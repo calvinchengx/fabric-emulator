@@ -87,28 +87,36 @@ That is the whole reason this feature is cheap on the Lakehouse side and
 expensive on the warehouse side: one has a version history and the other does
 not.
 
-## The blocking prerequisite, and it is a bug today
+## The blocking prerequisite (fixed — Phase 0 is done)
 
-[`write.go`](../internal/warehouse/write.go) stamps every Delta commit with:
-
-```go
-time.Now().UnixMilli()
-```
+[`write.go`](../internal/warehouse/write.go) used to stamp every Delta commit
+with `time.Now().UnixMilli()`.
 
 **Wall clock.** Every other time-derived value in the emulator comes from the
 controllable clock (`store.Now()` → `Clock.Now()`, [db.go](../internal/store/db.go)),
 which is the property the whole project is built on: LRO completion, job status,
 schedule firing. A commit timestamped from the host clock cannot be moved, so:
 
-- a test cannot write v1, advance an hour, write v2 and query the midpoint —
+- a test could not write v1, advance an hour, write v2 and query the midpoint —
   it would have to *wait* an hour;
 - `-clock-offset` and `POST /_emulator/clock` would silently not apply to the
   one feature whose entire subject is time;
 - the emulator would disagree with itself about what time it is, in a file whose
   timestamps are the index for a user-facing query.
 
-This is worth fixing whether or not time travel is ever built, and nothing here
-should be started before it is. It is also the cheapest item in the plan.
+Both writers now stamp from `st.Now()*1000`: `WriteDeltaTableAs` in
+[`write.go`](../internal/warehouse/write.go) and `writeDeltaSnapshot` in
+[`mirror.go`](../internal/warehouse/mirror.go), covering `metaData.createdTime`,
+`add.modificationTime` and `remove.deletionTimestamp`.
+
+Every commit also opens with a `commitInfo` action —
+`{"commitInfo":{"timestamp":…,"operation":"WRITE"}}` — which is what Phase 1
+reads. Delta records a commit's own time nowhere else: `add.modificationTime`
+belongs to the file, not the commit, and an append that adds no file would
+carry no time at all. `TestDeltaCommitsStampedFromEmulatorClock`
+([commit_clock_test.go](../internal/warehouse/commit_clock_test.go)) pins all of
+it against a frozen clock advanced 400 days, so a wall-clock stamp cannot pass
+by coincidence.
 
 ## Two surfaces, and they are not equally hard
 
@@ -233,10 +241,10 @@ rather than an assumption.
 
 ## Phases
 
-**Phase 0 — the clock.** Stamp Delta commits from `store.Now()`. One line, plus a
-test that a commit written under an offset clock lands at the offset time. **Do
-this regardless of whether any later phase happens**, because a wall-clock
-timestamp in a commit log is wrong on its own terms.
+**Phase 0 — the clock. Done.** Delta commits are stamped from `store.Now()`, and
+each one opens with a `commitInfo` action carrying that timestamp. Worth doing
+regardless of whether any later phase happens, because a wall-clock timestamp in
+a commit log is wrong on its own terms.
 
 **Phase 1 — read a version.** `ReadDeltaTableAsOf(st, itemID, name, ts)`:
 `activeFiles` with a stopping condition, plus the schema as of that commit. Pure
