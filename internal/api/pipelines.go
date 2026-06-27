@@ -11,6 +11,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/pipeline"
@@ -1001,6 +1002,11 @@ func (a *API) runPipelineWith(wid string, it *store.Item, jobID string, params, 
 		pipeline.Options{
 			TriggerEvent:     trigger,
 			LibraryVariables: libVars,
+			// @utcNow() reads the EMULATOR's clock, so a run under a frozen or
+			// advanced /_emulator/clock stamps the times that run would see —
+			// the same clock every other dated artefact (Delta commits, job
+			// timestamps) is written from.
+			Now: func() time.Time { return time.Unix(a.Store.Now(), 0).UTC() },
 			// Each activity is announced as it settles, so a watcher sees a
 			// failure at the moment it happens rather than reconstructing it
 			// from the run afterwards.

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Terminal activity/pipeline statuses (Fabric's spelling).
@@ -149,6 +150,7 @@ type run struct {
 	outputs   map[string]value // activity name -> {"output":..,"status":..}
 	trigger   map[string]value // @pipeline().TriggerEvent, nil when started by hand
 	libVars   map[string]value // @pipeline().libraryVariables, keyed by alias
+	now       func() time.Time // the clock utcNow() reads; nil = the wall clock
 	runs      []ActivityRun
 }
 
@@ -171,6 +173,10 @@ type Options struct {
 	// interpreter deliberately cannot reach — it is handed the answers, the
 	// same way leaf activities are delegated to an Executor.
 	LibraryVariables map[string]value
+	// Now is the clock the expression library's date functions read. The
+	// emulator passes its own clock, so a frozen or advanced /_emulator/clock
+	// moves @utcNow() with it and a run is reproducible. Nil means time.Now.
+	Now func() time.Time
 }
 
 // Run executes the pipeline with the given runtime parameters (overriding
@@ -189,6 +195,7 @@ func (p *Pipeline) RunWith(params map[string]value, exec Executor, opts Options)
 		trigger:    opts.TriggerEvent,
 		libVars:    opts.LibraryVariables,
 		onActivity: opts.OnActivity,
+		now:        opts.Now,
 	}
 	for name, def := range p.Properties.Parameters {
 		r.params[name] = def.DefaultValue
@@ -224,6 +231,7 @@ func (r *run) ctx(item value, hasItem bool) *evalContext {
 		LibraryVariables: r.libVars,
 		Item:             item,
 		HasItem:          hasItem,
+		Now:              r.now,
 	}
 }
 
