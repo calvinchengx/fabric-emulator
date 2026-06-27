@@ -17,7 +17,8 @@ package tsql
 //
 //	recursive CTEs, triggers, synonyms, CREATE USER, SET TRANSACTION
 //	ISOLATION LEVEL, SET ROWCOUNT, SET IDENTITY_INSERT, SELECT … FOR XML,
-//	IDENTITY(seed, increment), enforced PRIMARY KEY / UNIQUE / FOREIGN KEY,
+//	IDENTITY(seed, increment), an IDENTITY column added by ALTER TABLE,
+//	enforced PRIMARY KEY / UNIQUE / FOREIGN KEY,
 //	multi-column statistics, PREDICT, sp_showspaceused, FOR JSON inside a
 //	subquery, and a `/` or `\` in the name of a schema or table being created.
 //
@@ -89,6 +90,9 @@ func CheckStrict(sql string) error {
 	if containsSeq(sig, "sp_showspaceused") {
 		return &UnsupportedError{"sp-showspaceused", "sp_showspaceused is not supported"}
 	}
+	if err := checkAlterAddIdentity(sig); err != nil {
+		return err
+	}
 	if err := checkIdentitySeed(sig); err != nil {
 		return err
 	}
@@ -159,6 +163,40 @@ func checkIdentitySeed(sig []Token) error {
 		if i+1 < len(sig) && sig[i+1].Kind == Punct && sig[i+1].Text == "(" {
 			return &UnsupportedError{"identity-seed",
 				"defining an IDENTITY seed and increment is not supported"}
+		}
+	}
+	return nil
+}
+
+// checkAlterAddIdentity rejects an IDENTITY column added to an existing table:
+// Fabric allows the IDENTITY property only on a column declared when the table
+// is created, so `ALTER TABLE … ADD id BIGINT IDENTITY` runs on the sidecar and
+// fails in Fabric. It also catches a non-BIGINT IDENTITY arriving by ALTER,
+// which createtable.go only looks for in CREATE TABLE — the column type is
+// irrelevant here because no type is allowed.
+//
+// The IDENTITY keyword must follow an ADD, so a constraint added with
+// `ALTER TABLE … ADD CONSTRAINT … NOT ENFORCED` is untouched, and a Word token
+// is required, so `identity_provider`, `'IDENTITY'` in a literal and IDENTITY
+// in a comment are all left alone.
+func checkAlterAddIdentity(sig []Token) error {
+	if !startsWith(sig, "alter", "table") {
+		return nil
+	}
+	add := -1
+	for i := range sig {
+		if matchAt(sig, i, "add") {
+			add = i
+			break
+		}
+	}
+	if add < 0 {
+		return nil
+	}
+	for _, t := range sig[add+1:] {
+		if t.Kind == Word && strings.EqualFold(t.Text, "identity") {
+			return &UnsupportedError{"identity-alter-add",
+				"adding an IDENTITY column with ALTER TABLE is not supported"}
 		}
 	}
 	return nil
