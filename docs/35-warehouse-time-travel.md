@@ -246,10 +246,16 @@ each one opens with a `commitInfo` action carrying that timestamp. Worth doing
 regardless of whether any later phase happens, because a wall-clock timestamp in
 a commit log is wrong on its own terms.
 
-**Phase 1 — read a version.** `ReadDeltaTableAsOf(st, itemID, name, ts)`:
-`activeFiles` with a stopping condition, plus the schema as of that commit. Pure
-Go, no SQL, no protocol — unit-testable against a fixture log with three commits
-and no server at all. This is the phase that proves the premise.
+**Phase 1 — read a version. Done.**
+[`ReadDeltaTableAsOf(st, itemID, name, asOf)`](../internal/warehouse/delta.go)
+is `activeFiles` with a stopping condition (`commitStop`, consulted before each
+commit is applied), plus the schema as of that commit. A commit's time is its
+`commitInfo.timestamp`, or else the newest `add.modificationTime` it carries for
+a log written by someone else; an undated commit and a timestamp before the
+table's first commit are both errors rather than a plausible answer. Pure Go, no
+SQL, no protocol — `TestReadDeltaTableAsOf` covers three commits an emulator
+hour apart, and their midpoints, with no server at all. This is the phase that
+proves the premise.
 
 **Phase 2 — parse the hint.** Recognition, extraction, and every Class B refusal
 in the table above, in `internal/tsql`. Also pure, also unit-testable, and
