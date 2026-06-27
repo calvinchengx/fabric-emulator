@@ -227,6 +227,47 @@ func callFunc(name string, args []value, ctx *evalContext) (value, error) {
 			return nil, nil
 		}
 		return arr[len(arr)-1], nil
+
+	// --- collections ---
+	case "skip", "take":
+		if err := arity(name, args, 2); err != nil {
+			return nil, err
+		}
+		n := int(toNumber(args[1]))
+		// Fabric refuses a negative count rather than counting from the other
+		// end. Guessing an interpretation here would silently change which rows
+		// a ForEach runs over, which is worse than a failed activity.
+		if n < 0 {
+			return nil, fmt.Errorf("%s expects a count of 0 or more, got %d", name, n)
+		}
+		switch coll := args[0].(type) {
+		case []value:
+			if n > len(coll) {
+				n = len(coll) // a count past the end clamps; it is not an error
+			}
+			if name == "skip" {
+				// Copy: the result must not alias (and so keep alive, or let a
+				// later append overwrite) the caller's array.
+				return append([]value{}, coll[n:]...), nil
+			}
+			return append([]value{}, coll[:n]...), nil
+		case string:
+			// Byte offsets, like substring/length/indexOf in this package, so
+			// the whole string half of the library composes.
+			if n > len(coll) {
+				n = len(coll)
+			}
+			if name == "skip" {
+				return coll[n:], nil
+			}
+			return coll[:n], nil
+		}
+		return nil, fmt.Errorf("%s expects an array or a string, got %T", name, args[0])
+	case "union", "intersection":
+		if len(args) < 2 {
+			return nil, fmt.Errorf("%s expects at least 2 arguments, got %d", name, len(args))
+		}
+		return combine(name, args)
 	}
 	return nil, fmt.Errorf("unsupported function %q", name)
 }
@@ -240,6 +281,90 @@ func arity(name string, args []value, n int) error {
 		return fmt.Errorf("%s expects %d argument(s), got %d", name, n, len(args))
 	}
 	return nil
+}
+
+// combine is union/intersection over Fabric's two collection shapes: all
+// arrays, or all objects. A mix is an error — coercing one shape to the other
+// would answer a question nobody asked.
+//
+// Items and object values compare with equal(), the same loose equality the
+// equals() function exposes, so the number 1 and the string '1' are one item.
+// Both results keep first-seen order from the earliest argument that has the
+// item, which is what makes `union` usable as a ForEach input.
+func combine(name string, args []value) (value, error) {
+	if _, ok := args[0].([]value); ok {
+		arrs := make([][]value, 0, len(args))
+		for _, a := range args {
+			arr, ok := a.([]value)
+			if !ok {
+				return nil, fmt.Errorf("%s expects every argument to be an array, got %T", name, a)
+			}
+			arrs = append(arrs, arr)
+		}
+		out := []value{}
+		if name == "union" {
+			for _, arr := range arrs {
+				for _, e := range arr {
+					if !contains(out, e) {
+						out = append(out, e)
+					}
+				}
+			}
+			return out, nil
+		}
+		for _, e := range arrs[0] {
+			// contains(out, …) also drops duplicates within the first array.
+			if contains(out, e) || !inAll(e, arrs[1:]) {
+				continue
+			}
+			out = append(out, e)
+		}
+		return out, nil
+	}
+	if _, ok := args[0].(map[string]value); ok {
+		objs := make([]map[string]value, 0, len(args))
+		for _, a := range args {
+			m, ok := a.(map[string]value)
+			if !ok {
+				return nil, fmt.Errorf("%s expects every argument to be an object, got %T", name, a)
+			}
+			objs = append(objs, m)
+		}
+		out := map[string]value{}
+		if name == "union" {
+			for _, m := range objs { // a later argument wins a shared key
+				for k, v := range m {
+					out[k] = v
+				}
+			}
+			return out, nil
+		}
+		for k, v := range objs[0] {
+			keep := true
+			for _, m := range objs[1:] {
+				other, ok := m[k]
+				if !ok || !equal(v, other) {
+					keep = false // a key whose values disagree is not shared
+					break
+				}
+			}
+			if keep {
+				out[k] = v
+			}
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("%s expects arrays or objects, got %T", name, args[0])
+}
+
+// inAll reports whether e occurs in every one of arrs (vacuously true for none).
+func inAll(e value, arrs [][]value) bool {
+	for _, arr := range arrs {
+		if !contains(arr, e) {
+			return false
+		}
+	}
+	return true
 }
 
 // indexOfFold is the byte offset of searchText in text, searching from the end
