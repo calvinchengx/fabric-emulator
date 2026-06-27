@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Fabric/ADF pipeline expressions. A value beginning with '@' is an
@@ -32,6 +33,10 @@ type evalContext struct {
 	LibraryVariables map[string]value
 	Item             value // @item() inside ForEach
 	HasItem          bool
+	// Now is the clock the date functions read (utcNow and friends). Injected
+	// so a run follows the EMULATOR's clock — which /_emulator/clock can freeze
+	// and advance — instead of the wall. Nil falls back to time.Now.
+	Now func() time.Time
 }
 
 // evalString resolves a definition string: whole-value '@expr', interpolated

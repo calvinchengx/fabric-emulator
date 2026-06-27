@@ -268,6 +268,21 @@ func callFunc(name string, args []value, ctx *evalContext) (value, error) {
 			return nil, fmt.Errorf("%s expects at least 2 arguments, got %d", name, len(args))
 		}
 		return combine(name, args)
+
+	// --- date and time ---
+	case "utcNow":
+		if len(args) > 1 {
+			return nil, fmt.Errorf("%s expects 0 or 1 argument(s), got %d", name, len(args))
+		}
+		if len(args) == 1 {
+			if err := roundTripFormat(name, args[0]); err != nil {
+				return nil, err
+			}
+		}
+		// ctx.now() is the RUN's clock, not the wall clock; see funcs_datetime.go.
+		return ctx.now().Format(isoRoundTrip), nil
+	case "addDays", "addHours", "addMinutes", "addSeconds":
+		return shiftTimestamp(name, args)
 	}
 	return nil, fmt.Errorf("unsupported function %q", name)
 }
