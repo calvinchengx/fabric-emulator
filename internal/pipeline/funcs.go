@@ -80,6 +80,38 @@ func callFunc(name string, args []value, ctx *evalContext) (value, error) {
 		return strings.HasPrefix(toString(args[0]), toString(args[1])), nil
 	case "endsWith":
 		return strings.HasSuffix(toString(args[0]), toString(args[1])), nil
+	case "split":
+		if err := arity(name, args, 2); err != nil {
+			return nil, err
+		}
+		parts := strings.Split(toString(args[0]), toString(args[1]))
+		out := make([]value, 0, len(parts))
+		for _, part := range parts {
+			out = append(out, part)
+		}
+		return out, nil
+	case "join":
+		if err := arity(name, args, 2); err != nil {
+			return nil, err
+		}
+		// toArray returns nil for a non-array, which is indistinguishable from
+		// an empty one — and joining a string as if it were a collection is the
+		// kind of guess that turns a typo into a wrong result. Assert the type.
+		arr, ok := args[0].([]value)
+		if !ok {
+			return nil, fmt.Errorf("join expects an array, got %T", args[0])
+		}
+		parts := make([]string, 0, len(arr))
+		for _, e := range arr {
+			parts = append(parts, toString(e))
+		}
+		return strings.Join(parts, toString(args[1])), nil
+	case "indexOf", "lastIndexOf":
+		if err := arity(name, args, 2); err != nil {
+			return nil, err
+		}
+		return float64(indexOfFold(toString(args[0]), toString(args[1]),
+			name == "lastIndexOf")), nil
 	case "guid":
 		return "00000000-0000-0000-0000-000000000000", nil
 
@@ -208,6 +240,34 @@ func arity(name string, args []value, n int) error {
 		return fmt.Errorf("%s expects %d argument(s), got %d", name, n, len(args))
 	}
 	return nil
+}
+
+// indexOfFold is the byte offset of searchText in text, searching from the end
+// when last is set, or -1 when it does not occur. The comparison is
+// case-INSENSITIVE, which is what Fabric documents for indexOf/lastIndexOf and
+// is easy to get wrong by reaching for strings.Index.
+//
+// It scans rather than lower-casing both sides: ToLower can change a string's
+// byte length (Unicode title-case forms do), which would skew the returned
+// offset away from the original text — and the offset is the whole answer.
+func indexOfFold(text, searchText string, last bool) int {
+	if searchText == "" {
+		// Fabric returns 0 for an empty needle; lastIndexOf returns the end.
+		if last {
+			return len(text)
+		}
+		return 0
+	}
+	for i := 0; i+len(searchText) <= len(text); i++ {
+		j := i
+		if last {
+			j = len(text) - len(searchText) - i
+		}
+		if strings.EqualFold(text[j:j+len(searchText)], searchText) {
+			return j
+		}
+	}
+	return -1
 }
 
 func one(args []value) value {
