@@ -257,10 +257,21 @@ SQL, no protocol — `TestReadDeltaTableAsOf` covers three commits an emulator
 hour apart, and their midpoints, with no server at all. This is the phase that
 proves the premise.
 
-**Phase 2 — parse the hint.** Recognition, extraction, and every Class B refusal
-in the table above, in `internal/tsql`. Also pure, also unit-testable, and
-independently useful: even with no execution behind it, a consumer gets
-Fabric's error instead of a syntax error.
+**Phase 2 — parse the hint. Done.**
+[`ParseTimeTravelHint`](../internal/tsql/timetravel.go) reads
+`OPTION (FOR TIMESTAMP AS OF '<ts>')` from tokens — case-insensitive, whitespace
+and comments allowed, and not a hint at all when the same words sit in a string
+literal or a comment — and returns the instant in UTC plus the statement with the
+hint cut out. Every Class B row in the table above that a lexer can see is
+refused with a `*TimeTravelError{Rule, Detail}`: `timestamp-format` (more than
+three fractional digits, or malformed, quoting Fabric's Msg 22440),
+`timestamp-timezone`, `hint-once`, `select-only`, `view-definition` and
+`non-deterministic`. `TestParseTimeTravelHint`
+([timetravel_test.go](../internal/tsql/timetravel_test.go)) pins each one.
+
+It is deliberately not wired into `Adapt` or `CheckStrict` yet: stripping the
+hint without resolving the versions behind it would answer a question about the
+past with today's data. That wiring is Phase 3.
 
 **Phase 3 — the SQL analytics endpoint.** Wire 1 and 2 into the reflect path.
 This is the first phase with a user-visible feature, it is the faithful surface,
