@@ -1,10 +1,12 @@
 # 16 — Warehouse: T-SQL over TDS with Entra FedAuth
 
-**Status: design.** Plans the one R-track item left deferred: a real SQL
-endpoint that unmodified SQL clients — `sqlcmd`, `pyodbc`/`pymssql`,
+**Status: T1–T3 shipped and verified against a real SQL Server; T4 next.** A
+real SQL endpoint that unmodified SQL clients — `sqlcmd`, `pyodbc`/`pymssql`,
 `go-mssqldb`, the JDBC mssql driver, SSMS, Power BI DirectQuery — connect to
 over **TDS (port 1433)** authenticating with an **Entra token (FedAuth)**, and
-run real T-SQL against lakehouse Delta data.
+run real T-SQL against lakehouse Delta data. The engine is a **SQL Server
+sidecar**; the emulator reflects lakehouse Delta into it (§4) — *not* PolyBase,
+which a spike proved is a dead-end on Linux.
 
 Follows the same principle as the rest of the R-track
 ([14-real-compute.md](14-real-compute.md)):
@@ -68,13 +70,20 @@ materializes. Until then, bundling is the consistent, lower-friction choice.
   │   • validate token via internal/auth (entra JWKS)  ── reuse ──────────┼──▶ entra-emulator
   │   • map Fabric workspace/lakehouse → target database + SQL login      │
   │   • relay SQLBatch / RPC token streams both ways                      │
-  │  internal/warehouse — Delta⇄SQL reflection                            │
-  │   • materialize lakehouse Tables/<t> (Delta) into sidecar tables      │
+  │  internal/warehouse — Delta→SQL reflection (pure Go)                  │
+  │   • read lakehouse Tables/<t> Delta (parquet-go) ── reads ────────────┼──▶ OneLake (this emulator)
+  │   • CREATE TABLE + INSERT the rows into the sidecar                   │
   └──────────────────────────────────┬───────────────────────────────────┘
                                       │  go-mssqldb, SQL auth (fixed service login)
                                       ▼
-                          SQL Server (Linux) sidecar  ── reads ──▶ OneLake Delta
+                 SQL Server (Linux) sidecar  ◀── plain rows (no Delta read, no PolyBase)
 ```
+
+**Read the arrows carefully — this is the crux.** The **emulator** reads OneLake
+Delta (its own pure-Go reader); **SQL Server never touches OneLake**. It receives
+ordinary `CREATE TABLE` + `INSERT` + runs plain T-SQL `SELECT`. This is *not*
+PolyBase (SQL Server reading Delta itself) — that path is a proven dead-end on
+Linux (see §4). The sidecar is a vanilla T-SQL engine on rows we hand it.
 
 ### 1. TDS front leg (pure Go)
 Terminate the client TDS connection: PRELOGIN (encryption negotiation),
@@ -99,23 +108,49 @@ not a byte pipe: the two legs authenticate differently, so LOGIN7 must be
 parsed and a fresh backend session opened, then SQLBatch/RPC token streams
 relayed. `go-mssqldb` drives the backend leg.
 
-### 4. Data plane — the interesting open problem
-Fabric's **SQL analytics endpoint** exposes a lakehouse's Delta tables as
-read-only SQL. The emulator needs those tables queryable in the sidecar. Two
-approaches, start with the first:
+### 4. Data plane — two surfaces, one engine (resolved)
 
-- **Lazy materialization (v1):** on connect (or on first reference), reflect
-  each `Tables/<name>` Delta table into a sidecar table — read the Delta log +
-  Parquet (pure-Go reader, or via the sidecar's own Parquet ingest), infer the
-  schema, `CREATE TABLE` + bulk load. Read-only, eventually-consistent, schema
-  inferred. Enough for the real-client oracle.
-- **External tables / PolyBase (later):** point the sidecar at the Parquet
-  directly. Heavier setup and OneLake's custom endpoint complicates blob
-  access; revisit only if materialization proves too lossy.
+Fabric exposes **two** T-SQL surfaces, both over the same TDS front. The
+emulator routes by the connection's `database` (a Fabric item id) to the right
+strategy behind the same SQL Server sidecar:
 
-Full **Warehouse** read-write T-SQL (DDL/DML persisted back to OneLake Delta)
-is a larger sync problem — later milestone; v1 targets the read path (analytics
-endpoint semantics) that maps onto existing Delta data.
+| Surface | Item type | Strategy | Access |
+|---|---|---|---|
+| **Lakehouse SQL analytics endpoint** | `Lakehouse` | **Reflection** — the emulator reads each `Tables/<t>` Delta (pure-Go: replay `_delta_log` + `parquet-go`) and `CREATE TABLE`+`INSERT`s it into the sidecar on connect | **read-only** mirror of externally-written Delta |
+| **Warehouse** | `Warehouse` | **Direct relay** — the client's own `CREATE`/`INSERT`/`SELECT` go straight to the sidecar, which owns the data | **read-write** T-SQL |
+
+Reflection exists **only** for the lakehouse endpoint — it bridges Delta that
+was written *outside* SQL Server (by Spark / delta-rs / notebooks) into the
+query engine. The warehouse needs no reflection: its data is created *in* the
+warehouse via T-SQL, so it is already native to the sidecar.
+
+**Why reflection, not PolyBase — settled by a spike, not a hunch.** The
+tempting alternative is to point SQL Server at the OneLake Delta *directly*
+(`CREATE EXTERNAL DATA SOURCE` / `OPENROWSET(FORMAT='DELTA')`, i.e. PolyBase).
+A full spike (`e2e/sql-endpoint-spike/`) proved this is a **dead-end on the
+Linux `mssql/server` container**, at the wire and package level:
+
+- SQL Server 2022 Linux does not even register the `abs`/`adls` scheme
+  processors (`111631: scheme not valid`).
+- SQL Server 2025 Linux registers them (DDL parses), but the object-storage
+  read routes through a Java `HdfsBridge.jar` + JRE that `mssql-server-polybase`
+  **does not ship** on Linux (it installs only `libDMSNative.so` + gRPC + the
+  `.sfp` bundle). A `tcpdump` confirmed the connector makes **zero** network
+  calls — it fails in-process before any I/O, independent of DNS, TLS trust,
+  and SAS validity. The components exist only on **Windows** PolyBase.
+
+So reflection is the **permanent** design, not a v1 stopgap: the emulator reads
+Delta (it already can, in pure Go) and hands the sidecar plain rows. The full
+finding and root cause live in `e2e/sql-endpoint-spike/`.
+
+**Cross-engine oracle.** The same lakehouse Delta is queried independently by
+**DuckDB** (R3, `e2e/duckdb/`) — two engines agreeing on the result is the
+correctness proof for the reflection path.
+
+*Deferred (T4+):* per-lakehouse schema isolation (reflected tables currently
+land in the sidecar's default database — multiple lakehouses would collide);
+per-column type fidelity (all `NVARCHAR(4000)` today); write-back of Warehouse
+DML to OneLake Delta.
 
 ## Milestones
 
@@ -150,8 +185,27 @@ endpoint semantics) that maps onto existing Delta data.
   cross-engine oracle. *Limitations:* reflected tables land in the engine's
   default database (per-lakehouse schema isolation is a follow-up); re-reflects
   on each connect; `NVARCHAR(4000)`/no-checkpoint like T2's type caveat.
-- **T4 — RBAC + parity.** Map workspace roles → SQL permissions; connection
-  string / `information_schema` shape parity.
+  Verified locally against a real `mcr.microsoft.com/mssql/server:2022`
+  container (all three warehouse e2es pass), not just in CI.
+- **T4 — two-surface routing + RBAC + parity.** *Next.* Concretely:
+  1. **Explicit item-type routing.** Today the `Reflector` reflects for *any*
+     `database` item (harmless: a `Warehouse` has no `Tables/` Delta, so it's a
+     no-op and the direct relay handles read-write). Make it explicit —
+     `Lakehouse` → reflect + treat as read-only; `Warehouse` → relay only, no
+     reflect. Reject writes to a lakehouse endpoint (real Fabric does).
+  2. **Per-lakehouse schema isolation.** Reflected tables currently share the
+     sidecar's default database, so two lakehouses collide — reflect into a
+     per-item schema/database keyed by the item id.
+  3. **RBAC → SQL permissions.** The FedAuth token is validated, but the
+     workspace role isn't yet enforced on the SQL surface: map Viewer → read,
+     Contributor/Member/Admin → read-write (warehouse), and deny on no role.
+  4. **`information_schema` / connection-string parity** so schema-introspecting
+     tools (SSMS, Power BI, drivers) see the expected shape.
+  5. **Per-column type fidelity** (drop the all-`NVARCHAR(4000)` shortcut from
+     T2/T3) — infer real SQL types from the Parquet/Delta schema.
+- **T5 (optional) — borrowed-oracle breadth.** The CI proof is a `go-mssqldb`
+  test today; add a `pyodbc` (`ActiveDirectoryServicePrincipal`) client to the
+  gated e2e so a second real driver family exercises the FedAuth + result path.
 
 ## Borrowed oracles (the CI proof)
 

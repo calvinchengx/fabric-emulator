@@ -83,7 +83,9 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 |---|---|---|
 | SQL-analytics-endpoint semantics over lakehouse Delta | DuckDB runs real SQL (aggregation / join / filter), e2e | 🟢 Real (engine in e2e) |
 | Warehouse item management | Full | 🟢 Real |
-| **T-SQL over TDS + Entra FedAuth** | — | 🔴 Not implemented (deferred, with cause) |
+| **T-SQL over TDS + Entra FedAuth** | Pure-Go TDS front (`internal/tds`) terminates the FedAuth handshake (real Entra token, `database.windows.net` audience) and relays to a **SQL Server** sidecar; unmodified `go-mssqldb`/`pyodbc` clients connect and run T-SQL. Verified against a real SQL Server | 🟢 Real (front) / 🟠 SQL Server sidecar |
+| **Lakehouse SQL analytics endpoint — Delta → engine** | The emulator reads the lakehouse's `Tables/<t>` Delta in pure Go and reflects (CREATE+INSERT) it into the sidecar on connect, so `SELECT` hits real OneLake data (matches DuckDB). *Not PolyBase* — SQL Server reading Delta in place is a proven dead-end on the Linux container (`e2e/sql-endpoint-spike/`) | 🟢 Real (reflection) |
+| Per-lakehouse schema isolation / RBAC→SQL perms / `information_schema` parity | — | 🔴 T4 (next) |
 
 ## Data Factory (`data-factory/`)
 
