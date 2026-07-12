@@ -126,3 +126,52 @@ func TestReflectFromOneLake(t *testing.T) {
 		t.Fatalf("reflected SUM = %d, want 140", got)
 	}
 }
+
+// TestReflect exercises the exported Reflect (which forces the SQL Server "N"
+// Unicode string prefix). A numeric-only table keeps the generated literals
+// valid on the SQLite test engine, covering the production entry point.
+func TestReflect(t *testing.T) {
+	st, wsID, itemID := seedLakehouse(t)
+	put(t, st, wsID, itemID, "Tables/metrics/part-0.parquet",
+		writeNumParquet(t, []numRow{{1, 10.5}, {2, 20.5}}))
+	put(t, st, wsID, itemID, "Tables/metrics/_delta_log/00000000000000000000.json",
+		[]byte(`{"add":{"path":"part-0.parquet"}}`))
+	// A loose file directly under Tables/ (not a directory) is skipped.
+	put(t, st, wsID, itemID, "Tables/loose.txt", []byte("x"))
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+
+	done, err := Reflect(ctx, db, st, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(done) != 1 || done[0] != "metrics" {
+		t.Fatalf("reflected = %v, want [metrics]", done)
+	}
+	var sum float64
+	if err := db.QueryRowContext(ctx, "SELECT SUM(amount) FROM [metrics]").Scan(&sum); err != nil {
+		t.Fatal(err)
+	}
+	if sum < 30.9 || sum > 31.1 {
+		t.Fatalf("reflected SUM(amount) = %v, want 31", sum)
+	}
+}
+
+// TestReflectListError: a store error listing Tables/ surfaces, not panics.
+func TestReflectListError(t *testing.T) {
+	st, _, itemID := seedLakehouse(t)
+	st.Close() // a closed store makes ListOneLakePaths fail
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := Reflect(context.Background(), db, st, itemID); err == nil {
+		t.Fatal("expected an error from the closed store")
+	}
+}

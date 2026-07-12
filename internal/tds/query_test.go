@@ -3,6 +3,7 @@ package tds
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"testing"
@@ -10,6 +11,30 @@ import (
 
 	mssql "github.com/microsoft/go-mssqldb"
 )
+
+// TestSqlBatchQuery covers the SQLBatch text extraction: too-short input, the
+// ALL_HEADERS-prefixed form (TDS 7.2+), and the older headerless form.
+func TestSqlBatchQuery(t *testing.T) {
+	if got := sqlBatchQuery(nil); got != "" {
+		t.Errorf("nil = %q", got)
+	}
+	if got := sqlBatchQuery([]byte{1, 2, 3}); got != "" {
+		t.Errorf("short = %q", got)
+	}
+	// Headerless (older clients): the first 4 bytes as a length exceed len(data),
+	// so the whole payload is the query.
+	if got := sqlBatchQuery(str2ucs2("SELECT 1")); got != "SELECT 1" {
+		t.Errorf("headerless = %q", got)
+	}
+	// ALL_HEADERS: 4-byte total length + header bytes, then the UTF-16LE query.
+	const total = 22
+	data := binary.LittleEndian.AppendUint32(nil, total)
+	data = append(data, make([]byte, total-4)...)
+	data = append(data, str2ucs2("SELECT 2")...)
+	if got := sqlBatchQuery(data); got != "SELECT 2" {
+		t.Errorf("all-headers = %q", got)
+	}
+}
 
 // fakeBackend returns a scripted result (and records the query it saw), so the
 // SQLBatch-parse + result-encoding path can be exercised by the real driver

@@ -65,4 +65,8 @@ func TestNewSQLServerBackend(t *testing.T) {
 	if err != nil || be == nil {
 		t.Fatalf("NewSQLServerBackend: be=%v err=%v", be, err)
 	}
+	// A malformed DSN errors at open (go-mssqldb parses eagerly via DriverContext).
+	if _, err := NewSQLServerBackend("sqlserver://%zz"); err == nil {
+		t.Error("malformed DSN was accepted")
+	}
 }

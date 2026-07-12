@@ -27,6 +27,26 @@ func writeParquet(t *testing.T, rows []saleRow) []byte {
 	return buf.Bytes()
 }
 
+// numRow is an all-numeric table, so reflecting it emits no N'…' string
+// literals — lets a SQLite test exercise the SQL Server ("N" prefix) code path.
+type numRow struct {
+	ID     int64   `parquet:"id"`
+	Amount float64 `parquet:"amount"`
+}
+
+func writeNumParquet(t *testing.T, rows []numRow) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := parquet.NewGenericWriter[numRow](&buf)
+	if _, err := w.Write(rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
 // seedLakehouse opens a store with a workspace + lakehouse item.
 func seedLakehouse(t *testing.T) (*store.Store, string, string) {
 	t.Helper()
