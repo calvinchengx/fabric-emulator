@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: stg_countries
+    description: "Countries staged from the seed — exercises table build + tests."
+    columns:
+      - name: id
+        tests:
+          - unique
+          - not_null
+      - name: name
+        tests:
+          - not_null

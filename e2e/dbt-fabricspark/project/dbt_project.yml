@@ -1,0 +1,22 @@
+name: "dbt_fabricspark_e2e"
+version: "1.0.0"
+config-version: 2
+profile: "dbt_fabricspark_e2e"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+
+# In real Fabric the lakehouse's Spark database pre-exists (created with the
+# lakehouse item); non-schema-enabled dbt-fabricspark assumes it and does not
+# create it. Our agent's fresh Spark has no such database, so materialize it up
+# front — the emulator-side equivalent of Fabric provisioning the lakehouse.
+on-run-start:
+  - "create schema if not exists {{ target.schema }}"
+
+# Materialize as tables so run/test exercise real create-table + insert + select
+# through the emulator's Livy layer on Spark. Tables are Delta (the Fabric
+# default; the agent sets spark.sql.sources.default=delta to match), which dbt's
+# DDL assumes — it omits an explicit `using delta` clause.
+models:
+  dbt_fabricspark_e2e:
+    +materialized: table

@@ -150,7 +150,7 @@ contract holds better than any assertion we could write ourselves.
 | PySpark behind the **Livy API** | Spark sessions / statements | 🟢 `e2e/spark`, `e2e/livy`, `e2e/notebook-run` |
 | `notebookutils` | Notebook utility shim | 🟢 `e2e/notebookutils` |
 | `go-mssqldb` | Warehouse/Lakehouse **TDS + FedAuth** | 🟢 `internal/server`, `internal/tds` |
-| **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy sessions | ⏳ **Planned** — a 2nd real client over the Livy HC layer |
+| **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy HC sessions | 🟢 `e2e/dbt-fabricspark` — debug→seed→run→test on real Spark |
 | **`dbt-fabric`** (Microsoft) | Warehouse **TDS via ODBC Driver 18** | ⏳ **Planned** — closes the TDS driver-diversity gap |
 
 The TDS surface has exactly **one** driver witness today (`go-mssqldb`).

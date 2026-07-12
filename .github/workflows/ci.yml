@@ -158,6 +158,18 @@ jobs:
       # Apache Livy server. Linux-only (JVM Spark image), like spark-a2.
       - run: python3 e2e/livy/run.py
 
+  dbt-fabricspark:
+    name: Microsoft's dbt-fabricspark drives Livy HC on real Spark (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Microsoft's real dbt-fabricspark adapter runs a dbt project (debug ->
+      # seed -> run -> test) against the emulator's Fabric REST + Livy
+      # High-Concurrency surface, with real Spark computing the models and an
+      # Entra token minted by entra-emulator. A second, independent client over
+      # the Livy HC layer — parity witness. Linux-only (JVM Spark image).
+      - run: python3 e2e/dbt-fabricspark/run.py
+
   duckdb:
     name: Real DuckDB SQL over lakehouse Delta
     strategy:

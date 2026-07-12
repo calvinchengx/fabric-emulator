@@ -1,0 +1,95 @@
+# e2e: Microsoft's real dbt-fabricspark adapter runs a dbt project (debug ->
+# seed -> run -> test) against fabric-emulator's Livy High-Concurrency surface,
+# with real Spark behind it. This is the second independent client over the Livy
+# HC layer (after the go/pure-requests clients) — a strong parity witness.
+#
+#   dbt-fabricspark → fabric-emulator (Fabric REST + Livy HC, native) → spark-agent (real Spark SQL)
+#                          ↑ Entra FedAuth token minted by entra-emulator
+#
+# fabric-emulator serves TLS here (dbt requires an HTTPS endpoint); its
+# self-signed cert (SAN api.fabric.microsoft.com) is shared to the dbt container
+# via the emu-data volume for REQUESTS_CA_BUNDLE.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  # Real Spark behind the emulator's Livy layer, executing dbt's SQL. Reuses the
+  # ../spark image (delta-spark + ABFS jars + entra token provider). The health
+  # gate matters: the emulator reports HC sessions Idle immediately, so dbt hits
+  # the agent on the first statement — dbt must not start until Spark is up.
+  spark-agent:
+    build:
+      context: ../spark
+      dockerfile: Dockerfile
+    volumes:
+      - ./sql_agent.py:/opt/spark/work-dir/sql_agent.py:ro
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - "local[2]"
+      - /opt/spark/work-dir/sql_agent.py
+      - "8099"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8099/health').status==200 else 1)"
+      interval: 5s
+      timeout: 4s
+      retries: 60
+      start_period: 20s
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":9443"
+      FABRIC_DATA_DIR: "/data" # persist the TLS cert so the dbt container can trust it
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      # Terminate Livy natively (incl. High-Concurrency) and drive the agent.
+      FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
+    volumes:
+      - emu-data:/data
+    networks:
+      default:
+        aliases:
+          - api.fabric.microsoft.com
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  dbt:
+    build:
+      context: .
+      dockerfile: Dockerfile.dbt
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+      spark-agent:
+        condition: service_healthy
+    environment:
+      ENTRA_URL: "http://entra-emulator:8443"
+      FABRIC_URL: "https://api.fabric.microsoft.com:9443"
+      REQUESTS_CA_BUNDLE: "/data/tls/cert.pem"
+    volumes:
+      - emu-data:/data:ro
+
+volumes:
+  emu-data:

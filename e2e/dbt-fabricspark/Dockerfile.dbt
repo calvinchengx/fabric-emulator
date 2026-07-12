@@ -1,0 +1,19 @@
+# Microsoft's real dbt-fabricspark adapter + our in-container driver. Kept thin:
+# the adapter (and dbt-core) come as wheels; the project + runner are the last,
+# cheap layers so edits rebuild fast.
+FROM python:3.12-slim
+
+# git: dbt debug's environment check probes `git --help`; without it the
+# otherwise-green connection test reports a failed check.
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir dbt-fabricspark
+
+WORKDIR /project
+COPY project/ /project/
+COPY runner.py /runner.py
+
+# runner.py provisions ws+lakehouse, mints a token, templates profiles.yml, then
+# runs dbt debug -> seed -> run -> test against the emulator.
+CMD ["python3", "/runner.py"]
