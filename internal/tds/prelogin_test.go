@@ -112,6 +112,59 @@ func TestServerPreLoginRoundTrip(t *testing.T) {
 	}
 }
 
+func TestReadPacketTruncated(t *testing.T) {
+	if _, err := ReadPacket(bytes.NewReader([]byte{0x12, 0x01, 0x00})); err == nil {
+		t.Error("expected error on short header")
+	}
+	// Header claims length 100 but the body is missing.
+	if _, err := ReadPacket(bytes.NewReader([]byte{0x12, 0x01, 0x00, 0x64, 0, 0, 1, 0})); err == nil {
+		t.Error("expected error on missing body")
+	}
+	// Length below the header size.
+	if _, err := ReadPacket(bytes.NewReader([]byte{0x12, 0x01, 0x00, 0x04, 0, 0, 1, 0})); err == nil {
+		t.Error("expected error on length < header")
+	}
+}
+
+func TestParseLogin7Errors(t *testing.T) {
+	if _, err := ParseLogin7([]byte{1, 2, 3}); err == nil {
+		t.Error("expected header error on short data")
+	}
+	// A full-size header whose Length field exceeds the payload.
+	data := make([]byte, 94)
+	binary.LittleEndian.PutUint32(data[0:], 9999)
+	if _, err := ParseLogin7(data); err == nil {
+		t.Error("expected length-overflow error")
+	}
+}
+
+func TestFedAuthTokenStream(t *testing.T) {
+	// A non-FEDAUTH feature followed by the terminator → no token.
+	if tok, err := fedAuthToken([]byte{0x04, 2, 0, 0, 0, 0xAA, 0xBB, featExtTerminator}, 0); err != nil || tok != "" {
+		t.Fatalf("non-fedauth stream: tok=%q err=%v", tok, err)
+	}
+	// Truncated feature header.
+	if _, err := fedAuthToken([]byte{0x02, 0xFF}, 0); err == nil {
+		t.Error("expected truncated feature-ext error")
+	}
+	// A FEDAUTH SecurityToken feature carrying a UTF-16LE token "hi".
+	fd := []byte{fedAuthLibrarySecurityToken << 1, 4, 0, 0, 0, 'h', 0, 'i', 0}
+	dl := make([]byte, 4)
+	binary.LittleEndian.PutUint32(dl, uint32(len(fd)))
+	stream := append([]byte{featExtFedAuth}, dl...)
+	stream = append(stream, fd...)
+	stream = append(stream, featExtTerminator)
+	if tok, err := fedAuthToken(stream, 0); err != nil || tok != "hi" {
+		t.Fatalf("fedauth stream: tok=%q err=%v", tok, err)
+	}
+}
+
+func TestUCS2Odd(t *testing.T) {
+	if ucs2([]byte{0x41}) != "" {
+		t.Error("odd-length ucs2 should decode to empty")
+	}
+}
+
 // TestPreLoginRejectsBadOffsets guards the parser against malformed option
 // tables (out-of-range offsets, missing terminator).
 func TestPreLoginRejectsBadOffsets(t *testing.T) {
