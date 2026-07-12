@@ -71,7 +71,7 @@ form a coherent pair and the testing primitives carry over:
 |---|---|
 | Language / HTTP | Go, stdlib `net/http`, host-routed muxes |
 | Storage | `modernc.org/sqlite` (pure-Go, no CGO) |
-| Surface routing | `Host`-header router (`api.` / `onelake.` / `portal.` muxes) |
+| Surface routing | `Host`-header router (`onelake.*` data plane; everything else = control plane + portal) |
 | Determinism | Controllable **clock** (drives LRO completion) + **fault injection** |
 | Portal | Svelte 5, `go:embed all:dist`, committed `dist` + CI drift guard |
 | Docs site | Astro Starlight on GitHub Pages, pinned, `/docs` = source of truth |
@@ -107,7 +107,7 @@ is the audience set and the role lookup. Config: `--entra-issuer` +
 |---|---|
 | `api.fabric.microsoft.com` | the `/v1` control plane (workspaces, items, RBAC, git, LRO, jobs, admin) |
 | `onelake.dfs.fabric.microsoft.com` | ADLS-Gen2 subset (filesystem = workspace, path = item/…) |
-| `portal.` (local) | the Svelte operator portal |
+| any other host, at `/` | the Svelte operator portal (embedded; reads state via `/_emulator/portal/*`) |
 
 See [07-control-plane-api.md](07-control-plane-api.md) for the endpoint catalog and wire
 shapes, and [13-roadmap.md](13-roadmap.md) for what lands in each phase.

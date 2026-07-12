@@ -8,6 +8,7 @@
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm",
+    "portal:build": "pnpm --filter fabric-emulator-portal build",
     "docs:dev": "pnpm --filter fabric-emulator-docs dev",
     "docs:build": "pnpm --filter fabric-emulator-docs build"
   }

@@ -151,8 +151,12 @@ proxy would be a separate sibling.
 
 ## Cross-cutting (throughout)
 
-- [ ] Svelte portal: workspaces / items / role assignments / operations / git
-      status / provisioning views — `go:embed` + committed `dist` + CI drift guard.
+- [x] Svelte portal: dashboard / workspaces (items, role assignments, git
+      status drill-down) / operations / clock / fault injection / workspace
+      identities — served at `/` on the control-plane origin, reading state
+      through unauthenticated `/_emulator/portal/*` endpoints (the /v1
+      contract stays bearer-only). `go:embed all:dist` + committed `dist` +
+      CI drift guard; 21 Vitest unit tests.
 - [x] Starlight docs site on GitHub Pages (this `/docs` = source of truth,
       synced by `website/scripts/sync-docs.mjs`; pinned Astro Starlight;
       deploys via `docs-site.yml`) — live at
@@ -161,7 +165,7 @@ proxy would be a separate sibling.
       `healthcheck` subcommand) + Homebrew cask + winget (both self-skip
       without their tokens); `version` stamped via ldflags. Channels go live
       at the first `v*` tag.
-- [ ] Playwright headless mount smoke (catch builds-but-doesn't-mount).
+- [x] Playwright headless mount smoke (catch builds-but-doesn't-mount) — in the portal CI job, with the vite `resolve.conditions` fix baked in.
 - [x] Coverage parity with entra-emulator (≥ 70% per package): every package
       77–100% from its own tests; 91.6% total plain / 93.5% cross-package
       (CI floor 90%).

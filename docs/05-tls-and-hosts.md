@@ -6,7 +6,7 @@ like real Fabric's split between the control plane and OneLake:
 | `Host` starts with | Serves |
 |---|---|
 | `onelake.` | the [OneLake data plane](08-onelake.md) (ADLS-Gen2 DFS) |
-| anything else | the [`/v1` control plane](07-control-plane-api.md), `/health`, and the [`/_emulator` testing surface](10-testing.md) |
+| anything else | the [`/v1` control plane](07-control-plane-api.md), `/health`, the [`/_emulator` testing surface](10-testing.md), and the operator portal SPA at `/` |
 
 So plain `https://localhost:9443/v1/...` always reaches the control plane, and
 the data plane needs the request to *carry the OneLake hostname*.

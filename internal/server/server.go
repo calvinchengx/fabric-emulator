@@ -53,6 +53,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	s := &Server{Cfg: cfg, Store: st, Clock: ck, API: a, OneLake: ol, mux: http.NewServeMux()}
 	a.Register(s.mux)
 	s.registerControl()
+	s.registerPortal()
 	return s, nil
 }
 

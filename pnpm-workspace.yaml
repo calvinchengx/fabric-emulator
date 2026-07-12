@@ -1,4 +1,5 @@
 packages:
+  - portal
   - website
 
 # pnpm 10 blocks dependency build scripts by default; allow the ones Astro

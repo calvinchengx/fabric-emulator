@@ -35,6 +35,36 @@ jobs:
           echo "total coverage: ${total}%"
           awk -v t="$total" 'BEGIN { exit (t < 90) ? 1 : 0 }'
 
+  portal:
+    name: Portal builds from source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter fabric-emulator-portal test
+      - run: pnpm --filter fabric-emulator-portal build
+      # portal/dist is committed (go:embed bakes it into the binary so `go build`
+      # / `go install @latest` need no Node). Fail if the committed copy has
+      # drifted from a fresh build so it can never go stale.
+      - name: Verify committed portal/dist is up to date
+        run: |
+          changes="$(git status --porcelain -- portal/dist)"
+          if [ -n "$changes" ]; then
+            echo "::error::portal/dist is stale. Run 'pnpm --filter fabric-emulator-portal build' and commit portal/dist."
+            echo "$changes"
+            exit 1
+          fi
+      # Headless mount smoke: `vite build` + jsdom unit tests pass even when the
+      # bundle resolves Svelte to its server build and never mounts. Only a real
+      # browser catches that, so assert the built dist actually renders.
+      - run: pnpm --filter fabric-emulator-portal exec playwright install --with-deps chromium
+      - run: pnpm --filter fabric-emulator-portal smoke
+
   fabric-cicd:
     name: Real fabric-cicd tool publishes into the emulator
     strategy:
