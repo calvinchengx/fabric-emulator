@@ -125,6 +125,8 @@ git_connection    (workspaceId, provider, org, repo, branch, directory, status)
 job_instance      (id, itemId, jobType, status, startTime, endTime)
 onelake_blob      (workspaceId, itemId, path, bytes)   -- P3
 workspace_identity(workspaceId, appId, servicePrincipalId, state)  -- P2
+capacity          (id, displayName, sku, region, state) -- seeded; assignable object only
+shortcut          (itemId, path, name, targetWs, targetItem, targetPath) -- OneLake-to-OneLake symlink
 ```
 
 State enums: `workspace.state` is the six-value set fabric-docs documents

@@ -14,7 +14,11 @@ The minimum that lets someone test **SP → Fabric client-credentials** automati
 - [x] Store + migrations (`workspace`, `item`, `role_assignment`, `operation`).
 - [x] **LRO engine** on the controllable clock (`202`/`x-ms-operation-id`/
       `Location`/`Retry-After`, `GET /operations/{id}` + `/result`).
-- [x] Workspaces CRUD. (`assignToCapacity` deferred — no capacity model yet.)
+- [x] Workspaces CRUD. (`assignToCapacity` deferred at P0; the capacity model
+      is now designed in [02-api-surface.md](02-api-surface.md)
+      (`## Capacities`) — seeded default capacity, auto-assign on create,
+      assign/unassign LROs — validated as needed by fabric-cicd's
+      capacityId check.)
 - [x] Generic items CRUD (create-with-definition → 202 LRO).
 - [x] RBAC: role assignments CRUD + enforcement (Admin/Member/Contributor/Viewer;
       creator becomes Admin; Member grants ≤ Member).
@@ -97,7 +101,10 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
 - [x] e2e: full write flow (create → append ×2 → flush) via GUID addressing,
       read back via name addressing; listings; RBAC walls; managed-folder
       rejections — against real entra-minted Storage tokens.
-- [ ] Shortcuts (thin) + trusted-workspace-access smoke path (later).
+- [ ] Shortcuts: OneLake-to-OneLake symlinks with data-plane resolution and
+      target-side RBAC (the trusted-workspace-access smoke path); external
+      targets 501. Designed in [02-api-surface.md](02-api-surface.md)
+      (`## OneLake shortcuts`).
 - [ ] e2e: azcopy / ADLS SDK against the emulator (later; wire subset ready).
 
 ## Cross-cutting (throughout)
