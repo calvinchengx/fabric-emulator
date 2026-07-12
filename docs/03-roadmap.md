@@ -118,6 +118,11 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
 - [ ] GoReleaser: binaries + distroless Docker (GHCR) + Homebrew cask + winget.
 - [ ] Playwright headless mount smoke (catch builds-but-doesn't-mount).
 - [ ] Coverage parity with entra-emulator (target ≥ 70% per package).
+- [ ] **Connection credentials**: model `credentialDetails.credentialType`
+      (Basic / ServicePrincipal / WorkspaceIdentity / Key / SAS / Anonymous)
+      with write-only secrets, SP validation against entra at create, and the
+      WorkspaceIdentity kind gated on a provisioned identity. Designed in
+      [02-api-surface.md](02-api-surface.md) (`### Connection credentials`).
 - [ ] **AKV-reference connections**: a connection type that resolves secrets
       from [azure-keyvault-emulator](https://github.com/calvinchengx/azure-keyvault-emulator)
       (the family's third member), reproducing Fabric's Azure Key Vault

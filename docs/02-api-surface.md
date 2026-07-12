@@ -225,6 +225,32 @@ exactly what an offline emulator cannot honor; they 501 with a clear message.
 principal requires a `connectionId` (see git section above). `/admin/*` (tenant
 settings, workspace listing) is added as demand warrants.
 
+### Connection credentials (planned)
+
+Real connections carry `credentialDetails` with a `credentialType`
+(`copy-job-rest-api-capabilities.md` shows the wire shape): `Basic`,
+`ServicePrincipal`, `WorkspaceIdentity`, `Key`, `SharedAccessSignature`,
+`Anonymous`. The emulator currently stores connection details verbatim with no
+credential model; the planned design:
+
+- **Write-only secrets.** Credential material (`password`, `secret`, keys) is
+  accepted on create/update and **never echoed back** — reads return
+  `credentialType` and non-secret fields only, as real Fabric does.
+- **`ServicePrincipal`**: `{ tenantId, servicePrincipalClientId, secret }` —
+  optionally validated against entra-emulator at create (a real client-
+  credentials probe = Fabric's "test connection"), so a wrong secret fails
+  connection creation the way it does in production.
+- **`WorkspaceIdentity`**: no credential material at all
+  (`workspace-identity-authenticate.md` — "no need to manage keys, secrets,
+  and certificates"); valid only when the owning workspace has a provisioned
+  identity (composes with the P2 lifecycle; deprovisioning breaks the
+  connection, as documented).
+- **AKV references** (see roadmap): credential-by-reference — the connection
+  stores a pointer to an azure-keyvault-emulator secret and resolves it at
+  use, reproducing Fabric's Azure Key Vault references feature offline.
+- Identity material itself (app registrations, SP secrets) stays in
+  entra-emulator — connections *reference* principals, never own them.
+
 ## Scope note
 
 fabric-docs samples overwhelmingly acquire tokens with scope
