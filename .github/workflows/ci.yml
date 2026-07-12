@@ -105,3 +105,23 @@ jobs:
       # Blob surface with an entra-minted Storage token — exercising Range
       # reads and the _delta_log put-if-absent commit primitive.
       - run: python e2e/delta-rs/run.py
+
+  adls-sdk:
+    name: Real Azure Blob SDK round-trips through OneLake
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # Microsoft's real `azure-storage-blob` SDK uploads a pyarrow-written
+      # Parquet, downloads it byte-identical (exercising x-ms-range), lists
+      # blobs, and the DFS surface sees the same file — the ADLS SDK oracle.
+      - run: python e2e/adls-sdk/run.py

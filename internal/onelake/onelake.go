@@ -78,13 +78,18 @@ func pathHeaders(w http.ResponseWriter, p *store.OneLakePath, st *store.Store) {
 	w.Header().Set("Last-Modified", time.Unix(mod, 0).UTC().Format(http.TimeFormat))
 }
 
-// serveContent writes content honoring a single-range Range header (Parquet
-// readers seek with bytes=a-b); 206 with Content-Range for partial reads,
-// 416 for unsatisfiable ranges.
+// serveContent writes content honoring a single-range request; 206 with
+// Content-Range for partial reads, 416 for unsatisfiable ranges. Both range
+// header dialects are read: standard `Range` (DFS / Parquet seeks) and
+// `x-ms-range` (the Azure Blob SDK always sends this for its chunked
+// downloads and requires a 206 + Content-Range in reply).
 func serveContent(w http.ResponseWriter, r *http.Request, content []byte) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Accept-Ranges", "bytes")
 	rng := r.Header.Get("Range")
+	if rng == "" {
+		rng = r.Header.Get("x-ms-range")
+	}
 	if rng == "" {
 		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
 		_, _ = w.Write(content)

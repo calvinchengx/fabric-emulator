@@ -354,3 +354,31 @@ func TestConcurrentDeltaCommitRace(t *testing.T) {
 		t.Fatalf("committed content = %q; want the winner's (writer %d)", g.Body.String(), winner)
 	}
 }
+
+// TestXMSRange: the Azure Blob SDK sends its range as x-ms-range (not the
+// standard Range header) and requires a 206 + Content-Range in reply — found
+// by driving the real azure-storage-blob client against the emulator.
+func TestXMSRange(t *testing.T) {
+	f := newFixture(t)
+	path := "/" + f.ws.ID + "/" + f.it.ID + "/Files/blob.bin"
+	if w := f.doBlob("PUT", path, f.token, []byte("hello world"), nil); w.Code != http.StatusCreated {
+		t.Fatal(w.Code)
+	}
+	// x-ms-range yields 206 + Content-Range just like Range.
+	g := f.doBlob("GET", path, f.token, nil, map[string]string{"x-ms-range": "bytes=0-4"})
+	if g.Code != http.StatusPartialContent || g.Body.String() != "hello" ||
+		g.Header().Get("Content-Range") != "bytes 0-4/11" {
+		t.Fatalf("x-ms-range = %d %q %q", g.Code, g.Body.String(), g.Header().Get("Content-Range"))
+	}
+	// The SDK's whole-blob fetch (range covers past the end) → clamped 206.
+	g = f.doBlob("GET", path, f.token, nil, map[string]string{"x-ms-range": "bytes=0-33554431"})
+	if g.Code != http.StatusPartialContent || g.Body.String() != "hello world" ||
+		g.Header().Get("Content-Range") != "bytes 0-10/11" {
+		t.Fatalf("x-ms-range whole = %d %q %q", g.Code, g.Body.String(), g.Header().Get("Content-Range"))
+	}
+	// Standard Range still wins when both are present (defensive).
+	g = f.doBlob("GET", path, f.token, nil, map[string]string{"Range": "bytes=6-10", "x-ms-range": "bytes=0-0"})
+	if g.Body.String() != "world" {
+		t.Fatalf("Range precedence = %q", g.Body.String())
+	}
+}
