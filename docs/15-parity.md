@@ -90,7 +90,7 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Fabric feature | Emulator | Type |
 |---|---|---|
 | Data Pipeline control flow (If / ForEach / Until / Switch / Filter / Fail, expression language, `dependsOn`) | Pure-Go interpreter that really executes | 🟢 Real (orchestration) |
-| Pipeline → notebook activity (TridentNotebook) | Chains a real RunNotebook job | 🟢 Real chain |
+| Pipeline → notebook activity (TridentNotebook) | Resolves the notebook reference and creates a **real RunNotebook job instance** the pipeline gates on — the pipeline→jobs linkage is real; the notebook's **cells** execute only on the Spark sidecar (otherwise the job is clock-derived, like any RunNotebook job) | 🟢 Real chain / 🟠 exec |
 | `queryactivityruns` detail | Full | 🟢 Real |
 | Copy / Lookup / Web leaf activities | **Stubbed success** — the leaf is reached in `dependsOn` order and its expression inputs are resolved, but nothing executes (no data moved, no query, no HTTP call); returns a hardcoded `Succeeded` | 🟡 Emulated |
 | **Dataflow Gen2** (Power Query M engine) | An in-pipeline Dataflow activity fails with an explicit "not implemented" | 🔴 Honest fail |
