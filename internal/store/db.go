@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
 	_ "modernc.org/sqlite"
@@ -89,6 +90,10 @@ CREATE TABLE IF NOT EXISTS connections (
 	display_name TEXT NOT NULL,
 	connectivity_type TEXT NOT NULL DEFAULT '',
 	details_json TEXT NOT NULL DEFAULT '{}',
+	credential_type TEXT NOT NULL DEFAULT '',
+	sso_type TEXT NOT NULL DEFAULT '',
+	encryption TEXT NOT NULL DEFAULT '',
+	credentials_json TEXT NOT NULL DEFAULT '',
 	created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS git_connections (
@@ -160,6 +165,18 @@ PRAGMA foreign_keys = ON;
 `)
 	if err != nil {
 		return err
+	}
+	// Additive migrations for databases created before these columns; a
+	// duplicate-column error means the column already exists.
+	for _, alter := range []string{
+		`ALTER TABLE connections ADD COLUMN credential_type TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE connections ADD COLUMN sso_type TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE connections ADD COLUMN encryption TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE connections ADD COLUMN credentials_json TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return err
+		}
 	}
 	return s.seedCapacity()
 }

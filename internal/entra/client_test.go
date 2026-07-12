@@ -102,3 +102,28 @@ func TestClientErrors(t *testing.T) {
 		t.Fatal("garbage JSON accepted")
 	}
 }
+
+func TestValidateClientCredentials(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /{tenant}/oauth2/v2.0/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.PostFormValue("client_secret") != "good" || r.PathValue("tenant") != "tid" {
+			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"access_token":"x"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := New(srv.URL, false, srv.Client())
+	if err := c.ValidateClientCredentials("tid", "cid", "good"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ValidateClientCredentials("tid", "cid", "bad"); err == nil || !strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("bad secret err = %v", err)
+	}
+	dead := New("http://127.0.0.1:1", false, nil)
+	if err := dead.ValidateClientCredentials("t", "c", "s"); err == nil {
+		t.Fatal("unreachable entra accepted")
+	}
+}

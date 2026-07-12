@@ -5,6 +5,7 @@ package server_test
 // and clock-driven job instances. Same real-token fixture as P0.
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -277,4 +278,31 @@ func TestGitRBAC(t *testing.T) {
 	f.call("POST", "/v1/workspaces", alice, map[string]string{"displayName": "alice-ws"}, &aws)
 	f.mustStatus(f.call("POST", "/v1/workspaces/"+aws.ID+"/git/connect", alice,
 		map[string]any{"gitProviderDetails": provider}, nil), http.StatusOK, "user Automatic connect")
+}
+
+func TestServicePrincipalConnectionProbe(t *testing.T) {
+	f := newFixture(t)
+	sp := func(clientID, secret string) map[string]any {
+		return map[string]any{
+			"displayName": "sp-conn",
+			"credentialDetails": map[string]any{
+				"credentials": map[string]string{
+					"credentialType":           "ServicePrincipal",
+					"tenantId":                 entra.TenantID,
+					"servicePrincipalClientId": clientID,
+					"servicePrincipalSecret":   secret,
+				},
+			},
+		}
+	}
+	// The seeded daemon's real credentials pass the probe.
+	resp := f.call("POST", "/v1/connections", f.token, sp(entra.DaemonClientID, entra.DaemonSecret), nil)
+	f.mustStatus(resp, http.StatusCreated, "valid SP connection")
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), entra.DaemonSecret) {
+		t.Fatalf("secret echoed: %s", body)
+	}
+	// A wrong secret fails connection creation, as in production.
+	resp = f.call("POST", "/v1/connections", f.token, sp(entra.DaemonClientID, "wrong"), nil)
+	f.mustStatus(resp, http.StatusBadRequest, "invalid SP connection")
 }

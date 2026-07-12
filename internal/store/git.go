@@ -6,14 +6,27 @@ import (
 	"errors"
 )
 
+// CredentialDetails is the read shape of a connection's credential
+// configuration: metadata only — secret material is write-only and never
+// serialized back, as in real Fabric.
+type CredentialDetails struct {
+	CredentialType       string `json:"credentialType"`
+	SingleSignOnType     string `json:"singleSignOnType,omitempty"`
+	ConnectionEncryption string `json:"connectionEncryption,omitempty"`
+}
+
 // Connection is a stored credentials connection (git providers, sources).
-// Details are stored verbatim; the emulator only needs the id to exist.
+// Details are stored verbatim; credential secret material lives only in the
+// write-only CredentialsJSON column.
 type Connection struct {
-	ID               string          `json:"id"`
-	DisplayName      string          `json:"displayName"`
-	ConnectivityType string          `json:"connectivityType,omitempty"`
-	Details          json.RawMessage `json:"connectionDetails,omitempty"`
-	CreatedAt        int64           `json:"-"`
+	ID                string             `json:"id"`
+	DisplayName       string             `json:"displayName"`
+	ConnectivityType  string             `json:"connectivityType,omitempty"`
+	Details           json.RawMessage    `json:"connectionDetails,omitempty"`
+	CredentialDetails *CredentialDetails `json:"credentialDetails,omitempty"`
+	// CredentialsJSON holds the secret material (write-only; json:"-").
+	CredentialsJSON string `json:"-"`
+	CreatedAt       int64  `json:"-"`
 }
 
 // CreateConnection stores a connection.
@@ -26,42 +39,58 @@ func (s *Store) CreateConnection(c *Connection) error {
 	if len(c.Details) > 0 {
 		details = string(c.Details)
 	}
+	credType, sso, enc := "", "", ""
+	if c.CredentialDetails != nil {
+		credType = c.CredentialDetails.CredentialType
+		sso = c.CredentialDetails.SingleSignOnType
+		enc = c.CredentialDetails.ConnectionEncryption
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO connections (id, display_name, connectivity_type, details_json, created_at) VALUES (?,?,?,?,?)`,
-		c.ID, c.DisplayName, c.ConnectivityType, details, c.CreatedAt)
+		`INSERT INTO connections (id, display_name, connectivity_type, details_json, credential_type, sso_type, encryption, credentials_json, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?)`,
+		c.ID, c.DisplayName, c.ConnectivityType, details, credType, sso, enc, c.CredentialsJSON, c.CreatedAt)
 	return err
 }
 
+func scanConnection(scan func(dest ...any) error) (*Connection, error) {
+	c := &Connection{}
+	var details, credType, sso, enc string
+	err := scan(&c.ID, &c.DisplayName, &c.ConnectivityType, &details, &credType, &sso, &enc, &c.CredentialsJSON, &c.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	c.Details = json.RawMessage(details)
+	if credType != "" {
+		c.CredentialDetails = &CredentialDetails{CredentialType: credType, SingleSignOnType: sso, ConnectionEncryption: enc}
+	}
+	return c, nil
+}
+
+const connectionCols = `id, display_name, connectivity_type, details_json, credential_type, sso_type, encryption, credentials_json, created_at`
+
 // GetConnection fetches one connection.
 func (s *Store) GetConnection(id string) (*Connection, error) {
-	c := &Connection{}
-	var details string
-	err := s.db.QueryRow(
-		`SELECT id, display_name, connectivity_type, details_json, created_at FROM connections WHERE id = ?`, id).
-		Scan(&c.ID, &c.DisplayName, &c.ConnectivityType, &details, &c.CreatedAt)
+	row := s.db.QueryRow(`SELECT `+connectionCols+` FROM connections WHERE id = ?`, id)
+	c, err := scanConnection(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	c.Details = json.RawMessage(details)
 	return c, err
 }
 
 // ListConnections returns all connections.
 func (s *Store) ListConnections() ([]*Connection, error) {
-	rows, err := s.db.Query(
-		`SELECT id, display_name, connectivity_type, details_json, created_at FROM connections ORDER BY rowid`)
+	rows, err := s.db.Query(`SELECT ` + connectionCols + ` FROM connections ORDER BY rowid`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []*Connection
 	for rows.Next() {
-		c := &Connection{}
-		var details string
-		if err := rows.Scan(&c.ID, &c.DisplayName, &c.ConnectivityType, &details, &c.CreatedAt); err != nil {
+		c, err := scanConnection(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		c.Details = json.RawMessage(details)
 		out = append(out, c)
 	}
 	return out, rows.Err()

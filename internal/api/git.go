@@ -382,12 +382,67 @@ func (a *API) listConnections(w http.ResponseWriter, r *http.Request, p *auth.Pr
 	writeJSON(w, http.StatusOK, map[string]any{"value": cs})
 }
 
-// createConnection stores a connection; details are kept verbatim.
+// connectionCredentials is the write shape of credentialDetails.credentials.
+// Secret material is accepted here and never serialized back (the read shape
+// is store.CredentialDetails — metadata only), as in real Fabric.
+type connectionCredentials struct {
+	CredentialType           string `json:"credentialType"`
+	Username                 string `json:"username,omitempty"`
+	Password                 string `json:"password,omitempty"`
+	TenantID                 string `json:"tenantId,omitempty"`
+	ServicePrincipalClientID string `json:"servicePrincipalClientId,omitempty"`
+	ServicePrincipalSecret   string `json:"servicePrincipalSecret,omitempty"`
+	Key                      string `json:"key,omitempty"`
+	Token                    string `json:"token,omitempty"`
+	WorkspaceID              string `json:"workspaceId,omitempty"` // WorkspaceIdentity kind
+}
+
+// validCredential enforces the per-type required fields.
+func validCredential(c connectionCredentials) string {
+	switch c.CredentialType {
+	case "Basic":
+		if c.Username == "" || c.Password == "" {
+			return "Basic credentials require username and password."
+		}
+	case "ServicePrincipal":
+		if c.TenantID == "" || c.ServicePrincipalClientID == "" || c.ServicePrincipalSecret == "" {
+			return "ServicePrincipal credentials require tenantId, servicePrincipalClientId, and servicePrincipalSecret."
+		}
+	case "WorkspaceIdentity":
+		if c.WorkspaceID == "" {
+			return "WorkspaceIdentity credentials require workspaceId."
+		}
+	case "Key":
+		if c.Key == "" {
+			return "Key credentials require key."
+		}
+	case "SharedAccessSignature":
+		if c.Token == "" {
+			return "SharedAccessSignature credentials require token."
+		}
+	case "Anonymous":
+	default:
+		return "Unknown credentialType " + c.CredentialType + "."
+	}
+	return ""
+}
+
+// createConnection stores a connection; connection details are kept
+// verbatim, credential secret material is write-only. ServicePrincipal
+// credentials are probed against entra at create (the real test-connection)
+// unless skipTestConnection; WorkspaceIdentity requires a provisioned
+// identity — no credential material at all.
 func (a *API) createConnection(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	var body struct {
 		DisplayName       string          `json:"displayName"`
 		ConnectivityType  string          `json:"connectivityType"`
 		ConnectionDetails json.RawMessage `json:"connectionDetails"`
+		CredentialDetails *struct {
+			SingleSignOnType     string                `json:"singleSignOnType"`
+			ConnectionEncryption string                `json:"connectionEncryption"`
+			SkipTestConnection   bool                  `json:"skipTestConnection"`
+			Credentials          connectionCredentials `json:"credentials"`
+		} `json:"credentialDetails"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.DisplayName == "" {
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "displayName is required.")
@@ -395,6 +450,45 @@ func (a *API) createConnection(w http.ResponseWriter, r *http.Request, p *auth.P
 	}
 	c := &store.Connection{
 		DisplayName: body.DisplayName, ConnectivityType: body.ConnectivityType, Details: body.ConnectionDetails,
+	}
+	if cd := body.CredentialDetails; cd != nil {
+		if msg := validCredential(cd.Credentials); msg != "" {
+			writeErr(w, http.StatusBadRequest, "InvalidCredentials", msg)
+			return
+		}
+		switch cd.Credentials.CredentialType {
+		case "ServicePrincipal":
+			if !cd.SkipTestConnection {
+				if a.Entra == nil {
+					writeErr(w, http.StatusServiceUnavailable, "IdentityProviderNotConfigured",
+						"No Entra endpoint is configured to test ServicePrincipal credentials (set skipTestConnection to bypass).")
+					return
+				}
+				if err := a.Entra.ValidateClientCredentials(
+					cd.Credentials.TenantID, cd.Credentials.ServicePrincipalClientID, cd.Credentials.ServicePrincipalSecret); err != nil {
+					writeErr(w, http.StatusBadRequest, "TestConnectionFailed", err.Error())
+					return
+				}
+			}
+		case "WorkspaceIdentity":
+			// Credential-free by design; valid only with a provisioned identity.
+			if _, err := a.Store.GetWorkspaceIdentity(cd.Credentials.WorkspaceID); err != nil {
+				writeErr(w, http.StatusBadRequest, "WorkspaceIdentityNotFound",
+					"The workspace has no provisioned identity; provision one before using WorkspaceIdentity credentials.")
+				return
+			}
+		}
+		secret, err := json.Marshal(cd.Credentials)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+			return
+		}
+		c.CredentialDetails = &store.CredentialDetails{
+			CredentialType:       cd.Credentials.CredentialType,
+			SingleSignOnType:     cd.SingleSignOnType,
+			ConnectionEncryption: cd.ConnectionEncryption,
+		}
+		c.CredentialsJSON = string(secret)
 	}
 	if err := a.Store.CreateConnection(c); err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())

@@ -108,3 +108,25 @@ func (c *Client) RenameWorkspaceIdentity(id, workspaceName string) error {
 func (c *Client) DeleteWorkspaceIdentity(id string) error {
 	return c.do("DELETE", "/admin/api/workspace-identities/"+url.PathEscape(id), nil, nil)
 }
+
+// ValidateClientCredentials performs a real client-credentials grant — the
+// "test connection" probe for ServicePrincipal connection credentials. A
+// wrong id/secret fails here exactly as it would in production.
+func (c *Client) ValidateClientCredentials(tenantID, clientID, secret string) error {
+	form := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {clientID},
+		"client_secret": {secret},
+		"scope":         {"https://api.fabric.microsoft.com/.default"},
+	}
+	resp, err := c.http.PostForm(c.base+"/"+url.PathEscape(tenantID)+"/oauth2/v2.0/token", form)
+	if err != nil {
+		return fmt.Errorf("entra unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("service principal credentials rejected (status %d): %s", resp.StatusCode, raw)
+	}
+	return nil
+}
