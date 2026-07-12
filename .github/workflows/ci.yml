@@ -146,3 +146,22 @@ jobs:
       # surface (container network so onelake.dfs.* resolves to the emulator).
       # Linux-only — the JVM/Docker stack is a different weight class.
       - run: python3 e2e/spark/run.py
+
+  duckdb:
+    name: Real DuckDB SQL over lakehouse Delta
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # Real DuckDB runs SQL (aggregation, join, filter) over Delta tables in
+      # the OneLake plane — the lakehouse SQL-analytics-endpoint semantics.
+      - run: python e2e/duckdb/run.py

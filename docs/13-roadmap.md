@@ -167,10 +167,18 @@ proxy would be a separate sibling.
       proxy works against any Livy-compatible backend a user brings. Real
       Spark *execution* is already proven by A2 (Spark writes/reads real
       Delta). Revisit only if a maintained Livy-compatible server appears.
-- [ ] **R3** — warehouse: DuckDB+delta SQL over the same OneLake files (SQL
-      analytics endpoint semantics); Babelfish/SQL Server sidecar per
-      Warehouse item (SQL-auth compromise documented); TDS-FedAuth proxy only
-      by demand, as its own repo.
+- [x] **R3 (SQL analytics endpoint — DuckDB)** — real DuckDB runs SQL
+      (aggregation, join, filter) over Delta tables in the OneLake plane,
+      `e2e/duckdb` (3-OS): delta-rs writes two Delta tables into OneLake,
+      DuckDB queries them and the results match — the lakehouse↔warehouse SQL
+      interop, cross-engine. (DuckDB embeds via CGO, which the pure-Go
+      distroless build forbids, so the SQL engine runs in the e2e, not the
+      binary; the storage read is byte-proven by the delta-rs e2e.)
+    - [ ] **R3 (T-SQL / TDS warehouse)** — *deferred, with cause:* a real
+      T-SQL engine (Babelfish/SQL Server) over TDS with Entra FedAuth is a
+      large separate effort (the C2/C3 sidecar + TDS-FedAuth proxy). DuckDB
+      already proves the SQL-analytics-endpoint *semantics*; the TDS wire +
+      FedAuth is the heavy add, tackled by demand as its own repo.
 - [ ] **R4** — the notebook developer loop: functional `notebookutils` shim
       (fs → OneLake, credentials → entra + azure-keyvault-emulator, notebook
       run → jobs/Livy); default-lakehouse session semantics on the Spark
