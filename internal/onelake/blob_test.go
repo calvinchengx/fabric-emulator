@@ -8,7 +8,9 @@ import (
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -301,5 +303,54 @@ func TestDFSRenameAndConditionals(t *testing.T) {
 	f.svc.ServeHTTP(w, r)
 	if w.Code != http.StatusPartialContent || w.Body.String() != "da" {
 		t.Fatalf("dfs range = %d %q", w.Code, w.Body.String())
+	}
+}
+
+// TestConcurrentDeltaCommitRace is the mechanism-level oracle for _delta_log
+// atomicity: N writers race to create the SAME commit file with
+// If-None-Match: * (put-if-absent). Exactly one must win (201) and the rest
+// must lose (409) — the property that keeps concurrent Delta commits from
+// silently clobbering each other. delta-rs assumes a single writer by
+// default, so this direct race is a stronger signal than any delta-rs test.
+func TestConcurrentDeltaCommitRace(t *testing.T) {
+	f := newFixture(t)
+	commit := "/" + f.ws.ID + "/" + f.it.ID + "/Tables/t/_delta_log/00000000000000000001.json"
+
+	const writers = 24
+	var wg sync.WaitGroup
+	codes := make([]int, writers)
+	start := make(chan struct{})
+	for i := range writers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start // release all goroutines at once to maximize contention
+			body := []byte(`{"writer":` + strconv.Itoa(i) + `}`)
+			w := f.doBlob("PUT", commit, f.token, body, map[string]string{"If-None-Match": "*"})
+			codes[i] = w.Code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	created, conflict, winner := 0, 0, -1
+	for i, c := range codes {
+		switch c {
+		case http.StatusCreated:
+			created++
+			winner = i
+		case http.StatusConflict:
+			conflict++
+		default:
+			t.Fatalf("writer %d got unexpected status %d", i, c)
+		}
+	}
+	if created != 1 || conflict != writers-1 {
+		t.Fatalf("race outcome: %d created, %d conflict; want 1 + %d", created, conflict, writers-1)
+	}
+	// The committed content is the winner's — no torn or overwritten write.
+	g := f.doBlob("GET", commit, f.token, nil, nil)
+	if g.Code != http.StatusOK || g.Body.String() != `{"writer":`+strconv.Itoa(winner)+`}` {
+		t.Fatalf("committed content = %q; want the winner's (writer %d)", g.Body.String(), winner)
 	}
 }
