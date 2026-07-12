@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 )
@@ -95,4 +96,26 @@ func TestRunServesPlainHTTP(t *testing.T) {
 		})
 	}()
 	poll(t, http.DefaultClient, fmt.Sprintf("http://127.0.0.1:%d/health", port))
+}
+
+func TestRunDataDirAndTLSFailures(t *testing.T) {
+	clearEnv(t)
+	// -data-dir pointing at an existing FILE: MkdirAll fails.
+	dir := t.TempDir()
+	file := dir + "/occupied"
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "127.0.0.1:0", "-data-dir", file})
+	if err == nil {
+		t.Fatal("data-dir-is-a-file accepted")
+	}
+	// tls subpath blocked: data dir ok, cert persistence fails.
+	dir3 := t.TempDir()
+	if err := os.WriteFile(dir3+"/tls", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "127.0.0.1:0", "-data-dir", dir3}); err == nil {
+		t.Fatal("broken tls dir accepted")
+	}
 }

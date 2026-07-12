@@ -56,3 +56,20 @@ func TestState(t *testing.T) {
 		t.Fatal("State() frozen = false after Freeze")
 	}
 }
+
+func TestFreezeUnfreezeNoOps(t *testing.T) {
+	c := fixed(100)
+	c.Unfreeze() // not frozen: no-op
+	if c.Now() != 100 {
+		t.Fatalf("Unfreeze on running clock moved time: %d", c.Now())
+	}
+	c.Freeze()
+	c.Freeze() // already frozen: no-op
+	if c.Now() != 100 {
+		t.Fatalf("double Freeze moved time: %d", c.Now())
+	}
+	_, frozen, _ := c.State()
+	if !frozen {
+		t.Fatal("clock not frozen after Freeze")
+	}
+}

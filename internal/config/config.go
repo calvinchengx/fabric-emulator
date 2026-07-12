@@ -42,16 +42,13 @@ type Config struct {
 
 // FromEnv builds a validated Config from FABRIC_* environment variables.
 func FromEnv() (*Config, error) {
-	c, err := FromEnvPartial()
-	if err != nil {
-		return nil, err
-	}
+	c := FromEnvPartial()
 	return c, c.Finish()
 }
 
 // FromEnvPartial reads the environment without validating — cmd applies flag
 // overrides first, then calls Finish.
-func FromEnvPartial() (*Config, error) {
+func FromEnvPartial() *Config {
 	return &Config{
 		Addr:              envOr("FABRIC_ADDR", ":9443"),
 		DataDir:           os.Getenv("FABRIC_DATA_DIR"),
@@ -60,7 +57,7 @@ func FromEnvPartial() (*Config, error) {
 		EntraTLSInsecure:  boolEnv("FABRIC_ENTRA_TLS_INSECURE"),
 		DisableTLS:        boolEnv("FABRIC_DISABLE_TLS"),
 		RetryAfterSeconds: 1,
-	}, nil
+	}
 }
 
 // Finish validates and derives dependent fields. Call after flag overrides.

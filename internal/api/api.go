@@ -103,26 +103,28 @@ func (a *API) withAuth(h handler) http.HandlerFunc {
 	}
 }
 
-// requireRole loads the caller's role on the workspace and enforces a
+// requireRole loads the workspace and the caller's role on it, enforcing a
 // minimum. It 404s unknown workspaces and 403s principals with no grant —
 // Fabric hides workspaces the caller cannot see, but our single-tenant
-// emulator favors debuggability.
-func (a *API) requireRole(w http.ResponseWriter, wid string, p *auth.Principal, min string) (role string, ok bool) {
-	if _, err := a.Store.GetWorkspace(wid); err != nil {
+// emulator favors debuggability. The fetched workspace is returned so
+// handlers don't query it twice.
+func (a *API) requireRole(w http.ResponseWriter, wid string, p *auth.Principal, min string) (ws *store.Workspace, role string, ok bool) {
+	ws, err := a.Store.GetWorkspace(wid)
+	if err != nil {
 		writeErr(w, http.StatusNotFound, "WorkspaceNotFound", "The workspace is not available.")
-		return "", false
+		return nil, "", false
 	}
-	role, err := a.Store.RoleOf(wid, p.ID)
+	role, err = a.Store.RoleOf(wid, p.ID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
-		return "", false
+		return nil, "", false
 	}
 	if role == "" || store.RoleRank(role) < store.RoleRank(min) {
 		writeErr(w, http.StatusForbidden, "InsufficientPrivileges",
 			fmt.Sprintf("The caller requires at least the %s role on the workspace.", min))
-		return "", false
+		return nil, "", false
 	}
-	return role, true
+	return ws, role, true
 }
 
 // ---- fault control (wired to /_emulator/faults) ----

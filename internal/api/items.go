@@ -12,7 +12,7 @@ import (
 
 func (a *API) listItems(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
-	if _, ok := a.requireRole(w, wid, p, store.RoleViewer); !ok {
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleViewer); !ok {
 		return
 	}
 	items, err := a.Store.ListItems(wid, r.URL.Query().Get("type"))
@@ -31,7 +31,7 @@ func (a *API) listItems(w http.ResponseWriter, r *http.Request, p *auth.Principa
 // result), which is what fabric-cicd and git tooling exercise.
 func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
-	if _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
 		return
 	}
 	var body struct {
@@ -65,7 +65,7 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 
 func (a *API) getItem(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
-	if _, ok := a.requireRole(w, wid, p, store.RoleViewer); !ok {
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleViewer); !ok {
 		return
 	}
 	it, err := a.Store.GetItem(wid, r.PathValue("iid"))
@@ -78,7 +78,7 @@ func (a *API) getItem(w http.ResponseWriter, r *http.Request, p *auth.Principal)
 
 func (a *API) updateItem(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
-	if _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
 		return
 	}
 	it, err := a.Store.GetItem(wid, r.PathValue("iid"))
@@ -109,7 +109,7 @@ func (a *API) updateItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 
 func (a *API) deleteItem(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
-	if _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
 		return
 	}
 	if err := a.Store.DeleteItem(wid, r.PathValue("iid")); err != nil {

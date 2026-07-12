@@ -42,26 +42,16 @@ func (a *API) createWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 }
 
 func (a *API) getWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	wid := r.PathValue("wid")
-	if _, ok := a.requireRole(w, wid, p, store.RoleViewer); !ok {
-		return
-	}
-	ws, err := a.Store.GetWorkspace(wid)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "WorkspaceNotFound", "The workspace is not available.")
+	ws, _, ok := a.requireRole(w, r.PathValue("wid"), p, store.RoleViewer)
+	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, ws)
 }
 
 func (a *API) updateWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	wid := r.PathValue("wid")
-	if _, ok := a.requireRole(w, wid, p, store.RoleAdmin); !ok {
-		return
-	}
-	ws, err := a.Store.GetWorkspace(wid)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "WorkspaceNotFound", "The workspace is not available.")
+	ws, _, ok := a.requireRole(w, r.PathValue("wid"), p, store.RoleAdmin)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -87,7 +77,7 @@ func (a *API) updateWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 
 func (a *API) deleteWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
-	if _, ok := a.requireRole(w, wid, p, store.RoleAdmin); !ok {
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleAdmin); !ok {
 		return
 	}
 	if err := a.Store.DeleteWorkspace(wid); err != nil {
@@ -102,7 +92,7 @@ func (a *API) deleteWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 func (a *API) listRoleAssignments(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
 	// Members and above see the access list.
-	if _, ok := a.requireRole(w, wid, p, store.RoleMember); !ok {
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleMember); !ok {
 		return
 	}
 	ras, err := a.Store.ListRoleAssignments(wid)
@@ -117,7 +107,7 @@ func (a *API) listRoleAssignments(w http.ResponseWriter, r *http.Request, p *aut
 // below Member (the documented "add others with lower permissions").
 func (a *API) createRoleAssignment(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
-	callerRole, ok := a.requireRole(w, wid, p, store.RoleMember)
+	_, callerRole, ok := a.requireRole(w, wid, p, store.RoleMember)
 	if !ok {
 		return
 	}
@@ -145,7 +135,7 @@ func (a *API) createRoleAssignment(w http.ResponseWriter, r *http.Request, p *au
 
 func (a *API) updateRoleAssignment(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
-	if _, ok := a.requireRole(w, wid, p, store.RoleAdmin); !ok {
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleAdmin); !ok {
 		return
 	}
 	var body struct {
@@ -173,7 +163,7 @@ func (a *API) updateRoleAssignment(w http.ResponseWriter, r *http.Request, p *au
 
 func (a *API) deleteRoleAssignment(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
-	if _, ok := a.requireRole(w, wid, p, store.RoleAdmin); !ok {
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleAdmin); !ok {
 		return
 	}
 	if err := a.Store.DeleteRoleAssignment(wid, r.PathValue("raid")); err != nil {

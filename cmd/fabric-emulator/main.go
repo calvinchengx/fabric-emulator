@@ -24,10 +24,7 @@ func main() {
 }
 
 func run(args []string) error {
-	cfg, err := config.FromEnvPartial()
-	if err != nil {
-		return err
-	}
+	cfg := config.FromEnvPartial()
 	fs := flag.NewFlagSet("fabric-emulator", flag.ContinueOnError)
 	fs.StringVar(&cfg.Addr, "addr", cfg.Addr, "listen address")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "state directory (empty = in-memory)")
