@@ -79,9 +79,10 @@ func (s *Server) handle(conn net.Conn) error {
 			return nil // client closed the connection
 		}
 		if typ == PktSQLBatch {
-			// Placeholder: complete the batch with an empty result. Real result
-			// sets / engine relay land in the next milestone.
-			if err := WriteMessage(conn, PktTabular, done(doneFinal, 0)); err != nil {
+			// Stub engine: answer any batch with a single int column = 1 (so
+			// `SELECT 1` returns 1). Relaying to a real T-SQL engine — where the
+			// query and its true result set flow through — is T2.
+			if err := WriteMessage(conn, PktTabular, intResult(1)); err != nil {
 				return err
 			}
 		}
@@ -145,6 +146,25 @@ func done(status uint16, count uint64) []byte {
 	out = binary.LittleEndian.AppendUint16(out, 0) // CurCmd
 	out = binary.LittleEndian.AppendUint64(out, count)
 	return out
+}
+
+// intResult builds a one-column, one-row result: COLMETADATA (a single
+// non-null INT4 column "value") + ROW + DONE(count=1). Enough for `SELECT 1`
+// and to prove the result-token stream a real driver decodes.
+func intResult(val int32) []byte {
+	name := str2ucs2("value")
+	cm := []byte{0x81}                           // COLMETADATA
+	cm = binary.LittleEndian.AppendUint16(cm, 1) // column count
+	cm = binary.LittleEndian.AppendUint32(cm, 0) // UserType
+	cm = binary.LittleEndian.AppendUint16(cm, 0) // Flags
+	cm = append(cm, 0x38)                        // INT4TYPE (fixed 4-byte int)
+	cm = append(cm, byte(len(name)/2))           // column-name length (chars)
+	cm = append(cm, name...)
+
+	row := []byte{0xD1} // ROW
+	row = binary.LittleEndian.AppendUint32(row, uint32(val))
+
+	return concat(cm, row, done(doneFinal|doneCount, 1))
 }
 
 // errorToken builds an ERROR token (0xAA): a SQL error the client surfaces.

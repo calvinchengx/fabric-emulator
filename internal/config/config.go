@@ -44,6 +44,11 @@ type Config struct {
 	// jobs against). Empty leaves the Livy routes 501 and jobs on the
 	// deterministic clock.
 	SparkLivyURL string
+
+	// SQLTDSAddr, when set (e.g. ":1433"), starts the warehouse SQL endpoint:
+	// a TDS listener that terminates Entra FedAuth and answers T-SQL. Empty
+	// leaves the SQL endpoint off. See docs/16-warehouse-tds.md.
+	SQLTDSAddr string
 }
 
 // FromEnv builds a validated Config from FABRIC_* environment variables.
@@ -63,6 +68,7 @@ func FromEnvPartial() *Config {
 		EntraTLSInsecure:  boolEnv("FABRIC_ENTRA_TLS_INSECURE"),
 		DisableTLS:        boolEnv("FABRIC_DISABLE_TLS"),
 		SparkLivyURL:      os.Getenv("FABRIC_SPARK_LIVY_URL"),
+		SQLTDSAddr:        os.Getenv("FABRIC_SQL_TDS_ADDR"),
 		RetryAfterSeconds: 1,
 	}
 }

@@ -118,9 +118,15 @@ endpoint semantics) that maps onto existing Delta data.
 
 ## Milestones
 
-- **T1 — protocol oracle.** TDS server + FedAuth termination; `SELECT 1`
-  answered from Go (no sidecar). Proof: `sqlcmd`/`pyodbc` connect with a real
-  entra token and get a row. This is the unique, in-family part.
+- **T1 — protocol oracle. ✅ Done.** Pure-Go TDS server (`internal/tds`):
+  PRELOGIN → FedAuth `LOGIN7` (Entra token extracted from the SecurityToken
+  FeatureExt, UTF-16LE) → token validated against entra's JWKS with the
+  `database.windows.net` audience → `LOGINACK` → `SELECT 1` answered with a real
+  result-token stream (COLMETADATA/ROW/DONE). Behind `-sql-tds-addr`
+  (`FABRIC_SQL_TDS_ADDR`); off when unset. Proven against the **real Microsoft
+  `go-mssqldb` driver**: LOGIN7 token capture, accept/reject by audience, and a
+  full server e2e (real entra token → FedAuth login → `SELECT 1` = 1; a
+  wrong-audience token is refused). No sidecar — the unique, in-family part.
 - **T2 — real engine.** Attach the T-SQL sidecar (Babelfish or SQL Server —
   same proxy); relay arbitrary SQLBatch; real T-SQL over sidecar-native tables.
   `--warehouse-sql-url` (unset → honest 501, mirroring `--spark-livy-url`).

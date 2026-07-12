@@ -54,6 +54,37 @@ func TestServerFedAuthLogin(t *testing.T) {
 	}
 }
 
+// TestServerQuerySelect1 runs a real query through the driver and scans the
+// result — the endpoint answers SELECT 1 with 1 over the result-token stream.
+func TestServerQuerySelect1(t *testing.T) {
+	srv := &Server{Auth: func(string) error { return nil }}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go srv.Serve(ln)
+	addr := ln.Addr().(*net.TCPAddr)
+	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;encrypt=disable;dial timeout=5", addr.Port)
+
+	c, err := mssql.NewAccessTokenConnector(dsn, func() (string, error) { return "a.b.c", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := sql.OpenDB(c)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var got int
+	if err := db.QueryRowContext(ctx, "select 1").Scan(&got); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("SELECT 1 returned %d", got)
+	}
+}
+
 // TestServerRejectsNonFedAuth: a plain SQL login (no FedAuth token) is rejected.
 func TestServerRejectsNonFedAuth(t *testing.T) {
 	srv := &Server{Auth: func(string) error { return nil }}

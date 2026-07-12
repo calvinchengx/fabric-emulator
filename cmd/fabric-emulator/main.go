@@ -50,6 +50,7 @@ func run(args []string, stop <-chan struct{}) error {
 	fs.Int64Var(&cfg.LRODelaySeconds, "lro-delay", cfg.LRODelaySeconds, "virtual seconds operations stay Running")
 	fs.BoolVar(&cfg.DisableTLS, "disable-tls", cfg.DisableTLS, "serve plain HTTP")
 	fs.StringVar(&cfg.SparkLivyURL, "spark-livy-url", cfg.SparkLivyURL, "real Apache Livy backend for the Livy passthrough (empty = 501)")
+	fs.StringVar(&cfg.SQLTDSAddr, "sql-tds-addr", cfg.SQLTDSAddr, "listen address for the warehouse SQL/TDS endpoint (e.g. :1433; empty = off)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -89,6 +90,20 @@ func run(args []string, stop <-chan struct{}) error {
 			ln.Close()
 		}()
 	}
+	// The warehouse SQL/TDS endpoint runs on its own TCP listener (a raw binary
+	// protocol, not HTTP). It terminates Entra FedAuth against the same issuer.
+	if srv.TDS != nil && cfg.SQLTDSAddr != "" {
+		tln, err := net.Listen("tcp", cfg.SQLTDSAddr)
+		if err != nil {
+			return err
+		}
+		if stop != nil {
+			go func() { <-stop; tln.Close() }()
+		}
+		fmt.Printf("fabric-emulator SQL/TDS endpoint listening on %s\n", tln.Addr())
+		go func() { _ = srv.TDS.Serve(tln) }()
+	}
+
 	fmt.Printf("fabric-emulator listening on %s://%s (issuer: %s)\n", scheme, ln.Addr(), cfg.EntraIssuer)
 	return http.Serve(ln, srv.Handler())
 }

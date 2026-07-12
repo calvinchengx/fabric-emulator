@@ -16,7 +16,13 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/entra"
 	"github.com/calvinchengx/fabric-emulator/internal/onelake"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/tds"
 )
+
+// SQLAudience is the Entra resource a Fabric SQL/Warehouse token carries
+// (Azure SQL's audience), which the TDS endpoint validates FedAuth tokens
+// against — distinct from the control-plane and Storage audiences.
+var SQLAudience = []string{"https://database.windows.net", "https://database.windows.net/"}
 
 // Server owns the emulator's components.
 type Server struct {
@@ -25,7 +31,10 @@ type Server struct {
 	Clock   *clock.Clock
 	API     *api.API
 	OneLake *onelake.Service
-	mux     *http.ServeMux
+	// TDS is the warehouse SQL endpoint (nil when SQLTDSAddr is unset). main
+	// starts its TCP listener; it authenticates FedAuth logins against entra.
+	TDS *tds.Server
+	mux *http.ServeMux
 }
 
 // New wires the emulator. jwksClient overrides the JWKS-fetching HTTP client
@@ -54,6 +63,18 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	ol := onelake.New(st, olv)
 
 	s := &Server{Cfg: cfg, Store: st, Clock: ck, API: a, OneLake: ol, mux: http.NewServeMux()}
+
+	// The warehouse SQL endpoint terminates FedAuth by validating the client's
+	// TDS-presented token against entra with the Azure SQL audience.
+	if cfg.SQLTDSAddr != "" {
+		sqlv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)
+		sqlv.Audiences = SQLAudience
+		s.TDS = &tds.Server{Auth: func(token string) error {
+			_, err := sqlv.Validate(token)
+			return err
+		}}
+	}
+
 	a.Register(s.mux)
 	s.registerControl()
 	s.registerPortal()
