@@ -110,35 +110,15 @@ is the audience set and the role lookup. Config: `--entra-issuer` +
 | `portal.` (local) | the Svelte operator portal |
 
 See [07-control-plane-api.md](07-control-plane-api.md) for the endpoint catalog and wire
-shapes, and [03-roadmap.md](13-roadmap.md) for what lands in each phase.
+shapes, and [13-roadmap.md](13-roadmap.md) for what lands in each phase.
 
 ## Data model (SQLite)
 
-```
-tenant            (id — matches the entra-emulator tenant)
-workspace         (id, displayName, description, capacityId, state)
-role_assignment   (workspaceId, principalId, principalType, role)
-item              (id, workspaceId, type, displayName, description)
-item_definition   (itemId, format, parts JSON[{path, payloadB64, payloadType}])
-operation         (id, kind, status, createdAt, completeAt, resultRef, error)
-git_connection    (workspaceId, provider, org, repo, branch, directory, status)
-job_instance      (id, itemId, jobType, status, startTime, endTime)
-onelake_blob      (workspaceId, itemId, path, bytes)   -- P3
-workspace_identity(workspaceId, appId, servicePrincipalId, state)  -- P2
-capacity          (id, displayName, sku, region, state) -- seeded; assignable object only
-shortcut          (itemId, path, name, targetWs, targetItem, targetPath) -- OneLake-to-OneLake symlink
-```
-
-State enums: `workspace.state` is the six-value set fabric-docs documents
-(`Active/Inactive/Deleting/Unusable/Failed/DeleteFailed` —
-`security/workspace-identity.md`); `workspace_identity.state` mirrors what
-entra-emulator's shipped workspace-identity object uses
-(`Active/Provisioning/Failed/Deprovisioning`), since P2 drives that object
-directly.
-
-Item **definition parts** are the CI/CD payload: a `.platform` metadata file plus
-base64 `parts` (`payloadType: InlineBase64`). Storing them verbatim is what lets
-`fabric-cicd` and git integration round-trip against the emulator.
+One pure-Go SQLite database holds the entire state — workspaces, items and
+their verbatim definition parts, RBAC, capacities, operations, jobs, git
+remotes, OneLake blobs, and the workspace-identity link — with cascading
+deletes matching the control plane's semantics. The full schema, seed, and
+state enums live in [06-data-model-and-seed.md](06-data-model-and-seed.md).
 
 ## Long-running operations
 

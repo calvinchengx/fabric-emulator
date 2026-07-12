@@ -46,7 +46,12 @@ export default defineConfig({
         },
         {
           label: 'Reference',
-          items: [{ slug: '07-control-plane-api' }, { slug: '08-onelake' }],
+          items: [
+            { slug: '06-data-model-and-seed' },
+            { slug: '07-control-plane-api' },
+            { slug: '08-onelake' },
+            { slug: '09-identity-handshake' },
+          ],
         },
         {
           label: 'Project',
