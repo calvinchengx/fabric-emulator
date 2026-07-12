@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -172,6 +174,17 @@ func (s *Service) renameSource(wsID, itemID, src string) (string, *dfsError) {
 
 // ServeHTTP implements the DFS endpoint.
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Env-gated request tracing (diagnostics only; off in prod). Read per
+	// request so it can be toggled without a restart (and in tests).
+	if os.Getenv("ONELAKE_TRACE") != "" {
+		tw := &traceWriter{ResponseWriter: w, status: 200}
+		w = tw
+		defer func() {
+			log.Printf("[onelake-dfs] %s %s?%s range=%q x-ms-range=%q rename=%q -> %d (%dB)",
+				r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Range"),
+				r.Header.Get("x-ms-range"), r.Header.Get("x-ms-rename-source"), tw.status, tw.n)
+		}()
+	}
 	// Banned headers: ignore + echo.
 	var rejected []string
 	for _, h := range ignoredHeaders {
@@ -272,7 +285,15 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.Method {
-	case http.MethodPut: // create file/directory, or rename
+	case http.MethodPut: // create file/directory, rename, or append/flush
+		// The Hadoop ABFS driver sends append/flush as PUT with an action
+		// query param (the ADLS REST spec uses PATCH, but ABFS uses PUT).
+		// Without this, a flush PUT — which carries no body — would fall
+		// through to "create file" and truncate the file to zero bytes.
+		if a := strings.ToLower(r.URL.Query().Get("action")); a == "append" || a == "flush" {
+			s.patch(w, r, it.ID, rel)
+			return
+		}
 		// DFS rename: PUT dst with x-ms-rename-source (Hadoop committers).
 		if src := r.Header.Get("x-ms-rename-source"); src != "" {
 			srcRel, derr := s.renameSource(ws.ID, it.ID, src)
@@ -471,4 +492,18 @@ func (s *Service) resolveItem(workspaceID, seg string) (*store.Item, *dfsError) 
 		}
 	}
 	return nil, &dfsError{"PathNotFound", http.StatusNotFound, "No item matches " + seg + " (use name.ItemType or GUIDs)."}
+}
+
+// traceWriter captures the status and byte count for the trace log.
+type traceWriter struct {
+	http.ResponseWriter
+	status int
+	n      int
+}
+
+func (t *traceWriter) WriteHeader(code int) { t.status = code; t.ResponseWriter.WriteHeader(code) }
+func (t *traceWriter) Write(b []byte) (int, error) {
+	n, err := t.ResponseWriter.Write(b)
+	t.n += n
+	return n, err
 }

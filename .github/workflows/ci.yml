@@ -135,3 +135,14 @@ jobs:
       # asserting the nonroot user opens its SQLite DB and writes state to
       # the volume — the container path nothing else in CI exercised.
       - run: ./scripts/docker-smoke.sh
+
+  spark-a2:
+    name: Real Spark writes Delta via ABFS (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Heavy: builds fabric-emulator from source + a JVM Spark image, then
+      # real delta-spark writes/reads a Delta table through the OneLake ABFS
+      # surface (container network so onelake.dfs.* resolves to the emulator).
+      # Linux-only — the JVM/Docker stack is a different weight class.
+      - run: python3 e2e/spark/run.py

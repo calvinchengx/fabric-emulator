@@ -1,0 +1,57 @@
+# A2 + Livy: real JVM Spark writes Delta via the ABFS driver onto the
+# emulator's OneLake plane. The container network is the whole point — the
+# Hadoop ABFS driver takes no endpoint override, so onelake.dfs.fabric.
+# microsoft.com and api.fabric.microsoft.com are network aliases that resolve
+# to fabric-emulator. Plain HTTP throughout (ABFS always.use.https=false) to
+# avoid JVM truststore setup for the self-signed cert.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: "" # in-memory: the volume isn't writable by the nonroot user, and the e2e needs no persistence
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+    networks:
+      default:
+        aliases:
+          - onelake.dfs.fabric.microsoft.com
+          - api.fabric.microsoft.com
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  spark:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    volumes:
+      - ./job.py:/opt/spark/work-dir/job.py:ro
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - "local[2]"
+      - /opt/spark/work-dir/job.py

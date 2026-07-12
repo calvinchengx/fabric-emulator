@@ -5,6 +5,7 @@ package onelake
 // _delta_log commits.
 
 import (
+	"bytes"
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
@@ -380,5 +381,68 @@ func TestXMSRange(t *testing.T) {
 	g = f.doBlob("GET", path, f.token, nil, map[string]string{"Range": "bytes=6-10", "x-ms-range": "bytes=0-0"})
 	if g.Body.String() != "world" {
 		t.Fatalf("Range precedence = %q", g.Body.String())
+	}
+}
+
+// TestABFSPutAppendFlush: the Hadoop ABFS driver writes files as PUT create
+// → PUT ?action=append → PUT ?action=flush (not the PATCH the ADLS REST spec
+// documents), and commits by writing a .tmp then renaming it. The flush PUT
+// carries no body, so if it were treated as a create it would truncate the
+// file to zero — which silently corrupted every Delta commit until the DFS
+// PUT handler learned to route append/flush. Found by driving real Spark.
+func TestABFSPutAppendFlush(t *testing.T) {
+	f := newFixture(t)
+	tmp := "/" + f.ws.ID + "/" + f.it.ID + "/Tables/t/_delta_log/.0.json.tmp"
+	final := "/" + f.ws.ID + "/" + f.it.ID + "/Tables/t/_delta_log/00000000000000000000.json"
+	commit := []byte(`{"protocol":{"minReaderVersion":1}}` + "\n" + `{"metaData":{"id":"x"}}`)
+
+	// ABFS write sequence via PUT: create empty, append body, flush.
+	if w := f.do("PUT", tmp+"?resource=file", f.token, nil); w.Code != http.StatusCreated {
+		t.Fatalf("create = %d", w.Code)
+	}
+	if w := f.do("PUT", tmp+"?action=append&position=0", f.token, commit); w.Code != http.StatusAccepted {
+		t.Fatalf("append (PUT) = %d %s", w.Code, w.Body.Bytes())
+	}
+	flushURL := tmp + "?action=flush&position=" + strconv.Itoa(len(commit)) + "&close=true"
+	if w := f.do("PUT", flushURL, f.token, nil); w.Code != http.StatusOK {
+		t.Fatalf("flush (PUT, no body) = %d %s", w.Code, w.Body.Bytes())
+	}
+	// The flush must NOT have truncated the appended data.
+	g := f.do("GET", tmp, f.token, nil)
+	if g.Code != http.StatusOK || !bytes.Equal(g.Body.Bytes(), commit) {
+		t.Fatalf("after flush: %d %q; want the appended commit", g.Code, g.Body.Bytes())
+	}
+
+	// Commit: rename .tmp → 0.json (the atomic Delta commit), content intact.
+	r := httptest.NewRequest("PUT", final, nil)
+	r.Header.Set("Authorization", "Bearer "+f.token)
+	r.Header.Set("x-ms-rename-source", "/"+f.ws.ID+"/"+f.it.ID+"/Tables/t/_delta_log/.0.json.tmp")
+	w := httptest.NewRecorder()
+	f.svc.ServeHTTP(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("commit rename = %d %s", w.Code, w.Body.Bytes())
+	}
+	g = f.do("GET", final, f.token, nil)
+	if g.Code != http.StatusOK || !bytes.Equal(g.Body.Bytes(), commit) {
+		t.Fatalf("committed 0.json = %d %q; want the full commit (this is the actionNotFound bug)", g.Code, g.Body.Bytes())
+	}
+	// HEAD reports the right length (Delta reads this to size the file).
+	h := f.do("HEAD", final, f.token, nil)
+	if h.Header().Get("Content-Length") != strconv.Itoa(len(commit)) {
+		t.Fatalf("HEAD Content-Length = %q; want %d", h.Header().Get("Content-Length"), len(commit))
+	}
+}
+
+func TestRequestTrace(t *testing.T) {
+	t.Setenv("ONELAKE_TRACE", "1")
+	f := newFixture(t)
+	// A HEAD at the account level exercises the traced path end to end.
+	if w := f.do("HEAD", "/", f.token, nil); w.Code != http.StatusOK {
+		t.Fatalf("traced HEAD = %d", w.Code)
+	}
+	path := "/" + f.ws.ID + "/" + f.it.ID + "/Files/t.txt"
+	f.do("PUT", path+"?resource=file", f.token, []byte("hi"))
+	if w := f.do("GET", path, f.token, nil); w.Body.String() != "hi" {
+		t.Fatalf("traced GET = %q", w.Body.String())
 	}
 }

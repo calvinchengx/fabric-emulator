@@ -142,10 +142,14 @@ proxy would be a separate sibling.
       A separate weight class (a multi-hundred-MB Spark image + Docker
       orchestration), so it gets its own session rather than blocking the
       pure-wheel oracle work.
-    - **A2** — real PySpark + delta-spark write Delta via ABFS onto the
-      OneLake plane; cross-engine read-back with delta-rs (A1) and pyarrow —
-      Spark's JVM ABFS client and delta-rs's Rust object_store agreeing on
-      our bytes.
+    - [x] **A2** — real JVM Spark + delta-spark write and read a Delta table
+      (2 commits) via the ABFS driver onto the OneLake plane, `e2e/spark`
+      (compose: entra + fabric-from-source + Spark; a custom token provider
+      bridges ABFS's v1 `resource=` to entra's v2 `scope=`; a seeded storage
+      resource app resolves the audience). Found + fixed a real bug: **ABFS
+      sends append/flush as `PUT ?action=…`, not `PATCH`** — the flush PUT
+      (empty body) was truncating every file to zero, silently corrupting
+      Delta commits (regression-tested). Linux-only CI.
     - **B** — Livy passthrough on the documented endpoint
       (`…/lakehouses/{id}/livyapi/versions/2023-12-01/{sessions,batches}`)
       delegating to the sidecar; opt-in real `RunNotebook` mode
