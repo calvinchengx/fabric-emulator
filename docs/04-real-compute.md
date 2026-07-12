@@ -193,8 +193,17 @@ the runtime behind `ApacheAirflowJob` items:
   vault.
 
 Real scheduler, real executor, real DAG semantics — zero orchestration
-emulation. For data engineers who *can choose*, this is the recommended
-local pipeline path.
+emulation. And not merely "compatible": Fabric's hosted offering *is*
+upstream Apache Airflow (the docs pin exact releases — currently Airflow
+**2.10.5** on Python **3.12** — and point at airflow.apache.org's own guides
+for custom operators/hooks/plugins). The sidecar pins the same documented
+versions, so a DAG that runs locally runs identically hosted. For data
+engineers who *can choose*, this is the recommended local pipeline path.
+
+(To be precise about what Airflow is and isn't in Fabric: the default
+no-code **Data pipeline** does *not* run on Airflow — that's the proprietary
+ADF-lineage engine E2 addresses. Airflow is Fabric's separate code-first
+orchestrator, offered side by side.)
 
 **E2 — DataPipeline interpreter: our control flow, real work.** The no-code
 pipeline engine (ADF lineage) is proprietary — Polaris-class unobtainable.
