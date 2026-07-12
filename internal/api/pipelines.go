@@ -19,6 +19,10 @@ import (
 type pipelineExecutor struct {
 	a   *API
 	wid string
+	// chain is the stack of pipeline item IDs currently being invoked (the
+	// outermost job's pipeline, then each nested Invoke pipeline). It guards
+	// against invocation cycles and unbounded recursion.
+	chain []string
 }
 
 func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawMessage) (any, error)) (map[string]any, error) {
@@ -44,6 +48,13 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 			return nil, fmt.Errorf("notebook activity %q: %v", act.Name, err)
 		}
 		return map[string]any{"jobInstanceId": j.ID, "notebookId": nb.ID, "status": "Completed"}, nil
+
+	case "ExecutePipeline", "InvokePipeline":
+		// Invoke pipeline: resolve the referenced DataPipeline and run it for
+		// real through a fresh interpreter — recursive interpretation, the same
+		// engine, one level deeper. waitOnCompletion (default true) gates this
+		// activity on the child's terminal status.
+		return e.invokePipelineActivity(act, tp, resolve)
 
 	case "Copy":
 		// A Copy whose source and sink are OneLake locations really moves the
@@ -75,6 +86,149 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// records that the orchestration reached the leaf; the effect does not run.
 		return map[string]any{"status": "Succeeded", "activityType": act.Type}, nil
 	}
+}
+
+// maxInvokeDepth bounds nested Invoke pipeline recursion (a cycle is caught
+// earlier by the chain check; this backstops a pathologically deep-but-acyclic
+// nesting).
+const maxInvokeDepth = 32
+
+// invokePipelineActivity resolves the referenced DataPipeline, loads its
+// definition, and runs it through a fresh interpreter sharing this executor's
+// engines — real recursive interpretation. A cycle (the child already on the
+// call stack) or excessive depth fails the activity rather than looping. With
+// waitOnCompletion (the default), a child failure fails this activity too.
+func (e *pipelineExecutor) invokePipelineActivity(act pipeline.Activity, tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error)) (map[string]any, error) {
+	wsRef, ref, err := e.resolvePipelineRef(tp, resolve)
+	if err != nil {
+		return nil, fmt.Errorf("invoke pipeline %q: %w", act.Name, err)
+	}
+	child, err := e.resolvePipelineItem(wsRef, ref)
+	if err != nil {
+		return nil, fmt.Errorf("invoke pipeline %q: %w", act.Name, err)
+	}
+
+	for _, id := range e.chain {
+		if id == child.ID {
+			return nil, fmt.Errorf("invoke pipeline %q: cycle detected (pipeline %q is already running)", act.Name, child.DisplayName)
+		}
+	}
+	if len(e.chain) >= maxInvokeDepth {
+		return nil, fmt.Errorf("invoke pipeline %q: nesting deeper than %d not allowed", act.Name, maxInvokeDepth)
+	}
+
+	def, err := e.a.pipelineDefinition(child.ID)
+	if err != nil {
+		return nil, fmt.Errorf("invoke pipeline %q: %w", act.Name, err)
+	}
+	p, err := pipeline.Parse(def)
+	if err != nil {
+		return nil, fmt.Errorf("invoke pipeline %q: %w", act.Name, err)
+	}
+
+	params, err := e.resolveInvokeParams(tp, resolve)
+	if err != nil {
+		return nil, fmt.Errorf("invoke pipeline %q: %w", act.Name, err)
+	}
+
+	sub := &pipelineExecutor{a: e.a, wid: child.WorkspaceID, chain: append(append([]string{}, e.chain...), child.ID)}
+	res := p.Run(params, sub)
+
+	out := map[string]any{
+		"pipelineName": child.DisplayName,
+		"pipelineId":   child.ID,
+		"status":       res.Status,
+	}
+	if e.waitOnCompletion(tp, resolve) && res.Status != pipeline.StatusSucceeded {
+		return nil, fmt.Errorf("invoke pipeline %q: child pipeline %q failed: %s", act.Name, child.DisplayName, res.Error)
+	}
+	return out, nil
+}
+
+// resolvePipelineRef extracts the child pipeline reference (and optional
+// workspace) from an Invoke pipeline's typeProperties. It accepts both the
+// nested `pipeline.referenceName` shape and a flat `pipelineId`.
+func (e *pipelineExecutor) resolvePipelineRef(tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error)) (wsRef, ref string, err error) {
+	if raw, ok := tp["pipeline"]; ok {
+		var pref struct {
+			ReferenceName string `json:"referenceName"`
+			WorkspaceID   string `json:"workspaceId"`
+		}
+		if json.Unmarshal(raw, &pref) == nil && pref.ReferenceName != "" {
+			return pref.WorkspaceID, pref.ReferenceName, nil
+		}
+	}
+	if raw, ok := tp["pipelineId"]; ok {
+		v, err := resolve(raw)
+		if err != nil {
+			return "", "", err
+		}
+		if v != nil && fmt.Sprint(v) != "" {
+			return "", fmt.Sprint(v), nil
+		}
+	}
+	return "", "", fmt.Errorf("no pipeline reference (pipeline.referenceName or pipelineId)")
+}
+
+// resolvePipelineItem maps a pipeline reference (GUID or display name) in an
+// optional workspace to a concrete DataPipeline item.
+func (e *pipelineExecutor) resolvePipelineItem(wsRef, ref string) (*store.Item, error) {
+	wsID := e.wid
+	if wsRef != "" {
+		if w, err := e.a.Store.GetWorkspace(wsRef); err == nil {
+			wsID = w.ID
+		} else if w, err := e.a.Store.GetWorkspaceByName(wsRef); err == nil {
+			wsID = w.ID
+		} else {
+			return nil, fmt.Errorf("unknown workspace %q", wsRef)
+		}
+	}
+	if it, err := e.a.Store.GetItem(wsID, ref); err == nil && it.Type == "DataPipeline" {
+		return it, nil
+	}
+	if it, err := e.a.Store.GetItemByName(wsID, ref, "DataPipeline"); err == nil {
+		return it, nil
+	}
+	return nil, fmt.Errorf("no DataPipeline %q in this workspace", ref)
+}
+
+// resolveInvokeParams evaluates the child pipeline's parameter values against
+// the current scope. Each value may be a literal or an expression.
+func (e *pipelineExecutor) resolveInvokeParams(tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error)) (map[string]any, error) {
+	raw, ok := tp["parameters"]
+	if !ok || len(raw) == 0 {
+		return nil, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("parameters are not an object")
+	}
+	params := make(map[string]any, len(fields))
+	for name, vraw := range fields {
+		v, err := resolve(vraw)
+		if err != nil {
+			return nil, fmt.Errorf("parameter %q: %w", name, err)
+		}
+		params[name] = v
+	}
+	return params, nil
+}
+
+// waitOnCompletion reports whether the Invoke pipeline activity should block on
+// the child's terminal status. Fabric's default is true.
+func (e *pipelineExecutor) waitOnCompletion(tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error)) bool {
+	raw, ok := tp["waitOnCompletion"]
+	if !ok {
+		return true
+	}
+	var b bool
+	if json.Unmarshal(raw, &b) == nil {
+		return b
+	}
+	if v, err := resolve(raw); err == nil && v != nil {
+		return fmt.Sprint(v) == "true"
+	}
+	return true
 }
 
 // oneLakeLoc is a resolved OneLake location — the workspace/item/path a Copy
@@ -247,7 +401,7 @@ func (a *API) runPipeline(wid string, it *store.Item, jobID string, params map[s
 		a.savePipelineRun(jobID, pipeline.StatusFailed, nil)
 		return "PipelineDefinitionInvalid"
 	}
-	res := p.Run(params, &pipelineExecutor{a: a, wid: wid})
+	res := p.Run(params, &pipelineExecutor{a: a, wid: wid, chain: []string{it.ID}})
 	a.savePipelineRun(jobID, res.Status, res.Activities)
 	if res.Status != pipeline.StatusSucceeded {
 		return "PipelineActivityFailed"

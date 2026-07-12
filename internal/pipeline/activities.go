@@ -3,11 +3,98 @@ package pipeline
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 // maxUntilIterations bounds an Until loop so a never-true condition fails the
 // activity instead of hanging the interpreter.
 const maxUntilIterations = 10000
+
+// runWithPolicy wraps a single activity execution in its Policy (Fabric's
+// per-activity retry + timeout). A failed attempt is retried up to policy.retry
+// times; each retry re-runs the activity from scratch, so its prior attempt's
+// recorded runs (including any inner-container runs) are discarded and only the
+// final outcome is kept — carrying the retryAttempt count. A timeout fails an
+// otherwise-successful attempt whose virtual duration exceeds the limit (a Wait
+// longer than its timeout is the deterministically-testable case). No real
+// sleeping happens: retry is instant, so a backoff policy is exercised in
+// milliseconds while remaining faithful to the attempt semantics.
+func (r *run) runWithPolicy(a *Activity, item value, hasItem bool) (string, string) {
+	attempts := 1
+	var timeout float64
+	if a.Policy != nil {
+		if a.Policy.Retry > 0 {
+			attempts += a.Policy.Retry
+		}
+		timeout = parseTimeout(a.Policy.Timeout)
+	}
+
+	var st, msg string
+	for attempt := 0; attempt < attempts; attempt++ {
+		snap := len(r.runs)
+		st, msg = r.runOne(a, item, hasItem)
+
+		idx := r.ownRecordIdx(a, snap)
+		if idx >= 0 && timeout > 0 && st == StatusSucceeded && r.runs[idx].Duration > timeout {
+			st = StatusFailed
+			msg = fmt.Sprintf("activity %q timed out: ran %gs > timeout %gs", a.Name, r.runs[idx].Duration, timeout)
+			r.runs[idx].Status, r.runs[idx].Error, r.runs[idx].Output = StatusFailed, msg, nil
+			r.outputs[a.Name] = map[string]value{"status": StatusFailed}
+		}
+
+		if st != StatusFailed || attempt == attempts-1 {
+			if idx >= 0 && attempt > 0 {
+				r.runs[idx].Retry = attempt
+			}
+			return st, msg
+		}
+		// Failed with attempts remaining: discard this attempt's records and retry.
+		r.runs = r.runs[:snap]
+	}
+	return st, msg
+}
+
+// ownRecordIdx finds the activity's own terminal record (the last run named
+// a.Name at or after snap) — a leaf's sole record, or a container's aggregate.
+func (r *run) ownRecordIdx(a *Activity, snap int) int {
+	for i := len(r.runs) - 1; i >= snap && i >= 0; i-- {
+		if r.runs[i].Name == a.Name {
+			return i
+		}
+	}
+	return -1
+}
+
+// parseTimeout converts Fabric's "D.HH:MM:SS" (or "HH:MM:SS") timespan into
+// seconds. An unparseable/empty value yields 0 — no timeout enforced.
+func parseTimeout(s string) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	var days float64
+	if dot := strings.Index(s, "."); dot >= 0 && strings.Contains(s[dot+1:], ":") {
+		d, err := strconv.ParseFloat(s[:dot], 64)
+		if err != nil {
+			return 0
+		}
+		days, s = d, s[dot+1:]
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) != 3 {
+		return 0
+	}
+	total := days * 86400
+	for i, unit := range []float64{3600, 60, 1} {
+		n, err := strconv.ParseFloat(parts[i], 64)
+		if err != nil {
+			return 0
+		}
+		total += n * unit
+	}
+	return total
+}
 
 // resolveField evaluates a definition field: a JSON string is an expression
 // string; an object {"value":"@…","type":"Expression"} is the ADF expression

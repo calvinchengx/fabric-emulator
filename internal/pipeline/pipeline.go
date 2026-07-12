@@ -25,7 +25,17 @@ type Activity struct {
 	Name           string          `json:"name"`
 	Type           string          `json:"type"`
 	DependsOn      []Dependency    `json:"dependsOn"`
+	Policy         *Policy         `json:"policy,omitempty"`
 	TypeProperties json.RawMessage `json:"typeProperties"`
+}
+
+// Policy is an activity's execution policy — Fabric's per-activity General
+// settings (activity-overview.md): a retry count with a backoff interval and a
+// wall-clock timeout. Applied uniformly to every activity type by runWithPolicy.
+type Policy struct {
+	Timeout                string  `json:"timeout"`                // "D.HH:MM:SS" (default 12h in Fabric; unset here = none)
+	Retry                  int     `json:"retry"`                  // extra attempts after the first failure (Fabric: 1–1000)
+	RetryIntervalInSeconds float64 `json:"retryIntervalInSeconds"` // virtual backoff between attempts (default 30 in Fabric)
 }
 
 // Dependency gates an activity on an upstream one ending in one of the
@@ -58,6 +68,7 @@ type ActivityRun struct {
 	Output   map[string]any `json:"output,omitempty"`
 	Error    string         `json:"error,omitempty"`
 	Duration float64        `json:"durationInSeconds,omitempty"`
+	Retry    int            `json:"retryAttempt,omitempty"` // attempts consumed by policy.retry before this outcome
 }
 
 // Result is the whole run.
@@ -163,7 +174,7 @@ func (r *run) runActivities(acts []Activity, item value) string {
 				r.outputs[a.Name] = map[string]value{"status": StatusSkipped}
 				continue
 			}
-			st, errMsg := r.runOne(a, item, hasItem)
+			st, errMsg := r.runWithPolicy(a, item, hasItem)
 			status[a.Name] = st
 			if st == StatusFailed && firstFailure == "" {
 				firstFailure = fmt.Sprintf("activity %q failed: %s", a.Name, errMsg)

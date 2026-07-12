@@ -218,6 +218,270 @@ func TestPipelineMalformedDefinition(t *testing.T) {
 	}
 }
 
+// createNamedPipeline seeds a DataPipeline with an explicit display name.
+func createNamedPipeline(t *testing.T, st *store.Store, wid, name, contentJSON string) *store.Item {
+	t.Helper()
+	payload := base64.StdEncoding.EncodeToString([]byte(contentJSON))
+	it := &store.Item{WorkspaceID: wid, Type: "DataPipeline", DisplayName: name}
+	parts := []store.DefinitionPart{{Path: "pipeline-content.json", Payload: payload, PayloadType: "InlineBase64"}}
+	if err := st.CreateItem(it, parts); err != nil {
+		t.Fatal(err)
+	}
+	return it
+}
+
+// TestPipelineInvokeRealWork: a parent's Invoke pipeline activity runs the child
+// pipeline for real (recursive interpretation) — the child's Copy actually moves
+// bytes, and the parent reports the child's terminal status.
+func TestPipelineInvokeRealWork(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	payload := []byte("id\n1\n2\n")
+	seedFile(t, st, ws.ID, src.ID, "Files/in.csv", payload)
+
+	child := createNamedPipeline(t, st, ws.ID, "child", `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"location":{"itemId":"`+src.ID+`","path":"Files/in.csv"}},
+          "sink":{"location":{"itemId":"`+dst.ID+`","path":"Files/out.csv"}}}}
+      ]}}`)
+	parent := createNamedPipeline(t, st, ws.ID, "parent", `{"properties":{"activities":[
+        {"name":"Call","type":"ExecutePipeline","typeProperties":{
+          "pipeline":{"referenceName":"`+child.ID+`","type":"PipelineReference"},"waitOnCompletion":true}}
+      ]}}`)
+
+	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Completed" {
+		t.Fatalf("parent job = %s, want Completed", s)
+	}
+	// The child's Copy really ran through the storage layer.
+	got, err := st.GetOneLakePath(dst.ID, "Files/out.csv")
+	if err != nil || string(got.Content) != string(payload) {
+		t.Fatalf("child copy effect missing: %q (err %v)", got.Content, err)
+	}
+	// The Invoke activity reports the child's identity + status.
+	_, runs := activityRuns(t, a, ws.ID, parent.ID, jid)
+	out := outputOf(runs, "Call")
+	if out["status"] != "Succeeded" || out["pipelineId"] != child.ID {
+		t.Fatalf("invoke output = %+v", out)
+	}
+}
+
+// TestPipelineInvokeParametersFlow: parameters passed to the child reach its
+// expressions — the child copies to a param-named sink path.
+func TestPipelineInvokeParametersFlow(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	seedFile(t, st, ws.ID, src.ID, "Files/in", []byte("x"))
+
+	child := createNamedPipeline(t, st, ws.ID, "child", `{"properties":{
+        "parameters":{"out":{"type":"String","defaultValue":"default"}},
+        "activities":[
+          {"name":"Move","type":"Copy","typeProperties":{
+            "source":{"location":{"itemId":"`+src.ID+`","path":"Files/in"}},
+            "sink":{"location":{"itemId":"`+dst.ID+`","path":"@concat('Files/',pipeline().parameters.out)"}}}}
+        ]}}`)
+	parent := createNamedPipeline(t, st, ws.ID, "parent", `{"properties":{"activities":[
+        {"name":"Call","type":"ExecutePipeline","typeProperties":{
+          "pipeline":{"referenceName":"`+child.ID+`"},"parameters":{"out":"passed"}}}
+      ]}}`)
+
+	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Completed" {
+		t.Fatalf("parent job = %s, want Completed", s)
+	}
+	if _, err := st.GetOneLakePath(dst.ID, "Files/passed"); err != nil {
+		t.Fatalf("passed parameter did not reach child: %v", err)
+	}
+	if _, err := st.GetOneLakePath(dst.ID, "Files/default"); err == nil {
+		t.Fatalf("child used the default, not the passed parameter")
+	}
+}
+
+// TestPipelineInvokeChildFailurePropagates: with waitOnCompletion (the default),
+// a child failure fails the Invoke activity and the parent job.
+func TestPipelineInvokeChildFailurePropagates(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	child := createNamedPipeline(t, st, ws.ID, "child", `{"properties":{"activities":[
+        {"name":"RunNb","type":"TridentNotebook","typeProperties":{"notebookId":"missing"}}
+      ]}}`)
+	parent := createNamedPipeline(t, st, ws.ID, "parent", `{"properties":{"activities":[
+        {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipeline":{"referenceName":"`+child.ID+`"}}}
+      ]}}`)
+	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Failed" {
+		t.Fatalf("parent job = %s, want Failed", s)
+	}
+}
+
+// TestPipelineInvokeWaitFalse: waitOnCompletion=false is fire-and-forget — a
+// failing child does not fail the parent; the child's status is still reported.
+func TestPipelineInvokeWaitFalse(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	child := createNamedPipeline(t, st, ws.ID, "child", `{"properties":{"activities":[
+        {"name":"RunNb","type":"TridentNotebook","typeProperties":{"notebookId":"missing"}}
+      ]}}`)
+	parent := createNamedPipeline(t, st, ws.ID, "parent", `{"properties":{"activities":[
+        {"name":"Call","type":"ExecutePipeline","typeProperties":{
+          "pipeline":{"referenceName":"`+child.ID+`"},"waitOnCompletion":false}}
+      ]}}`)
+	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Completed" {
+		t.Fatalf("parent job = %s, want Completed (fire-and-forget)", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, parent.ID, jid)
+	if out := outputOf(runs, "Call"); out["status"] != "Failed" {
+		t.Fatalf("expected child status Failed reported, got %+v", out)
+	}
+}
+
+// TestPipelineInvokeCycleDetected: a pipeline invoking itself fails loudly
+// instead of recursing forever.
+func TestPipelineInvokeCycleDetected(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	pl := createNamedPipeline(t, st, ws.ID, "loop", `{"properties":{"activities":[]}}`)
+	// Rewrite its definition to invoke itself.
+	self := `{"properties":{"activities":[
+        {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipeline":{"referenceName":"` + pl.ID + `"}}}
+      ]}}`
+	payload := base64.StdEncoding.EncodeToString([]byte(self))
+	if err := st.SetDefinition(pl.ID, []store.DefinitionPart{{Path: "pipeline-content.json", Payload: payload, PayloadType: "InlineBase64"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("self-invoking pipeline = %s, want Failed", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if e, _ := runs[0]["error"].(string); !strings.Contains(e, "cycle") {
+		t.Fatalf("expected a cycle error, got %+v", runs)
+	}
+}
+
+// TestPipelineInvokeUnknownChild: referencing a non-existent pipeline fails.
+func TestPipelineInvokeUnknownChild(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	parent := createNamedPipeline(t, st, ws.ID, "parent", `{"properties":{"activities":[
+        {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipeline":{"referenceName":"nope"}}}
+      ]}}`)
+	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Failed" {
+		t.Fatalf("unknown-child invoke = %s, want Failed", s)
+	}
+}
+
+// TestPipelineInvokeByName: the child pipeline resolves by display name too.
+func TestPipelineInvokeByName(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedFile(t, st, ws.ID, src.ID, "Files/in", []byte("hi"))
+	createNamedPipeline(t, st, ws.ID, "worker", `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"location":{"itemId":"`+src.ID+`","path":"Files/in"}},
+          "sink":{"location":{"itemId":"`+dst.ID+`","path":"Files/out"}}}}
+      ]}}`)
+	parent := createNamedPipeline(t, st, ws.ID, "parent", `{"properties":{"activities":[
+        {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipeline":{"referenceName":"worker"}}}
+      ]}}`)
+	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Completed" {
+		t.Fatalf("invoke-by-name = %s, want Completed", s)
+	}
+	if got, err := st.GetOneLakePath(dst.ID, "Files/out"); err != nil || string(got.Content) != "hi" {
+		t.Fatalf("by-name child effect missing: %q (err %v)", got.Content, err)
+	}
+}
+
+// TestPipelineInvokeByPipelineId: the flat `pipelineId` typeProperty (not the
+// nested pipeline.referenceName) also resolves, and it accepts an expression.
+func TestPipelineInvokeByPipelineId(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedFile(t, st, ws.ID, src.ID, "Files/in", []byte("z"))
+	child := createNamedPipeline(t, st, ws.ID, "child", `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"location":{"itemId":"`+src.ID+`","path":"Files/in"}},
+          "sink":{"location":{"itemId":"`+dst.ID+`","path":"Files/out"}}}}
+      ]}}`)
+	parent := createNamedPipeline(t, st, ws.ID, "parent", `{"properties":{
+        "parameters":{"target":{"type":"String","defaultValue":"`+child.ID+`"}},
+        "activities":[
+          {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipelineId":"@pipeline().parameters.target"}}
+        ]}}`)
+	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Completed" {
+		t.Fatalf("invoke-by-pipelineId = %s, want Completed", s)
+	}
+	if _, err := st.GetOneLakePath(dst.ID, "Files/out"); err != nil {
+		t.Fatalf("child effect missing: %v", err)
+	}
+}
+
+// TestPipelineInvokeBadParameters: non-object parameters fail the activity
+// loudly instead of silently ignoring them.
+func TestPipelineInvokeBadParameters(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	child := createNamedPipeline(t, st, ws.ID, "child", `{"properties":{"activities":[]}}`)
+	parent := createNamedPipeline(t, st, ws.ID, "parent", `{"properties":{"activities":[
+        {"name":"Call","type":"ExecutePipeline","typeProperties":{
+          "pipeline":{"referenceName":"`+child.ID+`"},"parameters":["not","an","object"]}}
+      ]}}`)
+	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Failed" {
+		t.Fatalf("bad-parameters invoke = %s, want Failed", s)
+	}
+}
+
+// TestPipelineInvokeUnknownWorkspace: a pipeline reference in an unknown
+// workspace fails the activity.
+func TestPipelineInvokeUnknownWorkspace(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	parent := createNamedPipeline(t, st, ws.ID, "parent", `{"properties":{"activities":[
+        {"name":"Call","type":"ExecutePipeline","typeProperties":{
+          "pipeline":{"referenceName":"child","workspaceId":"no-such-ws"}}}
+      ]}}`)
+	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Failed" {
+		t.Fatalf("unknown-workspace invoke = %s, want Failed", s)
+	}
+}
+
+// TestPipelineRetryPolicyJob: an activity policy.retry drives real re-runs; a
+// TridentNotebook to a missing notebook fails, retries, then fails the job.
+func TestPipelineRetryPolicyJob(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	content := `{"properties":{"activities":[
+        {"name":"RunNb","type":"TridentNotebook","policy":{"retry":2},"typeProperties":{"notebookId":"missing"}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job status = %s, want Failed", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	// Recorded once (not 3×), with the retry count.
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 activity record after retries, got %d", len(runs))
+	}
+	if r, ok := runs[0]["retryAttempt"].(float64); !ok || r != 2 {
+		t.Fatalf("retryAttempt = %v, want 2", runs[0]["retryAttempt"])
+	}
+}
+
 // seedLakehouse creates a Lakehouse item, optionally seeding a OneLake file.
 func seedLakehouse(t *testing.T, st *store.Store, wid, name string) *store.Item {
 	t.Helper()

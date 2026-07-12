@@ -59,6 +59,124 @@ func byName(res *Result) map[string]ActivityRun {
 	return m
 }
 
+// flakyExec fails an activity for its first failUntil[name] attempts, then
+// succeeds — exercising the retry policy. It counts attempts per activity.
+type flakyExec struct {
+	failUntil map[string]int
+	attempts  map[string]int
+}
+
+func (e *flakyExec) Execute(a Activity, resolve func(json.RawMessage) (value, error)) (map[string]any, error) {
+	if e.attempts == nil {
+		e.attempts = map[string]int{}
+	}
+	e.attempts[a.Name]++
+	if e.attempts[a.Name] <= e.failUntil[a.Name] {
+		return nil, errTest("transient")
+	}
+	return map[string]any{"attempt": e.attempts[a.Name]}, nil
+}
+
+func countRecords(res *Result, name string) int {
+	n := 0
+	for _, a := range res.Activities {
+		if a.Name == name {
+			n++
+		}
+	}
+	return n
+}
+
+// TestRetryPolicySucceedsAfterRetries: a leaf failing its first two attempts
+// succeeds on the third under policy.retry=2 — recorded once, with the
+// retryAttempt count, not three duplicate runs.
+func TestRetryPolicySucceedsAfterRetries(t *testing.T) {
+	def := `{"properties":{"activities":[
+        {"name":"flaky","type":"CustomLeaf","policy":{"retry":2,"retryIntervalInSeconds":30},"typeProperties":{}}
+      ]}}`
+	exec := &flakyExec{failUntil: map[string]int{"flaky": 2}}
+	res := mustRun(t, def, nil, exec)
+	if res.Status != StatusSucceeded {
+		t.Fatalf("status = %q, want Succeeded", res.Status)
+	}
+	if got := exec.attempts["flaky"]; got != 3 {
+		t.Fatalf("attempts = %d, want 3 (1 initial + 2 retries)", got)
+	}
+	if n := countRecords(res, "flaky"); n != 1 {
+		t.Fatalf("record count = %d, want 1 (retries must not duplicate runs)", n)
+	}
+	if r := byName(res)["flaky"]; r.Retry != 2 {
+		t.Fatalf("retryAttempt = %d, want 2", r.Retry)
+	}
+}
+
+// TestRetryPolicyExhausted: retries run out and the activity (and pipeline)
+// fail, with the retryAttempt count on the final record.
+func TestRetryPolicyExhausted(t *testing.T) {
+	def := `{"properties":{"activities":[
+        {"name":"doomed","type":"CustomLeaf","policy":{"retry":1},"typeProperties":{}}
+      ]}}`
+	exec := &flakyExec{failUntil: map[string]int{"doomed": 99}}
+	res := mustRun(t, def, nil, exec)
+	if res.Status != StatusFailed {
+		t.Fatalf("status = %q, want Failed", res.Status)
+	}
+	if got := exec.attempts["doomed"]; got != 2 {
+		t.Fatalf("attempts = %d, want 2 (1 initial + 1 retry)", got)
+	}
+	if n := countRecords(res, "doomed"); n != 1 {
+		t.Fatalf("record count = %d, want 1", n)
+	}
+	if r := byName(res)["doomed"]; r.Retry != 1 {
+		t.Fatalf("retryAttempt = %d, want 1", r.Retry)
+	}
+}
+
+// TestTimeoutFailsLongWait: a Wait whose virtual duration exceeds policy.timeout
+// fails deterministically (100s > 30s).
+func TestTimeoutFailsLongWait(t *testing.T) {
+	def := `{"properties":{"activities":[
+        {"name":"w","type":"Wait","policy":{"timeout":"0.00:00:30"},"typeProperties":{"waitTimeInSeconds":100}}
+      ]}}`
+	res := mustRun(t, def, nil, &recordExec{})
+	if res.Status != StatusFailed {
+		t.Fatalf("status = %q, want Failed (100s > 30s timeout)", res.Status)
+	}
+	if r := byName(res)["w"]; r.Status != StatusFailed {
+		t.Fatalf("wait status = %q, want Failed", r.Status)
+	}
+}
+
+// TestTimeoutAllowsShortWait: a Wait within its timeout succeeds (100s < 120s).
+func TestTimeoutAllowsShortWait(t *testing.T) {
+	def := `{"properties":{"activities":[
+        {"name":"w","type":"Wait","policy":{"timeout":"0.00:02:00"},"typeProperties":{"waitTimeInSeconds":100}}
+      ]}}`
+	res := mustRun(t, def, nil, &recordExec{})
+	if res.Status != StatusSucceeded {
+		t.Fatalf("status = %q, want Succeeded (100s < 120s timeout)", res.Status)
+	}
+}
+
+func TestParseTimeout(t *testing.T) {
+	cases := map[string]float64{
+		"":           0,
+		"0.00:00:30": 30,
+		"0.00:02:00": 120,
+		"12:00:00":   43200,
+		"0.12:00:00": 43200,
+		"1.00:00:00": 86400,
+		"7.00:00:00": 604800,
+		"garbage":    0,
+		"1:2":        0,
+	}
+	for in, want := range cases {
+		if got := parseTimeout(in); got != want {
+			t.Errorf("parseTimeout(%q) = %g, want %g", in, got, want)
+		}
+	}
+}
+
 func TestVariablesAndExpressions(t *testing.T) {
 	def := `{"properties":{
       "parameters":{"env":{"type":"String","defaultValue":"dev"}},

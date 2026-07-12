@@ -227,8 +227,13 @@ proxy would be a separate sibling.
       expression language (a faithful subset — `pipeline()`, `variables()`,
       `activity()`, `item()`, and the string/logic/math/array function library
       with ADF-loose coercions), control flow (IfCondition, ForEach, Until,
-      Switch, Filter, Fail), variables (Set/Append), and `dependsOn` with all
-      four dependency conditions (Succeeded/Failed/Completed/Skipped). Wired
+      Switch, Filter, Fail), variables (Set/Append), `dependsOn` with all
+      four dependency conditions (Succeeded/Failed/Completed/Skipped),
+      **Invoke pipeline** (ExecutePipeline — real recursive interpretation of a
+      referenced DataPipeline, with parameter flow, `waitOnCompletion`, and a
+      cycle guard), and per-activity **policy** (retry re-runs a failed activity
+      and records `retryAttempt`; timeout fails an over-running attempt —
+      deterministic, no real sleeping). Wired
       into the jobs API: a `POST …/jobs/instances?jobType=Pipeline` on a
       DataPipeline item executes the definition now, a pipeline failure sets
       the job's terminal status, and `…/jobs/instances/{jid}/queryactivityruns`
