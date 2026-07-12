@@ -129,12 +129,26 @@ proxy would be a separate sibling.
       with a **concurrent-commit race test** (24 goroutines race one
       `_delta_log` file; exactly one wins — the mechanism-level atomicity
       oracle, `-race`-clean) and `x-ms-range` support (found by the ADLS SDK).
-- [ ] **R1** — e2e **A2**: real PySpark + delta-spark via the ABFS driver
-      (`abfss://…@onelake.dfs.fabric.microsoft.com/…`), OAuth against
-      entra-emulator; cross-engine read-back with delta-rs.
-- [ ] **R2** — Livy passthrough on the documented endpoint
+- [ ] **R1+R2 (merged) — containerized Spark**, its own focused runway.
+      *Decision:* R1 (in-process PySpark via ABFS) is folded into R2's Spark
+      sidecar rather than pursued standalone. The Hadoop **JVM ABFS driver**
+      derives its endpoint from the URI authority and takes no host/port
+      override — unlike delta-rs's `azure_endpoint` (A1 ✅) or the Blob SDK's
+      `account_url` (ADLS-SDK e2e ✅), both of which redirect cleanly. Only a
+      **container network** where `onelake.dfs.fabric.microsoft.com` resolves
+      to the emulator solves that structurally — and that's the R2 shape
+      anyway, the production-faithful path, and the one that gives Windows
+      users a real story (JVM stays in a Linux container; the client is thin).
+      A separate weight class (a multi-hundred-MB Spark image + Docker
+      orchestration), so it gets its own session rather than blocking the
+      pure-wheel oracle work.
+    - **A2** — real PySpark + delta-spark write Delta via ABFS onto the
+      OneLake plane; cross-engine read-back with delta-rs (A1) and pyarrow —
+      Spark's JVM ABFS client and delta-rs's Rust object_store agreeing on
+      our bytes.
+    - **B** — Livy passthrough on the documented endpoint
       (`…/lakehouses/{id}/livyapi/versions/2023-12-01/{sessions,batches}`)
-      delegating to a real Spark sidecar; opt-in real `RunNotebook` mode
+      delegating to the sidecar; opt-in real `RunNotebook` mode
       (`--spark-livy-url`) with job status from the actual batch; token
       passthrough scopes incl. `Code.AccessAzureKeyvault.All` →
       azure-keyvault-emulator.

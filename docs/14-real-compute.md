@@ -59,13 +59,26 @@ What the P3 wire subset lacks for real engines, in dependency order:
   table through our DFS surface with an entra Storage token. Object-store
   semantics only — needs Range + conditional writes, not rename. Also closes
   the "azcopy / ADLS SDK e2e" roadmap item's SDK half.
-- **A2 — real PySpark**: local `pyspark` + `delta-spark`, ABFS driver
+- **A2 — real PySpark**: `pyspark` + `delta-spark`, ABFS driver
   (`abfss://{workspace}@onelake.dfs.fabric.microsoft.com/{item}/…`, the
   documented URI), OAuth client-credentials token provider pointed at
   entra-emulator. Write a Delta table from Spark; read it back with delta-rs
   (A1) — cross-engine interop on our storage.
 
-## Track B — Spark execution (jobs become real)
+  > **A2 is delivered inside Track B, not standalone (decided).** A1 (delta-rs)
+  > and the ADLS-SDK e2e both redirect cleanly because their clients expose an
+  > endpoint knob (`azure_endpoint`, `account_url`). The Hadoop **JVM ABFS
+  > driver does not** — it derives its endpoint from the URI authority and
+  > takes no host/port override, so pointing it at a localhost emulator has no
+  > in-process ("ABFS-in-a-venv") answer. The structural fix is a **container
+  > network** where `onelake.dfs.fabric.microsoft.com` resolves to the
+  > emulator — which is exactly the Track B sidecar. So A2 rides on B's
+  > containerized Spark rather than being fought first as a bare-venv
+  > milestone. Bonus: the JVM lives in a Linux container, making this the
+  > only cross-OS-honest path for Windows developers (thin client, no
+  > `winutils`).
+
+## Track B — Spark execution (jobs become real), with A2 riding on it
 
 Fabric's documented Spark surface is the **Livy API**
 (`data-engineering/get-started-api-livy.md`), and its endpoint lives on the
@@ -263,9 +276,8 @@ C2 SQL-auth compromise.
 
 | Phase | Delivers |
 |---|---|
-| **R0** | Track A storage completeness + A1 (delta-rs e2e) |
-| **R1** | A2 (real PySpark writes Delta via ABFS; cross-engine read with delta-rs) |
-| **R2** | B1+B2 (Livy passthrough; real RunNotebook mode) |
+| **R0** ✅ | Track A storage completeness + A1 (delta-rs e2e) + the ADLS-SDK e2e (real `azure-storage-blob`); concurrent-commit race test |
+| **R1+R2** (merged) | **containerized Spark** — A2 (real PySpark writes Delta via ABFS, cross-engine read with delta-rs) **and** B1+B2 (Livy passthrough; real RunNotebook mode). Its own runway: JVM Spark image + Docker network so ABFS resolves to the emulator. |
 | **R3** | C1 (DuckDB SQL over the lakehouse); C2/C3 by demand |
 | **R4** | D1–D3 (notebookutils shim; default-lakehouse sessions; VS Code extension compatibility) |
 | **R5** | E1 (real Airflow sidecar behind ApacheAirflowJob items); E2 (DataPipeline interpreter, real-engine leaf activities) |
