@@ -147,6 +147,17 @@ jobs:
       # Linux-only — the JVM/Docker stack is a different weight class.
       - run: python3 e2e/spark/run.py
 
+  livy-native:
+    name: Native Livy sessions drive real Spark (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The emulator terminates the Livy REST protocol itself and drives a Spark
+      # statement-executor agent — a real client creates a session, submits
+      # PySpark statements, and gets results computed by real Spark, with NO
+      # Apache Livy server. Linux-only (JVM Spark image), like spark-a2.
+      - run: python3 e2e/livy/run.py
+
   duckdb:
     name: Real DuckDB SQL over lakehouse Delta
     strategy:
