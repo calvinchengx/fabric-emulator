@@ -394,7 +394,9 @@ type connectionCredentials struct {
 	ServicePrincipalSecret   string `json:"servicePrincipalSecret,omitempty"`
 	Key                      string `json:"key,omitempty"`
 	Token                    string `json:"token,omitempty"`
-	WorkspaceID              string `json:"workspaceId,omitempty"` // WorkspaceIdentity kind
+	WorkspaceID              string `json:"workspaceId,omitempty"` // WorkspaceIdentity + AzureKeyVaultReference kinds
+	VaultURI                 string `json:"vaultUri,omitempty"`    // AzureKeyVaultReference kind
+	SecretName               string `json:"secretName,omitempty"`  // AzureKeyVaultReference kind
 }
 
 // validCredential enforces the per-type required fields.
@@ -411,6 +413,10 @@ func validCredential(c connectionCredentials) string {
 	case "WorkspaceIdentity":
 		if c.WorkspaceID == "" {
 			return "WorkspaceIdentity credentials require workspaceId."
+		}
+	case "AzureKeyVaultReference":
+		if c.WorkspaceID == "" || c.VaultURI == "" || c.SecretName == "" {
+			return "AzureKeyVaultReference credentials require workspaceId, vaultUri, and secretName."
 		}
 	case "Key":
 		if c.Key == "" {
@@ -476,6 +482,31 @@ func (a *API) createConnection(w http.ResponseWriter, r *http.Request, p *auth.P
 				writeErr(w, http.StatusBadRequest, "WorkspaceIdentityNotFound",
 					"The workspace has no provisioned identity; provision one before using WorkspaceIdentity credentials.")
 				return
+			}
+		case "AzureKeyVaultReference":
+			// Credential-by-reference: the workspace identity authenticates
+			// to the vault; only the pointer is stored, never the secret.
+			wi, err := a.Store.GetWorkspaceIdentity(cd.Credentials.WorkspaceID)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, "WorkspaceIdentityNotFound",
+					"AzureKeyVaultReference resolves via the workspace identity; provision one first.")
+				return
+			}
+			if !cd.SkipTestConnection {
+				if a.Entra == nil || a.AKV == nil {
+					writeErr(w, http.StatusServiceUnavailable, "IdentityProviderNotConfigured",
+						"No Entra/vault endpoint is configured to test the reference (set skipTestConnection to bypass).")
+					return
+				}
+				bearer, err := a.Entra.MintWorkspaceIdentityToken(wi.IdentityID, "https://vault.azure.net")
+				if err != nil {
+					writeErr(w, http.StatusBadGateway, "WorkspaceIdentityTokenFailed", err.Error())
+					return
+				}
+				if _, err := a.AKV.ResolveSecret(cd.Credentials.VaultURI, cd.Credentials.SecretName, bearer); err != nil {
+					writeErr(w, http.StatusBadRequest, "TestConnectionFailed", err.Error())
+					return
+				}
 			}
 		}
 		secret, err := json.Marshal(cd.Credentials)

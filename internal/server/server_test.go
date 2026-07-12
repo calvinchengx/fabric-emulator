@@ -24,6 +24,7 @@ import (
 type fixture struct {
 	t      *testing.T
 	emu    *entra.Emulator
+	srv    *server.Server
 	fabric *httptest.Server
 	token  string
 }
@@ -65,7 +66,7 @@ func newFixture(t *testing.T) *fixture {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("client credentials failed (%d): %v %s", resp.StatusCode, err, body)
 	}
-	return &fixture{t: t, emu: emu, fabric: fabric, token: tok.AccessToken}
+	return &fixture{t: t, emu: emu, srv: srv, fabric: fabric, token: tok.AccessToken}
 }
 
 // forgeUserToken mints a delegated Fabric-audience token for a seeded user

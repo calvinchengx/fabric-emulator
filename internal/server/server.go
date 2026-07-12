@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/calvinchengx/fabric-emulator/internal/akv"
 	"github.com/calvinchengx/fabric-emulator/internal/api"
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
@@ -42,6 +43,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	if origin, err := entra.OriginFromIssuer(cfg.EntraIssuer); err == nil {
 		a.Entra = entra.New(origin, cfg.EntraTLSInsecure, jwksClient)
 	}
+	a.AKV = akv.New(cfg.EntraTLSInsecure, jwksClient)
 
 	// OneLake accepts only Storage-audience tokens, over the same JWKS.
 	olv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)

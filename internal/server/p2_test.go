@@ -9,7 +9,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/calvinchengx/fabric-emulator/internal/akv"
 )
 
 type identityShape struct {
@@ -132,4 +136,54 @@ func TestWorkspaceIdentityCascadeDelete(t *testing.T) {
 	if code := f.entraJSON(t, "GET", "/admin/api/workspace-identities/"+spID, nil); code != http.StatusNotFound {
 		t.Fatalf("entra identity after workspace delete = %d; want 404 (cascade)", code)
 	}
+}
+
+func TestAKVReferenceConnectionViaWorkspaceIdentity(t *testing.T) {
+	f := newFixture(t)
+
+	// Provision a real workspace identity.
+	var ws struct{ ID string }
+	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "akv-ws"}, &ws)
+	f.mustStatus(f.call("POST", "/v1/workspaces/"+ws.ID+"/provisionIdentity", f.token, nil, nil),
+		http.StatusAccepted, "provision")
+
+	// A vault that requires a real-looking JWT minted by entra (three JWS
+	// segments) — the wire-faithful stand-in for azure-keyvault-emulator;
+	// the true three-emulator chain lives in that repo's compose e2e.
+	vault := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if len(strings.Split(tok, ".")) != 3 {
+			http.Error(w, `{"error":{"code":"Unauthorized"}}`, http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Query().Get("api-version") == "" || !strings.HasSuffix(r.URL.Path, "/secrets/db-password") {
+			http.Error(w, `{"error":{"code":"SecretNotFound"}}`, http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"value":"s3cret"}`))
+	}))
+	defer vault.Close()
+	f.srv.API.AKV = akv.New(false, vault.Client())
+
+	body := map[string]any{
+		"displayName": "akv-conn",
+		"credentialDetails": map[string]any{
+			"credentials": map[string]string{
+				"credentialType": "AzureKeyVaultReference",
+				"workspaceId":    ws.ID,
+				"vaultUri":       vault.URL,
+				"secretName":     "db-password",
+			},
+		},
+	}
+	resp := f.call("POST", "/v1/connections", f.token, body, nil)
+	f.mustStatus(resp, http.StatusCreated, "akv-reference connection")
+	raw, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(raw), "s3cret") {
+		t.Fatalf("resolved secret echoed: %s", raw)
+	}
+	// A missing secret fails the reference at create.
+	body["credentialDetails"].(map[string]any)["credentials"].(map[string]string)["secretName"] = "nope"
+	f.mustStatus(f.call("POST", "/v1/connections", f.token, body, nil),
+		http.StatusBadRequest, "missing secret reference")
 }

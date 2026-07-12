@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/calvinchengx/fabric-emulator/internal/akv"
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/entra"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
@@ -21,6 +22,9 @@ type API struct {
 	// Entra drives workspace-identity provisioning in entra-emulator (nil
 	// disables the identity endpoints with a 503).
 	Entra *entra.Client
+	// AKV resolves AzureKeyVaultReference connection credentials against a
+	// Key Vault data plane (azure-keyvault-emulator in the family compose).
+	AKV *akv.Client
 	// RetryAfterSeconds is advertised on 202 responses.
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.

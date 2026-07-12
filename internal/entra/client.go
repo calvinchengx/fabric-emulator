@@ -130,3 +130,22 @@ func (c *Client) ValidateClientCredentials(tenantID, clientID, secret string) er
 	}
 	return nil
 }
+
+// MintWorkspaceIdentityToken asks entra to mint an app-only token for a
+// workspace identity, for the given resource audience (the platform holds
+// the credential — the caller supplies only the identity id). Used to
+// resolve AKV-reference connections: the workspace's identity authenticates
+// to the vault.
+func (c *Client) MintWorkspaceIdentityToken(identityID, resource string) (string, error) {
+	var out struct {
+		AccessToken string `json:"access_token"`
+	}
+	path := "/fabric/workspaceidentities/" + url.PathEscape(identityID) + "/token?resource=" + url.QueryEscape(resource)
+	if err := c.do("GET", path, nil, &out); err != nil {
+		return "", err
+	}
+	if out.AccessToken == "" {
+		return "", fmt.Errorf("entra returned no access_token for workspace identity %s", identityID)
+	}
+	return out.AccessToken, nil
+}
