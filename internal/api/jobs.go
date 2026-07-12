@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -33,6 +34,21 @@ func (a *API) createJobInstance(w http.ResponseWriter, r *http.Request, p *auth.
 	if err := a.Store.CreateJobInstance(j); err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
+	}
+	// DataPipeline jobs actually execute: the interpreter runs the definition's
+	// control flow now and records the activity runs; a pipeline failure sets
+	// the job's terminal status (overriding fault injection).
+	if it.Type == "DataPipeline" {
+		var body struct {
+			ExecutionData struct {
+				Parameters map[string]any `json:"parameters"`
+			} `json:"executionData"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if code := a.runPipeline(wid, it, j.ID, body.ExecutionData.Parameters); code != "" && j.FailWith == "" {
+			j.FailWith = code
+			_ = a.Store.SetJobFailure(it.ID, j.ID, code)
+		}
 	}
 	loc := fmt.Sprintf("https://%s/v1/workspaces/%s/items/%s/jobs/instances/%s", r.Host, wid, it.ID, j.ID)
 	w.Header().Set("Location", loc)

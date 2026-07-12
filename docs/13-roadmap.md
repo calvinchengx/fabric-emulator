@@ -194,13 +194,32 @@ proxy would be a separate sibling.
       *deferred:* default-lakehouse session binding on the Spark sidecar and
       the VS Code Fabric extension are additive; the shim already closes the
       author-run-read loop.
-- [ ] **R5** — pipelines: real Apache Airflow sidecar behind ApacheAirflowJob
-      items (Fabric's own code-first orchestrator IS Airflow; AKV secrets
-      backend → azure-keyvault-emulator); DataPipeline interpreter with
-      documented control-flow semantics and real-engine leaf activities
-      (Notebook→Spark, SQL→warehouse, Copy→scoped real movement); Dataflow
-      Gen2 and unscoped connectors 501. Designed in
-      [14-real-compute.md](14-real-compute.md) (Track E).
+- [x] **R5 (DataPipeline interpreter)** — a real, pure-Go interpreter
+      (`internal/pipeline`) for Fabric/ADF Data Pipeline definitions: the full
+      expression language (a faithful subset — `pipeline()`, `variables()`,
+      `activity()`, `item()`, and the string/logic/math/array function library
+      with ADF-loose coercions), control flow (IfCondition, ForEach, Until,
+      Switch, Filter, Fail), variables (Set/Append), and `dependsOn` with all
+      four dependency conditions (Succeeded/Failed/Completed/Skipped). Wired
+      into the jobs API: a `POST …/jobs/instances?jobType=Pipeline` on a
+      DataPipeline item executes the definition now, a pipeline failure sets
+      the job's terminal status, and `…/jobs/instances/{jid}/queryactivityruns`
+      returns the per-activity run detail. The notebook leaf activity
+      (TridentNotebook) chains a real RunNotebook job — pipeline → jobs →
+      notebook, end to end. Proven by interpreter unit tests, API-level job
+      tests, and a server e2e (real entra token → auth → RBAC → interpreter →
+      queryactivityruns). Coverage floor held at ≥90%. A malformed expression
+      fails the activity (recovered), never the server.
+    - [ ] **R5 (Apache Airflow + Dataflow Gen2)** — *deferred, with cause:*
+      Fabric's code-first orchestrator IS Apache Airflow, a JVM/Python engine
+      the same weight class as Spark/Livy — a sidecar-by-demand, not a bundled
+      default. Dataflow Gen2 is the proprietary Power Query M engine and has no
+      open implementation to host. Both are honestly surfaced rather than
+      faked: a Dataflow activity inside a pipeline fails with an explicit
+      "not implemented" (the interpreter runs everything around it), matching
+      the Livy stance. Copy/SQL leaf activities record orchestration success;
+      their storage effects are byte-proven by the OneLake/delta-rs e2es.
+      Designed in [14-real-compute.md](14-real-compute.md) (Track E).
 
 ## Cross-cutting (throughout)
 

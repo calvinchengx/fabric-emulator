@@ -76,6 +76,37 @@ FROM job_instances WHERE item_id = ? AND id = ?`, itemID, id).
 	return j, err
 }
 
+// SetPipelineRun records the interpreter's activity-run detail for a pipeline
+// job (queried back by the queryactivityruns surface).
+func (s *Store) SetPipelineRun(jobID, status, activityRunsJSON string) error {
+	_, err := s.db.Exec(`
+INSERT INTO pipeline_runs (job_id, status, activity_runs) VALUES (?,?,?)
+ON CONFLICT(job_id) DO UPDATE SET status = excluded.status, activity_runs = excluded.activity_runs`,
+		jobID, status, activityRunsJSON)
+	return err
+}
+
+// GetPipelineRun returns the recorded status and activity-runs JSON for a job.
+func (s *Store) GetPipelineRun(jobID string) (status, activityRunsJSON string, err error) {
+	err = s.db.QueryRow(`SELECT status, activity_runs FROM pipeline_runs WHERE job_id = ?`, jobID).
+		Scan(&status, &activityRunsJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrNotFound
+	}
+	return status, activityRunsJSON, err
+}
+
+// SetJobFailure records a terminal failure code on a job (used when a
+// DataPipeline interpreter run fails, overriding the clock-derived success).
+func (s *Store) SetJobFailure(itemID, id, failWith string) error {
+	res, err := s.db.Exec(
+		`UPDATE job_instances SET fail_with = ? WHERE item_id = ? AND id = ?`, failWith, itemID, id)
+	if err != nil {
+		return err
+	}
+	return oneRow(res)
+}
+
 // CancelJobInstance marks a job cancelled.
 func (s *Store) CancelJobInstance(itemID, id string) error {
 	res, err := s.db.Exec(

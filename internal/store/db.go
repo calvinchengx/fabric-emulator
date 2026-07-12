@@ -156,6 +156,11 @@ CREATE TABLE IF NOT EXISTS job_instances (
 	cancelled INTEGER NOT NULL DEFAULT 0,
 	fail_with TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+	job_id TEXT PRIMARY KEY REFERENCES job_instances(id) ON DELETE CASCADE,
+	status TEXT NOT NULL,
+	activity_runs TEXT NOT NULL   -- JSON array of activity-run records
+);
 CREATE TABLE IF NOT EXISTS capacities (
 	id TEXT PRIMARY KEY,
 	display_name TEXT NOT NULL,
