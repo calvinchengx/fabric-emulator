@@ -26,7 +26,7 @@ service — it is:
 
 1. this repo's OneLake plane becoming complete enough for real engines,
 2. e2e harnesses in `e2e/` (like `e2e/fabric-cicd/`),
-3. compose-level sidecar attachments (Spark, DuckDB, Babelfish).
+3. compose-level sidecar attachments (Spark, DuckDB, SQL Server).
 
 One future exception: a **TDS-FedAuth proxy** (Track C) would be a standalone
 service with its own release cycle — a separate sibling repo *if and when*
@@ -112,8 +112,9 @@ https://api.fabric.microsoft.com/v1/workspaces/{ws}/lakehouses/{lh}/livyapi/vers
   Track A — completely real SQL over completely real Delta, the actual
   lakehouse↔warehouse interop story. Exposed initially through the item's
   REST query surface, not TDS.
-- **C2 — real T-SQL engine**: sidecar **Babelfish for PostgreSQL** (a real
-  TDS + T-SQL implementation) or a SQL Server container, provisioned per
+- **C2 — real T-SQL engine**: sidecar **SQL Server on Linux** (real TDS +
+  T-SQL; Babelfish considered and rejected for fidelity — see
+  [16-warehouse-tds.md](16-warehouse-tds.md)), provisioned per
   Warehouse item, with connection info surfaced on the item like real
   Fabric's `sqlEndpoint` properties. Compromise, stated plainly: local
   engines only do SQL auth — Entra FedAuth over TDS is not available in any
@@ -263,10 +264,10 @@ waits on a JVM.
 | A1 delta-rs | Rust library in a Python wheel — no JVM | tens of MB |
 | A2/B PySpark | **full JVM Spark** (local mode or container, via Livy) | GBs, seconds to start |
 | C1 DuckDB | in-process library — no server, no JVM | a few MB |
-| C2 Babelfish | **full PostgreSQL fork** in a container | hundreds of MB |
+| C2 SQL Server | **full SQL Server engine** in a container | ~1.5 GB, x86 (emulated on ARM) |
 
 Honest asterisk on Track C: Spark's JVM *is* what Fabric runs — the weight
-buys true fidelity. DuckDB/Babelfish are **real engines standing in for an
+buys true fidelity. DuckDB/SQL Server are **real engines standing in for an
 unobtainable one** (Fabric's warehouse is Microsoft's proprietary Polaris
 engine): the Delta files they query are byte-identical to production, but
 T-SQL dialect edges will differ. Same class of documented divergence as the
@@ -345,7 +346,7 @@ scientific stack.
 | Adapter | Speaks | Works against | When |
 |---|---|---|---|
 | **`dbt-fabricspark`** (Microsoft) | the **Fabric Livy API** | our R2 Livy passthrough → real Spark; models materialize as Delta in OneLake | **earliest dbt win — R2, no warehouse needed** |
-| **`dbt-fabric`** (Microsoft; documented in `tutorial-setup-dbt.md`) | TDS/pyodbc to the warehouse SQL endpoint | the C2 Babelfish/SQL Server sidecar (SQL-auth compromise; T-SQL dialect edges per the Polaris asterisk) | R3/C2 |
+| **`dbt-fabric`** (Microsoft; documented in `tutorial-setup-dbt.md`) | TDS/pyodbc to the warehouse SQL endpoint | the C2 SQL Server sidecar (SQL-auth behind the FedAuth-terminating proxy; T-SQL dialect edges per the Polaris asterisk) | R3/C2 |
 | **`dbt-duckdb`** (+ delta plugin) | DuckDB in-process | the C1 engine over the same OneLake Delta files | R3/C1 |
 
 Acceptance for each: the official **dbt-tests-adapter** suite plus a

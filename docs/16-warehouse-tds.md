@@ -24,18 +24,19 @@ constraint:
 | FedAuth termination (validate the Entra token) | Yes — reuse `internal/auth` against entra-emulator's JWKS | `internal/tds` |
 | **T-SQL execution** (parse + run SELECT/JOIN/CTE/window over Delta) | **No** — no pure-Go/no-CGO T-SQL engine exists (DuckDB needs CGO; SQLite ≠ T-SQL) | **sidecar** |
 
-So the query engine must be a **real backend sidecar** — SQL Server on Linux
-(`mcr.microsoft.com/mssql/server`) or **Babelfish** (T-SQL on Postgres). That
-is the same "different weight class" as the Spark sidecar: a compose service,
-never embedded in the binary. Everything *around* it — the TDS protocol and the
-Entra FedAuth handshake — is pure Go and lives here.
+So the query engine must be a **real backend sidecar** — **SQL Server on Linux**
+(`mcr.microsoft.com/mssql/server`), one engine on every platform (see the
+decision record for why we standardised on it over Babelfish). That is the same
+"different weight class" as the Spark sidecar: a compose service, never embedded
+in the binary. Everything *around* it — the TDS protocol and the Entra FedAuth
+handshake — is pure Go and lives here.
 
 ## Where this lives — **in this repo, not a sibling**
 
 An earlier note floated a sibling repo. That was wrong, and it contradicts
 [14-real-compute.md](14-real-compute.md) ("Where this lives → **In this
-repository**", listing *compose-level sidecar attachments (Spark, DuckDB,
-Babelfish)*). The correct precedent is **Livy**:
+repository**", listing *compose-level sidecar attachments*). The correct
+precedent is **Livy**:
 
 - the **Livy proxy** is pure Go **in this repo** (`internal/api/livy.go`);
 - the **Spark engine** it fronts is a **compose sidecar**.
@@ -72,7 +73,7 @@ materializes. Until then, bundling is the consistent, lower-friction choice.
   └──────────────────────────────────┬───────────────────────────────────┘
                                       │  go-mssqldb, SQL auth (fixed service login)
                                       ▼
-                          SQL Server / Babelfish sidecar  ── reads ──▶ OneLake Delta
+                          SQL Server (Linux) sidecar  ── reads ──▶ OneLake Delta
 ```
 
 ### 1. TDS front leg (pure Go)
@@ -127,9 +128,9 @@ endpoint semantics) that maps onto existing Delta data.
   `go-mssqldb` driver**: LOGIN7 token capture, accept/reject by audience, and a
   full server e2e (real entra token → FedAuth login → `SELECT 1` = 1; a
   wrong-audience token is refused). No sidecar — the unique, in-family part.
-- **T2 — real engine.** Attach the T-SQL sidecar (Babelfish or SQL Server —
-  same proxy); relay arbitrary SQLBatch; real T-SQL over sidecar-native tables.
-  `--warehouse-sql-url` (unset → honest 501, mirroring `--spark-livy-url`).
+- **T2 — real engine.** Attach the SQL Server sidecar; relay arbitrary
+  SQLBatch; real T-SQL over sidecar-native tables. `--warehouse-sql-url` (unset
+  → the T1 stub result; set → real T-SQL, mirroring `--spark-livy-url`).
 - **T3 — lakehouse data.** Delta→sidecar reflection; query real
   `Tables/<name>` data written by delta-rs/Spark elsewhere in the family — the
   cross-engine warehouse oracle (delta-rs writes, T-SQL reads).
@@ -150,8 +151,8 @@ independent SQL engines agreeing.
 - A hand-written T-SQL engine (that's the sidecar's job).
 - Interactive/browser FedAuth flows (service-principal / access-token only).
 - Write-back to OneLake Delta from T-SQL DML (v1 is read-path).
-- Full T-SQL surface fidelity — bounded by whatever the chosen sidecar
-  (SQL Server vs Babelfish) supports.
+- Full T-SQL surface fidelity — bounded by what the SQL Server sidecar
+  supports (very high, but not the proprietary Fabric Polaris engine).
 
 ## Risks
 
@@ -167,13 +168,27 @@ independent SQL engines agreeing.
 
 ## Decision record
 
-- **Engine:** a real T-SQL **sidecar**, and **pluggable** — because the backend
-  leg is just TDS + a SQL login, the proxy is identical for either engine, and
-  only the compose service + the e2e's `--warehouse-sql-url` change. Selected by
-  platform: **Babelfish on macOS** (Apache-2.0, ARM-native, lighter),
-  **SQL Server on Linux/Windows and in CI** (highest T-SQL fidelity; the CI
-  oracle runs on Linux). Hard constraint: no in-binary T-SQL under no-CGO, so it
-  is always a sidecar, never embedded.
+- **Engine: SQL Server on Linux (`mcr.microsoft.com/mssql/server`), one engine
+  on every platform.** Hard constraint: no in-binary T-SQL under no-CGO, so it
+  is always a sidecar, never embedded. We considered a per-platform split
+  (Babelfish on macOS, SQL Server elsewhere) and **rejected it**:
+    - *Fidelity is the product.* Babelfish is a T-SQL *reimplementation on
+      PostgreSQL*, not the SQL Server engine — it diverges on collation, error
+      numbers, `information_schema`/system-view shapes, and datatype edges. An
+      emulator that sells fidelity shouldn't ship a *different* engine to Mac
+      devs than to CI and real Fabric.
+    - *The ARM win mostly evaporates.* There is no official arm64-native
+      Babelfish image; community images are x86, so on Apple Silicon it runs
+      under Rosetta/qemu emulation anyway — the same emulation SQL Server needs.
+      Babelfish would only be *lighter* under emulation, not native.
+    - *One engine = one set of quirks*, one CI oracle, no risk of the Mac path
+      being the less-tested one.
+  - **Cost accepted:** on Apple Silicon SQL Server runs under x86 emulation
+    (slower, ~2 GB RAM), and the image requires `ACCEPT_EULA=Y` (Developer
+    edition, free for dev/test; users pull Microsoft's image and accept the
+    EULA themselves). Because the proxy's backend leg is just TDS + a SQL login,
+    swapping in Babelfish later is a one-line `--warehouse-sql-url` change if
+    anyone wants the lighter local loop — but the default is SQL Server.
 - **Protocol + FedAuth:** pure Go, **in this repo** (`internal/tds`), following
   the Livy-proxy precedent — *not* a sibling repo.
 - **Priority:** deferred until there is demand for the real-client

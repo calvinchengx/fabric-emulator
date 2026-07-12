@@ -1,7 +1,7 @@
 // Package tds implements the server side of the Tabular Data Stream (TDS)
 // protocol — SQL Server's wire protocol — far enough to terminate a client
 // connection, complete an Entra FedAuth login, and relay the post-login
-// session to a real T-SQL backend (Babelfish or SQL Server).
+// session to a real T-SQL backend (SQL Server on Linux; see docs/16).
 //
 // This is the "protocol we own"; the T-SQL engine is a bring-your-own sidecar
 // reached over TDS with a SQL login (see docs/16-warehouse-tds.md). The novel,

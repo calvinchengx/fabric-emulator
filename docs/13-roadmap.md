@@ -186,11 +186,17 @@ proxy would be a separate sibling.
       interop, cross-engine. (DuckDB embeds via CGO, which the pure-Go
       distroless build forbids, so the SQL engine runs in the e2e, not the
       binary; the storage read is byte-proven by the delta-rs e2e.)
-    - [ ] **R3 (T-SQL / TDS warehouse)** — *deferred, with cause:* a real
-      T-SQL engine (Babelfish/SQL Server) over TDS with Entra FedAuth is a
-      large separate effort (the C2/C3 sidecar + TDS-FedAuth proxy). DuckDB
-      already proves the SQL-analytics-endpoint *semantics*; the TDS wire +
-      FedAuth is the heavy add, tackled by demand as its own repo.
+    - [~] **R3 (T-SQL / TDS warehouse)** — *in progress*, designed in
+      [16-warehouse-tds.md](16-warehouse-tds.md). **T1 done:** a pure-Go TDS
+      endpoint (`internal/tds`, `-sql-tds-addr`) terminates Entra FedAuth
+      (token validated vs entra's JWKS, `database.windows.net` audience) and
+      answers `SELECT 1` — proven against the real `go-mssqldb` driver. T2/T3
+      attach the engine (**SQL Server on Linux**, one engine everywhere;
+      Babelfish considered and rejected for fidelity — see doc 16) and reflect
+      lakehouse Delta into it. DuckDB (R3/C1) already proves the
+      SQL-analytics-endpoint *semantics*; this adds the real-client TDS/FedAuth
+      surface. (The proxy lives in this repo, mirroring the Livy precedent; the
+      engine is a compose sidecar — superseding the earlier "its own repo" note.)
 - [x] **R4 (notebook developer loop)** — a functional `notebookutils` /
       `mssparkutils` shim (`python/notebookutils`, stdlib-only) that makes
       real Fabric notebook code run unchanged against the emulator family:
