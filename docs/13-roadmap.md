@@ -1,4 +1,4 @@
-# 03 — Roadmap
+# 13 — Roadmap
 
 Scope chosen: **full** — control plane through the OneLake data plane, matching
 entra-emulator's surfaces (portal + Starlight docs + distribution), composed via
@@ -15,7 +15,7 @@ The minimum that lets someone test **SP → Fabric client-credentials** automati
 - [x] **LRO engine** on the controllable clock (`202`/`x-ms-operation-id`/
       `Location`/`Retry-After`, `GET /operations/{id}` + `/result`).
 - [x] Workspaces CRUD. (`assignToCapacity` deferred at P0; the capacity model
-      is now designed in [02-api-surface.md](02-api-surface.md)
+      is now designed in [07-control-plane-api.md](07-control-plane-api.md)
       (`## Capacities`) — seeded default capacity, auto-assign on create,
       assign/unassign LROs — validated as needed by fabric-cicd's
       capacityId check.)
@@ -103,14 +103,14 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
       rejections — against real entra-minted Storage tokens.
 - [ ] Shortcuts: OneLake-to-OneLake symlinks with data-plane resolution and
       target-side RBAC (the trusted-workspace-access smoke path); external
-      targets 501. Designed in [02-api-surface.md](02-api-surface.md)
+      targets 501. Designed in [07-control-plane-api.md](07-control-plane-api.md)
       (`## OneLake shortcuts`).
 - [ ] e2e: azcopy / ADLS SDK against the emulator (later; wire subset ready —
       subsumed by the real-compute track's A1/A2 milestones below).
 
 ## R — Real compute (PySpark, Delta, warehouse)
 
-Designed in [04-real-compute.md](04-real-compute.md): attach **real engines**
+Designed in [14-real-compute.md](14-real-compute.md): attach **real engines**
 below the emulated planes — never fake results. Lives in this repo (storage
 completeness + e2e harnesses + compose sidecars); only a future TDS-FedAuth
 proxy would be a separate sibling.
@@ -136,14 +136,14 @@ proxy would be a separate sibling.
       (fs → OneLake, credentials → entra + azure-keyvault-emulator, notebook
       run → jobs/Livy); default-lakehouse session semantics on the Spark
       sidecar; VS Code Fabric-extension compatibility investigation.
-      Designed in [04-real-compute.md](04-real-compute.md) (Track D).
+      Designed in [14-real-compute.md](14-real-compute.md) (Track D).
 - [ ] **R5** — pipelines: real Apache Airflow sidecar behind ApacheAirflowJob
       items (Fabric's own code-first orchestrator IS Airflow; AKV secrets
       backend → azure-keyvault-emulator); DataPipeline interpreter with
       documented control-flow semantics and real-engine leaf activities
       (Notebook→Spark, SQL→warehouse, Copy→scoped real movement); Dataflow
       Gen2 and unscoped connectors 501. Designed in
-      [04-real-compute.md](04-real-compute.md) (Track E).
+      [14-real-compute.md](14-real-compute.md) (Track E).
 
 ## Cross-cutting (throughout)
 
@@ -165,7 +165,7 @@ proxy would be a separate sibling.
       (Basic / ServicePrincipal / WorkspaceIdentity / Key / SAS / Anonymous)
       with write-only secrets, SP validation against entra at create, and the
       WorkspaceIdentity kind gated on a provisioned identity. Designed in
-      [02-api-surface.md](02-api-surface.md) (`### Connection credentials`).
+      [07-control-plane-api.md](07-control-plane-api.md) (`### Connection credentials`).
 - [ ] **AKV-reference connections**: a connection type that resolves secrets
       from [azure-keyvault-emulator](https://github.com/calvinchengx/azure-keyvault-emulator)
       (the family's third member), reproducing Fabric's Azure Key Vault

@@ -1,11 +1,11 @@
-# 02 — Emulated API surface
+# 07 — Control-plane API
 
 The surface is grounded in an endpoint-frequency scan of `fabric-docs`: the
 handful of routes below are what SDKs, `fabric-cicd`, git integration, and
 deployment-pipeline automation actually call. Typed item collections
 (`/notebooks`, `/lakehouses`, `/warehouses`, `/dataPipelines`, …) are thin
 aliases over the **generic item** shape, so one implementation covers dozens of
-item types.
+item types. The OneLake data plane has its own page: [08-onelake.md](08-onelake.md).
 
 All routes are under `https://api.fabric.microsoft.com/v1` unless noted.
 `application/json`. Bearer required. Mutations are async (see **LRO** below)
@@ -66,7 +66,7 @@ role yields Fabric-shaped `401`/`403`.
 | **OneLake API access (ReadAll)** | ✅ Contributor+ only — Viewers are denied on the data plane, as in the matrix. (Viewers read via the SQL endpoint's `ReadData`, which is compute and not modeled.) |
 | **Item permissions** (per-item sharing: Read/ReadAll/ReadWrite/Reshare) | ❌ Not yet — grants exist only at workspace scope. Emulable later as an `itemAccess` store + checks that OR with workspace roles. |
 | **OneLake security / data access roles** (`dataAccessRoles`, `DefaultReader`, folder-scoped) | ❌ Not yet — emulable later as folder-scope filters on the DFS surface. |
-| **Compute permissions** (T-SQL GRANT/OLS/RLS, semantic-model DAX) | 🚫 Non-goal: requires real SQL/DAX engines (see [01-architecture.md](01-architecture.md) non-goals). |
+| **Compute permissions** (T-SQL GRANT/OLS/RLS, semantic-model DAX) | 🚫 Non-goal: requires real SQL/DAX engines (see [03-architecture.md](03-architecture.md) non-goals). |
 
 ## Core — items (generic; typed aliases reuse this)
 
@@ -153,71 +153,6 @@ Async mutations respond `202` with **both** an `x-ms-operation-id` header (what
 the documented automation scripts actually read) and `Location:
 /v1/operations/{id}`, plus `Retry-After`. Clients poll while status ∈
 {`NotStarted`, `Running`}.
-
-## OneLake data plane (P3) — `onelake.dfs.fabric.microsoft.com`
-
-An **ADLS-Gen2 / Blob** subset (DFS endpoint), `Storage`-audience token. The
-**filesystem is the workspace** (account name is always `onelake`), so listing
-happens at the workspace level:
-
-- `PUT  /{workspace}/{item}.{type}/{path}?resource=file|directory` — create
-- `PATCH …?action=append` + `?action=flush` — write
-- `GET  /{workspace}/{item}.{type}/{path}` — read
-- `GET  /{workspace}?resource=filesystem&recursive=false[&directory={item}.{type}/Files]` — list
-- `DELETE …`
-
-**Managed-folder rules** (`onelake-api-parity.md` — core fidelity, not
-optional): ADLS/Blob APIs can **never create, rename, or delete workspaces or
-items** — only `HEAD` is allowed at the workspace (container) and tenant
-(account) level. An item's top-level folder (`/MyLakehouse.lakehouse`) and its
-first level (`/Files`, `/Tables`) are Fabric-managed: protected from
-create/delete/rename; full CRUD only *within* them. Disallowed query parameters
-(e.g. `action=setAccessControl`) reject the request; disallowed headers (e.g.
-`x-ms-owner`) are ignored and echoed back in `x-ms-rejected-headers`.
-Permission response headers are canned: `x-ms-owner`/`x-ms-group` =
-`$superuser`, `x-ms-permissions` = `---------`.
-
-Enough for shortcut / trusted-workspace-access smoke tests. GUID and
-name-addressing both resolve to the same item.
-
-## OneLake shortcuts (planned)
-
-Wire shapes are REST-reference-only (`/rest/api/fabric/core/onelake-shortcuts`;
-fabric-docs covers shortcut creation portal-side). A shortcut is a **symlink in
-OneLake**: a named entry inside an item's managed folders whose reads resolve
-into another location. Scope: **OneLake-to-OneLake targets only** — external
-targets (ADLS Gen2, S3, Dataverse, …) need real cloud credentials, which is
-exactly what an offline emulator cannot honor; they 501 with a clear message.
-
-| Method + path | Notes |
-|---|---|
-| `POST /v1/workspaces/{wid}/items/{iid}/shortcuts` | create → 201 |
-| `GET  /v1/workspaces/{wid}/items/{iid}/shortcuts` | list *sync* |
-| `GET  /v1/workspaces/{wid}/items/{iid}/shortcuts/{path}/{name}` | get *sync* |
-| `DELETE /v1/workspaces/{wid}/items/{iid}/shortcuts/{path}/{name}` | delete (removes the link, never the target) |
-
-**Create body** (the OneLake target):
-
-```json
-{
-  "path": "Files",
-  "name": "linked-data",
-  "target": { "oneLake": { "workspaceId": "…", "itemId": "…", "path": "Files/raw" } }
-}
-```
-
-- **Data-plane resolution:** on the DFS surface, `/{ws}/{item}/Files/linked-data/…`
-  resolves reads/lists through to the target item's `Files/raw/…`. Writes
-  through shortcuts follow the target's RBAC (the caller needs a role on the
-  *target* workspace — this is the trusted-workspace-access smoke path).
-- **Listing:** shortcut entries appear in filesystem listings as directories
-  with `isShortcut: true` metadata on the shortcut API (plain directories on
-  the DFS listing, as in real OneLake).
-- **Integrity:** deleting the target item leaves a dangling shortcut whose
-  resolution 404s (matching real behavior); deleting the shortcut never
-  touches target data. Cycles are rejected at create (`400 InvalidTarget`).
-- **Storage:** a `shortcuts` table (`item_id, path, name, target_ws, target_item,
-  target_path`) — no data is copied, resolution happens per request.
 
 ## Connections (P1) and admin (later)
 

@@ -59,9 +59,10 @@ function writeIndex() {
       `boundary, self-signed TLS). It emulates the control-plane **contract**, not the runtime: ` +
       `nothing actually computes. Run it on \`localhost\` only.\n:::\n\n` +
       `## Start here\n\n` +
-      `- [Architecture](01-architecture.md) — the two-emulator model, token acceptance, the LRO engine\n` +
-      `- [API surface](02-api-surface.md) — every emulated endpoint and wire shape\n` +
-      `- [Roadmap](03-roadmap.md) — phases P0–P3 and what's shipped\n`,
+      `- [Architecture](03-architecture.md) — the two-emulator model, token acceptance, the LRO engine\n` +
+      `- [Control-plane API](07-control-plane-api.md) — every emulated endpoint and wire shape\n` +
+      `- [OneLake](08-onelake.md) — the ADLS-Gen2 data plane and managed-folder rules\n` +
+      `- [Roadmap](13-roadmap.md) — phases P0–P3 and what's shipped\n`,
   );
   // The landing page is synthesized here (no /docs source), so it has no
   // "Edit this page" target.

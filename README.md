@@ -32,9 +32,18 @@ second — and validates every incoming token against entra-emulator's JWKS,
 
 ## Status
 
-Design phase. See [docs/01-architecture.md](docs/01-architecture.md) for the
-architecture, [docs/02-api-surface.md](docs/02-api-surface.md) for the emulated
-REST surface, and [docs/03-roadmap.md](docs/03-roadmap.md) for phasing.
+**Working** — phases P0–P3 are shipped and CI-verified on Linux, macOS, and
+Windows: the control-plane spine (workspaces, items, RBAC, deterministic LROs),
+the CI/CD surface (definitions, typed aliases, connections, git integration,
+jobs — the real `fabric-cicd` tool publishes into the emulator unmodified),
+the workspace-identity handshake with entra-emulator, and the OneLake
+ADLS-Gen2 data plane with managed-folder enforcement. Every package covers
+itself (≥77%, 91%+ total).
+
+Docs: <https://calvinchengx.github.io/fabric-emulator/> — start with
+[architecture](docs/03-architecture.md), the
+[control-plane API](docs/07-control-plane-api.md), [OneLake](docs/08-onelake.md),
+and the [roadmap](docs/13-roadmap.md).
 
 ## Relationship to entra-emulator
 

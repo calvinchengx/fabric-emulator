@@ -1,4 +1,4 @@
-# 01 — Architecture
+# 03 — Architecture
 
 fabric-emulator is a **control-plane contract emulator** for Microsoft Fabric,
 plus a thin OneLake data-plane surface. It is the sibling of
@@ -109,8 +109,8 @@ is the audience set and the role lookup. Config: `--entra-issuer` +
 | `onelake.dfs.fabric.microsoft.com` | ADLS-Gen2 subset (filesystem = workspace, path = item/…) |
 | `portal.` (local) | the Svelte operator portal |
 
-See [02-api-surface.md](02-api-surface.md) for the endpoint catalog and wire
-shapes, and [03-roadmap.md](03-roadmap.md) for what lands in each phase.
+See [07-control-plane-api.md](07-control-plane-api.md) for the endpoint catalog and wire
+shapes, and [03-roadmap.md](13-roadmap.md) for what lands in each phase.
 
 ## Data model (SQLite)
 

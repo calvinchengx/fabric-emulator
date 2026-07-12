@@ -1,4 +1,4 @@
-# 04 — Real compute: PySpark, Delta, and the warehouse
+# 14 — Real compute: PySpark, Delta, and the warehouse
 
 **Status: design.** This document plans the track that turns fabric-emulator
 from a *contract emulator* into a *local Fabric runtime* — by attaching
@@ -6,7 +6,7 @@ from a *contract emulator* into a *local Fabric runtime* — by attaching
 
 ## The principle (a refinement, not a reversal)
 
-[01-architecture.md](01-architecture.md) declares "no compute engines" a
+[03-architecture.md](03-architecture.md) declares "no compute engines" a
 non-goal. What that non-goal was always protecting against is *pretend*
 compute — a notebook run that "succeeds" without running, a query endpoint
 returning canned rows. The refinement, proven by the fabric-cicd and
