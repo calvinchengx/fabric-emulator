@@ -1,0 +1,28 @@
+# Brings up the emulator pair: entra-emulator issues tokens, fabric-emulator
+# validates them against entra's JWKS — the same trust relationship as real
+# Fabric ↔ Entra. fabric-emulator is pre-wired to entra's issuer here; point
+# --entra-issuer at a real tenant instead and nothing else changes.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    ports:
+      - "8443:8443" # login / graph / discovery (JWKS)
+    healthcheck:
+      test: ["CMD", "/entra-emulator", "healthcheck"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  fabric-emulator:
+    image: ghcr.io/calvinchengx/fabric-emulator:latest
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    ports:
+      - "9443:9443" # api.fabric + onelake.dfs + portal (host-routed)
+    environment:
+      # Trust entra-emulator's issuer + JWKS, reachable on the compose network.
+      FABRIC_ENTRA_ISSUER: "https://entra-emulator:8443/{tenant}/v2.0"
+      FABRIC_ENTRA_JWKS_URL: "https://entra-emulator:8443/{tenant}/discovery/v2.0/keys"
+      # Emulator trusts entra-emulator's self-signed cert on the internal network.
+      FABRIC_ENTRA_TLS_INSECURE: "true"

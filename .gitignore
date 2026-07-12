@@ -1,0 +1,19 @@
+# Runtime state
+data/
+*.log
+
+# Node
+node_modules/
+
+# Local tooling
+.claude/
+
+# Note: portal/dist IS committed — go:embed needs it for `go build` to be
+# self-sufficient. Rebuild with `pnpm --filter fabric-emulator-portal build`.
+
+# GoReleaser build output
+/dist/
+
+# Playwright
+test-results/
+playwright-report/
