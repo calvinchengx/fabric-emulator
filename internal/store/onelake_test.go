@@ -158,6 +158,37 @@ func TestListOneLakePaths(t *testing.T) {
 	}
 }
 
+func TestListOneLakePathsExplicitDirDedupe(t *testing.T) {
+	s := newTestStore(t)
+	wsID, itID := newOneLakeItem(t, s)
+	// Unlike TestListOneLakePaths (where parent directories stay implicit),
+	// create an explicit directory row *and* a child beneath it: the
+	// explicit row and the child's collapsed entry must merge, not repeat.
+	for _, p := range []OneLakePath{
+		{RelPath: "Files/dir", IsDir: true},
+		{RelPath: "Files/dir/child.txt"},
+	} {
+		p.WorkspaceID, p.ItemID, p.Content = wsID, itID, []byte{}
+		if err := s.CreateOneLakePath(&p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	top, err := s.ListOneLakePaths(itID, "Files", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 1 || top[0].RelPath != "Files/dir" || !top[0].IsDir {
+		t.Fatalf("non-recursive list = %+v; want just [Files/dir dir]", top)
+	}
+
+	// Recursive listings still see both rows.
+	all, err := s.ListOneLakePaths(itID, "Files", true)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("recursive list = %d paths, %v; want 2", len(all), err)
+	}
+}
+
 func TestDeleteOneLakePath(t *testing.T) {
 	s := newTestStore(t)
 	wsID, itID := newOneLakeItem(t, s)

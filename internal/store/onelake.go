@@ -96,6 +96,14 @@ FROM onelake_paths WHERE item_id = ? ORDER BY rel_path`, itemID)
 				out = append(out, &OneLakePath{WorkspaceID: p.WorkspaceID, ItemID: p.ItemID, RelPath: dir, IsDir: true})
 				continue
 			}
+			if p.IsDir {
+				// An explicit directory row merges with children that
+				// collapse to the same first-level directory.
+				if seenDirs[p.RelPath] {
+					continue
+				}
+				seenDirs[p.RelPath] = true
+			}
 		}
 		out = append(out, p)
 	}
