@@ -394,3 +394,265 @@ func TestQueryActivityRunsMissing(t *testing.T) {
 		t.Fatalf("expected 404 for non-pipeline job, got %d", w.Code)
 	}
 }
+
+// outputOf finds a named activity's output object in a run list.
+func outputOf(runs []map[string]any, name string) map[string]any {
+	for _, r := range runs {
+		if r["activityName"] == name {
+			if o, ok := r["output"].(map[string]any); ok {
+				return o
+			}
+		}
+	}
+	return nil
+}
+
+// TestPipelineLookupCSV: a Lookup reads real rows from a CSV in OneLake and its
+// first row flows into a downstream expression.
+func TestPipelineLookupCSV(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedFile(t, st, ws.ID, src.ID, "Files/ref.csv", []byte("id,name\n1,alice\n2,bob\n"))
+
+	content := `{"properties":{
+      "variables":{"who":{"type":"String"}},
+      "activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/ref.csv"}}}},
+        {"name":"Use","type":"SetVariable","dependsOn":[{"activity":"Lk","dependencyConditions":["Succeeded"]}],
+          "typeProperties":{"variableName":"who","value":"@activity('Lk').output.firstRow.name"}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	lk := outputOf(runs, "Lk")
+	if lk["count"].(float64) != 2 {
+		t.Fatalf("lookup count = %v", lk["count"])
+	}
+	if lk["firstRow"].(map[string]any)["name"] != "alice" {
+		t.Fatalf("firstRow = %+v", lk["firstRow"])
+	}
+	// The value really flowed into the downstream SetVariable.
+	if outputOf(runs, "Use")["value"] != "alice" {
+		t.Fatalf("downstream variable = %+v", outputOf(runs, "Use"))
+	}
+}
+
+// TestPipelineLookupJSONAllRows: firstRowOnly=false returns the whole array.
+func TestPipelineLookupJSONAllRows(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedFile(t, st, ws.ID, src.ID, "Files/data.json", []byte(`[{"k":1},{"k":2},{"k":3}]`))
+
+	content := `{"properties":{"activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{
+          "firstRowOnly":false,
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/data.json"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	lk := outputOf(runs, "Lk")
+	if lk["count"].(float64) != 3 || len(lk["value"].([]any)) != 3 {
+		t.Fatalf("json lookup = %+v", lk)
+	}
+}
+
+// TestPipelineLookupMissing: a missing source fails the activity (loudly).
+func TestPipelineLookupMissing(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	content := `{"properties":{"activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/none.csv"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("missing lookup source = %s, want Failed", s)
+	}
+}
+
+// TestPipelineGetMetadataFile: stats a real file (exists/size/type/name).
+func TestPipelineGetMetadataFile(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedFile(t, st, ws.ID, src.ID, "Files/a.bin", []byte("hello world"))
+
+	content := `{"properties":{"activities":[
+        {"name":"Meta","type":"GetMetadata","typeProperties":{
+          "fieldList":["exists","size","itemType","itemName"],
+          "dataset":{"location":{"itemId":"` + src.ID + `","path":"Files/a.bin"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	m := outputOf(runs, "Meta")
+	if m["exists"] != true || m["itemType"] != "File" || m["itemName"] != "a.bin" || m["size"].(float64) != 11 {
+		t.Fatalf("metadata = %+v", m)
+	}
+}
+
+// TestPipelineGetMetadataDir: childItems lists a directory's entries.
+func TestPipelineGetMetadataDir(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	if err := st.CreateOneLakePath(&store.OneLakePath{WorkspaceID: ws.ID, ItemID: src.ID, RelPath: "Files/d", IsDir: true, Content: []byte{}}, false); err != nil {
+		t.Fatal(err)
+	}
+	seedFile(t, st, ws.ID, src.ID, "Files/d/a.txt", []byte("A"))
+	seedFile(t, st, ws.ID, src.ID, "Files/d/b.txt", []byte("B"))
+
+	content := `{"properties":{"activities":[
+        {"name":"Meta","type":"GetMetadata","typeProperties":{
+          "fieldList":["itemType","childItems"],
+          "dataset":{"location":{"itemId":"` + src.ID + `","path":"Files/d"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	m := outputOf(runs, "Meta")
+	if m["itemType"] != "Folder" {
+		t.Fatalf("itemType = %v", m["itemType"])
+	}
+	names := map[string]bool{}
+	for _, ci := range m["childItems"].([]any) {
+		names[ci.(map[string]any)["name"].(string)] = true
+	}
+	if !names["a.txt"] || !names["b.txt"] {
+		t.Fatalf("childItems = %+v", m["childItems"])
+	}
+}
+
+// TestPipelineGetMetadataMissing: a missing path reports exists:false, not error.
+func TestPipelineGetMetadataMissing(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	content := `{"properties":{"activities":[
+        {"name":"Meta","type":"GetMetadata","typeProperties":{
+          "fieldList":["exists"],
+          "dataset":{"location":{"itemId":"` + src.ID + `","path":"Files/nope"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if outputOf(runs, "Meta")["exists"] != false {
+		t.Fatalf("missing path metadata = %+v", outputOf(runs, "Meta"))
+	}
+}
+
+// TestPipelineLookupOnDirectory: a Lookup pointed at a directory fails loudly.
+func TestPipelineLookupOnDirectory(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	if err := st.CreateOneLakePath(&store.OneLakePath{WorkspaceID: ws.ID, ItemID: src.ID, RelPath: "Files/d", IsDir: true, Content: []byte{}}, false); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"properties":{"activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/d"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("lookup on directory = %s, want Failed", s)
+	}
+}
+
+// TestPipelineGetMetadataDefaultFields: with no fieldList, GetMetadata returns
+// the default field set (including lastModified, set by the store on write).
+func TestPipelineGetMetadataDefaultFields(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedFile(t, st, ws.ID, src.ID, "Files/a.bin", []byte("data"))
+	content := `{"properties":{"activities":[
+        {"name":"Meta","type":"GetMetadata","typeProperties":{
+          "dataset":{"location":{"itemId":"` + src.ID + `","path":"Files/a.bin"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	m := outputOf(runs, "Meta")
+	if m["exists"] != true || m["itemName"] != "a.bin" || m["size"].(float64) != 4 {
+		t.Fatalf("default metadata = %+v", m)
+	}
+	if _, ok := m["lastModified"]; !ok {
+		t.Fatalf("expected lastModified in default fields: %+v", m)
+	}
+}
+
+// TestPipelineGetMetadataNoLocation: a GetMetadata with no location fails.
+func TestPipelineGetMetadataNoLocation(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	content := `{"properties":{"activities":[
+        {"name":"Meta","type":"GetMetadata","typeProperties":{"fieldList":["exists"]}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("no-location getMetadata = %s, want Failed", s)
+	}
+}
+
+// TestPipelineLookupNoSource: a Lookup with no source/dataset fails loudly.
+func TestPipelineLookupNoSource(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	content := `{"properties":{"activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{"firstRowOnly":true}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("no-source lookup = %s, want Failed", s)
+	}
+}
+
+// TestPipelineLookupEmptyCSV: firstRowOnly over a header-only CSV yields an
+// empty first row and count 0 (no crash).
+func TestPipelineLookupEmptyCSV(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedFile(t, st, ws.ID, src.ID, "Files/h.csv", []byte("a,b\n"))
+	content := `{"properties":{"activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/h.csv"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if outputOf(runs, "Lk")["count"].(float64) != 0 {
+		t.Fatalf("empty csv count = %+v", outputOf(runs, "Lk"))
+	}
+}

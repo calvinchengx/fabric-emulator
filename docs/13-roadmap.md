@@ -238,6 +238,16 @@ proxy would be a separate sibling.
       tests, and a server e2e (real entra token → auth → RBAC → interpreter →
       queryactivityruns). Coverage floor held at ≥90%. A malformed expression
       fails the activity (recovered), never the server.
+    - [x] **R5 (real data-plane leaf activities)** — leaves that can run
+      hermetically (pure-Go, no CGO, offline) really execute against OneLake:
+      **Copy** moves real bytes OneLake→OneLake (a file, or a directory subtree,
+      with expression-resolved `{workspaceId?, itemId, path}` locations);
+      **Lookup** reads real rows from a CSV/JSON file and feeds
+      `@activity(…).output`; **GetMetadata** stats a real path
+      (`exists`/`itemType`/`size`/`lastModified`/`childItems`). Parquet + the
+      SQL-endpoint source are a follow-up (Parquet needs a reader dep; SQL is
+      the warehouse engine's job). Web / external-connector leaves stay stubbed
+      (a real network call breaks the offline/deterministic guarantee).
     - [ ] **R5 (Apache Airflow + Dataflow Gen2)** — *deferred, with cause:*
       Fabric's code-first orchestrator IS Apache Airflow, a JVM/Python engine
       the same weight class as Spark/Livy — a sidecar-by-demand, not a bundled
@@ -245,8 +255,8 @@ proxy would be a separate sibling.
       open implementation to host. Both are honestly surfaced rather than
       faked: a Dataflow activity inside a pipeline fails with an explicit
       "not implemented" (the interpreter runs everything around it), matching
-      the Livy stance. Copy/SQL leaf activities record orchestration success;
-      their storage effects are byte-proven by the OneLake/delta-rs e2es.
+      the Livy stance. (In-family data-plane leaves — Copy/Lookup/GetMetadata —
+      already run for real; see the bullet above.)
       Designed in [14-real-compute.md](14-real-compute.md) (Track E).
 
 ## Cross-cutting (throughout)

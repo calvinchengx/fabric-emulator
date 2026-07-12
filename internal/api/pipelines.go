@@ -51,6 +51,16 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// stores / format transformation are not in scope and fail loudly.
 		return e.copyActivity(act, tp, resolve)
 
+	case "Lookup":
+		// Reads real rows from a CSV/JSON file in OneLake — hermetic, pure-Go,
+		// its output flows into @activity('lk').output for downstream steps.
+		return e.lookupActivity(act, tp, resolve)
+
+	case "GetMetadata":
+		// Stats a real OneLake path (exists / type / size / lastModified /
+		// childItems) — the storage layer answers for real.
+		return e.getMetadataActivity(act, tp, resolve)
+
 	case "RefreshDataflow", "ExecuteDataFlow", "ExecutePowerQueryTemplate":
 		// Dataflow Gen2 is the proprietary Power Query M engine — honestly
 		// unimplemented (mirrors the Livy/Airflow stance), so the activity
@@ -58,11 +68,11 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		return nil, fmt.Errorf("activity %q: Dataflow Gen2 (Power Query M) is not implemented in the emulator", act.Name)
 
 	default:
-		// Other leaf types (Lookup over SQL, Web to arbitrary URLs, external
-		// connectors) can't be executed hermetically — a SQL engine can't embed
-		// under the pure-Go/no-CGO build, and firing real network calls breaks
-		// the offline/deterministic guarantee. The emulator records that the
-		// orchestration reached the leaf; the effect does not run.
+		// Other leaf types (Web to arbitrary URLs, external connectors, SQL
+		// scripts against an external engine) can't be executed hermetically —
+		// firing real network calls breaks the offline/deterministic guarantee
+		// and no SQL engine embeds under the pure-Go/no-CGO build. The emulator
+		// records that the orchestration reached the leaf; the effect does not run.
 		return map[string]any{"status": "Succeeded", "activityType": act.Type}, nil
 	}
 }
