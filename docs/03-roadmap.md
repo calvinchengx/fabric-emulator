@@ -59,6 +59,10 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
 
 - [ ] `onelake.` host mux: ADLS-Gen2/Blob subset (create/append/flush/read/list/delete).
 - [ ] `Storage`-audience token acceptance.
+- [ ] Managed-folder enforcement (`onelake-api-parity.md`): no workspace/item
+      create/rename/delete via ADLS (HEAD-only at container level); item root +
+      `/Files`,`/Tables` protected; reject `setAccessControl`-class params;
+      ignore + echo banned headers via `x-ms-rejected-headers`.
 - [ ] Name- and GUID-addressing resolve to the same item.
 - [ ] Shortcuts (thin) + trusted-workspace-access smoke path.
 - [ ] e2e: azcopy / ADLS SDK writes a file into a lakehouse, reads it back.
