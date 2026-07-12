@@ -15,6 +15,41 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
+// TestHCLivyE2E confirms the high-concurrency Livy layer over real HTTP: the
+// packing contract works, and — critically — the `highConcurrencySessions`
+// routes win over the classic `{livypath...}` catch-all on the real ServeMux.
+func TestHCLivyE2E(t *testing.T) {
+	f := newFixture(t)
+
+	var ws struct{ ID string }
+	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "spark-ws"}, &ws)
+	var lake struct{ ID string }
+	f.call("POST", "/v1/workspaces/"+ws.ID+"/lakehouses", f.token, map[string]any{"displayName": "lh"}, &lake)
+
+	hc := "/v1/workspaces/" + ws.ID + "/lakehouses/" + lake.ID + "/livyapi/versions/2023-12-01/highConcurrencySessions"
+
+	// Two acquires sharing a tag pack into one underlying Livy session with
+	// distinct HC ids — proving the HC route resolved (not the classic proxy).
+	var a, b struct {
+		ID, SessionId, ReplId string
+	}
+	f.mustStatus(f.call("POST", hc, f.token, map[string]string{"sessionTag": "etl"}, &a), http.StatusOK, "acquire a")
+	f.mustStatus(f.call("POST", hc, f.token, map[string]string{"sessionTag": "etl"}, &b), http.StatusOK, "acquire b")
+	if a.ID == "" || a.ID == b.ID {
+		t.Fatalf("expected distinct HC ids, got %q and %q", a.ID, b.ID)
+	}
+	if a.SessionId != b.SessionId {
+		t.Fatalf("same-tag acquires should share a session, got %s vs %s", a.SessionId, b.SessionId)
+	}
+	f.mustStatus(f.call("GET", hc+"/"+a.ID, f.token, nil, nil), http.StatusOK, "get hc")
+	f.mustStatus(f.call("DELETE", hc+"/"+a.ID, f.token, nil, nil), http.StatusOK, "delete hc")
+
+	// The classic Livy path still routes to the proxy (501, no backend) — both
+	// route families coexist on the same mux.
+	classic := "/v1/workspaces/" + ws.ID + "/lakehouses/" + lake.ID + "/livyapi/versions/2023-12-01/sessions"
+	f.mustStatus(f.call("GET", classic, f.token, nil, nil), http.StatusNotImplemented, "classic sessions")
+}
+
 func TestPipelineRunE2E(t *testing.T) {
 	f := newFixture(t)
 

@@ -160,6 +160,18 @@ proxy would be a separate sibling.
       status reads need Viewer; unknown lakehouse 404s. Unset → honest 501.
       Unit-tested (path rewrite, RBAC matrix, 501, lakehouse) + a server e2e
       (real entra token → auth → RBAC → proxy → backend).
+    - [x] **B (high-concurrency Livy sessions)** — Fabric's *own* layer on top
+      of the Livy contract (`highConcurrencySessions`, current — it gained HC
+      support in 2026): the emulator implements the packing manager directly
+      (`internal/api/livy_hc.go`), since a vanilla Livy server has no REPL/HC
+      concept. `sessionTag` packs REPLs into a shared underlying Livy session,
+      capped at **5 REPLs/session** with spill-to-new-session; acquire is
+      non-idempotent (same tag → distinct HC ids, shared `sessionId`);
+      acquire/get/delete are pure control-plane (no Spark); a REPL's statements
+      open a **real** backend Livy session lazily and proxy to it (honest 501
+      without a backend). Unit-tested (packing, cap, spill, slot-reuse-after-
+      release, RBAC) + a server e2e proving the HC routes win over the classic
+      catch-all on the real mux, race-clean.
     - [ ] **B (real Livy sidecar e2e)** — *deferred, with cause:* Apache Livy
       is **retired to the Apache Attic** (last release 0.8.0, no maintained
       image), so there is no maintained real engine to bundle for the Livy

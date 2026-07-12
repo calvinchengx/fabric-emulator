@@ -24,12 +24,14 @@ import (
 func (a *API) SetLivyBackend(rawURL string) error {
 	if rawURL == "" {
 		a.livy = nil
+		a.livyBackend = nil
 		return nil
 	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return err
 	}
+	a.livyBackend = u
 	proxy := httputil.NewSingleHostReverseProxy(u)
 	// The default director joins the backend's base path with r.URL.Path, so
 	// the handler sets r.URL.Path to just the Livy-native suffix
@@ -43,12 +45,23 @@ func (a *API) SetLivyBackend(rawURL string) error {
 	return nil
 }
 
-// registerLivy mounts the lakehouse-scoped Livy routes.
+// registerLivy mounts the lakehouse-scoped Livy routes — the classic
+// sessions/batches proxy plus the Fabric high-concurrency layer.
 func (a *API) registerLivy(mux *http.ServeMux) {
 	const p = "/v1/workspaces/{wid}/lakehouses/{lid}/livyapi/versions/{ver}/"
 	for _, m := range []string{"GET", "POST", "DELETE"} {
 		mux.HandleFunc(m+" "+p+"{livypath...}", a.withAuth(a.livyProxy))
 	}
+	a.registerHCLivy(mux)
+}
+
+// hcClient is the HTTP client used to open/tear down backend Livy sessions for
+// HC REPLs (distinct from the reverse proxy, which streams statements).
+func (a *API) hcClient() *http.Client {
+	if a.hcHTTP != nil {
+		return a.hcHTTP
+	}
+	return http.DefaultClient
 }
 
 // livyProxy validates RBAC then reverse-proxies to the Livy backend. Session

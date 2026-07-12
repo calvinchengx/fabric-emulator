@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"sync"
 
 	"github.com/calvinchengx/fabric-emulator/internal/akv"
@@ -32,8 +33,13 @@ type API struct {
 	LRODelaySeconds int64
 
 	// livy reverse-proxies the Livy endpoint to a real Spark backend
-	// (nil = Livy routes 501).
-	livy *httputil.ReverseProxy
+	// (nil = Livy routes 501). livyBackend is the same backend as a base URL,
+	// used to open/tear down backend sessions for HC REPLs directly.
+	livy        *httputil.ReverseProxy
+	livyBackend *url.URL
+	hcHTTP      *http.Client
+	// hc holds high-concurrency Livy session-packing state (lazily created).
+	hc *hcManager
 
 	// Fault switches (set via the /_emulator control surface).
 	mu        sync.Mutex
