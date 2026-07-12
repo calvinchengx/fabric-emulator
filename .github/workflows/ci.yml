@@ -26,3 +26,19 @@ jobs:
           total=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "total coverage: ${total}%"
           awk -v t="$total" 'BEGIN { exit (t < 90) ? 1 : 0 }'
+
+  fabric-cicd:
+    name: Real fabric-cicd tool publishes into the emulator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # Self-contained: starts entra-emulator (go install) + fabric-emulator,
+      # installs fabric-cicd in a venv, publishes a notebook repo, and
+      # verifies the definition round-trips (idempotently).
+      - run: ./e2e/fabric-cicd/run.sh
