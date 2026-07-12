@@ -118,6 +118,11 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
 - [ ] GoReleaser: binaries + distroless Docker (GHCR) + Homebrew cask + winget.
 - [ ] Playwright headless mount smoke (catch builds-but-doesn't-mount).
 - [ ] Coverage parity with entra-emulator (target ≥ 70% per package).
+- [ ] **AKV-reference connections**: a connection type that resolves secrets
+      from [azure-keyvault-emulator](https://github.com/calvinchengx/azure-keyvault-emulator)
+      (the family's third member), reproducing Fabric's Azure Key Vault
+      references feature offline — `workspace identity → entra token →
+      vault secret → connection`. Depends on that emulator's P0.
 
 ## Sequencing note
 
