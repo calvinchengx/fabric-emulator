@@ -147,3 +147,17 @@ func TestClosedDBIdentityErrors(t *testing.T) {
 		t.Error("DeleteWorkspaceIdentity on closed DB succeeded")
 	}
 }
+
+func TestClosedDBCapacityErrors(t *testing.T) {
+	s, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if _, err := s.GetCapacity("x"); err == nil {
+		t.Error("GetCapacity on closed DB succeeded")
+	}
+	if _, err := s.ListCapacities(); err == nil {
+		t.Error("ListCapacities on closed DB succeeded")
+	}
+}

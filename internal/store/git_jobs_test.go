@@ -196,3 +196,18 @@ func TestWorkspaceIdentityStore(t *testing.T) {
 		t.Fatalf("delete missing identity err = %v", err)
 	}
 }
+
+func TestCapacitySeed(t *testing.T) {
+	s := newTestStore(t)
+	c, err := s.GetCapacity(DefaultCapacityID)
+	if err != nil || c.DisplayName != "Emulator Capacity" || c.State != "Active" {
+		t.Fatalf("seeded capacity = %+v, %v", c, err)
+	}
+	if _, err := s.GetCapacity("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing capacity err = %v", err)
+	}
+	list, err := s.ListCapacities()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("capacities = %d, %v", len(list), err)
+	}
+}

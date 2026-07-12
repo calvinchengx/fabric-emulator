@@ -67,10 +67,10 @@ token = cred.get_token().token
 auth = {"Authorization": f"Bearer {token}"}
 
 # Create the target workspace as the SP (it becomes Admin). fabric-cicd
-# refuses to publish into a workspace with no capacity, so assign one.
+# requires a capacity; the emulator auto-assigns its seeded default.
 r = requests.post(
     f"{FABRIC}/v1/workspaces",
-    json={"displayName": "cicd-target", "capacityId": "22222222-cccc-4444-8888-999999999999"},
+    json={"displayName": "cicd-target"},  # capacity auto-assigned by the emulator
     headers=auth,
 )
 r.raise_for_status()

@@ -78,6 +78,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/workspaces/{wid}/folders", a.withAuth(a.listFolders))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/folders", a.withAuth(a.createFolder))
 
+	mux.HandleFunc("GET /v1/capacities", a.withAuth(a.listCapacities))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/assignToCapacity", a.withAuth(a.assignToCapacity))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/unassignFromCapacity", a.withAuth(a.unassignFromCapacity))
+
 	mux.HandleFunc("POST /v1/workspaces/{wid}/provisionIdentity", a.withAuth(a.provisionIdentity))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/deprovisionIdentity", a.withAuth(a.deprovisionIdentity))
 

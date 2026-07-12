@@ -33,6 +33,15 @@ func (a *API) createWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "displayName is required.")
 		return
 	}
+	// No capacityId auto-assigns the seeded default (a tenant whose
+	// workspaces land on a trial/default capacity); an explicit one must
+	// exist.
+	if body.CapacityID == "" {
+		body.CapacityID = store.DefaultCapacityID
+	} else if _, err := a.Store.GetCapacity(body.CapacityID); err != nil {
+		writeErr(w, http.StatusNotFound, "CapacityNotFound", "No capacity matches capacityId.")
+		return
+	}
 	ws := &store.Workspace{DisplayName: body.DisplayName, Description: body.Description, CapacityID: body.CapacityID}
 	if err := a.Store.CreateWorkspace(ws, store.Principal{ID: p.ID, Type: p.Type}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
