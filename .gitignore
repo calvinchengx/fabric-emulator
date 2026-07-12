@@ -17,3 +17,11 @@ node_modules/
 # Playwright
 test-results/
 playwright-report/
+
+# Coverage profiles (CI writes cover.out via -coverprofile; regenerated, not committed)
+cover.out
+*.cover
+coverage.out
+
+# Local TDS/scratch probes (untracked developer scratch)
+/tmpprobe/
