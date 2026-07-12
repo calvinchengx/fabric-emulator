@@ -177,16 +177,22 @@ func TestOneLakeDataPlane(t *testing.T) {
 		t.Fatalf("collapsed listing = %+v", listing.Paths)
 	}
 
-	// RBAC on the data plane: ungranted principal 403; Viewer reads, no writes.
+	// RBAC on the data plane: OneLake API access is ReadAll — Contributor and
+	// above only. Viewers are denied entirely (they read via the SQL endpoint
+	// in real Fabric, which the emulator does not model).
 	aliceStorage := f.forgeToken(t, map[string]any{
 		"userId": entra.AliceOID, "audience": "https://storage.azure.com",
 	})
 	olStatus(t, f.ol(t, "GET", named, aliceStorage, nil), http.StatusForbidden, "ungranted read")
+	var aliceRA struct{ ID string }
 	f.call("POST", "/v1/workspaces/"+ws.ID+"/roleAssignments", f.token,
-		map[string]any{"principal": map[string]string{"id": entra.AliceOID, "type": "User"}, "role": "Viewer"}, nil)
-	olStatus(t, f.ol(t, "GET", named, aliceStorage, nil), http.StatusOK, "viewer read")
+		map[string]any{"principal": map[string]string{"id": entra.AliceOID, "type": "User"}, "role": "Viewer"}, &aliceRA)
+	olStatus(t, f.ol(t, "GET", named, aliceStorage, nil), http.StatusForbidden, "viewer denied (no ReadAll)")
+	f.call("PATCH", "/v1/workspaces/"+ws.ID+"/roleAssignments/"+aliceRA.ID, f.token,
+		map[string]string{"role": "Contributor"}, nil)
+	olStatus(t, f.ol(t, "GET", named, aliceStorage, nil), http.StatusOK, "contributor read")
 	olStatus(t, f.ol(t, "PUT", "/"+ws.ID+"/"+lake.ID+"/Files/raw/b.txt?resource=file", aliceStorage, nil),
-		http.StatusForbidden, "viewer write")
+		http.StatusCreated, "contributor write")
 
 	// Delete a directory removes its subtree.
 	olStatus(t, f.ol(t, "DELETE", "/"+ws.ID+"/"+lake.ID+"/Files/raw", storage, nil), http.StatusOK, "delete dir")

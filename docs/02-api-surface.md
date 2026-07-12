@@ -57,6 +57,17 @@ Roles: `Admin` \| `Member` \| `Contributor` \| `Viewer`. Enforcement maps the
 caller's token `oid`/`appid` → role → allowed operations. A missing/insufficient
 role yields Fabric-shaped `401`/`403`.
 
+**RBAC fidelity map.** Fabric's permission model has four layers
+(`security/permission-model.md`); the emulator covers them as follows:
+
+| Layer | Emulated? |
+|---|---|
+| **Workspace roles** | ✅ Per the `roles-workspaces.md` matrix: workspace delete/rename + role management = Admin (Member may grant ≤ Member); item CRUD, definitions, git sync, job start/cancel = Contributor+; item/metadata reads + job status = Viewer+; **git connect and workspace-identity provisioning = Admin only** (both explicit matrix rows). |
+| **OneLake API access (ReadAll)** | ✅ Contributor+ only — Viewers are denied on the data plane, as in the matrix. (Viewers read via the SQL endpoint's `ReadData`, which is compute and not modeled.) |
+| **Item permissions** (per-item sharing: Read/ReadAll/ReadWrite/Reshare) | ❌ Not yet — grants exist only at workspace scope. Emulable later as an `itemAccess` store + checks that OR with workspace roles. |
+| **OneLake security / data access roles** (`dataAccessRoles`, `DefaultReader`, folder-scoped) | ❌ Not yet — emulable later as folder-scope filters on the DFS surface. |
+| **Compute permissions** (T-SQL GRANT/OLS/RLS, semantic-model DAX) | 🚫 Non-goal: requires real SQL/DAX engines (see [01-architecture.md](01-architecture.md) non-goals). |
+
 ## Core — items (generic; typed aliases reuse this)
 
 | Method + path | Notes |

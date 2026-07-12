@@ -112,12 +112,15 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeDFSErr(w, dfsError{"InternalError", http.StatusInternalServerError, err.Error()})
 		return
 	}
-	if role == "" {
+	// OneLake API access is the ReadAll permission: Admin/Member/Contributor
+	// only (roles-workspaces.md). Viewers read through the SQL endpoint
+	// (ReadData), which the emulator does not model — so they are denied
+	// here, exactly as in real Fabric.
+	if store.RoleRank(role) < store.RoleRank(store.RoleContributor) {
 		writeDFSErr(w, dfsError{"AuthorizationFailure", http.StatusForbidden,
-			"The principal has no role on this workspace."})
+			"OneLake API access requires ReadAll (the Contributor role or above); Viewers read via the SQL endpoint."})
 		return
 	}
-	writeOK := store.RoleRank(role) >= store.RoleRank(store.RoleContributor)
 
 	// Workspace (container) level.
 	if len(segs) == 1 {
@@ -163,10 +166,6 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodPut: // create file or directory
-		if !writeOK {
-			writeDFSErr(w, dfsError{"AuthorizationFailure", http.StatusForbidden, "Write requires Contributor."})
-			return
-		}
 		isDir := r.URL.Query().Get("resource") == "directory"
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 64<<20))
 		err := s.Store.CreateOneLakePath(&store.OneLakePath{
@@ -179,10 +178,6 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 
 	case http.MethodPatch: // append | flush
-		if !writeOK {
-			writeDFSErr(w, dfsError{"AuthorizationFailure", http.StatusForbidden, "Write requires Contributor."})
-			return
-		}
 		s.patch(w, r, it.ID, rel)
 
 	case http.MethodHead:
@@ -216,10 +211,6 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(pth.Content)
 
 	case http.MethodDelete:
-		if !writeOK {
-			writeDFSErr(w, dfsError{"AuthorizationFailure", http.StatusForbidden, "Write requires Contributor."})
-			return
-		}
 		if err := s.Store.DeleteOneLakePath(it.ID, rel); err != nil {
 			writeDFSErr(w, dfsError{"PathNotFound", http.StatusNotFound, "The path does not exist."})
 			return
