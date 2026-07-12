@@ -53,6 +53,26 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.updateItem))
 	mux.HandleFunc("DELETE /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.deleteItem))
 
+	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/getDefinition", a.withAuth(a.getDefinition))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/updateDefinition", a.withAuth(a.updateDefinition))
+
+	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances", a.withAuth(a.createJobInstance))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}", a.withAuth(a.getJobInstance))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/cancel", a.withAuth(a.cancelJobInstance))
+
+	mux.HandleFunc("POST /v1/workspaces/{wid}/git/connect", a.withAuth(a.gitConnect))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/git/initializeConnection", a.withAuth(a.gitInitializeConnection))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/git/status", a.withAuth(a.gitStatus))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/git/commitToGit", a.withAuth(a.gitCommitToGit))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/git/updateFromGit", a.withAuth(a.gitUpdateFromGit))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/git/disconnect", a.withAuth(a.gitDisconnect))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/git/myGitCredentials", a.withAuth(a.gitMyCredentials))
+
+	mux.HandleFunc("GET /v1/connections", a.withAuth(a.listConnections))
+	mux.HandleFunc("POST /v1/connections", a.withAuth(a.createConnection))
+
+	a.registerTyped(mux)
+
 	mux.HandleFunc("GET /v1/operations/{oid}", a.withAuth(a.getOperation))
 	mux.HandleFunc("GET /v1/operations/{oid}/result", a.withAuth(a.getOperationResult))
 }

@@ -146,7 +146,9 @@ func (v *Validator) Validate(token string) (*Principal, error) {
 	if p.ID == "" {
 		p.ID = claims.Sub
 	}
-	if claims.IdTyp == "app" {
+	// App-only tokens: idtyp=app when present; otherwise the v2 shape is an
+	// appid with no user oid.
+	if claims.IdTyp == "app" || (claims.Oid == "" && claims.AppID != "") {
 		p.Type = "ServicePrincipal"
 	}
 	if p.ID == "" {

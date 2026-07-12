@@ -79,4 +79,40 @@ func TestClosedDBErrors(t *testing.T) {
 	if _, err := s.GetOperation("x"); err == nil {
 		t.Error("GetOperation on closed DB succeeded")
 	}
+	if err := s.CreateConnection(&Connection{DisplayName: "c"}); err == nil {
+		t.Error("CreateConnection on closed DB succeeded")
+	}
+	if _, err := s.GetConnection("x"); err == nil {
+		t.Error("GetConnection on closed DB succeeded")
+	}
+	if _, err := s.ListConnections(); err == nil {
+		t.Error("ListConnections on closed DB succeeded")
+	}
+	if err := s.SetGitConnection(&GitConnection{WorkspaceID: "w"}); err == nil {
+		t.Error("SetGitConnection on closed DB succeeded")
+	}
+	if _, err := s.GetGitConnection("w"); err == nil {
+		t.Error("GetGitConnection on closed DB succeeded")
+	}
+	if err := s.DeleteGitConnection("w"); err == nil {
+		t.Error("DeleteGitConnection on closed DB succeeded")
+	}
+	if _, err := s.GetRemoteHead("rk", "b"); err == nil {
+		t.Error("GetRemoteHead on closed DB succeeded")
+	}
+	if _, err := s.ListRemoteItems("rk", "b"); err == nil {
+		t.Error("ListRemoteItems on closed DB succeeded")
+	}
+	if _, err := s.CommitRemoteItems("rk", "b", nil); err == nil {
+		t.Error("CommitRemoteItems on closed DB succeeded")
+	}
+	if err := s.CreateJobInstance(&JobInstance{ItemID: "i", JobType: "j"}); err == nil {
+		t.Error("CreateJobInstance on closed DB succeeded")
+	}
+	if _, err := s.GetJobInstance("i", "x"); err == nil {
+		t.Error("GetJobInstance on closed DB succeeded")
+	}
+	if err := s.CancelJobInstance("i", "x"); err == nil {
+		t.Error("CancelJobInstance on closed DB succeeded")
+	}
 }

@@ -84,6 +84,48 @@ CREATE TABLE IF NOT EXISTS operations (
 	result_ref TEXT NOT NULL DEFAULT '',
 	fail_with TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS connections (
+	id TEXT PRIMARY KEY,
+	display_name TEXT NOT NULL,
+	connectivity_type TEXT NOT NULL DEFAULT '',
+	details_json TEXT NOT NULL DEFAULT '{}',
+	created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS git_connections (
+	workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+	provider_json TEXT NOT NULL,
+	remote_key TEXT NOT NULL,
+	branch TEXT NOT NULL,
+	cred_source TEXT NOT NULL,
+	connection_id TEXT NOT NULL DEFAULT '',
+	initialized INTEGER NOT NULL DEFAULT 0,
+	synced_commit TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS git_remote_items (
+	remote_key TEXT NOT NULL,
+	branch TEXT NOT NULL,
+	logical_id TEXT NOT NULL,
+	item_type TEXT NOT NULL,
+	display_name TEXT NOT NULL,
+	parts_json TEXT NOT NULL,
+	PRIMARY KEY (remote_key, branch, item_type, display_name)
+);
+CREATE TABLE IF NOT EXISTS git_remote_heads (
+	remote_key TEXT NOT NULL,
+	branch TEXT NOT NULL,
+	commit_hash TEXT NOT NULL,
+	PRIMARY KEY (remote_key, branch)
+);
+CREATE TABLE IF NOT EXISTS job_instances (
+	id TEXT PRIMARY KEY,
+	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	job_type TEXT NOT NULL,
+	invoke_type TEXT NOT NULL DEFAULT 'Manual',
+	created_at INTEGER NOT NULL,
+	complete_at INTEGER NOT NULL,
+	cancelled INTEGER NOT NULL DEFAULT 0,
+	fail_with TEXT NOT NULL DEFAULT ''
+);
 PRAGMA foreign_keys = ON;
 `)
 	return err
