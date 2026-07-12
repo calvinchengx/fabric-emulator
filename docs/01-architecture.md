@@ -6,6 +6,24 @@ plus a thin OneLake data-plane surface. It is the sibling of
 project is an Entra ID STS, this one is the Fabric REST surface that *consumes*
 Entra tokens.
 
+## Version grounding
+
+Fabric is evergreen SaaS: no product version exists, and
+[`MicrosoftDocs/fabric-docs`](https://github.com/MicrosoftDocs/fabric-docs) has
+**no tags or releases** (a continuously published `main`, ~100+ commits/week).
+The only contract version Microsoft exposes is the **`/v1` path segment** of the
+REST API — that is what this emulator targets.
+
+For clean-room reproducibility we therefore pin the docs **commit**, not a
+version. All claims in this doc set were verified against:
+
+> `MicrosoftDocs/fabric-docs @ 0d63906ac29d8e8befa42b13f3d1d31c0f92081a` (2026-07-10)
+
+When re-auditing, diff the grounding files against this SHA
+(`git diff 0d63906a.. -- docs/onelake/onelake-api-parity.md
+docs/cicd/git-integration/git-automation.md docs/security/workspace-identity.md
+docs/security/permission-model.md`) and bump the pin.
+
 ## The two-system model
 
 A Fabric environment is two independent products with two protocols:
