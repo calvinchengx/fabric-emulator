@@ -105,8 +105,11 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
       target-side RBAC (the trusted-workspace-access smoke path); external
       targets 501. Designed in [07-control-plane-api.md](07-control-plane-api.md)
       (`## OneLake shortcuts`).
-- [ ] e2e: azcopy / ADLS SDK against the emulator (later; wire subset ready —
-      subsumed by the real-compute track's A1/A2 milestones below).
+- [x] e2e: the **real Azure Blob SDK** (`azure-storage-blob`) round-trips
+      through the emulator — `e2e/adls-sdk` (3-OS): uploads a pyarrow Parquet,
+      downloads it byte-identical (found + fixed the `x-ms-range` gap), lists
+      blobs, DFS sees the same file. (azcopy, a heavier Go binary, is still a
+      later add; the SDK path is the higher-value proof and it's done.)
 
 ## R — Real compute (PySpark, Delta, warehouse)
 
@@ -122,7 +125,10 @@ proxy would be a separate sibling.
       put-if-absent conditional writes (Delta `_delta_log` atomicity), DFS
       rename (`x-ms-rename-source`), ETag/Last-Modified on every path. e2e
       **A1** (`e2e/delta-rs`, CI): real `deltalake` writes v0 → reads back →
-      appends v1, and the same files list through the DFS surface.
+      appends v1, and the same files list through the DFS surface. Hardened
+      with a **concurrent-commit race test** (24 goroutines race one
+      `_delta_log` file; exactly one wins — the mechanism-level atomicity
+      oracle, `-race`-clean) and `x-ms-range` support (found by the ADLS SDK).
 - [ ] **R1** — e2e **A2**: real PySpark + delta-spark via the ABFS driver
       (`abfss://…@onelake.dfs.fabric.microsoft.com/…`), OAuth against
       entra-emulator; cross-engine read-back with delta-rs.
