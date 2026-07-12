@@ -47,7 +47,7 @@ func TestWarehouseTwoSurfaces(t *testing.T) {
 	t.Cleanup(func() { srv.Close() })
 
 	ws := &store.Workspace{DisplayName: "two-surface-ws"}
-	if err := srv.Store.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
+	if err := srv.Store.CreateWorkspace(ws, store.Principal{ID: entra.DaemonClientID, Type: "ServicePrincipal"}); err != nil {
 		t.Fatal(err)
 	}
 	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "lake"}
@@ -141,5 +141,27 @@ func TestWarehouseTwoSurfaces(t *testing.T) {
 	}
 	if _, err := whdb.QueryContext(ctx, "SELECT * FROM [sales]"); err == nil {
 		t.Fatal("the lakehouse's table is visible from the warehouse connection — items not isolated")
+	}
+
+	// --- information_schema relays natively (SSMS/Power BI schema introspection). ---
+	var tname string
+	if err := whdb.QueryRowContext(ctx,
+		"SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME='metrics'").Scan(&tname); err != nil || tname != "metrics" {
+		t.Fatalf("information_schema: TABLE_NAME=%q err=%v", tname, err)
+	}
+
+	// --- RBAC: an item whose workspace the principal has no role on is rejected. ---
+	ws2 := &store.Workspace{DisplayName: "other-ws"}
+	if err := srv.Store.CreateWorkspace(ws2, store.Principal{ID: "someone-else", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	lake2 := &store.Item{WorkspaceID: ws2.ID, Type: "Lakehouse", DisplayName: "lake2"}
+	if err := srv.Store.CreateItem(lake2, nil); err != nil {
+		t.Fatal(err)
+	}
+	odb := open(lake2.ID)
+	defer odb.Close()
+	if _, err := odb.QueryContext(ctx, "SELECT 1"); err == nil {
+		t.Fatal("connected to a lakehouse the principal has no workspace role on — RBAC not enforced")
 	}
 }

@@ -87,7 +87,9 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | **Lakehouse SQL analytics endpoint — Delta → engine** | The emulator reads the lakehouse's `Tables/<t>` Delta in pure Go and reflects (CREATE+INSERT) it into the sidecar on connect, so `SELECT` hits real OneLake data (matches DuckDB), **read-only** (writes rejected). *Not PolyBase* — SQL Server reading Delta in place is a proven dead-end on the Linux container (`e2e/sql-endpoint-spike/`) | 🟢 Real (reflection) |
 | **Warehouse — read-write T-SQL** | Client `CREATE`/`INSERT`/`SELECT` relay straight to the sidecar; the warehouse owns its data (no reflection) | 🟢 Real (relay) |
 | Per-item isolation (each item = its own SQL Server database) | Lakehouse/Warehouse routed by type; per-item databases so they never collide | 🟢 Real |
-| RBAC→SQL permissions / `information_schema` parity / per-column type fidelity | — | 🔴 T4b (next) |
+| RBAC → SQL permissions | Workspace role enforced on connect: no role → rejected; Viewer → read-only; Contributor+ → read-write (warehouse) | 🟢 Real |
+| `information_schema` / `sys.*` introspection | Relays natively — reflected/warehouse tables are real SQL Server tables | 🟢 Real (relay) |
+| Per-column type fidelity (real SQL types over the wire) / connection by item name | — | 🔴 T4b/c (next) |
 
 ## Data Factory (`data-factory/`)
 

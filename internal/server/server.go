@@ -82,8 +82,16 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 			}
 			s.TDS.Backend = be
 			// Route each connection by item type (Lakehouse = read-only analytics
-			// endpoint, Warehouse = read-write), each into its own database.
-			s.TDS.OnConnect = warehouseRouter(st, be)
+			// endpoint, Warehouse = read-write), each into its own database, with
+			// workspace RBAC enforced for the token's principal.
+			principalOf := func(token string) (string, error) {
+				p, err := sqlv.Validate(token)
+				if err != nil {
+					return "", err
+				}
+				return p.ID, nil
+			}
+			s.TDS.OnConnect = warehouseRouter(st, be, principalOf)
 		}
 	}
 

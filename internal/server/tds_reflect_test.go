@@ -53,7 +53,7 @@ func TestWarehouseDeltaReflectionE2E(t *testing.T) {
 
 	// Seed a lakehouse and a Delta table (part-0.parquet + _delta_log) in OneLake.
 	ws := &store.Workspace{DisplayName: "wh-ws"}
-	if err := srv.Store.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
+	if err := srv.Store.CreateWorkspace(ws, store.Principal{ID: entra.DaemonClientID, Type: "ServicePrincipal"}); err != nil {
 		t.Fatal(err)
 	}
 	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "lake"}

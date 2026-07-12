@@ -22,11 +22,12 @@ type Server struct {
 	Auth    Authenticator
 	Backend Backend
 	// OnConnect, if set, is called after a successful login with the target
-	// database (a Fabric item id). It prepares that item's backend database —
-	// for a lakehouse, reflecting its Delta into the engine — and returns
-	// whether the surface is read-only (a lakehouse SQL analytics endpoint), so
-	// the query loop can reject writes. An error rejects the login.
-	OnConnect func(ctx context.Context, database string) (readOnly bool, err error)
+	// database (a Fabric item id) and the presented FedAuth token. It enforces
+	// workspace RBAC for that principal, prepares the item's backend database —
+	// for a lakehouse, reflecting its Delta into the engine — and returns whether
+	// the surface is read-only (a lakehouse endpoint, or a Viewer). An error
+	// rejects the login (no access, unknown/non-SQL item).
+	OnConnect func(ctx context.Context, database, token string) (readOnly bool, err error)
 }
 
 // Serve accepts and handles connections until l errors.
@@ -80,7 +81,7 @@ func (s *Server) handle(conn net.Conn) error {
 	// whether it is a read-only surface.
 	readOnly := false
 	if s.OnConnect != nil && login.Database != "" {
-		ro, err := s.OnConnect(context.Background(), login.Database)
+		ro, err := s.OnConnect(context.Background(), login.Database, login.FedAuthToken)
 		if err != nil {
 			return s.reject(conn, err.Error())
 		}

@@ -71,10 +71,13 @@ func TestWarehouseRouter(t *testing.T) {
 	}
 	defer db.Close()
 	ctx := context.Background()
-	route := warehouseRouter(st, &fakeWH{db: db})
+	// Identity principalOf: the "token" passed in is the principal id.
+	idOf := func(tok string) (string, error) { return tok, nil }
+	route := warehouseRouter(st, &fakeWH{db: db}, idOf)
 
-	// Lakehouse → read-only, and reflection populated the engine.
-	ro, err := route(ctx, lake.ID)
+	// "u" created the workspace, so it is Admin. Lakehouse → read-only, and
+	// reflection populated the engine.
+	ro, err := route(ctx, lake.ID, "u")
 	if err != nil || !ro {
 		t.Fatalf("lakehouse: readOnly=%v err=%v", ro, err)
 	}
@@ -82,21 +85,42 @@ func TestWarehouseRouter(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM [m]").Scan(&n); err != nil || n != 2 {
 		t.Fatalf("reflected rows = %d (err %v), want 2", n, err)
 	}
-
-	// Warehouse → read-write.
-	if ro, err := route(ctx, wh.ID); err != nil || ro {
-		t.Fatalf("warehouse: readOnly=%v err=%v", ro, err)
+	// Warehouse as Admin → read-write.
+	if ro, err := route(ctx, wh.ID, "u"); err != nil || ro {
+		t.Fatalf("warehouse admin: readOnly=%v err=%v", ro, err)
 	}
 	// Unknown database → error.
-	if _, err := route(ctx, "does-not-exist"); err == nil {
+	if _, err := route(ctx, "does-not-exist", "u"); err == nil {
 		t.Error("unknown database accepted")
 	}
 	// A non-SQL item (Notebook) → error.
-	if _, err := route(ctx, nb.ID); err == nil {
+	if _, err := route(ctx, nb.ID, "u"); err == nil {
 		t.Error("notebook accepted as a SQL endpoint")
 	}
 	// EnsureDatabase failure surfaces.
-	if _, err := warehouseRouter(st, &fakeWH{db: db, ensureErr: fmt.Errorf("boom")})(ctx, wh.ID); err == nil {
+	if _, err := warehouseRouter(st, &fakeWH{db: db, ensureErr: fmt.Errorf("boom")}, idOf)(ctx, wh.ID, "u"); err == nil {
 		t.Error("EnsureDatabase error not surfaced")
+	}
+
+	// --- RBAC ---
+	// A principal with no role on the workspace is denied.
+	if _, err := route(ctx, wh.ID, "stranger"); err == nil {
+		t.Error("a principal with no workspace role was granted access")
+	}
+	grant := func(principal, role string) {
+		if err := st.CreateRoleAssignment(&store.RoleAssignment{
+			WorkspaceID: ws.ID, Principal: store.Principal{ID: principal, Type: "User"}, Role: role}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A Viewer gets read-only, even on a Warehouse.
+	grant("viewer", store.RoleViewer)
+	if ro, err := route(ctx, wh.ID, "viewer"); err != nil || !ro {
+		t.Fatalf("warehouse viewer: readOnly=%v err=%v (want read-only)", ro, err)
+	}
+	// A Contributor gets read-write on a Warehouse.
+	grant("contrib", store.RoleContributor)
+	if ro, err := route(ctx, wh.ID, "contrib"); err != nil || ro {
+		t.Fatalf("warehouse contributor: readOnly=%v err=%v (want read-write)", ro, err)
 	}
 }

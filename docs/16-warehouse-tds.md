@@ -199,14 +199,25 @@ DML to OneLake Delta.
   safety) + a gated two-surface e2e (`TestWarehouseTwoSurfaces`) proving
   warehouse read-write, lakehouse read-only rejection, and isolation against a
   real SQL Server.
-- **T4b — RBAC + parity.** *Next.*
-  1. **RBAC → SQL permissions.** The FedAuth token is validated, but the
-     workspace role isn't yet enforced on the SQL surface: map Viewer → read,
-     Contributor/Member/Admin → read-write (warehouse), and deny on no role.
-  2. **`information_schema` / connection-string parity** so schema-introspecting
-     tools (SSMS, Power BI, drivers) see the expected shape.
-  3. **Per-column type fidelity** (drop the all-`NVARCHAR(4000)` shortcut from
-     T2/T3) — infer real SQL types from the Parquet/Delta schema.
+- **T4b — RBAC + parity. ✅ Done (RBAC + information_schema).**
+  1. **RBAC → SQL permissions. ✅** On connect, the token's principal is resolved
+     and its **workspace role** is enforced (`warehouseRouter`): no role → login
+     rejected; Viewer → read-only; Contributor/Member/Admin → read-write on a
+     Warehouse (a Lakehouse endpoint is always read-only). Unit-tested (each role
+     tier + deny) + a wire-level e2e (a principal with no role on the item's
+     workspace is rejected).
+  2. **`information_schema` parity. ✅** Reflected/warehouse tables are real SQL
+     Server tables in the item's database, so `INFORMATION_SCHEMA.*` / `sys.*`
+     relay natively — schema-introspecting tools (SSMS, Power BI) see the real
+     shape. Covered by the two-surface e2e (`INFORMATION_SCHEMA.TABLES`).
+  3. **Per-column type fidelity.** *Next.* Drop the all-`NVARCHAR(4000)` result
+     encoding — carry each column's real SQL type from the engine into the TDS
+     COLMETADATA + row encoding, so a typed client sees INT/FLOAT/DATETIME/…
+     instead of text.
+- **T4c (deferred) — connection by item name.** Real Fabric connects with the
+  lakehouse/warehouse *display name* as the database, not the GUID; the emulator
+  accepts the item id today. Name resolution needs workspace scoping on the
+  connection (the server name encodes the workspace) — a larger change, by demand.
 - **T5 (optional) — borrowed-oracle breadth.** The CI proof is a `go-mssqldb`
   test today; add a `pyodbc` (`ActiveDirectoryServicePrincipal`) client to the
   gated e2e so a second real driver family exercises the FedAuth + result path.
