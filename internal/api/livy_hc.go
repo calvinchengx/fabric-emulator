@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,7 @@ type hcRepl struct {
 	createdAt   int64
 	createBody  []byte // acquire payload, forwarded when the backend session is opened
 	backendID   string // real backend Livy session id (lazy; empty until first statement)
+	statements  []*livyStatement // native-agent path: this REPL's executed statements
 	deleted     bool
 }
 
@@ -148,14 +150,15 @@ func (m *hcManager) replFor(sid, replID string) (*hcRepl, bool) {
 // release removes a REPL, freeing its slot (a later same-tag acquire can repack
 // into the group) and dropping the group when it empties. Returns the backend
 // session id to tear down, if any.
-func (m *hcManager) release(hcID string) (backendID string, ok bool) {
+func (m *hcManager) release(hcID string) (backendID, replID string, ok bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.byID[hcID]
 	if !ok || r.deleted {
-		return "", false
+		return "", "", false
 	}
 	r.deleted = true
+	replID = r.replID
 	if g := m.groups[r.groupID]; g != nil {
 		out := g.repls[:0]
 		for _, id := range g.repls {
@@ -168,7 +171,7 @@ func (m *hcManager) release(hcID string) (backendID string, ok bool) {
 			delete(m.groups, g.id)
 		}
 	}
-	return r.backendID, true
+	return r.backendID, replID, true
 }
 
 // registerHCLivy mounts the HC routes. They carry a literal `highConcurrencySessions`
@@ -225,13 +228,16 @@ func (a *API) deleteHC(w http.ResponseWriter, r *http.Request, p *auth.Principal
 	if !a.hcScope(w, r, p, store.RoleContributor) {
 		return
 	}
-	backendID, ok := a.hcMgr().release(r.PathValue("hcid"))
+	backendID, replID, ok := a.hcMgr().release(r.PathValue("hcid"))
 	if !ok {
 		writeErr(w, http.StatusNotFound, "HighConcurrencySessionNotFound", "No such high concurrency session.")
 		return
 	}
-	// Best-effort teardown of the real backend session, if one was opened.
-	if backendID != "" && a.livyBackend != nil {
+	// Native path: drop the REPL's agent namespace. Proxy path: best-effort
+	// teardown of the real backend session, if one was opened.
+	if a.livyAgent != nil {
+		_, _ = a.agentPost("/close", map[string]any{"session": replID})
+	} else if backendID != "" && a.livyBackend != nil {
 		u := *a.livyBackend
 		u.Path = strings.TrimRight(u.Path, "/") + "/sessions/" + backendID
 		if req, err := http.NewRequest(http.MethodDelete, u.String(), nil); err == nil {
@@ -258,9 +264,16 @@ func (a *API) hcStatement(w http.ResponseWriter, r *http.Request, p *auth.Princi
 		writeErr(w, http.StatusNotFound, "ReplNotFound", "No such REPL in this high concurrency session.")
 		return
 	}
+	// Native path: each REPL is its own namespace in the Spark agent — the HC
+	// packing model (up to 5 REPLs sharing one Spark session, isolated) made
+	// real. Statements are computed by real Spark; no external Livy server.
+	if a.livyAgent != nil {
+		a.hcStatementNative(w, r, repl)
+		return
+	}
 	if a.livy == nil {
 		writeErr(w, http.StatusNotImplemented, "SparkBackendNotConfigured",
-			"No Spark/Livy backend is configured; set --spark-livy-url to run Spark for real.")
+			"No Spark/Livy backend is configured; set --spark-agent-url (native) or --spark-livy-url (proxy) to run Spark for real.")
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -282,6 +295,37 @@ func (a *API) hcStatement(w http.ResponseWriter, r *http.Request, p *auth.Princi
 	r.URL.Path = path
 	r.URL.RawPath = ""
 	a.livy.ServeHTTP(w, r)
+}
+
+// hcStatementNative runs (POST) or reads (GET) a statement in the REPL's agent
+// namespace — real Spark, one namespace per REPL for isolation.
+func (a *API) hcStatementNative(w http.ResponseWriter, r *http.Request, repl *hcRepl) {
+	m := a.hcMgr()
+	if r.Method == http.MethodPost {
+		var body struct {
+			Code string `json:"code"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		out, err := a.agentPost("/statements", map[string]any{"session": repl.replID, "code": body.Code})
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "SparkAgentError", err.Error())
+			return
+		}
+		m.mu.Lock()
+		st := &livyStatement{ID: len(repl.statements), State: "available", Output: out}
+		repl.statements = append(repl.statements, st)
+		m.mu.Unlock()
+		writeJSON(w, http.StatusCreated, st)
+		return
+	}
+	n, err := strconv.Atoi(r.PathValue("stid"))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err != nil || n < 0 || n >= len(repl.statements) {
+		writeErr(w, http.StatusNotFound, "StatementNotFound", "No such statement.")
+		return
+	}
+	writeJSON(w, http.StatusOK, repl.statements[n])
 }
 
 // ensureBackendSession opens the REPL's real Livy session once, forwarding the

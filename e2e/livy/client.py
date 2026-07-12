@@ -113,8 +113,63 @@ def main():
     print(f"sum(1..100) -> {r3}", flush=True)
     assert r3 == "5050", r3
 
-    # Clean up.
     http("DELETE", f"{base}/sessions/{sid}", token=token)
+
+    # --- High-concurrency session: a REPL slot on real Spark (the 5-REPL model).
+    _, hc = http("POST", f"{base}/highConcurrencySessions", {"sessionTag": "etl"}, token=token)
+    hcid, replid, hcsid = hc["id"], hc["replId"], hc["sessionId"]
+
+    def hc_run(code_str):
+        _, st = http("POST", f"{base}/highConcurrencySessions/{hcsid}/repls/{replid}/statements", {"code": code_str}, token=token)
+        stid = st["id"]
+        for _ in range(120):
+            _, got = http("GET", f"{base}/highConcurrencySessions/{hcsid}/repls/{replid}/statements/{stid}", token=token)
+            if got["state"] == "available":
+                return got["output"]["data"]["text/plain"].strip()
+            time.sleep(1)
+        raise RuntimeError("hc statement never available")
+
+    r_hc = hc_run("spark.range(7).count()")
+    print(f"[HC] spark.range(7).count() -> {r_hc}", flush=True)
+    assert r_hc == "7", r_hc
+    http("DELETE", f"{base}/highConcurrencySessions/{hcid}", token=token)
+
+    # --- Batch: run a script fetched from OneLake on real Spark.
+    try:
+        http("POST", f"{ENTRA}/admin/api/apps",
+             {"displayName": "storage", "appIdUri": "https://storage.azure.com", "isConfidential": False})
+    except urllib.error.HTTPError as e:
+        if e.code != 409:
+            raise
+    _, stok = http("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
+        "grant_type": "client_credentials",
+        "client_id": "cccccccc-0000-0000-0000-000000000002",
+        "client_secret": "daemon-app-secret",
+        "scope": "https://storage.azure.com/.default",
+    }, form=True)
+    storage_token = stok["access_token"]
+
+    # Upload the batch script into the lakehouse's Files (Blob surface, Host-routed).
+    script = b"rows = spark.range(1000).filter('id % 2 = 0').count()\nprint('even rows:', rows)\n"
+    put = urllib.request.Request(
+        f"{FABRIC}/{ws['id']}/{lake['id']}/Files/batch.py", data=script, method="PUT",
+        headers={"Host": "onelake.blob.fabric.microsoft.com", "Authorization": "Bearer " + storage_token,
+                 "x-ms-blob-type": "BlockBlob"})
+    with urllib.request.urlopen(put) as r:
+        assert r.status in (200, 201), r.status
+
+    _, b = http("POST", f"{base}/batches", {"file": f"{ws['id']}/{lake['id']}/Files/batch.py"}, token=token)
+    bg = None
+    for _ in range(120):
+        _, bg = http("GET", f"{base}/batches/{b['id']}", token=token)
+        if bg["state"] in ("success", "dead"):
+            break
+        time.sleep(1)
+    print(f"[BATCH] state={bg['state']} log={bg.get('log')}", flush=True)
+    assert bg["state"] == "success", bg
+    assert any("even rows: 500" in line for line in bg.get("log", [])), bg["log"]
+    http("DELETE", f"{base}/batches/{b['id']}", token=token)
+
     print("NATIVE-LIVY E2E: PASS", flush=True)
 
 

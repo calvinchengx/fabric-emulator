@@ -50,19 +50,32 @@ type livySession struct {
 	statements []*livyStatement
 }
 
-// livyManager holds native Livy session state (in-memory; sessions are
-// ephemeral, like a real Livy server's).
+// livyBatch is a non-interactive batch: a script (from OneLake) run once via
+// the agent in its own namespace — the spark-submit path, without launching a
+// separate driver (the agent's SparkSession runs the script's code).
+type livyBatch struct {
+	ID    int      `json:"id"`
+	State string   `json:"state"`
+	AppID string   `json:"appId"`
+	Log   []string `json:"log,omitempty"`
+	ns    string
+}
+
+// livyManager holds native Livy session/batch state (in-memory; ephemeral,
+// like a real Livy server's).
 type livyManager struct {
-	mu       sync.Mutex
-	sessions map[int]*livySession
-	nextID   int
+	mu        sync.Mutex
+	sessions  map[int]*livySession
+	nextID    int
+	batches   map[int]*livyBatch
+	nextBatch int
 }
 
 func (a *API) livyMgr() *livyManager {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.livyNativeState == nil {
-		a.livyNativeState = &livyManager{sessions: map[int]*livySession{}}
+		a.livyNativeState = &livyManager{sessions: map[int]*livySession{}, batches: map[int]*livyBatch{}}
 	}
 	return a.livyNativeState
 }
@@ -111,10 +124,14 @@ func (a *API) livyNative(w http.ResponseWriter, r *http.Request) {
 		a.submitLivyStatement(w, r, parts[1], m)
 	case len(parts) == 4 && parts[0] == "sessions" && parts[2] == "statements" && r.Method == http.MethodGet:
 		a.getLivyStatement(w, parts[1], parts[3], m)
-	case len(parts) >= 1 && parts[0] == "batches":
-		// Batches are the spark-submit path; not part of the interactive spike.
-		writeErr(w, http.StatusNotImplemented, "BatchesNotImplemented",
-			"The native Livy layer implements interactive sessions; batches are a follow-up.")
+	case len(parts) == 1 && parts[0] == "batches" && r.Method == http.MethodPost:
+		a.createLivyBatch(w, r, m)
+	case len(parts) == 2 && parts[0] == "batches" && r.Method == http.MethodGet:
+		a.getLivyBatch(w, parts[1], m, false)
+	case len(parts) == 3 && parts[0] == "batches" && parts[2] == "log" && r.Method == http.MethodGet:
+		a.getLivyBatch(w, parts[1], m, true)
+	case len(parts) == 2 && parts[0] == "batches" && r.Method == http.MethodDelete:
+		a.deleteLivyBatch(w, parts[1], m)
 	default:
 		writeErr(w, http.StatusNotFound, "LivyPathNotFound", "Unknown Livy path.")
 	}
@@ -231,4 +248,145 @@ func (a *API) getLivyStatement(w http.ResponseWriter, id, stid string, m *livyMa
 		return
 	}
 	writeJSON(w, http.StatusOK, s.statements[n])
+}
+
+// createLivyBatch resolves the batch's `file` to a script in OneLake, runs it
+// through the agent (its own namespace), and records the terminal state + log.
+func (a *API) createLivyBatch(w http.ResponseWriter, r *http.Request, m *livyManager) {
+	var body struct {
+		File string `json:"file"`
+		Args []any  `json:"args"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.File == "" {
+		writeErr(w, http.StatusBadRequest, "InvalidBatch", "batch requires a `file`.")
+		return
+	}
+	code, err := a.resolveLivyFile(body.File)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "BatchFileNotFound", err.Error())
+		return
+	}
+	m.mu.Lock()
+	b := &livyBatch{ID: m.nextBatch, State: "starting", ns: fmt.Sprintf("batch-%d", m.nextBatch)}
+	b.AppID = "livy-agent-" + b.ns
+	m.batches[b.ID] = b
+	m.nextBatch++
+	m.mu.Unlock()
+
+	out, err := a.agentPost("/statements", map[string]any{"session": b.ns, "code": string(code)})
+	m.mu.Lock()
+	if err != nil {
+		b.State, b.Log = "dead", []string{err.Error()}
+	} else if fmt.Sprint(out["status"]) == "ok" {
+		b.State, b.Log = "success", livyBatchLog(out)
+	} else {
+		b.State, b.Log = "dead", livyBatchLog(out)
+	}
+	resp := *b
+	m.mu.Unlock()
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+// livyBatchLog turns an agent result into log lines (stdout, or the traceback).
+func livyBatchLog(out map[string]any) []string {
+	if data, ok := out["data"].(map[string]any); ok {
+		if tp, ok := data["text/plain"].(string); ok && tp != "" {
+			return strings.Split(strings.TrimRight(tp, "\n"), "\n")
+		}
+	}
+	if tb, ok := out["traceback"].([]any); ok {
+		lines := make([]string, 0, len(tb))
+		for _, l := range tb {
+			lines = append(lines, fmt.Sprint(l))
+		}
+		return lines
+	}
+	return []string{}
+}
+
+func (a *API) lookupBatch(w http.ResponseWriter, id string, m *livyManager) (*livyBatch, bool) {
+	n, err := strconv.Atoi(id)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "InvalidBatchId", "Batch id must be an integer.")
+		return nil, false
+	}
+	m.mu.Lock()
+	b, ok := m.batches[n]
+	m.mu.Unlock()
+	if !ok {
+		writeErr(w, http.StatusNotFound, "BatchNotFound", "No such batch.")
+		return nil, false
+	}
+	return b, true
+}
+
+func (a *API) getLivyBatch(w http.ResponseWriter, id string, m *livyManager, logOnly bool) {
+	b, ok := a.lookupBatch(w, id, m)
+	if !ok {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if logOnly {
+		writeJSON(w, http.StatusOK, map[string]any{"id": b.ID, "from": 0, "total": len(b.Log), "log": b.Log})
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
+}
+
+func (a *API) deleteLivyBatch(w http.ResponseWriter, id string, m *livyManager) {
+	b, ok := a.lookupBatch(w, id, m)
+	if !ok {
+		return
+	}
+	_, _ = a.agentPost("/close", map[string]any{"session": b.ns})
+	m.mu.Lock()
+	delete(m.batches, b.ID)
+	m.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"msg": "deleted"})
+}
+
+// resolveLivyFile fetches a batch script from OneLake. Accepts an
+// abfss/abfs URI (`abfss://{ws}@host/{item}/{path}`) or a plain
+// `{ws}/{item}/{path}` — item and workspace by GUID or name.
+func (a *API) resolveLivyFile(file string) ([]byte, error) {
+	var wsRef, itemRef, rel string
+	if u, err := url.Parse(file); err == nil && (u.Scheme == "abfss" || u.Scheme == "abfs") {
+		// abfss://{container}@{account}.dfs…/{item}/{path} — url.Parse puts the
+		// container (the workspace) in the userinfo, not the host.
+		wsRef = u.User.Username()
+		segs := strings.SplitN(strings.TrimPrefix(u.Path, "/"), "/", 2)
+		if len(segs) == 2 {
+			itemRef, rel = segs[0], segs[1]
+		}
+	} else {
+		segs := strings.SplitN(strings.TrimPrefix(file, "/"), "/", 3)
+		if len(segs) == 3 {
+			wsRef, itemRef, rel = segs[0], segs[1], segs[2]
+		}
+	}
+	if wsRef == "" || itemRef == "" || rel == "" {
+		return nil, fmt.Errorf("cannot parse OneLake file reference %q", file)
+	}
+	ws, err := a.Store.GetWorkspace(wsRef)
+	if err != nil {
+		if ws, err = a.Store.GetWorkspaceByName(wsRef); err != nil {
+			return nil, fmt.Errorf("unknown workspace %q", wsRef)
+		}
+	}
+	it, err := a.Store.GetItem(ws.ID, itemRef)
+	if err != nil {
+		if i := strings.LastIndex(itemRef, "."); i > 0 {
+			it, err = a.Store.GetItemByName(ws.ID, itemRef[:i], itemRef[i+1:])
+		}
+		if err != nil {
+			return nil, fmt.Errorf("unknown item %q", itemRef)
+		}
+	}
+	p, err := a.Store.GetOneLakePath(it.ID, rel)
+	if err != nil {
+		return nil, fmt.Errorf("file %q not found in OneLake", rel)
+	}
+	return p.Content, nil
 }
