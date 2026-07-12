@@ -105,7 +105,33 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
       target-side RBAC (the trusted-workspace-access smoke path); external
       targets 501. Designed in [02-api-surface.md](02-api-surface.md)
       (`## OneLake shortcuts`).
-- [ ] e2e: azcopy / ADLS SDK against the emulator (later; wire subset ready).
+- [ ] e2e: azcopy / ADLS SDK against the emulator (later; wire subset ready —
+      subsumed by the real-compute track's A1/A2 milestones below).
+
+## R — Real compute (PySpark, Delta, warehouse)
+
+Designed in [04-real-compute.md](04-real-compute.md): attach **real engines**
+below the emulated planes — never fake results. Lives in this repo (storage
+completeness + e2e harnesses + compose sidecars); only a future TDS-FedAuth
+proxy would be a separate sibling.
+
+- [ ] **R0** — OneLake storage completeness: Range reads, ETags + conditional
+      writes (Delta `_delta_log` put-if-absent atomicity), rename, list-paging
+      fidelity; e2e **A1**: delta-rs (`deltalake`) writes/reads a Delta table
+      through our DFS with an entra Storage token.
+- [ ] **R1** — e2e **A2**: real PySpark + delta-spark via the ABFS driver
+      (`abfss://…@onelake.dfs.fabric.microsoft.com/…`), OAuth against
+      entra-emulator; cross-engine read-back with delta-rs.
+- [ ] **R2** — Livy passthrough on the documented endpoint
+      (`…/lakehouses/{id}/livyapi/versions/2023-12-01/{sessions,batches}`)
+      delegating to a real Spark sidecar; opt-in real `RunNotebook` mode
+      (`--spark-livy-url`) with job status from the actual batch; token
+      passthrough scopes incl. `Code.AccessAzureKeyvault.All` →
+      azure-keyvault-emulator.
+- [ ] **R3** — warehouse: DuckDB+delta SQL over the same OneLake files (SQL
+      analytics endpoint semantics); Babelfish/SQL Server sidecar per
+      Warehouse item (SQL-auth compromise documented); TDS-FedAuth proxy only
+      by demand, as its own repo.
 
 ## Cross-cutting (throughout)
 
