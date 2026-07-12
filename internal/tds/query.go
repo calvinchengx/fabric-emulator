@@ -54,6 +54,11 @@ const nvarcharMaxBytes = 8000
 // layer converts the text to the caller's scan target (int, string, …), so any
 // query round-trips. Real per-column type fidelity is a later refinement.
 func resultTokens(res *Result) []byte {
+	// A resultless batch (SET options, DDL, DML) has no columns: just DONE,
+	// with the affected-row count — no COLMETADATA.
+	if len(res.Columns) == 0 {
+		return done(doneFinal|doneCount, uint64(len(res.Rows)))
+	}
 	out := []byte{0x81} // COLMETADATA
 	out = binary.LittleEndian.AppendUint16(out, uint16(len(res.Columns)))
 	for _, c := range res.Columns {

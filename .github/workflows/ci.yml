@@ -197,3 +197,29 @@ jobs:
       # table lands), and the run is reported back so the RunNotebook job
       # reflects real execution. Linux-only.
       - run: python3 e2e/notebook-run/run.py
+
+  warehouse-tds:
+    name: Real SQL Server relay through the TDS endpoint
+    runs-on: ubuntu-latest
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+        ports:
+          - 1433:1433
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+      # entra-emulator runs in-process (a go.mod dependency); fabric's SQL/TDS
+      # endpoint points at the SQL Server service, then a real go-mssqldb client
+      # connects with an entra token and runs DDL + DML + a GROUP BY through the
+      # emulator — the FedAuth login is terminated here, the T-SQL runs on the
+      # real engine. Linux-only (SQL Server is a container weight class).
+      - name: Real SQL Server relay e2e
+        env:
+          WAREHOUSE_MSSQL_DSN: "server=localhost;user id=sa;password=Str0ng!Passw0rd;encrypt=disable"
+        run: go test ./internal/server/ -run TestWarehouseSQLServerRelayE2E -v -count=1

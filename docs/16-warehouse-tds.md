@@ -128,9 +128,16 @@ endpoint semantics) that maps onto existing Delta data.
   `go-mssqldb` driver**: LOGIN7 token capture, accept/reject by audience, and a
   full server e2e (real entra token → FedAuth login → `SELECT 1` = 1; a
   wrong-audience token is refused). No sidecar — the unique, in-family part.
-- **T2 — real engine.** Attach the SQL Server sidecar; relay arbitrary
-  SQLBatch; real T-SQL over sidecar-native tables. `--warehouse-sql-url` (unset
-  → the T1 stub result; set → real T-SQL, mirroring `--spark-livy-url`).
+- **T2 — real engine. ✅ Done.** With `-warehouse-sql-url` set, the endpoint
+  relays each authenticated SQLBatch to a real **SQL Server** over `go-mssqldb`
+  and streams the result back (COLMETADATA/ROW/DONE; DDL/DML → bare DONE; engine
+  errors → SQL ERROR). Unset → the T1 stub. The relay is validated against the
+  real `go-mssqldb` client with a fake backend (multi-column/NULL round-trip,
+  error surfacing) and the row-materialisation against in-memory SQLite; a
+  gated e2e (`WAREHOUSE_MSSQL_DSN`, CI Linux with a SQL Server service) runs
+  real DDL + DML + `GROUP BY` end to end: entra token → FedAuth login → real
+  T-SQL on the engine. Result columns are currently all NVARCHAR (the client
+  converts on scan); per-column type fidelity is a follow-up.
 - **T3 — lakehouse data.** Delta→sidecar reflection; query real
   `Tables/<name>` data written by delta-rs/Spark elsewhere in the family — the
   cross-engine warehouse oracle (delta-rs writes, T-SQL reads).

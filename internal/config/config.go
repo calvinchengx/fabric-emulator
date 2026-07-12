@@ -49,6 +49,11 @@ type Config struct {
 	// a TDS listener that terminates Entra FedAuth and answers T-SQL. Empty
 	// leaves the SQL endpoint off. See docs/16-warehouse-tds.md.
 	SQLTDSAddr string
+
+	// WarehouseSQLURL, when set, is a real SQL Server backend (go-mssqldb DSN)
+	// the SQL endpoint relays authenticated queries to. Empty leaves the
+	// endpoint answering the T1 stub result.
+	WarehouseSQLURL string
 }
 
 // FromEnv builds a validated Config from FABRIC_* environment variables.
@@ -69,6 +74,7 @@ func FromEnvPartial() *Config {
 		DisableTLS:        boolEnv("FABRIC_DISABLE_TLS"),
 		SparkLivyURL:      os.Getenv("FABRIC_SPARK_LIVY_URL"),
 		SQLTDSAddr:        os.Getenv("FABRIC_SQL_TDS_ADDR"),
+		WarehouseSQLURL:   os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
 		RetryAfterSeconds: 1,
 	}
 }

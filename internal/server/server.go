@@ -73,6 +73,15 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 			_, err := sqlv.Validate(token)
 			return err
 		}}
+		// With a backend configured, authenticated queries relay to a real SQL
+		// Server; without one, the endpoint answers the T1 stub.
+		if cfg.WarehouseSQLURL != "" {
+			be, err := tds.NewSQLServerBackend(cfg.WarehouseSQLURL)
+			if err != nil {
+				return nil, err
+			}
+			s.TDS.Backend = be
+		}
 	}
 
 	a.Register(s.mux)
