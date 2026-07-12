@@ -115,9 +115,14 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
       synced by `website/scripts/sync-docs.mjs`; pinned Astro Starlight;
       deploys via `docs-site.yml`) — live at
       <https://calvinchengx.github.io/fabric-emulator/>.
-- [ ] GoReleaser: binaries + distroless Docker (GHCR) + Homebrew cask + winget.
+- [x] GoReleaser: binaries + distroless Docker (GHCR, HEALTHCHECK via the new
+      `healthcheck` subcommand) + Homebrew cask + winget (both self-skip
+      without their tokens); `version` stamped via ldflags. Channels go live
+      at the first `v*` tag.
 - [ ] Playwright headless mount smoke (catch builds-but-doesn't-mount).
-- [ ] Coverage parity with entra-emulator (target ≥ 70% per package).
+- [x] Coverage parity with entra-emulator (≥ 70% per package): every package
+      77–100% from its own tests; 91.6% total plain / 93.5% cross-package
+      (CI floor 90%).
 - [ ] **Connection credentials**: model `credentialDetails.credentialType`
       (Basic / ServicePrincipal / WorkspaceIdentity / Key / SAS / Anonymous)
       with write-only secrets, SP validation against entra at create, and the
