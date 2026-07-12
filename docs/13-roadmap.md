@@ -189,16 +189,16 @@ proxy would be a separate sibling.
 - [x] Coverage parity with entra-emulator (≥ 70% per package): every package
       77–100% from its own tests; 91.6% total plain / 93.5% cross-package
       (CI floor 90%).
-- [ ] **Connection credentials**: model `credentialDetails.credentialType`
+- [x] **Connection credentials**: `credentialDetails.credentialType`
       (Basic / ServicePrincipal / WorkspaceIdentity / Key / SAS / Anonymous)
-      with write-only secrets, SP validation against entra at create, and the
-      WorkspaceIdentity kind gated on a provisioned identity. Designed in
-      [07-control-plane-api.md](07-control-plane-api.md) (`### Connection credentials`).
-- [ ] **AKV-reference connections**: a connection type that resolves secrets
-      from [azure-keyvault-emulator](https://github.com/calvinchengx/azure-keyvault-emulator)
-      (the family's third member), reproducing Fabric's Azure Key Vault
-      references feature offline — `workspace identity → entra token →
-      vault secret → connection`. Depends on that emulator's P0.
+      with write-only secrets, SP validation against entra at create
+      (`skipTestConnection` bypass), and the WorkspaceIdentity kind gated on a
+      provisioned identity.
+- [x] **AKV-reference connections**: `AzureKeyVaultReference` credential
+      resolves the secret via the workspace identity's vault-audience token
+      against [azure-keyvault-emulator](https://github.com/calvinchengx/azure-keyvault-emulator)
+      — `workspace identity → entra token → vault secret → connection`, offline
+      (`internal/akv`; only the pointer is stored, never the value).
 
 ## Sequencing note
 
