@@ -1,0 +1,116 @@
+# GoReleaser builds the cross-platform release binaries. Pure Go (modernc
+# sqlite, CGO off), so every target cross-compiles from one runner. Run
+# locally with `goreleaser release --snapshot --clean`.
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: fabric-emulator
+    main: ./cmd/fabric-emulator
+    binary: fabric-emulator
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+# Homebrew tap: on each tag, GoReleaser generates a cask from the built macOS
+# archives and commits it to calvinchengx/homebrew-tap, so `brew install
+# calvinchengx/tap/fabric-emulator` works. Pushing to a *separate* repo needs
+# a token with write access — the default GITHUB_TOKEN can't — so a
+# HOMEBREW_TAP_TOKEN secret is supplied by the release workflow. If the secret
+# is absent (e.g. a fork), skip publishing rather than fail the release.
+# Linux/Windows users use the release archives, `go install`, or the GHCR image.
+homebrew_casks:
+  - name: fabric-emulator
+    repository:
+      owner: calvinchengx
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/calvinchengx/fabric-emulator"
+    description: "A local emulator of the Microsoft Fabric control plane (workspaces, items, RBAC, git, LRO, OneLake) that validates Entra bearer tokens."
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
+    commit_author:
+      name: Calvin Cheng
+      email: calvin@calvinx.com
+    # Clear the quarantine attribute so the unsigned binary runs without a
+    # Gatekeeper prompt (GoReleaser's recommended cask post-install hook).
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/fabric-emulator"]
+          end
+
+# winget (Windows): on each tag, GoReleaser builds the manifest from the Windows
+# archives and opens a PR against microsoft/winget-pkgs from a fork, so
+# `winget install calvinchengx.fabric-emulator` works. Needs a WINGET_TOKEN
+# secret with write access to a calvinchengx/winget-pkgs fork; if it's absent
+# (e.g. a fork of this repo) the step self-skips rather than failing the
+# release. Same public-repo token constraint as the Homebrew tap.
+winget:
+  - name: fabric-emulator
+    publisher: calvinchengx
+    package_identifier: calvinchengx.fabric-emulator
+    license: Apache-2.0
+    homepage: "https://github.com/calvinchengx/fabric-emulator"
+    short_description: "A local emulator of the Microsoft Fabric control plane that validates Entra bearer tokens."
+    description: |
+      Fabric Emulator is a local emulator of the Microsoft Fabric control
+      plane in a single Go binary: workspaces, items and their CI/CD
+      definitions, workspace RBAC, git integration, jobs, the 202/poll
+      long-running-operation contract, and a OneLake ADLS-Gen2 data-plane
+      subset — all validating Microsoft Entra bearer tokens. Pairs with
+      entra-emulator so service-principal automation and fabric-cicd
+      pipelines run offline with no capacity and no cloud tenant. Local
+      development tool only.
+    release_notes_url: "https://github.com/calvinchengx/fabric-emulator/releases/tag/{{ .Tag }}"
+    tags:
+      - fabric
+      - microsoft-fabric
+      - onelake
+      - entra
+      - emulator
+      - fabric-cicd
+    repository:
+      owner: calvinchengx
+      name: winget-pkgs
+      branch: "fabric-emulator-{{ .Version }}"
+      # winget requires the plain {{ .Env.X }} form (unlike homebrew_casks,
+      # which accepts the index form). Only resolved when actually publishing,
+      # so the skip_upload guard below still keeps no-secret runs from failing.
+      token: "{{ .Env.WINGET_TOKEN }}"
+      pull_request:
+        enabled: true
+        draft: false
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+    skip_upload: '{{ if index .Env "WINGET_TOKEN" }}false{{ else }}true{{ end }}'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"

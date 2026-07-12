@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # create the GitHub Release
+  packages: write # push the image to GHCR
+
+jobs:
+  binaries:
+    name: Cross-platform binaries (GoReleaser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # GoReleaser needs full history/tags
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Write access to calvinchengx/homebrew-tap so GoReleaser can commit
+          # the cask. Optional: if the secret is unset the homebrew_casks step
+          # self-skips (skip_upload) instead of failing the release.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # Write access to a calvinchengx/winget-pkgs fork so GoReleaser can
+          # open the manifest PR against microsoft/winget-pkgs. Optional: if the
+          # secret is unset the winget step self-skips (skip_upload).
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+
+  image:
+    name: Docker image → GHCR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ github.ref_name }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

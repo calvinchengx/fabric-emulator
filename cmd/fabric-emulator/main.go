@@ -11,11 +11,15 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/config"
 	"github.com/calvinchengx/fabric-emulator/internal/server"
 	"github.com/calvinchengx/fabric-emulator/internal/tlscert"
 )
+
+// version is stamped by GoReleaser via -ldflags "-X main.version=…".
+var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -25,6 +29,15 @@ func main() {
 
 func run(args []string) error {
 	cfg := config.FromEnvPartial()
+	if len(args) > 0 {
+		switch args[0] {
+		case "version":
+			fmt.Println("fabric-emulator", version)
+			return nil
+		case "healthcheck":
+			return healthcheck(cfg.Addr)
+		}
+	}
 	fs := flag.NewFlagSet("fabric-emulator", flag.ContinueOnError)
 	fs.StringVar(&cfg.Addr, "addr", cfg.Addr, "listen address")
 	fs.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "state directory (empty = in-memory)")
@@ -68,4 +81,34 @@ func run(args []string) error {
 	}
 	fmt.Printf("fabric-emulator listening on %s://%s (issuer: %s)\n", scheme, ln.Addr(), cfg.EntraIssuer)
 	return http.Serve(ln, srv.Handler())
+}
+
+// healthcheck probes /health on the local instance and exits 0 when healthy —
+// distroless images have no shell, so container HEALTHCHECKs exec this binary.
+// The self-signed cert isn't in any trust store; this is a localhost liveness
+// probe, so skipping verification is fine.
+func healthcheck(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	client := &http.Client{
+		Timeout:   3 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}
+	resp, err := client.Get("https://" + net.JoinHostPort(host, port) + "/health")
+	if err != nil {
+		// TLS may be disabled; retry plain HTTP before giving up.
+		if resp, err = client.Get("http://" + net.JoinHostPort(host, port) + "/health"); err != nil {
+			return err
+		}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("health: %s", resp.Status)
+	}
+	return nil
 }
