@@ -171,6 +171,63 @@ The complete loop this yields: *author in VS Code → sync via git/fabric-cicd
 emulator family → Delta lands in OneLake → query it via the DuckDB SQL
 endpoint → schedule via the jobs API → CI drives the identical REST surfaces.*
 
+## Track E — pipelines: real orchestration where it exists, real work everywhere
+
+Pipelines are the sharpest test of the never-fake principle, because the
+engines split three ways:
+
+**E1 — Apache Airflow: the fully real tier.** Fabric's own code-first
+orchestrator is **genuine Apache Airflow**
+(`apache-airflow-jobs-concepts.md`: "Python-based DAGs", the next generation
+of ADF's Workflow Orchestration Manager) — and Airflow is OSS. So the
+highest-fidelity local pipeline story attaches a **real Airflow sidecar** as
+the runtime behind `ApacheAirflowJob` items:
+
+- DAG files stored as item definitions (the P1 machinery), synced into the
+  sidecar's DAG folder;
+- operators drive our control plane over REST — trigger notebook jobs (real
+  Spark via Track B), poll LROs, move OneLake data;
+- Airflow's **Azure Key Vault secrets backend** (documented:
+  `apache-airflow-jobs-enable-azure-key-vault.md`) pointed at
+  azure-keyvault-emulator — connections/variables resolve from the family's
+  vault.
+
+Real scheduler, real executor, real DAG semantics — zero orchestration
+emulation. For data engineers who *can choose*, this is the recommended
+local pipeline path.
+
+**E2 — DataPipeline interpreter: our control flow, real work.** The no-code
+pipeline engine (ADF lineage) is proprietary — Polaris-class unobtainable.
+For `DataPipeline` items we therefore implement the **documented control-flow
+semantics** ourselves — `dependsOn` conditions
+(Succeeded/Failed/Completed/Skipped), ForEach (sequential/parallel), If /
+Until (+timeout), Invoke Pipeline, and the retry policies
+`activity-overview.md` specifies — with every **leaf activity delegating to a
+real engine**:
+
+| Activity | Executes via |
+|---|---|
+| Notebook | Livy → the real Spark sidecar (Track B) |
+| Script / Stored procedure / Lookup | the warehouse engine (Track C) |
+| Web / Webhook | real HTTP calls |
+| Copy | real byte movement over a **scoped connector set** (OneLake↔OneLake, ADLS-shaped, HTTP source, local SQL) |
+| Invoke pipeline | recursive interpretation |
+
+Stated plainly: the orchestrator here is *ours* — faithful to documented
+semantics, deterministic on the controllable clock (a Until-timeout or retry
+backoff is testable in milliseconds) — but it is not Microsoft's engine. The
+*work* the pipeline does is real, and a pipeline that runs here exercises
+real Spark, real SQL, and real data movement.
+
+**E3 — honestly unobtainable → 501.** Dataflow Gen2 (the Power Query M
+compute is proprietary), self-hosted integration runtime / gateway scenarios,
+and the long tail of cloud connectors outside the scoped set. Activities we
+cannot execute for real fail with a clear 501 — a pipeline "succeeding"
+without doing its work is exactly what this design forbids.
+
+CI/CD for pipelines needs none of this and works **today**: `DataPipeline`
+definitions round-trip through git and fabric-cicd like any other item.
+
 ## Engine weights — what actually runs, and when
 
 The emulator core never gets heavier; engines are opt-in sidecars behind
@@ -202,6 +259,7 @@ C2 SQL-auth compromise.
 | **R2** | B1+B2 (Livy passthrough; real RunNotebook mode) |
 | **R3** | C1 (DuckDB SQL over the lakehouse); C2/C3 by demand |
 | **R4** | D1–D3 (notebookutils shim; default-lakehouse sessions; VS Code extension compatibility) |
+| **R5** | E1 (real Airflow sidecar behind ApacheAirflowJob items); E2 (DataPipeline interpreter, real-engine leaf activities) |
 
 ## Non-goals
 

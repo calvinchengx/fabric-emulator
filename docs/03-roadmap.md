@@ -137,6 +137,13 @@ proxy would be a separate sibling.
       run → jobs/Livy); default-lakehouse session semantics on the Spark
       sidecar; VS Code Fabric-extension compatibility investigation.
       Designed in [04-real-compute.md](04-real-compute.md) (Track D).
+- [ ] **R5** — pipelines: real Apache Airflow sidecar behind ApacheAirflowJob
+      items (Fabric's own code-first orchestrator IS Airflow; AKV secrets
+      backend → azure-keyvault-emulator); DataPipeline interpreter with
+      documented control-flow semantics and real-engine leaf activities
+      (Notebook→Spark, SQL→warehouse, Copy→scoped real movement); Dataflow
+      Gen2 and unscoped connectors 501. Designed in
+      [04-real-compute.md](04-real-compute.md) (Track E).
 
 ## Cross-cutting (throughout)
 
