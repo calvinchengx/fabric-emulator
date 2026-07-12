@@ -30,13 +30,13 @@ func clearEnv(t *testing.T) {
 
 func TestRunErrors(t *testing.T) {
 	clearEnv(t)
-	if err := run([]string{"-bogus-flag"}); err == nil {
+	if err := run([]string{"-bogus-flag"}, nil); err == nil {
 		t.Fatal("unknown flag accepted")
 	}
-	if err := run(nil); err == nil {
+	if err := run(nil, nil); err == nil {
 		t.Fatal("missing issuer accepted")
 	}
-	if err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "999.999.999.999:1"}); err == nil {
+	if err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "999.999.999.999:1"}, nil); err == nil {
 		t.Fatal("unlistenable addr accepted")
 	}
 }
@@ -62,13 +62,18 @@ func TestRunServesTLS(t *testing.T) {
 	clearEnv(t)
 	port := freePort(t)
 	dir := t.TempDir()
+	// Stop the server and wait for run to return before TempDir cleanup:
+	// the store must release the database file first (Windows cannot
+	// delete a file that is still open).
+	stop, done := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() { close(stop); <-done })
 	go func() {
-		// Serve blocks until process exit; the goroutine dies with the test.
+		defer close(done)
 		_ = run([]string{
 			"-entra-issuer", "https://127.0.0.1:1/t/v2.0", // JWKS unreachable is fine: /health needs no token
 			"-addr", fmt.Sprintf("127.0.0.1:%d", port),
 			"-data-dir", dir,
-		})
+		}, stop)
 	}()
 	client := &http.Client{Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -88,12 +93,15 @@ func TestRunServesTLS(t *testing.T) {
 func TestRunServesPlainHTTP(t *testing.T) {
 	clearEnv(t)
 	port := freePort(t)
+	stop, done := make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() { close(stop); <-done })
 	go func() {
+		defer close(done)
 		_ = run([]string{
 			"-entra-issuer", "https://127.0.0.1:1/t/v2.0",
 			"-addr", fmt.Sprintf("127.0.0.1:%d", port),
 			"-disable-tls",
-		})
+		}, stop)
 	}()
 	poll(t, http.DefaultClient, fmt.Sprintf("http://127.0.0.1:%d/health", port))
 }
@@ -106,7 +114,7 @@ func TestRunDataDirAndTLSFailures(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "127.0.0.1:0", "-data-dir", file})
+	err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "127.0.0.1:0", "-data-dir", file}, nil)
 	if err == nil {
 		t.Fatal("data-dir-is-a-file accepted")
 	}
@@ -115,7 +123,7 @@ func TestRunDataDirAndTLSFailures(t *testing.T) {
 	if err := os.WriteFile(dir3+"/tls", []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "127.0.0.1:0", "-data-dir", dir3}); err == nil {
+	if err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "127.0.0.1:0", "-data-dir", dir3}, nil); err == nil {
 		t.Fatal("broken tls dir accepted")
 	}
 }

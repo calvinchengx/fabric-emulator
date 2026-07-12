@@ -22,12 +22,15 @@ import (
 var version = "dev"
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	if err := run(os.Args[1:], nil); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(args []string) error {
+// run serves until the process exits, or until stop closes (nil = never).
+// Tests stop the server so the store releases the database file before
+// TempDir cleanup — Windows cannot delete a file that is still open.
+func run(args []string, stop <-chan struct{}) error {
 	cfg := config.FromEnvPartial()
 	if len(args) > 0 {
 		switch args[0] {
@@ -78,6 +81,12 @@ func run(args []string) error {
 			return err
 		}
 		ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{cert}})
+	}
+	if stop != nil {
+		go func() {
+			<-stop
+			ln.Close()
+		}()
 	}
 	fmt.Printf("fabric-emulator listening on %s://%s (issuer: %s)\n", scheme, ln.Addr(), cfg.EntraIssuer)
 	return http.Serve(ln, srv.Handler())

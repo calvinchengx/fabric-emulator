@@ -10,7 +10,7 @@ import (
 
 func TestVersionSubcommand(t *testing.T) {
 	clearEnv(t)
-	if err := run([]string{"version"}); err != nil {
+	if err := run([]string{"version"}, nil); err != nil {
 		t.Fatalf("version: %v", err)
 	}
 }
@@ -28,7 +28,7 @@ func TestHealthcheckSubcommand(t *testing.T) {
 	}))
 	defer okSrv.Close()
 	t.Setenv("FABRIC_ADDR", strings.TrimPrefix(okSrv.URL, "http://"))
-	if err := run([]string{"healthcheck"}); err != nil {
+	if err := run([]string{"healthcheck"}, nil); err != nil {
 		t.Fatalf("healthcheck against healthy instance: %v", err)
 	}
 
