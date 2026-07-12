@@ -1,0 +1,9 @@
+# Astro / build output
+dist/
+.astro/
+
+# Node
+node_modules/
+
+# Generated from /docs by scripts/sync-docs.mjs (source of truth lives in /docs)
+src/content/docs/

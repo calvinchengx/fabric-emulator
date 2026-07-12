@@ -1,0 +1,46 @@
+---
+// Override of Starlight's Head to load a small client-side mermaid renderer.
+// The remark plugin (plugins/remark-mermaid.mjs) emits diagrams as
+// `<pre class="mermaid">…</pre>`; this script renders them with mermaid.js,
+// theme-aware, and re-runs on client navigation and theme toggles.
+import Default from '@astrojs/starlight/components/Head.astro';
+---
+
+<Default {...Astro.props}><slot /></Default>
+
+<script>
+  import mermaid from 'mermaid';
+
+  const themeFor = () =>
+    document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default';
+
+  function render() {
+    const nodes = Array.from(document.querySelectorAll('pre.mermaid'));
+    if (nodes.length === 0) return;
+    for (const el of nodes) {
+      const node = /** @type {HTMLElement} */ (el);
+      // Stash the original source once; on re-render (theme change) restore it
+      // and clear mermaid's processed marker so it re-draws with the new theme.
+      if (node.dataset.src === undefined) {
+        node.dataset.src = node.textContent ?? '';
+      } else {
+        node.textContent = node.dataset.src;
+        node.removeAttribute('data-processed');
+      }
+    }
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: themeFor(),
+      flowchart: { htmlLabels: false, useMaxWidth: true },
+    });
+    mermaid.run({ nodes });
+  }
+
+  // Initial + every client-side navigation (Starlight view transitions).
+  document.addEventListener('astro:page-load', render);
+
+  // Re-render when the reader toggles light/dark.
+  new MutationObserver((muts) => {
+    if (muts.some((m) => m.attributeName === 'data-theme')) render();
+  }).observe(document.documentElement, { attributes: true });
+</script>
