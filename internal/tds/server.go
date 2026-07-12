@@ -20,6 +20,10 @@ type Authenticator func(token string) error
 type Server struct {
 	Auth    Authenticator
 	Backend Backend
+	// Reflector, if set, is called after a successful login with the
+	// connection's database (the lakehouse/warehouse) so its Delta tables can
+	// be materialised into the engine before the client queries them.
+	Reflector func(ctx context.Context, database string) error
 }
 
 // Serve accepts and handles connections until l errors.
@@ -67,6 +71,13 @@ func (s *Server) handle(conn net.Conn) error {
 	if s.Auth != nil {
 		if err := s.Auth(login.FedAuthToken); err != nil {
 			return s.reject(conn, "login failed: "+err.Error())
+		}
+	}
+	// Materialise the target lakehouse's Delta tables into the engine before
+	// the client can query them.
+	if s.Reflector != nil && login.Database != "" {
+		if err := s.Reflector(context.Background(), login.Database); err != nil {
+			return s.reject(conn, "warehouse sync failed: "+err.Error())
 		}
 	}
 	// Accepted: LOGINACK + DONE completes the login (go-mssqldb requires no

@@ -138,9 +138,18 @@ endpoint semantics) that maps onto existing Delta data.
   real DDL + DML + `GROUP BY` end to end: entra token → FedAuth login → real
   T-SQL on the engine. Result columns are currently all NVARCHAR (the client
   converts on scan); per-column type fidelity is a follow-up.
-- **T3 — lakehouse data.** Delta→sidecar reflection; query real
-  `Tables/<name>` data written by delta-rs/Spark elsewhere in the family — the
-  cross-engine warehouse oracle (delta-rs writes, T-SQL reads).
+- **T3 — lakehouse data. ✅ Done.** On connect (database = lakehouse item id),
+  the emulator reads each `Tables/<name>` **Delta table** from OneLake in pure
+  Go (`internal/warehouse`: replay `_delta_log`, read Parquet via
+  `parquet-go`) and reflects it into the engine (DROP/CREATE with inferred
+  types + literal INSERT), so `SELECT` hits real OneLake data. The Delta reader
+  + reflection are unit-tested (real Parquet round-trip, add/remove
+  supersession, type inference, SQLite materialization); a gated e2e writes a
+  Delta table into OneLake and a real client `GROUP BY`s it through the endpoint
+  to the SQL Server engine — `us=90, eu=60`, matching DuckDB (R3): the
+  cross-engine oracle. *Limitations:* reflected tables land in the engine's
+  default database (per-lakehouse schema isolation is a follow-up); re-reflects
+  on each connect; `NVARCHAR(4000)`/no-checkpoint like T2's type caveat.
 - **T4 — RBAC + parity.** Map workspace roles → SQL permissions; connection
   string / `information_schema` shape parity.
 

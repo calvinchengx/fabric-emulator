@@ -4,6 +4,8 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/onelake"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/calvinchengx/fabric-emulator/internal/tds"
+	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 )
 
 // SQLAudience is the Entra resource a Fabric SQL/Warehouse token carries
@@ -81,6 +84,20 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 				return nil, err
 			}
 			s.TDS.Backend = be
+			// On connect, reflect the target lakehouse's Delta tables into the
+			// engine. The connection's database is the lakehouse item id.
+			reflectDB, err := sql.Open("sqlserver", cfg.WarehouseSQLURL)
+			if err != nil {
+				return nil, err
+			}
+			s.TDS.Reflector = func(ctx context.Context, database string) error {
+				it, err := st.GetItemByID(database)
+				if err != nil {
+					return nil // unknown database → nothing to reflect
+				}
+				_, err = warehouse.Reflect(ctx, reflectDB, st, it.ID)
+				return err
+			}
 		}
 	}
 

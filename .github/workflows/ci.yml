@@ -219,7 +219,7 @@ jobs:
       # connects with an entra token and runs DDL + DML + a GROUP BY through the
       # emulator — the FedAuth login is terminated here, the T-SQL runs on the
       # real engine. Linux-only (SQL Server is a container weight class).
-      - name: Real SQL Server relay e2e
+      - name: Real SQL Server relay + Delta-reflection e2e
         env:
           WAREHOUSE_MSSQL_DSN: "server=localhost;user id=sa;password=Str0ng!Passw0rd;encrypt=disable"
-        run: go test ./internal/server/ -run TestWarehouseSQLServerRelayE2E -v -count=1
+        run: go test ./internal/server/ -run TestWarehouse -v -count=1
