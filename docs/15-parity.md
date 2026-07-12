@@ -92,7 +92,8 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Data Pipeline control flow (If / ForEach / Until / Switch / Filter / Fail, expression language, `dependsOn`) | Pure-Go interpreter that really executes | 🟢 Real (orchestration) |
 | Pipeline → notebook activity (TridentNotebook) | Resolves the notebook reference and creates a **real RunNotebook job instance** the pipeline gates on — the pipeline→jobs linkage is real; the notebook's **cells** execute only on the Spark sidecar (otherwise the job is clock-derived, like any RunNotebook job) | 🟢 Real chain / 🟠 exec |
 | `queryactivityruns` detail | Full | 🟢 Real |
-| Copy / Lookup / Web leaf activities | **Stubbed success** — the leaf is reached in `dependsOn` order and its expression inputs are resolved, but nothing executes (no data moved, no query, no HTTP call); returns a hardcoded `Succeeded` | 🟡 Emulated |
+| Copy activity — **OneLake → OneLake** | Really moves the bytes through the storage layer: a file, or a directory subtree preserving structure; source/sink locations `{workspaceId?, itemId, path}` are expression-resolved (GUID or name); returns real `filesWritten` / `dataWritten`. External stores / format transformation are out of scope and **fail loudly** | 🟢 Real (in-family) / 🔴 external |
+| Lookup / Web leaf activities | **Stubbed success** — reached in `dependsOn` order and inputs resolved, but nothing executes: a SQL Lookup can't embed a query engine under the pure-Go/no-CGO build, and a Web call to arbitrary URLs would break the offline/deterministic guarantee | 🟡 Emulated |
 | **Dataflow Gen2** (Power Query M engine) | An in-pipeline Dataflow activity fails with an explicit "not implemented" | 🔴 Honest fail |
 | Connectors / on-prem gateways | — | 🔴 Not implemented |
 
