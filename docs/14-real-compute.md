@@ -270,6 +270,77 @@ C2 SQL-auth compromise.
 | **R4** | D1–D3 (notebookutils shim; default-lakehouse sessions; VS Code extension compatibility) |
 | **R5** | E1 (real Airflow sidecar behind ApacheAirflowJob items); E2 (DataPipeline interpreter, real-engine leaf activities) |
 
+## Correctness: how we prove it
+
+Five oracle layers, cheapest first. The theme throughout: **we don't write
+the oracles — we borrow them** from the clients and engines that production
+Fabric already has to satisfy.
+
+1. **Protocol conformance — unmodified real clients.** The established
+   method (fabric-cicd found four real bugs; azsecrets/azkeys proved the
+   vault): if delta-rs, the ADLS SDK, the ABFS driver, and azcopy succeed
+   *unmodified*, the wire is right. Every A/B/C milestone is gated on a real
+   client, never on our own HTTP calls agreeing with ourselves.
+2. **Cross-engine round-trips — the data oracle.** Write with engine A, read
+   with engine B: Spark writes Delta → delta-rs reads it → row counts and
+   content checksums match → DuckDB queries the same table → same results.
+   Three independent implementations agreeing on bytes they didn't write is
+   the strongest correctness signal available without a formal spec.
+3. **Concurrency and atomicity — the Delta commit protocol.** Two writers
+   racing to commit `_delta_log/N.json`: exactly one must win the
+   put-if-absent (`If-None-Match: *`), the loser must observe the conflict
+   and retry as version N+1, and no committed row may vanish. This is the
+   corruption class the R0 ETag work exists to prevent, and it gets explicit
+   adversarial tests (concurrent writers + fault injection), not just happy
+   paths.
+4. **Borrowed reference suites.** The ecosystems ship their own conformance
+   tests, written by the people who defined the semantics: Hadoop's **ABFS
+   filesystem contract tests** (hadoop-azure), delta-rs's object-store
+   integration suite, and dbt's **dbt-tests-adapter** acceptance suite.
+   Pointing them at the emulator turns thousands of third-party assertions
+   into our regression net. These run as opt-in CI jobs (they're heavy),
+   like the fabric-cicd job.
+5. **Version pinning as a correctness contract.** Engines and libraries pin
+   to the documented Fabric Runtime (Spark 3.5.x / Delta 3.x for Runtime
+   1.3; Airflow 2.10.5 / Python 3.12) — so "works on the emulator" and
+   "works hosted" refer to the same binaries, and drift is a deliberate
+   bump, not an accident.
+
+Where a layer can't apply, the surface 501s rather than passing vacuously —
+an untestable claim is treated as a missing feature, not a passing test.
+
+## The compatibility matrix: what must run
+
+**Python on PySpark — Tier 1 (touches our surfaces; each gets an e2e):**
+
+| Library | Why it must work | Surface it exercises |
+|---|---|---|
+| `pyspark` 3.5.x + `delta-spark` 3.x | the engine itself (Runtime 1.3 pin) | ABFS → OneLake DFS (Track A) |
+| `notebookutils` (the D1 shim) | every Fabric notebook imports it | fs → DFS; credentials → entra + vault; lakehouse/jobs → `/v1` |
+| `deltalake` (delta-rs) | Spark-free Delta access; the A1 milestone | object-store semantics on DFS |
+| `pandas` + `pyarrow` | `toPandas()`/`createDataFrame`, `pyspark.pandas`, parquet bridging | in-engine, plus storage when reading `abfss://` |
+| `fsspec` + `adlfs` + `azure-storage-file-datalake` + `azure-identity` | what `pandas.read_parquet("abfss://…")` actually uses | the Python storage path incl. the credential chain |
+| `mlflow` | Fabric experiments/models *are* MLflow | later: attach a **real** mlflow tracking sidecar (same never-fake pattern) or 501 |
+| `semantic-link` (`sempy`) | Fabric-native analytics | partial: list/REST paths work; semantic-model *query* needs the unobtainable engine → 501 |
+
+**Tier 2 (compute-local, storage-agnostic — work automatically once Spark
+runs; verified by one smoke notebook, not per-library e2e):** numpy,
+scikit-learn, matplotlib/seaborn, and the rest of the Runtime's preinstalled
+scientific stack.
+
+**dbt — three adapters, three engine targets:**
+
+| Adapter | Speaks | Works against | When |
+|---|---|---|---|
+| **`dbt-fabricspark`** (Microsoft) | the **Fabric Livy API** | our R2 Livy passthrough → real Spark; models materialize as Delta in OneLake | **earliest dbt win — R2, no warehouse needed** |
+| **`dbt-fabric`** (Microsoft; documented in `tutorial-setup-dbt.md`) | TDS/pyodbc to the warehouse SQL endpoint | the C2 Babelfish/SQL Server sidecar (SQL-auth compromise; T-SQL dialect edges per the Polaris asterisk) | R3/C2 |
+| **`dbt-duckdb`** (+ delta plugin) | DuckDB in-process | the C1 engine over the same OneLake Delta files | R3/C1 |
+
+Acceptance for each: the official **dbt-tests-adapter** suite plus a
+jaffle-shop-style project building end-to-end. The documented
+Airflow-orchestrated dbt pattern (`apache-airflow-jobs-dbt-fabric.md`)
+composes with E1: a real Airflow DAG running real dbt against the emulator.
+
 ## Non-goals
 
 Performance parity, autoscaling/capacity behavior, high-concurrency Livy
