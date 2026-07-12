@@ -218,6 +218,167 @@ func TestPipelineMalformedDefinition(t *testing.T) {
 	}
 }
 
+// seedLakehouse creates a Lakehouse item, optionally seeding a OneLake file.
+func seedLakehouse(t *testing.T, st *store.Store, wid, name string) *store.Item {
+	t.Helper()
+	it := &store.Item{WorkspaceID: wid, Type: "Lakehouse", DisplayName: name}
+	if err := st.CreateItem(it, nil); err != nil {
+		t.Fatal(err)
+	}
+	return it
+}
+
+func seedFile(t *testing.T, st *store.Store, wid, itemID, rel string, content []byte) {
+	t.Helper()
+	if err := st.CreateOneLakePath(&store.OneLakePath{WorkspaceID: wid, ItemID: itemID, RelPath: rel, Content: content}, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPipelineCopyActivityRealBytes: a Copy activity moves real bytes from one
+// lakehouse OneLake path to another, with an expression-resolved sink path.
+func TestPipelineCopyActivityRealBytes(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	payload := []byte("id,name\n1,alice\n2,bob\n")
+	seedFile(t, st, ws.ID, src.ID, "Files/in.csv", payload)
+
+	content := `{"properties":{
+      "parameters":{"out":{"type":"String","defaultValue":"out.csv"}},
+      "activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/in.csv"}},
+          "sink":{"location":{"itemId":"` + dst.ID + `","path":"@concat('Files/',pipeline().parameters.out)"}}
+        }}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+
+	// The bytes really landed at the sink, identical to the source.
+	got, err := st.GetOneLakePath(dst.ID, "Files/out.csv")
+	if err != nil {
+		t.Fatalf("sink file missing: %v", err)
+	}
+	if string(got.Content) != string(payload) {
+		t.Fatalf("sink content = %q, want %q", got.Content, payload)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	out := runs[0]["output"].(map[string]any)
+	if out["filesWritten"].(float64) != 1 || int(out["dataWritten"].(float64)) != len(payload) {
+		t.Fatalf("copy output = %+v", out)
+	}
+}
+
+// TestPipelineCopyDirectory: copying a directory moves the whole subtree,
+// preserving relative structure.
+func TestPipelineCopyDirectory(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	seedFile(t, st, ws.ID, src.ID, "Files/in/a.txt", []byte("A"))
+	seedFile(t, st, ws.ID, src.ID, "Files/in/sub/b.txt", []byte("BB"))
+	// The directory row (IsDir) is what makes the copy recurse the subtree.
+	if err := st.CreateOneLakePath(&store.OneLakePath{WorkspaceID: ws.ID, ItemID: src.ID, RelPath: "Files/in", IsDir: true, Content: []byte{}}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	content := `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/in"}},
+          "sink":{"location":{"itemId":"` + dst.ID + `","path":"Files/out"}}
+        }}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	for rel, want := range map[string]string{"Files/out/a.txt": "A", "Files/out/sub/b.txt": "BB"} {
+		got, err := st.GetOneLakePath(dst.ID, rel)
+		if err != nil || string(got.Content) != want {
+			t.Fatalf("%s = %q (err %v), want %q", rel, got.Content, err, want)
+		}
+	}
+}
+
+// TestPipelineCopyByName: source/sink resolve by workspace + item *name*
+// (not just GUID), and an unknown workspace fails the activity.
+func TestPipelineCopyByName(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st) // DisplayName "w"
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	seedFile(t, st, ws.ID, src.ID, "Files/a", []byte("hi"))
+
+	// Reference workspace by name "w" and items by "name.Lakehouse".
+	ok := `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"location":{"workspaceId":"w","itemId":"src.Lakehouse","path":"Files/a"}},
+          "sink":{"location":{"workspaceId":"w","itemId":"dst.Lakehouse","path":"Files/a"}}
+        }}]}}`
+	pl := createPipeline(t, st, ws.ID, ok)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("by-name copy = %s", s)
+	}
+	got, err := st.GetOneLakePath(dst.ID, "Files/a")
+	if err != nil || string(got.Content) != "hi" {
+		t.Fatalf("by-name sink = %q (err %v)", got.Content, err)
+	}
+
+	// Unknown workspace → fail.
+	bad := `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"location":{"workspaceId":"nope","itemId":"src.Lakehouse","path":"Files/a"}},
+          "sink":{"location":{"itemId":"dst.Lakehouse","path":"Files/a"}}
+        }}]}}`
+	pl2 := createPipeline(t, st, ws.ID, bad)
+	_, jid2 := runJob(t, a, ws.ID, pl2.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl2.ID, jid2); s != "Failed" {
+		t.Fatalf("unknown-workspace copy = %s, want Failed", s)
+	}
+}
+
+// TestPipelineCopyFailures: missing source path and missing itemId fail the
+// activity (and the job) rather than silently "succeeding".
+func TestPipelineCopyFailures(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+
+	// Source file does not exist.
+	c1 := `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/nope.csv"}},
+          "sink":{"location":{"itemId":"` + dst.ID + `","path":"Files/x"}}
+        }}]}}`
+	pl := createPipeline(t, st, ws.ID, c1)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("missing-source job = %s, want Failed", s)
+	}
+
+	// Sink missing itemId.
+	c2 := `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/in"}},
+          "sink":{"location":{"path":"Files/x"}}
+        }}]}}`
+	seedFile(t, st, ws.ID, src.ID, "Files/in", []byte("x"))
+	pl2 := createPipeline(t, st, ws.ID, c2)
+	_, jid2 := runJob(t, a, ws.ID, pl2.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl2.ID, jid2); s != "Failed" {
+		t.Fatalf("missing-itemId job = %s, want Failed", s)
+	}
+}
+
 // TestQueryActivityRunsMissing: a non-pipeline job has no activity-run detail.
 func TestQueryActivityRunsMissing(t *testing.T) {
 	a, st := newAPI(t)
