@@ -22,7 +22,10 @@ jobs:
       - run: go build ./...
       # The server tests start a real entra-emulator in-process and drive the
       # full token → JWKS → RBAC → LRO path over HTTP.
+      # shell: bash keeps the coverage profile and the floor step below in
+      # the same shell semantics on the Windows runner (pwsh vs Git Bash).
       - run: go test -coverpkg=./... -coverprofile=cover.out ./...
+        shell: bash
       # Coverage floor: fail the build if total statement coverage regresses
       # below 90% (currently ~95%).
       - name: Coverage floor (90%)
