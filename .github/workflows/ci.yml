@@ -19,5 +19,10 @@ jobs:
       # The server tests start a real entra-emulator in-process and drive the
       # full token → JWKS → RBAC → LRO path over HTTP.
       - run: go test -coverpkg=./... -coverprofile=cover.out ./...
-      - name: Coverage summary
-        run: go tool cover -func=cover.out | tail -1
+      # Coverage floor: fail the build if total statement coverage regresses
+      # below 80% (currently ~87%).
+      - name: Coverage floor (80%)
+        run: |
+          total=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "total coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { exit (t < 80) ? 1 : 0 }'
