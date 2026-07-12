@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 
 	mssql "github.com/microsoft/go-mssqldb"
@@ -119,6 +120,22 @@ func (b *sqlServerBackend) Query(ctx context.Context, query string) (*Result, er
 	return materialize(rows)
 }
 
+// colTypeFromDB maps a driver's column type name to a wire ColType. Integer,
+// float, and bit families get their real TDS type; everything else (varchar,
+// datetime, decimal, …) falls back to NVARCHAR text. Covers SQL Server names
+// and the SQLite spellings used in tests.
+func colTypeFromDB(name string) ColType {
+	switch strings.ToUpper(name) {
+	case "INT", "BIGINT", "SMALLINT", "TINYINT", "INTEGER":
+		return ColInt
+	case "FLOAT", "REAL", "DOUBLE":
+		return ColFloat
+	case "BIT", "BOOLEAN":
+		return ColBit
+	}
+	return ColNVarchar
+}
+
 // dbFromCtx reads the target database threaded through the context (empty when
 // none — the default pool).
 func dbFromCtx(ctx context.Context) string {
@@ -133,9 +150,14 @@ func materialize(rows *sql.Rows) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	types, _ := rows.ColumnTypes()
 	res := &Result{Columns: make([]Column, len(cols))}
 	for i, c := range cols {
-		res.Columns[i] = Column{Name: c}
+		ct := ColNVarchar
+		if i < len(types) {
+			ct = colTypeFromDB(types[i].DatabaseTypeName())
+		}
+		res.Columns[i] = Column{Name: c, Type: ct}
 	}
 	for rows.Next() {
 		vals := make([]any, len(cols))

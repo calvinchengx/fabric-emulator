@@ -89,7 +89,8 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Per-item isolation (each item = its own SQL Server database) | Lakehouse/Warehouse routed by type; per-item databases so they never collide | 🟢 Real |
 | RBAC → SQL permissions | Workspace role enforced on connect: no role → rejected; Viewer → read-only; Contributor+ → read-write (warehouse) | 🟢 Real |
 | `information_schema` / `sys.*` introspection | Relays natively — reflected/warehouse tables are real SQL Server tables | 🟢 Real (relay) |
-| Per-column type fidelity (real SQL types over the wire) / connection by item name | — | 🔴 T4b/c (next) |
+| Per-column type fidelity (real SQL types over the wire) | Integer/float/bit columns carry their real TDS type (INTN/FLTN/BITN); other types fall back to NVARCHAR text | 🟢 Real (numeric/bool) |
+| Connection by item *name* (vs GUID) | Item id (GUID) today; name needs workspace-scoped connection | 🔴 T4c (deferred) |
 
 ## Data Factory (`data-factory/`)
 

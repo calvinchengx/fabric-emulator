@@ -199,7 +199,7 @@ DML to OneLake Delta.
   safety) + a gated two-surface e2e (`TestWarehouseTwoSurfaces`) proving
   warehouse read-write, lakehouse read-only rejection, and isolation against a
   real SQL Server.
-- **T4b — RBAC + parity. ✅ Done (RBAC + information_schema).**
+- **T4b — RBAC + parity. ✅ Done.**
   1. **RBAC → SQL permissions. ✅** On connect, the token's principal is resolved
      and its **workspace role** is enforced (`warehouseRouter`): no role → login
      rejected; Viewer → read-only; Contributor/Member/Admin → read-write on a
@@ -210,10 +210,13 @@ DML to OneLake Delta.
      Server tables in the item's database, so `INFORMATION_SCHEMA.*` / `sys.*`
      relay natively — schema-introspecting tools (SSMS, Power BI) see the real
      shape. Covered by the two-surface e2e (`INFORMATION_SCHEMA.TABLES`).
-  3. **Per-column type fidelity.** *Next.* Drop the all-`NVARCHAR(4000)` result
-     encoding — carry each column's real SQL type from the engine into the TDS
-     COLMETADATA + row encoding, so a typed client sees INT/FLOAT/DATETIME/…
-     instead of text.
+  3. **Per-column type fidelity. ✅** Integer/float/bit columns carry their real
+     type from the engine (`rows.ColumnTypes()`) into the TDS COLMETADATA + row
+     encoding (INTN/FLTN/BITN, with NULLs); other types keep the NVARCHAR-text
+     fallback (still converts on scan). A typed client reads `int64`/`float64`/
+     `bool` directly. Round-trip-tested through the real `go-mssqldb` driver
+     (typed scans + NULLs + reported column types) and end-to-end (the reflected
+     INT column reads back as an integer type, not text).
 - **T4c (deferred) — connection by item name.** Real Fabric connects with the
   lakehouse/warehouse *display name* as the database, not the GUID; the emulator
   accepts the item id today. Name resolution needs workspace scoping on the

@@ -129,6 +129,16 @@ func TestWarehouseTwoSurfaces(t *testing.T) {
 	if total != 140 {
 		t.Fatalf("lakehouse SUM(amount) = %d, want 140", total)
 	}
+	// Type fidelity: the reflected INT column comes back as an integer type, not text.
+	tr, err := lkdb.QueryContext(ctx, "SELECT amount FROM [sales]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cts, _ := tr.ColumnTypes()
+	if strings.Contains(strings.ToUpper(cts[0].DatabaseTypeName()), "CHAR") {
+		t.Errorf("reflected amount column is text (%s) — type fidelity lost", cts[0].DatabaseTypeName())
+	}
+	tr.Close()
 	if _, err := lkdb.ExecContext(ctx, "INSERT INTO [sales] VALUES ('xx', 1)"); err == nil {
 		t.Fatal("lakehouse INSERT succeeded — the analytics endpoint must be read-only")
 	} else if !strings.Contains(err.Error(), "read-only") {
