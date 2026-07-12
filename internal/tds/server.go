@@ -1,6 +1,7 @@
 package tds
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -14,10 +15,11 @@ import (
 type Authenticator func(token string) error
 
 // Server terminates TDS connections and authenticates the FedAuth login via
-// Auth. Post-login queries currently complete with an empty result (a DONE);
-// relaying to a real T-SQL engine is the next milestone.
+// Auth. When Backend is set, post-login queries execute against it (a real SQL
+// Server); otherwise they answer with the T1 stub (a single int = 1).
 type Server struct {
-	Auth Authenticator
+	Auth    Authenticator
+	Backend Backend
 }
 
 // Serve accepts and handles connections until l errors.
@@ -74,17 +76,24 @@ func (s *Server) handle(conn net.Conn) error {
 	}
 
 	for {
-		typ, _, err := ReadMessage(conn)
+		typ, data, err := ReadMessage(conn)
 		if err != nil {
 			return nil // client closed the connection
 		}
-		if typ == PktSQLBatch {
-			// Stub engine: answer any batch with a single int column = 1 (so
-			// `SELECT 1` returns 1). Relaying to a real T-SQL engine — where the
-			// query and its true result set flow through — is T2.
+		if typ != PktSQLBatch {
+			continue
+		}
+		if s.Backend == nil {
+			// No engine attached: the T1 stub (single int = 1).
 			if err := WriteMessage(conn, PktTabular, intResult(1)); err != nil {
 				return err
 			}
+			continue
+		}
+		// Relay the batch to the real engine and stream its result back.
+		resp := s.runQuery(sqlBatchQuery(data))
+		if err := WriteMessage(conn, PktTabular, resp); err != nil {
+			return err
 		}
 	}
 }
@@ -92,6 +101,16 @@ func (s *Server) handle(conn net.Conn) error {
 // reject sends a login ERROR + errored DONE, then returns (closing the conn).
 func (s *Server) reject(conn net.Conn, msg string) error {
 	return WriteMessage(conn, PktTabular, concat(errorToken(18456, msg), done(doneError, 0)))
+}
+
+// runQuery executes a batch against the backend and returns the encoded TDS
+// response — the result token stream, or an ERROR + errored DONE on failure.
+func (s *Server) runQuery(query string) []byte {
+	res, err := s.Backend.Query(context.Background(), query)
+	if err != nil {
+		return concat(errorToken(50000, err.Error()), done(doneError, 0))
+	}
+	return resultTokens(res)
 }
 
 // --- response token builders (MS-TDS 2.2.7) ---
