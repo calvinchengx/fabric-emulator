@@ -15,7 +15,7 @@ unless marked *sync*.
 
 | Method + path | Notes |
 |---|---|
-| `GET /workspaces` | list; `?roles=` filter, continuation-token pagination *sync* |
+| `GET /workspaces` | list; continuation-token pagination (`?roles=` filter is REST-reference-only, not shown in fabric-docs) *sync* |
 | `POST /workspaces` | create → 201 `{ id, displayName, capacityId }` |
 | `GET /workspaces/{id}` | get *sync* |
 | `PATCH /workspaces/{id}` | rename / describe |
@@ -114,7 +114,7 @@ real GitHub/AzDO needed for the happy path (a real provider can be wired later).
 | Method + path | Notes |
 |---|---|
 | `GET /operations/{id}` | `{ status: NotStarted\|Running\|Succeeded\|Failed, … }` *sync* |
-| `GET /operations/{id}/result` | terminal payload when `Succeeded` |
+| `GET /operations/{id}/result` | terminal payload when `Succeeded` (REST-reference-only; fabric-docs scripts poll `/operations/{id}` and read `Location` for the result) |
 
 Async mutations respond `202` with **both** an `x-ms-operation-id` header (what
 the documented automation scripts actually read) and `Location:
