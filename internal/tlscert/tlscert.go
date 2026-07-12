@@ -22,7 +22,7 @@ import (
 // names so /etc/hosts-style redirection works.
 var Hosts = []string{
 	"localhost", "fabric-emulator",
-	"api.fabric.microsoft.com", "onelake.dfs.fabric.microsoft.com",
+	"api.fabric.microsoft.com", "onelake.dfs.fabric.microsoft.com", "onelake.blob.fabric.microsoft.com",
 }
 
 // Load returns a certificate, generating (and persisting when dataDir is

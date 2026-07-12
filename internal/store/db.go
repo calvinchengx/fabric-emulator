@@ -128,6 +128,8 @@ CREATE TABLE IF NOT EXISTS onelake_paths (
 	is_dir INTEGER NOT NULL DEFAULT 0,
 	content BLOB NOT NULL DEFAULT x'',
 	created_at INTEGER NOT NULL,
+	etag TEXT NOT NULL DEFAULT '',
+	modified_at INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (item_id, rel_path)
 );
 CREATE TABLE IF NOT EXISTS workspace_identities (
@@ -173,6 +175,8 @@ PRAGMA foreign_keys = ON;
 		`ALTER TABLE connections ADD COLUMN sso_type TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN encryption TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN credentials_json TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE onelake_paths ADD COLUMN etag TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE onelake_paths ADD COLUMN modified_at INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return err

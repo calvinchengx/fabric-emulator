@@ -14,17 +14,50 @@ type OneLakePath struct {
 	IsDir       bool
 	Content     []byte
 	CreatedAt   int64
+	ETag        string
+	ModifiedAt  int64
 }
 
-// CreateOneLakePath creates a file (empty) or directory. Parent directories
-// are implicit, like ADLS.
-func (s *Store) CreateOneLakePath(p *OneLakePath) error {
+// ErrPathExists is returned by conditional creates (If-None-Match: *) when
+// the path already exists — the put-if-absent primitive Delta's commit
+// protocol relies on for _delta_log atomicity.
+var ErrPathExists = errors.New("path already exists")
+
+// newETag stamps a fresh opaque ETag.
+func newETag() string { return `"` + NewID() + `"` }
+
+// CreateOneLakePath creates or overwrites a file/directory. When ifNoneMatch
+// is true the create is conditional: an existing path is ErrPathExists and
+// nothing is written. Parent directories are implicit, like ADLS.
+func (s *Store) CreateOneLakePath(p *OneLakePath, ifNoneMatch bool) error {
 	p.CreatedAt = s.Now()
+	p.ModifiedAt = p.CreatedAt
+	p.ETag = newETag()
+	if ifNoneMatch {
+		res, err := s.db.Exec(`
+INSERT INTO onelake_paths (workspace_id, item_id, rel_path, is_dir, content, created_at, etag, modified_at)
+VALUES (?,?,?,?,?,?,?,?)
+ON CONFLICT(item_id, rel_path) DO NOTHING`,
+			p.WorkspaceID, p.ItemID, p.RelPath, p.IsDir, p.Content, p.CreatedAt, p.ETag, p.ModifiedAt)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrPathExists
+		}
+		return nil
+	}
 	_, err := s.db.Exec(`
-INSERT INTO onelake_paths (workspace_id, item_id, rel_path, is_dir, content, created_at)
-VALUES (?,?,?,?,?,?)
-ON CONFLICT(item_id, rel_path) DO UPDATE SET is_dir = excluded.is_dir, content = excluded.content`,
-		p.WorkspaceID, p.ItemID, p.RelPath, p.IsDir, p.Content, p.CreatedAt)
+INSERT INTO onelake_paths (workspace_id, item_id, rel_path, is_dir, content, created_at, etag, modified_at)
+VALUES (?,?,?,?,?,?,?,?)
+ON CONFLICT(item_id, rel_path) DO UPDATE SET
+	is_dir = excluded.is_dir, content = excluded.content,
+	etag = excluded.etag, modified_at = excluded.modified_at`,
+		p.WorkspaceID, p.ItemID, p.RelPath, p.IsDir, p.Content, p.CreatedAt, p.ETag, p.ModifiedAt)
 	return err
 }
 
@@ -32,9 +65,9 @@ ON CONFLICT(item_id, rel_path) DO UPDATE SET is_dir = excluded.is_dir, content =
 func (s *Store) GetOneLakePath(itemID, relPath string) (*OneLakePath, error) {
 	p := &OneLakePath{}
 	err := s.db.QueryRow(`
-SELECT workspace_id, item_id, rel_path, is_dir, content, created_at
+SELECT workspace_id, item_id, rel_path, is_dir, content, created_at, etag, modified_at
 FROM onelake_paths WHERE item_id = ? AND rel_path = ?`, itemID, relPath).
-		Scan(&p.WorkspaceID, &p.ItemID, &p.RelPath, &p.IsDir, &p.Content, &p.CreatedAt)
+		Scan(&p.WorkspaceID, &p.ItemID, &p.RelPath, &p.IsDir, &p.Content, &p.CreatedAt, &p.ETag, &p.ModifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -55,16 +88,52 @@ func (s *Store) AppendOneLakePath(itemID, relPath string, position int64, data [
 		return 0, errors.New("invalid append position")
 	}
 	content := append(p.Content, data...)
-	_, err = s.db.Exec(`UPDATE onelake_paths SET content = ? WHERE item_id = ? AND rel_path = ?`,
-		content, itemID, relPath)
+	_, err = s.db.Exec(`UPDATE onelake_paths SET content = ?, etag = ?, modified_at = ? WHERE item_id = ? AND rel_path = ?`,
+		content, newETag(), s.Now(), itemID, relPath)
 	return int64(len(content)), err
+}
+
+// RenameOneLakePath moves a file, or a directory and its subtree, within an
+// item (the DFS x-ms-rename-source operation; Hadoop committers depend on
+// it). Destination paths are overwritten.
+func (s *Store) RenameOneLakePath(itemID, src, dst string) error {
+	// The source may be an explicit path or an implicit prefix (a directory
+	// with no row of its own); either must cover at least one stored path.
+	var n int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM onelake_paths WHERE item_id = ? AND (rel_path = ? OR rel_path LIKE ? || '/%')`,
+		itemID, src, src).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now, etag := s.Now(), newETag()
+	// Overwrite any existing destination subtree, then move.
+	if _, err := tx.Exec(`
+DELETE FROM onelake_paths WHERE item_id = ? AND (rel_path = ? OR rel_path LIKE ? || '/%')`,
+		itemID, dst, dst); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+UPDATE onelake_paths SET rel_path = ? || substr(rel_path, ?), etag = ?, modified_at = ?
+WHERE item_id = ? AND (rel_path = ? OR rel_path LIKE ? || '/%')`,
+		dst, len(src)+1, etag, now, itemID, src, src); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // ListOneLakePaths returns paths under prefix ("" = whole item). Non-recursive
 // listings collapse deeper entries to their first-level directory.
 func (s *Store) ListOneLakePaths(itemID, prefix string, recursive bool) ([]*OneLakePath, error) {
 	rows, err := s.db.Query(`
-SELECT workspace_id, item_id, rel_path, is_dir, content, created_at
+SELECT workspace_id, item_id, rel_path, is_dir, content, created_at, etag, modified_at
 FROM onelake_paths WHERE item_id = ? ORDER BY rel_path`, itemID)
 	if err != nil {
 		return nil, err
@@ -75,7 +144,7 @@ FROM onelake_paths WHERE item_id = ? ORDER BY rel_path`, itemID)
 	seenDirs := map[string]bool{}
 	for rows.Next() {
 		p := &OneLakePath{}
-		if err := rows.Scan(&p.WorkspaceID, &p.ItemID, &p.RelPath, &p.IsDir, &p.Content, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.WorkspaceID, &p.ItemID, &p.RelPath, &p.IsDir, &p.Content, &p.CreatedAt, &p.ETag, &p.ModifiedAt); err != nil {
 			return nil, err
 		}
 		rel := p.RelPath

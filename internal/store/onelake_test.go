@@ -30,7 +30,7 @@ func TestOneLakePathLifecycle(t *testing.T) {
 	// Create a file and read it back. Content is non-nil even when empty,
 	// matching the DFS handler (io.ReadAll of the request body).
 	f := &OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "Files/raw/a.txt", Content: []byte{}}
-	if err := s.CreateOneLakePath(f); err != nil {
+	if err := s.CreateOneLakePath(f, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetOneLakePath(itID, "Files/raw/a.txt")
@@ -43,7 +43,7 @@ func TestOneLakePathLifecycle(t *testing.T) {
 
 	// Create a directory.
 	d := &OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "Files/raw", IsDir: true, Content: []byte{}}
-	if err := s.CreateOneLakePath(d); err != nil {
+	if err := s.CreateOneLakePath(d, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.GetOneLakePath(itID, "Files/raw")
@@ -55,7 +55,7 @@ func TestOneLakePathLifecycle(t *testing.T) {
 	if _, err := s.AppendOneLakePath(itID, "Files/raw/a.txt", 0, []byte("data")); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "Files/raw/a.txt", Content: []byte{}}); err != nil {
+	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "Files/raw/a.txt", Content: []byte{}}, false); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.GetOneLakePath(itID, "Files/raw/a.txt")
@@ -72,10 +72,10 @@ func TestOneLakePathLifecycle(t *testing.T) {
 func TestAppendOneLakePath(t *testing.T) {
 	s := newTestStore(t)
 	wsID, itID := newOneLakeItem(t, s)
-	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "f.txt", Content: []byte{}}); err != nil {
+	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "f.txt", Content: []byte{}}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "d", IsDir: true, Content: []byte{}}); err != nil {
+	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "d", IsDir: true, Content: []byte{}}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,7 +117,7 @@ func TestListOneLakePaths(t *testing.T) {
 		{RelPath: "Tables", IsDir: true},
 	} {
 		p.WorkspaceID, p.ItemID, p.Content = wsID, itID, []byte{}
-		if err := s.CreateOneLakePath(&p); err != nil {
+		if err := s.CreateOneLakePath(&p, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -169,7 +169,7 @@ func TestListOneLakePathsExplicitDirDedupe(t *testing.T) {
 		{RelPath: "Files/dir/child.txt"},
 	} {
 		p.WorkspaceID, p.ItemID, p.Content = wsID, itID, []byte{}
-		if err := s.CreateOneLakePath(&p); err != nil {
+		if err := s.CreateOneLakePath(&p, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -193,11 +193,11 @@ func TestDeleteOneLakePath(t *testing.T) {
 	s := newTestStore(t)
 	wsID, itID := newOneLakeItem(t, s)
 	for _, rel := range []string{"Files/raw/a.txt", "Files/raw/b.txt", "Files/top.txt"} {
-		if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: rel, Content: []byte{}}); err != nil {
+		if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: rel, Content: []byte{}}, false); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "Files/raw", IsDir: true, Content: []byte{}}); err != nil {
+	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "Files/raw", IsDir: true, Content: []byte{}}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -330,7 +330,7 @@ func TestClosedDBOneLakeErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Close()
-	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: "w", ItemID: "i", RelPath: "f", Content: []byte{}}); err == nil {
+	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: "w", ItemID: "i", RelPath: "f", Content: []byte{}}, false); err == nil {
 		t.Error("CreateOneLakePath on closed DB succeeded")
 	}
 	if _, err := s.GetOneLakePath("i", "f"); err == nil {
@@ -350,5 +350,55 @@ func TestClosedDBOneLakeErrors(t *testing.T) {
 	}
 	if _, err := s.GetItemByName("w", "d", "t"); err == nil {
 		t.Error("GetItemByName on closed DB succeeded")
+	}
+}
+
+func TestConditionalCreateAndRename(t *testing.T) {
+	s := newTestStore(t)
+	wsID, itID := newOneLakeItem(t, s)
+
+	// put-if-absent: first wins, second is ErrPathExists and does not write.
+	p1 := &OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "Tables/t/_delta_log/0.json", Content: []byte("v1")}
+	if err := s.CreateOneLakePath(p1, true); err != nil {
+		t.Fatal(err)
+	}
+	p2 := &OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "Tables/t/_delta_log/0.json", Content: []byte("v2")}
+	if err := s.CreateOneLakePath(p2, true); !errors.Is(err, ErrPathExists) {
+		t.Fatalf("second conditional create err = %v; want ErrPathExists", err)
+	}
+	got, _ := s.GetOneLakePath(itID, "Tables/t/_delta_log/0.json")
+	if string(got.Content) != "v1" || got.ETag == "" || got.ModifiedAt == 0 {
+		t.Fatalf("winner clobbered: %q etag=%q mod=%d", got.Content, got.ETag, got.ModifiedAt)
+	}
+
+	// Rename moves a subtree and rotates etags; source disappears.
+	for _, rel := range []string{"Files/stage/a", "Files/stage/deep/b"} {
+		if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: rel, Content: []byte(rel)}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.RenameOneLakePath(itID, "Files/stage", "Files/final"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetOneLakePath(itID, "Files/stage/a"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("source survived rename")
+	}
+	moved, err := s.GetOneLakePath(itID, "Files/final/deep/b")
+	if err != nil || string(moved.Content) != "Files/stage/deep/b" {
+		t.Fatalf("moved = %+v, %v", moved, err)
+	}
+	// Rename over an existing destination overwrites it.
+	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: wsID, ItemID: itID, RelPath: "Files/final2", Content: []byte("old")}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RenameOneLakePath(itID, "Files/final", "Files/final2"); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := s.GetOneLakePath(itID, "Files/final2/deep/b"); err != nil || string(p.Content) != "Files/stage/deep/b" {
+		t.Fatalf("overwrite rename = %+v, %v", p, err)
+	}
+	// Renaming a missing source errors.
+	if err := s.RenameOneLakePath(itID, "Files/ghost", "Files/x"); err == nil {
+		t.Fatal("rename of missing source succeeded")
 	}
 }

@@ -9,11 +9,13 @@ package onelake
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
@@ -22,10 +24,11 @@ import (
 // StorageAudience is the only token audience OneLake accepts.
 var StorageAudience = []string{"https://storage.azure.com", "https://storage.azure.com/"}
 
-// Service handles the DFS surface.
+// Service handles the DFS and Blob surfaces.
 type Service struct {
 	Store *store.Store
 	Auth  *auth.Validator // configured with the Storage audience
+	stage blockStage     // uncommitted Put Block staging (Blob dialect)
 }
 
 // New builds the service; the validator must carry StorageAudience.
@@ -61,6 +64,105 @@ func permHeaders(w http.ResponseWriter) {
 	w.Header().Set("x-ms-owner", "$superuser")
 	w.Header().Set("x-ms-group", "$superuser")
 	w.Header().Set("x-ms-permissions", "---------")
+}
+
+// pathHeaders stamps the per-path metadata storage clients depend on.
+func pathHeaders(w http.ResponseWriter, p *store.OneLakePath, st *store.Store) {
+	if p.ETag != "" {
+		w.Header().Set("ETag", p.ETag)
+	}
+	mod := p.ModifiedAt
+	if mod == 0 {
+		mod = p.CreatedAt
+	}
+	w.Header().Set("Last-Modified", time.Unix(mod, 0).UTC().Format(http.TimeFormat))
+}
+
+// serveContent writes content honoring a single-range Range header (Parquet
+// readers seek with bytes=a-b); 206 with Content-Range for partial reads,
+// 416 for unsatisfiable ranges.
+func serveContent(w http.ResponseWriter, r *http.Request, content []byte) {
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Accept-Ranges", "bytes")
+	rng := r.Header.Get("Range")
+	if rng == "" {
+		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		_, _ = w.Write(content)
+		return
+	}
+	start, end, ok := parseRange(rng, int64(len(content)))
+	if !ok {
+		w.Header().Set("Content-Range", "bytes */"+strconv.Itoa(len(content)))
+		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(content)))
+	w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+	w.WriteHeader(http.StatusPartialContent)
+	_, _ = w.Write(content[start : end+1])
+}
+
+// parseRange handles the single-range forms storage clients emit:
+// bytes=a-b, bytes=a-, bytes=-n (suffix).
+func parseRange(h string, size int64) (start, end int64, ok bool) {
+	spec, found := strings.CutPrefix(h, "bytes=")
+	if !found || strings.Contains(spec, ",") {
+		return 0, 0, false
+	}
+	a, b, found := strings.Cut(spec, "-")
+	if !found {
+		return 0, 0, false
+	}
+	if a == "" { // suffix: last n bytes
+		n, err := strconv.ParseInt(b, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, 0, false
+		}
+		if n > size {
+			n = size
+		}
+		return size - n, size - 1, size > 0
+	}
+	start, err := strconv.ParseInt(a, 10, 64)
+	if err != nil || start < 0 || start >= size {
+		return 0, 0, false
+	}
+	if b == "" {
+		return start, size - 1, true
+	}
+	end, err = strconv.ParseInt(b, 10, 64)
+	if err != nil || end < start {
+		return 0, 0, false
+	}
+	if end >= size {
+		end = size - 1
+	}
+	return start, end, true
+}
+
+// renameSource resolves the x-ms-rename-source path (which is
+// /{filesystem}/{item}/{rel…} on the wire) to a rel path within the same
+// item — cross-item renames are rejected, matching managed-folder rules.
+func (s *Service) renameSource(wsID, itemID, src string) (string, *dfsError) {
+	src, _, _ = strings.Cut(src, "?") // may carry a sas/query suffix
+	segs := strings.Split(strings.Trim(src, "/"), "/")
+	if len(segs) < 4 {
+		return "", &dfsError{"InvalidRenameSource", http.StatusBadRequest,
+			"x-ms-rename-source must be /{workspace}/{item}/{path} within the same item."}
+	}
+	ws, derr := s.resolveWorkspace(segs[0])
+	if derr != nil {
+		return "", derr
+	}
+	it, derr := s.resolveItem(ws.ID, segs[1])
+	if derr != nil {
+		return "", derr
+	}
+	if ws.ID != wsID || it.ID != itemID {
+		return "", &dfsError{"InvalidRenameSource", http.StatusBadRequest,
+			"Renames must stay within one item (Fabric-managed folders cannot move)."}
+	}
+	return strings.Join(segs[2:], "/"), nil
 }
 
 // ServeHTTP implements the DFS endpoint.
@@ -165,12 +267,31 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.Method {
-	case http.MethodPut: // create file or directory
+	case http.MethodPut: // create file/directory, or rename
+		// DFS rename: PUT dst with x-ms-rename-source (Hadoop committers).
+		if src := r.Header.Get("x-ms-rename-source"); src != "" {
+			srcRel, derr := s.renameSource(ws.ID, it.ID, src)
+			if derr != nil {
+				writeDFSErr(w, *derr)
+				return
+			}
+			if err := s.Store.RenameOneLakePath(it.ID, srcRel, rel); err != nil {
+				writeDFSErr(w, dfsError{"PathNotFound", http.StatusNotFound, err.Error()})
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
 		isDir := r.URL.Query().Get("resource") == "directory"
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+		ifNoneMatch := r.Header.Get("If-None-Match") == "*"
 		err := s.Store.CreateOneLakePath(&store.OneLakePath{
 			WorkspaceID: ws.ID, ItemID: it.ID, RelPath: rel, IsDir: isDir, Content: body,
-		})
+		}, ifNoneMatch)
+		if errors.Is(err, store.ErrPathExists) {
+			writeDFSErr(w, dfsError{"PathAlreadyExists", http.StatusConflict, "The specified path already exists."})
+			return
+		}
 		if err != nil {
 			writeDFSErr(w, dfsError{"InternalError", http.StatusInternalServerError, err.Error()})
 			return
@@ -187,6 +308,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		permHeaders(w)
+		pathHeaders(w, pth, s.Store)
 		w.Header().Set("Content-Length", strconv.Itoa(len(pth.Content)))
 		if pth.IsDir {
 			w.Header().Set("x-ms-resource-type", "directory")
@@ -195,7 +317,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(http.StatusOK)
 
-	case http.MethodGet: // read file
+	case http.MethodGet: // read file (Range-aware: Parquet readers seek)
 		pth, err := s.Store.GetOneLakePath(it.ID, rel)
 		if err != nil {
 			writeDFSErr(w, dfsError{"PathNotFound", http.StatusNotFound, "The path does not exist."})
@@ -206,9 +328,8 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		permHeaders(w)
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Length", strconv.Itoa(len(pth.Content)))
-		_, _ = w.Write(pth.Content)
+		pathHeaders(w, pth, s.Store)
+		serveContent(w, r, pth.Content)
 
 	case http.MethodDelete:
 		if err := s.Store.DeleteOneLakePath(it.ID, rel); err != nil {

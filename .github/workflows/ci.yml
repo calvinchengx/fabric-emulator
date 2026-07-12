@@ -54,3 +54,20 @@ jobs:
       # installs fabric-cicd in a venv, publishes a notebook repo, and
       # verifies the definition round-trips (idempotently).
       - run: python e2e/fabric-cicd/run.py
+
+  delta-rs:
+    name: Real delta-rs writes Delta through OneLake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # Starts entra-emulator + fabric-emulator, then the real `deltalake`
+      # (delta-rs) engine writes and reads a Delta table through the OneLake
+      # Blob surface with an entra-minted Storage token — exercising Range
+      # reads and the _delta_log put-if-absent commit primitive.
+      - run: ./e2e/delta-rs/run.sh

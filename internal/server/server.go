@@ -57,15 +57,26 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 }
 
 // Handler returns the root handler: Host-routed like real Fabric —
-// onelake.dfs.fabric.microsoft.com serves the data plane, everything else
-// the control plane.
+// onelake.dfs.* serves the DFS data plane and onelake.blob.* the Blob
+// dialect. For clients that override the endpoint instead of the Host
+// (delta-rs/object_store pointing at localhost), the azurite-style
+// account-prefixed path /onelake/{workspace}/… reaches the Blob surface on
+// any host — the account name is always the literal "onelake", as
+// documented.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.Host, "onelake.") {
+		switch {
+		case strings.HasPrefix(r.Host, "onelake.blob."):
+			s.OneLake.ServeBlob(w, r)
+		case strings.HasPrefix(r.Host, "onelake."):
 			s.OneLake.ServeHTTP(w, r)
-			return
+		case r.URL.Path == "/onelake" || strings.HasPrefix(r.URL.Path, "/onelake/"):
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = strings.TrimPrefix(r.URL.Path, "/onelake")
+			s.OneLake.ServeBlob(w, r2)
+		default:
+			s.mux.ServeHTTP(w, r)
 		}
-		s.mux.ServeHTTP(w, r)
 	})
 }
 
