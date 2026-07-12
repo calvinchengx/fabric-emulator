@@ -187,21 +187,25 @@ DML to OneLake Delta.
   on each connect; `NVARCHAR(4000)`/no-checkpoint like T2's type caveat.
   Verified locally against a real `mcr.microsoft.com/mssql/server:2022`
   container (all three warehouse e2es pass), not just in CI.
-- **T4 — two-surface routing + RBAC + parity.** *Next.* Concretely:
-  1. **Explicit item-type routing.** Today the `Reflector` reflects for *any*
-     `database` item (harmless: a `Warehouse` has no `Tables/` Delta, so it's a
-     no-op and the direct relay handles read-write). Make it explicit —
-     `Lakehouse` → reflect + treat as read-only; `Warehouse` → relay only, no
-     reflect. Reject writes to a lakehouse endpoint (real Fabric does).
-  2. **Per-lakehouse schema isolation.** Reflected tables currently share the
-     sidecar's default database, so two lakehouses collide — reflect into a
-     per-item schema/database keyed by the item id.
-  3. **RBAC → SQL permissions.** The FedAuth token is validated, but the
+- **T4a — both surfaces, isolated. ✅ Done.** Explicit item-type routing behind
+  one TDS front (`warehouseRouter`): the connection's `database` is a Fabric
+  item id, and **each item is its own SQL Server database** (`EnsureDatabase`
+  per item id — no cross-item collision). A **Lakehouse** → reflect its Delta +
+  **read-only** (writes rejected with a clear error, as real Fabric does); a
+  **Warehouse** → **read-write** relay (its data is native to the engine, no
+  reflection); unknown or non-SQL items reject the login. Per-database pools are
+  opened lazily from one parsed base DSN (`msdsn` + `NewConnectorConfig`).
+  Unit-tested (routing branches, per-db pool caching, read-only guard, name
+  safety) + a gated two-surface e2e (`TestWarehouseTwoSurfaces`) proving
+  warehouse read-write, lakehouse read-only rejection, and isolation against a
+  real SQL Server.
+- **T4b — RBAC + parity.** *Next.*
+  1. **RBAC → SQL permissions.** The FedAuth token is validated, but the
      workspace role isn't yet enforced on the SQL surface: map Viewer → read,
      Contributor/Member/Admin → read-write (warehouse), and deny on no role.
-  4. **`information_schema` / connection-string parity** so schema-introspecting
+  2. **`information_schema` / connection-string parity** so schema-introspecting
      tools (SSMS, Power BI, drivers) see the expected shape.
-  5. **Per-column type fidelity** (drop the all-`NVARCHAR(4000)` shortcut from
+  3. **Per-column type fidelity** (drop the all-`NVARCHAR(4000)` shortcut from
      T2/T3) — infer real SQL types from the Parquet/Delta schema.
 - **T5 (optional) — borrowed-oracle breadth.** The CI proof is a `go-mssqldb`
   test today; add a `pyodbc` (`ActiveDirectoryServicePrincipal`) client to the

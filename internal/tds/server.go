@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 	"unicode/utf16"
 )
 
@@ -20,10 +21,12 @@ type Authenticator func(token string) error
 type Server struct {
 	Auth    Authenticator
 	Backend Backend
-	// Reflector, if set, is called after a successful login with the
-	// connection's database (the lakehouse/warehouse) so its Delta tables can
-	// be materialised into the engine before the client queries them.
-	Reflector func(ctx context.Context, database string) error
+	// OnConnect, if set, is called after a successful login with the target
+	// database (a Fabric item id). It prepares that item's backend database —
+	// for a lakehouse, reflecting its Delta into the engine — and returns
+	// whether the surface is read-only (a lakehouse SQL analytics endpoint), so
+	// the query loop can reject writes. An error rejects the login.
+	OnConnect func(ctx context.Context, database string) (readOnly bool, err error)
 }
 
 // Serve accepts and handles connections until l errors.
@@ -73,12 +76,15 @@ func (s *Server) handle(conn net.Conn) error {
 			return s.reject(conn, "login failed: "+err.Error())
 		}
 	}
-	// Materialise the target lakehouse's Delta tables into the engine before
-	// the client can query them.
-	if s.Reflector != nil && login.Database != "" {
-		if err := s.Reflector(context.Background(), login.Database); err != nil {
-			return s.reject(conn, "warehouse sync failed: "+err.Error())
+	// Prepare the target item's database (reflect a lakehouse's Delta) and learn
+	// whether it is a read-only surface.
+	readOnly := false
+	if s.OnConnect != nil && login.Database != "" {
+		ro, err := s.OnConnect(context.Background(), login.Database)
+		if err != nil {
+			return s.reject(conn, err.Error())
 		}
+		readOnly = ro
 	}
 	// Accepted: LOGINACK + DONE completes the login (go-mssqldb requires no
 	// FedAuth signature ack — it does not validate one).
@@ -101,8 +107,21 @@ func (s *Server) handle(conn net.Conn) error {
 			}
 			continue
 		}
-		// Relay the batch to the real engine and stream its result back.
-		resp := s.runQuery(sqlBatchQuery(data))
+		query := sqlBatchQuery(data)
+		// A lakehouse SQL analytics endpoint is read-only; reject writes as
+		// real Fabric does, rather than mutating the reflected mirror.
+		if readOnly && isWriteStatement(query) {
+			resp := concat(errorToken(50000,
+				"the lakehouse SQL analytics endpoint is read-only; writes require a Warehouse"),
+				done(doneError, 0))
+			if err := WriteMessage(conn, PktTabular, resp); err != nil {
+				return err
+			}
+			continue
+		}
+		// Relay the batch to the real engine (in the item's database) and stream
+		// its result back.
+		resp := s.runQuery(login.Database, query)
 		if err := WriteMessage(conn, PktTabular, resp); err != nil {
 			return err
 		}
@@ -114,14 +133,53 @@ func (s *Server) reject(conn net.Conn, msg string) error {
 	return WriteMessage(conn, PktTabular, concat(errorToken(18456, msg), done(doneError, 0)))
 }
 
-// runQuery executes a batch against the backend and returns the encoded TDS
-// response — the result token stream, or an ERROR + errored DONE on failure.
-func (s *Server) runQuery(query string) []byte {
-	res, err := s.Backend.Query(context.Background(), query)
+// runQuery executes a batch against the backend in the given database (a Fabric
+// item id) and returns the encoded TDS response — the result token stream, or
+// an ERROR + errored DONE on failure.
+func (s *Server) runQuery(database, query string) []byte {
+	res, err := s.Backend.Query(withDatabase(context.Background(), database), query)
 	if err != nil {
 		return concat(errorToken(50000, err.Error()), done(doneError, 0))
 	}
 	return resultTokens(res)
+}
+
+// isWriteStatement reports whether a batch's first keyword is a write (DDL/DML),
+// used to enforce read-only on the lakehouse endpoint. A conservative denylist:
+// anything not clearly a write is allowed through to the engine.
+func isWriteStatement(query string) bool {
+	kw := firstKeyword(query)
+	switch kw {
+	case "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP",
+		"TRUNCATE", "GRANT", "REVOKE", "DENY", "EXEC", "EXECUTE":
+		return true
+	}
+	return false
+}
+
+// firstKeyword returns the upper-cased first SQL token, skipping leading
+// whitespace and -- line comments.
+func firstKeyword(query string) string {
+	for {
+		query = strings.TrimLeft(query, " \t\r\n")
+		if strings.HasPrefix(query, "--") {
+			if i := strings.IndexByte(query, '\n'); i >= 0 {
+				query = query[i+1:]
+				continue
+			}
+			return ""
+		}
+		break
+	}
+	i := 0
+	for i < len(query) {
+		c := query[i]
+		if c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '(' || c == ';' {
+			break
+		}
+		i++
+	}
+	return strings.ToUpper(query[:i])
 }
 
 // --- response token builders (MS-TDS 2.2.7) ---
