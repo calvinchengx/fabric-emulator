@@ -8,9 +8,21 @@ How the emulator's surface maps to real Fabric (as documented at
 The emulator's design bet is that the durable, testable surface is
 *contracts + storage + identity + orchestration*, and those are done for real
 (real signed JWTs, real Delta bytes on disk, real RBAC, a real pipeline
-interpreter, real cross-engine SQL). The heavyweight or proprietary **compute
-engines** are either bring-your-own (Spark behind the Livy proxy — which is how
-Fabric itself layers a Livy endpoint over Spark) or honestly stubbed.
+interpreter, real cross-engine SQL, real Livy high-concurrency session packing).
+The heavyweight or proprietary **compute engines** are either bring-your-own
+(Spark behind the Livy proxy — which is how Fabric itself layers a Livy endpoint
+over Spark) or honestly stubbed.
+
+**"Real via our own wire-protocol implementation."** A row is 🟢 **Real** not
+only when an external engine/client does the work, but also when the emulator
+*itself* implements Fabric's wire protocol and the logic behind it — so a real,
+unmodified client gets byte- and behaviour-identical responses. Fabric's
+control plane, OneLake's ADLS/Blob surfaces, the Data Pipeline expression
+language + control flow, and the Livy **high-concurrency** session-packing layer
+are all in this category: no engine is being proxied, yet the observable
+contract matches real Fabric because we built the protocol, not a mock of it.
+Where a row's *execution* still needs a heavyweight engine (a REPL's Spark
+statements, a notebook's cells), that part is split out as 🟠 BYO-engine or 🔴.
 
 ## Legend
 
@@ -31,7 +43,7 @@ Fabric itself layers a Livy endpoint over Spark) or honestly stubbed.
 | Folders | Full | 🟢 Real |
 | Capacities (list, assign / unassign) | Full state, no billing/SKU enforcement | 🟢 Real state |
 | Long-running operations (202 → poll) | Clock-derived | 🟡 Emulated |
-| Item **job execution** (`jobs/instances`) | Status derived from the controllable clock | 🟡 Emulated |
+| Item **job execution** (`jobs/instances`) | Generic items: status clock-derived. **DataPipeline** jobs really run the interpreter (see Data Factory) and set terminal status from the run | 🟡 Emulated / 🟢 Real (pipelines) |
 
 ## Identity & security (`security/`, `admin/`)
 
@@ -62,7 +74,7 @@ Fabric itself layers a Livy endpoint over Spark) or honestly stubbed.
 | `notebookutils` / `mssparkutils` (fs, credentials, getSecret, lakehouse, runtime) | Functional stdlib shim (`python/notebookutils`) | 🟢 Real |
 | Spark session / batch via the **Livy API** | Reverse-proxy to real Spark when `--spark-livy-url` is set, else 501 | 🟠 BYO-engine |
 | Notebook **cell execution** | On the Spark sidecar (e2e); a scheduled RunNotebook job is clock-derived | 🟠 / 🟡 |
-| Livy **High-Concurrency** (5-REPL) sessions | In progress | 🟡 Partial |
+| Livy **High-Concurrency** (5-REPL) sessions | Fabric's own packing layer, implemented for real (not proxied): `sessionTag` packing into a shared session, 5-REPL cap + spill, non-idempotent acquire, independent get/delete, slot reuse on release. REPL statements proxy to real Spark (BYO) | 🟢 Real (contract) / 🟠 exec |
 | Environments, Spark Job Definitions | Item management only | 🟡 Emulated |
 
 ## Data Warehouse (`data-warehouse/`)
@@ -80,7 +92,7 @@ Fabric itself layers a Livy endpoint over Spark) or honestly stubbed.
 | Data Pipeline control flow (If / ForEach / Until / Switch / Filter / Fail, expression language, `dependsOn`) | Pure-Go interpreter that really executes | 🟢 Real (orchestration) |
 | Pipeline → notebook activity (TridentNotebook) | Chains a real RunNotebook job | 🟢 Real chain |
 | `queryactivityruns` detail | Full | 🟢 Real |
-| Copy / Lookup / Web leaf activities | Orchestration recorded; storage effects proven by the OneLake e2es | 🟡 Emulated |
+| Copy / Lookup / Web leaf activities | **Stubbed success** — the leaf is reached in `dependsOn` order and its expression inputs are resolved, but nothing executes (no data moved, no query, no HTTP call); returns a hardcoded `Succeeded` | 🟡 Emulated |
 | **Dataflow Gen2** (Power Query M engine) | An in-pipeline Dataflow activity fails with an explicit "not implemented" | 🔴 Honest fail |
 | Connectors / on-prem gateways | — | 🔴 Not implemented |
 
@@ -114,9 +126,13 @@ Fabric itself layers a Livy endpoint over Spark) or honestly stubbed.
 
 Real Fabric's own Livy endpoint is *Microsoft's implementation of the Livy REST
 contract* over their Spark platform — they honor the protocol, not the retired
-Apache Livy server. The emulator takes the same stance: the **protocol and
-control plane are the durable, real things**, and the compute engine is
-attached (Spark) or deferred when proprietary/heavyweight (Dataflow Gen2's M
-engine, KQL, Power BI rendering, T-SQL/TDS). Every deferral fails loudly rather
-than pretending to succeed. See [13-roadmap.md](13-roadmap.md) for the
-milestone history and the deferred-with-cause rationale.
+Apache Livy server. And where Fabric adds its *own* layer on top of that
+protocol — high-concurrency REPL packing, which a vanilla Livy server has no
+concept of — the emulator implements that layer directly rather than proxying,
+because there is nothing to proxy it to. That is the same stance throughout: the
+**protocol and control plane are the durable, real things** (built, not mocked,
+so real clients can't tell the difference), and the compute engine is attached
+(Spark) or deferred when proprietary/heavyweight (Dataflow Gen2's M engine, KQL,
+Power BI rendering, T-SQL/TDS). Every deferral fails loudly rather than
+pretending to succeed. See [13-roadmap.md](13-roadmap.md) for the milestone
+history and the deferred-with-cause rationale.
