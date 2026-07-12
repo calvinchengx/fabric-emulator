@@ -62,15 +62,21 @@ Deprovisioning`, name-follows-workspace, cascade delete), admin CRUD at
 `GET /fabric/workspaceidentities/{id}/token`, and acceptance of both Fabric
 audiences. P2 can start any time; it consumes those endpoints over HTTP.
 
-- [ ] Workspace-identity lifecycle: create workspace → drive entra-emulator's
-      workspace-identity object via its admin API (create, rename-follows,
-      cascade delete; respect its `Active`-only minting gate).
-- [ ] Outbound token minting: when an item needs a token, call entra-emulator's
-      `GET /fabric/workspaceidentities/{id}/token` (customer never sees a
-      credential).
-- [ ] Audit event parity: `Retrieved Fabric Identity Token for Workspace`.
-- [ ] e2e: workspace create → identity Active → mint token → call back into
-      fabric-emulator with it.
+- [x] Workspace-identity lifecycle: `POST /v1/workspaces/{id}/provisionIdentity`
+      / `deprovisionIdentity` (202 LRO) drive entra's admin API over HTTP
+      (`internal/entra` client, origin derived from the issuer). Rename
+      follows the workspace; workspace delete cascades the identity; the
+      identity appears as `workspaceIdentity{applicationId,servicePrincipalId}`
+      on the workspace shape.
+- [x] The provisioned identity's SP is granted **Admin on its workspace**, so
+      tokens entra mints for it (`GET /fabric/workspaceidentities/{id}/token`
+      — customer never holds a credential) pass RBAC back here. Deprovision
+      revokes the grant.
+- [x] Audit event parity: entra-side — its token mint emits
+      `Retrieved Fabric Identity Token for Workspace` (covered by its tests).
+- [x] e2e: provision → entra mints for the identity → the identity's token
+      reads its workspace and creates items in fabric-emulator; rename-follows
+      verified in entra; deprovision revokes; workspace delete cascades.
 
 ## P3 — OneLake data plane
 

@@ -116,6 +116,12 @@ CREATE TABLE IF NOT EXISTS git_remote_heads (
 	commit_hash TEXT NOT NULL,
 	PRIMARY KEY (remote_key, branch)
 );
+CREATE TABLE IF NOT EXISTS workspace_identities (
+	workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+	identity_id TEXT NOT NULL, -- entra service principal object id
+	app_id TEXT NOT NULL,      -- the sub/appid in tokens the identity mints
+	created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS folders (
 	id TEXT PRIMARY KEY,
 	workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,

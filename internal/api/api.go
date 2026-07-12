@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
+	"github.com/calvinchengx/fabric-emulator/internal/entra"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
@@ -17,6 +18,9 @@ import (
 type API struct {
 	Store *store.Store
 	Auth  *auth.Validator
+	// Entra drives workspace-identity provisioning in entra-emulator (nil
+	// disables the identity endpoints with a 503).
+	Entra *entra.Client
 	// RetryAfterSeconds is advertised on 202 responses.
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.
@@ -73,6 +77,9 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /v1/workspaces/{wid}/folders", a.withAuth(a.listFolders))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/folders", a.withAuth(a.createFolder))
+
+	mux.HandleFunc("POST /v1/workspaces/{wid}/provisionIdentity", a.withAuth(a.provisionIdentity))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/deprovisionIdentity", a.withAuth(a.deprovisionIdentity))
 
 	a.registerTyped(mux)
 

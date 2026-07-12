@@ -41,12 +41,23 @@ func (a *API) createWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 	writeJSON(w, http.StatusCreated, ws)
 }
 
+// workspaceBody is the GET wire shape: the workspace plus its identity when
+// one is provisioned.
+type workspaceBody struct {
+	*store.Workspace
+	WorkspaceIdentity *store.WorkspaceIdentity `json:"workspaceIdentity,omitempty"`
+}
+
 func (a *API) getWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	ws, _, ok := a.requireRole(w, r.PathValue("wid"), p, store.RoleViewer)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, ws)
+	body := workspaceBody{Workspace: ws}
+	if wi, err := a.Store.GetWorkspaceIdentity(ws.ID); err == nil {
+		body.WorkspaceIdentity = wi
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func (a *API) updateWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
@@ -62,7 +73,9 @@ func (a *API) updateWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "Malformed JSON body.")
 		return
 	}
+	renamed := false
 	if body.DisplayName != nil {
+		renamed = *body.DisplayName != ws.DisplayName
 		ws.DisplayName = *body.DisplayName
 	}
 	if body.Description != nil {
@@ -72,12 +85,24 @@ func (a *API) updateWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
+	// Name-follows-workspace: the entra identity is renamed with it.
+	if renamed {
+		if err := a.identityRenameFollows(ws.ID, ws.DisplayName); err != nil {
+			writeErr(w, http.StatusBadGateway, "WorkspaceIdentityRenameFailed", err.Error())
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, ws)
 }
 
 func (a *API) deleteWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
 	if _, _, ok := a.requireRole(w, wid, p, store.RoleAdmin); !ok {
+		return
+	}
+	// Cascade: the entra identity is deleted with its workspace.
+	if err := a.identityCascadeDelete(wid); err != nil {
+		writeErr(w, http.StatusBadGateway, "WorkspaceIdentityDeprovisioningFailed", err.Error())
 		return
 	}
 	if err := a.Store.DeleteWorkspace(wid); err != nil {

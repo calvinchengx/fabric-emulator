@@ -130,3 +130,20 @@ func TestClosedDBFolderErrors(t *testing.T) {
 		t.Error("ListFolders on closed DB succeeded")
 	}
 }
+
+func TestClosedDBIdentityErrors(t *testing.T) {
+	s, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if err := s.SetWorkspaceIdentity(&WorkspaceIdentity{WorkspaceID: "w", IdentityID: "i", AppID: "a"}); err == nil {
+		t.Error("SetWorkspaceIdentity on closed DB succeeded")
+	}
+	if _, err := s.GetWorkspaceIdentity("w"); err == nil {
+		t.Error("GetWorkspaceIdentity on closed DB succeeded")
+	}
+	if err := s.DeleteWorkspaceIdentity("w"); err == nil {
+		t.Error("DeleteWorkspaceIdentity on closed DB succeeded")
+	}
+}

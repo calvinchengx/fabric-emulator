@@ -11,6 +11,7 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
 	"github.com/calvinchengx/fabric-emulator/internal/config"
+	"github.com/calvinchengx/fabric-emulator/internal/entra"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
@@ -33,6 +34,11 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	}
 	v := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)
 	a := api.New(st, v, cfg.RetryAfterSeconds, cfg.LRODelaySeconds)
+	// Workspace-identity provisioning drives entra's admin API at the
+	// issuer's origin, over the same HTTP client trust as JWKS.
+	if origin, err := entra.OriginFromIssuer(cfg.EntraIssuer); err == nil {
+		a.Entra = entra.New(origin, cfg.EntraTLSInsecure, jwksClient)
+	}
 
 	s := &Server{Cfg: cfg, Store: st, Clock: ck, API: a, mux: http.NewServeMux()}
 	a.Register(s.mux)

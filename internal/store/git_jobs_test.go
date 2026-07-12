@@ -162,3 +162,37 @@ func TestJobInstanceStates(t *testing.T) {
 		t.Fatal("job survived item delete")
 	}
 }
+
+func TestWorkspaceIdentityStore(t *testing.T) {
+	s := newTestStore(t)
+	ws := &Workspace{DisplayName: "w"}
+	if err := s.CreateWorkspace(ws, Principal{ID: "p", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetWorkspaceIdentity(ws.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("no identity err = %v", err)
+	}
+	wi := &WorkspaceIdentity{WorkspaceID: ws.ID, IdentityID: "sp-1", AppID: "app-1"}
+	if err := s.SetWorkspaceIdentity(wi); err != nil {
+		t.Fatal(err)
+	}
+	// Upsert replaces.
+	wi2 := &WorkspaceIdentity{WorkspaceID: ws.ID, IdentityID: "sp-2", AppID: "app-2"}
+	if err := s.SetWorkspaceIdentity(wi2); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetWorkspaceIdentity(ws.ID)
+	if err != nil || got.IdentityID != "sp-2" || got.AppID != "app-2" {
+		t.Fatalf("identity = %+v, %v", got, err)
+	}
+	// Workspace delete cascades the link.
+	if err := s.DeleteWorkspace(ws.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetWorkspaceIdentity(ws.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatal("identity link survived workspace delete")
+	}
+	if err := s.DeleteWorkspaceIdentity(ws.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete missing identity err = %v", err)
+	}
+}
