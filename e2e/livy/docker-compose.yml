@@ -1,0 +1,61 @@
+# Native Livy: the emulator terminates the Livy REST protocol itself and drives
+# a Spark statement-executor agent — real interactive Spark sessions with NO
+# Apache Livy server (it's retired). A real client creates a session, submits
+# PySpark statements, and gets results computed by real Spark.
+#
+#   client → fabric-emulator (Livy REST, native) → spark agent (persistent SparkSession)
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  # The Spark statement-executor agent: one long-lived SparkSession, a REPL over
+  # HTTP. spark-submit keeps it alive; the agent binds :8099 on the compose net.
+  spark-agent:
+    image: apache/spark:3.5.3
+    volumes:
+      - ./agent.py:/opt/spark/work-dir/agent.py:ro
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - "local[2]"
+      - /opt/spark/work-dir/agent.py
+      - "8099"
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: ""
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      # Terminate Livy natively and drive the agent — the whole point.
+      FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  client:
+    image: python:3.12-slim
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    volumes:
+      - ./client.py:/client.py:ro
+    command: ["python3", "/client.py"]

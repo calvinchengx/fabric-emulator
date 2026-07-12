@@ -81,9 +81,15 @@ func (a *API) livyProxy(w http.ResponseWriter, r *http.Request, p *auth.Principa
 		writeErr(w, http.StatusNotFound, "LakehouseNotFound", "The lakehouse is not available.")
 		return
 	}
+	// With a statement-executor agent configured, terminate Livy natively and
+	// drive real Spark ourselves (no Apache Livy server needed).
+	if a.livyAgent != nil {
+		a.livyNative(w, r)
+		return
+	}
 	if a.livy == nil {
 		writeErr(w, http.StatusNotImplemented, "SparkBackendNotConfigured",
-			"No Spark/Livy backend is configured; set --spark-livy-url to run Spark for real.")
+			"No Spark/Livy backend is configured; set --spark-livy-url (proxy) or --spark-agent-url (native) to run Spark for real.")
 		return
 	}
 	// Rewrite to the Livy-native suffix (/sessions|batches/…); the proxy

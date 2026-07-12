@@ -21,13 +21,18 @@ type Authenticator func(token string) error
 type Server struct {
 	Auth    Authenticator
 	Backend Backend
-	// OnConnect, if set, is called after a successful login with the target
-	// database (a Fabric item id) and the presented FedAuth token. It enforces
-	// workspace RBAC for that principal, prepares the item's backend database —
-	// for a lakehouse, reflecting its Delta into the engine — and returns whether
-	// the surface is read-only (a lakehouse endpoint, or a Viewer). An error
-	// rejects the login (no access, unknown/non-SQL item).
-	OnConnect func(ctx context.Context, database, token string) (readOnly bool, err error)
+	// OnConnect, if set, is called after a successful login with the client's
+	// requested server name, target database, and FedAuth token. The database is
+	// either a Fabric item id (GUID) or — real Fabric's addressing — a
+	// lakehouse/warehouse display name, in which case the workspace is taken from
+	// the server name (e.g. "<workspace>.datawarehouse.fabric.microsoft.com"). It
+	// enforces workspace RBAC for the principal, prepares the item's backend
+	// database — for a lakehouse, reflecting its Delta into the engine — and
+	// returns the resolved backend database (the item id, the SQL Server database
+	// to route queries to) plus whether the surface is read-only (a lakehouse
+	// endpoint, or a Viewer). An error rejects the login (no access, unknown or
+	// non-SQL item).
+	OnConnect func(ctx context.Context, server, database, token string) (targetDB string, readOnly bool, err error)
 }
 
 // Serve accepts and handles connections until l errors.
@@ -77,15 +82,18 @@ func (s *Server) handle(conn net.Conn) error {
 			return s.reject(conn, "login failed: "+err.Error())
 		}
 	}
-	// Prepare the target item's database (reflect a lakehouse's Delta) and learn
-	// whether it is a read-only surface.
+	// Resolve + prepare the target item's database (reflect a lakehouse's Delta)
+	// and learn whether it is a read-only surface. OnConnect returns the resolved
+	// backend database — the item id to route queries to — which differs from
+	// login.Database when the client connected by display name.
 	readOnly := false
+	targetDB := login.Database
 	if s.OnConnect != nil && login.Database != "" {
-		ro, err := s.OnConnect(context.Background(), login.Database, login.FedAuthToken)
+		db, ro, err := s.OnConnect(context.Background(), login.ServerName, login.Database, login.FedAuthToken)
 		if err != nil {
 			return s.reject(conn, err.Error())
 		}
-		readOnly = ro
+		targetDB, readOnly = db, ro
 	}
 	// Accepted: LOGINACK + DONE completes the login (go-mssqldb requires no
 	// FedAuth signature ack — it does not validate one).
@@ -122,7 +130,7 @@ func (s *Server) handle(conn net.Conn) error {
 		}
 		// Relay the batch to the real engine (in the item's database) and stream
 		// its result back.
-		resp := s.runQuery(login.Database, query)
+		resp := s.runQuery(targetDB, query)
 		if err := WriteMessage(conn, PktTabular, resp); err != nil {
 			return err
 		}

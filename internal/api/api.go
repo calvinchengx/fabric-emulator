@@ -38,6 +38,12 @@ type API struct {
 	livy        *httputil.ReverseProxy
 	livyBackend *url.URL
 	hcHTTP      *http.Client
+	// livyAgent, when set, makes the emulator terminate the Livy protocol
+	// itself and drive a Spark statement-executor agent (real interactive
+	// sessions without an Apache Livy server). livyNativeState holds its
+	// in-memory session/statement state.
+	livyAgent       *url.URL
+	livyNativeState *livyManager
 	// hc holds high-concurrency Livy session-packing state (lazily created).
 	hc *hcManager
 

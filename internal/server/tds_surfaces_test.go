@@ -160,6 +160,39 @@ func TestWarehouseTwoSurfaces(t *testing.T) {
 		t.Fatalf("information_schema: TABLE_NAME=%q err=%v", tname, err)
 	}
 
+	// --- Connect by display name (real Fabric addressing): the server name carries
+	// the workspace, the database is the item's display name. A fixedDialer sends
+	// the Fabric server name in LOGIN7 while dialing the test listener. Resolving
+	// "wh" against the workspace must reach the *same* backend database as the GUID
+	// connection above — the metrics table it created is visible here. ---
+	fabricSrv := ws.DisplayName + ".datawarehouse.fabric.microsoft.com"
+	openByName := func(server, database string) *sql.DB {
+		d := fmt.Sprintf("server=%s;database=%s;encrypt=disable;dial timeout=5", server, database)
+		c, err := mssql.NewConnectorWithAccessTokenProvider(d, func(context.Context) (string, error) { return token, nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Dialer = fixedDialer{addr: fmt.Sprintf("127.0.0.1:%d", port)}
+		return sql.OpenDB(c)
+	}
+	whByName := openByName(fabricSrv, wh.DisplayName)
+	defer whByName.Close()
+	var byNameCount int
+	if err := whByName.QueryRowContext(ctx, "SELECT COUNT(*) FROM dbo.metrics").Scan(&byNameCount); err != nil {
+		t.Fatalf("warehouse by name SELECT: %v", err)
+	}
+	if byNameCount != 2 {
+		t.Fatalf("warehouse by name row count = %d, want 2 (same backend db as the GUID connection)", byNameCount)
+	}
+	// The lakehouse endpoint by name is still read-only.
+	lkByName := openByName(fabricSrv, lake.DisplayName)
+	defer lkByName.Close()
+	if _, err := lkByName.ExecContext(ctx, "INSERT INTO [sales] VALUES ('zz', 9)"); err == nil {
+		t.Fatal("lakehouse-by-name INSERT succeeded — must be read-only")
+	} else if !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("lakehouse-by-name write error = %q; want a read-only rejection", err)
+	}
+
 	// --- RBAC: an item whose workspace the principal has no role on is rejected. ---
 	ws2 := &store.Workspace{DisplayName: "other-ws"}
 	if err := srv.Store.CreateWorkspace(ws2, store.Principal{ID: "someone-else", Type: "User"}); err != nil {
@@ -175,3 +208,15 @@ func TestWarehouseTwoSurfaces(t *testing.T) {
 		t.Fatal("connected to a lakehouse the principal has no workspace role on — RBAC not enforced")
 	}
 }
+
+// fixedDialer sends the DSN's server name in LOGIN7 (so the emulator can read the
+// workspace from it) while dialing a fixed address — the test listener. It
+// implements mssql.HostDialer so go-mssqldb skips DNS resolution of the Fabric
+// hostname and hands the raw host to DialContext, which ignores it.
+type fixedDialer struct{ addr string }
+
+func (d fixedDialer) DialContext(ctx context.Context, _ string, _ string) (net.Conn, error) {
+	return (&net.Dialer{}).DialContext(ctx, "tcp", d.addr)
+}
+
+func (d fixedDialer) HostName() string { return d.addr }

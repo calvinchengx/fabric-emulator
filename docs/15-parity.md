@@ -90,7 +90,7 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | RBAC → SQL permissions | Workspace role enforced on connect: no role → rejected; Viewer → read-only; Contributor+ → read-write (warehouse) | 🟢 Real |
 | `information_schema` / `sys.*` introspection | Relays natively — reflected/warehouse tables are real SQL Server tables | 🟢 Real (relay) |
 | Per-column type fidelity (real SQL types over the wire) | Integer/float/bit columns carry their real TDS type (INTN/FLTN/BITN); other types fall back to NVARCHAR text | 🟢 Real (numeric/bool) |
-| Connection by item *name* (vs GUID) | Item id (GUID) today; name needs workspace-scoped connection | 🔴 T4c (deferred) |
+| Connection by item *name* (vs GUID) | Workspace read from the server name (`<workspace>.datawarehouse.fabric.microsoft.com`), item resolved by display name; a GUID still resolves by id (back-compat). Verified with a real `go-mssqldb` client | 🟢 Real |
 
 ## Data Factory (`data-factory/`)
 
@@ -133,6 +133,55 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Controllable clock (`/_emulator/clock`) | Advance virtual time to drive LRO / job status transitions deterministically. |
 | Fault injection (`/_emulator/faults`, `/_emulator/permissions`) | Force failures / throttling / RBAC denials to test client resilience. |
 | Svelte management portal | Dashboard, workspaces, operations, clock, and fault controls. |
+
+## Ecosystem conformance: real OSS/vendor clients as witnesses
+
+Parity isn't claimed from our own tests alone — each 🟢 surface is pinned against
+the **real, unmodified client** a Fabric user runs, executed against the emulator
+in CI (`e2e/<client>/`). If Microsoft's own tool round-trips unchanged, the
+contract holds better than any assertion we could write ourselves.
+
+| Real client (pinned) | Surface exercised | Status |
+|---|---|---|
+| `fabric-cicd` (Microsoft) | Control plane / CI-CD publish | 🟢 `e2e/fabric-cicd` |
+| `deltalake` (delta-rs) | OneLake Delta write/read | 🟢 `e2e/delta-rs` |
+| `azure-storage-file-datalake` + Blob SDK | OneLake ADLS **Gen2 DFS** + Blob | 🟢 `e2e/adls-sdk` |
+| DuckDB | Lakehouse SQL over Delta/Parquet | 🟢 `e2e/duckdb` |
+| PySpark behind the **Livy API** | Spark sessions / statements | 🟢 `e2e/spark`, `e2e/livy`, `e2e/notebook-run` |
+| `notebookutils` | Notebook utility shim | 🟢 `e2e/notebookutils` |
+| `go-mssqldb` | Warehouse/Lakehouse **TDS + FedAuth** | 🟢 `internal/server`, `internal/tds` |
+| **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy sessions | ⏳ **Planned** — a 2nd real client over the Livy HC layer |
+| **`dbt-fabric`** (Microsoft) | Warehouse **TDS via ODBC Driver 18** | ⏳ **Planned** — closes the TDS driver-diversity gap |
+
+The TDS surface has exactly **one** driver witness today (`go-mssqldb`).
+`dbt-fabric` matters because the Microsoft **ODBC Driver 18** is an *independent*
+TDS implementation with its own FedAuth/prelogin handshake: passing it is a
+stronger parity claim than any number of go-mssqldb tests. `dbt-fabricspark`
+drives the just-built high-concurrency Livy layer over its real Livy-session
+protocol (`method: livy`, service-principal auth via entra-emulator).
+
+## Scope boundary: Fabric, not the predecessor Azure products
+
+The emulator targets **Microsoft Fabric** — the *convergence/successor* product —
+not the earlier Azure analytics services Fabric replaced. That boundary is why
+some adjacent dbt adapters and Azure surfaces are intentionally **not** built:
+they belong to predecessor (often retired) products, and their Fabric-native
+successors are what we emulate instead.
+
+| Adjacent product / client | Why out of scope | Fabric-era equivalent (in scope) |
+|---|---|---|
+| **Azure Synapse** dedicated SQL pool (`dbt-synapse`) | Different product: its own control plane (Synapse workspaces) **and** an MPP T-SQL dialect (`DISTRIBUTION = HASH`, clustered-columnstore / resource-class DDL) that our vanilla SQL Server sidecar rejects. `dbt-synapse` layers on `dbt-fabric`, so the *shared* SQL path is already covered by the `dbt-fabric` witness | **Fabric Warehouse** — 🟢 TDS relay |
+| **Azure Data Lake Analytics** — U-SQL / SCOPE (`dbt-scope`) | Retired service (EOL **Feb 2024**), proprietary batch language, no Fabric embodiment. The only overlap (Delta on a lake) is Spark/OneLake, already witnessed | Fabric **Spark** — 🟠 Livy |
+| **ADLS Gen1** | Retired (**Feb 2024**), superseded by Gen2 | — |
+| **ADLS Gen2** (standalone storage account) | **Not missing — OneLake *is* the Gen2 endpoint**: hierarchical namespace, the `dfs` filesystem API, `onelake.dfs.fabric.microsoft.com`. Fabric has no separate storage account to emulate | **OneLake** — 🟢 `e2e/adls-sdk` |
+
+Rule of thumb: if a capability exists only in a product Fabric replaced, it's out
+of scope; its Fabric-native successor is what we build. "We already have the
+TDS/SQL Server foundation" makes Synapse *cheaper*, not *done* — the remaining
+delta is a whole MPP dialect plus a second control plane, for a superseded
+target. So the two dbt adapters we build (`dbt-fabricspark`, `dbt-fabric`) are
+exactly the two that hit live Fabric surfaces; the other two (`dbt-synapse`,
+`dbt-scope`) target predecessor products outside the emulator's remit.
 
 ## Why the boundary sits where it does
 

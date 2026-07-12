@@ -217,10 +217,20 @@ DML to OneLake Delta.
      `bool` directly. Round-trip-tested through the real `go-mssqldb` driver
      (typed scans + NULLs + reported column types) and end-to-end (the reflected
      INT column reads back as an integer type, not text).
-- **T4c (deferred) — connection by item name.** Real Fabric connects with the
-  lakehouse/warehouse *display name* as the database, not the GUID; the emulator
-  accepts the item id today. Name resolution needs workspace scoping on the
-  connection (the server name encodes the workspace) — a larger change, by demand.
+- **T4c — connection by item name. ✅ Done.** Real Fabric connects with the
+  lakehouse/warehouse *display name* as the database and the **workspace encoded
+  in the server name** (`<workspace>.datawarehouse.fabric.microsoft.com`). The
+  router (`resolveSQLItem`) now accepts both: a GUID resolves by item id
+  (workspace-agnostic, back-compat); otherwise the database is a display name and
+  the workspace is taken from the LOGIN7 server name's first DNS label (by id or
+  name), then the item is looked up by name (Warehouse preferred, then Lakehouse).
+  `OnConnect` returns the resolved item id so queries route to the item's own
+  backend database regardless of how the client addressed it. Covered by the
+  router unit test (name + workspace-by-id/by-name, missing workspace, unknown
+  name, no workspace in the server name) and a wire-level e2e: a real `go-mssqldb`
+  client connects with a `fixedDialer` that sends the Fabric server name in
+  LOGIN7 while dialing the test listener, and reads back the same backend database
+  as the GUID connection (a lakehouse-by-name write is still rejected read-only).
 - **T5 (optional) — borrowed-oracle breadth.** The CI proof is a `go-mssqldb`
   test today; add a `pyodbc` (`ActiveDirectoryServicePrincipal`) client to the
   gated e2e so a second real driver family exercises the FedAuth + result path.

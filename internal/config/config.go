@@ -45,6 +45,12 @@ type Config struct {
 	// deterministic clock.
 	SparkLivyURL string
 
+	// SparkAgentURL, when set, makes the emulator terminate the Livy protocol
+	// itself and drive a Spark statement-executor agent (real interactive
+	// sessions, no Apache Livy server). Takes precedence over SparkLivyURL for
+	// the interactive session/statement path. See e2e/livy.
+	SparkAgentURL string
+
 	// SQLTDSAddr, when set (e.g. ":1433"), starts the warehouse SQL endpoint:
 	// a TDS listener that terminates Entra FedAuth and answers T-SQL. Empty
 	// leaves the SQL endpoint off. See docs/16-warehouse-tds.md.
@@ -73,6 +79,7 @@ func FromEnvPartial() *Config {
 		EntraTLSInsecure:  boolEnv("FABRIC_ENTRA_TLS_INSECURE"),
 		DisableTLS:        boolEnv("FABRIC_DISABLE_TLS"),
 		SparkLivyURL:      os.Getenv("FABRIC_SPARK_LIVY_URL"),
+		SparkAgentURL:     os.Getenv("FABRIC_SPARK_AGENT_URL"),
 		SQLTDSAddr:        os.Getenv("FABRIC_SQL_TDS_ADDR"),
 		WarehouseSQLURL:   os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
 		RetryAfterSeconds: 1,

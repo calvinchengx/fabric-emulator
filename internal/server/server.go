@@ -53,6 +53,9 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 		a.Entra = entra.New(origin, cfg.EntraTLSInsecure, jwksClient)
 	}
 	a.AKV = akv.New(cfg.EntraTLSInsecure, jwksClient)
+	if err := a.SetLivyAgent(cfg.SparkAgentURL); err != nil {
+		return nil, err
+	}
 	if err := a.SetLivyBackend(cfg.SparkLivyURL); err != nil {
 		return nil, err
 	}
