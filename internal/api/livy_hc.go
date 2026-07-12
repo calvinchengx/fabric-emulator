@@ -54,6 +54,7 @@ type hcRepl struct {
 // hcGroup is a logical Livy session hosting up to maxReplsPerLivySession REPLs.
 type hcGroup struct {
 	id    string
+	seq   int64  // creation order; lets acquire deterministically prefer the oldest free slot
 	scope string // workspace/lakehouse
 	tag   string
 	repls []string // active hcIDs (len ≤ maxReplsPerLivySession)
@@ -62,9 +63,10 @@ type hcGroup struct {
 // hcManager holds HC packing state. Pure in-memory: HC sessions are ephemeral
 // and, like classic Livy sessions, are not persisted across restarts.
 type hcManager struct {
-	mu     sync.Mutex
-	byID   map[string]*hcRepl
-	groups map[string]*hcGroup
+	mu      sync.Mutex
+	byID    map[string]*hcRepl
+	groups  map[string]*hcGroup
+	nextSeq int64 // monotonic group-creation counter (groups map has no stable order)
 }
 
 func newHCManager() *hcManager {
@@ -87,15 +89,21 @@ func (m *hcManager) acquire(scope, tag, wid, lid, creator string, now int64, bod
 	defer m.mu.Unlock()
 	var g *hcGroup
 	if tag != "" {
+		// Pick the oldest same-scope/tag group with a free slot. Iterating the
+		// map alone is order-unstable, so compare by creation seq: with several
+		// free groups (e.g. after a release opened a slot in an earlier group
+		// while a later spill group also has room) packing stays deterministic.
 		for _, cand := range m.groups {
 			if cand.scope == scope && cand.tag == tag && len(cand.repls) < maxReplsPerLivySession {
-				g = cand
-				break
+				if g == nil || cand.seq < g.seq {
+					g = cand
+				}
 			}
 		}
 	}
 	if g == nil {
-		g = &hcGroup{id: store.NewID(), scope: scope, tag: tag}
+		m.nextSeq++
+		g = &hcGroup{id: store.NewID(), seq: m.nextSeq, scope: scope, tag: tag}
 		m.groups[g.id] = g
 	}
 	r := &hcRepl{
