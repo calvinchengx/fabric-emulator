@@ -125,3 +125,13 @@ jobs:
       # Parquet, downloads it byte-identical (exercising x-ms-range), lists
       # blobs, and the DFS surface sees the same file — the ADLS SDK oracle.
       - run: python e2e/adls-sdk/run.py
+
+  docker-smoke:
+    name: Production image runs and persists (container smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Builds the distroless image and runs it with a persistent volume,
+      # asserting the nonroot user opens its SQLite DB and writes state to
+      # the volume — the container path nothing else in CI exercised.
+      - run: ./scripts/docker-smoke.sh
