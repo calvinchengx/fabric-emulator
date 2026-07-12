@@ -6,7 +6,7 @@ URL validator accepts that hostname on any port — so DNS is pinned to
 roots point at the emulator. Auth is a custom azure-core TokenCredential
 doing client credentials against entra-emulator.
 
-Requires (see run.sh):
+Requires (see run.py):
   FABRIC_PORT / ENTRA_PORT       emulator ports (default 19443 / 18443)
   REQUESTS_CA_BUNDLE             fabric-emulator's cert.pem
   FABRIC_API_ROOT_URL            https://api.fabric.microsoft.com:$FABRIC_PORT

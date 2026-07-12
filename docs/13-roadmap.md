@@ -47,7 +47,7 @@ Makes `fabric-cicd`, git integration, and deployment pipelines run offline.
 - [x] e2e: two-workspace git round-trip over HTTP (commit from one, update
       into another, definitions intact); job lifecycle on the frozen clock.
 - [x] e2e: the **real `fabric-cicd` Python tool** (v1.2.x) publishes into the
-      emulator — `e2e/fabric-cicd/run.sh` (self-contained: both emulators +
+      emulator — `e2e/fabric-cicd/run.py` (self-contained: both emulators +
       venv + driver). Works unmodified via its own `FABRIC_API_ROOT_URL` /
       `DEFAULT_API_ROOT_URL` overrides + in-process DNS pin (our TLS cert
       covers `api.fabric.microsoft.com`). Driving it surfaced and fixed real

@@ -13,7 +13,7 @@ spec-reading cannot (see [what fabric-cicd caught](11-testing-with-fabric-cicd.m
 | Git round-trip | Go HTTP | two-workspace commit→update, definitions intact, logical ids preserved | Go integration tests |
 | Identity handshake | in-process entra-emulator | provision → entra mints for the identity → token passes fabric RBAC → deprovision revokes → delete cascades | Go integration tests |
 | OneLake | Go HTTP + real entra Storage tokens | create/append/flush/read via GUID + name addressing, listings, RBAC walls, managed-folder rejections | Go integration tests |
-| **fabric-cicd** | Microsoft's real Python tool (v1.2.x) | `publish_all_items` publishes a notebook; parts round-trip byte-for-byte | `e2e/fabric-cicd/run.sh` (CI `fabric-cicd` job) |
+| **fabric-cicd** | Microsoft's real Python tool (v1.2.x) | `publish_all_items` publishes a notebook; parts round-trip byte-for-byte | `e2e/fabric-cicd/run.py` (CI `fabric-cicd` job) |
 
 Plus: coverage floor 90% (cross-package; currently ~93%), `go vet`, and the
 [docs site](https://calvinchengx.github.io/fabric-emulator/) build on every
@@ -31,7 +31,7 @@ docs push.
 
 ```bash
 go test ./...              # everything in-process, no network
-./e2e/fabric-cicd/run.sh   # the real-tool e2e (needs Python 3 + go)
+python3 e2e/fabric-cicd/run.py   # the real-tool e2e (needs Python 3 + go)
 ```
 
 Both are deterministic: virtual clock, in-memory stores, seeded credentials.

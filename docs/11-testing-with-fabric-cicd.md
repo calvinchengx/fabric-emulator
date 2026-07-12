@@ -9,7 +9,7 @@ in [`e2e/fabric-cicd/`](../e2e/fabric-cicd/), which CI runs on every push.
 ## Try it
 
 ```bash
-./e2e/fabric-cicd/run.sh
+python3 e2e/fabric-cicd/run.py
 ```
 
 Self-contained: installs entra-emulator (`go install`) if missing, builds

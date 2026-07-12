@@ -37,7 +37,11 @@ jobs:
 
   fabric-cicd:
     name: Real fabric-cicd tool publishes into the emulator
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -49,4 +53,4 @@ jobs:
       # Self-contained: starts entra-emulator (go install) + fabric-emulator,
       # installs fabric-cicd in a venv, publishes a notebook repo, and
       # verifies the definition round-trips (idempotently).
-      - run: ./e2e/fabric-cicd/run.sh
+      - run: python e2e/fabric-cicd/run.py
