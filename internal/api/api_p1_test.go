@@ -5,11 +5,12 @@ package api
 // tables under the live handlers.
 
 import (
-	"github.com/calvinchengx/fabric-emulator/internal/auth"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
@@ -262,5 +263,56 @@ func TestP1StorageFailure500s(t *testing.T) {
 	body := `{"gitProviderDetails":{"gitProviderType":"GitHub","ownerName":"o","repositoryName":"r","branchName":"main","directoryName":"/"}}`
 	if w := do(a.gitConnect, userAdmin, "POST", body, wid); w.Code != http.StatusInternalServerError {
 		t.Fatalf("connect = %d", w.Code)
+	}
+}
+
+func TestFolderHandlers(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	wid := map[string]string{"wid": ws.ID}
+
+	// Empty list is value:[] (fabric-cicd lists folders on every publish).
+	if w := do(a.listFolders, viewer, "GET", "", wid); w.Code != http.StatusOK || w.Body.String() != `{"value":[]}`+"\n" {
+		t.Fatalf("empty folders = %d %q", w.Code, w.Body.String())
+	}
+	// Viewer cannot create; malformed bodies rejected.
+	if w := do(a.createFolder, viewer, "POST", `{"displayName":"f"}`, wid); w.Code != http.StatusForbidden {
+		t.Fatalf("viewer create folder = %d", w.Code)
+	}
+	for _, body := range []string{`{`, `{}`} {
+		if w := do(a.createFolder, admin, "POST", body, wid); w.Code != http.StatusBadRequest {
+			t.Fatalf("bad folder create %q = %d", body, w.Code)
+		}
+	}
+	// Create, nest, duplicate → 409.
+	w := do(a.createFolder, admin, "POST", `{"displayName":"Notebook"}`, wid)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create folder = %d %s", w.Code, w.Body.Bytes())
+	}
+	var f struct{ ID string }
+	_ = json.Unmarshal(w.Body.Bytes(), &f)
+	if w := do(a.createFolder, admin, "POST", `{"displayName":"Processing","parentFolderId":"`+f.ID+`"}`, wid); w.Code != http.StatusCreated {
+		t.Fatalf("nested folder = %d", w.Code)
+	}
+	if w := do(a.createFolder, admin, "POST", `{"displayName":"Notebook"}`, wid); w.Code != http.StatusConflict {
+		t.Fatalf("duplicate folder = %d", w.Code)
+	}
+	var list struct {
+		Value []struct{ ParentFolderID string }
+	}
+	w = do(a.listFolders, admin, "GET", "", wid)
+	_ = json.Unmarshal(w.Body.Bytes(), &list)
+	if len(list.Value) != 2 || list.Value[1].ParentFolderID != f.ID {
+		t.Fatalf("folders list = %+v", list)
+	}
+}
+
+func TestFolderStorageFailure(t *testing.T) {
+	a, st, dir := newDiskAPI(t)
+	ws := seedWorkspace(t, st)
+	wid := map[string]string{"wid": ws.ID}
+	dropTable(t, dir, "folders")
+	if w := do(a.listFolders, admin, "GET", "", wid); w.Code != http.StatusInternalServerError {
+		t.Fatalf("listFolders = %d; want 500", w.Code)
 	}
 }

@@ -116,6 +116,14 @@ CREATE TABLE IF NOT EXISTS git_remote_heads (
 	commit_hash TEXT NOT NULL,
 	PRIMARY KEY (remote_key, branch)
 );
+CREATE TABLE IF NOT EXISTS folders (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	display_name TEXT NOT NULL,
+	parent_id TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	UNIQUE (workspace_id, parent_id, display_name)
+);
 CREATE TABLE IF NOT EXISTS job_instances (
 	id TEXT PRIMARY KEY,
 	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,

@@ -67,7 +67,9 @@ func (a *API) updateDefinition(w http.ResponseWriter, r *http.Request, p *auth.P
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	a.startOperation(w, r, "UpdateItemDefinition", it.ID)
+	// No resultRef: like real Fabric, this LRO has no result, so the poll
+	// response carries no Location and clients stop at Succeeded.
+	a.startOperation(w, r, "UpdateItemDefinition", "")
 }
 
 // typedCollections maps the typed REST collections to the item type they
@@ -140,4 +142,44 @@ func (a *API) typedGet(itemType string) handler {
 		}
 		writeJSON(w, http.StatusOK, it)
 	}
+}
+
+// listFolders returns the workspace's folders (fabric-cicd lists these on
+// every publish to map folder paths to ids).
+func (a *API) listFolders(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	wid := r.PathValue("wid")
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleViewer); !ok {
+		return
+	}
+	fs, err := a.Store.ListFolders(wid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	if fs == nil {
+		fs = []*store.Folder{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"value": fs})
+}
+
+// createFolder creates a folder (201, sync).
+func (a *API) createFolder(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	wid := r.PathValue("wid")
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
+		return
+	}
+	var body struct {
+		DisplayName    string `json:"displayName"`
+		ParentFolderID string `json:"parentFolderId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.DisplayName == "" {
+		writeErr(w, http.StatusBadRequest, "InvalidRequest", "displayName is required.")
+		return
+	}
+	f := &store.Folder{WorkspaceID: wid, DisplayName: body.DisplayName, ParentFolderID: body.ParentFolderID}
+	if err := a.Store.CreateFolder(f); err != nil {
+		writeErr(w, http.StatusConflict, "FolderAlreadyExists", "A folder with this name already exists here.")
+		return
+	}
+	writeJSON(w, http.StatusCreated, f)
 }

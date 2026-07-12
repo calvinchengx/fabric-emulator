@@ -71,6 +71,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/connections", a.withAuth(a.listConnections))
 	mux.HandleFunc("POST /v1/connections", a.withAuth(a.createConnection))
 
+	mux.HandleFunc("GET /v1/workspaces/{wid}/folders", a.withAuth(a.listFolders))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/folders", a.withAuth(a.createFolder))
+
 	a.registerTyped(mux)
 
 	mux.HandleFunc("GET /v1/operations/{oid}", a.withAuth(a.getOperation))

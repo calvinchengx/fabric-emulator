@@ -116,3 +116,17 @@ func TestClosedDBErrors(t *testing.T) {
 		t.Error("CancelJobInstance on closed DB succeeded")
 	}
 }
+
+func TestClosedDBFolderErrors(t *testing.T) {
+	s, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if err := s.CreateFolder(&Folder{WorkspaceID: "w", DisplayName: "f"}); err == nil {
+		t.Error("CreateFolder on closed DB succeeded")
+	}
+	if _, err := s.ListFolders("w"); err == nil {
+		t.Error("ListFolders on closed DB succeeded")
+	}
+}

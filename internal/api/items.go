@@ -174,6 +174,8 @@ func (a *API) getOperationResult(w http.ResponseWriter, r *http.Request, p *auth
 		}
 		writeJSON(w, http.StatusOK, it)
 	default:
-		w.WriteHeader(http.StatusOK)
+		// Always JSON with a Content-Type — clients (fabric-cicd) parse the
+		// header unconditionally.
+		writeJSON(w, http.StatusOK, map[string]any{})
 	}
 }

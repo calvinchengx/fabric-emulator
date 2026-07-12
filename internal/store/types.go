@@ -1,10 +1,12 @@
 package store
 
 // Workspace is a Fabric workspace (the container everything hangs off).
+// description is always present on the wire (fabric-cicd indexes it), so no
+// omitempty.
 type Workspace struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
-	Description string `json:"description,omitempty"`
+	Description string `json:"description"`
 	Type        string `json:"type"` // always "Workspace"
 	CapacityID  string `json:"capacityId,omitempty"`
 	CreatedAt   int64  `json:"-"`
@@ -49,12 +51,13 @@ type Principal struct {
 }
 
 // Item is a generic Fabric item; typed collections alias over this.
+// description is always present on the wire, matching real Fabric.
 type Item struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspaceId"`
 	Type        string `json:"type"` // Notebook, Lakehouse, Warehouse, …
 	DisplayName string `json:"displayName"`
-	Description string `json:"description,omitempty"`
+	Description string `json:"description"`
 	CreatedAt   int64  `json:"-"`
 }
 

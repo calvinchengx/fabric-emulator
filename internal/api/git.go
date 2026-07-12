@@ -269,7 +269,7 @@ func (a *API) gitCommitToGit(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	a.startOperation(w, r, "CommitToGit", wid)
+	a.startOperation(w, r, "CommitToGit", "") // no result, like real Fabric
 }
 
 // gitUpdateFromGit mirrors the remote branch into the workspace: create
@@ -337,7 +337,7 @@ func (a *API) gitUpdateFromGit(w http.ResponseWriter, r *http.Request, p *auth.P
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	a.startOperation(w, r, "UpdateFromGit", wid)
+	a.startOperation(w, r, "UpdateFromGit", "") // no result, like real Fabric
 }
 
 // gitDisconnect detaches the workspace from git.
