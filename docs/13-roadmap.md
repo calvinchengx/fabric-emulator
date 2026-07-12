@@ -150,12 +150,21 @@ proxy would be a separate sibling.
       sends append/flush as `PUT ?action=…`, not `PATCH`** — the flush PUT
       (empty body) was truncating every file to zero, silently corrupting
       Delta commits (regression-tested). Linux-only CI.
-    - **B** — Livy passthrough on the documented endpoint
-      (`…/lakehouses/{id}/livyapi/versions/2023-12-01/{sessions,batches}`)
-      delegating to the sidecar; opt-in real `RunNotebook` mode
-      (`--spark-livy-url`) with job status from the actual batch; token
-      passthrough scopes incl. `Code.AccessAzureKeyvault.All` →
-      azure-keyvault-emulator.
+    - [x] **B (Livy passthrough contract)** — the documented endpoint
+      (`…/lakehouses/{id}/livyapi/versions/2023-12-01/{sessions,batches}/…`)
+      is a bearer-validated, RBAC-gated reverse proxy (`internal/api/livy.go`)
+      to a real Apache Livy backend set via `--spark-livy-url` /
+      `FABRIC_SPARK_LIVY_URL`. Session-create and job-submit need Contributor;
+      status reads need Viewer; unknown lakehouse 404s. Unset → honest 501.
+      Unit-tested (path rewrite, RBAC matrix, 501, lakehouse) + a server e2e
+      (real entra token → auth → RBAC → proxy → backend).
+    - [ ] **B (real Livy sidecar e2e)** — *deferred, with cause:* Apache Livy
+      is **retired to the Apache Attic** (last release 0.8.0, no maintained
+      image), so there is no maintained real engine to bundle for the Livy
+      *protocol* specifically — the honest 501 default is correct, and the
+      proxy works against any Livy-compatible backend a user brings. Real
+      Spark *execution* is already proven by A2 (Spark writes/reads real
+      Delta). Revisit only if a maintained Livy-compatible server appears.
 - [ ] **R3** — warehouse: DuckDB+delta SQL over the same OneLake files (SQL
       analytics endpoint semantics); Babelfish/SQL Server sidecar per
       Warehouse item (SQL-auth compromise documented); TDS-FedAuth proxy only
