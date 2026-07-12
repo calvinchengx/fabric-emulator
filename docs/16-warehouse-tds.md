@@ -121,9 +121,9 @@ endpoint semantics) that maps onto existing Delta data.
 - **T1 — protocol oracle.** TDS server + FedAuth termination; `SELECT 1`
   answered from Go (no sidecar). Proof: `sqlcmd`/`pyodbc` connect with a real
   entra token and get a row. This is the unique, in-family part.
-- **T2 — real engine.** Attach the SQL Server sidecar; relay arbitrary
-  SQLBatch; real T-SQL over sidecar-native tables. `--warehouse-sql-url`
-  (unset → honest 501, mirroring `--spark-livy-url`).
+- **T2 — real engine.** Attach the T-SQL sidecar (Babelfish or SQL Server —
+  same proxy); relay arbitrary SQLBatch; real T-SQL over sidecar-native tables.
+  `--warehouse-sql-url` (unset → honest 501, mirroring `--spark-livy-url`).
 - **T3 — lakehouse data.** Delta→sidecar reflection; query real
   `Tables/<name>` data written by delta-rs/Spark elsewhere in the family — the
   cross-engine warehouse oracle (delta-rs writes, T-SQL reads).
@@ -161,8 +161,13 @@ independent SQL engines agreeing.
 
 ## Decision record
 
-- **Engine:** real SQL Server / Babelfish **sidecar** (hard constraint — no
-  in-binary T-SQL under no-CGO).
+- **Engine:** a real T-SQL **sidecar**, and **pluggable** — because the backend
+  leg is just TDS + a SQL login, the proxy is identical for either engine, and
+  only the compose service + the e2e's `--warehouse-sql-url` change. Selected by
+  platform: **Babelfish on macOS** (Apache-2.0, ARM-native, lighter),
+  **SQL Server on Linux/Windows and in CI** (highest T-SQL fidelity; the CI
+  oracle runs on Linux). Hard constraint: no in-binary T-SQL under no-CGO, so it
+  is always a sidecar, never embedded.
 - **Protocol + FedAuth:** pure Go, **in this repo** (`internal/tds`), following
   the Livy-proxy precedent — *not* a sibling repo.
 - **Priority:** deferred until there is demand for the real-client
