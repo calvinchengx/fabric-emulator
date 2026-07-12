@@ -165,3 +165,24 @@ jobs:
       # Real DuckDB runs SQL (aggregation, join, filter) over Delta tables in
       # the OneLake plane — the lakehouse SQL-analytics-endpoint semantics.
       - run: python e2e/duckdb/run.py
+
+  notebookutils:
+    name: notebookutils shim drives the family (notebook loop)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # Brings up entra + fabric + azure-keyvault and runs a real Fabric
+      # notebook that drives the functional notebookutils shim: fs over
+      # OneLake, credential tokens, Key Vault secret brokering, lakehouse
+      # control plane, and notebook.run — the notebook developer loop.
+      - run: python e2e/notebookutils/run.py

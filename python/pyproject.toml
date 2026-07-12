@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fabric-emulator-notebookutils"
+version = "0.1.0"
+description = "A functional notebookutils/mssparkutils shim for the Microsoft Fabric emulator"
+requires-python = ">=3.9"
+# Deliberately dependency-free: stdlib-only so it drops into any notebook
+# kernel without dragging a TLS/HTTP stack along.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/calvinchengx/fabric-emulator"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["notebookutils*"]

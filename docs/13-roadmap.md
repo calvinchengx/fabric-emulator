@@ -179,11 +179,21 @@ proxy would be a separate sibling.
       large separate effort (the C2/C3 sidecar + TDS-FedAuth proxy). DuckDB
       already proves the SQL-analytics-endpoint *semantics*; the TDS wire +
       FedAuth is the heavy add, tackled by demand as its own repo.
-- [ ] **R4** — the notebook developer loop: functional `notebookutils` shim
-      (fs → OneLake, credentials → entra + azure-keyvault-emulator, notebook
-      run → jobs/Livy); default-lakehouse session semantics on the Spark
-      sidecar; VS Code Fabric-extension compatibility investigation.
-      Designed in [14-real-compute.md](14-real-compute.md) (Track D).
+- [x] **R4 (notebook developer loop)** — a functional `notebookutils` /
+      `mssparkutils` shim (`python/notebookutils`, stdlib-only) that makes
+      real Fabric notebook code run unchanged against the emulator family:
+      `fs` over OneLake (create→append→flush, ranged reads, ls, cp — abfss
+      URIs *and* lakehouse-relative paths), `credentials.getToken` for any
+      audience, `credentials.getSecret` brokered through the real
+      azure-keyvault-emulator, the `lakehouse` control plane, `runtime.context`,
+      and `notebook.run` via the jobs API. Proven by `e2e/notebookutils`
+      (3-OS): entra + fabric + azure-keyvault up, a real notebook drives every
+      module to a PASS. Designed in [14-real-compute.md](14-real-compute.md)
+      (Track D).
+    - [ ] **R4 (VS Code Fabric-extension + Spark-session semantics)** —
+      *deferred:* default-lakehouse session binding on the Spark sidecar and
+      the VS Code Fabric extension are additive; the shim already closes the
+      author-run-read loop.
 - [ ] **R5** — pipelines: real Apache Airflow sidecar behind ApacheAirflowJob
       items (Fabric's own code-first orchestrator IS Airflow; AKV secrets
       backend → azure-keyvault-emulator); DataPipeline interpreter with

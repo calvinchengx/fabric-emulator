@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: fabric-emulator-notebookutils
+Version: 0.1.0
+Summary: A functional notebookutils/mssparkutils shim for the Microsoft Fabric emulator
+Project-URL: Homepage, https://github.com/calvinchengx/fabric-emulator
+Requires-Python: >=3.9
