@@ -1,0 +1,70 @@
+/* Fluent-mimic tokens per upstream DESIGN.md: white surfaces, 4px corners,
+   Azure blue actions, amber LOCAL EMULATOR badge. */
+:root {
+  --primary: #0078d4; --primary-hover: #106ebe; --primary-active: #005a9e;
+  --primary-tint: #deecf9; --primary-ink: #004578;
+  --caution: #f59e0b; --caution-tint: #fef3c7; --caution-ink: #92400e;
+  --success: #107c10; --success-tint: #dff6dd;
+  --error: #d13438; --error-ink: #a4262c; --error-tint: #fde7e9;
+  --ink: #201f1e; --ink-2: #323130; --muted: #605e5c;
+  --border: #e1dfdd; --divider: #edebe9; --hover: #f3f2f1;
+  --surface: #fff; --canvas: #faf9f8;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--canvas); color: var(--ink); font-size: 14px; }
+h1 { font-size: 24px; font-weight: 600; margin: 0 0 16px; }
+h2 { font-size: 20px; font-weight: 600; margin: 0 0 12px; }
+button { font: inherit; cursor: pointer; }
+.btn { background: var(--primary); color: #fff; border: none; border-radius: 4px;
+  height: 32px; padding: 0 20px; font-weight: 600; }
+.btn:hover { background: var(--primary-hover); }
+.btn:active { background: var(--primary-active); }
+.btn-secondary { background: var(--surface); color: var(--ink-2);
+  border: 1px solid var(--border); border-radius: 4px; height: 32px; padding: 0 20px; font-weight: 600; }
+.btn-secondary:hover { background: var(--hover); }
+.btn-danger { background: var(--surface); color: var(--error);
+  border: 1px solid var(--border); border-radius: 4px; height: 28px; padding: 0 12px; font-weight: 600; }
+.btn-danger:hover { background: var(--error-tint); }
+.badge { background: var(--caution); color: var(--ink); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.06em; border-radius: 4px; padding: 3px 8px; }
+.chip { font-family: 'Cascadia Mono', ui-monospace, Consolas, monospace; font-size: 12px;
+  background: var(--canvas); border: 1px solid var(--divider); border-radius: 4px;
+  padding: 2px 8px; color: var(--ink-2); cursor: pointer; }
+.chip:hover { background: var(--divider); }
+.card { background: var(--surface); border-radius: 4px; padding: 24px;
+  box-shadow: 0 0.6px 1.8px rgba(0,0,0,0.1), 0 0.15px 0.45px rgba(0,0,0,0.07); }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted);
+  padding: 8px 12px; border-bottom: 1px solid var(--divider); }
+td { padding: 8px 12px; border-bottom: 1px solid var(--divider); }
+tr:hover td { background: var(--canvas); }
+input, select { height: 32px; border: 1px solid var(--border); border-radius: 4px;
+  padding: 6px 8px; font: inherit; width: 100%; }
+input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+label { display: block; font-weight: 600; margin: 12px 0 4px; }
+.banner-caution { background: var(--caution-tint); color: var(--caution-ink);
+  border-left: 3px solid var(--caution); border-radius: 4px; padding: 12px 16px; margin-bottom: 16px; }
+.banner-error { background: var(--error-tint); color: var(--error-ink);
+  border-radius: 4px; padding: 12px 16px; margin-bottom: 16px; }
+pre.code { background: var(--ink); color: #fff; border-radius: 4px; padding: 16px 18px;
+  font-family: 'Cascadia Mono', ui-monospace, monospace; font-size: 13px; overflow-x: auto; }
+.muted { color: var(--muted); font-size: 12px; }
+
+/* Portal view utilities (shared by Dashboard/Workspaces/Operations/Clock/Faults). */
+.cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.cards .card { min-width: 140px; text-align: center; }
+.num { font-size: 28px; font-weight: 600; }
+.num.small { font-size: 14px; }
+.mono { font-family: 'Cascadia Mono', ui-monospace, Consolas, monospace; font-size: 12px; }
+.panel { background: var(--surface); border: 1px solid var(--divider); border-radius: 4px;
+  padding: 16px; margin: 12px 0; }
+.controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.controls label { margin: 0; display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.controls input, .panel input { width: 110px; }
+.error { color: var(--error-ink); background: var(--error-tint); border-radius: 4px; padding: 8px 12px; }
+.ok { color: var(--success); background: var(--success-tint); border-radius: 4px; padding: 8px 12px; }
+.row { cursor: pointer; }
+.chip.succeeded { background: var(--success-tint); color: var(--success); }
+.chip.failed { background: var(--error-tint); color: var(--error-ink); }
+.chip.running, .chip.notstarted { background: var(--caution-tint); color: var(--caution-ink); }
