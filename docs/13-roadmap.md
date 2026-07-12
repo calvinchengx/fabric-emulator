@@ -131,7 +131,7 @@ proxy would be a separate sibling.
       with a **concurrent-commit race test** (24 goroutines race one
       `_delta_log` file; exactly one wins — the mechanism-level atomicity
       oracle, `-race`-clean) and `x-ms-range` support (found by the ADLS SDK).
-- [ ] **R1+R2 (merged) — containerized Spark**, its own focused runway.
+- [x] **R1+R2 (merged) — containerized Spark**, its own focused runway.
       *Decision:* R1 (in-process PySpark via ABFS) is folded into R2's Spark
       sidecar rather than pursued standalone. The Hadoop **JVM ABFS driver**
       derives its endpoint from the URI authority and takes no host/port
