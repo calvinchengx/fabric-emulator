@@ -109,15 +109,23 @@ onelake_blob      (workspaceId, itemId, path, bytes)   -- P3
 workspace_identity(workspaceId, appId, servicePrincipalId, state)  -- P2
 ```
 
+State enums: `workspace.state` is the six-value set fabric-docs documents
+(`Active/Inactive/Deleting/Unusable/Failed/DeleteFailed` —
+`security/workspace-identity.md`); `workspace_identity.state` mirrors what
+entra-emulator's shipped workspace-identity object uses
+(`Active/Provisioning/Failed/Deprovisioning`), since P2 drives that object
+directly.
+
 Item **definition parts** are the CI/CD payload: a `.platform` metadata file plus
 base64 `parts` (`payloadType: InlineBase64`). Storing them verbatim is what lets
 `fabric-cicd` and git integration round-trip against the emulator.
 
 ## Long-running operations
 
-Nearly every mutation returns `202 Accepted` with `Location:
-/v1/operations/{id}` and `Retry-After`. Clients poll `GET /v1/operations/{id}`
-until `Status` ∈ {`Succeeded`, `Failed`}. The emulator models this as a first-
+Nearly every mutation returns `202 Accepted` with an `x-ms-operation-id` header
+(what the documented automation scripts read), a `Location:
+/v1/operations/{id}`, and `Retry-After`. Clients poll `GET /v1/operations/{id}`
+until `Status` leaves {`NotStarted`, `Running`}. The emulator models this as a first-
 class `operation` row whose `completeAt` is a function of the **controllable
 clock**:
 

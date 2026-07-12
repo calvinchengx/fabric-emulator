@@ -27,6 +27,8 @@ Makes `fabric-cicd`, git integration, and deployment pipelines run offline.
 
 - [ ] Item **definitions**: `getDefinition` / `updateDefinition` (parts round-trip).
 - [ ] Typed item aliases (notebook, lakehouse, warehouse, dataPipeline, semanticModel…).
+- [ ] **Connections**: `GET/POST /v1/connections` — git `connect` with a
+      service principal requires a `connectionId`, so this is a P1 dependency.
 - [ ] **Git integration**: connect / initializeConnection / status / commitToGit /
       updateFromGit / disconnect, backed by a local per-branch definition store.
 - [ ] Jobs: instances trigger + state transitions + cancel.
@@ -35,14 +37,20 @@ Makes `fabric-cicd`, git integration, and deployment pipelines run offline.
 
 ## P2 — the identity handshake (deepest entra integration)
 
-The "works seamlessly with entra-emulator" payoff. **Depends on entra-emulator
-roadmap #16** (workspace-identity object + token minting).
+The "works seamlessly with entra-emulator" payoff. Its dependency —
+entra-emulator roadmap #16 — **has already shipped**: the workspace-identity
+object (`internal/store/fabric.go`, states `Active/Provisioning/Failed/
+Deprovisioning`, name-follows-workspace, cascade delete), admin CRUD at
+`/admin/api/workspace-identities`, internal token minting at
+`GET /fabric/workspaceidentities/{id}/token`, and acceptance of both Fabric
+audiences. P2 can start any time; it consumes those endpoints over HTTP.
 
 - [ ] Workspace-identity lifecycle: create workspace → drive entra-emulator's
-      workspace-identity object (name-follows-workspace, cascade delete,
-      `Active/Inactive/Deleting/Unusable/Failed/DeleteFailed` state enum).
-- [ ] Outbound token minting: when an item needs a token, ask entra-emulator's
-      forge to mint one for that identity (customer never sees a credential).
+      workspace-identity object via its admin API (create, rename-follows,
+      cascade delete; respect its `Active`-only minting gate).
+- [ ] Outbound token minting: when an item needs a token, call entra-emulator's
+      `GET /fabric/workspaceidentities/{id}/token` (customer never sees a
+      credential).
 - [ ] Audit event parity: `Retrieved Fabric Identity Token for Workspace`.
 - [ ] e2e: workspace create → identity Active → mint token → call back into
       fabric-emulator with it.
@@ -68,4 +76,5 @@ roadmap #16** (workspace-identity object + token minting).
 
 Build the **LRO engine before anything that mutates** — every workspace/item/git
 call returns through it, so getting `202` → poll → terminal right once makes all
-later endpoints trivial. P2 should not start until entra-emulator #16 ships.
+later endpoints trivial. P2's entra-side dependency (#16) has already shipped,
+so phase order is a pure prioritization choice, not a blocking one.
