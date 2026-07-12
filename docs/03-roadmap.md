@@ -104,7 +104,10 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
 
 - [ ] Svelte portal: workspaces / items / role assignments / operations / git
       status / provisioning views — `go:embed` + committed `dist` + CI drift guard.
-- [ ] Starlight docs site on GitHub Pages (this `/docs` = source of truth).
+- [x] Starlight docs site on GitHub Pages (this `/docs` = source of truth,
+      synced by `website/scripts/sync-docs.mjs`; pinned Astro Starlight;
+      deploys via `docs-site.yml`) — live at
+      <https://calvinchengx.github.io/fabric-emulator/>.
 - [ ] GoReleaser: binaries + distroless Docker (GHCR) + Homebrew cask + winget.
 - [ ] Playwright headless mount smoke (catch builds-but-doesn't-mount).
 - [ ] Coverage parity with entra-emulator (target ≥ 70% per package).
