@@ -186,3 +186,14 @@ jobs:
       # OneLake, credential tokens, Key Vault secret brokering, lakehouse
       # control plane, and notebook.run — the notebook developer loop.
       - run: python e2e/notebookutils/run.py
+
+  notebook-run:
+    name: Real Spark executes notebook cells (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Heavy (reuses the spark-a2 JVM image): the emulator parses a real Fabric
+      # notebook into cells, real Spark executes them against OneLake (a Delta
+      # table lands), and the run is reported back so the RunNotebook job
+      # reflects real execution. Linux-only.
+      - run: python3 e2e/notebook-run/run.py

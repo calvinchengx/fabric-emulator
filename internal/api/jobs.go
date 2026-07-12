@@ -50,6 +50,12 @@ func (a *API) createJobInstance(w http.ResponseWriter, r *http.Request, p *auth.
 			_ = a.Store.SetJobFailure(it.ID, j.ID, code)
 		}
 	}
+	// A RunNotebook job: parse the notebook into cells now (real Go parser) and
+	// record a Pending run. A real Spark engine executes the cells and reports
+	// back to finalise the run + the job's status (see notebooks.go).
+	if it.Type == "Notebook" && jobType == "RunNotebook" {
+		a.startNotebookRun(it, j.ID)
+	}
 	loc := fmt.Sprintf("https://%s/v1/workspaces/%s/items/%s/jobs/instances/%s", r.Host, wid, it.ID, j.ID)
 	w.Header().Set("Location", loc)
 	w.Header().Set("Retry-After", fmt.Sprintf("%d", a.RetryAfterSeconds))

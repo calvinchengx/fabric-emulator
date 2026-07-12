@@ -1,0 +1,56 @@
+# Real notebook cell execution: the emulator parses a Fabric notebook, real
+# JVM Spark executes its cells against the OneLake plane (ABFS), and the run is
+# reported back so the RunNotebook job reflects real execution. Reuses the
+# ../spark image (ABFS jars + entra token provider). Plain HTTP over the
+# container network so onelake.dfs.fabric.microsoft.com resolves to the emulator.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: "" # in-memory; the e2e needs no persistence
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+    networks:
+      default:
+        aliases:
+          - onelake.dfs.fabric.microsoft.com
+          - api.fabric.microsoft.com
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  spark:
+    build:
+      context: ../spark
+      dockerfile: Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    volumes:
+      - ./runner.py:/opt/spark/work-dir/runner.py:ro
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - "local[2]"
+      - /opt/spark/work-dir/runner.py

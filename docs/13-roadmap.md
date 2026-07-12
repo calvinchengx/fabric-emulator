@@ -202,10 +202,20 @@ proxy would be a separate sibling.
       (3-OS): entra + fabric + azure-keyvault up, a real notebook drives every
       module to a PASS. Designed in [14-real-compute.md](14-real-compute.md)
       (Track D).
-    - [ ] **R4 (VS Code Fabric-extension + Spark-session semantics)** —
-      *deferred:* default-lakehouse session binding on the Spark sidecar and
-      the VS Code Fabric extension are additive; the shim already closes the
-      author-run-read loop.
+    - [x] **R4 (real notebook cell execution)** — a RunNotebook job is parsed
+      by the emulator (real Go parser, `internal/notebook`: `notebook-content.py`
+      → ordered code cells, magics/markdown handled) and executed by **real
+      Spark**: `e2e/notebook-run` publishes a Fabric notebook, real JVM Spark
+      runs its cells against the OneLake plane (a Delta table actually lands),
+      and the engine reports per-cell results + exit value back so the job's
+      terminal status reflects the real run — not the clock. The
+      parse/record/report contract is Go-side + unit-tested; the compute is
+      real Spark (Linux-only e2e, reusing the spark-a2 image). Without an engine
+      the cells are honestly "parsed, Pending".
+    - [ ] **R4 (VS Code Fabric-extension + default-lakehouse session binding)** —
+      *deferred:* the VS Code Fabric extension and auto-binding a default
+      lakehouse into the Spark session are additive; the shim + real cell
+      execution already close the author-run-read loop.
 - [x] **R5 (DataPipeline interpreter)** — a real, pure-Go interpreter
       (`internal/pipeline`) for Fabric/ADF Data Pipeline definitions: the full
       expression language (a faithful subset — `pipeline()`, `variables()`,

@@ -107,6 +107,38 @@ func (s *Store) SetJobFailure(itemID, id, failWith string) error {
 	return oneRow(res)
 }
 
+// FinalizeJob forces a job to a terminal state *now* — complete_at=now with the
+// given failure code (empty = success). Used when a real engine reports a
+// RunNotebook result, so the job reflects the run rather than the clock.
+func (s *Store) FinalizeJob(itemID, id, failWith string) error {
+	res, err := s.db.Exec(
+		`UPDATE job_instances SET complete_at = ?, fail_with = ? WHERE item_id = ? AND id = ?`,
+		s.Now(), failWith, itemID, id)
+	if err != nil {
+		return err
+	}
+	return oneRow(res)
+}
+
+// SetNotebookRun upserts the parsed/executed run detail for a RunNotebook job.
+func (s *Store) SetNotebookRun(jobID, status, runJSON string) error {
+	_, err := s.db.Exec(`
+INSERT INTO notebook_runs (job_id, status, run) VALUES (?,?,?)
+ON CONFLICT(job_id) DO UPDATE SET status = excluded.status, run = excluded.run`,
+		jobID, status, runJSON)
+	return err
+}
+
+// GetNotebookRun returns the recorded status and run JSON for a RunNotebook job.
+func (s *Store) GetNotebookRun(jobID string) (status, runJSON string, err error) {
+	err = s.db.QueryRow(`SELECT status, run FROM notebook_runs WHERE job_id = ?`, jobID).
+		Scan(&status, &runJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrNotFound
+	}
+	return status, runJSON, err
+}
+
 // CancelJobInstance marks a job cancelled.
 func (s *Store) CancelJobInstance(itemID, id string) error {
 	res, err := s.db.Exec(

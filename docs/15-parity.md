@@ -73,7 +73,7 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Notebook authoring / definition round-trip | Full | 🟢 Real |
 | `notebookutils` / `mssparkutils` (fs, credentials, getSecret, lakehouse, runtime) | Functional stdlib shim (`python/notebookutils`) | 🟢 Real |
 | Spark session / batch via the **Livy API** | Reverse-proxy to real Spark when `--spark-livy-url` is set, else 501 | 🟠 BYO-engine |
-| Notebook **cell execution** | On the Spark sidecar (e2e); a scheduled RunNotebook job is clock-derived | 🟠 / 🟡 |
+| Notebook **cell execution** | The emulator parses the notebook into cells (real Go parser) and records/serves the run; **real Spark executes the cells** against OneLake and reports back, finalising the job's status + exit value (`e2e/notebook-run`, real Delta lands). Cells stay "parsed, Pending" if no engine runs | 🟢 parse+run-record / 🟠 Spark exec |
 | Livy **High-Concurrency** (5-REPL) sessions | Fabric's own packing layer, implemented for real (not proxied): `sessionTag` packing into a shared session, 5-REPL cap + spill, non-idempotent acquire, independent get/delete, slot reuse on release. REPL statements proxy to real Spark (BYO) | 🟢 Real (contract) / 🟠 exec |
 | Environments, Spark Job Definitions | Item management only | 🟡 Emulated |
 

@@ -79,6 +79,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}", a.withAuth(a.getJobInstance))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/cancel", a.withAuth(a.cancelJobInstance))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/queryactivityruns", a.withAuth(a.queryActivityRuns))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/notebookRun", a.withAuth(a.getNotebookRun))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/notebookRunResult", a.withAuth(a.reportNotebookRun))
 
 	mux.HandleFunc("POST /v1/workspaces/{wid}/git/connect", a.withAuth(a.gitConnect))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/git/initializeConnection", a.withAuth(a.gitInitializeConnection))
