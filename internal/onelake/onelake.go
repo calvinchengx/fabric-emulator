@@ -147,6 +147,49 @@ func parseRange(h string, size int64) (start, end int64, ok bool) {
 	return start, end, true
 }
 
+// resolveRead returns the OneLakePath for rel within the item, following a
+// shortcut when the direct path is absent. Reads through a shortcut are
+// authorized against the TARGET workspace's RBAC — the trusted-workspace-
+// access model (source workspace role already checked by the caller). A
+// target that was deleted after the shortcut was made dangles → 404.
+func (s *Service) resolveRead(itemID, rel, principalID string) (*store.OneLakePath, *dfsError) {
+	if p, err := s.Store.GetOneLakePath(itemID, rel); err == nil {
+		return p, nil
+	}
+	sc, remainder, err := s.Store.ShortcutFor(itemID, rel)
+	if err != nil {
+		return nil, &dfsError{"InternalError", http.StatusInternalServerError, err.Error()}
+	}
+	if sc == nil {
+		return nil, &dfsError{"PathNotFound", http.StatusNotFound, "The path does not exist."}
+	}
+	role, err := s.Store.RoleOf(sc.TargetWorkspace, principalID)
+	if err != nil {
+		return nil, &dfsError{"InternalError", http.StatusInternalServerError, err.Error()}
+	}
+	if store.RoleRank(role) < store.RoleRank(store.RoleContributor) {
+		return nil, &dfsError{"AuthorizationFailure", http.StatusForbidden,
+			"Reading through the shortcut requires ReadAll on the target workspace."}
+	}
+	target := joinPath(sc.TargetPath, remainder)
+	p, err := s.Store.GetOneLakePath(sc.TargetItem, target)
+	if err != nil {
+		return nil, &dfsError{"PathNotFound", http.StatusNotFound, "The shortcut target path does not exist (dangling shortcut)."}
+	}
+	return p, nil
+}
+
+func joinPath(base, remainder string) string {
+	switch {
+	case base == "":
+		return remainder
+	case remainder == "":
+		return base
+	default:
+		return base + "/" + remainder
+	}
+}
+
 // renameSource resolves the x-ms-rename-source path (which is
 // /{filesystem}/{item}/{rel…} on the wire) to a rel path within the same
 // item — cross-item renames are rejected, matching managed-folder rules.
@@ -328,9 +371,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.patch(w, r, it.ID, rel)
 
 	case http.MethodHead:
-		pth, err := s.Store.GetOneLakePath(it.ID, rel)
-		if err != nil {
-			writeDFSErr(w, dfsError{"PathNotFound", http.StatusNotFound, "The path does not exist."})
+		pth, derr := s.resolveRead(it.ID, rel, p.ID)
+		if derr != nil {
+			writeDFSErr(w, *derr)
 			return
 		}
 		permHeaders(w)
@@ -344,9 +387,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 
 	case http.MethodGet: // read file (Range-aware: Parquet readers seek)
-		pth, err := s.Store.GetOneLakePath(it.ID, rel)
-		if err != nil {
-			writeDFSErr(w, dfsError{"PathNotFound", http.StatusNotFound, "The path does not exist."})
+		pth, derr := s.resolveRead(it.ID, rel, p.ID)
+		if derr != nil {
+			writeDFSErr(w, *derr)
 			return
 		}
 		if pth.IsDir {

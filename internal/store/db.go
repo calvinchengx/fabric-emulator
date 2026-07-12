@@ -163,6 +163,16 @@ CREATE TABLE IF NOT EXISTS capacities (
 	region TEXT NOT NULL,
 	state TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS shortcuts (
+	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	path TEXT NOT NULL,            -- managed folder the shortcut lives in, e.g. Files
+	name TEXT NOT NULL,            -- the symlink name
+	target_workspace TEXT NOT NULL,
+	target_item TEXT NOT NULL,
+	target_path TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	PRIMARY KEY (item_id, path, name)
+);
 PRAGMA foreign_keys = ON;
 `)
 	if err != nil {

@@ -161,3 +161,26 @@ func TestClosedDBCapacityErrors(t *testing.T) {
 		t.Error("ListCapacities on closed DB succeeded")
 	}
 }
+
+func TestClosedDBShortcutErrors(t *testing.T) {
+	s, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if err := s.CreateShortcut(&Shortcut{ItemID: "i", Path: "p", Name: "n"}); err == nil {
+		t.Error("CreateShortcut on closed DB succeeded")
+	}
+	if _, err := s.GetShortcut("i", "p", "n"); err == nil {
+		t.Error("GetShortcut on closed DB succeeded")
+	}
+	if _, err := s.ListShortcuts("i"); err == nil {
+		t.Error("ListShortcuts on closed DB succeeded")
+	}
+	if err := s.DeleteShortcut("i", "p", "n"); err == nil {
+		t.Error("DeleteShortcut on closed DB succeeded")
+	}
+	if _, _, err := s.ShortcutFor("i", "p"); err == nil {
+		t.Error("ShortcutFor on closed DB succeeded")
+	}
+}

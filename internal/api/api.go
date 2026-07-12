@@ -96,6 +96,7 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	a.registerTyped(mux)
 	a.registerLivy(mux)
+	a.registerShortcuts(mux)
 
 	mux.HandleFunc("GET /v1/operations/{oid}", a.withAuth(a.getOperation))
 	mux.HandleFunc("GET /v1/operations/{oid}/result", a.withAuth(a.getOperationResult))

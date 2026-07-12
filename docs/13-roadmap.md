@@ -101,10 +101,12 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
 - [x] e2e: full write flow (create → append ×2 → flush) via GUID addressing,
       read back via name addressing; listings; RBAC walls; managed-folder
       rejections — against real entra-minted Storage tokens.
-- [ ] Shortcuts: OneLake-to-OneLake symlinks with data-plane resolution and
-      target-side RBAC (the trusted-workspace-access smoke path); external
-      targets 501. Designed in [07-control-plane-api.md](07-control-plane-api.md)
-      (`## OneLake shortcuts`).
+- [x] Shortcuts: OneLake-to-OneLake symlinks — create/list/get/delete
+      (`internal/api/shortcuts.go`); data-plane read/HEAD resolution through
+      the target with **target-side RBAC** (the trusted-workspace-access
+      path: a read through a shortcut is authorized against the TARGET
+      workspace); external targets 501; dangling target 404; self-cycle
+      rejected. Store + API + onelake resolution tested.
 - [x] e2e: the **real Azure Blob SDK** (`azure-storage-blob`) round-trips
       through the emulator — `e2e/adls-sdk` (3-OS): uploads a pyarrow Parquet,
       downloads it byte-identical (found + fixed the `x-ms-range` gap), lists

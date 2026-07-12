@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
 // doBlob drives ServeBlob directly.
@@ -444,5 +446,68 @@ func TestRequestTrace(t *testing.T) {
 	f.do("PUT", path+"?resource=file", f.token, []byte("hi"))
 	if w := f.do("GET", path, f.token, nil); w.Body.String() != "hi" {
 		t.Fatalf("traced GET = %q", w.Body.String())
+	}
+}
+
+// TestShortcutResolution: a read through a shortcut resolves into the target
+// item, authorized against the TARGET workspace's RBAC (trusted-workspace-
+// access). A deleted target dangles → 404.
+func TestShortcutResolution(t *testing.T) {
+	f := newFixture(t)
+	// A second (target) workspace + lakehouse with a file, in a different
+	// workspace than the source.
+	tgtWS := &store.Workspace{DisplayName: "target-ws"}
+	if err := f.st.CreateWorkspace(tgtWS, store.Principal{ID: "owner", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	tgt := &store.Item{WorkspaceID: tgtWS.ID, Type: "Lakehouse", DisplayName: "shared"}
+	if err := f.st.CreateItem(tgt, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.CreateOneLakePath(&store.OneLakePath{
+		WorkspaceID: tgtWS.ID, ItemID: tgt.ID, RelPath: "Files/data/x.txt", Content: []byte("shared-bytes"),
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	// A shortcut in the source item (f.it) → the target item's Files/data.
+	sc := &store.Shortcut{
+		ItemID: f.it.ID, Path: "Files", Name: "linked",
+		TargetWorkspace: tgtWS.ID, TargetItem: tgt.ID, TargetPath: "Files/data",
+	}
+	if err := f.st.CreateShortcut(sc); err != nil {
+		t.Fatal(err)
+	}
+
+	read := "/" + f.ws.ID + "/" + f.it.ID + "/Files/linked/x.txt"
+
+	// admin-1 has no role on the target workspace → 403 (trusted-workspace
+	// access is enforced against the TARGET).
+	if w := f.do("GET", read, f.token, nil); w.Code != http.StatusForbidden {
+		t.Fatalf("read without target access = %d; want 403", w.Code)
+	}
+	// Grant admin-1 Contributor on the target → the read resolves through.
+	if err := f.st.CreateRoleAssignment(&store.RoleAssignment{
+		WorkspaceID: tgtWS.ID, Principal: store.Principal{ID: "admin-1", Type: "ServicePrincipal"}, Role: store.RoleContributor,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	g := f.do("GET", read, f.token, nil)
+	if g.Code != http.StatusOK || g.Body.String() != "shared-bytes" {
+		t.Fatalf("shortcut read = %d %q", g.Code, g.Body.String())
+	}
+	// HEAD through the shortcut works too.
+	if w := f.do("HEAD", read, f.token, nil); w.Code != http.StatusOK || w.Header().Get("Content-Length") != "12" {
+		t.Fatalf("shortcut HEAD = %d len=%q", w.Code, w.Header().Get("Content-Length"))
+	}
+	// A path under the shortcut that doesn't exist in the target → 404.
+	if w := f.do("GET", "/"+f.ws.ID+"/"+f.it.ID+"/Files/linked/missing", f.token, nil); w.Code != http.StatusNotFound {
+		t.Fatalf("missing through shortcut = %d", w.Code)
+	}
+	// Delete the target item → the shortcut dangles → 404.
+	if err := f.st.DeleteItem(tgtWS.ID, tgt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w := f.do("GET", read, f.token, nil); w.Code != http.StatusNotFound {
+		t.Fatalf("dangling shortcut read = %d; want 404", w.Code)
 	}
 }

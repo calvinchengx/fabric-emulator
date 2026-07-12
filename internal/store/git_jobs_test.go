@@ -211,3 +211,59 @@ func TestCapacitySeed(t *testing.T) {
 		t.Fatalf("capacities = %d, %v", len(list), err)
 	}
 }
+
+func TestShortcutStore(t *testing.T) {
+	s := newTestStore(t)
+	ws := &Workspace{DisplayName: "w"}
+	if err := s.CreateWorkspace(ws, Principal{ID: "p", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	it := &Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "lh"}
+	if err := s.CreateItem(it, nil); err != nil {
+		t.Fatal(err)
+	}
+	sc := &Shortcut{ItemID: it.ID, Path: "Files", Name: "link", TargetWorkspace: "tw", TargetItem: "ti", TargetPath: "Files/data"}
+	if err := s.CreateShortcut(sc); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetShortcut(it.ID, "Files", "link")
+	if err != nil || got.TargetItem != "ti" || got.TargetPath != "Files/data" {
+		t.Fatalf("shortcut = %+v, %v", got, err)
+	}
+	if _, err := s.GetShortcut(it.ID, "Files", "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing shortcut err = %v", err)
+	}
+	list, _ := s.ListShortcuts(it.ID)
+	if len(list) != 1 {
+		t.Fatalf("list = %d", len(list))
+	}
+
+	// ShortcutFor: longest-prefix match + remainder.
+	m, rem, _ := s.ShortcutFor(it.ID, "Files/link/sub/a.txt")
+	if m == nil || rem != "sub/a.txt" {
+		t.Fatalf("resolve = %+v rem=%q", m, rem)
+	}
+	m, rem, _ = s.ShortcutFor(it.ID, "Files/link")
+	if m == nil || rem != "" {
+		t.Fatalf("resolve exact = %+v rem=%q", m, rem)
+	}
+	if m, _, _ := s.ShortcutFor(it.ID, "Files/other"); m != nil {
+		t.Fatal("resolve non-shortcut matched")
+	}
+
+	if err := s.DeleteShortcut(it.ID, "Files", "link"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteShortcut(it.ID, "Files", "link"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("double delete err = %v", err)
+	}
+	// Item delete cascades shortcuts.
+	sc2 := &Shortcut{ItemID: it.ID, Path: "Files", Name: "x", TargetWorkspace: "tw", TargetItem: "ti"}
+	_ = s.CreateShortcut(sc2)
+	if err := s.DeleteItem(ws.ID, it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := s.ListShortcuts(it.ID); len(l) != 0 {
+		t.Fatal("shortcuts survived item delete")
+	}
+}
