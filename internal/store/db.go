@@ -116,6 +116,15 @@ CREATE TABLE IF NOT EXISTS git_remote_heads (
 	commit_hash TEXT NOT NULL,
 	PRIMARY KEY (remote_key, branch)
 );
+CREATE TABLE IF NOT EXISTS onelake_paths (
+	workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	rel_path TEXT NOT NULL, -- path within the item, e.g. Files/raw/a.txt
+	is_dir INTEGER NOT NULL DEFAULT 0,
+	content BLOB NOT NULL DEFAULT x'',
+	created_at INTEGER NOT NULL,
+	PRIMARY KEY (item_id, rel_path)
+);
 CREATE TABLE IF NOT EXISTS workspace_identities (
 	workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
 	identity_id TEXT NOT NULL, -- entra service principal object id

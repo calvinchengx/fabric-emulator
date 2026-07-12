@@ -49,7 +49,7 @@ func (s *Store) GetConnection(id string) (*Connection, error) {
 // ListConnections returns all connections.
 func (s *Store) ListConnections() ([]*Connection, error) {
 	rows, err := s.db.Query(
-		`SELECT id, display_name, connectivity_type, details_json, created_at FROM connections ORDER BY created_at, id`)
+		`SELECT id, display_name, connectivity_type, details_json, created_at FROM connections ORDER BY rowid`)
 	if err != nil {
 		return nil, err
 	}

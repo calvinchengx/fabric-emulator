@@ -25,7 +25,7 @@ func (s *Store) CreateFolder(f *Folder) error {
 // ListFolders returns a workspace's folders.
 func (s *Store) ListFolders(workspaceID string) ([]*Folder, error) {
 	rows, err := s.db.Query(
-		`SELECT id, workspace_id, display_name, parent_id, created_at FROM folders WHERE workspace_id = ? ORDER BY created_at, id`,
+		`SELECT id, workspace_id, display_name, parent_id, created_at FROM folders WHERE workspace_id = ? ORDER BY rowid`,
 		workspaceID)
 	if err != nil {
 		return nil, err

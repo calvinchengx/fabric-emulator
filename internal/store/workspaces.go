@@ -50,7 +50,7 @@ func (s *Store) ListWorkspacesFor(principalID string) ([]*Workspace, error) {
 	rows, err := s.db.Query(`
 SELECT w.id, w.display_name, w.description, w.capacity_id, w.created_at
 FROM workspaces w JOIN role_assignments ra ON ra.workspace_id = w.id
-WHERE ra.principal_id = ? ORDER BY w.created_at, w.id`, principalID)
+WHERE ra.principal_id = ? ORDER BY w.rowid`, principalID)
 	if err != nil {
 		return nil, err
 	}

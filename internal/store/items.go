@@ -68,7 +68,7 @@ func (s *Store) ListItems(workspaceID, itemType string) ([]*Item, error) {
 		q += ` AND type = ?`
 		args = append(args, itemType)
 	}
-	q += ` ORDER BY created_at, id`
+	q += ` ORDER BY rowid`
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err

@@ -6,22 +6,25 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/api"
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
 	"github.com/calvinchengx/fabric-emulator/internal/config"
 	"github.com/calvinchengx/fabric-emulator/internal/entra"
+	"github.com/calvinchengx/fabric-emulator/internal/onelake"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
 // Server owns the emulator's components.
 type Server struct {
-	Cfg   *config.Config
-	Store *store.Store
-	Clock *clock.Clock
-	API   *api.API
-	mux   *http.ServeMux
+	Cfg     *config.Config
+	Store   *store.Store
+	Clock   *clock.Clock
+	API     *api.API
+	OneLake *onelake.Service
+	mux     *http.ServeMux
 }
 
 // New wires the emulator. jwksClient overrides the JWKS-fetching HTTP client
@@ -40,14 +43,29 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 		a.Entra = entra.New(origin, cfg.EntraTLSInsecure, jwksClient)
 	}
 
-	s := &Server{Cfg: cfg, Store: st, Clock: ck, API: a, mux: http.NewServeMux()}
+	// OneLake accepts only Storage-audience tokens, over the same JWKS.
+	olv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)
+	olv.Audiences = onelake.StorageAudience
+	ol := onelake.New(st, olv)
+
+	s := &Server{Cfg: cfg, Store: st, Clock: ck, API: a, OneLake: ol, mux: http.NewServeMux()}
 	a.Register(s.mux)
 	s.registerControl()
 	return s, nil
 }
 
-// Handler returns the root handler.
-func (s *Server) Handler() http.Handler { return s.mux }
+// Handler returns the root handler: Host-routed like real Fabric —
+// onelake.dfs.fabric.microsoft.com serves the data plane, everything else
+// the control plane.
+func (s *Server) Handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.Host, "onelake.") {
+			s.OneLake.ServeHTTP(w, r)
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	})
+}
 
 // Close releases resources.
 func (s *Server) Close() error { return s.Store.Close() }

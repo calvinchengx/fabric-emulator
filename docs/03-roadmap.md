@@ -80,15 +80,25 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
 
 ## P3 — OneLake data plane
 
-- [ ] `onelake.` host mux: ADLS-Gen2/Blob subset (create/append/flush/read/list/delete).
-- [ ] `Storage`-audience token acceptance.
-- [ ] Managed-folder enforcement (`onelake-api-parity.md`): no workspace/item
-      create/rename/delete via ADLS (HEAD-only at container level); item root +
-      `/Files`,`/Tables` protected; reject `setAccessControl`-class params;
-      ignore + echo banned headers via `x-ms-rejected-headers`.
-- [ ] Name- and GUID-addressing resolve to the same item.
-- [ ] Shortcuts (thin) + trusted-workspace-access smoke path.
-- [ ] e2e: azcopy / ADLS SDK writes a file into a lakehouse, reads it back.
+- [x] `onelake.` host mux (Host-routed like real Fabric): ADLS-Gen2 subset —
+      PUT create file/directory, PATCH append/flush (position-checked), GET
+      read, HEAD properties, filesystem listing (`?resource=filesystem`,
+      `directory=`, `recursive=`, non-recursive collapses to first-level
+      dirs), DELETE (directories take their subtree).
+- [x] `Storage`-audience token acceptance (separate validator over the same
+      JWKS; fabric-audience tokens are rejected on the data plane and vice
+      versa). Workspace RBAC applies: Viewer reads, Contributor writes.
+- [x] Managed-folder enforcement (`onelake-api-parity.md`): HEAD-only at
+      account/workspace level; item root + first level protected from
+      create/rename/delete; `setAccessControl`-class params rejected; banned
+      headers ignored + echoed via `x-ms-rejected-headers`; canned
+      `$superuser` / `---------` permission response headers.
+- [x] Name- and GUID-addressing resolve to the same workspace/item.
+- [x] e2e: full write flow (create → append ×2 → flush) via GUID addressing,
+      read back via name addressing; listings; RBAC walls; managed-folder
+      rejections — against real entra-minted Storage tokens.
+- [ ] Shortcuts (thin) + trusted-workspace-access smoke path (later).
+- [ ] e2e: azcopy / ADLS SDK against the emulator (later; wire subset ready).
 
 ## Cross-cutting (throughout)
 
