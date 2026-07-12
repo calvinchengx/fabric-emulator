@@ -54,8 +54,20 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Testing',
+          items: [
+            { slug: '10-testing' },
+            { slug: '11-testing-with-fabric-cicd' },
+            { slug: '12-e2e-matrix' },
+          ],
+        },
+        {
           label: 'Project',
-          items: [{ slug: '13-roadmap' }, { slug: '14-real-compute' }],
+          items: [
+            { slug: '13-roadmap' },
+            { slug: '14-real-compute' },
+            { slug: '15-entra-companion' },
+          ],
         },
       ],
     }),

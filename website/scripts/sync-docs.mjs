@@ -59,10 +59,12 @@ function writeIndex() {
       `boundary, self-signed TLS). It emulates the control-plane **contract**, not the runtime: ` +
       `nothing actually computes. Run it on \`localhost\` only.\n:::\n\n` +
       `## Start here\n\n` +
+      `- [Quickstart](01-quickstart.md) — compose up the pair, mint a token, create a workspace, write to OneLake\n` +
+      `- [Installation](02-installation.md) — brew, winget, go install, Docker, compose\n` +
       `- [Architecture](03-architecture.md) — the two-emulator model, token acceptance, the LRO engine\n` +
-      `- [Control-plane API](07-control-plane-api.md) — every emulated endpoint and wire shape\n` +
-      `- [OneLake](08-onelake.md) — the ADLS-Gen2 data plane and managed-folder rules\n` +
-      `- [Roadmap](13-roadmap.md) — phases P0–P3 and what's shipped\n`,
+      `- [Control-plane API](07-control-plane-api.md) and [OneLake](08-onelake.md) — every emulated endpoint\n` +
+      `- [Testing](10-testing.md) — freeze the clock, inject faults; [run the real fabric-cicd](11-testing-with-fabric-cicd.md)\n` +
+      `- [Roadmap](13-roadmap.md) — phases P0–P3 and what's next\n`,
   );
   // The landing page is synthesized here (no /docs source), so it has no
   // "Edit this page" target.
