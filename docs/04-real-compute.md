@@ -111,6 +111,88 @@ https://api.fabric.microsoft.com/v1/workspaces/{ws}/lakehouses/{lh}/livyapi/vers
   for `pyodbc`/SSMS. Genuinely novel, genuinely hard; only worth building if
   C2 sees real use.
 
+## Track D — the notebook developer loop
+
+A Fabric "Notebook" is four layers; three already have designs. This track
+adds the fourth and composes them into a complete local environment for a
+Fabric data engineer:
+
+| Layer | Status |
+|---|---|
+| **The item + source format** (`.platform` + `notebook-content.py`, definitions, git/fabric-cicd round-trip) | ✅ shipped (P1) |
+| **Execution** (Livy on the documented endpoint → real Spark sidecar) | 📐 Track B |
+| **Storage** (Delta in OneLake via real engines) | 📐 Track A |
+| **The runtime library — NotebookUtils** | ⬅ this track |
+
+**D1 — a functional `notebookutils` shim** (pip-installable Python package,
+`python/notebookutils/` in this repo). `notebook-utilities.md` documents ten
+modules; every one maps onto surfaces the family already serves:
+
+| Module | Backed by |
+|---|---|
+| `notebookutils.fs` (+ mount) | the OneLake DFS plane |
+| `notebookutils.credentials.getToken` | entra-emulator (MSI endpoint / workspace identity) |
+| `notebookutils.credentials.getSecret` | **azure-keyvault-emulator** — the `Code.AccessAzureKeyvault.All` path, for real |
+| `notebookutils.notebook` (run/runMultiple/exit + management) | jobs + Livy (B2) and `/v1` item CRUD |
+| `notebookutils.lakehouse` | `/v1/workspaces/{id}/lakehouses` |
+| `notebookutils.runtime` (context) | session/workspace context from the emulator |
+| `notebookutils.session`, `udf`, `variableLibrary` | session mgmt; 501-honest until their items exist |
+
+Naming note: Microsoft publishes a non-functional `notebookutils` typing stub
+on PyPI for IDE support; ours is a *functional* implementation of the same
+documented API — distribution name TBD to avoid collision, module name
+compatible so notebook code runs unchanged.
+
+**D2 — default-lakehouse session semantics**: the Spark sidecar's sessions
+are provisioned with the notebook's attached lakehouse mounted — relative
+`Files/`/`Tables/` paths and `spark.sql` over lakehouse tables resolve to our
+OneLake plane, matching the attached-lakehouse experience. Spark/Delta
+versions pinned to the documented Fabric Runtime (1.3 = Spark 3.5/Delta 3.x).
+
+**D3 — authoring surfaces**, in order of fidelity:
+
+1. **VS Code + the Microsoft Fabric extension** — the real local authoring
+   tool. For Runtime 1.3+ the docs say there is *no local conda env*: the
+   extension runs notebooks on **remote Spark compute** via a Jupyter kernel
+   — which is precisely the shape of our Livy+Spark sidecar. Investigation
+   item: whether the extension's service endpoints can be redirected
+   (fabric-cicd could via env; the DNS-pin + cert trick is the fallback).
+   If yes, a data engineer authors in VS Code against the emulator
+   end-to-end.
+2. **Plain Jupyter/VS Code `.ipynb`** + git / fabric-cicd sync — works
+   **today**: author anywhere, `fabric-cicd` publishes into the emulator,
+   `updateFromGit` pulls edits back.
+3. The Svelte portal gets a read-only notebook view, not an editor —
+   authoring belongs to real tools.
+
+The complete loop this yields: *author in VS Code → sync via git/fabric-cicd
+→ run interactively on the Spark sidecar with the default lakehouse mounted →
+`notebookutils` resolves files, tokens, and Key Vault secrets through the
+emulator family → Delta lands in OneLake → query it via the DuckDB SQL
+endpoint → schedule via the jobs API → CI drives the identical REST surfaces.*
+
+## Engine weights — what actually runs, and when
+
+The emulator core never gets heavier; engines are opt-in sidecars behind
+compose profiles and flags. The default (no flags) runs nothing but the Go
+binary, and the clock-derived job behavior remains — CI's unit suite never
+waits on a JVM.
+
+| Rung | What runs | Weight |
+|---|---|---|
+| Default | the Go binary only; jobs are clock-derived | milliseconds |
+| A1 delta-rs | Rust library in a Python wheel — no JVM | tens of MB |
+| A2/B PySpark | **full JVM Spark** (local mode or container, via Livy) | GBs, seconds to start |
+| C1 DuckDB | in-process library — no server, no JVM | a few MB |
+| C2 Babelfish | **full PostgreSQL fork** in a container | hundreds of MB |
+
+Honest asterisk on Track C: Spark's JVM *is* what Fabric runs — the weight
+buys true fidelity. DuckDB/Babelfish are **real engines standing in for an
+unobtainable one** (Fabric's warehouse is Microsoft's proprietary Polaris
+engine): the Delta files they query are byte-identical to production, but
+T-SQL dialect edges will differ. Same class of documented divergence as the
+C2 SQL-auth compromise.
+
 ## Phasing
 
 | Phase | Delivers |
@@ -119,6 +201,7 @@ https://api.fabric.microsoft.com/v1/workspaces/{ws}/lakehouses/{lh}/livyapi/vers
 | **R1** | A2 (real PySpark writes Delta via ABFS; cross-engine read with delta-rs) |
 | **R2** | B1+B2 (Livy passthrough; real RunNotebook mode) |
 | **R3** | C1 (DuckDB SQL over the lakehouse); C2/C3 by demand |
+| **R4** | D1–D3 (notebookutils shim; default-lakehouse sessions; VS Code extension compatibility) |
 
 ## Non-goals
 

@@ -132,6 +132,11 @@ proxy would be a separate sibling.
       analytics endpoint semantics); Babelfish/SQL Server sidecar per
       Warehouse item (SQL-auth compromise documented); TDS-FedAuth proxy only
       by demand, as its own repo.
+- [ ] **R4** — the notebook developer loop: functional `notebookutils` shim
+      (fs → OneLake, credentials → entra + azure-keyvault-emulator, notebook
+      run → jobs/Livy); default-lakehouse session semantics on the Spark
+      sidecar; VS Code Fabric-extension compatibility investigation.
+      Designed in [04-real-compute.md](04-real-compute.md) (Track D).
 
 ## Cross-cutting (throughout)
 
