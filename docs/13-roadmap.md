@@ -115,10 +115,14 @@ below the emulated planes — never fake results. Lives in this repo (storage
 completeness + e2e harnesses + compose sidecars); only a future TDS-FedAuth
 proxy would be a separate sibling.
 
-- [ ] **R0** — OneLake storage completeness: Range reads, ETags + conditional
-      writes (Delta `_delta_log` put-if-absent atomicity), rename, list-paging
-      fidelity; e2e **A1**: delta-rs (`deltalake`) writes/reads a Delta table
-      through our DFS with an entra Storage token.
+- [x] **R0** — OneLake storage completeness: the Blob-endpoint dialect
+      (`internal/onelake/blob.go` — Put Blob / staged blocks / Copy / List
+      Blobs XML paging, reached via `onelake.blob.*` or the account-prefixed
+      `/onelake/{ws}/…` path), Range reads (206) on both surfaces, ETags +
+      put-if-absent conditional writes (Delta `_delta_log` atomicity), DFS
+      rename (`x-ms-rename-source`), ETag/Last-Modified on every path. e2e
+      **A1** (`e2e/delta-rs`, CI): real `deltalake` writes v0 → reads back →
+      appends v1, and the same files list through the DFS surface.
 - [ ] **R1** — e2e **A2**: real PySpark + delta-spark via the ABFS driver
       (`abfss://…@onelake.dfs.fabric.microsoft.com/…`), OAuth against
       entra-emulator; cross-engine read-back with delta-rs.
