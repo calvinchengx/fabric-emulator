@@ -187,3 +187,39 @@ func TestAKVReferenceConnectionViaWorkspaceIdentity(t *testing.T) {
 	f.mustStatus(f.call("POST", "/v1/connections", f.token, body, nil),
 		http.StatusBadRequest, "missing secret reference")
 }
+
+func TestLivyPassthroughE2E(t *testing.T) {
+	f := newFixture(t)
+
+	// A stub "Livy" backend records the path it received.
+	var gotPath string
+	livy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":1,"state":"starting"}`))
+	}))
+	defer livy.Close()
+	if err := f.srv.API.SetLivyBackend(livy.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	var ws struct{ ID string }
+	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "spark-ws"}, &ws)
+	var lake struct{ ID string }
+	f.call("POST", "/v1/workspaces/"+ws.ID+"/lakehouses", f.token, map[string]any{"displayName": "lh"}, &lake)
+
+	// Submit a Livy batch through the documented Fabric endpoint; a real
+	// entra token is validated, RBAC checked, then proxied to the backend.
+	base := "/v1/workspaces/" + ws.ID + "/lakehouses/" + lake.ID + "/livyapi/versions/2023-12-01/"
+	resp := f.call("POST", base+"batches", f.token, map[string]string{"file": "abfss://…/nb.py"}, nil)
+	f.mustStatus(resp, http.StatusCreated, "livy batch submit")
+	if gotPath != "/batches" {
+		t.Fatalf("backend path = %q; want /batches", gotPath)
+	}
+
+	// Without a backend, the endpoint is honestly 501.
+	if err := f.srv.API.SetLivyBackend(""); err != nil {
+		t.Fatal(err)
+	}
+	f.mustStatus(f.call("GET", base+"sessions", f.token, nil, nil), http.StatusNotImplemented, "no backend")
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
 	"sync"
 
 	"github.com/calvinchengx/fabric-emulator/internal/akv"
@@ -29,6 +30,10 @@ type API struct {
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.
 	LRODelaySeconds int64
+
+	// livy reverse-proxies the Livy endpoint to a real Spark backend
+	// (nil = Livy routes 501).
+	livy *httputil.ReverseProxy
 
 	// Fault switches (set via the /_emulator control surface).
 	mu        sync.Mutex
@@ -90,6 +95,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/workspaces/{wid}/deprovisionIdentity", a.withAuth(a.deprovisionIdentity))
 
 	a.registerTyped(mux)
+	a.registerLivy(mux)
 
 	mux.HandleFunc("GET /v1/operations/{oid}", a.withAuth(a.getOperation))
 	mux.HandleFunc("GET /v1/operations/{oid}/result", a.withAuth(a.getOperationResult))

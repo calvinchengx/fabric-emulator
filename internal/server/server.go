@@ -44,6 +44,9 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 		a.Entra = entra.New(origin, cfg.EntraTLSInsecure, jwksClient)
 	}
 	a.AKV = akv.New(cfg.EntraTLSInsecure, jwksClient)
+	if err := a.SetLivyBackend(cfg.SparkLivyURL); err != nil {
+		return nil, err
+	}
 
 	// OneLake accepts only Storage-audience tokens, over the same JWKS.
 	olv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)

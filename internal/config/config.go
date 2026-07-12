@@ -38,6 +38,12 @@ type Config struct {
 	// or for curl-based exploration). Default is self-signed TLS, matching
 	// entra-emulator.
 	DisableTLS bool
+
+	// SparkLivyURL, when set, is a real Apache Livy backend the emulator
+	// reverse-proxies its Livy endpoint to (and, opt-in, runs RunNotebook
+	// jobs against). Empty leaves the Livy routes 501 and jobs on the
+	// deterministic clock.
+	SparkLivyURL string
 }
 
 // FromEnv builds a validated Config from FABRIC_* environment variables.
@@ -56,6 +62,7 @@ func FromEnvPartial() *Config {
 		EntraJWKSURL:      os.Getenv("FABRIC_ENTRA_JWKS_URL"),
 		EntraTLSInsecure:  boolEnv("FABRIC_ENTRA_TLS_INSECURE"),
 		DisableTLS:        boolEnv("FABRIC_DISABLE_TLS"),
+		SparkLivyURL:      os.Getenv("FABRIC_SPARK_LIVY_URL"),
 		RetryAfterSeconds: 1,
 	}
 }
