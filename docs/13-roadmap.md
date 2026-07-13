@@ -172,17 +172,21 @@ proxy would be a separate sibling.
       capped at **5 REPLs/session** with spill-to-new-session; acquire is
       non-idempotent (same tag → distinct HC ids, shared `sessionId`);
       acquire/get/delete are pure control-plane (no Spark); a REPL's statements
-      open a **real** backend Livy session lazily and proxy to it (honest 501
-      without a backend). Unit-tested (packing, cap, spill, slot-reuse-after-
-      release, RBAC) + a server e2e proving the HC routes win over the classic
-      catch-all on the real mux, race-clean.
-    - [ ] **B (real Livy sidecar e2e)** — *deferred, with cause:* Apache Livy
-      is **retired to the Apache Attic** (last release 0.8.0, no maintained
-      image), so there is no maintained real engine to bundle for the Livy
-      *protocol* specifically — the honest 501 default is correct, and the
-      proxy works against any Livy-compatible backend a user brings. Real
-      Spark *execution* is already proven by A2 (Spark writes/reads real
-      Delta). Revisit only if a maintained Livy-compatible server appears.
+      run on **real Spark** via the native agent (`--spark-agent-url`) — or proxy
+      to an external Livy backend (`--spark-livy-url`), honest 501 without either.
+      Unit-tested (packing, cap, spill, slot-reuse-after-release, RBAC) + a server
+      e2e proving the HC routes win over the classic catch-all on the real mux,
+      race-clean.
+    - [x] **B (native Livy sessions on real Spark)** — Apache Livy is **retired
+      to the Apache Attic** (no maintained image to bundle for the protocol), so
+      rather than proxy it, the emulator *terminates* the Livy contract itself
+      and drives a **Spark statement-executor agent** via `--spark-agent-url` /
+      `FABRIC_SPARK_AGENT_URL` (`internal/api/livy_native.go`,
+      `e2e/livy/agent.py`): sessions, statements, and batches run on **real
+      Spark**, session state persists across statements, and HC REPLs each get
+      their own agent namespace — so the 5-REPL model is real end to end
+      (`e2e/livy`, containerized). `--spark-livy-url` still reverse-proxies an
+      external Livy backend if a user brings one; unset → honest 501.
 - [x] **R3 (SQL analytics endpoint — DuckDB)** — real DuckDB runs SQL
       (aggregation, join, filter) over Delta tables in the OneLake plane,
       `e2e/duckdb` (3-OS): delta-rs writes two Delta tables into OneLake,
@@ -190,22 +194,28 @@ proxy would be a separate sibling.
       interop, cross-engine. (DuckDB embeds via CGO, which the pure-Go
       distroless build forbids, so the SQL engine runs in the e2e, not the
       binary; the storage read is byte-proven by the delta-rs e2e.)
-    - [~] **R3 (T-SQL / TDS warehouse)** — **T1–T3 done; T4 next.** Designed in
+    - [x] **R3 (T-SQL / TDS warehouse)** — **T1–T5 done.** Designed in
       [16-warehouse-tds.md](16-warehouse-tds.md). A pure-Go TDS endpoint
       (`internal/tds`, `-sql-tds-addr`) terminates Entra FedAuth (token
-      validated vs entra's JWKS, `database.windows.net` audience), **T2** relays
-      SQLBatch to a real **SQL Server** sidecar (`-warehouse-sql-url`,
-      go-mssqldb), and **T3** reflects a lakehouse's Delta into it — the
-      emulator reads `Tables/<t>` Delta in pure Go (`internal/warehouse`) and
-      `CREATE TABLE`+`INSERT`s the rows; `SELECT` then matches DuckDB (R3/C1),
-      the cross-engine oracle. Verified end-to-end against a real SQL Server
-      container (all three warehouse e2es). **Not PolyBase:** a spike
-      (`e2e/sql-endpoint-spike/`) proved SQL Server reading OneLake Delta
-      directly is a dead-end on Linux (the object-storage connector components
-      aren't shipped), so reflection is the permanent design. **T4** adds
-      explicit Lakehouse(read-only)/Warehouse(read-write) routing, per-lakehouse
-      schema isolation, RBAC→SQL permissions, and `information_schema` parity.
-      (Proxy in this repo, mirroring Livy; engine a compose sidecar.)
+      validated vs entra's JWKS, `database.windows.net` audience); **T3**
+      reflects a lakehouse's Delta into a real **SQL Server** sidecar
+      (`-warehouse-sql-url`) — read `Tables/<t>` Delta in pure Go
+      (`internal/warehouse`), `CREATE`+`INSERT` the rows; `SELECT` matches DuckDB
+      (R3/C1), the cross-engine oracle. **T4** routes each item to its own
+      database (Lakehouse read-only / Warehouse read-write, isolated), enforces
+      RBAC→SQL permissions, and delivers `information_schema` parity, native
+      per-column type fidelity, and connect-by-name. **T5** replaces the
+      per-batch relay with a **session splice** (`internal/tds/splice.go`,
+      `client.go`): after terminating FedAuth, the client's post-login session is
+      **byte-forwarded** to a real per-item SQL Server connection, so the engine
+      emits every token natively (transactions, RPCs, prepared statements). That
+      unlocks a second, independent driver family — Microsoft **ODBC Driver 18**
+      — so Microsoft's real **dbt-fabric** adapter passes `debug→seed→run→test`
+      end to end (`e2e/dbt-fabric`), alongside `go-mssqldb`. **Not PolyBase:** a
+      spike proved SQL Server reading OneLake Delta directly is a dead-end on
+      Linux (the object-storage connector components aren't shipped), so
+      reflection is the permanent design. (Front in this repo; engine a compose
+      sidecar.)
 - [x] **R4 (notebook developer loop)** — a functional `notebookutils` /
       `mssparkutils` shim (`python/notebookutils`, stdlib-only) that makes
       real Fabric notebook code run unchanged against the emulator family:

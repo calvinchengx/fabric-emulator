@@ -67,6 +67,8 @@ export default defineConfig({
             { slug: '13-roadmap' },
             { slug: '14-real-compute' },
             { slug: '15-entra-companion' },
+            { slug: '16-warehouse-tds' },
+            { slug: '17-parity' },
           ],
         },
       ],

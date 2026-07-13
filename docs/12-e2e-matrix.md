@@ -24,10 +24,11 @@ engines against the running emulator.
 | **Spark via ABFS (A2)** | real PySpark + delta-spark | writes/reads a Delta table over `abfss://…@onelake.dfs…` with OAuth against entra | `e2e/spark/run.py` (CI `spark-a2`, Linux, containerized) |
 | **Native Livy** | real Livy REST client + real Spark | emulator terminates the Livy protocol itself and drives a Spark agent — session + PySpark statements computed by real Spark, no Apache Livy server | `e2e/livy/run.py` (CI `livy-native`, Linux) |
 | **dbt (fabric-spark)** | Microsoft's real `dbt-fabricspark` adapter | a dbt project (debug → seed → run → test) over the Fabric REST + Livy HC surface, models computed by real Spark | `e2e/dbt-fabricspark/run.py` (CI `dbt-fabricspark`, Linux) |
+| **dbt (fabric) via ODBC** | Microsoft's real `dbt-fabric` adapter + Microsoft ODBC Driver 18 | a dbt project (debug → seed → run → test) over the TDS warehouse surface through pyodbc + FedAuth (byte-spliced to a real SQL Server) — the **second** independent TDS driver family | `e2e/dbt-fabric/run.py` (CI `dbt-fabric`, Linux) |
 | **DuckDB SQL** | real DuckDB | SQL (aggregation, join, filter) over Delta tables in the OneLake plane — the lakehouse SQL-analytics-endpoint semantics | `e2e/duckdb/run.py` (CI `duckdb`, 3-OS) |
 | **notebookutils** | real Fabric notebook | the functional `notebookutils` shim: fs over OneLake, credential tokens, Key Vault secret brokering, lakehouse control plane, `notebook.run` | `e2e/notebookutils/run.py` (CI `notebookutils`, 3-OS) |
 | **Notebook execution** | real Spark | emulator parses a Fabric notebook into cells; real Spark executes them against OneLake (a Delta table lands) and the run reports back | `e2e/notebook-run/run.py` (CI `notebook-run`, Linux) |
-| **Warehouse TDS** | real `go-mssqldb` + real SQL Server 2022 | entra-token connect, then DDL + DML + a GROUP BY relayed through the TDS endpoint | CI `warehouse-tds` (Linux) |
+| **Warehouse TDS** | real `go-mssqldb` + real SQL Server 2022 | entra-token connect, then DDL + DML + a GROUP BY relayed through the TDS endpoint — **one of two** independent TDS driver witnesses (the other: Microsoft ODBC Driver 18 via `dbt-fabric` above) | CI `warehouse-tds` (Linux) |
 
 Plus: coverage floor 90% (cross-package; currently ~95%), `go vet`, a
 distroless container smoke (`docker-smoke`), the portal build + headless

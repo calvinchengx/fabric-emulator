@@ -21,7 +21,11 @@ localhost
 fabric-emulator
 api.fabric.microsoft.com
 onelake.dfs.fabric.microsoft.com
+onelake.blob.fabric.microsoft.com
 ```
+
+Both OneLake hostnames start with `onelake.`, so they route to the OneLake
+data plane — `onelake.blob.` reaches the same surface as `onelake.dfs.`.
 
 Covering the **real Fabric hostnames** is deliberate: it lets unmodified
 tools talk to the emulator under the names they insist on, with only DNS-level

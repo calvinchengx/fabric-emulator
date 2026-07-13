@@ -32,18 +32,32 @@ second — and validates every incoming token against entra-emulator's JWKS,
 
 ## Status
 
-**Working** — phases P0–P3 are shipped and CI-verified on Linux, macOS, and
-Windows: the control-plane spine (workspaces, items, RBAC, deterministic LROs),
-the CI/CD surface (definitions, typed aliases, connections, git integration,
-jobs — the real `fabric-cicd` tool publishes into the emulator unmodified),
-the workspace-identity handshake with entra-emulator, and the OneLake
-ADLS-Gen2 data plane with managed-folder enforcement. Every package covers
-itself (≥77%, 91%+ total).
+**Working** — the contract spine (P0–P3) *and* the real-compute track (R0–R5)
+are shipped and CI-verified on Linux, macOS, and Windows.
+
+- **Contract plane:** workspaces, items, RBAC, deterministic LROs; the CI/CD
+  surface (definitions, typed aliases, connections + credential model, git
+  integration, jobs — the real `fabric-cicd` tool publishes unmodified); the
+  workspace-identity handshake with entra-emulator; and the OneLake ADLS-Gen2 +
+  Blob data plane (managed folders, Delta put-if-absent commits, shortcuts).
+- **Real compute (opt-in sidecars):** real **Spark** over a native Livy agent
+  (interactive + high-concurrency sessions, notebook cell execution, Delta via
+  ABFS); real **T-SQL over TDS** with Entra **FedAuth** terminated and the
+  session byte-spliced to a **SQL Server** sidecar — driven by both `go-mssqldb`
+  and Microsoft **ODBC Driver 18** (Microsoft's real `dbt-fabric` adapter passes
+  end-to-end); **DuckDB** SQL over lakehouse Delta; and a pure-Go **pipeline**
+  interpreter with real leaf activities. Real clients (delta-rs, the Azure Blob
+  SDK, azcopy, PySpark, dbt) drive it in CI as borrowed oracles.
+
+The default binary runs none of the engines (clock-derived, milliseconds);
+each is an opt-in flag/sidecar. Coverage floor is 90% (currently ~95%).
 
 Docs: <https://calvinchengx.github.io/fabric-emulator/> — start with
 [architecture](docs/03-architecture.md), the
 [control-plane API](docs/07-control-plane-api.md), [OneLake](docs/08-onelake.md),
-and the [roadmap](docs/13-roadmap.md).
+the [roadmap](docs/13-roadmap.md), [real compute](docs/14-real-compute.md), the
+[warehouse over TDS](docs/16-warehouse-tds.md), and the
+[parity table](docs/17-parity.md).
 
 ## Relationship to entra-emulator
 

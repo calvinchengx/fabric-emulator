@@ -10,13 +10,16 @@ with it — matching the control plane's documented cascade semantics.
 
 ```
 capacities          (id, displayName, sku, region, state)
-workspaces          (id, displayName, description, capacityId, state)
+workspaces          (id, displayName, description, capacityId, createdAt)
 role_assignments    (id, workspace_id ⤳, principal_id, principal_type, role)
-items               (id, workspace_id ⤳, type, displayName, description, folder_id)
+items               (id, workspace_id ⤳, type, displayName, description, createdAt)
 item_definitions    (item_id ⤳ PK, parts JSON — stored verbatim, round-trips exactly)
-folders             (id, workspace_id ⤳, displayName, parent)
-operations          (id, kind, status, createdAt, completeAt, result ref, error)
+folders             (id, workspace_id ⤳, displayName, parent_id (parentFolderId))
+operations          (id, kind, createdAt, completeAt, result ref, fail_with — status derived on read)
 job_instances       (id, item_id ⤳, jobType, status, start/end times)
+pipeline_runs       (job_id ⤳ PK, status, activity_runs JSON)
+notebook_runs       (job_id ⤳ PK, status, run JSON — {status, exitValue, cells})
+shortcuts           (item_id ⤳ + path + name PK, target_workspace, target_item, target_path, created_at)
 connections         (id, displayName, connectivityType, details)
 git_connections     (workspace_id ⤳ PK, provider details, connection_id, branch, sync state)
 git_remote_items    (remote_key, branch, item_type, display_name → logical id, definition)
@@ -63,8 +66,6 @@ workspace becomes its Admin.
 
 ## State enums
 
-- `workspace.state`: `Active/Inactive/Deleting/Unusable/Failed/DeleteFailed`
-  (the six values fabric-docs documents).
 - `workspace_identities` state lives entra-side
   (`Active/Provisioning/Failed/Deprovisioning`) — see the
   [identity handshake](09-identity-handshake.md).

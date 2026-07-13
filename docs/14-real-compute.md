@@ -1,8 +1,12 @@
 # 14 — Real compute: PySpark, Delta, and the warehouse
 
-**Status: design.** This document plans the track that turns fabric-emulator
-from a *contract emulator* into a *local Fabric runtime* — by attaching
-**real engines**, never by faking results.
+**Status: largely shipped (R0–R5).** This document laid out the track that turns
+fabric-emulator from a *contract emulator* into a *local Fabric runtime* — by
+attaching **real engines**, never by faking results. Most of it now exists, each
+milestone gated on a real client in CI; the honest exceptions still in flight
+(a real Airflow sidecar, a handful of pipeline leaf activities, ForEach parallel
+mode) are marked inline. Tense below is kept as originally written where it still
+reads as intent; shipped items carry a ✅ and their `e2e/` witness.
 
 ## The principle (a refinement, not a reversal)
 
@@ -28,9 +32,10 @@ service — it is:
 2. e2e harnesses in `e2e/` (like `e2e/fabric-cicd/`),
 3. compose-level sidecar attachments (Spark, DuckDB, SQL Server).
 
-One future exception: a **TDS-FedAuth proxy** (Track C) would be a standalone
-service with its own release cycle — a separate sibling repo *if and when*
-it's built.
+This held even for the piece once expected to become a separate service: the
+**TDS-FedAuth termination** (Track C) shipped **in this repo** as `internal/tds`
+(a pure-Go TDS front that validates the login's Entra token and then byte-splices
+the session to the SQL Server sidecar) — not a sibling repo after all.
 
 ## The junction: OneLake is where engines meet
 
@@ -89,16 +94,20 @@ control-plane origin we already serve:
 https://api.fabric.microsoft.com/v1/workspaces/{ws}/lakehouses/{lh}/livyapi/versions/2023-12-01/{sessions|batches}
 ```
 
-- **B1 — Livy passthrough**: implement those routes (bearer-validated,
-  RBAC-checked like everything else) delegating to a **real Apache
-  Livy + Spark sidecar** in docker-compose, with the session pre-configured
-  so `abfss://` resolves to our OneLake plane. Fabric-shaped URL outside,
-  real Spark inside.
-- **B2 — jobs integration**: `POST …/jobs/instances?jobType=RunNotebook`
-  gains an opt-in real mode (`--spark-livy-url`): the job submits the
-  notebook's definition as a Livy batch, and job status reflects the *actual*
-  batch state instead of the clock-derived state machine. Without the flag,
-  today's deterministic clock behavior remains the default — CI stays fast.
+- **B1 — Livy sessions on real Spark. ✅** Those routes are implemented
+  (bearer-validated, RBAC-checked like everything else). Apache Livy itself is
+  retired (Attic), so the shipped path is **native**: `--spark-agent-url` points
+  the emulator at a Spark **statement-executor agent** (`e2e/livy/agent.py`) that
+  runs each session/statement/batch on real Spark, with the session configured so
+  `abfss://` resolves to our OneLake plane — Fabric-shaped URL outside, real Spark
+  inside (`internal/api/livy_native.go`, `e2e/livy`). A `--spark-livy-url` mode
+  still reverse-proxies an external Livy server if you have one. Fabric's
+  **high-concurrency** (5-REPL) session packing is implemented for real on top
+  (`internal/api/livy_hc.go`). Without either flag, statements 501 honestly.
+- **B2 — jobs integration. ✅** `RunNotebook` job execution parses the notebook
+  into cells and runs them on the Spark agent, finalising the job's terminal
+  status and exit value from the *actual* run (`e2e/notebook-run`); without an
+  agent, the deterministic clock behavior remains the default — CI stays fast.
 - **Token passthrough**: the Livy docs define `Code.Access*` scopes for Spark
   code acquiring downstream tokens — including `Code.AccessAzureKeyvault.All`.
   Spark code calling `mssparkutils`-style credential helpers can be pointed
@@ -108,23 +117,27 @@ https://api.fabric.microsoft.com/v1/workspaces/{ws}/lakehouses/{lh}/livyapi/vers
 
 ## Track C — the warehouse (two fidelity targets, priced separately)
 
-- **C1 — SQL analytics endpoint *semantics*** (cheap, high value): **DuckDB**
-  with its delta extension querying the *same Delta files* Spark wrote in
-  Track A — completely real SQL over completely real Delta, the actual
-  lakehouse↔warehouse interop story. Exposed initially through the item's
-  REST query surface, not TDS.
-- **C2 — real T-SQL engine**: sidecar **SQL Server on Linux** (real TDS +
+- **C1 — SQL analytics endpoint *semantics*. ✅** **DuckDB** with its delta
+  extension queries the *same Delta files* Spark wrote in Track A — completely
+  real SQL over completely real Delta, the actual lakehouse↔warehouse interop
+  story, verified in `e2e/duckdb` (aggregation / join / filter over lakehouse
+  Delta, agreeing with the TDS engine).
+- **C2 — real T-SQL engine. ✅** Sidecar **SQL Server on Linux** (real TDS +
   T-SQL; Babelfish considered and rejected for fidelity — see
-  [16-warehouse-tds.md](16-warehouse-tds.md)), provisioned per
-  Warehouse item, with connection info surfaced on the item like real
-  Fabric's `sqlEndpoint` properties. Compromise, stated plainly: local
-  engines only do SQL auth — Entra FedAuth over TDS is not available in any
-  stock engine.
-- **C3 — TDS-FedAuth proxy** (future, separate repo): a Go proxy that parses
-  the TDS login's FedAuth token, validates it against entra-emulator's JWKS,
-  and forwards upstream with SQL auth — restoring the production auth story
-  for `pyodbc`/SSMS. Genuinely novel, genuinely hard; only worth building if
-  C2 sees real use.
+  [16-warehouse-tds.md](16-warehouse-tds.md)), each Warehouse/Lakehouse item
+  routed to its **own SQL Server database**, with a Lakehouse's OneLake Delta
+  reflected into the engine on connect (read-only) and a Warehouse relayed
+  read-write. RBAC → SQL permissions, `information_schema` parity, native
+  per-column type fidelity, connect-by-name.
+- **C3 — Entra FedAuth over TDS. ✅ (in-repo, not a proxy repo).** The original
+  "local engines only do SQL auth" compromise was dissolved: `internal/tds`
+  terminates the FedAuth login itself (validates the login's Entra token against
+  entra-emulator's JWKS, `database.windows.net` audience) and then **byte-splices**
+  the client's post-login session straight to the SQL Server sidecar over a SQL
+  login — so the engine emits every token natively (transactions, RPCs, prepared
+  statements). This restores the production auth story for real clients:
+  unmodified `go-mssqldb` **and** the Microsoft ODBC Driver 18 (pyodbc) connect,
+  and Microsoft's real **dbt-fabric** adapter passes end-to-end (`e2e/dbt-fabric`).
 
 ## Track D — the notebook developer loop
 
@@ -191,8 +204,8 @@ endpoint → schedule via the jobs API → CI drives the identical REST surfaces
 Pipelines are the sharpest test of the never-fake principle, because the
 engines split three ways:
 
-**E1 — Apache Airflow: the fully real tier.** Fabric's own code-first
-orchestrator is **genuine Apache Airflow**
+**E1 — Apache Airflow: the fully real tier. 📐 planned (not yet shipped).**
+Fabric's own code-first orchestrator is **genuine Apache Airflow**
 (`apache-airflow-jobs-concepts.md`: "Python-based DAGs", the next generation
 of ADF's Workflow Orchestration Manager) — and Airflow is OSS. So the
 highest-fidelity local pipeline story attaches a **real Airflow sidecar** as
@@ -220,28 +233,31 @@ no-code **Data pipeline** does *not* run on Airflow — that's the proprietary
 ADF-lineage engine E2 addresses. Airflow is Fabric's separate code-first
 orchestrator, offered side by side.)
 
-**E2 — DataPipeline interpreter: our control flow, real work.** The no-code
-pipeline engine (ADF lineage) is proprietary — Polaris-class unobtainable.
-For `DataPipeline` items we therefore implement the **documented control-flow
+**E2 — DataPipeline interpreter: our control flow, real work. ✅ (core).** The
+no-code pipeline engine (ADF lineage) is proprietary — Polaris-class
+unobtainable. For `DataPipeline` items we implement the **documented control-flow
 semantics** ourselves — `dependsOn` conditions
-(Succeeded/Failed/Completed/Skipped), ForEach (sequential/parallel), If /
-Until (+timeout), Invoke Pipeline, and the retry policies
-`activity-overview.md` specifies — with every **leaf activity delegating to a
-real engine**:
+(Succeeded/Failed/Completed/Skipped), ForEach, If / Until (+timeout), Switch,
+Filter, Fail, the ADF expression language, and per-activity retry/timeout
+policies — with leaf activities delegating to real work where an engine exists:
 
-| Activity | Executes via |
-|---|---|
-| Notebook | Livy → the real Spark sidecar (Track B) |
-| Script / Stored procedure / Lookup | the warehouse engine (Track C) |
-| Web / Webhook | real HTTP calls |
-| Copy | real byte movement over a **scoped connector set** (OneLake↔OneLake, ADLS-shaped, HTTP source, local SQL) |
-| Invoke pipeline | recursive interpretation |
+| Activity | Executes via | Status |
+|---|---|---|
+| Invoke pipeline | recursive interpretation of the referenced `DataPipeline` | ✅ real |
+| Lookup | reads rows from a CSV/JSON file **directly in OneLake** (pure-Go, real bytes) | ✅ real |
+| GetMetadata | stats a OneLake path (exists/size/children) | ✅ real |
+| Copy | real byte movement, **OneLake→OneLake** (a file or a directory subtree) | ✅ real (in-family) |
+| Notebook | Livy → the real Spark agent (Track B) | ✅ real (with `--spark-agent-url`) |
+| Web / Webhook, Script / Stored procedure | real HTTP / the warehouse engine | 📐 not yet wired |
 
-Stated plainly: the orchestrator here is *ours* — faithful to documented
-semantics, deterministic on the controllable clock (a Until-timeout or retry
-backoff is testable in milliseconds) — but it is not Microsoft's engine. The
-*work* the pipeline does is real, and a pipeline that runs here exercises
-real Spark, real SQL, and real data movement.
+Two honest gaps in the interpreter itself: **ForEach parallel mode** is not
+implemented (execution is sequential-only), and while a per-activity **timeout**
+is enforced on the virtual clock, the **retry *interval*** (`retryIntervalInSeconds`)
+is parsed but not applied — retries fire instantly. Stated plainly: the
+orchestrator is *ours* — faithful to documented control-flow semantics,
+deterministic on the controllable clock (a Until-timeout is testable in
+milliseconds) — but it is not Microsoft's engine. The *work* a pipeline does is
+real: it exercises real Spark, real OneLake bytes, and real data movement.
 
 **E3 — honestly unobtainable → 501.** Dataflow Gen2 (the Power Query M
 compute is proprietary), self-hosted integration runtime / gateway scenarios,
@@ -276,13 +292,13 @@ C2 SQL-auth compromise.
 
 ## Phasing
 
-| Phase | Delivers |
-|---|---|
-| **R0** ✅ | Track A storage completeness + A1 (delta-rs e2e) + the ADLS-SDK e2e (real `azure-storage-blob`); concurrent-commit race test |
-| **R1+R2** (merged) | **containerized Spark** — A2 (real PySpark writes Delta via ABFS, cross-engine read with delta-rs) **and** B1+B2 (Livy passthrough; real RunNotebook mode). Its own runway: JVM Spark image + Docker network so ABFS resolves to the emulator. |
-| **R3** | C1 (DuckDB SQL over the lakehouse); C2/C3 by demand |
-| **R4** | D1–D3 (notebookutils shim; default-lakehouse sessions; VS Code extension compatibility) |
-| **R5** | E1 (real Airflow sidecar behind ApacheAirflowJob items); E2 (DataPipeline interpreter, real-engine leaf activities) |
+| Phase | Delivers | Status |
+|---|---|---|
+| **R0** | Track A storage completeness + A1 (delta-rs e2e) + the ADLS-SDK e2e (real `azure-storage-blob`) + azcopy; concurrent-commit race test | ✅ shipped |
+| **R1+R2** (merged) | **containerized Spark** — A2 (real PySpark writes Delta via ABFS, cross-engine read with delta-rs) **and** B1+B2 (native Livy sessions/HC on a real Spark agent; real RunNotebook mode). JVM Spark image + Docker network so ABFS resolves to the emulator. | ✅ shipped (`e2e/spark`, `e2e/livy`, `e2e/notebook-run`) |
+| **R3** | C1 (DuckDB SQL over the lakehouse) **and** C2/C3 (SQL Server sidecar + in-repo FedAuth-over-TDS splice; two driver witnesses) | ✅ shipped (`e2e/duckdb`, `e2e/dbt-fabric`, gated TDS tests) |
+| **R4** | D1 (notebookutils shim) shipped (`e2e/notebookutils`); D2–D3 (default-lakehouse sessions; VS Code extension compatibility) partial/by-demand | ~ mostly |
+| **R5** | E2 (DataPipeline interpreter, real-engine leaf activities) shipped; E1 (real Airflow sidecar behind ApacheAirflowJob items) **not yet built** | ~ E2 ✅ / E1 📐 |
 
 ## Correctness: how we prove it
 
@@ -344,11 +360,11 @@ scientific stack.
 
 **dbt — three adapters, three engine targets:**
 
-| Adapter | Speaks | Works against | When |
+| Adapter | Speaks | Works against | Status |
 |---|---|---|---|
-| **`dbt-fabricspark`** (Microsoft) | the **Fabric Livy API** | our R2 Livy passthrough → real Spark; models materialize as Delta in OneLake | **earliest dbt win — R2, no warehouse needed** |
-| **`dbt-fabric`** (Microsoft; documented in `tutorial-setup-dbt.md`) | TDS/pyodbc to the warehouse SQL endpoint | the C2 SQL Server sidecar (SQL-auth behind the FedAuth-terminating proxy; T-SQL dialect edges per the Polaris asterisk) | R3/C2 |
-| **`dbt-duckdb`** (+ delta plugin) | DuckDB in-process | the C1 engine over the same OneLake Delta files | R3/C1 |
+| **`dbt-fabricspark`** (Microsoft) | the **Fabric Livy API** | our native Livy → real Spark agent; models materialize as Delta in OneLake | ✅ shipped (`e2e/dbt-fabricspark`) |
+| **`dbt-fabric`** (Microsoft; documented in `tutorial-setup-dbt.md`) | TDS/pyodbc + Microsoft ODBC Driver 18 to the warehouse SQL endpoint | the C2 SQL Server sidecar, FedAuth terminated in-repo and byte-spliced (T-SQL dialect edges per the Polaris asterisk) | ✅ shipped (`e2e/dbt-fabric`, debug→seed→run→test) |
+| **`dbt-duckdb`** (+ delta plugin) | DuckDB in-process | the C1 engine over the same OneLake Delta files | 📐 not yet wired |
 
 Acceptance for each: the official **dbt-tests-adapter** suite plus a
 jaffle-shop-style project building end-to-end. The documented
@@ -357,7 +373,7 @@ composes with E1: a real Airflow DAG running real dbt against the emulator.
 
 ## Non-goals
 
-Performance parity, autoscaling/capacity behavior, high-concurrency Livy
-sessions (initially), Spark version matrixing, and emulating engine
-*internals* in any form. Where a real engine can't be attached, the surface
-returns 501 — it never pretends.
+Performance parity, autoscaling/capacity behavior, Spark version matrixing, and
+emulating engine *internals* in any form. (High-concurrency Livy session packing,
+once listed here as out of scope, shipped — `internal/api/livy_hc.go`.) Where a
+real engine can't be attached, the surface returns 501 — it never pretends.

@@ -47,8 +47,9 @@ flowchart LR
     Client["Client / SDK (SP or user)"]
     subgraph fab["fabric-emulator"]
         direction TB
-        API["/v1/workspaces/… — RBAC, item CRUD, definitions, git, LRO"]
-        OL["onelake.dfs — ADLS-Gen2 subset"]
+        API["/v1/workspaces/… — RBAC, CRUD, git, LRO, jobs; Livy/Spark data plane"]
+        OL["onelake.dfs / .blob — ADLS-Gen2 + Blob (Delta commits)"]
+        WH["TDS endpoint — T-SQL over FedAuth (internal/tds)"]
         Ident["workspace-identity lifecycle"]
     end
     subgraph entra["entra-emulator"]
@@ -56,10 +57,18 @@ flowchart LR
         JWKS["/{tenant}/discovery/v2.0/keys"]
         Forge["token forge / MSI endpoint"]
     end
+    subgraph engines["opt-in engine sidecars"]
+        direction TB
+        Spark["Spark agent (Livy)"]
+        SQL["SQL Server (warehouse)"]
+    end
     Client -->|"Bearer (aud = fabric / storage)"| API
     Client -->|"Bearer (aud = storage)"| OL
+    Client -->|"FedAuth (aud = database.windows.net)"| WH
     API -->|"verify (iss + aud + sig)"| JWKS
     Ident -->|"mint SP / identity tokens"| Forge
+    API -.->|"native execution"| Spark
+    WH -.->|"session splice"| SQL
 ```
 
 ## Design principle: mirror entra-emulator
@@ -105,8 +114,10 @@ is the audience set and the role lookup. Config: `--entra-issuer` +
 
 | Host mux | Serves |
 |---|---|
-| `api.fabric.microsoft.com` | the `/v1` control plane (workspaces, items, RBAC, git, LRO, jobs, admin) |
-| `onelake.dfs.fabric.microsoft.com` | ADLS-Gen2 subset (filesystem = workspace, path = item/…) |
+| `api.fabric.microsoft.com` | the `/v1` control plane (workspaces, items, RBAC, git, LRO, jobs, admin) + the Livy/Spark data plane (`…/livyapi/…`, high-concurrency sessions) |
+| `onelake.dfs.fabric.microsoft.com` | ADLS-Gen2 (DFS) subset (filesystem = workspace, path = item/…) |
+| `onelake.blob.fabric.microsoft.com` | the OneLake **Blob** dialect (Put Blob/Block, `If-None-Match:*` Delta put-if-absent) — what delta-rs / `object_store` use |
+| a raw **TCP/TDS** listener (`--sql-tds-addr`) | the warehouse **T-SQL over TDS** endpoint — Entra FedAuth terminated, session spliced to a SQL Server sidecar (`internal/tds`) |
 | any other host, at `/` | the Svelte operator portal (embedded; reads state via `/_emulator/portal/*`) |
 
 See [07-control-plane-api.md](07-control-plane-api.md) for the endpoint catalog and wire
@@ -135,15 +146,22 @@ clock**:
 
 ## Non-goals
 
-Capacity/SKU **billing**, real compute engines (Spark/SQL/KQL execution —
-notebooks and pipelines are CRUD + job-state only, they don't *run*), Power BI
-semantic-model evaluation, Purview audit, and real network/firewall enforcement.
-fabric-emulator emulates the **contract**, not the runtime.
+Capacity/SKU **billing**, Power BI semantic-model evaluation, Purview audit, and
+real network/firewall enforcement. Emulating engine *internals* or KQL execution
+is also out of scope.
+
+**Not a non-goal (any more): real compute.** The core Go binary stays a contract
+emulator, but real engines attach as **opt-in sidecars** — so notebooks and
+pipelines actually *run* (real Spark via a Livy agent), T-SQL runs for real over
+TDS against a SQL Server sidecar, and Delta lands in OneLake — and where no real
+engine can be attached, the surface returns an honest **501** rather than faking
+a result. The principle is *never fake compute*, not *no compute*. See
+[14-real-compute.md](14-real-compute.md).
 
 ## Decoupling from entra-emulator
 
-- Depends on entra-emulator **only over HTTP** (JWKS + issuer; a token-mint call
-  for workspace identities in P2). No shared process.
+- Depends on entra-emulator **only over HTTP** (JWKS + issuer; plus a token-mint
+  call for workspace identities — the shipped identity handshake). No shared process.
 - For Go integration tests, it *may* import entra-emulator's public `emulator`
   package to run both in one process with no network — an ergonomics option, not
   a coupling requirement.

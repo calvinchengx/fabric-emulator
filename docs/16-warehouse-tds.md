@@ -1,6 +1,7 @@
 # 16 — Warehouse: T-SQL over TDS with Entra FedAuth
 
-**Status: T1–T3 shipped and verified against a real SQL Server; T4 next.** A
+**Status: T1–T5 shipped and verified against a real SQL Server — including a
+second, independent driver family (Microsoft ODBC Driver 18 via dbt-fabric).** A
 real SQL endpoint that unmodified SQL clients — `sqlcmd`, `pyodbc`/`pymssql`,
 `go-mssqldb`, the JDBC mssql driver, SSMS, Power BI DirectQuery — connect to
 over **TDS (port 1433)** authenticating with an **Entra token (FedAuth)**, and
@@ -61,7 +62,7 @@ materializes. Until then, bundling is the consistent, lower-friction choice.
 ## Architecture
 
 ```
-  SQL client (sqlcmd / pyodbc / SSML / Power BI)
+  SQL client (sqlcmd / pyodbc / SSMS / Power BI)
         │  TDS/1433 + FedAuth (Entra access token, audience database.windows.net)
         ▼
   ┌──────────────────────────── fabric-emulator (this repo) ─────────────┐
@@ -127,8 +128,8 @@ warehouse via T-SQL, so it is already native to the sidecar.
 **Why reflection, not PolyBase — settled by a spike, not a hunch.** The
 tempting alternative is to point SQL Server at the OneLake Delta *directly*
 (`CREATE EXTERNAL DATA SOURCE` / `OPENROWSET(FORMAT='DELTA')`, i.e. PolyBase).
-A full spike (`e2e/sql-endpoint-spike/`) proved this is a **dead-end on the
-Linux `mssql/server` container**, at the wire and package level:
+A full spike proved this is a **dead-end on the Linux `mssql/server`
+container**, at the wire and package level:
 
 - SQL Server 2022 Linux does not even register the `abs`/`adls` scheme
   processors (`111631: scheme not valid`).
@@ -140,17 +141,19 @@ Linux `mssql/server` container**, at the wire and package level:
   and SAS validity. The components exist only on **Windows** PolyBase.
 
 So reflection is the **permanent** design, not a v1 stopgap: the emulator reads
-Delta (it already can, in pure Go) and hands the sidecar plain rows. The full
-finding and root cause live in `e2e/sql-endpoint-spike/`.
+Delta (it already can, in pure Go) and hands the sidecar plain rows. (The spike
+was a throwaway investigation; its finding and root cause are recorded here, not
+kept as a harness.)
 
 **Cross-engine oracle.** The same lakehouse Delta is queried independently by
 **DuckDB** (R3, `e2e/duckdb/`) — two engines agreeing on the result is the
 correctness proof for the reflection path.
 
-*Deferred (T4+):* per-lakehouse schema isolation (reflected tables currently
-land in the sidecar's default database — multiple lakehouses would collide);
-per-column type fidelity (all `NVARCHAR(4000)` today); write-back of Warehouse
-DML to OneLake Delta.
+*Since resolved (T4/T5):* per-item database isolation (each lakehouse/warehouse
+gets its own SQL Server database — no collisions), per-column type fidelity
+(native SQL types over the wire), RBAC → SQL permissions, and connect-by-name.
+*Still genuinely deferred:* write-back of Warehouse DML to OneLake Delta (the
+warehouse owns its own data in the sidecar; it is not mirrored back to Delta).
 
 ## Milestones
 
@@ -172,7 +175,7 @@ DML to OneLake Delta.
   gated e2e (`WAREHOUSE_MSSQL_DSN`, CI Linux with a SQL Server service) runs
   real DDL + DML + `GROUP BY` end to end: entra token → FedAuth login → real
   T-SQL on the engine. Result columns are currently all NVARCHAR (the client
-  converts on scan); per-column type fidelity is a follow-up.
+  converts on scan); per-column type fidelity landed later in T4b/T5.
 - **T3 — lakehouse data. ✅ Done.** On connect (database = lakehouse item id),
   the emulator reads each `Tables/<name>` **Delta table** from OneLake in pure
   Go (`internal/warehouse`: replay `_delta_log`, read Parquet via
@@ -183,7 +186,7 @@ DML to OneLake Delta.
   Delta table into OneLake and a real client `GROUP BY`s it through the endpoint
   to the SQL Server engine — `us=90, eu=60`, matching DuckDB (R3): the
   cross-engine oracle. *Limitations:* reflected tables land in the engine's
-  default database (per-lakehouse schema isolation is a follow-up); re-reflects
+  default database (per-item database isolation landed in T4a); re-reflects
   on each connect; `NVARCHAR(4000)`/no-checkpoint like T2's type caveat.
   Verified locally against a real `mcr.microsoft.com/mssql/server:2022`
   container (all three warehouse e2es pass), not just in CI.
@@ -265,12 +268,21 @@ DML to OneLake Delta.
 
 ## Borrowed oracles (the CI proof)
 
-`e2e/warehouse-tds/` (Linux; the sidecar is a container weight class, like
-`spark-a2`): bring up entra + fabric + the SQL sidecar; a real client
-(`pyodbc` with `ActiveDirectoryServicePrincipal`, and `go-mssqldb`) connects
-over TDS with an entra token and runs `SELECT … JOIN … WHERE` over a lakehouse
-Delta table, results matching what DuckDB (R3) returns over the same data — two
-independent SQL engines agreeing.
+Two independent driver families exercise the surface in CI (Linux; the sidecar
+is a container weight class, like `spark-a2`):
+
+- **`warehouse-tds` job** — gated Go tests (`internal/server/tds_*_test.go`,
+  behind `WAREHOUSE_MSSQL_DSN`) drive a real **`go-mssqldb`** client over TDS
+  with an entra token: FedAuth login → DDL + DML + `GROUP BY` on the real engine,
+  plus the two-surface / RBAC / type-fidelity / connect-by-name assertions. The
+  lakehouse `SELECT` result matches what **DuckDB** (R3, `e2e/duckdb`) returns
+  over the same Delta — two independent SQL engines agreeing.
+- **`dbt-fabric` job** (`e2e/dbt-fabric/`) — Microsoft's real **dbt-fabric**
+  adapter, over **pyodbc + Microsoft ODBC Driver 18** (a genuinely independent
+  TDS implementation from go-mssqldb), runs a full project `debug → seed → run →
+  test` against the warehouse: the FedAuth login is validated and the session is
+  byte-spliced to the sidecar, so RPCs / prepared statements / transactions all
+  flow through. This is the T5 second-driver witness.
 
 ## Non-goals
 
@@ -317,10 +329,10 @@ independent SQL engines agreeing.
     anyone wants the lighter local loop — but the default is SQL Server.
 - **Protocol + FedAuth:** pure Go, **in this repo** (`internal/tds`), following
   the Livy-proxy precedent — *not* a sibling repo.
-- **Priority:** deferred until there is demand for the real-client
-  (SSMS/pyodbc/Power BI-over-TDS) oracle; it re-proves SQL semantics already
-  exercisable via DuckDB (R3), so its marginal value is the TDS/FedAuth
-  real-client surface specifically.
+- **Priority:** the real-client (pyodbc/ODBC-Driver-18/dbt-fabric-over-TDS)
+  oracle **shipped** (`e2e/dbt-fabric`). Beyond re-proving SQL semantics already
+  exercisable via DuckDB (R3), its marginal value — realized — is the TDS/FedAuth
+  real-client surface with a second, independent driver family.
 - **Extraction:** reconsider only if the TDS-FedAuth proxy proves independently
   reusable outside Fabric; `internal/tds` stays Fabric-import-free to keep that
   option cheap.

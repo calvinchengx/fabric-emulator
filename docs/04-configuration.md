@@ -23,6 +23,20 @@ validation derives dependent values. There is no config file.
 Booleans accept `1`, `true`, `yes`, `on` (case-insensitive); anything else is
 false. `Retry-After` on `202` responses is fixed at 1 second.
 
+## Real-compute sidecars
+
+Empty by default — leave them unset and the emulator handles Spark/SQL with its
+built-in fakes. Point them at running sidecars to route to real compute; see
+[real compute](14-real-compute.md) and
+[warehouse TDS](16-warehouse-tds.md) for the full setup.
+
+| Env | Flag | Default | Meaning |
+|---|---|---|---|
+| `FABRIC_SPARK_LIVY_URL` | `-spark-livy-url` | *(empty)* | Livy endpoint for real Spark session/statement execution. |
+| `FABRIC_SPARK_AGENT_URL` | `-spark-agent-url` | *(empty)* | Spark agent endpoint fronting the Livy cluster. |
+| `FABRIC_SQL_TDS_ADDR` | `-sql-tds-addr` | *(empty)* | TDS listen address for the SQL analytics endpoint. |
+| `FABRIC_WAREHOUSE_SQL_URL` | `-warehouse-sql-url` | *(empty)* | Backing SQL engine URL for warehouse query execution. |
+
 ## Subcommands
 
 | Command | Does |

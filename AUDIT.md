@@ -1,123 +1,64 @@
-# Implementation-vs-docs audit — 2026-07-13
+# Implementation-vs-docs audit
 
-Snapshot audit comparing code to docs across all subsystems (6 parallel
-reviews: control plane/identity, OneLake, Spark/Livy/notebooks, warehouse/TDS,
-pipelines, and cross-cutting docs/CI). **Headline:** code is in good shape and
-runs *ahead* of the docs — most gaps are docs lagging a fast-growing codebase
-(reality exceeds claims), plus a short list of genuine over-claims to reconcile.
-`15-parity.md` is the most accurate doc; `14-real-compute.md`, `13-roadmap.md`,
-`12-e2e-matrix.md`, and `README.md` are the stalest.
+## 2026-07-14 — reconciliation pass (this update)
 
-> Note: a concurrent session is actively rewriting docs (13/15/16), so some
-> items below may already be resolved — re-check before acting.
+A second audit (4 parallel doc-vs-code reviews) plus a full reconciliation pass.
+Since the 2026-07-13 snapshot, warehouse **T4/T5** shipped (TDS session splice +
+Microsoft ODBC Driver 18 / dbt-fabric), and new e2e witnesses landed (`azcopy`,
+`dbt-fabric`, `dbt-fabricspark`). The docs were then updated to match code
+throughout. **Docs now track the implementation.**
 
-## P1 — genuine over-claims (docs promise more than code delivers)
+### Resolved in this pass (docs corrected to match code)
+- **03-architecture** — non-goals no longer claim "notebooks/pipelines don't run"
+  (real compute reframed as opt-in sidecars); TDS + OneLake-Blob surfaces added to
+  the surfaces table + mermaid; P2 identity handshake no longer "future".
+- **07-control-plane-api** — Jobs section reflects real pipeline/notebook execution;
+  added `queryactivityruns` / `notebookRun` / `notebookRunResult` / folders endpoints
+  and the Livy/Spark data plane; connection credentials + `/v1/connections` flipped
+  from "planned" to shipped; `GET /workspaces` no longer claims pagination it lacks.
+- **08-onelake** — Shortcuts flipped "planned" → shipped, with honest caveats
+  (read-only resolution; writes don't follow target; no `isShortcut` field; not in
+  listings). Added the Blob dialect + Delta put-if-absent commit section.
+- **06-data-model-and-seed** — removed the fictional `workspace.state` enum/column
+  and `items.folder_id`; added `pipeline_runs` / `notebook_runs` / `shortcuts`;
+  fixed `operations` (no stored `status`; `fail_with`) and `folders.parent_id`.
+- **04-configuration** — added the four real-compute flags (`-spark-livy-url`,
+  `-spark-agent-url`, `-sql-tds-addr`, `-warehouse-sql-url`).
+- **05-tls-and-hosts** — added the `onelake.blob.fabric.microsoft.com` SAN.
+- **12-e2e-matrix** — added the `dbt-fabric` (ODBC Driver 18) witness; two-driver TDS note.
+- **10-testing** — coverage figure aligned to "90% floor (currently ~95%)".
+- **13-roadmap** — R3 marked T1–T5 done with the session splice; native Livy
+  (`--spark-agent-url`) path documented (was "deferred, with cause").
+- **14-real-compute** — reframed "Status: design" → "largely shipped (R0–R5)";
+  Track C FedAuth-over-TDS shipped in-repo (not a future sibling repo); Track B
+  native Livy; Track E honest leaf-activity subset; dbt matrix + non-goals + phasing.
+- **16-warehouse-tds** — header "T4 next" → "T1–T5 shipped"; removed the
+  deferred-type-fidelity contradiction; fixed the borrowed-oracles section (two
+  driver witnesses) and the dangling `e2e/warehouse-tds/` / `e2e/sql-endpoint-spike/`.
+- **Structural** — renamed `15-parity.md` → **`17-parity.md`** (resolves the
+  duplicate `15-` prefix) and added `16-warehouse-tds` + `17-parity` to the
+  Starlight sidebar (both were orphaned from nav).
+- **README** — status now covers the R (real-compute) track.
 
-Each needs a decision: **[doc]** correct the wording to match code, or **[code]**
-implement the promised behavior.
-
-- [ ] **Shortcut *writes* don't follow target RBAC.** Only GET/HEAD resolve
-  shortcuts (`internal/onelake/onelake.go:374,390`); PUT/PATCH/DELETE
-  (`:357,371,404`) write the *source* item, no target check. Also: shortcuts are
-  invisible in `resource=filesystem` listings (`list()` never calls
-  `ShortcutFor`), and the API emits no `isShortcut` field. Doc: `08-onelake.md:62-67`.
-  → decide **[doc]** (document read-only shortcut resolution) or **[code]**.
-- [ ] **Pipeline retry backoff is not applied.** `runWithPolicy`
-  (`internal/pipeline/activities.go:23-56`) retries *instantly*;
-  `Policy.RetryIntervalInSeconds` is parsed (`pipeline.go:38`) but dead. Doc
-  claims "backoff exercised in milliseconds on the clock" (`15-parity.md:100`).
-  → **[doc]** drop the backoff claim, or **[code]** apply virtual backoff via the clock.
-- [ ] **ForEach parallel mode absent.** `runForEach`
-  (`activities.go:244-261`) is sequential-only; no `isSequential`/`batchCount`.
-  Doc lists "ForEach (sequential/parallel)" (`14-real-compute.md:226`).
-  → **[doc]** or **[code]**.
-- [ ] **Workspace `state` documented but unimplemented.** No `state` column
-  (`internal/store/db.go:53-59`) or field (`types.go:6-13`). Doc: `06:13,66`
-  (6-value enum). → **[doc]** remove, or **[code]** add.
-- [ ] **List pagination documented but absent.** `GET /workspaces` (and items /
-  capacities / connections / folders) return the full set, no continuation
-  token (`internal/api/workspaces.go:13-23`). Doc: `07:18`. → **[doc]** or **[code]**.
-- [ ] **pyodbc warehouse oracle over-claimed.** CI runs only `go-mssqldb`
-  (`ci.yml` `warehouse-tds`); pyodbc is still an optional T5. Doc `16:238-245`
-  presents it as exercised. → **[doc]** move to "future", or **[code]** add the pyodbc e2e.
-
-## P2 — hygiene
-
-- [x] **`cover.out` untracked + gitignored; `/tmpprobe/` gitignored.** Done
-  (commit eb56141).
-- [ ] **Duplicate doc number 15.** Both `docs/15-parity.md` and
-  `docs/15-entra-companion.md` exist (sequence 14, 15, 15, 16). Rename
-  `15-parity.md` → `17-parity.md` — coordinated 3-touch: the file, the Starlight
-  sidebar (`website/astro.config.mjs` uses **explicit slugs** → add
-  `{ slug: '17-parity' }`), and cross-refs in `13`/`16`. Verify with
-  `pnpm --filter fabric-emulator-portal-site build` (name TBD) so the site still builds.
-- [ ] **Dangling e2e dir references** (dirs don't exist): `e2e/sql-endpoint-spike/`
-  (in `13`, `15-parity`, `16`) and `e2e/warehouse-tds/` (in `16`). Real warehouse
-  tests live in `internal/server/tds_*_test.go`; the PolyBase dead-end lives in
-  doc prose, not a dir.
-
-## P3 — stale docs (code does more; update to catch up)
-
-- [ ] **`README.md` understates the project.** Status says "P0–P3 shipped",
-  omitting the entire **R (real-compute)** track (Spark/ABFS, native Livy + HC
-  packing, DuckDB, TDS warehouse, pipeline interpreter, notebook cell execution).
-  (`README.md:35`.)
-- [ ] **`12-e2e-matrix.md` badly stale** — lists delta-rs/Spark/ADLS as "queued,
-  not yet wired" (`12:22-28`); **8 e2es run in CI** (delta-rs, adls-sdk, spark,
-  duckdb, livy-native, notebookutils, notebook-run, warehouse-tds) + a new
-  untracked `e2e/dbt-fabricspark/`. Rewrite against the actual CI jobs.
-- [ ] **`14-real-compute.md` describes proxy-only Livy + aspirational pipelines.**
-  Code is *native* Livy driving a Spark agent (`internal/api/livy_native.go`;
-  `livy.go:86-89` checks the agent first). The Track-E leaf table (`14:231-237`)
-  over-claims vs the honest shipped subset — Lookup reads OneLake CSV/JSON (not a
-  warehouse), Web is a stub (not real HTTP), Copy is OneLake→OneLake only. Align
-  with `15-parity.md` (the accurate one).
-- [ ] **`13-roadmap.md` narrates proxy-only Livy and defers the "sidecar e2e"**
-  that's now done (`e2e/livy` + `--spark-agent-url`). Update the R-track boxes.
-- [x] **`15-entra-companion.md`** "planned third member" → integrated, and **`09`
-  identity-handshake** "planned on top of this" → shipped, with the Key Vault
-  trust-edge diagram added. Done (this commit).
-- [ ] **Connection credential model documented as "planned"** (`07:163-187`) but
-  fully built: per-type validation, write-only secrets, entra test-probe, AKV
-  resolution (`internal/api/git.go:388-529`).
-- [ ] **OneLake Blob surface entirely undocumented.** `onelake.blob.*` + `/onelake`
-  path: Put Blob, block staging, Copy, List Blobs XML (`internal/onelake/blob.go`);
-  also x-ms-range/206, DFS rename, PUT-append/flush, HEAD-on-file, and the
-  Contributor/ReadAll RBAC gate. Missing from `08`/`05`/`03`; cert-SAN list
-  (`05:19-24`) omits `onelake.blob.fabric.microsoft.com` (code cert has it).
-- [ ] **Warehouse doc 16 header/§4 contradict its own body** — header "T4 next"
-  and §4 "deferred: schema isolation, type fidelity" are both **done** (per-item
-  `EnsureDatabase`, INTN/FLTN/BITN). Only write-back is genuinely deferred. Also
-  undocumented: the FEATUREEXTACK(FEDAUTH) token emitted for ODBC compatibility.
-- [ ] **Undocumented endpoints/config** — `queryactivityruns`, `notebookRun(Result)`,
-  folders, typed collections; flags `FABRIC_SPARK_AGENT_URL`, `FABRIC_SQL_TDS_ADDR`,
-  `FABRIC_WAREHOUSE_SQL_URL` (missing from `04`/`07`).
-
-## Minor / cosmetic
-
-- [ ] Coverage figure disagrees across docs (95% / 93% / 91.6% / 91%+). Keep only
-  the 90% floor as source of truth.
-- [ ] Entra provision body key: code sends `workspaceName`, doc `09:15` shows `name`.
-- [ ] `guid()` returns a constant zero UUID (`funcs.go:69-70`) — note under "faithful subset".
-- [ ] `07` path-prefix style is mixed (`/v1` on some rows, not others).
-- [ ] `16` diagram typo "SSML" → SSMS.
-- [ ] `getDefinition`/`listRoleAssignments` min-role (Contributor/Member) not labeled in `07`.
-- [ ] Multi-hop shortcut cycles not detected (only direct self-target); `08:70` overstates.
-
-## What matches well (no action)
-
-Token validation (issuer/audience/JWKS/exp-nbf), RBAC ranks + Admin-gating, the
-full identity handshake, the LRO envelope, verbatim definition round-trip; DFS
-surface + x-ms-range + managed folders + name/GUID addressing; the pipeline
-control-flow interpreter + expression language + dependsOn + Invoke recursion;
-the warehouse two-surface design (reflection vs the PolyBase dead-end, per-item
-DB isolation, RBAC, connect-by-name, type fidelity); notebook cell execution and
-HC-Livy packing. PolyBase is confirmed **not** implemented anywhere (a recorded
-dead-end / non-goal only).
+### Still open — genuine code gaps (documented honestly; implement on demand)
+These were over-claims; the docs now state the real behavior. Implementing them is
+optional future **[code]** work:
+- **Shortcut *writes* don't follow target RBAC**, and shortcuts aren't in DFS
+  listings (only GET/HEAD resolve; no `isShortcut` field). `internal/onelake/onelake.go`.
+- **Pipeline retry *backoff* not applied** — `retryIntervalInSeconds` parsed but
+  dead; retries fire instantly. `internal/pipeline/activities.go`.
+- **ForEach parallel mode absent** — sequential-only. `internal/pipeline/activities.go`.
+- **List pagination absent** — `GET /workspaces` (+ items/capacities/…) return the
+  full set, no continuation token. `internal/api/workspaces.go`.
+- **Workspace `state` unimplemented** — no column/field (removed from docs).
+- **Pipeline leaf activities:** only Lookup / GetMetadata / Copy (OneLake→OneLake) /
+  Invoke are real; Web is a stub, Script/StoredProcedure unwired.
+- **E1 real Airflow sidecar** — not built (roadmap/real-compute mark it planned).
+- Minor: `guid()` returns a constant zero UUID (faithful-subset note); multi-hop
+  shortcut cycles not detected (only direct self-target).
 
 ## Context notes
-
-- `docs/` is canonical; `website/src/content/docs/` is **generated** by
-  `scripts/sync-docs.mjs` on `pnpm dev`/`build`. Only ever edit `docs/`.
-- Doc fixes above were **held** on 2026-07-13 because a concurrent session was
-  live-editing `13`/`15`/`16`. Re-check those before editing.
+- `docs/` is canonical; `website/src/content/docs/` is **generated** at build time
+  by `website/scripts/sync-docs.mjs` (not git-tracked). Only ever edit `docs/`.
+- Renames/additions must update the Starlight sidebar slugs in
+  `website/astro.config.mjs`, or the docs-site build fails.

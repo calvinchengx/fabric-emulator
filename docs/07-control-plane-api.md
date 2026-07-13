@@ -15,7 +15,7 @@ unless marked *sync*.
 
 | Method + path | Notes |
 |---|---|
-| `GET /workspaces` | list; continuation-token pagination (`?roles=` filter is REST-reference-only, not shown in fabric-docs) *sync* |
+| `GET /workspaces` | list (full set — no continuation-token pagination yet; `?roles=` filter is REST-reference-only, not shown in fabric-docs) *sync* |
 | `POST /workspaces` | create → 201 `{ id, displayName, capacityId }` |
 | `GET /workspaces/{id}` | get *sync* |
 | `PATCH /workspaces/{id}` | rename / describe |
@@ -96,17 +96,31 @@ role yields Fabric-shaped `401`/`403`.
 Stored verbatim so `getDefinition` round-trips exactly what `updateDefinition` /
 git wrote. This is what makes `fabric-cicd` and deployment pipelines testable.
 
-## Jobs (trigger + state, no real execution)
+## Jobs (trigger, state, and real execution)
 
 | Method + path | Notes |
 |---|---|
 | `POST /workspaces/{id}/items/{itemId}/jobs/instances?jobType=…` | schedule → operation |
 | `GET  /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}` | status *sync* |
 | `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/cancel` | cancel |
+| `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/queryactivityruns` | DataPipeline: the recorded activity runs *sync* |
+| `GET  /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/notebookRun` | RunNotebook: parsed cells + run detail *sync* |
+| `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/notebookRunResult` | engine → service callback: report per-cell results, finalise status |
 
 Jobs transition `NotStarted → InProgress → Completed/Failed` on the controllable
-clock (the REST reference also defines `Cancelled` and `Deduped`; add them with
-the cancel path). Nothing actually computes.
+clock, and — for the two executing job types — actually do work at trigger:
+
+- **DataPipeline** jobs run the pipeline interpreter now: the definition's
+  control flow executes and the **activity runs are recorded** (queryable via
+  `queryactivityruns`). A pipeline failure sets the job's terminal status,
+  overriding fault injection.
+- **RunNotebook** jobs parse the notebook into cells with the real Go parser and
+  record a `Pending` run (`notebookRun`). A Spark runner executes the cells and
+  posts back to `notebookRunResult`, which merges per-cell results and finalises
+  the job's status from the real outcome.
+
+`Cancelled` is implemented (the `cancel` path sets it); `Deduped` (from the REST
+reference) is the only state not yet emulated.
 
 ## Git integration (unlocks CI/CD testing)
 
@@ -136,11 +150,44 @@ object, and the SP path requires a **connection**):
 
 `myGitCredentials.source` is `Automatic` (SSO) or `ConfiguredConnection`;
 service principals must use `ConfiguredConnection`, whose `connectionId` comes
-from `GET/POST /v1/connections` — so **connections are on the P1 critical
-path**, not a later add.
+from the shipped `GET/POST /v1/connections` (see Connections below).
 
 The emulator's "git remote" is a local store of item definitions per branch — no
 real GitHub/AzDO needed for the happy path (a real provider can be wired later).
+
+## Folders (workspace item organization)
+
+| Method + path | Notes |
+|---|---|
+| `GET  /workspaces/{id}/folders` | list *sync* |
+| `POST /workspaces/{id}/folders` | create `{ displayName, parentFolderId? }` → 201 *sync* |
+
+Folders organize items within a workspace (nesting via `parentFolderId`); the
+folder tree is a plain metadata store.
+
+## Livy / Spark data plane
+
+Fabric exposes Spark through the Apache Livy REST API at a **lakehouse-scoped**
+endpoint. The emulator validates the bearer token and workspace RBAC (like every
+`/v1` route — session/job submission needs Contributor, status reads Viewer),
+then serves the Livy contract:
+
+| Method + path | Notes |
+|---|---|
+| `{GET,POST,DELETE} /workspaces/{id}/lakehouses/{lid}/livyapi/versions/{ver}/{sessions\|batches}/…` | classic Livy sessions + batches |
+| `POST /workspaces/{id}/lakehouses/{lid}/livyapi/versions/{ver}/highConcurrencySessions` | Fabric high-concurrency session (acquire) |
+| `{GET,DELETE} …/highConcurrencySessions/{hcid}` | get / release an HC session |
+| `{POST,GET} …/highConcurrencySessions/{sid}/repls/{replid}/statements[/{stid}]` | submit / poll HC statements |
+
+Execution mode depends on how the server is launched:
+
+- **`--spark-agent-url` set:** native Livy termination — the emulator implements
+  the Livy session/statement contract itself and drives a Spark
+  statement-executor agent, so real Spark computes the results (unmodified
+  `pylivy`/`sparkmagic` clients work).
+- **`--spark-livy-url` set:** the routes reverse-proxy to a real external Apache
+  Livy backend.
+- **Neither set:** the routes `501` honestly — no faked sessions.
 
 ## Long-running operations
 
@@ -154,35 +201,39 @@ the documented automation scripts actually read) and `Location:
 /v1/operations/{id}`, plus `Retry-After`. Clients poll while status ∈
 {`NotStarted`, `Running`}.
 
-## Connections (P1) and admin (later)
+## Connections (shipped) and admin (later)
 
-`GET/POST /v1/connections` lands in **P1** — git `connect` with a service
-principal requires a `connectionId` (see git section above). `/admin/*` (tenant
-settings, workspace listing) is added as demand warrants.
+| Method + path | Notes |
+|---|---|
+| `GET  /v1/connections` | list *sync* |
+| `POST /v1/connections` | create |
 
-### Connection credentials (planned)
+`GET/POST /v1/connections` is shipped — git `connect` with a service principal
+requires a `connectionId` (see git section above). `/admin/*` (tenant settings,
+workspace listing) is added as demand warrants.
 
-Real connections carry `credentialDetails` with a `credentialType`
-(`copy-job-rest-api-capabilities.md` shows the wire shape): `Basic`,
-`ServicePrincipal`, `WorkspaceIdentity`, `Key`, `SharedAccessSignature`,
-`Anonymous`. The emulator currently stores connection details verbatim with no
-credential model; the planned design:
+### Connection credentials
+
+Connections carry `credentialDetails` with a `credentialType`
+(`copy-job-rest-api-capabilities.md` shows the wire shape), validated per type:
+`Basic`, `ServicePrincipal`, `WorkspaceIdentity`, `AzureKeyVaultReference`,
+`Key`, `SharedAccessSignature`, `Anonymous`.
 
 - **Write-only secrets.** Credential material (`password`, `secret`, keys) is
   accepted on create/update and **never echoed back** — reads return
   `credentialType` and non-secret fields only, as real Fabric does.
-- **`ServicePrincipal`**: `{ tenantId, servicePrincipalClientId, secret }` —
-  optionally validated against entra-emulator at create (a real client-
-  credentials probe = Fabric's "test connection"), so a wrong secret fails
-  connection creation the way it does in production.
+- **`ServicePrincipal`**: `{ tenantId, servicePrincipalClientId, secret }`,
+  probed against entra-emulator via a client-credentials validation at create
+  (Fabric's "test connection"), so a wrong secret fails connection creation the
+  way it does in production.
 - **`WorkspaceIdentity`**: no credential material at all
   (`workspace-identity-authenticate.md` — "no need to manage keys, secrets,
   and certificates"); valid only when the owning workspace has a provisioned
-  identity (composes with the P2 lifecycle; deprovisioning breaks the
-  connection, as documented).
-- **AKV references** (see roadmap): credential-by-reference — the connection
-  stores a pointer to an azure-keyvault-emulator secret and resolves it at
-  use, reproducing Fabric's Azure Key Vault references feature offline.
+  identity. Deprovisioning breaks the connection, as documented.
+- **`AzureKeyVaultReference`**: credential-by-reference — the connection stores a
+  pointer to an Azure Key Vault secret, resolved at use with a vault-audience
+  workspace-identity token (Fabric's Azure Key Vault references feature,
+  offline).
 - Identity material itself (app registrations, SP secrets) stays in
   entra-emulator — connections *reference* principals, never own them.
 
