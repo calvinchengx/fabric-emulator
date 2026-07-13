@@ -146,6 +146,7 @@ contract holds better than any assertion we could write ourselves.
 | `fabric-cicd` (Microsoft) | Control plane / CI-CD publish | 🟢 `e2e/fabric-cicd` |
 | `deltalake` (delta-rs) | OneLake Delta write/read | 🟢 `e2e/delta-rs` |
 | `azure-storage-file-datalake` + Blob SDK | OneLake ADLS **Gen2 DFS** + Blob | 🟢 `e2e/adls-sdk` |
+| `azcopy` (Microsoft) | OneLake Blob multi-block transfer | 🟢 `e2e/azcopy` |
 | DuckDB | Lakehouse SQL over Delta/Parquet | 🟢 `e2e/duckdb` |
 | PySpark behind the **Livy API** | Spark sessions / statements | 🟢 `e2e/spark`, `e2e/livy`, `e2e/notebook-run` |
 | `notebookutils` | Notebook utility shim | 🟢 `e2e/notebookutils` |

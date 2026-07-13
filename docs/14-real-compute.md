@@ -57,8 +57,9 @@ What the P3 wire subset lacks for real engines, in dependency order:
 - **A1 — delta-rs**: the Python `deltalake` package (explicitly listed as
   OneLake-compatible in `onelake-api-parity.md`) writes and reads a Delta
   table through our DFS surface with an entra Storage token. Object-store
-  semantics only — needs Range + conditional writes, not rename. Also closes
-  the "azcopy / ADLS SDK e2e" roadmap item's SDK half.
+  semantics only — needs Range + conditional writes, not rename. Closes the
+  SDK half of the "azcopy / ADLS SDK e2e" roadmap item; the azcopy half is now
+  also wired (`e2e/azcopy`).
 - **A2 — real PySpark**: `pyspark` + `delta-spark`, ABFS driver
   (`abfss://{workspace}@onelake.dfs.fabric.microsoft.com/{item}/…`, the
   documented URI), OAuth client-credentials token provider pointed at

@@ -110,8 +110,12 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
 - [x] e2e: the **real Azure Blob SDK** (`azure-storage-blob`) round-trips
       through the emulator — `e2e/adls-sdk` (3-OS): uploads a pyarrow Parquet,
       downloads it byte-identical (found + fixed the `x-ms-range` gap), lists
-      blobs, DFS sees the same file. (azcopy, a heavier Go binary, is still a
-      later add; the SDK path is the higher-value proof and it's done.)
+      blobs, DFS sees the same file.
+- [x] e2e: the **real `azcopy` binary** transfers through the emulator —
+      `e2e/azcopy` (Linux): multi-block upload (Put Block + Put Block List),
+      byte-identical download, DFS sees the same object. Auth is a forged
+      Storage token handed to azcopy in its static-token mode (`TokenStore`),
+      since azcopy's own MSAL flow validates the authority against public AAD.
 
 ## R — Real compute (PySpark, Delta, warehouse)
 
