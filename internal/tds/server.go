@@ -95,12 +95,32 @@ func (s *Server) handle(conn net.Conn) error {
 		}
 		targetDB, readOnly = db, ro
 	}
-	// Accepted: LOGINACK + DONE completes the login (go-mssqldb requires no
-	// FedAuth signature ack — it does not validate one).
-	if err := WriteMessage(conn, PktTabular, concat(loginAck(), done(doneFinal, 0))); err != nil {
-		return err
+	// Full-fidelity path: if the backend can open a raw authenticated connection
+	// to the real engine, splice the client's post-login session straight to it
+	// (byte-forwarding) so SQL Server emits every token itself — transactions,
+	// type-info, native types — which a re-encoding relay cannot reproduce and
+	// which the Microsoft ODBC/JDBC driver family requires. Dial before acking so
+	// a backend failure can still reject the login cleanly.
+	if sb, ok := s.Backend.(SpliceBackend); ok && targetDB != "" {
+		backendConn, backendLogin, err := sb.Dial(context.Background(), targetDB)
+		if err != nil {
+			return s.reject(conn, "backend connect failed: "+err.Error())
+		}
+		defer backendConn.Close()
+		// Forward the engine's own login response (with our FEDAUTH ack merged in)
+		// so the client's session state — collation, server version, environment —
+		// matches the engine it is about to talk to, not a synthesized stand-in.
+		if err := WriteMessage(conn, PktTabular, spliceLoginResponse(backendLogin)); err != nil {
+			return err
+		}
+		return spliceSession(conn, backendConn, readOnly)
 	}
 
+	// Fallback re-encode relay: fake test backends and the no-engine stub. Each
+	// batch is run and its result re-encoded as a TDS response.
+	if err := WriteMessage(conn, PktTabular, s.loginResponse(login.Database)); err != nil {
+		return err
+	}
 	for {
 		typ, data, err := ReadMessage(conn)
 		if err != nil {
@@ -120,21 +140,48 @@ func (s *Server) handle(conn net.Conn) error {
 		// A lakehouse SQL analytics endpoint is read-only; reject writes as
 		// real Fabric does, rather than mutating the reflected mirror.
 		if readOnly && isWriteStatement(query) {
-			resp := concat(errorToken(50000,
-				"the lakehouse SQL analytics endpoint is read-only; writes require a Warehouse"),
-				done(doneError, 0))
-			if err := WriteMessage(conn, PktTabular, resp); err != nil {
+			if err := WriteMessage(conn, PktTabular, readOnlyReject()); err != nil {
 				return err
 			}
 			continue
 		}
-		// Relay the batch to the real engine (in the item's database) and stream
-		// its result back.
 		resp := s.runQuery(targetDB, query)
 		if err := WriteMessage(conn, PktTabular, resp); err != nil {
 			return err
 		}
 	}
+}
+
+// spliceLoginResponse adapts the engine's own login-response token stream for
+// the FedAuth client: it strips the engine's trailing DONE and appends the
+// FEDAUTH FEATUREEXTACK (which the SQL-auth backend login didn't negotiate) plus
+// a fresh DONE. Everything else — LOGINACK, the database/collation/language
+// ENVCHANGEs — is the engine's real state, so the client and backend agree.
+func spliceLoginResponse(backendLogin []byte) []byte {
+	body := backendLogin
+	if n := len(body); n >= 13 {
+		if t := body[n-13]; t == 0xFD || t == 0xFE || t == 0xFF {
+			body = body[:n-13] // strip the engine's final DONE token
+		}
+	}
+	return concat(body, fedAuthAck(), done(doneFinal, 0))
+}
+
+// loginResponse is the token stream that completes a FedAuth login: the
+// environment changes (database context, packet size) a real SQL Server sends,
+// LOGINACK, the FEDAUTH FEATUREEXTACK, and a final DONE. go-mssqldb tolerates a
+// leaner response, but the Microsoft ODBC driver's state machine needs all of it
+// (without ENVCHANGE + FEATUREEXTACK the connection never becomes ready).
+func (s *Server) loginResponse(database string) []byte {
+	return concat(loginEnv(database), loginAck(), fedAuthAck(), done(doneFinal, 0))
+}
+
+// readOnlyReject is the error response for a write attempted on a read-only
+// surface (a lakehouse SQL analytics endpoint, or a Viewer).
+func readOnlyReject() []byte {
+	return concat(errorToken(50000,
+		"the lakehouse SQL analytics endpoint is read-only; writes require a Warehouse"),
+		done(doneError, 0))
 }
 
 // reject sends a login ERROR + errored DONE, then returns (closing the conn).
@@ -218,6 +265,70 @@ func concat(parts ...[]byte) []byte {
 		out = append(out, p...)
 	}
 	return out
+}
+
+// ENVCHANGE token types (MS-TDS 2.2.7.9) the login response emits.
+const (
+	envDatabase   byte = 1
+	envLanguage   byte = 2
+	envPacketSize byte = 4
+	envCollation  byte = 7
+)
+
+// bVarchar encodes a B_VARCHAR: a 1-byte character count then UTF-16LE text.
+func bVarchar(s string) []byte {
+	u := str2ucs2(s)
+	return append([]byte{byte(len(u) / 2)}, u...)
+}
+
+// envChange builds an ENVCHANGE token (0xE3) for a string-valued environment
+// change: a new value and an old value, both B_VARCHAR.
+func envChange(typ byte, newVal, oldVal string) []byte {
+	body := append([]byte{typ}, bVarchar(newVal)...)
+	body = append(body, bVarchar(oldVal)...)
+	return envToken(body)
+}
+
+// envChangeBytes builds an ENVCHANGE token whose new value is a B_VARBYTE (a
+// 1-byte length then raw bytes) and old value is empty — used for the SQL
+// collation, which a real SQL Server sends so the client can decode (var)char.
+func envChangeBytes(typ byte, val []byte) []byte {
+	body := append([]byte{typ, byte(len(val))}, val...)
+	body = append(body, 0) // empty old value
+	return envToken(body)
+}
+
+func envToken(body []byte) []byte {
+	out := []byte{0xE3}
+	out = binary.LittleEndian.AppendUint16(out, uint16(len(body)))
+	return append(out, body...)
+}
+
+// loginEnv builds the ENVCHANGE tokens a real SQL Server sends in its login
+// response: the database context (echoing the requested database), the SQL
+// collation, the language, and the negotiated packet size. go-mssqldb ignores
+// these, but the Microsoft ODBC/JDBC driver families need them to finalize login
+// and interpret results (the database + collation especially).
+func loginEnv(database string) []byte {
+	if database == "" {
+		database = "master"
+	}
+	return concat(
+		envChange(envDatabase, database, "master"),
+		envChangeBytes(envCollation, defaultCollation),
+		envChange(envLanguage, "us_english", ""),
+		envChange(envPacketSize, "4096", "4096"),
+	)
+}
+
+// fedAuthAck builds a FEATUREEXTACK token (0xAE) acknowledging the FEDAUTH
+// feature (id 0x02) with empty ack data — the SecurityToken flow carries no
+// nonce/signature to echo — terminated by 0xFF. The Microsoft ODBC/JDBC driver
+// families expect this ack for the FEDAUTH feature they negotiated.
+func fedAuthAck() []byte {
+	out := []byte{0xAE, featExtFedAuth}
+	out = binary.LittleEndian.AppendUint32(out, 0) // FeatureAckDataLen = 0
+	return append(out, 0xFF)                       // FEATUREEXT terminator
 }
 
 // loginAck builds a LOGINACK token (0xAD): interface, TDS version, server

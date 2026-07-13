@@ -231,9 +231,37 @@ DML to OneLake Delta.
   client connects with a `fixedDialer` that sends the Fabric server name in
   LOGIN7 while dialing the test listener, and reads back the same backend database
   as the GUID connection (a lakehouse-by-name write is still rejected read-only).
-- **T5 (optional) — borrowed-oracle breadth.** The CI proof is a `go-mssqldb`
-  test today; add a `pyodbc` (`ActiveDirectoryServicePrincipal`) client to the
-  gated e2e so a second real driver family exercises the FedAuth + result path.
+- **T5 — second real driver family (Microsoft ODBC Driver 18). ✅ Done.** The CI
+  proof was a `go-mssqldb` test; the ODBC driver (pyodbc, and Microsoft's real
+  **dbt-fabric** adapter) is a genuinely independent TDS implementation and a far
+  stricter client. Making it work required two things:
+  1. **Login-response fidelity.** go-mssqldb tolerated a lean login response; the
+     ODBC driver's state machine did not. The PRELOGIN now reports a real server
+     version (16.0 — the driver refuses a `0.0.0.0` "SQL Server 2000") and a
+     FEDAUTH FEATUREEXTACK is emitted (without it the connection never becomes
+     ready).
+  2. **Session splice (the load-bearing change).** A re-encoding relay
+     (run each batch through go-mssqldb, re-emit COLMETADATA/ROW/DONE) structurally
+     can't reproduce the token stream a strict client depends on — transaction
+     ENVCHANGEs, `sp_datatype_info` metadata, native column types — and the driver
+     desynced on RPCs/`sp_executesql` and prepared statements. So after
+     terminating the FedAuth login the emulator now **byte-forwards** the client's
+     post-login session straight to a real per-item SQL Server connection
+     (`internal/tds/splice.go`, `client.go`): SQL Server generates every response
+     token itself. Crucially, the engine's **own login response is forwarded** to
+     the client (with the FEDAUTH ack merged in) so the client's session state —
+     collation, server identity, the begin-transaction ENVCHANGE that suppresses
+     the driver's autocommit fallback — matches the engine it is about to talk to.
+     go-mssqldb clients splice too (perfect type fidelity, real transactions);
+     fake test backends keep the re-encode relay. The read-only guard peeks
+     forwarded SQL batches and rejects writes before they reach the engine.
+
+  **Proven:** Microsoft's real `dbt-fabric` adapter runs its full lifecycle —
+  `dbt debug` → `seed` → `run` → `test` (all green) — through pyodbc + ODBC
+  Driver 18 over the TDS front (`e2e/dbt-fabric/`), and a rich pyodbc suite
+  (DDL, parameterized RPCs, commit/rollback, `INFORMATION_SCHEMA`) round-trips.
+  The splice + client login are unit-tested in-process (a TDS client against our
+  own server, the splice over pipes — no SQL Server needed).
 
 ## Borrowed oracles (the CI proof)
 

@@ -96,6 +96,14 @@ func buildPreLogin(opts []preLoginOption) []byte {
 	return append(out, payload...)
 }
 
+// serverVersion is the version reported in the PRELOGIN VERSION option:
+// SQL Server 2022 (16.0.4000). The Microsoft ODBC driver reads this and refuses
+// to connect to anything it reads as SQL Server 2000-or-earlier (a 0.0.0.0
+// version), so a real major version is required for pyodbc/SSMS-family clients
+// (go-mssqldb does not check it). UL_VERSION is major, minor, then a big-endian
+// build number; US_SUBBUILD follows.
+var serverVersion = []byte{16, 0, 0x0F, 0xA0, 0, 0} // 16.0.4000, subbuild 0
+
 // ServerPreLogin builds the server's PRELOGIN response. The emulator does not
 // terminate TLS on the TDS port, so it advertises ENCRYPT_NOT_SUP, and echoes
 // FEDAUTHREQUIRED=1 so the client proceeds with the FedAuth login (presenting
@@ -106,7 +114,7 @@ func ServerPreLogin(fedAuthRequired bool) []byte {
 		fed = 0x01
 	}
 	return buildPreLogin([]preLoginOption{
-		{plVersion, []byte{0, 0, 0, 0, 0, 0}}, // UL_VERSION(4) + US_SUBBUILD(2)
+		{plVersion, serverVersion},
 		{plEncryption, []byte{EncryptNotSup}},
 		{plInstOpt, []byte{0x00}}, // INSTOPT: instance validation success
 		{plFedAuthReq, []byte{fed}},

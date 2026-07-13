@@ -147,6 +147,10 @@ func TestFedAuthTokenStream(t *testing.T) {
 	if _, err := fedAuthToken([]byte{0x02, 0xFF}, 0); err == nil {
 		t.Error("expected truncated feature-ext error")
 	}
+	// A feature whose declared data length runs past the buffer.
+	if _, err := fedAuthToken([]byte{0x02, 0xFF, 0xFF, 0xFF, 0xFF}, 0); err == nil {
+		t.Error("expected feature-ext data-out-of-range error")
+	}
 	// A FEDAUTH SecurityToken feature carrying a UTF-16LE token "hi".
 	fd := []byte{fedAuthLibrarySecurityToken << 1, 4, 0, 0, 0, 'h', 0, 'i', 0}
 	dl := make([]byte, 4)

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"net"
 )
 
 // Backend runs a T-SQL query and returns its result. It is injected so the TDS
@@ -13,6 +14,20 @@ import (
 // Server has no Backend, it answers with the T1 stub instead.
 type Backend interface {
 	Query(ctx context.Context, sql string) (*Result, error)
+}
+
+// SpliceBackend is a Backend that can open a raw, already-authenticated
+// connection to the real engine for a given database. The server splices the
+// client's post-login TDS session straight to it (byte-forwarding), so the
+// engine emits every token itself — transactions, type-info metadata, native
+// column types — a full-fidelity path the re-encoding Query cannot reproduce and
+// the Microsoft ODBC/JDBC driver family requires. Backends that don't implement
+// this (fake test backends) use the re-encoding Query relay.
+type SpliceBackend interface {
+	// Dial returns the authenticated backend connection and the raw login-response
+	// token stream the engine sent (LOGINACK, ENVCHANGEs, collation, …), which the
+	// server forwards to the client so its session state matches the engine's.
+	Dial(ctx context.Context, database string) (net.Conn, []byte, error)
 }
 
 // ColType is the wire type a result column is encoded as. Integer/float/bit
@@ -55,9 +70,12 @@ func sqlBatchQuery(data []byte) string {
 	return ucs2(data)
 }
 
-// defaultCollation is a 5-byte COLLATION for LCID 1033 (US English), required
-// in the COLMETADATA type info of (n)char/(n)varchar columns.
-var defaultCollation = []byte{0x09, 0x04, 0x00, 0x00, 0x00}
+// defaultCollation is the 5-byte COLLATION a real SQL Server reports for LCID
+// 1033 (SQL_Latin1_General_CP1_CI_AS): LCID 0x0409, flags/version, sort id 0x34.
+// It is sent in the login ENVCHANGE and in the COLMETADATA of (n)char/(n)varchar
+// columns; matching the real bytes keeps strict clients (the Microsoft ODBC
+// driver) happy.
+var defaultCollation = []byte{0x09, 0x04, 0xd0, 0x00, 0x34}
 
 // nvarcharMaxBytes bounds the declared column width (nvarchar(4000)); values are
 // still length-prefixed per row.
@@ -68,10 +86,13 @@ const nvarcharMaxBytes = 8000
 // NVARCHAR text) so a typed client reads the natural Go type; text columns still
 // round-trip via the driver's on-scan conversion.
 func resultTokens(res *Result) []byte {
-	// A resultless batch (SET options, DDL, DML) has no columns: just DONE,
-	// with the affected-row count — no COLMETADATA.
+	// A resultless batch (SET options, DDL, control flow) has no columns and no
+	// result set: a plain DONE, no COLMETADATA. We deliberately do NOT set
+	// DONE_COUNT — the re-encode relay has no true affected-row count, and a
+	// DONE_COUNT with a phantom count leaves a strict client believing a row-count
+	// result is still pending.
 	if len(res.Columns) == 0 {
-		return done(doneFinal|doneCount, uint64(len(res.Rows)))
+		return done(doneFinal, 0)
 	}
 	out := []byte{0x81} // COLMETADATA
 	out = binary.LittleEndian.AppendUint16(out, uint16(len(res.Columns)))

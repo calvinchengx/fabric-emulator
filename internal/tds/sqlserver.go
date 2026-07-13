@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -118,6 +120,33 @@ func (b *sqlServerBackend) Query(ctx context.Context, query string) (*Result, er
 	}
 	defer rows.Close()
 	return materialize(rows)
+}
+
+// Dial opens a raw TCP connection to the SQL Server backend and completes a
+// SQL-auth TDS login into the item's database, returning the connection ready
+// for post-login traffic. The server splices the client's session onto it, so
+// SQL Server itself produces every response token (full fidelity). The service
+// credential and address come from the base DSN.
+func (b *sqlServerBackend) Dial(ctx context.Context, database string) (net.Conn, []byte, error) {
+	if b.base == nil {
+		return nil, nil, fmt.Errorf("no backend DSN configured for splicing")
+	}
+	port := b.base.Port
+	if port == 0 {
+		port = 1433
+	}
+	addr := net.JoinHostPort(b.base.Host, strconv.FormatUint(port, 10))
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	loginResp, err := clientLogin(conn, b.base.User, b.base.Password, database, b.base.Host)
+	if err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	return conn, loginResp, nil
 }
 
 // colTypeFromDB maps a driver's column type name to a wire ColType. Integer,

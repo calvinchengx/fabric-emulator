@@ -11,6 +11,7 @@ func TestIsWriteStatement(t *testing.T) {
 		"\n\t-- a comment\nSELECT x FROM t",
 		"WITH q AS (SELECT 1 AS n) SELECT * FROM q",
 		"SET NOCOUNT ON",
+		"-- a trailing comment with no newline",
 		"",
 	}
 	writes := []string{

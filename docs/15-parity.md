@@ -83,13 +83,13 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 |---|---|---|
 | SQL-analytics-endpoint semantics over lakehouse Delta | DuckDB runs real SQL (aggregation / join / filter), e2e | 🟢 Real (engine in e2e) |
 | Warehouse item management | Full | 🟢 Real |
-| **T-SQL over TDS + Entra FedAuth** | Pure-Go TDS front (`internal/tds`) terminates the FedAuth handshake (real Entra token, `database.windows.net` audience) and relays to a **SQL Server** sidecar; unmodified `go-mssqldb`/`pyodbc` clients connect and run T-SQL. Verified against a real SQL Server | 🟢 Real (front) / 🟠 SQL Server sidecar |
+| **T-SQL over TDS + Entra FedAuth** | Pure-Go TDS front (`internal/tds`) terminates the FedAuth handshake (real Entra token, `database.windows.net` audience), then **byte-splices** the client's post-login session to a real per-item **SQL Server** connection so the engine emits every token itself. Unmodified `go-mssqldb` *and* Microsoft **ODBC Driver 18** (pyodbc) clients connect and run T-SQL — including RPCs, prepared statements, and transactions. Verified against a real SQL Server; Microsoft's real **dbt-fabric** adapter passes `debug`/`seed`/`run`/`test` end-to-end (`e2e/dbt-fabric/`) | 🟢 Real (front) / 🟠 SQL Server sidecar |
 | **Lakehouse SQL analytics endpoint — Delta → engine** | The emulator reads the lakehouse's `Tables/<t>` Delta in pure Go and reflects (CREATE+INSERT) it into the sidecar on connect, so `SELECT` hits real OneLake data (matches DuckDB), **read-only** (writes rejected). *Not PolyBase* — SQL Server reading Delta in place is a proven dead-end on the Linux container (`e2e/sql-endpoint-spike/`) | 🟢 Real (reflection) |
 | **Warehouse — read-write T-SQL** | Client `CREATE`/`INSERT`/`SELECT` relay straight to the sidecar; the warehouse owns its data (no reflection) | 🟢 Real (relay) |
 | Per-item isolation (each item = its own SQL Server database) | Lakehouse/Warehouse routed by type; per-item databases so they never collide | 🟢 Real |
 | RBAC → SQL permissions | Workspace role enforced on connect: no role → rejected; Viewer → read-only; Contributor+ → read-write (warehouse) | 🟢 Real |
 | `information_schema` / `sys.*` introspection | Relays natively — reflected/warehouse tables are real SQL Server tables | 🟢 Real (relay) |
-| Per-column type fidelity (real SQL types over the wire) | Integer/float/bit columns carry their real TDS type (INTN/FLTN/BITN); other types fall back to NVARCHAR text | 🟢 Real (numeric/bool) |
+| Per-column type fidelity (real SQL types over the wire) | The splice forwards SQL Server's own COLMETADATA, so **every** column carries its true native type over the wire (the re-encode fallback, used only by fake test backends, synthesizes INTN/FLTN/BITN and falls back to NVARCHAR text) | 🟢 Real (native) |
 | Connection by item *name* (vs GUID) | Workspace read from the server name (`<workspace>.datawarehouse.fabric.microsoft.com`), item resolved by display name; a GUID still resolves by id (back-compat). Verified with a real `go-mssqldb` client | 🟢 Real |
 
 ## Data Factory (`data-factory/`)
