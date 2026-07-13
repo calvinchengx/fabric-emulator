@@ -126,6 +126,24 @@ jobs:
       # blobs, and the DFS surface sees the same file — the ADLS SDK oracle.
       - run: python e2e/adls-sdk/run.py
 
+  azcopy:
+    name: Real azcopy transfers through OneLake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # Microsoft's real `azcopy` binary uploads a multi-block file (Put Block +
+      # Put Block List), downloads it byte-identical, and the DFS surface sees
+      # the same object. Linux-only: azcopy (a Go binary) trusts the emulator's
+      # self-signed CA via SSL_CERT_FILE, which the macOS system verifier rejects
+      # for the dev cert's >825-day validity.
+      - run: python3 e2e/azcopy/run.py
+
   docker-smoke:
     name: Production image runs and persists (container smoke)
     runs-on: ubuntu-latest
