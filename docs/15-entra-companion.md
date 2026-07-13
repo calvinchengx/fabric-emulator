@@ -17,6 +17,7 @@ All of it **over plain HTTP** — no shared code, no shared process:
 | `/{tenant}/discovery/v2.0/keys` (JWKS) + the advertised issuer | validating every bearer token, control plane and OneLake alike ([architecture](03-architecture.md)) |
 | Fabric-audience token minting (`https://api.fabric.microsoft.com` and the legacy Power BI resource) | what clients authenticate with |
 | `Storage`-audience tokens (`https://storage.azure.com`) | the [OneLake data plane](08-onelake.md) |
+| `vault`-audience tokens (`https://vault.azure.net`), minted for the workspace identity | resolving [Azure Key Vault references](09-identity-handshake.md) against azure-keyvault-emulator |
 | `/admin/api/workspace-identities` (CRUD) + `GET /fabric/workspaceidentities/{id}/token` | the [workspace-identity handshake](09-identity-handshake.md) |
 
 Because the dependency is only "an issuer + a JWKS", `FABRIC_ENTRA_ISSUER`
@@ -36,8 +37,12 @@ workspace-identity orchestration works unchanged.
 
 ## The family
 
-A third member is planned:
-[azure-keyvault-emulator](https://github.com/calvinchengx/azure-keyvault-emulator),
-which will back Fabric's **Azure Key Vault references** for connection
-credentials (`workspace identity → entra token → vault secret → connection`)
-— see the [roadmap](13-roadmap.md).
+The third member is integrated:
+[azure-keyvault-emulator](https://github.com/calvinchengx/azure-keyvault-emulator)
+backs Fabric's **Azure Key Vault references** for connection credentials
+(`workspace identity → entra vault-audience token → vault secret → connection`).
+Like fabric, it is a relying party on entra — it validates bearers against the
+same JWKS/issuer, with the vault audience. The full trust edge is drawn in the
+[identity handshake](09-identity-handshake.md#reaching-a-protected-resource-azure-key-vault);
+it also serves `notebookutils.credentials.getSecret`. Brought up together in the
+`notebookutils` e2e (all three emulators + a real notebook reading a secret).

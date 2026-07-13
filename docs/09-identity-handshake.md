@@ -52,13 +52,53 @@ Once provisioned, the workspace shape carries
 No shared code or process — the same HTTP calls would work against any
 implementation of those endpoints.
 
+## Reaching a protected resource: Azure Key Vault
+
+This is what the handshake is *for*. Its canonical case — *a Fabric item needs
+to reach a protected resource as the workspace, not as a user* — is now realised
+against the family's third member,
+[azure-keyvault-emulator](15-entra-companion.md). Key Vault is a **relying
+party** that trusts the same entra issuer: it validates every bearer against
+entra's JWKS with the vault audience (`https://vault.azure.net`), exactly as the
+control plane and the OneLake data plane do. Key Vault didn't change the
+identity model — it's the clearest *instance* of it.
+
+An `AzureKeyVaultReference` connection resolves its secret with the workspace
+identity — no user, no stored credential:
+
+```mermaid
+sequenceDiagram
+    participant C as Client / Fabric item
+    participant F as fabric-emulator
+    participant E as entra-emulator (STS)
+    participant K as azure-keyvault-emulator
+    Note over C,F: workspace identity already provisioned (the loop above)
+    C->>F: use an AzureKeyVaultReference connection<br/>(or a job/notebook needing the secret)
+    F->>E: GET /fabric/workspaceidentities/{id}/token (aud = https://vault.azure.net)
+    E-->>F: vault-audience token for the workspace identity
+    F->>K: GET {vaultUri}/secrets/{name}  (Bearer)
+    K->>E: fetch JWKS (once) — same issuer as the control plane
+    K->>K: validate signature + issuer + vault audience + exp
+    K-->>F: secret value
+    F-->>C: uses it (e.g. as the connection credential)
+```
+
+It is the same mint as the loop above (`GET …/workspaceidentities/{id}/token`),
+only with the vault audience. Two consumers ride this trust edge:
+
+- **fabric-emulator** — resolving `AzureKeyVaultReference` connection
+  credentials with the workspace-identity token (`internal/akv`; the connection
+  must reference a provisioned identity).
+- **notebook code** — `notebookutils.credentials.getSecret(vault, name)` in the
+  Python shim, using the notebook's own vault-audience token.
+
+Both `WorkspaceIdentity`-type connection credentials and Azure Key Vault
+references — once *planned on top of this* — are now shipped.
+
 ## Why this matters for testing
 
 The pattern under test in real life is: *a Fabric item needs to reach a
-protected resource as the workspace, not as a user*. With the pair running you
-can exercise the full credential-less loop offline — provision, mint, call
-back into Fabric RBAC, deprovision, watch access die — deterministically and
-in CI (the e2e does exactly this; see the [e2e matrix](12-e2e-matrix.md)).
-
-Planned on top of this: `WorkspaceIdentity`-type connection credentials and
-Azure Key Vault references — see the [roadmap](13-roadmap.md).
+protected resource as the workspace, not as a user*. With the family running you
+can exercise the full credential-less loop offline — provision, mint, reach
+Key Vault (or Fabric RBAC), deprovision, watch access die — deterministically
+and in CI (the e2e does exactly this; see the [e2e matrix](12-e2e-matrix.md)).

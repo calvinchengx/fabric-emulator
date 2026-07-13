@@ -74,8 +74,9 @@ implement the promised behavior.
   with `15-parity.md` (the accurate one).
 - [ ] **`13-roadmap.md` narrates proxy-only Livy and defers the "sidecar e2e"**
   that's now done (`e2e/livy` + `--spark-agent-url`). Update the R-track boxes.
-- [ ] **`15-entra-companion.md:39-43`** calls azure-keyvault-emulator a *planned*
-  third member; it's integrated (roadmap `[x]`, parity 🟢, in the notebookutils CI job).
+- [x] **`15-entra-companion.md`** "planned third member" → integrated, and **`09`
+  identity-handshake** "planned on top of this" → shipped, with the Key Vault
+  trust-edge diagram added. Done (this commit).
 - [ ] **Connection credential model documented as "planned"** (`07:163-187`) but
   fully built: per-type validation, write-only secrets, entra test-probe, AKV
   resolution (`internal/api/git.go:388-529`).
