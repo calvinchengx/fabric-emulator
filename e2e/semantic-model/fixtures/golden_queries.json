@@ -1,0 +1,70 @@
+{
+  "_comment": "Golden (DAX query -> executeQueries rows) fixtures, hand-computed from seed_data.json. This is the DAX oracle (no live engine on macOS). Column keys follow the executeQueries JSON convention: 'Table[Column]' for columns, '[Name]' for named measure expressions. Compare order-insensitively. The arithmetic is shown in README.md.",
+  "queries": [
+    {
+      "name": "Store Asset",
+      "asset": "Power BI table (tutorial: ds.add_powerbi_table_asset 'Store')",
+      "dax": "EVALUATE 'Store'",
+      "handler": "dax",
+      "expected": {
+        "orderInsensitive": true,
+        "columns": ["Store[StoreId]", "Store[Store]", "Store[PostalCode]", "Store[Territory]"],
+        "rows": [
+          { "Store[StoreId]": 1, "Store[Store]": "Store A", "Store[PostalCode]": "98052", "Store[Territory]": "West" },
+          { "Store[StoreId]": 2, "Store[Store]": "Store B", "Store[PostalCode]": "10001", "Store[Territory]": "East" },
+          { "Store[StoreId]": 3, "Store[Store]": "Store C", "Store[PostalCode]": "60601", "Store[Territory]": "Central" },
+          { "Store[StoreId]": 4, "Store[Store]": "Store D", "Store[PostalCode]": "94016", "Store[Territory]": "West" }
+        ]
+      }
+    },
+    {
+      "name": "Total Units Asset",
+      "asset": "Power BI measure (tutorial: ds.add_powerbi_measure_asset 'TotalUnits')",
+      "dax": "EVALUATE SUMMARIZECOLUMNS('Time'[FiscalYear], 'Time'[FiscalMonth], \"TotalUnits\", [TotalUnits])",
+      "handler": "dax",
+      "expected": {
+        "orderInsensitive": true,
+        "columns": ["Time[FiscalYear]", "Time[FiscalMonth]", "[TotalUnits]"],
+        "rows": [
+          { "Time[FiscalYear]": "FY2013", "Time[FiscalMonth]": "Jan", "[TotalUnits]": 60000 },
+          { "Time[FiscalYear]": "FY2013", "Time[FiscalMonth]": "Apr", "[TotalUnits]": 65000 },
+          { "Time[FiscalYear]": "FY2014", "Time[FiscalMonth]": "Jan", "[TotalUnits]": 70000 },
+          { "Time[FiscalYear]": "FY2014", "Time[FiscalMonth]": "Apr", "[TotalUnits]": 80000 }
+        ]
+      }
+    },
+    {
+      "name": "Total Units YoY Asset",
+      "asset": "Custom DAX (tutorial: ds.add_powerbi_dax_asset 'Total Units Ratio' via DIVIDE)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS('Time'[FiscalYear], 'Time'[FiscalMonth], \"Total Units Ratio\", DIVIDE([Total Units This Year], [Total Units Last Year]))",
+      "handler": "dax",
+      "note": "The FY2014/Apr ratio (1.8) is out of the tutorial's 0.8-1.5 band; this is the deliberately-failing asset that mirrors the tutorial's result.",
+      "expected": {
+        "orderInsensitive": true,
+        "columns": ["Time[FiscalYear]", "Time[FiscalMonth]", "[Total Units Ratio]"],
+        "rows": [
+          { "Time[FiscalYear]": "FY2013", "Time[FiscalMonth]": "Jan", "[Total Units Ratio]": 1.0 },
+          { "Time[FiscalYear]": "FY2013", "Time[FiscalMonth]": "Apr", "[Total Units Ratio]": 1.5 },
+          { "Time[FiscalYear]": "FY2014", "Time[FiscalMonth]": "Jan", "[Total Units Ratio]": 0.9 },
+          { "Time[FiscalYear]": "FY2014", "Time[FiscalMonth]": "Apr", "[Total Units Ratio]": 1.8 }
+        ]
+      }
+    },
+    {
+      "name": "Referential Integrity Violation",
+      "asset": "DMV query (tutorial: DISCOVER_STORAGE_TABLES / RIVIOLATION_COUNT)",
+      "dax": "SELECT [Dimension_Name], [RIVIOLATION_COUNT] FROM $SYSTEM.DISCOVER_STORAGE_TABLES",
+      "handler": "schemaRowset",
+      "note": "Not a DAX EVALUATE — a DMV/schema rowset (DISCOVER_STORAGE_TABLES). Needs a separate schema-rowset handler, deferred past the DAX evaluator. Our model has no RI violations, so every RIVIOLATION_COUNT is 0.",
+      "expected": {
+        "orderInsensitive": true,
+        "columns": ["Dimension_Name", "RIVIOLATION_COUNT"],
+        "rows": [
+          { "Dimension_Name": "Store", "RIVIOLATION_COUNT": 0 },
+          { "Dimension_Name": "Time", "RIVIOLATION_COUNT": 0 },
+          { "Dimension_Name": "Sales", "RIVIOLATION_COUNT": 0 }
+        ]
+      }
+    }
+  ]
+}

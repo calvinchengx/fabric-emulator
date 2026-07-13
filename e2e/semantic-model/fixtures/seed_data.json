@@ -1,0 +1,25 @@
+{
+  "_comment": "Table rows for the RetailAnalysis fixture. In real Fabric these come from Direct Lake (OneLake Delta) or import partitions; here they are seeded so the DAX goldens are hand-computable. Two Sales rows per Time group so SUM aggregates more than one row.",
+  "Store": [
+    { "StoreId": 1, "Store": "Store A", "PostalCode": "98052", "Territory": "West" },
+    { "StoreId": 2, "Store": "Store B", "PostalCode": "10001", "Territory": "East" },
+    { "StoreId": 3, "Store": "Store C", "PostalCode": "60601", "Territory": "Central" },
+    { "StoreId": 4, "Store": "Store D", "PostalCode": "94016", "Territory": "West" }
+  ],
+  "Time": [
+    { "MonthKey": 201301, "FiscalYear": "FY2013", "FiscalMonth": "Jan" },
+    { "MonthKey": 201304, "FiscalYear": "FY2013", "FiscalMonth": "Apr" },
+    { "MonthKey": 201401, "FiscalYear": "FY2014", "FiscalMonth": "Jan" },
+    { "MonthKey": 201404, "FiscalYear": "FY2014", "FiscalMonth": "Apr" }
+  ],
+  "Sales": [
+    { "StoreId": 1, "MonthKey": 201301, "Units": 30000, "UnitsThisYear": 500, "UnitsLastYear": 500 },
+    { "StoreId": 2, "MonthKey": 201301, "Units": 30000, "UnitsThisYear": 500, "UnitsLastYear": 500 },
+    { "StoreId": 1, "MonthKey": 201304, "Units": 32500, "UnitsThisYear": 600, "UnitsLastYear": 400 },
+    { "StoreId": 2, "MonthKey": 201304, "Units": 32500, "UnitsThisYear": 600, "UnitsLastYear": 400 },
+    { "StoreId": 3, "MonthKey": 201401, "Units": 35000, "UnitsThisYear": 450, "UnitsLastYear": 500 },
+    { "StoreId": 4, "MonthKey": 201401, "Units": 35000, "UnitsThisYear": 450, "UnitsLastYear": 500 },
+    { "StoreId": 3, "MonthKey": 201404, "Units": 40000, "UnitsThisYear": 900, "UnitsLastYear": 500 },
+    { "StoreId": 4, "MonthKey": 201404, "Units": 40000, "UnitsThisYear": 900, "UnitsLastYear": 500 }
+  ]
+}

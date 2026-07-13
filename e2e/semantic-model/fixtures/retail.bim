@@ -1,0 +1,55 @@
+{
+  "name": "RetailAnalysis",
+  "compatibilityLevel": 1550,
+  "//": "Golden semantic-model fixture (TMSL / model.bim) mirroring the SemPy + Great Expectations tutorial's Retail Analysis Sample, shrunk to a hand-computable size. The this-year/last-year values are stored as columns (UnitsThisYear/UnitsLastYear) so the measures are plain SUM + DIVIDE — no time-intelligence engine needed — while reproducing the tutorial's query shapes and its failing YoY case. Table DATA lives in seed_data.json (import rows), separate from this definition.",
+  "model": {
+    "culture": "en-US",
+    "tables": [
+      {
+        "name": "Store",
+        "columns": [
+          { "name": "StoreId", "dataType": "int64", "sourceColumn": "StoreId" },
+          { "name": "Store", "dataType": "string", "sourceColumn": "Store" },
+          { "name": "PostalCode", "dataType": "string", "sourceColumn": "PostalCode" },
+          { "name": "Territory", "dataType": "string", "sourceColumn": "Territory" }
+        ]
+      },
+      {
+        "name": "Time",
+        "columns": [
+          { "name": "MonthKey", "dataType": "int64", "sourceColumn": "MonthKey" },
+          { "name": "FiscalYear", "dataType": "string", "sourceColumn": "FiscalYear" },
+          { "name": "FiscalMonth", "dataType": "string", "sourceColumn": "FiscalMonth" }
+        ]
+      },
+      {
+        "name": "Sales",
+        "columns": [
+          { "name": "StoreId", "dataType": "int64", "sourceColumn": "StoreId" },
+          { "name": "MonthKey", "dataType": "int64", "sourceColumn": "MonthKey" },
+          { "name": "Units", "dataType": "int64", "sourceColumn": "Units" },
+          { "name": "UnitsThisYear", "dataType": "int64", "sourceColumn": "UnitsThisYear" },
+          { "name": "UnitsLastYear", "dataType": "int64", "sourceColumn": "UnitsLastYear" }
+        ],
+        "measures": [
+          { "name": "TotalUnits", "expression": "SUM(Sales[Units])" },
+          { "name": "Total Units This Year", "expression": "SUM(Sales[UnitsThisYear])" },
+          { "name": "Total Units Last Year", "expression": "SUM(Sales[UnitsLastYear])" },
+          { "name": "Total Units Ratio", "expression": "DIVIDE([Total Units This Year], [Total Units Last Year])" }
+        ]
+      }
+    ],
+    "relationships": [
+      {
+        "name": "Sales_Store",
+        "fromTable": "Sales", "fromColumn": "StoreId",
+        "toTable": "Store", "toColumn": "StoreId"
+      },
+      {
+        "name": "Sales_Time",
+        "fromTable": "Sales", "fromColumn": "MonthKey",
+        "toTable": "Time", "toColumn": "MonthKey"
+      }
+    ]
+  }
+}
