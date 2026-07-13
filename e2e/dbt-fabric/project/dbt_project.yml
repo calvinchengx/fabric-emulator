@@ -1,0 +1,16 @@
+name: "dbt_fabric_e2e"
+version: "1.0.0"
+config-version: 2
+profile: "dbt_fabric_e2e"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+
+# View materialization: `CREATE VIEW` is standard T-SQL the SQL Server sidecar
+# runs directly. (dbt-fabric's *table* materialization emits Fabric/Synapse
+# `CREATE TABLE AS SELECT`, which vanilla SQL Server rejects — the sidecar is a
+# stand-in engine, not a real Fabric Warehouse. This e2e proves the ODBC Driver
+# 18 + FedAuth + catalog path, not Fabric's T-SQL dialect.)
+models:
+  dbt_fabric_e2e:
+    +materialized: view

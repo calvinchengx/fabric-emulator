@@ -152,13 +152,17 @@ contract holds better than any assertion we could write ourselves.
 | `notebookutils` | Notebook utility shim | 🟢 `e2e/notebookutils` |
 | `go-mssqldb` | Warehouse/Lakehouse **TDS + FedAuth** | 🟢 `internal/server`, `internal/tds` |
 | **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy HC sessions | 🟢 `e2e/dbt-fabricspark` — debug→seed→run→test on real Spark |
-| **`dbt-fabric`** (Microsoft) | Warehouse **TDS via ODBC Driver 18** | ⏳ **Planned** — closes the TDS driver-diversity gap |
+| **`dbt-fabric`** (Microsoft) | Warehouse **TDS via ODBC Driver 18** | 🟢 `e2e/dbt-fabric` — debug→seed→run→test through the TDS splice |
 
-The TDS surface has exactly **one** driver witness today (`go-mssqldb`).
-`dbt-fabric` matters because the Microsoft **ODBC Driver 18** is an *independent*
-TDS implementation with its own FedAuth/prelogin handshake: passing it is a
-stronger parity claim than any number of go-mssqldb tests. `dbt-fabricspark`
-drives the just-built high-concurrency Livy layer over its real Livy-session
+The TDS surface now has **two independent driver witnesses**: `go-mssqldb` and
+the Microsoft **ODBC Driver 18** (via `dbt-fabric`). That second driver mattered —
+it exposed a real gap: `go-mssqldb` tolerated a synthesized FedAuth login, but
+ODBC Driver 18 took a compatibility path (prepared-statement RPCs +
+`sp_reset_connection` under mandatory connection pooling) that desynced against a
+re-encoding relay. The fix was to **byte-splice** the post-login session straight
+to the real SQL Server (so it emits every token itself), which is exactly the
+kind of driver-family gap a single-driver test never surfaces. `dbt-fabricspark`
+likewise drives the high-concurrency Livy layer over its real Livy-session
 protocol (`method: livy`, service-principal auth via entra-emulator).
 
 ## Scope boundary: Fabric, not the predecessor Azure products

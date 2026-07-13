@@ -1,0 +1,87 @@
+# e2e: Microsoft's real dbt-fabric adapter runs a dbt project (debug -> seed ->
+# run -> test) against fabric-emulator's TDS warehouse surface, via the
+# **Microsoft ODBC Driver 18** — an independent TDS implementation from
+# go-mssqldb. This is the driver-diversity witness for the TDS front: the
+# FedAuth/prelogin handshake proven against a second, real client.
+#
+#   dbt-fabric (pyodbc + ODBC Driver 18) → fabric-emulator (TDS + FedAuth) → SQL Server sidecar
+#          ↑ Azure-SQL FedAuth token minted by entra-emulator
+#
+# Plain HTTP for the emulator's REST (used only to provision the workspace +
+# warehouse); the data path is TDS. The TDS front terminates FedAuth without TLS
+# (advertises ENCRYPT_NOT_SUP), so dbt connects with encrypt=false.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+    healthcheck:
+      test:
+        - CMD
+        - /opt/mssql-tools18/bin/sqlcmd
+        - -S
+        - localhost
+        - -U
+        - sa
+        - -P
+        - "Str0ng!Passw0rd"
+        - -C
+        - -Q
+        - "SELECT 1"
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_DATA_DIR: "" # in-memory; the e2e needs no persistence
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      # The TDS warehouse surface, relaying to the SQL Server sidecar.
+      FABRIC_SQL_TDS_ADDR: ":1433"
+      # Generous dial/connection timeouts: creating + starting the per-item
+      # database on first connect can be slow (esp. an amd64 SQL Server image
+      # emulated on an arm64 host), and the backend must not give up before it
+      # comes online (which surfaces to the client as a canceled query).
+      FABRIC_WAREHOUSE_SQL_URL: "server=sqlserver;user id=sa;password=Str0ng!Passw0rd;encrypt=disable;dial timeout=90;connection timeout=90"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  dbt:
+    build:
+      context: .
+      dockerfile: Dockerfile.dbt
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+      sqlserver:
+        condition: service_healthy
+    environment:
+      ENTRA_URL: "http://entra-emulator:8443"
+      FABRIC_REST_URL: "http://fabric-emulator:80"
+      TDS_SERVER: "fabric-emulator,1433"

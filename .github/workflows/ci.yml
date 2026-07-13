@@ -188,6 +188,18 @@ jobs:
       # the Livy HC layer — parity witness. Linux-only (JVM Spark image).
       - run: python3 e2e/dbt-fabricspark/run.py
 
+  dbt-fabric:
+    name: Microsoft's dbt-fabric drives the TDS warehouse via ODBC Driver 18 (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Microsoft's real dbt-fabric adapter runs a dbt project (debug -> seed ->
+      # run -> test) against the emulator's TDS warehouse surface through the
+      # Microsoft ODBC Driver 18 + FedAuth (token minted by entra-emulator),
+      # byte-spliced to a real SQL Server sidecar. The second, independent TDS
+      # driver witness (go-mssqldb is the first). Linux-only (SQL Server image).
+      - run: python3 e2e/dbt-fabric/run.py
+
   duckdb:
     name: Real DuckDB SQL over lakehouse Delta
     strategy:
