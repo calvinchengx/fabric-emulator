@@ -379,7 +379,7 @@ func (a *API) listConnections(w http.ResponseWriter, r *http.Request, p *auth.Pr
 	if cs == nil {
 		cs = []*store.Connection{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"value": cs})
+	writePage(w, r, cs)
 }
 
 // connectionCredentials is the write shape of credentialDetails.credentials.

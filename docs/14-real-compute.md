@@ -4,8 +4,8 @@
 fabric-emulator from a *contract emulator* into a *local Fabric runtime* — by
 attaching **real engines**, never by faking results. Most of it now exists, each
 milestone gated on a real client in CI; the honest exceptions still in flight
-(a real Airflow sidecar, a handful of pipeline leaf activities, ForEach parallel
-mode) are marked inline. Tense below is kept as originally written where it still
+(a real Airflow sidecar, a handful of pipeline leaf activities like Web/Script)
+are marked inline. Tense below is kept as originally written where it still
 reads as intent; shipped items carry a ✅ and their `e2e/` witness.
 
 ## The principle (a refinement, not a reversal)
@@ -250,14 +250,14 @@ policies — with leaf activities delegating to real work where an engine exists
 | Notebook | Livy → the real Spark agent (Track B) | ✅ real (with `--spark-agent-url`) |
 | Web / Webhook, Script / Stored procedure | real HTTP / the warehouse engine | 📐 not yet wired |
 
-Two honest gaps in the interpreter itself: **ForEach parallel mode** is not
-implemented (execution is sequential-only), and while a per-activity **timeout**
-is enforced on the virtual clock, the **retry *interval*** (`retryIntervalInSeconds`)
-is parsed but not applied — retries fire instantly. Stated plainly: the
-orchestrator is *ours* — faithful to documented control-flow semantics,
-deterministic on the controllable clock (a Until-timeout is testable in
-milliseconds) — but it is not Microsoft's engine. The *work* a pipeline does is
-real: it exercises real Spark, real OneLake bytes, and real data movement.
+Control-flow fidelity is deterministic on the controllable clock: **ForEach**
+honors `isSequential` + `batchCount` and reports the right wall-clock (sequential
+iterations add, a parallel batch costs its slowest); a per-activity **timeout**
+fails an over-running attempt; and **retry with `retryIntervalInSeconds`** folds
+the backoff into the activity's duration — all exercised in milliseconds, no real
+sleep. Stated plainly: the orchestrator is *ours* — faithful to documented
+control-flow semantics — but it is not Microsoft's engine. The *work* a pipeline
+does is real: it exercises real Spark, real OneLake bytes, and real data movement.
 
 **E3 — honestly unobtainable → 501.** Dataflow Gen2 (the Power Query M
 compute is proprietary), self-hosted integration runtime / gateway scenarios,

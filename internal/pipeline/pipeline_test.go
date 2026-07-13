@@ -108,6 +108,34 @@ func TestRetryPolicySucceedsAfterRetries(t *testing.T) {
 	if r := byName(res)["flaky"]; r.Retry != 2 {
 		t.Fatalf("retryAttempt = %d, want 2", r.Retry)
 	}
+	// Two retries at retryIntervalInSeconds=30 fold 60s of virtual backoff into
+	// the final run's durationInSeconds (the leaf's own duration is 0).
+	if r := byName(res)["flaky"]; r.Duration != 60 {
+		t.Fatalf("durationInSeconds = %v, want 60 (2 retries × 30s backoff)", r.Duration)
+	}
+}
+
+// TestRetryBackoffAccumulates: retryIntervalInSeconds is applied as virtual
+// wall-clock between attempts (deterministic, no real sleep). An exhausted
+// policy folds (attempts-1)×interval into the failed run's duration; a policy
+// with no interval adds nothing.
+func TestRetryBackoffAccumulates(t *testing.T) {
+	def := `{"properties":{"activities":[
+        {"name":"doomed","type":"CustomLeaf","policy":{"retry":3,"retryIntervalInSeconds":10},"typeProperties":{}}
+      ]}}`
+	res := mustRun(t, def, nil, &flakyExec{failUntil: map[string]int{"doomed": 99}})
+	if r := byName(res)["doomed"]; r.Duration != 30 { // 3 retries × 10s
+		t.Fatalf("exhausted backoff duration = %v, want 30", r.Duration)
+	}
+
+	// No interval → no added duration even with retries.
+	def2 := `{"properties":{"activities":[
+        {"name":"d2","type":"CustomLeaf","policy":{"retry":2},"typeProperties":{}}
+      ]}}`
+	res2 := mustRun(t, def2, nil, &flakyExec{failUntil: map[string]int{"d2": 99}})
+	if r := byName(res2)["d2"]; r.Duration != 0 {
+		t.Fatalf("no-interval duration = %v, want 0", r.Duration)
+	}
 }
 
 // TestRetryPolicyExhausted: retries run out and the activity (and pipeline)
@@ -129,6 +157,32 @@ func TestRetryPolicyExhausted(t *testing.T) {
 	}
 	if r := byName(res)["doomed"]; r.Retry != 1 {
 		t.Fatalf("retryAttempt = %d, want 1", r.Retry)
+	}
+}
+
+// TestForEachParallelDuration: ForEach reports its wall-clock per the
+// sequential/parallel + batchCount settings — sequential iterations add up,
+// parallel iterations in a batch overlap (the batch costs its slowest).
+func TestForEachParallelDuration(t *testing.T) {
+	mk := func(extra string) string {
+		return `{"properties":{"activities":[
+			{"name":"loop","type":"ForEach","typeProperties":{` + extra + `
+				"items":[1,2,3,4],
+				"activities":[{"name":"w","type":"Wait","typeProperties":{"waitTimeInSeconds":10}}]
+			}}
+		]}}`
+	}
+	// Sequential: 4 × 10s do not overlap → 40s.
+	if d := byName(mustRun(t, mk(`"isSequential":true,`), nil, nil))["loop"].Duration; d != 40 {
+		t.Fatalf("sequential ForEach duration = %v, want 40", d)
+	}
+	// Parallel, default batchCount (all 4 in one batch) → max = 10s.
+	if d := byName(mustRun(t, mk(``), nil, nil))["loop"].Duration; d != 10 {
+		t.Fatalf("parallel ForEach duration = %v, want 10", d)
+	}
+	// Parallel, batchCount=2 → two batches of max 10 → 20s.
+	if d := byName(mustRun(t, mk(`"batchCount":2,`), nil, nil))["loop"].Duration; d != 20 {
+		t.Fatalf("parallel batchCount=2 duration = %v, want 20", d)
 	}
 }
 

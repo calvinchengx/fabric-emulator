@@ -110,7 +110,7 @@ func (a *API) listShortcuts(w http.ResponseWriter, r *http.Request, p *auth.Prin
 	for _, sc := range scs {
 		out = append(out, shortcutDTO(sc))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"value": out})
+	writePage(w, r, out)
 }
 
 func (a *API) getShortcut(w http.ResponseWriter, r *http.Request, p *auth.Principal) {

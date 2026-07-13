@@ -15,7 +15,7 @@ unless marked *sync*.
 
 | Method + path | Notes |
 |---|---|
-| `GET /workspaces` | list (full set — no continuation-token pagination yet; `?roles=` filter is REST-reference-only, not shown in fabric-docs) *sync* |
+| `GET /workspaces` | list; opt-in `?maxPageSize=N` paginates with a `continuationToken` + `continuationUri` (omit it for the full set); `?roles=` filter is REST-reference-only, not shown in fabric-docs *sync* |
 | `POST /workspaces` | create → 201 `{ id, displayName, capacityId }` |
 | `GET /workspaces/{id}` | get *sync* |
 | `PATCH /workspaces/{id}` | rename / describe |

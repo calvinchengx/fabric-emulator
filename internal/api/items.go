@@ -23,7 +23,7 @@ func (a *API) listItems(w http.ResponseWriter, r *http.Request, p *auth.Principa
 	if items == nil {
 		items = []*store.Item{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"value": items})
+	writePage(w, r, items)
 }
 
 // createItem: without a definition it completes synchronously (201, like the

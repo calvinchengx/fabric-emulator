@@ -13,29 +13,35 @@ const maxUntilIterations = 10000
 
 // runWithPolicy wraps a single activity execution in its Policy (Fabric's
 // per-activity retry + timeout). A failed attempt is retried up to policy.retry
-// times; each retry re-runs the activity from scratch, so its prior attempt's
-// recorded runs (including any inner-container runs) are discarded and only the
-// final outcome is kept — carrying the retryAttempt count. A timeout fails an
-// otherwise-successful attempt whose virtual duration exceeds the limit (a Wait
-// longer than its timeout is the deterministically-testable case). No real
-// sleeping happens: retry is instant, so a backoff policy is exercised in
-// milliseconds while remaining faithful to the attempt semantics.
+// times, waiting policy.retryIntervalInSeconds between attempts; each retry
+// re-runs the activity from scratch, so its prior attempt's recorded runs
+// (including any inner-container runs) are discarded and only the final outcome
+// is kept — carrying the retryAttempt count and the accumulated backoff folded
+// into its durationInSeconds. A timeout fails an otherwise-successful attempt
+// whose own virtual duration exceeds the limit (checked before the backoff is
+// folded in). No real sleeping happens: the backoff is virtual-clock time, so a
+// retry-with-backoff policy is exercised deterministically in milliseconds while
+// remaining faithful to the wall-clock the activity would report.
 func (r *run) runWithPolicy(a *Activity, item value, hasItem bool) (string, string) {
 	attempts := 1
-	var timeout float64
+	var timeout, interval float64
 	if a.Policy != nil {
 		if a.Policy.Retry > 0 {
 			attempts += a.Policy.Retry
 		}
 		timeout = parseTimeout(a.Policy.Timeout)
+		interval = a.Policy.RetryIntervalInSeconds
 	}
 
 	var st, msg string
+	var backoff float64 // accumulated virtual wait across retries (no real sleep)
 	for attempt := 0; attempt < attempts; attempt++ {
 		snap := len(r.runs)
 		st, msg = r.runOne(a, item, hasItem)
 
 		idx := r.ownRecordIdx(a, snap)
+		// Timeout is checked against the attempt's own virtual duration, before
+		// any inter-attempt backoff is folded in.
 		if idx >= 0 && timeout > 0 && st == StatusSucceeded && r.runs[idx].Duration > timeout {
 			st = StatusFailed
 			msg = fmt.Sprintf("activity %q timed out: ran %gs > timeout %gs", a.Name, r.runs[idx].Duration, timeout)
@@ -44,12 +50,19 @@ func (r *run) runWithPolicy(a *Activity, item value, hasItem bool) (string, stri
 		}
 
 		if st != StatusFailed || attempt == attempts-1 {
-			if idx >= 0 && attempt > 0 {
-				r.runs[idx].Retry = attempt
+			if idx >= 0 {
+				if attempt > 0 {
+					r.runs[idx].Retry = attempt
+				}
+				// Fold the accumulated retry backoff into the final run's duration so
+				// durationInSeconds reflects the wall-clock (attempt + waits).
+				r.runs[idx].Duration += backoff
 			}
 			return st, msg
 		}
-		// Failed with attempts remaining: discard this attempt's records and retry.
+		// Failed with attempts remaining: wait retryIntervalInSeconds (virtual),
+		// then discard this attempt's records and retry.
+		backoff += interval
 		r.runs = r.runs[:snap]
 	}
 	return st, msg
@@ -251,13 +264,77 @@ func (r *run) runForEach(a *Activity, tp map[string]json.RawMessage, resolve fun
 	if err := json.Unmarshal(tp["activities"], &inner); err != nil {
 		return r.fail(a, "ForEach activities are invalid")
 	}
+	// Fabric's ForEach runs iterations in **parallel** by default, up to
+	// batchCount concurrent (default 20, max 50), or **sequentially** when
+	// isSequential=true. The interpreter runs single-threaded in array order
+	// regardless (deterministic, and the only safe order if an iteration mutates a
+	// variable), so the mode changes the container's reported wall-clock, not the
+	// results: sequential iterations don't overlap (durations add), parallel ones
+	// in a batch do (the batch costs its slowest iteration).
+	var isSeq bool
+	_ = json.Unmarshal(tp["isSequential"], &isSeq)
+	batch := 20
+	if b := 0; json.Unmarshal(tp["batchCount"], &b) == nil && b > 0 {
+		batch = b
+	}
+
 	var failure string
+	var iterDurs []float64
 	for _, el := range arr {
+		snap := len(r.runs)
 		if f := r.runActivities(inner, el); f != "" && failure == "" {
 			failure = f
 		}
+		iterDurs = append(iterDurs, sumDurations(r.runs[snap:]))
 	}
-	return r.finishContainer(a, failure)
+	dur := sequentialDuration(iterDurs)
+	if !isSeq {
+		dur = parallelDuration(iterDurs, batch)
+	}
+	return r.finishContainerDur(a, failure, dur)
+}
+
+// sumDurations totals the virtual durations of a slice of recorded runs (one
+// ForEach iteration's leaf + nested-container time).
+func sumDurations(runs []ActivityRun) float64 {
+	var t float64
+	for _, ar := range runs {
+		t += ar.Duration
+	}
+	return t
+}
+
+// sequentialDuration is the wall-clock of non-overlapping iterations: their sum.
+func sequentialDuration(durs []float64) float64 {
+	var t float64
+	for _, d := range durs {
+		t += d
+	}
+	return t
+}
+
+// parallelDuration is the wall-clock of iterations run in batches of `batch`
+// concurrently: each batch costs its slowest iteration, and batches run in
+// sequence, so the total is the sum of per-batch maxima.
+func parallelDuration(durs []float64, batch int) float64 {
+	if batch < 1 {
+		batch = 1
+	}
+	var total float64
+	for i := 0; i < len(durs); i += batch {
+		end := i + batch
+		if end > len(durs) {
+			end = len(durs)
+		}
+		var m float64
+		for _, d := range durs[i:end] {
+			if d > m {
+				m = d
+			}
+		}
+		total += m
+	}
+	return total
 }
 
 func (r *run) runUntil(a *Activity, tp map[string]json.RawMessage, item value) (string, string) {
@@ -315,12 +392,19 @@ func (r *run) runContainer(a *Activity, raw json.RawMessage, item value) (string
 }
 
 func (r *run) finishContainer(a *Activity, failure string) (string, string) {
+	return r.finishContainerDur(a, failure, 0)
+}
+
+// finishContainerDur records a container's aggregate outcome with an explicit
+// virtual duration (ForEach uses it to report its sequential/parallel wall-clock;
+// other containers pass 0).
+func (r *run) finishContainerDur(a *Activity, failure string, dur float64) (string, string) {
 	if failure != "" {
-		r.record(a, StatusFailed, nil, failure, 0)
+		r.record(a, StatusFailed, nil, failure, dur)
 		r.outputs[a.Name] = map[string]value{"status": StatusFailed}
 		return StatusFailed, failure
 	}
-	r.record(a, StatusSucceeded, nil, "", 0)
+	r.record(a, StatusSucceeded, nil, "", dur)
 	r.outputs[a.Name] = map[string]value{"status": StatusSucceeded}
 	return StatusSucceeded, ""
 }

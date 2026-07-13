@@ -40,22 +40,38 @@ throughout. **Docs now track the implementation.**
   Starlight sidebar (both were orphaned from nav).
 - **README** — status now covers the R (real-compute) track.
 
-### Still open — genuine code gaps (documented honestly; implement on demand)
-These were over-claims; the docs now state the real behavior. Implementing them is
-optional future **[code]** work:
-- **Shortcut *writes* don't follow target RBAC**, and shortcuts aren't in DFS
-  listings (only GET/HEAD resolve; no `isShortcut` field). `internal/onelake/onelake.go`.
-- **Pipeline retry *backoff* not applied** — `retryIntervalInSeconds` parsed but
-  dead; retries fire instantly. `internal/pipeline/activities.go`.
-- **ForEach parallel mode absent** — sequential-only. `internal/pipeline/activities.go`.
-- **List pagination absent** — `GET /workspaces` (+ items/capacities/…) return the
-  full set, no continuation token. `internal/api/workspaces.go`.
-- **Workspace `state` unimplemented** — no column/field (removed from docs).
-- **Pipeline leaf activities:** only Lookup / GetMetadata / Copy (OneLake→OneLake) /
-  Invoke are real; Web is a stub, Script/StoredProcedure unwired.
-- **E1 real Airflow sidecar** — not built (roadmap/real-compute mark it planned).
-- Minor: `guid()` returns a constant zero UUID (faithful-subset note); multi-hop
-  shortcut cycles not detected (only direct self-target).
+### Implemented in the code pass (each with a correctness test)
+Three genuine missing Fabric features were implemented and verified:
+- **Pipeline retry backoff.** `retryIntervalInSeconds` is now applied as virtual
+  wall-clock folded into the run's `durationInSeconds` (deterministic, no real
+  sleep). `internal/pipeline/activities.go`; tests `TestRetryBackoffAccumulates`
+  + assertion in `TestRetryPolicySucceedsAfterRetries`.
+- **ForEach sequential/parallel.** `isSequential` + `batchCount` honored; the
+  container reports the right wall-clock (sequential = sum, parallel = sum of
+  per-batch maxima). `internal/pipeline/activities.go`; test
+  `TestForEachParallelDuration`.
+- **List pagination.** Opt-in `?maxPageSize` continuation-token paging on all
+  list endpoints (`writePage`). `internal/api/pagination.go`; tests
+  `TestListPagination` + `TestPageTokenDecodeGarbage`.
+
+### Still open — deliberate non-implementations (documented honestly)
+Not "docs lagging code" — these are decisions, documented as-is:
+- **Shortcut *writes* don't follow target RBAC**, aren't in DFS listings, no
+  `isShortcut` field. Write-through-shortcut semantics vary by target type in real
+  OneLake; the read path resolves with target RBAC, writes hit the source. Kept as
+  a documented limitation rather than guessing the write semantics.
+- **Web activity real HTTP / Script / Stored procedure leaves** — Web would make
+  arbitrary outbound HTTP from a pipeline definition (out of scope for the
+  hermetic emulator); Script/StoredProcedure need the warehouse SQL sidecar wired
+  into the pipeline executor (a container weight class). Documented as unwired.
+- **Workspace `state`** — the documented 6-value enum was fictional; removed from
+  docs. Not implementing a made-up field.
+- **E1 real Airflow sidecar** — not built (a heavy sidecar; roadmap/real-compute
+  mark it planned).
+- Minor / faithful-subset: `guid()` returns a constant zero UUID (deterministic
+  distinctness would need a per-run counter threaded through the pure expression
+  funcs — disproportionate); multi-hop shortcut cycles aren't rejected on create,
+  but read resolution is single-hop so there is no loop at runtime.
 
 ## Context notes
 - `docs/` is canonical; `website/src/content/docs/` is **generated** at build time
