@@ -23,6 +23,10 @@ export default defineConfig({
       title: 'Fabric Emulator',
       components: {
         Head: './src/components/Head.astro',
+        // Right sidebar: the parity version picker above the table of contents.
+        // Overrides TableOfContents (not PageSidebar) so the picker renders
+        // inside Starlight's width-constrained sidebar container.
+        TableOfContents: './src/components/TableOfContents.astro',
       },
       description:
         'A local emulator of the Microsoft Fabric control plane — workspaces, items, RBAC, git integration, and long-running operations — that validates Entra bearer tokens.',

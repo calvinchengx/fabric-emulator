@@ -1,0 +1,13 @@
+---
+// Starlight's right-sidebar table of contents, with the parity version picker
+// above it. Overriding TableOfContents (rather than PageSidebar) puts the
+// picker *inside* Starlight's own `.sl-container`, so it inherits the sidebar's
+// width instead of overflowing it. Desktop only by construction: the mobile
+// sidebar uses MobileTableOfContents, and the parity pages already carry an
+// in-page picker for narrow screens.
+import Default from '@astrojs/starlight/components/TableOfContents.astro';
+import ParityVersionPicker from './ParityVersionPicker.astro';
+---
+
+<ParityVersionPicker />
+<Default><slot /></Default>

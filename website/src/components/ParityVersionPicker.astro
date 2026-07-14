@@ -1,0 +1,53 @@
+---
+// The parity version picker, rendered in the right sidebar next to "On this
+// page". Data comes from src/data/parity-versions.json, written by
+// scripts/sync-docs.mjs from the git release tags (a component can't shell out
+// to git). Renders nothing off the parity pages, or when there is only one
+// version (nothing to pick).
+import manifest from '../data/parity-versions.json';
+
+const withSlash = (u) => (u.endsWith('/') ? u : `${u}/`);
+const here = withSlash(Astro.url.pathname);
+const points = manifest?.points ?? [];
+// Only show on a page the picker can actually switch between.
+const active = points.find((p) => withSlash(p.url) === here);
+const show = points.length > 1 && Boolean(active);
+---
+
+{
+  show && (
+    <div class="parity-version-picker-sidebar">
+      <h2>Parity version</h2>
+      <select
+        aria-label="Choose a released version of the parity map"
+        onchange="if(this.value)location.assign(this.value)"
+      >
+        {points.map((p) => (
+          <option value={p.url} selected={withSlash(p.url) === here}>
+            {p.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+<style>
+  /* Rendered inside Starlight's right-sidebar `.sl-container`, so width comes
+     from the parent — just space it above the "On this page" heading. */
+  .parity-version-picker-sidebar {
+    margin-bottom: 1.5rem;
+  }
+  .parity-version-picker-sidebar select {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: var(--sl-text-xs);
+    padding: 0.35rem 0.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--sl-color-gray-5);
+    background: var(--sl-color-bg);
+    color: var(--sl-color-text);
+  }
+</style>
