@@ -8,7 +8,13 @@
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectParity, writeParityHistory, versionPicker, pointUrl } from './parity-versions.mjs';
+import {
+  collectParity,
+  writeParityHistory,
+  versionPicker,
+  pointUrl,
+  parityManifest,
+} from './parity-versions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, '..', '..');
@@ -114,6 +120,11 @@ for (const name of names) {
 }
 writeIndex();
 const info = writeParityHistory(OUT, PARITY, { convertBody });
+// The right-sidebar picker is an Astro component and can't shell out to git, so
+// hand it the same points as a build-time manifest.
+const DATA = join(here, '..', 'src', 'data');
+mkdirSync(DATA, { recursive: true });
+writeFileSync(join(DATA, 'parity-versions.json'), JSON.stringify(parityManifest(PARITY), null, 2) + '\n');
 console.log(
   `sync-docs: wrote ${names.length} docs + index to src/content/docs/ ` +
     `(parity ${info.version}; ${info.snapshots.length} tagged snapshot(s))`,

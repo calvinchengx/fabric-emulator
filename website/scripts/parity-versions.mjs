@@ -167,6 +167,23 @@ export function pointUrl(parity, pt) {
 const optionLabel = (pt) =>
   pt.latest ? `Current — ${pt.label}` : pt.label + (pt.reconstructed ? ' (reconstructed)' : '');
 
+// A build-time manifest of the same points, for the right-sidebar picker
+// component (which can't read git). Newest first, matching the <select> order.
+export function parityManifest(parity) {
+  return {
+    liveSlug: parity.liveSlug,
+    points: parity.points
+      .slice()
+      .reverse()
+      .map((pt) => ({
+        label: optionLabel(pt),
+        url: pointUrl(parity, pt),
+        latest: !!pt.latest,
+        reconstructed: !!pt.reconstructed,
+      })),
+  };
+}
+
 // A build-time <select> (newest first) that navigates to the chosen version's
 // parity page. Inline styles use Starlight CSS vars so it themes in light/dark;
 // the inline onchange keeps it a single self-contained block (no client script
