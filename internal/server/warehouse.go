@@ -59,11 +59,25 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 				return "", false, fmt.Errorf("reflecting lakehouse: %w", err)
 			}
 			return it.ID, readOnly, nil
-		case "Warehouse":
+		case "Warehouse", "SQLDatabase":
+			// A Warehouse and a Fabric SQL Database are both read-write T-SQL over
+			// their own SQL Server database (the SQL Database is OLTP and also mirrors
+			// to OneLake Delta — see warehouse.Mirror).
 			return it.ID, readOnly, nil
 		default:
 			return "", false, fmt.Errorf("item %q (type %s) has no SQL endpoint", database, it.Type)
 		}
+	}
+}
+
+// mirrorItem builds the control-plane mirror hook: ensure the item's SQL Server
+// database exists, then snapshot its tables to OneLake Delta (warehouse.Mirror).
+func mirrorItem(be warehouseBackend, st *store.Store) func(ctx context.Context, itemID string) error {
+	return func(ctx context.Context, itemID string) error {
+		if err := be.EnsureDatabase(ctx, itemID); err != nil {
+			return fmt.Errorf("preparing database: %w", err)
+		}
+		return warehouse.Mirror(ctx, be.DB(itemID), st, itemID)
 	}
 }
 

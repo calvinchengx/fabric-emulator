@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -30,6 +31,10 @@ type API struct {
 	// AKV resolves AzureKeyVaultReference connection credentials against a
 	// Key Vault data plane (azure-keyvault-emulator in the family compose).
 	AKV *akv.Client
+	// MirrorItem snapshots a Fabric SQL Database's SQL tables to OneLake Delta
+	// (the mirroring). Wired by the server when a warehouse SQL backend is set;
+	// nil → the refresh-mirror endpoint 501s.
+	MirrorItem func(ctx context.Context, itemID string) error
 	// RetryAfterSeconds is advertised on 202 responses.
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.
@@ -90,6 +95,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/queryactivityruns", a.withAuth(a.queryActivityRuns))
 	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/notebookRun", a.withAuth(a.getNotebookRun))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/notebookRunResult", a.withAuth(a.reportNotebookRun))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/sqlDatabases/{iid}/refreshMirror", a.withAuth(a.refreshMirror))
 
 	mux.HandleFunc("POST /v1/workspaces/{wid}/git/connect", a.withAuth(a.gitConnect))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/git/initializeConnection", a.withAuth(a.gitInitializeConnection))

@@ -87,6 +87,7 @@ var typedCollections = map[string]string{
 	"sparkJobDefinitions": "SparkJobDefinition",
 	"mirroredDatabases":   "MirroredDatabase",
 	"eventstreams":        "Eventstream",
+	"sqlDatabases":        "SQLDatabase",
 }
 
 // registerTyped mounts the typed collections as thin aliases: list/create on

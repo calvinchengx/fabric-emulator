@@ -138,6 +138,15 @@ https://api.fabric.microsoft.com/v1/workspaces/{ws}/lakehouses/{lh}/livyapi/vers
   statements). This restores the production auth story for real clients:
   unmodified `go-mssqldb` **and** the Microsoft ODBC Driver 18 (pyodbc) connect,
   and Microsoft's real **dbt-fabric** adapter passes end-to-end (`e2e/dbt-fabric`).
+- **C4 — Fabric SQL Database (OLTP + OneLake mirror). ✅** The `SQLDatabase` item
+  reuses the read-write TDS path (its own SQL Server database) and adds
+  **mirroring**, the reverse of the lakehouse reflection: `warehouse.Mirror`
+  reads the item's SQL tables and writes each as a **Delta** table into OneLake
+  `Tables/` (real Parquet + `_delta_log`), triggered by
+  `POST …/sqlDatabases/{id}/refreshMirror`. So an operational database becomes
+  queryable as Delta by Spark/DuckDB/delta-rs — the OLTP↔analytics story. Proven
+  by a gated e2e (write over TDS → mirror → the Delta reads back). *Deferred:*
+  continuous/CDC mirroring (the emulator snapshots on the refresh trigger).
 
 ## Track D — the notebook developer loop
 

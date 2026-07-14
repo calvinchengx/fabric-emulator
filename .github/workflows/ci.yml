@@ -275,7 +275,7 @@ jobs:
       - name: Real SQL Server relay + Delta-reflection e2e
         env:
           WAREHOUSE_MSSQL_DSN: "server=localhost;user id=sa;password=Str0ng!Passw0rd;encrypt=disable"
-        run: go test ./internal/server/ -run TestWarehouse -v -count=1
+        run: go test ./internal/server/ -run 'TestWarehouse|TestSQLDatabase' -v -count=1
 
   semantic-model:
     name: Real DAX over a semantic model (executeQueries)
