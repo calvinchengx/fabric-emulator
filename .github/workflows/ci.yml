@@ -276,3 +276,43 @@ jobs:
         env:
           WAREHOUSE_MSSQL_DSN: "server=localhost;user id=sa;password=Str0ng!Passw0rd;encrypt=disable"
         run: go test ./internal/server/ -run TestWarehouse -v -count=1
+
+  semantic-model:
+    name: Real DAX over a semantic model (executeQueries)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # Publishes the golden TMSL model as a SemanticModel item and runs the
+      # DAX golden queries through the executeQueries endpoint (real Power BI
+      # audience token), asserting the rows match the hand-computed oracle.
+      - run: python e2e/semantic-model/run.py
+
+  great-expectations:
+    name: Real Great Expectations validates semantic-model data
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # The SemPy/GX tutorial's subject: real great_expectations validates the
+      # emulator's executeQueries results — Store/Measure suites pass, the YoY
+      # ratio DAX asset fails (out of band), mirroring the tutorial.
+      - run: python e2e/great-expectations/run.py

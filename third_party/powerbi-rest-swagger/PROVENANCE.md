@@ -28,8 +28,8 @@ client + this schema can continuously gate the implementation.
   (`info.title` "Power BI Client", `info.version` "v1.0")
 - **License:** MIT — Copyright (c) Microsoft Corporation. Full text in
   [`LICENSE`](LICENSE) (vendored from the same commit's `license.txt`).
-- **Used by:** _(pending)_ the semantic-model query endpoint + its conformance
-  test, once built. Referenced now as the pinned target of that work.
+- **Used by:** `internal/api/executequeries.go` (the endpoint) + its handler and
+  server e2e tests; the `e2e/semantic-model` and `e2e/great-expectations` e2es.
 
 ## Refresh
 

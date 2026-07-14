@@ -56,10 +56,10 @@ Critical path to green: **A → C → D → E**. F is the tutorial's actual subj
       assert rows == golden (replaces the `404 pending` probe in `seed.py`).
 
 ### F — Great Expectations layer (the tutorial's subject)
-- [ ] `e2e/great-expectations/`: real `great_expectations` validates the
+- [x] `e2e/great-expectations/`: real `great_expectations` validates the
       executeQueries rows — the tutorial's suites (`row_count_between`,
       `column_values_between`, `values_in_set`, valid-zip) + a checkpoint.
-- [ ] Assert the pass/fail pattern mirrors the tutorial (Store/Measure pass, the
+- [x] Assert the pass/fail pattern mirrors the tutorial (Store/Measure pass, the
       YoY ratio `1.8` fails).
 
 ### G — DMV / schema rowset (deferred sub-phase)
@@ -67,10 +67,10 @@ Critical path to green: **A → C → D → E**. F is the tutorial's actual subj
       model) so the DMV asset works; until then the GX DMV suite is pending.
 
 ### H — CI, coverage, docs
-- [ ] CI jobs (3-OS, pure-wheel): `e2e/semantic-model/run.py`,
+- [x] CI jobs (3-OS, pure-wheel): `e2e/semantic-model/run.py`,
       `e2e/great-expectations/run.py`.
-- [ ] Go unit tests under the ≥90% coverage gate.
-- [ ] Parity doc: Power BI row → 🟢 executeQueries DAX-subset; deferred XMLA/SemPy,
+- [x] Go unit tests under the ≥90% coverage gate (total 91.2%).
+- [x] Parity doc: Power BI row → 🟢 executeQueries DAX-subset; deferred XMLA/SemPy,
       full DAX, DMV, Direct Lake. Roadmap entry. Swagger `PROVENANCE.md` "Used by".
 
 ## Honesty boundaries (documented, never faked)
@@ -84,3 +84,8 @@ Critical path to green: **A → C → D → E**. F is the tutorial's actual subj
   executeQueries endpoint (handler tests + server e2e), and the passing
   `e2e/semantic-model/run.py` — real PBI token → DAX → golden rows. Total
   coverage 91.2%. Next: F (Great Expectations), then H (CI + parity/roadmap).
+- **F + H done** (2026-07-14): real Great Expectations validates the
+  executeQueries results — Store/Measure suites pass, the YoY-ratio DAX asset
+  fails (1.8 out of band), mirroring the tutorial. CI jobs added (3-OS) for
+  both e2es; parity doc Power BI → 🟢 (DAX subset). Only G (DMV) + Direct Lake
+  remain deferred-with-cause. The plan is complete.

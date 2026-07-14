@@ -124,7 +124,8 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 |---|---|---|
 | Real-Time Intelligence — Eventhouse / KQL DB / Eventstream (`real-time-intelligence/`) | Item management only; no KQL / streaming engine | 🟡 mgmt / 🔴 exec |
 | Mirroring — Mirrored Database (`mirroring/`) | Item management only | 🟡 mgmt / 🔴 exec |
-| Power BI — Semantic Models / Reports | Item management only; no modeling / rendering engine | 🟡 mgmt / 🔴 render |
+| Power BI — Semantic Model **query** (`executeQueries`) | Real bounded **DAX engine** — `EVALUATE`, `SUMMARIZECOLUMNS`, measures, `SUM`/`DIVIDE`, relationship filter propagation — over the model.bim, conforming to the vendored Power BI OpenAPI. Proven by `e2e/semantic-model` (golden DAX oracle) and `e2e/great-expectations` (real GX validates the results). | 🟢 Real (DAX subset) |
+| Power BI — Reports / rendering; full DAX; SemPy over **XMLA** | No report rendering; DAX beyond the fixture subset; and the native ADOMD.NET/XMLA transport SemPy uses (no CI oracle) — all deferred with cause | 🟡 mgmt / 🔴 render |
 | Data Science — ML models / experiments / MLflow (`data-science/`) | — | 🔴 Not implemented |
 | Fabric SQL Database (`database/`), Graph (`graph/`), Real-Time Hub, Copilot / IQ (`iq/`), Embed, Workload Dev Kit | — | 🔴 Not implemented |
 
