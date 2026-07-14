@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -35,6 +36,11 @@ type API struct {
 	// (the mirroring). Wired by the server when a warehouse SQL backend is set;
 	// nil → the refresh-mirror endpoint 501s.
 	MirrorItem func(ctx context.Context, itemID string) error
+	// SQLDB returns the real SQL Server connection for a Warehouse/SQLDatabase
+	// item (preparing its database first). Wired by the server when a warehouse
+	// SQL backend is set; nil → the pipeline Script/StoredProcedure activities
+	// fail loudly (no SQL engine attached).
+	SQLDB func(ctx context.Context, itemID string) (*sql.DB, error)
 	// RetryAfterSeconds is advertised on 202 responses.
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.
@@ -96,6 +102,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/notebookRun", a.withAuth(a.getNotebookRun))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/notebookRunResult", a.withAuth(a.reportNotebookRun))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/sqlDatabases/{iid}/refreshMirror", a.withAuth(a.refreshMirror))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/mirroredDatabases/{iid}/refreshMirror", a.withAuth(a.refreshMirroredDatabase))
 
 	mux.HandleFunc("POST /v1/workspaces/{wid}/git/connect", a.withAuth(a.gitConnect))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/git/initializeConnection", a.withAuth(a.gitInitializeConnection))

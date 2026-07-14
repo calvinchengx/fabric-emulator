@@ -29,6 +29,14 @@ type deltaAction struct {
 	Remove *struct{ Path string } `json:"remove"`
 }
 
+// ReadParquetBytes reads a single standalone Parquet file's rows into a Table
+// (flat schemas — the same reader ReadDeltaTable uses per data file). Exported
+// for callers that address a bare .parquet file directly (e.g. the pipeline
+// Lookup activity), rather than a Tables/<name> Delta table.
+func ReadParquetBytes(data []byte) (*Table, error) {
+	return readParquet(data)
+}
+
 // ReadDeltaTable reads the Delta table under Tables/<name> in the given item
 // (a lakehouse) from OneLake: it replays the _delta_log to find the active
 // Parquet files, then reads their rows. Only the common shape delta-rs/Spark

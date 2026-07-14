@@ -81,6 +81,25 @@ func mirrorItem(be warehouseBackend, st *store.Store) func(ctx context.Context, 
 	}
 }
 
+// sqlDBFor builds the control-plane SQL hook the pipeline Script/StoredProcedure
+// activities use: only a Warehouse or SQLDatabase item has a SQL endpoint,
+// ensured (its own database prepared) before handing back the connection.
+func sqlDBFor(be warehouseBackend, st *store.Store) func(ctx context.Context, itemID string) (*sql.DB, error) {
+	return func(ctx context.Context, itemID string) (*sql.DB, error) {
+		it, err := st.GetItemByID(itemID)
+		if err != nil {
+			return nil, fmt.Errorf("item %q not found", itemID)
+		}
+		if it.Type != "Warehouse" && it.Type != "SQLDatabase" {
+			return nil, fmt.Errorf("item %q (type %s) has no SQL endpoint", itemID, it.Type)
+		}
+		if err := be.EnsureDatabase(ctx, itemID); err != nil {
+			return nil, fmt.Errorf("preparing database: %w", err)
+		}
+		return be.DB(itemID), nil
+	}
+}
+
 // resolveSQLItem finds the lakehouse/warehouse a connection addresses. It first
 // tries the database as an item id (GUID) — workspace-agnostic, and how the
 // emulator's own tooling connects. Failing that, the database is a display name

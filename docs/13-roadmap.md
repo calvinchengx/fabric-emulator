@@ -262,16 +262,18 @@ proxy would be a separate sibling.
       tests, and a server e2e (real entra token → auth → RBAC → interpreter →
       queryactivityruns). Coverage floor held at ≥90%. A malformed expression
       fails the activity (recovered), never the server.
-    - [x] **R5 (real data-plane leaf activities)** — leaves that can run
-      hermetically (pure-Go, no CGO, offline) really execute against OneLake:
-      **Copy** moves real bytes OneLake→OneLake (a file, or a directory subtree,
-      with expression-resolved `{workspaceId?, itemId, path}` locations);
-      **Lookup** reads real rows from a CSV/JSON file and feeds
-      `@activity(…).output`; **GetMetadata** stats a real path
-      (`exists`/`itemType`/`size`/`lastModified`/`childItems`). Parquet + the
-      SQL-endpoint source are a follow-up (Parquet needs a reader dep; SQL is
-      the warehouse engine's job). Web / external-connector leaves stay stubbed
-      (a real network call breaks the offline/deterministic guarantee).
+    - [x] **R5 (real data-plane leaf activities)** — leaves that can run for
+      real, hermetically where possible: **Copy** moves real bytes
+      OneLake→OneLake (a file, or a directory subtree, with expression-resolved
+      `{workspaceId?, itemId, path}` locations); **Lookup** reads real rows from
+      a CSV/JSON/Parquet file or a lakehouse **Delta** table (`Tables/<name>`,
+      auto-detected) and feeds `@activity(…).output`; **GetMetadata** stats a
+      real path (`exists`/`itemType`/`size`/`lastModified`/`childItems`);
+      **Script**/**SqlServerStoredProcedure** run real T-SQL against a
+      Warehouse/SQLDatabase item's own SQL Server database (Track C's backend),
+      targeted the same `{workspaceId?, itemId}` way as Copy/Lookup. Web /
+      external-connector leaves stay stubbed (a real network call breaks the
+      offline/deterministic guarantee).
     - [ ] **R5 (Apache Airflow + Dataflow Gen2)** — *deferred, with cause:*
       Fabric's code-first orchestrator IS Apache Airflow, a JVM/Python engine
       the same weight class as Spark/Livy — a sidecar-by-demand, not a bundled

@@ -166,3 +166,87 @@ func TestWorkspaceRef(t *testing.T) {
 		}
 	}
 }
+
+// TestSQLDBFor covers the pipeline Script/StoredProcedure hook's control-plane
+// guard: item-not-found, a non-SQL item type, EnsureDatabase failure, and the
+// happy path — all against SQLite (no real SQL Server needed for the guard
+// logic itself).
+func TestSQLDBFor(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ws := &store.Workspace{DisplayName: "w"}
+	if err := st.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	wh := &store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "wh"}
+	nb := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "nb"}
+	for _, it := range []*store.Item{wh, nb} {
+		if err := st.CreateItem(it, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+
+	// Unknown item → error.
+	if _, err := sqlDBFor(&fakeWH{db: db}, st)(ctx, "does-not-exist"); err == nil {
+		t.Error("unknown item accepted")
+	}
+	// A non-SQL item (Notebook) → error.
+	if _, err := sqlDBFor(&fakeWH{db: db}, st)(ctx, nb.ID); err == nil {
+		t.Error("notebook accepted as a SQL endpoint")
+	}
+	// EnsureDatabase failure surfaces.
+	if _, err := sqlDBFor(&fakeWH{db: db, ensureErr: fmt.Errorf("boom")}, st)(ctx, wh.ID); err == nil {
+		t.Error("EnsureDatabase error not surfaced")
+	}
+	// Happy path: a Warehouse item returns the backend's db.
+	got, err := sqlDBFor(&fakeWH{db: db}, st)(ctx, wh.ID)
+	if err != nil || got != db {
+		t.Fatalf("sqlDBFor happy path: db=%v err=%v", got, err)
+	}
+}
+
+// TestMirrorItem covers the SQLDatabase mirror hook's control-plane guard
+// (EnsureDatabase failure) and that it reaches warehouse.Mirror (a SQLite
+// backend fails there — no INFORMATION_SCHEMA.TABLES — proving the call is
+// wired; the full successful mirror is proven by the gated e2e against a real
+// SQL Server).
+func TestMirrorItem(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ws := &store.Workspace{DisplayName: "w"}
+	if err := st.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	db := &store.Item{WorkspaceID: ws.ID, Type: "SQLDatabase", DisplayName: "db"}
+	if err := st.CreateItem(db, nil); err != nil {
+		t.Fatal(err)
+	}
+	sqldb, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqldb.Close()
+	ctx := context.Background()
+
+	// EnsureDatabase failure surfaces.
+	if err := mirrorItem(&fakeWH{db: sqldb, ensureErr: fmt.Errorf("boom")}, st)(ctx, db.ID); err == nil {
+		t.Error("EnsureDatabase error not surfaced")
+	}
+	// A validated call reaches warehouse.Mirror (SQLite has no
+	// INFORMATION_SCHEMA.TABLES, so Mirror errors — proving the wiring).
+	if err := mirrorItem(&fakeWH{db: sqldb}, st)(ctx, db.ID); err == nil {
+		t.Error("expected Mirror to surface an error against a non-SQL-Server backend")
+	}
+}

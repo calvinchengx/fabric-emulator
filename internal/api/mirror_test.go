@@ -56,3 +56,80 @@ func TestRefreshMirror(t *testing.T) {
 		t.Fatalf("viewer: code %d, want 403", w.Code)
 	}
 }
+
+// TestRefreshMirroredDatabase covers the external-source mirror hook's
+// control-plane validation: RBAC, the item-type guard, a missing/unknown
+// connection, a connection missing server/database or non-Basic credentials —
+// and that a validated request reaches warehouse.Mirror (a connect failure to
+// an unreachable host surfaces as 502, proving the wiring, without needing a
+// real SQL Server for this non-gated test).
+func TestRefreshMirroredDatabase(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	md := &store.Item{WorkspaceID: ws.ID, Type: "MirroredDatabase", DisplayName: "mirror"}
+	if err := st.CreateItem(md, nil); err != nil {
+		t.Fatal(err)
+	}
+	nb := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "nb"}
+	if err := st.CreateItem(nb, nil); err != nil {
+		t.Fatal(err)
+	}
+	at := func(iid string) map[string]string { return map[string]string{"wid": ws.ID, "iid": iid} }
+
+	mkConn := func(details, credType string) string {
+		c := &store.Connection{DisplayName: "src", Details: []byte(details), CredentialsJSON: `{"credentialType":"` + credType + `","username":"sa","password":"x"}`}
+		if credType == "" {
+			c.CredentialsJSON = ""
+		}
+		if err := st.CreateConnection(c); err != nil {
+			t.Fatal(err)
+		}
+		return c.ID
+	}
+
+	// Missing connectionId → 400.
+	if w := do(a.refreshMirroredDatabase, admin, "POST", "{}", at(md.ID)); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing connectionId: code %d, want 400", w.Code)
+	}
+
+	// Item not found / wrong type → 404.
+	if w := do(a.refreshMirroredDatabase, admin, "POST", `{"connectionId":"x"}`, at(nb.ID)); w.Code != http.StatusNotFound {
+		t.Fatalf("notebook item: code %d, want 404", w.Code)
+	}
+
+	// Unknown connection → 400.
+	if w := do(a.refreshMirroredDatabase, admin, "POST", `{"connectionId":"does-not-exist"}`, at(md.ID)); w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown connection: code %d, want 400", w.Code)
+	}
+
+	// Connection missing server/database → 400.
+	badDetails := mkConn(`{"server":""}`, "Basic")
+	if w := do(a.refreshMirroredDatabase, admin, "POST", `{"connectionId":"`+badDetails+`"}`, at(md.ID)); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing server/database: code %d, want 400", w.Code)
+	}
+
+	// Non-Basic credentials → 400.
+	nonBasic := mkConn(`{"server":"localhost:1","database":"d"}`, "Key")
+	if w := do(a.refreshMirroredDatabase, admin, "POST", `{"connectionId":"`+nonBasic+`"}`, at(md.ID)); w.Code != http.StatusBadRequest {
+		t.Fatalf("non-Basic credentials: code %d, want 400", w.Code)
+	}
+
+	// No credentials at all → 400.
+	noCreds := mkConn(`{"server":"localhost:1","database":"d"}`, "")
+	if w := do(a.refreshMirroredDatabase, admin, "POST", `{"connectionId":"`+noCreds+`"}`, at(md.ID)); w.Code != http.StatusBadRequest {
+		t.Fatalf("no credentials: code %d, want 400", w.Code)
+	}
+
+	// A validated request reaches the mirror attempt: an unreachable host fails
+	// to connect/query, surfacing as 502 — proving the whole path is wired, not
+	// just accepted.
+	good := mkConn(`{"server":"127.0.0.1:1","database":"d"}`, "Basic")
+	if w := do(a.refreshMirroredDatabase, admin, "POST", `{"connectionId":"`+good+`"}`, at(md.ID)); w.Code != http.StatusBadGateway {
+		t.Fatalf("unreachable source: code %d, want 502, body %s", w.Code, w.Body)
+	}
+
+	// A Viewer (below Contributor) is refused.
+	if w := do(a.refreshMirroredDatabase, viewer, "POST", `{"connectionId":"`+good+`"}`, at(md.ID)); w.Code != http.StatusForbidden {
+		t.Fatalf("viewer: code %d, want 403", w.Code)
+	}
+}

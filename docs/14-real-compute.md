@@ -253,11 +253,12 @@ policies — with leaf activities delegating to real work where an engine exists
 | Activity | Executes via | Status |
 |---|---|---|
 | Invoke pipeline | recursive interpretation of the referenced `DataPipeline` | ✅ real |
-| Lookup | reads rows from a CSV/JSON file **directly in OneLake** (pure-Go, real bytes) | ✅ real |
+| Lookup | reads rows from a CSV/JSON/Parquet file, or a lakehouse Delta table, **directly in OneLake** (pure-Go, real bytes) | ✅ real |
 | GetMetadata | stats a OneLake path (exists/size/children) | ✅ real |
 | Copy | real byte movement, **OneLake→OneLake** (a file or a directory subtree) | ✅ real (in-family) |
 | Notebook | Livy → the real Spark agent (Track B) | ✅ real (with `--spark-agent-url`) |
-| Web / Webhook, Script / Stored procedure | real HTTP / the warehouse engine | 📐 not yet wired |
+| Script / SqlServerStoredProcedure | real T-SQL against a Warehouse/SQLDatabase item's own SQL Server database (Track C's backend) — the emulator's own scoped `{workspaceId?, itemId}` target reference, not Fabric's linkedService wire shape | ✅ real (with `--warehouse-sql-url`) |
+| Web / Webhook | real HTTP calls to arbitrary URLs would break the offline/deterministic guarantee | 📐 not yet wired |
 
 Control-flow fidelity is deterministic on the controllable clock: **ForEach**
 honors `isSequential` + `batchCount` and reports the right wall-clock (sequential

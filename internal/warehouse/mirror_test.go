@@ -1,7 +1,11 @@
 package warehouse
 
 import (
+	"context"
+	"database/sql"
 	"testing"
+
+	_ "modernc.org/sqlite"
 )
 
 // TestMirrorDeltaRoundTrip: the mirror writer produces a Delta table (Parquet +
@@ -102,5 +106,77 @@ func sameCell(a, b any) bool {
 		return ok && av == bv
 	default:
 		return a == b
+	}
+}
+
+// TestReadSQLTable covers readSQLTable (and kindOf/coerce's real-driver path)
+// against an in-memory SQLite database — the same generic `SELECT *` + Scan
+// pattern a real SQL Server driver uses, without needing one for this bit.
+// (listBaseTables/Mirror's INFORMATION_SCHEMA query is SQL-Server-specific and
+// is exercised end-to-end only against a real engine, by the gated e2es in
+// internal/server and internal/api.)
+func TestReadSQLTable(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, "CREATE TABLE [people] (id INTEGER, ratio REAL, active INTEGER, name TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO people VALUES (1, 1.5, 1, 'ada'), (2, NULL, 0, NULL), (NULL, NULL, NULL, 'c')"); err != nil {
+		t.Fatal(err)
+	}
+
+	tbl, kinds, err := readSQLTable(ctx, db, "people")
+	if err != nil {
+		t.Fatalf("readSQLTable: %v", err)
+	}
+	if len(tbl.Rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(tbl.Rows))
+	}
+	want := map[string]colKind{"id": kindLong, "ratio": kindDouble, "active": kindLong, "name": kindString}
+	for i, c := range tbl.Columns {
+		if kinds[i] != want[c] {
+			t.Errorf("column %q kind = %d, want %d", c, kinds[i], want[c])
+		}
+	}
+}
+
+// TestReadSQLTableQueryError: a query error (e.g. a missing table) surfaces,
+// not a panic.
+func TestReadSQLTableQueryError(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, _, err := readSQLTable(context.Background(), db, "no_such_table"); err == nil {
+		t.Error("expected an error reading a missing table")
+	}
+}
+
+// TestCoerce covers coerce's type-mismatch fallback branches (a value that
+// doesn't match its inferred kind is passed through unchanged).
+func TestCoerce(t *testing.T) {
+	if coerce(nil, kindLong) != nil {
+		t.Error("coerce(nil) should stay nil regardless of kind")
+	}
+	if v := coerce("not-a-number", kindLong); v != "not-a-number" {
+		t.Errorf("coerce mismatched kindLong = %v, want passthrough", v)
+	}
+	if v := coerce("not-a-number", kindDouble); v != "not-a-number" {
+		t.Errorf("coerce mismatched kindDouble = %v, want passthrough", v)
+	}
+	if v := coerce(123, kindBool); v != 123 {
+		t.Errorf("coerce mismatched kindBool = %v, want passthrough", v)
+	}
+	if v := coerce(int32(5), kindLong); v != int64(5) {
+		t.Errorf("coerce int32->kindLong = %v (%T), want int64(5)", v, v)
+	}
+	if v := coerce(float32(1.5), kindDouble); v != float64(1.5) {
+		t.Errorf("coerce float32->kindDouble = %v (%T), want float64(1.5)", v, v)
 	}
 }

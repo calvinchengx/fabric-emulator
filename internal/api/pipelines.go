@@ -72,6 +72,17 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// childItems) — the storage layer answers for real.
 		return e.getMetadataActivity(act, tp, resolve)
 
+	case "Script":
+		// Runs real T-SQL scripts against a Warehouse/SQLDatabase item's own SQL
+		// Server database — real rows/rowcounts back, when a warehouse SQL
+		// backend is attached; an honest error otherwise.
+		return e.scriptActivity(act, tp, resolve)
+
+	case "SqlServerStoredProcedure":
+		// Calls a real stored procedure on a Warehouse/SQLDatabase item's own
+		// database, same backend as Script.
+		return e.storedProcedureActivity(act, tp, resolve)
+
 	case "RefreshDataflow", "ExecuteDataFlow", "ExecutePowerQueryTemplate":
 		// Dataflow Gen2 is the proprietary Power Query M engine — honestly
 		// unimplemented (mirrors the Livy/Airflow stance), so the activity
@@ -79,11 +90,10 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		return nil, fmt.Errorf("activity %q: Dataflow Gen2 (Power Query M) is not implemented in the emulator", act.Name)
 
 	default:
-		// Other leaf types (Web to arbitrary URLs, external connectors, SQL
-		// scripts against an external engine) can't be executed hermetically —
-		// firing real network calls breaks the offline/deterministic guarantee
-		// and no SQL engine embeds under the pure-Go/no-CGO build. The emulator
-		// records that the orchestration reached the leaf; the effect does not run.
+		// Other leaf types (Web to arbitrary URLs, external connectors) can't be
+		// executed hermetically — firing real network calls breaks the
+		// offline/deterministic guarantee. The emulator records that the
+		// orchestration reached the leaf; the effect does not run.
 		return map[string]any{"status": "Succeeded", "activityType": act.Type}, nil
 	}
 }

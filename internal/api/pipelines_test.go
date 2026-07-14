@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/parquet-go/parquet-go"
 )
 
 // createPipeline seeds a DataPipeline item whose definition is the given
@@ -918,5 +920,193 @@ func TestPipelineLookupEmptyCSV(t *testing.T) {
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 	if outputOf(runs, "Lk")["count"].(float64) != 0 {
 		t.Fatalf("empty csv count = %+v", outputOf(runs, "Lk"))
+	}
+}
+
+// lookupRow is the fixture schema for the Delta/Parquet Lookup tests.
+type lookupRow struct {
+	Region string `parquet:"region"`
+	Amount int64  `parquet:"amount"`
+}
+
+func seedParquetBytes(t *testing.T, rows []lookupRow) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := parquet.NewGenericWriter[lookupRow](&buf)
+	if _, err := w.Write(rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// seedDeltaTable writes a minimal Delta table (one Parquet file + a
+// single-commit _delta_log) under Tables/<name> — the same shape the
+// warehouse's own Delta reader is proven against.
+func seedDeltaTable(t *testing.T, st *store.Store, wid, itemID, name string, rows []lookupRow) {
+	t.Helper()
+	seedFile(t, st, wid, itemID, "Tables/"+name+"/part-0.parquet", seedParquetBytes(t, rows))
+	seedFile(t, st, wid, itemID, "Tables/"+name+"/_delta_log/00000000000000000000.json",
+		[]byte(`{"add":{"path":"part-0.parquet"}}`))
+}
+
+// TestPipelineLookupDelta: Lookup auto-detects a bare Tables/<name> root as a
+// Delta table (no format hint needed) and reads its real rows.
+func TestPipelineLookupDelta(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedDeltaTable(t, st, ws.ID, src.ID, "sales", []lookupRow{{"us", 80}, {"eu", 60}})
+
+	content := `{"properties":{"activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{
+          "firstRowOnly":false,
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Tables/sales"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	lk := outputOf(runs, "Lk")
+	if lk["count"].(float64) != 2 {
+		t.Fatalf("delta lookup count = %v", lk["count"])
+	}
+	rows := lk["value"].([]any)
+	first := rows[0].(map[string]any)
+	if first["region"] != "us" {
+		t.Fatalf("first row region = %v, want us", first["region"])
+	}
+	// amount is a real numeric column value, not a stringified CSV cell — it
+	// round-trips through queryActivityRuns' JSON as float64, like every other
+	// number in these activity-output assertions.
+	if amt, ok := first["amount"].(float64); !ok || amt != 80 {
+		t.Fatalf("first row amount = %v (%T), want numeric 80", first["amount"], first["amount"])
+	}
+}
+
+// TestPipelineLookupDeltaExplicitFormat: an explicit format:"Delta" hint works
+// the same as the path-shape inference.
+func TestPipelineLookupDeltaExplicitFormat(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedDeltaTable(t, st, ws.ID, src.ID, "sales", []lookupRow{{"us", 80}})
+
+	content := `{"properties":{"activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{
+          "format":{"type":"DeltaFormat"},
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Tables/sales"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if outputOf(runs, "Lk")["count"].(float64) != 1 {
+		t.Fatalf("explicit-format delta lookup = %+v", outputOf(runs, "Lk"))
+	}
+}
+
+// TestPipelineLookupDeltaMissingTable: a Tables/<name> root with no Delta
+// commits fails the activity (loudly), not a silent empty result.
+func TestPipelineLookupDeltaMissingTable(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	content := `{"properties":{"activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Tables/nope"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("missing delta table = %s, want Failed", s)
+	}
+}
+
+// TestPipelineLookupParquetFile: a standalone .parquet file (not a Delta
+// table) is read directly, detected by extension.
+func TestPipelineLookupParquetFile(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedFile(t, st, ws.ID, src.ID, "Files/snap.parquet", seedParquetBytes(t, []lookupRow{{"us", 5}, {"eu", 9}}))
+
+	content := `{"properties":{"activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/snap.parquet"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if outputOf(runs, "Lk")["firstRow"].(map[string]any)["region"] != "us" {
+		t.Fatalf("parquet lookup firstRow = %+v", outputOf(runs, "Lk"))
+	}
+}
+
+// TestPipelineScriptNoBackend: a Script activity fails loudly (not silently
+// stubbed) when no warehouse SQL backend is attached — the honest 🔴, not a
+// pretend success.
+func TestPipelineScriptNoBackend(t *testing.T) {
+	a, st := newAPI(t) // a.SQLDB is nil: no --warehouse-sql-url in this test process
+	ws := seedWorkspace(t, st)
+	wh := &store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "wh"}
+	if err := st.CreateItem(wh, nil); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"properties":{"activities":[
+        {"name":"Sc","type":"Script","typeProperties":{
+          "database":{"itemId":"` + wh.ID + `"},
+          "scripts":[{"type":"Query","text":"SELECT 1"}]}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("script with no SQL backend = %s, want Failed", s)
+	}
+}
+
+// TestPipelineStoredProcedureNoBackend: same honest-failure contract for
+// SqlServerStoredProcedure.
+func TestPipelineStoredProcedureNoBackend(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	wh := &store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "wh"}
+	if err := st.CreateItem(wh, nil); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"properties":{"activities":[
+        {"name":"Sp","type":"SqlServerStoredProcedure","typeProperties":{
+          "database":{"itemId":"` + wh.ID + `"},
+          "storedProcedureName":"dbo.DoesNotMatter"}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("stored procedure with no SQL backend = %s, want Failed", s)
+	}
+}
+
+// TestPipelineScriptNoDatabaseRef: a Script activity with no database
+// reference fails loudly.
+func TestPipelineScriptNoDatabaseRef(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	content := `{"properties":{"activities":[
+        {"name":"Sc","type":"Script","typeProperties":{
+          "scripts":[{"type":"Query","text":"SELECT 1"}]}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("script with no database ref = %s, want Failed", s)
 	}
 }
