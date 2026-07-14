@@ -1,0 +1,11 @@
+---
+// Starlight's header search, with the parity version picker beside it.
+// Search sits in the header's un-gated middle slot, so unlike ThemeSelect
+// (whose slot is `sl-hidden md:sl-flex`) this keeps the picker in the top bar
+// at every width, including mobile — without forking Header.astro.
+import Default from '@astrojs/starlight/components/Search.astro';
+import ParityVersionPicker from './ParityVersionPicker.astro';
+---
+
+<Default><slot /></Default>
+<ParityVersionPicker />

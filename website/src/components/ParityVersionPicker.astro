@@ -32,8 +32,8 @@ const show = points.length > 1 && Boolean(active);
 }
 
 <style>
-  /* Sits in the header's right group, alongside the theme select — styled to
-     match Starlight's own header controls. */
+  /* Sits in the header next to the search box — styled to match Starlight's
+     own header controls. */
   .parity-version-picker {
     font: inherit;
     font-size: var(--sl-text-xs);
@@ -49,5 +49,15 @@ const show = points.length > 1 && Boolean(active);
   .parity-version-picker:hover {
     color: var(--sl-color-white);
     border-color: var(--sl-color-gray-2);
+  }
+  /* Narrow screens share the bar with the site title, search and menu button.
+     Starlight clips the title to protect those (`.title-wrapper { overflow:
+     clip }`), so cap the picker rather than eat the title: measured at 390px,
+     the title starts clipping once the picker passes ~110px. The selected
+     version truncates instead, and the full list is there on open. */
+  @media (max-width: 50rem) {
+    .parity-version-picker {
+      max-width: 6.5rem;
+    }
   }
 </style>
