@@ -3,9 +3,6 @@ name: Docs site
 on:
   push:
     branches: [main]
-    # Release tags also rebuild the docs so the parity map re-stamps with the
-    # clean vX.Y.Z version and a new per-release snapshot appears.
-    tags: ['v*']
     paths:
       - 'docs/**'
       - 'website/**'
@@ -13,6 +10,15 @@ on:
       - 'pnpm-workspace.yaml'
       - 'package.json'
       - '.github/workflows/docs-site.yml'
+  # NOTE: we do NOT trigger on `v*` tags. The `github-pages` environment only
+  # permits deployments from `main`, so a tag build would pass but its deploy
+  # would be rejected ("Tag … is not allowed to deploy … environment protection
+  # rules"). Instead the parity map re-stamps to the clean vX.Y.Z on the next
+  # push to main after a release (the checkout below fetches tags, so
+  # `git describe` sees the new tag). To publish immediately after tagging, run
+  # this workflow via workflow_dispatch on main. (To restore automatic tag
+  # deploys, allow the `v*` tag pattern in the github-pages environment's
+  # deployment branch/tag rules, then re-add `tags: ['v*']` here.)
   workflow_dispatch:
 
 # Allow the deploy job to publish to GitHub Pages.

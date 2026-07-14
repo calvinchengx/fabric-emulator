@@ -113,10 +113,25 @@ const BASE = '/fabric-emulator/';
 export function collectParity(repo) {
   const version = gitVersion(repo);
   const tags = releaseTags(repo);
+  let headSha = '';
+  try {
+    headSha = git(repo, 'rev-parse HEAD').trim();
+  } catch {
+    /* not a git checkout */
+  }
   const points = [];
   for (const tag of tags) {
     const p = parityPathAt(repo, tag);
-    if (p) points.push({ label: tag, released: true, md: git(repo, `show ${tag}:${p}`) });
+    if (!p) continue;
+    // Skip a tag that IS the current commit: the live map already represents
+    // it, so avoid a redundant "Current vX" + "vX snapshot" pair right at the
+    // release. The snapshot appears once main advances past the tag.
+    try {
+      if (git(repo, `rev-parse ${tag}^{commit}`).trim() === headSha) continue;
+    } catch {
+      /* ignore an unreadable tag */
+    }
+    points.push({ label: tag, released: true, md: git(repo, `show ${tag}:${p}`) });
   }
   const livePath = parityPathAt(repo, 'HEAD');
   const liveMd = livePath ? git(repo, `show HEAD:${livePath}`) : '';
