@@ -177,10 +177,10 @@ export function pointUrl(parity, pt) {
   return pt.latest ? `${BASE}${parity.liveSlug}/` : `${BASE}parity-history/${versionSlug(pt.label)}/`;
 }
 
-const optionLabel = (pt) => (pt.latest ? `Current — ${pt.label}` : pt.label);
-
-// A build-time manifest of the same points, for the right-sidebar picker
-// component (which can't read git). Newest first, matching the <select> order.
+// A build-time manifest of the points, for the top-nav picker component (which
+// can't read git). Newest first, matching the <select> order. The label is just
+// the version — "latest-<sha>" already reads as the moving tip, and the picker
+// marks the current page `selected`, so a "Current — " prefix adds nothing.
 export function parityManifest(parity) {
   return {
     liveSlug: parity.liveSlug,
@@ -188,7 +188,7 @@ export function parityManifest(parity) {
       .slice()
       .reverse()
       .map((pt) => ({
-        label: optionLabel(pt),
+        label: pt.label,
         url: pointUrl(parity, pt),
         latest: !!pt.latest,
         reconstructed: !!pt.reconstructed,
@@ -259,7 +259,7 @@ export function writeParityHistory(OUT, parity, helpers) {
   // Index: the live map + every snapshot.
   const idxFm = `---\ntitle: Parity history\neditUrl: false\n---\n\n`;
   const rows = [
-    `- **[Current — ${version}](/fabric-emulator/${liveSlug}/)** — the live map on \`main\``,
+    `- **[${version}](/fabric-emulator/${liveSlug}/)** — the live map on \`main\``,
     ...releasedPoints
       .slice()
       .reverse()
