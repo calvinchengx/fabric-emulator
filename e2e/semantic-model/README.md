@@ -17,9 +17,9 @@ for the vendored golden OpenAPI.
 - `fixtures/golden_queries.json` — the **DAX oracle**: `(query → executeQueries rows)`
   pairs. macOS has no live DAX engine (Power BI Desktop / DAX Studio are
   Windows-only), so these are computed by hand — arithmetic below.
-- `seed.py` — runnable: stands up entra + fabric, creates a real workspace +
-  SemanticModel item from `retail.bim`, mints a Power BI-audience token, and
-  probes `executeQueries` (404 until the engine exists).
+- `run.py` — the e2e: stands up entra + fabric, publishes the model + data as a
+  SemanticModel item, mints a Power BI-audience token, and POSTs each golden DAX
+  query to `executeQueries`, asserting the rows match the oracle.
 
 ## The model, and why it's shaped this way
 
@@ -82,9 +82,8 @@ the small fixture:
 ## Run
 
 ```sh
-python3 e2e/semantic-model/seed.py
+python3 e2e/semantic-model/run.py
 ```
-Today it ends with `executeQueries -> 404 (expected)`, proving the two URL
-params resolve, the golden model is loaded, and auth is in place. When the DAX
-engine lands, the same probe returns the rows in `golden_queries.json`, and the
-GX layer can validate them.
+Passes today: real Power BI-audience token → `executeQueries` → the three DAX
+golden queries return rows matching `golden_queries.json`. The Great Expectations
+layer (`e2e/great-expectations/`) validates these same rows.

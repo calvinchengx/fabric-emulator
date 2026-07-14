@@ -20,39 +20,39 @@ deferred-with-cause. See doc 16.
 Critical path to green: **A → C → D → E**. F is the tutorial's actual subject.
 
 ### A — TMSL model parsing (pure Go)
-- [ ] `internal/semanticmodel` parses `model.bim` (TMSL) → tables, columns,
+- [x] `internal/semanticmodel` parses `model.bim` (TMSL) → tables, columns,
       measures (DAX expr strings), relationships; loads it from the item's
       `model.bim` definition part.
-- [ ] Unit-tested against `e2e/semantic-model/fixtures/retail.bim`.
+- [x] Unit-tested against `e2e/semantic-model/fixtures/retail.bim`.
 
 ### B — table data binding
-- [ ] Engine reads an optional `data.json` definition part (import rows)
+- [x] Engine reads an optional `data.json` definition part (import rows)
       alongside `model.bim`; rows addressable per table.
-- [ ] Unit-tested against `fixtures/seed_data.json`.
+- [x] Unit-tested against `fixtures/seed_data.json`.
 - [ ] *Deferred, with cause:* **Direct Lake** (tables backed by real OneLake
       Delta) — needs a pure-Go Parquet + `_delta_log` reader; import-seeded first.
 
 ### C — the DAX evaluator (core)
-- [ ] Tokenizer + parser for the subset: `EVALUATE`, `SUMMARIZECOLUMNS`, table /
+- [x] Tokenizer + parser for the subset: `EVALUATE`, `SUMMARIZECOLUMNS`, table /
       column / measure refs, function calls, string literals.
-- [ ] Evaluation: filter context, relationship traversal (`Sales`→`Time`/`Store`),
+- [x] Evaluation: filter context, relationship traversal (`Sales`→`Time`/`Store`),
       measure expansion, `SUM`, `DIVIDE` (blank on ÷0), `EVALUATE <table>`,
       `SUMMARIZECOLUMNS(cols…, "name", expr)`.
-- [ ] Unit-tested against `fixtures/golden_queries.json` (the DAX oracle),
+- [x] Unit-tested against `fixtures/golden_queries.json` (the DAX oracle),
       order-insensitive.
 
 ### D — executeQueries REST endpoint
-- [ ] Routes per the vendored swagger: `POST /v1.0/myorg/datasets/{datasetId}/
+- [x] Routes per the vendored swagger: `POST /v1.0/myorg/datasets/{datasetId}/
       executeQueries` + the `/groups/{groupId}/…` variant.
-- [ ] Power BI audience (`https://analysis.windows.net/powerbi/api`) validator;
+- [x] Power BI audience (`https://analysis.windows.net/powerbi/api`) validator;
       Viewer RBAC; alias `api.powerbi.com`.
-- [ ] `datasetId` → SemanticModel item → parse + evaluate → executeQueries JSON
+- [x] `datasetId` → SemanticModel item → parse + evaluate → executeQueries JSON
       (`Table[Col]` / `[Measure]` keys, `{results:[{tables:[{rows}]}]}`).
-- [ ] Handler unit tests: golden queries; bad-DAX error shape; unknown dataset
+- [x] Handler unit tests + a server e2e: golden queries; bad-DAX error shape; unknown dataset
       404; wrong-audience rejected; RBAC.
 
 ### E — seed → passing e2e
-- [ ] `e2e/semantic-model/run.py`: upload model + data, POST each golden query,
+- [x] `e2e/semantic-model/run.py`: upload model + data, POST each golden query,
       assert rows == golden (replaces the `404 pending` probe in `seed.py`).
 
 ### F — Great Expectations layer (the tutorial's subject)
@@ -80,4 +80,7 @@ Critical path to green: **A → C → D → E**. F is the tutorial's actual subj
 - DMV/schema-rowset asset deferred to G.
 
 ## Progress log
-- _(updated as phases land)_
+- **A–E done** (2026-07-14): TMSL parse, data binding, DAX evaluator, the
+  executeQueries endpoint (handler tests + server e2e), and the passing
+  `e2e/semantic-model/run.py` — real PBI token → DAX → golden rows. Total
+  coverage 91.2%. Next: F (Great Expectations), then H (CI + parity/roadmap).

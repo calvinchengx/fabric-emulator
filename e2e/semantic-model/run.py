@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
-"""Seed flow for the semantic-model / executeQueries golden fixture.
+"""e2e: real DAX over a semantic model via the executeQueries REST contract.
 
-Stands up entra + fabric, creates a real workspace and a real SemanticModel
-item whose definition IS the golden `retail.bim`, and mints a Power BI-audience
-token. Then it probes the `executeQueries` endpoint exactly as the golden
-swagger defines it — which 404s today because the DAX engine isn't built yet.
+Stands up entra + fabric, publishes the golden `retail.bim` model + `data.json`
+as a SemanticModel item, mints a Power BI-audience token, then POSTs each golden
+DAX query to `executeQueries` (the exact swagger path) and asserts the rows
+match the hand-computed oracle in `fixtures/golden_queries.json`.
 
-That 404 is the point: it proves the two real URL params (groupId = workspace,
-datasetId = semantic-model item) resolve, the fixture is loaded, and the auth is
-in place — everything the future engine needs is wired. When the engine lands,
-the same probe should return the rows in fixtures/golden_queries.json.
-
-Self-contained, stdlib-only; run: python3 e2e/semantic-model/seed.py
+Self-contained, stdlib-only; run: python3 e2e/semantic-model/run.py
 """
 import base64
 import json
@@ -29,7 +24,7 @@ import urllib.request
 DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(DIR))
 FIX = os.path.join(DIR, "fixtures")
-WORK = os.path.join(tempfile.gettempdir(), "semantic-model-seed")
+WORK = os.path.join(tempfile.gettempdir(), "semantic-model-e2e")
 ENTRA_PORT = os.environ.get("ENTRA_PORT", "18443")
 FABRIC_PORT = os.environ.get("FABRIC_PORT", "19080")
 TENANT = "11111111-1111-1111-1111-111111111111"
@@ -79,6 +74,18 @@ def wait_healthy(url, deadline=60):
     raise RuntimeError(f"health never came up at {url}")
 
 
+def norm_row(row):
+    """A comparable key for a result row: numbers folded to float, order-free."""
+    out = []
+    for k, v in row.items():
+        out.append((k, float(v) if isinstance(v, (int, float)) else v))
+    return tuple(sorted(out, key=lambda x: x[0]))
+
+
+def rows_match(got, want):
+    return sorted(map(norm_row, got)) == sorted(map(norm_row, want))
+
+
 shutil.rmtree(WORK, ignore_errors=True)
 os.makedirs(os.path.join(WORK, "data"))
 
@@ -113,7 +120,6 @@ try:
     wait_healthy(f"{ENTRA}/health")
     wait_healthy(f"{FABRIC}/health")
 
-    # Seed the Power BI resource app so client-credentials resolves its audience.
     log(f"seeding Power BI resource app ({PBI_AUDIENCE})")
     try:
         http("POST", f"{ENTRA}/admin/api/apps",
@@ -129,14 +135,15 @@ try:
 
     ft = token("https://api.fabric.microsoft.com/.default")
     ws = http("POST", f"{FABRIC}/v1/workspaces", {"displayName": "retail-ws"}, token=ft)[2]["id"]
-    log(f"workspace (groupId) = {ws}")
 
-    # Create the SemanticModel item whose definition IS the golden model.bim.
-    bim = open(os.path.join(FIX, "retail.bim"), "rb").read()
+    # Publish the SemanticModel item with model + data as definition parts.
+    def part(path, fname):
+        return {"path": path, "payloadType": "InlineBase64",
+                "payload": base64.b64encode(open(os.path.join(FIX, fname), "rb").read()).decode()}
     _, hdrs, _ = http("POST", f"{FABRIC}/v1/workspaces/{ws}/items", {
         "displayName": "RetailAnalysis", "type": "SemanticModel",
-        "definition": {"parts": [{"path": "model.bim", "payloadType": "InlineBase64",
-                                  "payload": base64.b64encode(bim).decode()}]}}, token=ft)
+        "definition": {"parts": [part("model.bim", "retail.bim"), part("data.json", "seed_data.json")]}},
+        token=ft)
     opid = hdrs.get("x-ms-operation-id")
     dataset = None
     for _ in range(60):
@@ -146,29 +153,27 @@ try:
         time.sleep(0.1)
     if not dataset:
         raise SystemExit("semantic-model item create did not complete")
-    log(f"semantic model (datasetId) = {dataset}")
+    log(f"workspace={ws} dataset={dataset}")
 
     pbi = token(PBI_AUDIENCE + "/.default")
-    log(f"Power BI-audience token minted ({len(pbi)} chars)")
 
-    # Probe executeQueries exactly as the golden swagger defines it.
+    # Run each DAX golden query through executeQueries and check the rows.
     golden = json.load(open(os.path.join(FIX, "golden_queries.json")))
-    q = next(x for x in golden["queries"] if x["handler"] == "dax")
-    url = f"{FABRIC}/v1.0/myorg/groups/{ws}/datasets/{dataset}/executeQueries"
-    log(f"POST {url}")
-    log(f"     body: {{'queries':[{{'query': {q['dax']!r}}}]}}")
-    try:
-        status, _, resp = http("POST", url, {"queries": [{"query": q["dax"]}]}, token=pbi)
-        log(f"executeQueries returned {status}: {json.dumps(resp)[:200]}")
-        log("ENGINE PRESENT — compare against fixtures/golden_queries.json")
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            log("executeQueries -> 404 (expected): the DAX engine is not built yet.")
-            log("FIXTURE READY: groupId + datasetId resolve, auth in place, golden model loaded.")
-        else:
-            raise
+    ran = 0
+    for q in golden["queries"]:
+        if q["handler"] != "dax":
+            continue
+        ran += 1
+        url = f"{FABRIC}/v1.0/myorg/groups/{ws}/datasets/{dataset}/executeQueries"
+        _, _, resp = http("POST", url, {"queries": [{"query": q["dax"]}]}, token=pbi)
+        rows = resp["results"][0]["tables"][0]["rows"]
+        if not rows_match(rows, q["expected"]["rows"]):
+            raise SystemExit(f"{q['name']}: rows mismatch\n got={rows}\nwant={q['expected']['rows']}")
+        log(f"{q['name']}: {len(rows)} rows OK")
+    if ran != 3:
+        raise SystemExit(f"expected 3 DAX golden queries, ran {ran}")
 
-    print("\nSEMANTIC-MODEL SEED: OK (fixture wired; executeQueries engine pending)", flush=True)
+    print("\nSEMANTIC-MODEL E2E: PASS", flush=True)
 except Exception:
     for name, path in logs.items():
         sys.stderr.write(f"\n==== {name} log ====\n")
