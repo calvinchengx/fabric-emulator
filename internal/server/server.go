@@ -65,6 +65,11 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	olv.Audiences = onelake.StorageAudience
 	ol := onelake.New(st, olv)
 
+	// The Power BI executeQueries endpoint accepts only Power BI-audience tokens.
+	pbiv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)
+	pbiv.Audiences = api.PowerBIAudience
+	a.PBIAuth = pbiv
+
 	s := &Server{Cfg: cfg, Store: st, Clock: ck, API: a, OneLake: ol, mux: http.NewServeMux()}
 
 	// The warehouse SQL endpoint terminates FedAuth by validating the client's

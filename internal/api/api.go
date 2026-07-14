@@ -21,6 +21,9 @@ import (
 type API struct {
 	Store *store.Store
 	Auth  *auth.Validator
+	// PBIAuth validates the Power BI-audience tokens the executeQueries endpoint
+	// requires (nil disables the endpoint with a 501).
+	PBIAuth *auth.Validator
 	// Entra drives workspace-identity provisioning in entra-emulator (nil
 	// disables the identity endpoints with a 503).
 	Entra *entra.Client
@@ -112,6 +115,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerTyped(mux)
 	a.registerLivy(mux)
 	a.registerShortcuts(mux)
+	a.registerExecuteQueries(mux)
 
 	mux.HandleFunc("GET /v1/operations/{oid}", a.withAuth(a.getOperation))
 	mux.HandleFunc("GET /v1/operations/{oid}/result", a.withAuth(a.getOperationResult))
