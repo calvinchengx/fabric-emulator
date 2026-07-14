@@ -1,0 +1,53 @@
+---
+// The parity version picker, rendered in the top nav beside the theme select.
+// Data comes from src/data/parity-versions.json, written by
+// scripts/sync-docs.mjs from the git release tags (a component can't shell out
+// to git). Renders nothing off the parity pages, or when there is only one
+// version (nothing to pick).
+import manifest from '../data/parity-versions.json';
+
+const withSlash = (u) => (u.endsWith('/') ? u : `${u}/`);
+const here = withSlash(Astro.url.pathname);
+const points = manifest?.points ?? [];
+// Only show on a page the picker can actually switch between.
+const active = points.find((p) => withSlash(p.url) === here);
+const show = points.length > 1 && Boolean(active);
+---
+
+{
+  show && (
+    <select
+      class="parity-version-picker"
+      aria-label="Parity map version"
+      title="Parity map version"
+      onchange="if(this.value)location.assign(this.value)"
+    >
+      {points.map((p) => (
+        <option value={p.url} selected={withSlash(p.url) === here}>
+          {p.label}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+<style>
+  /* Sits in the header's right group, alongside the theme select — styled to
+     match Starlight's own header controls. */
+  .parity-version-picker {
+    font: inherit;
+    font-size: var(--sl-text-xs);
+    line-height: 1;
+    padding: 0.5rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--sl-color-gray-5);
+    background-color: var(--sl-color-black);
+    color: var(--sl-color-gray-1);
+    cursor: pointer;
+    max-width: 15rem;
+  }
+  .parity-version-picker:hover {
+    color: var(--sl-color-white);
+    border-color: var(--sl-color-gray-2);
+  }
+</style>

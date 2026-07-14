@@ -8,7 +8,7 @@
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectParity, writeParityHistory, versionPicker, pointUrl } from './parity-versions.mjs';
+import { collectParity, writeParityHistory, parityManifest } from './parity-versions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, '..', '..');
@@ -20,10 +20,15 @@ export const BASE = '/fabric-emulator/';
 // is e.g. "v0.2.0" on a tag or "v0.1.0-69-g1935665" between releases.
 const PARITY = collectParity(REPO);
 const IS_RELEASE = /^v\d+\.\d+\.\d+$/.test(PARITY.version);
-const PARITY_RE = /-parity\.md$/;
+// The parity map is the one doc without a reading-order number: it is a living
+// reference rather than a chapter, and its URL is just /parity/.
+const PARITY_RE = /(^|[/-])parity\.md$/;
+// Docs are `NN-name.md` chapters, plus the un-numbered parity map.
+const DOC_RE = /^(\d{2}-.*|parity)\.md$/;
 
-// Rewrite `](./|docs/ NN-slug.md#anchor)` → `](/fabric-emulator/NN-slug/#anchor)`.
-const LINK_RE = /\]\((?:\.\/|docs\/)?(\d{2}-[a-z0-9-]+)\.md(#[^)]*)?\)/g;
+// Rewrite `](./|docs/ NN-slug.md#anchor)` → `](/fabric-emulator/NN-slug/#anchor)`,
+// and the un-numbered `parity.md` the same way.
+const LINK_RE = /\]\((?:\.\/|docs\/)?(\d{2}-[a-z0-9-]+|parity)\.md(#[^)]*)?\)/g;
 function rewriteLinks(md) {
   return md.replace(LINK_RE, (_m, slug, anchor) => `](${BASE}${slug}/${anchor ?? ''})`);
 }
@@ -49,16 +54,16 @@ function convertBody(raw) {
   return rewriteLinks(lines.join('\n').replace(/^\n+/, ''));
 }
 
-// The version picker + context line injected at the top of the live parity
-// map. The picker's selected option is the live map itself; choosing a release
-// navigates to that version's snapshot. When no releases carry a parity map
-// yet, versionPicker() returns "" and only the context line shows.
+// The context line at the top of the live parity map. Switching versions is the
+// top-nav picker's job (src/components/ParityVersionPicker.astro) — this just
+// says which version you're reading.
 function parityStamp() {
-  const unreleased = IS_RELEASE ? '' : ' (unreleased)';
-  const picker = versionPicker(PARITY, pointUrl(PARITY, { latest: true }));
+  // On a release tag this reads "as of v0.2.0"; otherwise it's the moving tip,
+  // "as of latest-b1e3520" — which says "unreleased tip" without pretending to
+  // be a version.
+  const what = IS_RELEASE ? `release **${PARITY.version}**` : `**${PARITY.version}** (the live tip of \`main\`)`;
   return (
-    picker +
-    `_Parity map as of **${PARITY.version}**${unreleased} — tracked by git release tags. ` +
+    `_Parity map as of ${what} — tracked by git release tags. ` +
     `See the [version history](${BASE}parity-history/) and [parity changelog](${BASE}parity-history/changelog/)._\n\n`
   );
 }
@@ -105,12 +110,17 @@ function writeIndex() {
 
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
-const names = readdirSync(DOCS_SRC).filter((n) => /^\d{2}-.*\.md$/.test(n)).sort();
+const names = readdirSync(DOCS_SRC).filter((n) => DOC_RE.test(n)).sort();
 for (const name of names) {
   writeFileSync(join(OUT, name), convert(name));
 }
 writeIndex();
 const info = writeParityHistory(OUT, PARITY, { convertBody });
+// The right-sidebar picker is an Astro component and can't shell out to git, so
+// hand it the same points as a build-time manifest.
+const DATA = join(here, '..', 'src', 'data');
+mkdirSync(DATA, { recursive: true });
+writeFileSync(join(DATA, 'parity-versions.json'), JSON.stringify(parityManifest(PARITY), null, 2) + '\n');
 console.log(
   `sync-docs: wrote ${names.length} docs + index to src/content/docs/ ` +
     `(parity ${info.version}; ${info.snapshots.length} tagged snapshot(s))`,
