@@ -23,10 +23,10 @@ export default defineConfig({
       title: 'Fabric Emulator',
       components: {
         Head: './src/components/Head.astro',
-        // Right sidebar: the parity version picker above the table of contents.
-        // Overrides TableOfContents (not PageSidebar) so the picker renders
-        // inside Starlight's width-constrained sidebar container.
-        TableOfContents: './src/components/TableOfContents.astro',
+        // Top nav: the parity version picker, rendered beside the theme select
+        // (Starlight's Header has no slot, so this is the light-touch way in).
+        // The picker shows itself only on the parity pages.
+        ThemeSelect: './src/components/ThemeSelect.astro',
       },
       description:
         'A local emulator of the Microsoft Fabric control plane — workspaces, items, RBAC, git integration, and long-running operations — that validates Entra bearer tokens.',

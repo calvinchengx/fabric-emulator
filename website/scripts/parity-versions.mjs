@@ -164,8 +164,7 @@ export function pointUrl(parity, pt) {
   return pt.latest ? `${BASE}${parity.liveSlug}/` : `${BASE}parity-history/${versionSlug(pt.label)}/`;
 }
 
-const optionLabel = (pt) =>
-  pt.latest ? `Current — ${pt.label}` : pt.label + (pt.reconstructed ? ' (reconstructed)' : '');
+const optionLabel = (pt) => (pt.latest ? `Current — ${pt.label}` : pt.label);
 
 // A build-time manifest of the same points, for the right-sidebar picker
 // component (which can't read git). Newest first, matching the <select> order.
@@ -182,32 +181,6 @@ export function parityManifest(parity) {
         reconstructed: !!pt.reconstructed,
       })),
   };
-}
-
-// A build-time <select> (newest first) that navigates to the chosen version's
-// parity page. Inline styles use Starlight CSS vars so it themes in light/dark;
-// the inline onchange keeps it a single self-contained block (no client script
-// to bundle). `currentUrl` marks which option is pre-selected.
-export function versionPicker(parity, currentUrl) {
-  if (parity.points.length < 2) return ''; // only "latest" exists — nothing to pick
-  const opts = parity.points
-    .slice()
-    .reverse()
-    .map((pt) => {
-      const url = pointUrl(parity, pt);
-      return `    <option value="${url}"${url === currentUrl ? ' selected' : ''}>${optionLabel(pt)}</option>`;
-    })
-    .join('\n');
-  return (
-    `<div class="parity-version-picker" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin:0 0 1.5rem">\n` +
-    `  <label for="parity-version"><strong>Capabilities as of version:</strong></label>\n` +
-    `  <select id="parity-version" aria-label="Choose a released version of the parity map"` +
-    ` onchange="if(this.value)location.assign(this.value)"` +
-    ` style="font:inherit;padding:.35rem .55rem;border-radius:.375rem;border:1px solid var(--sl-color-gray-5);background:var(--sl-color-bg);color:var(--sl-color-text)">\n` +
-    `${opts}\n` +
-    `  </select>\n` +
-    `</div>\n\n`
-  );
 }
 
 /**
@@ -227,11 +200,13 @@ export function writeParityHistory(OUT, parity, helpers) {
     const slug = versionSlug(pt.label);
     const body = helpers.convertBody(pt.md);
     const fm = `---\ntitle: ${JSON.stringify(`Parity — ${pt.label}`)}\neditUrl: false\nprev: false\nnext: false\n---\n\n`;
-    const picker = versionPicker(parity, pointUrl(parity, pt));
+    // Back-filled maps carry no banner: the page's own opening prose already
+    // says it was written after the release, and the generic "as of release X"
+    // note would misread as a document published at the time.
     const banner = pt.reconstructed
-      ? `:::caution[Reconstructed snapshot]\n**${pt.label}** shipped before the parity map existed, and a git tag is immutable — so this map was **written after the fact**, from that tag's roadmap, e2e matrix, and source tree. It is our best retrospective reading of what was real at **${pt.label}**, not a document published at the time. The current map is on the [Parity page](/fabric-emulator/${liveSlug}/).\n:::\n\n`
+      ? ''
       : `:::note[Historical snapshot]\nThe feature-parity map as of release **${pt.label}**. The current map is on the [Parity page](/fabric-emulator/${liveSlug}/).\n:::\n\n`;
-    writeFileSync(join(outDir, `${slug}.md`), fm + picker + banner + body);
+    writeFileSync(join(outDir, `${slug}.md`), fm + banner + body);
   }
 
   const liveMd = points.find((p) => p.latest)?.md ?? '';
@@ -278,7 +253,7 @@ export function writeParityHistory(OUT, parity, helpers) {
       .map(
         (p) =>
           `- [${p.label}](/fabric-emulator/parity-history/${versionSlug(p.label)}/) — ` +
-          (p.reconstructed ? 'reconstructed after the fact (predates the map)' : 'snapshot at release'),
+          (p.reconstructed ? 'written retrospectively (predates the map)' : 'snapshot at release'),
       ),
   ];
   const idxBody =

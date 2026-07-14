@@ -8,13 +8,7 @@
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  collectParity,
-  writeParityHistory,
-  versionPicker,
-  pointUrl,
-  parityManifest,
-} from './parity-versions.mjs';
+import { collectParity, writeParityHistory, parityManifest } from './parity-versions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, '..', '..');
@@ -55,18 +49,15 @@ function convertBody(raw) {
   return rewriteLinks(lines.join('\n').replace(/^\n+/, ''));
 }
 
-// The version picker + context line injected at the top of the live parity
-// map. The picker's selected option is the live map itself; choosing a release
-// navigates to that version's snapshot. When no releases carry a parity map
-// yet, versionPicker() returns "" and only the context line shows.
+// The context line at the top of the live parity map. Switching versions is the
+// top-nav picker's job (src/components/ParityVersionPicker.astro) — this just
+// says which version you're reading.
 function parityStamp() {
-  const picker = versionPicker(PARITY, pointUrl(PARITY, { latest: true }));
   // On a release tag this reads "as of v0.2.0"; otherwise it's the moving tip,
   // "as of latest-b1e3520" — which says "unreleased tip" without pretending to
   // be a version.
   const what = IS_RELEASE ? `release **${PARITY.version}**` : `**${PARITY.version}** (the live tip of \`main\`)`;
   return (
-    picker +
     `_Parity map as of ${what} — tracked by git release tags. ` +
     `See the [version history](${BASE}parity-history/) and [parity changelog](${BASE}parity-history/changelog/)._\n\n`
   );
