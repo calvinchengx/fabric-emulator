@@ -13,10 +13,12 @@
 // that includes it, the only "version" is the unreleased tip. Everything below
 // degrades gracefully to that single point.
 import { execSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const PARITY_RE = /-parity\.md$/;
+// The parity doc is `docs/parity.md` today, but older tags carry it numbered
+// (`docs/17-parity.md`), so snapshots of those tags must still match.
+const PARITY_RE = /(^|[/-])parity\.md$/;
 
 function git(repo, args) {
   return execSync(`git ${args}`, { cwd: repo, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
@@ -25,15 +27,23 @@ function git(repo, args) {
 // The version string a build reflects, e.g. "v0.2.0" on a tag or
 // "v0.1.0-69-g1935665" between releases. Falls back to a short sha, then "dev".
 export function gitVersion(repo) {
-  for (const cmd of ['describe --tags --always', 'rev-parse --short HEAD']) {
-    try {
-      const v = git(repo, cmd).trim();
-      if (v) return v;
-    } catch {
-      /* not a git checkout / no tags — try the next */
-    }
+  // Sitting exactly on a release tag → that tag ("v0.2.0").
+  try {
+    const exact = git(repo, 'describe --tags --exact-match --match v*').trim();
+    if (exact) return exact;
+  } catch {
+    /* not on a release tag — fall through to the moving tip */
   }
-  return 'dev';
+  // Otherwise this is the moving tip, not a version: "latest-<short sha>".
+  // (`git describe`'s "v0.2.0-2-gb1e3520" reads like a release that doesn't
+  // exist; "latest-b1e3520" says plainly what it is.)
+  try {
+    const sha = git(repo, 'rev-parse --short HEAD').trim();
+    if (sha) return `latest-${sha}`;
+  } catch {
+    /* not a git checkout */
+  }
+  return 'latest';
 }
 
 // True for "v1.2.3" style strings straight off a tag (no -N-g<sha> suffix).
@@ -121,8 +131,6 @@ export function collectParity(repo) {
   }
   const points = [];
   for (const tag of tags) {
-    const p = parityPathAt(repo, tag);
-    if (!p) continue;
     // Skip a tag that IS the current commit: the live map already represents
     // it, so avoid a redundant "Current vX" + "vX snapshot" pair right at the
     // release. The snapshot appears once main advances past the tag.
@@ -131,11 +139,34 @@ export function collectParity(repo) {
     } catch {
       /* ignore an unreadable tag */
     }
-    points.push({ label: tag, released: true, md: git(repo, `show ${tag}:${p}`) });
+    const p = parityPathAt(repo, tag);
+    if (p) {
+      points.push({ label: tag, released: true, md: git(repo, `show ${tag}:${p}`) });
+      continue;
+    }
+    // The tag predates the parity map (it was added after v0.1.0), and a tag is
+    // immutable — so a map for it can only be reconstructed after the fact.
+    // Fall back to a hand-authored back-fill committed today, flagged so the
+    // page says plainly that it is a retrospective reconstruction.
+    const backfill = join(repo, 'docs', 'parity-snapshots', `${tag}.md`);
+    if (existsSync(backfill)) {
+      points.push({ label: tag, released: true, reconstructed: true, md: readFileSync(backfill, 'utf8') });
+    }
   }
-  const livePath = parityPathAt(repo, 'HEAD');
-  const liveMd = livePath ? git(repo, `show HEAD:${livePath}`) : '';
-  const liveSlug = livePath ? livePath.replace(/^docs\//, '').replace(/\.md$/, '') : null;
+  // The live map comes from the working tree, not `git show HEAD:` — the rest
+  // of sync-docs renders /docs from disk, so reading HEAD here would disagree
+  // with the page actually being built whenever the doc has uncommitted edits
+  // (e.g. `astro dev` while editing it, or a rename not yet committed). In CI
+  // the two are identical anyway.
+  const docsDir = join(repo, 'docs');
+  let liveName = null;
+  try {
+    liveName = readdirSync(docsDir).find((n) => PARITY_RE.test(n)) ?? null;
+  } catch {
+    /* no docs dir */
+  }
+  const liveMd = liveName ? readFileSync(join(docsDir, liveName), 'utf8') : '';
+  const liveSlug = liveName ? liveName.replace(/\.md$/, '') : null;
   points.push({ label: version, released: isRelease(version), latest: true, md: liveMd });
   return { version, liveSlug, points, firstTag: tags[0] ?? null };
 }
@@ -146,33 +177,23 @@ export function pointUrl(parity, pt) {
   return pt.latest ? `${BASE}${parity.liveSlug}/` : `${BASE}parity-history/${versionSlug(pt.label)}/`;
 }
 
-const optionLabel = (pt) =>
-  pt.latest ? `Current — ${pt.label}${pt.released ? '' : ' (unreleased)'}` : pt.label;
+const optionLabel = (pt) => (pt.latest ? `Current — ${pt.label}` : pt.label);
 
-// A build-time <select> (newest first) that navigates to the chosen version's
-// parity page. Inline styles use Starlight CSS vars so it themes in light/dark;
-// the inline onchange keeps it a single self-contained block (no client script
-// to bundle). `currentUrl` marks which option is pre-selected.
-export function versionPicker(parity, currentUrl) {
-  if (parity.points.length < 2) return ''; // only "latest" exists — nothing to pick
-  const opts = parity.points
-    .slice()
-    .reverse()
-    .map((pt) => {
-      const url = pointUrl(parity, pt);
-      return `    <option value="${url}"${url === currentUrl ? ' selected' : ''}>${optionLabel(pt)}</option>`;
-    })
-    .join('\n');
-  return (
-    `<div class="parity-version-picker" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin:0 0 1.5rem">\n` +
-    `  <label for="parity-version"><strong>Capabilities as of version:</strong></label>\n` +
-    `  <select id="parity-version" aria-label="Choose a released version of the parity map"` +
-    ` onchange="if(this.value)location.assign(this.value)"` +
-    ` style="font:inherit;padding:.35rem .55rem;border-radius:.375rem;border:1px solid var(--sl-color-gray-5);background:var(--sl-color-bg);color:var(--sl-color-text)">\n` +
-    `${opts}\n` +
-    `  </select>\n` +
-    `</div>\n\n`
-  );
+// A build-time manifest of the same points, for the right-sidebar picker
+// component (which can't read git). Newest first, matching the <select> order.
+export function parityManifest(parity) {
+  return {
+    liveSlug: parity.liveSlug,
+    points: parity.points
+      .slice()
+      .reverse()
+      .map((pt) => ({
+        label: optionLabel(pt),
+        url: pointUrl(parity, pt),
+        latest: !!pt.latest,
+        reconstructed: !!pt.reconstructed,
+      })),
+  };
 }
 
 /**
@@ -192,9 +213,13 @@ export function writeParityHistory(OUT, parity, helpers) {
     const slug = versionSlug(pt.label);
     const body = helpers.convertBody(pt.md);
     const fm = `---\ntitle: ${JSON.stringify(`Parity — ${pt.label}`)}\neditUrl: false\nprev: false\nnext: false\n---\n\n`;
-    const picker = versionPicker(parity, pointUrl(parity, pt));
-    const banner = `:::note[Historical snapshot]\nThe feature-parity map as of release **${pt.label}**. The current map is on the [Parity page](/fabric-emulator/${liveSlug}/).\n:::\n\n`;
-    writeFileSync(join(outDir, `${slug}.md`), fm + picker + banner + body);
+    // Back-filled maps carry no banner: the page's own opening prose already
+    // says it was written after the release, and the generic "as of release X"
+    // note would misread as a document published at the time.
+    const banner = pt.reconstructed
+      ? ''
+      : `:::note[Historical snapshot]\nThe feature-parity map as of release **${pt.label}**. The current map is on the [Parity page](/fabric-emulator/${liveSlug}/).\n:::\n\n`;
+    writeFileSync(join(outDir, `${slug}.md`), fm + banner + body);
   }
 
   const liveMd = points.find((p) => p.latest)?.md ?? '';
@@ -205,7 +230,7 @@ export function writeParityHistory(OUT, parity, helpers) {
     const a = parseParity(points[i - 1].md);
     const b = parseParity(points[i].md);
     const { added, removed, changed } = diffParity(a, b);
-    const to = points[i].label + (points[i].latest && !points[i].released ? ' (unreleased)' : '');
+    const to = points[i].label;
     cl.push(`## ${points[i - 1].label} → ${to}\n`);
     if (!added.length && !removed.length && !changed.length) {
       cl.push('_No parity changes._\n');
@@ -234,11 +259,15 @@ export function writeParityHistory(OUT, parity, helpers) {
   // Index: the live map + every snapshot.
   const idxFm = `---\ntitle: Parity history\neditUrl: false\n---\n\n`;
   const rows = [
-    `- **[Current — ${version}${isRelease(version) ? '' : ' (unreleased)'}](/fabric-emulator/${liveSlug}/)** — the live map on \`main\``,
+    `- **[Current — ${version}](/fabric-emulator/${liveSlug}/)** — the live map on \`main\``,
     ...releasedPoints
       .slice()
       .reverse()
-      .map((p) => `- [${p.label}](/fabric-emulator/parity-history/${versionSlug(p.label)}/) — snapshot at release`),
+      .map(
+        (p) =>
+          `- [${p.label}](/fabric-emulator/parity-history/${versionSlug(p.label)}/) — ` +
+          (p.reconstructed ? 'written retrospectively (predates the map)' : 'snapshot at release'),
+      ),
   ];
   const idxBody =
     `Versions of the [feature-parity map](/fabric-emulator/${liveSlug}/), tracked by git release tags. ` +
