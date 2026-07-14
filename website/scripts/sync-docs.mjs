@@ -8,11 +8,19 @@
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeParityHistory, gitVersion } from './parity-versions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const DOCS_SRC = join(here, '..', '..', 'docs');
+const REPO = join(here, '..', '..');
+const DOCS_SRC = join(REPO, 'docs');
 const OUT = join(here, '..', 'src', 'content', 'docs');
 export const BASE = '/fabric-emulator/';
+
+// The release version this build reflects (e.g. "v0.2.0" on a tag, or
+// "v0.1.0-69-g1935665" between releases). Used to stamp the parity map.
+const VERSION = gitVersion(REPO);
+const IS_RELEASE = /^v\d+\.\d+\.\d+$/.test(VERSION);
+const PARITY_RE = /-parity\.md$/;
 
 // Rewrite `](./|docs/ NN-slug.md#anchor)` → `](/fabric-emulator/NN-slug/#anchor)`.
 const LINK_RE = /\]\((?:\.\/|docs\/)?(\d{2}-[a-z0-9-]+)\.md(#[^)]*)?\)/g;
@@ -29,16 +37,33 @@ function yamlEscape(s) {
   return '"' + s.replace(/"/g, '\\"') + '"';
 }
 
-function convert(name) {
-  const raw = readFileSync(join(DOCS_SRC, name), 'utf8');
+// Strip the leading H1 (Starlight renders the frontmatter title) and rewrite
+// intra-doc links. Shared with the parity snapshot generator so historical
+// snapshots convert identically.
+function convertBody(raw) {
   const lines = raw.split('\n');
   const h1Index = lines.findIndex((l) => /^#\s+/.test(l));
-  const title = h1Index >= 0 ? cleanTitle(lines[h1Index].replace(/^#\s+/, '')) : name.replace(/\.md$/, '');
-  // Drop the H1 (Starlight renders the frontmatter title) and a trailing blank.
   if (h1Index >= 0) {
     lines.splice(h1Index, lines[h1Index + 1]?.trim() === '' ? 2 : 1);
   }
-  const body = rewriteLinks(lines.join('\n').replace(/^\n+/, ''));
+  return rewriteLinks(lines.join('\n').replace(/^\n+/, ''));
+}
+
+// The version banner injected at the top of the live parity map.
+function parityStamp() {
+  const unreleased = IS_RELEASE ? '' : ' (unreleased)';
+  return (
+    `:::note[Version]\nParity map as of **${VERSION}**${unreleased} — tracked by git release tags. ` +
+    `See the [version history](${BASE}parity-history/) and [parity changelog](${BASE}parity-history/changelog/).\n:::\n\n`
+  );
+}
+
+function convert(name) {
+  const raw = readFileSync(join(DOCS_SRC, name), 'utf8');
+  const h1 = raw.split('\n').find((l) => /^#\s+/.test(l));
+  const title = h1 ? cleanTitle(h1.replace(/^#\s+/, '')) : name.replace(/\.md$/, '');
+  let body = convertBody(raw);
+  if (PARITY_RE.test(name)) body = parityStamp() + body;
   // Point "Edit this page" at the real source in /docs (the generated copy
   // under src/content/docs/ is git-ignored), not Starlight's default path.
   const editUrl = `https://github.com/calvinchengx/fabric-emulator/edit/main/docs/${name}`;
@@ -80,4 +105,8 @@ for (const name of names) {
   writeFileSync(join(OUT, name), convert(name));
 }
 writeIndex();
-console.log(`sync-docs: wrote ${names.length} docs + index to src/content/docs/`);
+const parity = writeParityHistory(OUT, REPO, { convertBody });
+console.log(
+  `sync-docs: wrote ${names.length} docs + index to src/content/docs/ ` +
+    `(parity ${parity.version}; ${parity.snapshots.length} tagged snapshot(s))`,
+);
