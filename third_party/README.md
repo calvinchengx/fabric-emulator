@@ -49,6 +49,6 @@ the golden truth is reviewable. Never let a reference float.
   corpus (CC-BY-4.0, pinned by reference). Golden reference for the XMLA
   protocol, rowset encodings, schema rowsets, and the TMSL/TMDL model formats.
 
-See [docs/16-semantic-model-references.md](../docs/16-semantic-model-references.md)
+See [docs/18-semantic-model-references.md](../docs/18-semantic-model-references.md)
 for how these map onto the (as-yet-unbuilt) semantic-model engine and the DAX
 oracle strategy.

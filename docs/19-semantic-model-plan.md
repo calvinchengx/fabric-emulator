@@ -5,7 +5,7 @@ Turn Power BI from 🔴 (item management only) into a real query engine: the
 SemPy + Great Expectations tutorial's *methodology* runs against the emulator.
 
 Grounded in the golden references pinned first:
-[16-semantic-model-references.md](16-semantic-model-references.md),
+[18-semantic-model-references.md](18-semantic-model-references.md),
 [third_party/powerbi-rest-swagger](../third_party/powerbi-rest-swagger/) (the
 executeQueries OpenAPI), and [e2e/semantic-model](../e2e/semantic-model/) (the
 golden model + hand-computed DAX oracle).

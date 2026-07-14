@@ -69,6 +69,8 @@ export default defineConfig({
             { slug: '15-entra-companion' },
             { slug: '16-warehouse-tds' },
             { slug: '17-parity' },
+            { slug: '18-semantic-model-references' },
+            { slug: '19-semantic-model-plan' },
           ],
         },
       ],

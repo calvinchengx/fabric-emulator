@@ -3,7 +3,7 @@
 The last golden reference to pin before any DAX/semantic-model engine work: a
 small, hand-computable model that mirrors the SemPy + Great Expectations
 tutorial, plus the exact `executeQueries` request/response the engine must
-satisfy. See [../../docs/16-semantic-model-references.md](../../docs/16-semantic-model-references.md)
+satisfy. See [../../docs/18-semantic-model-references.md](../../docs/18-semantic-model-references.md)
 for why this contract (not XMLA) is the tractable one, and
 [../../third_party/powerbi-rest-swagger/](../../third_party/powerbi-rest-swagger/)
 for the vendored golden OpenAPI.

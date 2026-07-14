@@ -49,4 +49,4 @@ engine. dbt-fabric's **table** materialization emits Fabric/Synapse
 `CREATE TABLE AS SELECT`, which vanilla SQL Server rejects, so the model here is
 a **view** (`CREATE VIEW`, standard T-SQL). This e2e proves the ODBC Driver 18 +
 FedAuth + catalog/DML path end to end; it deliberately does not claim Fabric's
-MPP T-SQL dialect (see `docs/15-parity.md`).
+MPP T-SQL dialect (see `docs/17-parity.md`).

@@ -41,7 +41,7 @@ Model definition formats (semantic-model item definition parts):
   grammar or OpenAPI exists** — DAX is a language, and its executable oracle is
   a live Analysis Services engine (Power BI Desktop / DAX Studio / SSAS /
   Azure AS), none bundleable in a pure-Go CI. See
-  [docs/16-semantic-model-references.md](../../docs/16-semantic-model-references.md).
+  [docs/18-semantic-model-references.md](../../docs/18-semantic-model-references.md).
 - **[MS-SSAS-T]** / **[MS-SSAS]** — the normative open-spec PDFs
   (learn.microsoft.com/openspecs/sql_server_protocols) for the XMLA-based
   tabular commands and the `xmla-rs:rowset` complex type. Pin the exact

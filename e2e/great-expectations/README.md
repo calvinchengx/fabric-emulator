@@ -26,7 +26,7 @@ is honest about:
 
 1. **Data source** — the tutorial's GX Fabric Data Source reads a Power BI
    semantic model over **XMLA** via native `ADOMD.NET`, which can't be pointed at
-   the emulator (see [../../docs/16-semantic-model-references.md](../../docs/16-semantic-model-references.md)).
+   the emulator (see [../../docs/18-semantic-model-references.md](../../docs/18-semantic-model-references.md)).
    Here GX reads the same shape of data from the emulator's `executeQueries` REST
    endpoint over a lakehouse-shaped model. The Expectations are identical.
 2. **Valid-zip check** — uses the built-in `expect_column_values_to_match_regex`
