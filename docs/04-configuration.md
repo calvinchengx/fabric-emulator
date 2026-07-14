@@ -25,10 +25,16 @@ false. `Retry-After` on `202` responses is fixed at 1 second.
 
 ## Real-compute sidecars
 
-Empty by default — leave them unset and the emulator handles Spark/SQL with its
-built-in fakes. Point them at running sidecars to route to real compute; see
-[real compute](14-real-compute.md) and
+Empty by default for the **bare binary** — leave them unset and unattached
+surfaces answer with an honest 501, not a fake result. Point them at running
+sidecars to route to real compute; see [real compute](14-real-compute.md) and
 [warehouse TDS](16-warehouse-tds.md) for the full setup.
+
+`docker compose up` sets `FABRIC_SPARK_AGENT_URL`/`FABRIC_SQL_TDS_ADDR`/
+`FABRIC_WAREHOUSE_SQL_URL` for you by default (via the auto-loaded
+`docker-compose.override.yml`, which also brings up the sidecars they point
+at) — the binary's own empty defaults below only apply if you run it directly,
+or opt out with `docker compose -f docker-compose.yml up`.
 
 | Env | Flag | Default | Meaning |
 |---|---|---|---|

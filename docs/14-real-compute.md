@@ -280,14 +280,27 @@ definitions round-trip through git and fabric-cicd like any other item.
 
 ## Engine weights — what actually runs, and when
 
-The emulator core never gets heavier; engines are opt-in sidecars behind
-compose profiles and flags. The default (no flags) runs nothing but the Go
-binary, and the clock-derived job behavior remains — CI's unit suite never
-waits on a JVM.
+The **binary itself** never gets heavier: engines attach via flags
+(`--spark-agent-url`, `--warehouse-sql-url`, `--sql-tds-addr`), and with none of
+them set it runs nothing but the Go process — clock-derived jobs, milliseconds,
+no JVM. That's what CI's fast unit-test job runs, and it's what a bare
+`go run`/`fabric-emulator` binary gives you.
+
+The **bundled `docker compose up`** experience is different on purpose: since
+[T5](16-warehouse-tds.md) and native Livy shipped, `docker-compose.override.yml`
+(auto-loaded alongside `docker-compose.yml`, no flag needed) wires those same
+flags to a Spark agent + SQL Server sidecar it also brings up — so the default
+containerized experience has real engines attached, not just the contract. Opt
+out to the lite pair with `docker compose -f docker-compose.yml up` (the
+override is skipped when you name the base file explicitly). CI's heavy e2e jobs
+(`livy-native`, `warehouse-tds`, the dbt suites, …) use their own per-suite
+compose files under `e2e/`, independent of this one.
 
 | Rung | What runs | Weight |
 |---|---|---|
-| Default | the Go binary only; jobs are clock-derived | milliseconds |
+| Bare binary, no flags | the Go binary only; jobs are clock-derived | milliseconds |
+| `docker compose -f docker-compose.yml up` (opt-out) | entra + fabric-emulator only, same as the bare binary | milliseconds |
+| `docker compose up` (default) | + a Spark agent + a SQL Server sidecar | ~1.5 GB+, seconds to start |
 | A1 delta-rs | Rust library in a Python wheel — no JVM | tens of MB |
 | A2/B PySpark | **full JVM Spark** (local mode or container, via Livy) | GBs, seconds to start |
 | C1 DuckDB | in-process library — no server, no JVM | a few MB |

@@ -166,4 +166,7 @@ a result. The principle is *never fake compute*, not *no compute*. See
   package to run both in one process with no network — an ergonomics option, not
   a coupling requirement.
 - Primary local composition: a sibling [`docker-compose.yml`](../docker-compose.yml)
-  brings up both, fabric pre-wired to entra's issuer/JWKS.
+  brings up both, fabric pre-wired to entra's issuer/JWKS. An auto-loaded
+  [`docker-compose.override.yml`](../docker-compose.override.yml) additionally
+  attaches real engines (Spark agent, SQL Server) by default — see
+  [14-real-compute.md](14-real-compute.md).

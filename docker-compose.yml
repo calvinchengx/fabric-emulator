@@ -34,3 +34,7 @@ services:
       FABRIC_ENTRA_JWKS_URL: "https://entra-emulator:8443/11111111-1111-1111-1111-111111111111/discovery/v2.0/keys"
       # Trust entra-emulator's self-signed cert on the internal network.
       FABRIC_ENTRA_TLS_INSECURE: "true"
+      # The image bakes in FABRIC_DATA_DIR=/data (for callers who mount a
+      # volume there); this compose file mounts none, so state is in-memory —
+      # override back to empty or the store fails to open /data (no volume).
+      FABRIC_DATA_DIR: ""

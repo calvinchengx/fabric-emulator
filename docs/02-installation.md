@@ -42,13 +42,26 @@ Distroless, multi-arch (amd64/arm64), with a built-in `HEALTHCHECK` (the
 binary probes its own `/health` — no shell in the image). State lives in
 `/data`; mount it to persist.
 
-## docker-compose — the emulator pair
-
-The repo's [`docker-compose.yml`](../docker-compose.yml) starts entra-emulator
-and fabric-emulator wired together (issuer alignment included):
+## docker-compose — the emulator pair, with real engines by default
 
 ```bash
 docker compose up
+```
+
+This starts entra-emulator + fabric-emulator wired together (issuer alignment
+included), **plus real compute attached by default**: a Spark statement-executor
+agent (native Livy sessions, notebook cell execution) and a SQL Server sidecar
+(the T-SQL/TDS warehouse surface — Warehouse, Lakehouse SQL endpoint, Fabric SQL
+Database). `docker-compose.override.yml` — auto-loaded alongside
+[`docker-compose.yml`](../docker-compose.yml), no flag needed — adds those
+sidecars and their env vars; see [14-real-compute.md](14-real-compute.md).
+
+Opt out to the lite, contract-only pair (no heavy sidecars, honest 501s on the
+Spark/SQL surfaces) by naming the base file explicitly, which makes Compose skip
+the override:
+
+```bash
+docker compose -f docker-compose.yml up
 ```
 
 This is the recommended way to run the full stack — see the

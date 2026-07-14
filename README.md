@@ -67,6 +67,13 @@ identities). A [`docker-compose.yml`](docker-compose.yml) brings up both with
 fabric pre-wired to entra's issuer. It could equally point at a real Entra
 tenant.
 
+`docker compose up` attaches **real engines by default** — a Spark agent and a
+SQL Server sidecar, via the auto-loaded
+[`docker-compose.override.yml`](docker-compose.override.yml) — so Livy
+sessions, notebook cells, and the T-SQL/TDS warehouse surface run for real out
+of the box. `docker compose -f docker-compose.yml up` opts out to the lite,
+contract-only pair.
+
 ## License
 
 Apache-2.0. Clean-room: built only from public documentation
