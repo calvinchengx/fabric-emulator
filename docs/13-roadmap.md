@@ -55,6 +55,17 @@ Makes `fabric-cicd`, git integration, and deployment pipelines run offline.
       always present on item wire shapes, result-less LROs must not advertise
       a result Location, and fabric-cicd refuses workspaces with no
       `capacityId`. Remaining: wire into CI once the GitHub remote exists.
+- [x] e2e: **Microsoft's Fabric CLI (`fab`)** drives the control plane —
+      `e2e/fabric-cli` (containerized, `fab` v1.6+): service-principal auth
+      (its MSAL flow against entra-emulator, which *is* `login.microsoftonline
+      .com` via a compose alias + `FAB_API_ENDPOINT_FABRIC` for the API), then
+      workspace + item CRUD (Notebook / SemanticModel / Report / DataPipeline /
+      Lakehouse), `ls` / `get`, and the raw `api` passthrough — all unmodified.
+      Driving it surfaced and fixed a real gap in **entra-emulator**: MSAL/ADAL
+      validate the authority via `GET /common/discovery/instance` before every
+      token, which returned 404; entra-emulator now serves it (v0.2.2). That
+      same fix removes the root cause of `azcopy`'s static-token workaround
+      (its MSAL authority validation now succeeds against the emulator).
 
 ## P2 — the identity handshake (deepest entra integration)
 

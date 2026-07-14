@@ -176,6 +176,18 @@ jobs:
       # Apache Livy server. Linux-only (JVM Spark image), like spark-a2.
       - run: python3 e2e/livy/run.py
 
+  fabric-cli:
+    name: Microsoft's Fabric CLI (fab) drives the control plane (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Microsoft's own `fab` CLI authenticates (service principal via entra-
+      # emulator + MSAL) and drives the emulator's Fabric REST control plane:
+      # workspace + item CRUD (Notebook/SemanticModel/Report/DataPipeline/
+      # Lakehouse), ls/get, and the raw api passthrough. The highest-authority
+      # borrowed oracle. Linux-only (docker compose), like the other e2es.
+      - run: python3 e2e/fabric-cli/run.py
+
   dbt-fabricspark:
     name: Microsoft's dbt-fabricspark drives Livy HC on real Spark (containerized)
     runs-on: ubuntu-latest

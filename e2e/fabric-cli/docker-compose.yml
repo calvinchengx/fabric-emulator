@@ -1,0 +1,32 @@
+# Microsoft's Fabric CLI (fab) drives the emulator. fab hardcodes https:// and
+# the MSAL authority login.microsoftonline.com, so entra-emulator IS that host
+# (PUBLIC_ORIGIN + network alias, on :443) and fabric is api.fabric.microsoft.com
+# (fab's FAB_API_ENDPOINT_FABRIC override points at it on :8443).
+services:
+  entra:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    user: "0:0"                       # bind privileged :443 (authority has no port)
+    environment:
+      PUBLIC_ORIGIN: "https://login.microsoftonline.com"
+      LOCAL_DOMAINS: "login.microsoftonline.com"
+      PORT: "443"
+      TLS_ENABLED: "true"
+    networks:
+      default:
+        aliases: ["login.microsoftonline.com"]
+
+  fabric:
+    build: { context: ../.., dockerfile: Dockerfile }
+    user: "0:0"
+    environment:
+      FABRIC_ADDR: ":443"
+      FABRIC_DATA_DIR: "/data"
+      FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0"
+      FABRIC_ENTRA_TLS_INSECURE: "true"
+    networks:
+      default:
+        aliases: ["api.fabric.microsoft.com"]
+
+  client:
+    build: { context: ., dockerfile: Dockerfile }
+    depends_on: [entra, fabric]

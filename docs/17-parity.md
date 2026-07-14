@@ -149,6 +149,7 @@ contract holds better than any assertion we could write ourselves.
 | Real client (pinned) | Surface exercised | Status |
 |---|---|---|
 | `fabric-cicd` (Microsoft) | Control plane / CI-CD publish | 🟢 `e2e/fabric-cicd` |
+| **Fabric CLI `fab`** (Microsoft) | Control plane — SPN auth (MSAL) + workspace/item CRUD (Notebook, SemanticModel, Report, DataPipeline, Lakehouse), `ls`/`get`/`api` | 🟢 `e2e/fabric-cli` |
 | `deltalake` (delta-rs) | OneLake Delta write/read | 🟢 `e2e/delta-rs` |
 | `azure-storage-file-datalake` + Blob SDK | OneLake ADLS **Gen2 DFS** + Blob | 🟢 `e2e/adls-sdk` |
 | `azcopy` (Microsoft) | OneLake Blob multi-block transfer | 🟢 `e2e/azcopy` |
