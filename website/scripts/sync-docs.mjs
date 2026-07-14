@@ -8,7 +8,7 @@
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeParityHistory, gitVersion } from './parity-versions.mjs';
+import { collectParity, writeParityHistory, versionPicker, pointUrl } from './parity-versions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, '..', '..');
@@ -16,10 +16,10 @@ const DOCS_SRC = join(REPO, 'docs');
 const OUT = join(here, '..', 'src', 'content', 'docs');
 export const BASE = '/fabric-emulator/';
 
-// The release version this build reflects (e.g. "v0.2.0" on a tag, or
-// "v0.1.0-69-g1935665" between releases). Used to stamp the parity map.
-const VERSION = gitVersion(REPO);
-const IS_RELEASE = /^v\d+\.\d+\.\d+$/.test(VERSION);
+// Parity version data (release tags + the live map), collected once. `version`
+// is e.g. "v0.2.0" on a tag or "v0.1.0-69-g1935665" between releases.
+const PARITY = collectParity(REPO);
+const IS_RELEASE = /^v\d+\.\d+\.\d+$/.test(PARITY.version);
 const PARITY_RE = /-parity\.md$/;
 
 // Rewrite `](./|docs/ NN-slug.md#anchor)` → `](/fabric-emulator/NN-slug/#anchor)`.
@@ -49,12 +49,17 @@ function convertBody(raw) {
   return rewriteLinks(lines.join('\n').replace(/^\n+/, ''));
 }
 
-// The version banner injected at the top of the live parity map.
+// The version picker + context line injected at the top of the live parity
+// map. The picker's selected option is the live map itself; choosing a release
+// navigates to that version's snapshot. When no releases carry a parity map
+// yet, versionPicker() returns "" and only the context line shows.
 function parityStamp() {
   const unreleased = IS_RELEASE ? '' : ' (unreleased)';
+  const picker = versionPicker(PARITY, pointUrl(PARITY, { latest: true }));
   return (
-    `:::note[Version]\nParity map as of **${VERSION}**${unreleased} — tracked by git release tags. ` +
-    `See the [version history](${BASE}parity-history/) and [parity changelog](${BASE}parity-history/changelog/).\n:::\n\n`
+    picker +
+    `_Parity map as of **${PARITY.version}**${unreleased} — tracked by git release tags. ` +
+    `See the [version history](${BASE}parity-history/) and [parity changelog](${BASE}parity-history/changelog/)._\n\n`
   );
 }
 
@@ -105,8 +110,8 @@ for (const name of names) {
   writeFileSync(join(OUT, name), convert(name));
 }
 writeIndex();
-const parity = writeParityHistory(OUT, REPO, { convertBody });
+const info = writeParityHistory(OUT, PARITY, { convertBody });
 console.log(
   `sync-docs: wrote ${names.length} docs + index to src/content/docs/ ` +
-    `(parity ${parity.version}; ${parity.snapshots.length} tagged snapshot(s))`,
+    `(parity ${info.version}; ${info.snapshots.length} tagged snapshot(s))`,
 );

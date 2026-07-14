@@ -105,21 +105,16 @@ function diffParity(prev, cur) {
 
 // versionSlug("v0.1.0-69-g1935665") -> "v0-1-0-69-g1935665" (route-safe).
 const versionSlug = (v) => v.replace(/[.+]/g, '-');
+const BASE = '/fabric-emulator/';
 
-/**
- * Emit parity-history/ pages. `helpers` provides { convertBody, editUrlFor }
- * from sync-docs so snapshots share the same H1-stripping + link-rewriting.
- * Returns the resolved version string so the caller can stamp the live map.
- */
-export function writeParityHistory(OUT, repo, helpers) {
+// Collect the ordered version points once — each release tag that carries a
+// parity file (oldest first), then the working-tree "latest" (maybe unreleased)
+// — with the parity markdown at each. Shared by the writer and the picker.
+export function collectParity(repo) {
   const version = gitVersion(repo);
-  const outDir = join(OUT, 'parity-history');
-  mkdirSync(outDir, { recursive: true });
-
-  // Ordered points, oldest -> newest: each release tag that carries a parity
-  // file, then the working-tree "latest" (which may be unreleased).
+  const tags = releaseTags(repo);
   const points = [];
-  for (const tag of releaseTags(repo)) {
+  for (const tag of tags) {
     const p = parityPathAt(repo, tag);
     if (p) points.push({ label: tag, released: true, md: git(repo, `show ${tag}:${p}`) });
   }
@@ -127,17 +122,67 @@ export function writeParityHistory(OUT, repo, helpers) {
   const liveMd = livePath ? git(repo, `show HEAD:${livePath}`) : '';
   const liveSlug = livePath ? livePath.replace(/^docs\//, '').replace(/\.md$/, '') : null;
   points.push({ label: version, released: isRelease(version), latest: true, md: liveMd });
+  return { version, liveSlug, points, firstTag: tags[0] ?? null };
+}
+
+// The site URL of a version's parity view: the live map for "latest", a
+// snapshot route for a tag.
+export function pointUrl(parity, pt) {
+  return pt.latest ? `${BASE}${parity.liveSlug}/` : `${BASE}parity-history/${versionSlug(pt.label)}/`;
+}
+
+const optionLabel = (pt) =>
+  pt.latest ? `Current — ${pt.label}${pt.released ? '' : ' (unreleased)'}` : pt.label;
+
+// A build-time <select> (newest first) that navigates to the chosen version's
+// parity page. Inline styles use Starlight CSS vars so it themes in light/dark;
+// the inline onchange keeps it a single self-contained block (no client script
+// to bundle). `currentUrl` marks which option is pre-selected.
+export function versionPicker(parity, currentUrl) {
+  if (parity.points.length < 2) return ''; // only "latest" exists — nothing to pick
+  const opts = parity.points
+    .slice()
+    .reverse()
+    .map((pt) => {
+      const url = pointUrl(parity, pt);
+      return `    <option value="${url}"${url === currentUrl ? ' selected' : ''}>${optionLabel(pt)}</option>`;
+    })
+    .join('\n');
+  return (
+    `<div class="parity-version-picker" style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin:0 0 1.5rem">\n` +
+    `  <label for="parity-version"><strong>Capabilities as of version:</strong></label>\n` +
+    `  <select id="parity-version" aria-label="Choose a released version of the parity map"` +
+    ` onchange="if(this.value)location.assign(this.value)"` +
+    ` style="font:inherit;padding:.35rem .55rem;border-radius:.375rem;border:1px solid var(--sl-color-gray-5);background:var(--sl-color-bg);color:var(--sl-color-text)">\n` +
+    `${opts}\n` +
+    `  </select>\n` +
+    `</div>\n\n`
+  );
+}
+
+/**
+ * Emit parity-history/ pages from a `collectParity` result. `helpers` provides
+ * { convertBody } from sync-docs so snapshots share the same H1-stripping +
+ * link-rewriting. Returns { version, snapshots, liveSlug }.
+ */
+export function writeParityHistory(OUT, parity, helpers) {
+  const { version, liveSlug, points } = parity;
+  const outDir = join(OUT, 'parity-history');
+  mkdirSync(outDir, { recursive: true });
 
   // Snapshot page per released tag (the "latest" point links to the live map
-  // instead of duplicating it).
+  // instead of duplicating it). Each opens with the version picker.
   for (const pt of points) {
     if (pt.latest) continue;
     const slug = versionSlug(pt.label);
     const body = helpers.convertBody(pt.md);
     const fm = `---\ntitle: ${JSON.stringify(`Parity — ${pt.label}`)}\neditUrl: false\nprev: false\nnext: false\n---\n\n`;
+    const picker = versionPicker(parity, pointUrl(parity, pt));
     const banner = `:::note[Historical snapshot]\nThe feature-parity map as of release **${pt.label}**. The current map is on the [Parity page](/fabric-emulator/${liveSlug}/).\n:::\n\n`;
-    writeFileSync(join(outDir, `${slug}.md`), fm + banner + body);
+    writeFileSync(join(outDir, `${slug}.md`), fm + picker + banner + body);
   }
+
+  const liveMd = points.find((p) => p.latest)?.md ?? '';
 
   // Changelog: diff consecutive points.
   const cl = [];
@@ -167,7 +212,7 @@ export function writeParityHistory(OUT, repo, helpers) {
     (liveTally ? `**Current (${version}):** ${liveTally}.\n\n` : '') +
     (cl.length
       ? cl.join('\n')
-      : `_No tagged release includes the parity map yet — the map was introduced after ${releaseTags(repo)[0] ?? 'the first tag'}. ` +
+      : `_No tagged release includes the parity map yet — the map was introduced after ${parity.firstTag ?? 'the first tag'}. ` +
         `The first entry here appears when a release ships that carries it._\n`);
   writeFileSync(join(outDir, 'changelog.md'), clFm + clBody);
 
@@ -187,7 +232,7 @@ export function writeParityHistory(OUT, repo, helpers) {
     '\n\n' +
     (releasedPoints.length
       ? ''
-      : `:::note\nOnly the unreleased tip carries a parity map so far (it was added after \`${releaseTags(repo)[0] ?? 'v0.1.0'}\`). ` +
+      : `:::note\nOnly the unreleased tip carries a parity map so far (it was added after \`${parity.firstTag ?? 'v0.1.0'}\`). ` +
         `Each future \`vX.Y.Z\` release will appear above automatically.\n:::\n`);
   writeFileSync(join(outDir, 'index.md'), idxFm + idxBody);
 
