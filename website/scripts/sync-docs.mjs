@@ -20,10 +20,15 @@ export const BASE = '/fabric-emulator/';
 // is e.g. "v0.2.0" on a tag or "v0.1.0-69-g1935665" between releases.
 const PARITY = collectParity(REPO);
 const IS_RELEASE = /^v\d+\.\d+\.\d+$/.test(PARITY.version);
-const PARITY_RE = /-parity\.md$/;
+// The parity map is the one doc without a reading-order number: it is a living
+// reference rather than a chapter, and its URL is just /parity/.
+const PARITY_RE = /(^|[/-])parity\.md$/;
+// Docs are `NN-name.md` chapters, plus the un-numbered parity map.
+const DOC_RE = /^(\d{2}-.*|parity)\.md$/;
 
-// Rewrite `](./|docs/ NN-slug.md#anchor)` → `](/fabric-emulator/NN-slug/#anchor)`.
-const LINK_RE = /\]\((?:\.\/|docs\/)?(\d{2}-[a-z0-9-]+)\.md(#[^)]*)?\)/g;
+// Rewrite `](./|docs/ NN-slug.md#anchor)` → `](/fabric-emulator/NN-slug/#anchor)`,
+// and the un-numbered `parity.md` the same way.
+const LINK_RE = /\]\((?:\.\/|docs\/)?(\d{2}-[a-z0-9-]+|parity)\.md(#[^)]*)?\)/g;
 function rewriteLinks(md) {
   return md.replace(LINK_RE, (_m, slug, anchor) => `](${BASE}${slug}/${anchor ?? ''})`);
 }
@@ -105,7 +110,7 @@ function writeIndex() {
 
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
-const names = readdirSync(DOCS_SRC).filter((n) => /^\d{2}-.*\.md$/.test(n)).sort();
+const names = readdirSync(DOCS_SRC).filter((n) => DOC_RE.test(n)).sort();
 for (const name of names) {
   writeFileSync(join(OUT, name), convert(name));
 }
