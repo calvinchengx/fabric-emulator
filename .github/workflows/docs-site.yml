@@ -3,6 +3,9 @@ name: Docs site
 on:
   push:
     branches: [main]
+    # Release tags also rebuild the docs so the parity map re-stamps with the
+    # clean vX.Y.Z version and a new per-release snapshot appears.
+    tags: ['v*']
     paths:
       - 'docs/**'
       - 'website/**'
@@ -28,7 +31,12 @@ jobs:
     name: Build Starlight site
     runs-on: ubuntu-latest
     steps:
+      # Full history + tags: the parity-version generator reads the map at each
+      # `v*` tag (git show) and stamps the live map from `git describe`.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
