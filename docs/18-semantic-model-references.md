@@ -4,7 +4,7 @@ Before any semantic-model / DAX work, this pins the **golden references** we'd
 build and validate against, and — the crux — records *where an executable
 oracle exists and where it doesn't*. That split decides the whole approach.
 
-See [17-parity.md](17-parity.md) for why Power BI is 🔴 today (item management
+See [parity.md](parity.md) for why Power BI is 🔴 today (item management
 only, no modeling engine), and [third_party/](../third_party/) for the vendored
 references and the provenance pattern.
 

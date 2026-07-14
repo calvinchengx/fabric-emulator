@@ -12,6 +12,9 @@ export default defineConfig({
     '/02-api-surface/': '/fabric-emulator/07-control-plane-api/',
     '/03-roadmap/': '/fabric-emulator/13-roadmap/',
     '/04-real-compute/': '/fabric-emulator/14-real-compute/',
+    // The parity map dropped its reading-order number (it's a living
+    // reference, not a chapter) and now lives at /parity/.
+    '/17-parity/': '/fabric-emulator/parity/',
   },
   // remarkMermaid turns ```mermaid fences into <pre class="mermaid"> before
   // Expressive Code sees them; src/components/Head.astro renders them client-side.
@@ -85,7 +88,7 @@ export default defineConfig({
           // real Microsoft Fabric"); in this group it just needs to say Parity.
           label: 'Parity',
           items: [
-            { slug: '17-parity', label: 'Parity' },
+            { slug: 'parity', label: 'Parity' },
             { slug: 'parity-history' },
             { slug: 'parity-history/changelog' },
           ],

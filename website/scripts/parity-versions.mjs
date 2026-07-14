@@ -13,10 +13,12 @@
 // that includes it, the only "version" is the unreleased tip. Everything below
 // degrades gracefully to that single point.
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const PARITY_RE = /-parity\.md$/;
+// The parity doc is `docs/parity.md` today, but older tags carry it numbered
+// (`docs/17-parity.md`), so snapshots of those tags must still match.
+const PARITY_RE = /(^|[/-])parity\.md$/;
 
 function git(repo, args) {
   return execSync(`git ${args}`, { cwd: repo, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
@@ -151,9 +153,20 @@ export function collectParity(repo) {
       points.push({ label: tag, released: true, reconstructed: true, md: readFileSync(backfill, 'utf8') });
     }
   }
-  const livePath = parityPathAt(repo, 'HEAD');
-  const liveMd = livePath ? git(repo, `show HEAD:${livePath}`) : '';
-  const liveSlug = livePath ? livePath.replace(/^docs\//, '').replace(/\.md$/, '') : null;
+  // The live map comes from the working tree, not `git show HEAD:` — the rest
+  // of sync-docs renders /docs from disk, so reading HEAD here would disagree
+  // with the page actually being built whenever the doc has uncommitted edits
+  // (e.g. `astro dev` while editing it, or a rename not yet committed). In CI
+  // the two are identical anyway.
+  const docsDir = join(repo, 'docs');
+  let liveName = null;
+  try {
+    liveName = readdirSync(docsDir).find((n) => PARITY_RE.test(n)) ?? null;
+  } catch {
+    /* no docs dir */
+  }
+  const liveMd = liveName ? readFileSync(join(docsDir, liveName), 'utf8') : '';
+  const liveSlug = liveName ? liveName.replace(/\.md$/, '') : null;
   points.push({ label: version, released: isRelease(version), latest: true, md: liveMd });
   return { version, liveSlug, points, firstTag: tags[0] ?? null };
 }
