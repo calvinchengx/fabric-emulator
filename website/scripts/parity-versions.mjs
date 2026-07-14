@@ -13,7 +13,7 @@
 // that includes it, the only "version" is the unreleased tip. Everything below
 // degrades gracefully to that single point.
 import { execSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const PARITY_RE = /-parity\.md$/;
@@ -25,15 +25,23 @@ function git(repo, args) {
 // The version string a build reflects, e.g. "v0.2.0" on a tag or
 // "v0.1.0-69-g1935665" between releases. Falls back to a short sha, then "dev".
 export function gitVersion(repo) {
-  for (const cmd of ['describe --tags --always', 'rev-parse --short HEAD']) {
-    try {
-      const v = git(repo, cmd).trim();
-      if (v) return v;
-    } catch {
-      /* not a git checkout / no tags — try the next */
-    }
+  // Sitting exactly on a release tag → that tag ("v0.2.0").
+  try {
+    const exact = git(repo, 'describe --tags --exact-match --match v*').trim();
+    if (exact) return exact;
+  } catch {
+    /* not on a release tag — fall through to the moving tip */
   }
-  return 'dev';
+  // Otherwise this is the moving tip, not a version: "latest-<short sha>".
+  // (`git describe`'s "v0.2.0-2-gb1e3520" reads like a release that doesn't
+  // exist; "latest-b1e3520" says plainly what it is.)
+  try {
+    const sha = git(repo, 'rev-parse --short HEAD').trim();
+    if (sha) return `latest-${sha}`;
+  } catch {
+    /* not a git checkout */
+  }
+  return 'latest';
 }
 
 // True for "v1.2.3" style strings straight off a tag (no -N-g<sha> suffix).
@@ -121,8 +129,6 @@ export function collectParity(repo) {
   }
   const points = [];
   for (const tag of tags) {
-    const p = parityPathAt(repo, tag);
-    if (!p) continue;
     // Skip a tag that IS the current commit: the live map already represents
     // it, so avoid a redundant "Current vX" + "vX snapshot" pair right at the
     // release. The snapshot appears once main advances past the tag.
@@ -131,7 +137,19 @@ export function collectParity(repo) {
     } catch {
       /* ignore an unreadable tag */
     }
-    points.push({ label: tag, released: true, md: git(repo, `show ${tag}:${p}`) });
+    const p = parityPathAt(repo, tag);
+    if (p) {
+      points.push({ label: tag, released: true, md: git(repo, `show ${tag}:${p}`) });
+      continue;
+    }
+    // The tag predates the parity map (it was added after v0.1.0), and a tag is
+    // immutable — so a map for it can only be reconstructed after the fact.
+    // Fall back to a hand-authored back-fill committed today, flagged so the
+    // page says plainly that it is a retrospective reconstruction.
+    const backfill = join(repo, 'docs', 'parity-snapshots', `${tag}.md`);
+    if (existsSync(backfill)) {
+      points.push({ label: tag, released: true, reconstructed: true, md: readFileSync(backfill, 'utf8') });
+    }
   }
   const livePath = parityPathAt(repo, 'HEAD');
   const liveMd = livePath ? git(repo, `show HEAD:${livePath}`) : '';
@@ -147,7 +165,7 @@ export function pointUrl(parity, pt) {
 }
 
 const optionLabel = (pt) =>
-  pt.latest ? `Current — ${pt.label}${pt.released ? '' : ' (unreleased)'}` : pt.label;
+  pt.latest ? `Current — ${pt.label}` : pt.label + (pt.reconstructed ? ' (reconstructed)' : '');
 
 // A build-time <select> (newest first) that navigates to the chosen version's
 // parity page. Inline styles use Starlight CSS vars so it themes in light/dark;
@@ -193,7 +211,9 @@ export function writeParityHistory(OUT, parity, helpers) {
     const body = helpers.convertBody(pt.md);
     const fm = `---\ntitle: ${JSON.stringify(`Parity — ${pt.label}`)}\neditUrl: false\nprev: false\nnext: false\n---\n\n`;
     const picker = versionPicker(parity, pointUrl(parity, pt));
-    const banner = `:::note[Historical snapshot]\nThe feature-parity map as of release **${pt.label}**. The current map is on the [Parity page](/fabric-emulator/${liveSlug}/).\n:::\n\n`;
+    const banner = pt.reconstructed
+      ? `:::caution[Reconstructed snapshot]\n**${pt.label}** shipped before the parity map existed, and a git tag is immutable — so this map was **written after the fact**, from that tag's roadmap, e2e matrix, and source tree. It is our best retrospective reading of what was real at **${pt.label}**, not a document published at the time. The current map is on the [Parity page](/fabric-emulator/${liveSlug}/).\n:::\n\n`
+      : `:::note[Historical snapshot]\nThe feature-parity map as of release **${pt.label}**. The current map is on the [Parity page](/fabric-emulator/${liveSlug}/).\n:::\n\n`;
     writeFileSync(join(outDir, `${slug}.md`), fm + picker + banner + body);
   }
 
@@ -205,7 +225,7 @@ export function writeParityHistory(OUT, parity, helpers) {
     const a = parseParity(points[i - 1].md);
     const b = parseParity(points[i].md);
     const { added, removed, changed } = diffParity(a, b);
-    const to = points[i].label + (points[i].latest && !points[i].released ? ' (unreleased)' : '');
+    const to = points[i].label;
     cl.push(`## ${points[i - 1].label} → ${to}\n`);
     if (!added.length && !removed.length && !changed.length) {
       cl.push('_No parity changes._\n');
@@ -234,11 +254,15 @@ export function writeParityHistory(OUT, parity, helpers) {
   // Index: the live map + every snapshot.
   const idxFm = `---\ntitle: Parity history\neditUrl: false\n---\n\n`;
   const rows = [
-    `- **[Current — ${version}${isRelease(version) ? '' : ' (unreleased)'}](/fabric-emulator/${liveSlug}/)** — the live map on \`main\``,
+    `- **[Current — ${version}](/fabric-emulator/${liveSlug}/)** — the live map on \`main\``,
     ...releasedPoints
       .slice()
       .reverse()
-      .map((p) => `- [${p.label}](/fabric-emulator/parity-history/${versionSlug(p.label)}/) — snapshot at release`),
+      .map(
+        (p) =>
+          `- [${p.label}](/fabric-emulator/parity-history/${versionSlug(p.label)}/) — ` +
+          (p.reconstructed ? 'reconstructed after the fact (predates the map)' : 'snapshot at release'),
+      ),
   ];
   const idxBody =
     `Versions of the [feature-parity map](/fabric-emulator/${liveSlug}/), tracked by git release tags. ` +
