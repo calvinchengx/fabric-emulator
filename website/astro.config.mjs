@@ -26,10 +26,13 @@ export default defineConfig({
       title: 'Fabric Emulator',
       components: {
         Head: './src/components/Head.astro',
-        // Top nav: the parity version picker, rendered beside the theme select
-        // (Starlight's Header has no slot, so this is the light-touch way in).
-        // The picker shows itself only on the parity pages.
-        ThemeSelect: './src/components/ThemeSelect.astro',
+        // Top nav: the parity version picker, rendered beside the search box.
+        // Search occupies the header's un-gated middle slot, so the picker stays
+        // in the top bar at every width (the right-group that holds ThemeSelect
+        // is `sl-hidden md:sl-flex`, so a picker there vanishes on mobile and
+        // resurfaces in the mobile menu footer). The picker shows itself only on
+        // the parity pages.
+        Search: './src/components/Search.astro',
       },
       description:
         'A local emulator of the Microsoft Fabric control plane — workspaces, items, RBAC, git integration, and long-running operations — that validates Entra bearer tokens.',
