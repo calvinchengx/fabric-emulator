@@ -20,24 +20,25 @@ attached** (the [override file](../docker-compose.override.yml) auto-loads):
 | **entra-emulator** | `https://localhost:8443` | the STS — issues every token |
 | **azure-keyvault-emulator** | `https://localhost:8444` | Key Vault data plane (secrets, AKV references, `notebookutils.credentials.getSecret`) |
 | **fabric-emulator** | `https://localhost:9443` | Fabric control plane + OneLake + portal |
-| *spark-agent* | — | statement executor behind native Livy / `RunNotebook` |
+| *sail* | `sc://localhost:50051` | [LakeSail's Sail](20-lakesail-engine.md) — the Spark engine (Rust Spark Connect, **no JVM**) |
+| *spark-agent* | — | statement executor behind native Livy / `RunNotebook`, runs on Sail |
 | *sqlserver* | `:1433` via fabric | the T-SQL/TDS warehouse surface |
 
 keyvault and fabric both validate bearers against entra's JWKS — the same
 trust relationships as production Azure. Everything serves self-signed TLS,
 hence `-k` below.
 
-**The no-JVM variant — [LakeSail's Sail](20-lakesail-engine.md).** The Spark
-engine is being migrated from JVM Spark to Sail, a Rust Spark-Connect server.
-One command runs the same stack on Sail today:
+**The engine is [LakeSail's Sail](20-lakesail-engine.md)** — there is no JVM
+anywhere in the stack. Sessions start in milliseconds, Delta is native Rust,
+and the same stack is available with explicit file flags (naming `-f` files
+skips the auto-loaded override, so use the compute overlay to keep the full
+stack):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.compute.yml up
 ```
 
-Same family, same Livy/`RunNotebook`/dbt/warehouse surfaces — but the engine
-is Sail (`sc://localhost:50051`), sessions start in milliseconds, and any
-PySpark client connects directly with no JVM installed:
+Any PySpark client connects directly with no JVM installed:
 
 ```python
 # pip install "pyspark-client==4.2.0"   (the thin Connect client — no JVM)
