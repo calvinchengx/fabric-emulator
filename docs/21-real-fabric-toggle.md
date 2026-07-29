@@ -40,6 +40,45 @@ Ids are the one thing that can never match across targets — so the contract
 is **name-based**: user code holds workspace/item display names; the resolver
 translates to GUIDs per target.
 
+## The family — trust direction constrains the toggle
+
+Tokens flow one way: entra (or real AAD) **issues**; fabric and keyvault only
+**validate**. That means the toggle is not three independent switches — only
+chains rooted in a single issuer are coherent:
+
+| Combination | Works? | Why |
+|---|---|---|
+| All-emulator | ✅ | the default family — one trust chain rooted in entra-emulator |
+| All-real | ✅ | real AAD issues; real Fabric + real Key Vault validate |
+| Real AAD + emulated fabric/keyvault (**hybrid**) | ✅ | both emulators already accept any configured issuer — `FABRIC_ENTRA_ISSUER` / `KV_ENTRA_ISSUER` can point at `login.microsoftonline.com/{tenant}` today |
+| Emulated entra + real fabric/keyvault | ❌ | real Microsoft services will never trust the emulator's JWKS |
+
+So `FABRIC_TARGET` flips the whole chain; the one supported refinement is a
+**hybrid profile** (`FABRIC_TARGET=emulator` + `AUTH_TARGET=real`) for teams
+with a real AAD app registration but no Fabric capacity.
+
+Per member, "real" resolves as:
+
+- **entra-emulator → real Entra ID.** azure-identity *is* the toggle: the
+  resolver builds `ClientSecretCredential(..., authority=<entra-emulator>)`
+  with the seeded SP in emulator mode, and `DefaultAzureCredential()` (real
+  authority, real tenant, az-CLI/managed-identity chains) in real mode. User
+  code just receives "a credential".
+- **azure-keyvault-emulator → the user's actual vault.** Key Vault's
+  **challenge-based auth does the discovery**: the SDK hits the vault, reads
+  the 401 `WWW-Authenticate` challenge naming the authority, and follows it —
+  the AKV emulator implements that same challenge advertising entra-emulator's
+  authority, so identical `SecretClient(vault_url, credential)` code walks
+  either chain. The resolver supplies only the **vault URL** per target
+  (`https://localhost:8444` and its default vault vs
+  `https://{name}.vault.azure.net`). Vault **names** are the cross-target
+  contract, exactly like workspace names; `AzureKeyVaultReference`
+  connections carry the same shape on both sides.
+- **Seeded values never leak into real mode.** Tenant `11111111-…`, the
+  daemon SP, and `daemon-app-secret` are emulator-mode defaults only; in real
+  mode the resolver requires explicit `AZURE_*` values and refuses to fall
+  back to seeds, so dev credentials cannot be aimed at production.
+
 ## Deliverable A — `fabric_target` (Python helper, `python/fabric_target/`)
 
 Small sibling of the `notebookutils` shim, same env-driven style:
