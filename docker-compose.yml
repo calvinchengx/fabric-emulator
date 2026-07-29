@@ -1,7 +1,18 @@
-# Brings up the emulator pair: entra-emulator issues tokens, fabric-emulator
-# validates them against entra's JWKS — the same trust relationship as real
-# Fabric ↔ Entra. Point FABRIC_ENTRA_ISSUER at a real tenant instead and
-# nothing else changes.
+# Brings up the emulator FAMILY with one command:
+#
+#   docker compose up
+#     entra-emulator    :8443  issues every token (the STS)
+#     keyvault-emulator :8444  Azure Key Vault data plane (secrets, AKV refs)
+#     fabric-emulator   :9443  the Fabric control plane + OneLake
+#
+#   docker compose -f docker-compose.yml -f docker-compose.compute.yml up
+#     …adds LakeSail's Sail (Rust Spark-Connect engine, no JVM) + the Livy
+#     statement agent, so Livy sessions, RunNotebook, dbt, and any PySpark
+#     client (sc://localhost:50051) run against a real engine.
+#
+# entra issues tokens; keyvault and fabric validate them against entra's JWKS —
+# the same trust relationships as production Azure. Point FABRIC_ENTRA_ISSUER
+# at a real tenant instead and nothing else changes.
 #
 # Issuer alignment matters: tokens carry iss = <entra login origin>/<tenant>/v2.0,
 # so entra must ADVERTISE the origin fabric validates against. On the compose
@@ -19,6 +30,18 @@ services:
       interval: 5s
       timeout: 2s
       retries: 10
+
+  keyvault-emulator:
+    image: ghcr.io/calvinchengx/azure-keyvault-emulator:latest
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    ports:
+      - "8444:8444" # Key Vault data plane (AKV references, notebookutils.credentials.getSecret)
+    environment:
+      # Same trust wiring as fabric: validate bearers against entra's JWKS.
+      KV_ENTRA_ISSUER: "https://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      KV_ENTRA_TLS_INSECURE: "true"
 
   fabric-emulator:
     image: ghcr.io/calvinchengx/fabric-emulator:latest

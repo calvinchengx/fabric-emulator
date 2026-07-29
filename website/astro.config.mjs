@@ -80,6 +80,7 @@ export default defineConfig({
             { slug: '16-warehouse-tds' },
             { slug: '18-semantic-model-references' },
             { slug: '19-semantic-model-plan' },
+            { slug: '21-real-fabric-toggle' },
           ],
         },
         {

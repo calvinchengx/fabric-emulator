@@ -1,0 +1,133 @@
+# 21 — Design: one toggle between fabric-emulator and real Fabric
+
+**Status: design.** Goal: a user's Python functionality — SDK calls,
+`fabric-cicd` pipelines, notebooks on the `notebookutils` shim, dbt projects,
+plain `requests` — runs against **either** the local emulator family **or**
+the real Fabric service, switched by **one setting**, with zero code edits.
+
+## Why this is nearly free
+
+Everything this project did to run *real clients unmodified against the
+emulator* is exactly the machinery a toggle needs, pointed the other way:
+
+- Every client is already parameterized by an **API root**
+  (`FABRIC_API_ROOT_URL` / `DEFAULT_API_ROOT_URL`), a **token authority +
+  credential** (azure-identity), a **storage endpoint** (OneLake), and a
+  **vault URL** — because that's how the e2es aim them at localhost.
+- The emulator deliberately speaks v2.0/JWKS/challenge auth exactly like
+  production, so azure-identity, MSAL, and the SDKs cannot tell the
+  difference — only the endpoints and the credential values change.
+
+So the toggle is not an emulation feature; it is **one resolver** that turns a
+target name into a coherent set of endpoints + credentials, plus guardrails
+for the places the two worlds genuinely differ.
+
+## The contract
+
+One switch: `FABRIC_TARGET=emulator | real` (default `emulator`).
+
+| Resolved value | `emulator` (zero-config defaults) | `real` (from standard env) |
+|---|---|---|
+| API root | `https://localhost:9443/v1` | `https://api.fabric.microsoft.com/v1` |
+| Token authority | entra-emulator (`https://localhost:8443/{tenant}`) | `https://login.microsoftonline.com/{AZURE_TENANT_ID}` |
+| Credential | seeded daemon SP (`cccccccc-…0002` / `daemon-app-secret`) | `AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`, or `DefaultAzureCredential` (az CLI, managed identity, browser) |
+| OneLake | `https://localhost:9443` + Host/`--resolve` (or `az://` via Sail) | `https://onelake.dfs.fabric.microsoft.com` |
+| Key Vault | azure-keyvault-emulator (`https://localhost:8444`) | the user's real vault URI |
+| TLS verify | off (self-signed family certs) | on |
+| Workspace | by id **or name** against the emulator | **by name** (`FABRIC_WORKSPACE`), resolved to the real GUID at startup |
+
+Ids are the one thing that can never match across targets — so the contract
+is **name-based**: user code holds workspace/item display names; the resolver
+translates to GUIDs per target.
+
+## Deliverable A — `fabric_target` (Python helper, `python/fabric_target/`)
+
+Small sibling of the `notebookutils` shim, same env-driven style:
+
+```python
+from fabric_target import target
+
+t = target()                     # reads FABRIC_TARGET, resolves the profile
+t.credential                     # azure.identity credential for this target
+t.session()                      # requests.Session: base URL, bearer auth,
+                                 # verify flag, retry-on-429 — same object
+                                 # whichever target is active
+ws = t.workspace("analytics")    # name → id, either target
+t.session().post(f"/workspaces/{ws.id}/items", json={...})
+
+t.onelake                        # adlfs/azure-storage-blob-ready endpoint + credential
+t.vault_url                      # keyvault base for this target
+t.emulator_only("clock freeze")  # raises TargetError under FABRIC_TARGET=real
+```
+
+Implementation notes: authority override is plain azure-identity
+(`ClientSecretCredential(..., authority=...)` — the e2es already prove entra
+works as an authority); `verify=False` only in emulator mode; the profile is
+resolved once and printable (`python -m fabric_target show`).
+
+## Deliverable B — env emitter (non-Python tools, one command)
+
+The same resolver, exported for tools that only read env — `fabric-cicd`,
+dbt profiles, azcopy, the `notebookutils` shim, `fab` CLI:
+
+```bash
+eval "$(python -m fabric_target env real)"      # or: emulator
+```
+
+Emits the full coherent set: `FABRIC_API_ROOT_URL`, `DEFAULT_API_ROOT_URL`,
+`AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/…, `NOTEBOOKUTILS_*` (mapped onto real
+endpoints in real mode), `REQUESTS_CA_BUNDLE`/`SSL_CERT_FILE` handling, and —
+emulator mode only — the DNS-pin guidance for hostname-strict tools
+([05-tls-and-hosts.md](05-tls-and-hosts.md)).
+
+## Guardrails — where the worlds differ on purpose
+
+The toggle must make these differences *loud*, not paper over them:
+
+1. **Emulator-only surfaces hard-fail in real mode.** `/_emulator/*` (clock,
+   faults, portal data), forged tokens, seeded principals: the helper's
+   `emulator_only()` raises `TargetError("clock control does not exist on
+   real Fabric")` rather than letting a test silently no-op.
+2. **Time is real.** No frozen clock: LROs poll for real minutes; the helper's
+   `session()` bakes in `Retry-After`-honoring polling either way, so code
+   written against the emulator's instant LROs still behaves.
+3. **Real mode costs money and touches real state.** Destructive verbs
+   (workspace/item DELETE) require `FABRIC_TARGET_ALLOW_DESTRUCTIVE=1` in
+   real mode; the resolver refuses to start in real mode without an explicit
+   `FABRIC_WORKSPACE` scope, so nothing ever enumerates a whole tenant.
+4. **Throttling exists.** 429/`Retry-After` handling is on by default in the
+   session (the emulator can rehearse it via fault injection).
+5. **RBAC is real.** The SP needs actual workspace roles; the resolver's
+   startup probe (`GET /workspaces` + the scoped workspace) fails fast with
+   a "grant your SP access" message instead of 403s mid-run.
+
+## Verification — the same tests, both targets
+
+A pytest marker ties it together:
+
+```python
+@pytest.mark.target          # runs under either FABRIC_TARGET
+def test_publish_roundtrip(t): ...
+```
+
+- **CI (every push):** the marked suite runs with `FABRIC_TARGET=emulator` —
+  free, deterministic, offline.
+- **Nightly / manual (`workflow_dispatch`):** the same suite with
+  `FABRIC_TARGET=real`, gated on repo secrets (`AZURE_TENANT_ID`, SP creds,
+  a dedicated throwaway workspace). Every divergence found feeds the
+  [parity map](../parity.md) — the toggle doubles as a **fidelity oracle**:
+  the emulator's behavior is continuously diffed against the real service.
+
+## Phasing
+
+| Phase | Lands | Proves |
+|---|---|---|
+| **T0** | `python/fabric_target/` resolver + `env` emitter + this doc + quickstart section | `fabric-cicd` publishes to emulator and to a real workspace by flipping one env var |
+| **T1** | pytest `target` marker + the secret-gated `real-fabric` workflow | same suite green on both; divergences filed against the parity map |
+| **T2** | `notebookutils` real mode (`NOTEBOOKUTILS_*` resolved from the real profile: real OneLake, real vault, `DefaultAzureCredential`) | notebook code runs unchanged locally *and* as a genuine Fabric notebook |
+
+## Non-goals
+
+Proxying or recording real Fabric traffic through the emulator, translating
+ids between targets persistently (names are the contract), emulating tenant
+onboarding/capacity purchase, and hiding real-mode latency or cost.

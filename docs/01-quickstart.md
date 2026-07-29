@@ -4,7 +4,7 @@ Five minutes from nothing to a workspace, an item, and a file in OneLake — no
 tenant, no capacity. Every value below is a **seeded dev default** from
 entra-emulator; nothing needs registering.
 
-## 1. Start the pair
+## 1. Start the family — one command
 
 ```bash
 git clone https://github.com/calvinchengx/fabric-emulator
@@ -12,10 +12,46 @@ cd fabric-emulator
 docker compose up
 ```
 
-This brings up **entra-emulator** on `https://localhost:8443` (issues tokens)
-and **fabric-emulator** on `https://localhost:9443` (validates them against
-entra's JWKS — exactly as real Fabric validates against Entra). Both serve
-self-signed TLS, hence `-k` below.
+That single command brings up the whole emulator family **with real compute
+attached** (the [override file](../docker-compose.override.yml) auto-loads):
+
+| Service | Port | Role |
+|---|---|---|
+| **entra-emulator** | `https://localhost:8443` | the STS — issues every token |
+| **azure-keyvault-emulator** | `https://localhost:8444` | Key Vault data plane (secrets, AKV references, `notebookutils.credentials.getSecret`) |
+| **fabric-emulator** | `https://localhost:9443` | Fabric control plane + OneLake + portal |
+| *spark-agent* | — | statement executor behind native Livy / `RunNotebook` |
+| *sqlserver* | `:1433` via fabric | the T-SQL/TDS warehouse surface |
+
+keyvault and fabric both validate bearers against entra's JWKS — the same
+trust relationships as production Azure. Everything serves self-signed TLS,
+hence `-k` below.
+
+**The no-JVM variant — [LakeSail's Sail](20-lakesail-engine.md).** The Spark
+engine is being migrated from JVM Spark to Sail, a Rust Spark-Connect server.
+One command runs the same stack on Sail today:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.compute.yml up
+```
+
+Same family, same Livy/`RunNotebook`/dbt/warehouse surfaces — but the engine
+is Sail (`sc://localhost:50051`), sessions start in milliseconds, and any
+PySpark client connects directly with no JVM installed:
+
+```python
+# pip install "pyspark-client==4.2.0"   (the thin Connect client — no JVM)
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.remote("sc://localhost:50051").getOrCreate()
+spark.sql("SELECT 1").show()
+```
+
+(Once the [S1–S3 migration](20-lakesail-engine.md) lands, Sail becomes the
+default engine and the plain `docker compose up` is the only command.)
+
+**Contract-only, no engines:** `docker compose -f docker-compose.yml up`
+(naming the file skips the override) — lightest start; Spark/SQL surfaces
+answer with honest 501s.
 
 Without Docker: run entra-emulator locally (see its
 [quickstart](https://calvinchengx.github.io/entra-emulator/01-quickstart/)),

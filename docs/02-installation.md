@@ -42,19 +42,28 @@ Distroless, multi-arch (amd64/arm64), with a built-in `HEALTHCHECK` (the
 binary probes its own `/health` — no shell in the image). State lives in
 `/data`; mount it to persist.
 
-## docker-compose — the emulator pair, with real engines by default
+## docker-compose — the emulator family, with real engines by default
 
 ```bash
 docker compose up
 ```
 
-This starts entra-emulator + fabric-emulator wired together (issuer alignment
-included), **plus real compute attached by default**: a Spark statement-executor
-agent (native Livy sessions, notebook cell execution) and a SQL Server sidecar
-(the T-SQL/TDS warehouse surface — Warehouse, Lakehouse SQL endpoint, Fabric SQL
-Database). `docker-compose.override.yml` — auto-loaded alongside
-[`docker-compose.yml`](../docker-compose.yml), no flag needed — adds those
-sidecars and their env vars; see [14-real-compute.md](14-real-compute.md).
+This starts the **whole family** wired together (issuer alignment included):
+entra-emulator (`:8443`), azure-keyvault-emulator (`:8444`), and
+fabric-emulator (`:9443`) — **plus real compute attached by default**: a Spark
+statement-executor agent (native Livy sessions, notebook cell execution) and a
+SQL Server sidecar (the T-SQL/TDS warehouse surface — Warehouse, Lakehouse SQL
+endpoint, Fabric SQL Database). `docker-compose.override.yml` — auto-loaded
+alongside [`docker-compose.yml`](../docker-compose.yml), no flag needed — adds
+those sidecars and their env vars; see [14-real-compute.md](14-real-compute.md).
+
+To run the same stack on **LakeSail's Sail** (Rust Spark-Connect engine — no
+JVM anywhere; the engine JVM Spark is being migrated to, see
+[20-lakesail-engine.md](20-lakesail-engine.md)):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.compute.yml up
+```
 
 Opt out to the lite, contract-only pair (no heavy sidecars, honest 501s on the
 Spark/SQL surfaces) by naming the base file explicitly, which makes Compose skip

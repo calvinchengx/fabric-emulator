@@ -53,7 +53,7 @@ use.
 - **In-process (Go):** `server.New(cfg, …)` + `httptest` — the emulator's own
   integration tests run this way, including with a real in-process
   entra-emulator minting tokens. No network, no fixtures.
-- **Over HTTP (any language):** start the pair with docker-compose, mint
+- **Over HTTP (any language):** start the family with docker-compose, mint
   seeded tokens ([quickstart](01-quickstart.md)), drive the API. `-data-dir`
   empty means each run starts clean.
 - **Real tools unmodified:** see
