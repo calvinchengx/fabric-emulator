@@ -23,13 +23,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from pyspark.sql import SparkSession
 
-spark = SparkSession.builder.appName("livy-agent").getOrCreate()
+# SPARK_REMOTE (e.g. sc://sail:50051) makes this a Spark Connect client —
+# the Sail/no-JVM path (docs/20-lakesail-engine.md). Unset = classic JVM.
+import os
+_b = SparkSession.builder.appName("livy-agent")
+spark = (_b.remote(os.environ["SPARK_REMOTE"]) if os.environ.get("SPARK_REMOTE") else _b).getOrCreate()
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 
 
 def ns(session):
     if session not in namespaces:
-        namespaces[session] = {"spark": spark, "sc": spark.sparkContext}
+        namespaces[session] = {"spark": spark}
+        try:
+            # JVM sessions only — Spark Connect (Sail) has no sparkContext.
+            namespaces[session]["sc"] = spark.sparkContext
+        except Exception:
+            pass
     return namespaces[session]
 
 

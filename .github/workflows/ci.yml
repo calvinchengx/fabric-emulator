@@ -176,6 +176,17 @@ jobs:
       # Apache Livy server. Linux-only (JVM Spark image), like spark-a2.
       - run: python3 e2e/livy/run.py
 
+  sail:
+    name: LakeSail Sail (Rust Spark Connect) writes Delta through OneLake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # S0 of the JVM-replacement track (docs/20-lakesail-engine.md): a real
+      # PySpark Connect client drives Sail (no JVM in any container), writing
+      # and reading Delta through the OneLake Blob surface with entra
+      # client-credentials auth minted before server start.
+      - run: python3 e2e/sail/run.py
+
   fabric-cli:
     name: Microsoft's Fabric CLI (fab) drives the control plane (containerized)
     runs-on: ubuntu-latest

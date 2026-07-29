@@ -327,6 +327,31 @@ proxy would be a separate sibling.
       — `workspace identity → entra token → vault secret → connection`, offline
       (`internal/akv`; only the pointer is stored, never the value).
 
+## S — Engine swap: LakeSail replaces JVM Spark
+
+Designed in [20-lakesail-engine.md](20-lakesail-engine.md): Sail (Rust Spark
+Connect) becomes the engine behind every compute surface — PySpark with no JVM.
+
+- [x] **S0** — proof: `e2e/sail` (CI `sail`, Linux): real PySpark Connect
+      client → Sail → Delta write/SQL/append through the OneLake Blob surface
+      (az:// + endpoint override, the delta-rs recipe), entra
+      client-credentials minted by the `docker/sail` launcher. Conditional-PUT
+      Delta commits ride the R0 contract unchanged.
+- [x] **S4 (pulled forward)** — user-facing compose: the default
+      `docker-compose.override.yml` and the explicit
+      `docker-compose.compute.yml` both run Sail + the thin Connect agent
+      (JVM `apache/spark` image dropped); validated end-to-end over the
+      compose network incl. self-signed-TLS storage writes. Fabric builds
+      from the tree until a post-Blob-surface release is tagged.
+- [ ] **S1** — `e2e/livy` + `e2e/dbt-fabricspark` composes swap to Sail (the
+      agents are already `SPARK_REMOTE`-capable; `sc` is JVM-only and now
+      optional in the namespace).
+- [ ] **S2** — `e2e/notebook-run` runner connects via `SPARK_REMOTE`; drops
+      the JVM image build.
+- [ ] **S3** — `e2e/spark` (A2) reborn on Sail (az:// instead of the Hadoop
+      ABFS driver); `EntraTokenProvider.java` deleted. Tradeoff: we lose the
+      Hadoop-ABFS-driver witness — resurrect as opt-in nightly if needed.
+
 ## Sequencing note
 
 Build the **LRO engine before anything that mutates** — every workspace/item/git
