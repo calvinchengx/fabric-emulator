@@ -1,0 +1,9 @@
+pyproject.toml
+fabric_target/__init__.py
+fabric_target/__main__.py
+fabric_target.egg-info/PKG-INFO
+fabric_target.egg-info/SOURCES.txt
+fabric_target.egg-info/dependency_links.txt
+fabric_target.egg-info/requires.txt
+fabric_target.egg-info/top_level.txt
+tests/test_fabric_target.py

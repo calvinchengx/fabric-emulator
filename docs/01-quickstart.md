@@ -148,6 +148,37 @@ Fabric-audience tokens are rejected on the data plane and vice versa, matching
 real OneLake. Managed-folder rules apply — try to `DELETE` `/Files` itself and
 watch it refuse ([OneLake](08-onelake.md)).
 
+## Same code against real Fabric — the toggle
+
+Python code written against the emulator runs against the real service by
+flipping **one env var** — the [`fabric-target`](21-real-fabric-toggle.md)
+package resolves endpoints + credentials; your code holds names and never
+branches:
+
+```bash
+pip install ./python/fabric-target        # once
+
+export FABRIC_TARGET=emulator             # local (the default — zero config)
+python my_pipeline.py
+
+az login                                  # real: your own identity…
+export FABRIC_TARGET=real
+export FABRIC_WORKSPACE=my-workspace-name # …scoped to one workspace, always
+python my_pipeline.py                     # same code
+```
+
+```python
+from fabric_target import target
+t = target()
+ws = t.workspace("analytics")             # names, not GUIDs — they differ per target
+s = t.session()                           # authed, TLS-aware, 429-honoring
+s.post(f"/workspaces/{ws.id}/items", json={"displayName": "nb", "type": "Notebook"})
+```
+
+Real mode refuses to start without a credential source (`az login` or
+`AZURE_*` vars) and never falls back to the seeded dev values. Env-only tools
+get the same switch via `eval "$(python -m fabric_target env real)"`.
+
 ## Where next
 
 - Point the **real `fabric-cicd` tool** at the emulator:
