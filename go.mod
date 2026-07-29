@@ -2,6 +2,8 @@ module github.com/calvinchengx/fabric-emulator
 
 go 1.25.11
 
+toolchain go1.25.12
+
 require (
 	github.com/calvinchengx/entra-emulator v0.2.0
 	github.com/microsoft/go-mssqldb v1.10.0
