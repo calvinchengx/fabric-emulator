@@ -80,6 +80,21 @@ pyspark client ──sc:// (Spark Connect, h2c gRPC :50051)──▶ sail server
 JVM Spark at the emulator. If that matters later, resurrect `e2e/spark` as an
 opt-in nightly rather than re-adopting the JVM in the default path.
 
+## Notebook code compatibility (probed, not guessed)
+
+`e2e/sail` probes the surface unmodified Fabric notebook code actually
+touches; every claim below is CI-verified against the emulator:
+
+| Notebook pattern | On Sail | Evidence |
+|---|---|---|
+| `abfss://ws@onelake.dfs.fabric.microsoft.com/…` (production URL form) | ✅ works unmodified — Sail parses the Hadoop form and the endpoint override routes it; **no path shim needed** | e2e probe |
+| Delta write/read/append, SQL over temp views | ✅ | e2e |
+| Time travel (`option("versionAsOf", n)`) | ✅ (SQL `VERSION AS OF` is a Sail gap) | e2e probe |
+| `MERGE INTO` | ✅ **with a registered table target** (`CREATE TABLE … USING delta LOCATION`); a path-based ``delta.`az://…` `` target does not resolve (reads do) | e2e probe |
+| `sc` / RDD API / `spark._jvm` | ❌ Spark Connect has no SparkContext. The Livy agent binds `sc` to a guide-rail stub whose every use raises a pointer to this doc — a clear error instead of a bare `NameError`. **Fidelity inversion vs real Fabric**: notebooks using `sc.parallelize` work in production but not here. | agent stub |
+| `createDataFrame(local_rows)` | ⚠️ pyspark 4.2 clients trip on Sail's `'3GB'` local-relation limit string — use SQL `VALUES` or a 3.5 client | e2e finding |
+| Structured streaming, `OPTIMIZE`/`VACUUM`, CDF, Java/Scala UDFs, `spark.jars` | ❌ absent in Sail v0.6.6 | upstream docs |
+
 ## Known gaps to design around (Sail v0.6.6)
 
 - **No transaction conflict detection** in Delta commits — two sessions
