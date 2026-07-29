@@ -1,9 +1,8 @@
-# A2 + Livy: real JVM Spark writes Delta via the ABFS driver onto the
-# emulator's OneLake plane. The container network is the whole point — the
-# Hadoop ABFS driver takes no endpoint override, so onelake.dfs.fabric.
-# microsoft.com and api.fabric.microsoft.com are network aliases that resolve
-# to fabric-emulator. Plain HTTP throughout (ABFS always.use.https=false) to
-# avoid JVM truststore setup for the self-signed cert.
+# A2 on Sail: the real Spark API (Spark Connect) writes Delta through the
+# emulator's OneLake plane — the engine is LakeSail's Sail, no JVM anywhere.
+# The abfs:// URLs keep their production shape; sail's endpoint override
+# routes them to fabric-emulator (docs/20-lakesail-engine.md). Plain HTTP
+# throughout for the container network.
 services:
   entra-emulator:
     image: ghcr.io/calvinchengx/entra-emulator:latest
@@ -41,17 +40,34 @@ services:
       timeout: 2s
       retries: 20
 
-  spark:
+  # LakeSail's Sail: the Spark engine (Rust Spark Connect, no JVM).
+  sail:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../../docker/sail
     depends_on:
       fabric-emulator:
         condition: service_healthy
+    environment:
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+
+  # The A2 job — the real Spark API as a Connect client (python:slim, no JVM).
+  # Keeps the service name "spark" so run.py's --exit-code-from stays valid.
+  spark:
+    image: python:3.12-slim
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+      sail:
+        condition: service_started
     volumes:
-      - ./job.py:/opt/spark/work-dir/job.py:ro
-    command:
-      - /opt/spark/bin/spark-submit
-      - --master
-      - "local[2]"
-      - /opt/spark/work-dir/job.py
+      - ./job.py:/job.py:ro
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+    command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /job.py"
