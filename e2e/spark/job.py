@@ -1,8 +1,8 @@
-"""A2: real JVM Spark writes and reads a Delta table through fabric-emulator's
-OneLake plane via the ABFS driver, authenticated to entra-emulator with a
-custom token provider (v2 client-credentials for the Storage audience).
+"""A2 on Sail: the real Spark API (Spark Connect client) writes and reads a
+Delta table through fabric-emulator's OneLake plane — the engine is LakeSail's
+Sail, no JVM anywhere (docs/20-lakesail-engine.md).
 
-Runs inside the Spark container. Control-plane setup (seed the storage
+Runs in a plain python container. Control-plane setup (seed the storage
 resource app, create workspace + lakehouse) is plain REST over the container
 network; the data path is real Spark → ABFS → our DFS surface.
 """
@@ -35,15 +35,6 @@ def _req(method, url, body=None, token=None, form=False):
         return json.loads(raw) if raw else {}
 
 
-# 1. Seed a Storage resource app so client-credentials resolves the
-#    https://storage.azure.com audience the ABFS token provider requests.
-try:
-    _req("POST", f"{ENTRA}/admin/api/apps",
-         {"displayName": "Azure Storage", "appIdUri": "https://storage.azure.com", "isConfidential": False})
-except urllib.error.HTTPError as e:
-    if e.code not in (409,):  # already seeded is fine
-        raise
-print("seeded storage resource app", flush=True)
 
 fabric_token = _req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
     "grant_type": "client_credentials", "client_id": CLIENT_ID,
@@ -55,23 +46,27 @@ _req("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "l
 ws_id = ws["id"]
 print(f"workspace: {ws_id}", flush=True)
 
-# 2. Real Spark + Delta, ABFS pointed at the emulator via the container alias.
+# 2. Real Spark API over Spark Connect — Sail executes; its object_store
+# writes through the emulator's OneLake plane (endpoint override; storage
+# token minted by the sail launcher). Same abfs:// URL as the JVM ABFS days.
+import os  # noqa: E402
+import time  # noqa: E402
+
 from pyspark.sql import SparkSession  # noqa: E402
 
 acct = "onelake.dfs.fabric.microsoft.com"
-spark = (SparkSession.builder.appName("fabric-emu-a2")
-         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-         .config("spark.hadoop.fs.azure.always.use.https", "false")
-         .config(f"spark.hadoop.fs.azure.account.auth.type.{acct}", "Custom")
-         .config(f"spark.hadoop.fs.azure.account.oauth.provider.type.{acct}",
-                 "com.calvinchengx.fabricemu.EntraTokenProvider")
-         .config("spark.hadoop.fs.azure.emu.token.endpoint", f"{ENTRA}/{TENANT}/oauth2/v2.0/token")
-         .config("spark.hadoop.fs.azure.emu.client.id", CLIENT_ID)
-         .config("spark.hadoop.fs.azure.emu.client.secret", CLIENT_SECRET)
-         .config("spark.hadoop.fs.azure.emu.scope", "https://storage.azure.com/.default")
-         .getOrCreate())
-spark.sparkContext.setLogLevel("WARN")
+for _attempt in range(30):
+    try:
+        spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
+        spark.sql("SELECT 1").collect()
+        break
+    except Exception:
+        if _attempt == 29:
+            raise
+        time.sleep(2)
+# Sail reports this limit as "3GB"; pyspark 4.2's createDataFrame does int()
+# on it — override with an integer so plain createDataFrame works.
+spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
 
 path = f"abfs://{ws_id}@{acct}/lake.Lakehouse/Tables/events"
 

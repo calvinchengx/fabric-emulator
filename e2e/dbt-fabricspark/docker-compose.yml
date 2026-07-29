@@ -23,22 +23,39 @@ services:
       timeout: 2s
       retries: 20
 
-  # Real Spark behind the emulator's Livy layer, executing dbt's SQL. Reuses the
-  # ../spark image (delta-spark + ABFS jars + entra token provider). The health
-  # gate matters: the emulator reports HC sessions Idle immediately, so dbt hits
-  # the agent on the first statement — dbt must not start until Spark is up.
-  spark-agent:
+  # LakeSail's Sail: the Spark engine (Rust Spark Connect, no JVM). Its
+  # launcher mints the entra Storage token before the server starts;
+  # object_store writes ride the emulator's account-prefixed Blob path.
+  sail:
     build:
-      context: ../spark
-      dockerfile: Dockerfile
+      context: ../../docker/sail
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "https://fabric-emulator:9443/onelake"
+      AZURE_ALLOW_INVALID_CERTIFICATES: "true" # emulator self-signed TLS
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+
+  # The SQL agent behind the emulator's Livy layer, executing dbt's SQL — a
+  # Spark Connect client of sail (python:slim, no JVM). The health gate
+  # matters: the emulator reports HC sessions Idle immediately, so dbt hits
+  # the agent on the first statement — it must not start until the agent is up.
+  spark-agent:
+    image: python:3.12-slim
+    depends_on:
+      sail:
+        condition: service_started
     volumes:
-      - ./sql_agent.py:/opt/spark/work-dir/sql_agent.py:ro
-    command:
-      - /opt/spark/bin/spark-submit
-      - --master
-      - "local[2]"
-      - /opt/spark/work-dir/sql_agent.py
-      - "8099"
+      - ./sql_agent.py:/sql_agent.py:ro
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+    command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /sql_agent.py 8099"
     healthcheck:
       test:
         - CMD
@@ -48,7 +65,7 @@ services:
       interval: 5s
       timeout: 4s
       retries: 60
-      start_period: 20s
+      start_period: 60s
 
   fabric-emulator:
     build:

@@ -70,10 +70,10 @@ pyspark client ──sc:// (Spark Connect, h2c gRPC :50051)──▶ sail server
 | Milestone | What changes | JVM removed |
 |---|---|---|
 | **S0** ✅ | `e2e/sail`: PySpark client → Sail → Delta write/read/append + SQL over our OneLake plane, entra-authenticated. CI job `sail`. | — (proof) |
-| **S1** | `e2e/livy` + `e2e/dbt-fabricspark`: agents gain `SPARK_REMOTE` support (done — env-guarded, one line); their composes swap `apache/spark:3.5.3` → `sail` + `python:slim`. Same Livy REST surface, same dbt project. | 2 suites |
-| **S2** | `e2e/notebook-run`: `runner.py` connects via `SPARK_REMOTE` instead of `spark-submit local[2]`; compose drops the `e2e/spark` image build. | 1 suite |
-| **S3** | `e2e/spark` (A2) reborn as Sail: same job, `az://` instead of `abfss://`+ABFS-driver. `EntraTokenProvider.java` and the Hadoop jars are deleted. | last one |
-| **S4** | `docker-compose.compute.yml` (done): the user-facing compose override that runs the emulator pair + Sail + the statement agent — `RunNotebook`, Livy sessions, and dbt work out of the box with no JVM. Docs + quickstart. | — |
+| **S1** ✅ | `e2e/livy` + `e2e/dbt-fabricspark`: agents are `SPARK_REMOTE`-capable; composes swap `apache/spark:3.5.3` → `sail` + `python:slim`. Same Livy REST surface, same dbt project. | 2 suites |
+| **S2** ✅ | `e2e/notebook-run`: `runner.py` connects via `SPARK_REMOTE`; the JVM image build is gone. The notebook fixture (incl. `createDataFrame`) runs **unmodified**. | 1 suite |
+| **S3** ✅ | `e2e/spark` (A2) reborn on Sail: same job, same production-shaped `abfs://` URLs (endpoint override routes them). `EntraTokenProvider.java` + the JVM Dockerfile deleted. | last one |
+| **S4** ✅ | user-facing compose: the auto-loaded `docker-compose.override.yml` **and** the explicit `docker-compose.compute.yml` both run Sail + the statement agent — `RunNotebook`, Livy sessions, and dbt work out of the box with no JVM. Docs + quickstart updated. | — |
 
 **Tradeoff accepted (S3):** deleting the JVM suite removes our only
 *Hadoop-ABFS-driver* compatibility witness — a real signal for users pointing
@@ -92,7 +92,8 @@ touches; every claim below is CI-verified against the emulator:
 | Time travel (`option("versionAsOf", n)`) | ✅ (SQL `VERSION AS OF` is a Sail gap) | e2e probe |
 | `MERGE INTO` | ✅ **with a registered table target** (`CREATE TABLE … USING delta LOCATION`); a path-based ``delta.`az://…` `` target does not resolve (reads do) | e2e probe |
 | `sc` / RDD API / `spark._jvm` | ❌ Spark Connect has no SparkContext. The Livy agent binds `sc` to a guide-rail stub whose every use raises a pointer to this doc — a clear error instead of a bare `NameError`. **Fidelity inversion vs real Fabric**: notebooks using `sc.parallelize` work in production but not here. | agent stub |
-| `createDataFrame(local_rows)` | ⚠️ pyspark 4.2 clients trip on Sail's `'3GB'` local-relation limit string — use SQL `VALUES` or a 3.5 client | e2e finding |
+| `createDataFrame(local_rows)` | ✅ works — the agents/runners set `spark.conf.set("spark.sql.session.localRelationSizeLimit", <int>)` at session start, overriding the `'3GB'` string pyspark 4.2 chokes on; without that mitigation, use SQL `VALUES` or a 3.5 client | e2e (notebook fixture runs unmodified) |
+| DML row-count results (`INSERT`/`MERGE` envelopes) | ⚠️ DataFusion reports counts as `uint64`, which Arrow conversion to Spark clients rejects — the statement HAS executed; the Livy SQL agent absorbs this specific error as an empty result | dbt e2e finding |
 | Structured streaming, `OPTIMIZE`/`VACUUM`, CDF, Java/Scala UDFs, `spark.jars` | ❌ absent in Sail v0.6.6 | upstream docs |
 
 ## Known gaps to design around (Sail v0.6.6)
@@ -112,10 +113,12 @@ touches; every claim below is CI-verified against the emulator:
 ## Running it (user-facing)
 
 ```bash
-# emulator pair only (no compute):
+# the family with Sail compute attached (override auto-loads):
 docker compose up
-# pair + Sail compute (Livy sessions, RunNotebook, dbt against real engine):
+# same stack with explicit files (naming -f skips the auto-override):
 docker compose -f docker-compose.yml -f docker-compose.compute.yml up
+# contract-only, no compute sidecars:
+docker compose -f docker-compose.yml up
 ```
 
 Then connect any PySpark client with no JVM installed:

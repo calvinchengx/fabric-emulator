@@ -343,14 +343,18 @@ Connect) becomes the engine behind every compute surface — PySpark with no JVM
       (JVM `apache/spark` image dropped); validated end-to-end over the
       compose network incl. self-signed-TLS storage writes. Fabric builds
       from the tree until a post-Blob-surface release is tagged.
-- [ ] **S1** — `e2e/livy` + `e2e/dbt-fabricspark` composes swap to Sail (the
-      agents are already `SPARK_REMOTE`-capable; `sc` is JVM-only and now
-      optional in the namespace).
-- [ ] **S2** — `e2e/notebook-run` runner connects via `SPARK_REMOTE`; drops
-      the JVM image build.
-- [ ] **S3** — `e2e/spark` (A2) reborn on Sail (az:// instead of the Hadoop
-      ABFS driver); `EntraTokenProvider.java` deleted. Tradeoff: we lose the
-      Hadoop-ABFS-driver witness — resurrect as opt-in nightly if needed.
+- [x] **S1** — `e2e/livy` + `e2e/dbt-fabricspark` composes swapped to Sail
+      (`apache/spark:3.5.3` gone; agents are Spark Connect clients; under
+      Sail `sc` is a guide-rail stub, and the local-relation limit override
+      keeps `createDataFrame` working for user code).
+- [x] **S2** — `e2e/notebook-run` runner connects via `SPARK_REMOTE`; the
+      notebook fixture executes **unmodified** (abfs:// URLs and
+      `createDataFrame` included); JVM image build dropped.
+- [x] **S3** — `e2e/spark` (A2) reborn on Sail with the same
+      production-shaped `abfs://` URLs; `EntraTokenProvider.java` + the JVM
+      Dockerfile deleted. **No JVM remains anywhere in the repo.** Tradeoff
+      accepted: the Hadoop-ABFS-driver witness is gone — resurrect as an
+      opt-in nightly if demand appears.
 
 ## Sequencing note
 

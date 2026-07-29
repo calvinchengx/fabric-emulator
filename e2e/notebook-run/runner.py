@@ -124,19 +124,22 @@ assert [c["language"] for c in cells] == ["python", "sql", "python"], cells
 # --- real Spark executes the cells ------------------------------------------
 from pyspark.sql import SparkSession  # noqa: E402
 
-spark = (SparkSession.builder.appName("fabric-emu-notebook")
-         .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-         .config("spark.hadoop.fs.azure.always.use.https", "false")
-         .config(f"spark.hadoop.fs.azure.account.auth.type.{ACCT}", "Custom")
-         .config(f"spark.hadoop.fs.azure.account.oauth.provider.type.{ACCT}",
-                 "com.calvinchengx.fabricemu.EntraTokenProvider")
-         .config("spark.hadoop.fs.azure.emu.token.endpoint", f"{ENTRA}/{TENANT}/oauth2/v2.0/token")
-         .config("spark.hadoop.fs.azure.emu.client.id", CLIENT_ID)
-         .config("spark.hadoop.fs.azure.emu.client.secret", CLIENT_SECRET)
-         .config("spark.hadoop.fs.azure.emu.scope", "https://storage.azure.com/.default")
-         .getOrCreate())
-spark.sparkContext.setLogLevel("WARN")
+# Sail (Spark Connect): storage auth/endpoint live on the sail server (its
+# launcher minted the entra token); the notebook cells run unmodified.
+import os
+import time
+for _attempt in range(30):
+    try:
+        spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
+        spark.sql("SELECT 1").collect()
+        break
+    except Exception:
+        if _attempt == 29:
+            raise
+        time.sleep(2)
+# Sail reports this limit as "3GB"; pyspark 4.2's createDataFrame does int()
+# on it — override with an integer so unmodified notebook code works.
+spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
 
 TABLE_PATH = f"abfs://{ws}@{ACCT}/lake.Lakehouse/Tables/events"
 

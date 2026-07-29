@@ -24,30 +24,38 @@ import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import os
+
 from pyspark.sql import SparkSession
 
 # Delta-enabled so dbt's `create table ... using delta` (the Fabric default)
 # works. Local warehouse is fine for the protocol conformance milestone; binding
 # the session to the lakehouse's OneLake path (ABFS) so Delta lands in OneLake
 # is a follow-up (see README, milestone B).
-spark = (
-    SparkSession.builder.appName("dbt-fabricspark-agent")
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-    .config(
-        "spark.sql.catalog.spark_catalog",
-        "org.apache.spark.sql.delta.catalog.DeltaCatalog",
+if os.environ.get("SPARK_REMOTE"):
+    # Sail (Spark Connect): Delta-native, no JVM. The Delta/Hive configs below
+    # are JVM-session concerns; Sail needs none of them.
+    spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
+    spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
+else:
+    spark = (
+        SparkSession.builder.appName("dbt-fabricspark-agent")
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        .config(
+            "spark.sql.catalog.spark_catalog",
+            "org.apache.spark.sql.delta.catalog.DeltaCatalog",
+        )
+        # Delta is the DEFAULT table format, mirroring Fabric's Spark. dbt-fabricspark
+        # deliberately omits `using delta` from its DDL (it assumes the Fabric
+        # default), so `create or replace table` must land as Delta for the atomic
+        # REPLACE that seed --full-refresh and table materialization rely on.
+        .config("spark.sql.sources.default", "delta")
+        # ...and make `CREATE TABLE AS SELECT` (no USING clause) honour that default
+        # instead of creating a Hive table — Spark's legacy default is Hive, which
+        # this container has no support for. Fabric's Spark is Delta-by-default too.
+        .config("spark.sql.legacy.createHiveTableByDefault", "false")
+        .getOrCreate()
     )
-    # Delta is the DEFAULT table format, mirroring Fabric's Spark. dbt-fabricspark
-    # deliberately omits `using delta` from its DDL (it assumes the Fabric
-    # default), so `create or replace table` must land as Delta for the atomic
-    # REPLACE that seed --full-refresh and table materialization rely on.
-    .config("spark.sql.sources.default", "delta")
-    # ...and make `CREATE TABLE AS SELECT` (no USING clause) honour that default
-    # instead of creating a Hive table — Spark's legacy default is Hive, which
-    # this container has no support for. Fabric's Spark is Delta-by-default too.
-    .config("spark.sql.legacy.createHiveTableByDefault", "false")
-    .getOrCreate()
-)
 
 
 def run_sql(code):
@@ -69,6 +77,16 @@ def run_sql(code):
             "data": {"application/json": {"schema": df.schema.jsonValue(), "data": rows}},
         }
     except Exception as e:
+        # Sail quirk: DML executes fine but DataFusion reports its row-count
+        # as uint64, which the Arrow conversion to the Connect client rejects
+        # (Spark has no unsigned types). The statement has already run
+        # server-side; treat the conversion failure as an empty result. Real
+        # SQL errors carry different messages and still surface below —
+        # and if a write silently hadn't landed, dbt's own downstream
+        # selects/tests would fail loudly.
+        if "UNSUPPORTED_DATA_TYPE_FOR_ARROW_CONVERSION" in str(e):
+            print(f"[sql-agent] note: uint64 result envelope suppressed for: {code}", flush=True)
+            return {"status": "ok", "execution_count": 0, "data": {}}
         tb = traceback.format_exc().splitlines()
         # The full Spark message (str(e)) is far more useful to dbt than the last
         # traceback frame; surface it as evalue and log the failing statement.

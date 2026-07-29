@@ -1,8 +1,7 @@
-# Real notebook cell execution: the emulator parses a Fabric notebook, real
-# JVM Spark executes its cells against the OneLake plane (ABFS), and the run is
-# reported back so the RunNotebook job reflects real execution. Reuses the
-# ../spark image (ABFS jars + entra token provider). Plain HTTP over the
-# container network so onelake.dfs.fabric.microsoft.com resolves to the emulator.
+# Real notebook cell execution: the emulator parses a Fabric notebook, a real
+# engine — LakeSail's Sail (Spark Connect, no JVM) — executes its cells against
+# the OneLake plane, and the run is reported back so the RunNotebook job
+# reflects real execution. Plain HTTP over the container network.
 services:
   entra-emulator:
     image: ghcr.io/calvinchengx/entra-emulator:latest
@@ -40,17 +39,34 @@ services:
       timeout: 2s
       retries: 20
 
-  spark:
+  # LakeSail's Sail: the Spark engine (Rust Spark Connect, no JVM).
+  sail:
     build:
-      context: ../spark
-      dockerfile: Dockerfile
+      context: ../../docker/sail
     depends_on:
       fabric-emulator:
         condition: service_healthy
+    environment:
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+
+  # The notebook runner — a Spark Connect client (python:slim, no JVM). Keeps
+  # the service name "spark" so run.py's --exit-code-from stays valid.
+  spark:
+    image: python:3.12-slim
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+      sail:
+        condition: service_started
     volumes:
-      - ./runner.py:/opt/spark/work-dir/runner.py:ro
-    command:
-      - /opt/spark/bin/spark-submit
-      - --master
-      - "local[2]"
-      - /opt/spark/work-dir/runner.py
+      - ./runner.py:/runner.py:ro
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+    command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /runner.py"
