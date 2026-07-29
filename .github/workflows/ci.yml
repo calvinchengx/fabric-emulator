@@ -100,8 +100,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      # Unit layer: pure resolver tests (no network).
-      - run: pip install -q pytest && python -m pytest python/fabric-target/tests -q
+      # Unit layer: pure resolver tests (no network). Install the package so
+      # fabric_target is importable from any rootdir.
+      - run: pip install -q pytest ./python/fabric-target && python -m pytest python/fabric-target/tests -q
       # Live layer: target() -> credential -> session -> workspace-by-name ->
       # item -> LRO poll -> guards, against real entra+fabric binaries.
       - run: python e2e/fabric-target/run.py
