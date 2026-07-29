@@ -61,9 +61,17 @@ Per member, "real" resolves as:
 
 - **entra-emulator → real Entra ID.** azure-identity *is* the toggle: the
   resolver builds `ClientSecretCredential(..., authority=<entra-emulator>)`
-  with the seeded SP in emulator mode, and `DefaultAzureCredential()` (real
-  authority, real tenant, az-CLI/managed-identity chains) in real mode. User
-  code just receives "a credential".
+  with the seeded SP in emulator mode, and **exactly
+  `DefaultAzureCredential()`** in real mode. Its chain order does the rest
+  with no branching of ours: explicit `AZURE_TENANT_ID`/`AZURE_CLIENT_ID`/
+  `AZURE_CLIENT_SECRET` win when set (CI, service contexts); otherwise
+  **`az login` wins** — tokens are minted from the developer's own CLI
+  session (delegated identity; workspace RBAC and Conditional Access apply
+  to *them*), refresh handled by azure-identity re-invoking `az`. All three
+  family scopes (Fabric, Storage, Vault) mint through the CLI. Non-Python
+  tools follow the same split via the env emitter: `fabric-cicd` already
+  uses `DefaultAzureCredential` internally, `dbt-fabric` takes
+  `authentication: CLI`, `azcopy` takes `AZCOPY_AUTO_LOGIN_TYPE=AZCLI`.
 - **azure-keyvault-emulator → the user's actual vault.** Key Vault's
   **challenge-based auth does the discovery**: the SDK hits the vault, reads
   the 401 `WWW-Authenticate` challenge naming the authority, and follows it —
@@ -76,8 +84,10 @@ Per member, "real" resolves as:
   connections carry the same shape on both sides.
 - **Seeded values never leak into real mode.** Tenant `11111111-…`, the
   daemon SP, and `daemon-app-secret` are emulator-mode defaults only; in real
-  mode the resolver requires explicit `AZURE_*` values and refuses to fall
-  back to seeds, so dev credentials cannot be aimed at production.
+  mode the resolver requires a **real credential source** — env SP vars *or*
+  a live `az login` (the `DefaultAzureCredential` chain probe) — and refuses
+  to fall back to seeds. No source found → fail at startup with "run
+  `az login` or set AZURE_* credentials", never a silent seed.
 
 ## Deliverable A — `fabric_target` (Python helper, `python/fabric_target/`)
 
