@@ -31,6 +31,22 @@ spark = (_b.remote(os.environ["SPARK_REMOTE"]) if os.environ.get("SPARK_REMOTE")
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 
 
+class _NoSparkContext:
+    """Guide-rail for the Sail engine: real Fabric notebooks see `sc`, but
+    Spark Connect has no SparkContext/RDD API. Any use fails with a pointer
+    instead of a bare NameError/AttributeError (docs/20-lakesail-engine.md)."""
+
+    def __getattr__(self, name):
+        raise NotImplementedError(
+            f"sc.{name}: the RDD/SparkContext API is not available on the "
+            "emulator's Sail (Spark Connect) engine — use the DataFrame/SQL "
+            "API instead. See docs/20-lakesail-engine.md."
+        )
+
+    def __repr__(self):
+        return "<sc unavailable: Spark Connect engine (Sail) — DataFrame/SQL only>"
+
+
 def ns(session):
     if session not in namespaces:
         namespaces[session] = {"spark": spark}
@@ -38,7 +54,7 @@ def ns(session):
             # JVM sessions only — Spark Connect (Sail) has no sparkContext.
             namespaces[session]["sc"] = spark.sparkContext
         except Exception:
-            pass
+            namespaces[session]["sc"] = _NoSparkContext()
     return namespaces[session]
 
 

@@ -86,6 +86,38 @@ n = spark.read.format("delta").load(url).count()
 assert n == 4, n
 print("delta append OK (4 rows)")
 
+# --- deprecation-audit probes: turn "unverified vs delta-spark" into knowns ---
+
+# Time travel by version (DataFrame API; SQL time travel is a known Sail gap).
+v0 = spark.read.format("delta").option("versionAsOf", 0).load(url).count()
+assert v0 == 3, v0
+print("time travel OK (versionAsOf 0 -> 3 rows)")
+
+# MERGE INTO (copy-on-write): update one row, insert another. Finding: Sail
+# resolves path-based delta.`az://…` for READS but not as a MERGE target —
+# the target must be a catalog table, so register the location first.
+spark.sql(f"CREATE TABLE events_t USING delta LOCATION '{url}'")
+spark.sql("""
+    MERGE INTO events_t AS t
+    USING (SELECT * FROM VALUES (4,'refund','eu'), (5,'signup','ap') AS s(id, kind, region)) AS s
+    ON t.id = s.id
+    WHEN MATCHED THEN UPDATE SET t.kind = s.kind
+    WHEN NOT MATCHED THEN INSERT *
+""")
+merged = {r["id"]: r["kind"] for r in spark.read.format("delta").load(url).collect()}
+assert merged[4] == "refund" and merged[5] == "signup" and len(merged) == 5, merged
+print("MERGE INTO OK (update + insert, via registered table)")
+
+# Fabric-style abfss:// (Hadoop form, the URL shape unmodified production
+# notebooks use). Sail parses container@account.dfs.fabric.microsoft.com and
+# the endpoint override redirects the requests to the emulator — if this
+# holds, no abfss->az shim is needed anywhere.
+abfss = "abfss://sailws@onelake.dfs.fabric.microsoft.com/lake.Lakehouse/Tables/abfss_probe"
+spark.sql("SELECT * FROM VALUES (1,'x') AS t(id, v)") \
+    .write.format("delta").mode("overwrite").save(abfss)
+assert spark.read.format("delta").load(abfss).count() == 1
+print("abfss:// (Fabric Hadoop form) OK — no shim needed")
+
 # The engine's writes are real bytes in OneLake: read the first Delta commit
 # back through the Blob surface ourselves (same account-prefixed path form).
 storage_token = entra_token("https://storage.azure.com/.default")
