@@ -1,6 +1,6 @@
 # 21 — Design: one toggle between fabric-emulator and real Fabric
 
-**Status: design.** Goal: a user's Python functionality — SDK calls,
+**Status: T0 shipped** (`python/fabric-target/`, CI `fabric-target`); T1–T2 remain design. Goal: a user's Python functionality — SDK calls,
 `fabric-cicd` pipelines, notebooks on the `notebookutils` shim, dbt projects,
 plain `requests` — runs against **either** the local emulator family **or**
 the real Fabric service, switched by **one setting**, with zero code edits.
@@ -171,7 +171,7 @@ def test_publish_roundtrip(t): ...
 
 | Phase | Lands | Proves |
 |---|---|---|
-| **T0** | `python/fabric_target/` resolver + `env` emitter + this doc + quickstart section | `fabric-cicd` publishes to emulator and to a real workspace by flipping one env var |
+| **T0** ✅ | `python/fabric-target/` (resolver, TokenCredential-shaped emulator credential, guarded session + LRO poll, `env` emitter) + unit tests + `e2e/fabric-target` (CI 3-OS) + quickstart section | toggle commands are real; emulator profile CI-verified end to end |
 | **T1** | pytest `target` marker + the secret-gated `real-fabric` workflow | same suite green on both; divergences filed against the parity map |
 | **T2** | `notebookutils` real mode (`NOTEBOOKUTILS_*` resolved from the real profile: real OneLake, real vault, `DefaultAzureCredential`) | notebook code runs unchanged locally *and* as a genuine Fabric notebook |
 

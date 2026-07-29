@@ -77,6 +77,24 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Livy **High-Concurrency** (5-REPL) sessions | Fabric's own packing layer, implemented for real (not proxied): `sessionTag` packing into a shared session, 5-REPL cap + spill, non-idempotent acquire, independent get/delete, slot reuse on release. With `--spark-agent-url`, REPL statements run on **real Spark** — each REPL its own agent namespace, so the 5-REPL model is real end to end (`e2e/livy`) | 🟢 Real |
 | Environments, Spark Job Definitions | Item management only | 🟡 Emulated |
 
+### Notebook code on the default engine (LakeSail's Sail)
+
+The engine behind the agent is [Sail](20-lakesail-engine.md) (Rust
+Spark-Connect, no JVM). Every row is **probed in CI** (`e2e/sail`), not
+inferred — the fidelity deltas a Fabric notebook author actually hits:
+
+| Notebook pattern | Emulator (Sail) | Type |
+|---|---|---|
+| `abfss://…@onelake.dfs.fabric.microsoft.com/…` production paths | Work unmodified (endpoint override routes the Hadoop URL form) | 🟢 Real |
+| Delta write/read/append; SQL over temp views | Full | 🟢 Real |
+| Time travel `option("versionAsOf", n)` | Works (SQL `VERSION AS OF` is a Sail gap) | 🟢 Real / 🔴 SQL form |
+| `MERGE INTO` | Works against a registered table target (`CREATE TABLE … USING delta LOCATION`); path-based ``delta.`az://…` `` merge targets don't resolve | 🟢 Real (registered) / 🔴 path target |
+| `createDataFrame(local_rows)` | Works (runners preset `localRelationSizeLimit`) | 🟢 Real |
+| `sc` / RDD API / `spark._jvm` | **Fidelity inversion**: works on real Fabric, impossible on Spark Connect — the agent binds `sc` to a guide-rail stub that raises a clear pointer instead of `NameError` | 🔴 by architecture |
+| DML row-count envelopes (`INSERT`/`MERGE` counts) | Statement executes; DataFusion's `uint64` count is absorbed as an empty result by the SQL agent | 🟡 Emulated envelope |
+| Structured streaming, `OPTIMIZE`/`VACUUM`, CDF, Java/Scala UDFs, `spark.jars` | Absent in Sail v0.6.6 | 🔴 Not implemented |
+| Concurrent Delta writers to one table | **No conflict detection** — both "succeed" where real Fabric/delta-spark would conflict-detect; single-writer flows unaffected | 🔴 divergence |
+
 ## Data Warehouse (`data-warehouse/`)
 
 | Fabric feature | Emulator | Type |
