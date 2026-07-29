@@ -1,25 +1,13 @@
-# Auto-loaded alongside docker-compose.yml by `docker compose up` (Compose
-# merges *.override.yml automatically when present — no -f flag needed): adds
-# REAL engines to the default experience — LakeSail's Sail (Rust Spark-Connect,
-# no JVM) behind the Livy statement agent — native Livy sessions + notebook
-# cell execution on a real engine, and a SQL Server sidecar for
-# the T-SQL/TDS warehouse surface (Warehouse, Lakehouse SQL endpoint, Fabric SQL
-# Database) — so `docker compose up` gives you the emulator with real compute
-# attached, not just the contract. See docs/14-real-compute.md.
+# Compute overlay: adds LakeSail's Sail (Rust Spark-Connect server — PySpark
+# with no JVM) and the Livy statement-executor agent to the emulator pair, so
+# Livy sessions, RunNotebook jobs, and dbt run against a real engine.
 #
-# Opt out — the lite, contract-only pair (no heavy sidecars, honest 501s on the
-# Spark/SQL surfaces), by naming the base file explicitly so Compose skips this
-# override:
-#   docker compose -f docker-compose.yml up
+#   docker compose -f docker-compose.yml -f docker-compose.compute.yml up
 #
-# Local dev-only credentials below (not for anything internet-facing).
+# Clients connect to Spark Connect directly too: sc://localhost:50051
+# (pip install "pyspark-client==4.2.0"; no JVM needed). See
+# docs/20-lakesail-engine.md for the design and its limits.
 services:
-  # One long-lived SparkSession, a REPL over HTTP — the emulator terminates the
-  # Livy REST protocol itself and drives this agent (no Apache Livy server; it's
-  # retired). See e2e/livy/agent.py.
-  # LakeSail's Sail: a Rust Spark-Connect server — the engine behind the agent.
-  # No JVM anywhere; PySpark clients can also connect directly at
-  # sc://localhost:50051. See docs/20-lakesail-engine.md.
   sail:
     build:
       context: ./docker/sail
@@ -49,9 +37,13 @@ services:
     volumes:
       - ./e2e/livy/agent.py:/agent.py:ro
     environment:
-      SPARK_REMOTE: "sc://sail:50051" # Spark Connect client — no JVM
+      SPARK_REMOTE: "sc://sail:50051" # agent becomes a Connect client — no JVM
     command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /agent.py"
 
+  # Same warehouse sidecar as docker-compose.override.yml — restated here so
+  # `-f docker-compose.yml -f docker-compose.compute.yml` is a COMPLETE stack
+  # (naming files with -f disables the override auto-load, which would
+  # otherwise silently drop the TDS surface).
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
     environment:
@@ -78,23 +70,19 @@ services:
   fabric-emulator:
     # Compute needs the current tree: the published :latest (v0.1.0) predates
     # the Blob surface Sail writes through. Building here overrides the base
-    # image until a newer release is tagged.
+    # file's image until a newer release is tagged.
     build:
       context: .
       dockerfile: Dockerfile
     environment:
-      # Native Livy: terminate the protocol and drive the agent above — real
-      # interactive sessions, notebook cell execution, high-concurrency REPLs.
+      # Terminate the Livy protocol in-emulator and execute statements on the
+      # agent (which runs them on Sail).
       FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
-      # The T-SQL/TDS warehouse surface, relaying to the SQL Server sidecar
-      # above. Generous dial/connection timeouts: the backend dials lazily on
-      # first query, and the sidecar (esp. an amd64 image emulated on arm64)
-      # can take a while to finish booting.
+      # The T-SQL/TDS warehouse surface, relaying to the SQL Server sidecar.
       FABRIC_SQL_TDS_ADDR: ":1433"
       FABRIC_WAREHOUSE_SQL_URL: "server=sqlserver;user id=sa;password=Str0ng!Passw0rd;encrypt=disable;dial timeout=90;connection timeout=90"
-    # Restate the base port mapping alongside the new one — Compose replaces
-    # (not merges) list-typed fields like `ports` across files, so the full
-    # desired list must be given here.
     ports:
       - "9443:9443" # api.fabric + onelake.dfs + portal (host-routed)
-      - "1433:1433" # warehouse T-SQL/TDS (FedAuth; sqlcmd/pyodbc/dbt-fabric point here)
+      - "1433:1433" # warehouse T-SQL/TDS
+      # (Spark Connect 50051 is published by the sail service above — listing
+      # it here too would double-bind the host port and fail `up`.)

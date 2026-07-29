@@ -1,0 +1,74 @@
+# e2e S0: LakeSail's Sail (Rust Spark-Connect server, no JVM) writes and reads
+# a Delta table through fabric-emulator's OneLake plane.
+#
+# Storage routing is the azurite recipe delta-rs already proved: az://{ws}/…
+# URLs + AZURE_STORAGE_ENDPOINT={fabric}/onelake (the account-prefixed Blob
+# path form), AZURE_ALLOW_HTTP for the plain-HTTP container network. Auth is a
+# real client-credentials grant against entra-emulator, minted by the sail
+# image's launcher BEFORE the server starts — object_store reads credentials
+# from process env only.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: "" # in-memory; the e2e needs no persistence
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  sail:
+    build:
+      context: ../../docker/sail
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      # The launcher mints AZURE_STORAGE_TOKEN from entra before exec'ing sail.
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      # object_store → the emulator's account-prefixed Blob surface.
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+      # Notebook-friendly session lifetime (default is 900s).
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+
+  driver:
+    image: python:3.12-slim
+    depends_on:
+      sail:
+        condition: service_started
+      fabric-emulator:
+        condition: service_healthy
+    volumes:
+      - ./driver.py:/driver.py:ro
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+      FABRIC: "http://fabric-emulator"
+      ENTRA: "http://entra-emulator:8443"
+    command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /driver.py"
