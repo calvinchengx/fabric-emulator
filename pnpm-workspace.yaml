@@ -7,3 +7,8 @@ packages:
 onlyBuiltDependencies:
   - esbuild
   - sharp
+
+# Security floor for transitive deps (Dependabot): postcss < 8.5.18 has a
+# parsing vulnerability; nothing we use needs the old behavior.
+overrides:
+  postcss: ">=8.5.18"
