@@ -24,12 +24,14 @@ Because the dependency is only "an issuer + a JWKS", `FABRIC_ENTRA_ISSUER`
 can point at a **real Entra tenant** instead and everything except the
 workspace-identity orchestration works unchanged.
 
-## Running the pair
+## Running the family
 
 - **docker-compose** (recommended): the repo's
-  [`docker-compose.yml`](../docker-compose.yml) starts both, issuer-aligned
+  [`docker-compose.yml`](../docker-compose.yml) starts all three emulators —
+  entra (`:8443`), keyvault (`:8444`), fabric (`:9443`) — issuer-aligned
   (entra advertises the compose-internal origin — the subtlety explained in
-  [configuration](04-configuration.md)).
+  [configuration](04-configuration.md)), plus the real-compute sidecars via
+  the auto-loaded override ([quickstart](01-quickstart.md)).
 - **Locally**: entra on `:8443`, fabric on `:9443` with
   `-entra-issuer https://localhost:8443/{tenant}/v2.0 -entra-tls-insecure`.
 - **In-process (Go tests)**: both emulators in one test binary — how this

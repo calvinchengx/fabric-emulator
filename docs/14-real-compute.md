@@ -8,6 +8,13 @@ milestone gated on a real client in CI; the honest exceptions still in flight
 are marked inline. Tense below is kept as originally written where it still
 reads as intent; shipped items carry a ✅ and their `e2e/` witness.
 
+> **Engine update:** where this document says "real Spark" it originally
+> meant JVM `apache/spark`. The engine decision has since moved to
+> **LakeSail's Sail** (Rust Spark-Connect server — same PySpark clients, no
+> JVM); see [20-lakesail-engine.md](20-lakesail-engine.md) for the decision,
+> the S0 proof, and the per-suite migration schedule. The principle here is
+> unchanged: a *real* engine computes every result.
+
 ## The principle (a refinement, not a reversal)
 
 [03-architecture.md](03-architecture.md) declares "no compute engines" a

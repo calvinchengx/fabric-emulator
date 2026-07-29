@@ -11,6 +11,12 @@ Go integration tests start a real entra-emulator in-process and drive the
 full HTTP surface; the remaining suites drive real third-party clients and
 engines against the running emulator.
 
+> **Engine migration in progress:** the Spark rows below (`spark-a2`,
+> `livy-native`, `dbt-fabricspark`, `notebook-run`) currently run on JVM
+> Spark and are being migrated to **LakeSail's Sail** (Rust Spark-Connect,
+> no JVM) — S0 is proven by `e2e/sail`; the per-suite swap schedule is in
+> [20-lakesail-engine.md](20-lakesail-engine.md).
+
 | Suite | Client | Proves | Where |
 |---|---|---|---|
 | Token handshake | in-process **entra-emulator** | real client-credentials token (Fabric aud) → JWKS validation → full workspace/RBAC/item/LRO flow over HTTP | Go integration tests (CI `test`, Linux + macOS + Windows) |
