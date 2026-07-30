@@ -4,11 +4,14 @@ FABRIC_TARGET — same notebook code, one env var apart.
 Pure unit tests: no emulator, no network, no Azure. The live emulator leg is
 e2e/notebookutils; the live real leg is a user's own tenant.
 """
+import os
 import sys
 
 import pytest
 
-sys.path.insert(0, __file__.rsplit("/tests/", 1)[0])
+# python/ — the shim's parent. os.path, not a "/"-split: Windows paths use
+# backslashes, so a hardcoded separator silently fails to find the package.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from notebookutils import _config, credentials  # noqa: E402
 
