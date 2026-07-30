@@ -41,18 +41,65 @@ TYPE_MAP = {
     "string": "STRING", "long": "BIGINT", "integer": "INT", "short": "SMALLINT",
     "byte": "TINYINT", "double": "DOUBLE", "float": "FLOAT", "boolean": "BOOLEAN",
     "binary": "BINARY", "date": "DATE", "timestamp": "TIMESTAMP",
-    "timestamp_ntz": "TIMESTAMP",
+    "timestamp_ntz": "TIMESTAMP", "decimal": "DECIMAL",
+    "struct": "STRUCT", "array": "ARRAY", "map": "MAP",
 }
 
 
+def om_column(name, dtype, nullable=True):
+    """Map one Delta field to an OpenMetadata column.
+
+    Carries the detail a catalog is judged on: decimal precision/scale (a
+    silent STRING here is exactly the loss governance users notice), array
+    element type, and struct children — rather than flattening everything
+    that is not a primitive to STRING.
+    """
+    # delta-rs renders primitives as strings ("string", "decimal(10,2)") and
+    # nested types as objects ({"type": "struct", "fields": [...]}, …).
+    kind = dtype if isinstance(dtype, str) else dtype.get("type", "string")
+    base = str(kind).split("(")[0]
+    col = {
+        "name": name,
+        "dataType": TYPE_MAP.get(base, "STRING"),
+        "dataTypeDisplay": str(kind) if isinstance(dtype, str) else base,
+        "constraint": "NULL" if nullable else "NOT_NULL",
+    }
+    if base == "decimal" and "(" in str(kind):
+        precision, _, scale = str(kind).split("(", 1)[1].rstrip(")").partition(",")
+        try:
+            col["precision"] = int(precision)
+            col["scale"] = int(scale or 0)
+        except ValueError:
+            pass
+    elif base == "array" and isinstance(dtype, dict):
+        el = dtype.get("elementType", "string")
+        el_kind = el if isinstance(el, str) else el.get("type", "string")
+        col["arrayDataType"] = TYPE_MAP.get(str(el_kind).split("(")[0], "STRING")
+        col["dataTypeDisplay"] = f"array<{el_kind}>"
+    elif base == "struct" and isinstance(dtype, dict):
+        col["children"] = [
+            om_column(f["name"], f["type"], f.get("nullable", True))
+            for f in dtype.get("fields", [])
+        ]
+    return col
+
+
+_token_cache = {}
+
+
 def entra_token(scope):
+    """Cached per scope: delta_columns() runs per table, and re-minting for
+    every one is pure churn against the STS."""
+    if scope in _token_cache:
+        return _token_cache[scope]
     r = requests.post(
         f"{ENTRA}/{TENANT}/oauth2/v2.0/token",
         data={"grant_type": "client_credentials", "client_id": CLIENT_ID,
               "client_secret": CLIENT_SECRET, "scope": scope},
         verify=False, timeout=15)
     r.raise_for_status()
-    return r.json()["access_token"]
+    _token_cache[scope] = r.json()["access_token"]
+    return _token_cache[scope]
 
 
 def om_session():
@@ -89,17 +136,8 @@ def delta_columns(workspace_name, lakehouse_name, table):
         "azure_endpoint": f"{FABRIC}/onelake",
         "allow_invalid_certificates": "true",  # family self-signed TLS
     })
-    cols = []
-    for f in json.loads(dt.schema().to_json())["fields"]:
-        t = f["type"]
-        prim = t if isinstance(t, str) else t.get("type", "string")
-        base = str(prim).split("(")[0]
-        cols.append({
-            "name": f["name"],
-            "dataType": TYPE_MAP.get(base, "STRING"),
-            "dataTypeDisplay": str(prim),
-            "constraint": "NULL" if f.get("nullable", True) else "NOT_NULL",
-        })
+    cols = [om_column(f["name"], f["type"], f.get("nullable", True))
+            for f in json.loads(dt.schema().to_json())["fields"]]
     return cols, dt.version()
 
 

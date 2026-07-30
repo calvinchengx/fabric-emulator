@@ -13,6 +13,7 @@ past our Postgres pins, and schema drift in scripts/govern_ingest.py.
 import base64
 import json
 import os
+from decimal import Decimal
 import subprocess
 import sys
 import time
@@ -99,10 +100,18 @@ def main():
 
     import pyarrow as pa
     from deltalake import write_deltalake
+    # Deliberately includes a decimal and nested types: a catalog that
+    # flattens decimal(10,2) to STRING loses precision users care about, so
+    # OM's own validation is the oracle for the mapping.
     tbl = pa.table({
         "order_id": pa.array([1, 2, 3], pa.int64()),
         "amount": pa.array([9.5, 3.25, 7.0], pa.float64()),
         "region": ["us", "eu", "apac"],
+        "price": pa.array([Decimal("1.50"), Decimal("2.25"), Decimal("3.00")],
+                          pa.decimal128(10, 2)),
+        "tags": pa.array([["a"], ["b"], ["c"]], pa.list_(pa.string())),
+        "meta": pa.array([{"src": "web"}, {"src": "app"}, {"src": "web"}],
+                         pa.struct([("src", pa.string())])),
     })
     write_deltalake("az://govws/lake.Lakehouse/Tables/orders", tbl, storage_options={
         "azure_storage_account_name": "onelake",
@@ -145,9 +154,18 @@ def main():
     t = requests.get(f"{om}/api/v1/tables/name/fabric-emulator.govws.lake.orders",
                      headers=h, timeout=30)
     assert t.status_code == 200, (t.status_code, t.text[:300])
-    got = {c["name"]: c["dataType"] for c in t.json()["columns"]}
-    want = {"order_id": "BIGINT", "amount": "DOUBLE", "region": "STRING"}
+    cols = {c["name"]: c for c in t.json()["columns"]}
+    got = {n: c["dataType"] for n, c in cols.items()}
+    want = {"order_id": "BIGINT", "amount": "DOUBLE", "region": "STRING",
+            "price": "DECIMAL", "tags": "ARRAY", "meta": "STRUCT"}
     assert got == want, f"columns mapped wrong: {got}"
+    # Decimal precision/scale must survive into the catalog.
+    assert cols["price"].get("precision") == 10 and cols["price"].get("scale") == 2, \
+        f"decimal precision lost: {cols['price']}"
+    assert cols["tags"].get("arrayDataType") == "STRING", \
+        f"array element type lost: {cols['tags']}"
+    assert [c["name"] for c in cols["meta"].get("children", [])] == ["src"], \
+        f"struct children lost: {cols['meta']}"
 
     svc = requests.get(f"{om}/api/v1/services/databaseServices/name/fabric-emulator",
                        headers=h, timeout=30)
