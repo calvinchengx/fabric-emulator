@@ -233,6 +233,26 @@ than a plausible-looking implementation.
 
 ## Testing
 
+**Shipped:** store tests, handler tests, a real-mux test with an entra-minted
+bearer token, and a **real-client e2e** — `e2e/fabric-cli` drives the whole
+promotion flow with Microsoft's own `fab` CLI (CI job
+`fabric-cli`). `fab` 1.6.1 ships no deployment-pipeline verbs (nothing in the
+package mentions them), so those calls go through `fab api` — still fab's
+MSAL auth and HTTP stack, just untyped.
+
+Fetching Microsoft's `DeploymentPipelines-DeployAll.ps1` confirmed the wire
+contract independently of the REST reference. It calls exactly
+`GET /deploymentPipelines` → `GET …/stages` → `POST …/deploy`
+(`{sourceStageId, targetStageId, note}`) → `GET /operations/{id}` (honouring
+`Retry-After`) → `GET /operations/{id}/result`, which is what D0–D2 built. The
+e2e follows that same call order deliberately.
+
+Still worth doing: running the PowerShell sample itself, which authenticates
+with `Connect-AzAccount -ServicePrincipal` + `Get-AzAccessToken`. That needs
+`pwsh` + the Az module in a container and would test whether Az's MSAL flow
+survives against entra-emulator — the same class of question that surfaced the
+`/common/discovery/instance` 404 when `fab` was first wired up.
+
 Same shape as every other surface here — unit tests for the model, then a
 **real client** driving it, because that is what has repeatedly found real
 bugs (the ABFS `PUT`-vs-`PATCH` truncation, MSAL's discovery 404).

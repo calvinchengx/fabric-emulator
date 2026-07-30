@@ -80,6 +80,10 @@ Makes `fabric-cicd`, git integration, and deployment pipelines run offline.
       `/operations/{id}/result`, plus the deployment-operations history).
       **D3** (role-assignment CRUD; Admin is the only role a pipeline
       defines, mutations require Admin while reads require membership).
+      e2e: **Microsoft's `fab` CLI drives the whole promotion flow**
+      (`e2e/fabric-cli`), following the call order of Microsoft's own
+      `DeploymentPipelines-DeployAll.ps1` — list → stages → deploy → poll →
+      result — which independently confirmed the wire contract.
       Fabric has exactly two CI/CD mechanisms, git integration is one and
       stage-to-stage promotion is the other. Designed in
       [23-deployment-pipelines.md](23-deployment-pipelines.md) (D0 model+read →
