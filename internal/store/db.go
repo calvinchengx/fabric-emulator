@@ -184,6 +184,30 @@ CREATE TABLE IF NOT EXISTS shortcuts (
 	created_at INTEGER NOT NULL,
 	PRIMARY KEY (item_id, path, name)
 );
+CREATE TABLE IF NOT EXISTS deployment_pipelines (
+	id TEXT PRIMARY KEY,
+	display_name TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS deployment_pipeline_stages (
+	id TEXT PRIMARY KEY,
+	pipeline_id TEXT NOT NULL REFERENCES deployment_pipelines(id) ON DELETE CASCADE,
+	stage_order INTEGER NOT NULL,   -- dense 0..n-1; deploys are adjacent-only
+	display_name TEXT NOT NULL,
+	description TEXT NOT NULL DEFAULT '',
+	is_public INTEGER NOT NULL DEFAULT 0,
+	-- Nullable so the workspace FK can SET NULL: deleting a workspace
+	-- unassigns the stage instead of leaving it pointing at nothing.
+	workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
+	UNIQUE (pipeline_id, stage_order)
+);
+CREATE TABLE IF NOT EXISTS deployment_pipeline_roles (
+	pipeline_id TEXT NOT NULL REFERENCES deployment_pipelines(id) ON DELETE CASCADE,
+	principal_id TEXT NOT NULL,
+	principal_type TEXT NOT NULL,
+	role TEXT NOT NULL,
+	PRIMARY KEY (pipeline_id, principal_id)
+);
 PRAGMA foreign_keys = ON;
 `)
 	if err != nil {
