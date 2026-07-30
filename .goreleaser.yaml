@@ -31,6 +31,12 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Re-running the release job against an existing tag must not 422 on assets
+# that are already uploaded (learned on v0.4.0: a re-run to publish brew/
+# winget after their tokens were added died before reaching those steps).
+release:
+  replace_existing_artifacts: true
+
 # Homebrew tap: on each tag, GoReleaser generates a cask from the built macOS
 # archives and commits it to calvinchengx/homebrew-tap, so `brew install
 # calvinchengx/tap/fabric-emulator` works. Pushing to a *separate* repo needs
