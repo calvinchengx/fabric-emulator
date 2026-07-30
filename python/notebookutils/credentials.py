@@ -1,10 +1,12 @@
 """notebookutils.credentials — tokens and Key Vault secrets for the notebook.
 
-In real Fabric these resolve through the workspace's managed identity. Here the
-notebook identity is the client-credentials app from the runtime context
-(_config), and tokens come from the entra-emulator. getSecret then reads the
-azure-keyvault-emulator with a vault-audience token — the same identity-brokered
-path Fabric uses, just against the local family.
+In real Fabric these resolve through the workspace's managed identity. Under
+FABRIC_TARGET=emulator the notebook identity is the client-credentials app
+from the runtime context (_config) and tokens come from entra-emulator;
+under FABRIC_TARGET=real they come from DefaultAzureCredential (`az login`,
+managed identity, or AZURE_* env vars) against real Entra. Either way
+getSecret then reads Key Vault with a vault-audience token — the same
+identity-brokered path Fabric uses.
 """
 import urllib.parse
 
@@ -29,10 +31,33 @@ def _scope(audience):
     return resource.rstrip("/") + "/.default"
 
 
+# DefaultAzureCredential is constructed once and cached: it probes its chain
+# (env SP -> managed identity -> az login) on first use, which is slow.
+_real_credential = None
+
+
+def _real_token(scope):
+    """Real mode: mint through azure-identity, so `az login` just works."""
+    global _real_credential
+    if _real_credential is None:
+        try:
+            from azure.identity import DefaultAzureCredential
+        except ImportError as e:
+            raise RuntimeError(
+                "notebookutils: FABRIC_TARGET=real needs azure-identity "
+                "(pip install azure-identity), then `az login` or AZURE_* "
+                "credentials in the environment."
+            ) from e
+        _real_credential = DefaultAzureCredential()
+    return _real_credential.get_token(scope).token
+
+
 def getToken(audience):
     """Return a bearer token for `audience` (a Fabric alias like "storage"/
     "keyvault" or a full resource URL), minted for the notebook identity."""
     cfg = config()
+    if cfg.is_real:
+        return _real_token(_scope(audience))
     form = urllib.parse.urlencode({
         "grant_type": "client_credentials",
         "client_id": cfg.client_id,

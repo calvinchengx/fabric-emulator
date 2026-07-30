@@ -20,6 +20,7 @@ def _lines(t):
     if t.is_emulator:
         e += [
             ("NOTEBOOKUTILS_FABRIC_URL", t.api_root.removesuffix("/v1")),
+            ("NOTEBOOKUTILS_ONELAKE_URL", t.onelake_url),
             ("NOTEBOOKUTILS_ENTRA_URL", t.entra_url),
             ("NOTEBOOKUTILS_TENANT", t.tenant),
             ("NOTEBOOKUTILS_CLIENT_ID", _env("FABRIC_CLIENT_ID", SEED_CLIENT_ID)),
@@ -30,6 +31,7 @@ def _lines(t):
     else:
         e += [
             ("NOTEBOOKUTILS_FABRIC_URL", "https://api.fabric.microsoft.com"),
+            ("NOTEBOOKUTILS_ONELAKE_URL", t.onelake_url),
             ("NOTEBOOKUTILS_ENTRA_URL", t.entra_url),
             ("NOTEBOOKUTILS_TENANT", t.tenant),
             ("NOTEBOOKUTILS_INSECURE", "0"),

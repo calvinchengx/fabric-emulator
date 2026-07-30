@@ -60,7 +60,7 @@ def _resolve(path):
 
 def _url(filesystem, subpath=""):
     cfg = config()
-    base = f"{cfg.fabric_url}/{filesystem}"
+    base = f"{cfg.onelake_url}/{filesystem}"
     return base + ("/" + subpath if subpath else "")
 
 
