@@ -1,6 +1,6 @@
 # 21 — Design: one toggle between fabric-emulator and real Fabric
 
-**Status: T0 shipped** (`python/fabric-target/`, CI `fabric-target`); T1–T2 remain design. Goal: a user's Python functionality — SDK calls,
+**Status: T0 + T1 shipped** (`python/fabric-target/`, CI `fabric-target`; conformance emulator leg on every push, real leg via the secret-gated `real-fabric` workflow); T2 remains design. Goal: a user's Python functionality — SDK calls,
 `fabric-cicd` pipelines, notebooks on the `notebookutils` shim, dbt projects,
 plain `requests` — runs against **either** the local emulator family **or**
 the real Fabric service, switched by **one setting**, with zero code edits.
@@ -172,7 +172,7 @@ def test_publish_roundtrip(t): ...
 | Phase | Lands | Proves |
 |---|---|---|
 | **T0** ✅ | `python/fabric-target/` (resolver, TokenCredential-shaped emulator credential, guarded session + LRO poll, `env` emitter) + unit tests + `e2e/fabric-target` (CI 3-OS) + quickstart section | toggle commands are real; emulator profile CI-verified end to end |
-| **T1** | pytest `target` marker + the secret-gated `real-fabric` workflow | same suite green on both; divergences filed against the parity map |
+| **T1** ✅ | `conformance/` suite (7 target-agnostic tests: per-scope minting, name resolution, item+LRO lifecycle, throttle shape, both guards) — emulator leg in the `fabric-target` CI job; real leg in `.github/workflows/real-fabric.yml` (workflow_dispatch + weekly, self-skips until `AZURE_*`/`FABRIC_TEST_WORKSPACE` secrets exist) | same suite, one env var apart; divergences feed the parity map |
 | **T2** | `notebookutils` real mode (`NOTEBOOKUTILS_*` resolved from the real profile: real OneLake, real vault, `DefaultAzureCredential`) | notebook code runs unchanged locally *and* as a genuine Fabric notebook |
 
 ## Non-goals

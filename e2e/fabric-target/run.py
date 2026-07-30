@@ -83,16 +83,27 @@ try:
     subprocess.run([sys.executable, "-m", "venv", venv], check=True)
     vpy = os.path.join(venv, "Scripts" if os.name == "nt" else "bin", "python" + EXE)
     subprocess.run([vpy, "-m", "pip", "install", "-q",
-                    os.path.join(REPO, "python", "fabric-target"), "requests"], check=True)
+                    os.path.join(REPO, "python", "fabric-target"),
+                    "requests", "pytest"], check=True)
+
+    env = {**os.environ,
+           "FABRIC_TARGET": "emulator",
+           "FABRIC_EMULATOR_URL": f"https://localhost:{FABRIC_PORT}",
+           "ENTRA_EMULATOR_URL": f"https://localhost:{ENTRA_PORT}"}
 
     log("running driver")
+    subprocess.run([vpy, os.path.join(DIR, "driver.py")], check=True, env=env)
+
+    # T1: the dual-target conformance suite, emulator leg. The same tests run
+    # against real Fabric via .github/workflows/real-fabric.yml — only
+    # FABRIC_TARGET and credentials differ. The driver above left the
+    # "target-e2e" workspace in place; conformance scopes to it, as real
+    # mode always must.
+    log("running conformance suite (FABRIC_TARGET=emulator)")
     subprocess.run(
-        [vpy, os.path.join(DIR, "driver.py")],
-        check=True,
-        env={**os.environ,
-             "FABRIC_TARGET": "emulator",
-             "FABRIC_EMULATOR_URL": f"https://localhost:{FABRIC_PORT}",
-             "ENTRA_EMULATOR_URL": f"https://localhost:{ENTRA_PORT}"})
+        [vpy, "-m", "pytest", "-m", "target", "-q",
+         os.path.join(REPO, "python", "fabric-target", "conformance")],
+        check=True, env={**env, "FABRIC_WORKSPACE": "target-e2e"})
     log("PASS")
 finally:
     for p in procs:

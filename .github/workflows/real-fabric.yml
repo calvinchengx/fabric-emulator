@@ -1,0 +1,51 @@
+name: Real Fabric conformance
+
+# T1 of the real-Fabric toggle (docs/21): the SAME conformance suite CI runs
+# against the emulator on every push (e2e/fabric-target) runs here against
+# REAL Microsoft Fabric — FABRIC_TARGET is the only difference. Divergences
+# found here are parity-map material: this workflow is the fidelity oracle.
+#
+# Opt-in by secrets; without them the run skips loudly instead of failing.
+# Required repository secrets:
+#   AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+#     — a service principal with a role on the test workspace
+#   FABRIC_TEST_WORKSPACE
+#     — display name of a DEDICATED throwaway workspace (the suite creates
+#       and deletes its own items inside it; nothing else is touched)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1' # weekly, Monday 05:17 UTC
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Check secrets are configured
+        id: gate
+        env:
+          SECRET_SET: ${{ secrets.AZURE_CLIENT_SECRET != '' && secrets.FABRIC_TEST_WORKSPACE != '' }}
+        run: |
+          if [ "$SECRET_SET" != "true" ]; then
+            echo "::notice::real-Fabric secrets not configured — skipping (see workflow header for the required secrets)"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install fabric-target
+        if: steps.gate.outputs.run == 'true'
+        run: pip install -q './python/fabric-target[real,sessions]' pytest
+      - name: Conformance against real Fabric
+        if: steps.gate.outputs.run == 'true'
+        env:
+          FABRIC_TARGET: real
+          FABRIC_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: python -m pytest -m target -v python/fabric-target/conformance

@@ -22,3 +22,8 @@ Documentation = "https://calvinchengx.github.io/fabric-emulator/21-real-fabric-t
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["fabric_target*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "target: dual-target conformance — runs against fabric-emulator or real Fabric per FABRIC_TARGET (docs/21 T1)",
+]

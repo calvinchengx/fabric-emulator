@@ -107,6 +107,20 @@ jobs:
       # item -> LRO poll -> guards, against real entra+fabric binaries.
       - run: python e2e/fabric-target/run.py
 
+  governance:
+    name: OpenMetadata governance profile catalogs the emulator (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # The optional governance profile, witnessed: family + OpenMetadata
+      # (Postgres) up, a real Delta table seeded via delta-rs, govern-ingest
+      # catalogs it, and OM's API must return the table with columns mapped
+      # from the Delta schema. Linux-only (heavy: OM server + Elasticsearch).
+      - run: python3 e2e/governance/run.py
+
   delta-rs:
     name: Real delta-rs writes Delta through OneLake
     strategy:
