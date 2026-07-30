@@ -73,9 +73,9 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Lakehouse item + Tables/Files storage | Full (via OneLake) | 🟢 Real |
 | Notebook authoring / definition round-trip | Full | 🟢 Real |
 | `notebookutils` / `mssparkutils` (fs, credentials, getSecret, lakehouse, runtime) | Functional stdlib shim (`python/notebookutils`) | 🟢 Real |
-| Spark session / statement / batch via the **Livy API** | **Native termination** (`--spark-agent-url`): the emulator implements the Livy REST contract itself and drives a Spark statement-executor agent. **Interactive** sessions are persistent REPLs whose PySpark statements are computed by **real Spark** (state survives across statements); **batches** run a script fetched from OneLake through the agent — all in `e2e/livy`. No Apache Livy server (it's retired). Alternatively `--spark-livy-url` reverse-proxies an external Livy server | 🟢 Real |
-| Notebook **cell execution** | The emulator parses the notebook into cells (real Go parser) and records/serves the run; **real Spark executes the cells** against OneLake and reports back, finalising the job's status + exit value (`e2e/notebook-run`, real Delta lands). Cells stay "parsed, Pending" if no engine runs | 🟢 parse+run-record / 🟠 Spark exec |
-| Livy **High-Concurrency** (5-REPL) sessions | Fabric's own packing layer, implemented for real (not proxied): `sessionTag` packing into a shared session, 5-REPL cap + spill, non-idempotent acquire, independent get/delete, slot reuse on release. With `--spark-agent-url`, REPL statements run on **real Spark** — each REPL its own agent namespace, so the 5-REPL model is real end to end (`e2e/livy`) | 🟢 Real |
+| Spark session / statement / batch via the **Livy API** | **Native termination** (`--spark-agent-url`): the emulator implements the Livy contract and drives a persistent statement-executor agent. The default agent is a PySpark Connect client of Sail, not Apache Spark. An external Livy backend remains configurable with `--spark-livy-url` | 🟢 protocol / 🟠 Sail execution |
+| Notebook **cell execution** | The emulator parses and records the notebook run; Sail executes cells by default and reports results back. The same fixture also runs on the scheduled Spark 3.5 JVM oracle and secret-gated real Fabric workflow | 🟢 parse+record / 🟠 default compute |
+| Livy **High-Concurrency** (5-REPL) sessions | Fabric's packing layer is implemented directly: `sessionTag` packing, 5-REPL cap + spill, independent lifecycle and slot reuse. Statements use Sail by default, so engine compatibility is limited to the Spark Connect subset | 🟢 protocol / 🟠 Sail execution |
 | Environments, Spark Job Definitions | Item management only | 🟡 Emulated |
 
 ### Notebook code on the default engine (LakeSail's Sail)
@@ -93,8 +93,9 @@ inferred — the fidelity deltas a Fabric notebook author actually hits:
 | `createDataFrame(local_rows)` | Works (runners preset `localRelationSizeLimit`) | 🟢 Real |
 | `sc` / RDD API / `spark._jvm` | **Fidelity inversion**: works on real Fabric, impossible on Spark Connect — the agent binds `sc` to a guide-rail stub that raises a clear pointer instead of `NameError` | 🔴 by architecture |
 | DML row-count envelopes (`INSERT`/`MERGE` counts) | Statement executes; DataFusion's `uint64` count is absorbed as an empty result by the SQL agent | 🟡 Emulated envelope |
-| Structured streaming, `OPTIMIZE`/`VACUUM`, CDF, Java/Scala UDFs, `spark.jars` | Absent in Sail v0.6.6 | 🔴 Not implemented |
-| Concurrent Delta writers to one table | **No conflict detection** — both "succeed" where real Fabric/delta-spark would conflict-detect; single-writer flows unaffected | 🔴 divergence |
+| Structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs | Execution fails on Sail v0.6.6 | 🔴 Not implemented |
+| CDF options, `spark.jars` | Accepted but inert: CDF returns a normal snapshot and JARs have no JVM classloader | 🔴 false-positive surface |
+| Concurrent Delta overwrite writers | Two independent Connect sessions race at one barrier; one commits and the other receives a transaction failure from the conditional Delta-log create | 🟢 probed conflict rejection |
 
 ## Data Warehouse (`data-warehouse/`)
 
@@ -177,7 +178,7 @@ contract holds better than any assertion we could write ourselves.
 | PySpark behind the **Livy API** | Spark sessions / statements | 🟢 `e2e/spark`, `e2e/livy`, `e2e/notebook-run` |
 | `notebookutils` | Notebook utility shim | 🟢 `e2e/notebookutils` |
 | `go-mssqldb` | Warehouse/Lakehouse **TDS + FedAuth** | 🟢 `internal/server`, `internal/tds` |
-| **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy HC sessions | 🟢 `e2e/dbt-fabricspark` — debug→seed→run→test on real Spark |
+| **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy HC sessions | 🟠 `e2e/dbt-fabricspark` — debug→seed→run→test on Sail |
 | **`dbt-fabric`** (Microsoft) | Warehouse **TDS via ODBC Driver 18** | 🟢 `e2e/dbt-fabric` — debug→seed→run→test through the TDS splice |
 
 The TDS surface now has **two independent driver witnesses**: `go-mssqldb` and

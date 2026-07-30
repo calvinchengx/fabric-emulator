@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-"""e2e: Microsoft's real dbt-fabricspark adapter drives a dbt project through
-the emulator's Livy High-Concurrency surface onto real Spark, authenticated by
-entra-emulator. Brings the stack up and asserts dbt debug -> seed -> run -> test
-all pass (--exit-code-from dbt). Heavier weight class (JVM Spark image), like the
-other Spark e2es; Linux-friendly."""
+"""Microsoft's dbt-fabricspark adapter drives a dbt project through the
+emulator's Livy High-Concurrency surface onto Sail via Spark Connect. The
+entra-emulator-authenticated debug, seed, run and test sequence must pass."""
 import os
 import subprocess
 import sys

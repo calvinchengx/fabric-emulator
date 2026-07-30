@@ -11,9 +11,10 @@ Go integration tests start a real entra-emulator in-process and drive the
 full HTTP surface; the remaining suites drive real third-party clients and
 engines against the running emulator.
 
-> **Engine migration complete:** every Spark row below (`spark-a2`,
-> `livy-native`, `dbt-fabricspark`, `notebook-run`) runs on **LakeSail's
-> Sail** (Rust Spark-Connect, no JVM) — see
+> **Default compute tier:** every Spark row below (`spark-a2`, `livy-native`,
+> `dbt-fabricspark`, `notebook-run`) runs on **LakeSail's Sail** (Rust Spark
+> Connect, no JVM). This proves the Spark Connect/DataFrame subset, not full
+> Microsoft Fabric Runtime parity — see
 > [20-lakesail-engine.md](20-lakesail-engine.md).
 
 | Suite | Client | Proves | Where |
@@ -44,6 +45,19 @@ distroless container smoke (`docker-smoke`), the portal build + headless
 render (`portal`), and the
 [docs site](https://calvinchengx.github.io/fabric-emulator/) build on every
 docs push.
+
+## Slower compatibility oracles
+
+| Cadence | Suite | Proves |
+|---|---|---|
+| Weekly/manual | `e2e/spark-jvm` | Apache Spark 3.5.3 + Delta 3.2 batch Delta, Hadoop ABFS, RDD/SparkContext, JVM/JAR bridge, Structured Streaming, VACUUM and CDF |
+| Weekly/manual | `e2e/notebook-run/run-jvm.py` | the same representative notebook used by Sail runs on the Fabric Runtime 1.3-aligned JVM baseline |
+| Weekly + release | `e2e/notebook-run/real_fabric.py` | the representative DataFrame/SQL notebook publishes and completes in real Microsoft Fabric; secret-gated |
+
+The Sail suite also asserts the negative boundary: RDD/SparkContext, Py4J,
+`spark.jars`, streaming, `OPTIMIZE`, `VACUUM`, and ignored CDF options; it also
+asserts one-winner/one-rejected concurrent overwrite behavior. A capability
+change fails CI until this matrix is deliberately reclassified.
 
 ## Queued (designed, not yet wired)
 

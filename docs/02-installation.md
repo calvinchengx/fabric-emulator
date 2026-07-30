@@ -60,8 +60,8 @@ endpoint, Fabric SQL Database). `docker-compose.override.yml` — auto-loaded
 alongside [`docker-compose.yml`](../docker-compose.yml), no flag needed — adds
 those sidecars and their env vars; see [14-real-compute.md](14-real-compute.md).
 
-To run the same stack on **LakeSail's Sail** (Rust Spark-Connect engine — no
-JVM anywhere; the engine JVM Spark is being migrated to, see
+To run the same stack explicitly on **LakeSail's Sail** (the default Rust
+Spark-Connect engine, with no JVM; see
 [20-lakesail-engine.md](20-lakesail-engine.md)):
 
 ```bash

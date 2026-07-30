@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
-"""e2e: native Livy termination + real Spark. Brings up entra + fabric + a Spark
-statement-executor agent + a client, and asserts the client gets real
-Spark-computed results through the emulator's own Livy layer (no Apache Livy
-server). Linux-friendly; the JVM Spark image is a heavier weight class, like the
-other Spark e2e."""
+"""Native Livy termination with statements computed by Sail through a
+PySpark Connect agent. There is no Apache Livy server or JVM in this stack."""
 import os
 import subprocess
 import sys

@@ -27,7 +27,7 @@ jobs:
       - run: go test -coverpkg=./... -coverprofile=cover.out ./...
         shell: bash
       # Coverage floor: fail the build if total statement coverage regresses
-      # below 90% (currently ~95%).
+      # below 90% (currently ~90%).
       - name: Coverage floor (90%)
         shell: bash
         run: |
@@ -204,23 +204,23 @@ jobs:
       - run: ./scripts/docker-smoke.sh
 
   spark-a2:
-    name: Real Spark API on Sail writes Delta through OneLake (containerized)
+    name: Spark Connect API on Sail writes Delta through OneLake (containerized)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Builds fabric-emulator from source + the Sail image, then the real
-      # Spark API (Connect client) writes/reads a Delta table through the
+      # Builds fabric-emulator from source + the Sail image, then a real
+      # PySpark Connect client writes/reads a Delta table through the
       # OneLake plane using production-shaped abfs:// URLs. No JVM anywhere.
       - run: python3 e2e/spark/run.py
 
   livy-native:
-    name: Native Livy sessions drive real Spark (containerized)
+    name: Native Livy sessions drive Sail (containerized)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       # The emulator terminates the Livy REST protocol itself and drives a Spark
       # statement-executor agent — a real client creates a session, submits
-      # PySpark statements, and gets results computed by real Spark, with NO
+      # PySpark statements, and gets results computed by Sail, with NO
       # Apache Livy server. The engine is Sail (no JVM), like spark-a2.
       - run: python3 e2e/livy/run.py
 
@@ -265,15 +265,15 @@ jobs:
       - run: python3 e2e/deployment-pipelines/run.py
 
   dbt-fabricspark:
-    name: Microsoft's dbt-fabricspark drives Livy HC on real Spark (containerized)
+    name: Microsoft's dbt-fabricspark drives Livy HC on Sail (containerized)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       # Microsoft's real dbt-fabricspark adapter runs a dbt project (debug ->
       # seed -> run -> test) against the emulator's Fabric REST + Livy
-      # High-Concurrency surface, with real Spark computing the models and an
+      # High-Concurrency surface, with Sail computing the models and an
       # Entra token minted by entra-emulator. A second, independent client over
-      # the Livy HC layer — parity witness. Linux-only (JVM Spark image).
+      # the Livy HC layer — parity witness. Linux-only (Sail container stack).
       - run: python3 e2e/dbt-fabricspark/run.py
 
   dbt-fabric:
@@ -333,12 +333,12 @@ jobs:
       - run: python e2e/notebookutils/run.py
 
   notebook-run:
-    name: Real Spark executes notebook cells (containerized)
+    name: Sail executes representative notebook cells (containerized)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Heavy (reuses the spark-a2 JVM image): the emulator parses a real Fabric
-      # notebook into cells, real Spark executes them against OneLake (a Delta
+      # The emulator parses a real Fabric notebook into cells, Sail executes
+      # them through Spark Connect against OneLake (a Delta
       # table lands), and the run is reported back so the RunNotebook job
       # reflects real execution. Linux-only.
       - run: python3 e2e/notebook-run/run.py

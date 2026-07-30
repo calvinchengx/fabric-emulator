@@ -205,8 +205,9 @@ Execution mode depends on how the server is launched:
 
 - **`--spark-agent-url` set:** native Livy termination — the emulator implements
   the Livy session/statement contract itself and drives a Spark
-  statement-executor agent, so real Spark computes the results (unmodified
-  `pylivy`/`sparkmagic` clients work).
+  statement-executor agent. The default agent computes through Sail over Spark
+  Connect; a JVM-backed agent can be supplied separately (unmodified
+  `pylivy`/`sparkmagic` clients work at the protocol layer).
 - **`--spark-livy-url` set:** the routes reverse-proxy to a real external Apache
   Livy backend.
 - **Neither set:** the routes `501` honestly — no faked sessions.

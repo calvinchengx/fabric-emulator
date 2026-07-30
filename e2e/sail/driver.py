@@ -9,9 +9,11 @@ If-None-Match conditional PUT every Delta commit needs.
 """
 import json
 import os
+import threading
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 FABRIC = os.environ["FABRIC"]
 ENTRA = os.environ["ENTRA"]
@@ -117,6 +119,68 @@ spark.sql("SELECT * FROM VALUES (1,'x') AS t(id, v)") \
     .write.format("delta").mode("overwrite").save(abfss)
 assert spark.read.format("delta").load(abfss).count() == 1
 print("abfss:// (Fabric Hadoop form) OK — no shim needed")
+
+# --- executable compatibility boundary -------------------------------------
+
+def expect_unavailable(name, operation):
+    try:
+        operation()
+    except Exception as error:
+        print(f"known gap confirmed: {name} ({type(error).__name__})")
+        return
+    raise AssertionError(f"Sail capability changed: {name} unexpectedly succeeded; update the parity matrix")
+
+
+expect_unavailable("SparkContext / RDD", lambda: spark.sparkContext.parallelize([1, 2]).count())
+expect_unavailable("Py4J JVM bridge / Java and Scala UDFs", lambda: spark._jvm.java.lang.System.nanoTime())
+# Sail stores arbitrary Spark configuration, so this setting appears to work,
+# but there is no JVM/classloader that could load the referenced JAR.
+spark.conf.set("spark.jars", "/tmp/compat-probe.jar")
+assert spark.conf.get("spark.jars") == "/tmp/compat-probe.jar"
+print("known divergence confirmed: spark.jars is accepted but inert (no JVM classloader)")
+
+
+def start_stream():
+    query = (spark.readStream.format("rate").load().writeStream
+             .format("memory").queryName("sail_stream_probe").start())
+    query.awaitTermination(10)
+
+
+expect_unavailable("Structured Streaming execution", start_stream)
+expect_unavailable("OPTIMIZE", lambda: spark.sql("OPTIMIZE events_t").collect())
+expect_unavailable("VACUUM", lambda: spark.sql("VACUUM events_t RETAIN 168 HOURS").collect())
+cdf_probe = (spark.read.format("delta").option("readChangeFeed", "true")
+             .option("startingVersion", 0).load(url))
+cdf_probe.collect()
+assert "_change_type" not in cdf_probe.columns, cdf_probe.columns
+print("known divergence confirmed: CDF options are accepted but return a normal snapshot")
+
+# Launch two overwrite commits from separate sessions at the same barrier.
+# The OneLake conditional-create contract exposes the Delta log collision:
+# exactly one writer commits and the other receives a transaction failure.
+conflict_url = "az://sailws/lake.Lakehouse/Tables/concurrent_probe"
+spark.range(1).write.format("delta").mode("overwrite").save(conflict_url)
+barrier = threading.Barrier(2)
+
+
+def concurrent_overwrite(value):
+    session = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).create()
+    try:
+        barrier.wait(timeout=30)
+        session.range(value, value + 10).write.format("delta").mode("overwrite").save(conflict_url)
+        return "committed"
+    except Exception as error:
+        return f"rejected:{type(error).__name__}"
+    finally:
+        session.stop()
+
+
+with ThreadPoolExecutor(max_workers=2) as executor:
+    outcomes = list(executor.map(concurrent_overwrite, (100, 200)))
+assert outcomes.count("committed") == 1, outcomes
+assert sum(outcome.startswith("rejected:") for outcome in outcomes) == 1, outcomes
+assert spark.read.format("delta").load(conflict_url).count() == 10
+print(f"concurrent overwrite conflict rejected: {outcomes}")
 
 # The engine's writes are real bytes in OneLake: read the first Delta commit
 # back through the Blob surface ourselves (same account-prefixed path form).

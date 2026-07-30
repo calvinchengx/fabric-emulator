@@ -1,4 +1,4 @@
-# A2 on Sail: the real Spark API (Spark Connect) writes Delta through the
+# A2 on Sail: a real PySpark Connect client writes Delta through the
 # emulator's OneLake plane — the engine is LakeSail's Sail, no JVM anywhere.
 # The abfs:// URLs keep their production shape; sail's endpoint override
 # routes them to fabric-emulator (docs/20-lakesail-engine.md). Plain HTTP
@@ -57,7 +57,7 @@ services:
       SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
       RUST_LOG: "info"
 
-  # The A2 job — the real Spark API as a Connect client (python:slim, no JVM).
+  # The A2 job — a real PySpark Connect client (python:slim, no JVM).
   # Keeps the service name "spark" so run.py's --exit-code-from stays valid.
   spark:
     image: python:3.12-slim

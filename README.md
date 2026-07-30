@@ -50,7 +50,7 @@ are shipped and CI-verified on Linux, macOS, and Windows.
   SDK, azcopy, PySpark, dbt) drive it in CI as borrowed oracles.
 
 The default binary runs none of the engines (clock-derived, milliseconds);
-each is an opt-in flag/sidecar. Coverage floor is 90% (currently ~95%).
+each is an opt-in flag/sidecar. Coverage floor is 90% (currently ~90%).
 
 Docs: <https://calvinchengx.github.io/fabric-emulator/> — start with
 [architecture](docs/03-architecture.md), the

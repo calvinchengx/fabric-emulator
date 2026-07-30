@@ -14,6 +14,7 @@ name: Real Fabric conformance
 #       and deletes its own items inside it; nothing else is touched)
 
 on:
+  workflow_call:
   workflow_dispatch:
   schedule:
     - cron: '17 5 * * 1' # weekly, Monday 05:17 UTC
@@ -49,3 +50,11 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: python -m pytest -m target -v python/fabric-target/conformance
+      - name: Representative notebook against real Fabric
+        if: steps.gate.outputs.run == 'true'
+        env:
+          FABRIC_TEST_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: python3 e2e/notebook-run/real_fabric.py

@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""e2e A2: real JVM Spark (delta-spark) writes and reads a Delta table through
-fabric-emulator's OneLake plane via the Hadoop ABFS driver, authenticated to
-entra-emulator.
-
-The container network is the crux — the ABFS driver takes no endpoint
-override, so onelake.dfs.fabric.microsoft.com resolves (via a compose network
-alias) to fabric-emulator. fabric-emulator is built from this working tree, so
-the e2e tests the current code. Docker + a JVM Spark image make this a heavier
-job than the pure-wheel e2es; it runs Linux-only in CI.
-"""
+"""Run the common Spark API / Delta workload on the default Sail engine."""
 import os
 import subprocess
 import sys
