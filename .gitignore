@@ -29,3 +29,6 @@ coverage.out
 # Python build artifacts (pip local installs)
 python/**/build/
 python/**/*.egg-info/
+
+# Python bytecode
+__pycache__/
