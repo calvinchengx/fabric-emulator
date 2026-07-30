@@ -168,6 +168,10 @@ func TestPortalStoreErrors(t *testing.T) {
 		"/_emulator/portal/workspaces",
 		"/_emulator/portal/workspaces/some-id",
 		"/_emulator/portal/operations",
+		"/_emulator/portal/connections",
+		"/_emulator/portal/shortcuts",
+		"/_emulator/portal/capacities",
+		"/_emulator/portal/jobs",
 	} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
