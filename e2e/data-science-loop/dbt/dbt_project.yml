@@ -1,0 +1,8 @@
+name: fabric_direct_lake
+version: 1.0.0
+config-version: 2
+profile: fabric_direct_lake
+model-paths: ["models"]
+models:
+  fabric_direct_lake:
+    +materialized: table

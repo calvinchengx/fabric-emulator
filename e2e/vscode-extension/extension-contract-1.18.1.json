@@ -1,0 +1,22 @@
+{
+  "extension": "SynapseVSCode.synapse",
+  "version": "1.18.1",
+  "source": "https://github.com/microsoft/SynapseVSCode",
+  "routes": [
+    "PUT /spglobalservice/GetOrInsertClusterUrisByTenantLocation",
+    "GET /metadata/v201606/workspaces/",
+    "GET /metadata/workspaces/{workspaceId}/artifacts",
+    "POST /metadata/workspaces/{workspaceId}/artifacts",
+    "GET /metadata/artifacts/{artifactId}",
+    "PATCH /metadata/artifacts/{artifactId}",
+    "DELETE /metadata/artifacts/{artifactId}",
+    "POST /metadata/datahub/V2/artifacts",
+    "POST /metadata/v201606/generatemwctoken",
+    "GET /webapi/capacities/{capacityId}/workloads/Notebook/Data/Direct/api/workspaces/{workspaceId}/artifacts/{artifactId}/content",
+    "HEAD /webapi/capacities/{capacityId}/workloads/Notebook/Data/Direct/api/workspaces/{workspaceId}/artifacts/{artifactId}/content",
+    "PUT /webapi/capacities/{capacityId}/workloads/Notebook/Data/Direct/api/workspaces/{workspaceId}/artifacts/{artifactId}/content",
+    "GET /webapi/capacities/{capacityId}/workloads/Notebook/Data/Direct/api/workspaces/{workspaceId}/artifacts/{artifactId}/filesystem/workdir/{path}",
+    "PUT /webapi/capacities/{capacityId}/workloads/Notebook/Data/Direct/api/workspaces/{workspaceId}/artifacts/{artifactId}/filesystem/workdir/{path}",
+    "DELETE /webapi/capacities/{capacityId}/workloads/Notebook/Data/Direct/api/workspaces/{workspaceId}/artifacts/{artifactId}/filesystem/workdir/{path}"
+  ]
+}

@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -31,6 +33,10 @@ func (a *API) createJobInstance(w http.ResponseWriter, r *http.Request, p *auth.
 	delay, failWith := a.nextOpFate()
 	j := &store.JobInstance{ItemID: it.ID, JobType: jobType, FailWith: failWith}
 	j.CompleteAt = a.Store.Now() + delay
+	if it.Type == "ApacheAirflowJob" && jobType == "Run" {
+		// A real engine callback finalises this job; virtual time must not.
+		j.CompleteAt = math.MaxInt64
+	}
 	if err := a.Store.CreateJobInstance(j); err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
@@ -64,6 +70,28 @@ func (a *API) createJobInstance(w http.ResponseWriter, r *http.Request, p *auth.
 			j.FailWith = code
 			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
 		}
+	}
+	if it.Type == "ApacheAirflowJob" && jobType == "Run" {
+		var body struct {
+			ExecutionData struct {
+				DAGID string         `json:"dagId"`
+				Conf  map[string]any `json:"conf"`
+			} `json:"executionData"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.ExecutionData.DAGID == "" {
+			j.FailWith = "AirflowDAGIDRequired"
+			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
+		} else if a.Airflow == nil {
+			j.FailWith = "AirflowNotConfigured"
+			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
+		} else {
+			go a.runAirflow(context.Background(), it, j, body.ExecutionData.DAGID, body.ExecutionData.Conf)
+		}
+	}
+	if it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish") {
+		j.FailWith = "DataflowEngineNotImplemented"
+		_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
 	}
 	loc := fmt.Sprintf("https://%s/v1/workspaces/%s/items/%s/jobs/instances/%s", r.Host, wid, it.ID, j.ID)
 	w.Header().Set("Location", loc)

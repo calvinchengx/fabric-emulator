@@ -60,6 +60,17 @@ type Config struct {
 	// the SQL endpoint relays authenticated queries to. Empty leaves the
 	// endpoint answering the T1 stub result.
 	WarehouseSQLURL string
+
+	// AirflowURL attaches an upstream Apache Airflow 2.10 REST API. DAG files
+	// are materialised into AirflowDAGDir, which must be a shared volume mounted
+	// as the scheduler's DAG folder.
+	AirflowURL      string
+	AirflowDAGDir   string
+	AirflowUsername string
+	AirflowPassword string
+
+	// MLflowURL attaches a real MLflow tracking and model-registry server.
+	MLflowURL string
 }
 
 // FromEnv builds a validated Config from FABRIC_* environment variables.
@@ -82,6 +93,11 @@ func FromEnvPartial() *Config {
 		SparkAgentURL:     os.Getenv("FABRIC_SPARK_AGENT_URL"),
 		SQLTDSAddr:        os.Getenv("FABRIC_SQL_TDS_ADDR"),
 		WarehouseSQLURL:   os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
+		AirflowURL:        os.Getenv("FABRIC_AIRFLOW_URL"),
+		AirflowDAGDir:     os.Getenv("FABRIC_AIRFLOW_DAG_DIR"),
+		AirflowUsername:   os.Getenv("FABRIC_AIRFLOW_USERNAME"),
+		AirflowPassword:   os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
+		MLflowURL:         os.Getenv("FABRIC_MLFLOW_URL"),
 		RetryAfterSeconds: 1,
 	}
 }

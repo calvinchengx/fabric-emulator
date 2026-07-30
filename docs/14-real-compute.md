@@ -1,11 +1,10 @@
 # 14 — Real compute: PySpark, Delta, and the warehouse
 
-**Status: largely shipped (R0–R5).** This document laid out the track that turns
+**Status: shipped (R0–R5).** This document laid out the track that turns
 fabric-emulator from a *contract emulator* into a *local Fabric runtime* — by
 attaching **real engines**, never by faking results. Most of it now exists, each
-milestone gated on a real client in CI; the honest exceptions still in flight
-(a real Airflow sidecar, a handful of pipeline leaf activities like Web/Script)
-are marked inline. Tense below is kept as originally written where it still
+milestone gated on a real client in CI; the honest engine and protocol
+boundaries are marked inline. Tense below is kept as originally written where it still
 reads as intent; shipped items carry a ✅ and their `e2e/` witness.
 
 > **Historical terminology:** where this design document says "real Spark" it
@@ -195,14 +194,13 @@ versions pinned to the documented Fabric Runtime (1.3 = Spark 3.5/Delta 3.x).
 
 **D3 — authoring surfaces**, in order of fidelity:
 
-1. **VS Code + the Microsoft Fabric extension** — the real local authoring
-   tool. For Runtime 1.3+ the docs say there is *no local conda env*: the
-   extension runs notebooks on **remote Spark compute** via a Jupyter kernel
-   — which is precisely the shape of our Livy+Spark sidecar. Investigation
-   item: whether the extension's service endpoints can be redirected
-   (fabric-cicd could via env; the DNS-pin + cert trick is the fallback).
-   If yes, a data engineer authors in VS Code against the emulator
-   end-to-end.
+1. **VS Code + the Microsoft Fabric extension. ✅** The shared-backend/MWC
+   authoring protocol extracted from Microsoft's pinned 1.18.1 extension is
+   served through a DNS alias for `api.powerbi.com`: discovery, item authoring,
+   notebook content/resources with ETags, Spark-job actions, and lakehouse table
+   discovery. `e2e/vscode-extension` replays that exact route contract with a
+   real Power BI-audience token. Interactive Jupyter kernel websockets and table
+   preview are not claimed; execution remains on the jobs/Livy/Sail APIs.
 2. **Plain Jupyter/VS Code `.ipynb`** + git / fabric-cicd sync — works
    **today**: author anywhere, `fabric-cicd` publishes into the emulator,
    `updateFromGit` pulls edits back.
@@ -220,7 +218,7 @@ endpoint → schedule via the jobs API → CI drives the identical REST surfaces
 Pipelines are the sharpest test of the never-fake principle, because the
 engines split three ways:
 
-**E1 — Apache Airflow: the fully real tier. 📐 planned (not yet shipped).**
+**E1 — Apache Airflow: the fully real tier. ✅ shipped.**
 Fabric's own code-first orchestrator is **genuine Apache Airflow**
 (`apache-airflow-jobs-concepts.md`: "Python-based DAGs", the next generation
 of ADF's Workflow Orchestration Manager) — and Airflow is OSS. So the
@@ -235,6 +233,12 @@ the runtime behind `ApacheAirflowJob` items:
   `apache-airflow-jobs-enable-azure-key-vault.md`) pointed at
   azure-keyvault-emulator — connections/variables resolve from the family's
   vault.
+
+The shipped `ApacheAirflowJob` file API stores DAG sources in OneLake, syncs
+them into a shared DAG volume, and drives the upstream Airflow REST API for
+discovery, unpause, trigger, and terminal-state polling. Without the optional
+backend flags it fails with `AirflowNotConfigured`. `e2e/airflow` witnesses the
+real scheduler, executor, PythonOperator task, and Fabric job completion.
 
 Real scheduler, real executor, real DAG semantics — zero orchestration
 emulation. And not merely "compatible": Fabric's hosted offering *is*
@@ -288,7 +292,8 @@ definitions round-trip through git and fabric-cicd like any other item.
 ## Engine weights — what actually runs, and when
 
 The **binary itself** never gets heavier: engines attach via flags
-(`--spark-agent-url`, `--warehouse-sql-url`, `--sql-tds-addr`), and with none of
+(`--spark-agent-url`, `--warehouse-sql-url`, `--sql-tds-addr`,
+`--airflow-url`/`--airflow-dag-dir`), and with none of
 them set it runs nothing but the Go process — clock-derived jobs, milliseconds,
 no JVM. That's what CI's fast unit-test job runs, and it's what a bare
 `go run`/`fabric-emulator` binary gives you.
@@ -327,8 +332,8 @@ C2 SQL-auth compromise.
 | **R0** | Track A storage completeness + A1 (delta-rs e2e) + the ADLS-SDK e2e (real `azure-storage-blob`) + azcopy; concurrent-commit race test | ✅ shipped |
 | **R1+R2** (merged) | **containerized Spark** — A2 (real PySpark writes Delta via ABFS, cross-engine read with delta-rs) **and** B1+B2 (native Livy sessions/HC on a real Spark agent; real RunNotebook mode). JVM Spark image + Docker network so ABFS resolves to the emulator. | ✅ shipped (`e2e/spark`, `e2e/livy`, `e2e/notebook-run`) |
 | **R3** | C1 (DuckDB SQL over the lakehouse) **and** C2/C3 (SQL Server sidecar + in-repo FedAuth-over-TDS splice; two driver witnesses) | ✅ shipped (`e2e/duckdb`, `e2e/dbt-fabric`, gated TDS tests) |
-| **R4** | D1 notebookutils and D2 default-lakehouse sessions shipped; D3 VS Code extension endpoint compatibility remains | ~ mostly |
-| **R5** | E2 (DataPipeline interpreter, real-engine leaf activities) shipped; E1 (real Airflow sidecar behind ApacheAirflowJob items) **not yet built** | ~ E2 ✅ / E1 📐 |
+| **R4** | D1 notebookutils, D2 default-lakehouse sessions, and the pinned D3 VS Code extension authoring contract | ✅ shipped |
+| **R5** | E2 DataPipeline interpreter and real-engine leaves; E1 real Airflow sidecar; explicit Dataflow Gen2 engine boundary | ✅ shipped |
 
 ## Correctness: how we prove it
 
@@ -380,7 +385,7 @@ an untestable claim is treated as a missing feature, not a passing test.
 | `deltalake` (delta-rs) | Spark-free Delta access; the A1 milestone | object-store semantics on DFS |
 | `pandas` + `pyarrow` | `toPandas()`/`createDataFrame`, `pyspark.pandas`, parquet bridging | in-engine, plus storage when reading `abfss://` |
 | `fsspec` + `adlfs` + `azure-storage-file-datalake` + `azure-identity` | what `pandas.read_parquet("abfss://…")` actually uses | the Python storage path incl. the credential chain |
-| `mlflow` | Fabric experiments/models *are* MLflow | later: attach a **real** mlflow tracking sidecar (same never-fake pattern) or 501 |
+| `mlflow` | Fabric experiments/models *are* MLflow | real MLflow 3 sidecar through the authenticated workspace proxy; typed `MLExperiment`/`MLModel` items and OneLake artifact mirror (`e2e/data-science-loop`) |
 | `semantic-link` (`sempy`) | Fabric-native analytics | partial: list/REST paths work; semantic-model *query* needs the unobtainable engine → 501 |
 
 **Tier 2 (compute-local, storage-agnostic — work automatically once Spark
@@ -394,7 +399,7 @@ scientific stack.
 |---|---|---|---|
 | **`dbt-fabricspark`** (Microsoft) | the **Fabric Livy API** | our native Livy → real Spark agent; models materialize as Delta in OneLake | ✅ shipped (`e2e/dbt-fabricspark`) |
 | **`dbt-fabric`** (Microsoft; documented in `tutorial-setup-dbt.md`) | TDS/pyodbc + Microsoft ODBC Driver 18 to the warehouse SQL endpoint | the C2 SQL Server sidecar, FedAuth terminated in-repo and byte-spliced (T-SQL dialect edges per the Polaris asterisk) | ✅ shipped (`e2e/dbt-fabric`, debug→seed→run→test) |
-| **`dbt-duckdb`** (+ delta plugin) | DuckDB in-process | the C1 engine over the same OneLake Delta files | 📐 not yet wired |
+| **`dbt-duckdb`** (+ delta plugin) | DuckDB in-process | the C1 engine over the same OneLake Delta files | ✅ shipped (`e2e/data-science-loop`, build + four tests) |
 
 Acceptance for each: the official **dbt-tests-adapter** suite plus a
 jaffle-shop-style project building end-to-end. The documented

@@ -15,8 +15,17 @@ import (
 
 // Column is a table column with its TMSL data type (int64/string/double/…).
 type Column struct {
-	Name     string
-	DataType string
+	Name         string
+	DataType     string
+	SourceColumn string
+}
+
+// DirectLakePartition maps a model table to a Delta entity through a shared
+// TMSL expression. It is nil for import/calculated tables.
+type DirectLakePartition struct {
+	EntityName       string
+	SchemaName       string
+	ExpressionSource string
 }
 
 // Measure is a model measure: a name and its DAX expression.
@@ -34,33 +43,51 @@ type Relationship struct {
 
 // Table is a model table with its columns and measures.
 type Table struct {
-	Name     string
-	Columns  []Column
-	Measures []Measure
+	Name       string
+	Columns    []Column
+	Measures   []Measure
+	DirectLake *DirectLakePartition
 }
 
 // Model is the parsed tabular model.
 type Model struct {
-	Name          string
-	Tables        []Table
-	Relationships []Relationship
+	Name               string
+	CompatibilityLevel int
+	Tables             []Table
+	Relationships      []Relationship
+	Expressions        map[string]string
 }
 
 // tmsl mirrors the model.bim shape we consume (unknown keys, like the "//"
 // comment or annotations, are ignored by encoding/json).
 type tmsl struct {
-	Name  string `json:"name"`
-	Model struct {
+	Name               string `json:"name"`
+	CompatibilityLevel int    `json:"compatibilityLevel"`
+	Model              struct {
+		Expressions []struct {
+			Name       string          `json:"name"`
+			Expression json.RawMessage `json:"expression"`
+		} `json:"expressions"`
 		Tables []struct {
 			Name    string `json:"name"`
 			Columns []struct {
-				Name     string `json:"name"`
-				DataType string `json:"dataType"`
+				Name         string `json:"name"`
+				DataType     string `json:"dataType"`
+				SourceColumn string `json:"sourceColumn"`
 			} `json:"columns"`
 			Measures []struct {
 				Name       string `json:"name"`
 				Expression string `json:"expression"`
 			} `json:"measures"`
+			Partitions []struct {
+				Mode   string `json:"mode"`
+				Source struct {
+					Type             string `json:"type"`
+					EntityName       string `json:"entityName"`
+					SchemaName       string `json:"schemaName"`
+					ExpressionSource string `json:"expressionSource"`
+				} `json:"source"`
+			} `json:"partitions"`
 		} `json:"tables"`
 		Relationships []struct {
 			Name       string `json:"name"`
@@ -81,14 +108,38 @@ func ParseTMSL(b []byte) (*Model, error) {
 	if len(t.Model.Tables) == 0 {
 		return nil, fmt.Errorf("model has no tables")
 	}
-	m := &Model{Name: t.Name}
+	m := &Model{Name: t.Name, CompatibilityLevel: t.CompatibilityLevel, Expressions: map[string]string{}}
+	for _, expression := range t.Model.Expressions {
+		text, err := expressionText(expression.Expression)
+		if err != nil {
+			return nil, fmt.Errorf("expression %q: %w", expression.Name, err)
+		}
+		m.Expressions[expression.Name] = text
+	}
 	for _, tb := range t.Model.Tables {
 		table := Table{Name: tb.Name}
 		for _, c := range tb.Columns {
-			table.Columns = append(table.Columns, Column{Name: c.Name, DataType: c.DataType})
+			table.Columns = append(table.Columns, Column{Name: c.Name, DataType: c.DataType, SourceColumn: c.SourceColumn})
 		}
 		for _, ms := range tb.Measures {
 			table.Measures = append(table.Measures, Measure{Name: ms.Name, Expression: ms.Expression})
+		}
+		for _, partition := range tb.Partitions {
+			if strings.EqualFold(partition.Mode, "directLake") {
+				if t.CompatibilityLevel < 1604 {
+					return nil, fmt.Errorf("Direct Lake table %q requires compatibilityLevel 1604 or higher", tb.Name)
+				}
+				if table.DirectLake != nil {
+					return nil, fmt.Errorf("table %q has multiple Direct Lake partitions", tb.Name)
+				}
+				if !strings.EqualFold(partition.Source.Type, "entity") || partition.Source.EntityName == "" || partition.Source.ExpressionSource == "" {
+					return nil, fmt.Errorf("Direct Lake table %q requires an entity source and expressionSource", tb.Name)
+				}
+				table.DirectLake = &DirectLakePartition{
+					EntityName: partition.Source.EntityName, SchemaName: partition.Source.SchemaName,
+					ExpressionSource: partition.Source.ExpressionSource,
+				}
+			}
 		}
 		m.Tables = append(m.Tables, table)
 	}
@@ -99,6 +150,18 @@ func ParseTMSL(b []byte) (*Model, error) {
 		})
 	}
 	return m, nil
+}
+
+func expressionText(raw json.RawMessage) (string, error) {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text, nil
+	}
+	var lines []string
+	if err := json.Unmarshal(raw, &lines); err != nil {
+		return "", fmt.Errorf("must be a string or string array")
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 // Table returns the named table (nil if absent). Table names match TMSL exactly.

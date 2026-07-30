@@ -3,6 +3,7 @@ package semanticmodel
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -79,5 +80,42 @@ func TestParseTMSLErrors(t *testing.T) {
 	}
 	if _, err := ParseTMSL([]byte(`{"name":"x","model":{"tables":[]}}`)); err == nil {
 		t.Error("expected 'no tables' error")
+	}
+	for name, raw := range map[string]string{
+		"old compatibility":   `{"compatibilityLevel":1603,"model":{"tables":[{"name":"T","partitions":[{"mode":"directLake","source":{"type":"entity","entityName":"t","expressionSource":"DL"}}]}]}}`,
+		"bad entity source":   `{"compatibilityLevel":1604,"model":{"tables":[{"name":"T","partitions":[{"mode":"directLake","source":{"type":"m"}}]}]}}`,
+		"multiple partitions": `{"compatibilityLevel":1604,"model":{"tables":[{"name":"T","partitions":[{"mode":"directLake","source":{"type":"entity","entityName":"t","expressionSource":"DL"}},{"mode":"directLake","source":{"type":"entity","entityName":"t","expressionSource":"DL"}}]}]}}`,
+		"bad expression":      `{"compatibilityLevel":1604,"model":{"expressions":[{"name":"DL","expression":42}],"tables":[{"name":"T"}]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ParseTMSL([]byte(raw)); err == nil {
+				t.Fatal("expected parse error")
+			}
+		})
+	}
+}
+
+func TestParseDirectLakeModel(t *testing.T) {
+	raw := []byte(`{
+  "name":"Direct","compatibilityLevel":1604,
+  "model":{
+    "expressions":[{"name":"DL","expression":["let"," Source = AzureStorage.DataLake(\"https://onelake.dfs.fabric.microsoft.com/ws/lake\")","in Source"]}],
+    "tables":[{"name":"Sales","columns":[{"name":"Amount","dataType":"int64","sourceColumn":"amount"}],
+      "partitions":[{"name":"Sales","mode":"directLake","source":{"type":"entity","entityName":"sales_delta","schemaName":"dbo","expressionSource":"DL"}}]}]
+  }
+}`)
+	m, err := ParseTMSL(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := m.Table("Sales")
+	if m.CompatibilityLevel != 1604 || !strings.Contains(m.Expressions["DL"], "AzureStorage.DataLake") {
+		t.Fatalf("model=%+v", m)
+	}
+	if table == nil || table.DirectLake == nil || table.DirectLake.EntityName != "sales_delta" || table.DirectLake.ExpressionSource != "DL" {
+		t.Fatalf("table=%+v", table)
+	}
+	if table.Columns[0].SourceColumn != "amount" {
+		t.Fatalf("column=%+v", table.Columns[0])
 	}
 }

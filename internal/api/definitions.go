@@ -88,6 +88,10 @@ var typedCollections = map[string]string{
 	"mirroredDatabases":   "MirroredDatabase",
 	"eventstreams":        "Eventstream",
 	"sqlDatabases":        "SQLDatabase",
+	"apacheAirflowJobs":   "ApacheAirflowJob",
+	"dataflows":           "Dataflow",
+	"mlExperiments":       "MLExperiment",
+	"mlModels":            "MLModel",
 }
 
 // registerTyped mounts the typed collections as thin aliases: list/create on

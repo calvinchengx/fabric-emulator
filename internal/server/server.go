@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	airflowclient "github.com/calvinchengx/fabric-emulator/internal/airflow"
 	"github.com/calvinchengx/fabric-emulator/internal/akv"
 	"github.com/calvinchengx/fabric-emulator/internal/api"
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
@@ -57,6 +58,16 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 		return nil, err
 	}
 	if err := a.SetLivyBackend(cfg.SparkLivyURL); err != nil {
+		return nil, err
+	}
+	if cfg.AirflowURL != "" {
+		client, err := airflowclient.New(cfg.AirflowURL, cfg.AirflowDAGDir, cfg.AirflowUsername, cfg.AirflowPassword)
+		if err != nil {
+			return nil, err
+		}
+		a.Airflow = client
+	}
+	if err := a.SetMLflowBackend(cfg.MLflowURL); err != nil {
 		return nil, err
 	}
 

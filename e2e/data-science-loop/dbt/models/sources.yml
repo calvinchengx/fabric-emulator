@@ -1,0 +1,14 @@
+version: 2
+sources:
+  - name: onelake
+    schema: main
+    tables:
+      - name: sales
+        meta:
+          plugin: delta
+          delta_table_path: "{{ env_var('DELTA_TABLE_PATH') }}"
+          storage_options:
+            azure_storage_account_name: onelake
+            azure_storage_token: "{{ env_var('AZURE_STORAGE_TOKEN') }}"
+            azure_endpoint: "{{ env_var('AZURE_STORAGE_ENDPOINT') }}"
+            azure_allow_http: "true"

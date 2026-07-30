@@ -53,6 +53,11 @@ func run(args []string, stop <-chan struct{}) error {
 	fs.StringVar(&cfg.SparkAgentURL, "spark-agent-url", cfg.SparkAgentURL, "Spark statement-executor agent for native Livy sessions (empty = off)")
 	fs.StringVar(&cfg.SQLTDSAddr, "sql-tds-addr", cfg.SQLTDSAddr, "listen address for the warehouse SQL/TDS endpoint (e.g. :1433; empty = off)")
 	fs.StringVar(&cfg.WarehouseSQLURL, "warehouse-sql-url", cfg.WarehouseSQLURL, "real SQL Server backend the SQL endpoint relays to (go-mssqldb DSN; empty = stub result)")
+	fs.StringVar(&cfg.AirflowURL, "airflow-url", cfg.AirflowURL, "Apache Airflow 2.10 REST API base URL (empty = off)")
+	fs.StringVar(&cfg.AirflowDAGDir, "airflow-dag-dir", cfg.AirflowDAGDir, "shared Airflow DAG directory")
+	fs.StringVar(&cfg.AirflowUsername, "airflow-username", cfg.AirflowUsername, "Airflow basic-auth username")
+	fs.StringVar(&cfg.AirflowPassword, "airflow-password", cfg.AirflowPassword, "Airflow basic-auth password")
+	fs.StringVar(&cfg.MLflowURL, "mlflow-url", cfg.MLflowURL, "MLflow tracking/model-registry server URL (empty = off)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

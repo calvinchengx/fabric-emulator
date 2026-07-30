@@ -1,0 +1,11 @@
+fabric_direct_lake:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: /tmp/analytics_db.duckdb
+      database: analytics_db
+      schema: analytics
+      threads: 1
+      plugins:
+        - module: delta

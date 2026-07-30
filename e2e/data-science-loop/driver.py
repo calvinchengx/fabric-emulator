@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Composed parity witness over one physical OneLake Delta table."""
+import base64
+import json
+import os
+import subprocess
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+import duckdb
+import mlflow
+from mlflow import MlflowClient
+from pyspark.sql import SparkSession
+
+FABRIC = os.environ["FABRIC"]
+ENTRA = os.environ["ENTRA"]
+TENANT = "11111111-1111-1111-1111-111111111111"
+CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"
+CLIENT_SECRET = "daemon-app-secret"
+PBI = "https://analysis.windows.net/powerbi/api"
+
+
+def request(method, url, body=None, token=None, form=False):
+    headers, data = {}, None
+    if body is not None:
+        if form:
+            data = urllib.parse.urlencode(body).encode()
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        else:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=60) as response:
+        raw = response.read()
+        return response.status, response.headers, json.loads(raw) if raw else {}
+
+
+def token(scope):
+    return request("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
+        "grant_type": "client_credentials", "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET, "scope": scope,
+    }, form=True)[2]["access_token"]
+
+
+def create_item(workspace_id, body, fabric_token):
+    _, headers, item = request("POST", f"{FABRIC}/v1/workspaces/{workspace_id}/items", body, fabric_token)
+    operation = headers.get("x-ms-operation-id")
+    if not operation:
+        return item
+    for _ in range(100):
+        state = request("GET", f"{FABRIC}/v1/operations/{operation}", token=fabric_token)[2]
+        if state.get("status") == "Succeeded":
+            return request("GET", f"{FABRIC}/v1/operations/{operation}/result", token=fabric_token)[2]
+        if state.get("status") == "Failed":
+            raise RuntimeError(state)
+        time.sleep(0.1)
+    raise RuntimeError("item operation timed out")
+
+
+fabric_token = token("https://api.fabric.microsoft.com/.default")
+workspace = request("POST", f"{FABRIC}/v1/workspaces", {"displayName": "science-loop"}, fabric_token)[2]
+lakehouse = request("POST", f"{FABRIC}/v1/workspaces/{workspace['id']}/lakehouses", {"displayName": "lake"}, fabric_token)[2]
+print(f"workspace={workspace['id']} lakehouse={lakehouse['id']}", flush=True)
+
+# Spark SQL -> Delta -> OneLake. Sail is the real Spark Connect execution engine.
+for attempt in range(30):
+    try:
+        spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
+        spark.sql("SELECT 1").collect()
+        break
+    except Exception:
+        if attempt == 29:
+            raise
+        time.sleep(2)
+delta_path = f"abfs://{workspace['id']}@onelake.dfs.fabric.microsoft.com/{lakehouse['id']}/Tables/sales"
+sales = spark.sql("""
+    SELECT * FROM VALUES
+      (1, 'us', 80), (2, 'eu', 60), (3, 'us', 45), (4, 'apac', 125)
+    AS sales(id, region, amount)
+""")
+sales.write.format("delta").mode("overwrite").save(delta_path)
+assert spark.read.format("delta").load(delta_path).count() == 4
+print("Spark SQL -> OneLake Delta: PASS", flush=True)
+
+# Publish a real TMSL Direct Lake model over that exact Lakehouse table.
+model = {
+    "name": "SalesDirectLake", "compatibilityLevel": 1604,
+    "model": {
+        "expressions": [{
+            "name": "DL_Lakehouse", "kind": "m",
+            "expression": (
+                "let Source = AzureStorage.DataLake("
+                f"\"https://onelake.dfs.fabric.microsoft.com/{workspace['id']}/{lakehouse['id']}\", "
+                "[HierarchicalNavigation=true]) in Source"
+            ),
+        }],
+        "tables": [{
+            "name": "Sales",
+            "columns": [
+                {"name": "Id", "dataType": "int64", "sourceColumn": "id"},
+                {"name": "Region", "dataType": "string", "sourceColumn": "region"},
+                {"name": "Amount", "dataType": "int64", "sourceColumn": "amount"},
+            ],
+            "measures": [{"name": "Total", "expression": "SUM(Sales[Amount])"}],
+            "partitions": [{
+                "name": "Sales", "mode": "directLake",
+                "source": {"type": "entity", "entityName": "sales", "schemaName": "dbo", "expressionSource": "DL_Lakehouse"},
+            }],
+        }],
+    },
+}
+semantic = create_item(workspace["id"], {
+    "displayName": "Sales Direct Lake", "type": "SemanticModel",
+    "definition": {"parts": [{
+        "path": "model.bim", "payloadType": "InlineBase64",
+        "payload": base64.b64encode(json.dumps(model).encode()).decode(),
+    }]},
+}, fabric_token)
+
+try:
+    request("POST", f"{ENTRA}/admin/api/apps", {
+        "displayName": "Power BI Service", "appIdUri": PBI, "isConfidential": False,
+    })
+except urllib.error.HTTPError as error:
+    if error.code != 409:
+        raise
+pbi_token = token(PBI + "/.default")
+dax = request(
+    "POST",
+    f"{FABRIC}/v1.0/myorg/groups/{workspace['id']}/datasets/{semantic['id']}/executeQueries",
+    {"queries": [{"query": "EVALUATE SUMMARIZECOLUMNS(Sales[Region], \"Total\", [Total])"}]},
+    pbi_token,
+)[2]
+rows = dax["results"][0]["tables"][0]["rows"]
+totals = {row["Sales[Region]"]: row["[Total]"] for row in rows}
+assert totals == {"us": 125, "eu": 60, "apac": 125}, totals
+print(f"OneLake Delta -> Direct Lake DAX: PASS {totals}", flush=True)
+
+# Track the DAX observation through the real MLflow client and attached server.
+tracking_uri = f"{FABRIC}/mlflow/workspaces/{workspace['id']}"
+os.environ["MLFLOW_TRACKING_URI"] = tracking_uri
+os.environ["MLFLOW_TRACKING_TOKEN"] = fabric_token
+mlflow.set_tracking_uri(tracking_uri)
+mlflow.set_experiment("direct-lake-validation")
+with mlflow.start_run(run_name="dax-observation") as run:
+    mlflow.log_param("semantic_model_id", semantic["id"])
+    mlflow.log_metric("grand_total", sum(totals.values()))
+    mlflow.log_text(json.dumps(totals, sort_keys=True), "dax/region_totals.json")
+    run_id = run.info.run_id
+client = MlflowClient(tracking_uri=tracking_uri)
+client.create_registered_model("sales-direct-lake")
+experiments = request("GET", f"{FABRIC}/v1/workspaces/{workspace['id']}/mlExperiments", token=fabric_token)[2]["value"]
+models = request("GET", f"{FABRIC}/v1/workspaces/{workspace['id']}/mlModels", token=fabric_token)[2]["value"]
+assert [item["displayName"] for item in experiments] == ["direct-lake-validation"], experiments
+assert [item["displayName"] for item in models] == ["sales-direct-lake"], models
+experiment_id = experiments[0]["id"]
+storage_token = request("POST", f"{ENTRA}/admin/api/tokens", {
+    "clientId": CLIENT_ID, "audience": "https://storage.azure.com",
+})[2]
+storage_token = storage_token.get("access_token") or storage_token["token"]
+listing = request(
+    "GET",
+    f"http://onelake.dfs.fabric.microsoft.com/{workspace['id']}?resource=filesystem&directory={experiment_id}/Files/mlflow-artifacts&recursive=true",
+    token=storage_token,
+)[2]
+assert any(path["name"].endswith("dax/region_totals.json") for path in listing["paths"]), listing
+print(f"Direct Lake DAX -> MLflow tracking/model registry: PASS run={run_id}", flush=True)
+
+# dbt-duckdb's built-in Delta plugin independently validates the same table.
+env = {
+    **os.environ,
+    "DELTA_TABLE_PATH": f"az://{workspace['id']}/{lakehouse['id']}/Tables/sales",
+    "AZURE_STORAGE_TOKEN": storage_token,
+    "AZURE_STORAGE_ENDPOINT": f"{FABRIC}/onelake",
+}
+subprocess.run([
+    "dbt", "build", "--project-dir", "/dbt", "--profiles-dir", "/dbt",
+    "--target-path", "/tmp/dbt-target", "--log-path", "/tmp/dbt-logs",
+], check=True, env=env)
+with duckdb.connect("/tmp/analytics_db.duckdb", read_only=True) as connection:
+    dbt_rows = connection.sql(
+        "select region, total_amount, order_count from analytics.region_totals order by region"
+    ).fetchall()
+assert dbt_rows == [("apac", 125, 1), ("eu", 60, 1), ("us", 125, 2)], dbt_rows
+print(f"OneLake Delta -> dbt-duckdb validation: PASS {dbt_rows}", flush=True)
+
+spark.stop()
+print("DATA SCIENCE LOOP E2E: PASS", flush=True)

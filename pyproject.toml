@@ -47,6 +47,19 @@ sail = [
 spark-connect = ["pyspark-client==4.2.0"]
 dbt-fabric = ["dbt-fabric>=1.9"]
 dbt-fabricspark = ["dbt-fabricspark>=1.9"]
+dbt-duckdb = [
+    "dbt-duckdb>=1.9,<2",
+    "deltalake>=0.23,<2",
+    "pyarrow>=18,<24",
+]
+mlflow = ["mlflow>=3.1,<4"]
+data-science-loop = [
+    "dbt-duckdb>=1.9,<2",
+    "deltalake>=0.23,<2",
+    "mlflow>=3.1,<4",
+    "pyarrow>=18,<24",
+    "pyspark-client==4.2.0",
+]
 
 [tool.uv]
 package = false

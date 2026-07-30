@@ -55,10 +55,10 @@ func TestParseAndEvalEdges(t *testing.T) {
 
 // TestValueHelpers covers the numeric/equality helpers' branches.
 func TestValueHelpers(t *testing.T) {
-	if toF(3) != 3 || toF("2.5") != 2.5 || toF(nil) != 0 || toF(true) != 0 {
+	if toF(3) != 3 || toF(int64(4)) != 4 || toF(uint32(5)) != 5 || toF(float32(1.5)) != 1.5 || toF("2.5") != 2.5 || toF(nil) != 0 || toF(true) != 0 {
 		t.Error("toF conversions")
 	}
-	if !valEq("a", "a") || valEq(1.0, 2.0) || !valEq(1.0, 1.0) {
+	if !valEq("a", "a") || valEq(1.0, 2.0) || !valEq(1.0, int64(1)) || valEq(int64(1), uint8(2)) {
 		t.Error("valEq")
 	}
 	m := loadModel(t)

@@ -29,8 +29,12 @@ Critical path to green: **A → C → D → E**. F is the tutorial's actual subj
 - [x] Engine reads an optional `data.json` definition part (import rows)
       alongside `model.bim`; rows addressable per table.
 - [x] Unit-tested against `fixtures/seed_data.json`.
-- [ ] *Deferred, with cause:* **Direct Lake** (tables backed by real OneLake
-      Delta) — needs a pure-Go Parquet + `_delta_log` reader; import-seeded first.
+- [x] **Direct Lake:** compatibility level 1604 TMSL partitions with entity
+      sources resolve their shared `AzureStorage.DataLake` expression to a
+      Lakehouse and read its current Delta snapshot from OneLake. `sourceColumn`
+      maps physical Delta fields to model columns; source-workspace RBAC is
+      enforced. A later Delta commit is visible on the next DAX query without an
+      import refresh (`e2e/data-science-loop`).
 
 ### C — the DAX evaluator (core)
 - [x] Tokenizer + parser for the subset: `EVALUATE`, `SUMMARIZECOLUMNS`, table /
@@ -62,21 +66,26 @@ Critical path to green: **A → C → D → E**. F is the tutorial's actual subj
 - [x] Assert the pass/fail pattern mirrors the tutorial (Store/Measure pass, the
       YoY ratio `1.8` fails).
 
-### G — DMV / schema rowset (deferred sub-phase)
-- [ ] `$SYSTEM.DISCOVER_STORAGE_TABLES` → `RIVIOLATION_COUNT` (0 for the clean
-      model) so the DMV asset works; until then the GX DMV suite is pending.
+### G — DMV / schema rowset boundary
+- [x] `$SYSTEM.DISCOVER_STORAGE_TABLES` is explicitly outside the HTTP
+      executeQueries scope: it is an XMLA schema rowset consumed through native
+      ADOMD.NET, not DAX accepted by this endpoint. The parser's unsupported
+      query tests prove it fails loudly; the GX DMV suite remains intentionally
+      unavailable until an XMLA transport has a CI-runnable oracle.
 
 ### H — CI, coverage, docs
 - [x] CI jobs (3-OS, pure-wheel): `e2e/semantic-model/run.py`,
       `e2e/great-expectations/run.py`.
 - [x] Go unit tests under the ≥90% coverage gate (total 91.2%).
-- [x] Parity doc: Power BI row → 🟢 executeQueries DAX-subset; deferred XMLA/SemPy,
-      full DAX, DMV, Direct Lake. Roadmap entry. Swagger `PROVENANCE.md` "Used by".
+- [x] Parity doc: Power BI row → 🟢 executeQueries DAX subset with imported and
+      Direct Lake data; deferred XMLA/SemPy, full DAX, and DMV. Roadmap entry.
+      Swagger `PROVENANCE.md` "Used by".
 
 ## Honesty boundaries (documented, never faked)
 - executeQueries REST, **not** XMLA/SemPy (native ADOMD.NET, no CI oracle).
 - DAX **subset**, not full DAX — oracle is captured golden fixtures.
-- **Import-seeded** data, not Direct Lake (first cut).
+- Imported `data.json` and Direct Lake entity partitions are supported; other
+  partition modes and advanced Delta features remain outside this DAX subset.
 - DMV/schema-rowset asset deferred to G.
 
 ## Progress log
@@ -87,5 +96,10 @@ Critical path to green: **A → C → D → E**. F is the tutorial's actual subj
 - **F + H done** (2026-07-14): real Great Expectations validates the
   executeQueries results — Store/Measure suites pass, the YoY-ratio DAX asset
   fails (1.8 out of band), mirroring the tutorial. CI jobs added (3-OS) for
-  both e2es; parity doc Power BI → 🟢 (DAX subset). Only G (DMV) + Direct Lake
-  remain deferred-with-cause. The plan is complete.
+  both e2es; parity doc Power BI → 🟢 (DAX subset). At that milestone G (DMV)
+  and Direct Lake remained deferred; Direct Lake is completed below.
+- **Direct Lake done** (2026-07-31): compatibility-level-1604 entity partitions
+  resolve the shared OneLake expression, enforce source RBAC, map source columns,
+  and query the current Delta snapshot. `e2e/data-science-loop` proves a
+  Sail/PySpark-written table flows through DAX, MLflow, and dbt-duckdb. XMLA/DMV
+  remains the transport boundary.
