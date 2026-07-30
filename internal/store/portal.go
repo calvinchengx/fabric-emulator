@@ -23,6 +23,29 @@ func (s *Store) ListAllWorkspaces() ([]*Workspace, error) {
 	return out, rows.Err()
 }
 
+// ListJobInstances returns the most recent job instances, newest first.
+func (s *Store) ListJobInstances(limit int) ([]*JobInstance, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.Query(
+		`SELECT id, item_id, job_type, invoke_type, created_at, complete_at, cancelled, fail_with
+		 FROM job_instances ORDER BY created_at DESC, id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*JobInstance
+	for rows.Next() {
+		j := &JobInstance{}
+		if err := rows.Scan(&j.ID, &j.ItemID, &j.JobType, &j.InvokeType, &j.CreatedAt, &j.CompleteAt, &j.Cancelled, &j.FailWith); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 // ListOperations returns the most recent operations, newest first.
 func (s *Store) ListOperations(limit int) ([]*Operation, error) {
 	if limit <= 0 {

@@ -13,6 +13,11 @@ test('the portal mounts and renders its shell', async ({ page }) => {
   await expect(page.locator('#app')).not.toBeEmpty();
   // Concrete shell chrome renders (sidebar nav + topbar), not just a stray node.
   await expect(page.getByRole('link', { name: 'Workspaces' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Connections' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Capacities' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Jobs' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'OneLake shortcuts' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Warehouse SQL' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Workspace identities' })).toBeVisible();
   await expect(page.getByText('Fabric Emulator').first()).toBeVisible();
 

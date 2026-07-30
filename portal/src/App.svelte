@@ -5,6 +5,11 @@
   import Clock from './Clock.svelte';
   import Faults from './Faults.svelte';
   import Identities from './Identities.svelte';
+  import Connections from './Connections.svelte';
+  import Shortcuts from './Shortcuts.svelte';
+  import Capacities from './Capacities.svelte';
+  import Jobs from './Jobs.svelte';
+  import Warehouse from './Warehouse.svelte';
   import { api } from './api.js';
 
   let route = $state(location.hash.slice(1) || 'dashboard');
@@ -13,13 +18,20 @@
   let health = $state(null);
   api.get('/health').then((h) => (health = h)).catch(() => {});
 
-  // Grouped navigation: the control plane's state, the Go-native testing
-  // levers, and the entra-emulator identity handshake.
+  // Grouped navigation: the control plane's state, the data-plane surfaces,
+  // the Go-native testing levers, and the entra-emulator identity handshake.
   const sections = [
     ['Control plane', [
       ['dashboard', 'Dashboard'],
       ['workspaces', 'Workspaces'],
+      ['connections', 'Connections'],
+      ['capacities', 'Capacities'],
       ['operations', 'Operations'],
+      ['jobs', 'Jobs'],
+    ]],
+    ['Data plane', [
+      ['shortcuts', 'OneLake shortcuts'],
+      ['warehouse', 'Warehouse SQL'],
     ]],
     ['Testing tools', [
       ['clock', 'Clock'],
@@ -50,7 +62,12 @@
   </nav>
   <main>
     {#if route === 'workspaces'}<Workspaces />
+    {:else if route === 'connections'}<Connections />
+    {:else if route === 'capacities'}<Capacities />
     {:else if route === 'operations'}<Operations />
+    {:else if route === 'jobs'}<Jobs />
+    {:else if route === 'shortcuts'}<Shortcuts />
+    {:else if route === 'warehouse'}<Warehouse />
     {:else if route === 'clock'}<Clock />
     {:else if route === 'faults'}<Faults />
     {:else if route === 'identities'}<Identities />
