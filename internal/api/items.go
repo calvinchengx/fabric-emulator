@@ -47,6 +47,14 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "displayName and type are required.")
 		return
 	}
+	if taken, err := a.Store.ItemNameTaken(wid, body.DisplayName, body.Type, ""); err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	} else if taken {
+		writeErr(w, http.StatusConflict, "ItemDisplayNameAlreadyInUse",
+			"An item of this type with this display name already exists in the workspace.")
+		return
+	}
 	it := &store.Item{WorkspaceID: wid, Type: body.Type, DisplayName: body.DisplayName, Description: body.Description}
 	var parts []store.DefinitionPart
 	if body.Definition != nil {
@@ -94,7 +102,15 @@ func (a *API) updateItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "Malformed JSON body.")
 		return
 	}
-	if body.DisplayName != nil {
+	if body.DisplayName != nil && *body.DisplayName != it.DisplayName {
+		if taken, err := a.Store.ItemNameTaken(wid, *body.DisplayName, it.Type, it.ID); err != nil {
+			writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+			return
+		} else if taken {
+			writeErr(w, http.StatusConflict, "ItemDisplayNameAlreadyInUse",
+				"An item of this type with this display name already exists in the workspace.")
+			return
+		}
 		it.DisplayName = *body.DisplayName
 	}
 	if body.Description != nil {

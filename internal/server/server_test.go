@@ -263,7 +263,15 @@ func TestLROOnTheControllableClock(t *testing.T) {
 	// Fault: force the next operation to fail.
 	f.mustStatus(f.call("POST", "/_emulator/faults", "", map[string]int64{"lroDelaySeconds": 0}, nil), http.StatusOK, "reset delay")
 	f.call("POST", "/_emulator/faults", "", map[string]int{"failNextOperations": 1}, nil)
-	resp = f.call("POST", "/v1/workspaces/"+ws.ID+"/items", f.token, req, nil)
+	// A distinct display name: item names are unique per (workspace, type),
+	// so reusing "nb" here would 409 before the fault could fire.
+	req2 := map[string]any{}
+	for k, v := range req {
+		req2[k] = v
+	}
+	req2["displayName"] = "nb-faulted"
+	resp = f.call("POST", "/v1/workspaces/"+ws.ID+"/items", f.token, req2, nil)
+	f.mustStatus(resp, http.StatusAccepted, "async create (faulted)")
 	opID = resp.Header.Get("x-ms-operation-id")
 	f.call("POST", "/_emulator/clock", "", map[string]int64{"advance": 1}, nil)
 	var failed struct {

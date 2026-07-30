@@ -44,6 +44,28 @@ a workspace whose `capacityId` is empty.
 - `assignToCapacity` / `unassignFromCapacity` are Admin-only 202 LROs (no
   result), setting/clearing `workspace.capacityId`.
 
+## Display-name uniqueness (409)
+
+Real Fabric rejects duplicate names, and so does the emulator — every
+name-addressed contract here depends on it (OneLake `name.Type` paths, git
+logical ids, the [`FABRIC_TARGET` toggle](21-real-fabric-toggle.md)'s
+name-based workspace resolution, catalog ingest).
+
+| Scope | Rule | On conflict |
+|---|---|---|
+| Workspace `displayName` | unique **tenant-wide** | `409` `WorkspaceNameAlreadyExists` |
+| Item `displayName` | unique **per (workspace, type)** — reusable across types | `409` `ItemDisplayNameAlreadyInUse` |
+
+Both comparisons are case-insensitive, and both apply to renames as well as
+creates (renaming an entity to its own name is a no-op, not a conflict).
+Item names being reusable across types is deliberate and documented:
+"you can reuse item names across multiple item types" — which is exactly why
+OneLake addresses an item as `name.Type` (`onelake-access-api.md`).
+
+Every error response also carries the code in an **`x-ms-public-api-error-code`
+header** alongside the body's `errorCode`, because documented Fabric client
+code branches on that header.
+
 ## Core — RBAC (the decision Entra does not make)
 
 | Method + path | Notes |

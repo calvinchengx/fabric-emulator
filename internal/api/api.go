@@ -152,6 +152,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeErr(w http.ResponseWriter, status int, code, msg string) {
+	// Real Fabric echoes the error code in a header as well as the body;
+	// documented client code branches on it (fabric-docs
+	// real-time-intelligence/map/tutorial-create-real-time-map-python.md).
+	w.Header().Set("x-ms-public-api-error-code", code)
 	writeJSON(w, status, fabricError{ErrorCode: code, Message: msg, RequestID: store.NewID()})
 }
 

@@ -42,6 +42,14 @@ func (a *API) createWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		writeErr(w, http.StatusNotFound, "CapacityNotFound", "No capacity matches capacityId.")
 		return
 	}
+	if taken, err := a.Store.WorkspaceNameTaken(body.DisplayName, ""); err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	} else if taken {
+		writeErr(w, http.StatusConflict, "WorkspaceNameAlreadyExists",
+			"A workspace with this display name already exists.")
+		return
+	}
 	ws := &store.Workspace{DisplayName: body.DisplayName, Description: body.Description, CapacityID: body.CapacityID}
 	if err := a.Store.CreateWorkspace(ws, store.Principal{ID: p.ID, Type: p.Type}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
@@ -85,6 +93,16 @@ func (a *API) updateWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 	renamed := false
 	if body.DisplayName != nil {
 		renamed = *body.DisplayName != ws.DisplayName
+		if renamed {
+			if taken, err := a.Store.WorkspaceNameTaken(*body.DisplayName, ws.ID); err != nil {
+				writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+				return
+			} else if taken {
+				writeErr(w, http.StatusConflict, "WorkspaceNameAlreadyExists",
+					"A workspace with this display name already exists.")
+				return
+			}
+		}
 		ws.DisplayName = *body.DisplayName
 	}
 	if body.Description != nil {
