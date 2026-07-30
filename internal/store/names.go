@@ -1,5 +1,33 @@
 package store
 
+import (
+	"errors"
+	"strings"
+)
+
+// ErrNameConflict is returned when a write violates display-name uniqueness.
+// The API checks names up front for a clean 409, but the database constraint
+// is the real guarantee (concurrent creates can both pass a pre-check), so
+// stores translate the constraint violation into this sentinel.
+var ErrNameConflict = errors.New("display name already in use")
+
+// nameConflict maps a UNIQUE-index violation on one of the display-name
+// indexes to ErrNameConflict; other errors pass through untouched.
+func nameConflict(err error) error {
+	if err == nil {
+		return nil
+	}
+	m := err.Error()
+	if strings.Contains(m, "UNIQUE constraint failed") &&
+		(strings.Contains(m, "ux_workspaces_display_name") ||
+			strings.Contains(m, "ux_items_ws_name_type") ||
+			strings.Contains(m, "workspaces.display_name") ||
+			strings.Contains(m, "items.display_name")) {
+		return errors.Join(ErrNameConflict, err)
+	}
+	return err
+}
+
 // Display-name uniqueness. Real Fabric rejects duplicates, and the emulator
 // must too — name collisions silently break every name-addressed contract
 // (OneLake paths, git logical ids, the FABRIC_TARGET toggle, catalog ingest).

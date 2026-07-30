@@ -21,7 +21,7 @@ func (s *Store) CreateItem(it *Item, parts []DefinitionPart) error {
 	if _, err := tx.Exec(
 		`INSERT INTO items (id, workspace_id, type, display_name, description, created_at) VALUES (?,?,?,?,?,?)`,
 		it.ID, it.WorkspaceID, it.Type, it.DisplayName, it.Description, it.CreatedAt); err != nil {
-		return err
+		return nameConflict(err)
 	}
 	if len(parts) > 0 {
 		blob, err := json.Marshal(parts)
@@ -91,7 +91,7 @@ func (s *Store) UpdateItem(it *Item) error {
 		`UPDATE items SET display_name = ?, description = ? WHERE workspace_id = ? AND id = ?`,
 		it.DisplayName, it.Description, it.WorkspaceID, it.ID)
 	if err != nil {
-		return err
+		return nameConflict(err)
 	}
 	return oneRow(res)
 }

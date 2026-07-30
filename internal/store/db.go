@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 
@@ -200,6 +201,23 @@ PRAGMA foreign_keys = ON;
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return err
+		}
+	}
+	// Display-name uniqueness enforced by the DATABASE, not just the
+	// pre-insert check in the API: check-then-insert races (two concurrent
+	// creates of the same name both pass the check) would otherwise violate
+	// the invariant. Case-insensitive, matching the checks in names.go.
+	// A pre-existing dev database may already hold duplicates, so a failure
+	// here is logged-and-skipped rather than fatal — new databases always
+	// get the constraint.
+	for _, idx := range []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_workspaces_display_name
+		   ON workspaces (display_name COLLATE NOCASE)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_items_ws_name_type
+		   ON items (workspace_id, display_name COLLATE NOCASE, type COLLATE NOCASE)`,
+	} {
+		if _, err := s.db.Exec(idx); err != nil {
+			log.Printf("store: display-name uniqueness index not applied (pre-existing duplicates?): %v", err)
 		}
 	}
 	return s.seedCapacity()
