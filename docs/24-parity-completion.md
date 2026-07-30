@@ -45,9 +45,9 @@ compute (SQL Server for TDS, Sail for Spark, MLflow for data science).
 
 | Gap | Engine | Status |
 |---|---|---|
-| Spark: structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs, `sc`/RDD, `spark.jars`, CDF | `apache/spark` JVM as an **opt-in profile** beside Sail | **Largely landed** — `e2e/spark-jvm` + dual-engine notebook and compatibility-boundary suites exist with compose wiring. Remaining: confirm the user-facing profile is documented, then **upgrade the parity rows** (lines ~92–98) from 🔴 to 🟠 "real on the JVM profile". Closes ~7 Data-Engineering marks. |
+| Spark: structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs, `sc`/RDD, `spark.jars`, CDF | `apache/spark` JVM as an **opt-in profile** beside Sail | **Half landed.** The image (`docker/spark-runtime`, Spark 3.5.3 + Delta 3.2 + hadoop-azure) and the CI oracle (`e2e/spark-jvm`) exist, and the statement agent kept its classic-session path — but the root composes expose **only** the `governance` profile, so no user can attach it. Remaining work is real, not bookkeeping: an overlay that rebuilds `spark-agent` on the JVM image with `SPARK_REMOTE` reset (compose merges env maps, so it must be `!reset`), then the parity rows lift 🔴 → 🟠. Closes ~4 marks. |
 | KQL / Eventhouse / Eventstream execution | **`mcr.microsoft.com/azuredataexplorer/kustainer-linux`** — Microsoft's own KQL engine container (**verified pullable**) | Not started. Converts an entire "engine absent" category to real, via the same sidecar pattern as SQL Server. Highest-value remaining item. |
-| Copy / shortcuts to external stores (S3, standalone ADLS Gen2) | MinIO or LocalStack (**verified pullable**) | Partly done (ADLS/S3 read-through exists); a local S3 sidecar makes the write paths real while staying offline. |
+| Copy / shortcuts to external stores (S3, standalone ADLS Gen2) | **SeaweedFS** (Apache-2.0, Go) or **RustFS** (Apache-2.0); **Adobe S3Mock** if a pure test double suffices | Partly done (ADLS/S3 read-through exists); a local S3 sidecar makes the write paths real while staying offline. **Do not use MinIO or LocalStack — both repos were archived in 2026** (MinIO 2026-04, AGPL-3.0; LocalStack 2026-03). Verify the replacement's image and S3 surface before committing to it. |
 
 ## Tier 3 — Build the protocol ourselves
 
@@ -75,10 +75,10 @@ loud failures at the edges is a better artifact than one that fakes the last
 
 ## Sequence
 
-1. **Finish the JVM profile story** — verify wiring, document the profile, upgrade the parity rows. Mostly bookkeeping on work already done; biggest single parity jump.
+1. **Expose the JVM profile** — the image and CI oracle exist; the user-facing overlay does not. Build it, verify a Livy statement runs on it, then lift the parity rows. Biggest single parity jump.
 2. **kustainer → RTI** — new sidecar, new e2e, converts a whole category.
 3. **Tier 1 sweep** — steady, no-risk points; good parallel lane.
-4. **MinIO → external-store Copy** — completes the Copy/shortcut story.
+4. **A live S3 sidecar → external-store Copy** — SeaweedFS/RustFS/S3Mock (not MinIO — archived). Completes the Copy/shortcut story.
 5. **Tier 3 only on demand** — XMLA when a real SemPy user appears.
 
 Ceiling after 1–4: **~88–90% real**, with the remainder documented as boundary.
