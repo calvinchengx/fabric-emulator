@@ -87,11 +87,14 @@ inferred — the fidelity deltas a Fabric notebook author actually hits.
 
 A Spark 3.5 JVM image (`docker/spark-runtime`, Fabric Runtime 1.3's engine
 baseline) exists as a **CI compatibility oracle** (`e2e/spark-jvm`), and the
-statement agent still has its classic-session path. It is **not yet a
-user-facing compose profile**, so rows below stay graded on the default
-engine: a capability only reachable by editing test fixtures is not one a
-user can attach. Exposing that profile would lift the four 🔴 rows here to
-🟠 — see [24-parity-completion.md](24-parity-completion.md).
+statement agent still has its classic-session path. It is also exposed as a
+**user-facing overlay** — `docker compose -f docker-compose.yml -f
+docker-compose.override.yml -f docker-compose.spark-jvm.yml up` swaps the
+statement agent onto it — so the JVM-only rows below are graded 🟠
+(BYO-engine): real with that overlay attached, unavailable on the default
+engine. Verified live, not inferred: `sc.parallelize([1,2,3,4]).map(x*2)
+.sum()` returns 20 through the Livy agent, and `spark._jvm.io.delta.tables
+.DeltaTable` resolves.
 
 | Notebook pattern | Emulator (Sail) | Type |
 |---|---|---|
@@ -100,10 +103,10 @@ user can attach. Exposing that profile would lift the four 🔴 rows here to
 | Time travel `option("versionAsOf", n)` | Works (SQL `VERSION AS OF` is a Sail gap) | 🟢 Real / 🔴 SQL form |
 | `MERGE INTO` | Works against a registered table target (`CREATE TABLE … USING delta LOCATION`); path-based ``delta.`az://…` `` merge targets don't resolve | 🟢 Real (registered) / 🔴 path target |
 | `createDataFrame(local_rows)` | Works (runners preset `localRelationSizeLimit`) | 🟢 Real |
-| `sc` / RDD API / `spark._jvm` | **Fidelity inversion**: works on real Fabric, impossible on Spark Connect — the agent binds `sc` to a guide-rail stub that raises a clear pointer instead of `NameError`. Only a classic (non-Connect) JVM session can restore it | 🔴 by architecture |
+| `sc` / RDD API / `spark._jvm` | **Fidelity inversion**: works on real Fabric, impossible on Spark Connect — the agent binds `sc` to a guide-rail stub that raises a clear pointer instead of `NameError`. **Restored by the JVM overlay** (classic session): `sc.parallelize(…).map(…).sum()` verified | 🔴 default / 🟠 JVM overlay |
 | DML row-count envelopes (`INSERT`/`MERGE` counts) | Statement executes; DataFusion's `uint64` count is absorbed as an empty result by the SQL agent | 🟡 Emulated envelope |
-| Structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs | Execution fails on Sail v0.6.6. Runs on the JVM oracle image, which no user-facing profile exposes yet | 🔴 on the default engine |
-| CDF options, `spark.jars` | Accepted but inert on Sail: CDF returns a normal snapshot and JARs have no JVM classloader (the JVM oracle image has one) | 🔴 false-positive surface |
+| Structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs | Execution fails on Sail v0.6.6; available on the **JVM overlay** (Delta JVM classes verified present) | 🔴 default / 🟠 JVM overlay |
+| CDF options, `spark.jars` | Accepted but inert on Sail: CDF returns a normal snapshot and JARs have no classloader. The **JVM overlay** has a real one (verified) | 🔴 default / 🟠 JVM overlay |
 | Concurrent Delta overwrite writers | Two independent Connect sessions race at one barrier; one commits and the other receives a transaction failure from the conditional Delta-log create | 🟢 probed conflict rejection |
 
 ## Data Warehouse (`data-warehouse/`)
