@@ -251,6 +251,19 @@ jobs:
       # (docker compose), like the other e2es.
       - run: python3 e2e/fabric-cli/run.py
 
+  deployment-pipelines-ps:
+    name: Azure PowerShell drives deployment pipelines (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # A SECOND, independent client family for the deployment-pipeline
+      # surface: the fabric-cli job reaches it from Python/MSAL, this one from
+      # .NET/MSAL via Az.Accounts — the Connect-AzAccount + Get-AzAccessToken
+      # flow Microsoft's own DeploymentPipelines-DeployAll.ps1 uses, then that
+      # script's REST sequence. Proves entra-emulator satisfies MSAL's .NET
+      # implementation, not just its Python one. Linux-only (docker compose).
+      - run: python3 e2e/deployment-pipelines/run.py
+
   dbt-fabricspark:
     name: Microsoft's dbt-fabricspark drives Livy HC on real Spark (containerized)
     runs-on: ubuntu-latest

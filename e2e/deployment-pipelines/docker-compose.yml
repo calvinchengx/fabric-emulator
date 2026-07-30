@@ -1,0 +1,42 @@
+# Az PowerShell drives the emulator, so the family must look like real Azure to
+# MSAL. Two hard constraints, both measured (docs/23, "Running Microsoft's
+# PowerShell sample"):
+#
+#   1. MSAL refuses a non-HTTPS authority outright ("Authority host must be a
+#      TLS protected (https) endpoint") — the plain-HTTP escape hatch used for
+#      OpenMetadata's JVM is not available here.
+#   2. MSAL DROPS a non-443 port from the authority: an authority of
+#      https://host:18443/ produces "Connection refused (host:443)". So entra
+#      must answer on :443 with no port in the URL.
+#
+# Both are satisfied the same way the fabric-cli e2e does it: entra-emulator IS
+# login.microsoftonline.com on :443 via a network alias, fabric IS
+# api.fabric.microsoft.com.
+services:
+  entra:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    user: "0:0"                       # bind privileged :443 (authority has no port)
+    environment:
+      PUBLIC_ORIGIN: "https://login.microsoftonline.com"
+      LOCAL_DOMAINS: "login.microsoftonline.com"
+      PORT: "443"
+      TLS_ENABLED: "true"
+    networks:
+      default:
+        aliases: ["login.microsoftonline.com"]
+
+  fabric:
+    build: { context: ../.., dockerfile: Dockerfile }
+    user: "0:0"
+    environment:
+      FABRIC_ADDR: ":443"
+      FABRIC_DATA_DIR: "/data"
+      FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0"
+      FABRIC_ENTRA_TLS_INSECURE: "true"
+    networks:
+      default:
+        aliases: ["api.fabric.microsoft.com"]
+
+  client:
+    build: { context: ., dockerfile: Dockerfile }
+    depends_on: [entra, fabric]

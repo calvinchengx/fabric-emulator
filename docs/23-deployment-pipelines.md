@@ -247,11 +247,49 @@ contract independently of the REST reference. It calls exactly
 `Retry-After`) → `GET /operations/{id}/result`, which is what D0–D2 built. The
 e2e follows that same call order deliberately.
 
-Still worth doing: running the PowerShell sample itself, which authenticates
-with `Connect-AzAccount -ServicePrincipal` + `Get-AzAccessToken`. That needs
-`pwsh` + the Az module in a container and would test whether Az's MSAL flow
-survives against entra-emulator — the same class of question that surfaced the
-`/common/discovery/instance` 404 when `fab` was first wired up.
+### Running Microsoft's PowerShell sample
+
+**Done** — `e2e/deployment-pipelines` (CI job `deployment-pipelines-ps`) runs
+`Connect-AzAccount -ServicePrincipal` + `Get-AzAccessToken` against
+entra-emulator and then DeployAll's REST sequence. This is a **second,
+independent client family**: the `fab` e2e exercises MSAL's Python
+implementation, this one exercises MSAL's .NET implementation via Az.Accounts.
+
+Four constraints were measured rather than assumed, and each one is a real
+limit on what an emulator can get away with:
+
+1. **MSAL refuses a non-HTTPS authority outright** — *"Authority host must be
+   a TLS protected (https) endpoint."* The plain-HTTP overlay that unblocked
+   OpenMetadata's JVM (§22) is not available here.
+2. **MSAL drops a non-443 port from the authority.** An authority of
+   `https://host:18443/` produces `Connection refused (host:443)`. So entra
+   must answer on `:443` with no port in the URL — the same reason the `fab`
+   e2e aliases it as `login.microsoftonline.com`. Same shape as the
+   Hadoop-ABFS limitation recorded in [13-roadmap.md](13-roadmap.md) (R1+R2).
+3. **No certificate-validation bypass exists.** `Connect-AzAccount`'s
+   `-SkipValidation` is about environment metadata, not TLS, so the
+   emulator's roots go into the container's trust store for real.
+   (`SSL_CERT_FILE` is ignored on macOS — .NET uses the keychain there.)
+4. **`-ResourceManagerUrl` is mandatory** (omitting it throws *"Value cannot
+   be null. (Parameter 'uriString')"*), yet there is no ARM in this family.
+   It must not point at an origin root — see below.
+
+#### A cross-repo finding: an SPA fallback breaks strict API clients
+
+Pointing `-ResourceManagerUrl` at the emulator made Az die with *"Unexpected
+character encountered while parsing value: `<`"*. The cause: Az probes
+`{ResourceManagerUrl}/metadata/endpoints`, and **entra-emulator's portal SPA
+answers any unknown root-level GET with `200 text/html`**. A `404` would have
+been survivable; a `200` web page is not, and the error names nothing useful.
+
+**fabric-emulator had the same bug, and worse** — even `/v1/nonsense` returned
+`200 text/html`, where real Fabric returns a JSON error. Fixed here: paths
+under an API prefix (`/v1/`, `/_emulator/`, `/metadata/`, `/subscriptions/`)
+now return a Fabric-shaped JSON 404 and never fall through to the SPA
+(`internal/server/portal.go`, regression-tested in `routing_test.go`). The
+entra-emulator side is unfixed and is why the driver points
+`-ResourceManagerUrl` at a tenant-prefixed path, which escapes that
+emulator's SPA fallback and 404s as JSON.
 
 Same shape as every other surface here — unit tests for the model, then a
 **real client** driving it, because that is what has repeatedly found real

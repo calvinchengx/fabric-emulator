@@ -6,6 +6,7 @@ package server_test
 // backend wires lazily (go-mssqldb opens pools without dialing).
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -152,6 +153,60 @@ func TestPortalOperationsListsRows(t *testing.T) {
 	}
 	if len(ops.Value) == 0 || ops.Value[0].ID == "" || ops.Value[0].Kind == "" {
 		t.Fatalf("operations rows = %+v", ops.Value)
+	}
+}
+
+// TestUnknownAPIPathIsJSON404: an unrouted path under an API prefix must
+// answer as an API — a Fabric-shaped JSON 404 — never the portal SPA.
+//
+// Regression for a real client failure: Azure PowerShell probed
+// /metadata/endpoints, got 200 text/html from the SPA fallback, and died with
+// "Unexpected character encountered while parsing value: <", which says
+// nothing about the actual problem. A 404 is survivable; 200 HTML is not.
+func TestUnknownAPIPathIsJSON404(t *testing.T) {
+	srv, err := server.New(testConfig(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	h := srv.Handler()
+
+	for _, path := range []string{
+		"/v1/nonsense",
+		"/v1/deploymentPipelines/x/notARoute",
+		"/v1",
+		"/metadata/endpoints",
+		"/subscriptions/abc",
+		"/_emulator/not-a-thing",
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", path, w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+			t.Errorf("GET %s Content-Type = %q, want JSON", path, ct)
+		}
+		if body := w.Body.String(); strings.Contains(body, "<!doctype html") {
+			t.Errorf("GET %s served the SPA shell", path)
+		}
+		var env struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+			t.Errorf("GET %s body is not parseable JSON: %v", path, err)
+		} else if env.Error.Code == "" {
+			t.Errorf("GET %s has no error code: %s", path, w.Body)
+		}
+	}
+
+	// The portal itself still serves its SPA for non-API deep links.
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/some/portal/deep/link", nil))
+	if w.Code != http.StatusOK {
+		t.Errorf("portal deep link = %d, want the SPA shell", w.Code)
 	}
 }
 
