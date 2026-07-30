@@ -159,6 +159,24 @@ func TestReadDeltaMixedTypes(t *testing.T) {
 	}
 }
 
+// TestReadParquetBytes: a bare .parquet file (no Delta table around it) reads
+// through the exported entry point; garbage bytes fail loudly.
+func TestReadParquetBytes(t *testing.T) {
+	tbl, err := ReadParquetBytes(writeParquet(t, []saleRow{{"us", 80}, {"eu", 60}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tbl.Columns) != 2 || tbl.Columns[0] != "region" || tbl.Columns[1] != "amount" {
+		t.Fatalf("columns = %v", tbl.Columns)
+	}
+	if len(tbl.Rows) != 2 || tbl.Rows[0][0] != "us" || tbl.Rows[1][1] != int64(60) {
+		t.Fatalf("rows = %v", tbl.Rows)
+	}
+	if _, err := ReadParquetBytes([]byte("not parquet")); err == nil {
+		t.Error("expected an error for non-parquet bytes")
+	}
+}
+
 func TestReadDeltaTableErrors(t *testing.T) {
 	st, wsID, itemID := seedLakehouse(t)
 	// No _delta_log at all.

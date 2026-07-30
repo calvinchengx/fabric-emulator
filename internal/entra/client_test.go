@@ -103,6 +103,60 @@ func TestClientErrors(t *testing.T) {
 	}
 }
 
+func TestMintWorkspaceIdentityToken(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /fabric/workspaceidentities/{id}/token", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") != "sp-1" {
+			http.Error(w, `{"error":"unknown identity"}`, http.StatusNotFound)
+			return
+		}
+		switch r.URL.Query().Get("resource") {
+		case "https://vault.azure.net":
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "tok-1"})
+		case "https://empty.example":
+			_ = json.NewEncoder(w).Encode(map[string]string{}) // no access_token
+		default:
+			http.Error(w, `{"error":"bad resource"}`, http.StatusBadRequest)
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := New(srv.URL, false, srv.Client())
+
+	tok, err := c.MintWorkspaceIdentityToken("sp-1", "https://vault.azure.net")
+	if err != nil || tok != "tok-1" {
+		t.Fatalf("mint = %q, %v", tok, err)
+	}
+	// Entra-side rejection surfaces.
+	if _, err := c.MintWorkspaceIdentityToken("sp-9", "https://vault.azure.net"); err == nil || !strings.Contains(err.Error(), "status 404") {
+		t.Fatalf("unknown identity err = %v", err)
+	}
+	// A 200 with no access_token is an error, not an empty credential.
+	if _, err := c.MintWorkspaceIdentityToken("sp-1", "https://empty.example"); err == nil || !strings.Contains(err.Error(), "no access_token") {
+		t.Fatalf("empty token err = %v", err)
+	}
+	// Unreachable entra.
+	dead := New("http://127.0.0.1:1", false, nil)
+	if _, err := dead.MintWorkspaceIdentityToken("sp-1", "r"); err == nil {
+		t.Fatal("unreachable entra minted a token")
+	}
+}
+
+// TestDoEdgeCases covers do's request-construction failures and New's
+// insecure-TLS default client.
+func TestDoEdgeCases(t *testing.T) {
+	// insecure=true with a nil client builds a TLS-skipping transport.
+	c := New("https://entra.invalid:1", true, nil)
+	// An unmarshalable body fails before any request is sent.
+	if err := c.do("POST", "/x", func() {}, nil); err == nil {
+		t.Error("unmarshalable body accepted")
+	}
+	// An invalid path fails request construction.
+	if err := c.do("GET", "/%zz", nil, nil); err == nil {
+		t.Error("invalid URL accepted")
+	}
+}
+
 func TestValidateClientCredentials(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /{tenant}/oauth2/v2.0/token", func(w http.ResponseWriter, r *http.Request) {
