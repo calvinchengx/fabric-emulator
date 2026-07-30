@@ -1,10 +1,11 @@
 # 23 — Deployment pipelines (P1's third leg)
 
-**Status: D0 + D1 shipped. D2–D3 designed, not built.** The pipeline/stage model
+**Status: D0–D2 shipped. D3 designed, not built.** The pipeline/stage model
 and its read surface are real state (`internal/store/deployment.go`,
 `internal/api/deployment.go`), as is workspace assignment with real item
-pairing (`internal/store/pairing.go`); deployment and the role-assignment
-CRUD are not. Nothing here pretends to deploy — those endpoints are absent
+pairing (`internal/store/pairing.go`) and **Deploy Stage Content**
+(`internal/store/deploy.go`, over the existing LRO engine). The
+role-assignment CRUD is not. Nothing here pretends to deploy — those endpoints are absent
 rather than stubbed.
 
 [13-roadmap.md](13-roadmap.md)'s P1 header reads: *"Makes `fabric-cicd`, git
@@ -131,8 +132,14 @@ Eighteen operations (`pipeline-automation-fabric.md`), grouped by phase:
 |---|---|
 | **D0** ✅ | Create / Get / Update / Delete / List Deployment Pipelines; List + Get + Update Stage; List Stage Items |
 | **D1** ✅ | Assign Workspace To Stage; Unassign Workspace From Stage; pairing on assign |
-| **D2** — deployment | **Deploy Stage Content** (202 LRO), deploy-all and selective; Get / List Deployment Pipeline Operations |
+| **D2** ✅ | **Deploy Stage Content** (202 LRO), deploy-all and selective; Get / List Deployment Pipeline Operations |
 | **D3** — access control | Add / Delete / List Deployment Pipeline Role Assignments |
+
+D2 also confirmed the design's claim that deployment is mostly reuse: the
+copy is `GetDefinition` → `CreateItem`/`SetDefinition`, both P1 machinery.
+The new logic is entirely in *what not to do* — the three rules at the top of
+`deploy.go`. Deploy runs in both directions between adjacent stages (a
+backward deploy reads the same stored pairs in the other orientation).
 
 `Deploy Stage Content` returns through the **existing LRO engine** — `202` +
 `x-ms-operation-id` + `Location` + `Retry-After`, terminal state via

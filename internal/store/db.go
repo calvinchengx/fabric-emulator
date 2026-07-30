@@ -214,6 +214,16 @@ CREATE TABLE IF NOT EXISTS deployment_pipeline_pairs (
 	PRIMARY KEY (pipeline_id, earlier_stage_id, earlier_item_id),
 	UNIQUE (pipeline_id, later_stage_id, later_item_id)
 );
+CREATE TABLE IF NOT EXISTS deployment_pipeline_operations (
+	id TEXT PRIMARY KEY,           -- the LRO operation id, so /result can find it
+	pipeline_id TEXT NOT NULL REFERENCES deployment_pipelines(id) ON DELETE CASCADE,
+	source_stage_id TEXT NOT NULL,
+	target_stage_id TEXT NOT NULL,
+	note TEXT NOT NULL DEFAULT '',
+	performed_by TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	detail TEXT NOT NULL           -- JSON: [{sourceItemId,targetItemId,outcome,…}]
+);
 CREATE TABLE IF NOT EXISTS deployment_pipeline_roles (
 	pipeline_id TEXT NOT NULL REFERENCES deployment_pipelines(id) ON DELETE CASCADE,
 	principal_id TEXT NOT NULL,

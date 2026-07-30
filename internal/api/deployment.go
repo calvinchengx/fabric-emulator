@@ -284,6 +284,104 @@ func (a *API) writeStage(w http.ResponseWriter, pipelineID, stageID string) {
 	writeJSON(w, http.StatusOK, st)
 }
 
+// deployStageContent promotes items from one stage to the adjacent one and
+// returns through the existing LRO engine (202 + x-ms-operation-id +
+// Location), with the per-item detail served from /operations/{id}/result.
+//
+// The work happens synchronously before the 202 — the emulator's LRO is a
+// clock-derived envelope over already-applied state, the same as every other
+// 202 here. What matters for fidelity is the contract the client sees.
+func (a *API) deployStageContent(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	pl, ok := a.requirePipeline(w, r, p)
+	if !ok {
+		return
+	}
+	var body struct {
+		SourceStageID string `json:"sourceStageId"`
+		TargetStageID string `json:"targetStageId"`
+		Note          string `json:"note"`
+		Items         []struct {
+			SourceItemID string `json:"sourceItemId"`
+			ItemType     string `json:"itemType"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
+		body.SourceStageID == "" || body.TargetStageID == "" {
+		writeErr(w, http.StatusBadRequest, "InvalidRequest",
+			"sourceStageId and targetStageId are required.")
+		return
+	}
+	selected := make([]store.ItemSelector, 0, len(body.Items))
+	for _, it := range body.Items {
+		if it.SourceItemID == "" {
+			writeErr(w, http.StatusBadRequest, "InvalidRequest",
+				"Each selected item requires a sourceItemId.")
+			return
+		}
+		selected = append(selected, store.ItemSelector{
+			SourceItemID: it.SourceItemID, ItemType: it.ItemType})
+	}
+
+	// Reserve the operation id first so the deployment record and the LRO
+	// agree on it, then let startOperation write the 202 envelope.
+	opID := store.NewID()
+	if _, err := a.Store.DeployStageContent(pl.ID, body.SourceStageID, body.TargetStageID,
+		opID, body.Note, p.ID, selected); err != nil {
+		switch {
+		case errors.Is(err, store.ErrStagesNotAdjacent):
+			writeErr(w, http.StatusBadRequest, "InvalidRequest",
+				"Deployment is only defined between adjacent stages.")
+		case errors.Is(err, store.ErrStageUnassigned):
+			writeErr(w, http.StatusBadRequest, "DeploymentPipelineStageNotAssigned",
+				"Both stages must have a workspace assigned.")
+		case errors.Is(err, store.ErrNameConflict):
+			// An unpaired item of the same name already sits in the target.
+			// Refuse rather than duplicate or rename silently (docs/23 Q1).
+			writeErr(w, http.StatusConflict, "ItemDisplayNameAlreadyInUse",
+				"An unpaired item with this display name already exists in the target stage.")
+		case errors.Is(err, store.ErrNotFound):
+			writeErr(w, http.StatusNotFound, "DeploymentPipelineStageNotFound",
+				"No stage matches the requested id.")
+		default:
+			writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		}
+		return
+	}
+	a.startOperationWithID(w, r, opID, "Deploy", opID)
+}
+
+// getDeploymentOperation returns one recorded deployment.
+func (a *API) getDeploymentOperation(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	pl, ok := a.requirePipeline(w, r, p)
+	if !ok {
+		return
+	}
+	op, err := a.Store.GetDeploymentOperation(pl.ID, r.PathValue("oid"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "OperationNotFound", "No such deployment operation.")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, op)
+}
+
+// listDeploymentOperations returns a pipeline's deployments, newest first.
+func (a *API) listDeploymentOperations(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	pl, ok := a.requirePipeline(w, r, p)
+	if !ok {
+		return
+	}
+	ops, err := a.Store.ListDeploymentOperations(pl.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	writePage(w, r, ops)
+}
+
 // listDeploymentStageItems returns the supported items in the workspace
 // assigned to the stage. An unassigned stage has no items — an empty page,
 // not an error: a freshly created pipeline is in exactly that state.

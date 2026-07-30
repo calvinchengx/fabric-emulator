@@ -125,8 +125,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/workspaces/{wid}/provisionIdentity", a.withAuth(a.provisionIdentity))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/deprovisionIdentity", a.withAuth(a.deprovisionIdentity))
 
-	// Deployment pipelines (docs/23) — D0: model + read. Assignment/pairing
-	// (D1), Deploy Stage Content (D2) and role-assignment CRUD (D3) follow.
+	// Deployment pipelines (docs/23) — D0 model + read, D1 assignment +
+	// pairing, D2 Deploy Stage Content over the existing LRO engine. The
+	// role-assignment CRUD (D3) follows.
 	mux.HandleFunc("GET /v1/deploymentPipelines", a.withAuth(a.listDeploymentPipelines))
 	mux.HandleFunc("POST /v1/deploymentPipelines", a.withAuth(a.createDeploymentPipeline))
 	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}", a.withAuth(a.getDeploymentPipeline))
@@ -138,6 +139,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/stages/{sid}/items", a.withAuth(a.listDeploymentStageItems))
 	mux.HandleFunc("POST /v1/deploymentPipelines/{pid}/stages/{sid}/assignWorkspace", a.withAuth(a.assignStageWorkspace))
 	mux.HandleFunc("POST /v1/deploymentPipelines/{pid}/stages/{sid}/unassignWorkspace", a.withAuth(a.unassignStageWorkspace))
+	mux.HandleFunc("POST /v1/deploymentPipelines/{pid}/deploy", a.withAuth(a.deployStageContent))
+	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/operations", a.withAuth(a.listDeploymentOperations))
+	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/operations/{oid}", a.withAuth(a.getDeploymentOperation))
 
 	a.registerTyped(mux)
 	a.registerLivy(mux)
@@ -256,8 +260,16 @@ func (a *API) nextOpFate() (delay int64, failWith string) {
 // startOperation records an LRO and writes the 202 envelope (both
 // x-ms-operation-id — what documented scripts read — and Location).
 func (a *API) startOperation(w http.ResponseWriter, r *http.Request, kind, resultRef string) {
+	a.startOperationWithID(w, r, "", kind, resultRef)
+}
+
+// startOperationWithID is startOperation for callers that must know the
+// operation id BEFORE the operation exists — a deployment records its
+// per-item detail under that id so /operations/{id}/result can serve it.
+// An empty id is generated as usual.
+func (a *API) startOperationWithID(w http.ResponseWriter, r *http.Request, id, kind, resultRef string) {
 	delay, failWith := a.nextOpFate()
-	op := &store.Operation{Kind: kind, ResultRef: resultRef, FailWith: failWith}
+	op := &store.Operation{ID: id, Kind: kind, ResultRef: resultRef, FailWith: failWith}
 	op.CompleteAt = a.Store.Now() + delay
 	if err := a.Store.CreateOperation(op); err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
