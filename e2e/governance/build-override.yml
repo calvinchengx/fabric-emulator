@@ -1,0 +1,23 @@
+# CI/e2e override for the governance witness: build fabric-emulator from the
+# tree (the witness must test this checkout, not a released image), and allow
+# host-port remapping so the suite can run on machines where the defaults are
+# taken (locally 9443 is often busy; on CI the env vars are unset → defaults).
+services:
+  fabric-emulator:
+    build:
+      # run.py sets GOV_BUILD_CONTEXT to the repo root (absolute) — relative
+      # contexts resolve against the project dir on some compose versions,
+      # which would point outside the repo.
+      context: ${GOV_BUILD_CONTEXT:-..}
+      dockerfile: Dockerfile
+    ports: !override
+      - "${GOV_FABRIC_PORT:-9443}:9443"
+  entra-emulator:
+    ports: !override
+      - "${GOV_ENTRA_PORT:-8443}:8443"
+  keyvault-emulator:
+    ports: !override
+      - "${GOV_KV_PORT:-8444}:8444"
+  openmetadata:
+    ports: !override
+      - "${GOV_OM_PORT:-8585}:8585"

@@ -43,7 +43,12 @@ declared-schema drift.
   [docker-compose.yml](../docker-compose.yml) — without the flag they are
   invisible to `docker compose up`, cost nothing, pull nothing.
 - Definitions mirror OpenMetadata's own quickstart compose, pinned to
-  **1.13.2** (same pin-for-reproducibility rule as everything else here).
+  **1.13.2** (same pin-for-reproducibility rule as everything else here) —
+  **Postgres-backed** (OM's own Postgres image; the server image's MySQL
+  defaults are explicitly overridden).
+- **CI witness**: `e2e/governance/run.py` (CI job `governance`) boots the
+  profile, seeds a real Delta table, runs the ingest, and asserts the
+  cataloged columns through OM's API on every push.
 - **Weight warning:** this is a real Java server + Elasticsearch (~1 GB heap)
   + Postgres. Expect ~2–3 GB RAM on top of the family, and a couple of
   minutes of first-boot migration.
