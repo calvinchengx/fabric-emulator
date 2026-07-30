@@ -39,7 +39,7 @@ engines against the running emulator.
 | **Notebook execution** | Sail (real engine, no JVM) | emulator parses a Fabric notebook into cells; the unmodified cells execute against OneLake (a Delta table lands) and the run reports back | `e2e/notebook-run/run.py` (CI `notebook-run`, Linux) |
 | **Warehouse TDS** | real `go-mssqldb` + real SQL Server 2022 | entra-token connect, then DDL + DML + a GROUP BY relayed through the TDS endpoint — **one of two** independent TDS driver witnesses (the other: Microsoft ODBC Driver 18 via `dbt-fabric` above); plus the SQL Database → OneLake Delta mirror, the pipeline Script/SqlServerStoredProcedure activities over real HTTP + jobs, and an external-source MirroredDatabase mirror (seeded on a database reached independently of the emulator's own per-item routing) | CI `warehouse-tds` (Linux) |
 
-Plus: coverage floor 90% (cross-package; currently ~95%), `go vet`, a
+Plus: coverage floor 90% (cross-package; currently ~90%), `go vet`, a
 distroless container smoke (`docker-smoke`), the portal build + headless
 render (`portal`), and the
 [docs site](https://calvinchengx.github.io/fabric-emulator/) build on every
