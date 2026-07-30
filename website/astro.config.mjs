@@ -82,6 +82,7 @@ export default defineConfig({
             { slug: '19-semantic-model-plan' },
             { slug: '20-lakesail-engine' },
             { slug: '21-real-fabric-toggle' },
+            { slug: '22-openmetadata' },
           ],
         },
         {

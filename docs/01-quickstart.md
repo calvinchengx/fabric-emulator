@@ -148,6 +148,19 @@ Fabric-audience tokens are rejected on the data plane and vice versa, matching
 real OneLake. Managed-folder rules apply — try to `DELETE` `/Files` itself and
 watch it refuse ([OneLake](08-onelake.md)).
 
+## Governance (optional): OpenMetadata
+
+Data catalog/governance over the same state, one flag — nothing runs (or
+pulls) without it:
+
+```bash
+docker compose --profile governance up        # + OpenMetadata at http://localhost:8585
+docker compose run --rm govern-ingest         # catalog workspaces → lakehouses → Delta tables
+```
+
+Schemas are read from the **real Delta logs in OneLake**, so governance sees
+exactly what your pipelines wrote. Details: [22-openmetadata.md](22-openmetadata.md).
+
 ## Same code against real Fabric — the toggle
 
 Python code written against the emulator runs against the real service by
