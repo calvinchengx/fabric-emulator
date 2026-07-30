@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+**/node_modules
+e2e
+docs
+website
+cover.out
+*.log
+**/__pycache__
+**/*.pyc

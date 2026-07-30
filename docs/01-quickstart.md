@@ -12,8 +12,8 @@ cd fabric-emulator
 docker compose up
 ```
 
-That single command brings up the whole emulator family **with real compute
-attached** (the [override file](../docker-compose.override.yml) auto-loads):
+That single command brings up the whole emulator family **with Spark-compatible
+compute attached** (the [override file](../docker-compose.override.yml) auto-loads):
 
 | Service | Port | Role |
 |---|---|---|
@@ -47,8 +47,8 @@ spark = SparkSession.builder.remote("sc://localhost:50051").getOrCreate()
 spark.sql("SELECT 1").show()
 ```
 
-(Once the [S1–S3 migration](20-lakesail-engine.md) lands, Sail becomes the
-default engine and the plain `docker compose up` is the only command.)
+Sail is the default local engine. The slower Spark 3.5 JVM compatibility oracle
+is test-only and does not change this stack.
 
 **Contract-only, no engines:** `docker compose -f docker-compose.yml up`
 (naming the file skips the override) — lightest start; Spark/SQL surfaces

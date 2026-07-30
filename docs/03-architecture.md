@@ -152,7 +152,7 @@ is also out of scope.
 
 **Not a non-goal (any more): real compute.** The core Go binary stays a contract
 emulator, but real engines attach as **opt-in sidecars** — so notebooks and
-pipelines actually *run* (real Spark via a Livy agent), T-SQL runs for real over
+pipelines actually *run* (Spark-compatible Sail compute via a Livy agent), T-SQL runs for real over
 TDS against a SQL Server sidecar, and Delta lands in OneLake — and where no real
 engine can be attached, the surface returns an honest **501** rather than faking
 a result. The principle is *never fake compute*, not *no compute*. See

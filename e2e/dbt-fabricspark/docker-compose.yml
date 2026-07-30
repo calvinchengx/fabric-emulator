@@ -1,9 +1,9 @@
 # e2e: Microsoft's real dbt-fabricspark adapter runs a dbt project (debug ->
 # seed -> run -> test) against fabric-emulator's Livy High-Concurrency surface,
-# with real Spark behind it. This is the second independent client over the Livy
+# with Sail behind it through Spark Connect. This is the second independent client over the Livy
 # HC layer (after the go/pure-requests clients) — a strong parity witness.
 #
-#   dbt-fabricspark → fabric-emulator (Fabric REST + Livy HC, native) → spark-agent (real Spark SQL)
+#   dbt-fabricspark → fabric-emulator (Fabric REST + Livy HC, native) → Spark Connect agent → Sail
 #                          ↑ Entra FedAuth token minted by entra-emulator
 #
 # fabric-emulator serves TLS here (dbt requires an HTTPS endpoint); its

@@ -9,8 +9,13 @@ permissions:
   packages: write # push the image to GHCR
 
 jobs:
+  fabric-qualification:
+    uses: ./.github/workflows/real-fabric.yml
+    secrets: inherit
+
   binaries:
     name: Cross-platform binaries (GoReleaser)
+    needs: fabric-qualification
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -36,6 +41,7 @@ jobs:
 
   image:
     name: Docker image → GHCR
+    needs: fabric-qualification
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

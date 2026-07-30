@@ -7,8 +7,8 @@ a Spark pool that reports back to the service:
      Notebook item, then submit a RunNotebook job.
   2. The **emulator parses** the notebook into ordered code cells (its Go
      parser) and records a Pending run — we fetch those cells back.
-  3. **Real Spark executes** each cell in a shared kernel namespace against the
-     emulator's OneLake plane (ABFS): a pyspark cell writes a Delta table, a
+  3. The selected engine executes each cell in a shared kernel namespace
+     against the emulator's OneLake plane (ABFS): a PySpark cell writes a Delta table, a
      %%sql cell queries it, a final cell computes a value and exits.
   4. The runner POSTs the per-cell results + exit value to the emulator, which
      finalises the run and the job's terminal status.
@@ -121,25 +121,43 @@ cells = sorted(run["cells"], key=lambda c: c["index"])
 log(f"emulator parsed {len(cells)} code cells: {[c['language'] for c in cells]}")
 assert [c["language"] for c in cells] == ["python", "sql", "python"], cells
 
-# --- real Spark executes the cells ------------------------------------------
+# --- selected compute engine executes the cells -----------------------------
 from pyspark.sql import SparkSession  # noqa: E402
 
-# Sail (Spark Connect): storage auth/endpoint live on the sail server (its
-# launcher minted the entra token); the notebook cells run unmodified.
 import os
 import time
-for _attempt in range(30):
-    try:
-        spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
-        spark.sql("SELECT 1").collect()
-        break
-    except Exception:
-        if _attempt == 29:
-            raise
-        time.sleep(2)
-# Sail reports this limit as "3GB"; pyspark 4.2's createDataFrame does int()
-# on it — override with an integer so unmodified notebook code works.
-spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
+
+if os.environ.get("SPARK_REMOTE"):
+    # Sail: auth and endpoint configuration live on the Spark Connect server.
+    for _attempt in range(30):
+        try:
+            spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
+            spark.sql("SELECT 1").collect()
+            break
+        except Exception:
+            if _attempt == 29:
+                raise
+            time.sleep(2)
+    spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
+    engine = "sail"
+else:
+    # JVM oracle: the same notebook runs on the Spark 3.5 / Delta 3.2 baseline
+    # used by Fabric Runtime 1.3, with ABFS authenticated by the test provider.
+    spark = (SparkSession.builder.appName("fabric-emulator-notebook-jvm")
+             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+             .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+             .config("spark.hadoop.fs.azure.always.use.https", "false")
+             .config(f"spark.hadoop.fs.azure.account.auth.type.{ACCT}", "Custom")
+             .config(f"spark.hadoop.fs.azure.account.oauth.provider.type.{ACCT}",
+                     "com.calvinchengx.fabricemu.EntraTokenProvider")
+             .config("spark.hadoop.fs.azure.emu.token.endpoint", f"{ENTRA}/{TENANT}/oauth2/v2.0/token")
+             .config("spark.hadoop.fs.azure.emu.client.id", CLIENT_ID)
+             .config("spark.hadoop.fs.azure.emu.client.secret", CLIENT_SECRET)
+             .config("spark.hadoop.fs.azure.emu.scope", "https://storage.azure.com/.default")
+             .getOrCreate())
+    spark.sparkContext.setLogLevel("WARN")
+    engine = "jvm-spark-3.5"
+log(f"compute engine: {engine}")
 
 TABLE_PATH = f"abfs://{ws}@{ACCT}/lake.Lakehouse/Tables/events"
 
@@ -192,5 +210,5 @@ assert rows == [(1, "a"), (2, "b"), (3, "c")], rows
 
 spark.stop()
 log(f"delta table in OneLake: {rows}")
-print("NOTEBOOK-RUN E2E: PASS", flush=True)
+print(f"NOTEBOOK-RUN E2E ({engine}): PASS", flush=True)
 sys.exit(0)

@@ -2,12 +2,12 @@
 
 Microsoft's real [dbt-fabricspark](https://github.com/microsoft/dbt-fabricspark)
 adapter runs a dbt project against **fabric-emulator's Livy High-Concurrency
-surface**, with real Spark computing the models. It is a second, independent
+surface**, with Sail computing the models through Spark Connect. It is a second, independent
 client over the Livy HC layer — a strong parity witness that the emulator speaks
 the contract a real Fabric tool expects, not just our own tests.
 
 ```
-dbt-fabricspark → fabric-emulator (Fabric REST + Livy HC, native) → spark-agent (real Spark SQL)
+dbt-fabricspark → fabric-emulator (Fabric REST + Livy HC, native) → Spark Connect agent → Sail
                        ↑ Entra FedAuth token minted by entra-emulator
 ```
 
@@ -18,8 +18,7 @@ python e2e/dbt-fabricspark/run.py
 ```
 
 Brings the stack up with docker-compose and asserts `dbt debug → seed → run →
-test` all pass (`--exit-code-from dbt`). JVM Spark makes this a heavier weight
-class, like the other Spark e2es (Linux-friendly).
+test` all pass (`--exit-code-from dbt`) in a Linux container stack.
 
 ## How it maps onto the emulator
 
@@ -48,7 +47,7 @@ class, like the other Spark e2es (Linux-friendly).
 ## Milestones
 
 - **A (this harness).** Protocol conformance: auth + Fabric REST + Livy HC +
-  real Spark SQL execution. dbt's Delta tables land in the agent's *local* Spark
+  Sail SQL execution. dbt's Delta tables land in the agent's Spark-compatible
   warehouse; because one SparkSession serves every statement, `run`/`test`
   round-trip correctly.
 - **B (follow-up).** Storage fidelity: bind the session to the lakehouse so the

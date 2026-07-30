@@ -1,10 +1,10 @@
-"""A2 on Sail: the real Spark API (Spark Connect client) writes and reads a
+"""A2 on Sail: a real PySpark Connect client writes and reads a
 Delta table through fabric-emulator's OneLake plane — the engine is LakeSail's
 Sail, no JVM anywhere (docs/20-lakesail-engine.md).
 
 Runs in a plain python container. Control-plane setup (seed the storage
 resource app, create workspace + lakehouse) is plain REST over the container
-network; the data path is real Spark → ABFS → our DFS surface.
+network; the data path is PySpark Connect → Sail → our OneLake surface.
 """
 import json
 import sys

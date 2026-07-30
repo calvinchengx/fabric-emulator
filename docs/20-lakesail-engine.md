@@ -1,10 +1,10 @@
-# 20 — LakeSail: replacing JVM Spark with a Rust engine
+# 20 — LakeSail default compute and the JVM compatibility oracle
 
-**Decision: adopt [LakeSail's Sail](https://github.com/lakehq/sail) as the
-Spark engine behind the emulator's compute surfaces, replacing JVM
-PySpark/`apache/spark` everywhere it appears.** Sail is a Rust Spark-Connect
+**Decision: use [LakeSail's Sail](https://github.com/lakehq/sail) as the
+default engine behind the emulator's compute surfaces.** Sail is a Rust Spark-Connect
 server: unmodified `pyspark` clients connect over `sc://…`, and no JVM exists
-anywhere in the stack.
+in the default stack. It is a Spark-compatible engine, not Apache Spark and not
+a complete emulation of the Microsoft Fabric runtime.
 
 Grounded against Sail **v0.6.6** (local checkout audit; citations are that
 repo's paths).
@@ -74,11 +74,22 @@ pyspark client ──sc:// (Spark Connect, h2c gRPC :50051)──▶ sail server
 | **S2** ✅ | `e2e/notebook-run`: `runner.py` connects via `SPARK_REMOTE`; the JVM image build is gone. The notebook fixture (incl. `createDataFrame`) runs **unmodified**. | 1 suite |
 | **S3** ✅ | `e2e/spark` (A2) reborn on Sail: same job, same production-shaped `abfs://` URLs (endpoint override routes them). `EntraTokenProvider.java` + the JVM Dockerfile deleted. | last one |
 | **S4** ✅ | user-facing compose: the auto-loaded `docker-compose.override.yml` **and** the explicit `docker-compose.compute.yml` both run Sail + the statement agent — `RunNotebook`, Livy sessions, and dbt work out of the box with no JVM. Docs + quickstart updated. | — |
+| **S5** ✅ | restore an opt-in Apache Spark 3.5.3 + Delta 3.2 JVM oracle (`e2e/spark-jvm`) and run the representative notebook on both engines. Sail remains the default; JVM and real-Fabric qualification run on slower CI cadences. | compatibility only |
 
-**Tradeoff accepted (S3):** deleting the JVM suite removes our only
-*Hadoop-ABFS-driver* compatibility witness — a real signal for users pointing
-JVM Spark at the emulator. If that matters later, resurrect `e2e/spark` as an
-opt-in nightly rather than re-adopting the JVM in the default path.
+## What “parity” means
+
+Compute claims are split into three evidence tiers:
+
+| Tier | Engine | What a pass establishes |
+|---|---|---|
+| Default | Sail 0.6.6 + PySpark Connect 4.2 | Spark Connect DataFrame/SQL behavior, native Delta behavior, OneLake paths, auth, Livy and notebook integration |
+| JVM oracle | Apache Spark 3.5.3 + Delta 3.2 | Fabric Runtime 1.3-aligned Spark Core/JVM behavior and Hadoop ABFS compatibility; scheduled/manual, not part of the default stack |
+| Release oracle | real Microsoft Fabric | representative notebook and API conformance in the managed production runtime; secret-gated and run before releases |
+
+Passing the Sail tier does not establish compatibility for SparkContext/RDD,
+Py4J, Java or Scala libraries, Structured Streaming, table maintenance,
+transaction semantics beyond the probed overwrite conflict, cluster
+configuration, or performance.
 
 ## Notebook code compatibility (probed, not guessed)
 
@@ -94,13 +105,14 @@ touches; every claim below is CI-verified against the emulator:
 | `sc` / RDD API / `spark._jvm` | ❌ Spark Connect has no SparkContext. The Livy agent binds `sc` to a guide-rail stub whose every use raises a pointer to this doc — a clear error instead of a bare `NameError`. **Fidelity inversion vs real Fabric**: notebooks using `sc.parallelize` work in production but not here. | agent stub |
 | `createDataFrame(local_rows)` | ✅ works — the agents/runners set `spark.conf.set("spark.sql.session.localRelationSizeLimit", <int>)` at session start, overriding the `'3GB'` string pyspark 4.2 chokes on; without that mitigation, use SQL `VALUES` or a 3.5 client | e2e (notebook fixture runs unmodified) |
 | DML row-count results (`INSERT`/`MERGE` envelopes) | ⚠️ DataFusion reports counts as `uint64`, which Arrow conversion to Spark clients rejects — the statement HAS executed; the Livy SQL agent absorbs this specific error as an empty result | dbt e2e finding |
-| Structured streaming, `OPTIMIZE`/`VACUUM`, CDF, Java/Scala UDFs, `spark.jars` | ❌ absent in Sail v0.6.6 | upstream docs |
+| Structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs | ❌ absent in Sail v0.6.6 | executable negative probes |
+| CDF options, `spark.jars` | ⚠️ accepted but inert: CDF returns a normal snapshot without `_change_type`; JAR config is stored but there is no JVM classloader | executable divergence probes |
 
 ## Known gaps to design around (Sail v0.6.6)
 
-- **No transaction conflict detection** in Delta commits — two sessions
-  writing one table can both "succeed". Fine for single-driver e2es; document
-  for notebook users.
+- **Concurrent overwrite conflicts are rejected** at the Delta-log commit
+  boundary: the executable two-session probe observes one successful writer
+  and one transaction failure through OneLake's conditional create contract.
 - **No streaming** (`readStream`/`writeStream` absent), `cache()`/`persist()`
   are no-ops, no Java/Scala UDFs (Python/Pandas/Arrow UDFs all work), some
   catalog calls missing (`cacheTable`, `refreshTable`, …).

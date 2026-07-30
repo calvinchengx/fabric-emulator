@@ -6,7 +6,7 @@ emulator's Livy layer and parses the Livy *SQL* result envelope —
 ``output.data["application/json"] = {"schema": {...}, "data": [[...]]}``. The
 general-purpose Python REPL agent (``e2e/livy/agent.py``) execs Python and
 returns ``text/plain``, which dbt cannot parse. This agent runs each statement
-as ``spark.sql(code)`` and returns the SQL envelope, so real Spark computes
+as ``spark.sql(code)`` and returns the SQL envelope, so Sail computes
 dbt's models. Delta extensions are enabled so dbt's default ``USING delta``
 tables build.
 
