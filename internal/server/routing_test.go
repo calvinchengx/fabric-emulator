@@ -81,6 +81,54 @@ func TestNewRejectsBadEngineURLs(t *testing.T) {
 	if _, err := server.New(cfg, nil); err == nil {
 		t.Error("New with a bad WarehouseSQLURL succeeded")
 	}
+
+	cfg = testConfig(t)
+	cfg.AirflowURL = "://bad"
+	cfg.AirflowDAGDir = t.TempDir()
+	if _, err := server.New(cfg, nil); err == nil {
+		t.Error("New with a bad AirflowURL succeeded")
+	}
+
+	cfg = testConfig(t)
+	cfg.AirflowURL = "http://airflow:8080"
+	if _, err := server.New(cfg, nil); err == nil {
+		t.Error("New without an AirflowDAGDir succeeded")
+	}
+
+	cfg = testConfig(t)
+	cfg.MLflowURL = "://bad"
+	if _, err := server.New(cfg, nil); err == nil {
+		t.Error("New with a bad MLflowURL succeeded")
+	}
+}
+
+func TestNewWiresMLflowBackend(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.MLflowURL = "http://mlflow:5000"
+	srv, err := server.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	if srv.API.MLflowURL == nil || srv.API.MLflowURL.String() != cfg.MLflowURL || srv.API.MLflowHTTP == nil {
+		t.Fatalf("MLflow backend was not wired: %+v", srv.API.MLflowURL)
+	}
+}
+
+func TestNewWiresAirflowBackend(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.AirflowURL = "http://airflow:8080"
+	cfg.AirflowDAGDir = t.TempDir()
+	cfg.AirflowUsername = "fabric"
+	cfg.AirflowPassword = "secret"
+	srv, err := server.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	if srv.API.Airflow == nil {
+		t.Fatal("Airflow backend was not wired")
+	}
 }
 
 // TestNewWiresWarehouseSQLBackend: with SQLTDSAddr + WarehouseSQLURL set, New

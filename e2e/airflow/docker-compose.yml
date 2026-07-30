@@ -1,0 +1,100 @@
+services:
+  volume-init:
+    image: alpine:3.22
+    user: "0:0"
+    volumes:
+      - airflow-dags:/opt/airflow/dags
+      - airflow-results:/results
+    command: ["sh", "-c", "chmod 0777 /opt/airflow/dags /results && touch /ready && sleep infinity"]
+    healthcheck:
+      test: ["CMD", "test", "-f", "/ready"]
+      interval: 1s
+      timeout: 1s
+      retries: 10
+
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+
+  airflow:
+    image: apache/airflow:2.10.5-python3.12
+    depends_on:
+      volume-init:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "2"
+      AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "1"
+    volumes:
+      - airflow-dags:/opt/airflow/dags
+      - airflow-results:/results
+    command:
+      - bash
+      - -ec
+      - |
+        airflow db migrate
+        airflow users create --username admin --password admin --firstname Fabric --lastname Emulator --role Admin --email admin@example.com
+        airflow scheduler &
+        exec airflow webserver
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+      airflow:
+        condition: service_healthy
+      volume-init:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":9443"
+      FABRIC_DATA_DIR: ""
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      FABRIC_AIRFLOW_URL: "http://airflow:8080"
+      FABRIC_AIRFLOW_DAG_DIR: "/airflow-dags"
+      FABRIC_AIRFLOW_USERNAME: admin
+      FABRIC_AIRFLOW_PASSWORD: admin
+    volumes:
+      - airflow-dags:/airflow-dags
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+
+  client:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: runtime }
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    volumes:
+      - ./witness.py:/witness.py:ro
+      - airflow-results:/results
+    command: ["python3", "/witness.py"]
+
+volumes:
+  airflow-dags:
+  airflow-results:

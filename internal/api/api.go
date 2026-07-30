@@ -36,6 +36,13 @@ type API struct {
 	// (the mirroring). Wired by the server when a warehouse SQL backend is set;
 	// nil → the refresh-mirror endpoint 501s.
 	MirrorItem func(ctx context.Context, itemID string) error
+	// Airflow runs ApacheAirflowJob DAGs on an attached upstream Airflow
+	// instance. Nil preserves an honest AirflowNotConfigured failure.
+	Airflow AirflowRuntime
+	// MLflowURL is an attached real MLflow tracking/model-registry server. The
+	// API authenticates and workspace-namespaces traffic before proxying it.
+	MLflowURL  *url.URL
+	MLflowHTTP *http.Client
 	// SQLDB returns the real SQL Server connection for a Warehouse/SQLDatabase
 	// item (preparing its database first). Wired by the server when a warehouse
 	// SQL backend is set; nil → the pipeline Script/StoredProcedure activities
@@ -153,6 +160,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerLivy(mux)
 	a.registerShortcuts(mux)
 	a.registerExecuteQueries(mux)
+	a.registerVSCodeCompatibility(mux)
+	a.registerAirflow(mux)
+	a.registerMLflow(mux)
 
 	mux.HandleFunc("GET /v1/operations/{oid}", a.withAuth(a.getOperation))
 	mux.HandleFunc("GET /v1/operations/{oid}/result", a.withAuth(a.getOperationResult))

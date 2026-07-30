@@ -33,6 +33,9 @@ engines against the running emulator.
 | **azcopy** | Microsoft's real `azcopy` binary | multi-block upload (Put Block + Put Block List) → byte-identical download, and the DFS surface sees the same object | `e2e/azcopy/run.py` (CI `azcopy`, Linux) |
 | **Spark API on Sail (A2)** | real PySpark (Spark Connect client) + LakeSail's `sail` | writes/reads Delta over production-shaped `abfs://…@onelake.dfs…` URLs — engine is Rust, no JVM | `e2e/spark/run.py` (CI `spark-a2`, Linux, containerized) |
 | **Native Livy** | real Livy REST client + Sail | emulator terminates the Livy protocol itself and drives a statement agent — session + PySpark statements computed by a real engine (Sail, no JVM), no Apache Livy server | `e2e/livy/run.py` (CI `livy-native`, Linux) |
+| **Fabric VS Code extension contract** | Microsoft Fabric Data Engineering extension 1.18.1 route fixture | Power BI discovery/auth, workspace/artifact authoring, notebook content/resources with ETags, and host redirection through `api.powerbi.com` | `e2e/vscode-extension/run.py` (CI `vscode-extension`, Linux) |
+| **Apache Airflow Job** | real Apache Airflow 2.10.5/Python 3.12 | uploaded DAG discovery, scheduler/executor task run, REST polling, and the resulting Fabric job terminal state | `e2e/airflow/run.py` (CI `airflow`, Linux) |
+| **Data science loop** | PySpark/Sail + Direct Lake DAX + MLflow 3 + dbt-duckdb Delta plugin | one Spark-written OneLake Delta table is queried by DAX, tracked as typed MLflow experiment/model items with mirrored artifacts, then built and tested by dbt | `e2e/data-science-loop/run.py` (CI `data-science-loop`, Linux) |
 | **dbt (fabric-spark)** | Microsoft's real `dbt-fabricspark` adapter | a dbt project (debug → seed → run → test) over the Fabric REST + Livy HC surface, models computed by Sail (no JVM) | `e2e/dbt-fabricspark/run.py` (CI `dbt-fabricspark`, Linux) |
 | **dbt (fabric) via ODBC** | Microsoft's real `dbt-fabric` adapter + Microsoft ODBC Driver 18 | a dbt project (debug → seed → run → test) over the TDS warehouse surface through pyodbc + FedAuth (byte-spliced to a real SQL Server) — the **second** independent TDS driver family | `e2e/dbt-fabric/run.py` (CI `dbt-fabric`, Linux) |
 | **DuckDB SQL** | real DuckDB | SQL (aggregation, join, filter) over Delta tables in the OneLake plane — the lakehouse SQL-analytics-endpoint semantics | `e2e/duckdb/run.py` (CI `duckdb`, 3-OS) |
@@ -71,8 +74,12 @@ they're scoped.
 ```bash
 go test ./...  # everything in-process, no network
 uv run --frozen --group fabric-cicd python e2e/fabric-cicd/run.py
+uv run --frozen --no-sync python e2e/vscode-extension/run.py
+uv run --frozen --no-sync python e2e/airflow/run.py
+python3 e2e/data-science-loop/run.py
 ```
 
 Python dependencies are defined in the root `pyproject.toml` and locked by
-`uv.lock`; each E2E uses its named dependency group. Both commands are
+`uv.lock`; dependency-bearing E2Es use their named dependency group, while
+stdlib-only Docker launchers use `--no-sync`. The commands are
 deterministic: virtual clock, in-memory stores, seeded credentials.

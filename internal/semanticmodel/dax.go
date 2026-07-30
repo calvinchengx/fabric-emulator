@@ -543,7 +543,27 @@ func toF(v any) float64 {
 	switch n := v.(type) {
 	case float64:
 		return n
+	case float32:
+		return float64(n)
 	case int:
+		return float64(n)
+	case int8:
+		return float64(n)
+	case int16:
+		return float64(n)
+	case int32:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case uint:
+		return float64(n)
+	case uint8:
+		return float64(n)
+	case uint16:
+		return float64(n)
+	case uint32:
+		return float64(n)
+	case uint64:
 		return float64(n)
 	case string:
 		f, _ := strconv.ParseFloat(n, 64)
@@ -553,10 +573,19 @@ func toF(v any) float64 {
 }
 
 func valEq(a, b any) bool {
-	af, aok := a.(float64)
-	bf, bok := b.(float64)
+	af, aok := numeric(a)
+	bf, bok := numeric(b)
 	if aok && bok {
 		return af == bf
 	}
 	return fmt.Sprint(a) == fmt.Sprint(b)
+}
+
+func numeric(v any) (float64, bool) {
+	switch v.(type) {
+	case float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return toF(v), true
+	default:
+		return 0, false
+	}
 }

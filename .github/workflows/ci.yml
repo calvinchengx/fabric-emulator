@@ -221,6 +221,30 @@ jobs:
       # the volume — the container path nothing else in CI exercised.
       - run: ./scripts/docker-smoke.sh
 
+  vscode-extension:
+    name: Fabric Data Engineering VS Code extension contract (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      # Replays the routes extracted from Microsoft's pinned extension 1.18.1
+      # through the production host alias and a real Power BI-audience token.
+      - run: uv run --frozen --no-sync python e2e/vscode-extension/run.py
+
+  airflow:
+    name: Apache Airflow job runs on the real Fabric-pinned engine (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      # Airflow 2.10.5/Python 3.12 discovers the uploaded DAG, schedules it,
+      # executes its task, and determines the Fabric job's terminal state.
+      - run: uv run --frozen --no-sync python e2e/airflow/run.py
+
   spark-a2:
     name: Spark Connect API on Sail writes Delta through OneLake (containerized)
     runs-on: ubuntu-latest
@@ -252,6 +276,16 @@ jobs:
       # and reading Delta through the OneLake Blob surface with entra
       # client-credentials auth minted before server start.
       - run: python3 e2e/sail/run.py
+
+  data-science-loop:
+    name: Spark to Direct Lake DAX to MLflow to dbt (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # One physical OneLake Delta table crosses four real engines/clients:
+      # Sail executes PySpark SQL, Direct Lake evaluates DAX, MLflow 3 tracks
+      # the observation, and dbt-duckdb's Delta plugin builds/tests it.
+      - run: python3 e2e/data-science-loop/run.py
 
   fabric-cli:
     name: Microsoft's Fabric CLI (fab) drives the control plane + deployment pipelines (containerized)

@@ -1,15 +1,18 @@
 package api
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/parquet-go/parquet-go"
 )
 
 func smFixture(t *testing.T, name string) []byte {
@@ -181,5 +184,133 @@ func TestExecuteQueriesUnconfigured(t *testing.T) {
 	a.withPBIAuth(a.executeQueries)(w, r)
 	if w.Code != 501 {
 		t.Fatalf("unconfigured = %d; want 501", w.Code)
+	}
+}
+
+type directLakeSale struct {
+	Region string `parquet:"region"`
+	Amount int64  `parquet:"amount"`
+}
+
+func directLakeParquet(t *testing.T, rows []directLakeSale) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	w := parquet.NewGenericWriter[directLakeSale](&b)
+	if _, err := w.Write(rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+func directLakeModel(workspaceID, lakehouseID string) []byte {
+	return []byte(fmt.Sprintf(`{
+  "name":"DirectSales","compatibilityLevel":1604,
+  "model":{
+    "expressions":[{"name":"DL_Lakehouse","kind":"m","expression":"let Source = AzureStorage.DataLake(\"https://onelake.dfs.fabric.microsoft.com/%s/%s\", [HierarchicalNavigation=true]) in Source"}],
+    "tables":[{"name":"Sales","columns":[
+      {"name":"Region","dataType":"string","sourceColumn":"region"},
+      {"name":"Amount","dataType":"int64","sourceColumn":"amount"}],
+      "measures":[{"name":"Total","expression":"SUM(Sales[Amount])"}],
+      "partitions":[{"name":"Sales","mode":"directLake","source":{"type":"entity","entityName":"sales","schemaName":"dbo","expressionSource":"DL_Lakehouse"}}]}]
+  }
+}`, workspaceID, lakehouseID))
+}
+
+func putDirectLakeFile(t *testing.T, st *store.Store, wid, iid, rel string, content []byte) {
+	t.Helper()
+	if err := st.CreateOneLakePath(&store.OneLakePath{WorkspaceID: wid, ItemID: iid, RelPath: rel, Content: content}, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExecuteQueriesDirectLakeReadsCurrentDelta(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "sales-lake"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	putDirectLakeFile(t, st, ws.ID, lake.ID, "Tables/sales/part-0.parquet", directLakeParquet(t, []directLakeSale{{"us", 80}, {"eu", 60}}))
+	putDirectLakeFile(t, st, ws.ID, lake.ID, "Tables/sales/_delta_log/00000000000000000000.json", []byte(`{"add":{"path":"part-0.parquet"}}`))
+	model := &store.Item{WorkspaceID: ws.ID, Type: "SemanticModel", DisplayName: "Direct Sales"}
+	parts := []store.DefinitionPart{{Path: "model.bim", PayloadType: "InlineBase64", Payload: base64.StdEncoding.EncodeToString(directLakeModel(ws.ID, lake.ID))}}
+	if err := st.CreateItem(model, parts); err != nil {
+		t.Fatal(err)
+	}
+
+	query := `{"queries":[{"query":"EVALUATE SUMMARIZECOLUMNS(Sales[Region], \"Total\", [Total])"}]}`
+	assertRows := func(want ...string) {
+		t.Helper()
+		w := do(a.executeQueries, admin, "POST", query, map[string]string{"datasetId": model.ID})
+		if w.Code != 200 {
+			t.Fatalf("query=%d %s", w.Code, w.Body.String())
+		}
+		for _, value := range want {
+			if !bytes.Contains(w.Body.Bytes(), []byte(value)) {
+				t.Fatalf("response %s missing %q", w.Body.String(), value)
+			}
+		}
+	}
+	assertRows(`"Sales[Region]":"us"`, `"[Total]":80`, `"Sales[Region]":"eu"`, `"[Total]":60`)
+
+	putDirectLakeFile(t, st, ws.ID, lake.ID, "Tables/sales/part-1.parquet", directLakeParquet(t, []directLakeSale{{"apac", 125}}))
+	putDirectLakeFile(t, st, ws.ID, lake.ID, "Tables/sales/_delta_log/00000000000000000001.json", []byte("{\"remove\":{\"path\":\"part-0.parquet\"}}\n{\"add\":{\"path\":\"part-1.parquet\"}}"))
+	assertRows(`"Sales[Region]":"apac"`, `"[Total]":125`)
+}
+
+func TestDirectLakeErrorsAndSourceRBAC(t *testing.T) {
+	a, st := newAPI(t)
+	modelWS := seedWorkspace(t, st)
+	sourceWS := &store.Workspace{DisplayName: "source"}
+	if err := st.CreateWorkspace(sourceWS, store.Principal{ID: admin.ID, Type: admin.Type}); err != nil {
+		t.Fatal(err)
+	}
+	lake := &store.Item{WorkspaceID: sourceWS.ID, Type: "Lakehouse", DisplayName: "lake"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	putDirectLakeFile(t, st, sourceWS.ID, lake.ID, "Tables/sales/part.parquet", directLakeParquet(t, []directLakeSale{{"x", 1}}))
+	putDirectLakeFile(t, st, sourceWS.ID, lake.ID, "Tables/sales/_delta_log/00000000000000000000.json", []byte(`{"add":{"path":"part.parquet"}}`))
+	model := &store.Item{WorkspaceID: modelWS.ID, Type: "SemanticModel", DisplayName: "cross"}
+	parts := []store.DefinitionPart{{Path: "model.bim", PayloadType: "InlineBase64", Payload: base64.StdEncoding.EncodeToString(directLakeModel(sourceWS.ID, lake.ID))}}
+	if err := st.CreateItem(model, parts); err != nil {
+		t.Fatal(err)
+	}
+	q := `{"queries":[{"query":"EVALUATE Sales"}]}`
+	if w := do(a.executeQueries, viewer, "POST", q, map[string]string{"datasetId": model.ID}); w.Code != 400 || !bytes.Contains(w.Body.Bytes(), []byte("cannot read source workspace")) {
+		t.Fatalf("source RBAC=%d %s", w.Code, w.Body.String())
+	}
+
+	bad := directLakeModel(sourceWS.ID, lake.ID)
+	bad = bytes.Replace(bad, []byte("onelake.dfs.fabric.microsoft.com"), []byte("example.invalid"), 1)
+	if err := st.SetDefinition(model.ID, []store.DefinitionPart{{Path: "model.bim", PayloadType: "InlineBase64", Payload: base64.StdEncoding.EncodeToString(bad)}}); err != nil {
+		t.Fatal(err)
+	}
+	if w := do(a.executeQueries, admin, "POST", q, map[string]string{"datasetId": model.ID}); w.Code != 400 || !bytes.Contains(w.Body.Bytes(), []byte("shared expression")) {
+		t.Fatalf("bad expression=%d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDirectLakeSchemaQualifiedTableFallback(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "schema-lake"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	root := "Tables/sales_schema/sales"
+	putDirectLakeFile(t, st, ws.ID, lake.ID, root+"/part.parquet", directLakeParquet(t, []directLakeSale{{"us", 9}}))
+	putDirectLakeFile(t, st, ws.ID, lake.ID, root+"/_delta_log/00000000000000000000.json", []byte(`{"add":{"path":"part.parquet"}}`))
+	bim := bytes.Replace(directLakeModel(ws.ID, lake.ID), []byte(`"schemaName":"dbo"`), []byte(`"schemaName":"sales_schema"`), 1)
+	model := &store.Item{WorkspaceID: ws.ID, Type: "SemanticModel", DisplayName: "schema model"}
+	if err := st.CreateItem(model, []store.DefinitionPart{{Path: "model.bim", PayloadType: "InlineBase64", Payload: base64.StdEncoding.EncodeToString(bim)}}); err != nil {
+		t.Fatal(err)
+	}
+	w := do(a.executeQueries, admin, "POST", `{"queries":[{"query":"EVALUATE Sales"}]}`, map[string]string{"datasetId": model.ID})
+	if w.Code != http.StatusOK || !bytes.Contains(w.Body.Bytes(), []byte(`"Sales[Amount]":9`)) {
+		t.Fatalf("schema-qualified Direct Lake = %d %s", w.Code, w.Body.String())
 	}
 }

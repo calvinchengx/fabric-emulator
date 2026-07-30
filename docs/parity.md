@@ -131,7 +131,8 @@ inferred — the fidelity deltas a Fabric notebook author actually hits:
 | GetMetadata activity — **OneLake path** | Stats a **real** OneLake path: `exists` / `itemType` / `size` / `lastModified` / `childItems`; a missing path honestly returns `exists:false` | 🟢 Real |
 | **Script** / **SqlServerStoredProcedure** activities | Run **real T-SQL** against a Warehouse/Fabric-SQL-Database item's own SQL Server database — the same per-item backend the TDS endpoint and the SQLDatabase mirror share. `Script` runs each `scripts[]` entry (`Query` → real rows back, `NonQuery` → rows affected); `SqlServerStoredProcedure` calls a real stored procedure with named parameters. The target is named directly as `{workspaceId?, itemId}` (the emulator's own scoped mapping — real Fabric's linkedService/connection reference isn't modeled), the same shape Copy/Lookup/GetMetadata already use. Honest error without a warehouse SQL backend attached | 🟢 Real (scoped) |
 | Web / external-connector leaves | **Stubbed success** — reached in `dependsOn` order and inputs resolved, but nothing executes: Web calls to arbitrary URLs would break the offline/deterministic guarantee | 🟡 Emulated |
-| **Dataflow Gen2** (Power Query M engine) | An in-pipeline Dataflow activity fails with an explicit "not implemented" | 🔴 Honest fail |
+| **Apache Airflow Job** | Typed item + beta file APIs; uploaded Python DAGs sync to an opt-in real Airflow 2.10.5/Python 3.12 sidecar, whose scheduler/executor and REST state determine the Fabric job result (`e2e/airflow`) | 🟢 Real (sidecar) |
+| **Dataflow Gen2** (Power Query M engine) | Typed item/definition management round-trips. Refresh, Publish, and in-pipeline execution fail with `DataflowEngineNotImplemented`; no open Power Query M engine exists to attach | 🟡 mgmt / 🔴 exec |
 | Connectors / on-prem gateways | — | 🔴 Not implemented |
 
 ## CI/CD (`cicd/`)
@@ -149,9 +150,9 @@ inferred — the fidelity deltas a Fabric notebook author actually hits:
 |---|---|---|
 | Real-Time Intelligence — Eventhouse / KQL DB / Eventstream (`real-time-intelligence/`) | Item management only; no KQL / streaming engine | 🟡 mgmt / 🔴 exec |
 | Mirroring — Mirrored Database (`mirroring/`) | `POST …/mirroredDatabases/{id}/refreshMirror` mirrors an **external** SQL Server source (reached via a Connection with Basic credentials) to OneLake as real Delta — reusing the exact same mirror writer the Fabric SQL Database uses (`warehouse.Mirror`; same code, external source). Proven by a gated e2e: a table seeded directly on an external database (bypassing the emulator's own per-item routing entirely) mirrors and reads back correctly. *Snapshot-on-trigger, not continuous/CDC replication*; other source engines (Snowflake, CosmosDB, on-prem via gateway) are out of scope | 🟢 Real (snapshot mirror, SQL Server sources) |
-| Power BI — Semantic Model **query** (`executeQueries`) | Real bounded **DAX engine** — `EVALUATE`, `SUMMARIZECOLUMNS`, measures, `SUM`/`DIVIDE`, relationship filter propagation — over the model.bim, conforming to the vendored Power BI OpenAPI. Proven by `e2e/semantic-model` (golden DAX oracle) and `e2e/great-expectations` (real GX validates the results). | 🟢 Real (DAX subset) |
+| Power BI — Semantic Model **query** (`executeQueries`) | Real bounded **DAX engine** — `EVALUATE`, `SUMMARIZECOLUMNS`, measures, `SUM`/`DIVIDE`, relationship filter propagation — over imported `data.json` or compatibility-level-1604 **Direct Lake** entity partitions backed by current OneLake Delta. Proven by the golden DAX/GX suites and the Spark-written Direct Lake witness. | 🟢 Real (DAX subset + Direct Lake) |
 | Power BI — Reports / rendering; full DAX; SemPy over **XMLA** | No report rendering; DAX beyond the fixture subset; and the native ADOMD.NET/XMLA transport SemPy uses (no CI oracle) — all deferred with cause | 🟡 mgmt / 🔴 render |
-| Data Science — ML models / experiments / MLflow (`data-science/`) | — | 🔴 Not implemented |
+| Data Science — ML models / experiments / MLflow (`data-science/`) | Authenticated, workspace-scoped proxy to a real MLflow 3 tracking/model-registry server. Experiment/model creation synchronizes typed Fabric items; experiment/run references are isolated by workspace; successful artifact uploads are mirrored under the experiment item's OneLake `Files/mlflow-artifacts`. | 🟢 Real (sidecar) |
 | Fabric SQL Database (`database/`), Graph (`graph/`), Real-Time Hub, Copilot / IQ (`iq/`), Embed, Workload Dev Kit | — | 🔴 Not implemented |
 
 ## Emulator-only (no Fabric equivalent — these exist for testing)
@@ -173,6 +174,9 @@ contract holds better than any assertion we could write ourselves.
 |---|---|---|
 | `fabric-cicd` (Microsoft) | Control plane / CI-CD publish | 🟢 `e2e/fabric-cicd` |
 | **Fabric CLI `fab`** (Microsoft) | Control plane — SPN auth (MSAL) + workspace/item CRUD (Notebook, SemanticModel, Report, DataPipeline, Lakehouse), `ls`/`get`/`api` | 🟢 `e2e/fabric-cli` |
+| **Fabric Data Engineering VS Code extension 1.18.1 contract** (Microsoft) | Shared-backend/MWC authoring routes through `api.powerbi.com`; interactive kernel websocket is not claimed | 🟢 `e2e/vscode-extension` |
+| Apache Airflow 2.10.5 | `ApacheAirflowJob` DAG discovery, scheduling, execution, and status | 🟢 `e2e/airflow` |
+| MLflow 3 + dbt-duckdb | Workspace-scoped experiment/run/artifact/model lifecycle, followed by dbt's real Delta plugin over the same Spark-written OneLake table | 🟢 `e2e/data-science-loop` |
 | `deltalake` (delta-rs) | OneLake Delta write/read | 🟢 `e2e/delta-rs` |
 | `azure-storage-file-datalake` + Blob SDK | OneLake ADLS **Gen2 DFS** + Blob | 🟢 `e2e/adls-sdk` |
 | `azcopy` (Microsoft) | OneLake Blob multi-block transfer | 🟢 `e2e/azcopy` |

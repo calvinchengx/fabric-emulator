@@ -73,7 +73,7 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		return
 	}
 
-	model, data, err := a.loadSemanticModel(it.ID)
+	model, data, err := a.loadSemanticModel(it.ID, p)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "InvalidDataset", err.Error())
 		return
@@ -110,7 +110,7 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 }
 
 // loadSemanticModel parses the item's model.bim + optional data.json parts.
-func (a *API) loadSemanticModel(itemID string) (*semanticmodel.Model, semanticmodel.Data, error) {
+func (a *API) loadSemanticModel(itemID string, p *auth.Principal) (*semanticmodel.Model, semanticmodel.Data, error) {
 	bim, err := a.definitionPart(itemID, "model.bim")
 	if err != nil {
 		return nil, nil, err
@@ -124,6 +124,9 @@ func (a *API) loadSemanticModel(itemID string) (*semanticmodel.Model, semanticmo
 		if d, err := semanticmodel.ParseData(raw); err == nil {
 			data = d
 		}
+	}
+	if err := a.loadDirectLakeData(m, data, p); err != nil {
+		return nil, nil, err
 	}
 	return m, data, nil
 }

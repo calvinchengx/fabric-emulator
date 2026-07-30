@@ -285,9 +285,16 @@ proxy would be a separate sibling.
     - [x] **R4a (default-lakehouse session binding)** — notebook metadata is
       resolved and validated; Sail and JVM witnesses run unqualified table APIs
       against the attached lakehouse's OneLake `Tables/` directory.
-    - [ ] **R4b (VS Code Fabric-extension compatibility)** — endpoint
-      redirection for Microsoft's extension remains an independent authoring
-      surface investigation.
+    - [x] **R4b (VS Code Fabric-extension compatibility)** — the private
+      shared-backend/MWC protocol used by Microsoft's Fabric Data Engineering
+      extension 1.18.1 is implemented for workspace/artifact discovery,
+      Notebook/SparkJobDefinition/Environment authoring, notebook content with
+      ETag conflicts, notebook resources, Spark-job history/cancel, and
+      lakehouse table discovery. `e2e/vscode-extension` replays the pinned
+      extension contract through the real `api.powerbi.com` host alias with an
+      entra-emulator Power BI-audience token. Interactive Jupyter kernel
+      websockets and table preview remain out of scope; notebook execution is
+      available through the existing jobs/Livy/Sail surfaces.
 - [x] **R5 (DataPipeline interpreter)** — a real, pure-Go interpreter
       (`internal/pipeline`) for Fabric/ADF Data Pipeline definitions: the full
       expression language (a faithful subset — `pipeline()`, `variables()`,
@@ -321,16 +328,18 @@ proxy would be a separate sibling.
       targeted the same `{workspaceId?, itemId}` way as Copy/Lookup. Web /
       external-connector leaves stay stubbed (a real network call breaks the
       offline/deterministic guarantee).
-    - [ ] **R5 (Apache Airflow + Dataflow Gen2)** — *deferred, with cause:*
-      Fabric's code-first orchestrator IS Apache Airflow, a JVM/Python engine
-      the same weight class as Spark/Livy — a sidecar-by-demand, not a bundled
-      default. Dataflow Gen2 is the proprietary Power Query M engine and has no
-      open implementation to host. Both are honestly surfaced rather than
-      faked: a Dataflow activity inside a pipeline fails with an explicit
-      "not implemented" (the interpreter runs everything around it), matching
-      the Livy stance. (In-family data-plane leaves — Copy/Lookup/GetMetadata —
-      already run for real; see the bullet above.)
-      Designed in [14-real-compute.md](14-real-compute.md) (Track E).
+    - [x] **R5 (Apache Airflow + Dataflow Gen2 boundary)** —
+      `ApacheAirflowJob` item/file APIs sync Python DAGs into an attached
+      Airflow 2.10.5/Python 3.12 sidecar, unpause and trigger them through the
+      upstream REST API, then derive Fabric job completion from the real DAG
+      run. `e2e/airflow` proves real scheduler + executor + task execution with
+      a shared DAG volume. The sidecar is opt-in through `--airflow-url` and
+      `--airflow-dag-dir`; an unattached engine fails explicitly. `Dataflow`
+      management/definition round-trip is supported, while Refresh/Publish and
+      in-pipeline Dataflow execution fail with
+      `DataflowEngineNotImplemented`: Power Query M is proprietary, so there is
+      no engine to attach and no result is faked. Designed in
+      [14-real-compute.md](14-real-compute.md) (Track E).
 
 ## Cross-cutting (throughout)
 

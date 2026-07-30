@@ -1,0 +1,10 @@
+version: 2
+models:
+  - name: region_totals
+    columns:
+      - name: region
+        tests: [not_null, unique]
+      - name: total_amount
+        tests: [not_null]
+      - name: order_count
+        tests: [not_null]
