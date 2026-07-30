@@ -185,6 +185,13 @@ class Target:
             raise TargetError(
                 "session() needs requests: pip install 'fabric-target[sessions]'") from e
 
+        if not self.tls_verify:
+            # Self-signed family certs are the norm locally; the warning would
+            # fire on every call. Real mode keeps full verification (and any
+            # warnings) intact.
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
         t = self
 
         class _Session(requests.Session):
