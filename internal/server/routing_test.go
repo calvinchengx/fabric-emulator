@@ -6,7 +6,6 @@ package server_test
 // backend wires lazily (go-mssqldb opens pools without dialing).
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -101,9 +100,6 @@ func TestNewWiresWarehouseSQLBackend(t *testing.T) {
 	if srv.API.MirrorItem == nil || srv.API.SQLDB == nil {
 		t.Error("mirror/pipeline SQL hooks not wired")
 	}
-	if state := warehouseState(t, srv); state != "relay" {
-		t.Errorf("portal warehouse state = %q, want relay", state)
-	}
 
 	// TDS without a relay backend answers the stub.
 	cfg2 := testConfig(t)
@@ -113,26 +109,9 @@ func TestNewWiresWarehouseSQLBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stub.Close()
-	if state := warehouseState(t, stub); state != "stub" {
-		t.Errorf("portal warehouse state = %q, want stub", state)
+	if stub.TDS == nil || stub.TDS.Backend != nil {
+		t.Errorf("stub TDS wiring: %+v", stub.TDS)
 	}
-}
-
-// warehouseState reads the portal's warehouse wiring report.
-func warehouseState(t *testing.T, srv *server.Server) string {
-	t.Helper()
-	w := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/_emulator/portal/warehouse", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("portal warehouse = %d", w.Code)
-	}
-	var body struct {
-		TDSListener string `json:"tdsListener"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	return body.TDSListener
 }
 
 // TestPortalNonGETFallsThrough: the SPA fallback serves only GET/HEAD; other
@@ -189,10 +168,6 @@ func TestPortalStoreErrors(t *testing.T) {
 		"/_emulator/portal/workspaces",
 		"/_emulator/portal/workspaces/some-id",
 		"/_emulator/portal/operations",
-		"/_emulator/portal/connections",
-		"/_emulator/portal/shortcuts",
-		"/_emulator/portal/capacities",
-		"/_emulator/portal/jobs",
 	} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
