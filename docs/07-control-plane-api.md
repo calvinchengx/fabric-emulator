@@ -128,6 +128,9 @@ git wrote. This is what makes `fabric-cicd` and deployment pipelines testable.
 | `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/queryactivityruns` | DataPipeline: the recorded activity runs *sync* |
 | `GET  /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/notebookRun` | RunNotebook: parsed cells + run detail *sync* |
 | `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/notebookRunResult` | engine → service callback: report per-cell results, finalise status |
+| `GET  /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/sparkJobRun` | SparkJobDefinition: source, arguments, binding, and Environment run contract |
+| `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/sparkJobRunResult` | engine callback: finalise Spark job output/status |
+| `GET  /workspaces/{id}/lineage` | emulator extension: exact activity source/sink edges for governance ingestion |
 
 Jobs transition `NotStarted → InProgress → Completed/Failed` on the controllable
 clock, and — for the two executing job types — actually do work at trigger:
@@ -137,9 +140,11 @@ clock, and — for the two executing job types — actually do work at trigger:
   `queryactivityruns`). A pipeline failure sets the job's terminal status,
   overriding fault injection.
 - **RunNotebook** jobs parse the notebook into cells with the real Go parser and
-  record a `Pending` run (`notebookRun`). A Spark runner executes the cells and
+  resolve default-lakehouse/Environment metadata into a `Pending` run. A Spark runner executes the cells and
   posts back to `notebookRunResult`, which merges per-cell results and finalises
   the job's status from the real outcome.
+- **SparkJobDefinition** jobs parse V1 source/arguments/libraries, resolve the
+  same compute binding, and use an independent Pending→Completed/Failed callback.
 
 `Cancelled` is implemented (the `cancel` path sets it); `Deduped` (from the REST
 reference) is the only state not yet emulated.

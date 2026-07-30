@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """e2e R3/C1: real DuckDB runs SQL over a Delta table in the emulator's
-OneLake plane — the lakehouse SQL-analytics-endpoint semantics. Self-contained
-and OS-agnostic; stdlib-only orchestrator, duckdb/deltalake in the venv."""
+OneLake plane — the lakehouse SQL-analytics-endpoint semantics. Dependencies
+come from the locked `duckdb` uv group."""
 import os
 import shutil
 import ssl
@@ -75,14 +75,8 @@ try:
     wait_healthy(f"https://localhost:{ENTRA_PORT}/health")
     wait_healthy(f"http://127.0.0.1:{FABRIC_PORT}/health")
 
-    log("installing duckdb + deltalake")
-    venv = os.path.join(WORK, "venv")
-    subprocess.run([sys.executable, "-m", "venv", venv], check=True)
-    venv_py = os.path.join(venv, "Scripts" if os.name == "nt" else "bin", "python" + EXE)
-    subprocess.run([venv_py, "-m", "pip", "install", "-q", "duckdb", "deltalake", "pyarrow"], check=True)
-
     log("running DuckDB SQL over the lakehouse")
-    subprocess.run([venv_py, "-u", os.path.join(DIR, "driver.py")], check=True,
+    subprocess.run([sys.executable, "-u", os.path.join(DIR, "driver.py")], check=True,
                    env={**os.environ, "ENTRA_PORT": ENTRA_PORT, "FABRIC_PORT": FABRIC_PORT})
 except Exception:
     for name, path in logfiles.items():

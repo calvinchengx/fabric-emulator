@@ -2,17 +2,22 @@
 # the adapter (and dbt-core) come as wheels; the project + runner are the last,
 # cheap layers so edits rebuild fast.
 FROM python:3.12-slim
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 
 # git: dbt debug's environment check probes `git --help`; without it the
 # otherwise-green connection test reports a failed check.
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir dbt-fabricspark
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+COPY python/ ./python/
+RUN uv sync --frozen --no-install-project --group dbt-fabricspark
+ENV PATH="/app/.venv/bin:${PATH}"
 
 WORKDIR /project
-COPY project/ /project/
-COPY runner.py /runner.py
+COPY e2e/dbt-fabricspark/project/ /project/
+COPY e2e/dbt-fabricspark/runner.py /runner.py
 
 # runner.py provisions ws+lakehouse, mints a token, templates profiles.yml, then
 # runs dbt debug -> seed -> run -> test against the emulator.

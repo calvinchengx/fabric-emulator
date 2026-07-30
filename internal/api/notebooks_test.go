@@ -152,3 +152,62 @@ func TestNotebookRunNoDefinition(t *testing.T) {
 		t.Fatalf("empty notebook run = %+v", run)
 	}
 }
+
+func TestNotebookRunResolvesLakehouseAndEnvironment(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	envWS := &store.Workspace{DisplayName: "environment-workspace"}
+	if err := st.CreateWorkspace(envWS, store.Principal{ID: admin.ID, Type: admin.Type}); err != nil {
+		t.Fatal(err)
+	}
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "sales"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	env := &store.Item{WorkspaceID: envWS.ID, Type: "Environment", DisplayName: "runtime"}
+	if err := st.CreateItem(env, []store.DefinitionPart{
+		{Path: "requirements.txt", PayloadType: "InlineBase64", Payload: base64.StdEncoding.EncodeToString([]byte("pandas==2.2.3\n"))},
+		{Path: "Spark.json", PayloadType: "InlineBase64", Payload: base64.StdEncoding.EncodeToString([]byte(`{"sparkProperties":{"spark.sql.shuffle.partitions":4}}`))},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source := `# Fabric notebook source
+# METADATA ********************
+# META {
+# META   "dependencies": {
+# META     "lakehouse": {"default_lakehouse":"` + lake.ID + `", "default_lakehouse_workspace_id":"` + ws.ID + `"},
+# META     "environment": {"environmentId":"` + env.ID + `", "workspaceId":"` + envWS.ID + `"}
+# META   }
+# META }
+# CELL ********************
+spark.sql("select 1")
+`
+	nb := createNotebook(t, st, ws.ID, source)
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
+	if run.Binding.LakehouseID != lake.ID || run.Binding.LakehouseName != "sales" || run.Binding.EnvironmentID != env.ID {
+		t.Fatalf("binding = %+v", run.Binding)
+	}
+	if run.Binding.EnvironmentWorkspaceID != envWS.ID {
+		t.Fatalf("environment workspace = %+v", run.Binding)
+	}
+	if len(run.Environment.PythonPackages) != 1 || run.Environment.SparkConfig["spark.sql.shuffle.partitions"] != "4" {
+		t.Fatalf("environment = %+v", run.Environment)
+	}
+}
+
+func TestNotebookRunRejectsMissingBinding(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	source := `# META {"dependencies":{"lakehouse":{"default_lakehouse":"missing"}}}
+# CELL ********************
+print(1)`
+	nb := createNotebook(t, st, ws.ID, source)
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+	if got := jobStatus(t, a, ws.ID, nb.ID, jid); got != store.JobFailed {
+		t.Fatalf("status = %s", got)
+	}
+	if run := notebookRunDetail(t, a, ws.ID, nb.ID, jid); run.Status != "Failed" {
+		t.Fatalf("run = %+v", run)
+	}
+}

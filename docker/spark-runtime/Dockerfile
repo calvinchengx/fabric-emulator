@@ -2,6 +2,7 @@
 # engine baseline. This image is an optional compatibility oracle; Sail stays
 # the lightweight default engine used by docker compose.
 FROM apache/spark:3.5.3
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 
 USER root
 

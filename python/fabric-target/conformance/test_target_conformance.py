@@ -18,7 +18,7 @@ import uuid
 
 import pytest
 
-# Run from a clean checkout without `pip install ./python/fabric-target`:
+# Run from a clean checkout through the root uv workspace:
 # put the package dir on sys.path. os.path, not a "/"-split — Windows.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

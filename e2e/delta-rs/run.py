@@ -3,8 +3,7 @@
 table through fabric-emulator's OneLake Blob surface, authenticated by
 entra-emulator. Self-contained and OS-agnostic (Linux, macOS, Windows):
 builds fabric-emulator from this repo, installs entra-emulator if missing,
-runs the driver. This orchestrator is stdlib-only; deltalake and pyarrow
-live in the venv it creates."""
+runs the driver with dependencies from the locked `delta-rs` uv group."""
 
 import os
 import shutil
@@ -88,14 +87,8 @@ try:
     wait_healthy(f"https://localhost:{ENTRA_PORT}/health")
     wait_healthy(f"http://127.0.0.1:{FABRIC_PORT}/health")
 
-    log("installing deltalake + pyarrow")
-    venv = os.path.join(WORK, "venv")
-    subprocess.run([sys.executable, "-m", "venv", venv], check=True)
-    venv_py = os.path.join(venv, "Scripts" if os.name == "nt" else "bin", "python" + EXE)
-    subprocess.run([venv_py, "-m", "pip", "install", "-q", "deltalake", "pyarrow"], check=True)
-
     log("running delta-rs against the emulator")
-    subprocess.run([venv_py, "-u", os.path.join(DIR, "driver.py")], check=True, env={
+    subprocess.run([sys.executable, "-u", os.path.join(DIR, "driver.py")], check=True, env={
         **os.environ, "ENTRA_PORT": ENTRA_PORT, "FABRIC_PORT": FABRIC_PORT})
 except Exception:
     for name, path in logfiles.items():

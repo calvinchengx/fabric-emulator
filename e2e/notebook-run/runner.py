@@ -18,6 +18,9 @@ a Spark pool that reports back to the service:
 import base64
 import io
 import json
+import importlib
+import os
+import subprocess
 import sys
 import traceback
 import urllib.error
@@ -33,12 +36,11 @@ CLIENT_SECRET = "daemon-app-secret"
 ACCT = "onelake.dfs.fabric.microsoft.com"
 
 # A real Fabric notebook: pyspark write → %%sql query → compute + exit.
-NOTEBOOK = '''# Fabric notebook source
+NOTEBOOK_BODY = '''# Fabric notebook source
 
 # CELL ********************
 df = spark.createDataFrame([(1, "a"), (2, "b"), (3, "c")], ["id", "name"])
-df.write.format("delta").mode("overwrite").save(TABLE_PATH)
-df.createOrReplaceTempView("events")
+df.write.format("delta").mode("overwrite").saveAsTable("events")
 print("wrote", df.count(), "rows")
 
 # MARKDOWN ********************
@@ -50,7 +52,7 @@ print("wrote", df.count(), "rows")
 # MAGIC SELECT count(*) AS n FROM events
 
 # CELL ********************
-total = spark.read.format("delta").load(TABLE_PATH).count()
+total = spark.table("events").count()
 notebook_exit(str(total))
 '''
 
@@ -78,6 +80,23 @@ def log(m):
     print(f"==> {m}", flush=True)
 
 
+def inline_part(path, content):
+    return {"path": path, "payloadType": "InlineBase64",
+            "payload": base64.b64encode(content.encode()).decode()}
+
+
+def publish_item(display_name, item_type, parts):
+    _, headers, _ = req("POST", f"{FABRIC}/v1/workspaces/{ws}/items", {
+        "displayName": display_name, "type": item_type,
+        "definition": {"parts": parts}}, token=ft)
+    opid = headers.get("x-ms-operation-id")
+    for _ in range(60):
+        body = req("GET", f"{FABRIC}/v1/operations/{opid}", token=ft)[2]
+        if body.get("status") == "Succeeded":
+            return req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=ft)[2]["id"]
+    raise RuntimeError(f"{item_type} item create did not complete")
+
+
 # --- control plane: tokens, workspace, lakehouse ----------------------------
 try:
     req("POST", f"{ENTRA}/admin/api/apps",
@@ -91,24 +110,28 @@ ft = req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
     "client_secret": CLIENT_SECRET, "scope": "https://api.fabric.microsoft.com/.default"}, form=True)[2]["access_token"]
 
 ws = req("POST", f"{FABRIC}/v1/workspaces", {"displayName": "nb-ws"}, token=ft)[2]["id"]
-req("POST", f"{FABRIC}/v1/workspaces/{ws}/lakehouses", {"displayName": "lake"}, token=ft)
+lake = req("POST", f"{FABRIC}/v1/workspaces/{ws}/lakehouses", {"displayName": "lake"}, token=ft)[2]
 log(f"workspace {ws}")
 
-# Publish the notebook item with its definition (async create → poll the LRO).
-_, hdrs, _ = req("POST", f"{FABRIC}/v1/workspaces/{ws}/items", {
-    "displayName": "etl-nb", "type": "Notebook",
-    "definition": {"parts": [{
-        "path": "notebook-content.py", "payloadType": "InlineBase64",
-        "payload": base64.b64encode(NOTEBOOK.encode()).decode()}]}}, token=ft)
-opid = hdrs.get("x-ms-operation-id")
-nb = None
-for _ in range(60):
-    st, _, body = req("GET", f"{FABRIC}/v1/operations/{opid}", token=ft)
-    if body.get("status") == "Succeeded":
-        nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=ft)[2]["id"]
-        break
-if not nb:
-    raise SystemExit("notebook item create did not complete")
+# Attach a portable Environment and the default lakehouse through real Fabric
+# notebook metadata. The runner consumes only the resolved run contract.
+env = publish_item("runtime", "Environment", [
+    inline_part("requirements.txt", "cloudpickle\n"),
+    inline_part("Setting/Sparkcompute.json", json.dumps({
+        "sparkProperties": {"spark.sql.shuffle.partitions": 7}})),
+])
+metadata = {
+    "kernel_info": {"name": "synapse_pyspark"},
+    "dependencies": {
+        "lakehouse": {"default_lakehouse": lake["id"],
+                      "default_lakehouse_name": lake["displayName"],
+                      "default_lakehouse_workspace_id": ws},
+        "environment": {"environmentId": env, "workspaceId": ws},
+    },
+}
+meta = "# METADATA ********************\n" + "\n".join(
+    "# META " + line for line in json.dumps(metadata, indent=2).splitlines()) + "\n"
+nb = publish_item("etl-nb", "Notebook", [inline_part("notebook-content.py", NOTEBOOK_BODY + meta)])
 log(f"notebook {nb}")
 
 # Submit a RunNotebook job; the emulator parses the notebook now.
@@ -120,12 +143,18 @@ run = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}/n
 cells = sorted(run["cells"], key=lambda c: c["index"])
 log(f"emulator parsed {len(cells)} code cells: {[c['language'] for c in cells]}")
 assert [c["language"] for c in cells] == ["python", "sql", "python"], cells
+assert run["binding"] == {"workspaceId": ws, "lakehouseId": lake["id"],
+                           "lakehouseName": "lake", "environmentId": env,
+                           "environmentWorkspaceId": ws}, run["binding"]
+assert run["environment"]["pythonPackages"] == ["cloudpickle"], run["environment"]
 
 # --- selected compute engine executes the cells -----------------------------
 from pyspark.sql import SparkSession  # noqa: E402
 
-import os
 import time
+
+TABLE_PATH = f"abfs://{ws}@{ACCT}/lake.Lakehouse/Tables/events"
+TABLES_PATH = TABLE_PATH.rsplit("/", 1)[0]
 
 if os.environ.get("SPARK_REMOTE"):
     # Sail: auth and endpoint configuration live on the Spark Connect server.
@@ -146,6 +175,7 @@ else:
     spark = (SparkSession.builder.appName("fabric-emulator-notebook-jvm")
              .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
              .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+             .config("spark.sql.warehouse.dir", TABLES_PATH)
              .config("spark.hadoop.fs.azure.always.use.https", "false")
              .config(f"spark.hadoop.fs.azure.account.auth.type.{ACCT}", "Custom")
              .config(f"spark.hadoop.fs.azure.account.oauth.provider.type.{ACCT}",
@@ -159,7 +189,31 @@ else:
     engine = "jvm-spark-3.5"
 log(f"compute engine: {engine}")
 
-TABLE_PATH = f"abfs://{ws}@{ACCT}/lake.Lakehouse/Tables/events"
+# Apply the Environment before user code. Python declarations are verified in
+# the actual kernel and Spark properties are applied to the actual session.
+environment_site = "/tmp/fabric-environment"
+os.makedirs(environment_site, exist_ok=True)
+sys.path.insert(0, environment_site)
+for package in run["environment"].get("pythonPackages", []):
+    module = package.split("=", 1)[0].split(">", 1)[0].replace("-", "_")
+    try:
+        importlib.import_module(module)
+    except ModuleNotFoundError:
+        subprocess.run(
+            ["uv", "pip", "install", "--quiet", "--target", environment_site, package],
+            check=True,
+            env={**os.environ, "UV_CACHE_DIR": "/tmp/uv-cache"},
+        )
+        importlib.import_module(module)
+for key, value in run["environment"].get("sparkConfig", {}).items():
+    spark.conf.set(key, value)
+assert spark.conf.get("spark.sql.shuffle.partitions") == "7"
+
+# Bind the session catalog to the attached lakehouse. Unqualified Fabric table
+# APIs now resolve to OneLake Tables/ instead of a runner-injected file path.
+if engine == "sail":
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS lake LOCATION '{TABLES_PATH}'")
+    spark.catalog.setCurrentDatabase("lake")
 
 
 class _Exit(Exception):
@@ -171,7 +225,7 @@ def notebook_exit(value=""):
     raise _Exit(value)
 
 
-ns = {"spark": spark, "TABLE_PATH": TABLE_PATH, "notebook_exit": notebook_exit, "__name__": "__nb__"}
+ns = {"spark": spark, "notebook_exit": notebook_exit, "__name__": "__nb__"}
 results, exit_value, overall = [], "", "Completed"
 for c in cells:
     buf = io.StringIO()
@@ -193,6 +247,8 @@ for c in cells:
         break
 
 log(f"executed cells: {[(r['index'], r['status']) for r in results]}, exit={exit_value!r}")
+if overall == "Failed":
+    print(results[-1]["error"], flush=True)
 
 # Report the real run back to the emulator.
 req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}/notebookRunResult",
@@ -205,10 +261,61 @@ assert job["status"] == "Completed", f"job status {job['status']}"
 detail = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}/notebookRun", token=ft)[2]
 assert detail["status"] == "Completed" and detail["exitValue"] == "3", detail
 
-rows = sorted((r["id"], r["name"]) for r in spark.read.format("delta").load(TABLE_PATH).collect())
+rows = sorted((r["id"], r["name"]) for r in spark.table("events").collect())
 assert rows == [(1, "a"), (2, "b"), (3, "c")], rows
+
+# Spark Job Definition: publish, resolve, execute on the same selected engine,
+# and report the real outcome through its independent job lifecycle.
+sjd_source = "result = spark.table('events').count() + int(sys.argv[2])\nprint(f'sjd-result={result}')\n"
+sjd_config = {
+    "executableFile": "main.py", "arguments": ["--increment", "2"],
+    "defaultLakehouseArtifactId": lake["id"],
+    "defaultLakehouseWorkspaceId": ws, "environmentArtifactId": env,
+}
+sjd = publish_item("aggregate-job", "SparkJobDefinition", [
+    inline_part("SparkJobDefinitionV1.json", json.dumps(sjd_config)),
+    inline_part("main.py", sjd_source),
+])
+_, headers, _ = req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{sjd}/jobs/instances?jobType=sparkjob", token=ft)
+sjd_jid = headers["Location"].rstrip("/").rsplit("/", 1)[-1]
+sjd_run = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{sjd}/jobs/instances/{sjd_jid}/sparkJobRun", token=ft)[2]
+assert sjd_run["binding"]["lakehouseId"] == lake["id"] and sjd_run["job"]["mainFile"] == "main.py"
+old_argv = sys.argv
+buf = io.StringIO()
+try:
+    sys.argv = [sjd_run["job"]["mainFile"], *sjd_run["job"]["arguments"]]
+    with redirect_stdout(buf):
+        exec(compile(sjd_run["job"]["source"], "<spark-job>", "exec"), {"spark": spark, "sys": sys})
+finally:
+    sys.argv = old_argv
+assert "sjd-result=5" in buf.getvalue(), buf.getvalue()
+req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{sjd}/jobs/instances/{sjd_jid}/sparkJobRunResult",
+    {"status": "Completed", "output": buf.getvalue()}, token=ft)
+assert req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{sjd}/jobs/instances/{sjd_jid}", token=ft)[2]["status"] == "Completed"
+
+# A JAR-bearing Environment is an explicit JVM requirement. Sail rejects it;
+# the JVM oracle advertises the JVM surface used to load such dependencies.
+jar_env = publish_item("jar-runtime", "Environment", [inline_part("Libraries/probe.jar", "not-a-real-jar")])
+jar_config = dict(sjd_config, environmentArtifactId=jar_env)
+jar_sjd = publish_item("jar-job", "SparkJobDefinition", [
+    inline_part("SparkJobDefinitionV1.json", json.dumps(jar_config)),
+    inline_part("main.py", "print('jvm-only')\n"),
+])
+_, headers, _ = req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances?jobType=sparkjob", token=ft)
+jar_jid = headers["Location"].rstrip("/").rsplit("/", 1)[-1]
+jar_run = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances/{jar_jid}/sparkJobRun", token=ft)[2]
+assert jar_run["environment"]["jars"] == ["Libraries/probe.jar"], jar_run
+if engine == "sail":
+    assert not hasattr(spark, "sparkContext"), "Sail unexpectedly exposed SparkContext"
+    req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances/{jar_jid}/sparkJobRunResult",
+        {"status": "Failed", "error": "JAR libraries require the JVM Spark runtime"}, token=ft)
+    assert req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances/{jar_jid}", token=ft)[2]["status"] == "Failed"
+else:
+    assert spark.sparkContext._jvm is not None, "JVM Spark did not expose _jvm"
+    req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances/{jar_jid}/sparkJobRunResult",
+        {"status": "Completed", "output": "JVM dependency surface available"}, token=ft)
 
 spark.stop()
 log(f"delta table in OneLake: {rows}")
-print(f"NOTEBOOK-RUN E2E ({engine}): PASS", flush=True)
+print(f"NOTEBOOK + SJD + ENVIRONMENT E2E ({engine}): PASS", flush=True)
 sys.exit(0)

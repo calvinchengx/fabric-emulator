@@ -27,7 +27,7 @@ engines against the running emulator.
 | **Delta write/read (A1)** | real `deltalake` (delta-rs) | a real engine writes/reads a Delta table through the OneLake Blob surface with an entra Storage token — Range reads + the `_delta_log` put-if-absent commit primitive | `e2e/delta-rs/run.py` (CI `delta-rs`, 3-OS) |
 | **Sail / Spark Connect (S0)** | LakeSail's real `sail` server + `pyspark-client` | a Rust Spark-Connect engine (no JVM) writes/reads Delta and runs SQL through the OneLake Blob surface — same object_store contract as delta-rs, entra-authenticated via the launcher mint | `e2e/sail/run.py` (CI `sail`, Linux) |
 | **fabric_target toggle (T0)** | the `fabric-target` package | one `FABRIC_TARGET` switch resolves endpoints + credentials: seeded TokenCredential mints per-scope, session drives workspace-by-name → item → LRO, real-mode guards (workspace scope, az-login-or-SP, destructive gate) enforce; plus the T1 conformance suite (same 7 tests run against real Fabric via the secret-gated `real-fabric` workflow) | `e2e/fabric-target/run.py` (CI `fabric-target`, 3-OS) |
-| **Governance (OpenMetadata)** | real OpenMetadata 1.13.2 (Postgres) + delta-rs | the optional `governance` profile boots, `govern-ingest` catalogs workspace→lakehouse→Delta table with columns from the real Delta log, plus a OneLake **shortcut** cataloged with its target's schema and the `orders → orders_ref` **lineage edge** returned by OM's graph API; idempotent on re-ingest | `e2e/governance/run.py` (CI `governance`, Linux) |
+| **Governance (OpenMetadata)** | real OpenMetadata 1.13.2 (Postgres) + delta-rs | catalogs Delta schemas, shortcut lineage, and an executed pipeline Copy edge (`lake.orders → curated.orders_copy`) returned by OM's graph API; idempotent on re-ingest | `e2e/governance/run.py` (CI `governance`, Linux) |
 | **Governance SSO** | real OpenMetadata + entra-emulator | OM's authenticator is entra: a forged **user** token is accepted by OM's API and a broken-signature token is refused — the catalog inside the family trust chain | `e2e/governance/sso.py` (CI `governance-sso`, Linux) |
 | **ADLS SDK** | Microsoft's real `azure-storage-blob` | Parquet upload → byte-identical download (exercising `x-ms-range`), `list_blobs`, and the DFS surface sees the same file | `e2e/adls-sdk/run.py` (CI `adls-sdk`, 3-OS) |
 | **azcopy** | Microsoft's real `azcopy` binary | multi-block upload (Put Block + Put Block List) → byte-identical download, and the DFS surface sees the same object | `e2e/azcopy/run.py` (CI `azcopy`, Linux) |
@@ -37,7 +37,8 @@ engines against the running emulator.
 | **dbt (fabric) via ODBC** | Microsoft's real `dbt-fabric` adapter + Microsoft ODBC Driver 18 | a dbt project (debug → seed → run → test) over the TDS warehouse surface through pyodbc + FedAuth (byte-spliced to a real SQL Server) — the **second** independent TDS driver family | `e2e/dbt-fabric/run.py` (CI `dbt-fabric`, Linux) |
 | **DuckDB SQL** | real DuckDB | SQL (aggregation, join, filter) over Delta tables in the OneLake plane — the lakehouse SQL-analytics-endpoint semantics | `e2e/duckdb/run.py` (CI `duckdb`, 3-OS) |
 | **notebookutils** (+ T2 target unit tests) | real Fabric notebook | the functional `notebookutils` shim: fs over OneLake, credential tokens, Key Vault secret brokering, lakehouse control plane, `notebook.run`; plus `python/tests` asserting the shim's emulator-vs-real resolution (endpoints, TLS, DefaultAzureCredential, no seed leakage) | `e2e/notebookutils/run.py` (CI `notebookutils`, 3-OS) |
-| **Notebook execution** | Sail (real engine, no JVM) | emulator parses a Fabric notebook into cells; the unmodified cells execute against OneLake (a Delta table lands) and the run reports back | `e2e/notebook-run/run.py` (CI `notebook-run`, Linux) |
+| **Notebook + SJD + Environment** | Sail and Spark 3.5/Delta 3.2 JVM | attached lakehouse metadata binds unqualified table APIs to OneLake; Environment requirements/config apply; SJD source+args execute and report; Sail rejects JAR requirements while JVM exposes its dependency surface | `e2e/notebook-run/{run.py,run-jvm.py}` (CI `notebook-run`, scheduled JVM oracle) |
+| **External shortcuts** | containerized HTTP object stores | ADLS Gen2 and Amazon S3 shortcut definitions read real remote bytes through authenticated OneLake requests | `e2e/external-shortcuts/run.py` |
 | **Warehouse TDS** | real `go-mssqldb` + real SQL Server 2022 | entra-token connect, then DDL + DML + a GROUP BY relayed through the TDS endpoint — **one of two** independent TDS driver witnesses (the other: Microsoft ODBC Driver 18 via `dbt-fabric` above); plus the SQL Database → OneLake Delta mirror, the pipeline Script/SqlServerStoredProcedure activities over real HTTP + jobs, and an external-source MirroredDatabase mirror (seeded on a database reached independently of the emulator's own per-item routing) | CI `warehouse-tds` (Linux) |
 
 Plus: coverage floor 90% (cross-package; currently ~90%), `go vet`, a
@@ -68,8 +69,10 @@ they're scoped.
 ## Running locally
 
 ```bash
-go test ./...              # everything in-process, no network
-python3 e2e/fabric-cicd/run.py   # a real-tool e2e (needs Python 3 + go); see e2e/ for the rest
+go test ./...  # everything in-process, no network
+uv run --frozen --group fabric-cicd python e2e/fabric-cicd/run.py
 ```
 
-Both are deterministic: virtual clock, in-memory stores, seeded credentials.
+Python dependencies are defined in the root `pyproject.toml` and locked by
+`uv.lock`; each E2E uses its named dependency group. Both commands are
+deterministic: virtual clock, in-memory stores, seeded credentials.

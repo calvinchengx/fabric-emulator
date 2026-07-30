@@ -26,7 +26,8 @@ coverage.out
 # Local TDS/scratch probes (untracked developer scratch)
 /tmpprobe/
 
-# Python build artifacts (pip local installs)
+# Python environments and build artifacts (managed by uv)
+.venv/
 python/**/build/
 python/**/*.egg-info/
 

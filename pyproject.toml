@@ -1,0 +1,71 @@
+[project]
+name = "fabric-emulator-python"
+version = "0.1.0"
+description = "Locked Python tooling and end-to-end witnesses for fabric-emulator"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+test = [
+    "fabric-emulator-notebookutils",
+    "fabric-target",
+    "pytest>=8.3,<10",
+]
+adls-sdk = [
+    "azure-storage-blob>=12.24,<13",
+    "pyarrow>=18,<24",
+]
+delta-rs = [
+    "deltalake>=0.23,<2",
+    "pyarrow>=18,<24",
+]
+duckdb = [
+    "deltalake>=0.23,<2",
+    "duckdb>=1.1,<2",
+    "pyarrow>=18,<24",
+]
+fabric-cicd = ["fabric-cicd>=0.1"]
+fabric-cli = ["ms-fabric-cli>=1.2"]
+fabric-target = [
+    "fabric-target[real,sessions]",
+    "pytest>=8.3,<10",
+]
+governance = [
+    "deltalake>=0.23,<2",
+    "pyarrow>=18,<24",
+    "requests>=2.32,<3",
+]
+great-expectations = [
+    "great-expectations>=0.18,<1",
+    "pandas>=2.2,<4",
+]
+runtime = []
+sail = [
+    "pysail==0.6.6",
+    "pyspark-client==4.2.0",
+]
+spark-connect = ["pyspark-client==4.2.0"]
+dbt-fabric = ["dbt-fabric>=1.9"]
+dbt-fabricspark = ["dbt-fabricspark>=1.9"]
+
+[tool.uv]
+package = false
+conflicts = [
+    [
+        { group = "dbt-fabric" },
+        { group = "dbt-fabricspark" },
+    ],
+]
+
+[tool.uv.sources]
+fabric-emulator-notebookutils = { workspace = true }
+fabric-target = { workspace = true }
+
+[tool.uv.workspace]
+members = ["python", "python/fabric-target"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests", "python/fabric-target/tests"]
+markers = [
+    "target: dual-target conformance runs against fabric-emulator or real Fabric per FABRIC_TARGET",
+]

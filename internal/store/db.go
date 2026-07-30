@@ -167,6 +167,20 @@ CREATE TABLE IF NOT EXISTS notebook_runs (
 	status TEXT NOT NULL,
 	run TEXT NOT NULL             -- JSON: {status, exitValue, cells:[...]}
 );
+CREATE TABLE IF NOT EXISTS lineage_edges (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	job_id TEXT NOT NULL REFERENCES job_instances(id) ON DELETE CASCADE,
+	activity_name TEXT NOT NULL,
+	source_workspace_id TEXT NOT NULL,
+	source_item_id TEXT NOT NULL,
+	source_path TEXT NOT NULL,
+	target_workspace_id TEXT NOT NULL,
+	target_item_id TEXT NOT NULL,
+	target_path TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	UNIQUE(job_id, activity_name, source_item_id, source_path, target_item_id, target_path)
+);
 CREATE TABLE IF NOT EXISTS capacities (
 	id TEXT PRIMARY KEY,
 	display_name TEXT NOT NULL,
@@ -181,6 +195,9 @@ CREATE TABLE IF NOT EXISTS shortcuts (
 	target_workspace TEXT NOT NULL,
 	target_item TEXT NOT NULL,
 	target_path TEXT NOT NULL,
+	target_type TEXT NOT NULL DEFAULT 'OneLake',
+	target_location TEXT NOT NULL DEFAULT '',
+	connection_id TEXT NOT NULL DEFAULT '',
 	created_at INTEGER NOT NULL,
 	PRIMARY KEY (item_id, path, name)
 );
@@ -245,6 +262,9 @@ PRAGMA foreign_keys = ON;
 		`ALTER TABLE connections ADD COLUMN credentials_json TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE onelake_paths ADD COLUMN etag TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE onelake_paths ADD COLUMN modified_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE shortcuts ADD COLUMN target_type TEXT NOT NULL DEFAULT 'OneLake'`,
+		`ALTER TABLE shortcuts ADD COLUMN target_location TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE shortcuts ADD COLUMN connection_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return err

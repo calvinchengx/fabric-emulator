@@ -154,7 +154,10 @@ services:
   #   docker compose run --rm govern-ingest
   govern-ingest:
     profiles: [governance]
-    image: python:3.12-slim
+    build:
+      context: .
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: governance }
     depends_on:
       openmetadata:
         condition: service_healthy
@@ -166,7 +169,7 @@ services:
       FABRIC_URL: "https://fabric-emulator:9443"
       ENTRA_URL: "https://entra-emulator:8443"
       OM_URL: "http://openmetadata:8585"
-    command: sh -c "pip install --no-cache-dir -q requests deltalake && python /govern_ingest.py"
+    command: python /govern_ingest.py
 
 volumes:
   om-db-data:

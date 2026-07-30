@@ -1,4 +1,4 @@
-"""Runs inside the venv: fabric_target's emulator profile drives the live
+"""Runs inside the uv environment: fabric_target's emulator profile drives the live
 control plane end to end, and the toggle's guards behave."""
 import os
 

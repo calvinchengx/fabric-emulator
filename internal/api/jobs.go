@@ -54,7 +54,16 @@ func (a *API) createJobInstance(w http.ResponseWriter, r *http.Request, p *auth.
 	// record a Pending run. A real Spark engine executes the cells and reports
 	// back to finalise the run + the job's status (see notebooks.go).
 	if it.Type == "Notebook" && jobType == "RunNotebook" {
-		a.startNotebookRun(it, j.ID)
+		if code := a.startNotebookRun(it, j.ID); code != "" {
+			j.FailWith = code
+			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
+		}
+	}
+	if it.Type == "SparkJobDefinition" && jobType == "sparkjob" {
+		if code := a.startSparkJobRun(it, j.ID); code != "" {
+			j.FailWith = code
+			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
+		}
 	}
 	loc := fmt.Sprintf("https://%s/v1/workspaces/%s/items/%s/jobs/instances/%s", r.Host, wid, it.ID, j.ID)
 	w.Header().Set("Location", loc)

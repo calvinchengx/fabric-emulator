@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """e2e: Microsoft's real fabric-cicd Python tool publishes into fabric-emulator,
 authenticated by entra-emulator. Self-contained and OS-agnostic (Linux, macOS,
-Windows): builds fabric-emulator from this repo, installs entra-emulator +
-fabric-cicd if missing, runs the driver. This orchestrator is stdlib-only;
-fabric-cicd and its dependencies live in the venv it creates."""
+Windows): builds fabric-emulator from this repo, installs entra-emulator if
+missing, and runs fabric-cicd from the locked uv dependency group."""
 
 import os
 import shutil
@@ -86,14 +85,8 @@ try:
     wait_healthy(f"https://localhost:{ENTRA_PORT}/health")
     wait_healthy(f"https://localhost:{FABRIC_PORT}/health")
 
-    log("installing fabric-cicd")
-    venv = os.path.join(WORK, "venv")
-    subprocess.run([sys.executable, "-m", "venv", venv], check=True)
-    venv_py = os.path.join(venv, "Scripts" if os.name == "nt" else "bin", "python" + EXE)
-    subprocess.run([venv_py, "-m", "pip", "install", "-q", "fabric-cicd"], check=True)
-
     log("running fabric-cicd against the emulator")
-    subprocess.run([venv_py, "-u", os.path.join(DIR, "driver.py")], check=True, env={
+    subprocess.run([sys.executable, "-u", os.path.join(DIR, "driver.py")], check=True, env={
         **os.environ,  # FABRIC_CICD_DEBUG passes through when set
         "ENTRA_PORT": ENTRA_PORT, "FABRIC_PORT": FABRIC_PORT,
         "REQUESTS_CA_BUNDLE": os.path.join(WORK, "data", "tls", "cert.pem"),

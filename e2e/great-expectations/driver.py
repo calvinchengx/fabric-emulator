@@ -1,6 +1,6 @@
 """The Great Expectations layer — the tutorial's actual subject.
 
-Runs in a venv with real `great_expectations` + `pandas`. Reads each of the
+Runs in the locked uv environment with real `great_expectations` + `pandas`. Reads each of the
 tutorial's assets from the emulator's `executeQueries` endpoint (the DAX golden
 queries), loads the rows into a DataFrame, and runs the tutorial's Expectation
 Suites. The pass/fail pattern must mirror the tutorial: Store / Measure pass,

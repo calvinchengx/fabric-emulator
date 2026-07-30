@@ -74,6 +74,22 @@ sessions, notebook cells, and the T-SQL/TDS warehouse surface run for real out
 of the box. `docker compose -f docker-compose.yml up` opts out to the lite,
 contract-only pair.
 
+## Python tooling
+
+Python packages, development dependencies, and E2E clients are managed by the
+root uv workspace in [`pyproject.toml`](pyproject.toml) and [`uv.lock`](uv.lock).
+Use frozen named groups so local, CI, and container runs resolve identically:
+
+```bash
+uv sync --frozen --group test
+uv run --frozen --group test pytest
+uv run --frozen --group governance python e2e/governance/run.py
+```
+
+The Docker Python runtimes are also built from these locked groups. Update a
+dependency with `uv add --group <group> <package>`, then commit both project
+files.
+
 ## License
 
 Apache-2.0. Clean-room: built only from public documentation

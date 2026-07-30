@@ -64,10 +64,10 @@ func TestShortcutValidation(t *testing.T) {
 	}
 	pvIt := map[string]string{"wid": ws.ID, "iid": src.ID}
 
-	// External targets → 501.
+	// External targets validate URL and connection.
 	ext := `{"path":"Files","name":"s3link","target":{"amazonS3":{"location":"s3://b/k","connectionId":"x"}}}`
-	if w := do(a.createShortcut, admin, "POST", ext, pvIt); w.Code != http.StatusNotImplemented {
-		t.Fatalf("external target = %d; want 501", w.Code)
+	if w := do(a.createShortcut, admin, "POST", ext, pvIt); w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid external target = %d; want 400", w.Code)
 	}
 	// Malformed / incomplete.
 	for _, b := range []string{`{`, `{"name":"x"}`, `{"path":"Files","name":"x"}`, `{"path":"Files","name":"x","target":{"oneLake":{"workspaceId":"w"}}}`} {
@@ -91,5 +91,36 @@ func TestShortcutValidation(t *testing.T) {
 	}
 	if w := do(a.listShortcuts, admin, "GET", "", map[string]string{"wid": ws.ID, "iid": "nope"}); w.Code != http.StatusNotFound {
 		t.Fatalf("unknown item list = %d", w.Code)
+	}
+}
+
+func TestExternalShortcutsCRUD(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "src"}
+	if err := st.CreateItem(src, nil); err != nil {
+		t.Fatal(err)
+	}
+	conn := &store.Connection{DisplayName: "object-store", CredentialDetails: &store.CredentialDetails{CredentialType: "Anonymous"}, CredentialsJSON: `{"credentialType":"Anonymous"}`}
+	if err := st.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	pv := map[string]string{"wid": ws.ID, "iid": src.ID}
+	for _, tc := range []struct{ name, kind string }{{"adls", "adlsGen2"}, {"s3", "amazonS3"}} {
+		body := `{"path":"Files","name":"` + tc.name + `","target":{"` + tc.kind + `":{"location":"http://storage.test/root","subpath":"/folder","connectionId":"` + conn.ID + `"}}}`
+		w := do(a.createShortcut, admin, "POST", body, pv)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("%s create = %d %s", tc.kind, w.Code, w.Body.Bytes())
+		}
+		var got map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		target := got["target"].(map[string]any)
+		if target["type"] == "" || target[tc.kind] == nil {
+			t.Fatalf("%s response = %#v", tc.kind, got)
+		}
+	}
+	missing := `{"path":"Files","name":"bad","target":{"amazonS3":{"location":"https://storage.test","connectionId":"missing"}}}`
+	if w := do(a.createShortcut, admin, "POST", missing, pv); w.Code != http.StatusBadRequest || errorCode(t, w) != "ConnectionNotFound" {
+		t.Fatalf("missing connection = %d %s", w.Code, w.Body.Bytes())
 	}
 }

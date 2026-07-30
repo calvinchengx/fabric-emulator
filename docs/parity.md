@@ -54,7 +54,7 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Key Vault references in connections | Resolved against azure-keyvault-emulator | 🟢 Real |
 | Tenant settings / audit / admin-portal APIs | — | 🔴 Not implemented |
 | Purview / sensitivity labels (`governance/`) | — | 🔴 Not implemented |
-| **Lineage** (catalog graph) | Via the optional OpenMetadata profile: OneLake **shortcut** edges (target table → shortcut) are emitted exactly and witnessed in CI; activity-level lineage is deliberately not inferred. Catalog SSO can also be pointed at entra-emulator ([22-openmetadata.md](22-openmetadata.md)) | 🟢 Real (shortcuts) / 🔴 activity-level |
+| **Lineage** (catalog graph) | Via the optional OpenMetadata profile: OneLake **shortcut** edges and executed pipeline **Copy** source→sink edges are persisted exactly and witnessed in OM's graph API. Notebook/Script code is not guessed. Catalog SSO can also be pointed at entra-emulator ([22-openmetadata.md](22-openmetadata.md)) | 🟢 Real (shortcuts + Copy) |
 
 ## OneLake (`onelake/`)
 
@@ -64,7 +64,7 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Blob surface | Full | 🟢 Real |
 | Delta commits (put-if-absent atomicity) | Real; `-race`-tested concurrent-commit race | 🟢 Real |
 | Shortcuts (OneLake → OneLake) | Symlinks with target-side RBAC (trusted-workspace-access) | 🟢 Real |
-| Shortcuts to external targets (S3 / ADLS Gen2 / Dataverse) | — | 🔴 501 |
+| Shortcuts to external targets (S3 / ADLS Gen2 / Dataverse) | ADLS Gen2 and Amazon S3 HTTP(S) read-through with Connection-backed Anonymous/Basic/Key/SAS credentials; Dataverse remains an explicit 501 | 🟢 ADLS/S3 reads / 🔴 Dataverse |
 
 ## Data Engineering (`data-engineering/`)
 
@@ -74,9 +74,10 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Notebook authoring / definition round-trip | Full | 🟢 Real |
 | `notebookutils` / `mssparkutils` (fs, credentials, getSecret, lakehouse, runtime) | Functional stdlib shim (`python/notebookutils`) | 🟢 Real |
 | Spark session / statement / batch via the **Livy API** | **Native termination** (`--spark-agent-url`): the emulator implements the Livy contract and drives a persistent statement-executor agent. The default agent is a PySpark Connect client of Sail, not Apache Spark. An external Livy backend remains configurable with `--spark-livy-url` | 🟢 protocol / 🟠 Sail execution |
-| Notebook **cell execution** | The emulator parses and records the notebook run; Sail executes cells by default and reports results back. The same fixture also runs on the scheduled Spark 3.5 JVM oracle and secret-gated real Fabric workflow | 🟢 parse+record / 🟠 default compute |
+| Notebook **cell execution** | The emulator parses and records the notebook run, resolves attached lakehouse/Environment metadata, and Sail executes cells by default. The same fixture runs on Spark 3.5 JVM and proves unqualified `saveAsTable`/`spark.table` bind to OneLake `Tables/` | 🟢 orchestration+binding / 🟠 Sail subset |
 | Livy **High-Concurrency** (5-REPL) sessions | Fabric's packing layer is implemented directly: `sessionTag` packing, 5-REPL cap + spill, independent lifecycle and slot reuse. Statements use Sail by default, so engine compatibility is limited to the Spark Connect subset | 🟢 protocol / 🟠 Sail execution |
-| Environments, Spark Job Definitions | Item management only | 🟡 Emulated |
+| Environments | Run binding resolves Python requirements, Spark properties, and JAR declarations. Python packages are provisioned per run; config is applied to the real session; JAR-bearing runs explicitly require JVM Spark | 🟢 portable subset / 🟠 engine-specific JARs |
+| Spark Job Definitions | V1 definition/main/arguments/libraries parsing, attached lakehouse+Environment resolution, Pending→Completed/Failed callback lifecycle, and real Sail/JVM execution witness | 🟢 orchestration / 🟠 selected engine |
 
 ### Notebook code on the default engine (LakeSail's Sail)
 
@@ -124,6 +125,7 @@ inferred — the fidelity deltas a Fabric notebook author actually hits:
 | **Invoke pipeline** (ExecutePipeline) | Resolves the referenced `DataPipeline` (GUID or name, optional other workspace) and runs it through a fresh interpreter — **real recursive interpretation**, one level deeper on the same engines. `waitOnCompletion` (default) gates the parent on the child's terminal status; parameters flow into the child; a cycle or excessive nesting fails loudly | 🟢 Real |
 | Pipeline → notebook activity (TridentNotebook) | Resolves the notebook reference and creates a **real RunNotebook job instance** the pipeline gates on — the pipeline→jobs linkage is real; the notebook's **cells** execute only on the Spark sidecar (otherwise the job is clock-derived, like any RunNotebook job) | 🟢 Real chain / 🟠 exec |
 | `queryactivityruns` detail | Full | 🟢 Real |
+| Activity-level lineage | Successful Copy execution persists its resolved workspace/item/path source→sink edge, returns it in activity output, and exposes workspace lineage for OpenMetadata ingestion | 🟢 Real (Copy) |
 | Copy activity — **OneLake → OneLake** | Really moves the bytes through the storage layer: a file, or a directory subtree preserving structure; source/sink locations `{workspaceId?, itemId, path}` are expression-resolved (GUID or name); returns real `filesWritten` / `dataWritten`. External stores / format transformation are out of scope and **fail loudly** | 🟢 Real (in-family) / 🔴 external |
 | Lookup activity — **OneLake CSV/JSON/Parquet/Delta** | Reads **real rows** from a CSV, JSON, or standalone Parquet file, or a lakehouse **Delta table** (`Tables/<name>`, auto-detected — no format hint needed) in OneLake; honors `firstRowOnly`; the result flows into `@activity(…).output` for downstream steps. Parquet/Delta reuse the warehouse's own Parquet reader — a real Delta column keeps its native type (int/float/bool), not a stringified cell | 🟢 Real (CSV/JSON/Parquet/Delta) |
 | GetMetadata activity — **OneLake path** | Stats a **real** OneLake path: `exists` / `itemType` / `size` / `lastModified` / `childItems`; a missing path honestly returns `exists:false` | 🟢 Real |

@@ -5,13 +5,13 @@ Mapping:  workspace -> OM database, lakehouse -> OM schema, Delta table ->
 OM table (columns read from the REAL Delta metadata in OneLake via delta-rs,
 not from the control plane — governance sits on the bytes pipelines wrote).
 
-Lineage: OneLake **shortcuts** are literal data-flow edges — a shortcut in
+Lineage: OneLake **shortcuts** and executed pipeline Copy activities are
+literal data-flow edges. A shortcut in
 lakehouse B pointing at A/Tables/x means A.x feeds B.x — so each one is
 cataloged as a table (schema read from the target's Delta log, since that is
 the data it exposes) plus an OM lineage edge target -> shortcut. Only exact,
-emulator-known edges are emitted: activity-level lineage (which tables a
-notebook or Script activity touched) would require executing or parsing user
-code, so it is deliberately NOT invented. See docs/22-openmetadata.md.
+emulator-known edges are emitted; notebook and Script activity lineage is not
+guessed from user code. See docs/22-openmetadata.md.
 
 Runs as the compose one-shot `govern-ingest`; env: FABRIC_URL, ENTRA_URL,
 OM_URL (see docker-compose.yml). Auth: seeded daemon SP against entra for
@@ -163,7 +163,15 @@ def list_shortcuts(fab, workspace_id, item_id):
     return r.json().get("value", [])
 
 
-def om_lineage(s, from_fqn, to_fqn):
+def list_activity_lineage(fab, workspace_id):
+    """Exact source/sink edges recorded by successful activity execution."""
+    r = fab.get(f"{FABRIC}/v1/workspaces/{workspace_id}/lineage", timeout=15)
+    if r.status_code != 200:
+        return []
+    return r.json().get("value", [])
+
+
+def om_lineage(s, from_fqn, to_fqn, description="OneLake shortcut (fabric-emulator)"):
     """Add a table -> table edge. Idempotent: OM upserts by entity pair."""
     def ref(fqn):
         r = s.get(f"{OM}/api/v1/tables/name/{fqn}", timeout=30)
@@ -176,8 +184,7 @@ def om_lineage(s, from_fqn, to_fqn):
         return False
     r = s.put(f"{OM}/api/v1/lineage",
               json={"edge": {"fromEntity": a, "toEntity": b,
-                             "lineageDetails": {"description":
-                                                "OneLake shortcut (fabric-emulator)"}}},
+                             "lineageDetails": {"description": description}}},
               timeout=30)
     if r.status_code not in (200, 201):
         sys.exit(f"OM lineage {from_fqn} -> {to_fqn}: {r.status_code} {r.text[:300]}")
@@ -212,6 +219,7 @@ def main():
                  "check the emulator wasn't restarted: state is in-memory "
                  "unless FABRIC_DATA_DIR is set.)")
     n_db = n_schema = n_table = 0
+    item_fqn = {}
     for ws in workspaces:
         db_fqn = f"{SERVICE}.{ws['displayName']}"
         om_put(om, "databases", {
@@ -223,6 +231,7 @@ def main():
                         params={"type": "Lakehouse"}, timeout=15).json()["value"]
         for lh in items:
             schema_fqn = f"{db_fqn}.{lh['displayName']}"
+            item_fqn[lh["id"]] = schema_fqn
             om_put(om, "databaseSchemas", {
                 "name": lh["displayName"], "database": db_fqn,
                 "description": f"Lakehouse {lh['id']}",
@@ -279,8 +288,30 @@ def main():
                     print(f"  lineage {tgt_item['displayName']}.{tgt_table} -> "
                           f"{lh['displayName']}.{sc['name']}", flush=True)
 
+    # Third pass: exact table-to-table edges emitted by successful Copy
+    # activities. Files paths remain queryable through the emulator endpoint,
+    # but are not forced into OpenMetadata's table entity model.
+    n_activity_edge = 0
+    for ws in workspaces:
+        for edge in list_activity_lineage(fab, ws["id"]):
+            src_path = edge.get("sourcePath", "").strip("/")
+            dst_path = edge.get("targetPath", "").strip("/")
+            if not src_path.startswith("Tables/") or not dst_path.startswith("Tables/"):
+                continue
+            src_table, dst_table = src_path.split("/", 1)[1], dst_path.split("/", 1)[1]
+            src_schema = item_fqn.get(edge.get("sourceItemId"))
+            dst_schema = item_fqn.get(edge.get("targetItemId"))
+            if not src_schema or not dst_schema:
+                continue
+            if om_lineage(om, f"{src_schema}.{src_table}", f"{dst_schema}.{dst_table}",
+                          f"Fabric Copy activity {edge.get('activityName')} (fabric-emulator)"):
+                n_activity_edge += 1
+                print(f"  activity lineage {src_schema}.{src_table} -> "
+                      f"{dst_schema}.{dst_table}", flush=True)
+
     print(f"govern-ingest: {n_db} database(s), {n_schema} schema(s), "
-          f"{n_table} table(s), {n_short} shortcut(s), {n_edge} lineage edge(s) "
+          f"{n_table} table(s), {n_short} shortcut(s), {n_edge} shortcut lineage edge(s), "
+          f"{n_activity_edge} activity lineage edge(s) "
           f"-> {OM} service '{SERVICE}'", flush=True)
 
 

@@ -28,7 +28,8 @@ services:
   # object_store writes ride the emulator's account-prefixed Blob path.
   sail:
     build:
-      context: ../../docker/sail
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
     depends_on:
       fabric-emulator:
         condition: service_healthy
@@ -47,7 +48,10 @@ services:
   # matters: the emulator reports HC sessions Idle immediately, so dbt hits
   # the agent on the first statement — it must not start until the agent is up.
   spark-agent:
-    image: python:3.12-slim
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
     depends_on:
       sail:
         condition: service_started
@@ -55,7 +59,7 @@ services:
       - ./sql_agent.py:/sql_agent.py:ro
     environment:
       SPARK_REMOTE: "sc://sail:50051"
-    command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /sql_agent.py 8099"
+    command: python /sql_agent.py 8099
     healthcheck:
       test:
         - CMD
@@ -94,8 +98,8 @@ services:
 
   dbt:
     build:
-      context: .
-      dockerfile: Dockerfile.dbt
+      context: ../..
+      dockerfile: e2e/dbt-fabricspark/Dockerfile.dbt
     depends_on:
       fabric-emulator:
         condition: service_healthy

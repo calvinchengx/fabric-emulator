@@ -17,8 +17,9 @@ import (
 // this only handles the "call an engine" activities — notably chaining a
 // notebook activity to the same jobs engine R4 notebooks run on.
 type pipelineExecutor struct {
-	a   *API
-	wid string
+	a     *API
+	wid   string
+	jobID string
 	// chain is the stack of pipeline item IDs currently being invoked (the
 	// outermost job's pipeline, then each nested Invoke pipeline). It guards
 	// against invocation cycles and unbounded recursion.
@@ -141,7 +142,7 @@ func (e *pipelineExecutor) invokePipelineActivity(act pipeline.Activity, tp map[
 		return nil, fmt.Errorf("invoke pipeline %q: %w", act.Name, err)
 	}
 
-	sub := &pipelineExecutor{a: e.a, wid: child.WorkspaceID, chain: append(append([]string{}, e.chain...), child.ID)}
+	sub := &pipelineExecutor{a: e.a, wid: child.WorkspaceID, jobID: e.jobID, chain: append(append([]string{}, e.chain...), child.ID)}
 	res := p.Run(params, sub)
 
 	out := map[string]any{
@@ -263,7 +264,14 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 
 	root, err := e.a.Store.GetOneLakePath(src.itemID, src.path)
 	if err != nil {
-		return nil, fmt.Errorf("copy %q: source %s not found", act.Name, src.path)
+		// ADLS parent directories may be implicit: Delta writers commonly create
+		// only files below Tables/<name>. A nonempty prefix is therefore a real
+		// directory source even when it has no standalone metadata row.
+		children, listErr := e.a.Store.ListOneLakePaths(src.itemID, src.path, true)
+		if listErr != nil || len(children) == 0 {
+			return nil, fmt.Errorf("copy %q: source %s not found", act.Name, src.path)
+		}
+		root = &store.OneLakePath{ItemID: src.itemID, RelPath: src.path, IsDir: true}
 	}
 
 	type file struct {
@@ -296,9 +304,16 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 		}
 		bytesCopied += len(f.content)
 	}
+	edge := &store.LineageEdge{WorkspaceID: e.wid, JobID: e.jobID, ActivityName: act.Name,
+		SourceWorkspaceID: src.wsID, SourceItemID: src.itemID, SourcePath: src.path,
+		TargetWorkspaceID: dst.wsID, TargetItemID: dst.itemID, TargetPath: dst.path}
+	if err := e.a.Store.CreateLineageEdge(edge); err != nil {
+		return nil, fmt.Errorf("copy %q lineage: %v", act.Name, err)
+	}
 	return map[string]any{
 		"filesRead": len(files), "filesWritten": len(files),
 		"dataRead": bytesCopied, "dataWritten": bytesCopied, "copyDuration": 0,
+		"lineage": edge,
 	}, nil
 }
 
@@ -411,7 +426,7 @@ func (a *API) runPipeline(wid string, it *store.Item, jobID string, params map[s
 		a.savePipelineRun(jobID, pipeline.StatusFailed, nil)
 		return "PipelineDefinitionInvalid"
 	}
-	res := p.Run(params, &pipelineExecutor{a: a, wid: wid, chain: []string{it.ID}})
+	res := p.Run(params, &pipelineExecutor{a: a, wid: wid, jobID: jobID, chain: []string{it.ID}})
 	a.savePipelineRun(jobID, res.Status, res.Activities)
 	if res.Status != pipeline.StatusSucceeded {
 		return "PipelineActivityFailed"

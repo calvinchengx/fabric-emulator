@@ -3,12 +3,12 @@
 
 The tutorial's subject, adapted to the emulator: stands up entra + fabric,
 publishes the golden model, mints a Power BI-audience token, then runs the GX
-suites (in a venv) against the emulator's executeQueries endpoint — asserting
+suites against the emulator's executeQueries endpoint — asserting
 the same pass/fail pattern as the tutorial (Store/Measure pass, the YoY-ratio
 DAX asset fails). See driver.py + README for the documented adaptations.
 
-Self-contained, pure-wheel (great_expectations + pandas ship wheels);
-run: python3 e2e/great-expectations/run.py
+Run with `uv run --frozen --group great-expectations python
+e2e/great-expectations/run.py`.
 """
 import base64
 import json
@@ -144,14 +144,8 @@ try:
     pbi = token(PBI_AUDIENCE + "/.default")
     log(f"workspace={ws} dataset={dataset}")
 
-    log("installing great_expectations + pandas")
-    venv = os.path.join(WORK, "venv")
-    subprocess.run([sys.executable, "-m", "venv", venv], check=True)
-    venv_py = os.path.join(venv, "Scripts" if os.name == "nt" else "bin", "python" + EXE)
-    subprocess.run([venv_py, "-m", "pip", "install", "-q", "great_expectations<1.0", "pandas"], check=True)
-
     log("running Great Expectations")
-    subprocess.run([venv_py, "-u", os.path.join(DIR, "driver.py")], check=True, env={
+    subprocess.run([sys.executable, "-u", os.path.join(DIR, "driver.py")], check=True, env={
         **os.environ, "FABRIC_URL": FABRIC, "WS": ws, "DATASET": dataset, "PBI_TOKEN": pbi})
 except Exception:
     for name, path in logs.items():
