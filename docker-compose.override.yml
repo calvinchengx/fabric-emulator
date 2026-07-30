@@ -76,12 +76,6 @@ services:
       start_period: 20s
 
   fabric-emulator:
-    # Compute needs the current tree: the published :latest (v0.1.0) predates
-    # the Blob surface Sail writes through. Building here overrides the base
-    # image until a newer release is tagged.
-    build:
-      context: .
-      dockerfile: Dockerfile
     environment:
       # Native Livy: terminate the protocol and drive the agent above — real
       # interactive sessions, notebook cell execution, high-concurrency REPLs.
