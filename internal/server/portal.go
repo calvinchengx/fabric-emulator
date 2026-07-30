@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -34,6 +35,17 @@ func (s *Server) registerPortal() {
 			http.NotFound(w, r)
 			return
 		}
+		// An unrouted path under an API prefix is a 404, never the SPA. A
+		// strict API client that hits an unimplemented or mistyped endpoint
+		// must get a Fabric-shaped JSON error it can parse, not a web page:
+		// Azure PowerShell dies on HTML with "Unexpected character
+		// encountered while parsing value: <", which says nothing about the
+		// real problem. Found by the Az e2e (docs/23).
+		if isAPIPath(r.URL.Path) {
+			writeJSONError(w, http.StatusNotFound, "UnknownEndpoint",
+				"No such endpoint on this emulator.")
+			return
+		}
 		// Serve real assets as-is; anything else falls back to the SPA shell
 		// (hash routing means only "/" is ever navigated to, but deep links
 		// should not 404).
@@ -46,6 +58,32 @@ func (s *Server) registerPortal() {
 		}
 		r.URL.Path = "/"
 		files.ServeHTTP(w, r)
+	})
+}
+
+// apiPrefixes are the path roots that belong to an API surface rather than to
+// the operator portal. Anything under them must answer as an API — a JSON
+// error — even when no route matches.
+var apiPrefixes = []string{"/v1/", "/_emulator/", "/metadata/", "/subscriptions/"}
+
+// isAPIPath reports whether a path belongs to an API surface. The bare prefix
+// without its trailing slash counts too ("/v1" as well as "/v1/…").
+func isAPIPath(p string) bool {
+	for _, pre := range apiPrefixes {
+		if strings.HasPrefix(p, pre) || p == strings.TrimSuffix(pre, "/") {
+			return true
+		}
+	}
+	return false
+}
+
+// writeJSONError emits the Fabric-shaped error envelope used across /v1.
+func writeJSONError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("x-ms-public-api-error-code", code)
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]string{"code": code, "message": message},
 	})
 }
 
