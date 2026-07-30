@@ -221,8 +221,8 @@ WHERE pipeline_id = ? AND id = ?`,
 }
 
 // SetStageWorkspace assigns (or, with an empty id, unassigns) a stage's
-// workspace. The REST endpoints that drive this land in D1 together with
-// item pairing; the store half is here because stage reads depend on it.
+// workspace WITHOUT touching pairs. AssignStageWorkspace is the operation
+// callers want; this is the raw column write it is built from.
 func (s *Store) SetStageWorkspace(pipelineID, stageID, workspaceID string) error {
 	var arg any
 	if workspaceID != "" {
@@ -232,6 +232,156 @@ func (s *Store) SetStageWorkspace(pipelineID, stageID, workspaceID string) error
 		`UPDATE deployment_pipeline_stages SET workspace_id = ? WHERE pipeline_id = ? AND id = ?`,
 		arg, pipelineID, stageID)
 	return err
+}
+
+// ItemPair is one established pairing edge between adjacent stages, named by
+// deploy direction: earlier is the source, later the target.
+type ItemPair struct {
+	EarlierStageID string `json:"-"`
+	EarlierItemID  string `json:"sourceItemId"`
+	LaterStageID   string `json:"-"`
+	LaterItemID    string `json:"targetItemId"`
+}
+
+// ErrPairingAmbiguous is returned when an assignment cannot pair
+// unambiguously. Per assign-pipeline.md the assignment itself fails; the
+// alternative — assigning anyway and leaving those items unpaired — would
+// defer the failure to a deploy, where it silently duplicates instead.
+var ErrPairingAmbiguous = errors.New("store: item pairing is ambiguous")
+
+// AssignStageWorkspace assigns a workspace to a stage and (re)computes item
+// pairing against the adjacent stages.
+//
+// Pairing happens HERE and on deploy — never lazily at read time. Pairs are
+// stored as item-id edges, so renaming either side afterwards does not unpair
+// them, which is the documented behaviour and the whole reason this is state
+// rather than a name match.
+//
+// Any pairs the stage already held are dropped first: they described the
+// previous workspace's items.
+func (s *Store) AssignStageWorkspace(pipelineID, stageID, workspaceID string) error {
+	stage, err := s.GetDeploymentStage(pipelineID, stageID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.GetWorkspace(workspaceID); err != nil {
+		return err
+	}
+	stages, err := s.ListDeploymentStages(pipelineID)
+	if err != nil {
+		return err
+	}
+	mine, err := s.ListItems(workspaceID, "")
+	if err != nil {
+		return err
+	}
+
+	// Compute every pair before writing anything, so an ambiguous neighbour
+	// aborts the assignment rather than half-applying it.
+	var fresh []ItemPair
+	for _, other := range stages {
+		if other.ID == stageID || other.WorkspaceID == "" {
+			continue
+		}
+		if other.Order != stage.Order-1 && other.Order != stage.Order+1 {
+			continue // pairs only ever span adjacent stages
+		}
+		theirs, err := s.ListItems(other.WorkspaceID, "")
+		if err != nil {
+			return err
+		}
+		earlierStage, laterStage := other, stage
+		earlierItems, laterItems := theirs, mine
+		if other.Order > stage.Order {
+			earlierStage, laterStage = stage, other
+			earlierItems, laterItems = mine, theirs
+		}
+		pairs, ambiguous := PairItems(earlierItems, laterItems)
+		if len(ambiguous) > 0 {
+			return fmt.Errorf("%w: %v", ErrPairingAmbiguous, ambiguous)
+		}
+		for _, pr := range pairs {
+			fresh = append(fresh, ItemPair{
+				EarlierStageID: earlierStage.ID, EarlierItemID: pr[0].ID,
+				LaterStageID: laterStage.ID, LaterItemID: pr[1].ID,
+			})
+		}
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
+		`UPDATE deployment_pipeline_stages SET workspace_id = ? WHERE pipeline_id = ? AND id = ?`,
+		workspaceID, pipelineID, stageID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+DELETE FROM deployment_pipeline_pairs
+WHERE pipeline_id = ? AND (earlier_stage_id = ? OR later_stage_id = ?)`,
+		pipelineID, stageID, stageID); err != nil {
+		return err
+	}
+	for _, pr := range fresh {
+		if _, err := tx.Exec(`
+INSERT INTO deployment_pipeline_pairs
+  (pipeline_id, earlier_stage_id, earlier_item_id, later_stage_id, later_item_id)
+VALUES (?, ?, ?, ?, ?)`,
+			pipelineID, pr.EarlierStageID, pr.EarlierItemID,
+			pr.LaterStageID, pr.LaterItemID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// UnassignStageWorkspace clears the stage's workspace and every pair it held.
+func (s *Store) UnassignStageWorkspace(pipelineID, stageID string) error {
+	if _, err := s.GetDeploymentStage(pipelineID, stageID); err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
+		`UPDATE deployment_pipeline_stages SET workspace_id = NULL WHERE pipeline_id = ? AND id = ?`,
+		pipelineID, stageID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+DELETE FROM deployment_pipeline_pairs
+WHERE pipeline_id = ? AND (earlier_stage_id = ? OR later_stage_id = ?)`,
+		pipelineID, stageID, stageID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ListItemPairs returns the pairs between two adjacent stages, source-first.
+func (s *Store) ListItemPairs(pipelineID, earlierStageID, laterStageID string) ([]ItemPair, error) {
+	rows, err := s.db.Query(`
+SELECT earlier_stage_id, earlier_item_id, later_stage_id, later_item_id
+FROM deployment_pipeline_pairs
+WHERE pipeline_id = ? AND earlier_stage_id = ? AND later_stage_id = ?
+ORDER BY rowid`, pipelineID, earlierStageID, laterStageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ItemPair{}
+	for rows.Next() {
+		var pr ItemPair
+		if err := rows.Scan(&pr.EarlierStageID, &pr.EarlierItemID,
+			&pr.LaterStageID, &pr.LaterItemID); err != nil {
+			return nil, err
+		}
+		out = append(out, pr)
+	}
+	return out, rows.Err()
 }
 
 // DeploymentPipelineRole returns the principal's role on the pipeline, or

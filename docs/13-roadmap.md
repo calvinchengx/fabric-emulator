@@ -70,7 +70,10 @@ Makes `fabric-cicd`, git integration, and deployment pipelines run offline.
       **D0 shipped** (pipeline/stage model + read surface: 2–10 ordered stages,
       default Development/Test/Production, per-pipeline RBAC where the creator
       is Admin and non-members get 404, stage→workspace assignment with live
-      name resolution and `ON DELETE SET NULL`). D1–D3 remain — Fabric has
+      name resolution and `ON DELETE SET NULL`). **D1 shipped** (assign/
+      unassign workspace + real item pairing: pairs are item-id edges between
+      adjacent stages that survive renames on either side, recomputed only at
+      assign — never lazily at read time). D2–D3 remain — Fabric has
       exactly two CI/CD mechanisms, git integration is one and stage-to-stage
       promotion is the other. Designed in
       [23-deployment-pipelines.md](23-deployment-pipelines.md) (D0 model+read →
@@ -78,10 +81,14 @@ Makes `fabric-cicd`, git integration, and deployment pipelines run offline.
       assignments). Most of the work is *pairing*, which is persistent state
       surviving renames — not a name match — and deployment copying **metadata
       only, never data**, and **not** deleting target-only items the way
-      `updateFromGit` does. Two fidelity questions are open and recorded rather
-      than guessed (duplicate display names vs. the `28e4a4c` UNIQUE
-      constraint; whether deploy overwrites the target's display name); both
-      are first questions for the conformance oracle.
+      `updateFromGit` does. D1 turned the first open fidelity question into a
+      measurement: the documented ambiguous-pairing case is **structurally
+      unreachable** here — the `28e4a4c` UNIQUE index forbids duplicate
+      name+type in a workspace, and items carry no folder membership, so the
+      documented tie-breaker has no data. `PairItems` is a pure function so
+      that branch is still unit-tested against inputs the store cannot
+      produce. The second question (whether deploy overwrites the target's
+      display name) stays open for the conformance oracle.
 
 ## P2 — the identity handshake (deepest entra integration)
 

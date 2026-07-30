@@ -179,6 +179,237 @@ func TestStageWorkspaceAssignment(t *testing.T) {
 	}
 }
 
+// mkWorkspaceWith creates a workspace holding one item per name (all
+// Notebooks) and returns the workspace plus the items by name.
+func mkWorkspaceWith(t *testing.T, s *Store, wsName string, itemNames ...string) (*Workspace, map[string]*Item) {
+	t.Helper()
+	ws := &Workspace{DisplayName: wsName}
+	if err := s.CreateWorkspace(ws, Principal{ID: "p", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	items := map[string]*Item{}
+	for _, n := range itemNames {
+		item := &Item{WorkspaceID: ws.ID, DisplayName: n, Type: "Notebook"}
+		if err := s.CreateItem(item, nil); err != nil {
+			t.Fatal(err)
+		}
+		items[n] = item
+	}
+	return ws, items
+}
+
+// TestAssignStageWorkspacePairsAdjacent: assigning pairs against the adjacent
+// stage on both sides, and only on matching (name, type).
+func TestAssignStageWorkspacePairsAdjacent(t *testing.T) {
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 3)
+	sts, _ := s.ListDeploymentStages(pl.ID)
+
+	devWS, dev := mkWorkspaceWith(t, s, "dev", "orders", "dev-only")
+	testWS, tst := mkWorkspaceWith(t, s, "test", "orders", "test-only")
+
+	if err := s.AssignStageWorkspace(pl.ID, sts[0].ID, devWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing to pair against yet.
+	if prs, _ := s.ListItemPairs(pl.ID, sts[0].ID, sts[1].ID); len(prs) != 0 {
+		t.Fatalf("pairs before the neighbour exists = %+v", prs)
+	}
+
+	if err := s.AssignStageWorkspace(pl.ID, sts[1].ID, testWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	prs, err := s.ListItemPairs(pl.ID, sts[0].ID, sts[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prs) != 1 {
+		t.Fatalf("pairs = %+v, want 1", prs)
+	}
+	if prs[0].EarlierItemID != dev["orders"].ID || prs[0].LaterItemID != tst["orders"].ID {
+		t.Fatalf("paired the wrong items: %+v", prs[0])
+	}
+}
+
+// TestAssignStageWorkspaceOnlyPairsAdjacentStages: stage 0 and stage 2 are
+// not adjacent, so assigning them leaves no edge — deploys are adjacent-only.
+func TestAssignStageWorkspaceOnlyPairsAdjacentStages(t *testing.T) {
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 3)
+	sts, _ := s.ListDeploymentStages(pl.ID)
+
+	devWS, _ := mkWorkspaceWith(t, s, "dev", "orders")
+	prodWS, _ := mkWorkspaceWith(t, s, "prod", "orders")
+	if err := s.AssignStageWorkspace(pl.ID, sts[0].ID, devWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AssignStageWorkspace(pl.ID, sts[2].ID, prodWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if prs, _ := s.ListItemPairs(pl.ID, sts[0].ID, sts[2].ID); len(prs) != 0 {
+		t.Fatalf("non-adjacent stages paired: %+v", prs)
+	}
+}
+
+// TestPairsSurviveRename is THE regression for docs/23: pairs are item-id
+// edges, so renaming either side must not unpair them. A name-matching
+// implementation passes every other test here and fails this one.
+func TestPairsSurviveRename(t *testing.T) {
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 2)
+	sts, _ := s.ListDeploymentStages(pl.ID)
+
+	devWS, dev := mkWorkspaceWith(t, s, "dev", "orders")
+	testWS, tst := mkWorkspaceWith(t, s, "test", "orders")
+	if err := s.AssignStageWorkspace(pl.ID, sts[0].ID, devWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AssignStageWorkspace(pl.ID, sts[1].ID, testWS.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rename BOTH sides to names that no longer match each other at all.
+	dev["orders"].DisplayName = "orders-renamed-source"
+	if err := s.UpdateItem(dev["orders"]); err != nil {
+		t.Fatal(err)
+	}
+	tst["orders"].DisplayName = "orders-renamed-target"
+	if err := s.UpdateItem(tst["orders"]); err != nil {
+		t.Fatal(err)
+	}
+
+	prs, err := s.ListItemPairs(pl.ID, sts[0].ID, sts[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prs) != 1 {
+		t.Fatalf("rename unpaired the items: %+v", prs)
+	}
+	if prs[0].EarlierItemID != dev["orders"].ID || prs[0].LaterItemID != tst["orders"].ID {
+		t.Fatalf("pair points at the wrong items after rename: %+v", prs[0])
+	}
+}
+
+// TestItemsAddedAfterAssignAreNotPaired: "Items added after the workspace is
+// assigned to a pipeline aren't automatically paired" — pairing happens at
+// assign (and deploy), never lazily at read time.
+func TestItemsAddedAfterAssignAreNotPaired(t *testing.T) {
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 2)
+	sts, _ := s.ListDeploymentStages(pl.ID)
+
+	devWS, _ := mkWorkspaceWith(t, s, "dev")
+	testWS, _ := mkWorkspaceWith(t, s, "test")
+	if err := s.AssignStageWorkspace(pl.ID, sts[0].ID, devWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AssignStageWorkspace(pl.ID, sts[1].ID, testWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, ws := range []*Workspace{devWS, testWS} {
+		if err := s.CreateItem(&Item{WorkspaceID: ws.ID, DisplayName: "late", Type: "Notebook"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if prs, _ := s.ListItemPairs(pl.ID, sts[0].ID, sts[1].ID); len(prs) != 0 {
+		t.Fatalf("identically-named items added after assign were paired: %+v", prs)
+	}
+}
+
+// TestReassignDropsStalePairs: a stage's pairs describe its current
+// workspace's items, so re-assigning replaces them wholesale.
+func TestReassignDropsStalePairs(t *testing.T) {
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 2)
+	sts, _ := s.ListDeploymentStages(pl.ID)
+
+	devWS, _ := mkWorkspaceWith(t, s, "dev", "orders")
+	testWS, _ := mkWorkspaceWith(t, s, "test", "orders")
+	otherWS, _ := mkWorkspaceWith(t, s, "test2", "unrelated")
+	if err := s.AssignStageWorkspace(pl.ID, sts[0].ID, devWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AssignStageWorkspace(pl.ID, sts[1].ID, testWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if prs, _ := s.ListItemPairs(pl.ID, sts[0].ID, sts[1].ID); len(prs) != 1 {
+		t.Fatalf("setup pairs = %+v", prs)
+	}
+	// Point stage 1 at a workspace with nothing in common.
+	if err := s.AssignStageWorkspace(pl.ID, sts[1].ID, otherWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if prs, _ := s.ListItemPairs(pl.ID, sts[0].ID, sts[1].ID); len(prs) != 0 {
+		t.Fatalf("stale pairs survived re-assignment: %+v", prs)
+	}
+}
+
+// TestUnassignDropsPairs: unassigning clears both the column and the edges.
+func TestUnassignDropsPairs(t *testing.T) {
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 2)
+	sts, _ := s.ListDeploymentStages(pl.ID)
+
+	devWS, _ := mkWorkspaceWith(t, s, "dev", "orders")
+	testWS, _ := mkWorkspaceWith(t, s, "test", "orders")
+	if err := s.AssignStageWorkspace(pl.ID, sts[0].ID, devWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AssignStageWorkspace(pl.ID, sts[1].ID, testWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UnassignStageWorkspace(pl.ID, sts[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetDeploymentStage(pl.ID, sts[1].ID)
+	if got.WorkspaceID != "" {
+		t.Fatalf("unassign left the workspace: %+v", got)
+	}
+	if prs, _ := s.ListItemPairs(pl.ID, sts[0].ID, sts[1].ID); len(prs) != 0 {
+		t.Fatalf("pairs survived unassign: %+v", prs)
+	}
+	if err := s.UnassignStageWorkspace(pl.ID, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unassign unknown stage = %v, want ErrNotFound", err)
+	}
+}
+
+// TestDeletingAnItemDropsItsPair: the pair FK cascades, so a deleted item
+// leaves no edge behind.
+func TestDeletingAnItemDropsItsPair(t *testing.T) {
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 2)
+	sts, _ := s.ListDeploymentStages(pl.ID)
+
+	devWS, dev := mkWorkspaceWith(t, s, "dev", "orders")
+	testWS, _ := mkWorkspaceWith(t, s, "test", "orders")
+	if err := s.AssignStageWorkspace(pl.ID, sts[0].ID, devWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AssignStageWorkspace(pl.ID, sts[1].ID, testWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteItem(devWS.ID, dev["orders"].ID); err != nil {
+		t.Fatal(err)
+	}
+	if prs, _ := s.ListItemPairs(pl.ID, sts[0].ID, sts[1].ID); len(prs) != 0 {
+		t.Fatalf("pair survived item delete: %+v", prs)
+	}
+}
+
+func TestAssignStageWorkspaceNotFound(t *testing.T) {
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 2)
+	sts, _ := s.ListDeploymentStages(pl.ID)
+	ws, _ := mkWorkspaceWith(t, s, "dev")
+
+	if err := s.AssignStageWorkspace(pl.ID, "nope", ws.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown stage = %v, want ErrNotFound", err)
+	}
+	if err := s.AssignStageWorkspace(pl.ID, sts[0].ID, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown workspace = %v, want ErrNotFound", err)
+	}
+}
+
 func TestDeleteDeploymentPipelineCascadesStore(t *testing.T) {
 	s := newDeploymentStore(t)
 	pl := mkPipeline(t, s, "release", 3)
@@ -238,5 +469,44 @@ func TestDeploymentClosedDBErrors(t *testing.T) {
 	}
 	if _, err := s.DeploymentPipelineRole(pl.ID, "p"); err == nil {
 		t.Error("DeploymentPipelineRole on closed DB succeeded")
+	}
+	if err := s.AssignStageWorkspace(pl.ID, stageID, "w"); err == nil {
+		t.Error("AssignStageWorkspace on closed DB succeeded")
+	}
+	if err := s.UnassignStageWorkspace(pl.ID, stageID); err == nil {
+		t.Error("UnassignStageWorkspace on closed DB succeeded")
+	}
+	if _, err := s.ListItemPairs(pl.ID, stageID, stageID); err == nil {
+		t.Error("ListItemPairs on closed DB succeeded")
+	}
+}
+
+// TestAssignStageWorkspaceRepairsAfterWorkspaceDelete: deleting a paired
+// stage's workspace must leave the pipeline usable — the stage unassigns, the
+// pairs go with the deleted items, and re-assigning still works.
+func TestAssignStageWorkspaceRepairsAfterWorkspaceDelete(t *testing.T) {
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 2)
+	sts, _ := s.ListDeploymentStages(pl.ID)
+
+	devWS, _ := mkWorkspaceWith(t, s, "dev", "orders")
+	testWS, _ := mkWorkspaceWith(t, s, "test", "orders")
+	if err := s.AssignStageWorkspace(pl.ID, sts[0].ID, devWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AssignStageWorkspace(pl.ID, sts[1].ID, testWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Deleting the neighbour's workspace unassigns that stage (FK) and takes
+	// its items — so the pair goes with them, and re-assigning the survivor
+	// finds nothing to pair against rather than erroring.
+	if err := s.DeleteWorkspace(testWS.ID); err != nil {
+		t.Fatal(err)
+	}
+	if prs, _ := s.ListItemPairs(pl.ID, sts[0].ID, sts[1].ID); len(prs) != 0 {
+		t.Fatalf("pairs survived the target workspace's deletion: %+v", prs)
+	}
+	if err := s.AssignStageWorkspace(pl.ID, sts[0].ID, devWS.ID); err != nil {
+		t.Fatalf("re-assign after neighbour deletion: %v", err)
 	}
 }

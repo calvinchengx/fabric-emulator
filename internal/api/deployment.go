@@ -225,6 +225,65 @@ func (a *API) updateDeploymentStage(w http.ResponseWriter, r *http.Request, p *a
 	writeJSON(w, http.StatusOK, st)
 }
 
+// assignStageWorkspace attaches a workspace to a stage and pairs its items
+// against the adjacent stages (D1). The caller must be able to administer the
+// workspace they are attaching — otherwise pipeline access alone would let
+// anyone pull someone else's workspace into a promotion path.
+func (a *API) assignStageWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	st, ok := a.requireStage(w, r, p)
+	if !ok {
+		return
+	}
+	var body struct {
+		WorkspaceID string `json:"workspaceId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.WorkspaceID == "" {
+		writeErr(w, http.StatusBadRequest, "InvalidRequest", "workspaceId is required.")
+		return
+	}
+	if _, _, ok := a.requireRole(w, body.WorkspaceID, p, store.RoleAdmin); !ok {
+		return
+	}
+	if err := a.Store.AssignStageWorkspace(st.PipelineID, st.ID, body.WorkspaceID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrPairingAmbiguous):
+			// The assignment is refused rather than applied unpaired: an
+			// unpaired promotion path duplicates silently on the next deploy.
+			writeErr(w, http.StatusConflict, "DeploymentPipelineStagePairingFailed", err.Error())
+		case errors.Is(err, store.ErrNotFound):
+			writeErr(w, http.StatusNotFound, "WorkspaceNotFound", "No workspace matches workspaceId.")
+		default:
+			writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		}
+		return
+	}
+	a.writeStage(w, st.PipelineID, st.ID)
+}
+
+// unassignStageWorkspace detaches the workspace and drops the stage's pairs.
+func (a *API) unassignStageWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	st, ok := a.requireStage(w, r, p)
+	if !ok {
+		return
+	}
+	if err := a.Store.UnassignStageWorkspace(st.PipelineID, st.ID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	a.writeStage(w, st.PipelineID, st.ID)
+}
+
+// writeStage re-reads and returns a stage, so the response reflects what was
+// actually persisted rather than the pre-write copy.
+func (a *API) writeStage(w http.ResponseWriter, pipelineID, stageID string) {
+	st, err := a.Store.GetDeploymentStage(pipelineID, stageID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
 // listDeploymentStageItems returns the supported items in the workspace
 // assigned to the stage. An unassigned stage has no items — an empty page,
 // not an error: a freshly created pipeline is in exactly that state.
