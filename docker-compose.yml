@@ -10,6 +10,12 @@
 #     statement agent, so Livy sessions, RunNotebook, dbt, and any PySpark
 #     client (sc://localhost:50051) run against a real engine.
 #
+#   docker compose --profile governance up
+#     …adds OpenMetadata (:8585) — data governance/catalog over the same
+#     state your pipelines write. Optional by profile: without the flag the
+#     services below tagged `profiles: [governance]` never start or pull.
+#     Catalog the emulator into it:  docker compose run --rm govern-ingest
+#
 # entra issues tokens; keyvault and fabric validate them against entra's JWKS —
 # the same trust relationships as production Azure. Point FABRIC_ENTRA_ISSUER
 # at a real tenant instead and nothing else changes.
@@ -61,3 +67,104 @@ services:
       # volume there); this compose file mounts none, so state is in-memory —
       # override back to empty or the store fails to open /data (no volume).
       FABRIC_DATA_DIR: ""
+
+  # ---- Governance (optional): OpenMetadata, profile-gated -------------------
+  # Mirrors OpenMetadata's own quickstart compose (docker-compose-postgres.yml
+  # @ 1.13.2), profile-gated so `docker compose up` never starts or pulls it.
+  # The OM env schema defaults every connection var; we set only the hosts.
+  # Heavier than the emulators: Elasticsearch alone wants ~1 GB heap.
+  om-postgresql:
+    profiles: [governance]
+    image: docker.getcollate.io/openmetadata/postgresql:1.13.2
+    command: "--work_mem=10MB"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - om-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: psql -U postgres -tAc 'select 1' -d openmetadata_db
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  om-elasticsearch:
+    profiles: [governance]
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.3.0
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms1024m -Xmx1024m
+      - xpack.security.enabled=false
+    volumes:
+      - om-es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: "curl -s http://localhost:9200/_cluster/health?pretty | grep status | grep -qE 'green|yellow' || exit 1"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  om-migrate:
+    profiles: [governance]
+    image: docker.getcollate.io/openmetadata/server:1.13.2
+    command: "./bootstrap/openmetadata-ops.sh migrate"
+    environment:
+      DB_HOST: om-postgresql
+      # The server image defaults to MySQL; these flip it to the Postgres
+      # sidecar (same values as OM's quickstart-postgres compose).
+      DB_PORT: "5432"
+      DB_SCHEME: postgresql
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_PARAMS: "allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC"
+      ELASTICSEARCH_HOST: om-elasticsearch
+    depends_on:
+      om-postgresql:
+        condition: service_healthy
+      om-elasticsearch:
+        condition: service_healthy
+
+  openmetadata:
+    profiles: [governance]
+    image: docker.getcollate.io/openmetadata/server:1.13.2
+    ports:
+      - "8585:8585" # UI + API (seeded basic-auth admin)
+    environment:
+      DB_HOST: om-postgresql
+      # The server image defaults to MySQL; these flip it to the Postgres
+      # sidecar (same values as OM's quickstart-postgres compose).
+      DB_PORT: "5432"
+      DB_SCHEME: postgresql
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_PARAMS: "allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC"
+      ELASTICSEARCH_HOST: om-elasticsearch
+    depends_on:
+      om-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8586/healthcheck"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+  # One-shot: walk the emulator (workspaces → lakehouses → Delta tables, schemas
+  # read from real OneLake bytes) and upsert the catalog into OpenMetadata.
+  # Idempotent — rerun after pipeline runs to refresh.
+  #   docker compose run --rm govern-ingest
+  govern-ingest:
+    profiles: [governance]
+    image: python:3.12-slim
+    depends_on:
+      openmetadata:
+        condition: service_healthy
+      fabric-emulator:
+        condition: service_healthy
+    volumes:
+      - ./scripts/govern_ingest.py:/govern_ingest.py:ro
+    environment:
+      FABRIC_URL: "https://fabric-emulator:9443"
+      ENTRA_URL: "https://entra-emulator:8443"
+      OM_URL: "http://openmetadata:8585"
+    command: sh -c "pip install --no-cache-dir -q requests deltalake && python /govern_ingest.py"
+
+volumes:
+  om-db-data:
+  om-es-data:
