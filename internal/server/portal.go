@@ -18,6 +18,11 @@ func (s *Server) registerPortal() {
 	s.mux.HandleFunc("GET /_emulator/portal/workspaces", s.portalWorkspaces)
 	s.mux.HandleFunc("GET /_emulator/portal/workspaces/{id}", s.portalWorkspaceDetail)
 	s.mux.HandleFunc("GET /_emulator/portal/operations", s.portalOperations)
+	s.mux.HandleFunc("GET /_emulator/portal/connections", s.portalConnections)
+	s.mux.HandleFunc("GET /_emulator/portal/shortcuts", s.portalShortcuts)
+	s.mux.HandleFunc("GET /_emulator/portal/capacities", s.portalCapacities)
+	s.mux.HandleFunc("GET /_emulator/portal/jobs", s.portalJobs)
+	s.mux.HandleFunc("GET /_emulator/portal/warehouse", s.portalWarehouse)
 
 	assets, err := portal.Dist()
 	if err != nil {
@@ -121,6 +126,178 @@ func (s *Server) portalWorkspaceDetail(w http.ResponseWriter, r *http.Request) {
 		"roleAssignments":   roles,
 		"git":               row.Git,
 		"workspaceIdentity": row.WorkspaceIdentity,
+	})
+}
+
+// portalConnections lists connections as an explicit metadata-only shape:
+// credential secret material is write-only in the store, and the explicit row
+// keeps any future Connection field from leaking here by accident.
+func (s *Server) portalConnections(w http.ResponseWriter, r *http.Request) {
+	cs, err := s.Store.ListConnections()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+		return
+	}
+	type connRow struct {
+		ID                   string `json:"id"`
+		DisplayName          string `json:"displayName"`
+		ConnectivityType     string `json:"connectivityType"`
+		CredentialType       string `json:"credentialType"`
+		SingleSignOnType     string `json:"singleSignOnType,omitempty"`
+		ConnectionEncryption string `json:"connectionEncryption,omitempty"`
+	}
+	out := make([]connRow, 0, len(cs))
+	for _, c := range cs {
+		row := connRow{ID: c.ID, DisplayName: c.DisplayName, ConnectivityType: c.ConnectivityType}
+		if c.CredentialDetails != nil {
+			row.CredentialType = c.CredentialDetails.CredentialType
+			row.SingleSignOnType = c.CredentialDetails.SingleSignOnType
+			row.ConnectionEncryption = c.CredentialDetails.ConnectionEncryption
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+// portalShortcut is one OneLake shortcut with its owning workspace/item and a
+// dangling flag — the target existed at create time but may have been deleted
+// since (resolution fails at read time, matching real OneLake).
+type portalShortcut struct {
+	WorkspaceID       string `json:"workspaceId"`
+	WorkspaceName     string `json:"workspaceName"`
+	ItemID            string `json:"itemId"`
+	ItemName          string `json:"itemName"`
+	Path              string `json:"path"`
+	Name              string `json:"name"`
+	TargetWorkspaceID string `json:"targetWorkspaceId"`
+	TargetItemID      string `json:"targetItemId"`
+	TargetPath        string `json:"targetPath"`
+	Dangling          bool   `json:"dangling"`
+}
+
+func (s *Server) portalShortcuts(w http.ResponseWriter, r *http.Request) {
+	workspaces, err := s.Store.ListAllWorkspaces()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+		return
+	}
+	out := make([]portalShortcut, 0)
+	for _, ws := range workspaces {
+		items, err := s.Store.ListItems(ws.ID, "")
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+			return
+		}
+		for _, it := range items {
+			shortcuts, err := s.Store.ListShortcuts(it.ID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+				return
+			}
+			for _, sc := range shortcuts {
+				_, err := s.Store.GetItem(sc.TargetWorkspace, sc.TargetItem)
+				if err != nil && err != store.ErrNotFound {
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+					return
+				}
+				out = append(out, portalShortcut{
+					WorkspaceID: ws.ID, WorkspaceName: ws.DisplayName,
+					ItemID: it.ID, ItemName: it.DisplayName,
+					Path: sc.Path, Name: sc.Name,
+					TargetWorkspaceID: sc.TargetWorkspace, TargetItemID: sc.TargetItem, TargetPath: sc.TargetPath,
+					Dangling: err == store.ErrNotFound,
+				})
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func (s *Server) portalCapacities(w http.ResponseWriter, r *http.Request) {
+	caps, err := s.Store.ListCapacities()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+		return
+	}
+	workspaces, err := s.Store.ListAllWorkspaces()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+		return
+	}
+	type wsRef struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"displayName"`
+	}
+	type capRow struct {
+		*store.Capacity
+		Workspaces []wsRef `json:"workspaces"`
+	}
+	out := make([]capRow, 0, len(caps))
+	for _, c := range caps {
+		row := capRow{Capacity: c, Workspaces: []wsRef{}}
+		for _, ws := range workspaces {
+			if ws.CapacityID == c.ID {
+				row.Workspaces = append(row.Workspaces, wsRef{ID: ws.ID, DisplayName: ws.DisplayName})
+			}
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func (s *Server) portalJobs(w http.ResponseWriter, r *http.Request) {
+	jobs, err := s.Store.ListJobInstances(100)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+		return
+	}
+	now := s.Clock.Now()
+	type jobRow struct {
+		ID          string `json:"id"`
+		ItemID      string `json:"itemId"`
+		ItemName    string `json:"itemName"`
+		ItemType    string `json:"itemType"`
+		WorkspaceID string `json:"workspaceId"`
+		JobType     string `json:"jobType"`
+		InvokeType  string `json:"invokeType"`
+		Status      string `json:"status"`
+		CreatedAt   int64  `json:"createdAt"`
+	}
+	out := make([]jobRow, 0, len(jobs))
+	for _, j := range jobs {
+		row := jobRow{
+			ID: j.ID, ItemID: j.ItemID, JobType: j.JobType, InvokeType: j.InvokeType,
+			Status: j.StatusAt(now), CreatedAt: j.CreatedAt,
+		}
+		// The owning item may have been deleted since the job ran; the row
+		// still lists, just without item context.
+		if it, err := s.Store.GetItemByID(j.ItemID); err == nil {
+			row.ItemName, row.ItemType, row.WorkspaceID = it.DisplayName, it.Type, it.WorkspaceID
+		} else if err != store.ErrNotFound {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+			return
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+// portalWarehouse reports whether the warehouse SQL surface is wired: config
+// presence only — the DSN in FABRIC_WAREHOUSE_SQL_URL carries credentials and
+// is never echoed.
+func (s *Server) portalWarehouse(w http.ResponseWriter, r *http.Request) {
+	state := "off"
+	if s.TDS != nil {
+		if s.TDS.Backend != nil {
+			state = "relay"
+		} else {
+			state = "stub"
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sqlTdsConfigured":       s.Cfg.SQLTDSAddr != "",
+		"warehouseSqlConfigured": s.Cfg.WarehouseSQLURL != "",
+		"tdsListener":            state,
 	})
 }
 

@@ -65,6 +65,7 @@ pre.code { background: var(--ink); color: #fff; border-radius: 4px; padding: 16p
 .error { color: var(--error-ink); background: var(--error-tint); border-radius: 4px; padding: 8px 12px; }
 .ok { color: var(--success); background: var(--success-tint); border-radius: 4px; padding: 8px 12px; }
 .row { cursor: pointer; }
-.chip.succeeded { background: var(--success-tint); color: var(--success); }
+.chip.succeeded, .chip.completed { background: var(--success-tint); color: var(--success); }
 .chip.failed { background: var(--error-tint); color: var(--error-ink); }
-.chip.running, .chip.notstarted { background: var(--caution-tint); color: var(--caution-ink); }
+.chip.running, .chip.notstarted, .chip.inprogress { background: var(--caution-tint); color: var(--caution-ink); }
+.chip.cancelled { background: var(--divider); color: var(--muted); }
