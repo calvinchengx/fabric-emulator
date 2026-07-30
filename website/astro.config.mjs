@@ -83,6 +83,7 @@ export default defineConfig({
             { slug: '20-lakesail-engine' },
             { slug: '21-real-fabric-toggle' },
             { slug: '22-openmetadata' },
+            { slug: '23-deployment-pipelines' },
           ],
         },
         {
