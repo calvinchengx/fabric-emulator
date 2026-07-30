@@ -410,6 +410,50 @@ func TestAssignStageWorkspaceNotFound(t *testing.T) {
 	}
 }
 
+// TestDeploymentPipelineRoles: grants are keyed by principal, so re-granting
+// replaces rather than duplicating, and a revoked principal loses visibility.
+func TestDeploymentPipelineRoles(t *testing.T) {
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 2)
+
+	ras, err := s.ListDeploymentPipelineRoles(pl.ID)
+	if err != nil || len(ras) != 1 || ras[0].Principal.ID != "p" || ras[0].Role != RoleAdmin {
+		t.Fatalf("creator assignment = %+v, %v", ras, err)
+	}
+
+	bob := Principal{ID: "bob", Type: "ServicePrincipal"}
+	if err := s.AddDeploymentPipelineRole(pl.ID, bob, RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if ps, _ := s.ListDeploymentPipelinesFor("bob"); len(ps) != 1 {
+		t.Fatalf("bob cannot see the pipeline he was granted: %+v", ps)
+	}
+
+	// Re-granting the same principal replaces, never duplicates.
+	if err := s.AddDeploymentPipelineRole(pl.ID, Principal{ID: "bob", Type: "User"}, RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	ras, _ = s.ListDeploymentPipelineRoles(pl.ID)
+	if len(ras) != 2 {
+		t.Fatalf("re-grant duplicated: %+v", ras)
+	}
+	for _, ra := range ras {
+		if ra.Principal.ID == "bob" && ra.Principal.Type != "User" {
+			t.Errorf("re-grant did not update the principal type: %+v", ra)
+		}
+	}
+
+	if err := s.DeleteDeploymentPipelineRole(pl.ID, "bob"); err != nil {
+		t.Fatal(err)
+	}
+	if ps, _ := s.ListDeploymentPipelinesFor("bob"); len(ps) != 0 {
+		t.Fatalf("bob still sees the pipeline after revocation: %+v", ps)
+	}
+	if err := s.DeleteDeploymentPipelineRole(pl.ID, "bob"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("revoking twice = %v, want ErrNotFound", err)
+	}
+}
+
 func TestDeleteDeploymentPipelineCascadesStore(t *testing.T) {
 	s := newDeploymentStore(t)
 	pl := mkPipeline(t, s, "release", 3)
@@ -478,6 +522,15 @@ func TestDeploymentClosedDBErrors(t *testing.T) {
 	}
 	if _, err := s.ListItemPairs(pl.ID, stageID, stageID); err == nil {
 		t.Error("ListItemPairs on closed DB succeeded")
+	}
+	if err := s.AddDeploymentPipelineRole(pl.ID, Principal{ID: "x"}, RoleAdmin); err == nil {
+		t.Error("AddDeploymentPipelineRole on closed DB succeeded")
+	}
+	if err := s.DeleteDeploymentPipelineRole(pl.ID, "x"); err == nil {
+		t.Error("DeleteDeploymentPipelineRole on closed DB succeeded")
+	}
+	if _, err := s.ListDeploymentPipelineRoles(pl.ID); err == nil {
+		t.Error("ListDeploymentPipelineRoles on closed DB succeeded")
 	}
 }
 

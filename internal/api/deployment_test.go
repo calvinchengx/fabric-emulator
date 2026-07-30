@@ -608,6 +608,131 @@ func TestDeploymentOperationsAPI(t *testing.T) {
 	}
 }
 
+// TestDeploymentPipelineRoleAssignments: grants make a pipeline visible to
+// another principal, and revocation takes it away again.
+func TestDeploymentPipelineRoleAssignments(t *testing.T) {
+	a, _ := newAPI(t)
+	pl, _ := seedPipeline(t, a, "")
+	ids := map[string]string{"pid": pl.ID}
+
+	// Before the grant, viewer sees nothing.
+	if got := page[store.DeploymentPipeline](t,
+		do(a.listDeploymentPipelines, viewer, "GET", "", nil).Body.Bytes()); len(got) != 0 {
+		t.Fatalf("viewer sees %+v before any grant", got)
+	}
+
+	body := `{"principal":{"id":"` + viewer.ID + `","type":"User"},"role":"Admin"}`
+	w := do(a.addDeploymentPipelineRole, admin, "POST", body, ids)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("grant = %d: %s", w.Code, w.Body)
+	}
+	if got := page[store.DeploymentPipeline](t,
+		do(a.listDeploymentPipelines, viewer, "GET", "", nil).Body.Bytes()); len(got) != 1 {
+		t.Fatalf("viewer still cannot see the pipeline after a grant: %+v", got)
+	}
+
+	ras := page[store.DeploymentPipelineRoleAssignment](t,
+		do(a.listDeploymentPipelineRoles, admin, "GET", "", ids).Body.Bytes())
+	if len(ras) != 2 {
+		t.Fatalf("role assignments = %+v", ras)
+	}
+
+	revoke := map[string]string{"pid": pl.ID, "prid": viewer.ID}
+	if w := do(a.deleteDeploymentPipelineRole, admin, "DELETE", "", revoke); w.Code != http.StatusOK {
+		t.Fatalf("revoke = %d: %s", w.Code, w.Body)
+	}
+	if got := page[store.DeploymentPipeline](t,
+		do(a.listDeploymentPipelines, viewer, "GET", "", nil).Body.Bytes()); len(got) != 0 {
+		t.Fatalf("viewer still sees the pipeline after revocation: %+v", got)
+	}
+	if w := do(a.deleteDeploymentPipelineRole, admin, "DELETE", "", revoke); w.Code != http.StatusNotFound {
+		t.Errorf("revoking twice = %d, want 404", w.Code)
+	}
+}
+
+// TestDeploymentPipelineRoleOnlyAdmin: Admin is the only role a deployment
+// pipeline defines — unlike workspaces. An omitted role defaults to it; any
+// other value is rejected rather than stored as something meaningless.
+func TestDeploymentPipelineRoleOnlyAdmin(t *testing.T) {
+	a, st := newAPI(t)
+	pl, _ := seedPipeline(t, a, "")
+	ids := map[string]string{"pid": pl.ID}
+
+	w := do(a.addDeploymentPipelineRole, admin, "POST", `{"principal":{"id":"someone"}}`, ids)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("default role = %d: %s", w.Code, w.Body)
+	}
+	role, err := st.DeploymentPipelineRole(pl.ID, "someone")
+	if err != nil || role != store.RoleAdmin {
+		t.Fatalf("defaulted role = %q, %v", role, err)
+	}
+	// Type defaults to User rather than being stored empty.
+	ras, _ := st.ListDeploymentPipelineRoles(pl.ID)
+	for _, ra := range ras {
+		if ra.Principal.ID == "someone" && ra.Principal.Type != "User" {
+			t.Errorf("principal type = %q, want User", ra.Principal.Type)
+		}
+	}
+
+	for name, body := range map[string]string{
+		"workspace role": `{"principal":{"id":"x"},"role":"Contributor"}`,
+		"nonsense role":  `{"principal":{"id":"x"},"role":"Wizard"}`,
+		"no principal":   `{"role":"Admin"}`,
+		"malformed":      `{`,
+	} {
+		if w := do(a.addDeploymentPipelineRole, admin, "POST", body, ids); w.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", name, w.Code)
+		}
+	}
+}
+
+// TestDeploymentPipelineRoleMutationsNeedAdmin is the escalation guard:
+// holding a role on the pipeline lets you READ it, but only an Admin may
+// change who can reach it. Without this, any member could revoke the owner.
+func TestDeploymentPipelineRoleMutationsNeedAdmin(t *testing.T) {
+	a, st := newAPI(t)
+	pl, _ := seedPipeline(t, a, "")
+	ids := map[string]string{"pid": pl.ID}
+
+	// Grant viewer a NON-Admin role directly in the store — the API refuses
+	// to mint one, but the store must still be gated correctly if it exists.
+	if err := st.AddDeploymentPipelineRole(pl.ID,
+		store.Principal{ID: viewer.ID, Type: "User"}, store.RoleViewer); err != nil {
+		t.Fatal(err)
+	}
+	// They can read…
+	if w := do(a.getDeploymentPipeline, viewer, "GET", "", ids); w.Code != http.StatusOK {
+		t.Fatalf("member read = %d, want 200", w.Code)
+	}
+	if w := do(a.listDeploymentPipelineRoles, viewer, "GET", "", ids); w.Code != http.StatusOK {
+		t.Fatalf("member role list = %d, want 200", w.Code)
+	}
+	// …but not change access.
+	grant := `{"principal":{"id":"mallory"},"role":"Admin"}`
+	if w := do(a.addDeploymentPipelineRole, viewer, "POST", grant, ids); w.Code != http.StatusForbidden {
+		t.Errorf("non-admin grant = %d, want 403", w.Code)
+	}
+	revoke := map[string]string{"pid": pl.ID, "prid": admin.ID}
+	if w := do(a.deleteDeploymentPipelineRole, viewer, "DELETE", "", revoke); w.Code != http.StatusForbidden {
+		t.Errorf("non-admin revoke of the owner = %d, want 403", w.Code)
+	}
+	if role, err := st.DeploymentPipelineRole(pl.ID, admin.ID); err != nil || role != store.RoleAdmin {
+		t.Fatalf("owner lost their role: %q, %v", role, err)
+	}
+	// A complete non-member gets 404 on all three.
+	for name, h := range map[string]handler{
+		"list": a.listDeploymentPipelineRoles,
+		"add":  a.addDeploymentPipelineRole,
+	} {
+		if w := do(h, nobody, "POST", grant, ids); w.Code != http.StatusNotFound {
+			t.Errorf("non-member %s = %d, want 404", name, w.Code)
+		}
+	}
+	if w := do(a.deleteDeploymentPipelineRole, nobody, "DELETE", "", revoke); w.Code != http.StatusNotFound {
+		t.Errorf("non-member revoke = %d, want 404", w.Code)
+	}
+}
+
 // TestDeploymentStoreErrors: a closed store surfaces as 500s, not panics.
 func TestDeploymentStoreErrors(t *testing.T) {
 	a, st := newAPI(t)

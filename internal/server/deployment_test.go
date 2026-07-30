@@ -240,6 +240,28 @@ func TestDeploymentPipelinesOverTheWire(t *testing.T) {
 		t.Fatalf("stage still assigned on re-read: %+v", reread)
 	}
 
+	// D3: granting Bob a role makes the pipeline visible to him; revoking
+	// takes it away again.
+	resp = f.call("POST", "/v1/deploymentPipelines/"+pl.ID+"/roleAssignments", tok,
+		map[string]any{"principal": map[string]string{"id": entra.BobOID, "type": "User"},
+			"role": "Admin"}, nil)
+	f.mustStatus(resp, http.StatusCreated, "grant Bob")
+
+	var bobList struct {
+		Value []wirePipeline `json:"value"`
+	}
+	resp = f.call("GET", "/v1/deploymentPipelines", other, nil, &bobList)
+	f.mustStatus(resp, http.StatusOK, "list as Bob after grant")
+	if len(bobList.Value) != 1 || bobList.Value[0].ID != pl.ID {
+		t.Fatalf("Bob cannot see the pipeline he was granted: %+v", bobList.Value)
+	}
+
+	resp = f.call("DELETE", "/v1/deploymentPipelines/"+pl.ID+"/roleAssignments/"+entra.BobOID,
+		tok, nil, nil)
+	f.mustStatus(resp, http.StatusOK, "revoke Bob")
+	resp = f.call("GET", "/v1/deploymentPipelines/"+pl.ID, other, nil, nil)
+	f.mustStatus(resp, http.StatusNotFound, "get as Bob after revoke")
+
 	resp = f.call("DELETE", "/v1/deploymentPipelines/"+pl.ID, tok, nil, nil)
 	f.mustStatus(resp, http.StatusOK, "delete")
 	resp = f.call("GET", "/v1/deploymentPipelines/"+pl.ID, tok, nil, nil)

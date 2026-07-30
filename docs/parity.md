@@ -138,7 +138,7 @@ inferred — the fidelity deltas a Fabric notebook author actually hits:
 | Git integration (connect / status / commit / update / disconnect) | Full, real state | 🟢 Real |
 | `fabric-cicd` tool publishing | The real client round-trips definitions (e2e) | 🟢 Real |
 | Deployment pipelines — model, assignment, **item pairing**, **Deploy Stage Content** (D0–D2) | Real promotion: definitions really copy, pairs decide (not names), metadata only — a deployed lakehouse arrives empty — and target-only items survive. 202 LRO + `/result` detail. [23-deployment-pipelines.md](23-deployment-pipelines.md) | 🟢 Real |
-| Deployment pipelines — role-assignment CRUD (D3) | Endpoints absent; the creator is Admin and access is enforced, but grants can't be managed over REST | 🔴 Not implemented |
+| Deployment pipelines — role-assignment CRUD (D3) | Add / Delete / List; Admin is the only role a pipeline defines; mutations require Admin, reads require membership | 🟢 Real |
 
 ## Item types present, engine absent
 
