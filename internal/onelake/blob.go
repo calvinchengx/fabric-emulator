@@ -267,6 +267,19 @@ func (s *Service) copyBlob(w http.ResponseWriter, r *http.Request, ws *store.Wor
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// guidAddressed reports whether the list prefix addresses the item by GUID
+// rather than name.Type. Emitted names must echo the client's addressing:
+// delta-rs opens az://{workspaceGuid}/{itemGuid}/Tables/t and lists
+// _delta_log under the GUID prefix — name-form results would match nothing
+// and delta-kernel fails with "No files in log segment".
+func guidAddressed(prefix, itemID string) bool {
+	seg, _, hasSlash := strings.Cut(prefix, "/")
+	if hasSlash {
+		return seg == itemID
+	}
+	return seg != "" && strings.HasPrefix(itemID, seg)
+}
+
 // listBlobs implements List Blobs (?comp=list) with prefix, delimiter, and
 // marker paging — the XML dialect object_store's list() parses.
 func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
@@ -294,6 +307,9 @@ func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Wo
 	var all []blob
 	for _, it := range items {
 		base := it.DisplayName + "." + it.Type
+		if guidAddressed(prefix, it.ID) {
+			base = it.ID
+		}
 		paths, err := s.Store.ListOneLakePaths(it.ID, "", true)
 		if err != nil {
 			writeBlobErr(w, http.StatusInternalServerError, "InternalError", err.Error())

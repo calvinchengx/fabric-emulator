@@ -248,6 +248,66 @@ func TestBlobListAndWalls(t *testing.T) {
 	}
 }
 
+// TestBlobListGUIDAddressing: docs/08-onelake and the parity map promise that
+// GUID and name addressing resolve to the same item on every surface. The
+// Blob listing used to emit only name.Type-form names, so delta-rs opening
+// az://{workspaceGuid}/{itemGuid}/Tables/t listed _delta_log by GUID prefix,
+// matched nothing, and failed with "No files in log segment". The listing
+// must echo the addressing the client used.
+func TestBlobListGUIDAddressing(t *testing.T) {
+	f := newFixture(t)
+	for _, p := range []string{
+		"Tables/t/_delta_log/00000000000000000000.json",
+		"Tables/t/part-0.parquet",
+	} {
+		if w := f.doBlob("PUT", "/"+f.ws.ID+"/"+f.it.ID+"/"+p, f.token, []byte("x"), nil); w.Code != http.StatusCreated {
+			t.Fatalf("seed %s = %d", p, w.Code)
+		}
+	}
+	type listing struct {
+		Blobs struct {
+			Blob []struct {
+				Name string `xml:"Name"`
+			} `xml:"Blob"`
+			BlobPrefix []struct {
+				Name string `xml:"Name"`
+			} `xml:"BlobPrefix"`
+		} `xml:"Blobs"`
+	}
+	list := func(query string) listing {
+		t.Helper()
+		w := f.doBlob("GET", "/"+f.ws.ID+"?comp=list&"+query, f.token, nil, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("list %s = %d %s", query, w.Code, w.Body.Bytes())
+		}
+		var l listing
+		if err := xml.Unmarshal(w.Body.Bytes(), &l); err != nil {
+			t.Fatalf("list xml: %v\n%s", err, w.Body.String())
+		}
+		return l
+	}
+
+	// The exact listing delta-kernel issues when the table is GUID-addressed.
+	l := list("prefix=" + f.it.ID + "/Tables/t/_delta_log/")
+	if len(l.Blobs.Blob) != 1 ||
+		l.Blobs.Blob[0].Name != f.it.ID+"/Tables/t/_delta_log/00000000000000000000.json" {
+		t.Fatalf("GUID-prefixed _delta_log list = %+v", l.Blobs.Blob)
+	}
+	// Delimited GUID listing (object_store list_with_delimiter) echoes GUID
+	// form in both Blob and BlobPrefix entries.
+	l = list("prefix=" + f.it.ID + "/Tables/t/&delimiter=/")
+	if len(l.Blobs.Blob) != 1 || l.Blobs.Blob[0].Name != f.it.ID+"/Tables/t/part-0.parquet" ||
+		len(l.Blobs.BlobPrefix) != 1 || l.Blobs.BlobPrefix[0].Name != f.it.ID+"/Tables/t/_delta_log/" {
+		t.Fatalf("GUID delimited list = %+v / %+v", l.Blobs.Blob, l.Blobs.BlobPrefix)
+	}
+	// Name addressing keeps returning name-form entries.
+	l = list("prefix=lake.Lakehouse/Tables/t/_delta_log/")
+	if len(l.Blobs.Blob) != 1 ||
+		l.Blobs.Blob[0].Name != "lake.Lakehouse/Tables/t/_delta_log/00000000000000000000.json" {
+		t.Fatalf("name-prefixed list = %+v", l.Blobs.Blob)
+	}
+}
+
 func TestDFSRenameAndConditionals(t *testing.T) {
 	f := newFixture(t)
 	src := "/" + f.ws.ID + "/" + f.it.ID + "/Files/staging/part-0"
