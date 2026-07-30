@@ -201,6 +201,19 @@ CREATE TABLE IF NOT EXISTS deployment_pipeline_stages (
 	workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
 	UNIQUE (pipeline_id, stage_order)
 );
+CREATE TABLE IF NOT EXISTS deployment_pipeline_pairs (
+	pipeline_id TEXT NOT NULL REFERENCES deployment_pipelines(id) ON DELETE CASCADE,
+	-- Pairs only ever span ADJACENT stages, named by deploy direction:
+	-- "earlier" is the source of a deploy, "later" the target.
+	earlier_stage_id TEXT NOT NULL REFERENCES deployment_pipeline_stages(id) ON DELETE CASCADE,
+	earlier_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	later_stage_id TEXT NOT NULL REFERENCES deployment_pipeline_stages(id) ON DELETE CASCADE,
+	later_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	-- An item pairs with at most one item on each side, so both directions
+	-- are unique. Deleting an item drops its pairs.
+	PRIMARY KEY (pipeline_id, earlier_stage_id, earlier_item_id),
+	UNIQUE (pipeline_id, later_stage_id, later_item_id)
+);
 CREATE TABLE IF NOT EXISTS deployment_pipeline_roles (
 	pipeline_id TEXT NOT NULL REFERENCES deployment_pipelines(id) ON DELETE CASCADE,
 	principal_id TEXT NOT NULL,

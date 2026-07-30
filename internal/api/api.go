@@ -136,6 +136,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/stages/{sid}", a.withAuth(a.getDeploymentStage))
 	mux.HandleFunc("PATCH /v1/deploymentPipelines/{pid}/stages/{sid}", a.withAuth(a.updateDeploymentStage))
 	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/stages/{sid}/items", a.withAuth(a.listDeploymentStageItems))
+	mux.HandleFunc("POST /v1/deploymentPipelines/{pid}/stages/{sid}/assignWorkspace", a.withAuth(a.assignStageWorkspace))
+	mux.HandleFunc("POST /v1/deploymentPipelines/{pid}/stages/{sid}/unassignWorkspace", a.withAuth(a.unassignStageWorkspace))
 
 	a.registerTyped(mux)
 	a.registerLivy(mux)

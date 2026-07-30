@@ -137,8 +137,8 @@ inferred — the fidelity deltas a Fabric notebook author actually hits:
 |---|---|---|
 | Git integration (connect / status / commit / update / disconnect) | Full, real state | 🟢 Real |
 | `fabric-cicd` tool publishing | The real client round-trips definitions (e2e) | 🟢 Real |
-| Deployment pipelines — pipeline/stage model, read surface (D0) | Real state: 2–10 ordered stages, per-pipeline RBAC, stage→workspace assignment. [23-deployment-pipelines.md](23-deployment-pipelines.md) | 🟢 Real |
-| Deployment pipelines — pairing, **Deploy Stage Content**, role-assignment CRUD (D1–D3) | Endpoints absent; nothing pretends to deploy | 🔴 Not implemented |
+| Deployment pipelines — model, read surface, workspace assignment + **item pairing** (D0–D1) | Real state: 2–10 ordered stages, per-pipeline RBAC, pairs stored as item-id edges that survive renames. [23-deployment-pipelines.md](23-deployment-pipelines.md) | 🟢 Real |
+| Deployment pipelines — **Deploy Stage Content**, role-assignment CRUD (D2–D3) | Endpoints absent; nothing pretends to deploy | 🔴 Not implemented |
 
 ## Item types present, engine absent
 

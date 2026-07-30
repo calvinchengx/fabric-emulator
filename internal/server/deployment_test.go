@@ -117,6 +117,44 @@ func TestDeploymentPipelinesOverTheWire(t *testing.T) {
 	resp = f.call("GET", "/v1/deploymentPipelines", "", nil, nil)
 	f.mustStatus(resp, http.StatusUnauthorized, "unauthenticated")
 
+	// D1: assign a workspace over the wire, then unassign.
+	var ws struct {
+		ID string `json:"id"`
+	}
+	resp = f.call("POST", "/v1/workspaces", tok, map[string]any{"displayName": "dp-dev"}, &ws)
+	f.mustStatus(resp, http.StatusCreated, "create workspace")
+
+	var assigned wireStage
+	resp = f.call("POST", "/v1/deploymentPipelines/"+pl.ID+"/stages/"+one.ID+"/assignWorkspace",
+		tok, map[string]any{"workspaceId": ws.ID}, &assigned)
+	f.mustStatus(resp, http.StatusOK, "assign workspace")
+	if assigned.WorkspaceID != ws.ID || assigned.WorkspaceName != "dp-dev" {
+		t.Fatalf("assigned stage = %+v", assigned)
+	}
+
+	// Bob holds no role on the pipeline, so the route is invisible to him.
+	resp = f.call("POST", "/v1/deploymentPipelines/"+pl.ID+"/stages/"+one.ID+"/unassignWorkspace",
+		other, nil, nil)
+	f.mustStatus(resp, http.StatusNotFound, "unassign as non-member")
+
+	// Decode into a FRESH struct: workspaceId is omitempty, so unmarshalling
+	// an unassigned stage over a populated value would leave the old id in
+	// place and the assertion would pass for the wrong reason.
+	var cleared wireStage
+	resp = f.call("POST", "/v1/deploymentPipelines/"+pl.ID+"/stages/"+one.ID+"/unassignWorkspace",
+		tok, nil, &cleared)
+	f.mustStatus(resp, http.StatusOK, "unassign workspace")
+	if cleared.WorkspaceID != "" || cleared.WorkspaceName != "" {
+		t.Fatalf("unassigned stage = %+v", cleared)
+	}
+	// …and confirmed independently by a fresh read.
+	var reread wireStage
+	resp = f.call("GET", "/v1/deploymentPipelines/"+pl.ID+"/stages/"+one.ID, tok, nil, &reread)
+	f.mustStatus(resp, http.StatusOK, "re-read stage")
+	if reread.WorkspaceID != "" {
+		t.Fatalf("stage still assigned on re-read: %+v", reread)
+	}
+
 	resp = f.call("DELETE", "/v1/deploymentPipelines/"+pl.ID, tok, nil, nil)
 	f.mustStatus(resp, http.StatusOK, "delete")
 	resp = f.call("GET", "/v1/deploymentPipelines/"+pl.ID, tok, nil, nil)

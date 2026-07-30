@@ -1,8 +1,9 @@
 # 23 — Deployment pipelines (P1's third leg)
 
-**Status: D0 shipped. D1–D3 designed, not built.** The pipeline/stage model
+**Status: D0 + D1 shipped. D2–D3 designed, not built.** The pipeline/stage model
 and its read surface are real state (`internal/store/deployment.go`,
-`internal/api/deployment.go`); pairing, deployment, and the role-assignment
+`internal/api/deployment.go`), as is workspace assignment with real item
+pairing (`internal/store/pairing.go`); deployment and the role-assignment
 CRUD are not. Nothing here pretends to deploy — those endpoints are absent
 rather than stubbed.
 
@@ -129,7 +130,7 @@ Eighteen operations (`pipeline-automation-fabric.md`), grouped by phase:
 | Phase | Operations |
 |---|---|
 | **D0** ✅ | Create / Get / Update / Delete / List Deployment Pipelines; List + Get + Update Stage; List Stage Items |
-| **D1** — assignment + pairing | Assign Workspace To Stage; Unassign Workspace From Stage; pairing on assign |
+| **D1** ✅ | Assign Workspace To Stage; Unassign Workspace From Stage; pairing on assign |
 | **D2** — deployment | **Deploy Stage Content** (202 LRO), deploy-all and selective; Get / List Deployment Pipeline Operations |
 | **D3** — access control | Add / Delete / List Deployment Pipeline Role Assignments |
 
@@ -139,13 +140,34 @@ Eighteen operations (`pipeline-automation-fabric.md`), grouped by phase:
 Fabric retains it 24h; we can retain it for the process lifetime). No new
 async machinery.
 
-D0 landed `SetStageWorkspace` in the store but **no assign/unassign
-endpoints** — stage reads depend on the column, and D1 owns the REST half
-together with the pairing that must happen at the same moment. The stage's
-`workspace_id` carries an `ON DELETE SET NULL` foreign key, so deleting a
-workspace unassigns the stage rather than leaving it pointing at nothing;
-`workspaceName` is resolved live at read time, so a workspace rename shows
-through without a write to the stage.
+The stage's `workspace_id` carries an `ON DELETE SET NULL` foreign key, so
+deleting a workspace unassigns the stage rather than leaving it pointing at
+nothing; `workspaceName` is resolved live at read time, so a workspace rename
+shows through without a write to the stage.
+
+### What D1 found: the ambiguity case is structurally unreachable
+
+Implementing pairing turned Q1 from a question into a measurement. The
+documented ambiguous case — duplicates disambiguated by folder — cannot occur
+here, for **two independent reasons**:
+
+1. `(workspace_id, display_name, type)` is a UNIQUE index (`28e4a4c`), so two
+   items with the same name *and* type cannot coexist in one workspace.
+2. Items carry **no folder membership** in this model, so the documented
+   tie-breaker has no data to tie-break with.
+
+`PairItems` is therefore written as a **pure function** over two item sets,
+separate from the database, and the ambiguous branch is unit-tested against
+hand-built inputs the store cannot currently produce. Writing it as "assume
+uniqueness" would have been shorter and would have silently mis-paired the
+day either premise changed — which is precisely the failure this design
+exists to prevent. Ambiguity fails the assignment (409
+`DeploymentPipelineStagePairingFailed`) rather than assigning unpaired, since
+an unpaired promotion path duplicates silently on the next deploy.
+
+Assignment also requires the caller to hold **Admin on the workspace** being
+attached, not merely on the pipeline — otherwise pipeline access alone would
+let anyone pull someone else's workspace into a promotion path.
 
 ### Store
 

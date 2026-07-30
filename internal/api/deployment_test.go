@@ -356,6 +356,117 @@ func TestDeleteDeploymentPipelineCascades(t *testing.T) {
 	}
 }
 
+// TestAssignStageWorkspace: the happy path returns the persisted stage, and
+// the caller must be able to administer the workspace they are attaching —
+// pipeline access alone must not let anyone pull someone else's workspace
+// into a promotion path.
+func TestAssignStageWorkspace(t *testing.T) {
+	a, st := newAPI(t)
+	pl, sts := seedPipeline(t, a, "")
+	ws := seedWorkspace(t, st) // admin is Admin, viewer is Viewer
+	ids := map[string]string{"pid": pl.ID, "sid": sts[0].ID}
+
+	w := do(a.assignStageWorkspace, admin, "POST", `{"workspaceId":"`+ws.ID+`"}`, ids)
+	if w.Code != http.StatusOK {
+		t.Fatalf("assign = %d: %s", w.Code, w.Body)
+	}
+	got := &store.DeploymentStage{}
+	if err := json.Unmarshal(w.Body.Bytes(), got); err != nil {
+		t.Fatal(err)
+	}
+	if got.WorkspaceID != ws.ID || got.WorkspaceName != ws.DisplayName {
+		t.Fatalf("assign response = %+v", got)
+	}
+
+	// Being an Admin of the PIPELINE does not let you bind a workspace you
+	// hold no role on — otherwise pipeline access would be a way to pull
+	// someone else's workspace into a promotion path.
+	foreign := &store.Workspace{DisplayName: "someone-elses"}
+	if err := st.CreateWorkspace(foreign, store.Principal{ID: viewer.ID, Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	if w := do(a.assignStageWorkspace, admin, "POST", `{"workspaceId":"`+foreign.ID+`"}`, ids); w.Code != http.StatusForbidden {
+		t.Errorf("assigning a foreign workspace = %d, want 403", w.Code)
+	}
+
+	for name, tc := range map[string]struct {
+		body string
+		want int
+	}{
+		"no workspaceId":    {`{}`, http.StatusBadRequest},
+		"malformed":         {`{`, http.StatusBadRequest},
+		"unknown workspace": {`{"workspaceId":"nope"}`, http.StatusNotFound},
+	} {
+		if w := do(a.assignStageWorkspace, admin, "POST", tc.body, ids); w.Code != tc.want {
+			t.Errorf("%s = %d, want %d", name, w.Code, tc.want)
+		}
+	}
+}
+
+// TestUnassignStageWorkspaceAPI: unassign clears the stage and is reachable
+// only by a pipeline member.
+func TestUnassignStageWorkspaceAPI(t *testing.T) {
+	a, st := newAPI(t)
+	pl, sts := seedPipeline(t, a, "")
+	ws := seedWorkspace(t, st)
+	ids := map[string]string{"pid": pl.ID, "sid": sts[0].ID}
+
+	if w := do(a.assignStageWorkspace, admin, "POST", `{"workspaceId":"`+ws.ID+`"}`, ids); w.Code != http.StatusOK {
+		t.Fatalf("assign = %d: %s", w.Code, w.Body)
+	}
+	w := do(a.unassignStageWorkspace, admin, "POST", "", ids)
+	if w.Code != http.StatusOK {
+		t.Fatalf("unassign = %d: %s", w.Code, w.Body)
+	}
+	got := &store.DeploymentStage{}
+	json.Unmarshal(w.Body.Bytes(), got)
+	if got.WorkspaceID != "" {
+		t.Fatalf("unassign response still assigned: %+v", got)
+	}
+	if w := do(a.unassignStageWorkspace, nobody, "POST", "", ids); w.Code != http.StatusNotFound {
+		t.Errorf("non-member unassign = %d, want 404", w.Code)
+	}
+}
+
+// TestAssignPairsThroughTheAPI: assigning both stages over the handlers
+// establishes the pair, and the items then show through stage items.
+func TestAssignPairsThroughTheAPI(t *testing.T) {
+	a, st := newAPI(t)
+	pl, sts := seedPipeline(t, a, "")
+
+	mk := func(name string) *store.Workspace {
+		ws := &store.Workspace{DisplayName: name}
+		if err := st.CreateWorkspace(ws, store.Principal{ID: admin.ID, Type: admin.Type}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CreateItem(&store.Item{
+			WorkspaceID: ws.ID, DisplayName: "orders", Type: "Notebook"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		return ws
+	}
+	dev, tst := mk("dev-ws"), mk("test-ws")
+
+	for i, ws := range []*store.Workspace{dev, tst} {
+		ids := map[string]string{"pid": pl.ID, "sid": sts[i].ID}
+		if w := do(a.assignStageWorkspace, admin, "POST", `{"workspaceId":"`+ws.ID+`"}`, ids); w.Code != http.StatusOK {
+			t.Fatalf("assign stage %d = %d: %s", i, w.Code, w.Body)
+		}
+	}
+	prs, err := st.ListItemPairs(pl.ID, sts[0].ID, sts[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prs) != 1 {
+		t.Fatalf("pairs after assigning both stages = %+v", prs)
+	}
+	items := page[store.Item](t, do(a.listDeploymentStageItems, admin, "GET", "",
+		map[string]string{"pid": pl.ID, "sid": sts[0].ID}).Body.Bytes())
+	if len(items) != 1 || items[0].DisplayName != "orders" {
+		t.Fatalf("stage items = %+v", items)
+	}
+}
+
 // TestDeploymentStoreErrors: a closed store surfaces as 500s, not panics.
 func TestDeploymentStoreErrors(t *testing.T) {
 	a, st := newAPI(t)
