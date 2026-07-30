@@ -53,7 +53,8 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Workspace managed identity handshake | Provisioned via entra admin API; the identity's own token passes RBAC | 🟢 Real |
 | Key Vault references in connections | Resolved against azure-keyvault-emulator | 🟢 Real |
 | Tenant settings / audit / admin-portal APIs | — | 🔴 Not implemented |
-| Purview / lineage / sensitivity labels (`governance/`) | — | 🔴 Not implemented |
+| Purview / sensitivity labels (`governance/`) | — | 🔴 Not implemented |
+| **Lineage** (catalog graph) | Via the optional OpenMetadata profile: OneLake **shortcut** edges (target table → shortcut) are emitted exactly and witnessed in CI; activity-level lineage is deliberately not inferred. Catalog SSO can also be pointed at entra-emulator ([22-openmetadata.md](22-openmetadata.md)) | 🟢 Real (shortcuts) / 🔴 activity-level |
 
 ## OneLake (`onelake/`)
 

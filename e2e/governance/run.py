@@ -112,6 +112,23 @@ def main():
     })
     log("delta table written via delta-rs")
 
+    # A second lakehouse holding a OneLake shortcut to the first one's table:
+    # a literal data-flow edge, and the only lineage the emulator can know
+    # exactly (see scripts/govern_ingest.py).
+    log("seeding a shortcut (the lineage edge under test)")
+    r = s.post(f"{fabric}/v1/workspaces/{ws['id']}/lakehouses",
+               json={"displayName": "curated"}, timeout=15)
+    assert r.status_code in (201, 202), (r.status_code, r.text)
+    items = s.get(f"{fabric}/v1/workspaces/{ws['id']}/items",
+                  params={"type": "Lakehouse"}, timeout=15).json()["value"]
+    by_name = {i["displayName"]: i["id"] for i in items}
+    r = s.post(f"{fabric}/v1/workspaces/{ws['id']}/items/{by_name['curated']}/shortcuts",
+               json={"path": "Tables", "name": "orders_ref",
+                     "target": {"oneLake": {"workspaceId": ws["id"],
+                                            "itemId": by_name["lake"],
+                                            "path": "Tables/orders"}}}, timeout=15)
+    assert r.status_code in (200, 201), (r.status_code, r.text)
+
     log("running govern-ingest")
     # --no-deps: everything is already up; letting compose re-evaluate the
     # dependency chain here re-runs one-shots and can recreate fabric,
@@ -136,6 +153,28 @@ def main():
                        headers=h, timeout=30)
     assert svc.status_code == 200 and svc.json()["serviceType"] == "CustomDatabase"
 
+    # The shortcut is cataloged as a table carrying the TARGET's schema —
+    # that is the data it exposes.
+    sc = requests.get(f"{om}/api/v1/tables/name/fabric-emulator.govws.curated.orders_ref",
+                      headers=h, timeout=30)
+    assert sc.status_code == 200, (sc.status_code, sc.text[:300])
+    sc_cols = {c["name"]: c["dataType"] for c in sc.json()["columns"]}
+    assert sc_cols == want, f"shortcut columns wrong: {sc_cols}"
+
+    # …and OM holds the lineage edge orders -> orders_ref.
+    lin = requests.get(
+        f"{om}/api/v1/lineage/table/name/fabric-emulator.govws.lake.orders",
+        params={"upstreamDepth": 1, "downstreamDepth": 1}, headers=h, timeout=30)
+    assert lin.status_code == 200, (lin.status_code, lin.text[:300])
+    graph = lin.json()
+    ids = {n.get("id") for n in graph.get("nodes", [])}
+    ids.add((graph.get("entity") or {}).get("id"))
+    assert sc.json()["id"] in ids, f"shortcut not in lineage graph: {graph}"
+    edges = graph.get("downstreamEdges") or graph.get("edges") or []
+    assert any(e.get("toEntity") == sc.json()["id"] for e in edges), \
+        f"no downstream edge to the shortcut: {edges}"
+    log("lineage edge orders -> curated.orders_ref present in OpenMetadata")
+
     # Idempotency: a second ingest must succeed and not duplicate.
     log("re-running govern-ingest (idempotency)")
     compose("run", "--rm", "--no-deps", "govern-ingest")
@@ -144,7 +183,8 @@ def main():
     assert t2.status_code == 200
 
     log("PASS: fabric-emulator.govws.lake.orders cataloged with "
-        f"{len(want)} columns, types {sorted(set(want.values()))}")
+        f"{len(want)} columns, types {sorted(set(want.values()))}; "
+        "shortcut cataloged with the target's schema and a lineage edge")
 
 
 if __name__ == "__main__":

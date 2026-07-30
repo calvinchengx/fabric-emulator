@@ -5,6 +5,14 @@ Mapping:  workspace -> OM database, lakehouse -> OM schema, Delta table ->
 OM table (columns read from the REAL Delta metadata in OneLake via delta-rs,
 not from the control plane — governance sits on the bytes pipelines wrote).
 
+Lineage: OneLake **shortcuts** are literal data-flow edges — a shortcut in
+lakehouse B pointing at A/Tables/x means A.x feeds B.x — so each one is
+cataloged as a table (schema read from the target's Delta log, since that is
+the data it exposes) plus an OM lineage edge target -> shortcut. Only exact,
+emulator-known edges are emitted: activity-level lineage (which tables a
+notebook or Script activity touched) would require executing or parsing user
+code, so it is deliberately NOT invented. See docs/22-openmetadata.md.
+
 Runs as the compose one-shot `govern-ingest`; env: FABRIC_URL, ENTRA_URL,
 OM_URL (see docker-compose.yml). Auth: seeded daemon SP against entra for
 the emulator; OpenMetadata's seeded basic-auth admin for the catalog.
@@ -109,6 +117,35 @@ def list_tables(fabric_session, workspace_name, lakehouse_name):
             for p in r.json().get("paths", []) if p.get("isDirectory") in (True, "true")]
 
 
+def list_shortcuts(fab, workspace_id, item_id):
+    """Shortcuts declared on an item (OneLake -> OneLake only)."""
+    r = fab.get(f"{FABRIC}/v1/workspaces/{workspace_id}/items/{item_id}/shortcuts", timeout=15)
+    if r.status_code != 200:
+        return []
+    return r.json().get("value", [])
+
+
+def om_lineage(s, from_fqn, to_fqn):
+    """Add a table -> table edge. Idempotent: OM upserts by entity pair."""
+    def ref(fqn):
+        r = s.get(f"{OM}/api/v1/tables/name/{fqn}", timeout=30)
+        if r.status_code != 200:
+            return None
+        return {"id": r.json()["id"], "type": "table"}
+
+    a, b = ref(from_fqn), ref(to_fqn)
+    if not a or not b:
+        return False
+    r = s.put(f"{OM}/api/v1/lineage",
+              json={"edge": {"fromEntity": a, "toEntity": b,
+                             "lineageDetails": {"description":
+                                                "OneLake shortcut (fabric-emulator)"}}},
+              timeout=30)
+    if r.status_code not in (200, 201):
+        sys.exit(f"OM lineage {from_fqn} -> {to_fqn}: {r.status_code} {r.text[:300]}")
+    return True
+
+
 def main():
     fab = requests.Session()
     fab.verify = False
@@ -165,7 +202,47 @@ def main():
                 print(f"  cataloged {ws['displayName']}.{lh['displayName']}.{tbl} "
                       f"({len(cols)} columns, delta v{version})", flush=True)
 
-    print(f"govern-ingest: {n_db} database(s), {n_schema} schema(s), {n_table} table(s) "
+    # Second pass: shortcuts. Needs every real table cataloged first, because
+    # a shortcut edge references its target table by FQN.
+    n_short = n_edge = 0
+    for ws in workspaces:
+        items = fab.get(f"{FABRIC}/v1/workspaces/{ws['id']}/items",
+                        params={"type": "Lakehouse"}, timeout=15).json()["value"]
+        by_id = {i["id"]: i for i in items}
+        for lh in items:
+            for sc in list_shortcuts(fab, ws["id"], lh["id"]):
+                target = (sc.get("target") or {}).get("oneLake") or {}
+                tgt_item = by_id.get(target.get("itemId"))
+                tgt_path = (target.get("path") or "").strip("/")
+                # Only Tables/<name> shortcuts are catalog-visible tables.
+                if sc.get("path", "").strip("/") != "Tables" or not tgt_item \
+                        or not tgt_path.startswith("Tables/"):
+                    continue
+                tgt_table = tgt_path.split("/", 1)[1]
+                try:
+                    cols, version = delta_columns(
+                        ws["displayName"], tgt_item["displayName"], tgt_table)
+                except Exception as e:  # target isn't a Delta table — skip, don't guess
+                    print(f"  shortcut {sc['name']}: target not readable as Delta ({e}); "
+                          "cataloged without columns", flush=True)
+                    cols, version = [], "?"
+                schema_fqn = f"{SERVICE}.{ws['displayName']}.{lh['displayName']}"
+                om_put(om, "tables", {
+                    "name": sc["name"], "databaseSchema": schema_fqn,
+                    "tableType": "External", "columns": cols,
+                    "description": f"OneLake shortcut -> {tgt_item['displayName']}/"
+                                   f"{tgt_path} (Delta version {version})",
+                })
+                n_short += 1
+                if om_lineage(om,
+                              f"{SERVICE}.{ws['displayName']}.{tgt_item['displayName']}.{tgt_table}",
+                              f"{schema_fqn}.{sc['name']}"):
+                    n_edge += 1
+                    print(f"  lineage {tgt_item['displayName']}.{tgt_table} -> "
+                          f"{lh['displayName']}.{sc['name']}", flush=True)
+
+    print(f"govern-ingest: {n_db} database(s), {n_schema} schema(s), "
+          f"{n_table} table(s), {n_short} shortcut(s), {n_edge} lineage edge(s) "
           f"-> {OM} service '{SERVICE}'", flush=True)
 
 

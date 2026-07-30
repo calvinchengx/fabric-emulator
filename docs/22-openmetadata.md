@@ -36,6 +36,40 @@ carries over; the table description records the Delta version and the
 Sail/dbt/delta-rs wrote is exactly what governance sees — end to end, no
 declared-schema drift.
 
+## Lineage (what the emulator can prove)
+
+`govern-ingest` emits lineage only where the emulator holds an **exact**
+fact — it never infers a graph:
+
+| Edge | Source | Emitted? |
+|---|---|---|
+| target table → shortcut table | a OneLake **shortcut** *is* the data-flow edge; the shortcut is cataloged as a table carrying the target's Delta schema (that is the data it exposes) | ✅ exact |
+| activity → the tables it touched | would require executing or parsing user notebook/SQL code | ❌ not invented |
+
+The CI witness seeds `lake.orders`, shortcuts it into a second lakehouse as
+`curated.orders_ref`, and asserts OpenMetadata returns both the shortcut's
+columns and the `orders → orders_ref` edge in its lineage graph.
+
+## SSO: the catalog inside the family trust chain (optional)
+
+By default OpenMetadata uses its own basic auth. Layer the SSO overlay and
+its authenticator becomes **entra-emulator** — OM validates bearer JWTs
+against entra's JWKS with the same issuer fabric-emulator and
+azure-keyvault-emulator use, so the catalog stops being the one member with
+its own login:
+
+```bash
+docker compose -f docker-compose.yml -f e2e/governance/sso-override.yml \
+  --profile governance up
+```
+
+`e2e/governance/sso.py` witnesses it headlessly: entra mints a **user** token
+(client-credentials tokens carry no `email`/`preferred_username`, which is
+what OM maps a principal from), OM's API accepts it, and a token with a
+broken signature is refused — so the trust edge is real, not "any bearer
+accepted". The browser login flow (OIDC confidential client) rides the same
+edge but needs a real browser, so it is not asserted.
+
 ## How it stays optional (and honest)
 
 - The five services (`om-postgresql`, `om-elasticsearch`, `om-migrate`,

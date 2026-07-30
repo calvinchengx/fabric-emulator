@@ -1,0 +1,54 @@
+# Governance SSO: OpenMetadata joins the family's trust chain.
+#
+# Layered on the governance profile, this points OM's authenticator at
+# entra-emulator instead of its built-in basic auth — OM validates bearer
+# JWTs against entra's JWKS with the same issuer every other relying party
+# (fabric, keyvault) uses. Compose it explicitly:
+#
+#   docker compose -f docker-compose.yml -f e2e/governance/sso-override.yml \
+#     --profile governance up
+#
+# Witnessed headlessly by e2e/governance/sso.py: entra mints a user token,
+# OM accepts it. The browser login flow (OIDC_* confidential client) rides
+# the same trust edge but needs a real browser, so it is not asserted here.
+#
+# TLS note (a real finding, not a workaround for its own sake): OpenMetadata
+# is a JVM app and will not fetch a JWKS served with the family's self-signed
+# certificate — it loads no entra keys and every token fails with
+# "JWT Token keyID doesn't match the configured keyID". Rather than bake a
+# custom truststore into the OM image, this overlay runs the *issuer* over
+# plain HTTP on the compose network (localhost-only, and the tokens are still
+# genuinely signed + verified). Against a real Entra tenant the question
+# disappears: its JWKS is served with a publicly-trusted certificate.
+services:
+  entra-emulator:
+    environment:
+      TLS_ENABLED: "false"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+
+  keyvault-emulator:
+    environment:
+      KV_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+
+  fabric-emulator:
+    environment:
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      FABRIC_ENTRA_JWKS_URL: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/discovery/v2.0/keys"
+
+  openmetadata:
+    environment:
+      AUTHENTICATION_PROVIDER: custom-oidc
+      CUSTOM_OIDC_AUTHENTICATION_PROVIDER_NAME: entra-emulator
+      # The issuer OM expects in `iss`, and the keys it validates against.
+      # OM's own JWKS stays in the list so its internal bot tokens keep working.
+      AUTHENTICATION_AUTHORITY: "${SSO_ENTRA_ISSUER:-http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0}"
+      AUTHENTICATION_PUBLIC_KEYS: '["${SSO_ENTRA_JWKS:-http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/discovery/v2.0/keys}","http://openmetadata:8585/api/v1/system/config/jwks"]'
+      AUTHENTICATION_CLIENT_ID: "${SSO_CLIENT_ID:-cccccccc-0000-0000-0000-000000000002}"
+      # Entra puts the user's identity in these claims; OM maps the first hit
+      # to a principal.
+      AUTHENTICATION_JWT_PRINCIPAL_CLAIMS: '[preferred_username,email,sub]'
+      # Seeded users live at entraemulator.dev; admins are named, not inferred.
+      AUTHORIZER_PRINCIPAL_DOMAIN: "${SSO_PRINCIPAL_DOMAIN:-entraemulator.dev}"
+      AUTHORIZER_ENFORCE_PRINCIPAL_DOMAIN: "false"
+      AUTHORIZER_ADMIN_PRINCIPALS: '[admin,alice]'
+      AUTHENTICATION_ENABLE_SELF_SIGNUP: "true"
