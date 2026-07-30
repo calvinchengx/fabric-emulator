@@ -121,6 +121,19 @@ jobs:
       # from the Delta schema. Linux-only (heavy: OM server + Elasticsearch).
       - run: python3 e2e/governance/run.py
 
+  governance-sso:
+    name: OpenMetadata authenticates against entra-emulator (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # The catalog inside the family trust chain: OM's authenticator is
+      # entra-emulator, so an entra-minted user token is accepted while
+      # badly-signed and expired ones are refused. Linux-only (heavy).
+      - run: python3 e2e/governance/sso.py
+
   delta-rs:
     name: Real delta-rs writes Delta through OneLake
     strategy:
