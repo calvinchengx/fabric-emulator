@@ -1,0 +1,44 @@
+# Engine swap: run the Livy statement agent on **Spark 3.5 JVM** instead of the
+# default Sail (Rust Spark Connect). Overlay — layer it on the usual files:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml \
+#                  -f docker-compose.spark-jvm.yml up
+#
+# Why you'd want it: Sail covers the Spark subset most notebooks use, but a few
+# capabilities are JVM-only — structured streaming, OPTIMIZE/VACUUM, Java/Scala
+# UDFs, `spark.jars`, and the RDD API (`sc`), which Spark Connect cannot expose
+# at all. This profile trades startup time and image size for that fidelity.
+# See docs/20-lakesail-engine.md and the parity map's notebook-compatibility
+# table for exactly which rows change.
+#
+# The agent script is unchanged: e2e/livy/agent.py builds a classic in-process
+# SparkSession when SPARK_REMOTE is unset, and a Connect client when it is set.
+# Hence the `!reset` below — Compose MERGES environment maps across files, so
+# without it the JVM container would still be handed sail's sc:// URL and
+# quietly stay a Connect client, defeating the whole overlay.
+services:
+  spark-agent:
+    build:
+      context: .
+      dockerfile: docker/spark-runtime/Dockerfile
+    # The base file builds this service from the python runtime; drop that
+    # image identity so the JVM build above is what runs.
+    image: !reset null
+    depends_on: !override
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      SPARK_REMOTE: !reset null # classic JVM session, not a Connect client
+    volumes: !override
+      - ./e2e/livy/agent.py:/opt/spark/work-dir/agent.py:ro
+    command: !override
+      - /opt/spark/bin/spark-submit
+      - --master
+      - local[2]
+      - /opt/spark/work-dir/agent.py
+      - "8099"
+
+  # Sail is not needed in this configuration; keep it out of the way so the
+  # stack doesn't build and boot an engine nothing talks to.
+  sail:
+    profiles: [donotstart]
