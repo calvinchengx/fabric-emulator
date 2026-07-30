@@ -37,8 +37,8 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 
 | Fabric feature | Emulator | Type |
 |---|---|---|
-| Workspaces CRUD | Full | 🟢 Real (state persists) |
-| Items CRUD + 12 typed collections | Full | 🟢 Real |
+| Workspaces CRUD | Full. Display names are **unique tenant-wide** — duplicates 409 `WorkspaceNameAlreadyExists` (uniqueness per the REST reference; fabric-docs covers workspace naming portal-side only) | 🟢 Real |
+| Items CRUD + 12 typed collections | Full. Display names are **unique per (workspace, type)** — duplicates 409 `ItemDisplayNameAlreadyInUse`; names stay reusable *across* types, which is why OneLake addresses items as `name.Type` | 🟢 Real |
 | Role assignments / workspace RBAC | Enforced from the validated bearer principal | 🟢 Real |
 | Folders | Full | 🟢 Real |
 | Capacities (list, assign / unassign) | Full state, no billing/SKU enforcement | 🟢 Real state |
