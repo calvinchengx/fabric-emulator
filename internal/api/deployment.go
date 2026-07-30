@@ -284,6 +284,94 @@ func (a *API) writeStage(w http.ResponseWriter, pipelineID, stageID string) {
 	writeJSON(w, http.StatusOK, st)
 }
 
+// requirePipelineAdmin gates the mutations that change who can reach a
+// pipeline. Membership alone must not let someone grant themselves more, or
+// revoke the owner.
+func (a *API) requirePipelineAdmin(w http.ResponseWriter, r *http.Request, p *auth.Principal) (*store.DeploymentPipeline, bool) {
+	pl, ok := a.requirePipeline(w, r, p)
+	if !ok {
+		return nil, false
+	}
+	role, err := a.Store.DeploymentPipelineRole(pl.ID, p.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return nil, false
+	}
+	if role != store.RoleAdmin {
+		writeErr(w, http.StatusForbidden, "InsufficientPrivileges",
+			"The caller requires the Admin role on the deployment pipeline.")
+		return nil, false
+	}
+	return pl, true
+}
+
+// listDeploymentPipelineRoles returns the pipeline's role assignments.
+func (a *API) listDeploymentPipelineRoles(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	pl, ok := a.requirePipeline(w, r, p)
+	if !ok {
+		return
+	}
+	ras, err := a.Store.ListDeploymentPipelineRoles(pl.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	writePage(w, r, ras)
+}
+
+// addDeploymentPipelineRole grants a principal a role on the pipeline.
+func (a *API) addDeploymentPipelineRole(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	pl, ok := a.requirePipelineAdmin(w, r, p)
+	if !ok {
+		return
+	}
+	var body struct {
+		Principal store.Principal `json:"principal"`
+		Role      string          `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Principal.ID == "" {
+		writeErr(w, http.StatusBadRequest, "InvalidRequest", "principal.id is required.")
+		return
+	}
+	// Fabric's deployment-pipeline role enum is Admin alone — there is no
+	// Member/Contributor/Viewer here, unlike workspaces. Reject anything else
+	// rather than storing a role that means nothing.
+	if body.Role == "" {
+		body.Role = store.RoleAdmin
+	}
+	if body.Role != store.RoleAdmin {
+		writeErr(w, http.StatusBadRequest, "InvalidRequest",
+			"Admin is the only role a deployment pipeline defines.")
+		return
+	}
+	if body.Principal.Type == "" {
+		body.Principal.Type = "User"
+	}
+	if err := a.Store.AddDeploymentPipelineRole(pl.ID, body.Principal, body.Role); err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, store.DeploymentPipelineRoleAssignment{
+		Principal: body.Principal, Role: body.Role})
+}
+
+// deleteDeploymentPipelineRole revokes a principal's role.
+func (a *API) deleteDeploymentPipelineRole(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	pl, ok := a.requirePipelineAdmin(w, r, p)
+	if !ok {
+		return
+	}
+	if err := a.Store.DeleteDeploymentPipelineRole(pl.ID, r.PathValue("prid")); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "RoleAssignmentNotFound", "No such role assignment.")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // deployStageContent promotes items from one stage to the adjacent one and
 // returns through the existing LRO engine (202 + x-ms-operation-id +
 // Location), with the per-item detail served from /operations/{id}/result.

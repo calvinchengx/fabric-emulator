@@ -384,6 +384,65 @@ ORDER BY rowid`, pipelineID, earlierStageID, laterStageID)
 	return out, rows.Err()
 }
 
+// DeploymentPipelineRoleAssignment grants a principal a role on a pipeline.
+// Deployment pipelines have their own access control, separate from the
+// workspaces their stages point at.
+type DeploymentPipelineRoleAssignment struct {
+	PipelineID string    `json:"-"`
+	Principal  Principal `json:"principal"`
+	Role       string    `json:"role"`
+}
+
+// AddDeploymentPipelineRole grants (or re-grants) a principal a role.
+// Re-granting the same principal replaces their role rather than erroring —
+// the assignment is keyed by principal, so there is only ever one.
+func (s *Store) AddDeploymentPipelineRole(pipelineID string, p Principal, role string) error {
+	_, err := s.db.Exec(`
+INSERT INTO deployment_pipeline_roles (pipeline_id, principal_id, principal_type, role)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(pipeline_id, principal_id) DO UPDATE SET principal_type = excluded.principal_type, role = excluded.role`,
+		pipelineID, p.ID, p.Type, role)
+	return err
+}
+
+// DeleteDeploymentPipelineRole revokes a principal's role.
+func (s *Store) DeleteDeploymentPipelineRole(pipelineID, principalID string) error {
+	res, err := s.db.Exec(
+		`DELETE FROM deployment_pipeline_roles WHERE pipeline_id = ? AND principal_id = ?`,
+		pipelineID, principalID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListDeploymentPipelineRoles returns every role assignment on a pipeline.
+func (s *Store) ListDeploymentPipelineRoles(pipelineID string) ([]*DeploymentPipelineRoleAssignment, error) {
+	rows, err := s.db.Query(`
+SELECT principal_id, principal_type, role FROM deployment_pipeline_roles
+WHERE pipeline_id = ? ORDER BY rowid`, pipelineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*DeploymentPipelineRoleAssignment{}
+	for rows.Next() {
+		ra := &DeploymentPipelineRoleAssignment{PipelineID: pipelineID}
+		if err := rows.Scan(&ra.Principal.ID, &ra.Principal.Type, &ra.Role); err != nil {
+			return nil, err
+		}
+		out = append(out, ra)
+	}
+	return out, rows.Err()
+}
+
 // DeploymentPipelineRole returns the principal's role on the pipeline, or
 // ErrNotFound when they hold none.
 func (s *Store) DeploymentPipelineRole(pipelineID, principalID string) (string, error) {

@@ -1,11 +1,11 @@
 # 23 — Deployment pipelines (P1's third leg)
 
-**Status: D0–D2 shipped. D3 designed, not built.** The pipeline/stage model
+**Status: D0–D3 shipped — the surface is complete.** The pipeline/stage model
 and its read surface are real state (`internal/store/deployment.go`,
 `internal/api/deployment.go`), as is workspace assignment with real item
 pairing (`internal/store/pairing.go`) and **Deploy Stage Content**
-(`internal/store/deploy.go`, over the existing LRO engine). The
-role-assignment CRUD is not. Nothing here pretends to deploy — those endpoints are absent
+(`internal/store/deploy.go`, over the existing LRO engine) and the
+role-assignment CRUD. Nothing here pretends to deploy — those endpoints are absent
 rather than stubbed.
 
 [13-roadmap.md](13-roadmap.md)'s P1 header reads: *"Makes `fabric-cicd`, git
@@ -133,7 +133,7 @@ Eighteen operations (`pipeline-automation-fabric.md`), grouped by phase:
 | **D0** ✅ | Create / Get / Update / Delete / List Deployment Pipelines; List + Get + Update Stage; List Stage Items |
 | **D1** ✅ | Assign Workspace To Stage; Unassign Workspace From Stage; pairing on assign |
 | **D2** ✅ | **Deploy Stage Content** (202 LRO), deploy-all and selective; Get / List Deployment Pipeline Operations |
-| **D3** — access control | Add / Delete / List Deployment Pipeline Role Assignments |
+| **D3** ✅ | Add / Delete / List Deployment Pipeline Role Assignments |
 
 D2 also confirmed the design's claim that deployment is mostly reuse: the
 copy is `GetDefinition` → `CreateItem`/`SetDefinition`, both P1 machinery.
@@ -191,6 +191,28 @@ deployment_pipeline_role_assignments  pipeline_id, principal_id, role
 
 Stage count is constrained to 2–10 at create. `order` is dense and contiguous;
 deployment is only ever defined between **adjacent** stages.
+
+### Access control
+
+Pipelines carry their own RBAC, separate from the workspaces their stages
+point at. The creator becomes Admin; List returns only pipelines the caller
+holds a role on; a non-member gets **404, not 403**, matching workspaces here.
+**Admin is the only role a deployment pipeline defines** — there is no
+Member/Contributor/Viewer — so any other value is rejected rather than stored
+as something meaningless.
+
+Reads need membership; changing *who can reach the pipeline* needs Admin.
+Without that split, any member could revoke the owner.
+
+Two deliberate non-inventions:
+
+* **Assignment requires Admin on the workspace** being attached, not just on
+  the pipeline — otherwise pipeline access would be a route to pulling
+  someone else's workspace into a promotion path.
+* **No last-Admin guard.** Revoking the final Admin orphans a pipeline. The
+  workspace implementation here has the same property, so matching it is
+  consistent rather than inventing a rule the REST reference has not been
+  checked against. Worth confirming with the conformance oracle.
 
 ## Out of scope, with cause
 

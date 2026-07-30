@@ -127,7 +127,7 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	// Deployment pipelines (docs/23) — D0 model + read, D1 assignment +
 	// pairing, D2 Deploy Stage Content over the existing LRO engine. The
-	// role-assignment CRUD (D3) follows.
+	// role-assignment CRUD (D3).
 	mux.HandleFunc("GET /v1/deploymentPipelines", a.withAuth(a.listDeploymentPipelines))
 	mux.HandleFunc("POST /v1/deploymentPipelines", a.withAuth(a.createDeploymentPipeline))
 	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}", a.withAuth(a.getDeploymentPipeline))
@@ -142,6 +142,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/deploymentPipelines/{pid}/deploy", a.withAuth(a.deployStageContent))
 	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/operations", a.withAuth(a.listDeploymentOperations))
 	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/operations/{oid}", a.withAuth(a.getDeploymentOperation))
+	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/roleAssignments", a.withAuth(a.listDeploymentPipelineRoles))
+	mux.HandleFunc("POST /v1/deploymentPipelines/{pid}/roleAssignments", a.withAuth(a.addDeploymentPipelineRole))
+	mux.HandleFunc("DELETE /v1/deploymentPipelines/{pid}/roleAssignments/{prid}", a.withAuth(a.deleteDeploymentPipelineRole))
 
 	a.registerTyped(mux)
 	a.registerLivy(mux)
