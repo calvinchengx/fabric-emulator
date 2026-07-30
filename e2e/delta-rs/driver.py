@@ -56,7 +56,7 @@ storage_token = entra_token(audience="https://storage.azure.com")
 
 # Control plane: workspace + lakehouse.
 ws = post_json(f"{FABRIC}/v1/workspaces", {"displayName": "deltaws"}, fabric_token)
-post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "lake"}, fabric_token)
+lh = post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "lake"}, fabric_token)
 print(f"workspace: {ws['id']}")
 
 url = "az://deltaws/lake.Lakehouse/Tables/events"
@@ -85,6 +85,16 @@ dt = DeltaTable(url, storage_options=storage_options)
 assert dt.version() == 1, dt.version()
 assert dt.to_pyarrow_table().num_rows == 4
 print("delta append: OK (version 1, 4 rows)")
+
+# GUID addressing opens the SAME table (08-onelake: name and GUID paths
+# resolve to the same item). Regression: the Blob listing used to emit only
+# name-form entries, so the GUID-prefixed _delta_log list came back empty and
+# delta-kernel failed with "No files in log segment".
+guid_url = f"az://{ws['id']}/{lh['id']}/Tables/events"
+dt_guid = DeltaTable(guid_url, storage_options=storage_options)
+assert dt_guid.version() == 1, dt_guid.version()
+assert dt_guid.to_pyarrow_table().num_rows == 4, dt_guid.to_pyarrow_table().num_rows
+print("delta GUID addressing: OK (same table, version 1, 4 rows)")
 
 # The same files are visible through the DFS surface — one storage substrate.
 req = urllib.request.Request(
