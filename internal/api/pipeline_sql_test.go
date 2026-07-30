@@ -11,6 +11,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
@@ -165,6 +166,108 @@ func TestPipelineScriptQueryError(t *testing.T) {
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("query against missing table = %s, want Failed", s)
+	}
+}
+
+// TestPipelineScriptNestedLocationAndBlob: the database reference also
+// resolves when nested under "location" (the Copy/Lookup shape), and blob
+// results come back as text, not base64.
+func TestPipelineScriptNestedLocationAndBlob(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	wh := &store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "wh"}
+	if err := st.CreateItem(wh, nil); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	a.SQLDB = func(context.Context, string) (*sql.DB, error) { return db, nil }
+
+	content := `{"properties":{"activities":[
+        {"name":"Sc","type":"Script","typeProperties":{
+          "database":{"location":{"workspaceId":"@null","itemId":"` + wh.ID + `"}},
+          "scripts":[{"type":"Query","text":"SELECT CAST('ab' AS BLOB) AS b"}]}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("nested-location script = %s, want Completed", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	rows := outputOf(runs, "Sc")["resultSets"].([]any)[0].(map[string]any)["rows"].([]any)
+	if rows[0].(map[string]any)["b"] != "ab" {
+		t.Fatalf("blob column = %+v, want text 'ab'", rows[0])
+	}
+}
+
+// TestPipelineScriptDatabaseRefErrors: expression failures inside the
+// database reference, and a reference without an itemId, fail the activity.
+func TestPipelineScriptDatabaseRefErrors(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	wh := &store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "wh"}
+	if err := st.CreateItem(wh, nil); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	a.SQLDB = func(context.Context, string) (*sql.DB, error) { return db, nil }
+
+	for name, ref := range map[string]string{
+		"bad workspaceId expression": `{"workspaceId":"@nosuchfunc()","itemId":"` + wh.ID + `"}`,
+		"bad itemId expression":      `{"itemId":"@nosuchfunc()"}`,
+		"no itemId":                  `{"workspaceId":"` + ws.ID + `"}`,
+	} {
+		content := `{"properties":{"activities":[
+            {"name":"Sc","type":"Script","typeProperties":{
+              "database":` + ref + `,
+              "scripts":[{"type":"Query","text":"SELECT 1"}]}}
+          ]}}`
+		pl := createPipeline(t, st, ws.ID, content)
+		_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+		if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+			t.Errorf("%s = %s, want Failed", name, s)
+		}
+	}
+}
+
+// TestPipelineStoredProcedureParams: named parameters build the EXEC call
+// (@name = @pN in some order); SQLite has no EXEC, so the real query fails —
+// which is exactly the path under test (parameter marshalling + query error).
+func TestPipelineStoredProcedureParams(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	wh := &store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "wh"}
+	if err := st.CreateItem(wh, nil); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	a.SQLDB = func(context.Context, string) (*sql.DB, error) { return db, nil }
+
+	content := `{"properties":{"activities":[
+        {"name":"Sp","type":"SqlServerStoredProcedure","typeProperties":{
+          "database":{"itemId":"` + wh.ID + `"},
+          "storedProcedureName":"dbo.upsert",
+          "storedProcedureParameters":{"id":{"value":1,"type":"Int"},"name":{"value":"ada"}}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("EXEC against SQLite = %s, want Failed (no stored procedures)", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if e, _ := runs[0]["error"].(string); !strings.Contains(e, `stored procedure "Sp"`) {
+		t.Fatalf("error = %q, want the stored-procedure wrap", e)
 	}
 }
 

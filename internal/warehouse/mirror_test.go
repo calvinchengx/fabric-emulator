@@ -158,6 +158,115 @@ func TestReadSQLTableQueryError(t *testing.T) {
 	}
 }
 
+// newMirrorSQLite opens an in-memory SQLite database with an attached
+// INFORMATION_SCHEMA.TABLES metadata table, so listBaseTables' SQL-Server
+// INFORMATION_SCHEMA query runs verbatim against it (SQLite resolves
+// INFORMATION_SCHEMA.TABLES as table TABLES in an attached database named
+// INFORMATION_SCHEMA).
+func newMirrorSQLite(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	db.SetMaxOpenConns(1) // the attached schema lives on the one connection
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, "ATTACH DATABASE ':memory:' AS INFORMATION_SCHEMA"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "CREATE TABLE INFORMATION_SCHEMA.TABLES (TABLE_NAME TEXT, TABLE_TYPE TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+// TestMirrorSnapshotsBaseTables: Mirror lists the base tables (views excluded),
+// snapshots each to OneLake as a Delta table, and the snapshot reads back
+// through this package's own Delta reader — blobs normalized to strings.
+func TestMirrorSnapshotsBaseTables(t *testing.T) {
+	st, _, itemID := seedLakehouse(t)
+	db := newMirrorSQLite(t)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, "CREATE TABLE [orders] (id INTEGER, note TEXT, data BLOB)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO orders VALUES (1, 'a', x'414243'), (2, NULL, NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO INFORMATION_SCHEMA.TABLES VALUES ('orders','BASE TABLE'), ('v1','VIEW')"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Mirror(ctx, db, st, itemID); err != nil {
+		t.Fatalf("Mirror: %v", err)
+	}
+	got, err := ReadDeltaTable(st, itemID, "orders")
+	if err != nil {
+		t.Fatalf("ReadDeltaTable: %v", err)
+	}
+	if len(got.Rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(got.Rows))
+	}
+	gi := map[string]int{}
+	for i, c := range got.Columns {
+		gi[c] = i
+	}
+	r0 := got.Rows[0]
+	if r0[gi["id"]] != int64(1) || r0[gi["note"]] != "a" || r0[gi["data"]] != "ABC" {
+		t.Fatalf("row0 = %v", r0)
+	}
+	if got.Rows[1][gi["note"]] != nil || got.Rows[1][gi["data"]] != nil {
+		t.Fatalf("row1 NULLs lost: %v", got.Rows[1])
+	}
+	// The view is not mirrored.
+	if _, err := ReadDeltaTable(st, itemID, "v1"); err == nil {
+		t.Error("view v1 was mirrored; only BASE TABLEs should be")
+	}
+}
+
+// TestMirrorErrors: each failure surfaces as a wrapped error — a missing item,
+// an engine without INFORMATION_SCHEMA, metadata naming a missing table, and a
+// NULL table name breaking the metadata scan.
+func TestMirrorErrors(t *testing.T) {
+	st, _, itemID := seedLakehouse(t)
+	ctx := context.Background()
+
+	db := newMirrorSQLite(t)
+	if err := Mirror(ctx, db, st, "no-such-item"); err == nil {
+		t.Error("Mirror with an unknown item succeeded")
+	}
+
+	// No INFORMATION_SCHEMA at all → listing tables fails.
+	bare, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { bare.Close() })
+	if err := Mirror(ctx, bare, st, itemID); err == nil {
+		t.Error("Mirror without INFORMATION_SCHEMA succeeded")
+	}
+
+	// Metadata names a table that does not exist → reading it fails.
+	if _, err := db.ExecContext(ctx, "INSERT INTO INFORMATION_SCHEMA.TABLES VALUES ('ghost','BASE TABLE')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Mirror(ctx, db, st, itemID); err == nil {
+		t.Error("Mirror with a ghost table succeeded")
+	}
+
+	// A NULL TABLE_NAME breaks the metadata row scan.
+	db2 := newMirrorSQLite(t)
+	if _, err := db2.ExecContext(ctx, "INSERT INTO INFORMATION_SCHEMA.TABLES VALUES (NULL,'BASE TABLE')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Mirror(ctx, db2, st, itemID); err == nil {
+		t.Error("Mirror with a NULL table name succeeded")
+	}
+}
+
 // TestCoerce covers coerce's type-mismatch fallback branches (a value that
 // doesn't match its inferred kind is passed through unchanged).
 func TestCoerce(t *testing.T) {
@@ -175,6 +284,9 @@ func TestCoerce(t *testing.T) {
 	}
 	if v := coerce(int32(5), kindLong); v != int64(5) {
 		t.Errorf("coerce int32->kindLong = %v (%T), want int64(5)", v, v)
+	}
+	if v := coerce(int(7), kindLong); v != int64(7) {
+		t.Errorf("coerce int->kindLong = %v (%T), want int64(7)", v, v)
 	}
 	if v := coerce(float32(1.5), kindDouble); v != float64(1.5) {
 		t.Errorf("coerce float32->kindDouble = %v (%T), want float64(1.5)", v, v)
