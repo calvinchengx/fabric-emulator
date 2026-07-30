@@ -66,9 +66,13 @@ Makes `fabric-cicd`, git integration, and deployment pipelines run offline.
       token, which returned 404; entra-emulator now serves it (v0.2.2). That
       same fix removes the root cause of `azcopy`'s static-token workaround
       (its MSAL authority validation now succeeds against the emulator).
-- [ ] **Deployment pipelines** — the third item in this phase's own header, and
-      the only one still unbuilt. Fabric has exactly two CI/CD mechanisms; git
-      integration is one, stage-to-stage promotion is the other. Designed in
+- [ ] **Deployment pipelines** — the third item in this phase's own header.
+      **D0 shipped** (pipeline/stage model + read surface: 2–10 ordered stages,
+      default Development/Test/Production, per-pipeline RBAC where the creator
+      is Admin and non-members get 404, stage→workspace assignment with live
+      name resolution and `ON DELETE SET NULL`). D1–D3 remain — Fabric has
+      exactly two CI/CD mechanisms, git integration is one and stage-to-stage
+      promotion is the other. Designed in
       [23-deployment-pipelines.md](23-deployment-pipelines.md) (D0 model+read →
       D1 assignment+pairing → D2 deploy over the existing LRO engine → D3 role
       assignments). Most of the work is *pairing*, which is persistent state

@@ -1,7 +1,10 @@
 # 23 — Deployment pipelines (P1's third leg)
 
-**Status: design. Not implemented.** No store table, no endpoints, no
-references anywhere in `internal/`.
+**Status: D0 shipped. D1–D3 designed, not built.** The pipeline/stage model
+and its read surface are real state (`internal/store/deployment.go`,
+`internal/api/deployment.go`); pairing, deployment, and the role-assignment
+CRUD are not. Nothing here pretends to deploy — those endpoints are absent
+rather than stubbed.
 
 [13-roadmap.md](13-roadmap.md)'s P1 header reads: *"Makes `fabric-cicd`, git
 integration, and **deployment pipelines** run offline."* Two of those three
@@ -125,8 +128,8 @@ Eighteen operations (`pipeline-automation-fabric.md`), grouped by phase:
 
 | Phase | Operations |
 |---|---|
-| **D0** — model + read | Create / Get / Update / Delete / List Deployment Pipelines; List + Get Stage; List Stage Items |
-| **D1** — assignment + pairing | Assign Workspace To Stage; Unassign Workspace From Stage; Update Stage; pairing on assign |
+| **D0** ✅ | Create / Get / Update / Delete / List Deployment Pipelines; List + Get + Update Stage; List Stage Items |
+| **D1** — assignment + pairing | Assign Workspace To Stage; Unassign Workspace From Stage; pairing on assign |
 | **D2** — deployment | **Deploy Stage Content** (202 LRO), deploy-all and selective; Get / List Deployment Pipeline Operations |
 | **D3** — access control | Add / Delete / List Deployment Pipeline Role Assignments |
 
@@ -135,6 +138,14 @@ Eighteen operations (`pipeline-automation-fabric.md`), grouped by phase:
 `GET /operations/{id}`, with extended deployment detail on `/result` (real
 Fabric retains it 24h; we can retain it for the process lifetime). No new
 async machinery.
+
+D0 landed `SetStageWorkspace` in the store but **no assign/unassign
+endpoints** — stage reads depend on the column, and D1 owns the REST half
+together with the pairing that must happen at the same moment. The stage's
+`workspace_id` carries an `ON DELETE SET NULL` foreign key, so deleting a
+workspace unassigns the stage rather than leaving it pointing at nothing;
+`workspaceName` is resolved live at read time, so a workspace rename shows
+through without a write to the stage.
 
 ### Store
 

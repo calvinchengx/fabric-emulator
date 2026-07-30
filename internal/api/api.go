@@ -125,6 +125,18 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/workspaces/{wid}/provisionIdentity", a.withAuth(a.provisionIdentity))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/deprovisionIdentity", a.withAuth(a.deprovisionIdentity))
 
+	// Deployment pipelines (docs/23) — D0: model + read. Assignment/pairing
+	// (D1), Deploy Stage Content (D2) and role-assignment CRUD (D3) follow.
+	mux.HandleFunc("GET /v1/deploymentPipelines", a.withAuth(a.listDeploymentPipelines))
+	mux.HandleFunc("POST /v1/deploymentPipelines", a.withAuth(a.createDeploymentPipeline))
+	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}", a.withAuth(a.getDeploymentPipeline))
+	mux.HandleFunc("PATCH /v1/deploymentPipelines/{pid}", a.withAuth(a.updateDeploymentPipeline))
+	mux.HandleFunc("DELETE /v1/deploymentPipelines/{pid}", a.withAuth(a.deleteDeploymentPipeline))
+	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/stages", a.withAuth(a.listDeploymentStages))
+	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/stages/{sid}", a.withAuth(a.getDeploymentStage))
+	mux.HandleFunc("PATCH /v1/deploymentPipelines/{pid}/stages/{sid}", a.withAuth(a.updateDeploymentStage))
+	mux.HandleFunc("GET /v1/deploymentPipelines/{pid}/stages/{sid}/items", a.withAuth(a.listDeploymentStageItems))
+
 	a.registerTyped(mux)
 	a.registerLivy(mux)
 	a.registerShortcuts(mux)
