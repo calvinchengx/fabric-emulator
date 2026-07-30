@@ -73,7 +73,11 @@ Makes `fabric-cicd`, git integration, and deployment pipelines run offline.
       name resolution and `ON DELETE SET NULL`). **D1 shipped** (assign/
       unassign workspace + real item pairing: pairs are item-id edges between
       adjacent stages that survive renames on either side, recomputed only at
-      assign — never lazily at read time). D2–D3 remain — Fabric has
+      assign — never lazily at read time). **D2 shipped** (Deploy Stage
+      Content over the existing LRO engine, deploy-all and selective, both
+      directions between adjacent stages, per-item detail on
+      `/operations/{id}/result`, plus the deployment-operations history).
+      D3 remains — Fabric has
       exactly two CI/CD mechanisms, git integration is one and stage-to-stage
       promotion is the other. Designed in
       [23-deployment-pipelines.md](23-deployment-pipelines.md) (D0 model+read →

@@ -467,6 +467,147 @@ func TestAssignPairsThroughTheAPI(t *testing.T) {
 	}
 }
 
+// deployReady builds a pipeline with dev/test assigned and one item in dev.
+func deployReady(t *testing.T, a *API, st *store.Store) (*store.DeploymentPipeline, []*store.DeploymentStage, *store.Workspace, *store.Workspace) {
+	t.Helper()
+	pl, sts := seedPipeline(t, a, "")
+	mk := func(name string, items ...string) *store.Workspace {
+		ws := &store.Workspace{DisplayName: name}
+		if err := st.CreateWorkspace(ws, store.Principal{ID: admin.ID, Type: admin.Type}); err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range items {
+			if err := st.CreateItem(&store.Item{
+				WorkspaceID: ws.ID, DisplayName: n, Type: "Notebook"}, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return ws
+	}
+	dev, tst := mk("dev-ws", "orders"), mk("test-ws")
+	for i, ws := range []*store.Workspace{dev, tst} {
+		ids := map[string]string{"pid": pl.ID, "sid": sts[i].ID}
+		if w := do(a.assignStageWorkspace, admin, "POST", `{"workspaceId":"`+ws.ID+`"}`, ids); w.Code != http.StatusOK {
+			t.Fatalf("assign %d = %d: %s", i, w.Code, w.Body)
+		}
+	}
+	return pl, sts, dev, tst
+}
+
+// TestDeployStageContentReturnsLRO: deploy answers with the 202 envelope the
+// documented scripts poll — x-ms-operation-id, Location and Retry-After.
+func TestDeployStageContentReturnsLRO(t *testing.T) {
+	a, st := newAPI(t)
+	pl, sts, _, tst := deployReady(t, a, st)
+
+	body := `{"sourceStageId":"` + sts[0].ID + `","targetStageId":"` + sts[1].ID + `","note":"promote"}`
+	w := do(a.deployStageContent, admin, "POST", body, map[string]string{"pid": pl.ID})
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("deploy = %d: %s", w.Code, w.Body)
+	}
+	opID := w.Header().Get("x-ms-operation-id")
+	if opID == "" || w.Header().Get("Location") == "" || w.Header().Get("Retry-After") == "" {
+		t.Fatalf("202 envelope incomplete: %v", w.Header())
+	}
+	// The item really landed.
+	items, err := st.ListItems(tst.ID, "")
+	if err != nil || len(items) != 1 || items[0].DisplayName != "orders" {
+		t.Fatalf("target items = %+v, %v", items, err)
+	}
+	// …and the detail is retrievable under the SAME id the LRO advertised.
+	dep, err := st.GetDeploymentOperationByID(opID)
+	if err != nil {
+		t.Fatalf("deployment detail not stored under the operation id: %v", err)
+	}
+	if dep.Note != "promote" || len(dep.Items) != 1 || dep.Items[0].Outcome != store.DeployCreated {
+		t.Fatalf("deployment detail = %+v", dep)
+	}
+}
+
+func TestDeployStageContentBadRequests(t *testing.T) {
+	a, st := newAPI(t)
+	pl, sts, _, _ := deployReady(t, a, st)
+	ids := map[string]string{"pid": pl.ID}
+	ok := `"sourceStageId":"` + sts[0].ID + `","targetStageId":"` + sts[1].ID + `"`
+
+	for name, tc := range map[string]struct {
+		body string
+		want int
+	}{
+		"malformed":      {`{`, http.StatusBadRequest},
+		"no stages":      {`{}`, http.StatusBadRequest},
+		"no target":      {`{"sourceStageId":"` + sts[0].ID + `"}`, http.StatusBadRequest},
+		"item unnamed":   {`{` + ok + `,"items":[{"itemType":"Notebook"}]}`, http.StatusBadRequest},
+		"non-adjacent":   {`{"sourceStageId":"` + sts[0].ID + `","targetStageId":"` + sts[2].ID + `"}`, http.StatusBadRequest},
+		"unknown stage":  {`{"sourceStageId":"nope","targetStageId":"` + sts[1].ID + `"}`, http.StatusNotFound},
+		"unassigned tgt": {`{"sourceStageId":"` + sts[1].ID + `","targetStageId":"` + sts[2].ID + `"}`, http.StatusBadRequest},
+	} {
+		if w := do(a.deployStageContent, admin, "POST", tc.body, ids); w.Code != tc.want {
+			t.Errorf("%s = %d, want %d (%s)", name, w.Code, tc.want, w.Body)
+		}
+	}
+	if w := do(a.deployStageContent, nobody, "POST", `{`+ok+`}`, ids); w.Code != http.StatusNotFound {
+		t.Errorf("non-member deploy = %d, want 404", w.Code)
+	}
+}
+
+// TestDeployUnpairedCollisionIs409: the emulator refuses rather than
+// duplicating or renaming (docs/23 Q1).
+func TestDeployUnpairedCollisionIs409(t *testing.T) {
+	a, st := newAPI(t)
+	pl, sts, _, tst := deployReady(t, a, st)
+	// Added AFTER assignment, so it is not paired.
+	if err := st.CreateItem(&store.Item{
+		WorkspaceID: tst.ID, DisplayName: "orders", Type: "Notebook"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"sourceStageId":"` + sts[0].ID + `","targetStageId":"` + sts[1].ID + `"}`
+	w := do(a.deployStageContent, admin, "POST", body, map[string]string{"pid": pl.ID})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("collision = %d, want 409: %s", w.Code, w.Body)
+	}
+}
+
+// TestDeploymentOperationsAPI: recorded deployments are listable and
+// gettable, and gated by pipeline membership.
+func TestDeploymentOperationsAPI(t *testing.T) {
+	a, st := newAPI(t)
+	pl, sts, _, _ := deployReady(t, a, st)
+	ids := map[string]string{"pid": pl.ID}
+	body := `{"sourceStageId":"` + sts[0].ID + `","targetStageId":"` + sts[1].ID + `"}`
+	w := do(a.deployStageContent, admin, "POST", body, ids)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("deploy = %d", w.Code)
+	}
+	opID := w.Header().Get("x-ms-operation-id")
+
+	ops := page[store.DeploymentOperation](t, do(a.listDeploymentOperations, admin, "GET", "", ids).Body.Bytes())
+	if len(ops) != 1 || ops[0].ID != opID {
+		t.Fatalf("list operations = %+v", ops)
+	}
+	withOp := map[string]string{"pid": pl.ID, "oid": opID}
+	got := do(a.getDeploymentOperation, admin, "GET", "", withOp)
+	if got.Code != http.StatusOK {
+		t.Fatalf("get operation = %d: %s", got.Code, got.Body)
+	}
+	one := &store.DeploymentOperation{}
+	json.Unmarshal(got.Body.Bytes(), one)
+	if one.ID != opID || len(one.Items) != 1 {
+		t.Fatalf("get operation body = %+v", one)
+	}
+	if w := do(a.getDeploymentOperation, admin, "GET", "",
+		map[string]string{"pid": pl.ID, "oid": "nope"}); w.Code != http.StatusNotFound {
+		t.Errorf("unknown operation = %d, want 404", w.Code)
+	}
+	for name, h := range map[string]handler{
+		"list": a.listDeploymentOperations, "get": a.getDeploymentOperation,
+	} {
+		if w := do(h, nobody, "GET", "", withOp); w.Code != http.StatusNotFound {
+			t.Errorf("non-member %s = %d, want 404", name, w.Code)
+		}
+	}
+}
+
 // TestDeploymentStoreErrors: a closed store surfaces as 500s, not panics.
 func TestDeploymentStoreErrors(t *testing.T) {
 	a, st := newAPI(t)

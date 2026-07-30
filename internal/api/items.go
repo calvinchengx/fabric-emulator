@@ -201,6 +201,16 @@ func (a *API) getOperationResult(w http.ResponseWriter, r *http.Request, p *auth
 			return
 		}
 		writeJSON(w, http.StatusOK, it)
+	case "Deploy":
+		// "For 24 hours after the deployment is completed, the extended
+		// deployment information is available in the Get Operation Result
+		// API" — here it lives as long as the store does.
+		dep, err := a.Store.GetDeploymentOperationByID(op.ResultRef)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "OperationNotFound", "The deployment result is gone.")
+			return
+		}
+		writeJSON(w, http.StatusOK, dep)
 	default:
 		// Always JSON with a Content-Type — clients (fabric-cicd) parse the
 		// header unconditionally.

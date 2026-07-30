@@ -1,10 +1,14 @@
 package server_test
 
-// Deployment pipelines D0 over the real mux (docs/23): a real entra-minted
-// bearer token through the actual routes, which the handler-level tests in
-// internal/api bypass. Would have caught a route registered on the wrong
-// method or path — the SPA fallback swallows unknown GETs, so a typo shows up
-// as HTML, not a 404.
+// Deployment pipelines D0–D2 over the real mux (docs/23): a real
+// entra-minted bearer token through the actual routes, which the
+// handler-level tests in internal/api bypass. Would have caught a route
+// registered on the wrong method or path — the SPA fallback swallows unknown
+// GETs, so a typo shows up as HTML, not a 404.
+//
+// The D2 leg follows the same path Microsoft's own DeploymentPipelines-*.ps1
+// samples take: deploy → poll the LRO → read the extended detail from
+// /operations/{id}/result.
 
 import (
 	"net/http"
@@ -136,6 +140,87 @@ func TestDeploymentPipelinesOverTheWire(t *testing.T) {
 	resp = f.call("POST", "/v1/deploymentPipelines/"+pl.ID+"/stages/"+one.ID+"/unassignWorkspace",
 		other, nil, nil)
 	f.mustStatus(resp, http.StatusNotFound, "unassign as non-member")
+
+	// D2: deploy stage 0 -> stage 1 and follow the LRO to its result, the way
+	// Microsoft's own DeployAll script does.
+	var ws2 struct {
+		ID string `json:"id"`
+	}
+	resp = f.call("POST", "/v1/workspaces", tok, map[string]any{"displayName": "dp-test"}, &ws2)
+	f.mustStatus(resp, http.StatusCreated, "create target workspace")
+	resp = f.call("POST", "/v1/workspaces/"+ws.ID+"/items", tok,
+		map[string]any{"displayName": "orders", "type": "Notebook"}, nil)
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("create item = %d", resp.StatusCode)
+	}
+	resp = f.call("POST", "/v1/deploymentPipelines/"+pl.ID+"/stages/"+stages.Value[1].ID+"/assignWorkspace",
+		tok, map[string]any{"workspaceId": ws2.ID}, nil)
+	f.mustStatus(resp, http.StatusOK, "assign target workspace")
+
+	resp = f.call("POST", "/v1/deploymentPipelines/"+pl.ID+"/deploy", tok, map[string]any{
+		"sourceStageId": one.ID, "targetStageId": stages.Value[1].ID, "note": "promote",
+	}, nil)
+	f.mustStatus(resp, http.StatusAccepted, "deploy")
+	opID := resp.Header.Get("x-ms-operation-id")
+	if opID == "" || resp.Header.Get("Location") == "" {
+		t.Fatalf("deploy 202 envelope incomplete: %v", resp.Header)
+	}
+
+	// Poll the LRO, then read the extended deployment detail from /result.
+	var opState struct {
+		Status string `json:"status"`
+	}
+	resp = f.call("GET", "/v1/operations/"+opID, tok, nil, &opState)
+	f.mustStatus(resp, http.StatusOK, "operation state")
+	if opState.Status != "Succeeded" {
+		t.Fatalf("operation status = %q", opState.Status)
+	}
+	var result struct {
+		Items []struct {
+			DisplayName  string `json:"displayName"`
+			Outcome      string `json:"outcome"`
+			TargetItemID string `json:"targetItemId"`
+		} `json:"items"`
+	}
+	resp = f.call("GET", "/v1/operations/"+opID+"/result", tok, nil, &result)
+	f.mustStatus(resp, http.StatusOK, "operation result")
+	if len(result.Items) != 1 || result.Items[0].DisplayName != "orders" ||
+		result.Items[0].Outcome != "Created" {
+		t.Fatalf("deployment result = %+v", result.Items)
+	}
+
+	// The item is really in the target workspace, with a NEW id.
+	var targetItems struct {
+		Value []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"displayName"`
+		} `json:"value"`
+	}
+	resp = f.call("GET", "/v1/workspaces/"+ws2.ID+"/items", tok, nil, &targetItems)
+	f.mustStatus(resp, http.StatusOK, "target items")
+	if len(targetItems.Value) != 1 || targetItems.Value[0].DisplayName != "orders" {
+		t.Fatalf("target workspace items = %+v", targetItems.Value)
+	}
+	if targetItems.Value[0].ID != result.Items[0].TargetItemID {
+		t.Fatalf("result target id disagrees with the workspace: %+v", targetItems.Value)
+	}
+
+	// The deployment is listed on the pipeline.
+	var deployOps struct {
+		Value []struct {
+			ID   string `json:"id"`
+			Note string `json:"note"`
+		} `json:"value"`
+	}
+	resp = f.call("GET", "/v1/deploymentPipelines/"+pl.ID+"/operations", tok, nil, &deployOps)
+	f.mustStatus(resp, http.StatusOK, "list deployment operations")
+	if len(deployOps.Value) != 1 || deployOps.Value[0].ID != opID || deployOps.Value[0].Note != "promote" {
+		t.Fatalf("deployment operations = %+v", deployOps.Value)
+	}
+
+	resp = f.call("POST", "/v1/deploymentPipelines/"+pl.ID+"/stages/"+stages.Value[1].ID+"/unassignWorkspace",
+		tok, nil, nil)
+	f.mustStatus(resp, http.StatusOK, "unassign target")
 
 	// Decode into a FRESH struct: workspaceId is omitempty, so unmarshalling
 	// an unassigned stage over a populated value would leave the old id in
