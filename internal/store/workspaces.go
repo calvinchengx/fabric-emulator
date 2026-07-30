@@ -23,7 +23,7 @@ func (s *Store) CreateWorkspace(w *Workspace, creator Principal) error {
 	if _, err := tx.Exec(
 		`INSERT INTO workspaces (id, display_name, description, capacity_id, created_at) VALUES (?,?,?,?,?)`,
 		w.ID, w.DisplayName, w.Description, w.CapacityID, w.CreatedAt); err != nil {
-		return err
+		return nameConflict(err)
 	}
 	if _, err := tx.Exec(
 		`INSERT INTO role_assignments (id, workspace_id, principal_id, principal_type, role) VALUES (?,?,?,?,?)`,
@@ -72,7 +72,7 @@ func (s *Store) UpdateWorkspace(w *Workspace) error {
 		`UPDATE workspaces SET display_name = ?, description = ?, capacity_id = ? WHERE id = ?`,
 		w.DisplayName, w.Description, w.CapacityID, w.ID)
 	if err != nil {
-		return err
+		return nameConflict(err)
 	}
 	return oneRow(res)
 }

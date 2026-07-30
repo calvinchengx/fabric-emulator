@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
@@ -14,10 +16,16 @@ import (
 
 // createPipeline seeds a DataPipeline item whose definition is the given
 // pipeline-content.json.
+// pipelineSeq keeps each created pipeline's display name unique: item names
+// are unique per (workspace, type), so tests that create several pipelines in
+// one workspace must not reuse a literal name.
+var pipelineSeq atomic.Int64
+
 func createPipeline(t *testing.T, st *store.Store, wid, contentJSON string) *store.Item {
 	t.Helper()
 	payload := base64.StdEncoding.EncodeToString([]byte(contentJSON))
-	it := &store.Item{WorkspaceID: wid, Type: "DataPipeline", DisplayName: "pl"}
+	it := &store.Item{WorkspaceID: wid, Type: "DataPipeline",
+		DisplayName: fmt.Sprintf("pl-%d", pipelineSeq.Add(1))}
 	parts := []store.DefinitionPart{{Path: "pipeline-content.json", Payload: payload, PayloadType: "InlineBase64"}}
 	if err := st.CreateItem(it, parts); err != nil {
 		t.Fatal(err)

@@ -1,9 +1,12 @@
 """Pure-unit tests for the resolver — no emulators, no network."""
-import io
-import subprocess
+import os
 import sys
 
 import pytest
+
+# Run from a clean checkout without `pip install ./python/fabric-target`:
+# put the package dir on sys.path. os.path, not a "/"-split — Windows.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fabric_target
 from fabric_target import Target, TargetError, target

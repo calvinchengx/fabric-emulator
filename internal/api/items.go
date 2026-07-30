@@ -61,6 +61,13 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		parts = body.Definition.Parts
 	}
 	if err := a.Store.CreateItem(it, parts); err != nil {
+		// The pre-check above catches the ordinary case; this is the
+		// concurrent-create race the DB constraint closes.
+		if errors.Is(err, store.ErrNameConflict) {
+			writeErr(w, http.StatusConflict, "ItemDisplayNameAlreadyInUse",
+				"An item of this type with this display name already exists in the workspace.")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
@@ -117,6 +124,11 @@ func (a *API) updateItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		it.Description = *body.Description
 	}
 	if err := a.Store.UpdateItem(it); err != nil {
+		if errors.Is(err, store.ErrNameConflict) {
+			writeErr(w, http.StatusConflict, "ItemDisplayNameAlreadyInUse",
+				"An item of this type with this display name already exists in the workspace.")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}

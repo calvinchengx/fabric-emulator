@@ -1,6 +1,10 @@
 package store
 
 import (
+	"errors"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
@@ -105,5 +109,107 @@ func TestNameTakenClosedDB(t *testing.T) {
 	}
 	if _, err := s.ItemNameTaken("w", "x", "Notebook", ""); err == nil {
 		t.Fatal("ItemNameTaken on closed DB should error")
+	}
+}
+
+// Concurrency: the API pre-checks names, but check-then-insert races mean the
+// DATABASE has to be the guarantee. Two creators of the same name must not
+// both land a row. (-race in CI; the invariant holds either way.)
+func TestConcurrentDuplicateNamesRejected(t *testing.T) {
+	s := namesStore(t)
+	p := Principal{ID: "p1", Type: "User"}
+
+	var wg sync.WaitGroup
+	var okCount int64
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Mirrors the API: pre-check, then insert.
+			if taken, _ := s.WorkspaceNameTaken("racy", ""); taken {
+				return
+			}
+			if err := s.CreateWorkspace(&Workspace{DisplayName: "racy"}, p); err == nil {
+				atomic.AddInt64(&okCount, 1)
+			} else if !errors.Is(err, ErrNameConflict) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt64(&okCount); got != 1 {
+		t.Fatalf("%d creators succeeded; exactly 1 must", got)
+	}
+	all, err := s.ListAllWorkspaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, w := range all {
+		if strings.EqualFold(w.DisplayName, "racy") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("uniqueness violated: %d workspaces named 'racy'", n)
+	}
+}
+
+// Same for items, whose uniqueness is scoped per (workspace, type).
+func TestConcurrentDuplicateItemNamesRejected(t *testing.T) {
+	s := namesStore(t)
+	ws := &Workspace{DisplayName: "ws"}
+	if err := s.CreateWorkspace(ws, Principal{ID: "p1", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	var okCount int64
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if taken, _ := s.ItemNameTaken(ws.ID, "dup", "Notebook", ""); taken {
+				return
+			}
+			err := s.CreateItem(&Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "dup"}, nil)
+			if err == nil {
+				atomic.AddInt64(&okCount, 1)
+			} else if !errors.Is(err, ErrNameConflict) {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt64(&okCount); got != 1 {
+		t.Fatalf("%d creators succeeded; exactly 1 must", got)
+	}
+	items, err := s.ListItems(ws.ID, "Notebook")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("uniqueness violated: %d items named 'dup'", len(items))
+	}
+}
+
+// The sentinel must not swallow unrelated failures.
+func TestNameConflictOnlyMapsNameIndexes(t *testing.T) {
+	if err := nameConflict(nil); err != nil {
+		t.Fatalf("nil passed through as %v", err)
+	}
+	other := errors.New("UNIQUE constraint failed: role_assignments.workspace_id")
+	if errors.Is(nameConflict(other), ErrNameConflict) {
+		t.Fatal("a non-display-name UNIQUE violation was mapped to ErrNameConflict")
+	}
+	plain := errors.New("disk full")
+	if errors.Is(nameConflict(plain), ErrNameConflict) {
+		t.Fatal("an unrelated error was mapped to ErrNameConflict")
+	}
+	dup := errors.New("UNIQUE constraint failed: ux_workspaces_display_name")
+	if !errors.Is(nameConflict(dup), ErrNameConflict) {
+		t.Fatal("a display-name violation was NOT mapped")
 	}
 }

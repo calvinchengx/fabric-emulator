@@ -52,6 +52,13 @@ func (a *API) createWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 	}
 	ws := &store.Workspace{DisplayName: body.DisplayName, Description: body.Description, CapacityID: body.CapacityID}
 	if err := a.Store.CreateWorkspace(ws, store.Principal{ID: p.ID, Type: p.Type}); err != nil {
+		// The pre-check above catches the ordinary case; this is the
+		// concurrent-create race the DB constraint closes.
+		if errors.Is(err, store.ErrNameConflict) {
+			writeErr(w, http.StatusConflict, "WorkspaceNameAlreadyExists",
+				"A workspace with this display name already exists.")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
@@ -109,6 +116,11 @@ func (a *API) updateWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		ws.Description = *body.Description
 	}
 	if err := a.Store.UpdateWorkspace(ws); err != nil {
+		if errors.Is(err, store.ErrNameConflict) {
+			writeErr(w, http.StatusConflict, "WorkspaceNameAlreadyExists",
+				"A workspace with this display name already exists.")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
