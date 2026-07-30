@@ -1,0 +1,95 @@
+# 24 — Parity completion: what "100% real" would take
+
+The [parity map](parity.md) grades every Fabric capability 🟢 Real / 🟡 Emulated
+/ 🟠 BYO-engine / 🔴 Not implemented. This doc answers the obvious follow-up —
+*what would it take to make everything 🟢?* — and gives the honest answer:
+
+> **100% is not reachable, ~88–90% is, and three rows should deliberately never
+> be closed.** Four proprietary engines have no open equivalent; that is a
+> documented boundary, not a backlog.
+
+Written before execution so three concurrent sessions plan against one baseline
+(the LakeSail track ran this way — [20-lakesail-engine.md](20-lakesail-engine.md)
+preceded its code).
+
+## Baseline
+
+Graded from `docs/parity.md` at the time of writing: **60 🟢, 7 🟡, 7 🟠, 14 🔴**
+across 8 areas (a row may carry two marks). CI/CD, Data Warehouse, Platform, and
+OneLake are effectively complete; Data Engineering holds the largest cluster of
+non-green marks, and "item types, engine absent" holds the rest.
+
+## Won't do — and why that's the right call
+
+| Row | Grade | Why it stays |
+|---|---|---|
+| Long-running operations (202 → poll) | 🟡 | Clock-derived **on purpose**. Real Fabric makes you wait minutes; the virtual clock is the single most valuable testing feature the emulator has. Making it "real" means sleeping — strictly worse. |
+| Generic item job status | 🟡 | Same reason. (DataPipeline jobs already run for real.) |
+| Web / external-connector activity leaves | 🟡 | Executing arbitrary URLs would destroy the offline + deterministic guarantee. Stubbed success is the correct behavior for a hermetic emulator. |
+
+## Tier 1 — Control plane only (no engine, no research risk)
+
+Pure CRUD + RBAC in patterns the repo has executed a dozen times.
+
+| Gap | Scope | Size |
+|---|---|---|
+| Tenant settings / audit / admin-portal APIs | Typed settings, audit event list, admin-scoped RBAC | S |
+| Graph, Real-Time Hub, Embed, Workload Dev Kit | Typed items + definition round-trip | S–M |
+| Sensitivity labels | The label assignment API (not Purview scanning) | M |
+| Dataflow Gen2 **management** completeness | Finish the non-engine surface; execution stays 501 | S |
+
+## Tier 2 — Attach a real engine that exists
+
+The repo's established move: terminate the protocol ourselves, let a real engine
+compute (SQL Server for TDS, Sail for Spark, MLflow for data science).
+
+| Gap | Engine | Status |
+|---|---|---|
+| Spark: structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs, `sc`/RDD, `spark.jars`, CDF | `apache/spark` JVM as an **opt-in profile** beside Sail | **Largely landed** — `e2e/spark-jvm` + dual-engine notebook and compatibility-boundary suites exist with compose wiring. Remaining: confirm the user-facing profile is documented, then **upgrade the parity rows** (lines ~92–98) from 🔴 to 🟠 "real on the JVM profile". Closes ~7 Data-Engineering marks. |
+| KQL / Eventhouse / Eventstream execution | **`mcr.microsoft.com/azuredataexplorer/kustainer-linux`** — Microsoft's own KQL engine container (**verified pullable**) | Not started. Converts an entire "engine absent" category to real, via the same sidecar pattern as SQL Server. Highest-value remaining item. |
+| Copy / shortcuts to external stores (S3, standalone ADLS Gen2) | MinIO or LocalStack (**verified pullable**) | Partly done (ADLS/S3 read-through exists); a local S3 sidecar makes the write paths real while staying offline. |
+
+## Tier 3 — Build the protocol ourselves
+
+Precedent: `internal/tds` terminates TDS + Entra FedAuth and byte-splices to a
+real SQL Server. These are the same class of work.
+
+| Gap | Notes | Size |
+|---|---|---|
+| XMLA / ADOMD.NET (SemPy's transport) | Documented protocol (MS-XMLA / MS-SSAS); no harder than TDS was. Gated on real demand — no CI oracle today | L |
+| Full DAX | The bounded engine works; this is open-ended surface growth, not a blocker | L, open-ended |
+| On-prem gateway **contract** | Emulate the protocol, not the proprietary binary | M |
+
+## Tier 4 — Not reachable without Microsoft's source
+
+| Gap | Blocker |
+|---|---|
+| **Power Query M engine** (Dataflow Gen2 execution) | No open implementation exists anywhere. The hardest gap on the board. |
+| Power BI report rendering | Proprietary renderer |
+| Dataverse shortcuts | Proprietary backend, no emulator |
+| Copilot / IQ fidelity | An LLM can be attached; never *the* model |
+
+These stay 🔴 with honest 501s. A clean-room emulator that is ~90% real with
+loud failures at the edges is a better artifact than one that fakes the last
+10% — the same stance [parity.md](parity.md) already takes.
+
+## Sequence
+
+1. **Finish the JVM profile story** — verify wiring, document the profile, upgrade the parity rows. Mostly bookkeeping on work already done; biggest single parity jump.
+2. **kustainer → RTI** — new sidecar, new e2e, converts a whole category.
+3. **Tier 1 sweep** — steady, no-risk points; good parallel lane.
+4. **MinIO → external-store Copy** — completes the Copy/shortcut story.
+5. **Tier 3 only on demand** — XMLA when a real SemPy user appears.
+
+Ceiling after 1–4: **~88–90% real**, with the remainder documented as boundary.
+
+## Coordination
+
+Three sessions share this checkout. Rules that have worked:
+
+- One lane per session; commit only your lane's paths; `pull --rebase` before push.
+- Re-read this doc and `parity.md` before starting a tier — both move.
+- Grade honestly: if a real engine computes it, 🟢; if it needs an attached
+  engine, 🟠; if it 501s, 🔴. Never grade intent.
+- Every 🟢 needs a real-client witness in CI, per the ecosystem-conformance
+  table in [parity.md](parity.md).
