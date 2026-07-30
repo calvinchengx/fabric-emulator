@@ -36,7 +36,14 @@ func (c *Client) SyncDAGs(ctx context.Context, itemID string, files map[string][
 	cleanFiles := make(map[string][]byte, len(files))
 	for name, raw := range files {
 		clean := filepath.Clean(name)
-		if clean == "." || clean == ".." || filepath.IsAbs(clean) || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		// A leading separator must be rejected explicitly: on Windows
+		// filepath.IsAbs("/x") is FALSE (an absolute path there needs a
+		// volume, "C:\\x"), so a rooted name would otherwise pass validation
+		// — and since validation gates the RemoveAll below, that silently
+		// wiped the item's existing DAGs and reported success.
+		rooted := clean != "" && os.IsPathSeparator(clean[0])
+		if clean == "." || clean == ".." || rooted || filepath.IsAbs(clean) ||
+			strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			return fmt.Errorf("invalid DAG path %q", name)
 		}
 		cleanFiles[clean] = raw
