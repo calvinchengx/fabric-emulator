@@ -131,6 +131,11 @@ def main():
     })
 
     workspaces = fab.get(f"{FABRIC}/v1/workspaces", timeout=15).json()["value"]
+    if not workspaces:
+        sys.exit("govern-ingest: the emulator has no workspaces visible to this "
+                 "principal — nothing to catalog. (If you just seeded state, "
+                 "check the emulator wasn't restarted: state is in-memory "
+                 "unless FABRIC_DATA_DIR is set.)")
     n_db = n_schema = n_table = 0
     for ws in workspaces:
         db_fqn = f"{SERVICE}.{ws['displayName']}"

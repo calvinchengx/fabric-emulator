@@ -113,7 +113,10 @@ def main():
     log("delta table written via delta-rs")
 
     log("running govern-ingest")
-    compose("run", "--rm", "govern-ingest")
+    # --no-deps: everything is already up; letting compose re-evaluate the
+    # dependency chain here re-runs one-shots and can recreate fabric,
+    # wiping its in-memory state between seed and ingest (seen on CI).
+    compose("run", "--rm", "--no-deps", "govern-ingest")
 
     log("asserting through OpenMetadata's API")
     r = requests.post(f"{om}/api/v1/users/login",
@@ -135,7 +138,7 @@ def main():
 
     # Idempotency: a second ingest must succeed and not duplicate.
     log("re-running govern-ingest (idempotency)")
-    compose("run", "--rm", "govern-ingest")
+    compose("run", "--rm", "--no-deps", "govern-ingest")
     t2 = requests.get(f"{om}/api/v1/tables/name/fabric-emulator.govws.lake.orders",
                       headers=h, timeout=30)
     assert t2.status_code == 200
