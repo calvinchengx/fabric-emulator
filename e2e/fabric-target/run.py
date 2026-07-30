@@ -2,9 +2,8 @@
 """e2e T0: the fabric_target toggle resolves the emulator profile and drives
 the real control plane through it — target() -> credential -> session ->
 workspace-by-name -> item -> LRO poll -> guards. Self-contained and
-OS-agnostic like the other suites: builds fabric-emulator from this repo,
-installs entra-emulator if missing, runs the driver in a venv with the
-fabric-target package installed from source."""
+OS-agnostic like the other suites: builds fabric-emulator from this repo and
+runs with the locked `fabric-target` uv dependency group."""
 
 import os
 import shutil
@@ -78,21 +77,13 @@ try:
         stdout=open(os.path.join(WORK, "fabric.log"), "w"), stderr=subprocess.STDOUT))
     wait_healthy(f"https://localhost:{FABRIC_PORT}/health")
 
-    log("creating venv with fabric-target from source")
-    venv = os.path.join(WORK, "venv")
-    subprocess.run([sys.executable, "-m", "venv", venv], check=True)
-    vpy = os.path.join(venv, "Scripts" if os.name == "nt" else "bin", "python" + EXE)
-    subprocess.run([vpy, "-m", "pip", "install", "-q",
-                    os.path.join(REPO, "python", "fabric-target"),
-                    "requests", "pytest"], check=True)
-
     env = {**os.environ,
            "FABRIC_TARGET": "emulator",
            "FABRIC_EMULATOR_URL": f"https://localhost:{FABRIC_PORT}",
            "ENTRA_EMULATOR_URL": f"https://localhost:{ENTRA_PORT}"}
 
     log("running driver")
-    subprocess.run([vpy, os.path.join(DIR, "driver.py")], check=True, env=env)
+    subprocess.run([sys.executable, os.path.join(DIR, "driver.py")], check=True, env=env)
 
     # T1: the dual-target conformance suite, emulator leg. The same tests run
     # against real Fabric via .github/workflows/real-fabric.yml — only
@@ -101,7 +92,7 @@ try:
     # mode always must.
     log("running conformance suite (FABRIC_TARGET=emulator)")
     subprocess.run(
-        [vpy, "-m", "pytest", "-m", "target", "-q",
+        [sys.executable, "-m", "pytest", "-m", "target", "-q",
          os.path.join(REPO, "python", "fabric-target", "conformance")],
         check=True, env={**env, "FABRIC_WORKSPACE": "target-e2e"})
     log("PASS")

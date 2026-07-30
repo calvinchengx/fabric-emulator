@@ -80,10 +80,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
       # Self-contained: starts entra-emulator (go install) + fabric-emulator,
       # installs fabric-cicd in a venv, publishes a notebook repo, and
       # verifies the definition round-trips (idempotently).
-      - run: python e2e/fabric-cicd/run.py
+      - run: uv run --frozen --group fabric-cicd python e2e/fabric-cicd/run.py
 
   fabric-target:
     name: fabric_target toggle drives the emulator profile (T0)
@@ -100,12 +103,15 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
       # Unit layer: pure resolver tests (no network). Install the package so
       # fabric_target is importable from any rootdir.
-      - run: pip install -q pytest ./python/fabric-target && python -m pytest python/fabric-target/tests -q
+      - run: uv run --frozen --group fabric-target pytest python/fabric-target/tests -q
       # Live layer: target() -> credential -> session -> workspace-by-name ->
       # item -> LRO poll -> guards, against real entra+fabric binaries.
-      - run: python e2e/fabric-target/run.py
+      - run: uv run --frozen --group fabric-target python e2e/fabric-target/run.py
 
   governance:
     name: OpenMetadata governance profile catalogs the emulator (containerized)
@@ -115,11 +121,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
       # The optional governance profile, witnessed: family + OpenMetadata
       # (Postgres) up, a real Delta table seeded via delta-rs, govern-ingest
       # catalogs it, and OM's API must return the table with columns mapped
       # from the Delta schema. Linux-only (heavy: OM server + Elasticsearch).
-      - run: python3 e2e/governance/run.py
+      - run: uv run --frozen --group governance python e2e/governance/run.py
 
   governance-sso:
     name: OpenMetadata authenticates against entra-emulator (containerized)
@@ -129,10 +138,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
       # The catalog inside the family trust chain: OM's authenticator is
       # entra-emulator, so an entra-minted user token is accepted while
       # badly-signed and expired ones are refused. Linux-only (heavy).
-      - run: python3 e2e/governance/sso.py
+      - run: uv run --frozen --group governance python e2e/governance/sso.py
 
   delta-rs:
     name: Real delta-rs writes Delta through OneLake
@@ -149,11 +161,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
       # Starts entra-emulator + fabric-emulator, then the real `deltalake`
       # (delta-rs) engine writes and reads a Delta table through the OneLake
       # Blob surface with an entra-minted Storage token — exercising Range
       # reads and the _delta_log put-if-absent commit primitive.
-      - run: python e2e/delta-rs/run.py
+      - run: uv run --frozen --group delta-rs python e2e/delta-rs/run.py
 
   adls-sdk:
     name: Real Azure Blob SDK round-trips through OneLake
@@ -170,10 +185,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
       # Microsoft's real `azure-storage-blob` SDK uploads a pyarrow-written
       # Parquet, downloads it byte-identical (exercising x-ms-range), lists
       # blobs, and the DFS surface sees the same file — the ADLS SDK oracle.
-      - run: python e2e/adls-sdk/run.py
+      - run: uv run --frozen --group adls-sdk python e2e/adls-sdk/run.py
 
   azcopy:
     name: Real azcopy transfers through OneLake
@@ -303,9 +321,12 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
       # Real DuckDB runs SQL (aggregation, join, filter) over Delta tables in
       # the OneLake plane — the lakehouse SQL-analytics-endpoint semantics.
-      - run: python e2e/duckdb/run.py
+      - run: uv run --frozen --group duckdb python e2e/duckdb/run.py
 
   notebookutils:
     name: notebookutils shim drives the family (notebook loop)
@@ -322,15 +343,18 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
       # T2 unit layer: the shim resolves emulator vs real Fabric from
       # FABRIC_TARGET (endpoints, TLS, and DefaultAzureCredential in real
       # mode) with no network and no Azure.
-      - run: pip install -q pytest && python -m pytest python/tests -q
+      - run: uv run --frozen --group test pytest python/tests -q
       # Brings up entra + fabric + azure-keyvault and runs a real Fabric
       # notebook that drives the functional notebookutils shim: fs over
       # OneLake, credential tokens, Key Vault secret brokering, lakehouse
       # control plane, and notebook.run — the notebook developer loop.
-      - run: python e2e/notebookutils/run.py
+      - run: uv run --frozen --group test python e2e/notebookutils/run.py
 
   notebook-run:
     name: Sail executes representative notebook cells (containerized)
@@ -404,7 +428,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
       # The SemPy/GX tutorial's subject: real great_expectations validates the
       # emulator's executeQueries results — Store/Measure suites pass, the YoY
       # ratio DAX asset fails (out of band), mirroring the tutorial.
-      - run: python e2e/great-expectations/run.py
+      - run: uv run --frozen --group great-expectations python e2e/great-expectations/run.py

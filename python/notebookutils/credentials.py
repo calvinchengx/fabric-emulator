@@ -45,7 +45,7 @@ def _real_token(scope):
         except ImportError as e:
             raise RuntimeError(
                 "notebookutils: FABRIC_TARGET=real needs azure-identity "
-                "(pip install azure-identity), then `az login` or AZURE_* "
+                "(`uv add azure-identity`), then `az login` or AZURE_* "
                 "credentials in the environment."
             ) from e
         _real_credential = DefaultAzureCredential()

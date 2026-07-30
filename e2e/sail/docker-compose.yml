@@ -41,7 +41,8 @@ services:
 
   sail:
     build:
-      context: ../../docker/sail
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
     depends_on:
       fabric-emulator:
         condition: service_healthy
@@ -59,7 +60,10 @@ services:
       RUST_LOG: "info"
 
   driver:
-    image: python:3.12-slim
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
     depends_on:
       sail:
         condition: service_started
@@ -71,4 +75,4 @@ services:
       SPARK_REMOTE: "sc://sail:50051"
       FABRIC: "http://fabric-emulator"
       ENTRA: "http://entra-emulator:8443"
-    command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /driver.py"
+    command: python /driver.py

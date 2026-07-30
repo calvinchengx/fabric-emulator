@@ -155,7 +155,7 @@ class Target:
                     from azure.identity import DefaultAzureCredential
                 except ImportError as e:
                     raise TargetError(
-                        "real mode needs azure-identity: pip install 'fabric-target[real]'"
+                        "real mode needs azure-identity: uv add 'fabric-target[real]'"
                     ) from e
                 self._credential = DefaultAzureCredential()
         return self._credential
@@ -183,7 +183,7 @@ class Target:
             import requests
         except ImportError as e:
             raise TargetError(
-                "session() needs requests: pip install 'fabric-target[sessions]'") from e
+                "session() needs requests: uv add 'fabric-target[sessions]'") from e
 
         if not self.tls_verify:
             # Self-signed family certs are the norm locally; the warning would

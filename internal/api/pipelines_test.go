@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -546,6 +547,26 @@ func TestPipelineCopyActivityRealBytes(t *testing.T) {
 	if out["filesWritten"].(float64) != 1 || int(out["dataWritten"].(float64)) != len(payload) {
 		t.Fatalf("copy output = %+v", out)
 	}
+	lineage := out["lineage"].(map[string]any)
+	if lineage["sourceItemId"] != src.ID || lineage["targetPath"] != "Files/out.csv" {
+		t.Fatalf("activity lineage = %+v", lineage)
+	}
+	w := do(a.listLineage, viewer, "GET", "", map[string]string{"wid": ws.ID})
+	if w.Code != http.StatusOK {
+		t.Fatalf("viewer lineage = %d %s", w.Code, w.Body.Bytes())
+	}
+	var page struct {
+		Value []store.LineageEdge `json:"value"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Value) != 1 || page.Value[0].JobID != jid || page.Value[0].ActivityName != "Move" {
+		t.Fatalf("lineage page = %+v", page.Value)
+	}
+	if w := do(a.listLineage, nobody, "GET", "", map[string]string{"wid": ws.ID}); w.Code != http.StatusForbidden {
+		t.Fatalf("ungranted lineage = %d", w.Code)
+	}
 }
 
 // TestPipelineCopyDirectory: copying a directory moves the whole subtree,
@@ -557,10 +578,8 @@ func TestPipelineCopyDirectory(t *testing.T) {
 	dst := seedLakehouse(t, st, ws.ID, "dst")
 	seedFile(t, st, ws.ID, src.ID, "Files/in/a.txt", []byte("A"))
 	seedFile(t, st, ws.ID, src.ID, "Files/in/sub/b.txt", []byte("BB"))
-	// The directory row (IsDir) is what makes the copy recurse the subtree.
-	if err := st.CreateOneLakePath(&store.OneLakePath{WorkspaceID: ws.ID, ItemID: src.ID, RelPath: "Files/in", IsDir: true, Content: []byte{}}, false); err != nil {
-		t.Fatal(err)
-	}
+	// The parent directory is deliberately implicit, as it is for Delta data
+	// written through ADLS clients; the nonempty prefix still copies recursively.
 
 	content := `{"properties":{"activities":[
         {"name":"Move","type":"Copy","typeProperties":{

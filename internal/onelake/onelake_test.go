@@ -299,6 +299,16 @@ func TestManagedFolderEnforcement(t *testing.T) {
 			}
 		}
 	}
+	// Hadoop's mkdirs probe for an existing managed folder is idempotent. This
+	// is the path Spark's catalog initialization uses for a bound lakehouse.
+	r := httptest.NewRequest(http.MethodPut, "/"+f.ws.ID+"/"+f.it.ID+"/Tables?resource=directory", nil)
+	r.Header.Set("Authorization", "Bearer "+f.token)
+	r.Header.Set("User-Agent", "APN/1.0 Azure Blob FS/3.3.4")
+	w := httptest.NewRecorder()
+	f.svc.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ABFS managed mkdir = %d %s", w.Code, w.Body.String())
+	}
 }
 
 func TestRejectedQueryParams(t *testing.T) {

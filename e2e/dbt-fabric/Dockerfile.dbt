@@ -2,6 +2,7 @@
 # driver. dbt-fabric talks TDS via pyodbc/ODBC Driver 18 — an *independent* TDS
 # implementation from go-mssqldb, which is the whole point of this witness.
 FROM python:3.12-slim
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 
 # Microsoft ODBC Driver 18 (msodbcsql18) from packages.microsoft.com.
 # git: dbt debug's environment check probes `git --help`.
@@ -15,10 +16,14 @@ RUN apt-get update \
     && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir dbt-fabric
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+COPY python/ ./python/
+RUN uv sync --frozen --no-install-project --group dbt-fabric
+ENV PATH="/app/.venv/bin:${PATH}"
 
 WORKDIR /project
-COPY project/ /project/
-COPY runner.py /runner.py
+COPY e2e/dbt-fabric/project/ /project/
+COPY e2e/dbt-fabric/runner.py /runner.py
 
 CMD ["python3", "/runner.py"]

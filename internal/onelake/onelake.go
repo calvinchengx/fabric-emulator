@@ -14,6 +14,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -28,14 +29,15 @@ var StorageAudience = []string{"https://storage.azure.com", "https://storage.azu
 
 // Service handles the DFS and Blob surfaces.
 type Service struct {
-	Store *store.Store
-	Auth  *auth.Validator // configured with the Storage audience
-	stage blockStage     // uncommitted Put Block staging (Blob dialect)
+	Store  *store.Store
+	Auth   *auth.Validator // configured with the Storage audience
+	stage  blockStage      // uncommitted Put Block staging (Blob dialect)
+	Client *http.Client
 }
 
 // New builds the service; the validator must carry StorageAudience.
 func New(st *store.Store, v *auth.Validator) *Service {
-	return &Service{Store: st, Auth: v}
+	return &Service{Store: st, Auth: v, Client: &http.Client{Timeout: 30 * time.Second}}
 }
 
 // Headers OneLake ignores (unpermitted-action headers); echoed back in
@@ -156,12 +158,21 @@ func (s *Service) resolveRead(itemID, rel, principalID string) (*store.OneLakePa
 	if p, err := s.Store.GetOneLakePath(itemID, rel); err == nil {
 		return p, nil
 	}
+	// Lakehouse managed folders exist even before they contain user data. They
+	// are virtual service-owned directories: readable/stat-able, but mutation
+	// remains blocked by the managed-folder guards in ServeHTTP.
+	if rel == "Files" || rel == "Tables" {
+		return &store.OneLakePath{ItemID: itemID, RelPath: rel, IsDir: true, CreatedAt: s.Store.Now()}, nil
+	}
 	sc, remainder, err := s.Store.ShortcutFor(itemID, rel)
 	if err != nil {
 		return nil, &dfsError{"InternalError", http.StatusInternalServerError, err.Error()}
 	}
 	if sc == nil {
 		return nil, &dfsError{"PathNotFound", http.StatusNotFound, "The path does not exist."}
+	}
+	if sc.TargetType == "ADLSGen2" || sc.TargetType == "AmazonS3" {
+		return s.resolveExternal(sc, remainder)
 	}
 	role, err := s.Store.RoleOf(sc.TargetWorkspace, principalID)
 	if err != nil {
@@ -177,6 +188,45 @@ func (s *Service) resolveRead(itemID, rel, principalID string) (*store.OneLakePa
 		return nil, &dfsError{"PathNotFound", http.StatusNotFound, "The shortcut target path does not exist (dangling shortcut)."}
 	}
 	return p, nil
+}
+
+func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.OneLakePath, *dfsError) {
+	target, err := url.Parse(sc.TargetLocation + "/" + joinPath(sc.TargetPath, remainder))
+	if err != nil {
+		return nil, &dfsError{"ExternalTargetInvalid", http.StatusBadGateway, err.Error()}
+	}
+	conn, err := s.Store.GetConnection(sc.ConnectionID)
+	if err != nil {
+		return nil, &dfsError{"ExternalConnectionNotFound", http.StatusBadGateway, "The shortcut connection is unavailable."}
+	}
+	req, _ := http.NewRequest(http.MethodGet, target.String(), nil)
+	var creds struct{ CredentialType, Username, Password, Key, Token string }
+	_ = json.Unmarshal([]byte(conn.CredentialsJSON), &creds)
+	switch creds.CredentialType {
+	case "Basic":
+		req.SetBasicAuth(creds.Username, creds.Password)
+	case "SharedAccessSignature":
+		target.RawQuery = strings.TrimPrefix(creds.Token, "?")
+		req.URL = target
+	case "Key":
+		req.Header.Set("x-api-key", creds.Key)
+	case "", "Anonymous":
+	default:
+		return nil, &dfsError{"ExternalCredentialUnsupported", http.StatusBadGateway, "The shortcut credential type is not supported for HTTP read-through."}
+	}
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return nil, &dfsError{"ExternalTargetUnavailable", http.StatusBadGateway, err.Error()}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &dfsError{"ExternalTargetError", http.StatusBadGateway, fmt.Sprintf("external target returned HTTP %d", resp.StatusCode)}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return nil, &dfsError{"ExternalTargetError", http.StatusBadGateway, err.Error()}
+	}
+	return &store.OneLakePath{RelPath: remainder, Content: body, CreatedAt: s.Store.Now(), ModifiedAt: s.Store.Now()}, nil
 }
 
 func joinPath(base, remainder string) string {
@@ -321,6 +371,15 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeDFSErr(w, dfsError{"PathIsDirectory", http.StatusBadRequest,
 				"The path is a Fabric-managed folder."})
 		default:
+			// Hadoop ABFS implements mkdirs as an unconditional create request.
+			// For an already-existing managed directory, make that operation
+			// idempotent; no user-owned path is created or changed. Other managed
+			// folder mutations retain the public OneLake rejection below.
+			if r.Method == http.MethodPut && r.URL.Query().Get("resource") == "directory" &&
+				strings.Contains(r.UserAgent(), "Azure Blob FS") {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 			writeDFSErr(w, dfsError{"OperationNotAllowedOnManagedFolder", http.StatusConflict,
 				"Fabric-managed folders (the item root and its first level) cannot be created, renamed, or deleted via ADLS APIs."})
 		}

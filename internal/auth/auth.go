@@ -128,7 +128,7 @@ func (v *Validator) Validate(token string) (*Principal, error) {
 		return nil, fmt.Errorf("%w: claims", ErrBadToken)
 	}
 	if claims.Iss != v.Issuer {
-		return nil, fmt.Errorf("%w: issuer %q not trusted", ErrBadToken, claims.Iss)
+		return nil, fmt.Errorf("%w: issuer %q not trusted (expected %q)", ErrBadToken, claims.Iss, v.Issuer)
 	}
 	if !audMatch(claims.Aud, v.Audiences) {
 		return nil, fmt.Errorf("%w: audience not accepted", ErrBadToken)

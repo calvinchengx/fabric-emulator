@@ -5,12 +5,13 @@
 #   docker compose -f docker-compose.yml -f docker-compose.compute.yml up
 #
 # Clients connect to Spark Connect directly too: sc://localhost:50051
-# (pip install "pyspark-client==4.2.0"; no JVM needed). See
+# (`uv add pyspark-client==4.2.0`; no JVM needed). See
 # docs/20-lakesail-engine.md for the design and its limits.
 services:
   sail:
     build:
-      context: ./docker/sail
+      context: .
+      dockerfile: docker/sail/Dockerfile
     depends_on:
       fabric-emulator:
         condition: service_healthy
@@ -30,7 +31,10 @@ services:
       RUST_LOG: "info"
 
   spark-agent:
-    image: python:3.12-slim
+    build:
+      context: .
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
     depends_on:
       sail:
         condition: service_started
@@ -38,7 +42,7 @@ services:
       - ./e2e/livy/agent.py:/agent.py:ro
     environment:
       SPARK_REMOTE: "sc://sail:50051" # agent becomes a Connect client — no JVM
-    command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /agent.py"
+    command: python /agent.py
 
   # Same warehouse sidecar as docker-compose.override.yml — restated here so
   # `-f docker-compose.yml -f docker-compose.compute.yml` is a COMPLETE stack

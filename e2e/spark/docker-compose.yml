@@ -43,7 +43,8 @@ services:
   # LakeSail's Sail: the Spark engine (Rust Spark Connect, no JVM).
   sail:
     build:
-      context: ../../docker/sail
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
     depends_on:
       fabric-emulator:
         condition: service_healthy
@@ -60,7 +61,10 @@ services:
   # The A2 job — a real PySpark Connect client (python:slim, no JVM).
   # Keeps the service name "spark" so run.py's --exit-code-from stays valid.
   spark:
-    image: python:3.12-slim
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
     depends_on:
       fabric-emulator:
         condition: service_healthy
@@ -70,4 +74,4 @@ services:
       - ./job.py:/job.py:ro
     environment:
       SPARK_REMOTE: "sc://sail:50051"
-    command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /job.py"
+    command: python /job.py

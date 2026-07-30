@@ -1,15 +1,13 @@
 package api
 
-// OneLake shortcuts: symlinks from an item's managed folder to a target
-// OneLake location. Scope is OneLake-to-OneLake only — external targets (ADLS
-// Gen2, S3, Dataverse) need real cloud credentials an offline emulator cannot
-// honor, so they 501. Data-plane resolution + target-side RBAC live in the
-// OneLake surface (internal/onelake).
+// OneLake shortcuts: symlinks from an item's managed folder to a OneLake,
+// ADLS Gen2, or Amazon S3 target.
 
 import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
@@ -36,8 +34,16 @@ type shortcutBody struct {
 		} `json:"oneLake"`
 		// Any other target kind (adlsGen2, amazonS3, dataverse, …) present →
 		// unsupported.
-		ADLSGen2  json.RawMessage `json:"adlsGen2"`
-		AmazonS3  json.RawMessage `json:"amazonS3"`
+		ADLSGen2 *struct {
+			Location     string `json:"location"`
+			Subpath      string `json:"subpath"`
+			ConnectionID string `json:"connectionId"`
+		} `json:"adlsGen2"`
+		AmazonS3 *struct {
+			Location     string `json:"location"`
+			Subpath      string `json:"subpath"`
+			ConnectionID string `json:"connectionId"`
+		} `json:"amazonS3"`
 		Dataverse json.RawMessage `json:"dataverse"`
 	} `json:"target"`
 }
@@ -58,9 +64,35 @@ func (a *API) createShortcut(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "path and name are required.")
 		return
 	}
-	if body.Target.ADLSGen2 != nil || body.Target.AmazonS3 != nil || body.Target.Dataverse != nil {
+	if body.Target.Dataverse != nil {
 		writeErr(w, http.StatusNotImplemented, "ExternalShortcutTargetUnsupported",
-			"The emulator supports OneLake-to-OneLake shortcuts only; external targets need real cloud credentials.")
+			"Dataverse shortcuts are not supported by the emulator.")
+		return
+	}
+	if body.Target.ADLSGen2 != nil || body.Target.AmazonS3 != nil {
+		typeName, location, subpath, connectionID := "ADLSGen2", "", "", ""
+		if ext := body.Target.ADLSGen2; ext != nil {
+			location, subpath, connectionID = ext.Location, ext.Subpath, ext.ConnectionID
+		} else {
+			typeName = "AmazonS3"
+			location, subpath, connectionID = body.Target.AmazonS3.Location, body.Target.AmazonS3.Subpath, body.Target.AmazonS3.ConnectionID
+		}
+		u, parseErr := url.Parse(location)
+		if parseErr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || connectionID == "" {
+			writeErr(w, http.StatusBadRequest, "InvalidRequest", "external targets require an http(s) location and connectionId.")
+			return
+		}
+		if _, err := a.Store.GetConnection(connectionID); err != nil {
+			writeErr(w, http.StatusBadRequest, "ConnectionNotFound", "connectionId does not resolve to a connection.")
+			return
+		}
+		sc := &store.Shortcut{ItemID: it.ID, Path: strings.Trim(body.Path, "/"), Name: body.Name,
+			TargetType: typeName, TargetLocation: strings.TrimRight(location, "/"), TargetPath: strings.Trim(subpath, "/"), ConnectionID: connectionID}
+		if err := a.Store.CreateShortcut(sc); err != nil {
+			writeErr(w, http.StatusConflict, "ShortcutAlreadyExists", "A shortcut with this path and name already exists.")
+			return
+		}
+		writeJSON(w, http.StatusCreated, shortcutDTO(sc))
 		return
 	}
 	ol := body.Target.OneLake
@@ -82,7 +114,7 @@ func (a *API) createShortcut(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	}
 	sc := &store.Shortcut{
 		ItemID: it.ID, Path: strings.Trim(body.Path, "/"), Name: body.Name,
-		TargetWorkspace: ol.WorkspaceID, TargetItem: ol.ItemID, TargetPath: strings.Trim(ol.Path, "/"),
+		TargetWorkspace: ol.WorkspaceID, TargetItem: ol.ItemID, TargetPath: strings.Trim(ol.Path, "/"), TargetType: "OneLake",
 	}
 	if err := a.Store.CreateShortcut(sc); err != nil {
 		writeErr(w, http.StatusConflict, "ShortcutAlreadyExists", "A shortcut with this path and name already exists.")
@@ -154,6 +186,15 @@ func (a *API) deleteShortcut(w http.ResponseWriter, r *http.Request, p *auth.Pri
 
 // shortcutDTO is the response shape (target echoed as oneLake).
 func shortcutDTO(sc *store.Shortcut) map[string]any {
+	if sc.TargetType == "ADLSGen2" || sc.TargetType == "AmazonS3" {
+		key := "adlsGen2"
+		if sc.TargetType == "AmazonS3" {
+			key = "amazonS3"
+		}
+		return map[string]any{"path": sc.Path, "name": sc.Name, "target": map[string]any{
+			"type": sc.TargetType, key: map[string]any{"location": sc.TargetLocation, "subpath": "/" + sc.TargetPath, "connectionId": sc.ConnectionID},
+		}}
+	}
 	return map[string]any{
 		"path": sc.Path, "name": sc.Name,
 		"target": map[string]any{

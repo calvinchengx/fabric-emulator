@@ -44,11 +44,12 @@ fact — it never infers a graph:
 | Edge | Source | Emitted? |
 |---|---|---|
 | target table → shortcut table | a OneLake **shortcut** *is* the data-flow edge; the shortcut is cataloged as a table carrying the target's Delta schema (that is the data it exposes) | ✅ exact |
-| activity → the tables it touched | would require executing or parsing user notebook/SQL code | ❌ not invented |
+| Copy source table → sink table | the pipeline executor persists the resolved workspace/item/path pair after successful byte movement | ✅ exact |
+| Notebook/Script activity → tables | would require parsing user code or engine query plans | ❌ not invented |
 
-The CI witness seeds `lake.orders`, shortcuts it into a second lakehouse as
-`curated.orders_ref`, and asserts OpenMetadata returns both the shortcut's
-columns and the `orders → orders_ref` edge in its lineage graph.
+The CI witness seeds `lake.orders`, shortcuts it as `curated.orders_ref`, then
+executes a Copy to `curated.orders_copy`. OpenMetadata must return both
+independent edges and remain idempotent on a second ingestion.
 
 ## SSO: the catalog inside the family trust chain (optional)
 

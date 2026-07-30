@@ -101,6 +101,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/queryactivityruns", a.withAuth(a.queryActivityRuns))
 	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/notebookRun", a.withAuth(a.getNotebookRun))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/notebookRunResult", a.withAuth(a.reportNotebookRun))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/sparkJobRun", a.withAuth(a.getSparkJobRun))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/sparkJobRunResult", a.withAuth(a.reportSparkJobRun))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/lineage", a.withAuth(a.listLineage))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/sqlDatabases/{iid}/refreshMirror", a.withAuth(a.refreshMirror))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/mirroredDatabases/{iid}/refreshMirror", a.withAuth(a.refreshMirroredDatabase))
 

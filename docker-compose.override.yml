@@ -22,7 +22,8 @@ services:
   # sc://localhost:50051. See docs/20-lakesail-engine.md.
   sail:
     build:
-      context: ./docker/sail
+      context: .
+      dockerfile: docker/sail/Dockerfile
     depends_on:
       fabric-emulator:
         condition: service_healthy
@@ -42,7 +43,10 @@ services:
       RUST_LOG: "info"
 
   spark-agent:
-    image: python:3.12-slim
+    build:
+      context: .
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
     depends_on:
       sail:
         condition: service_started
@@ -50,7 +54,7 @@ services:
       - ./e2e/livy/agent.py:/agent.py:ro
     environment:
       SPARK_REMOTE: "sc://sail:50051" # Spark Connect client — no JVM
-    command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /agent.py"
+    command: python /agent.py
 
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest

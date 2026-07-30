@@ -149,8 +149,9 @@ audiences. P2 can start any time; it consumes those endpoints over HTTP.
       (`internal/api/shortcuts.go`); data-plane read/HEAD resolution through
       the target with **target-side RBAC** (the trusted-workspace-access
       path: a read through a shortcut is authorized against the TARGET
-      workspace); external targets 501; dangling target 404; self-cycle
-      rejected. Store + API + onelake resolution tested.
+      workspace); ADLS Gen2/Amazon S3 external read-through via Connections;
+      Dataverse 501; dangling target 404; self-cycle rejected. Store + API +
+      OneLake resolution and container-network reads tested.
 - [x] e2e: the **real Azure Blob SDK** (`azure-storage-blob`) round-trips
       through the emulator — `e2e/adls-sdk` (3-OS): uploads a pyarrow Parquet,
       downloads it byte-identical (found + fixed the `x-ms-range` gap), lists
@@ -281,10 +282,12 @@ proxy would be a separate sibling.
       parse/record/report contract is Go-side + unit-tested; the compute is
       real Spark (Linux-only e2e, reusing the spark-a2 image). Without an engine
       the cells are honestly "parsed, Pending".
-    - [ ] **R4 (VS Code Fabric-extension + default-lakehouse session binding)** —
-      *deferred:* the VS Code Fabric extension and auto-binding a default
-      lakehouse into the Spark session are additive; the shim + real cell
-      execution already close the author-run-read loop.
+    - [x] **R4a (default-lakehouse session binding)** — notebook metadata is
+      resolved and validated; Sail and JVM witnesses run unqualified table APIs
+      against the attached lakehouse's OneLake `Tables/` directory.
+    - [ ] **R4b (VS Code Fabric-extension compatibility)** — endpoint
+      redirection for Microsoft's extension remains an independent authoring
+      surface investigation.
 - [x] **R5 (DataPipeline interpreter)** — a real, pure-Go interpreter
       (`internal/pipeline`) for Fabric/ADF Data Pipeline definitions: the full
       expression language (a faithful subset — `pipeline()`, `variables()`,

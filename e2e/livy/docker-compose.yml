@@ -24,7 +24,8 @@ services:
   # object_store writes ride the emulator's account-prefixed Blob path.
   sail:
     build:
-      context: ../../docker/sail
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
     depends_on:
       fabric-emulator:
         condition: service_healthy
@@ -41,7 +42,10 @@ services:
   # The statement-executor agent: one long-lived session, a REPL over HTTP —
   # now a Spark Connect client of sail (python:slim, no JVM).
   spark-agent:
-    image: python:3.12-slim
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
     depends_on:
       sail:
         condition: service_started
@@ -49,7 +53,7 @@ services:
       - ./agent.py:/agent.py:ro
     environment:
       SPARK_REMOTE: "sc://sail:50051"
-    command: sh -c "pip install --no-cache-dir -q 'pyspark-client==4.2.0' && python /agent.py"
+    command: python /agent.py
 
   fabric-emulator:
     build:
@@ -72,7 +76,10 @@ services:
       retries: 20
 
   client:
-    image: python:3.12-slim
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: runtime }
     depends_on:
       fabric-emulator:
         condition: service_healthy

@@ -19,6 +19,7 @@ import (
 	"net/http"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
+	"github.com/calvinchengx/fabric-emulator/internal/compute"
 	"github.com/calvinchengx/fabric-emulator/internal/notebook"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
@@ -59,27 +60,70 @@ type notebookCellRun struct {
 
 // notebookRun is the whole run: overall status, the exit value, and per-cell detail.
 type notebookRun struct {
-	Status    string            `json:"status"` // Pending | Completed | Failed
-	ExitValue string            `json:"exitValue,omitempty"`
-	Cells     []notebookCellRun `json:"cells"`
+	Status      string              `json:"status"` // Pending | Completed | Failed
+	ExitValue   string              `json:"exitValue,omitempty"`
+	Binding     compute.Binding     `json:"binding,omitempty"`
+	Environment compute.Environment `json:"environment,omitempty"`
+	Cells       []notebookCellRun   `json:"cells"`
 }
 
 // startNotebookRun parses a Notebook item's definition and records a Pending
 // run for the job, so the cells are queryable before any engine executes them.
-func (a *API) startNotebookRun(it *store.Item, jobID string) {
+func (a *API) startNotebookRun(it *store.Item, jobID string) string {
 	def, err := a.notebookContent(it.ID)
 	run := notebookRun{Status: "Pending", Cells: []notebookCellRun{}}
-	if err == nil {
-		// Re-sequence the executable code cells 0..n so the run is self-
-		// contiguous (markdown/metadata don't leave gaps) and an engine can
-		// iterate + report by a simple index.
-		for i, c := range notebook.CodeCells(notebook.Parse(def)) {
-			run.Cells = append(run.Cells, notebookCellRun{
-				Index: i, Kind: string(c.Kind), Language: c.Language, Source: c.Source, Status: "Pending",
-			})
-		}
+	if err != nil {
+		a.saveNotebookRun(jobID, run)
+		return ""
+	}
+	run.Binding = compute.NotebookBinding(def)
+	run.Binding, run.Environment, err = a.resolveComputeBinding(it, run.Binding)
+	if err != nil {
+		run.Status = "Failed"
+		a.saveNotebookRun(jobID, run)
+		return "ComputeBindingInvalid"
+	}
+	// Re-sequence the executable code cells 0..n so the run is self-
+	// contiguous (markdown/metadata don't leave gaps) and an engine can
+	// iterate + report by a simple index.
+	for i, c := range notebook.CodeCells(notebook.Parse(def)) {
+		run.Cells = append(run.Cells, notebookCellRun{
+			Index: i, Kind: string(c.Kind), Language: c.Language, Source: c.Source, Status: "Pending",
+		})
 	}
 	a.saveNotebookRun(jobID, run)
+	return ""
+}
+
+func (a *API) resolveComputeBinding(owner *store.Item, binding compute.Binding) (compute.Binding, compute.Environment, error) {
+	if binding.WorkspaceID == "" {
+		binding.WorkspaceID = owner.WorkspaceID
+	}
+	if binding.LakehouseID != "" {
+		lake, err := a.Store.GetItem(binding.WorkspaceID, binding.LakehouseID)
+		if err != nil || lake.Type != "Lakehouse" {
+			return binding, compute.Environment{}, fmt.Errorf("default lakehouse is unavailable")
+		}
+		binding.LakehouseName = lake.DisplayName
+	}
+	if binding.EnvironmentID == "" {
+		return binding, compute.Environment{}, nil
+	}
+	envWorkspaceID := binding.EnvironmentWorkspaceID
+	if envWorkspaceID == "" {
+		envWorkspaceID = owner.WorkspaceID
+	}
+	binding.EnvironmentWorkspaceID = envWorkspaceID
+	envItem, err := a.Store.GetItem(envWorkspaceID, binding.EnvironmentID)
+	if err != nil || envItem.Type != "Environment" {
+		return binding, compute.Environment{}, fmt.Errorf("environment is unavailable")
+	}
+	parts, err := a.Store.GetDefinition(envItem.ID)
+	if err != nil {
+		return binding, compute.Environment{}, err
+	}
+	env, err := compute.ParseEnvironment(parts)
+	return binding, env, err
 }
 
 // notebookContent decodes the `notebook-content.py` payload from the item's

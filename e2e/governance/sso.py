@@ -48,7 +48,6 @@ def compose(*args, check=True):
 
 
 def main():
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "requests"], check=True)
     import requests
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)

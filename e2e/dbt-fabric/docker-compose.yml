@@ -74,8 +74,8 @@ services:
 
   dbt:
     build:
-      context: .
-      dockerfile: Dockerfile.dbt
+      context: ../..
+      dockerfile: e2e/dbt-fabric/Dockerfile.dbt
     depends_on:
       fabric-emulator:
         condition: service_healthy

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "One toggle between fabric-emulator and real Microsoft Fabric: FABRIC_TARGET=emulator|real resolves endpoints + credentials; code holds names."
 requires-python = ">=3.9"
 # Core is stdlib-only, family style. Real mode lazily imports azure-identity
-# (pip install 'fabric-target[real]'); session() lazily imports requests.
+# (`uv add 'fabric-target[real]'`); session() lazily imports requests.
 dependencies = []
 
 [project.optional-dependencies]

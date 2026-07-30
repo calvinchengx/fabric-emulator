@@ -42,12 +42,7 @@ def compose(*args, check=True):
                           env={**os.environ, "GOV_BUILD_CONTEXT": REPO})
 
 
-def pip_install(*pkgs):
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *pkgs], check=True)
-
-
 def main():
-    pip_install("requests", "deltalake", "pyarrow")
     import requests
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -93,7 +88,9 @@ def main():
     s = requests.Session()
     s.verify = False
     s.headers["Authorization"] = "Bearer " + token("https://api.fabric.microsoft.com/.default")
-    ws = s.post(f"{fabric}/v1/workspaces", json={"displayName": "govws"}, timeout=15).json()
+    r = s.post(f"{fabric}/v1/workspaces", json={"displayName": "govws"}, timeout=15)
+    assert r.status_code == 201, (r.status_code, r.text)
+    ws = r.json()
     r = s.post(f"{fabric}/v1/workspaces/{ws['id']}/lakehouses",
                json={"displayName": "lake"}, timeout=15)
     assert r.status_code in (201, 202), (r.status_code, r.text)
@@ -138,6 +135,39 @@ def main():
                                             "path": "Tables/orders"}}}, timeout=15)
     assert r.status_code in (200, 201), (r.status_code, r.text)
 
+    # Execute a real Copy over the Delta directory. This creates a second table
+    # and an activity-produced lineage edge, independently of shortcut lineage.
+    log("executing Copy activity (the activity lineage edge under test)")
+    pipeline = {"properties": {"activities": [{
+        "name": "CurateOrders", "type": "Copy", "typeProperties": {
+            "source": {"location": {"itemId": by_name["lake"],
+                                      "path": "Tables/orders"}},
+            "sink": {"location": {"itemId": by_name["curated"],
+                                    "path": "Tables/orders_copy"}},
+        }}]}}
+    payload = base64.b64encode(json.dumps(pipeline).encode()).decode()
+    r = s.post(f"{fabric}/v1/workspaces/{ws['id']}/items", json={
+        "displayName": "curate-orders", "type": "DataPipeline",
+        "definition": {"parts": [{"path": "pipeline-content.json",
+                                    "payloadType": "InlineBase64",
+                                    "payload": payload}]},
+    }, timeout=15)
+    assert r.status_code == 202, (r.status_code, r.text)
+    opid = r.headers["x-ms-operation-id"]
+    for _ in range(60):
+        op = s.get(f"{fabric}/v1/operations/{opid}", timeout=15).json()
+        if op.get("status") == "Succeeded":
+            pipeline_id = s.get(f"{fabric}/v1/operations/{opid}/result", timeout=15).json()["id"]
+            break
+        time.sleep(.1)
+    else:
+        raise RuntimeError("pipeline create did not complete")
+    r = s.post(f"{fabric}/v1/workspaces/{ws['id']}/items/{pipeline_id}/jobs/instances",
+               params={"jobType": "Pipeline"}, json={}, timeout=30)
+    assert r.status_code == 202, (r.status_code, r.text)
+    copy_job = s.get(r.headers["Location"], timeout=15).json()
+    assert copy_job["status"] == "Completed", copy_job
+
     log("running govern-ingest")
     # --no-deps: everything is already up; letting compose re-evaluate the
     # dependency chain here re-runs one-shots and can recreate fabric,
@@ -179,6 +209,11 @@ def main():
     sc_cols = {c["name"]: c["dataType"] for c in sc.json()["columns"]}
     assert sc_cols == want, f"shortcut columns wrong: {sc_cols}"
 
+    copied = requests.get(
+        f"{om}/api/v1/tables/name/fabric-emulator.govws.curated.orders_copy",
+        headers=h, timeout=30)
+    assert copied.status_code == 200, (copied.status_code, copied.text[:300])
+
     # …and OM holds the lineage edge orders -> orders_ref.
     lin = requests.get(
         f"{om}/api/v1/lineage/table/name/fabric-emulator.govws.lake.orders",
@@ -193,6 +228,16 @@ def main():
         f"no downstream edge to the shortcut: {edges}"
     log("lineage edge orders -> curated.orders_ref present in OpenMetadata")
 
+    activity_lin = requests.get(
+        f"{om}/api/v1/lineage/table/name/fabric-emulator.govws.curated.orders_copy",
+        params={"upstreamDepth": 1, "downstreamDepth": 1}, headers=h, timeout=30)
+    assert activity_lin.status_code == 200, (activity_lin.status_code, activity_lin.text[:300])
+    activity_graph = activity_lin.json()
+    activity_ids = {n.get("id") for n in activity_graph.get("nodes", [])}
+    activity_ids.add((activity_graph.get("entity") or {}).get("id"))
+    assert t.json()["id"] in activity_ids, f"Copy source absent from lineage: {activity_graph}"
+    log("activity lineage lake.orders -> curated.orders_copy present in OpenMetadata")
+
     # Idempotency: a second ingest must succeed and not duplicate.
     log("re-running govern-ingest (idempotency)")
     compose("run", "--rm", "--no-deps", "govern-ingest")
@@ -202,7 +247,7 @@ def main():
 
     log("PASS: fabric-emulator.govws.lake.orders cataloged with "
         f"{len(want)} columns, types {sorted(set(want.values()))}; "
-        "shortcut cataloged with the target's schema and a lineage edge")
+        "shortcut and Copy activity lineage cataloged")
 
 
 if __name__ == "__main__":

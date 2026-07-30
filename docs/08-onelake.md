@@ -37,9 +37,9 @@ name-addressing both resolve to the same item.
 Wire shapes are REST-reference-only (`/rest/api/fabric/core/onelake-shortcuts`;
 fabric-docs covers shortcut creation portal-side). A shortcut is a **symlink in
 OneLake**: a named entry inside an item's managed folders whose reads resolve
-into another location. Scope: **OneLake-to-OneLake targets only** — external
-targets (ADLS Gen2, S3, Dataverse, …) need real cloud credentials, which is
-exactly what an offline emulator cannot honor; they 501 with a clear message.
+into another location. OneLake, ADLS Gen2, and Amazon S3 targets are supported;
+external reads use the referenced Connection's write-only credentials.
+Dataverse remains unsupported and returns 501.
 
 | Method + path | Notes |
 |---|---|
@@ -63,6 +63,9 @@ exactly what an offline emulator cannot honor; they 501 with a clear message.
   target item's `Files/raw/…` when the direct path is absent. Resolution is
   authorized against the **target** workspace's RBAC (the caller needs
   Contributor/ReadAll there — the trusted-workspace-access smoke path).
+- **External resolution:** ADLS Gen2 and Amazon S3 locations must be HTTP(S)
+  URLs and name an existing Connection. Anonymous, Basic, Key, and SAS
+  credentials are applied to read-through requests; failures surface as 502.
 - **Not in listings:** the DFS list handler enumerates only real stored paths,
   so shortcut entries do **not** appear in directory listings.
 - **Writes don't follow:** PUT/PATCH/DELETE on a shortcut path write the source
@@ -74,8 +77,8 @@ exactly what an offline emulator cannot honor; they 501 with a clear message.
   shortcut whose resolution 404s (matching real behavior); deleting the shortcut
   never touches target data. Self-referential cycles are rejected at create
   (`400 InvalidTarget`).
-- **Storage:** a `shortcuts` table (`item_id, path, name, target_ws, target_item,
-  target_path`) — no data is copied, resolution happens per request.
+- **Storage:** the `shortcuts` table stores either OneLake ids or external
+  target type/location/connection metadata. No data is copied.
 
 ## The Blob surface (Delta commits)
 

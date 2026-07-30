@@ -327,7 +327,7 @@ C2 SQL-auth compromise.
 | **R0** | Track A storage completeness + A1 (delta-rs e2e) + the ADLS-SDK e2e (real `azure-storage-blob`) + azcopy; concurrent-commit race test | ✅ shipped |
 | **R1+R2** (merged) | **containerized Spark** — A2 (real PySpark writes Delta via ABFS, cross-engine read with delta-rs) **and** B1+B2 (native Livy sessions/HC on a real Spark agent; real RunNotebook mode). JVM Spark image + Docker network so ABFS resolves to the emulator. | ✅ shipped (`e2e/spark`, `e2e/livy`, `e2e/notebook-run`) |
 | **R3** | C1 (DuckDB SQL over the lakehouse) **and** C2/C3 (SQL Server sidecar + in-repo FedAuth-over-TDS splice; two driver witnesses) | ✅ shipped (`e2e/duckdb`, `e2e/dbt-fabric`, gated TDS tests) |
-| **R4** | D1 (notebookutils shim) shipped (`e2e/notebookutils`); D2–D3 (default-lakehouse sessions; VS Code extension compatibility) partial/by-demand | ~ mostly |
+| **R4** | D1 notebookutils and D2 default-lakehouse sessions shipped; D3 VS Code extension endpoint compatibility remains | ~ mostly |
 | **R5** | E2 (DataPipeline interpreter, real-engine leaf activities) shipped; E1 (real Airflow sidecar behind ApacheAirflowJob items) **not yet built** | ~ E2 ✅ / E1 📐 |
 
 ## Correctness: how we prove it

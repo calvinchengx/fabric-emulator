@@ -28,5 +28,5 @@ services:
         aliases: ["api.fabric.microsoft.com"]
 
   client:
-    build: { context: ., dockerfile: Dockerfile }
+    build: { context: ../.., dockerfile: e2e/fabric-cli/Dockerfile }
     depends_on: [entra, fabric]

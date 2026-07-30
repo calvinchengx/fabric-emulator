@@ -4,8 +4,8 @@
 the functional `notebookutils` shim — fs over OneLake, credentials tokens,
 Key Vault secret brokering, and the lakehouse control plane — unchanged.
 
-Self-contained, OS-agnostic: stdlib-only orchestrator; the shim installs from
-python/ into a venv (it has no dependencies of its own)."""
+Run with `uv run --frozen --group test python e2e/notebookutils/run.py`; uv
+installs the workspace shim from python/ before this orchestrator starts."""
 import json
 import os
 import shutil
@@ -146,14 +146,8 @@ try:
     vt = token("https://vault.azure.net/.default")
     http("PUT", f"{KV}/secrets/db-password?api-version=7.4", {"value": "s3cr3t-value"}, vt)
 
-    log("installing the notebookutils shim into a venv")
-    venv = os.path.join(WORK, "venv")
-    subprocess.run([sys.executable, "-m", "venv", venv], check=True)
-    venv_py = os.path.join(venv, "Scripts" if os.name == "nt" else "bin", "python" + EXE)
-    subprocess.run([venv_py, "-m", "pip", "install", "-q", os.path.join(REPO, "python")], check=True)
-
     log("running the notebook")
-    subprocess.run([venv_py, "-u", os.path.join(DIR, "notebook.py")], check=True, env={
+    subprocess.run([sys.executable, "-u", os.path.join(DIR, "notebook.py")], check=True, env={
         **os.environ,
         "NOTEBOOKUTILS_FABRIC_URL": FABRIC,
         "NOTEBOOKUTILS_ENTRA_URL": ENTRA,
