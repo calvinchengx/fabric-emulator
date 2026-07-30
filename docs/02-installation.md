@@ -10,22 +10,17 @@ Linux, macOS, and Windows.
 
 ## macOS — Homebrew
 
-> **Not yet published** — the Homebrew cask requires a `HOMEBREW_TAP_TOKEN`
-> repo secret and ships with the next tagged release once set. Until then use
-> `go install`, the release archives, or Docker below.
-
 ```bash
-brew install calvinchengx/tap/fabric-emulator   # (pending first cask publish)
+brew install calvinchengx/tap/fabric-emulator
 ```
 
 ## Windows — winget
 
-> **Not yet published** — the winget manifest requires a `WINGET_TOKEN` repo
-> secret and a Microsoft moderation pass; ships with the next tagged release
-> once set.
+> The manifest [PR](https://github.com/microsoft/winget-pkgs/pull/409794) is in
+> Microsoft's moderation queue; the command works once it merges.
 
 ```powershell
-winget install calvinchengx.fabric-emulator     # (pending first manifest publish)
+winget install calvinchengx.fabric-emulator
 ```
 
 ## Any platform — go install
