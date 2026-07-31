@@ -35,6 +35,21 @@ jobs:
           echo "total coverage: ${total}%"
           awk -v t="$total" 'BEGIN { exit (t < 90) ? 1 : 0 }'
 
+  witnesses:
+    name: Every 🟢 parity claim names its witness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # Report mode for now: it prints the mapping and the count of claims with
+      # no identified witness. Flip to --strict once those are cleared, at
+      # which point an unwitnessed 🟢 fails the build. Dangling references (a
+      # named CI job or Go test that no longer exists) are reported today and
+      # are the most valuable part — they catch a witness being renamed or
+      # deleted out from under a claim.
+      - run: python3 scripts/check_witnesses.py
   portal:
     name: Portal builds from source
     runs-on: ubuntu-latest

@@ -1,0 +1,487 @@
+{
+  "workspaces-crud": {
+    "section": "Platform / fundamentals",
+    "claim": "Workspaces CRUD",
+    "witnesses": [
+      "ci:fabric-cicd",
+      "ci:fabric-cli"
+    ]
+  },
+  "items-crud-typed-collections": {
+    "section": "Platform / fundamentals",
+    "claim": "Items CRUD + typed collections",
+    "witnesses": [
+      "ci:fabric-cicd",
+      "go:TestItemTypeValidation",
+      "go:TestTypedAliasesForLaterItemTypes",
+      "go:TestItemTypeIsCanonicalisedNotDuplicated"
+    ]
+  },
+  "role-assignments-workspace-rbac": {
+    "section": "Platform / fundamentals",
+    "claim": "Role assignments / workspace RBAC",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "folders": {
+    "section": "Platform / fundamentals",
+    "claim": "Folders",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "capacities-list-assign-unassign": {
+    "section": "Platform / fundamentals",
+    "claim": "Capacities (list, assign / unassign)",
+    "witnesses": [
+      "go:TestCapacities"
+    ]
+  },
+  "item-job-execution-jobs-instances": {
+    "section": "Platform / fundamentals",
+    "claim": "Item **job execution** (`jobs/instances`)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "entra-oauth2-tokens-jwks-client-credentials": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "Entra OAuth2 tokens / JWKS / client-credentials",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "workspace-managed-identity-handshake": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "Workspace managed identity handshake",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "key-vault-references-in-connections": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "Key Vault references in connections",
+    "witnesses": [
+      "go:TestAKVReferenceConnectionViaWorkspaceIdentity"
+    ]
+  },
+  "governance-domains-v1-admin-domains": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Governance domains** (`/v1/admin/domains`)",
+    "witnesses": [
+      "go:TestAdminDomains"
+    ]
+  },
+  "activity-log-audit-get-v1-0-myorg-admin-activityevents": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Activity log / audit** (`GET /v1.0/myorg/admin/activityevents`)",
+    "witnesses": [
+      "go:TestActivityEventsRecordsRealOperations",
+      "go:TestActivityEventsUsesDocumentedDomainVocabulary",
+      "go:TestActivityEventsPagination"
+    ]
+  },
+  "tenant-settings-get-v1-admin-tenantsettings": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Tenant settings** (`GET /v1/admin/tenantsettings`)",
+    "witnesses": [
+      "go:TestTenantSettingsList",
+      "go:TestTenantSettingsUpdate",
+      "go:TestTenantSettingsOmitsEmptyOptionalFields"
+    ]
+  },
+  "tenant-wide-workspace-admin-get-v1-admin-workspaces": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Tenant-wide workspace admin** (`GET /v1/admin/workspaces`)",
+    "witnesses": [
+      "go:TestAdminListWorkspacesUsesDocumentedShape",
+      "go:TestAdminListWorkspacesFilters",
+      "go:TestAdminListWorkspacesReportsDomain"
+    ]
+  },
+  "tenant-wide-item-admin-get-v1-admin-items": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Tenant-wide item admin** (`GET /v1/admin/items`)",
+    "witnesses": [
+      "go:TestAdminListItemsSpansWorkspaces",
+      "go:TestAdminListItemsFiltersAndValidation"
+    ]
+  },
+  "capacity-tenant-setting-overrides-get-v1-admin-capacities-delegatedtenantsettingoverrides-post-capacityid-delegatedtenantsettingoverrides-name-update": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Capacity tenant-setting overrides** (`GET /v1/admin/capacities/delegatedTenantSettingOverrides`, `POST …/{capacityId}/delegatedTenantSettingOverrides/{name}/update`)",
+    "witnesses": [
+      "go:TestCapacityOverridesRoundTrip",
+      "go:TestCapacityOverrideValidation"
+    ]
+  },
+  "sensitivity-labels-bulksetlabels-bulkremovelabels": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Sensitivity labels** (`bulkSetLabels` / `bulkRemoveLabels`)",
+    "witnesses": [
+      "go:TestBulkLabelsApplyReplaceAndRemove",
+      "go:TestBulkLabelsPartialFailureAndValidation",
+      "go:TestLabelChangesAuditWithDocumentedSchema"
+    ]
+  },
+  "lineage-catalog-graph": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Lineage** (catalog graph)",
+    "witnesses": [
+      "ci:governance"
+    ]
+  },
+  "adls-gen2-dfs-surface-create-append-flush-ranged-read-list": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "ADLS Gen2 DFS surface (create → append → flush, ranged read, list)",
+    "witnesses": [
+      "ci:adls-sdk",
+      "ci:azcopy"
+    ]
+  },
+  "blob-surface": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "Blob surface",
+    "witnesses": [
+      "ci:adls-sdk"
+    ]
+  },
+  "delta-commits-put-if-absent-atomicity": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "Delta commits (put-if-absent atomicity)",
+    "witnesses": [
+      "ci:delta-rs"
+    ]
+  },
+  "shortcuts-onelake-onelake": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "Shortcuts (OneLake → OneLake)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "shortcuts-to-external-targets-s3-adls-gen2-dataverse": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "Shortcuts to external targets (S3 / ADLS Gen2 / Dataverse)",
+    "witnesses": [
+      "ci:external-s3",
+      "ci:azurite-shortcut"
+    ]
+  },
+  "lakehouse-item-tables-files-storage": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Lakehouse item + Tables/Files storage",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "notebook-authoring-definition-round-trip": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Notebook authoring / definition round-trip",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "notebookutils-mssparkutils-fs-credentials-getsecret-lakehouse-runtime": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`notebookutils` / `mssparkutils` (fs, credentials, getSecret, lakehouse, runtime)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "spark-session-statement-batch-via-the-livy-api": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Spark session / statement / batch via the **Livy API**",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "notebook-cell-execution": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Notebook **cell execution**",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "livy-high-concurrency-5-repl-sessions": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Livy **High-Concurrency** (5-REPL) sessions",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "environments": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Environments",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "spark-job-definitions": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Spark Job Definitions",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "abfss-onelake-dfs-fabric-microsoft-com-production-paths": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`abfss://…@onelake.dfs.fabric.microsoft.com/…` production paths",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "delta-write-read-append-sql-over-temp-views": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Delta write/read/append; SQL over temp views",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "time-travel-option-versionasof-n": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Time travel `option(\"versionAsOf\", n)`",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "merge-into": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`MERGE INTO`",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "createdataframe-localrows": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`createDataFrame(local_rows)`",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "concurrent-delta-overwrite-writers": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Concurrent Delta overwrite writers",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "sql-analytics-endpoint-semantics-over-lakehouse-delta": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "SQL-analytics-endpoint semantics over lakehouse Delta",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "warehouse-item-management": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "Warehouse item management",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "t-sql-over-tds-entra-fedauth": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**T-SQL over TDS + Entra FedAuth**",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "lakehouse-sql-analytics-endpoint-delta-engine": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**Lakehouse SQL analytics endpoint — Delta → engine**",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "warehouse-read-write-t-sql": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**Warehouse — read-write T-SQL**",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "fabric-sql-database-database-oltp-onelake-mirror": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**Fabric SQL Database (`database/`)** — OLTP + OneLake mirror",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "per-item-isolation-each-item-its-own-sql-server-database": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "Per-item isolation (each item = its own SQL Server database)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "rbac-sql-permissions": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "RBAC → SQL permissions",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "informationschema-sys-introspection": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "`information_schema` / `sys.*` introspection",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "per-column-type-fidelity-real-sql-types-over-the-wire": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "Per-column type fidelity (real SQL types over the wire)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "connection-by-item-name-vs-guid": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "Connection by item *name* (vs GUID)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "data-pipeline-control-flow-if-foreach-until-switch-filter-fail-expression-language-dependson": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Data Pipeline control flow (If / ForEach / Until / Switch / Filter / Fail, expression language, `dependsOn`)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "per-activity-policy-retry-backoff-timeout": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Per-activity **policy — retry + backoff + timeout**",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "foreach-sequential-parallel-issequential-batchcount": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**ForEach** sequential / parallel (`isSequential`, `batchCount`)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "list-pagination-continuationtoken": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "List **pagination** (`continuationToken`)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "invoke-pipeline-executepipeline": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Invoke pipeline** (ExecutePipeline)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "pipeline-notebook-activity-tridentnotebook": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Pipeline → notebook activity (TridentNotebook)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "queryactivityruns-detail": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "`queryactivityruns` detail",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "activity-level-lineage": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Activity-level lineage",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "copy-activity-onelake-onelake": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Copy activity — **OneLake → OneLake**",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "lookup-activity-onelake-csv-json-parquet-delta": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Lookup activity — **OneLake CSV/JSON/Parquet/Delta**",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "getmetadata-activity-onelake-path": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "GetMetadata activity — **OneLake path**",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "script-sqlserverstoredprocedure-activities": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Script** / **SqlServerStoredProcedure** activities",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "apache-airflow-job": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Apache Airflow Job**",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "git-integration-connect-status-commit-update-disconnect": {
+    "section": "CI/CD (`cicd/`)",
+    "claim": "Git integration (connect / status / commit / update / disconnect)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "fabric-cicd-tool-publishing": {
+    "section": "CI/CD (`cicd/`)",
+    "claim": "`fabric-cicd` tool publishing",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "deployment-pipelines-model-assignment-item-pairing-deploy-stage-content-d0-d2": {
+    "section": "CI/CD (`cicd/`)",
+    "claim": "Deployment pipelines — model, assignment, **item pairing**, **Deploy Stage Content** (D0–D2)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "deployment-pipelines-role-assignment-crud-d3": {
+    "section": "CI/CD (`cicd/`)",
+    "claim": "Deployment pipelines — role-assignment CRUD (D3)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "mirroring-mirrored-database-mirroring": {
+    "section": "Item types present, engine absent",
+    "claim": "Mirroring — Mirrored Database (`mirroring/`)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "power-bi-semantic-model-query-executequeries": {
+    "section": "Item types present, engine absent",
+    "claim": "Power BI — Semantic Model **query** (`executeQueries`)",
+    "witnesses": [
+      "TODO"
+    ]
+  },
+  "data-science-ml-models-experiments-mlflow-data-science": {
+    "section": "Item types present, engine absent",
+    "claim": "Data Science — ML models / experiments / MLflow (`data-science/`)",
+    "witnesses": [
+      "TODO"
+    ]
+  }
+}
