@@ -28,6 +28,20 @@ keyvault and fabric both validate bearers against entra's JWKS — the same
 trust relationships as production Azure. Everything serves self-signed TLS,
 hence `-k` below.
 
+To confirm the stack is actually usable (not just that containers exist):
+
+```bash
+./scripts/status.sh
+```
+
+It rolls up container health, the HTTP surfaces, and emulator state in one
+view, and exits non-zero when something is wrong. It reports what `docker
+compose ps` cannot: a service with **no healthcheck** (`sail`, `spark-agent`
+report `running`, never `healthy`, so serving is unverified), and a container
+that is up and healthy while attached to **no network** — the state Docker
+leaves behind when a port bind fails during creation. Compose then reuses that
+container because it looks healthy, and every peer fails DNS on its name.
+
 **The engine is [LakeSail's Sail](20-lakesail-engine.md)** — there is no JVM
 anywhere in the stack. Sessions start in milliseconds, Delta is native Rust,
 and the same stack is available with explicit file flags (naming `-f` files
