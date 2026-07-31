@@ -1,0 +1,50 @@
+# The same capability probes, run against both Spark engines, so the parity
+# map's Sail/JVM claims are generated from evidence rather than asserted.
+#
+# Two profiles rather than one stack: the engines are alternatives, never used
+# together, and the JVM image is heavy enough that you want to run one at a
+# time. `run.py` drives both and merges the results.
+services:
+  sail:
+    profiles: [sail]
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    command: ["spark", "server", "--ip", "0.0.0.0", "--port", "50051"]
+
+  sail-probe:
+    profiles: [sail]
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: sail }
+    depends_on: [sail]
+    volumes:
+      - ./probes.py:/probes.py:ro
+      - ./out:/out
+    environment:
+      ENGINE: sail
+      SPARK_REMOTE: "sc://sail:50051"
+      PROBE_DIR: /tmp/probe
+    # Sail needs a moment to bind its port; the client retries are inside the
+    # Spark Connect channel, so a short wait is enough.
+    command: ["sh", "-c", "sleep 8 && python /probes.py"]
+
+  jvm-probe:
+    profiles: [jvm]
+    build:
+      context: ../..
+      dockerfile: docker/spark-runtime/Dockerfile
+    volumes:
+      - ./probes.py:/opt/spark/work-dir/probes.py:ro
+      - ./out:/out
+    environment:
+      ENGINE: jvm
+      PROBE_DIR: /tmp/probe
+    # No SPARK_REMOTE: a classic in-process session, which is what gives the
+    # JVM surface (sc, _jvm) its meaning.
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - local[2]
+      - /opt/spark/work-dir/probes.py
