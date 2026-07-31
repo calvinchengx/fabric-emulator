@@ -193,3 +193,26 @@ func (s *Store) MoveItem(workspaceID, id, folderID string) error {
 	}
 	return oneRow(res)
 }
+
+// AllItems returns every item across every workspace, oldest first. The
+// tenant-wide admin listing needs this; per-workspace ListItems does not
+// compose for it without N queries.
+func (s *Store) AllItems() ([]*Item, error) {
+	rows, err := s.db.Query(
+		`SELECT id, workspace_id, type, display_name, description, folder_id, created_at
+		 FROM items ORDER BY rowid`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Item{}
+	for rows.Next() {
+		it := &Item{}
+		if err := rows.Scan(&it.ID, &it.WorkspaceID, &it.Type, &it.DisplayName,
+			&it.Description, &it.FolderID, &it.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
