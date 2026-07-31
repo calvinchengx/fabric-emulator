@@ -69,24 +69,7 @@ def _install_delta_ops():
     except ImportError:  # pragma: no cover - runtime without deltalake
         return
 
-    original_sql = spark.sql
-
-    def resolve(name):
-        row = original_sql(f"DESCRIBE DETAIL {name}").collect()[0]
-        return row["location"]
-
-    def sql(query, *args, **kwargs):
-        matched = delta_ops.match(query) if isinstance(query, str) else None
-        if matched is None:
-            return original_sql(query, *args, **kwargs)
-        kind, params = matched
-        message = delta_ops.execute(kind, params, resolve)
-        # Return a DataFrame so callers can .show()/.collect() as they would
-        # after a native OPTIMIZE, rather than getting None back.
-        return spark.createDataFrame([(message,)], ["result"])
-
-    spark.sql = sql
-    spark.delta_change_feed = lambda uri, **kw: delta_ops.read_change_feed(spark, uri, **kw)
+    delta_ops.install(spark)
 
 
 _install_delta_ops()

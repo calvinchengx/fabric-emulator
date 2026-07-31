@@ -127,3 +127,45 @@ def read_change_feed(spark, uri, starting_version=0, ending_version=None,
             "change feed is empty — enable it on the table first "
             "(delta.enableChangeDataFeed) and write at least one version")
     return spark.createDataFrame(frame)
+
+
+# KNOWN GAP — storage credentials are not wired.
+#
+# `execute()` accepts storage_options but `install()` passes none, so the
+# delta-rs path is proven only against a table delta-rs can open unauthenticated
+# (a local path, same process). Against a real `abfss://…onelake…` table it will
+# fail on credentials: delta-rs needs the bearer/SAS the Spark session already
+# holds, and there is no supported way to read it back off a Connect session.
+#
+# Found by the engine matrix's third column, which runs this module across a
+# container boundary and so cannot rely on a shared filesystem the way the unit
+# check did. Until this is wired, the parity map grades the OneLake path
+# accordingly rather than claiming it works.
+def install(spark, storage_options=None):
+    """Wrap `spark.sql` so OPTIMIZE/VACUUM route here, and expose the CDF helper.
+
+    Shared by the Livy agent and the engine-matrix probes so the matrix measures
+    the *same* code path users get, rather than a re-implementation that could
+    drift from it.
+
+    Returns the original `sql` callable, which the caller needs both to restore
+    it and to resolve catalog names.
+    """
+    original_sql = spark.sql
+
+    def resolve(name):
+        return original_sql(f"DESCRIBE DETAIL {name}").collect()[0]["location"]
+
+    def sql(query, *args, **kwargs):
+        matched = match(query) if isinstance(query, str) else None
+        if matched is None:
+            return original_sql(query, *args, **kwargs)
+        kind, params = matched
+        message = execute(kind, params, resolve, storage_options)
+        # A DataFrame, so callers can .show()/.collect() as after a native
+        # OPTIMIZE rather than getting None back.
+        return spark.createDataFrame([(message,)], ["result"])
+
+    spark.sql = sql
+    spark.delta_change_feed = lambda uri, **kw: read_change_feed(spark, uri, **kw)
+    return original_sql
