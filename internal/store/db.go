@@ -203,6 +203,18 @@ CREATE TABLE IF NOT EXISTS item_properties (
 	value TEXT NOT NULL,
 	PRIMARY KEY (item_id, name)
 );
+-- Sensitivity labels. The taxonomy is emulator-provided (real Fabric gets it
+-- from Purview, which is not attachable offline); the label-change event
+-- model in governance/sensitivity-label-audit-schema.md is what is faithful.
+CREATE TABLE IF NOT EXISTS sensitivity_labels (
+	id TEXT PRIMARY KEY,
+	name TEXT NOT NULL,
+	sort_order INTEGER NOT NULL   -- higher = more restrictive
+);
+CREATE TABLE IF NOT EXISTS item_labels (
+	item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+	label_id TEXT NOT NULL REFERENCES sensitivity_labels(id)
+);
 -- Audit log behind the admin activityevents API. Operation names come from
 -- the documented audit vocabulary (admin/operation-list.md and
 -- governance/domains-audit-schema.md); properties_json holds the
@@ -344,7 +356,10 @@ PRAGMA foreign_keys = ON;
 			log.Printf("store: display-name uniqueness index not applied (pre-existing duplicates?): %v", err)
 		}
 	}
-	return s.seedCapacity()
+	if err := s.seedCapacity(); err != nil {
+		return err
+	}
+	return s.seedLabels()
 }
 
 // NewID returns a random lowercase UUIDv4 — the id format Fabric uses for

@@ -403,7 +403,22 @@ func (a *API) itemView(r *http.Request, it *store.Item) any {
 	return itemWithProperties{Item: it, Properties: props}
 }
 
+// itemProperties is the typed "properties" object plus anything that applies
+// to every item type. A sensitivity label is the latter: it is merged in
+// regardless of type. Fabric's own item payloads do not carry the label; this
+// is the emulator's read-back path for what bulkSetLabels applied (labels.go).
 func (a *API) itemProperties(r *http.Request, it *store.Item) map[string]any {
+	props := a.typedItemProperties(r, it)
+	if l, err := a.Store.ItemLabel(it.ID); err == nil {
+		if props == nil {
+			props = map[string]any{}
+		}
+		props["sensitivityLabel"] = map[string]any{"labelId": l.ID, "name": l.Name}
+	}
+	return props
+}
+
+func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]any {
 	switch it.Type {
 	case "Eventhouse":
 		base := kustoBaseURI(r, it.WorkspaceID, it.ID)
