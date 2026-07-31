@@ -120,7 +120,7 @@ part that matters — QEMU's default CPU model omits AVX2 as well:
 ```bash
 brew install colima qemu lima-additional-guestagents
 colima start --profile fabric-x86 --arch x86_64 --vm-type qemu \
-  --cpu-type max --memory 8 --cpus 4 --disk 60
+  --cpu-type max --memory 20 --cpus 6 --disk 60
 export DOCKER_CONTEXT=colima-fabric-x86
 python3 e2e/rti/run.py
 ```
@@ -129,11 +129,14 @@ python3 e2e/rti/run.py
 architecture's guest agent, and without it the VM fails to start with
 `guest agent binary could not be found for Linux-x86_64`.
 
-Measured on an M4 Max: the VM exposes `avx2`, the engine is ready in **~40 s**,
-and it computes the same values CI asserts. Pulling the ~3.4 GB image into the
-VM is the slow step — everything is translated — and image *builds* under
-emulation are slower still. Treat this as the path for engine-level debugging;
-CI remains the witness of record.
+Size the VM generously: at 8 GiB the engine is OOM-killed (exit 137) once the
+rest of the stack is running.
+
+Measured on an M4 Max (36 GB): the VM exposes `avx2`, the engine is ready in
+**~40 s**, and the **full suite passes** with the same values CI asserts. The
+slow parts are the ~3.4 GB image pull and the image builds — everything is
+translated — not the engine; budget ~10 min for a cold run and far less once
+cached. CI remains the witness of record.
 
 ## Boundaries (deliberate, not backlog)
 
