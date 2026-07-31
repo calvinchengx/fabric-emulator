@@ -2,15 +2,30 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
+// freePort returns a port with nothing listening on it — which is what the
+// healthcheck tests below need, and the opposite of what a server test needs.
+// Never reserve a port this way to hand to the emulator: see serve() in
+// main_test.go for why the address has to come back from run instead.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
 func TestVersionSubcommand(t *testing.T) {
 	clearEnv(t)
-	if err := run([]string{"version"}, nil); err != nil {
+	if err := run([]string{"version"}, nil, nil); err != nil {
 		t.Fatalf("version: %v", err)
 	}
 }
@@ -28,7 +43,7 @@ func TestHealthcheckSubcommand(t *testing.T) {
 	}))
 	defer okSrv.Close()
 	t.Setenv("FABRIC_ADDR", strings.TrimPrefix(okSrv.URL, "http://"))
-	if err := run([]string{"healthcheck"}, nil); err != nil {
+	if err := run([]string{"healthcheck"}, nil, nil); err != nil {
 		t.Fatalf("healthcheck against healthy instance: %v", err)
 	}
 
