@@ -48,6 +48,48 @@ def apply_connect_confs():
 
 
 apply_connect_confs()
+
+
+def _install_delta_ops():
+    """Route OPTIMIZE/VACUUM to delta-rs when the engine cannot run them.
+
+    Wrapping `spark.sql` rather than scanning statement text: user code reaches
+    these through arbitrary Python (`spark.sql("OPTIMIZE ...")`), so the SQL
+    entry point is the only place that catches every path. Anything unmatched
+    is handed to Spark untouched.
+
+    Only installed on the Sail/Connect path. On the JVM overlay Spark runs
+    these natively and interception would be a downgrade — the JVM supports the
+    full syntax (ZORDER, WHERE) that the delta-rs path refuses.
+    """
+    if not os.environ.get("SPARK_REMOTE"):
+        return
+    try:
+        import delta_ops
+    except ImportError:  # pragma: no cover - runtime without deltalake
+        return
+
+    original_sql = spark.sql
+
+    def resolve(name):
+        row = original_sql(f"DESCRIBE DETAIL {name}").collect()[0]
+        return row["location"]
+
+    def sql(query, *args, **kwargs):
+        matched = delta_ops.match(query) if isinstance(query, str) else None
+        if matched is None:
+            return original_sql(query, *args, **kwargs)
+        kind, params = matched
+        message = delta_ops.execute(kind, params, resolve)
+        # Return a DataFrame so callers can .show()/.collect() as they would
+        # after a native OPTIMIZE, rather than getting None back.
+        return spark.createDataFrame([(message,)], ["result"])
+
+    spark.sql = sql
+    spark.delta_change_feed = lambda uri, **kw: delta_ops.read_change_feed(spark, uri, **kw)
+
+
+_install_delta_ops()
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 
 

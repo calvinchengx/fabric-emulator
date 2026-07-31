@@ -140,3 +140,59 @@ Then connect any PySpark client with no JVM installed:
 spark = SparkSession.builder.remote("sc://localhost:50051").getOrCreate()
 spark.sql("SELECT 1").show()
 ```
+
+
+## Delta maintenance on Sail: `OPTIMIZE` and `VACUUM` via delta-rs
+
+Sail's SQL planner has no `OPTIMIZE` or `VACUUM` — it answers `found OPTIMIZE
+at 0:8 expected something else`. The statement agent closes that gap without a
+JVM by recognising exactly those statements and running them through
+**delta-rs**, a real Delta Lake implementation, against the same table.
+
+Verified end to end: three appends produce three data files; `OPTIMIZE`
+compacts them to one with every row preserved; `VACUUM` then removes the three
+superseded files and the table still reads back correctly.
+
+```sql
+OPTIMIZE delta.`abfss://ws@onelake.dfs.fabric.microsoft.com/lh.Lakehouse/Tables/t`;
+VACUUM   delta.`…` RETAIN 168 HOURS;   -- and DRY RUN
+```
+
+### What is real, and what differs
+
+The outcome is genuine — real Parquet, a real `_delta_log`, files actually
+compacted and actually deleted. **What differs is the executor**: the emulator
+performs the operation, not the Spark engine, so nothing appears in a Spark
+job listing. That is a deliberate, documented divergence. The alternative is an
+honest failure, which helps nobody testing a notebook that calls `OPTIMIZE`.
+
+Three deliberate limits:
+
+- **`ZORDER` and `WHERE` are refused, not ignored.** They change *what* gets
+  compacted; quietly running a bare compaction instead would be a silent
+  semantic change. The error names the clause and points at the JVM overlay,
+  which supports the full syntax.
+- **`RETAIN` fractions round down.** delta-rs takes whole hours; retaining
+  *less* than asked would delete files the user wanted kept, which is the
+  unrecoverable direction.
+- **Change Data Feed is an explicit helper**, `spark.delta_change_feed(uri)`,
+  not an interception of `spark.read`. Silently rewriting a user's read chain
+  would hide which engine answered; calling it by name makes the source
+  obvious. The result is a materialised DataFrame, not a lazy scan.
+
+Interception is installed **only on the Sail/Connect path**. On the JVM overlay
+Spark runs these natively with full syntax, so intercepting would be a
+downgrade.
+
+### Why these three and not streaming
+
+These are bounded statements that start and finish against a table path,
+carrying no Spark session state — so they can be lifted out and run elsewhere.
+A streaming query is a long-running computation *inside* the engine; there is
+no statement boundary to intercept. That gap needs an upstream Sail fix, which
+is why [engine-matrix.md](engine-matrix.md) still lists the streaming sinks as
+Sail's real remaining gaps.
+
+**Note the matrix measures engines, not the emulator.** It probes Sail directly,
+so `OPTIMIZE`/`VACUUM` stay ❌ there — Sail genuinely does not implement them.
+Through the emulator's Livy agent they work.
