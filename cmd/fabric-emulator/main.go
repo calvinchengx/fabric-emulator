@@ -22,7 +22,7 @@ import (
 var version = "dev"
 
 func main() {
-	if err := run(os.Args[1:], nil); err != nil {
+	if err := run(os.Args[1:], nil, nil); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -30,7 +30,13 @@ func main() {
 // run serves until the process exits, or until stop closes (nil = never).
 // Tests stop the server so the store releases the database file before
 // TempDir cleanup — Windows cannot delete a file that is still open.
-func run(args []string, stop <-chan struct{}) error {
+//
+// ready (nil = don't report) receives the address the HTTP listener actually
+// bound, just before serving begins. Callers that ask for :0 learn their port
+// from here; reserving one up front and passing it in races every other
+// listener on the machine for the window it takes to open the store and
+// generate a certificate.
+func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	cfg := config.FromEnvPartial()
 	if len(args) > 0 {
 		switch args[0] {
@@ -113,6 +119,13 @@ func run(args []string, stop <-chan struct{}) error {
 	}
 
 	fmt.Printf("fabric-emulator listening on %s://%s (issuer: %s)\n", scheme, ln.Addr(), cfg.EntraIssuer)
+	if ready != nil {
+		// Non-blocking: an unread channel must not wedge the server.
+		select {
+		case ready <- ln.Addr():
+		default:
+		}
+	}
 	return http.Serve(ln, srv.Handler())
 }
 

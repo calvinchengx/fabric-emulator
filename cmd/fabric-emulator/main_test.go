@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/tls"
-	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -10,14 +9,38 @@ import (
 	"time"
 )
 
-func freePort(t *testing.T) int {
+// serve runs the emulator on an ephemeral port and returns the address it
+// actually bound. Both details matter, and both come from a Windows-only
+// flake that failed roughly one CI run in nine:
+//
+//   - run's error is surfaced. It used to be discarded, which made a bind
+//     collision and a slow start indistinguishable: every failure, whatever
+//     its cause, reported only that health never came up.
+//   - the port comes from run rather than from a listener we open and close
+//     beforehand. Reserving one up front leaves a window — widened by opening
+//     the store and generating a certificate — for anything else binding :0
+//     to take it first.
+func serve(t *testing.T, args ...string) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	stop, done, ready := make(chan struct{}), make(chan struct{}), make(chan net.Addr, 1)
+	var runErr error
+	go func() {
+		defer close(done)
+		runErr = run(append(args, "-addr", "127.0.0.1:0"), stop, ready)
+	}()
+	// Stop the server and wait for run to return before TempDir cleanup: the
+	// store must release the database file first (Windows cannot delete a
+	// file that is still open).
+	t.Cleanup(func() { close(stop); <-done })
+	select {
+	case addr := <-ready:
+		return addr.String()
+	case <-done:
+		t.Fatalf("run exited before it began serving: %v", runErr)
+	case <-time.After(60 * time.Second):
+		t.Fatal("run never reported a listen address")
 	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
+	return ""
 }
 
 func clearEnv(t *testing.T) {
@@ -30,21 +53,44 @@ func clearEnv(t *testing.T) {
 
 func TestRunErrors(t *testing.T) {
 	clearEnv(t)
-	if err := run([]string{"-bogus-flag"}, nil); err == nil {
+	if err := run([]string{"-bogus-flag"}, nil, nil); err == nil {
 		t.Fatal("unknown flag accepted")
 	}
-	if err := run(nil, nil); err == nil {
+	if err := run(nil, nil, nil); err == nil {
 		t.Fatal("missing issuer accepted")
 	}
-	if err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "999.999.999.999:1"}, nil); err == nil {
+	if err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "999.999.999.999:1"}, nil, nil); err == nil {
 		t.Fatal("unlistenable addr accepted")
 	}
 }
 
-// poll waits for the health endpoint to answer.
+// TestRunReportsNoAddressWhenListenFails: run announces an address only once
+// it has one. A report on the failure path would strand serve() waiting on a
+// health check for a server that already exited — the exact misdiagnosis this
+// channel exists to prevent.
+func TestRunReportsNoAddressWhenListenFails(t *testing.T) {
+	clearEnv(t)
+	ready := make(chan net.Addr, 1)
+	err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "999.999.999.999:1"}, nil, ready)
+	if err == nil {
+		t.Fatal("unlistenable addr accepted")
+	}
+	select {
+	case addr := <-ready:
+		t.Fatalf("reported %v after failing to listen", addr)
+	default:
+	}
+}
+
+// poll waits for the health endpoint to answer. The budget is generous
+// because a contended Windows runner can spend seconds opening the store and
+// generating a certificate before Serve; polling returns the moment health
+// answers, so a fast machine pays nothing for the headroom. The client must
+// carry its own timeout — an unbounded Get can outlive the deadline on its
+// own and turn a slow handshake into a missed budget.
 func poll(t *testing.T, client *http.Client, url string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
 		if err == nil {
@@ -60,27 +106,16 @@ func poll(t *testing.T, client *http.Client, url string) {
 
 func TestRunServesTLS(t *testing.T) {
 	clearEnv(t)
-	port := freePort(t)
-	dir := t.TempDir()
-	// Stop the server and wait for run to return before TempDir cleanup:
-	// the store must release the database file first (Windows cannot
-	// delete a file that is still open).
-	stop, done := make(chan struct{}), make(chan struct{})
-	t.Cleanup(func() { close(stop); <-done })
-	go func() {
-		defer close(done)
-		_ = run([]string{
-			"-entra-issuer", "https://127.0.0.1:1/t/v2.0", // JWKS unreachable is fine: /health needs no token
-			"-addr", fmt.Sprintf("127.0.0.1:%d", port),
-			"-data-dir", dir,
-		}, stop)
-	}()
-	client := &http.Client{Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}}
-	poll(t, client, fmt.Sprintf("https://127.0.0.1:%d/health", port))
+	addr := serve(t,
+		"-entra-issuer", "https://127.0.0.1:1/t/v2.0", // JWKS unreachable is fine: /health needs no token
+		"-data-dir", t.TempDir())
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}
+	poll(t, client, "https://"+addr+"/health")
 	// An authenticated route without a token is a Fabric-shaped 401.
-	resp, err := client.Get(fmt.Sprintf("https://127.0.0.1:%d/v1/workspaces", port))
+	resp, err := client.Get("https://" + addr + "/v1/workspaces")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,18 +127,8 @@ func TestRunServesTLS(t *testing.T) {
 
 func TestRunServesPlainHTTP(t *testing.T) {
 	clearEnv(t)
-	port := freePort(t)
-	stop, done := make(chan struct{}), make(chan struct{})
-	t.Cleanup(func() { close(stop); <-done })
-	go func() {
-		defer close(done)
-		_ = run([]string{
-			"-entra-issuer", "https://127.0.0.1:1/t/v2.0",
-			"-addr", fmt.Sprintf("127.0.0.1:%d", port),
-			"-disable-tls",
-		}, stop)
-	}()
-	poll(t, http.DefaultClient, fmt.Sprintf("http://127.0.0.1:%d/health", port))
+	addr := serve(t, "-entra-issuer", "https://127.0.0.1:1/t/v2.0", "-disable-tls")
+	poll(t, &http.Client{Timeout: 5 * time.Second}, "http://"+addr+"/health")
 }
 
 func TestRunDataDirAndTLSFailures(t *testing.T) {
@@ -114,7 +139,7 @@ func TestRunDataDirAndTLSFailures(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "127.0.0.1:0", "-data-dir", file}, nil)
+	err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "127.0.0.1:0", "-data-dir", file}, nil, nil)
 	if err == nil {
 		t.Fatal("data-dir-is-a-file accepted")
 	}
@@ -123,7 +148,7 @@ func TestRunDataDirAndTLSFailures(t *testing.T) {
 	if err := os.WriteFile(dir3+"/tls", []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "127.0.0.1:0", "-data-dir", dir3}, nil); err == nil {
+	if err := run([]string{"-entra-issuer", "https://x/t/v2.0", "-addr", "127.0.0.1:0", "-data-dir", dir3}, nil, nil); err == nil {
 		t.Fatal("broken tls dir accepted")
 	}
 }
