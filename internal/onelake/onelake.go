@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/calvinchengx/fabric-emulator/internal/awssig"
 	"io"
 	"log"
 	"net/http"
@@ -200,8 +201,29 @@ func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.
 		return nil, &dfsError{"ExternalConnectionNotFound", http.StatusBadGateway, "The shortcut connection is unavailable."}
 	}
 	req, _ := http.NewRequest(http.MethodGet, target.String(), nil)
-	var creds struct{ CredentialType, Username, Password, Key, Token string }
+	var creds struct {
+		CredentialType, Username, Password, Key, Token string
+		// S3 shortcuts authenticate with an Access Key ID and Secret Access
+		// Key (fabric-docs onelake/create-s3-shortcut.md), which means SigV4 —
+		// not a header credential. The portal collects exactly two strings, so
+		// a Basic credential's username/password carry them too.
+		AccessKeyID, SecretAccessKey, SessionToken string
+	}
 	_ = json.Unmarshal([]byte(conn.CredentialsJSON), &creds)
+
+	// A real S3 endpoint requires SigV4; a header credential is not enough.
+	// The trigger is explicit key material rather than the credentialType, so
+	// the plain HTTP read-through below (Basic / Key / SAS against an
+	// S3-compatible HTTP front end) keeps working exactly as before.
+	if creds.AccessKeyID != "" {
+		awssig.Sign(req, awssig.Credentials{
+			AccessKeyID:     creds.AccessKeyID,
+			SecretAccessKey: creds.SecretAccessKey,
+			SessionToken:    creds.SessionToken,
+		}, s.S3Region(), "s3", awssig.EmptyPayloadHash, time.Unix(s.Store.Now(), 0).UTC())
+		resp, err := s.Client.Do(req)
+		return s.readExternalBody(resp, err, remainder)
+	}
 	switch creds.CredentialType {
 	case "Basic":
 		req.SetBasicAuth(creds.Username, creds.Password)
@@ -215,6 +237,21 @@ func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.
 		return nil, &dfsError{"ExternalCredentialUnsupported", http.StatusBadGateway, "The shortcut credential type is not supported for HTTP read-through."}
 	}
 	resp, err := s.Client.Do(req)
+	return s.readExternalBody(resp, err, remainder)
+}
+
+// S3Region is the region the shortcut signer signs for. S3-compatible servers
+// (SeaweedFS, RustFS, and AWS itself for us-east-1) accept this default;
+// FABRIC_S3_REGION overrides it for a bucket in another region.
+func (s *Service) S3Region() string {
+	if r := os.Getenv("FABRIC_S3_REGION"); r != "" {
+		return r
+	}
+	return "us-east-1"
+}
+
+// readExternalBody turns an external response into a synthesized OneLake path.
+func (s *Service) readExternalBody(resp *http.Response, err error, remainder string) (*store.OneLakePath, *dfsError) {
 	if err != nil {
 		return nil, &dfsError{"ExternalTargetUnavailable", http.StatusBadGateway, err.Error()}
 	}

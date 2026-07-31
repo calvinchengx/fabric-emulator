@@ -68,7 +68,7 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Blob surface | Full | 🟢 Real |
 | Delta commits (put-if-absent atomicity) | Real; `-race`-tested concurrent-commit race | 🟢 Real |
 | Shortcuts (OneLake → OneLake) | Symlinks with target-side RBAC (trusted-workspace-access) | 🟢 Real |
-| Shortcuts to external targets (S3 / ADLS Gen2 / Dataverse) | ADLS Gen2 and Amazon S3 HTTP(S) read-through with Connection-backed Anonymous/Basic/Key/SAS credentials; Dataverse remains an explicit 501 | 🟢 ADLS/S3 reads / 🔴 Dataverse |
+| Shortcuts to external targets (S3 / ADLS Gen2 / Dataverse) | **Real Amazon S3 / S3-compatible read-through**: a Connection carrying the documented Access Key ID + Secret Access Key pair makes the emulator sign upstream requests with **AWS SigV4** (`internal/awssig`, verified against AWS's own published example signature). Witnessed by `e2e/s3` against a real **SeaweedFS** server started with an identity config — the suite proves an unsigned GET is 403 and that a *wrong* secret is refused, so the pass cannot be vacuous; the object itself is written by **boto3**. ADLS Gen2 and plain HTTP(S) endpoints keep the Anonymous/Basic/Key/SAS read-through. Dataverse remains an explicit 501 | 🟢 Real (S3 SigV4 + ADLS reads) / 🔴 Dataverse |
 
 ## Data Engineering (`data-engineering/`)
 
