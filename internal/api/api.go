@@ -173,6 +173,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerAdminDomains(mux)
 	a.registerActivityEvents(mux)
 	a.registerLabels(mux)
+	a.registerTenantSettings(mux)
 	a.registerLivy(mux)
 	a.registerShortcuts(mux)
 	a.registerExecuteQueries(mux)

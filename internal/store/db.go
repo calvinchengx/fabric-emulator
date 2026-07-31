@@ -203,6 +203,20 @@ CREATE TABLE IF NOT EXISTS item_properties (
 	value TEXT NOT NULL,
 	PRIMARY KEY (item_id, name)
 );
+-- Tenant settings, shaped as the REST reference's TenantSetting object.
+CREATE TABLE IF NOT EXISTS tenant_settings (
+	setting_name TEXT PRIMARY KEY,
+	title TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 0,
+	can_specify_security_groups INTEGER NOT NULL DEFAULT 0,
+	tenant_setting_group TEXT NOT NULL DEFAULT '',
+	delegate_to_capacity INTEGER NOT NULL DEFAULT 0,
+	delegate_to_domain INTEGER NOT NULL DEFAULT 0,
+	delegate_to_workspace INTEGER NOT NULL DEFAULT 0,
+	enabled_groups_json TEXT NOT NULL DEFAULT 'null',
+	excluded_groups_json TEXT NOT NULL DEFAULT 'null',
+	properties_json TEXT NOT NULL DEFAULT 'null'
+);
 -- Sensitivity labels. The taxonomy is emulator-provided (real Fabric gets it
 -- from Purview, which is not attachable offline); the label-change event
 -- model in governance/sensitivity-label-audit-schema.md is what is faithful.
@@ -359,7 +373,10 @@ PRAGMA foreign_keys = ON;
 	if err := s.seedCapacity(); err != nil {
 		return err
 	}
-	return s.seedLabels()
+	if err := s.seedLabels(); err != nil {
+		return err
+	}
+	return s.seedTenantSettings()
 }
 
 // NewID returns a random lowercase UUIDv4 — the id format Fabric uses for

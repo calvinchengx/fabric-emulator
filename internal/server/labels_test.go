@@ -33,16 +33,16 @@ func (f *fixture) labels(t *testing.T) map[string]string {
 // itemLabel reads back the label the item carries, or "" when it has none.
 func (f *fixture) itemLabel(t *testing.T, wsID, itemID string) string {
 	t.Helper()
+	// The REST reference puts sensitivityLabel on the Item object itself,
+	// carrying only an id.
 	var got struct {
-		Properties struct {
-			SensitivityLabel struct {
-				LabelID string `json:"labelId"`
-			} `json:"sensitivityLabel"`
-		} `json:"properties"`
+		SensitivityLabel struct {
+			ID string `json:"id"`
+		} `json:"sensitivityLabel"`
 	}
 	f.mustStatus(f.call("GET", "/v1/workspaces/"+wsID+"/items/"+itemID, f.token, nil, &got),
 		http.StatusOK, "get item")
-	return got.Properties.SensitivityLabel.LabelID
+	return got.SensitivityLabel.ID
 }
 
 // Applying, replacing and clearing a label, through the documented bulk APIs.
