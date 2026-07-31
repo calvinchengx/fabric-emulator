@@ -80,6 +80,13 @@ Eventhouse / KQL Database surface
 ([docs/25-rti-kusto.md](docs/25-rti-kusto.md)); `--profile governance` adds
 OpenMetadata ([docs/22-openmetadata.md](docs/22-openmetadata.md)).
 
+Overlay files *swap* an engine rather than add one. Layering
+[`docker-compose.spark-jvm.yml`](docker-compose.spark-jvm.yml) runs the Spark
+surface on the **JVM** instead of the default Sail, buying the capabilities
+Spark Connect cannot express — the RDD API (`sc`), structured streaming,
+`OPTIMIZE`/`VACUUM`, and Java/Scala UDFs — at the cost of image size and
+startup ([docs/20-lakesail-engine.md](docs/20-lakesail-engine.md)).
+
 ## Python tooling
 
 Python packages, development dependencies, and E2E clients are managed by the

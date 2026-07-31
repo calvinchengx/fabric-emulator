@@ -198,7 +198,7 @@ contract holds better than any assertion we could write ourselves.
 | `go-mssqldb` | Warehouse/Lakehouse **TDS + FedAuth** | 🟢 `internal/server`, `internal/tds` |
 | **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy HC sessions | 🟠 `e2e/dbt-fabricspark` — debug→seed→run→test on Sail |
 | **`dbt-fabric`** (Microsoft) | Warehouse **TDS via ODBC Driver 18** | 🟢 `e2e/dbt-fabric` — debug→seed→run→test through the TDS splice |
-| **`azure-kusto-data`** (Microsoft) + raw Kusto REST, over **`kustainer`** (Microsoft's own KQL engine) | Eventhouse / KQL Database: `/v1/rest/mgmt`, `/v1/rest/query`, `/v2/rest/query` on the published `queryServiceUri` — create table, ingest, query values back, per-database isolation | 🟠 `e2e/rti` — CI-only witness: the engine is amd64/AVX2-only, so it cannot run on arm64 at all |
+| **`azure-kusto-data`** (Microsoft) + raw Kusto REST, over **`kustainer`** (Microsoft's own KQL engine) | Eventhouse / KQL Database: `/v1/rest/mgmt`, `/v1/rest/query`, `/v2/rest/query` on the published `queryServiceUri` — create table, ingest, query values back, per-database isolation | 🟠 `e2e/rti` — witness of record is CI (amd64). The engine needs AVX2, which Rosetta does not provide, so the default Docker setup on Apple silicon cannot run it; a QEMU x86-64 VM with `--cpu-type max` can, and does ([25-rti-kusto.md](25-rti-kusto.md)) |
 
 The TDS surface now has **two independent driver witnesses**: `go-mssqldb` and
 the Microsoft **ODBC Driver 18** (via `dbt-fabric`). That second driver mattered —
