@@ -62,6 +62,8 @@ func (a *API) createWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
+	a.audit(p, &store.ActivityEvent{Operation: store.OpCreateWorkspace,
+		WorkspaceID: ws.ID, Properties: map[string]any{"WorkspaceName": ws.DisplayName}})
 	writeJSON(w, http.StatusCreated, ws)
 }
 

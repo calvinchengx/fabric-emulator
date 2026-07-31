@@ -35,6 +35,34 @@ func (a *API) registerAdminDomains(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/admin/domains/{did}/roleAssignments/bulkUnassign", a.withAuth(a.bulkUnassignDomainRole))
 }
 
+// domainProps builds the operationProperties the domain audit schema
+// documents for every domain operation (governance/domains-audit-schema.md):
+// DataDomainObjectId, DataDomainDisplayName, and ParentObjectId when the
+// domain is a subdomain.
+func domainProps(d *store.Domain) map[string]any {
+	props := map[string]any{
+		"DataDomainObjectId":    d.ID,
+		"DataDomainDisplayName": d.DisplayName,
+	}
+	if d.ParentDomainID != "" {
+		props["ParentObjectId"] = d.ParentDomainID
+	}
+	return props
+}
+
+// auditDomainWorkspaces records an assignment change. The schema names the
+// counters FoldersToSetCounter / FoldersToUnsetCount — "folders" is the audit
+// vocabulary's word for workspaces.
+func (a *API) auditDomainWorkspaces(p *auth.Principal, domainID, counter string, n int) {
+	d, err := a.Store.GetDomain(domainID)
+	if err != nil {
+		return
+	}
+	props := domainProps(d)
+	props[counter] = n
+	a.audit(p, &store.ActivityEvent{Operation: store.OpUpdateDomainWorkspaces, Properties: props})
+}
+
 // domainErr maps a store error onto the admin surface's error envelope.
 func domainErr(w http.ResponseWriter, err error) {
 	switch {
@@ -76,6 +104,8 @@ func (a *API) createDomain(w http.ResponseWriter, r *http.Request, p *auth.Princ
 		domainErr(w, err)
 		return
 	}
+	a.audit(p, &store.ActivityEvent{Operation: store.OpInsertDomain,
+		Properties: domainProps(d)})
 	writeJSON(w, http.StatusCreated, d)
 }
 
@@ -99,13 +129,22 @@ func (a *API) updateDomain(w http.ResponseWriter, r *http.Request, p *auth.Princ
 		domainErr(w, err)
 		return
 	}
+	a.audit(p, &store.ActivityEvent{Operation: store.OpUpdateDomain,
+		Properties: domainProps(d)})
 	writeJSON(w, http.StatusOK, d)
 }
 
 func (a *API) deleteDomain(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	// Read it first: the audit record names the domain, and after the delete
+	// there is nothing left to name it from.
+	deleted, _ := a.Store.GetDomain(r.PathValue("did"))
 	if err := a.Store.DeleteDomain(r.PathValue("did")); err != nil {
 		domainErr(w, err)
 		return
+	}
+	if deleted != nil {
+		a.audit(p, &store.ActivityEvent{Operation: store.OpDeleteDomain,
+			Properties: domainProps(deleted)})
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -134,6 +173,7 @@ func (a *API) assignDomainWorkspaces(w http.ResponseWriter, r *http.Request, p *
 		domainErr(w, err)
 		return
 	}
+	a.auditDomainWorkspaces(p, r.PathValue("did"), "FoldersToSetCounter", len(body.WorkspacesIDs))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -147,6 +187,7 @@ func (a *API) unassignDomainWorkspaces(w http.ResponseWriter, r *http.Request, p
 		domainErr(w, err)
 		return
 	}
+	a.auditDomainWorkspaces(p, r.PathValue("did"), "FoldersToUnsetCount", len(body.WorkspacesIDs))
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -154,6 +195,10 @@ func (a *API) unassignAllDomainWorkspaces(w http.ResponseWriter, r *http.Request
 	if err := a.Store.UnassignAllWorkspaces(r.PathValue("did")); err != nil {
 		domainErr(w, err)
 		return
+	}
+	if d, err := a.Store.GetDomain(r.PathValue("did")); err == nil {
+		a.audit(p, &store.ActivityEvent{Operation: store.OpDeleteAllDomainWorkspae,
+			Properties: domainProps(d)})
 	}
 	w.WriteHeader(http.StatusOK)
 }
