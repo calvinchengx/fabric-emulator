@@ -72,6 +72,10 @@ CREATE TABLE IF NOT EXISTS items (
 	type TEXT NOT NULL,
 	display_name TEXT NOT NULL,
 	description TEXT NOT NULL DEFAULT '',
+	-- Workspace folder the item lives in ('' = workspace root). Not a declared
+	-- FK: folders are deleted independently and an item outliving its folder
+	-- must fall back to the root rather than block the delete.
+	folder_id TEXT NOT NULL DEFAULT '',
 	created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS item_definitions (
@@ -301,6 +305,7 @@ PRAGMA foreign_keys = ON;
 		`ALTER TABLE shortcuts ADD COLUMN target_type TEXT NOT NULL DEFAULT 'OneLake'`,
 		`ALTER TABLE shortcuts ADD COLUMN target_location TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE shortcuts ADD COLUMN connection_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE items ADD COLUMN folder_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return err

@@ -111,6 +111,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.updateItem))
 	mux.HandleFunc("DELETE /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.deleteItem))
 
+	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/move", a.withAuth(a.moveItem))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/getDefinition", a.withAuth(a.getDefinition))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/updateDefinition", a.withAuth(a.updateDefinition))
 

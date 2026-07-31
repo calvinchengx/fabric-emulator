@@ -38,7 +38,10 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		DisplayName string `json:"displayName"`
 		Type        string `json:"type"`
 		Description string `json:"description"`
-		Definition  *struct {
+		// Workspace folder to create the item in; omitted means the root.
+		// fabric-cicd sends this when the repository nests items in folders.
+		FolderID   string `json:"folderId"`
+		Definition *struct {
 			Parts []store.DefinitionPart `json:"parts"`
 		} `json:"definition"`
 		// creationPayload carries per-type creation settings — a KQL
@@ -59,7 +62,8 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 			"An item of this type with this display name already exists in the workspace.")
 		return
 	}
-	it := &store.Item{WorkspaceID: wid, Type: body.Type, DisplayName: body.DisplayName, Description: body.Description}
+	it := &store.Item{WorkspaceID: wid, Type: body.Type, DisplayName: body.DisplayName,
+		Description: body.Description, FolderID: strings.TrimSpace(body.FolderID)}
 	var parts []store.DefinitionPart
 	if body.Definition != nil {
 		parts = body.Definition.Parts
@@ -221,4 +225,60 @@ func (a *API) getOperationResult(w http.ResponseWriter, r *http.Request, p *auth
 		// header unconditionally.
 		writeJSON(w, http.StatusOK, map[string]any{})
 	}
+}
+
+// moveItem reparents an item into a workspace folder.
+//
+//	POST /v1/workspaces/{wid}/items/{iid}/move  {"targetFolderId": "<guid>"}
+//
+// fabric-cicd calls this on every redeploy where the item's folder in the
+// repository differs from the deployed one, so without it a second publish of
+// any repository that nests items in folders fails on every nested item.
+// An empty or omitted targetFolderId moves the item back to the workspace root.
+func (a *API) moveItem(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	wid, iid := r.PathValue("wid"), r.PathValue("iid")
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
+		return
+	}
+	it, err := a.Store.GetItem(wid, iid)
+	if err != nil || it == nil {
+		writeErr(w, http.StatusNotFound, "ItemNotFound", "item not found")
+		return
+	}
+	var body struct {
+		TargetFolderID string `json:"targetFolderId"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, "InvalidRequest", "malformed body")
+			return
+		}
+	}
+	target := strings.TrimSpace(body.TargetFolderID)
+	// Fabric rejects a move into a folder that does not exist in the workspace;
+	// silently accepting it would let a bad deploy look successful.
+	if target != "" {
+		folders, err := a.Store.ListFolders(wid)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+			return
+		}
+		found := false
+		for _, f := range folders {
+			if f.ID == target {
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeErr(w, http.StatusNotFound, "FolderNotFound", "target folder not found in this workspace")
+			return
+		}
+	}
+	if err := a.Store.MoveItem(wid, iid, target); err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	it.FolderID = target
+	writeJSON(w, http.StatusOK, it)
 }

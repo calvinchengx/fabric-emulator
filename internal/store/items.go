@@ -19,8 +19,8 @@ func (s *Store) CreateItem(it *Item, parts []DefinitionPart) error {
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(
-		`INSERT INTO items (id, workspace_id, type, display_name, description, created_at) VALUES (?,?,?,?,?,?)`,
-		it.ID, it.WorkspaceID, it.Type, it.DisplayName, it.Description, it.CreatedAt); err != nil {
+		`INSERT INTO items (id, workspace_id, type, display_name, description, folder_id, created_at) VALUES (?,?,?,?,?,?,?)`,
+		it.ID, it.WorkspaceID, it.Type, it.DisplayName, it.Description, it.FolderID, it.CreatedAt); err != nil {
 		return nameConflict(err)
 	}
 	if len(parts) > 0 {
@@ -40,8 +40,8 @@ func (s *Store) CreateItem(it *Item, parts []DefinitionPart) error {
 func (s *Store) GetItem(workspaceID, id string) (*Item, error) {
 	it := &Item{}
 	err := s.db.QueryRow(
-		`SELECT id, workspace_id, type, display_name, description, created_at FROM items WHERE workspace_id = ? AND id = ?`,
-		workspaceID, id).Scan(&it.ID, &it.WorkspaceID, &it.Type, &it.DisplayName, &it.Description, &it.CreatedAt)
+		`SELECT id, workspace_id, type, display_name, description, folder_id, created_at FROM items WHERE workspace_id = ? AND id = ?`,
+		workspaceID, id).Scan(&it.ID, &it.WorkspaceID, &it.Type, &it.DisplayName, &it.Description, &it.FolderID, &it.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -52,8 +52,8 @@ func (s *Store) GetItem(workspaceID, id string) (*Item, error) {
 func (s *Store) GetItemByID(id string) (*Item, error) {
 	it := &Item{}
 	err := s.db.QueryRow(
-		`SELECT id, workspace_id, type, display_name, description, created_at FROM items WHERE id = ?`, id).
-		Scan(&it.ID, &it.WorkspaceID, &it.Type, &it.DisplayName, &it.Description, &it.CreatedAt)
+		`SELECT id, workspace_id, type, display_name, description, folder_id, created_at FROM items WHERE id = ?`, id).
+		Scan(&it.ID, &it.WorkspaceID, &it.Type, &it.DisplayName, &it.Description, &it.FolderID, &it.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -62,7 +62,7 @@ func (s *Store) GetItemByID(id string) (*Item, error) {
 
 // ListItems returns a workspace's items, optionally filtered by type.
 func (s *Store) ListItems(workspaceID, itemType string) ([]*Item, error) {
-	q := `SELECT id, workspace_id, type, display_name, description, created_at FROM items WHERE workspace_id = ?`
+	q := `SELECT id, workspace_id, type, display_name, description, folder_id, created_at FROM items WHERE workspace_id = ?`
 	args := []any{workspaceID}
 	if itemType != "" {
 		q += ` AND type = ?`
@@ -77,7 +77,7 @@ func (s *Store) ListItems(workspaceID, itemType string) ([]*Item, error) {
 	var out []*Item
 	for rows.Next() {
 		it := &Item{}
-		if err := rows.Scan(&it.ID, &it.WorkspaceID, &it.Type, &it.DisplayName, &it.Description, &it.CreatedAt); err != nil {
+		if err := rows.Scan(&it.ID, &it.WorkspaceID, &it.Type, &it.DisplayName, &it.Description, &it.FolderID, &it.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -179,4 +179,17 @@ func (s *Store) ItemProperties(itemID string) (map[string]string, error) {
 		props[name] = value
 	}
 	return props, rows.Err()
+}
+
+// MoveItem reparents an item to a workspace folder ("" = the workspace root).
+// Fabric exposes this as POST /items/{id}/move, which fabric-cicd calls whenever
+// a redeploy finds an item in a different folder than the repository says.
+func (s *Store) MoveItem(workspaceID, id, folderID string) error {
+	res, err := s.db.Exec(
+		`UPDATE items SET folder_id = ? WHERE workspace_id = ? AND id = ?`,
+		folderID, workspaceID, id)
+	if err != nil {
+		return err
+	}
+	return oneRow(res)
 }
