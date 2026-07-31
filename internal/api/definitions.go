@@ -103,6 +103,12 @@ var typedCollections = map[string]string{
 	"kqlQuerysets":       "KQLQueryset",
 	"reflexes":           "Reflex",
 	"warehouseSnapshots": "WarehouseSnapshot",
+	// Collection segments are NOT derivable from the type name — the REST
+	// reference spells GraphQLApi's collection `GraphQLApis` (capitalised) but
+	// VariableLibrary's `variableLibraries`. Each is taken from its own
+	// reference page rather than generated.
+	"GraphQLApis":       "GraphQLApi",
+	"variableLibraries": "VariableLibrary",
 }
 
 // registerTyped mounts the typed collections as thin aliases: list/create on

@@ -36,7 +36,7 @@ Pure CRUD + RBAC in patterns the repo has executed a dozen times.
 | ~~Governance domains~~ ✅ | `/v1/admin/domains`: domain/subdomain CRUD, workspace assignment, bulk role assignment. Graded 🟢 mgmt with the missing tenant-admin gate called out as 🟡 | S |
 | ~~Audit (`activityevents`)~~ ✅ | Real audit trail recorded as operations happen, documented vocabulary, same-day window + continuation paging. 🟢 | S |
 | ~~Tenant settings~~ ✅ | Documented TenantSetting object, delegation flags, typed properties. 🟢 read; PATCH is a marked emulator affordance | S |
-| Graph, Real-Time Hub, Embed, Workload Dev Kit | Typed items + definition round-trip. **Unblocked**: the authoritative `ItemType` enum is in the REST reference (core/items/list-items), which the fabric-docs clone does not carry | S–M |
+| ~~Item-type fidelity~~ ✅ | The documented `ItemType` enum is enforced (`InvalidItemType`, case-insensitive canonicalisation); every enum type is creatable through the generic surface, and `GraphQLApis`/`variableLibraries` gained typed collections. Remaining typed collections are cheap but each needs its own reference page — the segments are not derivable | S–M |
 | ~~Sensitivity labels~~ ✅ | bulkSetLabels/bulkRemoveLabels + documented label-change audit events. 🟢 (taxonomy is emulator-provided: Purview is not attachable) | M |
 | Dataflow Gen2 **management** completeness | Finish the non-engine surface; execution stays 501 | S |
 

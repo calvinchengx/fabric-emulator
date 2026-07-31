@@ -38,7 +38,7 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Fabric feature | Emulator | Type |
 |---|---|---|
 | Workspaces CRUD | Full. Display names are **unique tenant-wide** — duplicates 409 `WorkspaceNameAlreadyExists` (uniqueness per the REST reference; fabric-docs covers workspace naming portal-side only) | 🟢 Real |
-| Items CRUD + 12 typed collections | Full. Display names are **unique per (workspace, type)** — duplicates 409 `ItemDisplayNameAlreadyInUse`; names stay reusable *across* types, which is why OneLake addresses items as `name.Type` | 🟢 Real |
+| Items CRUD + typed collections | Full. Display names are **unique per (workspace, type)** — duplicates 409 `ItemDisplayNameAlreadyInUse`; names stay reusable *across* types, which is why OneLake addresses items as `name.Type`. The `type` is validated against the documented **`ItemType` enumeration** (50 values, REST reference) — anything else is `InvalidItemType`, as real Fabric returns — and canonicalised case-insensitively so `notebook` and `Notebook` cannot become two types. 24 typed collections alias the generic surface; each collection segment is taken from its own reference page, since they are not derivable (`GraphQLApis` is capitalised, `variableLibraries` is not) | 🟢 Real |
 | Role assignments / workspace RBAC | Enforced from the validated bearer principal | 🟢 Real |
 | Folders | Full | 🟢 Real |
 | Capacities (list, assign / unassign) | Full state, no billing/SKU enforcement | 🟢 Real state |
