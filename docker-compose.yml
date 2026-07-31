@@ -32,9 +32,16 @@
 # Issuer alignment matters: tokens carry iss = <entra login origin>/<tenant>/v2.0,
 # so entra must ADVERTISE the origin fabric validates against. On the compose
 # network that origin is https://entra-emulator:8443, hence PUBLIC_ORIGIN below.
+# Image versions are overridable so a consumer can pin a known-good release
+# instead of tracking whatever `latest` happens to be:
+#
+#   FABRIC_EMULATOR_VERSION=0.7.0 docker compose up -d
+#
+# Default stays `latest` so the quickstart is unchanged. Release tags publish
+# both `<version>` and `latest` (see .github/workflows/release.yml).
 services:
   entra-emulator:
-    image: ghcr.io/calvinchengx/entra-emulator:latest
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-latest}
     environment:
       ORIGIN_MODE: compat # single origin, path-prefixed surfaces
       PUBLIC_ORIGIN: "https://entra-emulator:8443"
@@ -47,7 +54,7 @@ services:
       retries: 10
 
   keyvault-emulator:
-    image: ghcr.io/calvinchengx/azure-keyvault-emulator:latest
+    image: ghcr.io/calvinchengx/azure-keyvault-emulator:${KEYVAULT_EMULATOR_VERSION:-latest}
     depends_on:
       entra-emulator:
         condition: service_healthy
@@ -62,7 +69,7 @@ services:
       KV_DATA_DIR: ""
 
   fabric-emulator:
-    image: ghcr.io/calvinchengx/fabric-emulator:latest
+    image: ghcr.io/calvinchengx/fabric-emulator:${FABRIC_EMULATOR_VERSION:-latest}
     depends_on:
       entra-emulator:
         condition: service_healthy
