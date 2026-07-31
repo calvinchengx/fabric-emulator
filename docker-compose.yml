@@ -101,7 +101,10 @@ services:
   # the overlay the Kusto routes stay an honest 501. See docs/25-rti-kusto.md.
   kustainer:
     profiles: [rti]
-    image: mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest
+    # Digest-pinned: `latest` on a Microsoft image moves without notice, and a
+    # silently swapped engine turns a parity witness into a coin toss. Refresh with
+    #   docker buildx imagetools inspect mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest
+    image: mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest@sha256:1a488e094be760ebff1204e690a54b1b372decd9730ea0baf2d291b4a488205f
     # amd64 only, and Microsoft documents ARM as unsupported: the engine's
     # native layer needs AVX2, which Apple-silicon emulation does not expose,
     # so the container crashes on boot there. Linux/amd64 hosts (and CI) are

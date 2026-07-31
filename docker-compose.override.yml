@@ -21,6 +21,10 @@ services:
   # No JVM anywhere; PySpark clients can also connect directly at
   # sc://localhost:50051. See docs/20-lakesail-engine.md.
   sail:
+    # image + build: `docker compose pull` fetches the published sidecar (so a
+    # pinned SAIL_VERSION is reproducible), while `docker compose build` still
+    # works from source for local development. Defaults to latest, like the rest.
+    image: ghcr.io/calvinchengx/fabric-emulator-sail:${SAIL_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/sail/Dockerfile
@@ -54,6 +58,7 @@ services:
       retries: 20
 
   spark-agent:
+    image: ghcr.io/calvinchengx/fabric-emulator-spark-agent:${SPARK_AGENT_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/python-runtime/Dockerfile
@@ -78,7 +83,10 @@ services:
       retries: 20
 
   sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # Digest-pinned for the same reason as kustainer: this sidecar IS the warehouse
+    # engine, so an unannounced change moves T-SQL behaviour under the tests. Refresh:
+    #   docker buildx imagetools inspect mcr.microsoft.com/mssql/server:2022-latest
+    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
