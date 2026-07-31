@@ -54,6 +54,15 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "displayName and type are required.")
 		return
 	}
+	// Real Fabric rejects a type outside the documented ItemType enumeration
+	// with InvalidItemType. Matching is case-insensitive and the canonical
+	// spelling is stored, so `notebook` and `Notebook` stay one type.
+	itemType, known := store.CanonicalItemType(body.Type)
+	if !known {
+		writeErr(w, http.StatusBadRequest, "InvalidItemType", "Invalid item type.")
+		return
+	}
+	body.Type = itemType
 	if taken, err := a.Store.ItemNameTaken(wid, body.DisplayName, body.Type, ""); err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
