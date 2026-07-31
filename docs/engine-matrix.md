@@ -11,10 +11,12 @@ facts pointing at different fixes.
 Rows where the engines differ are the honest content of the
 🔴 default / 🟠 JVM overlay marks in [parity.md](parity.md).
 
-**This measures the engines, not the emulator.** `OPTIMIZE` and `VACUUM`
-show ❌ for Sail because Sail genuinely does not implement them — but the
-emulator's Livy agent runs both through delta-rs, so they work in a
-notebook. See [20-lakesail-engine.md](20-lakesail-engine.md).
+Three columns, because *engine* and *emulator* are different things:
+**Sail (engine)** is the bare engine; **Sail + delta-rs** is what a user
+actually gets, since the Livy agent installs the delta-rs interception
+for every Sail session ([20-lakesail-engine.md](20-lakesail-engine.md)).
+The middle column runs the agent's own module, not a re-implementation,
+so it cannot drift from the runtime it describes.
 
 ## Which engine should I use?
 
@@ -55,27 +57,27 @@ fidelity engine. It is not the default because a 2.1 GB image and a
 minutes-long startup would cost every user speed to buy capabilities most
 tests never touch.
 
-| Capability | Sail | Spark JVM |
-|---|---|---|
-| Delta write | ✅ | ✅ |
-| Delta append | ✅ | ✅ |
-| Time travel — `option("versionAsOf")` | ✅ | ✅ |
-| Time travel — SQL `VERSION AS OF` | ✅ | ✅ |
-| `MERGE INTO` a registered table at a **local path** ᵃ | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ✅ |
-| `MERGE INTO delta.`path`` (path target) | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ✅ |
-| `OPTIMIZE` | ❌ `invalid argument: found OPTIMIZE at 0:8 expected something else, ';', statement, or end of` | ✅ |
-| `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ✅ |
-| Change Data Feed (must not be inert) | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ |
-| `readStream` (rate source) | ✅ | ✅ |
-| Streaming sink — console | ✅ | ✅ |
-| Streaming sink — memory | ❌ `No table format found for: memory` | ✅ |
-| Streaming sink — parquet | ❌ `cannot write streaming data to listing table` | ✅ |
-| Streaming sink — **delta** | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ✅ |
-| `sc` / RDD API | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ✅ |
-| `spark._jvm` bridge | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `_jvm` is not supported in Spark Connect as it dep` | ✅ |
-| `createDataFrame(local_rows)` | ✅ | ✅ |
-| Python UDF ᵇ | ❌ `An exception was thrown from the Python worker. Please see the stack trace below. TypeErro` | ✅ |
-| SQL over a temp view | ✅ | ✅ |
+| Capability | Sail (engine) | Sail + delta-rs (emulator) | Spark JVM |
+|---|---|---|---|
+| Delta write | ✅ | ✅ | ✅ |
+| Delta append | ✅ | ✅ | ✅ |
+| Time travel — `option("versionAsOf")` | ✅ | ✅ | ✅ |
+| Time travel — SQL `VERSION AS OF` | ✅ | ✅ | ✅ |
+| `MERGE INTO` a registered table at a **local path** ᵃ | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ✅ |
+| `MERGE INTO delta.`path`` (path target) | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ✅ |
+| `OPTIMIZE` | ❌ `invalid argument: found OPTIMIZE at 0:8 expected something else, ';', statement, or end of` | ❌ `Local path "/tmp/probe/t_opt" does not exist or you don't have access! Error: Os { code: 2` | ✅ |
+| `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ❌ `Local path "/tmp/probe/t_vac" does not exist or you don't have access! Error: Os { code: 2` | ✅ |
+| Change Data Feed (must not be inert) | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ |
+| `readStream` (rate source) | ✅ | ✅ | ✅ |
+| Streaming sink — console | ✅ | ✅ | ✅ |
+| Streaming sink — memory | ❌ `No table format found for: memory` | ❌ `No table format found for: memory` | ✅ |
+| Streaming sink — parquet | ❌ `cannot write streaming data to listing table` | ❌ `cannot write streaming data to listing table` | ✅ |
+| Streaming sink — **delta** | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ✅ |
+| `sc` / RDD API | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ✅ |
+| `spark._jvm` bridge | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `_jvm` is not supported in Spark Connect as it dep` | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `_jvm` is not supported in Spark Connect as it dep` | ✅ |
+| `createDataFrame(local_rows)` | ✅ | ✅ | ✅ |
+| Python UDF ᵇ | ❌ `An exception was thrown from the Python worker. Please see the stack trace below. TypeErro` | ❌ `An exception was thrown from the Python worker. Please see the stack trace below. TypeErro` | ✅ |
+| SQL over a temp view | ✅ | ✅ | ✅ |
 
 **11 of 19 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the

@@ -23,11 +23,11 @@ DIR = pathlib.Path(__file__).resolve().parent
 OUT = DIR / "out"
 MATRIX = DIR.parent.parent / "docs" / "engine-matrix.md"
 COMPOSE = ["docker", "compose", "-f", str(DIR / "docker-compose.yml")]
-ENGINES = ("sail", "jvm")
+ENGINES = ("sail", "sail-delta", "jvm")
 
 
 def run_engine(engine: str) -> int:
-    service = "sail-probe" if engine == "sail" else "jvm-probe"
+    service = {"sail": "sail-probe", "sail-delta": "sail-delta-probe"}.get(engine, "jvm-probe")
     print(f"==> probing {engine}", flush=True)
     try:
         result = subprocess.run(
@@ -59,6 +59,7 @@ def cell(result) -> str:
 
 def render() -> str:
     sail, jvm = load("sail"), load("jvm")
+    sail_delta = load("sail-delta")
     order = [r["id"] for r in json.loads((OUT / "jvm.json").read_text())]
     lines = [
         "# Spark engine matrix — Sail vs JVM",
@@ -74,10 +75,12 @@ def render() -> str:
         "Rows where the engines differ are the honest content of the",
         "🔴 default / 🟠 JVM overlay marks in [parity.md](parity.md).",
         "",
-        "**This measures the engines, not the emulator.** `OPTIMIZE` and `VACUUM`",
-        "show ❌ for Sail because Sail genuinely does not implement them — but the",
-        "emulator's Livy agent runs both through delta-rs, so they work in a",
-        "notebook. See [20-lakesail-engine.md](20-lakesail-engine.md).",
+        "Three columns, because *engine* and *emulator* are different things:",
+        "**Sail (engine)** is the bare engine; **Sail + delta-rs** is what a user",
+        "actually gets, since the Livy agent installs the delta-rs interception",
+        "for every Sail session ([20-lakesail-engine.md](20-lakesail-engine.md)).",
+        "The middle column runs the agent's own module, not a re-implementation,",
+        "so it cannot drift from the runtime it describes.",
         "",
         "## Which engine should I use?",
         "",
@@ -118,16 +121,18 @@ def render() -> str:
         "minutes-long startup would cost every user speed to buy capabilities most",
         "tests never touch.",
         "",
-        "| Capability | Sail | Spark JVM |",
-        "|---|---|---|",
+        "| Capability | Sail (engine) | Sail + delta-rs (emulator) | Spark JVM |",
+        "|---|---|---|---|",
     ]
     differing = 0
     for probe_id in order:
-        s, j = sail.get(probe_id), jvm.get(probe_id)
+        s, sd, j = sail.get(probe_id), sail_delta.get(probe_id), jvm.get(probe_id)
         desc = (j or s or {}).get("description", probe_id)
-        if s and j and s["status"] != j["status"]:
+        # "Differs" is measured against what the emulator actually delivers —
+        # the middle column — not the bare engine.
+        if sd and j and sd["status"] != j["status"]:
             differing += 1
-        lines.append(f"| {desc} | {cell(s)} | {cell(j)} |")
+        lines.append(f"| {desc} | {cell(s)} | {cell(sd)} | {cell(j)} |")
     lines += [
         "",
         f"**{differing} of {len(order)} capabilities differ between the engines.**",

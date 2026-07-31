@@ -166,6 +166,13 @@ performs the operation, not the Spark engine, so nothing appears in a Spark
 job listing. That is a deliberate, documented divergence. The alternative is an
 honest failure, which helps nobody testing a notebook that calls `OPTIMIZE`.
 
+**Not yet working: OneLake tables.** `install()` passes no storage credentials
+to delta-rs, so an `abfss://…onelake…` target fails on auth. delta-rs needs the
+bearer or SAS the Spark session already holds, and a Connect session offers no
+supported way to read it back. The engine matrix's third column found this by
+running the module across a container boundary, where a shared filesystem could
+not paper over it — the single-process check had passed.
+
 Three deliberate limits:
 
 - **`ZORDER` and `WHERE` are refused, not ignored.** They change *what* gets

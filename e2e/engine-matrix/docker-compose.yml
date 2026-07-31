@@ -30,6 +30,33 @@ services:
     # Spark Connect channel, so a short wait is enough.
     command: ["sh", "-c", "sleep 8 && python /probes.py"]
 
+  # Same Sail server, but with the emulator's delta-rs interception installed —
+  # i.e. what a user actually gets through the Livy agent.
+  sail-delta:
+    profiles: [sail-delta]
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    command: ["spark", "server", "--ip", "0.0.0.0", "--port", "50051"]
+
+  sail-delta-probe:
+    profiles: [sail-delta]
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: sail-delta }
+    depends_on: [sail-delta]
+    volumes:
+      - ./probes.py:/probes.py:ro
+      - ../livy:/livy:ro
+      - ./out:/out
+    environment:
+      ENGINE: sail-delta
+      SPARK_REMOTE: "sc://sail-delta:50051"
+      DELTA_OPS: "1"
+      PROBE_DIR: /tmp/probe
+    command: ["sh", "-c", "sleep 8 && python /probes.py"]
+
   jvm-probe:
     profiles: [jvm]
     build:

@@ -48,6 +48,16 @@ sail = [
     "pysail==0.6.6",
     "pyspark-client==4.2.0",
 ]
+# The Sail statement agent also runs Delta maintenance (OPTIMIZE/VACUUM/CDF)
+# through delta-rs, since Sail's planner has no such commands — so the runtime
+# that hosts the agent needs both the Connect client and deltalake. Also used
+# by the engine matrix's "Sail + delta-rs" column, which measures that runtime.
+sail-delta = [
+    "pyspark-client==4.2.0",
+    "deltalake>=0.23,<2",
+    "pandas>=2,<3",
+    "pyarrow>=18,<24",
+]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP
 # APIs, and the statement agent is where that code executes.
 spark-connect = ["pyspark-client==4.2.0", "requests>=2.32,<3"]

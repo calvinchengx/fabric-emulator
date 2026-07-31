@@ -1279,6 +1279,12 @@ sail = [
     { name = "pysail" },
     { name = "pyspark-client" },
 ]
+sail-delta = [
+    { name = "deltalake" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "pyspark-client" },
+]
 spark-connect = [
     { name = "pyspark-client" },
     { name = "requests" },
@@ -1346,6 +1352,12 @@ s3 = [
 ]
 sail = [
     { name = "pysail", specifier = "==0.6.6" },
+    { name = "pyspark-client", specifier = "==4.2.0" },
+]
+sail-delta = [
+    { name = "deltalake", specifier = ">=0.23,<2" },
+    { name = "pandas", specifier = ">=2,<3" },
+    { name = "pyarrow", specifier = ">=18,<24" },
     { name = "pyspark-client", specifier = "==4.2.0" },
 ]
 spark-connect = [

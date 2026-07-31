@@ -265,6 +265,17 @@ def main():
                    .config("spark.sql.catalog.spark_catalog",
                            "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
     spark = builder.getOrCreate()
+
+    # The "sail+delta-rs" column measures the emulator's actual runtime, not a
+    # bare engine: the Livy agent installs this same wrapper for every Sail
+    # session. Importing the agent's module (rather than re-implementing it)
+    # keeps the matrix honest — if the agent changes, the column moves with it.
+    if os.environ.get("DELTA_OPS"):
+        sys.path.insert(0, "/livy")
+        import delta_ops
+        delta_ops.install(spark)
+        print("delta-rs interception installed", flush=True)
+
     print(f"engine={engine} connected", flush=True)
 
     results = run_all(spark, engine)
