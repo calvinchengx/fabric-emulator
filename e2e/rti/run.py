@@ -31,8 +31,10 @@ Two ways forward:
     the part that matters: QEMU's default model omits AVX2 too.
         brew install colima qemu lima-additional-guestagents
         colima start --profile fabric-x86 --arch x86_64 --vm-type qemu \\
-            --cpu-type max --memory 8 --cpus 4 --disk 60
+            --cpu-type max --memory 20 --cpus 6 --disk 60
         export DOCKER_CONTEXT=colima-fabric-x86
+    Give the VM room: at 8 GiB the engine is OOM-killed (exit 137) once the
+    rest of the stack is up.
     Expect it to be slow: every instruction is translated. See
     docs/25-rti-kusto.md.
 
