@@ -74,6 +74,10 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 
 ## Data Engineering (`data-engineering/`)
 
+> Engine-level claims below are measured, not asserted: the generated
+> [Spark engine matrix](engine-matrix.md) probes each capability against both
+> Sail and the JVM overlay and is regenerated in CI.
+
 | Fabric feature | Emulator | Type |
 |---|---|---|
 | Lakehouse item + Tables/Files storage | Full (via OneLake) | 🟢 Real |

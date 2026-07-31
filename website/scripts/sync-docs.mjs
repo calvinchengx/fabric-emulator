@@ -23,12 +23,13 @@ const IS_RELEASE = /^v\d+\.\d+\.\d+$/.test(PARITY.version);
 // The parity map is the one doc without a reading-order number: it is a living
 // reference rather than a chapter, and its URL is just /parity/.
 const PARITY_RE = /(^|[/-])parity\.md$/;
-// Docs are `NN-name.md` chapters, plus the un-numbered parity map.
-const DOC_RE = /^(\d{2}-.*|parity)\.md$/;
+// Docs are `NN-name.md` chapters, plus the un-numbered living references
+// (the parity map and the generated Spark engine matrix).
+const DOC_RE = /^(\d{2}-.*|parity|engine-matrix)\.md$/;
 
 // Rewrite `](./|docs/ NN-slug.md#anchor)` → `](/fabric-emulator/NN-slug/#anchor)`,
 // and the un-numbered `parity.md` the same way.
-const LINK_RE = /\]\((?:\.\/|docs\/)?(\d{2}-[a-z0-9-]+|parity)\.md(#[^)]*)?\)/g;
+const LINK_RE = /\]\((?:\.\/|docs\/)?(\d{2}-[a-z0-9-]+|parity|engine-matrix)\.md(#[^)]*)?\)/g;
 function rewriteLinks(md) {
   return md.replace(LINK_RE, (_m, slug, anchor) => `](${BASE}${slug}/${anchor ?? ''})`);
 }

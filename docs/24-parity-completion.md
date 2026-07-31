@@ -53,6 +53,24 @@ compute (SQL Server for TDS, Sail for Spark, MLflow for data science).
 | Eventstream execution | — | **Not reachable via this engine.** The Kusto emulator has no streaming ingestion and no data-management service, so Eventstream stays 🔴 with cause — it needs a streaming pipeline, not a query engine. Split out of the row above rather than left implied. |
 | Shortcut reads from **Amazon S3 / S3-compatible** | **SeaweedFS** (Apache-2.0, Go) — health re-verified before adoption: not archived, pushed the same day | **Reads done; writes not started.** The gap was never the sidecar: the read-through sent header credentials, and a real S3 endpoint requires **SigV4**. `internal/awssig` implements it (validated against AWS's published example signature), and a Connection carrying the documented Access Key ID / Secret Access Key pair triggers signing. `e2e/s3` (CI job `external-s3`) witnesses it against SeaweedFS with anonymous access **denied**: boto3 writes the object, an unsigned GET must 403, the OneLake read-through must return the exact bytes, and a wrong secret must be refused. MinIO and LocalStack remain excluded — both archived in 2026. **Scope of this row is S3 only** — SeaweedFS is an S3 server and cannot witness a standalone ADLS Gen2 endpoint (different verbs, Entra/SAS auth); that target is a separate row below. **Still open:** this covers *reads through a shortcut* only. Copy has no external sink (it is OneLake-internal), external shortcuts are read-only, and only GET/HEAD are signed — no PUT or multipart. The credential travels as `Basic` (username = Access Key Id, password = Secret Access Key): Fabric's S3 connector uses authentication kind "Access Key", and `Basic` is the only documented `CredentialType` carrying two secrets. An earlier implementation invented `accessKeyId`/`secretAccessKey` fields that exist in no Fabric credential object. |
 
+### Which Sail gaps are real — measured, not asserted
+
+[`engine-matrix.md`](engine-matrix.md) runs one probe per capability against
+**both** Sail and the JVM and is regenerated in CI, so this list cannot go
+stale the way the prose did. It already disproved one entry: SQL
+`VERSION AS OF` was graded a Sail gap and works.
+
+Candidates it leaves standing, with the engine's own error:
+
+| Gap | Sail says |
+|---|---|
+| Streaming sinks — delta / parquet / memory | `unsupported extension node for streaming: DeltaWriteNode`; `cannot write streaming data to listing table`; `No table format found for: memory` |
+| `OPTIMIZE` / `VACUUM` | `found OPTIMIZE at 0:8 expected something else` — absent from the SQL parser |
+| Change Data Feed | `Table features must be specified: ChangeDataFeed` |
+
+Not candidates: `sc`/`_jvm` fail with `JVM_ATTRIBUTE_NOT_SUPPORTED`, a Spark
+**Connect protocol** limit rather than a Sail choice — no upstream fix exists.
+
 ## Tier 3 — Build the protocol ourselves
 
 Precedent: `internal/tds` terminates TDS + Entra FedAuth and byte-splices to a
