@@ -130,15 +130,18 @@ except urllib.error.HTTPError as e:
 ws = fabric_post("/v1/workspaces", {"displayName": "s3-shortcuts"})
 lakehouse = fabric_post(f"/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "lh"})
 
-# The Access Key ID / Secret Access Key pair the S3 shortcut dialog asks for
-# (fabric-docs onelake/create-s3-shortcut.md), on the Key credential type.
+# Fabric's S3 connector uses authentication kind "Access Key" with an Access
+# Key Id and a Secret Access Key (fabric-docs connector-amazon-s3.md). The REST
+# reference's CredentialType enum has no AccessKey member, and Basic is the
+# only documented type carrying two secrets — so the pair travels as
+# username/password. Only documented enum values are used here.
 conn = fabric_post("/v1/connections", {
     "displayName": "seaweedfs-s3",
     "connectivityType": "ShareableCloud",
     "credentialDetails": {"credentials": {
-        "credentialType": "Key",
-        "accessKeyId": ACCESS_KEY,
-        "secretAccessKey": SECRET_KEY,
+        "credentialType": "Basic",
+        "username": ACCESS_KEY,
+        "password": SECRET_KEY,
     }},
 })
 
@@ -172,9 +175,9 @@ bad = fabric_post("/v1/connections", {
     "displayName": "seaweedfs-s3-wrong",
     "connectivityType": "ShareableCloud",
     "credentialDetails": {"credentials": {
-        "credentialType": "Key",
-        "accessKeyId": ACCESS_KEY,
-        "secretAccessKey": "wrong-secret-entirely",
+        "credentialType": "Basic",
+        "username": ACCESS_KEY,
+        "password": "wrong-secret-entirely",
     }},
 })
 fabric_post(

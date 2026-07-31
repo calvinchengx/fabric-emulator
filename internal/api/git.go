@@ -397,15 +397,6 @@ type connectionCredentials struct {
 	WorkspaceID              string `json:"workspaceId,omitempty"` // WorkspaceIdentity + AzureKeyVaultReference kinds
 	VaultURI                 string `json:"vaultUri,omitempty"`    // AzureKeyVaultReference kind
 	SecretName               string `json:"secretName,omitempty"`  // AzureKeyVaultReference kind
-	// Amazon S3 (and S3-compatible) shortcuts: the Access Key ID / Secret
-	// Access Key pair Fabric's shortcut dialog collects (fabric-docs
-	// onelake/create-s3-shortcut.md). Carried on the `Key` credential type,
-	// whose `key` field is optional when these are present. Their presence is
-	// what makes the OneLake read-through sign with SigV4 rather than send a
-	// header credential.
-	AccessKeyID     string `json:"accessKeyId,omitempty"`
-	SecretAccessKey string `json:"secretAccessKey,omitempty"`
-	SessionToken    string `json:"sessionToken,omitempty"`
 }
 
 // validCredential enforces the per-type required fields.
@@ -428,13 +419,8 @@ func validCredential(c connectionCredentials) string {
 			return "AzureKeyVaultReference credentials require workspaceId, vaultUri, and secretName."
 		}
 	case "Key":
-		// Either a single opaque key, or an S3 access-key pair.
-		if c.AccessKeyID != "" {
-			if c.SecretAccessKey == "" {
-				return "accessKeyId requires secretAccessKey."
-			}
-		} else if c.Key == "" {
-			return "Key credentials require key (or an accessKeyId/secretAccessKey pair)."
+		if c.Key == "" {
+			return "Key credentials require key."
 		}
 	case "SharedAccessSignature":
 		if c.Token == "" {
