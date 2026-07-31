@@ -11,6 +11,45 @@ facts pointing at different fixes.
 Rows where the engines differ are the honest content of the
 🔴 default / 🟠 JVM overlay marks in [parity.md](parity.md).
 
+## Which engine should I use?
+
+**Sail is the default, and should stay the default.** This table only
+measures capability; it says nothing about the axis Sail was chosen for.
+Measured on the same 19 probes:
+
+| | Sail | Spark JVM |
+|---|---|---|
+| Image size | **943 MB** | **2.1 GB** |
+| Run output | 125 log lines | **78,040 log lines** |
+| Wall clock | seconds | minutes |
+
+And the differences are fewer than the row count suggests:
+
+* two (`sc`, `spark._jvm`) are **Spark Connect protocol** limits, not Sail
+  choices — Apache Spark's own Connect client cannot expose them either,
+  so no upstream fix exists;
+* one (Python UDF) is a harness version mismatch, not a capability gap;
+* one (`MERGE` at a local path) works on `az://`, the path the emulator
+  actually uses.
+
+The common notebook path — Delta write/append, both time-travel forms,
+`createDataFrame`, SQL, `readStream` — passes on **both**. Ordinary work
+sees no difference except speed.
+
+**Reach for the JVM overlay when your test touches** `OPTIMIZE`/`VACUUM`,
+Change Data Feed, a durable streaming sink (delta/parquet/memory), or the
+RDD/`_jvm` surface — the ❌ rows below. One flag:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.override.yml \
+               -f docker-compose.spark-jvm.yml up
+```
+
+Real Fabric Runtime 1.3 *is* JVM Spark 3.5, so the overlay is the higher-
+fidelity engine. It is not the default because a 2.1 GB image and a
+minutes-long startup would cost every user speed to buy capabilities most
+tests never touch.
+
 | Capability | Sail | Spark JVM |
 |---|---|---|
 | Delta write | ✅ | ✅ |
