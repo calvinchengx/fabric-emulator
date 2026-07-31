@@ -87,9 +87,21 @@ func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table, npre
 // NVARCHAR). The type names are valid in both SQL Server and SQLite.
 func sqlType(tbl *Table, col int) string {
 	for _, row := range tbl.Rows {
-		switch row[col].(type) {
+		switch v := row[col].(type) {
 		case bool:
 			return "BIT"
+		case Decimal:
+			// Preserve the declared precision/scale: reflecting a decimal as
+			// BIGINT drops the scale and every aggregate over it is then wrong
+			// by 10^scale. SQL Server caps precision at 38.
+			p, s := v.Precision, v.Scale
+			if p < 1 || p > 38 {
+				p = 38
+			}
+			if s < 0 || s > p {
+				s = 0
+			}
+			return fmt.Sprintf("DECIMAL(%d,%d)", p, s)
 		case int64:
 			return "BIGINT"
 		case float64:
@@ -116,6 +128,8 @@ func literal(v any, nprefix string) string {
 		return "0"
 	case int64:
 		return strconv.FormatInt(x, 10)
+	case Decimal:
+		return x.String() // scale applied; already a valid SQL decimal literal
 	case float64:
 		return strconv.FormatFloat(x, 'g', -1, 64)
 	case []byte:
