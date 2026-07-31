@@ -58,7 +58,10 @@ type Item struct {
 	Type        string `json:"type"` // Notebook, Lakehouse, Warehouse, …
 	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
-	CreatedAt   int64  `json:"-"`
+	// FolderID is the workspace folder the item lives in ("" = root). Omitted
+	// from JSON when empty, matching Fabric: a root item has no folderId.
+	FolderID  string `json:"folderId,omitempty"`
+	CreatedAt int64  `json:"-"`
 }
 
 // DefinitionPart is one file of an item definition — the CI/CD source format
