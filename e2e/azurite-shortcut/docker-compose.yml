@@ -1,0 +1,76 @@
+# External-store witness #2: an ADLS Gen2 shortcut read against **Azurite**,
+# Microsoft's own Azure Storage emulator, with SAS authentication enforced.
+#
+# Scope, stated precisely because it is easy to overclaim:
+#   * Azurite implements Blob/Queue/Table and **not** ADLS Gen2 (Microsoft
+#     documents this). So this witnesses the shortcut *read path* — a plain
+#     authenticated GET, which is byte-identical on the Blob and DFS endpoints
+#     of a real ADLS Gen2 account — not DFS-specific behaviour.
+#   * What it replaces is a hand-written Python stub, which validated nothing.
+#
+# Azurite refuses unauthenticated requests with 403 (verified), so a passing
+# read genuinely exercises the SAS credential path.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:latest
+    # --disableProductStyleUrl keeps the account name in the URL path
+    # (http://azurite:10000/devstoreaccount1/…), which is the addressing the
+    # shortcut target uses.
+    # --skipApiVersionCheck: the azure-storage-blob SDK negotiates a newer
+    # x-ms-version than this Azurite build lists, and Azurite rejects it with
+    # InvalidHeaderValue. Azurite documents this flag for the case. The
+    # operations used here — put blob, get blob, SAS validation — are long
+    # stable, so the version gate is noise rather than signal.
+    command: azurite-blob --blobHost 0.0.0.0 --disableProductStyleUrl --skipApiVersionCheck
+    # No healthcheck: the image has no shell probe tool, and a *correct*
+    # unauthenticated response here is 403, which most probes read as failure.
+    # The witness waits for the port itself.
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+      azurite:
+        condition: service_started
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: ""
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  witness:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: adls-sdk }
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    volumes:
+      - ./driver.py:/driver.py:ro
+    environment:
+      FABRIC: "http://fabric-emulator"
+      ENTRA: "http://entra-emulator:8443"
+      AZURITE: "http://azurite:10000"
+    command: python /driver.py
