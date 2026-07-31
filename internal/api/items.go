@@ -80,6 +80,9 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		return
 	}
 	a.applyCreationPayload(it, body.CreationPayload)
+	a.audit(p, &store.ActivityEvent{Operation: store.OpCreateArtifact,
+		WorkspaceID: it.WorkspaceID, ArtifactID: it.ID, ArtifactName: it.DisplayName,
+		Properties: map[string]any{"ArtifactKind": it.Type}})
 	if body.Definition == nil {
 		writeJSON(w, http.StatusCreated, a.itemView(r, it))
 		return
@@ -141,6 +144,9 @@ func (a *API) updateItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
+	a.audit(p, &store.ActivityEvent{Operation: store.OpUpdateArtifact,
+		WorkspaceID: it.WorkspaceID, ArtifactID: it.ID, ArtifactName: it.DisplayName,
+		Properties: map[string]any{"ArtifactKind": it.Type}})
 	writeJSON(w, http.StatusOK, it)
 }
 
@@ -149,6 +155,9 @@ func (a *API) deleteItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 	if _, _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
 		return
 	}
+	// Read the item before removing it: the audit record names what was
+	// deleted, and after the delete there is nothing left to name it from.
+	deleted, _ := a.Store.GetItem(wid, r.PathValue("iid"))
 	if err := a.Store.DeleteItem(wid, r.PathValue("iid")); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeErr(w, http.StatusNotFound, "ItemNotFound", "The item is not available.")
@@ -156,6 +165,11 @@ func (a *API) deleteItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		}
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
+	}
+	if deleted != nil {
+		a.audit(p, &store.ActivityEvent{Operation: store.OpDeleteArtifact,
+			WorkspaceID: wid, ArtifactID: deleted.ID, ArtifactName: deleted.DisplayName,
+			Properties: map[string]any{"ArtifactKind": deleted.Type}})
 	}
 	w.WriteHeader(http.StatusOK)
 }

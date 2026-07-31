@@ -203,6 +203,22 @@ CREATE TABLE IF NOT EXISTS item_properties (
 	value TEXT NOT NULL,
 	PRIMARY KEY (item_id, name)
 );
+-- Audit log behind the admin activityevents API. Operation names come from
+-- the documented audit vocabulary (admin/operation-list.md and
+-- governance/domains-audit-schema.md); properties_json holds the
+-- per-operation operationProperties.
+CREATE TABLE IF NOT EXISTS activity_events (
+	id TEXT PRIMARY KEY,
+	created_at INTEGER NOT NULL,
+	operation TEXT NOT NULL,
+	user_id TEXT NOT NULL,
+	user_type TEXT NOT NULL,
+	workspace_id TEXT NOT NULL DEFAULT '',
+	artifact_id TEXT NOT NULL DEFAULT '',
+	artifact_name TEXT NOT NULL DEFAULT '',
+	properties_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS ix_activity_events_time ON activity_events(created_at);
 -- Tenant-level governance domains (fabric-docs governance/domains.md). A
 -- subdomain points at its parent; deleting a domain takes its subdomains,
 -- workspace assignments and role assignments with it.
