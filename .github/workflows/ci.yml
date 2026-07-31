@@ -144,6 +144,21 @@ jobs:
       # verified.
       - run: python3 e2e/s3/run.py
 
+  azurite-shortcut:
+    name: ADLS Gen2 shortcut reads against Azurite, SAS enforced (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The ADLS Gen2 shortcut *read path*, witnessed against Microsoft's own
+      # storage emulator instead of a hand-written stub. Azurite implements
+      # Blob/Queue/Table and NOT ADLS Gen2, so the endpoint is the Blob one —
+      # legitimate here because the read-through issues a plain authenticated
+      # GET, identical on both endpoints of a real ADLS Gen2 account. DFS
+      # semantics are not witnessed and are not claimed to be.
+      # Non-vacuous by construction: azure-storage-blob writes the blob, an
+      # unauthenticated GET must 403, and a tampered SAS must be refused.
+      - run: python3 e2e/azurite-shortcut/run.py
+
   governance:
     name: OpenMetadata governance profile catalogs the emulator (containerized)
     runs-on: ubuntu-latest
