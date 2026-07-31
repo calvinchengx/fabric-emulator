@@ -86,6 +86,7 @@ export default defineConfig({
             { slug: '23-deployment-pipelines' },
             { slug: '24-parity-completion' },
             { slug: '25-rti-kusto' },
+            { slug: 'engine-matrix' },
           ],
         },
         {
