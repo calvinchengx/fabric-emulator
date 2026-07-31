@@ -28,11 +28,26 @@ from pyspark.sql import SparkSession
 import os
 _b = SparkSession.builder.appName("livy-agent")
 spark = (_b.remote(os.environ["SPARK_REMOTE"]) if os.environ.get("SPARK_REMOTE") else _b).getOrCreate()
-if os.environ.get("SPARK_REMOTE"):
-    # Sail reports this limit as "3GB"; pyspark 4.2's createDataFrame does
-    # int() on it. Overriding with an integer restores local-relation support
-    # for unmodified user code.
-    spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
+def apply_connect_confs():
+    """Sail reports this limit as "3GB"; pyspark 4.2's createDataFrame does
+    int() on it. Overriding with an integer restores local-relation support for
+    unmodified user code.
+
+    Re-applied per session, not just once at import: the conf lives on the
+    *server*, so if sail restarts while this agent keeps running, the client
+    reconnects to a fresh engine where the override is gone and every later
+    createDataFrame fails with the '3GB' ValueError — while spark.range keeps
+    working, which makes it look like user error rather than a lost setting.
+    """
+    if not os.environ.get("SPARK_REMOTE"):
+        return
+    try:
+        spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
+    except Exception:  # noqa: BLE001 — engine not reachable yet; retried next session
+        pass
+
+
+apply_connect_confs()
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 
 
@@ -54,6 +69,7 @@ class _NoSparkContext:
 
 def ns(session):
     if session not in namespaces:
+        apply_connect_confs()  # survive an engine restart between sessions
         namespaces[session] = {"spark": spark}
         try:
             # JVM sessions only — Spark Connect (Sail) has no sparkContext.
