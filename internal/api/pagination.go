@@ -16,6 +16,13 @@ import (
 // `continuationUri` are included; the client passes the token back via
 // `?continuationToken` to fetch the next page.
 func writePage[T any](w http.ResponseWriter, r *http.Request, items []T) {
+	writePageKeyed(w, r, "value", items)
+}
+
+// writePageKeyed is writePage with a caller-chosen envelope key. The admin
+// list APIs name their array after the resource (`workspaces`) rather than
+// using `value`, per the REST reference.
+func writePageKeyed[T any](w http.ResponseWriter, r *http.Request, key string, items []T) {
 	offset := 0
 	if tok := r.URL.Query().Get("continuationToken"); tok != "" {
 		if n := decodePageToken(tok); n > 0 {
@@ -35,7 +42,7 @@ func writePage[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	if page == nil {
 		page = []T{}
 	}
-	resp := map[string]any{"value": page}
+	resp := map[string]any{key: page}
 	if end < len(items) {
 		tok := encodePageToken(end)
 		resp["continuationToken"] = tok

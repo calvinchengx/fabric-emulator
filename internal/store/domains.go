@@ -292,3 +292,23 @@ func (s *Store) DomainRoleAssignments(domainID string) ([]RoleAssignment, error)
 	}
 	return out, rows.Err()
 }
+
+// WorkspaceDomains maps workspace id → domain id for every assigned
+// workspace. The admin workspace listing reports each workspace's domainId,
+// and doing it in one query avoids a lookup per workspace.
+func (s *Store) WorkspaceDomains() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT workspace_id, domain_id FROM domain_workspaces`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var ws, dom string
+		if err := rows.Scan(&ws, &dom); err != nil {
+			return nil, err
+		}
+		out[ws] = dom
+	}
+	return out, rows.Err()
+}
