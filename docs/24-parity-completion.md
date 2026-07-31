@@ -96,4 +96,10 @@ Three sessions share this checkout. Rules that have worked:
 - Grade honestly: if a real engine computes it, 🟢; if it needs an attached
   engine, 🟠; if it 501s, 🔴. Never grade intent.
 - Every 🟢 needs a real-client witness in CI, per the ecosystem-conformance
-  table in [parity.md](parity.md).
+  table in [parity.md](parity.md). **This is now enforced**:
+  `docs/witnesses.json` maps every green claim to the CI job and/or Go test
+  that witnesses it, and `scripts/check_witnesses.py --strict` (CI job
+  `witnesses`) fails the build on a claim with no witness, or a witness that
+  no longer exists. It also reports witnesses carrying many claims — that
+  report already caught `fabric-cicd` being credited for warehouse item
+  management, a suite that publishes Notebooks only.
