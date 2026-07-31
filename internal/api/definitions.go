@@ -145,7 +145,7 @@ func (a *API) typedGet(itemType string) handler {
 			writeErr(w, http.StatusNotFound, "ItemNotFound", "The item is not available.")
 			return
 		}
-		writeJSON(w, http.StatusOK, it)
+		writeJSON(w, http.StatusOK, a.itemView(r, it))
 	}
 }
 

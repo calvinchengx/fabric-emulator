@@ -53,6 +53,10 @@ dbt-duckdb = [
     "pyarrow>=18,<24",
 ]
 mlflow = ["mlflow>=3.1,<4"]
+rti = [
+    "azure-kusto-data>=5,<6",
+    "requests>=2.32,<3",
+]
 data-science-loop = [
     "dbt-duckdb>=1.9,<2",
     "deltalake>=0.23,<2",

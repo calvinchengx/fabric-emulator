@@ -113,3 +113,45 @@ func TestOpenBadDir(t *testing.T) {
 		t.Skip("driver created intermediate path; acceptable")
 	}
 }
+
+// TestItemProperties round-trips typed item properties, including the delete
+// path (an empty value clears the key) and cascade on item delete.
+func TestItemProperties(t *testing.T) {
+	s, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ws := &Workspace{DisplayName: "w"}
+	if err := s.CreateWorkspace(ws, Principal{ID: "p", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	it := &Item{WorkspaceID: ws.ID, Type: "KQLDatabase", DisplayName: "db"}
+	if err := s.CreateItem(it, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if props, err := s.ItemProperties(it.ID); err != nil || len(props) != 0 {
+		t.Fatalf("fresh item properties = %v, %v", props, err)
+	}
+	if err := s.SetItemProperties(it.ID, map[string]string{"a": "1", "b": "2"}); err != nil {
+		t.Fatal(err)
+	}
+	// Upsert one, clear the other.
+	if err := s.SetItemProperties(it.ID, map[string]string{"a": "9", "b": ""}); err != nil {
+		t.Fatal(err)
+	}
+	props, err := s.ItemProperties(it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(props) != 1 || props["a"] != "9" {
+		t.Errorf("properties = %v, want {a:9}", props)
+	}
+	if err := s.DeleteItem(ws.ID, it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if props, err := s.ItemProperties(it.ID); err != nil || len(props) != 0 {
+		t.Errorf("properties survived the item: %v, %v", props, err)
+	}
+}

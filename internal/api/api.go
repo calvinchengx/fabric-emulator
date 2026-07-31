@@ -43,6 +43,18 @@ type API struct {
 	// API authenticates and workspace-namespaces traffic before proxying it.
 	MLflowURL  *url.URL
 	MLflowHTTP *http.Client
+	// KQLURL is an attached real Kusto engine (Microsoft's kustainer, or any
+	// ADX/Eventhouse cluster) backing the Real-Time Intelligence surface. Nil
+	// → the Kusto routes 501. KQLAuth validates the Kusto-audience tokens
+	// those routes require.
+	KQLURL  *url.URL
+	KQLHTTP *http.Client
+	KQLAuth *auth.Validator
+	// kqlDatabases remembers which engine-side databases have been created,
+	// guarded by kqlMu — separate from the fault mutex below so a slow engine
+	// call never blocks an unrelated request.
+	kqlMu        sync.Mutex
+	kqlDatabases map[string]bool
 	// SQLDB returns the real SQL Server connection for a Warehouse/SQLDatabase
 	// item (preparing its database first). Wired by the server when a warehouse
 	// SQL backend is set; nil → the pipeline Script/StoredProcedure activities
@@ -163,6 +175,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerVSCodeCompatibility(mux)
 	a.registerAirflow(mux)
 	a.registerMLflow(mux)
+	a.registerKQL(mux)
 
 	mux.HandleFunc("GET /v1/operations/{oid}", a.withAuth(a.getOperation))
 	mux.HandleFunc("GET /v1/operations/{oid}/result", a.withAuth(a.getOperationResult))

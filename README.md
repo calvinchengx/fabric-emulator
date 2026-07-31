@@ -74,6 +74,12 @@ sessions, notebook cells, and the T-SQL/TDS warehouse surface run for real out
 of the box. `docker compose -f docker-compose.yml up` opts out to the lite,
 contract-only pair.
 
+Optional profiles add heavier engines only when asked for — nothing is pulled
+otherwise. `--profile rti` attaches Microsoft's own KQL engine behind the
+Eventhouse / KQL Database surface
+([docs/25-rti-kusto.md](docs/25-rti-kusto.md)); `--profile governance` adds
+OpenMetadata ([docs/22-openmetadata.md](docs/22-openmetadata.md)).
+
 ## Python tooling
 
 Python packages, development dependencies, and E2E clients are managed by the

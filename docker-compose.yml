@@ -10,6 +10,15 @@
 #     statement agent, so Livy sessions, RunNotebook, dbt, and any PySpark
 #     client (sc://localhost:50051) run against a real engine.
 #
+#   docker compose --profile rti \
+#     -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.rti.yml up
+#     …adds Microsoft's own KQL engine (kustainer, :8080) behind the
+#     Eventhouse / KQL Database surface, so Real-Time Intelligence queries,
+#     management commands, and inline ingestion really execute. Optional by
+#     profile: without the flag the kustainer service never starts or pulls,
+#     and without the overlay the Kusto routes stay an honest 501.
+#     See docs/25-rti-kusto.md.
+#
 #   docker compose --profile governance up
 #     …adds OpenMetadata (:8585) — data governance/catalog over the same
 #     state your pipelines write. Optional by profile: without the flag the
@@ -70,6 +79,44 @@ services:
       # volume there); this compose file mounts none, so state is in-memory —
       # override back to empty or the store fails to open /data (no volume).
       FABRIC_DATA_DIR: ""
+
+  # ---- Real-Time Intelligence (optional): Kusto engine, profile-gated -------
+  # Microsoft's own KQL engine container (the Azure Data Explorer "Kusto
+  # emulator"), attached the same way the SQL Server sidecar backs the T-SQL
+  # warehouse: the emulator terminates Fabric's Kusto REST contract — bearer,
+  # RBAC, per-KQL-database isolation — and this computes the KQL for real.
+  # Profile-gated so `docker compose up` never starts or pulls it (~1.2 GB).
+  #
+  #   docker compose --profile rti \
+  #     -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.rti.yml up
+  #
+  # The overlay is what points the emulator at it (FABRIC_KQL_URL); without
+  # the overlay the Kusto routes stay an honest 501. See docs/25-rti-kusto.md.
+  kustainer:
+    profiles: [rti]
+    image: mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest
+    # amd64 only, and Microsoft documents ARM as unsupported: the engine's
+    # native layer needs AVX2, which Apple-silicon emulation does not expose,
+    # so the container crashes on boot there. Linux/amd64 hosts (and CI) are
+    # where this profile runs.
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y" # the image refuses to start without it
+    mem_limit: 4g # Microsoft's documented minimum for the engine
+    ports:
+      - "8080:8080" # Kusto query + management (HTTP only; the engine has no TLS)
+    healthcheck:
+      # The documented readiness probe: a management command that needs no
+      # database (learn.microsoft.com/azure/data-explorer/kusto-emulator-install).
+      test:
+        - CMD-SHELL
+        - >-
+          curl -sf -X POST -H 'Content-Type: application/json'
+          -d '{"csl":".show cluster"}' http://localhost:8080/v1/rest/mgmt >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
 
   # ---- Governance (optional): OpenMetadata, profile-gated -------------------
   # Mirrors OpenMetadata's own quickstart compose (docker-compose-postgres.yml

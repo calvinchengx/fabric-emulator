@@ -70,6 +70,15 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	if err := a.SetMLflowBackend(cfg.MLflowURL); err != nil {
 		return nil, err
 	}
+	// The Eventhouse/KQL Database surface speaks the Kusto REST protocol on
+	// its own audience, and relays the KQL to a real engine when one is
+	// attached (docs/25-rti-kusto.md).
+	kqlv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)
+	kqlv.Audiences = api.KustoAudience
+	a.KQLAuth = kqlv
+	if err := a.SetKQLBackend(cfg.KQLURL); err != nil {
+		return nil, err
+	}
 
 	// OneLake accepts only Storage-audience tokens, over the same JWKS.
 	olv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)

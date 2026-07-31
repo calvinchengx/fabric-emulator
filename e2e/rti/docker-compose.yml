@@ -1,0 +1,77 @@
+# Real-Time Intelligence witness: Microsoft's own KQL engine (kustainer)
+# behind the emulator's Eventhouse / KQL Database surface.
+#
+# The witness never talks to the engine directly — it reads the eventhouse's
+# properties.queryServiceUri from the Fabric control plane and speaks the
+# Kusto REST protocol to *that*, exactly as it would against real Fabric.
+# Everything it asserts (a created table, ingested rows, values queried back)
+# is computed by the engine; the emulator only terminates the contract.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:latest
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  # amd64 only — Microsoft documents ARM as unsupported (the engine's native
+  # layer needs AVX2). CI's ubuntu-latest runners are amd64.
+  kustainer:
+    image: mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest
+    platform: linux/amd64
+    environment:
+      ACCEPT_EULA: "Y"
+    mem_limit: 4g
+    healthcheck:
+      # The documented readiness probe: a management command needing no database.
+      test:
+        - CMD-SHELL
+        - >-
+          curl -sf -X POST -H 'Content-Type: application/json'
+          -d '{"csl":".show cluster"}' http://localhost:8080/v1/rest/mgmt >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+      kustainer:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: ""
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      FABRIC_KQL_URL: "http://kustainer:8080"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  witness:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: rti }
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    volumes:
+      - ./driver.py:/driver.py:ro
+    environment:
+      FABRIC: "http://fabric-emulator"
+      ENTRA: "http://entra-emulator:8443"
+    command: python /driver.py
