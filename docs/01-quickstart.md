@@ -161,6 +161,15 @@ docker compose run --rm govern-ingest         # catalog workspaces → lakehouse
 Schemas are read from the **real Delta logs in OneLake**, so governance sees
 exactly what your pipelines wrote. Details: [22-openmetadata.md](22-openmetadata.md).
 
+Run it on a **fresh stack** and there is nothing to catalog yet (the seed is
+one capacity row, [06](06-data-model-and-seed.md)), so `govern-ingest` first
+creates a small demo: a workspace, a lakehouse, and a real Delta table written
+via delta-rs. It fires **only when the emulator is completely empty**, so it
+never touches state you seeded yourself, and skipping straight to steps 3 to 5
+above gets your own data cataloged instead. `GOVERN_SEED_DEMO=0` turns it off
+and restores the plain "nothing to catalog" exit; `GOVERN_DEMO_WORKSPACE`,
+`GOVERN_DEMO_LAKEHOUSE` and `GOVERN_DEMO_TABLE` rename what it creates.
+
 ## Same code against real Fabric — the toggle
 
 Python code written against the emulator runs against the real service by

@@ -21,6 +21,7 @@ import base64
 import json
 import os
 import sys
+import time
 import urllib.parse
 
 import requests
@@ -35,6 +36,19 @@ TENANT = os.environ.get("FABRIC_TENANT", "11111111-1111-1111-1111-111111111111")
 CLIENT_ID = os.environ.get("FABRIC_CLIENT_ID", "cccccccc-0000-0000-0000-000000000002")
 CLIENT_SECRET = os.environ.get("FABRIC_CLIENT_SECRET", "daemon-app-secret")
 SERVICE = "fabric-emulator"
+
+# A fresh stack is empty by design: the seed is one capacity row and nothing
+# else (docs/06), because the first authenticated caller to create a workspace
+# becomes its Admin. That made the documented governance flow
+# (`--profile governance up` then `run --rm govern-ingest`) fail on a new
+# install with nothing to catalog. So when there is nothing at all, create a
+# small real demo first. Only ever fires on a completely empty emulator, so it
+# cannot touch state you seeded yourself. Set GOVERN_SEED_DEMO=0 to opt out and
+# get the old "nothing to catalog" exit instead.
+SEED_DEMO = os.environ.get("GOVERN_SEED_DEMO", "1").strip().lower() not in ("0", "false", "no")
+DEMO_WORKSPACE = os.environ.get("GOVERN_DEMO_WORKSPACE", "DemoWorkspace")
+DEMO_LAKEHOUSE = os.environ.get("GOVERN_DEMO_LAKEHOUSE", "demo_lakehouse")
+DEMO_TABLE = os.environ.get("GOVERN_DEMO_TABLE", "orders")
 
 # Delta primitive -> OpenMetadata column dataType.
 TYPE_MAP = {
@@ -191,6 +205,69 @@ def om_lineage(s, from_fqn, to_fqn, description="OneLake shortcut (fabric-emulat
     return True
 
 
+def seed_demo(fab):
+    """Create one workspace + lakehouse + a REAL Delta table, so a fresh stack
+    has something to catalog.
+
+    The table is written through delta-rs rather than faked, because the whole
+    point of this script is that governance reads the bytes pipelines actually
+    wrote. Column types mirror e2e/governance/run.py on purpose: a decimal, an
+    array and a struct, so the demo catalog exercises the parts of the mapping
+    that are easy to get wrong (a decimal(10,2) silently flattened to STRING is
+    exactly the loss a governance user notices).
+    """
+    print(f"govern-ingest: emulator is empty, seeding demo workspace "
+          f"'{DEMO_WORKSPACE}' (GOVERN_SEED_DEMO=0 to disable)")
+
+    r = fab.post(f"{FABRIC}/v1/workspaces", json={"displayName": DEMO_WORKSPACE}, timeout=15)
+    if r.status_code != 201:
+        sys.exit(f"govern-ingest: seeding workspace failed: {r.status_code} {r.text[:300]}")
+    ws = r.json()
+
+    # Typed collection, same as the e2e. Item create may answer 202 (LRO), so
+    # confirm the lakehouse exists by name before addressing it as a path.
+    r = fab.post(f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses",
+                 json={"displayName": DEMO_LAKEHOUSE}, timeout=15)
+    if r.status_code not in (201, 202):
+        sys.exit(f"govern-ingest: seeding lakehouse failed: {r.status_code} {r.text[:300]}")
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        items = fab.get(f"{FABRIC}/v1/workspaces/{ws['id']}/items",
+                        params={"type": "Lakehouse"}, timeout=15).json().get("value", [])
+        if any(i["displayName"] == DEMO_LAKEHOUSE for i in items):
+            break
+        time.sleep(1)
+    else:
+        sys.exit(f"govern-ingest: lakehouse '{DEMO_LAKEHOUSE}' never appeared after create")
+
+    from decimal import Decimal
+
+    import pyarrow as pa
+    from deltalake import write_deltalake
+
+    tbl = pa.table({
+        "order_id": pa.array([1, 2, 3], pa.int64()),
+        "amount": pa.array([9.5, 3.25, 7.0], pa.float64()),
+        "region": ["us", "eu", "apac"],
+        "price": pa.array([Decimal("1.50"), Decimal("2.25"), Decimal("3.00")],
+                          pa.decimal128(10, 2)),
+        "tags": pa.array([["a"], ["b"], ["c"]], pa.list_(pa.string())),
+        "meta": pa.array([{"src": "web"}, {"src": "app"}, {"src": "web"}],
+                         pa.struct([("src", pa.string())])),
+    })
+    write_deltalake(
+        f"az://{DEMO_WORKSPACE}/{DEMO_LAKEHOUSE}.Lakehouse/Tables/{DEMO_TABLE}",
+        tbl,
+        storage_options={
+            "azure_storage_account_name": "onelake",
+            "azure_storage_token": entra_token("https://storage.azure.com/.default"),
+            "azure_endpoint": f"{FABRIC}/onelake",
+            "allow_invalid_certificates": "true",  # family self-signed TLS
+        })
+    print(f"govern-ingest: seeded {DEMO_WORKSPACE}/{DEMO_LAKEHOUSE}.Lakehouse/"
+          f"Tables/{DEMO_TABLE} ({tbl.num_rows} rows via delta-rs)")
+
+
 def main():
     fab = requests.Session()
     fab.verify = False
@@ -213,11 +290,15 @@ def main():
     })
 
     workspaces = fab.get(f"{FABRIC}/v1/workspaces", timeout=15).json()["value"]
+    if not workspaces and SEED_DEMO:
+        seed_demo(fab)
+        workspaces = fab.get(f"{FABRIC}/v1/workspaces", timeout=15).json()["value"]
     if not workspaces:
         sys.exit("govern-ingest: the emulator has no workspaces visible to this "
-                 "principal — nothing to catalog. (If you just seeded state, "
-                 "check the emulator wasn't restarted: state is in-memory "
-                 "unless FABRIC_DATA_DIR is set.)")
+                 "principal — nothing to catalog, and seeding is off "
+                 "(GOVERN_SEED_DEMO=0). (If you just seeded state, check the "
+                 "emulator wasn't restarted: state is in-memory unless "
+                 "FABRIC_DATA_DIR is set.)")
     n_db = n_schema = n_table = 0
     item_fqn = {}
     for ws in workspaces:
