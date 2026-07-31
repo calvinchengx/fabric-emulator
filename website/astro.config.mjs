@@ -85,6 +85,7 @@ export default defineConfig({
             { slug: '22-openmetadata' },
             { slug: '23-deployment-pipelines' },
             { slug: '24-parity-completion' },
+            { slug: '25-rti-kusto' },
           ],
         },
         {

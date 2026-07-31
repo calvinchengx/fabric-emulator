@@ -43,7 +43,7 @@ Kusto engine in a container (the Azure Data Explorer "Kusto emulator").
 | Readiness | `POST /v1/rest/mgmt {"csl":".show cluster"}` → 200 (needs no database) |
 | Ingestion | **no data-management service**: queued ingestion and the `ingest-` endpoint are unsupported. Direct ingestion commands (`.set-or-append`, `.ingest inline`) run on the engine itself |
 | Memory | 4 GB recommended (Microsoft's own examples pass `-m 4G`) |
-| **Platform** | **linux/amd64 only. Microsoft documents ARM as unsupported** — the engine's native layer needs AVX2, which Apple-silicon emulation does not expose, so the container crashes during boot on an M-series Mac (`libKusto.NativeInfra.so failed … Crash_FailSlow`). Verified on this repo's own hardware. CI's amd64 runners are therefore the only witness. |
+| **Platform** | **linux/amd64, and it needs AVX2** — the constraint is the instruction set, not the host. The engine's native layer aborts without AVX2 (`libKusto.NativeInfra.so failed … Crash_FailSlow`). Rosetta translates x86-64 but stops at SSE4.2, so `--platform linux/amd64` on Apple silicon crashes on boot; a QEMU x86-64 VM with `--cpu-type max` supplies AVX2 and the engine runs. Both directions verified on this repo's own hardware — see [below](#running-it-on-apple-silicon). |
 
 ## What the emulator does (and does not)
 
@@ -102,8 +102,38 @@ cross-database isolation check. Two independent client families run over the
 same surface: raw REST, and Microsoft's own `azure-kusto-data` SDK (which
 parses the v2 frame stream and so exercises a second dialect).
 
-Because the engine cannot run on arm64, that CI job is the only place this is
-provable. Locally on Apple silicon the surface still answers — with a 501.
+That CI job is the **witness of record**: it runs on amd64 runners, and the
+witness depends on `kustainer: service_healthy`, so an engine that never comes
+up fails the job rather than passing quietly.
+
+## Running it on Apple silicon
+
+The default Docker setup on an M-series Mac translates amd64 with Rosetta,
+which stops at SSE4.2 — so the engine crashes during boot. `e2e/rti/run.py`
+detects this and explains it, rather than letting you discover it as a native
+crash mid-build. Note it inspects the **Docker daemon's** architecture, not the
+host's: with the VM below the two deliberately differ.
+
+QEMU does implement AVX2, so a real x86-64 VM works. `--cpu-type max` is the
+part that matters — QEMU's default CPU model omits AVX2 as well:
+
+```bash
+brew install colima qemu lima-additional-guestagents
+colima start --profile fabric-x86 --arch x86_64 --vm-type qemu \
+  --cpu-type max --memory 8 --cpus 4 --disk 60
+export DOCKER_CONTEXT=colima-fabric-x86
+python3 e2e/rti/run.py
+```
+
+`lima-additional-guestagents` is not optional: Lima 2.x ships only the host
+architecture's guest agent, and without it the VM fails to start with
+`guest agent binary could not be found for Linux-x86_64`.
+
+Measured on an M4 Max: the VM exposes `avx2`, the engine is ready in **~40 s**,
+and it computes the same values CI asserts. Pulling the ~3.4 GB image into the
+VM is the slow step — everything is translated — and image *builds* under
+emulation are slower still. Treat this as the path for engine-level debugging;
+CI remains the witness of record.
 
 ## Boundaries (deliberate, not backlog)
 
