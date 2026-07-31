@@ -42,6 +42,29 @@ def compose(*args, check=True):
                           env={**os.environ, "GOV_BUILD_CONTEXT": REPO})
 
 
+def compose_pulling(*args, attempts=3, base_delay=15):
+    """Run a compose command whose failure mode is usually a registry hiccup.
+
+    OpenMetadata ships from docker.getcollate.io — a third-party registry with
+    no mirror — so a reset connection mid-pull reds an otherwise-green run.
+    (Seen in CI: `read tcp ...:443: read: connection reset by peer`.)
+
+    Retries are bounded and each one is logged, so a real outage still fails
+    the suite rather than being silently absorbed or hanging.
+    """
+    for attempt in range(1, attempts + 1):
+        result = compose(*args, check=False)
+        if result.returncode == 0:
+            return result
+        if attempt == attempts:
+            log(f"compose {args[0]} failed {attempts}x — giving up")
+            raise subprocess.CalledProcessError(result.returncode, COMPOSE + list(args))
+        delay = base_delay * attempt
+        log(f"compose {args[0]} exited {result.returncode}; "
+            f"retrying in {delay}s ({attempt}/{attempts - 1}) — likely a registry hiccup")
+        time.sleep(delay)
+
+
 def main():
     import requests
     import urllib3
@@ -51,12 +74,12 @@ def main():
     # Two phases: `up --wait` chokes on om-migrate (a one-shot that exits 0
     # is counted as failed on some compose versions), so wait only on the
     # long-running services, then start the OM chain and poll its API.
-    compose("up", "-d", "--build", "--wait", "--wait-timeout", "600",
-            "entra-emulator", "keyvault-emulator", "fabric-emulator",
-            "om-postgresql", "om-elasticsearch")
+    compose_pulling("up", "-d", "--build", "--wait", "--wait-timeout", "600",
+                    "entra-emulator", "keyvault-emulator", "fabric-emulator",
+                    "om-postgresql", "om-elasticsearch")
 
     log("starting OpenMetadata (first-boot migration takes a few minutes)")
-    compose("up", "-d", "--no-recreate", "openmetadata")
+    compose_pulling("up", "-d", "--no-recreate", "openmetadata")
 
     entra = f"https://localhost:{ENTRA_PORT}"
     fabric = f"https://localhost:{FABRIC_PORT}"
