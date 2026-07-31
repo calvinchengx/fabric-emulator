@@ -371,11 +371,20 @@ func writeKustoErr(w http.ResponseWriter, status int, code, msg string) {
 
 // ---- item properties: the Fabric-side half of the surface ----
 
-// itemWithProperties is an item plus the typed "properties" object Fabric
-// returns for RTI items. The embedded pointer inlines the item's own fields.
+// itemWithProperties is an item plus the fields the REST reference documents
+// on the Item object beyond the generic record: the typed "properties" object
+// (RTI items), and "sensitivityLabel", which the reference defines as a
+// SensitivityLabel object carrying just an id. The embedded pointer inlines
+// the item's own fields.
 type itemWithProperties struct {
 	*store.Item
-	Properties map[string]any `json:"properties"`
+	Properties       map[string]any    `json:"properties,omitempty"`
+	SensitivityLabel *sensitivityLabel `json:"sensitivityLabel,omitempty"`
+}
+
+// sensitivityLabel is the documented shape — an id and nothing else.
+type sensitivityLabel struct {
+	ID string `json:"id"`
 }
 
 // kustoBaseURI is the eventhouse's cluster URI — what real Fabric surfaces as
@@ -396,26 +405,15 @@ func kustoBaseURI(r *http.Request, wid, eventhouseID string) string {
 // itemView returns the item, wrapped with its typed properties when its type
 // has any (Eventhouse / KQLDatabase today).
 func (a *API) itemView(r *http.Request, it *store.Item) any {
-	props := a.itemProperties(r, it)
-	if props == nil {
+	props := a.typedItemProperties(r, it)
+	var label *sensitivityLabel
+	if l, err := a.Store.ItemLabel(it.ID); err == nil {
+		label = &sensitivityLabel{ID: l.ID}
+	}
+	if props == nil && label == nil {
 		return it
 	}
-	return itemWithProperties{Item: it, Properties: props}
-}
-
-// itemProperties is the typed "properties" object plus anything that applies
-// to every item type. A sensitivity label is the latter: it is merged in
-// regardless of type. Fabric's own item payloads do not carry the label; this
-// is the emulator's read-back path for what bulkSetLabels applied (labels.go).
-func (a *API) itemProperties(r *http.Request, it *store.Item) map[string]any {
-	props := a.typedItemProperties(r, it)
-	if l, err := a.Store.ItemLabel(it.ID); err == nil {
-		if props == nil {
-			props = map[string]any{}
-		}
-		props["sensitivityLabel"] = map[string]any{"labelId": l.ID, "name": l.Name}
-	}
-	return props
+	return itemWithProperties{Item: it, Properties: props, SensitivityLabel: label}
 }
 
 func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]any {
