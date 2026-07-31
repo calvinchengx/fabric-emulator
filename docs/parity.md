@@ -159,7 +159,8 @@ engine. Verified live, not inferred: `sc.parallelize([1,2,3,4]).map(x*2)
 
 | Fabric area | Emulator | Type |
 |---|---|---|
-| Real-Time Intelligence — Eventhouse / KQL DB / Eventstream (`real-time-intelligence/`) | Item management only; no KQL / streaming engine | 🟡 mgmt / 🔴 exec |
+| Real-Time Intelligence — Eventhouse / KQL Database (`real-time-intelligence/`) | Full item management (including the default child database an eventhouse creates, and `creationPayload.parentEventhouseItemId`), plus the **Kusto REST protocol** on the eventhouse's published `properties.queryServiceUri` — `/v1/rest/mgmt`, `/v1/rest/query`, `/v2/rest/query` — terminated by the emulator (Kusto-audience bearer, workspace RBAC, one isolated engine database per Fabric KQL Database) and **executed by Microsoft's own KQL engine container** (`kustainer`) when the `rti` profile attaches it. No engine attached → honest 501. [25-rti-kusto.md](25-rti-kusto.md) | 🟡 mgmt / 🟠 exec (BYO Kusto engine) |
+| Real-Time Intelligence — Eventstream (`real-time-intelligence/event-streams/`) | Item management only. The attached Kusto engine is a query/ingest engine with **no streaming ingestion** — a streaming pipeline is a different service, deferred with cause | 🟡 mgmt / 🔴 exec |
 | Mirroring — Mirrored Database (`mirroring/`) | `POST …/mirroredDatabases/{id}/refreshMirror` mirrors an **external** SQL Server source (reached via a Connection with Basic credentials) to OneLake as real Delta — reusing the exact same mirror writer the Fabric SQL Database uses (`warehouse.Mirror`; same code, external source). Proven by a gated e2e: a table seeded directly on an external database (bypassing the emulator's own per-item routing entirely) mirrors and reads back correctly. *Snapshot-on-trigger, not continuous/CDC replication*; other source engines (Snowflake, CosmosDB, on-prem via gateway) are out of scope | 🟢 Real (snapshot mirror, SQL Server sources) |
 | Power BI — Semantic Model **query** (`executeQueries`) | Real bounded **DAX engine** — `EVALUATE`, `SUMMARIZECOLUMNS`, measures, `SUM`/`DIVIDE`, relationship filter propagation — over imported `data.json` or compatibility-level-1604 **Direct Lake** entity partitions backed by current OneLake Delta. Proven by the golden DAX/GX suites and the Spark-written Direct Lake witness. | 🟢 Real (DAX subset + Direct Lake) |
 | Power BI — Reports / rendering; full DAX; SemPy over **XMLA** | No report rendering; DAX beyond the fixture subset; and the native ADOMD.NET/XMLA transport SemPy uses (no CI oracle) — all deferred with cause | 🟡 mgmt / 🔴 render |
@@ -197,6 +198,7 @@ contract holds better than any assertion we could write ourselves.
 | `go-mssqldb` | Warehouse/Lakehouse **TDS + FedAuth** | 🟢 `internal/server`, `internal/tds` |
 | **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy HC sessions | 🟠 `e2e/dbt-fabricspark` — debug→seed→run→test on Sail |
 | **`dbt-fabric`** (Microsoft) | Warehouse **TDS via ODBC Driver 18** | 🟢 `e2e/dbt-fabric` — debug→seed→run→test through the TDS splice |
+| **`azure-kusto-data`** (Microsoft) + raw Kusto REST, over **`kustainer`** (Microsoft's own KQL engine) | Eventhouse / KQL Database: `/v1/rest/mgmt`, `/v1/rest/query`, `/v2/rest/query` on the published `queryServiceUri` — create table, ingest, query values back, per-database isolation | 🟠 `e2e/rti` — CI-only witness: the engine is amd64/AVX2-only, so it cannot run on arm64 at all |
 
 The TDS surface now has **two independent driver witnesses**: `go-mssqldb` and
 the Microsoft **ODBC Driver 18** (via `dbt-fabric`). That second driver mattered —
@@ -242,7 +244,9 @@ concept of — the emulator implements that layer directly rather than proxying,
 because there is nothing to proxy it to. That is the same stance throughout: the
 **protocol and control plane are the durable, real things** (built, not mocked,
 so real clients can't tell the difference), and the compute engine is attached
-(Spark) or deferred when proprietary/heavyweight (Dataflow Gen2's M engine, KQL,
-Power BI rendering, T-SQL/TDS). Every deferral fails loudly rather than
+(Spark; T-SQL on SQL Server; **KQL on Microsoft's own Kusto engine** —
+[25-rti-kusto.md](25-rti-kusto.md)) or deferred when proprietary or without an
+implementation to attach at all (Dataflow Gen2's M engine, Power BI rendering,
+Eventstream's streaming ingestion). Every deferral fails loudly rather than
 pretending to succeed. See [13-roadmap.md](13-roadmap.md) for the milestone
 history and the deferred-with-cause rationale.

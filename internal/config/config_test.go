@@ -42,6 +42,7 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("FABRIC_AIRFLOW_USERNAME", "fabric")
 	t.Setenv("FABRIC_AIRFLOW_PASSWORD", "secret")
 	t.Setenv("FABRIC_MLFLOW_URL", "http://mlflow:5000")
+	t.Setenv("FABRIC_KQL_URL", "http://kustainer:8080")
 	c, err := FromEnv()
 	if err != nil {
 		t.Fatal(err)
@@ -54,6 +55,23 @@ func TestFromEnv(t *testing.T) {
 	}
 	if c.MLflowURL != "http://mlflow:5000" {
 		t.Fatalf("FromEnv misread MLflow env: %+v", c)
+	}
+	if c.KQLURL != "http://kustainer:8080" {
+		t.Fatalf("FromEnv misread the Kusto engine env: %+v", c)
+	}
+}
+
+// TestKQLURLDefaultsOff: no FABRIC_KQL_URL means no engine, which the server
+// turns into an honest 501 rather than a silent stub.
+func TestKQLURLDefaultsOff(t *testing.T) {
+	t.Setenv("FABRIC_ENTRA_ISSUER", "https://e:1/t/v2.0")
+	t.Setenv("FABRIC_KQL_URL", "")
+	c, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.KQLURL != "" {
+		t.Fatalf("KQLURL = %q, want empty", c.KQLURL)
 	}
 }
 

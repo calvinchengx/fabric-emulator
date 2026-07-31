@@ -113,6 +113,22 @@ jobs:
       # item -> LRO poll -> guards, against real entra+fabric binaries.
       - run: uv run --frozen --group fabric-target python e2e/fabric-target/run.py
 
+  rti:
+    name: Microsoft's Kusto engine (kustainer) executes KQL behind Eventhouse (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The optional `rti` profile, witnessed: Microsoft's own KQL engine
+      # container backs the emulator's Eventhouse / KQL Database surface. The
+      # witness reads properties.queryServiceUri off the control plane and
+      # speaks the Kusto REST protocol to it — create a table, ingest rows,
+      # query them back — with every KQL statement computed by the engine.
+      # Two client families over the same surface: raw REST and Microsoft's
+      # own azure-kusto-data SDK. Linux/amd64 only: Microsoft documents ARM as
+      # unsupported for the engine (its native layer needs AVX2), so this is
+      # the only place the engine can be witnessed at all.
+      - run: python3 e2e/rti/run.py
+
   governance:
     name: OpenMetadata governance profile catalogs the emulator (containerized)
     runs-on: ubuntu-latest

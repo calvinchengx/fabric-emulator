@@ -96,6 +96,12 @@ func TestNewRejectsBadEngineURLs(t *testing.T) {
 	}
 
 	cfg = testConfig(t)
+	cfg.KQLURL = "://bad"
+	if _, err := server.New(cfg, nil); err == nil {
+		t.Error("New with a bad KQLURL succeeded")
+	}
+
+	cfg = testConfig(t)
 	cfg.MLflowURL = "://bad"
 	if _, err := server.New(cfg, nil); err == nil {
 		t.Error("New with a bad MLflowURL succeeded")

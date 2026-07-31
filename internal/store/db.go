@@ -188,6 +188,17 @@ CREATE TABLE IF NOT EXISTS capacities (
 	region TEXT NOT NULL,
 	state TEXT NOT NULL
 );
+-- Typed item properties the Fabric REST reference exposes under an item's
+-- "properties" object but that are not part of the generic item record — e.g.
+-- a KQLDatabase's parentEventhouseItemId / databaseType, taken from the
+-- creationPayload. Free-form key/value so new typed surfaces need no schema
+-- change; the API decides which keys a given item type recognises.
+CREATE TABLE IF NOT EXISTS item_properties (
+	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	value TEXT NOT NULL,
+	PRIMARY KEY (item_id, name)
+);
 CREATE TABLE IF NOT EXISTS shortcuts (
 	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
 	path TEXT NOT NULL,            -- managed folder the shortcut lives in, e.g. Files

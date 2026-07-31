@@ -41,6 +41,10 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		Definition  *struct {
 			Parts []store.DefinitionPart `json:"parts"`
 		} `json:"definition"`
+		// creationPayload carries per-type creation settings — a KQL
+		// Database's parentEventhouseItemId / databaseType, for instance
+		// (fabric-docs real-time-intelligence/eventhouse-deploy-with-fabric-api.md).
+		CreationPayload map[string]any `json:"creationPayload"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
 		strings.TrimSpace(body.DisplayName) == "" || strings.TrimSpace(body.Type) == "" {
@@ -71,8 +75,9 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
+	a.applyCreationPayload(it, body.CreationPayload)
 	if body.Definition == nil {
-		writeJSON(w, http.StatusCreated, it)
+		writeJSON(w, http.StatusCreated, a.itemView(r, it))
 		return
 	}
 	a.startOperation(w, r, "CreateItem", it.ID)
@@ -88,7 +93,7 @@ func (a *API) getItem(w http.ResponseWriter, r *http.Request, p *auth.Principal)
 		writeErr(w, http.StatusNotFound, "ItemNotFound", "The item is not available.")
 		return
 	}
-	writeJSON(w, http.StatusOK, it)
+	writeJSON(w, http.StatusOK, a.itemView(r, it))
 }
 
 func (a *API) updateItem(w http.ResponseWriter, r *http.Request, p *auth.Principal) {

@@ -135,3 +135,48 @@ func (s *Store) SetDefinition(itemID string, parts []DefinitionPart) error {
 		itemID, string(blob))
 	return err
 }
+
+// SetItemProperties upserts typed properties on an item — the values Fabric
+// returns under an item's "properties" object (a KQLDatabase's
+// parentEventhouseItemId, for instance). Empty values delete the key so a
+// caller can clear one without a second method.
+func (s *Store) SetItemProperties(itemID string, props map[string]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for name, value := range props {
+		if value == "" {
+			if _, err := tx.Exec(`DELETE FROM item_properties WHERE item_id = ? AND name = ?`, itemID, name); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO item_properties (item_id, name, value) VALUES (?,?,?)
+			 ON CONFLICT(item_id, name) DO UPDATE SET value = excluded.value`,
+			itemID, name, value); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ItemProperties returns an item's typed properties (empty map when none).
+func (s *Store) ItemProperties(itemID string) (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT name, value FROM item_properties WHERE item_id = ? ORDER BY name`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	props := map[string]string{}
+	for rows.Next() {
+		var name, value string
+		if err := rows.Scan(&name, &value); err != nil {
+			return nil, err
+		}
+		props[name] = value
+	}
+	return props, rows.Err()
+}

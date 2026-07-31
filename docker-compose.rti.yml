@@ -1,0 +1,29 @@
+# Real-Time Intelligence overlay: point the emulator's Eventhouse / KQL
+# Database surface at the profile-gated `kustainer` service in
+# docker-compose.yml (Microsoft's own KQL engine container).
+#
+#   docker compose --profile rti \
+#     -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.rti.yml up
+#
+# Two opt-ins on purpose, and they do different jobs:
+#   --profile rti          starts (and only then pulls) the ~1.2 GB engine
+#   -f docker-compose.rti.yml  hands the emulator its URL
+# Skip the overlay and the Kusto routes answer an honest 501 instead of
+# relaying to a host that isn't there. Naming files with -f also disables the
+# automatic override load, which is why docker-compose.override.yml is listed
+# explicitly above — drop it for the lite pair (no Spark/SQL sidecars).
+#
+# Once up, a client reads the eventhouse's properties.queryServiceUri from the
+# control plane and speaks Kusto to it, exactly as against real Fabric:
+#
+#   POST {queryServiceUri}/v1/rest/mgmt   {"db":"…","csl":".create-merge table …"}
+#   POST {queryServiceUri}/v1/rest/query  {"db":"…","csl":"T | count"}
+#
+# See docs/25-rti-kusto.md.
+services:
+  fabric-emulator:
+    depends_on:
+      kustainer:
+        condition: service_healthy
+    environment:
+      FABRIC_KQL_URL: "http://kustainer:8080"

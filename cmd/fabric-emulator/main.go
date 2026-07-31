@@ -58,6 +58,7 @@ func run(args []string, stop <-chan struct{}) error {
 	fs.StringVar(&cfg.AirflowUsername, "airflow-username", cfg.AirflowUsername, "Airflow basic-auth username")
 	fs.StringVar(&cfg.AirflowPassword, "airflow-password", cfg.AirflowPassword, "Airflow basic-auth password")
 	fs.StringVar(&cfg.MLflowURL, "mlflow-url", cfg.MLflowURL, "MLflow tracking/model-registry server URL (empty = off)")
+	fs.StringVar(&cfg.KQLURL, "kql-url", cfg.KQLURL, "real Kusto engine the Eventhouse/KQL Database surface relays to (e.g. http://kustainer:8080; empty = 501)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

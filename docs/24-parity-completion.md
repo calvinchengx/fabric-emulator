@@ -46,7 +46,8 @@ compute (SQL Server for TDS, Sail for Spark, MLflow for data science).
 | Gap | Engine | Status |
 |---|---|---|
 | Spark: structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs, `sc`/RDD, `spark.jars`, CDF | `apache/spark` JVM as an **opt-in profile** beside Sail | **✅ Done.** The image (`docker/spark-runtime`, Spark 3.5.3 + Delta 3.2 + hadoop-azure) and the CI oracle (`e2e/spark-jvm`) exist, and the statement agent kept its classic-session path — but the root composes expose **only** the `governance` profile, so no user can attach it. `docker-compose.spark-jvm.yml` now rebuilds `spark-agent` on the JVM image with `SPARK_REMOTE: !reset null` (compose merges env maps — a plain override would leave it a Connect client). Verified live: RDD `sc` returns 20 and Delta's JVM classes resolve. Parity rows lifted 🔴 → 🟠. |
-| KQL / Eventhouse / Eventstream execution | **`mcr.microsoft.com/azuredataexplorer/kustainer-linux`** — Microsoft's own KQL engine container (**verified pullable**) | Not started. Converts an entire "engine absent" category to real, via the same sidecar pattern as SQL Server. Highest-value remaining item. |
+| KQL / Eventhouse execution | **`mcr.microsoft.com/azuredataexplorer/kustainer-linux`** — Microsoft's own KQL engine container | **Landed** ([25-rti-kusto.md](25-rti-kusto.md)). The emulator terminates the Kusto REST protocol on the eventhouse's published `queryServiceUri` (Kusto-audience bearer, workspace RBAC, one isolated engine database per Fabric KQL Database) and relays the KQL to the engine, attached by `--profile rti` + `docker-compose.rti.yml`. Witnessed by `e2e/rti` (CI job `rti`) with two client families — raw REST and Microsoft's `azure-kusto-data`. Parity row 🔴 exec → **🟠 exec**. One constraint to know: the engine is **amd64/AVX2-only and Microsoft documents ARM as unsupported**, so it cannot run on an Apple-silicon dev machine — CI is the only witness. |
+| Eventstream execution | — | **Not reachable via this engine.** The Kusto emulator has no streaming ingestion and no data-management service, so Eventstream stays 🔴 with cause — it needs a streaming pipeline, not a query engine. Split out of the row above rather than left implied. |
 | Copy / shortcuts to external stores (S3, standalone ADLS Gen2) | **SeaweedFS** (Apache-2.0, Go) or **RustFS** (Apache-2.0); **Adobe S3Mock** if a pure test double suffices | Partly done (ADLS/S3 read-through exists); a local S3 sidecar makes the write paths real while staying offline. **Do not use MinIO or LocalStack — both repos were archived in 2026** (MinIO 2026-04, AGPL-3.0; LocalStack 2026-03). Verify the replacement's image and S3 surface before committing to it. |
 
 ## Tier 3 — Build the protocol ourselves
@@ -76,7 +77,7 @@ loud failures at the edges is a better artifact than one that fakes the last
 ## Sequence
 
 1. ~~**Expose the JVM profile**~~ ✅ done — `docker-compose.spark-jvm.yml`, verified live, parity rows lifted.
-2. **kustainer → RTI** — new sidecar, new e2e, converts a whole category.
+2. ~~**kustainer → RTI**~~ ✅ done — `--profile rti` + `docker-compose.rti.yml`, `e2e/rti`, CI job `rti`; Eventhouse/KQL exec 🔴 → 🟠. Eventstream stays 🔴: the engine has no streaming ingestion.
 3. **Tier 1 sweep** — steady, no-risk points; good parallel lane.
 4. **A live S3 sidecar → external-store Copy** — SeaweedFS/RustFS/S3Mock (not MinIO — archived). Completes the Copy/shortcut story.
 5. **Tier 3 only on demand** — XMLA when a real SemPy user appears.

@@ -71,6 +71,15 @@ type Config struct {
 
 	// MLflowURL attaches a real MLflow tracking and model-registry server.
 	MLflowURL string
+
+	// KQLURL, when set, is a real Kusto engine (Microsoft's kustainer
+	// container, or any ADX/Eventhouse cluster) that the Real-Time
+	// Intelligence surface relays queries, management commands, and inline
+	// ingestion to. The emulator still terminates Fabric's own contract —
+	// bearer validation, workspace RBAC, and per-KQL-database isolation —
+	// and only the KQL itself executes upstream. Empty leaves the Kusto
+	// routes answering an honest 501. See docs/25-rti-kusto.md.
+	KQLURL string
 }
 
 // FromEnv builds a validated Config from FABRIC_* environment variables.
@@ -98,6 +107,7 @@ func FromEnvPartial() *Config {
 		AirflowUsername:   os.Getenv("FABRIC_AIRFLOW_USERNAME"),
 		AirflowPassword:   os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
 		MLflowURL:         os.Getenv("FABRIC_MLFLOW_URL"),
+		KQLURL:            os.Getenv("FABRIC_KQL_URL"),
 		RetryAfterSeconds: 1,
 	}
 }

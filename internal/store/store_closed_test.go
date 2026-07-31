@@ -73,6 +73,12 @@ func TestClosedDBErrors(t *testing.T) {
 	if err := s.SetDefinition("x", nil); err == nil {
 		t.Error("SetDefinition on closed DB succeeded")
 	}
+	if err := s.SetItemProperties("x", map[string]string{"a": "b"}); err == nil {
+		t.Error("SetItemProperties on closed DB succeeded")
+	}
+	if _, err := s.ItemProperties("x"); err == nil {
+		t.Error("ItemProperties on closed DB succeeded")
+	}
 	if err := s.CreateOperation(&Operation{Kind: "k"}); err == nil {
 		t.Error("CreateOperation on closed DB succeeded")
 	}
