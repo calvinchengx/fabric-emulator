@@ -44,7 +44,9 @@ sail = [
     "pysail==0.6.6",
     "pyspark-client==4.2.0",
 ]
-spark-connect = ["pyspark-client==4.2.0"]
+# requests: user notebook code (and libraries it imports) routinely calls HTTP
+# APIs, and the statement agent is where that code executes.
+spark-connect = ["pyspark-client==4.2.0", "requests>=2.32,<3"]
 dbt-fabric = ["dbt-fabric>=1.9"]
 dbt-fabricspark = ["dbt-fabricspark>=1.9"]
 dbt-duckdb = [
