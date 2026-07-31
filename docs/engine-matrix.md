@@ -11,6 +11,11 @@ facts pointing at different fixes.
 Rows where the engines differ are the honest content of the
 🔴 default / 🟠 JVM overlay marks in [parity.md](parity.md).
 
+**This measures the engines, not the emulator.** `OPTIMIZE` and `VACUUM`
+show ❌ for Sail because Sail genuinely does not implement them — but the
+emulator's Livy agent runs both through delta-rs, so they work in a
+notebook. See [20-lakesail-engine.md](20-lakesail-engine.md).
+
 ## Which engine should I use?
 
 **Sail is the default, and should stay the default.** This table only
