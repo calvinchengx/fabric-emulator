@@ -167,7 +167,7 @@ engine. Verified live, not inferred: `sc.parallelize([1,2,3,4]).map(x*2)
 | Power BI — Semantic Model **query** (`executeQueries`) | Real bounded **DAX engine** — `EVALUATE`, `SUMMARIZECOLUMNS`, measures, `SUM`/`DIVIDE`, relationship filter propagation — over imported `data.json` or compatibility-level-1604 **Direct Lake** entity partitions backed by current OneLake Delta. Proven by the golden DAX/GX suites and the Spark-written Direct Lake witness. | 🟢 Real (DAX subset + Direct Lake) |
 | Power BI — Reports / rendering; full DAX; SemPy over **XMLA** | No report rendering; DAX beyond the fixture subset; and the native ADOMD.NET/XMLA transport SemPy uses (no CI oracle) — all deferred with cause | 🟡 mgmt / 🔴 render |
 | Data Science — ML models / experiments / MLflow (`data-science/`) | Authenticated, workspace-scoped proxy to a real MLflow 3 tracking/model-registry server. Experiment/model creation synchronizes typed Fabric items; experiment/run references are isolated by workspace; successful artifact uploads are mirrored under the experiment item's OneLake `Files/mlflow-artifacts`. | 🟢 Real (sidecar) |
-| Fabric SQL Database (`database/`), Graph (`graph/`), Real-Time Hub, Copilot / IQ (`iq/`), Embed, Workload Dev Kit | — | 🔴 Not implemented |
+| Graph (`graph/`), Real-Time Hub, Copilot / IQ (`iq/`), Embed, Workload Dev Kit | — | 🔴 Not implemented |
 
 ## Emulator-only (no Fabric equivalent — these exist for testing)
 
