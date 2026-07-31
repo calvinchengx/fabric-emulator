@@ -90,6 +90,15 @@ def render() -> str:
         "Those are precisely the rows the JVM overlay exists for, and the",
         "candidate list for upstream Sail contributions.",
         "",
+        "ᵃ Qualified deliberately. `e2e/sail` proves the same `MERGE` succeeds on",
+        "Sail when the registered table is backed by an `az://` OneLake URL — the",
+        "path the emulator actually uses. Only the local-path form fails, so this",
+        "row is not evidence that Sail lacks `MERGE`.",
+        "",
+        "ᵇ A failure here is a pyspark client/worker protocol mismatch in the probe",
+        "container, not a missing capability: Sail embeds CPython via `pyo3` to run",
+        "Python UDFs. Fix by pinning matching pyspark versions.",
+        "",
     ]
     return "\n".join(lines)
 

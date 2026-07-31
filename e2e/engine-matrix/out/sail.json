@@ -25,7 +25,7 @@
   },
   {
     "id": "delta.merge_registered",
-    "description": "`MERGE INTO` a registered table",
+    "description": "`MERGE INTO` a registered table at a **local path** \u1d43",
     "engine": "sail",
     "status": "fail",
     "error_class": "AnalysisException",
@@ -123,7 +123,7 @@
   },
   {
     "id": "spark.python_udf",
-    "description": "Python UDF",
+    "description": "Python UDF \u1d47",
     "engine": "sail",
     "status": "fail",
     "error_class": "PythonException",

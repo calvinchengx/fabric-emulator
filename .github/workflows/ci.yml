@@ -35,6 +35,16 @@ jobs:
           echo "total coverage: ${total}%"
           awk -v t="$total" 'BEGIN { exit (t < 90) ? 1 : 0 }'
 
+  engine-matrix:
+    name: Spark engine matrix (Sail vs JVM) is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Regenerates the matrix from both engines and fails if the committed
+      # file differs. That is what stops a claim like "SQL VERSION AS OF is a
+      # Sail gap" surviving a Sail upgrade that closed it.
+      - run: python3 e2e/engine-matrix/run.py && git diff --exit-code docs/engine-matrix.md
+
   witnesses:
     name: Every 🟢 parity claim names its witness
     runs-on: ubuntu-latest

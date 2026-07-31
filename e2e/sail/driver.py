@@ -90,7 +90,8 @@ print("delta append OK (4 rows)")
 
 # --- deprecation-audit probes: turn "unverified vs delta-spark" into knowns ---
 
-# Time travel by version (DataFrame API; SQL time travel is a known Sail gap).
+# Time travel by version. (The SQL `VERSION AS OF` form also works — see
+# docs/engine-matrix.md; an earlier comment here called it a Sail gap.)
 v0 = spark.read.format("delta").option("versionAsOf", 0).load(url).count()
 assert v0 == 3, v0
 print("time travel OK (versionAsOf 0 -> 3 rows)")
