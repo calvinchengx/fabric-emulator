@@ -22,7 +22,8 @@ func nameConflict(err error) error {
 		(strings.Contains(m, "ux_workspaces_display_name") ||
 			strings.Contains(m, "ux_items_ws_name_type") ||
 			strings.Contains(m, "workspaces.display_name") ||
-			strings.Contains(m, "items.display_name")) {
+			strings.Contains(m, "items.display_name") ||
+			strings.Contains(m, "domains.display_name")) {
 		return errors.Join(ErrNameConflict, err)
 	}
 	return err

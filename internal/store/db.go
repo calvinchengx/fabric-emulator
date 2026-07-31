@@ -199,6 +199,31 @@ CREATE TABLE IF NOT EXISTS item_properties (
 	value TEXT NOT NULL,
 	PRIMARY KEY (item_id, name)
 );
+-- Tenant-level governance domains (fabric-docs governance/domains.md). A
+-- subdomain points at its parent; deleting a domain takes its subdomains,
+-- workspace assignments and role assignments with it.
+CREATE TABLE IF NOT EXISTS domains (
+	id TEXT PRIMARY KEY,
+	-- Unique tenant-wide, case-insensitively, like workspace names.
+	display_name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+	description TEXT NOT NULL DEFAULT '',
+	-- NULL for a root domain; a real id for a subdomain. Not '' — an empty
+	-- string is not a domain id, and the foreign key would reject it.
+	parent_domain_id TEXT REFERENCES domains(id) ON DELETE CASCADE,
+	contributors_scope TEXT NOT NULL
+);
+-- A workspace belongs to at most one domain, so workspace_id is the key.
+CREATE TABLE IF NOT EXISTS domain_workspaces (
+	workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+	domain_id TEXT NOT NULL REFERENCES domains(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS domain_role_assignments (
+	domain_id TEXT NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
+	principal_id TEXT NOT NULL,
+	principal_type TEXT NOT NULL,
+	role TEXT NOT NULL,
+	PRIMARY KEY (domain_id, principal_id, role)
+);
 CREATE TABLE IF NOT EXISTS shortcuts (
 	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
 	path TEXT NOT NULL,            -- managed folder the shortcut lives in, e.g. Files

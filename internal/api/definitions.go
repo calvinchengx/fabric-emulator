@@ -92,6 +92,17 @@ var typedCollections = map[string]string{
 	"dataflows":           "Dataflow",
 	"mlExperiments":       "MLExperiment",
 	"mlModels":            "MLModel",
+	// Item types the REST reference documents but that had no typed alias.
+	// The type names are taken from request/response payloads in fabric-docs
+	// (`"type": "CopyJob"`, `items?type=KQLDashboard`, …); the collection
+	// segment follows Fabric's camelCase-plural convention, and `copyJobs`
+	// and `reflexes` appear verbatim as URL segments there. These are pure
+	// aliases over the generic item surface, which already accepts the type.
+	"copyJobs":           "CopyJob",
+	"kqlDashboards":      "KQLDashboard",
+	"kqlQuerysets":       "KQLQueryset",
+	"reflexes":           "Reflex",
+	"warehouseSnapshots": "WarehouseSnapshot",
 }
 
 // registerTyped mounts the typed collections as thin aliases: list/create on

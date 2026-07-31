@@ -33,7 +33,8 @@ Pure CRUD + RBAC in patterns the repo has executed a dozen times.
 
 | Gap | Scope | Size |
 |---|---|---|
-| Tenant settings / audit / admin-portal APIs | Typed settings, audit event list, admin-scoped RBAC | S |
+| ~~Governance domains~~ ✅ | `/v1/admin/domains`: domain/subdomain CRUD, workspace assignment, bulk role assignment. Graded 🟢 mgmt with the missing tenant-admin gate called out as 🟡 | S |
+| Tenant settings / audit (`activityevents`) | Typed settings, audit event list, admin-scoped RBAC | S |
 | Graph, Real-Time Hub, Embed, Workload Dev Kit | Typed items + definition round-trip | S–M |
 | Sensitivity labels | The label assignment API (not Purview scanning) | M |
 | Dataflow Gen2 **management** completeness | Finish the non-engine surface; execution stays 501 | S |

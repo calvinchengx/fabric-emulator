@@ -169,6 +169,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/deploymentPipelines/{pid}/roleAssignments/{prid}", a.withAuth(a.deleteDeploymentPipelineRole))
 
 	a.registerTyped(mux)
+	a.registerAdminDomains(mux)
 	a.registerLivy(mux)
 	a.registerShortcuts(mux)
 	a.registerExecuteQueries(mux)
