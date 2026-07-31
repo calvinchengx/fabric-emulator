@@ -8,19 +8,56 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"path"
 	"sort"
 	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/format"
 )
 
 // Table is a materialised Delta table: column names and rows of Go-typed
-// values (bool, int64, float64, string, []byte, or nil for NULL).
+// values (bool, int64, float64, string, []byte, Decimal, or nil for NULL).
 type Table struct {
 	Columns []string
 	Rows    [][]any
+}
+
+// Decimal is an exact DECIMAL(precision, scale) value.
+//
+// Parquet stores a decimal as an *unscaled integer* plus a logical annotation
+// carrying the scale: decimal(10,2) 1.50 is the int64 150. Decoding on the
+// physical kind alone therefore yields 150, and every downstream sum is wrong
+// by 10^scale — silently, which is worse than failing. Carrying the unscaled
+// integer with its scale (rather than converting to float64) keeps the value
+// exact, which is the whole point of asking for a decimal.
+type Decimal struct {
+	Unscaled  *big.Int
+	Precision int
+	Scale     int
+}
+
+// String renders the value with its scale applied ("150" scale 2 -> "1.50"),
+// which is also a valid SQL decimal literal.
+func (d Decimal) String() string {
+	if d.Unscaled == nil {
+		return "0"
+	}
+	if d.Scale <= 0 {
+		return d.Unscaled.String()
+	}
+	neg := d.Unscaled.Sign() < 0
+	digits := new(big.Int).Abs(d.Unscaled).String()
+	if len(digits) <= d.Scale { // pad to 0.00ddd
+		digits = strings.Repeat("0", d.Scale-len(digits)+1) + digits
+	}
+	out := digits[:len(digits)-d.Scale] + "." + digits[len(digits)-d.Scale:]
+	if neg {
+		out = "-" + out
+	}
+	return out
 }
 
 // deltaAction is one line of a _delta_log commit (only the parts we use).
@@ -133,8 +170,14 @@ func readParquet(data []byte) (*Table, error) {
 	}
 	fields := pf.Schema().Fields()
 	cols := make([]string, len(fields))
+	// A decimal's scale lives in the schema's logical annotation, not in the
+	// values, so capture it per column before reading any rows.
+	decs := make([]*format.DecimalType, len(fields))
 	for i, f := range fields {
 		cols[i] = f.Name()
+		if lt := f.Type().LogicalType(); lt != nil {
+			decs[i] = lt.Decimal
+		}
 	}
 	tbl := &Table{Columns: cols}
 
@@ -148,7 +191,7 @@ func readParquet(data []byte) (*Table, error) {
 				for _, v := range buf[i] {
 					c := v.Column()
 					if c >= 0 && c < len(out) {
-						out[c] = goValue(v)
+						out[c] = goValue(v, decs[c])
 					}
 				}
 				tbl.Rows = append(tbl.Rows, out)
@@ -162,10 +205,15 @@ func readParquet(data []byte) (*Table, error) {
 	return tbl, nil
 }
 
-// goValue converts a parquet Value to a Go primitive (nil for NULL).
-func goValue(v parquet.Value) any {
+// goValue converts a parquet Value to a Go primitive (nil for NULL). dec is the
+// column's DECIMAL annotation when it has one, which must win over the physical
+// kind: the same INT64 is a plain long or an unscaled decimal depending on it.
+func goValue(v parquet.Value, dec *format.DecimalType) any {
 	if v.IsNull() {
 		return nil
+	}
+	if dec != nil {
+		return decimalValue(v, dec)
 	}
 	switch v.Kind() {
 	case parquet.Boolean:
@@ -183,4 +231,29 @@ func goValue(v parquet.Value) any {
 	default:
 		return v.String()
 	}
+}
+
+// decimalValue decodes one DECIMAL value. Parquet allows four physical
+// encodings for the unscaled integer, and delta-rs picks by precision (INT32
+// to 9, INT64 to 18, byte array beyond), so all of them have to be handled or
+// wide decimals silently fall through to a string.
+func decimalValue(v parquet.Value, dec *format.DecimalType) Decimal {
+	d := Decimal{Precision: int(dec.Precision), Scale: int(dec.Scale)}
+	switch v.Kind() {
+	case parquet.Int32:
+		d.Unscaled = big.NewInt(int64(v.Int32()))
+	case parquet.Int64:
+		d.Unscaled = big.NewInt(v.Int64())
+	case parquet.ByteArray, parquet.FixedLenByteArray:
+		// Big-endian two's complement, so a leading high bit means negative.
+		b := v.ByteArray()
+		n := new(big.Int).SetBytes(b)
+		if len(b) > 0 && b[0]&0x80 != 0 {
+			n.Sub(n, new(big.Int).Lsh(big.NewInt(1), uint(len(b)*8)))
+		}
+		d.Unscaled = n
+	default:
+		d.Unscaled = big.NewInt(0)
+	}
+	return d
 }
