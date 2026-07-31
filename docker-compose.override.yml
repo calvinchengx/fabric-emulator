@@ -41,6 +41,17 @@ services:
       AZURE_ALLOW_INVALID_CERTIFICATES: "true" # emulator's self-signed TLS
       SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
       RUST_LOG: "info"
+    # Without this the container reports `running` forever whether or not the
+    # engine ever bound its port, so nothing downstream can wait on it. Plain
+    # TCP because the surface is h2c gRPC and the image carries no gRPC client;
+    # proving the port listens is the honest scope of a healthcheck. The deeper
+    # "does Spark compute" question is `scripts/status.sh --spark`.
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket; socket.create_connection(('127.0.0.1', 50051), 2).close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   spark-agent:
     build:
@@ -49,12 +60,22 @@ services:
       args: { UV_GROUP: spark-connect }
     depends_on:
       sail:
-        condition: service_started
+        # Now that sail reports health, wait for the engine to actually listen
+        # rather than merely be started: the agent holds a Spark Connect client.
+        condition: service_healthy
     volumes:
       - ./e2e/livy/agent.py:/agent.py:ro
     environment:
       SPARK_REMOTE: "sc://sail:50051" # Spark Connect client — no JVM
     command: python /agent.py
+    # The agent already serves /health (e2e/livy/agent.py); it just was not wired
+    # up, so `running` was never evidence the statement executor could answer.
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
