@@ -24,6 +24,10 @@ duckdb = [
     "duckdb>=1.1,<2",
     "pyarrow>=18,<24",
 ]
+s3 = [
+    "boto3>=1.35,<2",
+    "requests>=2.32,<3",
+]
 fabric-cicd = ["fabric-cicd>=0.1"]
 fabric-cli = ["ms-fabric-cli>=1.2"]
 fabric-target = [

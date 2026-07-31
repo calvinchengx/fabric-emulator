@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "fabric-shortcut",
+      "credentials": [
+        { "accessKey": "FABRICACCESSKEY", "secretKey": "FABRICSECRETKEY0123456789" }
+      ],
+      "actions": ["Read", "Write", "List", "Tagging", "Admin"]
+    }
+  ]
+}

@@ -129,6 +129,21 @@ jobs:
       # the only place the engine can be witnessed at all.
       - run: python3 e2e/rti/run.py
 
+  external-s3:
+    name: Real S3 server (SeaweedFS) behind a OneLake shortcut, SigV4 enforced (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # External-store shortcuts, witnessed against a real S3 server rather
+      # than an anonymous HTTP endpoint. SeaweedFS runs with an identity
+      # config, so every request must carry a valid AWS SigV4 signature: the
+      # witness writes the object with boto3 (Amazon's own SDK), proves an
+      # unsigned GET is refused, then reads the object back through OneLake —
+      # which forces the emulator to sign the upstream request itself. A
+      # deliberately wrong secret must be refused, or nothing is being
+      # verified.
+      - run: python3 e2e/s3/run.py
+
   governance:
     name: OpenMetadata governance profile catalogs the emulator (containerized)
     runs-on: ubuntu-latest

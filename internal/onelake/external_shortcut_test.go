@@ -3,6 +3,7 @@ package onelake
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
@@ -92,5 +93,53 @@ func TestResolveReadExposesEmptyManagedFolders(t *testing.T) {
 		if derr != nil || !p.IsDir || p.RelPath != name {
 			t.Fatalf("%s = %+v, error %+v", name, p, derr)
 		}
+	}
+}
+
+// An S3 shortcut configured with an Access Key ID and Secret Access Key —
+// what Fabric's own shortcut dialog collects — is signed with SigV4. Header
+// credentials are not enough for a real S3 endpoint.
+func TestResolveExternalShortcutSignsS3WithSigV4(t *testing.T) {
+	var gotAuth, gotSHA, gotDate, gotToken string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotSHA = r.Header.Get("x-amz-content-sha256")
+		gotDate = r.Header.Get("X-Amz-Date")
+		gotToken = r.Header.Get("x-amz-security-token")
+		_, _ = w.Write([]byte("s3-object-bytes"))
+	}))
+	defer target.Close()
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(st, nil)
+
+	conn := &store.Connection{DisplayName: "s3", CredentialsJSON: `{
+		"accessKeyID":"AKIAIOSFODNN7EXAMPLE",
+		"secretAccessKey":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		"sessionToken":"SESSION"}`}
+	if err := st.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	sc := &store.Shortcut{TargetType: "AmazonS3", TargetLocation: target.URL,
+		TargetPath: "bucket", ConnectionID: conn.ID}
+	p, derr := svc.resolveExternal(sc, "folder/file.txt")
+	if derr != nil || string(p.Content) != "s3-object-bytes" {
+		t.Fatalf("result = %v, error = %+v", p, derr)
+	}
+	if !strings.HasPrefix(gotAuth, "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/") {
+		t.Fatalf("Authorization = %q", gotAuth)
+	}
+	if !strings.Contains(gotAuth, "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token") {
+		t.Fatalf("session token not signed: %q", gotAuth)
+	}
+	if gotSHA == "" || gotDate == "" || gotToken != "SESSION" {
+		t.Fatalf("sha=%q date=%q token=%q", gotSHA, gotDate, gotToken)
+	}
+	// No basic/api-key credential leaks alongside the signature.
+	if strings.Contains(gotAuth, "Basic") {
+		t.Fatalf("basic credential leaked: %q", gotAuth)
 	}
 }
