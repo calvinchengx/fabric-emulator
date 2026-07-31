@@ -269,7 +269,7 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "`createDataFrame(local_rows)`",
     "witnesses": [
-      "TODO"
+      "ci:livy-native"
     ]
   },
   "concurrent-delta-overwrite-writers": {
@@ -306,7 +306,8 @@
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "**Lakehouse SQL analytics endpoint — Delta → engine**",
     "witnesses": [
-      "TODO"
+      "ci:warehouse-tds",
+      "go:TestWarehouseDeltaReflectionE2E"
     ]
   },
   "warehouse-read-write-t-sql": {
@@ -321,42 +322,48 @@
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "**Fabric SQL Database (`database/`)** — OLTP + OneLake mirror",
     "witnesses": [
-      "TODO"
+      "ci:warehouse-tds",
+      "go:TestSQLDatabaseMirror"
     ]
   },
   "per-item-isolation-each-item-its-own-sql-server-database": {
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "Per-item isolation (each item = its own SQL Server database)",
     "witnesses": [
-      "TODO"
+      "ci:warehouse-tds",
+      "go:TestWarehouseTwoSurfaces",
+      "go:TestWarehouseRouter"
     ]
   },
   "rbac-sql-permissions": {
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "RBAC → SQL permissions",
     "witnesses": [
-      "TODO"
+      "ci:warehouse-tds",
+      "go:TestWarehouseTDSEndpointE2E"
     ]
   },
   "informationschema-sys-introspection": {
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "`information_schema` / `sys.*` introspection",
     "witnesses": [
-      "TODO"
+      "ci:warehouse-tds",
+      "go:TestWarehouseSQLServerRelayE2E"
     ]
   },
   "per-column-type-fidelity-real-sql-types-over-the-wire": {
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "Per-column type fidelity (real SQL types over the wire)",
     "witnesses": [
-      "TODO"
+      "go:TestResultTypeFidelity",
+      "go:TestReflectDecimalColumn"
     ]
   },
   "connection-by-item-name-vs-guid": {
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "Connection by item *name* (vs GUID)",
     "witnesses": [
-      "TODO"
+      "go:TestGetWorkspaceAndItemByName"
     ]
   },
   "data-pipeline-control-flow-if-foreach-until-switch-filter-fail-expression-language-dependson": {
@@ -404,14 +411,17 @@
     "section": "Data Factory (`data-factory/`)",
     "claim": "Pipeline → notebook activity (TridentNotebook)",
     "witnesses": [
-      "TODO"
+      "go:TestNotebookBinding",
+      "go:TestPipelineNotebookMissingID",
+      "go:TestNotebookRunParseAndReport"
     ]
   },
   "queryactivityruns-detail": {
     "section": "Data Factory (`data-factory/`)",
     "claim": "`queryactivityruns` detail",
     "witnesses": [
-      "TODO"
+      "go:TestQueryActivityRunsAuthAndEdges",
+      "go:TestQueryActivityRunsMissing"
     ]
   },
   "activity-level-lineage": {
@@ -451,7 +461,8 @@
     "section": "Data Factory (`data-factory/`)",
     "claim": "**Script** / **SqlServerStoredProcedure** activities",
     "witnesses": [
-      "TODO"
+      "ci:warehouse-tds",
+      "go:TestPipelineSQLActivitiesE2E"
     ]
   },
   "apache-airflow-job": {
@@ -498,21 +509,27 @@
     "section": "Item types present, engine absent",
     "claim": "Mirroring — Mirrored Database (`mirroring/`)",
     "witnesses": [
-      "TODO"
+      "ci:warehouse-tds",
+      "go:TestRefreshMirroredDatabaseE2E",
+      "go:TestMirrorSnapshotsBaseTables"
     ]
   },
   "power-bi-semantic-model-query-executequeries": {
     "section": "Item types present, engine absent",
     "claim": "Power BI — Semantic Model **query** (`executeQueries`)",
     "witnesses": [
-      "TODO"
+      "ci:semantic-model",
+      "go:TestExecuteQueriesE2E",
+      "go:TestExecuteQueriesGolden",
+      "go:TestExecuteQueriesDirectLakeReadsCurrentDelta"
     ]
   },
   "data-science-ml-models-experiments-mlflow-data-science": {
     "section": "Item types present, engine absent",
     "claim": "Data Science — ML models / experiments / MLflow (`data-science/`)",
     "witnesses": [
-      "TODO"
+      "ci:data-science-loop",
+      "go:TestMLflowProxyContract"
     ]
   }
 }

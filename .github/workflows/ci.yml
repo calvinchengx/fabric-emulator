@@ -43,13 +43,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      # Report mode for now: it prints the mapping and the count of claims with
-      # no identified witness. Flip to --strict once those are cleared, at
-      # which point an unwitnessed 🟢 fails the build. Dangling references (a
-      # named CI job or Go test that no longer exists) are reported today and
-      # are the most valuable part — they catch a witness being renamed or
-      # deleted out from under a claim.
-      - run: python3 scripts/check_witnesses.py
+      # Strict: all 67 claims are mapped, so a new 🟢 row without a witness —
+      # or a witness that no longer exists — fails the build. That second case
+      # is the valuable one: it catches a test being renamed or deleted out
+      # from under the claim that depended on it.
+      - run: python3 scripts/check_witnesses.py --strict
   portal:
     name: Portal builds from source
     runs-on: ubuntu-latest
