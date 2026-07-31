@@ -96,17 +96,22 @@ func TestTenantSettingsOmitsEmptyOptionalFields(t *testing.T) {
 	}
 }
 
-// PATCH is an emulator affordance (real Fabric changes settings in the admin
-// portal), but it must behave sanely: partial updates, validation, and
-// persistence.
+// The documented update API: POST .../{name}/update, `enabled` required, and a
+// {"tenantSettings":[...]} response wrapper rather than the bare object.
 func TestTenantSettingsUpdate(t *testing.T) {
 	f := newFixture(t)
 	const name = "DatamartTenant"
 
 	// Flip enabled; the other fields survive untouched.
-	var got tenantSetting
-	f.mustStatus(f.call("PATCH", "/v1/admin/tenantsettings/"+name, f.token,
-		map[string]any{"enabled": false}, &got), http.StatusOK, "disable setting")
+	var wrapped struct {
+		TenantSettings []tenantSetting `json:"tenantSettings"`
+	}
+	f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/"+name+"/update", f.token,
+		map[string]any{"enabled": false}, &wrapped), http.StatusOK, "disable setting")
+	if len(wrapped.TenantSettings) != 1 {
+		t.Fatalf("response = %+v; the documented shape is {tenantSettings:[...]}", wrapped)
+	}
+	got := wrapped.TenantSettings[0]
 	if got.Enabled {
 		t.Fatal("setting still enabled after patch")
 	}
@@ -119,32 +124,38 @@ func TestTenantSettingsUpdate(t *testing.T) {
 	}
 
 	// Security groups round-trip with the documented graphId/name shape.
-	f.mustStatus(f.call("PATCH", "/v1/admin/tenantsettings/"+name, f.token, map[string]any{
+	f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/"+name+"/update", f.token, map[string]any{
+		"enabled":                  false,
 		"canSpecifySecurityGroups": true,
 		"enabledSecurityGroups": []map[string]string{
 			{"graphId": "f51b705f-a409-4d40-9197-c5d5f349e2f0", "name": "TestComputeCdsa"},
 		},
-	}, &got), http.StatusOK, "set security groups")
+	}, &wrapped), http.StatusOK, "set security groups")
+	got = wrapped.TenantSettings[0]
 	if len(got.EnabledSecurityGroups) != 1 ||
 		got.EnabledSecurityGroups[0].Name != "TestComputeCdsa" {
 		t.Fatalf("security groups = %+v", got.EnabledSecurityGroups)
 	}
 
 	// Typed properties: the documented types are accepted...
-	f.mustStatus(f.call("PATCH", "/v1/admin/tenantsettings/"+name, f.token, map[string]any{
+	f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/"+name+"/update", f.token, map[string]any{
+		"enabled":    false,
 		"properties": []map[string]string{{"name": "MaxRows", "type": "Integer", "value": "1000"}},
-	}, &got), http.StatusOK, "typed property")
+	}, &wrapped), http.StatusOK, "typed property")
+	got = wrapped.TenantSettings[0]
 	if len(got.Properties) != 1 || got.Properties[0].Type != "Integer" {
 		t.Fatalf("properties = %+v", got.Properties)
 	}
 	// ...and anything else is refused.
-	f.mustStatus(f.call("PATCH", "/v1/admin/tenantsettings/"+name, f.token, map[string]any{
+	f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/"+name+"/update", f.token, map[string]any{
+		"enabled":    false,
 		"properties": []map[string]string{{"name": "X", "type": "NotAType", "value": "1"}},
 	}, nil), http.StatusBadRequest, "invalid property type")
 
 	// Naming enabled groups while the setting applies to the whole org is
 	// contradictory and is refused.
-	f.mustStatus(f.call("PATCH", "/v1/admin/tenantsettings/CertifyDatasets", f.token, map[string]any{
+	f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/CertifyDatasets/update", f.token, map[string]any{
+		"enabled":                  true,
 		"canSpecifySecurityGroups": false,
 		"enabledSecurityGroups": []map[string]string{
 			{"graphId": "f51b705f-a409-4d40-9197-c5d5f349e2f0", "name": "G"},
@@ -152,6 +163,6 @@ func TestTenantSettingsUpdate(t *testing.T) {
 	}, nil), http.StatusBadRequest, "groups without canSpecifySecurityGroups")
 
 	// Unknown settings and malformed bodies.
-	f.mustStatus(f.call("PATCH", "/v1/admin/tenantsettings/NoSuchSetting", f.token,
+	f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/NoSuchSetting/update", f.token,
 		map[string]any{"enabled": true}, nil), http.StatusNotFound, "unknown setting")
 }

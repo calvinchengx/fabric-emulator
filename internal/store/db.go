@@ -217,6 +217,15 @@ CREATE TABLE IF NOT EXISTS tenant_settings (
 	excluded_groups_json TEXT NOT NULL DEFAULT 'null',
 	properties_json TEXT NOT NULL DEFAULT 'null'
 );
+-- Capacity-level overrides of tenant settings. The documented payload is
+-- stored whole: it is a read-mostly projection, and keeping it as one JSON
+-- object avoids a column per documented field.
+CREATE TABLE IF NOT EXISTS capacity_setting_overrides (
+	capacity_id TEXT NOT NULL,
+	setting_name TEXT NOT NULL,
+	setting_json TEXT NOT NULL,
+	PRIMARY KEY (capacity_id, setting_name)
+);
 -- Sensitivity labels. The taxonomy is emulator-provided (real Fabric gets it
 -- from Purview, which is not attachable offline); the label-change event
 -- model in governance/sensitivity-label-audit-schema.md is what is faithful.

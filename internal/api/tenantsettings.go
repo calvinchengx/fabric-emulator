@@ -2,8 +2,8 @@ package api
 
 // Tenant settings:
 //
-//	GET   /v1/admin/tenantsettings
-//	PATCH /v1/admin/tenantsettings/{settingName}   (emulator affordance, see below)
+//	GET  /v1/admin/tenantsettings
+//	POST /v1/admin/tenantsettings/{tenantSettingName}/update
 //
 // The payload is the documented TenantSetting object from the Fabric REST
 // reference (admin/tenants/list-tenant-settings): settingName, title, enabled,
@@ -13,10 +13,9 @@ package api
 // and per the reference those two are *removed* when there are no more pages
 // rather than sent as null.
 //
-// Real Fabric has no public API to change a tenant setting — the admin portal
-// does it. An emulator that cannot flip a setting is useless for testing code
-// that branches on one, so PATCH exists as a clearly-marked emulator
-// affordance. It is not a Fabric endpoint.
+// The update is a real Fabric API (admin/tenants/update-tenant-setting), not
+// an emulator affordance: `enabled` is required, and the response wraps the
+// result in `{"tenantSettings": [...]}` rather than returning the object bare.
 
 import (
 	"encoding/json"
@@ -29,7 +28,7 @@ import (
 
 func (a *API) registerTenantSettings(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/tenantsettings", a.withAuth(a.listTenantSettings))
-	mux.HandleFunc("PATCH /v1/admin/tenantsettings/{name}", a.withAuth(a.updateTenantSetting))
+	mux.HandleFunc("POST /v1/admin/tenantsettings/{name}/update", a.withAuth(a.updateTenantSetting))
 }
 
 func (a *API) listTenantSettings(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
@@ -45,6 +44,7 @@ func (a *API) listTenantSettings(w http.ResponseWriter, r *http.Request, p *auth
 
 func (a *API) updateTenantSetting(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	var patch struct {
+		// `enabled` is documented as required.
 		Enabled                  *bool                             `json:"enabled"`
 		CanSpecifySecurityGroups *bool                             `json:"canSpecifySecurityGroups"`
 		DelegateToCapacity       *bool                             `json:"delegateToCapacity"`
@@ -56,6 +56,10 @@ func (a *API) updateTenantSetting(w http.ResponseWriter, r *http.Request, p *aut
 	}
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "Malformed JSON body.")
+		return
+	}
+	if patch.Enabled == nil {
+		writeErr(w, http.StatusBadRequest, "InvalidRequest", "enabled is required.")
 		return
 	}
 	s, err := a.Store.GetTenantSetting(r.PathValue("name"))
@@ -111,5 +115,6 @@ func (a *API) updateTenantSetting(w http.ResponseWriter, r *http.Request, p *aut
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, s)
+	// The documented response is a list wrapper, not the bare object.
+	writeJSON(w, http.StatusOK, map[string]any{"tenantSettings": []*store.TenantSetting{s}})
 }
