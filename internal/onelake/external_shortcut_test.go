@@ -28,6 +28,9 @@ func TestResolveExternalShortcutCredentialsAndErrors(t *testing.T) {
 	defer st.Close()
 	svc := New(st, nil)
 
+	// These four exercise the plain HTTP read-through, so the target type is
+	// ADLSGen2: an AmazonS3 target with Basic credentials now means SigV4
+	// (see TestResolveExternalShortcutSignsS3WithSigV4).
 	tests := []struct {
 		name, creds, wantAuth, wantKey, wantQuery string
 	}{
@@ -42,7 +45,7 @@ func TestResolveExternalShortcutCredentialsAndErrors(t *testing.T) {
 			if err := st.CreateConnection(conn); err != nil {
 				t.Fatal(err)
 			}
-			sc := &store.Shortcut{TargetType: "AmazonS3", TargetLocation: target.URL, TargetPath: "bucket", ConnectionID: conn.ID}
+			sc := &store.Shortcut{TargetType: "ADLSGen2", TargetLocation: target.URL, TargetPath: "bucket", ConnectionID: conn.ID}
 			p, derr := svc.resolveExternal(sc, "folder/file.txt")
 			if derr != nil || string(p.Content) != "external-data" {
 				t.Fatalf("result = %v, error = %+v", p, derr)
@@ -116,10 +119,13 @@ func TestResolveExternalShortcutSignsS3WithSigV4(t *testing.T) {
 	defer st.Close()
 	svc := New(st, nil)
 
+	// Fabric's S3 connector collects an Access Key Id and a Secret Access Key;
+	// the REST reference has no AccessKey credential type, so they travel as
+	// Basic's username/password.
 	conn := &store.Connection{DisplayName: "s3", CredentialsJSON: `{
-		"accessKeyID":"AKIAIOSFODNN7EXAMPLE",
-		"secretAccessKey":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-		"sessionToken":"SESSION"}`}
+		"credentialType":"Basic",
+		"username":"AKIAIOSFODNN7EXAMPLE",
+		"password":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}`}
 	if err := st.CreateConnection(conn); err != nil {
 		t.Fatal(err)
 	}
@@ -132,14 +138,19 @@ func TestResolveExternalShortcutSignsS3WithSigV4(t *testing.T) {
 	if !strings.HasPrefix(gotAuth, "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/") {
 		t.Fatalf("Authorization = %q", gotAuth)
 	}
-	if !strings.Contains(gotAuth, "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token") {
-		t.Fatalf("session token not signed: %q", gotAuth)
+	if !strings.Contains(gotAuth, "SignedHeaders=host;x-amz-content-sha256;x-amz-date") {
+		t.Fatalf("unexpected signed headers: %q", gotAuth)
 	}
-	if gotSHA == "" || gotDate == "" || gotToken != "SESSION" {
-		t.Fatalf("sha=%q date=%q token=%q", gotSHA, gotDate, gotToken)
+	if gotSHA == "" || gotDate == "" {
+		t.Fatalf("sha=%q date=%q", gotSHA, gotDate)
 	}
-	// No basic/api-key credential leaks alongside the signature.
-	if strings.Contains(gotAuth, "Basic") {
+	// No STS session token is sent: Fabric's S3 connector does not collect one.
+	if gotToken != "" {
+		t.Fatalf("unexpected session token %q", gotToken)
+	}
+	// The Basic credential must NOT also be sent as an Authorization header —
+	// it is key material for the signature, not a header credential.
+	if strings.Contains(gotAuth, "Basic ") {
 		t.Fatalf("basic credential leaked: %q", gotAuth)
 	}
 }

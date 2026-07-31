@@ -203,23 +203,23 @@ func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.
 	req, _ := http.NewRequest(http.MethodGet, target.String(), nil)
 	var creds struct {
 		CredentialType, Username, Password, Key, Token string
-		// S3 shortcuts authenticate with an Access Key ID and Secret Access
-		// Key (fabric-docs onelake/create-s3-shortcut.md), which means SigV4 —
-		// not a header credential. The portal collects exactly two strings, so
-		// a Basic credential's username/password carry them too.
-		AccessKeyID, SecretAccessKey, SessionToken string
 	}
 	_ = json.Unmarshal([]byte(conn.CredentialsJSON), &creds)
 
-	// A real S3 endpoint requires SigV4; a header credential is not enough.
-	// The trigger is explicit key material rather than the credentialType, so
-	// the plain HTTP read-through below (Basic / Key / SAS against an
-	// S3-compatible HTTP front end) keeps working exactly as before.
-	if creds.AccessKeyID != "" {
+	// An Amazon S3 target is signed with SigV4 — a header credential is not
+	// something a real S3 endpoint accepts.
+	//
+	// Which credential carries the keys is a documented-shape decision worth
+	// spelling out. Fabric's S3 connector uses authentication kind "Access
+	// Key" with an **Access Key Id** and a **Secret Access Key**
+	// (fabric-docs data-factory/connector-amazon-s3.md), but the REST
+	// reference's CredentialType enumeration has no `AccessKey` member, and
+	// `Basic` is the only documented type carrying two secrets. So the pair
+	// travels as Basic's username/password rather than on invented fields.
+	if sc.TargetType == "AmazonS3" && creds.CredentialType == "Basic" {
 		awssig.Sign(req, awssig.Credentials{
-			AccessKeyID:     creds.AccessKeyID,
-			SecretAccessKey: creds.SecretAccessKey,
-			SessionToken:    creds.SessionToken,
+			AccessKeyID:     creds.Username,
+			SecretAccessKey: creds.Password,
 		}, s.S3Region(), "s3", awssig.EmptyPayloadHash, time.Unix(s.Store.Now(), 0).UTC())
 		resp, err := s.Client.Do(req)
 		return s.readExternalBody(resp, err, remainder)
