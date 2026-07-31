@@ -134,7 +134,7 @@ kusto(query_uri, "mgmt", DB, """
     [
         "dev-1", 21.5, datetime(2026-07-31T00:00:00Z),
         "dev-1", 23.5, datetime(2026-07-31T00:01:00Z),
-        "dev-2", 30.0, datetime(2026-07-31T00:02:00Z),
+        "dev-2", 30.0, datetime(2026-07-31T00:02:00Z)
     ]
 """)
 # …and the inline push command, the other documented direct-ingestion form.
@@ -172,9 +172,11 @@ assert primary_rows(kusto(query_uri, "query", "sensors", "Readings | count"))[0]
 assert primary_rows(kusto(query_uri, "query", DB, "Readings | count"))[0][0] == 4
 print("per-KQL-database isolation: OK")
 
-# The engine's internal database name must never leak back to a client.
-shown = json.dumps(kusto(query_uri, "mgmt", DB, ".show database details"))
-assert "fabric" + default_db["id"].replace("-", "") not in shown, shown
+# The engine's internal database name must never leak back to a client:
+# current_database() reports the database the engine actually ran in, and the
+# relay maps it home to the Fabric display name.
+current = primary_rows(kusto(query_uri, "query", DB, "print DB=current_database()"))[0][0]
+assert current == DB, f"current_database() = {current!r}, want the Fabric name {DB!r}"
 print("engine database naming stays internal: OK")
 
 # ------------------------------------------------------------------ auth + RBAC
