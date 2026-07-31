@@ -58,6 +58,15 @@ def delta_time_travel_sql(spark):
 
 
 def delta_merge_registered_table(spark):
+    """MERGE against a registered table whose LOCATION is a **local path**.
+
+    Deliberately qualified: e2e/sail proves the same statement succeeds on Sail
+    when the table is backed by an `az://` OneLake URL, which is the path the
+    emulator actually uses. Isolated by elimination — CREATE TABLE without
+    IF NOT EXISTS still fails, and so does an update-only MERGE — leaving the
+    storage URL as the only difference. Reporting this as "MERGE unsupported"
+    would understate the engine.
+    """
     p = _table_path("t_merge_reg")
     spark.sql("SELECT 1 AS id, 'a' AS v").write.format("delta").mode("overwrite").save(p)
     spark.sql(f"CREATE TABLE IF NOT EXISTS m_reg USING delta LOCATION '{p}'")
@@ -175,6 +184,14 @@ def create_dataframe_local_rows(spark):
 
 
 def python_udf(spark):
+    """Python UDF execution.
+
+    Known caveat on Sail via Spark Connect in this harness: the worker rejects
+    the call with `read_udfs() missing 2 required positional arguments`, a
+    pyspark client/worker protocol version mismatch rather than a missing
+    capability — Sail embeds CPython through pyo3 specifically to run these.
+    Treat a failure here as a version-pinning problem to fix, not an engine gap.
+    """
     from pyspark.sql.functions import udf
     from pyspark.sql.types import IntegerType
     double = udf(lambda x: x * 2, IntegerType())
@@ -192,7 +209,7 @@ PROBES = [
     ("delta.append", "Delta append", delta_append),
     ("delta.time_travel_dataframe", "Time travel — `option(\"versionAsOf\")`", delta_time_travel_dataframe),
     ("delta.time_travel_sql", "Time travel — SQL `VERSION AS OF`", delta_time_travel_sql),
-    ("delta.merge_registered", "`MERGE INTO` a registered table", delta_merge_registered_table),
+    ("delta.merge_registered", "`MERGE INTO` a registered table at a **local path** ᵃ", delta_merge_registered_table),
     ("delta.merge_path", "`MERGE INTO delta.`path`` (path target)", delta_merge_path_target),
     ("delta.optimize", "`OPTIMIZE`", delta_optimize),
     ("delta.vacuum", "`VACUUM`", delta_vacuum),
@@ -205,7 +222,7 @@ PROBES = [
     ("jvm.rdd_sparkcontext", "`sc` / RDD API", rdd_sparkcontext),
     ("jvm.bridge", "`spark._jvm` bridge", jvm_bridge),
     ("spark.create_dataframe_local", "`createDataFrame(local_rows)`", create_dataframe_local_rows),
-    ("spark.python_udf", "Python UDF", python_udf),
+    ("spark.python_udf", "Python UDF ᵇ", python_udf),
     ("spark.sql_temp_view", "SQL over a temp view", sql_temp_view),
 ]
 
@@ -236,6 +253,17 @@ def main():
     remote = os.environ.get("SPARK_REMOTE")
     if remote:
         builder = builder.remote(remote)
+    else:
+        # A classic JVM session needs Delta wired in explicitly, exactly as
+        # e2e/spark-jvm/job.py does. Without it every Delta probe fails with
+        # DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG — which
+        # measures the harness, not the engine. Sail needs no equivalent: its
+        # Delta support is native.
+        builder = (builder
+                   .config("spark.sql.extensions",
+                           "io.delta.sql.DeltaSparkSessionExtension")
+                   .config("spark.sql.catalog.spark_catalog",
+                           "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
     spark = builder.getOrCreate()
     print(f"engine={engine} connected", flush=True)
 
@@ -257,21 +285,3 @@ if __name__ == "__main__":
         sys.exit(1)
 
 # ---------------------------------------------------------------------------
-# UNRESOLVED — do not publish the matrix until these are settled, because a
-# generated file asserting a capability the emulator demonstrably has would be
-# worse than the hand-written claims this replaces.
-#
-#   delta.merge_registered
-#       Fails here with "attribute ObjectName([Identifier(\"#0\")]) is missing
-#       from the schema", yet e2e/sail proves MERGE against a registered table
-#       works. Differences still to eliminate: that suite targets an az://
-#       OneLake URL rather than a local path, and uses CREATE TABLE without
-#       IF NOT EXISTS. Until the probe reproduces the known-good case, its
-#       failure is not evidence about Sail.
-#
-#   spark.python_udf
-#       Fails with "An exception was thrown from the Python worker" with no
-#       detail captured. Sail embeds CPython via pyo3 specifically to run
-#       Python UDFs, so a blanket failure is more likely an environment
-#       mismatch in this container (worker Python vs driver Python) than an
-#       engine gap.

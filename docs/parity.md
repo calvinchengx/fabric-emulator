@@ -106,7 +106,7 @@ engine. Verified live, not inferred: `sc.parallelize([1,2,3,4]).map(x*2)
 |---|---|---|
 | `abfss://…@onelake.dfs.fabric.microsoft.com/…` production paths | Work unmodified (endpoint override routes the Hadoop URL form) | 🟢 Real |
 | Delta write/read/append; SQL over temp views | Full | 🟢 Real |
-| Time travel `option("versionAsOf", n)` | Works (SQL `VERSION AS OF` is a Sail gap) | 🟢 Real / 🔴 SQL form |
+| Time travel — DataFrame option **and** SQL `VERSION AS OF` | Both forms work on Sail. The SQL form was previously graded 🔴 on the strength of an assertion; the generated [engine matrix](engine-matrix.md) probes it against both engines and it passes on each | 🟢 Real |
 | `MERGE INTO` | Works against a registered table target (`CREATE TABLE … USING delta LOCATION`); path-based ``delta.`az://…` `` merge targets don't resolve | 🟢 Real (registered) / 🔴 path target |
 | `createDataFrame(local_rows)` | Works (runners preset `localRelationSizeLimit`) | 🟢 Real |
 | `sc` / RDD API / `spark._jvm` | **Fidelity inversion**: works on real Fabric, impossible on Spark Connect — the agent binds `sc` to a guide-rail stub that raises a clear pointer instead of `NameError`. **Restored by the JVM overlay** (classic session): `sc.parallelize(…).map(…).sum()` verified | 🔴 default / 🟠 JVM overlay |

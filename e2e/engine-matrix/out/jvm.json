@@ -1,0 +1,116 @@
+[
+  {
+    "id": "delta.write",
+    "description": "Delta write",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "delta.append",
+    "description": "Delta append",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "delta.time_travel_dataframe",
+    "description": "Time travel \u2014 `option(\"versionAsOf\")`",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "delta.time_travel_sql",
+    "description": "Time travel \u2014 SQL `VERSION AS OF`",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "delta.merge_registered",
+    "description": "`MERGE INTO` a registered table at a **local path** \u1d43",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "delta.merge_path",
+    "description": "`MERGE INTO delta.`path`` (path target)",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "delta.optimize",
+    "description": "`OPTIMIZE`",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "delta.vacuum",
+    "description": "`VACUUM`",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "delta.cdf",
+    "description": "Change Data Feed (must not be inert)",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "streaming.read_rate",
+    "description": "`readStream` (rate source)",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "streaming.sink_console",
+    "description": "Streaming sink \u2014 console",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "streaming.sink_memory",
+    "description": "Streaming sink \u2014 memory",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "streaming.sink_parquet",
+    "description": "Streaming sink \u2014 parquet",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "streaming.sink_delta",
+    "description": "Streaming sink \u2014 **delta**",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "jvm.rdd_sparkcontext",
+    "description": "`sc` / RDD API",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "jvm.bridge",
+    "description": "`spark._jvm` bridge",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "spark.create_dataframe_local",
+    "description": "`createDataFrame(local_rows)`",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "spark.python_udf",
+    "description": "Python UDF \u1d47",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "spark.sql_temp_view",
+    "description": "SQL over a temp view",
+    "engine": "jvm",
+    "status": "pass"
+  }
+]
