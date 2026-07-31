@@ -1,0 +1,138 @@
+[
+  {
+    "id": "delta.write",
+    "description": "Delta write",
+    "engine": "sail",
+    "status": "pass"
+  },
+  {
+    "id": "delta.append",
+    "description": "Delta append",
+    "engine": "sail",
+    "status": "pass"
+  },
+  {
+    "id": "delta.time_travel_dataframe",
+    "description": "Time travel \u2014 `option(\"versionAsOf\")`",
+    "engine": "sail",
+    "status": "pass"
+  },
+  {
+    "id": "delta.time_travel_sql",
+    "description": "Time travel \u2014 SQL `VERSION AS OF`",
+    "engine": "sail",
+    "status": "pass"
+  },
+  {
+    "id": "delta.merge_registered",
+    "description": "`MERGE INTO` a registered table",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "AnalysisException",
+    "error": "attribute ObjectName([Identifier(\"#0\")]) is missing from the schema: cannot resolve attribute"
+  },
+  {
+    "id": "delta.merge_path",
+    "description": "`MERGE INTO delta.`path`` (path target)",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "AnalysisException",
+    "error": "Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_path"
+  },
+  {
+    "id": "delta.optimize",
+    "description": "`OPTIMIZE`",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "IllegalArgumentException",
+    "error": "invalid argument: found OPTIMIZE at 0:8 expected something else, ';', statement, or end of input"
+  },
+  {
+    "id": "delta.vacuum",
+    "description": "`VACUUM`",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "IllegalArgumentException",
+    "error": "invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of input"
+  },
+  {
+    "id": "delta.cdf",
+    "description": "Change Data Feed (must not be inert)",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "SparkRuntimeException",
+    "error": "Table features must be specified, please specify: ChangeDataFeed"
+  },
+  {
+    "id": "streaming.read_rate",
+    "description": "`readStream` (rate source)",
+    "engine": "sail",
+    "status": "pass"
+  },
+  {
+    "id": "streaming.sink_console",
+    "description": "Streaming sink \u2014 console",
+    "engine": "sail",
+    "status": "pass"
+  },
+  {
+    "id": "streaming.sink_memory",
+    "description": "Streaming sink \u2014 memory",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "AnalysisException",
+    "error": "No table format found for: memory"
+  },
+  {
+    "id": "streaming.sink_parquet",
+    "description": "Streaming sink \u2014 parquet",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "AnalysisException",
+    "error": "cannot write streaming data to listing table"
+  },
+  {
+    "id": "streaming.sink_delta",
+    "description": "Streaming sink \u2014 **delta**",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "AnalysisException",
+    "error": "unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { expr: [Column(Column { relation: None, name: \"_marker\" }), Column(Column { relation: None,"
+  },
+  {
+    "id": "jvm.rdd_sparkcontext",
+    "description": "`sc` / RDD API",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "PySparkAttributeError",
+    "error": "[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect as it depends on the JVM. If you need to use this attribute, do not use Spark Connect when "
+  },
+  {
+    "id": "jvm.bridge",
+    "description": "`spark._jvm` bridge",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "PySparkAttributeError",
+    "error": "[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `_jvm` is not supported in Spark Connect as it depends on the JVM. If you need to use this attribute, do not use Spark Connect when creating"
+  },
+  {
+    "id": "spark.create_dataframe_local",
+    "description": "`createDataFrame(local_rows)`",
+    "engine": "sail",
+    "status": "pass"
+  },
+  {
+    "id": "spark.python_udf",
+    "description": "Python UDF",
+    "engine": "sail",
+    "status": "fail",
+    "error_class": "PythonException",
+    "error": "An exception was thrown from the Python worker. Please see the stack trace below. TypeError: read_udfs() missing 2 required positional arguments: 'runner_conf' and 'eval_conf'"
+  },
+  {
+    "id": "spark.sql_temp_view",
+    "description": "SQL over a temp view",
+    "engine": "sail",
+    "status": "pass"
+  }
+]
