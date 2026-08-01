@@ -20,6 +20,79 @@ jobs:
           go-version: '1.25'
       - run: go vet ./...
       - run: go build ./...
+
+      # --- a real SQL Server on every leg -------------------------------------
+      # The warehouse tests used to stand SQL Server up with SQLite. A test
+      # double cannot tell you whether reflect.go's TDS bulk copy works, so the
+      # double is gone and these tests now gate on WAREHOUSE_MSSQL_DSN — one
+      # variable, the same one internal/server's e2e-style tests and the "Real
+      # SQL Server relay" job below already use.
+      #
+      # The gate is IDENTICAL on all three legs: every leg gets a real engine.
+      # Only the route differs, because each platform has exactly one:
+      #   ubuntu   docker, native amd64
+      #   macOS    docker under Colima, the same linux/amd64 image emulated
+      #   windows  LocalDB, already on the runner image
+      #
+      # `docker run` on ubuntu rather than a `services:` block: services cannot
+      # be conditioned per matrix leg without an empty `image:` on the others,
+      # which is not valid. One uniform mechanism beats a conditional that only
+      # works on one platform.
+      - name: SQL Server (Linux, native)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          docker run -d --name mssql -e ACCEPT_EULA=Y \
+            -e MSSQL_SA_PASSWORD='Str0ng!Passw0rd' \
+            -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+
+      - name: SQL Server (macOS, emulated amd64)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install colima docker
+          colima start --vm-type=vz --vz-rosetta --cpu 4 --memory 8
+          docker run -d --name mssql --platform linux/amd64 -e ACCEPT_EULA=Y \
+            -e MSSQL_SA_PASSWORD='Str0ng!Passw0rd' \
+            -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+
+      # No container on Windows: the runner ships Docker with WSLv1, which has
+      # no Linux kernel, and mssql/server publishes no Windows manifest. LocalDB
+      # is a real SQL Server engine and is already installed; the Go driver
+      # reaches it over a named pipe (internal/testsupport blank-imports
+      # go-mssqldb/namedpipe, whose init registers only on Windows).
+      - name: SQL Server LocalDB (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          & "$env:ProgramFiles\Microsoft SQL Server\160\Tools\Binn\SqlLocalDB.exe" create MSSQLLocalDB -s
+          & "$env:ProgramFiles\Microsoft SQL Server\160\Tools\Binn\SqlLocalDB.exe" info MSSQLLocalDB
+
+      # Wait for the engine, rather than trusting that a started container is a
+      # ready one. `services:` would have done this; doing it by hand is the
+      # cost of not using it.
+      - name: Wait for SQL Server
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          for i in $(seq 1 60); do
+            if docker exec mssql /opt/mssql-tools18/bin/sqlcmd \
+                 -S localhost -U sa -P 'Str0ng!Passw0rd' -C -Q 'SELECT 1' >/dev/null 2>&1; then
+              echo "ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::SQL Server never became ready"; docker logs mssql | tail -40; exit 1
+
+      - name: Warehouse DSN
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            PIPE=$("$PROGRAMFILES/Microsoft SQL Server/160/Tools/Binn/SqlLocalDB.exe" info MSSQLLocalDB \
+                   | grep -i 'Instance pipe name' | cut -d' ' -f4-)
+            echo "WAREHOUSE_MSSQL_DSN=sqlserver://?pipe=${PIPE#np:\\\\.\\pipe\\}" >> "$GITHUB_ENV"
+          else
+            echo 'WAREHOUSE_MSSQL_DSN=server=localhost,1433;user id=sa;password=Str0ng!Passw0rd;encrypt=disable' >> "$GITHUB_ENV"
+          fi
+
       # The server tests start a real entra-emulator in-process and drive the
       # full token → JWKS → RBAC → LRO path over HTTP.
       # shell: bash keeps the coverage profile and the floor step below in
@@ -27,7 +100,13 @@ jobs:
       - run: go test -coverpkg=./... -coverprofile=cover.out ./...
         shell: bash
       # Coverage floor: fail the build if total statement coverage regresses
-      # below 90% (currently ~90%).
+      # below 90%.
+      #
+      # Measured, not estimated: 90.9% with a reachable SQL Server, 89.2%
+      # without — the warehouse tests skip when WAREHOUSE_MSSQL_DSN is unset.
+      # So the floor is only meetable WITH the engine, and that is deliberate:
+      # if a leg's setup step above breaks, the leg FAILS here rather than
+      # quietly passing on less coverage. Headroom is 0.9%.
       - name: Coverage floor (90%)
         shell: bash
         run: |
