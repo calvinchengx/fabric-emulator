@@ -1,8 +1,12 @@
-"""Endpoints, tokens, and shared state for the medallion pipeline.
+"""Endpoints, tokens, and shared state for the medallion example.
 
 Every hop authenticates against entra-emulator with the seeded daemon service
-principal, exactly as the tutorial (docs/28-tutorial-end-to-end.md) does — only
-the endpoints differ (compose service names instead of localhost).
+principal — the same trust relationships as production Azure.
+
+Endpoints default to the local developer stack (`docker compose up`, self-signed
+TLS on localhost) and are overridable by environment variable, so the same code
+runs unchanged inside a container against compose service names. That is how
+`e2e/medallion` drives this example in CI.
 """
 import json
 import os
@@ -11,18 +15,18 @@ import pathlib
 import requests
 import urllib3
 
-urllib3.disable_warnings()
+urllib3.disable_warnings()  # the family serves self-signed TLS
 
 TENANT = "11111111-1111-1111-1111-111111111111"
 CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"  # seeded daemon SP
 CLIENT_SECRET = "daemon-app-secret"  # intentionally public dev value
 
-ENTRA = os.environ["ENTRA_URL"]
-KV = os.environ["KV_URL"]
-FABRIC = os.environ["FABRIC_REST_URL"]
-TDS_SERVER = os.environ["TDS_SERVER"]
-# The vault URI Fabric itself resolves an AKV reference against — an in-network
-# address, since the emulator (not this client) performs that fetch.
+ENTRA = os.environ.get("ENTRA_URL", "https://localhost:8443")
+KV = os.environ.get("KV_URL", "https://localhost:8444")
+FABRIC = os.environ.get("FABRIC_REST_URL", "https://localhost:9443")
+TDS_SERVER = os.environ.get("TDS_SERVER", "localhost,1433")
+# Fabric resolves an AKV reference server-side, so the vault URI it stores must
+# be reachable from the *emulator*, which is not always where you are.
 KV_INTERNAL = os.environ.get("KV_INTERNAL_URL", KV)
 
 FABRIC_AUD = "https://api.fabric.microsoft.com"
@@ -34,7 +38,9 @@ PBI_AUD = "https://analysis.windows.net/powerbi/api"
 S = requests.Session()
 S.verify = False
 
-STATE = pathlib.Path(os.environ.get("PIPELINE_STATE", "/tmp/pipeline-state.json"))
+HERE = pathlib.Path(__file__).resolve().parent
+STATE = pathlib.Path(os.environ.get("PIPELINE_STATE", HERE / "state.json"))
+GOLD_PROJECT = os.environ.get("GOLD_PROJECT", str(HERE / "gold"))
 
 
 def log(msg):
@@ -61,7 +67,7 @@ def fabric_headers():
 
 
 def storage_options():
-    """delta-rs storage options pointing at OneLake's account-prefixed path."""
+    """delta-rs options pointing at OneLake's account-prefixed Blob path."""
     opts = {
         "azure_storage_account_name": "onelake",
         "azure_storage_token": token(STORAGE_AUD),
@@ -74,11 +80,16 @@ def storage_options():
     return opts
 
 
+def tables_uri():
+    st = load()
+    return f"az://{st['workspace']}/{st['lakehouse']}/Tables"
+
+
 def tds_connect(database, token_value=None, timeout=60):
     """FedAuth over TDS: the pre-minted Azure-SQL token rides in
-    SQL_COPT_SS_ACCESS_TOKEN (1256) — the same injection dbt-fabric performs, so
+    SQL_COPT_SS_ACCESS_TOKEN (1256) — the exact injection dbt-fabric performs, so
     the ODBC driver never runs MSAL. Encrypt=no because the TDS front terminates
-    FedAuth without TLS (advertises ENCRYPT_NOT_SUP)."""
+    FedAuth without TLS (it advertises ENCRYPT_NOT_SUP)."""
     import struct
 
     import pyodbc

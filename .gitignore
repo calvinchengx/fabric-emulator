@@ -37,3 +37,11 @@ python/**/*.egg-info/
 
 # Python bytecode
 __pycache__/
+
+# examples/ runtime output — never committed. profiles.yml in particular is
+# generated per run and carries a live access token.
+examples/**/profiles.yml
+examples/**/state.json
+examples/**/target/
+examples/**/logs/
+examples/**/dbt_packages/

@@ -1,6 +1,7 @@
-# The pipeline client: pandas + delta-rs write OneLake Delta, the Microsoft
-# ODBC Driver 18 carries FedAuth TDS to the warehouse surface, and Microsoft's
-# real dbt-fabric builds gold. One image runs every hop of the tutorial.
+# Runs examples/medallion — the same scripts a reader runs by hand, unmodified.
+# pandas + delta-rs write OneLake Delta, the Microsoft ODBC Driver 18 carries
+# FedAuth TDS to the warehouse surface, and Microsoft's real dbt-fabric builds
+# gold. One image runs every hop.
 FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 
@@ -16,13 +17,14 @@ RUN apt-get update \
     && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-COPY pyproject.toml uv.lock ./
-COPY python/ ./python/
-RUN uv sync --frozen --no-install-project --group medallion
-ENV PATH="/app/.venv/bin:${PATH}"
+# The example owns its dependencies and its lockfile, so CI installs exactly
+# what a reader gets — and the emulator's own dependency graph stays clean of
+# pandas/dbt/pyodbc. Lock first for layer caching, then bring in the code.
+WORKDIR /example
+COPY examples/medallion/pyproject.toml examples/medallion/uv.lock ./
+RUN uv sync --frozen
+ENV PATH="/example/.venv/bin:${PATH}"
 
-COPY e2e/medallion/pipeline/ /pipeline/
-WORKDIR /pipeline
+COPY examples/medallion/ /example/
 
-CMD ["python3", "/pipeline/driver.py"]
+CMD ["python3", "run_all.py"]

@@ -1,0 +1,21 @@
+# Self-contained: this example owns its dependencies and its lockfile, so it
+# can be copied out of the repo and run anywhere, and so its versions never
+# enter the emulator's own dependency graph.
+#
+#   uv sync --frozen && uv run python run_all.py
+[project]
+name = "fabric-emulator-example-medallion"
+version = "0.1.0"
+description = "End-to-end medallion example against the fabric-emulator family"
+requires-python = ">=3.12"
+dependencies = [
+    "dbt-fabric>=1.9",
+    "deltalake>=0.23,<2",
+    "pandas>=2.2,<4",
+    "pyarrow>=18,<24",
+    "pyodbc>=5.2,<6",
+    "requests>=2.32,<3",
+]
+
+[tool.uv]
+package = false

@@ -19,11 +19,18 @@ flowchart LR
     G --> SM[SemanticModel item<br/>executeQueries / DAX]
 ```
 
-**This tutorial is itself a test.** Everything below runs end to end in CI as
-[`e2e/medallion`](../e2e/medallion/) — same source system, same layers, same dbt
-project, same DAX query — so the instructions cannot rot silently. Read the
-tutorial to understand the flow; run `python3 e2e/medallion/run.py` to watch it
-execute.
+**This tutorial is itself a test.** Every script below lives in
+[`examples/medallion/`](../examples/medallion/) and runs end to end in CI via
+[`e2e/medallion`](../e2e/medallion/) — the same files, unmodified, so the
+instructions cannot rot silently. Read the tutorial to understand the flow; run
+it yourself with:
+
+```bash
+cd examples/medallion && uv sync && uv run python run_all.py
+```
+
+or watch the containerized version with `python3 e2e/medallion/run.py`. Each
+numbered snippet below is one file in that directory.
 
 Everything here runs on `docker compose up` and is backed by a witnessed e2e
 suite — this tutorial composes proven paths rather than inventing new ones:
@@ -36,7 +43,7 @@ suite — this tutorial composes proven paths rather than inventing new ones:
 | Silver → SQL | Delta→SQL reflection on the lakehouse endpoint | [16-warehouse-tds.md](16-warehouse-tds.md) |
 | Gold with dbt | Microsoft's dbt-fabric over TDS + FedAuth (ODBC Driver 18) | `e2e/dbt-fabric` |
 | Semantic model | TMSL definition + `executeQueries` DAX | `e2e/semantic-model`, [18-semantic-model-references.md](18-semantic-model-references.md) |
-| **All of the above, in sequence** | this tutorial, executed | **`e2e/medallion`** |
+| **All of the above, in sequence** | this tutorial, executed | **`examples/medallion` via `e2e/medallion`** |
 
 **Honesty box.** The Warehouse engine is a vanilla SQL Server sidecar, not
 Fabric's MPP engine — dbt models here materialize as **views** (Fabric's

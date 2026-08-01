@@ -92,28 +92,15 @@ data-science-loop = [
     "pyarrow>=18,<24",
     "pyspark-client==4.1.1",
 ]
-# The end-to-end medallion tutorial (docs/28-tutorial-end-to-end.md): delta-rs
-# writes the lakehouse layers, dbt-fabric builds gold over TDS via pyodbc +
-# ODBC Driver 18, requests drives every REST surface.
-medallion = [
-    "dbt-fabric>=1.9",
-    "deltalake>=0.23,<2",
-    "pandas>=2.2,<4",
-    "pyarrow>=18,<24",
-    "requests>=2.32,<3",
-]
+# NOTE: examples/ deliberately do NOT appear here. Each example owns its
+# pyproject.toml + uv.lock so it can be copied out and run standalone, and so
+# its dependencies never enter the emulator's own graph. See examples/medallion.
 
 [tool.uv]
 package = false
 conflicts = [
     [
         { group = "dbt-fabric" },
-        { group = "dbt-fabricspark" },
-    ],
-    # medallion carries dbt-fabric, so it conflicts with the fabricspark adapter
-    # for the same reason the group above does.
-    [
-        { group = "medallion" },
         { group = "dbt-fabricspark" },
     ],
 ]
