@@ -6,7 +6,7 @@ tutorial walks through them. This runner executes them as separate processes,
 exactly as a reader would, so nothing passes here that would fail when typed
 one line at a time.
 
-05_wrangle.py is skipped: it is the interactive Data Wrangler checkpoint, meant
+06_wrangle.py is skipped: it is the interactive Data Wrangler checkpoint, meant
 for the VS Code Interactive Window rather than a batch run.
 """
 import pathlib
@@ -19,12 +19,14 @@ STEPS = [
     ("00_provision.py", "provision workspace, lakehouse, warehouse, identity"),
     ("01_secret.py", "store the source API key in Key Vault + bind an AKV reference"),
     ("02_extract_load.py", "extract from Contoso POS into Files/landing"),
-    ("03_bronze.py", "bronze: append landing verbatim into Delta"),
-    ("04_silver.py", "silver: dedupe, conform, quarantine"),
-    ("06_reflect.py", "reflect silver into the lakehouse SQL endpoint"),
-    ("07_gold.py", "gold: dbt build in the warehouse (models + DQ tests)"),
-    ("08_dq_gate.py", "verify the DQ gate rejects bad data"),
-    ("09_semantic_model.py", "publish + query the semantic model over executeQueries"),
+    ("03_bronze.py", "bronze: a pipeline — Copy activity + Notebook activity"),
+    ("04_engine.py", "Spark executes the queued notebook run and reports lineage"),
+    ("05_silver.py", "silver: dedupe, conform, quarantine"),
+    ("07_reflect.py", "reflect silver into the lakehouse SQL endpoint"),
+    ("08_gold.py", "gold: dbt build in the warehouse (models + DQ tests)"),
+    ("09_dq_gate.py", "verify the DQ gate rejects bad data"),
+    ("10_semantic_model.py", "publish + query the semantic model over executeQueries"),
+    ("11_lineage.py", "assert the lineage graph the emulator recorded"),
 ]
 
 

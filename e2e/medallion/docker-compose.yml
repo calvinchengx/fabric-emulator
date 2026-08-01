@@ -102,6 +102,27 @@ services:
       timeout: 2s
       retries: 20
 
+  # A real Spark engine (LakeSail's Sail — Rust Spark Connect, no JVM). The
+  # emulator never executes notebooks itself: it parses them into cells and
+  # records a Pending run, and an engine executes those cells and reports back.
+  # Without this, a notebook hop could only be play-acted by the client.
+  sail:
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator:80/onelake"
+      AZURE_ALLOW_HTTP: "true"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+
   # Runs examples/medallion unmodified — the same scripts the tutorial teaches.
   # Only the endpoints differ (compose service names, plain HTTP), supplied by
   # the environment the example already reads.
@@ -114,7 +135,12 @@ services:
         condition: service_healthy
       sqlserver:
         condition: service_healthy
+      sail:
+        condition: service_started
     environment:
+      # The example drives notebook cells onto Sail over Spark Connect, the same
+      # engine role e2e/notebook-run plays.
+      SPARK_REMOTE: "sc://sail:50051"
       ENTRA_URL: "http://entra-emulator:8443"
       KV_URL: "http://keyvault-emulator:8444"
       FABRIC_REST_URL: "http://fabric-emulator:80"

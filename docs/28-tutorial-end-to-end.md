@@ -335,56 +335,62 @@ for name, blob in contoso_pos_export(api_key).items():
 save(landing_date=today)
 ```
 
-## 5. Bronze — append-only Delta
+## 5. Bronze — a real pipeline: Copy + Notebook
 
-Bronze reads **from landing** (OneLake is the source of truth, not your local
-disk), keeps every record — duplicates included — and stamps lineage columns.
-The writer is real delta-rs (`deltalake`), producing a real `_delta_log` in
-OneLake.
+Bronze is where the emulator starts doing the work rather than your script.
+Both hops run as activities of a real **DataPipeline**, which is how a Fabric
+shop builds this:
+
+- `customers.csv` → `Tables/bronze_customers` with a **Copy activity**. The
+  emulator reads the CSV, commits the rows as Delta, and records a lineage edge
+  — no client-side data movement at all. It reports `rowsCopied` back.
+- `orders.jsonl` → `Tables/bronze_orders` with a **Notebook activity**. Copy
+  genuinely cannot do this one: JSON Lines is not a tabular source it parses
+  into a table, and semi-structured input is what a notebook is for.
 
 ```python
-# 03_bronze.py
-import io, json, pandas as pd
-from deltalake import write_deltalake
-from common import *
+# 03_bronze.py  (see examples/medallion for the full file)
+definition = {"properties": {"activities": [
+    {"name": "IngestCustomers", "type": "Copy", "typeProperties": {
+        "source": {"type": "DelimitedTextSource", "rootFolder": "Files",
+                   "folderPath": landing_dir, "fileName": "customers.csv",
+                   "datasetSettings": lakehouse},
+        "sink": {"type": "LakehouseTableSink", "tableActionOption": "Overwrite",
+                 "table": "bronze_customers", "datasetSettings": lakehouse}}},
+    {"name": "IngestOrders", "type": "TridentNotebook",
+     "typeProperties": {"notebookId": nb}},
+]}}
+```
 
-st = load()
-st_tok = token(STORAGE_AUD)
+Build the definition as a **dict and serialise it** — a pipeline definition is
+nested JSON, and hand-escaping braces in a template is how you earn a
+`PipelineDefinitionInvalid`.
 
-STORAGE_OPTIONS = {
-    "azure_storage_account_name": "onelake",
-    "azure_storage_token": st_tok,
-    "azure_endpoint": f"{FABRIC}/onelake",
-    "azure_allow_invalid_certificates": "true",
-}
+### The notebook does not run yet — and that is faithful
 
+The emulator parses a Notebook item into ordered cells and records a `Pending`
+run. **It never executes them.** An engine does, and reports the outcome to
+`notebookRunResult`. Real Fabric works the same way with its own Spark pools;
+here the engine is **Sail** (Rust Spark Connect, no JVM), attached to the stack,
+and `04_engine.py` plays the driver:
 
-def read_landing(name):
-    path = f"Files/landing/contoso_pos/{st['landing_date']}/{name}"
-    r = S.get(f"{FABRIC}/onelake/{st['workspace']}/{st['lakehouse']}/{path}",
-              headers={"Authorization": "Bearer " + token(STORAGE_AUD)})
-    r.raise_for_status()
-    return path, r.content
+```python
+# 04_engine.py — fetch the cells the EMULATOR parsed, run them on Spark, report
+run = S.get(f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}/notebookRun", ...)
+spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
+for c in sorted(run.json()["cells"], key=lambda c: c["index"]):
+    exec(c["source"], ns)          # running notebook code IS the engine's job
+```
 
+Reporting the cell's **read/write set** alongside the results is what turns the
+run into lineage. The emulator records those edges verbatim; it never parses the
+notebook's code to guess what it touched.
 
-def stamp(df, src):
-    df["_source_path"] = src
-    df["_landing_date"] = st["landing_date"]
-    return df
+Inside the notebook, OneLake is addressed the way a Fabric notebook addresses
+it — by the **full account host**, not a bare account name:
 
-
-src, raw = read_landing("customers.csv")
-customers = stamp(pd.read_csv(io.BytesIO(raw)), src)
-
-src, raw = read_landing("orders.jsonl")
-orders = stamp(pd.DataFrame(json.loads(l) for l in raw.decode().splitlines()), src)
-
-base = f"az://{st['workspace']}/{st['lakehouse']}/Tables"
-write_deltalake(f"{base}/bronze_customers", customers, mode="append",
-                storage_options=STORAGE_OPTIONS)
-write_deltalake(f"{base}/bronze_orders", orders, mode="append",
-                storage_options=STORAGE_OPTIONS)
-print(f"bronze: {len(customers)} customer rows, {len(orders)} order events")
+```python
+landing = f"abfs://{ws}@onelake.dfs.fabric.microsoft.com/{lake}/Files/{landing_dir}/orders.jsonl"
 ```
 
 ## 6. Silver — dedupe, conform, quarantine
@@ -394,7 +400,7 @@ Silver applies the rules bronze deliberately does not: latest event wins per
 quarantined into their own table instead of silently dropped.
 
 ```python
-# 04_silver.py
+# 05_silver.py
 import pandas as pd
 from deltalake import DeltaTable, write_deltalake
 from common import *
@@ -456,7 +462,7 @@ extensions, then open this cell script and run it in the Interactive Window
 (`Shift+Enter` on a `# %%` cell):
 
 ```python
-# 05_wrangle.py — run cells in the VS Code Interactive Window
+# 06_wrangle.py — run cells in the VS Code Interactive Window
 # %%
 from deltalake import DeltaTable
 from common import *
@@ -489,7 +495,7 @@ icon next to the variable). Things worth checking against this dataset:
 
 Data Wrangler's operations panel (filter, drop duplicates, change type…)
 **exports the pandas code for each step** — a fast way to prototype the next
-silver rule interactively, then paste the generated code into `04_silver.py`.
+silver rule interactively, then paste the generated code into `05_silver.py`.
 
 ## 8. Reflect silver into the SQL analytics endpoint
 
@@ -499,7 +505,7 @@ One authenticated connection makes silver queryable T-SQL — and refreshes it
 after every silver rewrite:
 
 ```python
-# 06_reflect.py
+# 07_reflect.py
 import time
 from common import *
 
@@ -755,7 +761,7 @@ good = DeltaTable(url, storage_options=opts).to_pandas()
 write_deltalake(url, pd.concat([good, good.head(1).assign(amount=-5.0)], ignore_index=True),
                 mode="overwrite", storage_options=opts)
 EOF
-uv run python 06_reflect.py
+uv run python 07_reflect.py
 DBT_PROFILES_DIR=. uv run dbt build
 ```
 
@@ -770,7 +776,7 @@ Done. PASS=9 WARN=0 ERROR=1 SKIP=3 NO-OP=0 REUSED=0 TOTAL=13
 data already known to be bad. That is the property you want: a broken contract
 halts the graph instead of propagating into the reporting layer.
 
-Restore silver (`uv run python 04_silver.py && uv run python 06_reflect.py`)
+Restore silver (`uv run python 05_silver.py && uv run python 07_reflect.py`)
 and the build goes green again. That loop — silver rule ↔ gold test — is the
 medallion working as designed, and `e2e/medallion` asserts **both** halves of
 it in CI (green on clean data, red on poisoned) so the gate can't quietly stop
@@ -785,7 +791,7 @@ Direct Lake; the emulator seeds them as a `data.json` definition part
 exported straight from the warehouse gold you just built, closing the loop.
 
 ```python
-# 07_semantic_model.py
+# 10_semantic_model.py
 import base64, json, time
 from common import *
 

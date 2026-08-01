@@ -16,9 +16,10 @@ tests included), and a **semantic model** queried over the Power BI
 authenticated by entra-emulator.
 
 ```
-pipeline (pandas + delta-rs + ODBC Driver 18 + dbt-fabric)
-  ├── REST      → fabric-emulator (control plane + OneLake)
+pipeline (pandas + delta-rs + ODBC Driver 18 + dbt-fabric + Spark Connect)
+  ├── REST      → fabric-emulator (control plane, pipelines, OneLake)
   ├── TDS/1433  → fabric-emulator (FedAuth) → SQL Server sidecar
+  ├── sc://     → sail (Spark engine executing notebook cells)
   ├── vault     → keyvault-emulator
   └── tokens    → entra-emulator (five audiences)
 ```
@@ -29,7 +30,7 @@ pipeline (pandas + delta-rs + ODBC Driver 18 + dbt-fabric)
 python3 e2e/medallion/run.py
 ```
 
-Brings the stack up with docker-compose and asserts all nine steps pass
+Brings the stack up with docker-compose and asserts all eleven steps pass
 (`--exit-code-from pipeline`). Linux weight class (SQL Server container).
 
 ### Choosing the container engine (Apple Silicon in particular)
@@ -72,14 +73,20 @@ CI runs `ubuntu-latest` (native amd64) and pays none of this.
 | # | Step | Assertion |
 |---|---|---|
 | 1 | Provision | workspace + lakehouse + warehouse created; workspace identity provisioned |
-| 2 | Key Vault | secret stored; an `AzureKeyVaultReference` connection resolves for real (fabric fetches it with a vault-audience workspace-identity token) and the read shape **never returns the secret** |
-| 3 | Extract → landing | the vendor refuses a wrong API key; the correct one (read back from Key Vault) yields an export landed verbatim in `Files/landing/` |
-| 4 | Bronze | 8 customer rows + 8 order events appended to Delta with lineage columns — duplicates and the malformed row kept |
-| 5 | Silver | 7 customers, 6 orders, 1 quarantined; countries conformed to `{US, GB, SG}`; `order_id` unique |
-| 6 | Reflection | connecting to the lakehouse database reflects its Delta into SQL; `GROUP BY` over `silver_orders` returns 6 orders / 701.70 |
-| 7 | Gold | `dbt build` green — 3 **table** models + 10 DQ tests over TDS via ODBC Driver 18, including dbt's **native `accepted_values` and `relationships`**, which compile to nested CTEs the emulator flattens on the wire ([docs/29](../../docs/29-tsql-parity.md)) |
-| 8 | DQ gate | poisoning silver with a duplicate + negative-amount order makes `dbt build` **fail**, then restoring it makes gold green again |
-| 9 | Semantic model | TMSL + rows published as a `SemanticModel` item; a DAX query over `executeQueries` returns the same 701.70; a wrong-audience token is rejected with 401 |
+| 2 | Key Vault | secret stored; an `AzureKeyVaultReference` connection resolves for real and the read shape **never returns the secret** |
+| 3 | Extract → landing | the vendor refuses a wrong API key; the correct one yields an export landed verbatim in `Files/landing/` |
+| 4 | Bronze **pipeline** | a real `DataPipeline` runs two activities: a **Copy** the *emulator itself* executes (CSV → `Tables/bronze_customers`, reporting `rowsCopied`), and a **Notebook** activity that starts a genuine run |
+| 5 | **Spark engine** | the cells the emulator parsed execute on **Sail** over Spark Connect, writing `Tables/bronze_orders` as Delta; the engine reports the run **and its read/write set** |
+| 6 | Silver | 7 customers, 6 orders, 1 quarantined; countries conformed to `{US, GB, SG}`; `order_id` unique |
+| 7 | Reflection | connecting to the lakehouse database reflects its Delta into SQL; `GROUP BY` returns 6 orders / 701.70 |
+| 8 | Gold | `dbt build` green — view models + DQ tests over TDS via ODBC Driver 18 |
+| 9 | DQ gate | poisoning silver makes `dbt build` **fail**, then restoring it makes gold green again |
+| 10 | Semantic model | TMSL + rows published; a DAX query over `executeQueries` returns the same 701.70; a wrong-audience token is rejected with 401 |
+| 11 | Lineage | the graph carries a **`Copy`** edge into `bronze_customers` and a **`Notebook`** edge into `bronze_orders` — one recorded by the emulator, one reported by the engine, neither inferred from user code |
+
+Steps 4, 5 and 11 are what make this exercise the emulator rather than work
+around it: the Copy is executed by the emulator, the notebook by a real Spark
+engine, and both land in one lineage graph.
 
 Step 8 is the point of the whole gold layer: a data-quality contract that never
 fails is not a contract. The e2e proves the tests reject bad data, not merely
@@ -91,7 +98,12 @@ The harness is four files; everything it exercises lives in
 [`examples/medallion`](../../examples/medallion/).
 
 - `run.py` — brings the stack up, runs the example, tears it down.
-- `docker-compose.yml` — entra, Key Vault, SQL Server, fabric (TDS on), pipeline.
+- `docker-compose.yml` — entra, Key Vault, SQL Server, **Sail**, fabric (TDS on), pipeline.
+
+**Why Sail is here.** The emulator never executes notebooks: it parses a Notebook
+item into cells and records a `Pending` run, and an engine executes them and
+reports back. Without a real engine attached, a notebook hop could only be
+play-acted by the client — so the suite runs one.
 - `Dockerfile.pipeline` — python + ODBC Driver 18, then `uv sync --frozen`
   against **the example's own lockfile** and `COPY examples/medallion/`. The
   example's dependencies never enter the emulator's dependency graph.
