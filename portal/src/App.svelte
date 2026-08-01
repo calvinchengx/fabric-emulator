@@ -10,6 +10,7 @@
   import Capacities from './Capacities.svelte';
   import Jobs from './Jobs.svelte';
   import Warehouse from './Warehouse.svelte';
+  import Flow from './Flow.svelte';
   import { api } from './api.js';
 
   let route = $state(location.hash.slice(1) || 'dashboard');
@@ -30,6 +31,7 @@
       ['jobs', 'Jobs'],
     ]],
     ['Data plane', [
+      ['flow', 'Data flow'],
       ['shortcuts', 'OneLake shortcuts'],
       ['warehouse', 'Warehouse SQL'],
     ]],
@@ -66,6 +68,7 @@
     {:else if route === 'capacities'}<Capacities />
     {:else if route === 'operations'}<Operations />
     {:else if route === 'jobs'}<Jobs />
+    {:else if route === 'flow'}<Flow />
     {:else if route === 'shortcuts'}<Shortcuts />
     {:else if route === 'warehouse'}<Warehouse />
     {:else if route === 'clock'}<Clock />

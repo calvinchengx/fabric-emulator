@@ -24,6 +24,7 @@ func (s *Server) registerPortal() {
 	s.mux.HandleFunc("GET /_emulator/portal/capacities", s.portalCapacities)
 	s.mux.HandleFunc("GET /_emulator/portal/jobs", s.portalJobs)
 	s.mux.HandleFunc("GET /_emulator/portal/warehouse", s.portalWarehouse)
+	s.mux.HandleFunc("GET /_emulator/portal/lineage", s.portalLineage)
 
 	assets, err := portal.Dist()
 	if err != nil {
@@ -279,6 +280,51 @@ func (s *Server) portalCapacities(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+// portalLineage serves the data-flow graph's edges: every recorded
+// source→target movement, with item display names resolved so a node can be
+// labelled by something a human recognises rather than a GUID.
+func (s *Server) portalLineage(w http.ResponseWriter, r *http.Request) {
+	edges, err := s.Store.ListAllLineageEdges(500)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+		return
+	}
+	type edgeRow struct {
+		JobID        string `json:"jobId"`
+		ActivityName string `json:"activityName"`
+		Producer     string `json:"producer"`
+		SourceItemID string `json:"sourceItemId"`
+		SourceItem   string `json:"sourceItem"`
+		SourcePath   string `json:"sourcePath"`
+		TargetItemID string `json:"targetItemId"`
+		TargetItem   string `json:"targetItem"`
+		TargetPath   string `json:"targetPath"`
+		CreatedAt    int64  `json:"createdAt"`
+	}
+	names := map[string]string{}
+	nameOf := func(itemID string) string {
+		if n, ok := names[itemID]; ok {
+			return n
+		}
+		n := ""
+		if it, err := s.Store.GetItemByID(itemID); err == nil {
+			n = it.DisplayName
+		}
+		names[itemID] = n
+		return n
+	}
+	out := make([]edgeRow, 0, len(edges))
+	for _, e := range edges {
+		out = append(out, edgeRow{
+			JobID: e.JobID, ActivityName: e.ActivityName, Producer: e.Producer,
+			SourceItemID: e.SourceItemID, SourceItem: nameOf(e.SourceItemID), SourcePath: e.SourcePath,
+			TargetItemID: e.TargetItemID, TargetItem: nameOf(e.TargetItemID), TargetPath: e.TargetPath,
+			CreatedAt: e.CreatedAt,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"value": out})
 }
