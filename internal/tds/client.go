@@ -15,12 +15,23 @@ import (
 // backend leg is a trusted, local sidecar over a SQL login, matching the
 // go-mssqldb `encrypt=disable` relay the emulator already uses.
 func clientLogin(conn net.Conn, user, password, database, serverName string) (loginResp []byte, err error) {
+	// Each phase names itself. The splice's failures arrive as raw I/O errors
+	// from whichever Read or Write hit them — "No process is on the other end of
+	// the pipe" says nothing about WHERE in the handshake it happened, and on
+	// the Windows LocalDB leg that ambiguity was the difference between "the
+	// pipe never opened" and "the server hung up on our PRELOGIN". Those want
+	// opposite fixes.
 	if err := WriteMessage(conn, PktPreLogin, clientPreLogin()); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sending PRELOGIN: %w", err)
 	}
 	typ, data, err := ReadMessage(conn)
 	if err != nil {
-		return nil, err
+		// The server accepted the connection and then hung up without
+		// answering. The usual cause is a backend that will not speak
+		// plaintext: the splice advertises EncryptNotSup and cannot do TLS.
+		return nil, fmt.Errorf("reading the PRELOGIN response (the backend "+
+			"accepted the connection then closed it without replying; a backend "+
+			"that mandates encryption will do this, and the splice cannot TLS): %w", err)
 	}
 	if typ != PktTabular {
 		return nil, fmt.Errorf("tds client: expected PRELOGIN response, got %#x", typ)
@@ -33,11 +44,11 @@ func clientLogin(conn net.Conn, user, password, database, serverName string) (lo
 		return nil, fmt.Errorf("tds client: backend requires TLS encryption, which the splice does not support (use a plaintext SQL login)")
 	}
 	if err := WriteMessage(conn, PktLogin7, buildLogin7(user, password, database, serverName)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sending LOGIN7: %w", err)
 	}
 	typ, data, err = ReadMessage(conn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading the LOGIN7 response: %w", err)
 	}
 	if ok, msg := loginResult(data); !ok {
 		return nil, fmt.Errorf("tds client: backend login failed: %s", msg)
