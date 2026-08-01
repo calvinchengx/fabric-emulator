@@ -296,3 +296,110 @@ func TestConnectionPayloadMatchesDocumentedSchema(t *testing.T) {
 		}
 	}
 }
+
+// Shortcuts, like connections, carry a nested object worth checking: `target`
+// holds exactly one of nine documented data-source shapes plus a `type`
+// discriminator, and each shape has its own field set. The ADLS and S3 targets
+// are the two the emulator resolves for real, so a drift here would break the
+// read-through paths silently.
+func TestShortcutPayloadMatchesDocumentedSchema(t *testing.T) {
+	const source = "rest/api/fabric/core/onelake-shortcuts/list-shortcuts"
+	f := newFixture(t)
+
+	var ws struct{ ID string }
+	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "sc-schema"}, &ws)
+	var lake struct{ ID string }
+	f.call("POST", "/v1/workspaces/"+ws.ID+"/lakehouses", f.token,
+		map[string]any{"displayName": "lh"}, &lake)
+	var conn struct{ ID string }
+	f.call("POST", "/v1/connections", f.token, map[string]any{
+		"displayName": "sc-conn", "connectivityType": "ShareableCloud",
+		"credentialDetails": map[string]any{
+			"credentials": map[string]any{"credentialType": "Anonymous"}},
+	}, &conn)
+
+	base := "/v1/workspaces/" + ws.ID + "/items/" + lake.ID + "/shortcuts"
+	f.call("POST", base, f.token, map[string]any{
+		"path": "Files", "name": "toAdls", "target": map[string]any{"adlsGen2": map[string]any{
+			"location": "https://acct.dfs.core.windows.net", "subpath": "container/sub",
+			"connectionId": conn.ID}}}, nil)
+	f.call("POST", base, f.token, map[string]any{
+		"path": "Files", "name": "toS3", "target": map[string]any{"amazonS3": map[string]any{
+			"location": "https://b.s3.us-west-2.amazonaws.com", "subpath": "folder",
+			"connectionId": conn.ID}}}, nil)
+
+	var page struct {
+		Value []map[string]json.RawMessage `json:"value"`
+	}
+	f.mustStatus(f.call("GET", base, f.token, nil, &page), http.StatusOK, "list shortcuts")
+	if len(page.Value) < 2 {
+		t.Fatalf("expected the two shortcuts, got %d", len(page.Value))
+	}
+
+	shortcutFields := map[string]bool{
+		"name": true, "path": true, "target": true,
+		"isShortcutTransform": true, "transform": true,
+	}
+	// Target: a `type` discriminator plus exactly one data-source object.
+	targetFields := map[string]bool{
+		"type": true, "adlsGen2": true, "amazonS3": true, "azureBlobStorage": true,
+		"dataverse": true, "externalDataShare": true, "googleCloudStorage": true,
+		"oneDriveSharePoint": true, "oneLake": true, "s3Compatible": true,
+	}
+	sourceFields := map[string]map[string]bool{
+		"adlsGen2": {"connectionId": true, "location": true, "subpath": true},
+		"amazonS3": {"connectionId": true, "location": true, "subpath": true},
+		"oneLake":  {"connectionId": true, "itemId": true, "path": true, "workspaceId": true},
+	}
+
+	for i, sc := range page.Value {
+		for _, need := range []string{"name", "path", "target"} {
+			if _, ok := sc[need]; !ok {
+				t.Errorf("shortcut %d is missing %q\nreference: %s", i, need, source)
+			}
+		}
+		for got := range sc {
+			if !shortcutFields[got] {
+				t.Errorf("shortcut %d carries %q, undocumented by %s", i, got, source)
+			}
+		}
+		var target map[string]json.RawMessage
+		if json.Unmarshal(sc["target"], &target) != nil {
+			t.Errorf("shortcut %d: target is not an object", i)
+			continue
+		}
+		if _, ok := target["type"]; !ok {
+			t.Errorf("shortcut %d: target has no `type` discriminator", i)
+		}
+		bodies := 0
+		for got, raw := range target {
+			if !targetFields[got] {
+				t.Errorf("shortcut %d: target.%s is undocumented by %s", i, got, source)
+				continue
+			}
+			if got == "type" {
+				continue
+			}
+			bodies++
+			fields, checked := sourceFields[got]
+			if !checked {
+				continue
+			}
+			var obj map[string]json.RawMessage
+			if json.Unmarshal(raw, &obj) != nil {
+				continue
+			}
+			for inner := range obj {
+				if !fields[inner] {
+					t.Errorf("shortcut %d: target.%s.%s is undocumented by %s",
+						i, got, inner, source)
+				}
+			}
+		}
+		// "must specify exactly one of the supported destinations".
+		if bodies > 1 {
+			t.Errorf("shortcut %d: target carries %d data-source objects; exactly one is allowed",
+				i, bodies)
+		}
+	}
+}
