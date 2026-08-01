@@ -597,8 +597,14 @@ jobs:
       - uses: actions/checkout@v7
       - name: Microsoft ODBC Driver 18 (dbt-fabric + pyodbc)
         run: |
+          # gpg is run as the normal user, NOT under sudo: `sudo gpg --dearmor`
+          # tries to open /dev/tty, which a runner does not have, and dies with
+          # "cannot open '/dev/tty'". The Dockerfile this replaced was root and
+          # never hit it. Dearmor to a temp file, then install it with sudo.
           curl -sSL https://packages.microsoft.com/keys/microsoft.asc \
-            | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+            | gpg --dearmor --batch --yes -o /tmp/microsoft-prod.gpg
+          sudo install -o root -g root -m 644 \
+            /tmp/microsoft-prod.gpg /usr/share/keyrings/microsoft-prod.gpg
           echo "deb [signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
             | sudo tee /etc/apt/sources.list.d/mssql-release.list
           sudo apt-get update
