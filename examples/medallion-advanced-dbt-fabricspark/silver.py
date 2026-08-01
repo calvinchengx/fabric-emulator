@@ -26,10 +26,16 @@ Two Sail behaviours show up here and neither is a failure of this example:
     routes it to delta-rs (docs/engine-matrix.md marks it ✅ for
     "Sail + delta-rs"), but dbt-fabricspark emits it as raw SQL and the adapter
     reports "OPTIMIZE failed and was skipped; the model itself succeeded".
-  * **Sail resolves a WHERE predicate against the PROJECTED schema**, so a
-    column computed in a CTE and filtered on in a select that narrows the
-    columns is gone before the predicate runs. See the two-CTE structure in
-    silver_quarantine_orders.sql.
+  * **A `_rn`-not-in-schema failure that is NOT Sail's**, despite this comment
+    having said so. A probe ran the exact shape — a `row_number()` CTE filtered
+    on the helper column, projecting an explicit list, including wrapped in a
+    view — against Sail over Spark Connect, and every form PASSED. So the fault
+    is somewhere on the Livy path (emulator -> agent -> Sail) or in dbt's
+    generated SQL, and not in Sail's SQL support. The two-CTE rewrite in
+    silver_quarantine_orders.sql stays because it is portable and costs
+    nothing; only the attribution was wrong. docs/engine-matrix.md carries the
+    corrected row, and carries it there rather than here because that file is
+    REGENERATED from a live run and this comment is not.
 """
 import json
 import os

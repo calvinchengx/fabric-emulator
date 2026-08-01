@@ -9,16 +9,20 @@
 -- as `SELECT * EXCEPT (_rn)`: star-modifier syntax is not uniformly available
 -- across Spark builds, and this project has to run on Sail.
 --
--- TWO CTEs, not one. The filter has to live in a select that still projects
--- `*`, because Sail resolves a WHERE predicate against the PROJECTED schema:
--- narrowing to the explicit column list while filtering on `_rn` in the same
--- select loses the column before the predicate is evaluated, and fails with
+-- TWO CTEs, not one. The one-CTE form — narrowing to the explicit column list
+-- while filtering on `_rn` in the same select — failed with
 --
 --     attribute ObjectName([Identifier("_rn")]) is missing from the schema
 --
--- Standard SQL evaluates WHERE before projection, so the one-CTE form is legal
--- and works on other engines — which is why this is worth a comment rather than
--- a silent restructure.
+-- This was first attributed to Sail resolving WHERE against the projected
+-- schema. That attribution was WRONG: a probe ran this exact shape against Sail
+-- over Spark Connect, including wrapped in a view, and every form passed. The
+-- fault lies somewhere on the Livy path or in dbt's generated SQL and is not
+-- yet localised.
+--
+-- The rewrite stays regardless. Standard SQL evaluates WHERE before projection,
+-- so both forms are legal; this one keeps `_rn` in scope at the point it is
+-- filtered, which is portable and costs nothing.
 {% set src = source('bronze', 'bronze_orders') %}
 {% set cols = adapter.get_columns_in_relation(src) %}
 

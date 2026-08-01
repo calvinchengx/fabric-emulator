@@ -201,6 +201,16 @@ assert web_bridged + web_only == web_c.count(), \
 # Deletes and ambiguous keys can only SHRINK these cohorts, never grow them —
 # an excess means the join invented an identity.
 assert erp_only <= erp.EXPECTED_ERP_ONLY_COUNT, (erp_only, erp.EXPECTED_ERP_ONLY_COUNT)
+
+# The exact cohort, as the star sees it: EXPECTED_ERP_ONLY_COUNT less the
+# soft-deleted, plus the accounts whose phone is ambiguous in POS and so cannot
+# match. The invariants above cannot see a wrong SPLIT between bridged and only
+# — 100 accounts moving from one cohort to the other satisfies them both. This
+# number catches that, and is computed in the fixture with the SAME `!= 1`
+# ambiguity rule this step applies, so a change to the resolution rule that is
+# not carried into the fixture SHOULD fail here: the cohort really did change.
+assert erp_only == erp.EXPECTED_ERP_ONLY_CURRENT, \
+    (erp_only, erp.EXPECTED_ERP_ONLY_CURRENT)
 assert web_only <= web.EXPECTED_WEB_ONLY_EMAIL_COUNT, \
     (web_only, web.EXPECTED_WEB_ONLY_EMAIL_COUNT)
 
