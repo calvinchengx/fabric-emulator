@@ -336,3 +336,44 @@ is a container weight class, like `spark-a2`):
 - **Extraction:** reconsider only if the TDS-FedAuth proxy proves independently
   reusable outside Fabric; `internal/tds` stays Fabric-import-free to keep that
   option cheap.
+
+## Limitation: the splice does not work over a named pipe
+
+The full-fidelity path opens the emulator's **own** raw connection to SQL Server
+and performs a hand-rolled TDS handshake on it, so the engine emits every token
+itself. Over a named pipe that handshake fails. Measured on the Windows LocalDB
+leg, per phase:
+
+| phase | result |
+|---|---|
+| the pipe opens | OK |
+| `WriteMessage(PRELOGIN)` | OK |
+| `ReadMessage` (the PRELOGIN reply) | `No process is on the other end of the pipe` |
+
+SQL Server accepts the connection, receives the PRELOGIN, and closes without
+replying.
+
+**Root cause unknown.** Two candidates were ruled out by measurement rather than
+argument: it is not the dial (the retry in `dialBackend` tags a dial it gave up
+on with `after N attempts`, and these errors do not carry it), and it is not a
+message-mode pipe read (the client opens in byte-read mode, where partial reads
+are legal). What remains, untested for want of a Windows host: a PRELOGIN option
+SQL Server requires over pipes that `clientPreLogin` omits — `INSTOPT` is the
+obvious candidate — or an encryption stance it will not negotiate on that
+transport. A TDS trace on Windows would settle it.
+
+**Scope.** Only the splice is affected. Everything that goes through
+go-mssqldb's own handshake works over a pipe: the pooled query path, lakehouse
+reflection, and bulk copy. That is why `internal/warehouse`, `internal/api` and
+`internal/tds` all pass against the same LocalDB instance that the three splice
+e2es fail against — and it is the evidence for this being a handshake problem
+rather than a transport or availability one.
+
+**Practically:** run the emulator's SQL endpoint against a TCP SQL Server. On
+Windows that means a container or a remote instance rather than LocalDB. The
+gated tests skip themselves on a hostless DSN via
+`testsupport.SkipIfSpliceUnsupported`, which names this section.
+
+Not falling back to the re-encode relay when the splice cannot be established:
+the splice exists precisely because the Microsoft ODBC/JDBC driver family needs
+SQL Server's own tokens, so a fallback would move the failure rather than fix it.
