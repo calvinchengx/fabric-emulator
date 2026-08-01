@@ -474,6 +474,21 @@ dependencies = [
 requires-dist = [{ name = "requests", specifier = ">=2.32,<3" }]
 
 [[package]]
+name = "contoso-fixtures-advanced"
+version = "0.1.0"
+source = { editable = "../contoso-fixtures-advanced" }
+dependencies = [
+    { name = "contoso-fixtures" },
+    { name = "pyarrow" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "contoso-fixtures", editable = "../contoso-fixtures" },
+    { name = "pyarrow", specifier = ">=18,<24" },
+]
+
+[[package]]
 name = "cryptography"
 version = "50.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -656,6 +671,23 @@ wheels = [
 ]
 
 [[package]]
+name = "dbt-fabricspark"
+version = "1.13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core" },
+    { name = "azure-identity" },
+    { name = "dbt-adapters" },
+    { name = "dbt-common" },
+    { name = "dbt-core" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/77/fe/b105a0824cb8d1a692498c9e5020fca27ef50a46782ee8138f1ae38ac1ef/dbt_fabricspark-1.13.0.tar.gz", hash = "sha256:52ce5ea8dffa659c2d6d62807459dac637197541b58ea9cfbf15ddea01f3ff7e", size = 493799, upload-time = "2026-08-01T11:24:15.535Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ad/4e/04b2a3deb9b5474cb1ad8dcc2f198d36777076f75a79b6d2b41940e5f739/dbt_fabricspark-1.13.0-py3-none-any.whl", hash = "sha256:1e5bc6ba4e4118386b57ad21e8111f11f41998da444dbe089a23ec589d4f2cae", size = 119564, upload-time = "2026-08-01T11:24:13.976Z" },
+]
+
+[[package]]
 name = "dbt-protos"
 version = "1.0.541"
 source = { registry = "https://pypi.org/simple" }
@@ -758,12 +790,14 @@ wheels = [
 ]
 
 [[package]]
-name = "fabric-emulator-example-medallion"
+name = "fabric-emulator-example-medallion-advanced-dbt-fabricspark"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "contoso-fixtures" },
+    { name = "contoso-fixtures-advanced" },
     { name = "dbt-fabric" },
+    { name = "dbt-fabricspark" },
     { name = "deltalake" },
     { name = "great-expectations" },
     { name = "pyarrow" },
@@ -776,7 +810,9 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "contoso-fixtures", editable = "../contoso-fixtures" },
+    { name = "contoso-fixtures-advanced", editable = "../contoso-fixtures-advanced" },
     { name = "dbt-fabric", specifier = ">=1.9" },
+    { name = "dbt-fabricspark", specifier = ">=1.9" },
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "great-expectations", specifier = ">=0.18,<1" },
     { name = "pyarrow", specifier = ">=18,<24" },
