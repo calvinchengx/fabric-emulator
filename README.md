@@ -1,8 +1,16 @@
 # fabric-emulator
 
-A clean-room, local emulator of the **Microsoft Fabric control plane** (and a
-thin OneLake data plane), built to compose with
-[entra-emulator](https://github.com/calvinchengx/entra-emulator).
+[![CI](https://github.com/calvinchengx/fabric-emulator/actions/workflows/ci.yml/badge.svg)](https://github.com/calvinchengx/fabric-emulator/actions/workflows/ci.yml)
+[![Docs](https://github.com/calvinchengx/fabric-emulator/actions/workflows/docs-site.yml/badge.svg)](https://calvinchengx.github.io/fabric-emulator/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+A clean-room, local emulator of **Microsoft Fabric**, built to compose with
+[entra-emulator](https://github.com/calvinchengx/entra-emulator) — the control
+plane (workspaces, items, RBAC, git, LROs) plus a real **OneLake** ADLS/Blob
+data plane, a **T-SQL warehouse** over TDS, native **Livy** sessions on a real
+Spark engine, **Data Factory** pipelines, and **KQL** eventhouses.
+
+![fabric-emulator demo: a real Entra token, a workspace, a lakehouse, and a file written to and read back from OneLake — against two local binaries](docs/demo/demo.gif)
 
 Real Fabric layers two independent systems: **Entra ID** issues the bearer
 tokens, and the **Fabric control plane** (`https://api.fabric.microsoft.com/v1/…`)
@@ -57,7 +65,19 @@ Docs: <https://calvinchengx.github.io/fabric-emulator/> — start with
 [control-plane API](docs/07-control-plane-api.md), [OneLake](docs/08-onelake.md),
 the [roadmap](docs/13-roadmap.md), [real compute](docs/14-real-compute.md), the
 [warehouse over TDS](docs/16-warehouse-tds.md), and the
-[parity table](docs/17-parity.md).
+[parity map](docs/parity.md).
+
+## Parity at a glance
+
+| | Rows | Meaning |
+|---|---|---|
+| 🟢 **Real** | 87 | Genuine work — real signed JWTs, real bytes on disk, a real engine or client computes |
+| 🟡 **Emulated** | 15 | Faithful API contract and persisted state, but no engine behind it |
+| 🟠 **Bring-your-own-engine** | 19 | Real once a sidecar is attached; an honest `501` otherwise |
+| 🔴 **Not implemented** | 19 | Deliberately out of scope — the parity map argues where the boundary sits and why |
+
+Every 🟢 row names the witness that proves it, and a CI job fails the build if a
+claim loses its witness. Full detail: [parity map](docs/parity.md).
 
 ## Relationship to entra-emulator
 
@@ -95,6 +115,18 @@ The workflow is the same on all three — only the prerequisites differ:
 make doctor   # toolchain, docker context, memory, ports — run this first
 make up
 make status   # "stack OK" is the real verdict; `make up` only means containers exist
+```
+
+Everything else, once it is running:
+
+```bash
+make help     # every target with a one-line description
+make ps       # container states for this project
+make logs     # tail logs (SVC=<service> to narrow to one)
+make down     # stop and remove containers — volumes SURVIVE
+make clean    # stop and remove containers AND delete the data volumes
+make restart  # clean, then up
+make test     # go build, vet and unit tests
 ```
 
 Install the prerequisites once (a container runtime with Compose v2, plus GNU
