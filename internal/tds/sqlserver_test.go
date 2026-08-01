@@ -54,6 +54,33 @@ func TestSQLServerBackendQuery(t *testing.T) {
 	if _, err := be.Query(ctx, "SELECT * FROM nope"); err == nil {
 		t.Error("expected error for missing table")
 	}
+
+	// Types SQLite could not have represented, and which the warehouse
+	// endpoint has to carry faithfully because callers aggregate over them.
+	// A DECIMAL that arrives as a float is wrong by a power of ten; an
+	// NVARCHAR that loses its encoding is wrong in a way nobody notices until
+	// a non-ASCII name appears.
+	if _, err := be.Query(ctx,
+		"CREATE TABLE typed (amount DECIMAL(12,4), name NVARCHAR(50), when2 DATETIME2)"); err != nil {
+		t.Fatalf("create typed: %v", err)
+	}
+	if _, err := be.Query(ctx,
+		"INSERT INTO typed VALUES (1234.5678, N'Ada Lovelace \u00e9\u4e2d', '2026-08-01T12:34:56')"); err != nil {
+		t.Fatalf("insert typed: %v", err)
+	}
+	res, err = be.Query(ctx, "SELECT CONVERT(NVARCHAR(50), amount), name FROM typed")
+	if err != nil {
+		t.Fatalf("select typed: %v", err)
+	}
+	if len(res.Rows) != 1 {
+		t.Fatalf("typed rows = %d", len(res.Rows))
+	}
+	if got, _ := res.Rows[0][0].(string); got != "1234.5678" {
+		t.Errorf("DECIMAL scale lost on the wire: %v", res.Rows[0][0])
+	}
+	if got, _ := res.Rows[0][1].(string); got != "Ada Lovelace \u00e9\u4e2d" {
+		t.Errorf("NVARCHAR round-trip lost characters: %q", got)
+	}
 }
 
 // TestNewSQLServerBackend confirms the constructor opens without dialing.
