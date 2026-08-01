@@ -18,6 +18,50 @@ for every Sail session ([20-lakesail-engine.md](20-lakesail-engine.md)).
 The middle column runs the agent's own module, not a re-implementation,
 so it cannot drift from the runtime it describes.
 
+## How to read a cell
+
+A ✅ means *this probe passed on this engine* — nothing wider. A ❌ is
+not a verdict that the capability is impossible; it is the engine's own
+error, kept verbatim because the message is the actionable part. Three
+distinct things hide behind ❌, and the footnotes say which is which:
+
+1. **A real gap** — the engine cannot do it (durable streaming sinks).
+2. **A protocol limit** — Spark Connect itself forbids it (`sc`, `_jvm`),
+   so no upstream fix exists for *any* Connect client, Sail or Apache's.
+3. **A harness artefact** — the probe's environment, not the engine
+   (the Python UDF row). These are bugs in the table, not in the engine,
+   and get fixed rather than explained away.
+
+Read a ❌ next to a ✅ in the same row as "the emulator closes this gap",
+and two ❌ with *different* messages as two different problems.
+
+## How the table is produced
+
+Four rules, each of them a reaction to a way an earlier hand-written
+version misled:
+
+- **Generated, never edited.** A hand-written row claimed streaming was
+  broken on Sail long after Sail gained streaming. Prose drifts from
+  reality silently; a generated file cannot. CI regenerates and diffs.
+- **One probe per capability, never bundled.** Three capabilities once
+  shared one verdict, which hid a partial pass. A row that covers two
+  things can only report the worse of them.
+- **The error text is recorded, not summarised.** `No table format found
+  for: memory` and `unsupported extension node for streaming:
+  DeltaWriteNode` point at different upstream fixes; "streaming sink
+  fails" points at neither.
+- **The middle column imports the shipped module.** It does not
+  re-implement the interception. If the agent changes, the column moves
+  with it — the table cannot claim a behaviour the runtime lacks.
+
+What this table does **not** do: prove the OneLake path. The probes run
+against local table paths, so credentials are out of scope here and are
+witnessed separately by `e2e/livy` against `abfss://…onelake…`, with a
+negative control (a deliberately wrong bearer must be refused). Keeping
+those separate is deliberate — a capability probe that also needed
+storage auth would fail for two unrelated reasons and distinguish
+neither.
+
 ## Which engine should I use?
 
 **Sail is the default, and should stay the default.** This table only
