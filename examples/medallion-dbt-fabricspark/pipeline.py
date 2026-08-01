@@ -29,7 +29,7 @@ import subprocess
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
-WAREHOUSE = HERE.parent / "medallion"
+WAREHOUSE = HERE.parent / "medallion-pyspark"
 STATE = HERE / "state.json"
 
 # Shared with the Warehouse example: identical steps, run in its directory so

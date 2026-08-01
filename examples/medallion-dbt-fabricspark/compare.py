@@ -22,7 +22,7 @@ import pathlib
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
-WAREHOUSE_SUMMARY = HERE.parent / "medallion" / "gold_summary.json"
+WAREHOUSE_SUMMARY = HERE.parent / "medallion-pyspark" / "gold_summary.json"
 SPARK_SUMMARY = HERE / "gold_summary.json"
 
 

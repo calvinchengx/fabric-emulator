@@ -26,7 +26,7 @@ import sys as _sys
 # fixture — live in the Warehouse example, because both paths ingest the same
 # data from the same source system. Importing them beats copying a 700-line
 # generator that would then have to be kept identical by hand.
-_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent / "medallion"))
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent / "medallion-pyspark"))
 
 import json
 import os
@@ -66,7 +66,7 @@ lakehouse_name = st["lakehouse_name"]
       connect_retries: 3
       connect_timeout: 60
       spark_config:
-        name: "medallion-spark-gold"
+        name: "medallion-dbt-fabricspark-gold"
 """)
 
 # dbt-fabricspark talks to the emulator over HTTPS with `requests`, which
