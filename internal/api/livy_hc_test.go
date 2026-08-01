@@ -232,3 +232,40 @@ func TestHCStatementGetBeforeExecute(t *testing.T) {
 		t.Fatalf("unknown repl = %d; want 404", w.Code)
 	}
 }
+
+// TestHCAcquireNeedsNoSparkBackend: acquiring an HC session must succeed with no
+// Spark agent and no Livy backend attached at all.
+//
+// This is the file's stated invariant — acquire/retrieve/release are pure
+// control-plane state — and it was broken by adding a call that reached the
+// agent to declare the lakehouse's tables. With no agent configured that
+// dereferenced a nil *url.URL, so the handler PANICKED and net/http closed the
+// connection without a response. The client saw only
+//
+//	HC session acquire failed: Remote end closed connection without response
+//
+// which names neither the handler nor the cause. Catalog registration now
+// happens on the REPL's first statement, where an agent is known to exist.
+func TestHCAcquireNeedsNoSparkBackend(t *testing.T) {
+	a, st := newAPI(t) // no livyAgent, no livyBackend
+	ws := seedWorkspace(t, st)
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "lh"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	// A Delta table present, so the removed call would have had work to do and
+	// would have reached the agent rather than returning early on an empty
+	// Tables/ listing.
+	if err := st.CreateOneLakePath(&store.OneLakePath{
+		WorkspaceID: ws.ID, ItemID: lake.ID,
+		RelPath: "Tables/orders/_delta_log/00000000000000000000.json",
+		Content: []byte(`{"add":{"path":"part-0.parquet"}}`),
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	r := acquire(t, a, ws.ID, lake.ID, "etl")
+	if r.ID == "" || r.ReplId == "" {
+		t.Fatalf("acquire returned an empty session: %+v", r)
+	}
+}

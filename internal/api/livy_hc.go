@@ -50,6 +50,7 @@ type hcRepl struct {
 	createBody  []byte           // acquire payload, forwarded when the backend session is opened
 	backendID   string           // real backend Livy session id (lazy; empty until first statement)
 	kind        string           // session default statement language (Livy: spark/pyspark/sql)
+	registered  bool             // lakehouse tables declared to the agent (once, on first statement)
 	statements  []*livyStatement // native-agent path: this REPL's executed statements
 	deleted     bool
 }
@@ -222,9 +223,10 @@ func (a *API) acquireHC(w http.ResponseWriter, r *http.Request, p *auth.Principa
 	_ = json.Unmarshal(body, &req)
 	wid, lid := r.PathValue("wid"), r.PathValue("lid")
 	repl := a.hcMgr().acquire(wid+"/"+lid, req.SessionTag, wid, lid, p.ID, a.Store.Now(), body)
-	// Give the REPL the lakehouse's tables by name, the way a Fabric notebook
-	// attached to a lakehouse already has them.
-	a.registerLakehouseTables(repl.replID, wid, lid)
+	// NOTE: no agent call here. Acquire is pure control-plane state (see the
+	// header) and must succeed with no Spark backend attached at all. Catalog
+	// registration happens on the REPL's first statement instead, where an
+	// agent is already known to exist.
 	writeJSON(w, http.StatusOK, a.hcBody(repl))
 }
 
@@ -318,6 +320,16 @@ func (a *API) hcStatement(w http.ResponseWriter, r *http.Request, p *auth.Princi
 func (a *API) hcStatementNative(w http.ResponseWriter, r *http.Request, repl *hcRepl) {
 	m := a.hcMgr()
 	if r.Method == http.MethodPost {
+		// Register the lakehouse's Delta tables in this REPL's Spark catalog,
+		// once, before its first statement runs. Deliberately here and not in
+		// acquireHC: acquire must work with no Spark backend attached, and it
+		// also runs before the client has had a chance to create anything, so
+		// registering there would miss tables written between acquire and first
+		// use. This path is only reached when an agent exists.
+		if !repl.registered {
+			repl.registered = true
+			a.registerLakehouseTables(repl.replID, repl.workspaceID, repl.lakehouseID)
+		}
 		// `kind` selects the statement's language — Livy defines spark, pyspark,
 		// sql and sparkr, and a session's kind is the default when a statement
 		// omits it. Forwarding it matters: a SQL statement must come back as a
