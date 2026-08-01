@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
@@ -141,5 +142,76 @@ func TestListItemsEmptyWorkspace(t *testing.T) {
 	w := do(a.listItems, viewer, "GET", "", map[string]string{"wid": ws.ID})
 	if w.Code != http.StatusOK || w.Body.String() != `{"value":[]}`+"\n" {
 		t.Fatalf("empty list = %d %q; want value:[]", w.Code, w.Body.String())
+	}
+}
+
+// The admin surfaces added for governance have the same failure contract as
+// the rest of the control plane: a storage error is a 500, not a partial or
+// empty success. These paths are otherwise unreachable — nothing a client
+// sends can make the store fail — so they are exercised by removing the table
+// underneath them.
+func TestAdminSurfaceStorageFailures(t *testing.T) {
+	a, st, dir := newDiskAPI(t)
+	ws := seedWorkspace(t, st)
+
+	// A domain to address, created before its table is removed.
+	d := &store.Domain{DisplayName: "Fin"}
+	if err := st.CreateDomain(d); err != nil {
+		t.Fatal(err)
+	}
+	did := map[string]string{"did": d.ID}
+
+	dropTable(t, dir, "sensitivity_labels")
+	if w := do(a.listLabels, admin, "GET", "", nil); w.Code != http.StatusInternalServerError {
+		t.Fatalf("listLabels = %d; want 500", w.Code)
+	}
+
+	dropTable(t, dir, "activity_events")
+	day := time.Now().UTC().Format("2006-01-02")
+	w := doQuery(a.listActivityEvents, "GET",
+		"startDateTime='"+day+"T00:00:00Z'&endDateTime='"+day+"T23:59:59Z'", nil)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("listActivityEvents = %d; want 500", w.Code)
+	}
+
+	dropTable(t, dir, "tenant_settings")
+	if w := do(a.listTenantSettings, admin, "GET", "", nil); w.Code != http.StatusInternalServerError {
+		t.Fatalf("listTenantSettings = %d; want 500", w.Code)
+	}
+
+	// Domain reads, writes and role assignment all fail loudly.
+	dropTable(t, dir, "domain_role_assignments")
+	if w := do(a.listDomainRoles, admin, "GET", "", did); w.Code != http.StatusInternalServerError {
+		t.Fatalf("listDomainRoles = %d; want 500", w.Code)
+	}
+	if w := do(a.bulkAssignDomainRole, admin, "POST",
+		`{"type":"Admins","principals":[{"id":"11111111-1111-4111-8111-111111111111","type":"User"}]}`,
+		did); w.Code != http.StatusInternalServerError {
+		t.Fatalf("bulkAssignDomainRole = %d; want 500", w.Code)
+	}
+	if w := do(a.bulkUnassignDomainRole, admin, "POST",
+		`{"type":"Admins","principals":[{"id":"11111111-1111-4111-8111-111111111111","type":"User"}]}`,
+		did); w.Code != http.StatusInternalServerError {
+		t.Fatalf("bulkUnassignDomainRole = %d; want 500", w.Code)
+	}
+
+	dropTable(t, dir, "domain_workspaces")
+	if w := do(a.listDomainWorkspaces, admin, "GET", "", did); w.Code != http.StatusInternalServerError {
+		t.Fatalf("listDomainWorkspaces = %d; want 500", w.Code)
+	}
+	if w := do(a.assignDomainWorkspaces, admin, "POST",
+		`{"workspacesIds":["`+ws.ID+`"]}`, did); w.Code != http.StatusInternalServerError {
+		t.Fatalf("assignDomainWorkspaces = %d; want 500", w.Code)
+	}
+
+	dropTable(t, dir, "domains")
+	if w := do(a.listDomains, admin, "GET", "", nil); w.Code != http.StatusInternalServerError {
+		t.Fatalf("listDomains = %d; want 500", w.Code)
+	}
+	if w := do(a.updateDomain, admin, "PATCH", `{"description":"x"}`, did); w.Code != http.StatusInternalServerError {
+		t.Fatalf("updateDomain = %d; want 500", w.Code)
+	}
+	if w := do(a.createDomain, admin, "POST", `{"displayName":"New"}`, nil); w.Code != http.StatusInternalServerError {
+		t.Fatalf("createDomain = %d; want 500", w.Code)
 	}
 }

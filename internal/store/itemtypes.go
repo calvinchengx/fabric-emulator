@@ -46,6 +46,3 @@ func CanonicalItemType(t string) (string, bool) {
 	c, ok := canonicalItemTypes[strings.ToLower(strings.TrimSpace(t))]
 	return c, ok
 }
-
-// ItemTypes returns the known item types (canonical spelling).
-func ItemTypes() []string { return append([]string(nil), itemTypes...) }
