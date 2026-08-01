@@ -33,7 +33,7 @@ type FileEvent struct {
 // The call is synchronous and reentrant: a trigger may start a pipeline that
 // writes more files, which emits more events. Cycles are broken by the
 // dispatcher, not here (see internal/api/triggers.go).
-func (s *Store) emitFileEvent(kind, workspaceID, itemID, relPath string) {
+func (s *Store) emitFileEvent(kind, workspaceID, itemID, relPath string, attr Attribution) {
 	if relPath == "" {
 		return
 	}
@@ -44,8 +44,13 @@ func (s *Store) emitFileEvent(kind, workspaceID, itemID, relPath string) {
 	}
 	// Observers second, asynchronously — queued and returned from immediately,
 	// because a watching developer must never be able to slow a writer down.
-	s.publish(Event{Kind: KindFile, EventType: kind,
-		WorkspaceID: workspaceID, ItemID: itemID, Path: relPath})
+	ev := Event{Kind: KindFile, EventType: kind,
+		WorkspaceID: workspaceID, ItemID: itemID, Path: relPath}
+	if !attr.Empty() {
+		a := attr
+		ev.Attribution = &a
+	}
+	s.publish(ev)
 }
 
 // EmitFileWritten reports that a staged write has completed — the flush step of
@@ -55,8 +60,8 @@ func (s *Store) emitFileEvent(kind, workspaceID, itemID, relPath string) {
 // The store cannot infer this: mid-sequence the path exists and is simply
 // empty, indistinguishable from an empty file. Only the protocol handler knows
 // the write is finished, so it says so.
-func (s *Store) EmitFileWritten(workspaceID, itemID, relPath string) {
-	s.emitFileEvent(EventFileCreated, workspaceID, itemID, relPath)
+func (s *Store) EmitFileWritten(workspaceID, itemID, relPath string, attr Attribution) {
+	s.emitFileEvent(EventFileCreated, workspaceID, itemID, relPath, attr)
 }
 
 // EventTrigger is a Reflex's subscription: an event shape to watch, and the

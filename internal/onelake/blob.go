@@ -220,7 +220,7 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 func (s *Service) putBlob(w http.ResponseWriter, r *http.Request, ws *store.Workspace, it *store.Item, rel string, data []byte) {
 	ifNoneMatch := r.Header.Get("If-None-Match") == "*"
 	pth := &store.OneLakePath{WorkspaceID: ws.ID, ItemID: it.ID, RelPath: rel, Content: data}
-	err := s.Store.CreateOneLakePath(pth, ifNoneMatch)
+	err := s.Store.CreateOneLakePathAs(s.attributionOf(r), pth, ifNoneMatch)
 	if err == store.ErrPathExists {
 		writeBlobErr(w, http.StatusConflict, "BlobAlreadyExists", "The specified blob already exists.")
 		return
@@ -267,7 +267,7 @@ func (s *Service) copyBlob(w http.ResponseWriter, r *http.Request, ws *store.Wor
 	}
 	ifNoneMatch := r.Header.Get("If-None-Match") == "*"
 	dst := &store.OneLakePath{WorkspaceID: ws.ID, ItemID: it.ID, RelPath: rel, Content: srcPath.Content}
-	err = s.Store.CreateOneLakePath(dst, ifNoneMatch)
+	err = s.Store.CreateOneLakePathAs(s.attributionOf(r), dst, ifNoneMatch)
 	if err == store.ErrPathExists {
 		writeBlobErr(w, http.StatusConflict, "BlobAlreadyExists", "The specified blob already exists.")
 		return
@@ -434,4 +434,3 @@ func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Wo
 	fmt.Fprint(w, xml.Header)
 	_ = xml.NewEncoder(w).Encode(out)
 }
-

@@ -1,7 +1,7 @@
 # Flow observability: watching data move through the emulator
 
-**Status: steps 1–2 built** — the event bus, all four event kinds, and the SSE
-endpoint. Steps 3–4 (attribution, the portal view) are still design.
+**Status: steps 1–3 built** — the event bus, all four event kinds, the SSE
+endpoint, and attribution. Step 4 (the portal view) is still design.
 
 Running the medallion example today is a black box. It prints step numbers, and
 when something fails you reconstruct what happened afterwards from
@@ -147,9 +147,13 @@ So:
 type Attribution struct {
 	JobID        string
 	ActivityName string // Copy and other pipeline activities
-	CellIndex    int    // notebook cells; -1 when not a cell
+	CellIndex    *int   // notebook cells
 }
 ```
+
+`CellIndex` ended up a **pointer**, not an int with a sentinel: cell 0 is a
+real cell, and a plain int cannot tell "the first cell" from "not a cell at
+all". Same reason `Version` is a pointer on a table event.
 
 **How it reaches the write, without plumbing `context` through everything.**
 `CreateOneLakePath` is called from the DFS and Blob handlers, git, deployment,
@@ -158,9 +162,14 @@ serve two callers would be a large diff for a small gain. Instead:
 
 - `CreateOneLakePath` keeps its signature and emits an **unattributed** event;
 - a sibling `CreateOneLakePathAs(attr Attribution, …)` emits an attributed one;
-- `warehouse.WriteDeltaTable` takes an `Attribution` and passes it down;
-- exactly three call sites change: the Copy activity, the Delta writer, and the
-  OneLake DFS/Blob handlers (which already have the values in `observe`).
+- `warehouse.WriteDeltaTableAs` is the same pattern one level up, so the Delta
+  writer's *two* writes — the Parquet part and the `_delta_log` commit — both
+  carry it, and the derived `table` event inherits it from the commit;
+- the OneLake handlers pass `attributionOf(r)`, which is the value `observe()`
+  was already computing and discarding.
+
+Sibling functions rather than a parameter, so the ten existing callers and
+their tests stay untouched; only the sites that know something change.
 
 Explicit, no globals, no goroutine-local trickery, and every other caller is
 untouched. **Attribution is never inferred** — same rule the lineage design
@@ -280,7 +289,10 @@ state already persisted (`job_instances`, `pipeline_runs`, `lineage_edges`,
 2. ~~**`activity`/`job` events.**~~ **Done.** Failures arrive as they happen
    instead of being reconstructed afterwards — with the activity name, its
    error, and the job id that correlates them.
-3. **Attribution** (§4) — three call sites.
+3. ~~**Attribution** (§4).~~ **Done.** A Copy activity's writes name the
+   activity; a notebook cell's writes name the cell — including cell 0, and
+   including engines that cannot set headers, via the bearer claims that were
+   already there.
 4. **Portal `Flow` view.**
 
 Each step is independently useful, and each stops at a point where the tree is

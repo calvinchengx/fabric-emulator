@@ -76,6 +76,43 @@ type Event struct {
 
 	// KindDropped
 	Dropped int64 `json:"dropped,omitempty"`
+
+	// Who caused this, when that is known — see Attribution.
+	Attribution *Attribution `json:"attribution,omitempty"`
+}
+
+// Attribution says which unit of work moved some bytes.
+//
+// It is **never inferred**. The same rule the lineage design holds to applies
+// here: an engine reports it (a notebook runtime sets headers, or carries the
+// same values as bearer claims when it is built on Rust object_store and
+// cannot set headers), or the emulator's own executor knows it because it is
+// the thing doing the write. Anything else leaves the field empty rather than
+// guessing.
+//
+// This is a live debugging aid. `lineage_edges` remains the durable,
+// authoritative record of a source→target movement.
+type Attribution struct {
+	JobID        string `json:"jobId,omitempty"`
+	ActivityName string `json:"activityName,omitempty"`
+	// CellIndex is a pointer because cell 0 is a real cell: a plain int could
+	// not tell "the first cell" from "no cell at all".
+	CellIndex *int `json:"cellIndex,omitempty"`
+}
+
+// Empty reports whether nothing is known about who caused a write.
+func (a Attribution) Empty() bool {
+	return a.JobID == "" && a.ActivityName == "" && a.CellIndex == nil
+}
+
+// ActivityBy attributes a write to a pipeline activity.
+func ActivityBy(jobID, activityName string) Attribution {
+	return Attribution{JobID: jobID, ActivityName: activityName}
+}
+
+// CellBy attributes a write to a notebook cell.
+func CellBy(jobID string, cellIndex int) Attribution {
+	return Attribution{JobID: jobID, CellIndex: &cellIndex}
 }
 
 // Job statuses a flow event reports at the moment they are known. Generic
