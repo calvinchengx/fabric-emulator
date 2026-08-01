@@ -627,13 +627,21 @@ models:
       - name: customer_id
         tests: [unique, not_null]
       - name: country
-        tests: [not_null]
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["US", "GB", "SG"]   # silver's conformed domain
   - name: fct_orders
     columns:
       - name: order_id
         tests: [unique, not_null]   # the at-least-once duplicates must be gone
       - name: amount
         tests: [not_null]
+      - name: customer_id
+        tests:
+          - relationships:          # every order resolves to a customer
+              to: ref('dim_customer')
+              field: customer_id
   - name: fct_daily_revenue
     columns:
       - name: revenue
@@ -641,32 +649,17 @@ models:
 ```
 
 ```sql
--- tests/assert_country_domain.sql
-select customer_id, country
-from {{ ref('dim_customer') }}
-where country not in ('US', 'GB', 'SG')
-```
-
-```sql
--- tests/assert_orders_have_customers.sql — referential integrity
-select o.order_id
-from {{ ref('fct_orders') }} o
-left join {{ ref('dim_customer') }} c on o.customer_id = c.customer_id
-where c.customer_id is null
-```
-
-```sql
--- tests/assert_no_negative_revenue.sql — a failing row fails the build
+-- tests/assert_no_negative_revenue.sql — a business rule, not a schema shape
 select order_date, country, revenue
 from {{ ref('fct_daily_revenue') }}
 where revenue <= 0
 ```
 
-### Why the country check is a singular test, not `accepted_values`
+### Why `accepted_values` works here — the emulator rewrites it
 
-You would reach for dbt's `accepted_values` builtin here. On this engine it
-fails to compile, and the reason is worth knowing because it applies to
-`relationships` too.
+`accepted_values` and `relationships` are the two builtins that would *not*
+run against a plain SQL Server, and understanding why explains a piece of the
+emulator worth knowing about.
 
 dbt wraps every test body so it can count failing rows, and dbt-fabric's
 wrapper is a CTE:
@@ -693,23 +686,36 @@ select * from all_values where value_field not in ('US','GB','SG')
 
 Substituted, that becomes `with test_main_sql as ( with all_values as (…) … )`
 — a `WITH` opening immediately inside another CTE's parentheses, a **nested
-CTE**. SQL Server forbids that, so the sidecar rejects it at parse time:
+CTE**. Fabric Warehouse runs that happily; **plain SQL Server rejects it** at
+parse time:
 
 ```
 [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Incorrect syntax near the keyword 'with'. (156)
 ```
 
-Writing the same assertion CTE-free — `select … from dim_customer where country
-not in (…)` — substitutes fine and gates exactly the same rows. Same for
-`relationships`: express it as a `left join … where c.customer_id is null`.
+Since the emulator's engine *is* a plain SQL Server sidecar, that would make it
+stricter than the real thing — so the TDS layer closes the gap itself,
+flattening the nesting into the sequential form the sidecar accepts before
+forwarding:
 
-> **This one is the stand-in engine's limit, not Fabric's.** Fabric Data
-> Warehouse *does* support nested CTEs ([Microsoft Learn][nested-cte]) — it is
-> SQL Server that doesn't, so the emulator is stricter than the real thing here.
-> Teaching the TDS layer to flatten nested CTEs is planned as T6 in
-> [29-tsql-parity.md](29-tsql-parity.md), which maps the whole T-SQL surface in
-> both directions. (dbt-fabric also has an open bug of its own in this area,
-> [microsoft/dbt-fabric#318][i318].)
+```sql
+-- what dbt sends                 -- what the sidecar receives
+with test_main_sql as (           with all_values as (…),
+    with all_values as (…)             test_main_sql as (…),
+    select …                           dbt_internal_test as (…)
+), dbt_internal_test as (…)       select count(*) as failures …
+select count(*) as failures …
+```
+
+The rows still come from a real engine running real T-SQL; only the statement's
+dialect changes. Statements Fabric *itself* rejects are refused rather than
+rewritten, so a green build here still means a green build there.
+
+> The whole mechanism — what is rewritten, what is refused, and the T-SQL
+> surface mapped in both directions — is
+> [29-tsql-parity.md](29-tsql-parity.md). Note that dbt-fabric has an open bug
+> of its own in this area ([microsoft/dbt-fabric#318][i318]), so these builtins
+> may still fail against *real* Fabric for reasons unrelated to the engine.
 
 [nested-cte]: https://learn.microsoft.com/en-us/sql/t-sql/queries/nested-common-table-expression?view=fabric&preserve-view=true
 [i318]: https://github.com/microsoft/dbt-fabric/issues/318

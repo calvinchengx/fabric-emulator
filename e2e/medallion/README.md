@@ -77,7 +77,7 @@ CI runs `ubuntu-latest` (native amd64) and pays none of this.
 | 4 | Bronze | 8 customer rows + 8 order events appended to Delta with lineage columns — duplicates and the malformed row kept |
 | 5 | Silver | 7 customers, 6 orders, 1 quarantined; countries conformed to `{US, GB, SG}`; `order_id` unique |
 | 6 | Reflection | connecting to the lakehouse database reflects its Delta into SQL; `GROUP BY` over `silver_orders` returns 6 orders / 701.70 |
-| 7 | Gold | `dbt build` green — 3 view models + 8 DQ tests over TDS via ODBC Driver 18 |
+| 7 | Gold | `dbt build` green — 3 view models + 10 DQ tests over TDS via ODBC Driver 18, including dbt's **native `accepted_values` and `relationships`**, which compile to nested CTEs the emulator flattens on the wire ([docs/29](../../docs/29-tsql-parity.md)) |
 | 8 | DQ gate | poisoning silver with a duplicate + negative-amount order makes `dbt build` **fail**, then restoring it makes gold green again |
 | 9 | Semantic model | TMSL + rows published as a `SemanticModel` item; a DAX query over `executeQueries` returns the same 701.70; a wrong-audience token is rejected with 401 |
 
@@ -105,32 +105,14 @@ The harness is four files; everything it exercises lives in
    warehouse — the same scope note as [`e2e/dbt-fabric`](../dbt-fabric/) and
    [docs/16](../../docs/16-warehouse-tds.md).
 
-2. **The CTE-based dbt builtins are expressed as singular tests.** dbt-fabric
-   wraps a test body in `with test_main_sql as ( … )`. `unique` and `not_null`
-   compile to plain `SELECT`s and substitute cleanly, but `accepted_values` and
-   `relationships` compile to bodies that *themselves* open with `with`,
-   producing a **nested CTE** — which the SQL Server sidecar rejects
-   (`Incorrect syntax near the keyword 'with'`, error 156). Those two checks
-   live in [`examples/medallion/gold/tests/`](../../examples/medallion/gold/tests/)
-   as CTE-free singular tests asserting exactly the same thing.
-
-   **This is a gap in the stand-in engine, not faithful Fabric behaviour.**
-   Fabric Data Warehouse *does* support nested CTEs
-   ([Microsoft Learn](https://learn.microsoft.com/en-us/sql/t-sql/queries/nested-common-table-expression?view=fabric&preserve-view=true));
-   SQL Server does not. Closing it is planned as T6 in
-   [docs/29-tsql-parity.md](../../docs/29-tsql-parity.md), after which these two
-   builtins should run unmodified. (Independently, dbt-fabric has its own open
-   bug in this area — [microsoft/dbt-fabric#318](https://github.com/microsoft/dbt-fabric/issues/318)
-   — so the adapter may still fail against real Fabric regardless of the engine.)
-
-3. **Plain HTTP between services.** All three emulators run with TLS off, as the
+2. **Plain HTTP between services.** All three emulators run with TLS off, as the
    other containerized harnesses do, so none of the five TLS stacks in play (Go,
    Python/requests, rustls behind delta-rs, OpenSSL behind unixodbc, SQL Server)
    needs a CA distributed into it. The default developer stack
    (`docker-compose.yml`) keeps self-signed TLS **on** — mirroring production
    Azure trust is the product's point; it just isn't what this harness tests.
 
-4. **Semantic-model rows are seeded, not Direct Lake.** The model's rows are
+3. **Semantic-model rows are seeded, not Direct Lake.** The model's rows are
    exported from warehouse gold into a `data.json` definition part. Real Fabric
    would Direct-Lake them from OneLake Delta; the emulator's boundary here is
    recorded in [docs/18](../../docs/18-semantic-model-references.md), which also
