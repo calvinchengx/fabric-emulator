@@ -324,3 +324,35 @@ a witness that the stream reflects real work.
 
 Per the repo rule, the `docs/parity.md` row and its `docs/witnesses.json` entry
 land in the **same commit** as the claim.
+
+## Portal styling
+
+The portal now uses **shadcn-svelte** components on **Tailwind 4**, themed to
+Fluent rather than shipping shadcn's default slate.
+
+That last part is the point. The portal is the operator console for an emulator
+of a Microsoft product, and a developer should recognise where they are: Azure
+blue actions, 4px corners, white surfaces on a warm-grey canvas, the Segoe
+stack — the intent the original hand-rolled CSS recorded as "Fluent-mimic
+tokens per upstream DESIGN.md". shadcn is used for what it is good at
+(accessible primitives, real focus rings, dark mode, a coherent token
+contract); the palette stays Fabric's.
+
+Every token a shadcn component reads resolves through `@theme inline` to the
+variables in `portal/src/app.css`, so a retheme is one block rather than a
+sweep through markup — and dark mode is a single `prefers-color-scheme` block.
+The portal has no account and nowhere to store a preference, so it follows the
+OS rather than offering a switcher.
+
+The shared class vocabulary the eleven views already spoke (`.card`, `.chip`,
+`.panel`, `.btn`…) was reimplemented on those tokens instead of being replaced,
+so every view improved at once without eleven parallel rewrites. A bare
+`<button>` picks up the secondary treatment from a base rule for the same
+reason.
+
+**Cost, stated:** the bundle grew from 66 kB JS / 5.8 kB CSS to ~145 kB / 59 kB
+(43 kB / 10 kB gzipped) — bits-ui and its primitives. For a portal embedded in a
+local binary that is a fair trade for accessibility and consistency; it would
+not be on a public site's critical path. Tailwind is now a build dependency of
+`portal/`, installed through the existing pnpm workspace, and CI's
+`pnpm install --frozen-lockfile` covers it.

@@ -1,5 +1,6 @@
 <script>
   import { api } from './api.js';
+  import { Button } from '$lib/components/ui/button/index.js';
 
   // The flow view: the emulator's own event stream, live.
   //
@@ -221,16 +222,16 @@
   browser with <code>curl -N /_emulator/events</code>.
 </p>
 
-<p>
+<div class="mt-4 flex flex-wrap items-center gap-2">
   <span class="chip {link === 'streaming' ? 'completed' : link === 'connecting' ? 'notstarted' : 'failed'}">{link}</span>
   {#if dropped > 0}
     <span class="chip failed" title="This browser fell behind; the emulator was never slowed down.">
       {dropped} event(s) dropped
     </span>
   {/if}
-  <button onclick={clear}>Clear</button>
-  <button onclick={loadLineage}>Reload graph</button>
-</p>
+  <Button variant="outline" size="sm" onclick={clear}>Clear</Button>
+  <Button variant="outline" size="sm" onclick={loadLineage}>Reload graph</Button>
+</div>
 
 {#if error}<p class="error">{error}</p>{/if}
 
@@ -285,80 +286,64 @@
 {/if}
 
 <style>
+  @reference '../src/app.css';
+
   .graph-scroll {
-    overflow-x: auto;
-    border: 1px solid var(--border, #ddd);
-    border-radius: 6px;
-    padding: 4px;
+    @apply overflow-x-auto rounded-lg border bg-card p-2;
   }
   .link {
     fill: none;
-    stroke: #9aa;
+    stroke: var(--border);
     stroke-width: 1.5;
   }
+  /* Solid where the emulator moved the bytes itself, dashed where an engine
+     reported the movement — the same distinction lineage records as `producer`. */
   .link.notebook,
   .link.notebookobserved {
     stroke-dasharray: 4 3;
   }
   .node rect {
-    fill: #f6f8fa;
-    stroke: #c4cdd5;
+    fill: var(--muted);
+    stroke: var(--border);
   }
   .node text {
+    fill: var(--foreground);
     font-size: 12px;
-    fill: #222;
   }
   .node .sub {
+    fill: var(--muted-foreground);
     font-size: 10px;
-    fill: #777;
   }
   .node.touched rect {
-    fill: #e7f5ec;
-    stroke: #4a9;
+    fill: var(--success-bg);
+    stroke: var(--success);
   }
   .node.broken rect {
-    fill: #fdecea;
-    stroke: #d33;
+    fill: var(--danger-bg);
+    stroke: var(--danger);
   }
-  /* The portal's global rules make every input a full-width 32px box and every
-     label a block — right for the forms elsewhere, wrong for a row of filter
-     checkboxes. Undo both, scoped to here. */
   .filters {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-    align-items: center;
+    @apply flex flex-wrap items-center gap-4;
   }
   .filters label {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin: 0;
-    font-weight: 400;
+    @apply m-0 inline-flex items-center gap-1.5 font-normal;
   }
   .filters input[type='checkbox'] {
-    width: auto;
-    height: auto;
-    margin: 0;
+    @apply m-0 h-4 w-4;
   }
-  /* One colour per kind, so the log is scannable without reading it. */
   .chip.file {
-    background: var(--divider);
-    color: var(--muted);
+    @apply bg-muted text-muted-foreground border-transparent;
   }
   .chip.table {
-    background: var(--success-tint);
-    color: var(--success);
+    @apply bg-[var(--success-bg)] text-success border-transparent;
   }
   .chip.activity {
-    background: var(--caution-tint);
-    color: var(--caution-ink);
+    @apply bg-[var(--caution-bg)] text-caution border-transparent;
   }
   .chip.job {
-    background: var(--primary-tint, #e8eefc);
-    color: var(--primary, #2b5fd9);
+    @apply bg-accent text-accent-foreground border-transparent;
   }
   .failed-row td {
-    background: #fdecea;
+    @apply bg-[var(--danger-bg)];
   }
 </style>
