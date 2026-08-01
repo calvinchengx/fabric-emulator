@@ -21,23 +21,19 @@ jobs:
       - run: go vet ./...
       - run: go build ./...
 
-      # --- a real SQL Server: ubuntu only, for now -----------------------------
-      # The warehouse tests gate on WAREHOUSE_MSSQL_DSN and skip without it. The
-      # intent is a real engine on ALL THREE legs, so the gate is identical
-      # everywhere — but the other two routes are not working yet and are being
-      # solved before the SQLite double is dropped:
+      # --- a real SQL Server: Linux and Windows ---------------------------------
+      # The warehouse tests gate on WAREHOUSE_MSSQL_DSN and skip without it, so
+      # every leg that can reach an engine gets one. Two of three now do:
       #
-      #   macOS    `colima start --vm-type=vz --vz-rosetta` dies at "Setting up
-      #            Rosetta share" on the hosted macos-26-arm64 image. Rosetta is
-      #            not available to the VM there, so amd64 emulation of the
-      #            mssql image has no fast path.
-      #   windows  SqlLocalDB.exe is not at the documented
-      #            "160\\Tools\\Binn" path on the runner image.
-      #
-      # Until both are settled this runs on ubuntu alone, where it is measured
-      # at ~10s to first query. That is deliberately NOT enough to drop the
-      # SQLite double: doing so would put the other two legs below the coverage
-      # floor (90.9% with an engine, 89.2% without).
+      #   ubuntu   docker, native amd64 — ~10s to first query
+      #   windows  LocalDB, already on the runner image
+      #   macOS    NOT YET. `colima start --vm-type=vz --vz-rosetta` dies at
+      #            "Setting up Rosetta share" on macos-26-arm64 — Rosetta is not
+      #            exposed to the VM, so this is not a tuning problem and no flag
+      #            combination fixes it. The only remaining route is QEMU
+      #            interpreting the whole SQL Server userland, which is minutes
+      #            per run to reproduce a number ubuntu already produces.
+      #            Deprioritised deliberately, not forgotten.
       - name: SQL Server (Linux, native)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -67,34 +63,44 @@ jobs:
         run: |
           echo 'WAREHOUSE_MSSQL_DSN=server=localhost,1433;user id=sa;password=Str0ng!Passw0rd;encrypt=disable' >> "$GITHUB_ENV"
 
-      # Diagnostic only — never fails the leg. The first Windows attempt assumed
-      # LocalDB at a fixed "160\Tools\Binn" path and got "not recognized", which
-      # cannot distinguish "installed elsewhere" from "not installed at all".
-      # The runner manifest lists SQL.LocalDB.Runtime 17.14, but that is a Visual
-      # Studio COMPONENT version, not a SQL Server major version — an engine was
-      # inferred from a component listing.
+      # LocalDB, which the runner already ships — no container. The Windows image
+      # has Docker but only WSLv1, which has no Linux kernel, and mssql/server
+      # publishes no Windows manifest. LocalDB is a real SQL Server engine and
+      # the Go driver reaches it over a named pipe (internal/testsupport
+      # blank-imports go-mssqldb/namedpipe, whose init registers only on Windows).
       #
-      # So: look, report, and decide from evidence. If this finds an engine, the
-      # Windows leg can have a real one and risk #1 (whether LocalDB supports the
-      # INSERT BULK protocol reflect.go depends on) finally becomes testable.
-      - name: Probe for LocalDB (diagnostic, non-fatal)
+      # The path is GLOBBED, not hard-coded. A first attempt assumed
+      # "160\Tools\Binn" and got "not recognized"; a probe found it at 170 on
+      # windows-2025-vs2026. Pinning a version means the next image bump silently
+      # loses the engine — and losing it is invisible, because the tests skip
+      # rather than fail.
+      - name: SQL Server LocalDB (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        continue-on-error: true
         run: |
-          $found = Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server" -Filter SqlLocalDB.exe `
-                     -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-          if ($found) {
-            Write-Host "LocalDB found at:"; $found | ForEach-Object { Write-Host "  $_" }
-            & $found[0] info
-          } else {
-            Write-Host "no SqlLocalDB.exe under $env:ProgramFiles\Microsoft SQL Server"
-            Write-Host "--- what IS there ---"
-            Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server" -ErrorAction SilentlyContinue |
-              Select-Object -ExpandProperty Name
-            Write-Host "--- sqllocaldb on PATH? ---"
-            Get-Command sqllocaldb -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
-          }
+          # @(...) forces an array: -ExpandProperty returns a bare STRING on a
+          # single match, and indexing that yields its first CHARACTER.
+          $exe = @(Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server" -Filter SqlLocalDB.exe `
+                     -Recurse -ErrorAction SilentlyContinue |
+                   Sort-Object FullName -Descending |
+                   Select-Object -ExpandProperty FullName)[0]
+          if (-not $exe) { throw "no SqlLocalDB.exe under $env:ProgramFiles\Microsoft SQL Server" }
+          Write-Host "using $exe"
+          # create fails if the instance already exists; start is the idempotent
+          # half, and `info` below is what actually has to succeed.
+          & $exe create MSSQLLocalDB -s 2>$null
+          & $exe start  MSSQLLocalDB    2>$null
+          $info = & $exe info MSSQLLocalDB
+          $pipe = (($info | Select-String 'Instance pipe name:') -replace '.*Instance pipe name:\s*', '').Trim()
+          if (-not $pipe) { $info | Write-Host; throw "could not read the instance pipe name" }
+          Write-Host "pipe: $pipe"
+          # ADO/keyword form, NOT sqlserver://?pipe=... — a LocalDB pipe name
+          # contains '#' (np:\\.\pipe\LOCALDB#A1B2C3D4\tsql\query), which a URL
+          # parser reads as a fragment delimiter and silently truncates. The
+          # connection then fails on a half a pipe name with nothing saying why.
+          # Keyword form does no URL parsing, and it is the shape the Linux leg
+          # already uses, so every gated leg carries one DSN form rather than two.
+          "WAREHOUSE_MSSQL_DSN=server=$pipe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # The server tests start a real entra-emulator in-process and drive the
       # full token → JWKS → RBAC → LRO path over HTTP.
@@ -106,13 +112,18 @@ jobs:
       # below 90% — enforced only where a real SQL Server was reachable.
       #
       # The SQLite double is gone, so the warehouse tests skip without
-      # WAREHOUSE_MSSQL_DSN: measured 90.9% with an engine, 89.2% without,
-      # against a 90% floor. Enforcing on a leg with no engine would fail it for
-      # a reason unrelated to the change being tested.
+      # WAREHOUSE_MSSQL_DSN: measured 91.2% with an engine against 89.4%
+      # without. HEADROOM ON A GATED LEG IS 1.2 POINTS — that is the number that
+      # decides whether a future change trips this gate, not the totals.
+      # Enforcing on a leg with no engine would fail it at 89.4% for a reason
+      # unrelated to the change being tested.
       #
-      # This is a TEMPORARY asymmetry and the intent is still one identical gate
-      # on all three legs. It exists because neither non-Linux route works on
-      # the hosted images yet (see the setup steps above). The skip is a loud
+      # The condition keys on the DSN, not on the platform, so the floor arms
+      # itself the moment a leg gains an engine — nobody has to remember to edit
+      # this when macOS is solved.
+      #
+      # TEMPORARY, and deliberately so: the intent remains one identical gate on
+      # all three legs, and macOS is the only leg still short. The skip is a loud
       # ::warning:: rather than a silent pass, so "the floor is green" cannot
       # come to mean "the floor did not run" without someone seeing it said so.
       - name: Coverage floor (90%)
