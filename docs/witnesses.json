@@ -595,5 +595,29 @@
       "go:TestAdaptRewritesCTASInsideEXEC",
       "go:TestDialectFixRewritesCTAS"
     ]
+  },
+  "list-item-job-instances-get-jobs-instances": {
+    "section": "Platform / fundamentals",
+    "claim": "**List Item Job Instances** (`GET …/jobs/instances`)",
+    "witnesses": [
+      "go:TestListItemJobInstances",
+      "go:TestJobSchedulerAPIEndToEnd"
+    ]
+  },
+  "item-job-scheduler-items-id-jobs-jobtype-schedules": {
+    "section": "Platform / fundamentals",
+    "claim": "**Item Job Scheduler** (`…/items/{id}/jobs/{jobType}/schedules`)",
+    "witnesses": [
+      "go:TestJobSchedulerAPIEndToEnd",
+      "go:TestScheduleWithPastStartTriggersInstantly",
+      "go:TestScheduleLimitAndValidationOverHTTP",
+      "go:TestScheduleCRUDRoundTrip",
+      "go:TestClockAdvanceFiresEachDueOccurrenceExactlyOnce",
+      "go:TestScheduledPipelineReallyRuns",
+      "go:TestParseRejectsEveryDocumentedBound",
+      "go:TestDailyHoldsLocalWallTimeAcrossDST",
+      "go:TestMonthlyOrdinalWeekday",
+      "go:TestCronCatchUpIsCappedAndKeepsTheNewest"
+    ]
   }
 }

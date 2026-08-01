@@ -161,6 +161,25 @@ CREATE TABLE IF NOT EXISTS job_instances (
 	cancelled INTEGER NOT NULL DEFAULT 0,
 	fail_with TEXT NOT NULL DEFAULT ''
 );
+-- Fabric's native per-item Job Scheduler (POST …/jobs/{jobType}/schedules).
+-- The ScheduleConfig union is stored as the JSON the caller sent, validated on
+-- the way in by internal/schedule: the emulator round-trips exactly what it
+-- was given rather than a lossy column-per-field decomposition.
+CREATE TABLE IF NOT EXISTS item_schedules (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	job_type TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	configuration TEXT NOT NULL,   -- JSON ScheduleConfig, verbatim
+	execution_data TEXT NOT NULL DEFAULT '',  -- JSON, optional
+	owner_id TEXT NOT NULL,
+	owner_type TEXT NOT NULL DEFAULT 'User',
+	created_at INTEGER NOT NULL,
+	-- The high-water mark of materialised occurrences: the next evaluation
+	-- fires the window (fired_through, now]. 0 = never fired.
+	fired_through INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS pipeline_runs (
 	job_id TEXT PRIMARY KEY REFERENCES job_instances(id) ON DELETE CASCADE,
 	status TEXT NOT NULL,
