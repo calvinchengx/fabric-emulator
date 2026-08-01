@@ -111,7 +111,22 @@ winget:
           owner: microsoft
           name: winget-pkgs
           branch: master
-    skip_upload: '{{ if index .Env "WINGET_TOKEN" }}false{{ else }}true{{ end }}'
+    # Two gates, not one.
+    #
+    # WINGET_TOKEN keeps forks (which have no secret) from failing the release.
+    #
+    # PUBLISH_WINGET is the cadence control, and it is the reason winget does
+    # not ride every tag. Tags land here several times a day; winget moderation
+    # takes days. Publishing on each one grows a queue of superseded PRs faster
+    # than it drains — on 2026-08-01 seven had to be closed by hand (0.4.1
+    # through 0.9.0) so that one current version could carry the package.
+    # Moderator attention spent on a version nobody will install is worse than
+    # a winget entry that lags by a few tags.
+    #
+    # So publish deliberately: re-run the Release workflow against the tag you
+    # want distributed, with publish_winget=true. `replace_existing_artifacts`
+    # above makes that re-run safe on a tag already released.
+    skip_upload: '{{ if and (index .Env "WINGET_TOKEN") (eq (index .Env "PUBLISH_WINGET") "true") }}false{{ else }}true{{ end }}'
 
 changelog:
   sort: asc

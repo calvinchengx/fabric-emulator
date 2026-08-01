@@ -3,6 +3,18 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Manual re-run, whose only job is to publish the winget manifest for a tag
+  # that has already shipped. Dispatch it with --ref set to that tag:
+  #
+  #   gh workflow run Release --ref v0.11.0 -f publish_winget=true
+  #
+  # Everything else re-runs idempotently (release.replace_existing_artifacts).
+  workflow_dispatch:
+    inputs:
+      publish_winget:
+        description: 'Submit the winget manifest PR for this ref'
+        type: boolean
+        default: false
 
 permissions:
   contents: write # create the GitHub Release
@@ -44,6 +56,10 @@ jobs:
           # open the manifest PR against microsoft/winget-pkgs. Optional: if the
           # secret is unset the winget step self-skips (skip_upload).
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          # Off for tag pushes, so a day of tagging doesn't queue a day of
+          # manifest PRs behind winget's multi-day moderation. See the comment
+          # on skip_upload in .goreleaser.yaml.
+          PUBLISH_WINGET: ${{ inputs.publish_winget || false }}
 
   image:
     name: Docker image → GHCR
