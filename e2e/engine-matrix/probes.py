@@ -254,6 +254,62 @@ def sql_temp_view(spark):
     assert spark.sql("SELECT count(*) AS n FROM v_probe").collect()[0]["n"] == 1
 
 
+def sql_describe_registered_delta_table(spark):
+    """DESCRIBE TABLE must return one row per column for a registered Delta table.
+
+    Sail returns the right SCHEMA (col_name, data_type, comment) and ZERO ROWS,
+    and raises nothing. Against a TEMP VIEW it answers correctly, so the gap is
+    specific to catalog-registered Delta tables — which is exactly what the
+    emulator's registerLakehouseTables creates for every lakehouse table.
+
+    This cost a day precisely because three components each behaved reasonably:
+    Sail answers with no rows and no error; the Livy agent forwards the empty
+    result faithfully (the schema has 3 fields, so it is not an empty envelope);
+    dbt's get_columns_in_relation reads that as "this table has no columns"; and
+    the model then compiles to `select` followed by `from`. Nobody lied. The
+    information that the answer was missing simply did not survive the chain.
+
+    So the row belongs here rather than in a comment: it is the only place the
+    claim gets re-checked against a live engine. And it is broader than dbt —
+    ANY introspection against a registered table has this hole, so a green row
+    one day is what tells us the workarounds can be removed.
+
+    The portable route, which is what the medallion models use instead:
+    `run_query("select * from t limit 0").column_names`, which carries the
+    schema in the result envelope and never asks the catalog.
+    """
+    p = _table_path("t_describe")
+    spark.sql("SELECT 1 AS id, 'a' AS v").write.format("delta").mode("overwrite").save(p)
+    spark.sql(f"CREATE TABLE IF NOT EXISTS d_reg USING delta LOCATION '{p}'")
+    rows = spark.sql("DESCRIBE TABLE d_reg").collect()
+    names = [r[0] for r in rows]
+    assert "id" in names and "v" in names, f"DESCRIBE returned {len(rows)} rows: {names}"
+
+
+def sql_describe_detail_registered_delta(spark):
+    """DESCRIBE DETAIL resolves a registered Delta table to its physical location.
+
+    e2e/livy/delta_ops.py needs exactly this: when a statement names a
+    registered table rather than a path, the delta-rs interception has to find
+    where the table actually lives before it can act on it.
+
+    Sail does not have DETAIL in its DESCRIBE grammar at all, so this raises
+    rather than returning nothing. That is the BETTER failure — it is loud, and
+    `collect()[0]` never runs on an empty list — but it does mean the
+    name-resolution route is unavailable on Sail, which is why OPTIMIZE against
+    a named table degrades to skipped there.
+
+    Recorded separately from the DESCRIBE TABLE row ᵉ because the two fail in
+    opposite ways, and the difference is the whole lesson: one is silent and
+    cost a day, the other is noisy and cost minutes.
+    """
+    p = _table_path("t_detail")
+    spark.sql("SELECT 1 AS id").write.format("delta").mode("overwrite").save(p)
+    spark.sql(f"CREATE TABLE IF NOT EXISTS dd_reg USING delta LOCATION '{p}'")
+    rows = spark.sql("DESCRIBE DETAIL dd_reg").collect()
+    assert rows and rows[0]["location"], f"DESCRIBE DETAIL returned {len(rows)} rows"
+
+
 def sql_filter_on_unprojected_window_column(spark):
     """Filter on a window-function column the outer SELECT does not project.
 
@@ -307,6 +363,8 @@ PROBES = [
     ("spark.python_udf", "Python UDF", python_udf),
     ("spark.sql_temp_view", "SQL over a temp view", sql_temp_view),
     ("spark.sql_filter_unprojected_window", "Filter on a `row_number()` column the `SELECT` drops ᵈ", sql_filter_on_unprojected_window_column),
+    ("spark.sql_describe_registered_delta", "`DESCRIBE TABLE` on a registered Delta table ᵉ", sql_describe_registered_delta_table),
+    ("spark.sql_describe_detail_registered", "`DESCRIBE DETAIL` on a registered Delta table ᶠ", sql_describe_detail_registered_delta),
 ]
 
 

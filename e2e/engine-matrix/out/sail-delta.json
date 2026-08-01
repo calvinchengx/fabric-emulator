@@ -134,5 +134,21 @@
     "description": "Filter on a `row_number()` column the `SELECT` drops \u1d48",
     "engine": "sail-delta",
     "status": "pass"
+  },
+  {
+    "id": "spark.sql_describe_registered_delta",
+    "description": "`DESCRIBE TABLE` on a registered Delta table \u1d49",
+    "engine": "sail-delta",
+    "status": "fail",
+    "error_class": "AssertionError",
+    "error": "DESCRIBE returned 0 rows: []"
+  },
+  {
+    "id": "spark.sql_describe_detail_registered",
+    "description": "`DESCRIBE DETAIL` on a registered Delta table \u1da0",
+    "engine": "sail-delta",
+    "status": "fail",
+    "error_class": "IllegalArgumentException",
+    "error": "invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA', 'NAMESPACE', 'TABLE', 'EXTENDED', 'QUERY', or query"
   }
 ]
