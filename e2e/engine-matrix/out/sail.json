@@ -65,19 +65,19 @@
   },
   {
     "id": "streaming.read_rate",
-    "description": "`readStream` (rate source)",
+    "description": "`readStream` (rate source) \u2014 schema only \u1d9c",
     "engine": "sail",
     "status": "pass"
   },
   {
     "id": "streaming.sink_console",
-    "description": "Streaming sink \u2014 console",
+    "description": "Streaming sink \u2014 console \u2014 liveness only \u1d9c",
     "engine": "sail",
     "status": "pass"
   },
   {
     "id": "streaming.sink_memory",
-    "description": "Streaming sink \u2014 memory",
+    "description": "Streaming sink \u2014 memory (rows readable)",
     "engine": "sail",
     "status": "fail",
     "error_class": "AnalysisException",
@@ -85,7 +85,7 @@
   },
   {
     "id": "streaming.sink_parquet",
-    "description": "Streaming sink \u2014 parquet",
+    "description": "Streaming sink \u2014 parquet (rows readable)",
     "engine": "sail",
     "status": "fail",
     "error_class": "AnalysisException",
@@ -93,7 +93,7 @@
   },
   {
     "id": "streaming.sink_delta",
-    "description": "Streaming sink \u2014 **delta**",
+    "description": "Streaming sink \u2014 **delta** (rows readable)",
     "engine": "sail",
     "status": "fail",
     "error_class": "AnalysisException",
