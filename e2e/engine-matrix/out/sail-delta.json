@@ -43,17 +43,13 @@
     "id": "delta.optimize",
     "description": "`OPTIMIZE`",
     "engine": "sail-delta",
-    "status": "fail",
-    "error_class": "TableNotFoundError",
-    "error": "Local path \"/tmp/probe/t_opt\" does not exist or you don't have access! Error: Os { code: 2, kind: NotFound, message: \"No such file or directory\" }"
+    "status": "pass"
   },
   {
     "id": "delta.vacuum",
     "description": "`VACUUM`",
     "engine": "sail-delta",
-    "status": "fail",
-    "error_class": "TableNotFoundError",
-    "error": "Local path \"/tmp/probe/t_vac\" does not exist or you don't have access! Error: Os { code: 2, kind: NotFound, message: \"No such file or directory\" }"
+    "status": "pass"
   },
   {
     "id": "delta.cdf",

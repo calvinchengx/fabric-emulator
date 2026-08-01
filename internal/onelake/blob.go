@@ -16,8 +16,10 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -72,6 +74,17 @@ func writeBlobErr(w http.ResponseWriter, status int, code, msg string) {
 // ServeBlob handles the Blob dialect. Paths arrive workspace-first (the
 // /onelake account prefix, when present, is stripped by the router).
 func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
+	// Same env-gated tracing as the DFS surface (ServeHTTP): the Blob dialect
+	// is what delta-rs speaks, so a Delta commit is only visible here.
+	if os.Getenv("ONELAKE_TRACE") != "" {
+		tw := &traceWriter{ResponseWriter: w, status: 200}
+		w = tw
+		defer func() {
+			log.Printf("[onelake-blob] %s %s?%s inm=%q copy=%q -> %d (%dB)",
+				r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("If-None-Match"),
+				r.Header.Get("x-ms-copy-source"), tw.status, tw.n)
+		}()
+	}
 	p, err := s.Auth.ValidateRequest(r)
 	if err != nil {
 		w.Header().Set("WWW-Authenticate", `Bearer authorization_uri="`+s.Auth.Issuer+`"`)
@@ -280,13 +293,28 @@ func guidAddressed(prefix, itemID string) bool {
 	return seg != "" && strings.HasPrefix(itemID, seg)
 }
 
-// listBlobs implements List Blobs (?comp=list) with prefix, delimiter, and
-// marker paging — the XML dialect object_store's list() parses.
+// listBlobs implements List Blobs (?comp=list) with prefix, delimiter,
+// marker paging, and startFrom — the XML dialect object_store's list() parses.
+//
+// startFrom is how object_store expresses list_with_offset on Azure, and its
+// semantics are the opposite of the S3/GCP equivalent: **inclusive**, where
+// S3's start-after is exclusive. object_store compensates by dropping the
+// first entry when it equals the offset, so returning a *half-open* range here
+// would silently skip a blob (arrow-rs-object-store src/azure/client.rs:
+// "startFrom is inclusive (unlike S3/GCP's start-after which is exclusive)").
+//
+// Ignoring it entirely — as this did — is worse than skipping: the listing
+// starts from the beginning, so delta-rs's get_latest_version() gets a log
+// segment beginning at version 0 when it asked for one beginning at N, and
+// the kernel rejects it as "Invalid table version: N". That makes every
+// delta-rs commit-conflict path fail (OPTIMIZE, VACUUM, MERGE) while plain
+// writes still pass, because only the former re-reads the log from an offset.
 func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
 	q := r.URL.Query()
 	prefix := strings.TrimPrefix(q.Get("prefix"), "/")
 	delimiter := q.Get("delimiter")
 	marker := q.Get("marker")
+	startFrom := q.Get("startFrom")
 	maxResults := 5000
 	if mr := q.Get("maxresults"); mr != "" {
 		if n, err := strconv.Atoi(mr); err == nil && n > 0 && n < maxResults {
@@ -345,6 +373,12 @@ func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Wo
 		if marker != "" && b.name <= marker {
 			continue
 		}
+		// Inclusive, per the note above — `<`, not `<=`. marker wins when both
+		// are present: object_store sends startFrom only on the first request
+		// and marker on every page after it.
+		if marker == "" && startFrom != "" && b.name < startFrom {
+			continue
+		}
 		if len(blobs)+len(prefixes) >= maxResults {
 			next = blobs[len(blobs)-1].Name
 			if len(prefixes) > 0 && prefixes[len(prefixes)-1] > next {
@@ -399,3 +433,4 @@ func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Wo
 	fmt.Fprint(w, xml.Header)
 	_ = xml.NewEncoder(w).Encode(out)
 }
+

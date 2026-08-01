@@ -166,12 +166,39 @@ performs the operation, not the Spark engine, so nothing appears in a Spark
 job listing. That is a deliberate, documented divergence. The alternative is an
 honest failure, which helps nobody testing a notebook that calls `OPTIMIZE`.
 
-**Not yet working: OneLake tables.** `install()` passes no storage credentials
-to delta-rs, so an `abfss://…onelake…` target fails on auth. delta-rs needs the
-bearer or SAS the Spark session already holds, and a Connect session offers no
-supported way to read it back. The engine matrix's third column found this by
-running the module across a container boundary, where a shared filesystem could
-not paper over it — the single-process check had passed.
+### Credentials on the OneLake path
+
+delta-rs reaches OneLake **on its own account**, not the Spark session's. A
+Spark Connect client cannot read back the bearer the server holds — no such API
+exists, in Sail or in Apache Spark's own Connect client — so `e2e/livy/storage.py`
+performs its own client-credentials grant against the same issuer with the same
+Storage audience. delta-rs therefore authenticates as the same principal Sail
+does, without either side reading the other's token.
+
+The two sides take credentials in opposite shapes, and that drives the design:
+
+| | Sail | delta-rs |
+|---|---|---|
+| Where credentials come from | process env, read once at startup (`MicrosoftAzureBuilder::from_env`) | `storage_options` on every call |
+| When they can change | never — the launcher mints before `exec sail` | per statement |
+
+So `install()` takes the resolver **as a callable**, not a dict: every
+intercepted statement resolves a current bearer, and a refreshed token needs no
+restart — the one thing the Sail side cannot do.
+
+Verified end to end by `e2e/livy` against an `abfss://…onelake…` table, with a
+negative control: the same OPTIMIZE with `storage_options={}` must be *refused*,
+so a pass cannot mean "OneLake lets anyone in".
+
+Getting there surfaced a real emulator bug worth recording, because it only
+appears on this path. The Blob endpoint's `List Blobs` ignored **`startFrom`**,
+the offset parameter object_store uses for `list_with_offset`. delta-rs's
+`get_latest_version()` then received a log segment starting at version 0 when it
+had asked for one starting at N, which the kernel rejects as `Invalid table
+version: N`. Plain writes passed throughout — only the commit-conflict paths
+(OPTIMIZE, VACUUM, MERGE) re-read the log from an offset, so only they broke.
+Azure's `startFrom` is **inclusive**, unlike S3/GCP's exclusive `start-after`;
+`TestBlobListStartFrom` pins that.
 
 Three deliberate limits:
 
@@ -186,6 +213,13 @@ Three deliberate limits:
   not an interception of `spark.read`. Silently rewriting a user's read chain
   would hide which engine answered; calling it by name makes the source
   obvious. The result is a materialised DataFrame, not a lazy scan.
+
+  **The table must be created by delta-rs**, because Sail's writer cannot enable
+  the feature: it answers `Unsupported table features required: [ChangeDataFeed]`
+  even when the property and the feature are both named. So the emulator can
+  *serve* a change feed on OneLake — verified — but a user cannot produce a
+  CDF-enabled table through Sail. Use the JVM overlay for that, or write the
+  table with `deltalake` directly.
 
 Interception is installed **only on the Sail/Connect path**. On the JVM overlay
 Spark runs these natively with full syntax, so intercepting would be a

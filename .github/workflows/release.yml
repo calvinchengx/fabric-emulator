@@ -85,7 +85,7 @@ jobs:
             build_args: ""
           - name: spark-agent
             dockerfile: docker/python-runtime/Dockerfile
-            build_args: UV_GROUP=spark-connect
+            build_args: UV_GROUP=sail-delta
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4

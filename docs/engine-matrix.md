@@ -65,8 +65,8 @@ tests never touch.
 | Time travel — SQL `VERSION AS OF` | ✅ | ✅ | ✅ |
 | `MERGE INTO` a registered table at a **local path** ᵃ | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ✅ |
 | `MERGE INTO delta.`path`` (path target) | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ✅ |
-| `OPTIMIZE` | ❌ `invalid argument: found OPTIMIZE at 0:8 expected something else, ';', statement, or end of` | ❌ `Local path "/tmp/probe/t_opt" does not exist or you don't have access! Error: Os { code: 2` | ✅ |
-| `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ❌ `Local path "/tmp/probe/t_vac" does not exist or you don't have access! Error: Os { code: 2` | ✅ |
+| `OPTIMIZE` | ❌ `invalid argument: found OPTIMIZE at 0:8 expected something else, ';', statement, or end of` | ✅ | ✅ |
+| `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ✅ | ✅ |
 | Change Data Feed (must not be inert) | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ |
 | `readStream` (rate source) | ✅ | ✅ | ✅ |
 | Streaming sink — console | ✅ | ✅ | ✅ |
@@ -79,7 +79,7 @@ tests never touch.
 | Python UDF ᵇ | ❌ `An exception was thrown from the Python worker. Please see the stack trace below. TypeErro` | ❌ `An exception was thrown from the Python worker. Please see the stack trace below. TypeErro` | ✅ |
 | SQL over a temp view | ✅ | ✅ | ✅ |
 
-**11 of 19 capabilities differ between the engines.**
+**9 of 19 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the
 candidate list for upstream Sail contributions.
 
@@ -91,3 +91,10 @@ row is not evidence that Sail lacks `MERGE`.
 ᵇ A failure here is a pyspark client/worker protocol mismatch in the probe
 container, not a missing capability: Sail embeds CPython via `pyo3` to run
 Python UDFs. Fix by pinning matching pyspark versions.
+
+ᶜ The CDF row fails on the **write**, not the read. Sail's writer cannot
+enable the table feature (`Unsupported table features required:
+[ChangeDataFeed]`) even when the property and the feature are both named,
+so the probe never gets a CDF-enabled table to read. The read side is real
+and verified separately in `e2e/livy` against OneLake, on a table written
+by delta-rs. Sail-authored CDF tables need the JVM overlay.

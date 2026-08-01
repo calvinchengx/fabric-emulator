@@ -38,6 +38,8 @@ services:
       context: ../..
       dockerfile: docker/sail/Dockerfile
     command: ["spark", "server", "--ip", "0.0.0.0", "--port", "50051"]
+    volumes:
+      - probe-tables:/tmp/probe
 
   sail-delta-probe:
     profiles: [sail-delta]
@@ -50,6 +52,11 @@ services:
       - ./probes.py:/probes.py:ro
       - ../livy:/livy:ro
       - ./out:/out
+      # Sail writes the table; delta-rs, in *this* container, then opens it. In
+      # the real stack both reach the same OneLake, so they must reach the same
+      # bytes here too — without this the probe measured a missing file rather
+      # than the capability, and every delta row failed on "does not exist".
+      - probe-tables:/tmp/probe
     environment:
       ENGINE: sail-delta
       SPARK_REMOTE: "sc://sail-delta:50051"
@@ -75,3 +82,7 @@ services:
       - --master
       - local[2]
       - /opt/spark/work-dir/probes.py
+
+volumes:
+  # Shared between the Sail engine and the delta-rs probe: see sail-delta-probe.
+  probe-tables:

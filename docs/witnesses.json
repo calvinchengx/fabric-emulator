@@ -251,13 +251,6 @@
       "ci:delta-rs"
     ]
   },
-  "time-travel-option-versionasof-n": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Time travel `option(\"versionAsOf\", n)`",
-    "witnesses": [
-      "ci:sail"
-    ]
-  },
   "merge-into": {
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "`MERGE INTO`",
@@ -530,6 +523,28 @@
     "witnesses": [
       "ci:data-science-loop",
       "go:TestMLflowProxyContract"
+    ]
+  },
+  "time-travel-dataframe-option-and-sql-version-as-of": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Time travel — DataFrame option **and** SQL `VERSION AS OF`",
+    "witnesses": [
+      "ci:sail",
+      "ci:engine-matrix"
+    ]
+  },
+  "optimize-vacuum-delta-maintenance": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`OPTIMIZE` / `VACUUM` (Delta maintenance)",
+    "witnesses": [
+      "ci:livy-native"
+    ]
+  },
+  "change-data-feed": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Change Data Feed",
+    "witnesses": [
+      "ci:livy-native"
     ]
   }
 }
