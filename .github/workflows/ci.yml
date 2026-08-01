@@ -486,6 +486,22 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/medallion/run.py
 
+  medallion-advanced:
+    name: Advanced medallion — a second source system (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The advanced track continues where the tutorial stops: Contoso Web, an
+      # e-commerce feed with nested JSON, no customer id, and a deliberate
+      # overlap with the POS customer set. This job pins that overlap — 4 shared
+      # people, 2 web-only, 1 unmatchable because POS holds no email for him —
+      # so that the conformance step which resolves them has a stated target
+      # rather than whatever a join happens to produce.
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/medallion-advanced/run.py
+
   duckdb:
     name: Real DuckDB SQL over lakehouse Delta
     strategy:
