@@ -1,6 +1,7 @@
 package onelake
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -152,5 +153,94 @@ func TestResolveExternalShortcutSignsS3WithSigV4(t *testing.T) {
 	// it is key material for the signature, not a header credential.
 	if strings.Contains(gotAuth, "Basic ") {
 		t.Fatalf("basic credential leaked: %q", gotAuth)
+	}
+}
+
+// Writing through an ADLS Gen2 shortcut must reach the target, and writing
+// through an S3 shortcut must not be attempted at all: Fabric documents S3
+// shortcuts as read-only "regardless of the user's permissions".
+func TestExternalShortcutWriteAndDelete(t *testing.T) {
+	var gotMethod, gotPath, gotBlobType string
+	var gotBody []byte
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		gotBlobType = r.Header.Get("x-ms-blob-type")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer target.Close()
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(st, nil)
+
+	conn := &store.Connection{DisplayName: "adls", CredentialsJSON: `{"credentialType":"Anonymous"}`}
+	if err := st.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	adls := &store.Shortcut{TargetType: "ADLSGen2", TargetLocation: target.URL,
+		TargetPath: "container", ConnectionID: conn.ID}
+
+	// Write reaches the target, as a whole-file block-blob PUT.
+	if derr := svc.writeExternal(adls, "dir/out.csv", []byte("a,b\n1,2\n")); derr != nil {
+		t.Fatalf("write failed: %+v", derr)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/container/dir/out.csv" {
+		t.Fatalf("upstream got %s %s", gotMethod, gotPath)
+	}
+	if string(gotBody) != "a,b\n1,2\n" {
+		t.Fatalf("upstream body = %q", gotBody)
+	}
+	if gotBlobType != "BlockBlob" {
+		t.Fatalf("x-ms-blob-type = %q", gotBlobType)
+	}
+
+	// Delete reaches the target too.
+	if derr := svc.deleteExternal(adls, "dir/out.csv"); derr != nil {
+		t.Fatalf("delete failed: %+v", derr)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Fatalf("upstream method = %s, want DELETE", gotMethod)
+	}
+
+	// S3 is read-only by specification — neither write nor delete may be
+	// forwarded, and the refusal must not depend on the target's permissions.
+	s3 := &store.Shortcut{TargetType: "AmazonS3", TargetLocation: target.URL,
+		TargetPath: "bucket", ConnectionID: conn.ID}
+	gotMethod = ""
+	if derr := svc.writeExternal(s3, "x.csv", []byte("nope")); derr == nil {
+		t.Fatal("write through an S3 shortcut was allowed; Fabric documents them as read-only")
+	}
+	if derr := svc.deleteExternal(s3, "x.csv"); derr == nil {
+		t.Fatal("delete through an S3 shortcut was allowed")
+	}
+	if gotMethod != "" {
+		t.Fatalf("an S3 write reached the target (%s) — it must be refused locally", gotMethod)
+	}
+}
+
+// An upstream refusal must surface as an error, not a silent success.
+func TestExternalShortcutWriteSurfacesUpstreamFailure(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "denied", http.StatusForbidden)
+	}))
+	defer target.Close()
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(st, nil)
+	conn := &store.Connection{DisplayName: "adls", CredentialsJSON: `{"credentialType":"Anonymous"}`}
+	if err := st.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	sc := &store.Shortcut{TargetType: "ADLSGen2", TargetLocation: target.URL,
+		TargetPath: "container", ConnectionID: conn.ID}
+	derr := svc.writeExternal(sc, "x.csv", []byte("data"))
+	if derr == nil || derr.code != "ExternalTargetError" {
+		t.Fatalf("a 403 from the target produced %+v, want ExternalTargetError", derr)
 	}
 }

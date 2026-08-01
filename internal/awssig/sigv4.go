@@ -37,6 +37,9 @@ type Credentials struct {
 	SessionToken string
 }
 
+// HashPayload is the hex SHA256 of a request body, which SigV4 signs over.
+func HashPayload(body []byte) string { return hashHex(body) }
+
 // Sign adds the Authorization, X-Amz-Date and x-amz-content-sha256 headers to
 // req. payloadHash is the hex SHA256 of the body — use EmptyPayloadHash for a
 // body-less request. now must be UTC.

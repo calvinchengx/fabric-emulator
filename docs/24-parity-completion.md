@@ -100,7 +100,7 @@ loud failures at the edges is a better artifact than one that fakes the last
 1. ~~**Expose the JVM profile**~~ ✅ done — `docker-compose.spark-jvm.yml`, verified live, parity rows lifted.
 2. ~~**kustainer → RTI**~~ ✅ done — `--profile rti` + `docker-compose.rti.yml`, `e2e/rti`, CI job `rti`; Eventhouse/KQL exec 🔴 → 🟠. Eventstream stays 🔴: the engine has no streaming ingestion.
 3. **Tier 1 sweep** — steady, no-risk points; good parallel lane.
-4. ~~**External-store shortcut reads**~~ ✅ done — S3 (SeaweedFS + SigV4) and ADLS Gen2/Blob (Azurite + SAS). **S3 writes are deliberately absent**: Fabric documents S3 shortcuts as read-only. The genuine remaining gap is **write-through on an ADLS Gen2 shortcut**, which Fabric does support (deleting through a shortcut deletes in the storage account).
+4. ~~**External-store shortcut reads**~~ ✅ done — S3 (SeaweedFS + SigV4) and ADLS Gen2/Blob (Azurite + SAS). **S3 writes are deliberately absent**: Fabric documents S3 shortcuts as read-only. **ADLS Gen2 write-through is now done** — flush PUTs to the storage account, delete removes at the target, both witnessed by SDK reads against Azurite. Writes previously landed in the local store and silently never reached the target.
 5. **Tier 3 only on demand** — XMLA when a real SemPy user appears.
 
 Ceiling after 1–4: **~88–90% real**, with the remainder documented as boundary.

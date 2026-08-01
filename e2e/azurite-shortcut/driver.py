@@ -45,6 +45,8 @@ ACCOUNT_KEY = (
     "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
 )
 CONTAINER = "curated"
+WRITTEN_BLOB = "written-through-shortcut.csv"
+WRITTEN_PAYLOAD = b"written,through\nshortcut,yes\n"
 BLOB = "readings.csv"
 PAYLOAD = b"device,temp\ndev-1,21.5\ndev-2,30.0\n"
 
@@ -191,5 +193,62 @@ denied = requests.get(
 if denied.status_code == 200:
     raise SystemExit("a tampered SAS still read the blob — the signature is not being verified")
 print(f"tampered SAS correctly refused through the shortcut: HTTP {denied.status_code}")
+
+# ------------- 6. WRITE through the shortcut lands in the storage account
+# Fabric supports writes through an ADLS Gen2 shortcut (and documents deleting
+# a file within a shortcut as deleting it at the target). The proof that
+# matters is not the emulator's 200 — it is Azurite holding the bytes
+# afterwards, read back with the SDK rather than through the emulator.
+write_sas = generate_blob_sas(
+    account_name=ACCOUNT, container_name=CONTAINER, blob_name=WRITTEN_BLOB,
+    account_key=ACCOUNT_KEY,
+    permission=BlobSasPermissions(read=True, write=True, create=True, delete=True),
+    expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+)
+write_conn = fabric_post("/v1/connections", {
+    "displayName": "azurite-adls-rw",
+    "connectivityType": "ShareableCloud",
+    "credentialDetails": {"credentials": {
+        "credentialType": "SharedAccessSignature", "token": write_sas,
+    }},
+})
+fabric_post(
+    f"/v1/workspaces/{ws['id']}/items/{lakehouse['id']}/shortcuts",
+    {"path": "Files", "name": "adlswrite",
+     "target": {"adlsGen2": {
+         "location": f"{AZURITE}/{ACCOUNT}/{CONTAINER}",
+         "subpath": "", "connectionId": write_conn["id"],
+     }}},
+)
+
+base = f"{FABRIC}/{ws['id']}/{lakehouse['id']}/Files/adlswrite/{WRITTEN_BLOB}"
+created = requests.put(base + "?resource=file", headers=ONELAKE_HEADERS, timeout=60)
+if created.status_code not in (200, 201):
+    raise SystemExit(f"create failed: HTTP {created.status_code} {created.text[:300]}")
+appended = requests.patch(base + "?action=append&position=0", headers=ONELAKE_HEADERS,
+                          data=WRITTEN_PAYLOAD, timeout=60)
+if appended.status_code not in (200, 202):
+    raise SystemExit(f"append failed: HTTP {appended.status_code} {appended.text[:300]}")
+flushed = requests.patch(base + f"?action=flush&position={len(WRITTEN_PAYLOAD)}",
+                         headers=ONELAKE_HEADERS, timeout=60)
+if flushed.status_code != 200:
+    raise SystemExit(f"flush failed: HTTP {flushed.status_code} {flushed.text[:300]}")
+
+# The SDK is the oracle: read the blob straight from Azurite.
+landed = svc.get_blob_client(CONTAINER, WRITTEN_BLOB).download_blob().readall()
+if landed != WRITTEN_PAYLOAD:
+    raise SystemExit(f"the storage account holds {landed!r}, not what was written")
+print(f"write through the shortcut landed in Azurite ({len(landed)} bytes, verified by SDK)")
+
+# ------------- 7. DELETE through the shortcut removes it at the target
+deleted = requests.delete(base, headers=ONELAKE_HEADERS, timeout=60)
+if deleted.status_code not in (200, 202):
+    raise SystemExit(f"delete failed: HTTP {deleted.status_code} {deleted.text[:300]}")
+from azure.core.exceptions import ResourceNotFoundError
+try:
+    svc.get_blob_client(CONTAINER, WRITTEN_BLOB).download_blob().readall()
+    raise SystemExit("the blob still exists in Azurite — the delete never reached the target")
+except ResourceNotFoundError:
+    print("delete through the shortcut removed the blob at the target (verified by SDK)")
 
 print("Azurite shortcut e2e: PASS — real storage emulator, real SDK, real SAS through OneLake")
