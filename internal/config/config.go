@@ -7,6 +7,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -61,6 +62,12 @@ type Config struct {
 	// endpoint answering the T1 stub result.
 	WarehouseSQLURL string
 
+	// ListPageSize is the server's page size for list APIs. 0 uses the default
+	// (api.DefaultListPageSize); a small value forces every client through the
+	// continuation-token loop, which is how you prove a client handles
+	// pagination before real data grows into it. Negative disables paging.
+	ListPageSize int
+
 	// TSQLStrict refuses T-SQL that the SQL Server sidecar accepts but real
 	// Fabric rejects — recursive CTEs, triggers, enforced constraints and the
 	// rest of docs/29-tsql-parity.md's Class B. Off by default because it
@@ -110,6 +117,7 @@ func FromEnvPartial() *Config {
 		SQLTDSAddr:        os.Getenv("FABRIC_SQL_TDS_ADDR"),
 		WarehouseSQLURL:   os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
 		TSQLStrict:        boolEnv("FABRIC_TSQL_STRICT"),
+		ListPageSize:      intEnv("FABRIC_LIST_PAGE_SIZE"),
 		AirflowURL:        os.Getenv("FABRIC_AIRFLOW_URL"),
 		AirflowDAGDir:     os.Getenv("FABRIC_AIRFLOW_DAG_DIR"),
 		AirflowUsername:   os.Getenv("FABRIC_AIRFLOW_USERNAME"),
@@ -156,4 +164,13 @@ func boolEnv(key string) bool {
 		return true
 	}
 	return false
+}
+
+// intEnv reads an integer environment variable, 0 when unset or unparseable.
+func intEnv(key string) int {
+	n, err := strconv.Atoi(os.Getenv(key))
+	if err != nil {
+		return 0
+	}
+	return n
 }

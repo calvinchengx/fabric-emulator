@@ -101,3 +101,22 @@ func TestTSQLStrictFromEnv(t *testing.T) {
 		t.Fatal("strict mode is on by default; it must be opt-in")
 	}
 }
+
+func TestListPageSizeFromEnv(t *testing.T) {
+	t.Setenv("FABRIC_LIST_PAGE_SIZE", "2")
+	if got := FromEnvPartial().ListPageSize; got != 2 {
+		t.Fatalf("got %d, want 2", got)
+	}
+	t.Setenv("FABRIC_LIST_PAGE_SIZE", "")
+	if got := FromEnvPartial().ListPageSize; got != 0 {
+		t.Fatalf("unset should mean 0 (use the default), got %d", got)
+	}
+	t.Setenv("FABRIC_LIST_PAGE_SIZE", "not-a-number")
+	if got := FromEnvPartial().ListPageSize; got != 0 {
+		t.Fatalf("garbage should fall back to the default, got %d", got)
+	}
+	t.Setenv("FABRIC_LIST_PAGE_SIZE", "-1")
+	if got := FromEnvPartial().ListPageSize; got != -1 {
+		t.Fatalf("negative should pass through to disable paging, got %d", got)
+	}
+}

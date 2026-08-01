@@ -21,7 +21,7 @@ func (a *API) listCapacities(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	writePage(w, r, cs)
+	writePage(a, w, r, cs)
 }
 
 // assignToCapacity attaches the workspace to a capacity (202 LRO, no result).

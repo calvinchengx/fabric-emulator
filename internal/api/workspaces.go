@@ -19,7 +19,7 @@ func (a *API) listWorkspaces(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	if ws == nil {
 		ws = []*store.Workspace{}
 	}
-	writePage(w, r, ws)
+	writePage(a, w, r, ws)
 }
 
 // createWorkspace creates a workspace; the caller becomes its Admin.
@@ -166,7 +166,7 @@ func (a *API) listRoleAssignments(w http.ResponseWriter, r *http.Request, p *aut
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	writePage(w, r, ras)
+	writePage(a, w, r, ras)
 }
 
 // createRoleAssignment: Admins grant anything; Members grant roles at or

@@ -39,7 +39,7 @@ func (a *API) listTenantSettings(w http.ResponseWriter, r *http.Request, p *auth
 	}
 	// writePage applies the shared continuationToken/continuationUri paging,
 	// which is the envelope this API documents.
-	writePage(w, r, settings)
+	writePage(a, w, r, settings)
 }
 
 func (a *API) updateTenantSetting(w http.ResponseWriter, r *http.Request, p *auth.Principal) {

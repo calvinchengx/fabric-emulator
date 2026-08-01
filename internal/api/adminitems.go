@@ -96,5 +96,5 @@ func (a *API) adminListItems(w http.ResponseWriter, r *http.Request, p *auth.Pri
 			WorkspaceID:     it.WorkspaceID, CapacityID: capacity, FolderID: it.FolderID,
 		})
 	}
-	writePageKeyed(w, r, "itemEntities", out)
+	writePageKeyed(a, w, r, "itemEntities", out)
 }

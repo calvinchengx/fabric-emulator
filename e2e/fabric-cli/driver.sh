@@ -201,6 +201,23 @@ fab rm "$DPWS_TGT" -f >/dev/null || fail "rm dp target workspace"
 # query handling, and the pages are checked for completeness — no item seen
 # twice, none missed, and the terminal page carrying no token.
 # ---------------------------------------------------------------------------
+echo "==> pagination is ON BY DEFAULT — no maxPageSize in the request"
+# The compose file runs the emulator with FABRIC_LIST_PAGE_SIZE=2, so a plain
+# list pages exactly as real Fabric's would; a client that ignored the token
+# would silently see only the first two items.
+WSID0=$(fab get "$WS" -q id | guid); [ -n "$WSID0" ] || fail "workspace id"
+FIRST=$(fab api "workspaces/$WSID0/items") || fail "default list"
+echo "$FIRST" | python3 -c '
+import json,sys
+d=json.loads(sys.stdin.read())
+for k in ("text","body","result"):
+    if isinstance(d,dict) and k in d and isinstance(d[k],(dict,list)): d=d[k]
+if isinstance(d,str): d=json.loads(d)
+n = len(d["value"])
+assert d.get("continuationToken"), "no continuationToken on a default list — pagination is not on by default"
+assert n == 2, f"default page size not applied: got {n} items"
+print(f"    default list paged at {n} items with a token, unprompted")' || fail "default-on pagination"
+
 echo "==> pagination: page the workspace items with a real client"
 WSID=$(fab get "$WS" -q id | guid); [ -n "$WSID" ] || fail "workspace id for pagination"
 
@@ -233,18 +250,17 @@ done
 [ -n "$TOK" ] && fail "pagination never terminated (token still set after $PAGES pages)"
 [ "$PAGES" -ge 3 ] || fail "expected at least 3 pages at maxPageSize=2, got $PAGES"
 
-# Every item exactly once, and the paged set equals the unpaged set.
-ALL=$(fab api "workspaces/$WSID/items" | python3 -c '
-import json,sys
-d=json.loads(sys.stdin.read())
-for k in ("text","body","result"):
-    if isinstance(d,dict) and k in d and isinstance(d[k],(dict,list)): d=d[k]
-if isinstance(d,str): d=json.loads(d)
-print(" ".join(sorted(i["id"] for i in d["value"])))')
+# Every item exactly once, and nothing lost. There is deliberately no "unpaged"
+# baseline to compare against: with pagination on by default a single request
+# CANNOT return the whole list, which is the point. So completeness is checked
+# against the items we know we created, looked up by name.
 PAGED=$(echo "$SEEN" | tr " " "\n" | grep -v "^$" | sort | tr "\n" " " | sed "s/ $//")
 UNIQ=$(echo "$SEEN" | tr " " "\n" | grep -v "^$" | sort -u | tr "\n" " " | sed "s/ $//")
 [ "$PAGED" = "$UNIQ" ] || fail "an item was returned on more than one page"
-[ "$PAGED" = "$ALL" ]  || fail "paged set != unpaged set (paged=[$PAGED] all=[$ALL])"
+for it in nb.Notebook model.SemanticModel rpt.Report pipe.DataPipeline lake.Lakehouse; do
+  IID=$(fab get "$WS/$it" -q id | guid); [ -n "$IID" ] || fail "id for $it"
+  echo "$UNIQ" | grep -q "$IID" || fail "paging lost $it ($IID)"
+done
 echo "    paged $PAGES pages, $(echo $UNIQ | wc -w | tr -d ' ') distinct items, no duplicates or gaps"
 
 echo "==> continuationUri is an absolute URL, as real Fabric returns"

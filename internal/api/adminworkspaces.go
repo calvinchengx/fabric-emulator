@@ -103,5 +103,5 @@ func (a *API) adminListWorkspaces(w http.ResponseWriter, r *http.Request, p *aut
 			CapacityID: ws.CapacityID, DomainID: domains[ws.ID],
 		})
 	}
-	writePageKeyed(w, r, "workspaces", out)
+	writePageKeyed(a, w, r, "workspaces", out)
 }

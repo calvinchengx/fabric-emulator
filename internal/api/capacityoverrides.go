@@ -49,7 +49,7 @@ func (a *API) listCapacityOverrides(w http.ResponseWriter, r *http.Request, p *a
 	for _, capacityID := range order {
 		out = append(out, capacityOverride{ID: capacityID, TenantSettings: byCapacity[capacityID]})
 	}
-	writePage(w, r, out)
+	writePage(a, w, r, out)
 }
 
 func (a *API) putCapacityOverride(w http.ResponseWriter, r *http.Request, p *auth.Principal) {

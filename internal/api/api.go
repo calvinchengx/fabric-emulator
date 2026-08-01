@@ -64,6 +64,9 @@ type API struct {
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.
 	LRODelaySeconds int64
+	// ListPageSize is the server's list page size (see pagination.go): 0 uses
+	// DefaultListPageSize, negative disables paging.
+	ListPageSize int
 
 	// livy reverse-proxies the Livy endpoint to a real Spark backend
 	// (nil = Livy routes 501). livyBackend is the same backend as a base URL,
@@ -88,6 +91,9 @@ type API struct {
 }
 
 // New constructs the API.
+// ListPageSize is the server's list page size: 0 uses DefaultListPageSize,
+// negative disables paging. Set it small to force clients through the
+// continuation-token loop (see internal/api/pagination.go).
 func New(st *store.Store, v *auth.Validator, retryAfter int, lroDelay int64) *API {
 	return &API{Store: st, Auth: v, RetryAfterSeconds: retryAfter, LRODelaySeconds: lroDelay, lroDelay: -1}
 }

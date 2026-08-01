@@ -131,7 +131,7 @@ func TestContinuationUriIsAbsolute(t *testing.T) {
 				r.Header.Set("X-Forwarded-Proto", tc.fwdProto)
 			}
 			w := httptest.NewRecorder()
-			writePage(w, r, items)
+			writePage(&API{}, w, r, items)
 
 			var body struct {
 				ContinuationToken string `json:"continuationToken"`
@@ -165,5 +165,137 @@ func TestContinuationUriFallsBackWithoutHost(t *testing.T) {
 	r.Host = ""
 	if got := absoluteURI(r, "/v1/items?x=1"); got != "/v1/items?x=1" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// Pagination is on by default, as it is in real Fabric: a list longer than the
+// server's page size comes back with a token, with no client opt-in.
+func TestPaginationIsOnByDefault(t *testing.T) {
+	items := make([]map[string]string, 5)
+	for i := range items {
+		items[i] = map[string]string{"id": strconv.Itoa(i)}
+	}
+	a := &API{ListPageSize: 2} // the testing lever: force small pages
+
+	seen, pages, query := map[string]bool{}, 0, ""
+	for {
+		r := httptest.NewRequest("GET", "/v1/items"+query, nil)
+		r.Host = "api.fabric.microsoft.com"
+		w := httptest.NewRecorder()
+		writePage(a, w, r, items)
+		pages++
+
+		var body struct {
+			Value             []map[string]string `json:"value"`
+			ContinuationToken string              `json:"continuationToken"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Value) > 2 {
+			t.Fatalf("page %d returned %d items, over the page size", pages, len(body.Value))
+		}
+		for _, it := range body.Value {
+			if seen[it["id"]] {
+				t.Fatalf("item %s returned on more than one page", it["id"])
+			}
+			seen[it["id"]] = true
+		}
+		if body.ContinuationToken == "" {
+			break
+		}
+		query = "?continuationToken=" + body.ContinuationToken
+		if pages > 10 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+	if pages != 3 || len(seen) != 5 {
+		t.Fatalf("got %d pages / %d items, want 3 / 5", pages, len(seen))
+	}
+}
+
+// The default page size leaves everyday lists whole, so ordinary callers see no
+// behaviour change — the contract is faithful without the path being noisy.
+func TestDefaultPageSizeLeavesSmallListsWhole(t *testing.T) {
+	items := make([]map[string]string, DefaultListPageSize)
+	for i := range items {
+		items[i] = map[string]string{"id": strconv.Itoa(i)}
+	}
+	r := httptest.NewRequest("GET", "/v1/items", nil)
+	w := httptest.NewRecorder()
+	writePage(&API{}, w, r, items) // ListPageSize 0 => DefaultListPageSize
+
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if _, paged := body["continuationToken"]; paged {
+		t.Fatal("a list at exactly the page size should come back whole")
+	}
+	if n := len(body["value"].([]any)); n != DefaultListPageSize {
+		t.Fatalf("got %d items, want %d", n, DefaultListPageSize)
+	}
+}
+
+// A negative size opts out of paging entirely.
+func TestNegativePageSizeDisablesPaging(t *testing.T) {
+	items := make([]map[string]string, 50)
+	r := httptest.NewRequest("GET", "/v1/items", nil)
+	w := httptest.NewRecorder()
+	writePage(&API{ListPageSize: -1}, w, r, items)
+
+	var body map[string]any
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if _, paged := body["continuationToken"]; paged {
+		t.Fatal("paging was disabled but a token was emitted")
+	}
+}
+
+// maxPageSize may narrow a page but never widen it past the server's limit.
+func TestMaxPageSizeCannotExceedTheServerPageSize(t *testing.T) {
+	items := make([]map[string]string, 20)
+	for i := range items {
+		items[i] = map[string]string{"id": strconv.Itoa(i)}
+	}
+	a := &API{ListPageSize: 3}
+
+	r := httptest.NewRequest("GET", "/v1/items?maxPageSize=100", nil)
+	w := httptest.NewRecorder()
+	writePage(a, w, r, items)
+	var body struct {
+		Value []map[string]string `json:"value"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if len(body.Value) != 3 {
+		t.Fatalf("maxPageSize widened the page to %d, want the server's 3", len(body.Value))
+	}
+}
+
+// A token pointing past the end (a stale cursor, or a list that shrank between
+// pages) yields an empty final page rather than a panic or a wrapped offset.
+func TestTokenBeyondTheEndYieldsAnEmptyPage(t *testing.T) {
+	r := httptest.NewRequest("GET", "/v1/items?continuationToken="+encodePageToken(99), nil)
+	w := httptest.NewRecorder()
+	writePage(&API{ListPageSize: 2}, w, r, []map[string]string{{"id": "1"}})
+
+	var body struct {
+		Value             []map[string]string `json:"value"`
+		ContinuationToken string              `json:"continuationToken"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Value) != 0 || body.ContinuationToken != "" {
+		t.Fatalf("got %d items / token %q, want an empty terminal page", len(body.Value), body.ContinuationToken)
+	}
+}
+
+// A malformed or negative token is treated as "start from the beginning"
+// rather than trusted — it arrives from the client and cannot be assumed sane.
+func TestMalformedTokenRestartsFromTheBeginning(t *testing.T) {
+	for _, tok := range []string{"not-base64!!", encodePageToken(-5), ""} {
+		if got := decodePageToken(tok); got != 0 {
+			t.Fatalf("decodePageToken(%q) = %d, want 0", tok, got)
+		}
 	}
 }
