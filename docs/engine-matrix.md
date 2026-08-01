@@ -28,9 +28,10 @@ distinct things hide behind ❌, and the footnotes say which is which:
 1. **A real gap** — the engine cannot do it (durable streaming sinks).
 2. **A protocol limit** — Spark Connect itself forbids it (`sc`, `_jvm`),
    so no upstream fix exists for *any* Connect client, Sail or Apache's.
-3. **A harness artefact** — the probe's environment, not the engine
-   (the Python UDF row). These are bugs in the table, not in the engine,
-   and get fixed rather than explained away.
+3. **A harness artefact** — the probe's environment, not the engine.
+   These are bugs in the table and get fixed rather than explained away:
+   the Python UDF row was one, until the pyspark client pin was corrected
+   to the version pysail is built against.
 
 Read a ❌ next to a ✅ in the same row as "the emulator closes this gap",
 and two ❌ with *different* messages as two different problems.
@@ -79,7 +80,6 @@ And the differences are fewer than the row count suggests:
 * two (`sc`, `spark._jvm`) are **Spark Connect protocol** limits, not Sail
   choices — Apache Spark's own Connect client cannot expose them either,
   so no upstream fix exists;
-* one (Python UDF) is a harness version mismatch, not a capability gap;
 * one (`MERGE` at a local path) works on `az://`, the path the emulator
   actually uses.
 
@@ -111,7 +111,7 @@ tests never touch.
 | `MERGE INTO delta.`path`` (path target) | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ✅ |
 | `OPTIMIZE` | ❌ `invalid argument: found OPTIMIZE at 0:8 expected something else, ';', statement, or end of` | ✅ | ✅ |
 | `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ✅ | ✅ |
-| Change Data Feed (must not be inert) | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ |
+| Change Data Feed (must not be inert) ᵇ | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ |
 | `readStream` (rate source) | ✅ | ✅ | ✅ |
 | Streaming sink — console | ✅ | ✅ | ✅ |
 | Streaming sink — memory | ❌ `No table format found for: memory` | ❌ `No table format found for: memory` | ✅ |
@@ -120,10 +120,10 @@ tests never touch.
 | `sc` / RDD API | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ✅ |
 | `spark._jvm` bridge | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `_jvm` is not supported in Spark Connect as it dep` | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `_jvm` is not supported in Spark Connect as it dep` | ✅ |
 | `createDataFrame(local_rows)` | ✅ | ✅ | ✅ |
-| Python UDF ᵇ | ❌ `An exception was thrown from the Python worker. Please see the stack trace below. TypeErro` | ❌ `An exception was thrown from the Python worker. Please see the stack trace below. TypeErro` | ✅ |
+| Python UDF | ✅ | ✅ | ✅ |
 | SQL over a temp view | ✅ | ✅ | ✅ |
 
-**9 of 19 capabilities differ between the engines.**
+**8 of 19 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the
 candidate list for upstream Sail contributions.
 
@@ -132,11 +132,7 @@ Sail when the registered table is backed by an `az://` OneLake URL — the
 path the emulator actually uses. Only the local-path form fails, so this
 row is not evidence that Sail lacks `MERGE`.
 
-ᵇ A failure here is a pyspark client/worker protocol mismatch in the probe
-container, not a missing capability: Sail embeds CPython via `pyo3` to run
-Python UDFs. Fix by pinning matching pyspark versions.
-
-ᶜ The CDF row fails on the **write**, not the read. Sail's writer cannot
+ᵇ The CDF row fails on the **write**, not the read. Sail's writer cannot
 enable the table feature (`Unsupported table features required:
 [ChangeDataFeed]`) even when the property and the feature are both named,
 so the probe never gets a CDF-enabled table to read. The read side is real

@@ -49,7 +49,7 @@
   },
   {
     "id": "delta.cdf",
-    "description": "Change Data Feed (must not be inert)",
+    "description": "Change Data Feed (must not be inert) \u1d47",
     "engine": "jvm",
     "status": "pass"
   },
@@ -103,7 +103,7 @@
   },
   {
     "id": "spark.python_udf",
-    "description": "Python UDF \u1d47",
+    "description": "Python UDF",
     "engine": "jvm",
     "status": "pass"
   },

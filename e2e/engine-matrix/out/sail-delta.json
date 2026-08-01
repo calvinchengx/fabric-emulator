@@ -53,7 +53,7 @@
   },
   {
     "id": "delta.cdf",
-    "description": "Change Data Feed (must not be inert)",
+    "description": "Change Data Feed (must not be inert) \u1d47",
     "engine": "sail-delta",
     "status": "fail",
     "error_class": "SparkRuntimeException",
@@ -119,11 +119,9 @@
   },
   {
     "id": "spark.python_udf",
-    "description": "Python UDF \u1d47",
+    "description": "Python UDF",
     "engine": "sail-delta",
-    "status": "fail",
-    "error_class": "PythonException",
-    "error": "An exception was thrown from the Python worker. Please see the stack trace below. TypeError: read_udfs() missing 2 required positional arguments: 'runner_conf' and 'eval_conf'"
+    "status": "pass"
   },
   {
     "id": "spark.sql_temp_view",

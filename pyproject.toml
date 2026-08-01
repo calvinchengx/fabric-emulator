@@ -44,9 +44,17 @@ great-expectations = [
     "pandas>=2.2,<4",
 ]
 runtime = []
+# pyspark-client is pinned to what pysail 0.6.6 is built and tested against
+# (its own `test` extra pins 4.1.1). This is not cosmetic: 4.2.0 added
+# `runner_conf`/`eval_conf` to `pyspark.worker.read_udfs`, which Sail calls with
+# the 3-argument form, so every Python UDF died with
+#   TypeError: read_udfs() missing 2 required positional arguments
+# The UDF runs inside the Sail server's embedded CPython, so the *server* image
+# is what must match — but client and server are pinned together so the two
+# never drift apart. Revisit when pysail supports a newer client.
 sail = [
     "pysail==0.6.6",
-    "pyspark-client==4.2.0",
+    "pyspark-client==4.1.1",
 ]
 # The Sail statement agent also runs Delta maintenance (OPTIMIZE/VACUUM/CDF)
 # through delta-rs, since Sail's planner has no such commands — so the runtime
@@ -56,7 +64,7 @@ sail = [
 # lookalike. requests for the same reason spark-connect carries it: user
 # notebook code calls HTTP APIs, and the agent is where that code runs.
 sail-delta = [
-    "pyspark-client==4.2.0",
+    "pyspark-client==4.1.1",
     "deltalake>=0.23,<2",
     "pandas>=2,<3",
     "pyarrow>=18,<24",
@@ -64,7 +72,7 @@ sail-delta = [
 ]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP
 # APIs, and the statement agent is where that code executes.
-spark-connect = ["pyspark-client==4.2.0", "requests>=2.32,<3"]
+spark-connect = ["pyspark-client==4.1.1", "requests>=2.32,<3"]
 dbt-fabric = ["dbt-fabric>=1.9"]
 dbt-fabricspark = ["dbt-fabricspark>=1.9"]
 dbt-duckdb = [
@@ -82,7 +90,7 @@ data-science-loop = [
     "deltalake>=0.23,<2",
     "mlflow>=3.1,<4",
     "pyarrow>=18,<24",
-    "pyspark-client==4.2.0",
+    "pyspark-client==4.1.1",
 ]
 
 [tool.uv]

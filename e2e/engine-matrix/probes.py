@@ -177,13 +177,13 @@ def create_dataframe_local_rows(spark):
 
 
 def python_udf(spark):
-    """Python UDF execution.
+    """Python UDF execution — Sail embeds CPython through pyo3 to run these.
 
-    Known caveat on Sail via Spark Connect in this harness: the worker rejects
-    the call with `read_udfs() missing 2 required positional arguments`, a
-    pyspark client/worker protocol version mismatch rather than a missing
-    capability — Sail embeds CPython through pyo3 specifically to run these.
-    Treat a failure here as a version-pinning problem to fix, not an engine gap.
+    This failed for a while with `read_udfs() missing 2 required positional
+    arguments`, which looked like an engine gap but was a client pin: pyspark
+    4.2.0 added two parameters to `pyspark.worker.read_udfs` and pysail 0.6.6
+    calls the 3-argument form. Fixed by pinning the client to 4.1.1, the version
+    pysail is built against. If this regresses, check that pin before the engine.
     """
     from pyspark.sql.functions import udf
     from pyspark.sql.types import IntegerType
@@ -206,7 +206,7 @@ PROBES = [
     ("delta.merge_path", "`MERGE INTO delta.`path`` (path target)", delta_merge_path_target),
     ("delta.optimize", "`OPTIMIZE`", delta_optimize),
     ("delta.vacuum", "`VACUUM`", delta_vacuum),
-    ("delta.cdf", "Change Data Feed (must not be inert)", delta_change_data_feed),
+    ("delta.cdf", "Change Data Feed (must not be inert) ᵇ", delta_change_data_feed),
     ("streaming.read_rate", "`readStream` (rate source)", streaming_read_rate),
     ("streaming.sink_console", "Streaming sink — console", streaming_sink_console),
     ("streaming.sink_memory", "Streaming sink — memory", streaming_sink_memory),
@@ -215,7 +215,7 @@ PROBES = [
     ("jvm.rdd_sparkcontext", "`sc` / RDD API", rdd_sparkcontext),
     ("jvm.bridge", "`spark._jvm` bridge", jvm_bridge),
     ("spark.create_dataframe_local", "`createDataFrame(local_rows)`", create_dataframe_local_rows),
-    ("spark.python_udf", "Python UDF ᵇ", python_udf),
+    ("spark.python_udf", "Python UDF", python_udf),
     ("spark.sql_temp_view", "SQL over a temp view", sql_temp_view),
 ]
 
