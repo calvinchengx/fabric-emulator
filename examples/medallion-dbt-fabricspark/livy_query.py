@@ -18,7 +18,7 @@ import sys as _sys
 # fixture — live in the Warehouse example, because both paths ingest the same
 # data from the same source system. Importing them beats copying a 700-line
 # generator that would then have to be kept identical by hand.
-_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent / "medallion"))
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent / "medallion-pyspark"))
 
 import time
 

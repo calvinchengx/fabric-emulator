@@ -10,7 +10,7 @@ thousand rows and the wrong shape entirely for a hundred million — the data
 never has to leave the lakehouse, and here it does not.
 
 The same transform written as **dbt-fabricspark models** is in
-`../medallion-spark`, which builds the identical silver declaratively and then
+`../medallion-dbt-fabricspark`, which builds the identical silver declaratively and then
 compares the two. Imperative Spark or declarative dbt is a real choice a Fabric
 team makes; neither example claims it is the only one.
 
