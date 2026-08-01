@@ -21,6 +21,7 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/config"
 	"github.com/calvinchengx/fabric-emulator/internal/server"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/parquet-go/parquet-go"
 )
@@ -30,6 +31,7 @@ func TestWarehouseTwoSurfaces(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set WAREHOUSE_MSSQL_DSN (a reachable SQL Server) to run the two-surface e2e")
 	}
+	testsupport.SkipIfSpliceUnsupported(t, dsn)
 
 	emu := entra.StartT(t)
 	cfg := &config.Config{

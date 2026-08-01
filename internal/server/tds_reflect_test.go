@@ -21,6 +21,7 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/config"
 	"github.com/calvinchengx/fabric-emulator/internal/server"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/parquet-go/parquet-go"
 )
@@ -35,6 +36,7 @@ func TestWarehouseDeltaReflectionE2E(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set WAREHOUSE_MSSQL_DSN (a reachable SQL Server) to run the reflection e2e")
 	}
+	testsupport.SkipIfSpliceUnsupported(t, dsn)
 
 	emu := entra.StartT(t)
 	cfg := &config.Config{
