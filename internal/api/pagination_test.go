@@ -1,10 +1,13 @@
 package api
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
@@ -97,5 +100,70 @@ func TestPageTokenDecodeGarbage(t *testing.T) {
 	}
 	if got := decodePageToken(encodePageToken(7)); got != 7 {
 		t.Errorf("round-trip token = %d, want 7", got)
+	}
+}
+
+// Real Fabric returns continuationUri as a fully-qualified URL — its reference
+// shows `https://api.fabric.microsoft.com/v1/workspaces/…/items?continuationToken=…`
+// — not a bare path. A client that treats the field as a URL (which is what the
+// name says) must be able to request it directly, so the shape has to match.
+func TestContinuationUriIsAbsolute(t *testing.T) {
+	items := []map[string]string{{"id": "1"}, {"id": "2"}, {"id": "3"}}
+
+	for _, tc := range []struct {
+		name, host, wantPrefix string
+		tls                    bool
+		fwdProto               string
+	}{
+		{name: "plain http", host: "localhost:9443", wantPrefix: "http://localhost:9443/v1/items?"},
+		{name: "tls", host: "api.fabric.microsoft.com", tls: true,
+			wantPrefix: "https://api.fabric.microsoft.com/v1/items?"},
+		{name: "behind a TLS-terminating proxy", host: "api.fabric.microsoft.com",
+			fwdProto: "https", wantPrefix: "https://api.fabric.microsoft.com/v1/items?"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/v1/items?maxPageSize=2", nil)
+			r.Host = tc.host
+			if tc.tls {
+				r.TLS = &tls.ConnectionState{}
+			}
+			if tc.fwdProto != "" {
+				r.Header.Set("X-Forwarded-Proto", tc.fwdProto)
+			}
+			w := httptest.NewRecorder()
+			writePage(w, r, items)
+
+			var body struct {
+				ContinuationToken string `json:"continuationToken"`
+				ContinuationUri   string `json:"continuationUri"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.ContinuationToken == "" {
+				t.Fatal("no continuationToken emitted")
+			}
+			if !strings.HasPrefix(body.ContinuationUri, tc.wantPrefix) {
+				t.Fatalf("continuationUri = %q, want prefix %q", body.ContinuationUri, tc.wantPrefix)
+			}
+			// It must parse as an absolute URL carrying the token back.
+			u, err := url.Parse(body.ContinuationUri)
+			if err != nil || !u.IsAbs() {
+				t.Fatalf("not an absolute URL: %q (%v)", body.ContinuationUri, err)
+			}
+			if got := u.Query().Get("continuationToken"); got != body.ContinuationToken {
+				t.Fatalf("uri token %q != body token %q", got, body.ContinuationToken)
+			}
+		})
+	}
+}
+
+// A request with no Host cannot be qualified; emitting a wrong host would be
+// worse than emitting the path.
+func TestContinuationUriFallsBackWithoutHost(t *testing.T) {
+	r := httptest.NewRequest("GET", "/v1/items?maxPageSize=1", nil)
+	r.Host = ""
+	if got := absoluteURI(r, "/v1/items?x=1"); got != "/v1/items?x=1" {
+		t.Fatalf("got %q", got)
 	}
 }

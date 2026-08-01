@@ -193,6 +193,75 @@ fab api "deploymentPipelines/$PID" -X delete >/dev/null || fail "delete pipeline
 fab rm "$DPWS_SRC" -f >/dev/null || fail "rm dp source workspace"
 fab rm "$DPWS_TGT" -f >/dev/null || fail "rm dp target workspace"
 
+# ---------------------------------------------------------------------------
+# Pagination (docs/parity.md, list continuationToken). Until now the token
+# contract had no real-client witness: we wrote both the producer and the
+# consumer, so our Go tests agreed with themselves by construction. Here
+# Microsoft's client transmits the opaque token through its own HTTP stack and
+# query handling, and the pages are checked for completeness — no item seen
+# twice, none missed, and the terminal page carrying no token.
+# ---------------------------------------------------------------------------
+echo "==> pagination: page the workspace items with a real client"
+WSID=$(fab get "$WS" -q id | guid); [ -n "$WSID" ] || fail "workspace id for pagination"
+
+# 5 items already exist above; a page size of 2 forces three pages.
+PAGES=0; SEEN=""; TOK=""
+for i in $(seq 1 10); do
+  if [ -z "$TOK" ]; then
+    BODY=$(fab api "workspaces/$WSID/items?maxPageSize=2") || fail "list page $i"
+  else
+    BODY=$(fab api "workspaces/$WSID/items?maxPageSize=2&continuationToken=$TOK") || fail "list page $i"
+  fi
+  PAGES=$((PAGES+1))
+  IDS=$(echo "$BODY" | python3 -c '
+import json,sys
+d=json.loads(sys.stdin.read())
+for k in ("text","body","result"):
+    if isinstance(d,dict) and k in d and isinstance(d[k],(dict,list)): d=d[k]
+if isinstance(d,str): d=json.loads(d)
+print(" ".join(i["id"] for i in d["value"]))') || fail "page $i body"
+  SEEN="$SEEN $IDS"
+  TOK=$(echo "$BODY" | python3 -c '
+import json,sys
+d=json.loads(sys.stdin.read())
+for k in ("text","body","result"):
+    if isinstance(d,dict) and k in d and isinstance(d[k],(dict,list)): d=d[k]
+if isinstance(d,str): d=json.loads(d)
+print(d.get("continuationToken",""))' | tr -d "\r")
+  [ -z "$TOK" ] && break
+done
+[ -n "$TOK" ] && fail "pagination never terminated (token still set after $PAGES pages)"
+[ "$PAGES" -ge 3 ] || fail "expected at least 3 pages at maxPageSize=2, got $PAGES"
+
+# Every item exactly once, and the paged set equals the unpaged set.
+ALL=$(fab api "workspaces/$WSID/items" | python3 -c '
+import json,sys
+d=json.loads(sys.stdin.read())
+for k in ("text","body","result"):
+    if isinstance(d,dict) and k in d and isinstance(d[k],(dict,list)): d=d[k]
+if isinstance(d,str): d=json.loads(d)
+print(" ".join(sorted(i["id"] for i in d["value"])))')
+PAGED=$(echo "$SEEN" | tr " " "\n" | grep -v "^$" | sort | tr "\n" " " | sed "s/ $//")
+UNIQ=$(echo "$SEEN" | tr " " "\n" | grep -v "^$" | sort -u | tr "\n" " " | sed "s/ $//")
+[ "$PAGED" = "$UNIQ" ] || fail "an item was returned on more than one page"
+[ "$PAGED" = "$ALL" ]  || fail "paged set != unpaged set (paged=[$PAGED] all=[$ALL])"
+echo "    paged $PAGES pages, $(echo $UNIQ | wc -w | tr -d ' ') distinct items, no duplicates or gaps"
+
+echo "==> continuationUri is an absolute URL, as real Fabric returns"
+fab api "workspaces/$WSID/items?maxPageSize=2" | python3 -c '
+import json,sys,urllib.parse
+d=json.loads(sys.stdin.read())
+for k in ("text","body","result"):
+    if isinstance(d,dict) and k in d and isinstance(d[k],(dict,list)): d=d[k]
+if isinstance(d,str): d=json.loads(d)
+uri=d.get("continuationUri")
+assert uri, "no continuationUri on a page that has a continuationToken"
+u=urllib.parse.urlparse(uri)
+assert u.scheme and u.netloc, f"continuationUri is not absolute: {uri}"
+assert urllib.parse.parse_qs(u.query).get("continuationToken") == [d["continuationToken"]], \
+    f"continuationUri carries a different token: {uri}"
+print(f"    continuationUri ok: {u.scheme}://{u.netloc}{u.path}")' || fail "continuationUri shape"
+
 echo "==> rm an item, then the workspace"
 fab rm "$WS/nb.Notebook" -f || fail "rm item"
 fab exists "$WS/nb.Notebook" | grep -qi false || fail "item still exists after rm"
