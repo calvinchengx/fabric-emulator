@@ -23,8 +23,42 @@ python3 e2e/medallion/run.py
 ```
 
 Brings the stack up with docker-compose and asserts all nine steps pass
-(`--exit-code-from pipeline`). Linux weight class (SQL Server container); the
-ODBC driver and SQL Server image are amd64-native.
+(`--exit-code-from pipeline`). Linux weight class (SQL Server container).
+
+### Choosing the container engine (Apple Silicon in particular)
+
+The suite runs on whatever Docker engine your context points at — it shells out
+to `docker compose`, so `DOCKER_CONTEXT` (or `DOCKER_HOST`) selects the engine
+without touching any file:
+
+```sh
+docker context ls                      # what you have
+DOCKER_CONTEXT=orbstack python3 e2e/medallion/run.py    # run on a specific one
+```
+
+**Only `mcr.microsoft.com/mssql/server` is amd64-locked** — Microsoft ships no
+arm64 manifest for it. Everything else in the stack (the three emulators,
+Python, the Microsoft ODBC Driver 18) has native arm64 builds, and the
+emulator's own `Dockerfile` cross-compiles with `--platform=$BUILDPLATFORM`, so
+it builds at native speed for whatever architecture the host is.
+
+That makes the fast configuration on Apple Silicon a **native arm64 engine**
+(OrbStack, Docker Desktop, or `colima start --vm-type vz`), letting Rosetta
+translate the single SQL Server container. Measured on this repo: the Go build
+stage compiles `GOARCH=arm64` natively in a couple of minutes.
+
+The slow configuration is a **fully emulated x86_64 VM** — e.g.
+`colima start --arch x86_64` with the default `vmType: qemu` and
+`rosetta: false`. There QEMU interprets the entire kernel and userland, the
+build stage's "native" compile is itself emulated, and the same Go build takes
+well over half an hour. If you want an x86 VM specifically, use Apple's
+Virtualization.framework with Rosetta instead of QEMU:
+
+```sh
+colima start fabric-x86 --arch x86_64 --vm-type vz --vz-rosetta
+```
+
+CI runs `ubuntu-latest` (native amd64) and pays none of this.
 
 ## What each step proves
 

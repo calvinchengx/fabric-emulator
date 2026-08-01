@@ -49,6 +49,13 @@ services:
 
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
+    # The ONLY amd64-locked service here: Microsoft publishes no arm64 manifest
+    # for mssql/server. Pinning the platform states that requirement explicitly
+    # instead of relying on each engine's fallback when the host is arm64 —
+    # OrbStack and Docker Desktop translate it via Rosetta, but an unpinned pull
+    # can also fail outright with "no matching manifest for linux/arm64/v8".
+    # No-op on an amd64 host (CI), so it costs nothing there.
+    platform: linux/amd64
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
