@@ -66,7 +66,7 @@ Docs: <https://calvinchengx.github.io/fabric-emulator/> — start with
 [architecture](docs/03-architecture.md), the
 [control-plane API](docs/07-control-plane-api.md), [OneLake](docs/08-onelake.md),
 the [roadmap](docs/13-roadmap.md), [real compute](docs/14-real-compute.md), the
-[warehouse over TDS](docs/16-warehouse-tds.md), and the
+[warehouse over TDS](docs/16-warehouse-tds.md), [running modes](docs/27-running-modes.md), and the
 [parity map](docs/parity.md).
 
 ## Parity at a glance
@@ -123,6 +123,8 @@ Everything else, once it is running:
 
 ```bash
 make help     # every target with a one-line description
+make up-lite  # contract-only pair — no compute sidecars, honest 501s
+make up-jvm   # swap the default Sail engine for JVM Spark
 make ps       # container states for this project
 make logs     # tail logs (SVC=<service> to narrow to one)
 make down     # stop and remove containers — volumes SURVIVE
