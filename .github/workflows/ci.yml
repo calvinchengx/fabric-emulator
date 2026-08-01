@@ -103,6 +103,38 @@ jobs:
           Write-Host "pipe: $pipe"
           "WAREHOUSE_MSSQL_DSN=server=$pipe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      # Keep LocalDB alive for the whole test run.
+      #
+      # A LocalDB instance SHUTS ITSELF DOWN after a few minutes idle. Starting
+      # it in the step above and then running `go test ./...` — which spends
+      # minutes in other packages before it reaches the warehouse tests — leaves
+      # the pipe present with nothing behind it:
+      #
+      #     backend connect failed: No process is on the other end of the pipe.
+      #
+      # That is a DIFFERENT failure from the earlier `dial tcp :1433`, which was
+      # the driver not routing to the pipe at all. The route is right now; the
+      # instance simply was not there any more.
+      #
+      # A connection resets the idle timer, so poll it. Detached, and it dies
+      # with the job.
+      - name: Keep LocalDB awake
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $exe = @(Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server" -Filter SqlLocalDB.exe `
+                     -Recurse -ErrorAction SilentlyContinue |
+                   Sort-Object FullName -Descending |
+                   Select-Object -ExpandProperty FullName)[0]
+          Start-Job -ScriptBlock {
+            param($sqllocaldb)
+            while ($true) {
+              & $sqllocaldb start MSSQLLocalDB | Out-Null
+              Start-Sleep -Seconds 60
+            }
+          } -ArgumentList $exe | Out-Null
+          Write-Host "keep-alive job started (LocalDB idles out in minutes; go test takes longer)"
+
       # The server tests start a real entra-emulator in-process and drive the
       # full token → JWKS → RBAC → LRO path over HTTP.
       # shell: bash keeps the coverage profile and the floor step below in
