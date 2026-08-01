@@ -1,0 +1,122 @@
+name: Make targets
+
+# The Makefile is the documented entry point — the quickstart, the README and
+# docs/26-platform-setup.md all tell users to run `make doctor` / `make up` /
+# `make status` — so it needs the same cross-OS guarantee the Go tests have.
+# Nothing else in CI ran a single `make` command before this workflow existed.
+#
+# The failures this catches are platform-specific and invisible on Linux, which
+# is exactly why they survived so long:
+#   * a shell script checked out with CRLF fails at the shebang — `sh` reads the
+#     trailing \r as part of the interpreter path (.gitattributes pins eol=lf;
+#     `sh -n` below is what proves it stayed pinned).
+#   * on Windows `python3` is a Microsoft Store alias stub: on PATH, so every
+#     `command -v python3` check passes, and it exits 49 when actually run.
+#   * GNU Make falls back to cmd.exe when it cannot find a shell on PATH, and
+#     every recipe here is POSIX shell.
+#   * an unquoted or wrongly-named variable expands to nothing, or to whatever
+#     the caller happened to export — `make -n` catches that without running it.
+#
+# Docker coverage is Linux-only by necessity, not by choice: GitHub's macOS
+# runners have no Docker daemon, and the Windows runners support only Windows
+# containers, so the Linux images this stack is built from cannot run there. On
+# those two the container targets are checked for correct EXPANSION rather than
+# execution, which still catches the variable and quoting classes of bug.
+
+on:
+  workflow_call: # called by release.yml as a release gate
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  make-targets:
+    name: make targets (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+
+      # macOS ships GNU Make 3.81 with the Xcode CLT and Linux ships it as
+      # standard; only Windows needs one installed. This is the same
+      # `ezwinports.make` story docs/26-platform-setup.md tells users, via the
+      # package manager already present on the runner.
+      - name: Install GNU Make (Windows only)
+        if: runner.os == 'Windows'
+        run: choco install make --no-progress -y
+
+      # Deliberately the runner's DEFAULT shell — PowerShell on Windows. This is
+      # the one step that reproduces how a Windows user actually invokes make,
+      # and it fails if Make cannot find sh.exe or the grep/awk the recipe uses.
+      # One command per step so its exit code is the step's exit code: under
+      # pwsh only the LAST command's status is checked.
+      - name: make help (from the platform's native shell)
+        run: make help
+
+      - name: Makefile and scripts are POSIX-clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Syntax-only, with the interpreter each script's shebang actually
+          # declares: `sh -n` on a #!/usr/bin/env bash script would reject
+          # legitimate bashisms, and `bash -n` on a #!/bin/sh script would let
+          # real ones through. This is what catches a CRLF checkout — dash and
+          # bash both reject a brace followed by a carriage return — and any bashism creeping into an sh script.
+          for f in scripts/*.sh; do
+            case "$(head -1 "$f")" in
+              *bash) echo "bash -n $f"; bash -n "$f" ;;
+              *)     echo "sh -n   $f"; sh -n "$f" ;;
+            esac
+          done
+
+      - name: Every target expands
+        shell: bash
+        run: |
+          set -euo pipefail
+          # -n prints the recipe without running it, so this exercises variable
+          # expansion, quoting and the shell selection on every platform —
+          # including the docker targets that cannot execute off Linux.
+          for t in help doctor up down clean restart status status-spark spark seed ps logs test; do
+            echo "=== make -n $t ==="
+            make -n "$t"
+          done
+          # The documented overrides must expand too.
+          make -n logs SVC=fabric-emulator
+          make -n up PROFILE=
+
+      - name: make test
+        shell: bash
+        run: make test
+
+      # The real thing, where a Linux container runtime exists.
+      - name: make doctor
+        if: runner.os == 'Linux'
+        run: make doctor
+
+      - name: make up / status / down
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The lean stack: the governance profile pulls OpenMetadata and
+          # Elasticsearch (~1 GB heap), which a CI runner should not pay for
+          # just to prove the targets work. status.sh skips the OpenMetadata
+          # probe when that profile is absent, so this is a clean pass rather
+          # than a tolerated failure.
+          make up PROFILE=
+          make status
+          make down PROFILE=
+
+      # Not `make logs`: that target follows (-f) and would hang the job.
+      - name: Container logs on failure
+        if: failure() && runner.os == 'Linux'
+        run: docker compose logs --no-color --tail 200 || true

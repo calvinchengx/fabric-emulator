@@ -9,13 +9,19 @@ permissions:
   packages: write # push the image to GHCR
 
 jobs:
+  # Gate: the Makefile is what users are told to run, on all three platforms.
+  # A release that publishes binaries whose documented entry point is broken on
+  # Windows or macOS is worse than a late release.
+  make-targets:
+    uses: ./.github/workflows/make-targets.yml
+
   fabric-qualification:
     uses: ./.github/workflows/real-fabric.yml
     secrets: inherit
 
   binaries:
     name: Cross-platform binaries (GoReleaser)
-    needs: fabric-qualification
+    needs: [fabric-qualification, make-targets]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -41,7 +47,7 @@ jobs:
 
   image:
     name: Docker image → GHCR
-    needs: fabric-qualification
+    needs: [fabric-qualification, make-targets]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -75,7 +81,7 @@ jobs:
   # actually behaves.
   compute-images:
     name: Compute sidecar images → GHCR
-    needs: fabric-qualification
+    needs: [fabric-qualification, make-targets]
     runs-on: ubuntu-latest
     strategy:
       matrix:
