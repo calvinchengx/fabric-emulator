@@ -1,0 +1,42 @@
+# Self-contained: this example owns its dependencies and its lockfile, so it
+# can be copied out of the repo and run anywhere, and so its versions never
+# enter the emulator's own dependency graph.
+#
+#   uv sync --frozen && uv run python pipeline.py
+#
+# Three source systems, resolved into one identity graph, joined into a star.
+# bronze -> silver is dbt-fabricspark over Livy; silver -> gold is dbt-fabric over TDS, because
+# gold is a WAREHOUSE. Differs from ../medallion-advanced-pyspark only
+# in the first half.
+[project]
+name = "fabric-emulator-example-medallion-advanced-dbt-fabricspark"
+version = "0.1.0"
+description = "Advanced medallion: three sources, dbt-fabricspark to silver, dbt-fabric to a Warehouse star"
+requires-python = ">=3.12"
+dependencies = [
+    "contoso-fixtures",
+    # The web store and the ERP change log. Depends on contoso-fixtures for the
+    # POS generator rather than restating it.
+    "contoso-fixtures-advanced",
+    "dbt-fabric>=1.9",
+    "dbt-fabricspark>=1.9",
+    "deltalake>=0.23,<2",
+    "pyarrow>=18,<24",
+    "pyodbc>=5.2,<6",
+    "pyspark-client==4.1.1",
+    "requests>=2.32,<3",
+    # contract_gates.py compiles the ODCS `library` rules in contracts/ into
+    # Expectation Suites. Pinned <1 to match the emulator's own
+    # great-expectations extra, so the two demonstrations cannot drift onto
+    # different major versions of the API.
+    "great-expectations>=0.18,<1",
+    # contract_gate.py reads the ODCS YAML.
+    "pyyaml>=6,<7",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+contoso-fixtures = { path = "../contoso-fixtures", editable = true }
+contoso-fixtures-advanced = { path = "../contoso-fixtures-advanced", editable = true }

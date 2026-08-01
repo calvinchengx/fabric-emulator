@@ -53,3 +53,4 @@ examples/**/pbip/
 # examples write for their cross-example comparison.
 examples/**/*.egg-info/
 examples/**/gold_summary.json
+examples/*/silver_summary.json

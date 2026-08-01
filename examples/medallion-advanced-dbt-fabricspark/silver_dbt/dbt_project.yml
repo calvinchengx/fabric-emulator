@@ -1,0 +1,15 @@
+name: contoso_silver_spark
+version: "1.0.0"
+config-version: 2
+profile: contoso_silver_spark
+model-paths: ["models"]
+test-paths: ["tests"]
+
+# Delta tables in the Lakehouse. This is Lakehouse-to-Lakehouse ETL — the half
+# of the medallion where a Fabric team genuinely chooses between imperative
+# Spark and declarative dbt. Gold is not built here: gold is a Warehouse, and
+# dbt-fabricspark cannot write to one.
+models:
+  contoso_silver_spark:
+    +materialized: table
+    +file_format: delta

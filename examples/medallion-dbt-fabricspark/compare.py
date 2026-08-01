@@ -1,29 +1,28 @@
-"""Compare the two gold builds: the Warehouse star and the Lakehouse star.
+"""Compare the two SILVER builds: imperative PySpark and declarative dbt.
 
-Both examples emit a `gold_summary.json`. This reads them side by side and
-asserts the thing that actually matters — **the adapter choice does not change
-the answer** — then reports the two things that do differ.
+Both examples emit a `silver_summary.json`. This reads them side by side and
+asserts the thing that actually matters — **the tool choice does not change the
+answer** — then reports the two things that do differ.
 
-READ THE CAVEAT ON THE TIMINGS. They are the emulator's stand-in engines:
+The comparison moved here from gold, and the move is the point. Gold is a
+Warehouse in both examples, built by dbt-fabric, so there was never a choice to
+compare there: dbt-fabricspark materialises into a Lakehouse and cannot write to
+a Warehouse. The genuine fork is bronze -> silver, which is Lakehouse-to-
+Lakehouse and where a Fabric team really does pick one or the other.
 
-    dbt-fabric      -> a vanilla SQL Server sidecar
-    dbt-fabricspark -> Sail, a Rust Spark-Connect engine with no JVM
-
-Neither is the Fabric engine it stands for. Fabric Warehouse is a distributed
-MPP engine and Fabric Spark is a managed pool; a ratio measured here says
-something about two containers on your laptop and NOTHING about which is faster
-on Fabric. Quoting these numbers as engine guidance would be a misuse of them.
-
-What the timings ARE good for: knowing what each path costs you locally, in a
-loop you run all day.
+READ THE CAVEAT ON THE TIMINGS. Both run on the emulator's stand-in engine —
+Sail, a Rust Spark-Connect server with no JVM — so a ratio measured here says
+something about two processes on your laptop and NOTHING about Fabric's managed
+Spark pools. Quoting these as engine guidance would misuse them. What they ARE
+good for: knowing what each path costs you locally, in a loop you run all day.
 """
 import json
 import pathlib
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
-WAREHOUSE_SUMMARY = HERE.parent / "medallion-pyspark" / "gold_summary.json"
-SPARK_SUMMARY = HERE / "gold_summary.json"
+PYSPARK_SUMMARY = HERE.parent / "medallion-pyspark" / "silver_summary.json"
+DBT_SUMMARY = HERE / "silver_summary.json"
 
 
 def load(path, how):
@@ -32,49 +31,27 @@ def load(path, how):
     return json.loads(path.read_text())
 
 
-wh = load(WAREHOUSE_SUMMARY, "`uv run python pipeline.py` in ../medallion")
-sp = load(SPARK_SUMMARY, "`uv run python pipeline.py` here")
+ps = load(PYSPARK_SUMMARY, "`uv run python pipeline.py` in ../medallion-pyspark")
+db = load(DBT_SUMMARY, "`uv run python pipeline.py` here")
 
-print("==> gold, two ways\n", flush=True)
-print(f"{'':22} {'Warehouse':>28}  {'Lakehouse':>28}")
-print(f"{'adapter':22} {wh['engine']:>28}  {sp['engine']:>28}")
-print(f"{'target':22} {wh['target']:>28}  {sp['target']:>28}")
-print(f"{'compute':22} {wh['compute']:>28}  {sp['compute']:>28}")
-print()
+print("==> silver, two ways\n", flush=True)
+print(f"{'':22} {'imperative':>28}  {'declarative':>28}")
+print(f"{'tool':22} {ps['engine']:>28}  {db['engine']:>28}")
+print(f"{'compute':22} {ps['compute']:>28}  {db['compute']:>28}")
+print(f"{'build seconds':22} {ps['build_seconds']:>28}  {db['build_seconds']:>28}")
 
-# --- 1. equivalence: the claim worth making ----------------------------------
-mismatch = []
-for table in sorted(set(wh["rows"]) | set(sp["rows"])):
-    a, b = wh["rows"].get(table), sp["rows"].get(table)
-    flag = "" if a == b else "   <-- MISMATCH"
-    if a != b:
-        mismatch.append(f"{table}: warehouse={a} spark={b}")
-    print(f"{table:22} {a if a is not None else '-':>28}  {b if b is not None else '-':>28}{flag}")
+# The assertion the whole example exists to make. Same source bytes, same rules,
+# two tools: if the row counts diverge, one of them is wrong and the comparison
+# has found it rather than averaged over it.
+assert ps["rows"] == db["rows"], (
+    "the two silver builds disagree:\n"
+    f"  PySpark:         {ps['rows']}\n"
+    f"  dbt-fabricspark: {db['rows']}")
+print(f"\n{'rows':22} {str(ps['rows']):>58}")
+print("   identical — the tool choice did not change the answer")
 
-rev_delta = abs(wh["revenue"] - sp["revenue"])
-print(f"{'revenue':22} {wh['revenue']:>28,.2f}  {sp['revenue']:>28,.2f}")
-if rev_delta >= 0.01:
-    mismatch.append(f"revenue differs by {rev_delta:.2f}")
-
-if mismatch:
-    sys.exit("\nFAIL: the two engines produced different stars:\n  - "
-             + "\n  - ".join(mismatch))
-print("\n==> equivalent: both adapters built the same star, to the cent")
-
-# --- 2. dialect divergence: the real portability cost -------------------------
-print("\n==> dialect adaptations the emulator had to make on the wire")
-for label, s in (("Warehouse", wh), ("Lakehouse", sp)):
-    if not s["dialect_adaptations"]:
-        print(f"  {label}: none — the SQL dbt emitted ran unmodified")
-        continue
-    for note in s["dialect_adaptations"]:
-        print(f"  {label}: {note}")
-print("  (this is the portability cost of each path, and it is not symmetric)")
-
-# --- 3. wall clock, with the caveat attached to it ---------------------------
-print(f"\n==> dbt build wall-clock — EMULATOR SIDECARS, NOT FABRIC ENGINES")
-print(f"  {wh['engine']:16} {wh['build_seconds']:>7.1f}s   ({wh['compute']})")
-print(f"  {sp['engine']:16} {sp['build_seconds']:>7.1f}s   ({sp['compute']})")
-print("  These compare a SQL Server container against a Sail container on this")
-print("  machine. Fabric Warehouse is an MPP engine and Fabric Spark is a managed")
-print("  pool; neither is represented here. Do not read this as engine guidance.")
+# Neither path needs statement rewriting: both speak Spark SQL to the same
+# engine. The Warehouse half of BOTH examples does (docs/29-tsql-parity.md).
+for name, s in (("PySpark", ps), ("dbt-fabricspark", db)):
+    assert s["dialect_adaptations"] == [], (name, s["dialect_adaptations"])
+print("   neither path needed a statement rewritten on the wire")

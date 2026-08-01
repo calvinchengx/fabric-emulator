@@ -1,25 +1,30 @@
-# Self-contained, like the Warehouse example next door. Separate lockfile so the
-# two dbt adapters — which pin different dbt-core ranges — never have to be
-# resolved into one environment.
+# Self-contained: this example owns its dependencies and its lockfile, so it can
+# be copied out of the repo and run anywhere.
 #
-#   uv sync --frozen && uv run python run_all.py
+#   uv sync --frozen && uv run python pipeline.py
+#
+# BOTH dbt adapters are here, and that is the shape of the example rather than
+# an accident: dbt-fabricspark builds bronze -> silver in the Lakehouse over
+# Livy, and dbt-fabric builds silver -> gold in the Warehouse over TDS. Gold is
+# a Warehouse, and fabricspark cannot write to one.
 [project]
-name = "fabric-emulator-example-medallion-spark"
+name = "fabric-emulator-example-medallion-dbt-fabricspark"
 version = "0.1.0"
-description = "Lakehouse medallion: gold built by dbt-fabricspark over Livy HC on Sail"
+description = "Medallion: dbt-fabricspark to silver, dbt-fabric to a Warehouse gold"
 requires-python = ">=3.12"
 dependencies = [
     "contoso-fixtures",
+    "dbt-fabric>=1.9",
     "dbt-fabricspark>=1.9",
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",
+    "pyodbc>=5.2,<6",
     "pyspark-client==4.1.1",
     "requests>=2.32,<3",
 ]
 
-[tool.uv.sources]
-contoso-fixtures = { path = "../contoso-fixtures", editable = true }
-
-
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+contoso-fixtures = { path = "../contoso-fixtures", editable = true }
