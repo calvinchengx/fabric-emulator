@@ -255,16 +255,25 @@ portal survives a reload mid-medallion.
 A new entry under *Data plane* in [`portal/src/App.svelte`](../portal/src/App.svelte),
 which already has the section structure:
 
-- **A live log** — the event stream, filterable by kind and workspace. Failures
-  in red, with the activity error inline. This alone replaces reading container
-  logs.
+- **A live log** — the event stream, filterable by kind and by workspace.
+  Failures in red, with the activity error inline. This alone replaces reading
+  container logs.
 - **A flow graph** — nodes are items and tables, edges come from
   `lineage_edges` (which already carry `producer`, so a Copy edge and a notebook
-  edge are visually distinct). Nodes pulse as `table` events land on them and go
-  red when an activity targeting them fails. On the medallion this draws itself:
-  landing → bronze → silver → gold.
-- **A table inspector** — click a node, see the current Delta version, schema,
-  and row count via the existing warehouse reader.
+  edge are visually distinct). A node written in the last ten seconds is bright,
+  one written earlier in the session keeps a quieter mark, and one whose writing
+  activity failed goes red. Two levels rather than one because they answer
+  different questions — *what just changed* and *what this run has touched at
+  all*; a single state means a finished run is uniformly lit and says nothing.
+  On the medallion this draws itself: landing → bronze → silver → gold.
+- **A table inspector** — select a node for the current Delta version, schema,
+  row count and a 20-row sample, read through the same warehouse reader the SQL
+  endpoint uses (`/_emulator/portal/table`). The stream says a table *changed*;
+  this says what it changed *into*, which is the question a developer asks next.
+  Re-read automatically when a `table` event lands on the open table, so the
+  panel cannot quietly go stale. A `Files/` node says plainly that there is no
+  schema to read rather than erroring, and a table whose first commit has not
+  landed reports that as a fact, not a 500.
 
 Polling would have worked for the log. It would not have worked for the graph:
 the point is watching it happen.

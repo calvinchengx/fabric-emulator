@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Flow from './Flow.svelte';
 
@@ -41,12 +41,23 @@ const edges = [
   },
 ];
 
-function mockLineage(value = edges) {
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: () => Promise.resolve({ value }),
+// The view calls several endpoints; route by URL so a test can say what each
+// one returns without the others interfering.
+function mockApi({ lineage = edges, workspaces = [], table = null } = {}) {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+    const body = url.includes('/portal/lineage')
+      ? { value: lineage }
+      : url.includes('/portal/workspaces')
+        ? { value: workspaces }
+        : url.includes('/portal/table')
+          ? table
+          : { value: [] };
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   });
+}
+
+function mockLineage(value = edges) {
+  mockApi({ lineage: value });
 }
 
 describe('Flow', () => {
@@ -113,7 +124,7 @@ describe('Flow', () => {
     expect(screen.getAllByText('IngestCustomers').length).toBeGreaterThan(0);
     // …and the node is marked as touched.
     const node = screen.getByText('bronze_customers').closest('g');
-    await waitFor(() => expect(node.getAttribute('class')).toContain('touched'));
+    await waitFor(() => expect(node.getAttribute('class')).toContain('fresh'));
   });
 
   it('marks a failing activity red on the table it writes', async () => {
@@ -161,7 +172,7 @@ describe('Flow', () => {
     expect(screen.queryByText(/FileCreated Files\/landing/)).not.toBeInTheDocument();
 
     // Turning `file` on reveals the event that already arrived.
-    await screen.getByLabelText('file').click();
+    await fireEvent.click(screen.getByLabelText('file'));
     await waitFor(() =>
       expect(screen.getByText(/FileCreated Files\/landing\/customers.csv/)).toBeInTheDocument());
   });
@@ -174,5 +185,69 @@ describe('Flow', () => {
     });
     render(Flow);
     await waitFor(() => expect(screen.getByText('db gone')).toBeInTheDocument());
+  });
+  it('inspects a table node: what it holds, not just that it changed', async () => {
+    mockApi({
+      table: {
+        itemId: 'lake-1', table: 'Tables/bronze_customers', version: 4, readable: true,
+        columns: ['id', 'name'], rowCount: 1203,
+        preview: [['1', 'ada'], ['2', 'grace']], truncated: true,
+      },
+    });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
+
+    await fireEvent.click(screen.getByText('bronze_customers').closest('g'));
+
+    await waitFor(() => expect(screen.getByText('v4')).toBeInTheDocument());
+    expect(screen.getByText('1203 rows')).toBeInTheDocument();
+    // The schema and a sample of the data — the question that follows "it changed".
+    expect(screen.getByText('id')).toBeInTheDocument();
+    expect(screen.getByText('ada')).toBeInTheDocument();
+    expect(screen.getByText(/First 2 of 1203 rows/)).toBeInTheDocument();
+  });
+
+  it('says plainly when a node is a file rather than a table', async () => {
+    mockApi({});
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('customers.csv')).toBeInTheDocument());
+    await fireEvent.click(screen.getByText('customers.csv').closest('g'));
+    await waitFor(() =>
+      expect(screen.getByText(/no schema to read/)).toBeInTheDocument());
+  });
+
+  it('reports a table whose first commit has not landed', async () => {
+    mockApi({
+      table: { itemId: 'lake-1', table: 'Tables/bronze_customers', version: -1,
+        readable: false, message: 'has no active data files' },
+    });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
+    await fireEvent.click(screen.getByText('bronze_customers').closest('g'));
+    await waitFor(() =>
+      expect(screen.getByText(/Not readable yet/)).toBeInTheDocument());
+  });
+
+  it('filters the log by workspace as well as by kind', async () => {
+    mockApi({ workspaces: [{ id: 'ws-1', displayName: 'Analytics' }, { id: 'ws-2', displayName: 'Sandbox' }] });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
+    FakeEventSource.last.open();
+
+    FakeEventSource.last.emit('job', {
+      seq: 1, at: 1700000000, kind: 'job', workspaceId: 'ws-1', jobId: 'a', status: 'Started',
+    });
+    FakeEventSource.last.emit('activity', {
+      seq: 2, at: 1700000001, kind: 'activity', workspaceId: 'ws-2',
+      activityName: 'OtherWorkspaceStep', activityType: 'Wait', status: 'Succeeded',
+    });
+    await waitFor(() => expect(screen.getByText(/OtherWorkspaceStep/)).toBeInTheDocument());
+
+    // Narrowing to one workspace hides the other's events without dropping them.
+    const select = screen.getByLabelText(/workspace/);
+    select.value = 'ws-1';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor(() => expect(screen.queryByText(/OtherWorkspaceStep/)).not.toBeInTheDocument());
+    expect(screen.getByText('job Started')).toBeInTheDocument();
   });
 });
