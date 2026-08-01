@@ -30,13 +30,21 @@ ifeq ($(OS),Windows_NT)
   .SHELLFLAGS := -c
 endif
 
-# Which interpreter is "python3" is not a given. On Windows `python3` normally
-# resolves to the Microsoft Store *alias stub*: it exists on PATH, so
-# `command -v python3` succeeds, and then it exits 49 with a "not found, install
-# from the Store" message. Detection therefore has to RUN each candidate, not
-# merely locate it — the same reason scripts/status.sh no longer trusts
-# `command -v`. Override with PY= if you keep python somewhere unusual.
-PY ?= $(shell for c in python3 python py; do if "$$c" -c '' >/dev/null 2>&1; then echo "$$c"; break; fi; done)
+# Same interpreter resolution as scripts/status.sh, deliberately — otherwise
+# `make spark` and `make status-spark` run the SAME spark_check.py under two
+# different Pythons.
+#
+# uv first: every Python entry point in this repo runs through it, so the
+# project environment is the only interpreter the code is tested against.
+#
+# The bare fallback still matters on a machine without uv, and there locating an
+# interpreter is not enough to know one exists: on Windows `python3` is normally
+# the Microsoft Store *alias stub*, which sits on PATH (so `command -v python3`
+# succeeds) and then exits 49 telling you to install from the Store. Run each
+# candidate and take the first that executes. Override with PY= for anything
+# else. Unquoted on use below, because the uv form is several words.
+PY ?= $(shell if command -v uv >/dev/null 2>&1; then echo "uv run --frozen --no-sync python"; \
+	else for c in python3 python py; do if "$$c" -c '' >/dev/null 2>&1; then echo "$$c"; break; fi; done; fi)
 
 .PHONY: help doctor up down restart clean status status-spark spark logs ps seed test
 
@@ -65,7 +73,7 @@ status-spark: ## status, plus a real Livy session executing Spark statements
 	@sh scripts/status.sh --spark
 
 spark: ## Deep Spark check only (Livy -> spark-agent -> sail)
-	@test -n "$(PY)" || { echo "no working python found (tried python3, python, py); set PY=" >&2; exit 1; }
+	@test -n "$(PY)" || { echo "no uv and no working python (tried python3, python, py); set PY=" >&2; exit 1; }
 	$(PY) scripts/spark_check.py
 
 seed: ## Catalog the emulator into OpenMetadata (seeds a demo if empty)
