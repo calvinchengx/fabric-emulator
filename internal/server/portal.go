@@ -2,11 +2,15 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
+	"path"
+	"strconv"
 	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 	"github.com/calvinchengx/fabric-emulator/portal"
 )
 
@@ -25,6 +29,7 @@ func (s *Server) registerPortal() {
 	s.mux.HandleFunc("GET /_emulator/portal/jobs", s.portalJobs)
 	s.mux.HandleFunc("GET /_emulator/portal/warehouse", s.portalWarehouse)
 	s.mux.HandleFunc("GET /_emulator/portal/lineage", s.portalLineage)
+	s.mux.HandleFunc("GET /_emulator/portal/table", s.portalTable)
 
 	assets, err := portal.Dist()
 	if err != nil {
@@ -282,6 +287,82 @@ func (s *Server) portalCapacities(w http.ResponseWriter, r *http.Request) {
 		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+// portalTablePreviewRows bounds the sample a node inspection returns. Enough to
+// see the shape of the data; not enough to turn clicking a node into a table
+// scan.
+const portalTablePreviewRows = 20
+
+// portalTable inspects one Delta table for the Data flow view: what it holds
+// right now, read through the same warehouse reader the SQL endpoint uses.
+//
+// The flow stream says a table *changed*; this says what it changed *into*,
+// which is the question a developer asks next.
+func (s *Server) portalTable(w http.ResponseWriter, r *http.Request) {
+	itemID := r.URL.Query().Get("itemId")
+	name := strings.TrimPrefix(r.URL.Query().Get("table"), "Tables/")
+	if itemID == "" || name == "" {
+		writeJSON(w, http.StatusBadRequest,
+			map[string]any{"error": map[string]string{"message": "itemId and table are required"}})
+		return
+	}
+	out := map[string]any{"itemId": itemID, "table": "Tables/" + name, "version": latestDeltaVersion(s.Store, itemID, name)}
+	tbl, err := warehouse.ReadDeltaTable(s.Store, itemID, name)
+	if err != nil {
+		// A table that cannot be read is not a server error: it may be a Files
+		// path, or a table whose first commit has not landed. Say so plainly
+		// and let the view render the reason.
+		out["readable"] = false
+		out["message"] = err.Error()
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	rows := tbl.Rows
+	if len(rows) > portalTablePreviewRows {
+		rows = rows[:portalTablePreviewRows]
+	}
+	preview := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		cells := make([]string, len(row))
+		for i, v := range row {
+			if v == nil {
+				cells[i] = ""
+				continue
+			}
+			cells[i] = fmt.Sprint(v)
+		}
+		preview = append(preview, cells)
+	}
+	out["readable"] = true
+	out["columns"] = tbl.Columns
+	out["rowCount"] = len(tbl.Rows)
+	out["preview"] = preview
+	out["truncated"] = len(tbl.Rows) > len(preview)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// latestDeltaVersion is the highest committed version in the table's log, or -1
+// when there is no log to read. The warehouse reader replays the log but does
+// not surface the version, and the flow stream reports versions — so the
+// inspector must speak the same units.
+func latestDeltaVersion(st *store.Store, itemID, name string) int64 {
+	entries, err := st.ListOneLakePaths(itemID, path.Join("Tables", name, "_delta_log"), false)
+	if err != nil {
+		return -1
+	}
+	latest := int64(-1)
+	for _, e := range entries {
+		base := path.Base(e.RelPath)
+		if !strings.HasSuffix(base, ".json") {
+			continue
+		}
+		v, err := strconv.ParseInt(strings.TrimSuffix(base, ".json"), 10, 64)
+		if err == nil && v > latest {
+			latest = v
+		}
+	}
+	return latest
 }
 
 // portalLineage serves the data-flow graph's edges: every recorded
