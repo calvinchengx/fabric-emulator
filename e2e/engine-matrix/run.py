@@ -37,9 +37,18 @@ def ensure_out_writable() -> None:
     It passed on macOS throughout: Docker Desktop's filesystem ignores the uid
     mismatch, so only Linux CI ever saw it. That is why this job had never gone
     green despite the matrix regenerating cleanly on a laptop every time.
+
+    The existing result files need chmod too, not just the directory. The
+    directory bits govern create/delete/rename; `open(path, "w")` *truncates*
+    an existing file, which needs write permission on that file. Since
+    `out/*.json` are tracked, checkout recreates them 644 and owned by the
+    runner, so a writable directory alone changes nothing — which is exactly
+    how the first attempt at this fix failed.
     """
     OUT.mkdir(parents=True, exist_ok=True)
     os.chmod(OUT, 0o777)
+    for existing in OUT.glob("*.json"):
+        os.chmod(existing, 0o666)
 
 
 def run_engine(engine: str) -> int:
