@@ -93,6 +93,11 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	pbiv.Audiences = api.PowerBIAudience
 	a.PBIAuth = pbiv
 
+	// Every committed OneLake write emits an event; event triggers subscribe.
+	// No broker: the emulator owns the storage layer, so a file event is
+	// observable at the source whoever wrote it (internal/api/triggers.go).
+	st.FileEvents = func(ev store.FileEvent) { a.DispatchFileEvent(ev) }
+
 	s := &Server{Cfg: cfg, Store: st, Clock: ck, API: a, OneLake: ol, mux: http.NewServeMux()}
 
 	// The warehouse SQL endpoint terminates FedAuth by validating the client's

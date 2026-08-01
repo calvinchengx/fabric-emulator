@@ -100,17 +100,33 @@ type run struct {
 	params    map[string]value
 	variables map[string]value
 	outputs   map[string]value // activity name -> {"output":..,"status":..}
+	trigger   map[string]value // @pipeline().TriggerEvent, nil when started by hand
 	runs      []ActivityRun
+}
+
+// Options carries per-run context beyond parameters.
+type Options struct {
+	// TriggerEvent populates @pipeline().TriggerEvent for a run started by an
+	// event trigger. Nil for a manual or scheduled run, which is why the
+	// documented way to read it is the safe-navigating
+	// `@pipeline()?.TriggerEvent?.FileName`.
+	TriggerEvent map[string]value
 }
 
 // Run executes the pipeline with the given runtime parameters (overriding
 // defaults). The Executor handles leaf activities.
 func (p *Pipeline) Run(params map[string]value, exec Executor) *Result {
+	return p.RunWith(params, exec, Options{})
+}
+
+// RunWith is Run with per-run context — see Options.
+func (p *Pipeline) RunWith(params map[string]value, exec Executor, opts Options) *Result {
 	r := &run{
 		exec:      exec,
 		params:    map[string]value{},
 		variables: map[string]value{},
 		outputs:   map[string]value{},
+		trigger:   opts.TriggerEvent,
 	}
 	for name, def := range p.Properties.Parameters {
 		r.params[name] = def.DefaultValue
@@ -141,6 +157,7 @@ func (r *run) ctx(item value, hasItem bool) *evalContext {
 		Parameters: r.params,
 		Variables:  r.variables,
 		Activities: r.outputs,
+		Trigger:    r.trigger,
 		Item:       item,
 		HasItem:    hasItem,
 	}
