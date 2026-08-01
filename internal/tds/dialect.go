@@ -5,8 +5,9 @@ package tds
 // This is the one place the emulator rewrites a client's SQL rather than
 // relaying it verbatim, so the rules from docs/29 are enforced here in code:
 //
-//	rewrite  — a nested CTE becomes the sequential form SQL Server accepts,
-//	           which Fabric would have run as written;
+//	rewrite  — a nested CTE becomes the sequential form SQL Server accepts and
+//	           a CTAS becomes SELECT … INTO, both of which Fabric would have
+//	           run as written;
 //	reject   — anything Fabric itself refuses, or that cannot be rewritten
 //	           faithfully, is answered with an error naming the limitation;
 //	forward  — everything else is passed through byte-identical, including
@@ -77,7 +78,7 @@ func fixRPC(data []byte, strict bool) (out []byte, reject string) {
 		if msg := strictReject(p.text, strict); msg != "" {
 			return data, msg
 		}
-		rewritten, changed, ferr := tsql.Flatten(p.text)
+		rewritten, changed, ferr := tsql.Adapt(p.text)
 		if ferr != nil {
 			var restriction *tsql.RestrictionError
 			var shadowed *tsql.ShadowedNameError
@@ -147,7 +148,7 @@ func fixBatch(data []byte, strict bool) (out []byte, reject string) {
 	if msg := strictReject(raw, strict); msg != "" {
 		return data, msg
 	}
-	sql, changed, err := tsql.Flatten(raw)
+	sql, changed, err := tsql.Adapt(raw)
 	switch {
 	case err != nil:
 		// A statement Fabric itself refuses, or one that cannot be flattened

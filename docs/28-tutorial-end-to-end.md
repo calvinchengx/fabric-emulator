@@ -46,9 +46,12 @@ suite — this tutorial composes proven paths rather than inventing new ones:
 | **All of the above, in sequence** | this tutorial, executed | **`examples/medallion` via `e2e/medallion`** |
 
 **Honesty box.** The Warehouse engine is a vanilla SQL Server sidecar, not
-Fabric's MPP engine — dbt models here materialize as **views** (Fabric's
-`CREATE TABLE AS SELECT` dialect is not claimed; see
-[16-warehouse-tds.md](16-warehouse-tds.md) §scope). The semantic model serves
+Fabric's MPP engine. Where its T-SQL dialect differs from Fabric's, the
+emulator adapts the statement on the wire rather than pretending — nested CTEs
+are flattened and Fabric's `CREATE TABLE AS SELECT` becomes `SELECT … INTO`, so
+dbt's `table` materialization and its CTE-based tests run here as they would on
+Fabric ([29-tsql-parity.md](29-tsql-parity.md)); what the sidecar cannot do
+*faithfully* is refused, not faked. The semantic model serves
 the **REST `executeQueries` contract** (what SemPy and Power BI REST clients
 call), not XMLA/ADOMD — the deliberate boundary recorded in
 [18-semantic-model-references.md](18-semantic-model-references.md).
@@ -572,10 +575,10 @@ model-paths: ["models"]
 test-paths: ["tests"]
 models:
   contoso_gold:
-    # Views: standard T-SQL the sidecar runs directly. dbt-fabric's *table*
-    # materialization emits Fabric's CTAS dialect, which vanilla SQL Server
-    # rejects — the honest boundary from docs/16.
-    +materialized: view
+    # dbt-fabric's table materialization ships CTAS inside EXEC('…'), which
+    # vanilla SQL Server rejects; the emulator rewrites it to SELECT … INTO on
+    # the wire (docs/29-tsql-parity.md, T8).
+    +materialized: table
 ```
 
 ```yaml

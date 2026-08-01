@@ -1,6 +1,6 @@
 # 29 — T-SQL parity: Fabric's surface area vs the stand-in engine
 
-**Status: T6 and T7 shipped; T8 outstanding.** This doc maps Fabric's documented
+**Status: T6, T7 and T8 shipped.** This doc maps Fabric's documented
 T-SQL surface area against the SQL Server sidecar the emulator relays to,
 classifies every divergence in **both** directions, and tracks the work to close
 them. [16-warehouse-tds.md](16-warehouse-tds.md) describes the surface this
@@ -10,7 +10,8 @@ builds on (T1–T5).
   parameters, so dbt's `accepted_values` and `relationships` run unmodified.
 - **T7 ✅** — `-tsql-strict` refuses the Class B constructs Fabric rejects that
   the sidecar would otherwise run. Off by default.
-- **T8 ⬜** — CTAS (`CREATE TABLE AS SELECT`), the last Class A gap.
+- **T8 ✅** — CTAS becomes `SELECT … INTO`, including inside the `EXEC('…')`
+  dynamic SQL dbt actually ships. Both Class A gaps are closed.
 
 ## Why this doc exists
 
@@ -454,11 +455,39 @@ divergence, so a loud refusal beats a silent one. What it costs is spelled out
 rather than hidden — a column named `identity` or a CTE whose name also names a
 column can be refused.
 
-### T8 — CTAS (proposed)
+### T8 — CTAS. ✅ Done
 
-Rewrite Fabric/Synapse `CREATE TABLE AS SELECT` into SQL Server `SELECT … INTO`,
-restoring dbt's `table` materialization and removing adaptation #1. Mechanically
-simpler than T6 but shares the tokeniser, so it should follow it.
+`CREATE TABLE … AS SELECT` → `SELECT … INTO`, closing the last Class A gap.
+`INTO` is spliced before the first `FROM` at parenthesis depth 0, so a subquery
+in the select list or a leading CTE cannot capture it, and a query with no
+`FROM` takes it at the end. Fabric's `WITH (DISTRIBUTION = …)` table options are
+dropped — SQL Server has no equivalent, and they affect data distribution rather
+than results, which is the one non-syntactic change here and why it is called
+out.
+
+**The plan was wrong about the input, and measuring caught it.** T8 assumed dbt
+sends a bare CTAS. It does not: dbt-fabric ships its DDL as *dynamic SQL* —
+
+```sql
+EXEC('CREATE TABLE [db].[dbo].[x__dbt_temp]  AS SELECT * FROM …
+    OPTION (LABEL = ''dbt-fabric-dw'');');
+```
+
+so the CTAS lives inside a string literal and a statement-level rewrite misses
+it entirely. The first implementation did exactly that and the e2e still failed
+with `Msg 156` — which is why the witness came before the claim. `Adapt` now
+also rewrites inside `EXEC('…')` arguments, unescaping and re-escaping the
+literal. Only the single-literal form is touched: `EXEC(@variable)` or a
+concatenated expression is left alone, since its content is not knowable.
+
+`OPTION (LABEL = …)` needed no handling — verified directly against SQL Server
+2022, which accepts it.
+
+**Witnessed:** `examples/medallion` now uses `+materialized: table`, so CI
+builds real tables through the rewrite — `PASS=13 ERROR=0`, 9/9 steps, DQ gate
+still failing on poisoned data. Adaptation #1 is deleted from
+`e2e/medallion/README.md`, as T6f deleted #2. **Both Class A gaps are now
+closed.**
 
 ## Reproducing the measurements
 

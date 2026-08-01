@@ -5,10 +5,12 @@ profile: contoso_gold
 model-paths: ["models"]
 test-paths: ["tests"]
 
-# Views: standard T-SQL the SQL Server sidecar runs directly. dbt-fabric's
-# *table* materialization emits Fabric/Synapse CREATE TABLE AS SELECT, which
-# vanilla SQL Server rejects — the sidecar is a stand-in engine, not Fabric's
-# MPP warehouse (docs/16-warehouse-tds.md, scope note).
+# Tables, using dbt-fabric's own `table` materialization — no emulator-shaped
+# workaround. That materialization ships its DDL as
+# `EXEC('CREATE TABLE … AS SELECT …')`: Fabric/Synapse CTAS, which vanilla SQL
+# Server rejects. The emulator rewrites it to `SELECT … INTO` on the wire,
+# inside the EXEC literal, so gold materialises here exactly as it would on
+# Fabric. See docs/29-tsql-parity.md (T8).
 models:
   contoso_gold:
-    +materialized: view
+    +materialized: table
