@@ -1,0 +1,15 @@
+version: 2
+
+# Bronze is read DIRECTLY as Delta from the Lakehouse — no reflection, no second
+# database. Spark reads the same files the Copy activity and the notebook wrote.
+#
+# The tables resolve BY NAME with no help from this project: opening a Livy
+# session against a lakehouse registers its Tables/ in the Spark catalog, the
+# way real Fabric's metastore does. Until the emulator did that, every model
+# here would have needed an abfs:// path or a hand-written CREATE TABLE.
+sources:
+  - name: bronze
+    schema: "{{ env_var('LAKEHOUSE_NAME') }}"
+    tables:
+      - name: bronze_customers
+      - name: bronze_orders

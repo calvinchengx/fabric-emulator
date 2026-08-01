@@ -29,6 +29,9 @@ from pyspark.sql import functions as F  # noqa: E402
 
 spark = SparkSession.builder.remote(SPARK_REMOTE).getOrCreate()
 
+import time as _time  # noqa: E402
+_t0 = _time.time()  # build clock: the transform starts here
+
 base = (f"abfs://{st['workspace']}@onelake.dfs.fabric.microsoft.com"
         f"/{st['lakehouse']}/Tables")
 
@@ -109,3 +112,23 @@ assert silver_customers.filter(F.col("email") == "").count() > 0, \
 
 log(f"silver (PySpark): {n_customers:,} customers x {len(silver_customers.columns)} cols, "
     f"{n_orders:,} orders, {n_quarantine:,} quarantined")
+
+# A machine-readable summary of what this tool produced, so
+# ../medallion-dbt-fabricspark can compare its declarative build against this
+# imperative one without either example importing the other's code.
+import json  # noqa: E402
+import pathlib  # noqa: E402
+
+pathlib.Path(__file__).resolve().parent.joinpath("silver_summary.json").write_text(
+    json.dumps({
+        "engine": "PySpark (Spark Connect)",
+        "target": "Lakehouse (Delta in OneLake)",
+        "compute": "Sail (Rust Spark Connect, no JVM)",
+        "build_seconds": round(_time.time() - _t0, 2),
+        "rows": {"silver_customers": n_customers, "silver_orders": n_orders,
+                 "silver_quarantine_orders": n_quarantine},
+        # Empty, and that is the finding rather than an omission: Spark SQL
+        # needs no statement rewriting on the wire. The Warehouse half of this
+        # example does (docs/29-tsql-parity.md, T6 and T8).
+        "dialect_adaptations": [],
+    }, indent=2))
