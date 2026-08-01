@@ -197,3 +197,102 @@ func keysOfRaw(m map[string]json.RawMessage) string {
 	sort.Strings(out)
 	return strings.Join(out, ", ")
 }
+
+// Connections get their own case because the interesting checks are nested,
+// and because this is the surface where a schema bug actually shipped: the
+// credential object grew invented `accessKeyId`/`secretAccessKey` fields.
+//
+// The reference's read model is deliberately narrow — `ListCredentialDetails`
+// carries only credentialType, singleSignOnType, connectionEncryption and
+// skipTestConnection. No credentials come back at all, which makes "no secret
+// ever appears in a list response" a property worth enforcing rather than
+// assuming.
+func TestConnectionPayloadMatchesDocumentedSchema(t *testing.T) {
+	const source = "rest/api/fabric/core/connections/list-connections"
+	f := newFixture(t)
+
+	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{
+		"displayName":      "schema-conn",
+		"connectivityType": "ShareableCloud",
+		"credentialDetails": map[string]any{
+			"credentials": map[string]any{
+				"credentialType": "Basic",
+				"username":       "sentinel-user",
+				"password":       "sentinel-password-do-not-leak",
+			}},
+	}, nil), http.StatusCreated, "create connection")
+
+	var page struct {
+		Value []map[string]json.RawMessage `json:"value"`
+	}
+	f.mustStatus(f.call("GET", "/v1/connections", f.token, nil, &page),
+		http.StatusOK, "list connections")
+	if len(page.Value) == 0 {
+		t.Fatal("no connections returned")
+	}
+
+	// ShareableCloudConnection, per the reference.
+	allowed := map[string]bool{}
+	for _, k := range []string{
+		"id", "displayName", "gatewayId", "connectivityType", "connectionDetails",
+		"privacyLevel", "credentialDetails", "connectionRecency",
+		"allowConnectionUsageInGateway", "allowUsageInUserControlledCode",
+	} {
+		allowed[k] = true
+	}
+	nested := map[string]map[string]bool{
+		// ListConnectionDetails
+		"connectionDetails": {"path": true, "type": true},
+		// ListCredentialDetails — note: no credentials.
+		"credentialDetails": {
+			"credentialType": true, "singleSignOnType": true,
+			"connectionEncryption": true, "skipTestConnection": true,
+		},
+	}
+
+	for i, conn := range page.Value {
+		for _, need := range []string{"id", "displayName", "connectivityType"} {
+			if _, ok := conn[need]; !ok {
+				t.Errorf("connection %d is missing %q\nreference: %s", i, need, source)
+			}
+		}
+		for got, raw := range conn {
+			if !allowed[got] {
+				t.Errorf("connection %d carries %q, undocumented by %s", i, got, source)
+				continue
+			}
+			fields, checked := nested[got]
+			if !checked {
+				continue
+			}
+			var obj map[string]json.RawMessage
+			if json.Unmarshal(raw, &obj) != nil {
+				continue
+			}
+			for inner := range obj {
+				if !fields[inner] {
+					t.Errorf("connection %d: %s.%s is undocumented by %s",
+						i, got, inner, source)
+				}
+			}
+		}
+	}
+
+	// No secret may appear anywhere in the response, at any depth. The
+	// reference returns no credentials, so a leak is both a schema break and a
+	// security bug — and a substring check catches it wherever it hides.
+	raw, err := json.Marshal(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"sentinel-password-do-not-leak", "sentinel-user"} {
+		if strings.Contains(string(raw), secret) {
+			t.Errorf("the connections list leaked %q; the reference returns no credentials", secret)
+		}
+	}
+	for _, field := range []string{"password", "secretAccessKey", "servicePrincipalSecret", "privateKey"} {
+		if strings.Contains(string(raw), `"`+field+`"`) {
+			t.Errorf("the connections list exposes a %q field; ListCredentialDetails has none", field)
+		}
+	}
+}
