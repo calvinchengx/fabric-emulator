@@ -251,26 +251,54 @@ forward*.
   Each expected value was fixed in advance, so this is **semantic** equivalence
   — the rewrite returns the answer the original was meant to produce — not
   merely "the engine accepted it". T6f makes this harness permanent.
-- **T6d — enforce Fabric's own restrictions.** Now carries an obligation T6c
-  created: flattening **widens scope**. Fabric scopes a nested CTE to its
-  immediate higher level, so this — from Microsoft's own documentation — fails
-  on Fabric with `Msg 208, Invalid object name 'inner_cte1_1'`:
+- **T6d — enforce Fabric's own restrictions. ✅ Done.** Checked *before* any
+  rewrite, so fixing a Class A gap cannot open a Class B one. A refused
+  statement is returned untouched with a `RestrictionError` naming the rule.
+
+  **The scope rule is the one T6c created, and the risk was real — measured,
+  not assumed.** Fabric scopes a nested CTE to its immediate higher level, so
+  Microsoft's own example fails there with `Msg 208`:
 
   ```sql
-  WITH outer_1 AS (WITH inner_cte1_1 AS (…) SELECT …),
-       outer_2 AS (WITH inner_2 AS (…) SELECT … FROM inner_cte1_1, inner_2 …)
-  SELECT * FROM outer_2;   -- inner_cte1_1 belongs to outer_1's scope
+  WITH outer_1 AS (WITH inner_1_1 AS (…) SELECT …),
+       outer_2 AS (WITH inner_2_1 AS (…) SELECT … FROM inner_1_1, inner_2_1 …)
+  SELECT * FROM outer_2;   -- inner_1_1 belongs to outer_1's scope
   ```
 
-  Once flattened, every CTE is visible to the whole statement, so the emulator
-  would **accept** it — a new Class B divergence introduced by the fix. T6d must
-  reject out-of-scope references before flattening. Beyond that: nested CTEs are
-  `SELECT`-only; no
-  `OPTION` hints in a nested definition; not usable in `CREATE VIEW`; permitted
-  in a CTE subquery definition but **not** a general subquery; no `AS OF`; names
-  unique per level; visible only to the immediate higher level. Accepting these
-  would turn a fixed Class A gap into a *new Class B gap* — so reject them with
-  the same error text Fabric gives (`Msg 156`) where it applies.
+  Flattened and run against a real SQL Server, that statement **succeeds,
+  returning `a=1, b=2`**. So without this check the emulator would have quietly
+  executed SQL a real warehouse rejects — precisely the silent Class B failure
+  this document exists to prevent. It is now refused as
+  `out-of-scope-reference`.
+
+  | Rule | Enforced as |
+  |---|---|
+  | nested CTE only in a `SELECT` statement | `select-only` |
+  | no `INSERT`/`UPDATE`/`DELETE`/`MERGE` in a nested definition | `no-dml-in-definition` |
+  | no `OPTION` query hints in a nested definition | `no-query-hint` |
+  | names unique within a nesting level | `duplicate-name` |
+  | a nested CTE visible only to its level and its parent's body | `out-of-scope-reference` |
+  | nesting depth ≤ 64 | `max-depth` |
+
+  Note `duplicate-name` (invalid on Fabric too) is deliberately distinct from
+  `ShadowedNameError` (valid on Fabric, merely unflattenable here) — they mean
+  different things to whoever has to fix the SQL.
+
+  **Deliberately not enforced, because the engines already agree:** a nested CTE
+  in `CREATE VIEW`, and one in a *general* subquery (`SELECT * FROM (WITH …) x`),
+  are both rejected by Fabric with `Msg 156` — and neither parses as a leading
+  `WITH`, so it is forwarded untouched and SQL Server rejects it with the same
+  `Msg 156`. Two engines, one error, nothing to add. **Not enforced, and why:**
+  `AS OF` in a nested definition needs temporal-clause parsing this lexer does
+  not do; recursive CTEs are a pre-existing Class B entry owned by T7, not
+  something T6 introduced.
+
+  **The one accepted trade:** the scope check considers only identifiers that
+  name a CTE *somewhere in the statement*, so ordinary table and column names
+  cannot trip it — but a column sharing a name with a CTE in an unrelated branch
+  is a false positive. That costs a refused statement (loud, Class A) rather
+  than a wrong answer (silent, Class B), which is the direction this document
+  asks for.
 - **T6e — re-encode.** Rebuild the SQLBatch payload: preserve the ALL_HEADERS
   block verbatim, re-encode the rewritten text as UTF-16LE, and recompute packet
   framing. Oversized batches must chunk correctly.
