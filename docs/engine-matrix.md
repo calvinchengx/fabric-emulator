@@ -112,11 +112,11 @@ tests never touch.
 | `OPTIMIZE` | ❌ `invalid argument: found OPTIMIZE at 0:8 expected something else, ';', statement, or end of` | ✅ | ✅ |
 | `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ✅ | ✅ |
 | Change Data Feed (must not be inert) ᵇ | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ |
-| `readStream` (rate source) | ✅ | ✅ | ✅ |
-| Streaming sink — console | ✅ | ✅ | ✅ |
-| Streaming sink — memory | ❌ `No table format found for: memory` | ❌ `No table format found for: memory` | ✅ |
-| Streaming sink — parquet | ❌ `cannot write streaming data to listing table` | ❌ `cannot write streaming data to listing table` | ✅ |
-| Streaming sink — **delta** | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ✅ |
+| `readStream` (rate source) — schema only ᶜ | ✅ | ✅ | ✅ |
+| Streaming sink — console — liveness only ᶜ | ✅ | ✅ | ✅ |
+| Streaming sink — memory (rows readable) | ❌ `No table format found for: memory` | ❌ `No table format found for: memory` | ✅ |
+| Streaming sink — parquet (rows readable) | ❌ `cannot write streaming data to listing table` | ❌ `cannot write streaming data to listing table` | ✅ |
+| Streaming sink — **delta** (rows readable) | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ✅ |
 | `sc` / RDD API | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ✅ |
 | `spark._jvm` bridge | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `_jvm` is not supported in Spark Connect as it dep` | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `_jvm` is not supported in Spark Connect as it dep` | ✅ |
 | `createDataFrame(local_rows)` | ✅ | ✅ | ✅ |
@@ -131,6 +131,17 @@ candidate list for upstream Sail contributions.
 Sail when the registered table is backed by an `az://` OneLake URL — the
 path the emulator actually uses. Only the local-path form fails, so this
 row is not evidence that Sail lacks `MERGE`.
+
+ᶜ These two assert less than the others, and say so rather than
+implying more. Every other streaming row now proves rows actually
+**reached the sink** — files read back, or a queryable table — after a
+green `console` cell was found to mean only that a query object
+reported itself active while the engine delivered nothing. No stronger
+assertion exists from a Spark Connect client for these two: `console`
+writes to the *server's* stdout, a `readStream` is unobservable without
+a sink, and Sail reports no progress metrics (`lastProgress` is None,
+`recentProgress` is empty) — so asserting on those would fail for a
+missing API rather than a missing capability.
 
 ᵇ The CDF row fails on the **write**, not the read. Sail's writer cannot
 enable the table feature (`Unsupported table features required:

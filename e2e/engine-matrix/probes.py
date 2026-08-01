@@ -118,45 +118,102 @@ def delta_change_data_feed(spark):
 
 
 # ----------------------------------------------------------------- streaming
+#
+# These probes assert that rows REACH THE SINK, not merely that a query object
+# reported itself active. The weaker form is what they used to do, and it made
+# `console` green on an engine that never delivered a single batch — a ✅ that
+# measured liveness while its label claimed a working sink.
+#
+# Where the sink's output is not observable from a Spark Connect client, the
+# probe says so in its name rather than pretending. Two are in that category:
+# `console` writes to the *server's* stdout, and the rate source can only be
+# observed through some sink. Sail also reports no progress metrics
+# (`lastProgress` is None, `recentProgress` is []), so there is nothing else to
+# interrogate — asserting on them would fail for a missing API rather than a
+# missing capability.
 def _rate_stream(spark):
     return spark.readStream.format("rate").option("rowsPerSecond", 5).load()
 
 
+def _await_rows(read, deadline=25):
+    """Poll a reader until rows appear, returning (row_count, columns).
+
+    Streaming sinks land data asynchronously, so a single read straight after
+    `start()` proves nothing either way. Returns (0, set()) if nothing arrives
+    before the deadline — the caller decides whether that is a failure.
+    """
+    end = time.time() + deadline
+    while time.time() < end:
+        try:
+            df = read()
+            n = df.count()
+            if n > 0:
+                return n, set(df.columns)
+        except Exception:  # noqa: BLE001 — the target may not exist yet
+            pass
+        time.sleep(1)
+    return 0, set()
+
+
+def _assert_sink_wrote(spark, fmt, path, read):
+    """Run a streaming query into `path` and assert real rows land there."""
+    query = (_rate_stream(spark).writeStream.format(fmt)
+             .option("path", path)
+             .option("checkpointLocation", path + "_ck")
+             .outputMode("append").start())
+    try:
+        rows, cols = _await_rows(read)
+    finally:
+        query.stop()
+    assert rows > 0, (
+        f"{fmt} sink: query ran but no rows were readable at {path} — "
+        "a started query is not a working sink"
+    )
+    # The flow event schema (`_marker`/`_retracted`) is engine-internal. If it
+    # reaches the files, the sink wrote its plumbing instead of the user's data.
+    leaked = {"_marker", "_retracted"} & cols
+    assert not leaked, f"{fmt} sink: flow-event columns leaked into the output: {sorted(leaked)}"
+
+
 def streaming_read_rate(spark):
+    """Schema only — a readStream is not observable without a sink."""
     df = _rate_stream(spark)
     assert "timestamp" in df.schema.simpleString()
 
 
-def _try_sink(spark, fmt, **opts):
-    wr = _rate_stream(spark).writeStream.format(fmt).outputMode("append")
-    for k, v in opts.items():
-        wr = wr.option(k, v)
-    q = wr.start()
-    time.sleep(4)
-    active = q.isActive
-    q.stop()
-    assert active, f"{fmt} sink started but was not active"
-
-
 def streaming_sink_console(spark):
-    _try_sink(spark, "console")
+    """Liveness only — console writes to the server's stdout, not to the client.
+
+    Deliberately still the weak assertion, because no stronger one exists from
+    here. The row is named so that the matrix does not overstate it.
+    """
+    query = _rate_stream(spark).writeStream.format("console").outputMode("append").start()
+    time.sleep(4)
+    active = query.isActive
+    query.stop()
+    assert active, "console sink started but was not active"
 
 
 def streaming_sink_memory(spark):
-    wr = _rate_stream(spark).writeStream.format("memory").queryName("probe_mem").outputMode("append")
-    q = wr.start()
-    time.sleep(4)
-    q.stop()
+    """The memory sink IS observable: it registers a queryable table."""
+    name = "probe_mem"
+    query = (_rate_stream(spark).writeStream.format("memory")
+             .queryName(name).outputMode("append").start())
+    try:
+        rows, _ = _await_rows(lambda: spark.table(name))
+    finally:
+        query.stop()
+    assert rows > 0, "memory sink: query ran but spark.table() returned no rows"
 
 
 def streaming_sink_parquet(spark):
-    _try_sink(spark, "parquet", path=_table_path("s_pq"),
-              checkpointLocation=_table_path("s_pq_ck"))
+    path = _table_path("s_pq")
+    _assert_sink_wrote(spark, "parquet", path, lambda: spark.read.parquet(path))
 
 
 def streaming_sink_delta(spark):
-    _try_sink(spark, "delta", path=_table_path("s_delta"),
-              checkpointLocation=_table_path("s_delta_ck"))
+    path = _table_path("s_delta")
+    _assert_sink_wrote(spark, "delta", path, lambda: spark.read.format("delta").load(path))
 
 
 # ------------------------------------------------------- JVM-only surface
@@ -207,11 +264,11 @@ PROBES = [
     ("delta.optimize", "`OPTIMIZE`", delta_optimize),
     ("delta.vacuum", "`VACUUM`", delta_vacuum),
     ("delta.cdf", "Change Data Feed (must not be inert) ᵇ", delta_change_data_feed),
-    ("streaming.read_rate", "`readStream` (rate source)", streaming_read_rate),
-    ("streaming.sink_console", "Streaming sink — console", streaming_sink_console),
-    ("streaming.sink_memory", "Streaming sink — memory", streaming_sink_memory),
-    ("streaming.sink_parquet", "Streaming sink — parquet", streaming_sink_parquet),
-    ("streaming.sink_delta", "Streaming sink — **delta**", streaming_sink_delta),
+    ("streaming.read_rate", "`readStream` (rate source) — schema only ᶜ", streaming_read_rate),
+    ("streaming.sink_console", "Streaming sink — console — liveness only ᶜ", streaming_sink_console),
+    ("streaming.sink_memory", "Streaming sink — memory (rows readable)", streaming_sink_memory),
+    ("streaming.sink_parquet", "Streaming sink — parquet (rows readable)", streaming_sink_parquet),
+    ("streaming.sink_delta", "Streaming sink — **delta** (rows readable)", streaming_sink_delta),
     ("jvm.rdd_sparkcontext", "`sc` / RDD API", rdd_sparkcontext),
     ("jvm.bridge", "`spark._jvm` bridge", jvm_bridge),
     ("spark.create_dataframe_local", "`createDataFrame(local_rows)`", create_dataframe_local_rows),
