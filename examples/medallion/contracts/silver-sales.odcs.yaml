@@ -1,0 +1,204 @@
+# ODCS v3.1.0 — the INTERNAL contract for silver.
+#
+# Silver has one consumer (gold) and it is inside the same team, so this
+# contract exists to pin down guarantees that are currently implicit: they live
+# as Python asserts at the bottom of 05_silver.py and as EXPECTED_* constants
+# in source_system.py. Writing them here does not make them true — the asserts
+# still enforce them — it makes them READABLE by someone who is not reading the
+# transform.
+#
+# Two servers, one dataset: the Delta files in OneLake, and the same tables as
+# reflected by the lakehouse SQL analytics endpoint. dbt reads gold's sources
+# through the second.
+apiVersion: v3.1.0
+kind: DataContract
+id: 7b0688b7-dec7-5bde-a72d-66b703d4898e
+name: sales-silver
+version: 1.0.0
+status: draft
+domain: sales
+dataProduct: contoso-sales-analytics
+tenant: fabric-emulator
+
+description:
+  purpose: >-
+    Deduplicated, conformed and quarantined sales data. Silver is where the
+    vendor's at-least-once delivery, free-text country codes and malformed
+    events are resolved — once, so that no downstream consumer resolves them
+    again and differently.
+  usage: >-
+    Read as Delta from OneLake, or as tables through the lakehouse SQL
+    analytics endpoint. Gold's dbt sources point at the latter.
+  limitations: >-
+    silver_orders is the CLEAN set: rows failing the quarantine predicate are
+    diverted to silver_quarantine_orders, not dropped and not fixed. Any
+    reconciliation against the source must read both. Conformity of `country`
+    is a closed mapping — an unseen spelling passes through unchanged rather
+    than failing, so a new source country surfaces as an invalidValues breach
+    here rather than as silent loss.
+
+servers:
+  - server: onelake-delta
+    type: azure
+    description: The Delta tables the transform writes, under the lakehouse Tables area.
+    environment: dev
+    location: abfs://${WORKSPACE_ID}@onelake.dfs.fabric.microsoft.com/${LAKEHOUSE_ID}/Tables/
+    format: delta
+  - server: lakehouse-sql-endpoint
+    type: sqlserver
+    description: >-
+      The SQL analytics endpoint reflecting the same Delta into T-SQL. Database
+      is the lakehouse item's GUID, created at run time.
+    environment: dev
+    host: localhost
+    database: ${LAKEHOUSE_ID}
+    schema: dbo
+
+schema:
+  - name: silver_customers
+    logicalType: object
+    physicalType: table
+    businessName: Conformed customers
+    description: One row per customer, emails lower-cased, countries conformed.
+    dataGranularityDescription: One row per customer_id.
+    quality:
+      - type: library
+        metric: rowCount
+        mustBe: 7
+        dimension: completeness
+        description: >-
+          EXPECTED_SILVER_CUSTOMERS in source_system.py — pinned because the
+          example is a fixture, not a live feed. A production contract would
+          state a range here, not an equality.
+    properties:
+      - name: customer_id
+        logicalType: string
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+        criticalDataElement: true
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+            unit: rows
+            dimension: uniqueness
+            description: The vendor's repeated C-007 row collapses here.
+      - name: name
+        logicalType: string
+      - name: email
+        logicalType: string
+        classification: pii
+        description: >-
+          Lower-cased. Still nullable — the source permits an absent email and
+          silver does not invent one.
+      - name: country
+        logicalType: string
+        description: ISO-3166 alpha-2, mapped from the vendor's free text.
+        quality:
+          - type: library
+            metric: invalidValues
+            mustBe: 0
+            unit: rows
+            dimension: conformity
+            arguments:
+              validValues: ["US", "GB", "SG"]
+            description: EXPECTED_COUNTRIES in source_system.py.
+
+  - name: silver_orders
+    logicalType: object
+    physicalType: table
+    businessName: Clean orders
+    description: >-
+      One row per order after last-event-wins dedupe, with malformed rows
+      diverted to quarantine and `amount` computed.
+    dataGranularityDescription: One row per order_id.
+    quality:
+      - type: library
+        metric: rowCount
+        mustBe: 6
+        dimension: completeness
+        description: EXPECTED_SILVER_ORDERS — 8 events, less 1 redelivery, less 1 quarantined.
+    properties:
+      - name: order_id
+        logicalType: string
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+        criticalDataElement: true
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+            unit: rows
+            dimension: uniqueness
+            description: >-
+              The guarantee silver exists to make. Enforced by the
+              `is_unique` assert in 05_silver.py.
+      - name: customer_id
+        logicalType: string
+        required: true
+      - name: order_date
+        logicalType: date
+        description: Typed here; a string in landing and bronze.
+      - name: quantity
+        logicalType: integer
+        description: Strictly positive — non-positive events are quarantined.
+      - name: unit_price
+        logicalType: number
+        description: Present — events without a price are quarantined.
+      - name: amount
+        logicalType: number
+        description: quantity x unit_price. Computed here so gold cannot compute it differently.
+      - name: status
+        logicalType: string
+
+  - name: silver_quarantine_orders
+    logicalType: object
+    physicalType: table
+    businessName: Quarantined orders
+    description: >-
+      Events rejected by silver's predicate, kept whole. This table is part of
+      the contract precisely because dropping bad rows silently is the failure
+      mode it prevents.
+    dataGranularityDescription: One row per rejected EVENT (pre-dedupe shape).
+    properties:
+      - name: order_id
+        logicalType: string
+      - name: customer_id
+        logicalType: string
+      - name: order_date
+        logicalType: string
+      - name: quantity
+        logicalType: integer
+      - name: unit_price
+        logicalType: number
+      - name: status
+        logicalType: string
+      - name: event_seq
+        logicalType: integer
+
+slaProperties:
+  - property: frequency
+    value: 1
+    unit: d
+    element: silver_orders
+    driver: analytics
+
+support:
+  - channel: fabric-emulator-issues
+    url: https://github.com/calvinchengx/fabric-emulator/issues
+    tool: other
+    scope: issues
+
+authoritativeDefinitions:
+  - url: https://github.com/calvinchengx/fabric-emulator/blob/main/examples/medallion/05_silver.py
+    type: implementation
+    description: The transform, and the asserts that currently enforce these rules.
+
+tags:
+  - medallion
+  - silver
+  - internal
