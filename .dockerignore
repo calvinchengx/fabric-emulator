@@ -8,3 +8,10 @@ cover.out
 *.log
 **/__pycache__
 **/*.pyc
+# A virtualenv built on the host. e2e/medallion/Dockerfile.pipeline runs
+# `uv sync` and *then* copies the example directory over it, so a host .venv
+# lands on top of the container's — macOS binaries in a Linux image, and the
+# pipeline dies on `No module named 'requests'`. Anyone who follows the
+# example's own README (`uv run python run_all.py`) has one; CI checks out
+# fresh and never does, which is why this only bites contributors.
+**/.venv

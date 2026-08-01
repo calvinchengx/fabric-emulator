@@ -26,8 +26,18 @@ KV = os.environ.get("KV_URL", "https://localhost:8444")
 FABRIC = os.environ.get("FABRIC_REST_URL", "https://localhost:9443")
 TDS_SERVER = os.environ.get("TDS_SERVER", "localhost,1433")
 # Fabric resolves an AKV reference server-side, so the vault URI it stores must
-# be reachable from the *emulator*, which is not always where you are.
-KV_INTERNAL = os.environ.get("KV_INTERNAL_URL", KV)
+# be reachable from the *emulator*, which is not always where you are. Running
+# these steps on your machine against `docker compose up`, `localhost:8444` is
+# the vault as *you* reach it — the emulator container cannot follow it back
+# out. So the default is the compose service name, which is correct whether the
+# step runs on the host or in a container alongside it. Override for any other
+# topology (the CI harness points it at plain HTTP; a bare-metal vault at your
+# own address).
+KV_INTERNAL = os.environ.get("KV_INTERNAL_URL", "https://keyvault-emulator:8444")
+
+# The Spark engine 04_engine.py drives the queued notebook run onto. Default is
+# Sail as `docker compose up` publishes it; the CI harness uses the service name.
+SPARK_REMOTE = os.environ.get("SPARK_REMOTE", "sc://localhost:50051")
 
 FABRIC_AUD = "https://api.fabric.microsoft.com"
 STORAGE_AUD = "https://storage.azure.com"

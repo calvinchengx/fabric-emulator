@@ -20,6 +20,18 @@ Start the emulator family, with real compute attached:
 docker compose up -d          # from the repo root
 ```
 
+> **Running from a git checkout rather than a release?** That command starts the
+> **published** `fabric-emulator:latest` image, which can lag `main` by hours.
+> These steps assert against the emulator's current behaviour, so a stale image
+> fails in ways that look like example bugs — a missing `rowsCopied` on the Copy
+> activity, a 404 on a route that exists in your tree. Build the emulator from
+> your checkout and point compose at it:
+>
+> ```sh
+> docker build -t ghcr.io/calvinchengx/fabric-emulator:dev .
+> FABRIC_EMULATOR_VERSION=dev docker compose up -d
+> ```
+
 Then, in this directory:
 
 ```sh
@@ -106,7 +118,8 @@ at compose service names over plain HTTP:
 | `KV_URL` | `https://localhost:8444` |
 | `FABRIC_REST_URL` | `https://localhost:9443` |
 | `TDS_SERVER` | `localhost,1433` |
-| `KV_INTERNAL_URL` | same as `KV_URL` — the vault URI **Fabric** resolves, which must be reachable from the emulator, not from you |
+| `KV_INTERNAL_URL` | `https://keyvault-emulator:8444` — the vault URI **Fabric** resolves, so it must be reachable from the emulator, not from you. That is why it is a service name and not `localhost` even when you run these steps on your machine |
+| `SPARK_REMOTE` | `sc://localhost:50051` — the Spark engine `04_engine.py` drives the notebook run onto (Sail, as the root compose publishes it) |
 | `PIPELINE_STATE` | `./state.json` |
 | `GOLD_PROJECT` | `./gold` |
 
