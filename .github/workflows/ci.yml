@@ -469,24 +469,53 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/dbt-fabric/run.py
 
+  # All four medallion examples, one matrix. They differ in exactly two axes —
+  # simple vs advanced, and PySpark vs dbt-fabricspark for bronze -> silver — so
+  # four near-identical jobs would be four copies of the same ODBC install
+  # drifting apart. The job id stays `medallion` because docs/witnesses.json
+  # names `ci:medallion` as the witness for several parity claims.
+  #
+  # Gold is a WAREHOUSE in all four, built by dbt-fabric over TDS: dbt-fabricspark
+  # materialises into a Lakehouse and has no path to a Warehouse. The engine
+  # choice these legs compare is upstream, in the Lakehouse-to-Lakehouse half.
+  #
+  # The EXAMPLES run on the runner, not in containers: they are client code a
+  # reader runs on their own machine, and the stack they talk to is what belongs
+  # in docker. That is why the driver is installed here — and why these legs
+  # exercise self-signed TLS on localhost, the transport the READMEs document.
+  # Linux-only: the SQL Server image is amd64 and ships no arm64 manifest.
   medallion:
-    name: End-to-end medallion tutorial — Key Vault, landing, bronze/silver/gold, semantic model
+    name: ${{ matrix.title }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The runnable witness for docs/28-tutorial-end-to-end.md: a Key Vault
+          # secret behind an AKV-reference connection, an extract landed in
+          # OneLake, bronze -> silver on Sail, silver -> gold with Microsoft's
+          # dbt-fabric over TDS + FedAuth, and a semantic model queried through
+          # executeQueries with a Power BI audience token. Also proves the gold
+          # DQ tests REJECT bad data, not merely pass on good.
+          - harness: medallion
+            title: "Medallion — PySpark to silver, dbt-fabric to a Warehouse gold"
+          # Same pipeline, silver built declaratively by Microsoft's
+          # dbt-fabricspark over the Livy HC surface with Sail behind it. Its
+          # compare step asserts both silvers agree row for row — the tool
+          # choice must not change the answer.
+          - harness: medallion-dbt-fabricspark
+            title: "Medallion — dbt-fabricspark to silver, dbt-fabric to a Warehouse gold"
+          # Three source systems. No key spans all three, so an ERP account
+          # reaches a Web account only THROUGH POS — identity as a graph, which
+          # a two-source example never has to face. The resolution is
+          # materialised and the star joins both selling channels in gold; the
+          # step that resolves also names the cohorts it cannot place.
+          - harness: medallion-advanced
+            title: "Advanced medallion — three sources resolved and joined (PySpark silver)"
+          - harness: medallion-advanced-dbt-fabricspark
+            title: "Advanced medallion — three sources resolved and joined (dbt-fabricspark silver)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # The runnable witness for docs/28-tutorial-end-to-end.md: a Key Vault
-      # secret behind an AKV-reference connection, an extract landed in OneLake,
-      # bronze -> silver in Delta on Sail, silver -> gold with Microsoft's
-      # dbt-fabric over TDS + FedAuth, and a semantic model queried through
-      # executeQueries with a Power BI audience token. Also proves the gold DQ
-      # tests REJECT bad data, not just pass on good. Linux-only (SQL Server
-      # image + ODBC Driver 18).
-      #
-      # The EXAMPLE runs on this runner, not in a container: it is client code a
-      # reader runs on their own machine, and the stack it talks to is what
-      # belongs in docker. That is why the driver is installed here — and why
-      # this job exercises self-signed TLS on localhost, which is the transport
-      # the README documents.
       - name: Microsoft ODBC Driver 18 (dbt-fabric + pyodbc)
         run: |
           curl -sSL https://packages.microsoft.com/keys/microsoft.asc \
@@ -498,31 +527,7 @@ jobs:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.32"
-      - run: uv run --frozen --no-sync python e2e/medallion/run.py
-
-  medallion-advanced:
-    name: Advanced medallion — three source systems, resolved and joined
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      # The advanced track continues where the tutorial stops: Contoso Web (an
-      # e-commerce feed with nested JSON and no customer id) and Contoso ERP (a
-      # CDC change log), overlapping the POS customer set deliberately. No key
-      # spans all three, so an ERP account reaches a Web account only THROUGH
-      # POS — identity as a graph, which a two-source example never has to face.
-      # The step that resolves them also names the cohorts it cannot place.
-      - name: Microsoft ODBC Driver 18 (dbt-fabric + pyodbc)
-        run: |
-          curl -sSL https://packages.microsoft.com/keys/microsoft.asc \
-            | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
-          echo "deb [signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
-            | sudo tee /etc/apt/sources.list.d/mssql-release.list
-          sudo apt-get update
-          sudo ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc
-      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          version: "0.11.32"
-      - run: uv run --frozen --no-sync python e2e/medallion-advanced/run.py
+      - run: uv run --frozen --no-sync python e2e/${{ matrix.harness }}/run.py
 
   duckdb:
     name: Real DuckDB SQL over lakehouse Delta

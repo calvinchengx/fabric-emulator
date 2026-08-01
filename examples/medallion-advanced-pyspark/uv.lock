@@ -474,6 +474,21 @@ dependencies = [
 requires-dist = [{ name = "requests", specifier = ">=2.32,<3" }]
 
 [[package]]
+name = "contoso-fixtures-advanced"
+version = "0.1.0"
+source = { editable = "../contoso-fixtures-advanced" }
+dependencies = [
+    { name = "contoso-fixtures" },
+    { name = "pyarrow" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "contoso-fixtures", editable = "../contoso-fixtures" },
+    { name = "pyarrow", specifier = ">=18,<24" },
+]
+
+[[package]]
 name = "cryptography"
 version = "50.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -758,11 +773,12 @@ wheels = [
 ]
 
 [[package]]
-name = "fabric-emulator-example-medallion"
+name = "fabric-emulator-example-medallion-advanced-pyspark"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "contoso-fixtures" },
+    { name = "contoso-fixtures-advanced" },
     { name = "dbt-fabric" },
     { name = "deltalake" },
     { name = "great-expectations" },
@@ -776,6 +792,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "contoso-fixtures", editable = "../contoso-fixtures" },
+    { name = "contoso-fixtures-advanced", editable = "../contoso-fixtures-advanced" },
     { name = "dbt-fabric", specifier = ">=1.9" },
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "great-expectations", specifier = ">=0.18,<1" },
