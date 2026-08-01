@@ -119,8 +119,11 @@ func TestReflectDecimalColumn(t *testing.T) {
 	if got := sqlType(&Table{Rows: [][]any{{Decimal{Unscaled: big.NewInt(1), Precision: 99, Scale: 2}}}}, 0); got != "DECIMAL(38,2)" {
 		t.Errorf("clamped sqlType = %q, want DECIMAL(38,2)", got)
 	}
-	if got := literal(Decimal{Unscaled: big.NewInt(150), Precision: 10, Scale: 2}, "N"); got != "1.50" {
-		t.Errorf("literal = %q, want 1.50", got)
+	// The scale has to survive the trip to the wire too. That used to be
+	// literal()'s job; with the text path gone it is bulkValue's, which hands
+	// the encoder an exact decimal string rather than a float64.
+	if got := bulkValue(Decimal{Unscaled: big.NewInt(150), Precision: 10, Scale: 2}); got != "1.50" {
+		t.Errorf("bulkValue = %v, want \"1.50\"", got)
 	}
 
 	db := testsupport.OpenMSSQL(t)
@@ -132,7 +135,7 @@ func TestReflectDecimalColumn(t *testing.T) {
 			{Decimal{Unscaled: big.NewInt(300), Precision: 10, Scale: 2}},
 		},
 	}
-	if err := reflectTable(context.Background(), db, "orders", tbl, "N"); err != nil {
+	if err := reflectTable(context.Background(), db, "orders", tbl); err != nil {
 		t.Fatal(err)
 	}
 	var sum float64

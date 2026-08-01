@@ -23,7 +23,7 @@ func TestReflectTable(t *testing.T) {
 			{nil, int64(0), 0.0, nil},          // NULLs
 		},
 	}
-	if err := reflectTable(ctx, db, "sales", tbl, "N"); err != nil {
+	if err := reflectTable(ctx, db, "sales", tbl); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,28 +51,11 @@ func TestReflectTable(t *testing.T) {
 	}
 }
 
-func TestLiteralAndSQLType(t *testing.T) {
-	cases := []struct {
-		v       any
-		nprefix string
-		want    string
-	}{
-		{nil, "N", "NULL"},
-		{true, "N", "1"},
-		{false, "", "0"},
-		{int64(42), "", "42"},
-		{3.5, "", "3.5"},
-		{[]byte{0x01, 0xAB}, "N", "0x01ab"},
-		{"a'b", "N", "N'a''b'"},
-		{"x", "", "'x'"},
-		{int32(7), "N", "N'7'"}, // unhandled type → default text
-	}
-	for _, c := range cases {
-		if got := literal(c.v, c.nprefix); got != c.want {
-			t.Errorf("literal(%v,%q) = %q, want %q", c.v, c.nprefix, got, c.want)
-		}
-	}
-
+// TestSQLType: the DDL side of reflection. The literal-encoding half of this
+// test went with literal() — it rendered values into INSERT text, which nothing
+// does any more; bulk copy hands the encoder Go values directly. What survives
+// is type inference, which still decides every reflected column's DDL.
+func TestSQLType(t *testing.T) {
 	// sqlType picks a type from the first non-null value.
 	types := map[string]*Table{
 		"BIT":             {Rows: [][]any{{nil}, {true}}},
@@ -102,7 +85,7 @@ func TestReflectFromOneLake(t *testing.T) {
 	db := testsupport.OpenMSSQL(t)
 	ctx := context.Background()
 
-	done, err := reflect(ctx, db, st, itemID, "N")
+	done, err := Reflect(ctx, db, st, itemID)
 	if err != nil {
 		t.Fatal(err)
 	}

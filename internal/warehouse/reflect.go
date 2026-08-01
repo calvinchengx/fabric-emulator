@@ -3,9 +3,7 @@ package warehouse
 import (
 	"context"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
-	"strconv"
 	"strings"
 
 	mssql "github.com/microsoft/go-mssqldb"
@@ -18,13 +16,6 @@ import (
 // table and DROP/CREATE/INSERT it into db. Idempotent — safe to call on every
 // connect. Returns the names reflected.
 func Reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID string) ([]string, error) {
-	// Production target is SQL Server: Unicode string literals take the N prefix.
-	return reflect(ctx, db, st, itemID, "N")
-}
-
-// reflect is Reflect with the string-literal Unicode prefix parameterised, so
-// tests can target SQLite (no N prefix, no MAX) over the same code path.
-func reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID, nprefix string) ([]string, error) {
 	dirs, err := st.ListOneLakePaths(itemID, "Tables", false)
 	if err != nil {
 		return nil, err
@@ -40,7 +31,7 @@ func reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID, nprefix s
 			// A folder under Tables/ that isn't a Delta table is skipped, not fatal.
 			continue
 		}
-		if err := reflectTable(ctx, db, name, tbl, nprefix); err != nil {
+		if err := reflectTable(ctx, db, name, tbl); err != nil {
 			return done, fmt.Errorf("reflect %q: %w", name, err)
 		}
 		done = append(done, name)
@@ -48,22 +39,22 @@ func reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID, nprefix s
 	return done, nil
 }
 
-// reflectTable drops and recreates one table, then loads its rows.
+// reflectTable drops and recreates one table, then loads its rows over the TDS
+// bulk-copy protocol — how a warehouse is actually loaded: rows stream in
+// binary and the server parses no SQL for them at all.
 //
-// SQL Server — the production target — is loaded with the TDS bulk-copy
-// protocol, which is how a warehouse is actually loaded: rows stream in binary
-// and the server parses no SQL for them at all. Building INSERT ... VALUES text
-// instead makes load cost scale with CHARACTER COUNT rather than row count, and
-// SQL Server's parse cost grows faster than linearly with statement size, so a
-// wide table degrades sharply: reflecting 20,000 rows x 100 columns that way
-// measured 123s of statement execution against 0.13s of reading the Delta and
-// 0.09s of building the literals. Bulk copy does the same load in ~1s.
+// It used to build INSERT ... VALUES text as an alternative, for the SQLite
+// handle the unit tests injected. That made load cost scale with CHARACTER
+// COUNT rather than row count, and SQL Server's parse cost grows faster than
+// linearly with statement size, so a wide table degraded sharply: 20,000 rows x
+// 100 columns measured 123s of statement execution against 0.13s of reading the
+// Delta. Bulk copy does the same load in about a second.
 //
-// The literal path below is kept for the SQLite backend the unit tests inject,
-// which has no bulk protocol. That does mean the two backends load by different
-// routes; the SQL Server route is the one the e2e suites (e2e/medallion,
-// e2e/dbt-fabric, e2e/warehouse-tds) exercise against the real sidecar.
-func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table, nprefix string) error {
+// That branch is gone with the SQLite double. Reflect has exactly one caller,
+// and the backend it passes is only ever built by tds.NewSQLServerBackend, so
+// the text path was unreachable in production and untestable without a double —
+// as were the nprefix parameter and literal() that existed solely to serve it.
+func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table) error {
 	q := quoteIdent(name)
 	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS "+q); err != nil {
 		return err
@@ -78,64 +69,7 @@ func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table, npre
 	if len(tbl.Rows) == 0 {
 		return nil
 	}
-
-	// Ask the DRIVER, not the literal dialect: Reflect is called with nprefix
-	// "N" by production AND by the unit tests, which hand it a SQLite handle, so
-	// the prefix says nothing about who is on the other end of the connection.
-	if isSQLServer(db) {
-		return bulkInsert(ctx, db, q, tbl)
-	}
-
-	// No bulk protocol (SQLite): batch by statement SIZE rather than a fixed row
-	// count, so a wide table's statements stay the same size as a narrow one's.
-	const (
-		maxStmtBytes     = 64 << 10
-		maxRowsPerInsert = 500
-	)
-	prefix := "INSERT INTO " + q + " VALUES "
-	var sb strings.Builder
-	sb.WriteString(prefix)
-	inBatch := 0
-
-	flush := func() error {
-		if inBatch == 0 {
-			return nil
-		}
-		if _, err := db.ExecContext(ctx, sb.String()); err != nil {
-			return err
-		}
-		sb.Reset()
-		sb.WriteString(prefix)
-		inBatch = 0
-		return nil
-	}
-
-	for _, row := range tbl.Rows {
-		cells := make([]string, len(row))
-		for i, v := range row {
-			cells[i] = literal(v, nprefix)
-		}
-		frag := "(" + strings.Join(cells, ",") + ")"
-		if inBatch > 0 && (sb.Len()+1+len(frag) > maxStmtBytes || inBatch >= maxRowsPerInsert) {
-			if err := flush(); err != nil {
-				return err
-			}
-		}
-		if inBatch > 0 {
-			sb.WriteByte(',')
-		}
-		sb.WriteString(frag)
-		inBatch++
-	}
-	return flush()
-}
-
-// isSQLServer reports whether db really is a go-mssqldb connection, and so can
-// speak the bulk-copy protocol. Everything else (the tests' SQLite) takes the
-// literal-INSERT path.
-func isSQLServer(db *sql.DB) bool {
-	_, ok := db.Driver().(*mssql.Driver)
-	return ok
+	return bulkInsert(ctx, db, q, tbl)
 }
 
 // bulkInsert streams a table's rows into SQL Server over the TDS bulk-copy
@@ -222,32 +156,6 @@ func sqlType(tbl *Table, col int) string {
 		}
 	}
 	return "NVARCHAR(4000)"
-}
-
-// literal renders a Go value as a SQL literal. nprefix is "N" for SQL Server
-// (Unicode string literals) or "" for SQLite.
-func literal(v any, nprefix string) string {
-	switch x := v.(type) {
-	case nil:
-		return "NULL"
-	case bool:
-		if x {
-			return "1"
-		}
-		return "0"
-	case int64:
-		return strconv.FormatInt(x, 10)
-	case Decimal:
-		return x.String() // scale applied; already a valid SQL decimal literal
-	case float64:
-		return strconv.FormatFloat(x, 'g', -1, 64)
-	case []byte:
-		return "0x" + hex.EncodeToString(x)
-	case string:
-		return nprefix + "'" + strings.ReplaceAll(x, "'", "''") + "'"
-	default:
-		return nprefix + "'" + strings.ReplaceAll(fmt.Sprint(x), "'", "''") + "'"
-	}
 }
 
 // quoteIdent wraps an identifier in brackets (T-SQL; SQLite accepts them too).
