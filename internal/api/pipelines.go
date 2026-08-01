@@ -334,7 +334,7 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 	var bytesCopied int
 	for _, f := range files {
 		p := &store.OneLakePath{WorkspaceID: dst.wsID, ItemID: dst.itemID, RelPath: f.rel, Content: f.content}
-		if err := e.a.Store.CreateOneLakePath(p, false); err != nil {
+		if err := e.a.Store.CreateOneLakePathAs(store.ActivityBy(e.jobID, act.Name), p, false); err != nil {
 			return nil, fmt.Errorf("copy %q: writing %s: %v", act.Name, f.rel, err)
 		}
 		bytesCopied += len(f.content)
@@ -745,7 +745,8 @@ func (e *pipelineExecutor) copyIntoTable(act pipeline.Activity, tp map[string]js
 	} else if strings.EqualFold(action, "Append") {
 		mode = warehouse.WriteAppend
 	}
-	if err := warehouse.WriteDeltaTable(e.a.Store, dst.wsID, dst.itemID, table, mode, tbl); err != nil {
+	if err := warehouse.WriteDeltaTableAs(store.ActivityBy(e.jobID, act.Name),
+		e.a.Store, dst.wsID, dst.itemID, table, mode, tbl); err != nil {
 		return nil, false, fmt.Errorf("copy %q: writing table %s: %v", act.Name, table, err)
 	}
 
