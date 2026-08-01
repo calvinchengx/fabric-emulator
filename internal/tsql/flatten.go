@@ -67,11 +67,19 @@ func Flatten(sql string) (out string, changed bool, err error) {
 		return sql, false, nil
 	}
 
+	// Refuse anything Fabric itself refuses *before* rewriting, so fixing a
+	// Class A gap cannot open a Class B one (T6d).
+	if err := checkNestedRestrictions(st); err != nil {
+		return sql, false, err
+	}
+
 	var flat []*CTE
 	hoist(st.With, &flat)
 
 	// Every level now shares one namespace, so any repeated name is a
 	// collision — including one that was legal in the nested original.
+	// Same-level duplicates were already rejected as a Fabric violation above,
+	// so anything reaching here is genuine cross-level shadowing.
 	seen := make(map[string]bool, len(flat))
 	for _, c := range flat {
 		id := c.Ident()
