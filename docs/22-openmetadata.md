@@ -51,6 +51,54 @@ The CI witness seeds `lake.orders`, shortcuts it as `curated.orders_ref`, then
 executes a Copy to `curated.orders_copy`. OpenMetadata must return both
 independent edges and remain idempotent on a second ingestion.
 
+## Sensitivity labels → classification tags
+
+Purview's Data Map speaks the **Apache Atlas API**, and OpenMetadata ships an
+Atlas connector — so a Purview → OpenMetadata migration carries assets,
+classifications, glossary and lineage. The one thing it cannot carry is
+**sensitivity labels**: those are Microsoft Purview *Information Protection*
+objects, not Atlas entities, so there is nothing on the Atlas surface to read
+them from.
+
+The emulator models labels already (see [parity](parity.md), *Identity &
+security*), so `govern-ingest` closes that gap offline:
+
+| Fabric (emulator) | OpenMetadata |
+|---|---|
+| the label taxonomy (`GET /v1/admin/labels`) | Classification **`FabricSensitivity`**, `mutuallyExclusive: true` — an item carries at most one label |
+| each label (`Public`, `General`, `Confidential`, `Highly Confidential`) | a Tag under it, description carrying the label's id and sensitivity order |
+| an item's `sensitivityLabel.id` | that tag applied to the item's OM entity (`labelType: Automated` — the reference's own word for "a tool determined the label") |
+
+Only **items** carry labels in Fabric, and the only labelled item kind this
+ingest catalogs is the Lakehouse — so the tag lands on the Lakehouse's OM
+**database schema**. Labels are not propagated down to the tables inside it:
+Fabric's downstream-inheritance rules are Purview's, and guessing them here
+would be inventing policy.
+
+Two properties the CI witness (`e2e/governance/run.py`) asserts **through
+OpenMetadata's API**, never the emulator's:
+
+- **the tag tracks the source of truth.** Two lakehouses get two *different*
+  labels, so a constant tag cannot pass; then the label is cleared with
+  `bulkRemoveLabels` and a re-ingest must leave the schema with no
+  `FabricSensitivity` tag at all.
+- **the ingest does not stomp hand curation.** A tag applied by a person in
+  the catalog, under a different classification, survives every re-ingest and
+  survives a label being cleared: the ingest reads the entity's tags and
+  carries through everything that is not its own.
+
+That first property is the reason the tag is reconciled with a **JSON Patch**
+rather than in the upsert. OpenMetadata's create-or-update *adds* tags but
+never removes one that is absent from the payload — the negative control found
+that the first time it ran, with a cleared label still showing `Confidential`
+in the catalog. A `PUT` alone would have looked like it worked.
+
+The API shapes (`PUT /v1/classifications`, `PUT /v1/tags`, the `tags[]`
+`TagLabel` on a database schema, `?fields=tags` on read-back) are cited to
+OpenMetadata's 1.13.x REST reference in comments in
+[`scripts/govern_ingest.py`](../scripts/govern_ingest.py) — same rule as the
+Fabric side: no field name without a page behind it.
+
 ## SSO: the catalog inside the family trust chain (optional)
 
 By default OpenMetadata uses its own basic auth. Layer the SSO overlay and
@@ -107,12 +155,16 @@ edge but needs a real browser, so it is not asserted.
 
 ## Where this goes next
 
-- **SSO against entra-emulator** — OpenMetadata supports OIDC (`OIDC_*` env in
-  its config schema); pointing it at the family's own STS would put the
-  catalog inside the same trust chain as everything else. Designed, not wired.
-- **Lineage** — pipeline runs and notebook jobs are recorded by the emulator;
-  emitting OM lineage edges from them is a natural follow-up to the ingest
-  script.
+- **Labels on more than lakehouses** — every Fabric item can carry a
+  sensitivity label, but only Lakehouses are cataloged today, so only their
+  labels reach OM. Cataloging notebooks/pipelines as OM entities would extend
+  the tag to them.
+- **Label-change history** — the emulator writes the documented
+  `SensitivityLabelEventData` audit events on every apply/change/remove; the
+  ingest reads only the current label, not that history.
+- **Domains and ownership** — governance domains and workspace roles are
+  modelled by the emulator and have OM counterparts (domains, owners); neither
+  is exported yet.
 - **Real-target symmetry** — under [`FABRIC_TARGET=real`](21-real-fabric-toggle.md)
   the same catalog pattern applies to real Fabric via OpenMetadata's native
   connectors; the emulator path exists so governance can be developed and

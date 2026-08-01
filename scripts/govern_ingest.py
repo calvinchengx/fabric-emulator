@@ -5,6 +5,8 @@ Mapping:  workspace -> OM database, lakehouse -> OM schema, Delta table ->
 OM table (columns read from the REAL Delta metadata in OneLake via delta-rs,
 not from the control plane — governance sits on the bytes pipelines wrote).
 
+Sensitivity labels -> OM classification tags: see LABEL_CLASSIFICATION below.
+
 Lineage: OneLake **shortcuts** and executed pipeline Copy activities are
 literal data-flow edges. A shortcut in
 lakehouse B pointing at A/Tables/x means A.x feeds B.x — so each one is
@@ -49,6 +51,32 @@ SEED_DEMO = os.environ.get("GOVERN_SEED_DEMO", "1").strip().lower() not in ("0",
 DEMO_WORKSPACE = os.environ.get("GOVERN_DEMO_WORKSPACE", "DemoWorkspace")
 DEMO_LAKEHOUSE = os.environ.get("GOVERN_DEMO_LAKEHOUSE", "demo_lakehouse")
 DEMO_TABLE = os.environ.get("GOVERN_DEMO_TABLE", "orders")
+
+# --- sensitivity labels -> OpenMetadata classification tags ----------------
+#
+# Purview's Data Map speaks the Atlas API and OpenMetadata ships an Atlas
+# connector, so a Purview -> OM migration carries assets, classifications,
+# glossary and lineage. Sensitivity labels are the one thing it cannot carry:
+# they are Microsoft Purview Information Protection objects, not Atlas
+# entities. The emulator models labels (docs/parity.md, internal/api/labels.go),
+# so this ingest exports them as an OM **Classification** with one **Tag** per
+# label, and applies the matching tag to the entity that carries the label.
+#
+# Every payload shape below is from OpenMetadata's REST reference (1.13.x —
+# the pinned server version), not inferred:
+#
+#   PUT /v1/classifications            {name, displayName, description,
+#                                       mutuallyExclusive, owners, provider}
+#     api-reference/governance/classifications/create
+#   PUT /v1/tags                       {name, classification, displayName,
+#                                       description, parent, style, owners,
+#                                       provider}
+#     api-reference/governance/tags/create
+#   databaseSchema `tags[]` (TagLabel) {tagFQN, labelType, state}
+#     api-reference/data-assets/database-schemas/create
+#   GET /v1/databaseSchemas/name/{fqn}?fields=...,tags
+#     api-reference/data-assets/database-schemas/retrieve
+LABEL_CLASSIFICATION = os.environ.get("GOVERN_LABEL_CLASSIFICATION", "FabricSensitivity")
 
 # Delta primitive -> OpenMetadata column dataType.
 TYPE_MAP = {
@@ -205,6 +233,105 @@ def om_lineage(s, from_fqn, to_fqn, description="OneLake shortcut (fabric-emulat
     return True
 
 
+def export_label_taxonomy(fab, om):
+    """Mirror the emulator's label taxonomy as an OM classification.
+
+    Returns {label id -> tag FQN}. The whole taxonomy is exported, not only
+    the labels currently in use: a classification a governance user can pick
+    from is the point, and it is what makes the Purview gap visible offline.
+    """
+    r = fab.get(f"{FABRIC}/v1/admin/labels", timeout=15)
+    if r.status_code != 200:
+        print(f"govern-ingest: GET /v1/admin/labels -> {r.status_code}; "
+              "no sensitivity labels exported", flush=True)
+        return {}
+    labels = r.json().get("labels", [])
+    if not labels:
+        return {}
+
+    om_put(om, "classifications", {
+        "name": LABEL_CLASSIFICATION,
+        "displayName": "Fabric sensitivity",
+        "description": (
+            "Microsoft Fabric sensitivity labels, exported from the "
+            "fabric-emulator by scripts/govern_ingest.py. Labels are Purview "
+            "Information Protection objects rather than Atlas entities, so an "
+            "Atlas-based Purview import does not carry them; this classification "
+            "is how they reach the catalog. The taxonomy is emulator-provided — "
+            "real Fabric sources it from Microsoft Purview."),
+        # A Fabric item carries at most one sensitivity label, so the tags
+        # under this classification are mutually exclusive by construction.
+        "mutuallyExclusive": True,
+    })
+    for label in labels:
+        om_put(om, "tags", {
+            "name": label["name"],
+            "classification": LABEL_CLASSIFICATION,
+            "displayName": label["name"],
+            "description": (
+                f"Fabric sensitivity label {label['name']!r} "
+                f"(id {label['id']}, sensitivity order {label['order']}; "
+                "higher is more restrictive)."),
+        })
+    fqns = {label["id"]: f"{LABEL_CLASSIFICATION}.{label['name']}" for label in labels}
+    print(f"govern-ingest: exported {len(fqns)} sensitivity label(s) as "
+          f"classification '{LABEL_CLASSIFICATION}'", flush=True)
+    return fqns
+
+
+def item_label_tag(fab, workspace_id, item_id, tag_by_label):
+    """The tag FQN for an item's sensitivity label, or None if it carries none.
+
+    The label sits on the Item object as `sensitivityLabel: {id}` (the
+    documented REST shape — top level, id only). List Items does not carry it,
+    so the item is read individually.
+    """
+    r = fab.get(f"{FABRIC}/v1/workspaces/{workspace_id}/items/{item_id}", timeout=15)
+    if r.status_code != 200:
+        return None
+    label_id = ((r.json().get("sensitivityLabel") or {}).get("id"))
+    return tag_by_label.get(label_id) if label_id else None
+
+
+def sync_schema_label_tag(om, schema_id, schema_fqn, tag_fqn):
+    """Make the schema's sensitivity tag match the item's label exactly.
+
+    Reports whether the entity ends up carrying a label tag.
+
+    Why this is a PATCH rather than part of the upsert: OpenMetadata's
+    create-or-update **adds** tags but never removes one that is absent from
+    the payload. The governance e2e's negative control caught that — clearing
+    a label with `bulkRemoveLabels` and re-ingesting left the old tag sitting
+    on the entity, so a removed or downgraded label never reached the catalog.
+    A JSON Patch does remove. `add` on `/tags` replaces the member when it is
+    present and creates it when it is not (RFC 6902 §4.1), so the same
+    operation works on a freshly created schema and on an updated one.
+
+    Tags from other classifications are carried through untouched, exactly as
+    OM returned them (so no field is invented on the way): an ingest that
+    silently deletes hand-applied catalog tags is a governance bug of its own.
+
+    labelType "Automated" is the reference's own definition — "used when a
+    tool determined the tag label" — which is what an ingest is, as opposed to
+    a person tagging inside OpenMetadata.
+    """
+    r = om.get(f"{OM}/api/v1/databaseSchemas/name/{urllib.parse.quote(schema_fqn)}",
+               params={"fields": "tags"}, timeout=30)
+    current = (r.json().get("tags") or []) if r.status_code == 200 else []
+    desired = [t for t in current
+               if not str(t.get("tagFQN", "")).startswith(LABEL_CLASSIFICATION + ".")]
+    if tag_fqn:
+        desired.append({"tagFQN": tag_fqn, "labelType": "Automated", "state": "Confirmed"})
+    if {t["tagFQN"] for t in desired} != {t.get("tagFQN") for t in current}:
+        resp = om.patch(
+            f"{OM}/api/v1/databaseSchemas/{schema_id}",
+            data=json.dumps([{"op": "add", "path": "/tags", "value": desired}]),
+            headers={"Content-Type": "application/json-patch+json"}, timeout=30)
+        if resp.status_code not in (200, 201):
+            sys.exit(f"OM PATCH tags on {schema_fqn}: {resp.status_code} {resp.text[:300]}")
+    return bool(tag_fqn)
+
+
 def seed_demo(fab):
     """Create one workspace + lakehouse + a REAL Delta table, so a fresh stack
     has something to catalog.
@@ -299,7 +426,10 @@ def main():
                  "(GOVERN_SEED_DEMO=0). (If you just seeded state, check the "
                  "emulator wasn't restarted: state is in-memory unless "
                  "FABRIC_DATA_DIR is set.)")
-    n_db = n_schema = n_table = 0
+    # Before anything is tagged: the tags have to exist to be applied.
+    tag_by_label = export_label_taxonomy(fab, om)
+
+    n_db = n_schema = n_table = n_labelled = 0
     item_fqn = {}
     for ws in workspaces:
         db_fqn = f"{SERVICE}.{ws['displayName']}"
@@ -313,11 +443,15 @@ def main():
         for lh in items:
             schema_fqn = f"{db_fqn}.{lh['displayName']}"
             item_fqn[lh["id"]] = schema_fqn
-            om_put(om, "databaseSchemas", {
+            schema = om_put(om, "databaseSchemas", {
                 "name": lh["displayName"], "database": db_fqn,
                 "description": f"Lakehouse {lh['id']}",
             })
             n_schema += 1
+            tag_fqn = item_label_tag(fab, ws["id"], lh["id"], tag_by_label)
+            if sync_schema_label_tag(om, schema["id"], schema_fqn, tag_fqn):
+                n_labelled += 1
+                print(f"  labelled {schema_fqn} -> {tag_fqn}", flush=True)
             for tbl in list_tables(storage, ws["displayName"], lh["displayName"]):
                 cols, version = delta_columns(ws["displayName"], lh["displayName"], tbl)
                 om_put(om, "tables", {
@@ -392,7 +526,8 @@ def main():
 
     print(f"govern-ingest: {n_db} database(s), {n_schema} schema(s), "
           f"{n_table} table(s), {n_short} shortcut(s), {n_edge} shortcut lineage edge(s), "
-          f"{n_activity_edge} activity lineage edge(s) "
+          f"{n_activity_edge} activity lineage edge(s), "
+          f"{n_labelled} sensitivity-labelled schema(s) "
           f"-> {OM} service '{SERVICE}'", flush=True)
 
 

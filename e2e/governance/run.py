@@ -17,6 +17,7 @@ from decimal import Decimal
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 DIR = os.path.dirname(os.path.abspath(__file__))
@@ -191,6 +192,18 @@ def main():
     copy_job = s.get(r.headers["Location"], timeout=15).json()
     assert copy_job["status"] == "Completed", copy_job
 
+    # Sensitivity labels. Two different labels on two lakehouses, so a bug
+    # that tags everything with one constant cannot pass. `curated` keeps the
+    # *less* restrictive one deliberately.
+    log("applying sensitivity labels via bulkSetLabels")
+    labels = s.get(f"{fabric}/v1/admin/labels", timeout=15).json()["labels"]
+    by_label = {label["name"]: label["id"] for label in labels}
+    for name, item in (("Confidential", "lake"), ("Public", "curated")):
+        r = s.post(f"{fabric}/v1/admin/items/bulkSetLabels",
+                   json={"items": [{"id": by_name[item]}], "labelId": by_label[name]},
+                   timeout=15)
+        assert r.status_code == 200 and not r.json()["failedItems"], (r.status_code, r.text)
+
     log("running govern-ingest")
     # --no-deps: everything is already up; letting compose re-evaluate the
     # dependency chain here re-runs one-shots and can recreate fabric,
@@ -261,16 +274,97 @@ def main():
     assert t.json()["id"] in activity_ids, f"Copy source absent from lineage: {activity_graph}"
     log("activity lineage lake.orders -> curated.orders_copy present in OpenMetadata")
 
+    # --- sensitivity labels, read back through OpenMetadata's own API ------
+    #
+    # This is the part a Purview -> OpenMetadata migration cannot do: labels
+    # are Purview Information Protection objects, not Atlas entities. The
+    # emulator's answer is not evidence here — only OM's is.
+    def om_get(path, **params):
+        return requests.get(f"{om}/api/v1/{path}", params=params, headers=h, timeout=30)
+
+    def schema_label_tags(fqn):
+        r = om_get(f"databaseSchemas/name/{fqn}", fields="tags")
+        assert r.status_code == 200, (fqn, r.status_code, r.text[:300])
+        return {t["tagFQN"] for t in (r.json().get("tags") or [])
+                if t["tagFQN"].startswith("FabricSensitivity.")}
+
+    c = om_get("classifications/name/FabricSensitivity")
+    assert c.status_code == 200, (c.status_code, c.text[:300])
+    # A Fabric item carries at most one label; the classification must say so.
+    assert c.json()["mutuallyExclusive"] is True, c.json()
+
+    # The whole taxonomy is exported, not only the labels in use — including
+    # the one whose name contains a space, which is where an FQN goes wrong.
+    for label in labels:
+        tag = om_get(f"tags/name/{urllib.parse.quote('FabricSensitivity.' + label['name'])}")
+        assert tag.status_code == 200, (label["name"], tag.status_code, tag.text[:300])
+        assert tag.json()["fullyQualifiedName"] == f"FabricSensitivity.{label['name']}", tag.json()
+        assert label["id"] in tag.json()["description"], tag.json()["description"]
+    log(f"{len(labels)} label(s) present in OpenMetadata as FabricSensitivity tags")
+
+    assert schema_label_tags("fabric-emulator.govws.lake") == {"FabricSensitivity.Confidential"}, \
+        schema_label_tags("fabric-emulator.govws.lake")
+    # Negative control: the other lakehouse carries a *different* label, so a
+    # constant tag or a blanket "tag everything" fails right here.
+    assert schema_label_tags("fabric-emulator.govws.curated") == {"FabricSensitivity.Public"}, \
+        schema_label_tags("fabric-emulator.govws.curated")
+    log("labels lake=Confidential, curated=Public confirmed through OM")
+
+    # A tag applied by a human in the catalog, under someone else's
+    # classification. Re-ingest must not delete it.
+    def om_put_json(path, body):
+        return requests.put(f"{om}/api/v1/{path}", json=body, headers=h, timeout=30)
+
+    r = om_put_json("classifications", {"name": "E2EManual",
+                                        "description": "Hand curation, not from the emulator."})
+    assert r.status_code in (200, 201), (r.status_code, r.text[:300])
+    r = om_put_json("tags", {"name": "Curated", "classification": "E2EManual",
+                             "description": "Applied by a person in OpenMetadata."})
+    assert r.status_code in (200, 201), (r.status_code, r.text[:300])
+    lake_schema = om_get("databaseSchemas/name/fabric-emulator.govws.lake", fields="tags").json()
+    r = requests.patch(
+        f"{om}/api/v1/databaseSchemas/{lake_schema['id']}",
+        data=json.dumps([{"op": "add", "path": "/tags/-",
+                          "value": {"tagFQN": "E2EManual.Curated",
+                                    "labelType": "Manual", "state": "Confirmed"}}]),
+        headers={**h, "Content-Type": "application/json-patch+json"}, timeout=30)
+    assert r.status_code == 200, (r.status_code, r.text[:300])
+
     # Idempotency: a second ingest must succeed and not duplicate.
     log("re-running govern-ingest (idempotency)")
     compose("run", "--rm", "--no-deps", "govern-ingest")
     t2 = requests.get(f"{om}/api/v1/tables/name/fabric-emulator.govws.lake.orders",
                       headers=h, timeout=30)
     assert t2.status_code == 200
+    assert schema_label_tags("fabric-emulator.govws.lake") == {"FabricSensitivity.Confidential"}, \
+        "label tag lost or duplicated on re-ingest"
+    all_tags = {t["tagFQN"] for t in om_get(
+        "databaseSchemas/name/fabric-emulator.govws.lake", fields="tags").json()["tags"]}
+    assert "E2EManual.Curated" in all_tags, f"re-ingest deleted a hand-applied tag: {all_tags}"
+
+    # Negative control: clearing the label in Fabric must clear the tag in
+    # OpenMetadata. Without this, "the tag is there" only proves tags are
+    # written, never that they track the source of truth.
+    log("removing the label and re-ingesting (negative control)")
+    r = s.post(f"{fabric}/v1/admin/items/bulkRemoveLabels",
+               json={"items": [{"id": by_name["lake"]}]}, timeout=15)
+    assert r.status_code == 200 and not r.json()["failedItems"], (r.status_code, r.text)
+    compose("run", "--rm", "--no-deps", "govern-ingest")
+    assert schema_label_tags("fabric-emulator.govws.lake") == set(), \
+        f"label removed in Fabric but still tagged in OM: {schema_label_tags('fabric-emulator.govws.lake')}"
+    # …and the removal was targeted: the other lakehouse and the hand-applied
+    # tag are untouched.
+    assert schema_label_tags("fabric-emulator.govws.curated") == {"FabricSensitivity.Public"}, \
+        "removing one item's label cleared another's"
+    all_tags = {t["tagFQN"] for t in om_get(
+        "databaseSchemas/name/fabric-emulator.govws.lake", fields="tags").json()["tags"]}
+    assert "E2EManual.Curated" in all_tags, f"label removal took a foreign tag with it: {all_tags}"
+    log("label removal propagated to OpenMetadata")
 
     log("PASS: fabric-emulator.govws.lake.orders cataloged with "
         f"{len(want)} columns, types {sorted(set(want.values()))}; "
-        "shortcut and Copy activity lineage cataloged")
+        "shortcut and Copy activity lineage cataloged; "
+        f"{len(labels)} sensitivity labels exported as OM classification tags")
 
 
 if __name__ == "__main__":
