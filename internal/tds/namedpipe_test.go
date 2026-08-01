@@ -2,6 +2,8 @@ package tds
 
 import (
 	"context"
+	"errors"
+	"net"
 	"runtime"
 	"strings"
 	"testing"
@@ -177,5 +179,62 @@ func TestNewSQLServerBackendRefusesAnUnresolvedProtocol(t *testing.T) {
 	// the normal case.
 	if _, err := NewSQLServerBackend("server=localhost,1433;user id=sa;password=p"); err != nil {
 		t.Errorf("rejected an ordinary TCP DSN: %v", err)
+	}
+}
+
+// dialWithRetry must actually retry, and must give up rather than loop.
+//
+// Runs everywhere: the point is the retry policy, not the pipe. A dialer that
+// fails N-1 times then succeeds proves the retry; one that always fails proves
+// the bound. Without the first, the Windows splice tests fail on a transient
+// busy pipe; without the second, a dead server hangs a login.
+type flakyDialer struct {
+	failures int
+	calls    int
+}
+
+func (f *flakyDialer) ParseBrowserData(msdsn.BrowserData, *msdsn.Config) error { return nil }
+func (f *flakyDialer) CallBrowser(*msdsn.Config) bool                          { return false }
+func (f *flakyDialer) DialConnection(ctx context.Context, p *msdsn.Config) (net.Conn, error) {
+	f.calls++
+	if f.calls <= f.failures {
+		return nil, errors.New("No process is on the other end of the pipe.")
+	}
+	c, _ := net.Pipe()
+	return c, nil
+}
+
+func TestDialWithRetry(t *testing.T) {
+	// Succeeds on the last allowed attempt.
+	d := &flakyDialer{failures: dialPipeAttempts - 1}
+	conn, err := dialWithRetry(context.Background(), d, &msdsn.Config{})
+	if err != nil {
+		t.Fatalf("gave up on a dialer that succeeds on attempt %d: %v", dialPipeAttempts, err)
+	}
+	conn.Close()
+	if d.calls != dialPipeAttempts {
+		t.Errorf("made %d attempts, want %d", d.calls, dialPipeAttempts)
+	}
+
+	// Bounded: a permanently failing dialer must stop, and say how many it tried.
+	always := &flakyDialer{failures: 1 << 30}
+	if _, err := dialWithRetry(context.Background(), always, &msdsn.Config{}); err == nil {
+		t.Fatal("succeeded against a dialer that never connects")
+	} else if !strings.Contains(err.Error(), "attempts") {
+		t.Errorf("error should say it retried: %v", err)
+	}
+	if always.calls != dialPipeAttempts {
+		t.Errorf("made %d attempts against a dead server, want exactly %d", always.calls, dialPipeAttempts)
+	}
+
+	// A cancelled context stops the retry loop rather than burning the budget.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	quick := &flakyDialer{failures: 1 << 30}
+	if _, err := dialWithRetry(ctx, quick, &msdsn.Config{}); err == nil {
+		t.Error("ignored a cancelled context")
+	}
+	if quick.calls > 1 {
+		t.Errorf("kept retrying after cancellation: %d attempts", quick.calls)
 	}
 }
