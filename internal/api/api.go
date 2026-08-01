@@ -89,6 +89,9 @@ type API struct {
 	// pipeline, and must not block unrelated requests for that long.
 	tickMu sync.Mutex
 
+	// firing breaks event-trigger cycles — see internal/api/triggers.go.
+	firing firingSet
+
 	// Fault switches (set via the /_emulator control surface).
 	mu        sync.Mutex
 	failNext  int   // force the next N operations to Failed
@@ -182,6 +185,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/deploymentPipelines/{pid}/roleAssignments/{prid}", a.withAuth(a.deleteDeploymentPipelineRole))
 
 	a.registerSchedules(mux)
+	a.registerTriggers(mux)
 	a.registerTyped(mux)
 	a.registerAdminDomains(mux)
 	a.registerActivityEvents(mux)

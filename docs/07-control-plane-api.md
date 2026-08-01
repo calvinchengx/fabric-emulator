@@ -209,6 +209,70 @@ keeping the newest. Real Fabric never needs the cap because its clock advances
 one second per second; here a caller can advance a year against a one-minute
 Cron, and half a million job instances is not a useful answer.
 
+## Event triggers (Reflex / Data Activator)
+
+| Method + path | Notes |
+|---|---|
+| `POST   /workspaces/{id}/reflexes/{reflexId}/triggers` | bind a trigger *sync* |
+| `GET    /workspaces/{id}/reflexes/{reflexId}/triggers` | list, paged *sync* |
+| `GET    /workspaces/{id}/reflexes/{reflexId}/triggers/{tid}` | read one *sync* |
+| `PATCH  /workspaces/{id}/reflexes/{reflexId}/triggers/{tid}` | update (absent fields keep their value) |
+| `DELETE /workspaces/{id}/reflexes/{reflexId}/triggers/{tid}` | unbind |
+
+**This binding surface is emulator-native.** In Fabric, adding a Trigger to a
+pipeline creates a Reflex fed by an Eventstream, assembled in the portal — there
+is no public REST for it, so there is no contract here to be faithful to. What
+*is* faithful is everything downstream of the binding: the filter, the
+invocation, the `TriggerEvent` fields, and a real pipeline really running.
+
+```json
+{
+  "displayName": "on-landing",
+  "eventType": "Microsoft.Fabric.OneLake.FileCreated",
+  "source": { "itemId": "<lakehouse-id>", "pathPrefix": "Files/landing" },
+  "action": { "itemId": "<pipeline-id>", "jobType": "Pipeline" }
+}
+```
+
+`eventType` is one of `Microsoft.Fabric.OneLake.FileCreated`, `…FileDeleted`,
+`…FileRenamed`. `source` is the `subject` filter: which item's OneLake storage
+to watch, and optionally which folder within it (empty watches the whole item).
+`action` names the item job to start; its `workspaceId` defaults to the Reflex's
+own. A trigger whose action does not resolve is refused at bind time rather
+than discovered to be inert later.
+
+### No broker, because none is needed
+
+Every byte written to OneLake passes through this emulator's own storage layer,
+so a file event is observable **at the source**, whoever wrote it — an ADLS
+client, `azcopy`, delta-rs, a Copy activity, the mirror writer. That is what
+makes the trigger a genuine emulation of Data Activator's OneLake source rather
+than a stub that only notices writes made through one API.
+
+A match starts a job with `invokeType: "EventTriggered"`, and the event is bound
+into the run:
+
+```
+@pipeline()?.TriggerEvent?.FileName      orders.csv
+@pipeline()?.TriggerEvent?.FolderPath    Files/landing
+@pipeline()?.TriggerEvent?.Subject       Files/landing/orders.csv
+@pipeline()?.TriggerEvent?.EventType     Microsoft.Fabric.OneLake.FileCreated
+@pipeline()?.TriggerEvent?.WorkspaceId / .ItemId / .Source
+```
+
+Reading those is what the expression language's **safe navigation** (`?.`) is
+for, and why Fabric's own samples are written that way: the *same* definition
+must also run when started by hand, where there is no trigger event at all.
+With `?.` the chain yields null; with a plain `.` it would fail. Plain `.` still
+fails loudly on a missing member, so safe navigation is opt-in and a typo in an
+ordinary expression is still an error.
+
+**Chains and cycles.** Dispatch is synchronous and reentrant: a triggered
+pipeline writes files, which emit events, which may fire further triggers —
+that is how a bronze→silver→gold chain behaves, and it works. A *cycle* would
+recurse forever, so a trigger already on the dispatch stack does not fire again;
+any cycle is cut at its first repeat while genuine chains still run.
+
 ## Git integration (unlocks CI/CD testing)
 
 | Method + path | Notes |

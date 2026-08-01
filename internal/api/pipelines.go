@@ -632,6 +632,13 @@ func (a *API) pipelineDefinition(itemID string) ([]byte, error) {
 // runs against the job. It returns a failure code ("" on success) used to set
 // the job's terminal status.
 func (a *API) runPipeline(wid string, it *store.Item, jobID string, params map[string]any) string {
+	return a.runPipelineWith(wid, it, jobID, params, nil)
+}
+
+// runPipelineWith is runPipeline with the event that started it, which the
+// definition reads as `@pipeline()?.TriggerEvent?.FileName`. nil for a manual
+// or scheduled run — which is why the documented way to read it safe-navigates.
+func (a *API) runPipelineWith(wid string, it *store.Item, jobID string, params, trigger map[string]any) string {
 	def, err := a.pipelineDefinition(it.ID)
 	if err != nil {
 		a.savePipelineRun(jobID, pipeline.StatusFailed, nil)
@@ -642,7 +649,8 @@ func (a *API) runPipeline(wid string, it *store.Item, jobID string, params map[s
 		a.savePipelineRun(jobID, pipeline.StatusFailed, nil)
 		return "PipelineDefinitionInvalid"
 	}
-	res := p.Run(params, &pipelineExecutor{a: a, wid: wid, jobID: jobID, chain: []string{it.ID}})
+	res := p.RunWith(params, &pipelineExecutor{a: a, wid: wid, jobID: jobID, chain: []string{it.ID}},
+		pipeline.Options{TriggerEvent: trigger})
 	a.savePipelineRun(jobID, res.Status, res.Activities)
 	if res.Status != pipeline.StatusSucceeded {
 		return "PipelineActivityFailed"

@@ -49,6 +49,7 @@ ON CONFLICT(item_id, rel_path) DO NOTHING`,
 		if n == 0 {
 			return ErrPathExists
 		}
+		s.emitFileEvent(EventFileCreated, p.WorkspaceID, p.ItemID, eventPath(p))
 		return nil
 	}
 	_, err := s.db.Exec(`
@@ -58,7 +59,19 @@ ON CONFLICT(item_id, rel_path) DO UPDATE SET
 	is_dir = excluded.is_dir, content = excluded.content,
 	etag = excluded.etag, modified_at = excluded.modified_at`,
 		p.WorkspaceID, p.ItemID, p.RelPath, p.IsDir, p.Content, p.CreatedAt, p.ETag, p.ModifiedAt)
+	if err == nil {
+		s.emitFileEvent(EventFileCreated, p.WorkspaceID, p.ItemID, eventPath(p))
+	}
 	return err
+}
+
+// eventPath is the path a file event carries: empty for a directory, so
+// creating a folder is not reported as a file arriving.
+func eventPath(p *OneLakePath) string {
+	if p.IsDir {
+		return ""
+	}
+	return p.RelPath
 }
 
 // GetOneLakePath fetches one path.
@@ -126,7 +139,13 @@ WHERE item_id = ? AND (rel_path = ? OR rel_path LIKE ? || '/%')`,
 		dst, len(src)+1, etag, now, itemID, src, src); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if p, err := s.GetOneLakePath(itemID, dst); err == nil {
+		s.emitFileEvent(EventFileRenamed, p.WorkspaceID, itemID, eventPath(p))
+	}
+	return nil
 }
 
 // ListOneLakePaths returns paths under prefix ("" = whole item). Non-recursive
@@ -181,13 +200,23 @@ FROM onelake_paths WHERE item_id = ? ORDER BY rel_path`, itemID)
 
 // DeleteOneLakePath removes a file, or a directory and everything under it.
 func (s *Store) DeleteOneLakePath(itemID, relPath string) error {
+	// Read the workspace before the delete: afterwards there is nothing left
+	// to attribute the event to.
+	wsID := ""
+	if p, err := s.GetOneLakePath(itemID, relPath); err == nil {
+		wsID = p.WorkspaceID
+	}
 	res, err := s.db.Exec(`
 DELETE FROM onelake_paths WHERE item_id = ? AND (rel_path = ? OR rel_path LIKE ? || '/%')`,
 		itemID, relPath, relPath)
 	if err != nil {
 		return err
 	}
-	return oneRow(res)
+	if err := oneRow(res); err != nil {
+		return err
+	}
+	s.emitFileEvent(EventFileDeleted, wsID, itemID, relPath)
+	return nil
 }
 
 // GetWorkspaceByName resolves a workspace by display name (OneLake's
