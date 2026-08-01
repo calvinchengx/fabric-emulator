@@ -685,9 +685,8 @@ select * from all_values where value_field not in ('US','GB','SG')
 ```
 
 Substituted, that becomes `with test_main_sql as ( with all_values as (…) … )`
-— a `WITH` opening immediately inside another CTE's parentheses. **T-SQL
-forbids that** (PostgreSQL allows it; SQL Server does not), so the engine
-rejects it at parse time:
+— a `WITH` opening immediately inside another CTE's parentheses, a **nested
+CTE**. SQL Server forbids that, so the sidecar rejects it at parse time:
 
 ```
 [Microsoft][ODBC Driver 18 for SQL Server][SQL Server]Incorrect syntax near the keyword 'with'. (156)
@@ -696,6 +695,17 @@ rejects it at parse time:
 Writing the same assertion CTE-free — `select … from dim_customer where country
 not in (…)` — substitutes fine and gates exactly the same rows. Same for
 `relationships`: express it as a `left join … where c.customer_id is null`.
+
+> **This one is the stand-in engine's limit, not Fabric's.** Fabric Data
+> Warehouse *does* support nested CTEs ([Microsoft Learn][nested-cte]) — it is
+> SQL Server that doesn't, so the emulator is stricter than the real thing here.
+> Teaching the TDS layer to flatten nested CTEs is planned as T6 in
+> [29-tsql-parity.md](29-tsql-parity.md), which maps the whole T-SQL surface in
+> both directions. (dbt-fabric also has an open bug of its own in this area,
+> [microsoft/dbt-fabric#318][i318].)
+
+[nested-cte]: https://learn.microsoft.com/en-us/sql/t-sql/queries/nested-common-table-expression?view=fabric&preserve-view=true
+[i318]: https://github.com/microsoft/dbt-fabric/issues/318
 
 Build it — models and tests in dependency order:
 

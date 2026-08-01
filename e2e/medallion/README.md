@@ -99,11 +99,22 @@ that they pass on good data.
 2. **The CTE-based dbt builtins are expressed as singular tests.** dbt-fabric
    wraps a test body in `with test_main_sql as ( … )`. `unique` and `not_null`
    compile to plain `SELECT`s and substitute cleanly, but `accepted_values` and
-   `relationships` compile to bodies that *themselves* open with `with`, which
-   nests two CTEs — invalid in T-SQL (`Incorrect syntax near the keyword
-   'with'`, error 156; Postgres permits this, T-SQL does not). Those two checks
+   `relationships` compile to bodies that *themselves* open with `with`,
+   producing a **nested CTE** — which the SQL Server sidecar rejects
+   (`Incorrect syntax near the keyword 'with'`, error 156). Those two checks
    live in `pipeline/gold/tests/` as CTE-free singular tests asserting exactly
    the same thing.
+
+   **This is a gap in the stand-in engine, not faithful Fabric behaviour.**
+   Fabric Data Warehouse *does* support nested CTEs ([Microsoft
+   Learn][nested-cte]); SQL Server does not. Closing it is planned as T6 in
+   [docs/29-tsql-parity.md](../../docs/29-tsql-parity.md), after which these two
+   builtins should run unmodified. (Independently, dbt-fabric has its own open
+   bug in this area — [microsoft/dbt-fabric#318][i318] — so the adapter may
+   still fail against real Fabric regardless of the engine.)
+
+[nested-cte]: https://learn.microsoft.com/en-us/sql/t-sql/queries/nested-common-table-expression?view=fabric&preserve-view=true
+[i318]: https://github.com/microsoft/dbt-fabric/issues/318
 
 3. **Plain HTTP between services.** All three emulators run with TLS off, as the
    other containerized harnesses do, so none of the five TLS stacks in play (Go,
