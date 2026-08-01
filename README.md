@@ -48,7 +48,7 @@ are shipped and CI-verified on Linux, macOS, and Windows.
   integration, jobs — the real `fabric-cicd` tool publishes unmodified); the
   workspace-identity handshake with entra-emulator; and the OneLake ADLS-Gen2 +
   Blob data plane (managed folders, Delta put-if-absent commits, shortcuts).
-- **Real compute (opt-in sidecars):** real **Spark** over a native Livy agent
+- **Real compute (attached by default):** real **Spark** over a native Livy agent
   (interactive + high-concurrency sessions, notebook cell execution, Delta via
   ABFS); real **T-SQL over TDS** with Entra **FedAuth** terminated and the
   session byte-spliced to a **SQL Server** sidecar — driven by both `go-mssqldb`
@@ -57,8 +57,10 @@ are shipped and CI-verified on Linux, macOS, and Windows.
   interpreter with real leaf activities. Real clients (delta-rs, the Azure Blob
   SDK, azcopy, PySpark, dbt) drive it in CI as borrowed oracles.
 
-The default binary runs none of the engines (clock-derived, milliseconds);
-each is an opt-in flag/sidecar. Coverage floor is 90% (currently ~90%).
+The bare binary runs none of the engines (clock-derived, milliseconds) — but
+`docker compose up` auto-loads the override that attaches them, so the
+documented path is engine-backed by default. Heavier engines (KQL, OpenMetadata)
+stay behind opt-in profiles. Coverage floor is 90% (currently ~90%).
 
 Docs: <https://calvinchengx.github.io/fabric-emulator/> — start with
 [architecture](docs/03-architecture.md), the
@@ -71,9 +73,9 @@ the [roadmap](docs/13-roadmap.md), [real compute](docs/14-real-compute.md), the
 
 | | Rows | Meaning |
 |---|---|---|
-| 🟢 **Real** | 87 | Genuine work — real signed JWTs, real bytes on disk, a real engine or client computes |
-| 🟡 **Emulated** | 15 | Faithful API contract and persisted state, but no engine behind it |
-| 🟠 **Bring-your-own-engine** | 19 | Real once a sidecar is attached; an honest `501` otherwise |
+| 🟢 **Real** | 89 | Genuine work — real signed JWTs, real bytes on disk, a real engine or client computes |
+| 🟡 **Emulated** | 17 | Faithful API contract and persisted state, but no engine behind it |
+| 🟠 **Non-default engine** | 14 | Real on the JVM Spark overlay or an opt-in profile — *not* "bring your own": `docker compose up` already starts Sail and the SQL Server sidecar |
 | 🔴 **Not implemented** | 19 | Deliberately out of scope — the parity map argues where the boundary sits and why |
 
 Every 🟢 row names the witness that proves it, and a CI job fails the build if a

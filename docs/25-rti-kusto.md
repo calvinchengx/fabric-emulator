@@ -1,6 +1,6 @@
 # 25 — Real-Time Intelligence: a real KQL engine behind Eventhouse
 
-**Status: shipped, BYO-engine (🟠).** Eventhouse / KQL Database execution is
+**Status: shipped, opt-in engine profile (🟠).** Eventhouse / KQL Database execution is
 real when Microsoft's own KQL engine container is attached, and an honest 501
 when it is not. This is Tier 2, item 2 of
 [24-parity-completion.md](24-parity-completion.md) — the same move the repo
