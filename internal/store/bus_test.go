@@ -257,29 +257,35 @@ func TestSubscriberCanSeeWhatItMissed(t *testing.T) {
 		}
 	}
 
-	// Dispatch is asynchronous, so wait for the queue to drain into the (full)
-	// subscriber rather than assuming it already has.
-	var dropped int64
-	deadline := time.After(5 * time.Second)
-	for dropped == 0 {
+	// Dispatch is asynchronous, so accumulate until the whole series is
+	// accounted for rather than sampling once. The total is exact, not
+	// approximate: subBuffer events fit and the rest cannot, so waiting for
+	// equality is what makes this deterministic.
+	//
+	// Sampling once and then asserting the count had been cleared — the first
+	// version of this — is a race, because dispatch is still draining and
+	// still dropping while the assertion runs.
+	var total int64
+	deadline := time.After(10 * time.Second)
+	for total < overflow {
+		total += sub.TakeDropped()
+		if total >= overflow {
+			break
+		}
 		select {
 		case <-deadline:
-			t.Fatal("the subscriber was never credited with the events it missed")
-		default:
-		}
-		dropped = sub.TakeDropped()
-		if dropped == 0 {
-			time.Sleep(10 * time.Millisecond)
+			t.Fatalf("credited with %d of the %d events that overflowed", total, overflow)
+		case <-time.After(5 * time.Millisecond):
 		}
 	}
-	// Every event past the buffer is accounted for, and none before it.
-	if dropped > overflow {
-		t.Fatalf("dropped %d, more than the %d that overflowed", dropped, overflow)
+	if total != overflow {
+		t.Fatalf("dropped %d, want exactly the %d that did not fit", total, overflow)
 	}
 
-	// Taking the count clears it: a drop is reported once, not on every poll.
+	// Nothing is published after this, so the count stays cleared: a drop is
+	// reported once, not on every poll.
 	if again := sub.TakeDropped(); again != 0 {
-		t.Fatalf("TakeDropped reported %d a second time", again)
+		t.Fatalf("TakeDropped reported a further %d with nothing left to drop", again)
 	}
 
 	// And the events that did fit are still there to read.
