@@ -650,7 +650,16 @@ func (a *API) runPipelineWith(wid string, it *store.Item, jobID string, params, 
 		return "PipelineDefinitionInvalid"
 	}
 	res := p.RunWith(params, &pipelineExecutor{a: a, wid: wid, jobID: jobID, chain: []string{it.ID}},
-		pipeline.Options{TriggerEvent: trigger})
+		pipeline.Options{
+			TriggerEvent: trigger,
+			// Each activity is announced as it settles, so a watcher sees a
+			// failure at the moment it happens rather than reconstructing it
+			// from the run afterwards.
+			OnActivity: func(ar pipeline.ActivityRun) {
+				a.Store.PublishActivityEvent(wid, it.ID, jobID, ar.Name, ar.Type,
+					ar.Status, ar.Error, ar.Duration, ar.Retry)
+			},
+		})
 	a.savePipelineRun(jobID, res.Status, res.Activities)
 	if res.Status != pipeline.StatusSucceeded {
 		return "PipelineActivityFailed"

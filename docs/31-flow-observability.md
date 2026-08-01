@@ -1,8 +1,7 @@
 # Flow observability: watching data move through the emulator
 
-**Status: step 1 built** — the event bus, `file`/`table` events, and the SSE
-endpoint. Steps 2–4 (activity/job events, attribution, the portal view) are
-still design.
+**Status: steps 1–2 built** — the event bus, all four event kinds, and the SSE
+endpoint. Steps 3–4 (attribution, the portal view) are still design.
 
 Running the medallion example today is a black box. It prints step numbers, and
 when something fails you reconstruct what happened afterwards from
@@ -89,6 +88,22 @@ every other timestamp in the system is.
 Existing shapes are reused verbatim where they exist — `activity` is
 `pipeline.ActivityRun` plus the job id, `job` is the `jobBody` fields. Nothing
 new to learn, and no second source of truth for a status.
+
+**When an activity is announced.** Not when it is recorded. The interpreter's
+retry loop *discards* failed attempts and back-patches the survivor's
+`retryAttempt`, `durationInSeconds` and — on a timeout — its status, so
+announcing at record time would stream outcomes that never appear in the run,
+and stream them before they were final. Instead the interpreter flushes at
+points where its records are settled: after `runWithPolicy` returns, and after
+the skip / unresolvable-dependency records that bypass it. The stream and
+`queryactivityruns` therefore always agree, which is the design's rule.
+
+**When a job is announced.** `Started` always. A terminal event only where one
+genuinely exists: a DataPipeline (which runs inline), a Dataflow (which fails
+loudly), a notebook / Spark job / Airflow DAG at the moment its engine reports
+back. A **generic item's status is derived from the clock** and never has such
+a moment, so nothing further is claimed for it. The stream says what happened
+and stays quiet where nothing did.
 
 ### 3. Delta commits are what make the stream legible
 
@@ -262,8 +277,9 @@ state already persisted (`job_instances`, `pipeline_runs`, `lineage_edges`,
    own: `curl -N` while the medallion runs. Also emitted Delta `stats`
    (`numRecords`) from our own writer, which every real Delta writer already
    does and without which our own commits could not report row counts.
-2. **`activity`/`job` events.** Failures arrive as they happen instead of being
-   reconstructed afterwards.
+2. ~~**`activity`/`job` events.**~~ **Done.** Failures arrive as they happen
+   instead of being reconstructed afterwards — with the activity name, its
+   error, and the job id that correlates them.
 3. **Attribution** (§4) — three call sites.
 4. **Portal `Flow` view.**
 

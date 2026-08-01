@@ -58,12 +58,20 @@ func (r *run) runWithPolicy(a *Activity, item value, hasItem bool) (string, stri
 				// durationInSeconds reflects the wall-clock (attempt + waits).
 				r.runs[idx].Duration += backoff
 			}
+			// Settled: this attempt is the one that will appear in the result,
+			// with its retry count and duration final.
+			r.flushActivities()
 			return st, msg
 		}
 		// Failed with attempts remaining: wait retryIntervalInSeconds (virtual),
 		// then discard this attempt's records and retry.
 		backoff += interval
 		r.runs = r.runs[:snap]
+		// A nested activity may already have been announced; un-announce the
+		// discarded attempt so the retry's records are reported afresh.
+		if r.emitted > snap {
+			r.emitted = snap
+		}
 	}
 	return st, msg
 }
