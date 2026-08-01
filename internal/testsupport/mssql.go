@@ -84,6 +84,18 @@ func OpenMSSQL(t *testing.T) *sql.DB {
 	return db
 }
 
+// DSN returns the raw DSN CI set, for the few tests that need to feed it to a
+// production constructor rather than open it here. Skips like OpenMSSQL does,
+// so a caller can use either without a second gate.
+func DSN(t *testing.T) string {
+	t.Helper()
+	dsn := os.Getenv(DSNEnv)
+	if dsn == "" {
+		t.Skipf("set %s (a reachable SQL Server) to run the warehouse tests", DSNEnv)
+	}
+	return dsn
+}
+
 // dbName derives a legal, unique database name from the test's own name, so a
 // leaked database says which test leaked it.
 func dbName(t *testing.T) string {
