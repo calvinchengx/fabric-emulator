@@ -54,3 +54,9 @@ examples/**/pbip/
 examples/**/*.egg-info/
 examples/**/gold_summary.json
 examples/*/silver_summary.json
+
+# Per-run artefact: silver.py fetches the cert the emulator is actually
+# presenting and writes it here for dbt (which owns its own HTTP client and
+# only honours REQUESTS_CA_BUNDLE). It changes every time the stack restarts.
+examples/*/silver_dbt/.emulator-ca.pem
+examples/*/gold*/.emulator-ca.pem
