@@ -82,24 +82,24 @@ ca.write_text(ssl.get_server_certificate((host, int(port or 443))))
 
 from livy_query import query  # noqa: E402 — after the path shim above
 
-# Register silver in the Spark catalog before dbt looks for it.
+# Nothing to register here any more.
 #
-# On real Fabric a Lakehouse's `Tables/` are already catalog tables: attach a
-# notebook and `SELECT * FROM silver_customers` just works, because Fabric keeps
-# the metastore in step with the folder. This stack has no metastore — Sail sees
-# object storage and nothing else — so the tables have to be declared, and doing
-# it here rather than pretending otherwise is the honest version.
+# This step used to declare silver into the Spark catalog by hand — CREATE
+# SCHEMA, then CREATE TABLE ... USING delta LOCATION ... for each table —
+# because Sail is handed object storage and nothing else, while on real Fabric a
+# Lakehouse's `Tables/` ARE catalog tables. That was a parity gap the example had
+# to paper over, and it was named as one rather than dressed up as setup.
 #
-# That gap is worth naming as a parity gap and not a setup chore: it is the one
-# place this path needs a step real Fabric does not.
-onelake = f"abfs://{st['workspace']}@onelake.dfs.fabric.microsoft.com/{st['lakehouse']}"
-query(f"CREATE SCHEMA IF NOT EXISTS {lakehouse_name}")
-for tbl in ("silver_customers", "silver_orders"):
-    query(f"DROP TABLE IF EXISTS {lakehouse_name}.{tbl}")
-    query(f"CREATE TABLE {lakehouse_name}.{tbl} USING delta "
-          f"LOCATION '{onelake}/Tables/{tbl}'")
-log(f"registered silver in the Spark catalog as {lakehouse_name}.silver_* "
-    f"(real Fabric does this for you — see the note in this step)")
+# The emulator closes it now: opening a Livy session against a lakehouse
+# enumerates its Delta tables and registers them in the agent's Spark catalog,
+# using the same enumeration that builds the SQL analytics endpoint — so the SQL
+# and Spark surfaces expose the same table set. dbt finds its sources by name
+# with no help from the client, which is the point.
+#
+# One Sail-specific consequence to know when writing models: Sail rejects
+# `USE <schema>`, so the current database cannot be moved. Tables are registered
+# under both the lakehouse schema and `default`, which is what makes the
+# unqualified form resolve as well as the qualified one dbt-fabricspark emits.
 
 env = {**os.environ, "DBT_PROFILES_DIR": str(PROJECT), "LAKEHOUSE_NAME": lakehouse_name,
        "REQUESTS_CA_BUNDLE": str(ca), "SSL_CERT_FILE": str(ca)}

@@ -470,33 +470,55 @@ jobs:
       - run: uv run --frozen --no-sync python e2e/dbt-fabric/run.py
 
   medallion:
-    name: End-to-end medallion tutorial — Key Vault, landing, bronze/silver/gold, semantic model (containerized)
+    name: End-to-end medallion tutorial — Key Vault, landing, bronze/silver/gold, semantic model
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       # The runnable witness for docs/28-tutorial-end-to-end.md: a Key Vault
       # secret behind an AKV-reference connection, an extract landed in OneLake,
-      # bronze -> silver in Delta (delta-rs), silver -> gold with Microsoft's
+      # bronze -> silver in Delta on Sail, silver -> gold with Microsoft's
       # dbt-fabric over TDS + FedAuth, and a semantic model queried through
       # executeQueries with a Power BI audience token. Also proves the gold DQ
       # tests REJECT bad data, not just pass on good. Linux-only (SQL Server
       # image + ODBC Driver 18).
+      #
+      # The EXAMPLE runs on this runner, not in a container: it is client code a
+      # reader runs on their own machine, and the stack it talks to is what
+      # belongs in docker. That is why the driver is installed here — and why
+      # this job exercises self-signed TLS on localhost, which is the transport
+      # the README documents.
+      - name: Microsoft ODBC Driver 18 (dbt-fabric + pyodbc)
+        run: |
+          curl -sSL https://packages.microsoft.com/keys/microsoft.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          echo "deb [signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
+            | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/medallion/run.py
 
   medallion-advanced:
-    name: Advanced medallion — a second source system (containerized)
+    name: Advanced medallion — three source systems, resolved and joined
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # The advanced track continues where the tutorial stops: Contoso Web, an
-      # e-commerce feed with nested JSON, no customer id, and a deliberate
-      # overlap with the POS customer set. This job pins that overlap — 4 shared
-      # people, 2 web-only, 1 unmatchable because POS holds no email for him —
-      # so that the conformance step which resolves them has a stated target
-      # rather than whatever a join happens to produce.
+      # The advanced track continues where the tutorial stops: Contoso Web (an
+      # e-commerce feed with nested JSON and no customer id) and Contoso ERP (a
+      # CDC change log), overlapping the POS customer set deliberately. No key
+      # spans all three, so an ERP account reaches a Web account only THROUGH
+      # POS — identity as a graph, which a two-source example never has to face.
+      # The step that resolves them also names the cohorts it cannot place.
+      - name: Microsoft ODBC Driver 18 (dbt-fabric + pyodbc)
+        run: |
+          curl -sSL https://packages.microsoft.com/keys/microsoft.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          echo "deb [signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
+            | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.32"
