@@ -87,6 +87,41 @@ Spark Connect cannot express — the RDD API (`sc`), structured streaming,
 `OPTIMIZE`/`VACUUM`, and Java/Scala UDFs — at the cost of image size and
 startup ([docs/20-lakesail-engine.md](docs/20-lakesail-engine.md)).
 
+## Getting started on Linux, macOS or Windows
+
+The workflow is the same on all three — only the prerequisites differ:
+
+```bash
+make doctor   # toolchain, docker context, memory, ports — run this first
+make up
+make status   # "stack OK" is the real verdict; `make up` only means containers exist
+```
+
+Install the prerequisites once (a container runtime with Compose v2, plus GNU
+Make; Python 3 is optional and only used by `make spark` / `make seed`):
+
+```bash
+# Linux
+curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker "$USER" && newgrp docker
+```
+
+```bash
+# macOS  (Make and Python ship with the Xcode CLT; Docker Desktop / OrbStack work too)
+xcode-select --install && brew install colima docker docker-compose && colima start --memory 8
+```
+
+```powershell
+# Windows  (Git supplies sh.exe + grep/awk/curl; ezwinports supplies make)
+winget install Git.Git; winget install ezwinports.make
+```
+
+`make doctor` is the entry point on every platform: it names what is missing
+instead of letting it surface later as a broken recipe, an unreachable socket,
+or a `?` in a status column. Per-platform detail — the `docker` group on Linux,
+VM memory and Apple-silicon sidecar constraints on macOS, Rancher Desktop
+context selection on Windows:
+[docs/26-platform-setup.md](docs/26-platform-setup.md).
+
 ## Python tooling
 
 Python packages, development dependencies, and E2E clients are managed by the

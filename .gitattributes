@@ -1,0 +1,24 @@
+# Git for Windows sets core.autocrlf=true in its SYSTEM config, so on a Windows
+# machine the default is to rewrite line endings on checkout. For most of a repo
+# that is harmless. For the files below it is not:
+#
+#   * a shell script checked out with CRLF fails at the shebang — `sh` reads the
+#     trailing \r as part of the interpreter path, and the error names a file
+#     that plainly exists.
+#   * a Makefile is whitespace-significant; the same scripts are also COPYed
+#     into Linux images, where \r never becomes acceptable.
+#
+# Pinning eol=lf here means these files are byte-identical on every platform no
+# matter what a given developer's core.autocrlf happens to be — the repo stops
+# depending on per-machine Git configuration. See docs/26-windows.md.
+*.sh    text eol=lf
+*.py    text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Windows-only helpers are the exception: cmd.exe requires CRLF in batch files.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
