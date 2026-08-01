@@ -22,7 +22,7 @@ import (
 //   - one dispatch goroutine does the (occasionally expensive) derivation and
 //     fan-out, off the caller's thread;
 //   - a subscriber whose buffer is full has events **dropped**, never blocks,
-//     and is told how many it missed.
+//     and can collect the count of what it missed (Subscription.TakeDropped).
 //
 // A slow consumer degrades itself and nothing else. That is the whole reason
 // the bus can exist without endangering the emulator's determinism.
@@ -210,20 +210,13 @@ func (b *bus) dispatch(ev Event) {
 	b.mu.Unlock()
 
 	for _, sub := range subs {
-		// Tell a recovering subscriber what it missed before giving it more.
-		if n := sub.dropped.Load(); n > 0 {
-			select {
-			case sub.ch <- Event{Seq: ev.Seq, At: ev.At, Kind: KindDropped, Dropped: n}:
-				sub.dropped.Add(-n)
-			default:
-				sub.dropped.Add(1)
-				continue
-			}
-		}
 		select {
 		case sub.ch <- ev:
 		default:
-			sub.dropped.Add(1) // never block a writer
+			// Never block a writer. The count is the subscriber's to collect
+			// and report — see Subscription.TakeDropped for why announcing it
+			// from here cannot work.
+			sub.dropped.Add(1)
 		}
 	}
 }
@@ -249,10 +242,39 @@ func (s *Store) publish(ev Event) {
 	}
 }
 
-// Subscribe returns a channel of events and a cancel func. The channel is
-// buffered; a reader that falls behind gets KindDropped events rather than
-// backpressure onto the emulator. Cancel is idempotent.
-func (s *Store) Subscribe() (<-chan Event, func()) {
+// Subscription is one consumer's view of the bus: a buffered channel of events
+// and the count of what it was too slow to receive.
+type Subscription struct {
+	// C delivers events. Buffered, and never blocked on — a reader that falls
+	// behind loses events rather than applying backpressure to a OneLake write.
+	C <-chan Event
+
+	sub  *subscriber
+	once sync.Once
+	stop func()
+}
+
+// TakeDropped returns how many events this subscriber has missed since the
+// last call, and resets the count.
+//
+// Reporting drops is the *consumer's* job, not the bus's, and that division is
+// forced by the problem rather than chosen. The bus can only announce a drop
+// while dispatching some later event — so a subscriber that falls behind and
+// then goes quiet would never be told, which is precisely when it most needs
+// to know. A consumer, by contrast, can ask whenever it likes; the SSE handler
+// asks on every loop iteration and on its keepalive tick, so a gap surfaces
+// within one interval whether or not traffic continues.
+func (s *Subscription) TakeDropped() int64 {
+	return s.sub.dropped.Swap(0)
+}
+
+// Close unsubscribes. Idempotent.
+func (s *Subscription) Close() {
+	s.once.Do(s.stop)
+}
+
+// Subscribe registers a consumer.
+func (s *Store) Subscribe() *Subscription {
 	b := s.bus
 	sub := &subscriber{ch: make(chan Event, subBuffer)}
 	b.mu.Lock()
@@ -261,16 +283,13 @@ func (s *Store) Subscribe() (<-chan Event, func()) {
 	b.subs[id] = sub
 	b.mu.Unlock()
 
-	var once sync.Once
-	return sub.ch, func() {
-		once.Do(func() {
-			b.mu.Lock()
-			delete(b.subs, id)
-			b.mu.Unlock()
-			// Not closed: dispatch may be mid-send. Dropping the reference is
-			// enough — the buffered channel is garbage once nobody holds it.
-		})
-	}
+	return &Subscription{C: sub.ch, sub: sub, stop: func() {
+		b.mu.Lock()
+		delete(b.subs, id)
+		b.mu.Unlock()
+		// Not closed: dispatch may be mid-send. Dropping the reference is
+		// enough — the buffered channel is garbage once nobody holds it.
+	}}
 }
 
 // Replay returns buffered events with Seq greater than since, oldest first.
