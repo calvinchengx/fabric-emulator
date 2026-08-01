@@ -1308,7 +1308,7 @@ data-science-loop = [
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "mlflow", specifier = ">=3.1,<4" },
     { name = "pyarrow", specifier = ">=18,<24" },
-    { name = "pyspark-client", specifier = "==4.2.0" },
+    { name = "pyspark-client", specifier = "==4.1.1" },
 ]
 dbt-duckdb = [
     { name = "dbt-duckdb", specifier = ">=1.9,<2" },
@@ -1353,17 +1353,17 @@ s3 = [
 ]
 sail = [
     { name = "pysail", specifier = "==0.6.6" },
-    { name = "pyspark-client", specifier = "==4.2.0" },
+    { name = "pyspark-client", specifier = "==4.1.1" },
 ]
 sail-delta = [
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "pandas", specifier = ">=2,<3" },
     { name = "pyarrow", specifier = ">=18,<24" },
-    { name = "pyspark-client", specifier = "==4.2.0" },
+    { name = "pyspark-client", specifier = "==4.1.1" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 spark-connect = [
-    { name = "pyspark-client", specifier = "==4.2.0" },
+    { name = "pyspark-client", specifier = "==4.1.1" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 test = [
@@ -3834,7 +3834,7 @@ wheels = [
 
 [[package]]
 name = "pyspark-client"
-version = "4.2.0"
+version = "4.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -3846,7 +3846,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/31/1b/b7fc2cb3cb34a9d71790bd556ac5802c2d93e861c6af850f6e97e3e92b7c/pyspark_client-4.2.0.tar.gz", hash = "sha256:4008fe5e537bf0e57e7243d03abfaac089b7c87316bd07024784d8ea726f5d41", size = 1675557, upload-time = "2026-07-14T22:41:58.134Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/b0/fde39357666529049f2f71235d7126c7b2d5b4c5e20c072dccf845e9a09d/pyspark_client-4.1.1.tar.gz", hash = "sha256:23bd428d1f96c7196ae8ba29facca7eb56f66b3c380294385101ec8f1872a44a", size = 1600762, upload-time = "2026-01-09T09:38:50.679Z" }
 
 [[package]]
 name = "pytest"
