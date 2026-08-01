@@ -53,7 +53,7 @@ reads `SPARK_REMOTE` (default `sc://localhost:50051`).
 | `05_silver.py` | dedupe, conform countries, quarantine the malformed row |
 | `06_wrangle.py` | **interactive**: profile bronze vs silver in VS Code Data Wrangler |
 | `07_reflect.py` | connect to the lakehouse database — reflection makes silver queryable T-SQL |
-| `08_gold.py` | `dbt build`: the star as views in the Warehouse, plus DQ tests |
+| `08_gold.py` | `dbt build`: the star as tables in the Warehouse, plus DQ tests |
 | `09_dq_gate.py` | poison silver → dbt **fails** → restore → green again |
 | `10_semantic_model.py` | publish TMSL + rows, query with DAX, assert a wrong audience is refused |
 | `11_lineage.py` | assert the graph: a `Copy` edge and a `Notebook` edge, neither guessed from code |
@@ -61,11 +61,36 @@ reads `SPARK_REMOTE` (default `sc://localhost:50051`).
 `run_all.py` runs all of them except `06_wrangle.py`, which is meant for the
 VS Code Interactive Window.
 
+## The advanced track (steps 20+)
+
+Steps 00–11 are the tutorial and do not change. The **advanced track** picks up
+from there with a second source system, which is what makes conformance,
+a genuine star schema, SCD2 and incremental loading possible at all — one source
+can only ever be deduplicated against itself.
+
+| Script | What it does |
+|---|---|
+| `20_web_extract.py` | second source: Contoso Web gets its own Key Vault secret and AKV-reference connection; nested JSON lands verbatim |
+| `21_web_bronze.py` | flatten orders → line rows; pin the **designed overlap** with the POS customer set |
+
+```sh
+uv run python run_advanced.py     # the basic pipeline, then 20+
+```
+
+`run_advanced.py` reuses `run_all.py`'s step list rather than restating it, so
+the basic track cannot drift out from under the advanced one.
+[`e2e/medallion-advanced`](../../e2e/medallion-advanced/) runs it in CI.
+
 ## Files
 
 - `common.py` — endpoints, tokens for all five audiences, the TDS connector, state
 - `source_system.py` — the fictitious "Contoso POS" vendor API and the expected
   row counts each stage must produce (the oracle every step asserts against)
+- `web_store.py` — the second source, "Contoso Web": nested JSON, no customer
+  id, a product catalog POS does not have, and a **designed** overlap with the
+  POS customer set (advanced track)
+- `contracts/` — ODCS v3.1.0 data contracts over the layers; see
+  [docs/30](../../docs/30-odcs-data-contracts.md)
 - `gold/` — the dbt project (models, sources, schema tests, singular tests)
 - `state.json` — written by `00_provision.py`, read by everything after it
 
