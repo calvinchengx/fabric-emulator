@@ -136,6 +136,14 @@
     "status": "pass"
   },
   {
+    "id": "spark.sql_create_table_default_format",
+    "description": "`CREATE TABLE` with no `USING` defaults to Delta \u1d4d",
+    "engine": "sail-delta",
+    "status": "fail",
+    "error_class": "AnalysisException",
+    "error": "Invalid table location: No commit files found in _delta_log"
+  },
+  {
     "id": "spark.sql_describe_registered_delta",
     "description": "`DESCRIBE TABLE` on a registered Delta table \u1d49",
     "engine": "sail-delta",

@@ -254,6 +254,47 @@ def sql_temp_view(spark):
     assert spark.sql("SELECT count(*) AS n FROM v_probe").collect()[0]["n"] == 1
 
 
+def sql_create_table_defaults_to_delta(spark):
+    """A CREATE TABLE with no USING clause must produce a DELTA table.
+
+    On Fabric the default table format is Delta, so `CREATE TABLE x LOCATION
+    '...' AS SELECT ...` writes a Delta table with no `USING delta` needed.
+    Sail's default is not Delta, so the same statement writes something else at
+    that path and nothing downstream can read it as Delta.
+
+    This is invisible until something depends on it, and something did.
+    dbt-fabricspark's file_format_clause macro emits NO clause for exactly one
+    value of file_format — `delta` — because the adapter assumes it is the
+    default. So a model configured `+file_format: delta` and `+location_root:
+    abfs://.../Tables` produced
+
+        create or replace table `lake`.silver_orders
+          location 'abfs://.../Tables/silver_orders' as ...
+
+    with no USING, and the lakehouse silently never received silver while dbt
+    reported success. Two rounds of debugging went into config that was being
+    applied correctly the whole time.
+
+    Neither side is wrong in isolation, which is what makes it worth a row:
+    dbt is correct for Fabric, and an engine is entitled to its own default.
+
+    Read the row carefully — it is expected to be RED EVERYWHERE, and that is
+    the finding. Delta-by-default is a FABRIC property, and neither engine here
+    reproduces it. So the override the examples carry is not a Sail workaround
+    that a better engine would retire; it is the price of running dbt-fabricspark
+    anywhere that is not Fabric, and it would still be needed on the JVM overlay.
+    """
+    p = _table_path("t_default_fmt")
+    # Plain CREATE TABLE, not CREATE OR REPLACE: the first version of this probe
+    # used OR REPLACE and the JVM leg failed with "does not support REPLACE TABLE
+    # AS SELECT", which is a statement-support fact and not the format question.
+    # A probe that can fail for two reasons measures neither.
+    spark.sql(f"CREATE TABLE d_default LOCATION '{p}' AS SELECT 1 AS id")
+    # The portable test from a Connect client: can the Delta reader open it?
+    # A non-Delta table at that path has no _delta_log and this fails.
+    assert spark.read.format("delta").load(p).count() == 1
+
+
 def sql_describe_registered_delta_table(spark):
     """DESCRIBE TABLE must return one row per column for a registered Delta table.
 
@@ -363,6 +404,7 @@ PROBES = [
     ("spark.python_udf", "Python UDF", python_udf),
     ("spark.sql_temp_view", "SQL over a temp view", sql_temp_view),
     ("spark.sql_filter_unprojected_window", "Filter on a `row_number()` column the `SELECT` drops ᵈ", sql_filter_on_unprojected_window_column),
+    ("spark.sql_create_table_default_format", "`CREATE TABLE` with no `USING` defaults to Delta ᵍ", sql_create_table_defaults_to_delta),
     ("spark.sql_describe_registered_delta", "`DESCRIBE TABLE` on a registered Delta table ᵉ", sql_describe_registered_delta_table),
     ("spark.sql_describe_detail_registered", "`DESCRIBE DETAIL` on a registered Delta table ᶠ", sql_describe_detail_registered_delta),
 ]
