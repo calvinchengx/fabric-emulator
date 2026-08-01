@@ -16,7 +16,7 @@ brew install calvinchengx/tap/fabric-emulator
 
 ## Windows — winget
 
-> The manifest [PR](https://github.com/microsoft/winget-pkgs/pull/409794) is in
+> The manifest [PR](https://github.com/microsoft/winget-pkgs/pull/410794) is in
 > Microsoft's moderation queue; the command works once it merges.
 
 ```powershell
