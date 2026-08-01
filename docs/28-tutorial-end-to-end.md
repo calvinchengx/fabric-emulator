@@ -63,15 +63,23 @@ For the dbt leg you need the **Microsoft ODBC Driver 18** (macOS:
 `brew tap microsoft/mssql-release && brew install msodbcsql18`; Linux: see
 `e2e/dbt-fabric/Dockerfile.dbt` for the apt recipe).
 
-> **Apple Silicon:** the only amd64-locked image in this stack is SQL Server
-> (`mcr.microsoft.com/mssql/server` publishes no arm64 variant); everything else
-> — the emulators, Python, the ODBC driver — has native arm64 builds. So run
-> your container engine **natively as arm64** and let Rosetta translate just
-> that one container. A fully emulated x86_64 VM (e.g. `colima start --arch
-> x86_64` with the default `vmType: qemu`) interprets the entire kernel and
-> userland under QEMU and makes every step of this tutorial an order of
-> magnitude slower. If you do want an x86 VM, at least use Apple's
-> Virtualization.framework with Rosetta: `--vm-type vz --vz-rosetta`.
+> **Apple Silicon — run your engine natively as arm64.** The only amd64-locked
+> image in this stack is SQL Server (`mcr.microsoft.com/mssql/server` publishes
+> no arm64 manifest); the emulators, Python, and the ODBC driver all have native
+> arm64 builds, and the emulator's `Dockerfile` cross-compiles for whatever the
+> host is. So a native arm64 engine — OrbStack, Docker Desktop, or
+> `colima start --vm-type vz` — runs everything at full speed and lets Rosetta
+> translate just the one SQL Server container.
+>
+> A **fully emulated x86_64 VM** (`colima start --arch x86_64` with the default
+> `vmType: qemu`, `rosetta: false`) is the slow trap: QEMU interprets the whole
+> kernel and userland, so every step here runs an order of magnitude slower. If
+> you specifically want an x86 VM, use Apple's Virtualization.framework with
+> Rosetta instead — `colima start --arch x86_64 --vm-type vz --vz-rosetta`.
+>
+> Engine choice is per-user, not baked into the repo: `docker compose` and the
+> e2e both honour `DOCKER_CONTEXT`, so `docker context ls` then
+> `DOCKER_CONTEXT=<name> …` picks one without editing anything.
 
 Scaffold the project with uv:
 

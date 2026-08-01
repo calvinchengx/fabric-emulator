@@ -102,6 +102,12 @@ services:
     # engine, so an unannounced change moves T-SQL behaviour under the tests. Refresh:
     #   docker buildx imagetools inspect mcr.microsoft.com/mssql/server:2022-latest
     image: mcr.microsoft.com/mssql/server:2022-latest@sha256:ba4c8329f48fb8f02e1416be6a930ebfd71268caee78aa985f3af4315e457c89
+    # amd64 only — Microsoft publishes no arm64 manifest for mssql/server. On an
+    # Apple-silicon host the engine translates this one container (Rosetta);
+    # stating the platform beats relying on per-engine fallback, which can also
+    # fail outright with "no matching manifest for linux/arm64/v8". Everything
+    # else in this stack has a native arm64 build, so nothing else pays for it.
+    platform: linux/amd64
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
