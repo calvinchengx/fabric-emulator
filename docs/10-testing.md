@@ -64,3 +64,28 @@ use.
 Every package covers itself (90% floor cross-package, currently ~90%), on
 Linux, macOS, and Windows. The full matrix of what CI verifies — including
 the real-tool e2e — is in [12-e2e-matrix.md](12-e2e-matrix.md).
+
+## Running Python: always through `uv`
+
+Every Python entry point — e2e runners, `scripts/`, Makefile targets, CI steps —
+goes through `uv`, never a bare `python3`:
+
+```bash
+uv run --frozen --group <group> python e2e/<suite>/run.py   # suite needs deps
+uv run --frozen --no-sync python e2e/<suite>/run.py         # stdlib-only driver
+```
+
+Most host-side runners only drive `docker compose` and are stdlib-only, so they
+take `--no-sync`; the nine that import real client libraries name their group.
+
+This is not style. A bare `python3` resolves to whatever is on `PATH`, which on
+a developer machine is often a pyenv build with none of the project's
+dependencies — `e2e/adls-sdk` fails with `ModuleNotFoundError: No module named
+'azure'` that way, a harness fault that reads exactly like a test failure.
+
+`.python-version` pins **3.12**, matching `requires-python`, the `python:3.12-slim`
+images, and CI's `setup-python`. Without it `uv` satisfies `>=3.12` with the
+newest interpreter it can find (3.13 at the time of writing), so the host would
+quietly run a different Python from the containers under test. Note that
+`uv run --no-sync` *reuses* a mismatched existing `.venv` with only a warning
+rather than rebuilding it — if the warning appears, `rm -rf .venv` and re-sync.

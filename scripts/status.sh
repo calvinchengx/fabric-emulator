@@ -55,13 +55,24 @@ bad() { RC=1; }
 
 # Portal payloads nest children (capacities embed their workspaces), so
 # counting `"id"` occurrences over-reports. Parse the top-level list instead,
-# and degrade to "?" rather than lying if no python is available.
+# and degrade to "?" rather than lying if no interpreter is available.
 #
-# Locating an interpreter is not enough to know one exists: on Windows
-# `python3` is normally the Microsoft Store ALIAS STUB, which sits on PATH (so
-# `command -v python3` succeeds) and then exits 49 telling you to install from
-# the Store. Run each candidate instead, and take the first that executes.
+# uv first: every Python entry point in this repo runs through it, so the
+# project environment is the only interpreter the code is tested against. A
+# bare `python3` is whatever happens to be on PATH — which is how one suite run
+# picked up a pyenv 3.11 and failed on a missing dependency.
+#
+# The bare fallback still matters on a machine without uv, and locating an
+# interpreter is not enough to know one exists: on Windows `python3` is normally
+# the Microsoft Store ALIAS STUB, which sits on PATH (so `command -v python3`
+# succeeds) and then exits 49 telling you to install from the Store. Run each
+# candidate and take the first that executes.
+#
+# Unquoted on use below, because the uv form is several words.
 PY="${PY:-}"
+if [ -z "$PY" ] && command -v uv >/dev/null 2>&1; then
+  PY="uv run --frozen --no-sync python"
+fi
 if [ -z "$PY" ]; then
   for c in python3 python py; do
     if "$c" -c '' >/dev/null 2>&1; then PY="$c"; break; fi
@@ -70,7 +81,7 @@ fi
 if [ -n "$PY" ]; then HAVE_PY=1; else HAVE_PY=0; fi
 count_value() {
   if [ "$HAVE_PY" = "1" ]; then
-    printf '%s' "$1" | "$PY" -c 'import sys,json
+    printf '%s' "$1" | $PY -c 'import sys,json
 d = json.load(sys.stdin)
 print(len(d.get("value", [])) if isinstance(d, dict) else len(d))' 2>/dev/null || printf '?'
   else
@@ -195,9 +206,9 @@ if [ "$SPARK_DEEP" = "1" ]; then
   say ""
   say "spark (deep: a real Livy session executing statements)"
   if [ "$HAVE_PY" = "1" ]; then
-    if "$PY" "$(dirname "$0")/spark_check.py"; then :; else bad; fi
+    if $PY "$(dirname "$0")/spark_check.py"; then :; else bad; fi
   else
-    say "  skip  no working python to run scripts/spark_check.py"
+    say "  skip  no uv or working python to run scripts/spark_check.py"
   fi
 fi
 

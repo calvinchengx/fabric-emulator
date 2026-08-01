@@ -43,7 +43,10 @@ jobs:
       # Regenerates the matrix from both engines and fails if the committed
       # file differs. That is what stops a claim like "SQL VERSION AS OF is a
       # Sail gap" surviving a Sail upgrade that closed it.
-      - run: python3 e2e/engine-matrix/run.py && git diff --exit-code docs/engine-matrix.md
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/engine-matrix/run.py && git diff --exit-code docs/engine-matrix.md
 
   witnesses:
     name: Every 🟢 parity claim names its witness
@@ -57,7 +60,10 @@ jobs:
       # or a witness that no longer exists — fails the build. That second case
       # is the valuable one: it catches a test being renamed or deleted out
       # from under the claim that depended on it.
-      - run: python3 scripts/check_witnesses.py --strict
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python scripts/check_witnesses.py --strict
   portal:
     name: Portal builds from source
     runs-on: ubuntu-latest
@@ -150,7 +156,10 @@ jobs:
       # own azure-kusto-data SDK. Linux/amd64 only: Microsoft documents ARM as
       # unsupported for the engine (its native layer needs AVX2), so this is
       # the only place the engine can be witnessed at all.
-      - run: python3 e2e/rti/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/rti/run.py
 
   external-s3:
     name: Real S3 server (SeaweedFS) behind a OneLake shortcut, SigV4 enforced (containerized)
@@ -165,7 +174,10 @@ jobs:
       # which forces the emulator to sign the upstream request itself. A
       # deliberately wrong secret must be refused, or nothing is being
       # verified.
-      - run: python3 e2e/s3/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/s3/run.py
 
   azurite-shortcut:
     name: ADLS Gen2 shortcut reads against Azurite, SAS enforced (containerized)
@@ -180,7 +192,10 @@ jobs:
       # semantics are not witnessed and are not claimed to be.
       # Non-vacuous by construction: azure-storage-blob writes the blob, an
       # unauthenticated GET must 403, and a tampered SAS must be refused.
-      - run: python3 e2e/azurite-shortcut/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/azurite-shortcut/run.py
 
   governance:
     name: OpenMetadata governance profile catalogs the emulator (containerized)
@@ -278,7 +293,10 @@ jobs:
       # the same object. Linux-only: azcopy (a Go binary) trusts the emulator's
       # self-signed CA via SSL_CERT_FILE, which the macOS system verifier rejects
       # for the dev cert's >825-day validity.
-      - run: python3 e2e/azcopy/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/azcopy/run.py
 
   docker-smoke:
     name: Production image runs and persists (container smoke)
@@ -322,7 +340,10 @@ jobs:
       # Builds fabric-emulator from source + the Sail image, then a real
       # PySpark Connect client writes/reads a Delta table through the
       # OneLake plane using production-shaped abfs:// URLs. No JVM anywhere.
-      - run: python3 e2e/spark/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/spark/run.py
 
   livy-native:
     name: Native Livy sessions drive Sail (containerized)
@@ -333,7 +354,10 @@ jobs:
       # statement-executor agent — a real client creates a session, submits
       # PySpark statements, and gets results computed by Sail, with NO
       # Apache Livy server. The engine is Sail (no JVM), like spark-a2.
-      - run: python3 e2e/livy/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/livy/run.py
 
   sail:
     name: LakeSail Sail (Rust Spark Connect) writes Delta through OneLake
@@ -344,7 +368,10 @@ jobs:
       # PySpark Connect client drives Sail (no JVM in any container), writing
       # and reading Delta through the OneLake Blob surface with entra
       # client-credentials auth minted before server start.
-      - run: python3 e2e/sail/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/sail/run.py
 
   data-science-loop:
     name: Spark to Direct Lake DAX to MLflow to dbt (containerized)
@@ -354,7 +381,10 @@ jobs:
       # One physical OneLake Delta table crosses four real engines/clients:
       # Sail executes PySpark SQL, Direct Lake evaluates DAX, MLflow 3 tracks
       # the observation, and dbt-duckdb's Delta plugin builds/tests it.
-      - run: python3 e2e/data-science-loop/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/data-science-loop/run.py
 
   fabric-cli:
     name: Microsoft's Fabric CLI (fab) drives the control plane + deployment pipelines (containerized)
@@ -370,7 +400,10 @@ jobs:
       # poll -> result) via `fab api`, since fab 1.6 has no typed verbs for
       # that surface. The highest-authority borrowed oracle. Linux-only
       # (docker compose), like the other e2es.
-      - run: python3 e2e/fabric-cli/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/fabric-cli/run.py
 
   deployment-pipelines-ps:
     name: Azure PowerShell drives deployment pipelines (containerized)
@@ -383,7 +416,10 @@ jobs:
       # flow Microsoft's own DeploymentPipelines-DeployAll.ps1 uses, then that
       # script's REST sequence. Proves entra-emulator satisfies MSAL's .NET
       # implementation, not just its Python one. Linux-only (docker compose).
-      - run: python3 e2e/deployment-pipelines/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/deployment-pipelines/run.py
 
   dbt-fabricspark:
     name: Microsoft's dbt-fabricspark drives Livy HC on Sail (containerized)
@@ -395,7 +431,10 @@ jobs:
       # High-Concurrency surface, with Sail computing the models and an
       # Entra token minted by entra-emulator. A second, independent client over
       # the Livy HC layer — parity witness. Linux-only (Sail container stack).
-      - run: python3 e2e/dbt-fabricspark/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/dbt-fabricspark/run.py
 
   dbt-fabric:
     name: Microsoft's dbt-fabric drives the TDS warehouse via ODBC Driver 18 (containerized)
@@ -407,7 +446,10 @@ jobs:
       # Microsoft ODBC Driver 18 + FedAuth (token minted by entra-emulator),
       # byte-spliced to a real SQL Server sidecar. The second, independent TDS
       # driver witness (go-mssqldb is the first). Linux-only (SQL Server image).
-      - run: python3 e2e/dbt-fabric/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/dbt-fabric/run.py
 
   duckdb:
     name: Real DuckDB SQL over lakehouse Delta
@@ -468,7 +510,10 @@ jobs:
       # them through Spark Connect against OneLake (a Delta
       # table lands), and the run is reported back so the RunNotebook job
       # reflects real execution. Linux-only.
-      - run: python3 e2e/notebook-run/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/notebook-run/run.py
 
   warehouse-tds:
     name: Real SQL Server relay through the TDS endpoint
@@ -514,7 +559,10 @@ jobs:
       # Publishes the golden TMSL model as a SemanticModel item and runs the
       # DAX golden queries through the executeQueries endpoint (real Power BI
       # audience token), asserting the rows match the hand-computed oracle.
-      - run: python e2e/semantic-model/run.py
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/semantic-model/run.py
 
   great-expectations:
     name: Real Great Expectations validates semantic-model data
