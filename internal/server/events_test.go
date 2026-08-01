@@ -5,6 +5,7 @@ package server_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -341,5 +342,76 @@ func TestFlowStreamShowsAFailingPipelineAsItHappens(t *testing.T) {
 	})
 	if done.Data["failureReason"] == "" || done.Data["jobId"] != jobID {
 		t.Fatalf("terminal job event = %+v", done.Data)
+	}
+}
+
+func TestNotebookCellWritesAreAttributedOnTheStream(t *testing.T) {
+	// A notebook runtime executes cells one at a time, so it always knows
+	// which one is running and says so on the request. The flow stream reuses
+	// exactly that — no inference from user code.
+	f := newFixture(t)
+	var ws struct{ ID string }
+	f.mustStatus(f.call("POST", "/v1/workspaces", f.token,
+		map[string]string{"displayName": "FlowAttr"}, &ws), http.StatusCreated, "workspace")
+	var lake struct{ ID string }
+	f.mustStatus(f.call("POST", "/v1/workspaces/"+ws.ID+"/items", f.token,
+		map[string]any{"displayName": "lake", "type": "Lakehouse"}, &lake), http.StatusCreated, "lakehouse")
+
+	events, closeStream := f.openStream(t, "?kinds=file")
+	defer closeStream()
+	storage := f.forgeToken(t, map[string]any{
+		"clientId": entra.DaemonClientID, "audience": "https://storage.azure.com",
+	})
+
+	const body = "id\n1\n"
+	base := "/" + ws.ID + "/" + lake.ID + "/Files/from-cell.csv"
+	// Cell 0 deliberately: the index that a non-pointer field could not tell
+	// apart from "no cell".
+	hdr := map[string]string{"x-ms-fabric-job-id": "job-abc", "x-ms-fabric-cell-index": "0"}
+	f.olWithHeaders(t, "PUT", base+"?resource=file", storage, nil, hdr, http.StatusCreated)
+	f.olWithHeaders(t, "PATCH", base+"?action=append&position=0", storage, []byte(body), hdr, http.StatusAccepted)
+	f.olWithHeaders(t, "PATCH", base+fmt.Sprintf("?action=flush&position=%d", len(body)), storage, nil, hdr, http.StatusOK)
+
+	ev := awaitEvent(t, events, "the attributed write", func(e sseEvent) bool {
+		return e.Data["path"] == "Files/from-cell.csv"
+	})
+	attr, ok := ev.Data["attribution"].(map[string]any)
+	if !ok {
+		t.Fatalf("no attribution on %+v", ev.Data)
+	}
+	if attr["jobId"] != "job-abc" {
+		t.Fatalf("attribution = %+v", attr)
+	}
+	cell, ok := attr["cellIndex"].(float64)
+	if !ok || cell != 0 {
+		t.Fatalf("cellIndex = %v, want 0 present", attr["cellIndex"])
+	}
+}
+
+// olWithHeaders is f.ol with extra request headers.
+func (f *fixture) olWithHeaders(t *testing.T, method, path, token string, body []byte,
+	headers map[string]string, want int) {
+	t.Helper()
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, f.fabric.URL+path, rd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "onelake.dfs.fabric.microsoft.com"
+	req.Header.Set("Authorization", "Bearer "+token)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := f.fabric.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != want {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("%s %s = %d, want %d — %s", method, path, resp.StatusCode, want, raw)
 	}
 }

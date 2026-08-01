@@ -30,6 +30,17 @@ func newETag() string { return `"` + NewID() + `"` }
 // is true the create is conditional: an existing path is ErrPathExists and
 // nothing is written. Parent directories are implicit, like ADLS.
 func (s *Store) CreateOneLakePath(p *OneLakePath, ifNoneMatch bool) error {
+	return s.CreateOneLakePathAs(Attribution{}, p, ifNoneMatch)
+}
+
+// CreateOneLakePathAs is CreateOneLakePath for a caller that knows which unit
+// of work is doing the writing, so the flow event can say so.
+//
+// A sibling rather than a `context.Context` threaded through every caller:
+// CreateOneLakePath is called from the DFS and Blob handlers, git, deployment,
+// the mirror and the Delta writer, and only a few of those know anything worth
+// reporting. Explicit at the sites that do, untouched everywhere else.
+func (s *Store) CreateOneLakePathAs(attr Attribution, p *OneLakePath, ifNoneMatch bool) error {
 	p.CreatedAt = s.Now()
 	p.ModifiedAt = p.CreatedAt
 	p.ETag = newETag()
@@ -49,7 +60,7 @@ ON CONFLICT(item_id, rel_path) DO NOTHING`,
 		if n == 0 {
 			return ErrPathExists
 		}
-		s.emitFileEvent(EventFileCreated, p.WorkspaceID, p.ItemID, eventPath(p))
+		s.emitFileEvent(EventFileCreated, p.WorkspaceID, p.ItemID, eventPath(p), attr)
 		return nil
 	}
 	_, err := s.db.Exec(`
@@ -60,7 +71,7 @@ ON CONFLICT(item_id, rel_path) DO UPDATE SET
 	etag = excluded.etag, modified_at = excluded.modified_at`,
 		p.WorkspaceID, p.ItemID, p.RelPath, p.IsDir, p.Content, p.CreatedAt, p.ETag, p.ModifiedAt)
 	if err == nil {
-		s.emitFileEvent(EventFileCreated, p.WorkspaceID, p.ItemID, eventPath(p))
+		s.emitFileEvent(EventFileCreated, p.WorkspaceID, p.ItemID, eventPath(p), attr)
 	}
 	return err
 }
@@ -151,7 +162,7 @@ WHERE item_id = ? AND (rel_path = ? OR rel_path LIKE ? || '/%')`,
 		return err
 	}
 	if p, err := s.GetOneLakePath(itemID, dst); err == nil {
-		s.emitFileEvent(EventFileRenamed, p.WorkspaceID, itemID, eventPath(p))
+		s.emitFileEvent(EventFileRenamed, p.WorkspaceID, itemID, eventPath(p), Attribution{})
 	}
 	return nil
 }
@@ -223,7 +234,7 @@ DELETE FROM onelake_paths WHERE item_id = ? AND (rel_path = ? OR rel_path LIKE ?
 	if err := oneRow(res); err != nil {
 		return err
 	}
-	s.emitFileEvent(EventFileDeleted, wsID, itemID, relPath)
+	s.emitFileEvent(EventFileDeleted, wsID, itemID, relPath, Attribution{})
 	return nil
 }
 

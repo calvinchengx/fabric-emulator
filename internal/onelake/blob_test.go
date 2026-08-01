@@ -8,8 +8,8 @@ import (
 	"bytes"
 	"encoding/xml"
 	"net/http"
-	"reflect"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -346,7 +346,7 @@ func TestDFSRenameAndConditionals(t *testing.T) {
 
 	// Bad rename sources: cross-item, too short, unknown.
 	for src, want := range map[string]int{
-		"/short":                                http.StatusBadRequest,
+		"/short": http.StatusBadRequest,
 		"/" + f.ws.ID + "/nope.Lakehouse/Files/x": http.StatusNotFound,
 	} {
 		r = httptest.NewRequest("PUT", dst, strings.NewReader(""))

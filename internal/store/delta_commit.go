@@ -74,6 +74,9 @@ func (s *Store) deriveTableEvent(ev Event) *Event {
 	out := Event{
 		At: ev.At, Kind: KindTable, WorkspaceID: ev.WorkspaceID, ItemID: ev.ItemID,
 		Table: path.Join("Tables", table), Version: &version,
+		// A commit is written by whatever wrote the file, so the derived event
+		// inherits its attribution rather than losing it.
+		Attribution: ev.Attribution,
 	}
 	for _, line := range strings.Split(string(p.Content), "\n") {
 		if strings.TrimSpace(line) == "" {

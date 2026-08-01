@@ -22,6 +22,31 @@ const (
 // Direction comes from the method, which is exactly what the storage layer
 // knows: a GET read, a PUT/PATCH wrote. Paths under Tables/<name> collapse to
 // the table root — a Delta write touches many files, but one table.
+// attributionOf reads the caller's own statement of which notebook cell it is
+// running, so a write can say who caused it. The same values observe() uses —
+// computed once here rather than derived twice.
+func (s *Service) attributionOf(r *http.Request) store.Attribution {
+	jobID, cellRaw := s.cellContext(r)
+	if jobID == "" {
+		return store.Attribution{}
+	}
+	cell, err := strconv.Atoi(cellRaw)
+	if err != nil {
+		return store.Attribution{JobID: jobID}
+	}
+	return store.CellBy(jobID, cell)
+}
+
+// cellContext returns the job id and cell index the caller identified itself
+// with, by header or by bearer claim.
+func (s *Service) cellContext(r *http.Request) (jobID, cellRaw string) {
+	jobID, cellRaw = r.Header.Get(HeaderJobID), r.Header.Get(HeaderCellIndex)
+	if jobID == "" {
+		return s.attributionFromToken(r)
+	}
+	return jobID, cellRaw
+}
+
 func (s *Service) observe(r *http.Request, itemID, rel string) {
 	jobID, cellRaw := r.Header.Get(HeaderJobID), r.Header.Get(HeaderCellIndex)
 	if jobID == "" {

@@ -336,7 +336,7 @@ func TestPublishAfterCloseIsSafe(t *testing.T) {
 	}
 	s.Close()
 	s.publish(Event{Kind: KindFile, Path: "Files/after-close.csv"})
-	s.emitFileEvent(EventFileCreated, "w", "i", "Files/after-close.csv")
+	s.emitFileEvent(EventFileCreated, "w", "i", "Files/after-close.csv", Attribution{})
 }
 
 // mustJSONL renders Delta actions as the newline-delimited JSON a commit is.

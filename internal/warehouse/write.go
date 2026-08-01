@@ -32,6 +32,13 @@ const (
 // The table is created on first write, so the caller need not distinguish
 // create from append.
 func WriteDeltaTable(st *store.Store, wsID, itemID, name, mode string, tbl *Table) error {
+	return WriteDeltaTableAs(store.Attribution{}, st, wsID, itemID, name, mode, tbl)
+}
+
+// WriteDeltaTableAs is WriteDeltaTable for a caller that knows which unit of
+// work is writing — a Copy activity, say — so the resulting file and table
+// events can name it.
+func WriteDeltaTableAs(attr store.Attribution, st *store.Store, wsID, itemID, name, mode string, tbl *Table) error {
 	if tbl == nil || len(tbl.Columns) == 0 {
 		return fmt.Errorf("delta write %q: no columns", name)
 	}
@@ -61,13 +68,13 @@ func WriteDeltaTable(st *store.Store, wsID, itemID, name, mode string, tbl *Tabl
 	}
 
 	dataFile := fmt.Sprintf("part-%d.parquet", version)
-	if err := st.CreateOneLakePath(&store.OneLakePath{
+	if err := st.CreateOneLakePathAs(attr, &store.OneLakePath{
 		WorkspaceID: wsID, ItemID: itemID,
 		RelPath: path.Join(root, dataFile), Content: pq,
 	}, false); err != nil {
 		return err
 	}
-	return st.CreateOneLakePath(&store.OneLakePath{
+	return st.CreateOneLakePathAs(attr, &store.OneLakePath{
 		WorkspaceID: wsID, ItemID: itemID,
 		RelPath: path.Join(root, "_delta_log", commitFileName(version)),
 		Content: commitJSON(tbl.Columns, kinds, dataFile, len(pq), len(tbl.Rows), removes, version, time.Now().UnixMilli()),
