@@ -181,10 +181,28 @@ assert conformed.select("customer_key").distinct().count() == n_conformed, \
 
 # The unplaceable cohorts survive as their own identities. resolve.py proves
 # they exist; this proves materialising did not quietly merge them away.
+#
+# The invariant, NOT a fixture total. Contoso ERP is a change log: a delete
+# closes a customer's last version, so a deleted ERP-only customer has history
+# rows and no current one, and correctly never reaches the star. Comparing a
+# live count against EXPECTED_ERP_ONLY_COUNT — which counts everyone the source
+# ever had — asserts that the dead are still here. What must hold is that no
+# CURRENT account is lost: each one either bridged to POS or stands alone.
 web_only = conformed.filter(~F.col("in_pos") & F.col("in_web")).count()
 erp_only = conformed.filter(~F.col("in_pos") & F.col("in_erp")).count()
-assert web_only == web.EXPECTED_WEB_ONLY_EMAIL_COUNT, (web_only, web.EXPECTED_WEB_ONLY_EMAIL_COUNT)
-assert erp_only == erp.EXPECTED_ERP_ONLY_COUNT, (erp_only, erp.EXPECTED_ERP_ONLY_COUNT)
+erp_bridged = conformed.filter(F.col("in_pos") & F.col("in_erp")).count()
+web_bridged = conformed.filter(F.col("in_pos") & F.col("in_web")).count()
+
+assert erp_bridged + erp_only == erp_now.count(), \
+    f"ERP accounts lost in the join: {erp_bridged} + {erp_only} != {erp_now.count()}"
+assert web_bridged + web_only == web_c.count(), \
+    f"web accounts lost in the join: {web_bridged} + {web_only} != {web_c.count()}"
+
+# Deletes and ambiguous keys can only SHRINK these cohorts, never grow them —
+# an excess means the join invented an identity.
+assert erp_only <= erp.EXPECTED_ERP_ONLY_COUNT, (erp_only, erp.EXPECTED_ERP_ONLY_COUNT)
+assert web_only <= web.EXPECTED_WEB_ONLY_EMAIL_COUNT, \
+    (web_only, web.EXPECTED_WEB_ONLY_EMAIL_COUNT)
 
 assert n_lines == web.EXPECTED_WEB_CLEAN_LINES, (n_lines, web.EXPECTED_WEB_CLEAN_LINES)
 assert web_lines.filter(F.col("customer_key").isNull()).count() == 0, \

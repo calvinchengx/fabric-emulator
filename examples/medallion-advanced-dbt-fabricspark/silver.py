@@ -18,6 +18,18 @@ Sources resolve BY NAME with no help from this step. Opening a Livy session
 against a lakehouse registers its `Tables/` in the Spark catalog, as Fabric's
 metastore does — this example used to hand-declare each table with
 `CREATE TABLE ... USING delta LOCATION ...` and no longer has to.
+
+Two Sail behaviours show up here and neither is a failure of this example:
+
+  * **`OPTIMIZE` is not in Sail's SQL grammar** — it is a Delta *extension*,
+    registered in JVM Spark by delta-spark, not part of Spark SQL. The emulator
+    routes it to delta-rs (docs/engine-matrix.md marks it ✅ for
+    "Sail + delta-rs"), but dbt-fabricspark emits it as raw SQL and the adapter
+    reports "OPTIMIZE failed and was skipped; the model itself succeeded".
+  * **Sail resolves a WHERE predicate against the PROJECTED schema**, so a
+    column computed in a CTE and filtered on in a select that narrows the
+    columns is gone before the predicate runs. See the two-CTE structure in
+    silver_quarantine_orders.sql.
 """
 import json
 import os
