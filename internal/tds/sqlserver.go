@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/microsoft/go-mssqldb/msdsn"
@@ -207,7 +208,7 @@ func (b *sqlServerBackend) dialBackend(ctx context.Context) (net.Conn, error) {
 				attempts = append(attempts, proto+": no dialer registered")
 				continue
 			}
-			conn, err = d.DialConnection(ctx, b.base)
+			conn, err = dialWithRetry(ctx, d, b.base)
 		}
 		if err == nil {
 			return conn, nil
@@ -339,4 +340,49 @@ func dsnProtocolPrefix(dsn string) (string, bool) {
 		return strings.ToLower(proto), true
 	}
 	return "", false
+}
+
+// dialPipeAttempts / dialPipeBackoff bound the retry in dialWithRetry. Small on
+// purpose: this is for a transient busy pipe, not for a server that is down.
+const (
+	dialPipeAttempts = 4
+	dialPipeBackoff  = 75 * time.Millisecond
+)
+
+// dialWithRetry opens a non-TCP backend connection, retrying briefly.
+//
+// A Windows named-pipe client is EXPECTED to retry: the documented protocol is
+// that CreateFile on a busy pipe fails and the caller waits for an instance to
+// free up. Go's dialer surfaces those as "All pipe instances are busy" and
+// "No process is on the other end of the pipe", and the second is what the
+// Windows LocalDB leg reports for exactly these three splice tests.
+//
+// The splice is the only thing here that needs this. Ordinary queries go
+// through database/sql, which POOLS — a handful of connections, reused for the
+// life of the process. The splice opens a FRESH backend connection for every
+// client session and never reuses one, so it is the only path that produces a
+// stream of short-lived pipe connects, and the only one that fails. That
+// asymmetry is why internal/warehouse, internal/api and internal/tds all pass
+// against the same LocalDB in the same run while internal/server does not.
+//
+// Deliberately bounded and deliberately not protocol-specific: any protocol
+// dialer may have a transient busy state, and a real failure still surfaces
+// after four attempts and ~225ms rather than being retried away.
+func dialWithRetry(ctx context.Context, d msdsn.ProtocolDialer, cfg *msdsn.Config) (net.Conn, error) {
+	var err error
+	for i := 0; i < dialPipeAttempts; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(dialPipeBackoff):
+			}
+		}
+		var conn net.Conn
+		conn, err = d.DialConnection(ctx, cfg)
+		if err == nil {
+			return conn, nil
+		}
+	}
+	return nil, fmt.Errorf("after %d attempts: %w", dialPipeAttempts, err)
 }
