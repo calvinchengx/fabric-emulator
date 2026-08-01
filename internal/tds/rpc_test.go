@@ -150,7 +150,7 @@ func TestParseRPCRefusesTruncatedInput(t *testing.T) {
 
 func TestFixRPCRewritesNestedCTEInStatementParameter(t *testing.T) {
 	in := spPrepexec("with o as (with i as (select @P1 x) select * from i) select * from o")
-	out, reject := dialectFix(PktRPC, in)
+	out, reject := dialectFix(PktRPC, in, false)
 	if reject != "" {
 		t.Fatalf("unexpected reject: %s", reject)
 	}
@@ -180,7 +180,7 @@ func TestFixRPCRewritesNestedCTEInStatementParameter(t *testing.T) {
 func TestFixRPCRewritesPLPStatement(t *testing.T) {
 	in := rpcMsg(10, nvarcharMaxParam("@stmt",
 		"with o as (with i as (select 1 x) select * from i) select * from o"))
-	out, reject := dialectFix(PktRPC, in)
+	out, reject := dialectFix(PktRPC, in, false)
 	if reject != "" || bytes.Equal(out, in) {
 		t.Fatalf("PLP statement not rewritten (reject=%q)", reject)
 	}
@@ -250,7 +250,7 @@ func TestFixRPCLeavesOrdinaryStatementsUntouched(t *testing.T) {
 		spPrepexec("with a as (select 1 x), b as (select x from a) select * from b"),
 		rpcMsg(1, nvarcharParam("@stmt", "with o as (with i as (select 1 x) select * from i) select * from o")), // sp_cursor: not a SQL-carrying proc
 	} {
-		out, reject := dialectFix(PktRPC, in)
+		out, reject := dialectFix(PktRPC, in, false)
 		if reject != "" || !bytes.Equal(out, in) {
 			t.Fatalf("altered or rejected: reject=%q changed=%v", reject, !bytes.Equal(out, in))
 		}
@@ -260,7 +260,7 @@ func TestFixRPCLeavesOrdinaryStatementsUntouched(t *testing.T) {
 // A statement Fabric itself refuses is rejected by name, even in a parameter.
 func TestFixRPCRejectsFabricRestrictionInParameter(t *testing.T) {
 	in := spPrepexec("with o as (with i as (select 1 x) select * from i) insert into t select * from o")
-	_, reject := dialectFix(PktRPC, in)
+	_, reject := dialectFix(PktRPC, in, false)
 	if !strings.Contains(reject, "select-only") {
 		t.Fatalf("reject = %q", reject)
 	}
@@ -273,7 +273,7 @@ func TestFixRPCFallsBackToNamedRejectOnUnmodelledShape(t *testing.T) {
 	sqlVariant := append(append(paramName("@v"), 0), 0x62, 8, 0, 0, 0)
 	in := rpcMsg(13, sqlVariant, nvarcharParam("@stmt", nested))
 
-	out, reject := dialectFix(PktRPC, in)
+	out, reject := dialectFix(PktRPC, in, false)
 	if !strings.Contains(reject, "does not model") {
 		t.Fatalf("reject = %q", reject)
 	}
@@ -325,7 +325,7 @@ func TestFixRPCNeverCorruptsTruncatedInput(t *testing.T) {
 	full := spPrepexec("with o as (with i as (select @P1 x) select * from i) select * from o")
 	for n := 0; n <= len(full); n++ {
 		in := append([]byte(nil), full[:n]...)
-		out, _ := dialectFix(PktRPC, in)
+		out, _ := dialectFix(PktRPC, in, false)
 		if !bytes.Equal(out, in) && n != len(full) {
 			// A rewrite of a truncated message is only acceptable if it still
 			// parses to the intended statement.
@@ -423,7 +423,7 @@ func FuzzParseRPC(f *testing.F) {
 			t.Fatalf("accepted but did not round-trip: %d vs %d bytes", len(got), len(data))
 		}
 		// The full path must not panic either.
-		dialectFix(PktRPC, data)
+		dialectFix(PktRPC, data, false)
 	})
 }
 
@@ -478,7 +478,7 @@ func TestFixRPCSkipsUnparseableParameterAndRewritesTheNext(t *testing.T) {
 		nvarcharParam("@junk", "with a as (select 'unterminated"),
 		nvarcharParam("@stmt", "with o as (with i as (select 1 x) select * from i) select * from o"),
 	)
-	out, reject := dialectFix(PktRPC, in)
+	out, reject := dialectFix(PktRPC, in, false)
 	if reject != "" {
 		t.Fatalf("reject: %s", reject)
 	}

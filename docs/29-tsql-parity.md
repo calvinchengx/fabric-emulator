@@ -1,10 +1,16 @@
 # 29 — T-SQL parity: Fabric's surface area vs the stand-in engine
 
-**Status: plan.** This doc maps Fabric's documented T-SQL surface area against
-the SQL Server sidecar the emulator relays to, classifies every divergence, and
-sets out the work to close the one that currently blocks real tooling (nested
-CTEs). Nothing here is implemented yet; [16-warehouse-tds.md](16-warehouse-tds.md)
-describes what *is* (T1–T5).
+**Status: T6 and T7 shipped; T8 outstanding.** This doc maps Fabric's documented
+T-SQL surface area against the SQL Server sidecar the emulator relays to,
+classifies every divergence in **both** directions, and tracks the work to close
+them. [16-warehouse-tds.md](16-warehouse-tds.md) describes the surface this
+builds on (T1–T5).
+
+- **T6 ✅** — nested CTEs are flattened on the wire, in batches and in RPC
+  parameters, so dbt's `accepted_values` and `relationships` run unmodified.
+- **T7 ✅** — `-tsql-strict` refuses the Class B constructs Fabric rejects that
+  the sidecar would otherwise run. Off by default.
+- **T8 ⬜** — CTAS (`CREATE TABLE AS SELECT`), the last Class A gap.
 
 ## Why this doc exists
 
@@ -34,10 +40,11 @@ three classes with very different consequences:
 | **B — emulator too permissive** | Fabric rejects it; the sidecar accepts it | Your SQL passes locally, then **fails in production** | Silent — discovered only on real Fabric |
 | **C — agree** | Both behave the same | None | Nobody |
 
-**Class B is the more dangerous class**, and it is invisible today. A local
-green build is exactly the signal the emulator exists to provide; a Class B gap
-makes that signal a lie. Class A is loud and annoying; Class B is quiet and
-expensive.
+**Class B is the more dangerous class.** A local green build is exactly the
+signal the emulator exists to provide; a Class B gap makes that signal a lie.
+Class A is loud and annoying; Class B is quiet and expensive. Most of Class B
+is now refusable with **`-tsql-strict`** (T7 below) — off by default, because
+removing capability breaks working setups and that is the operator's call.
 
 The emulator's governing rule — *never fake results; either do it for real or
 fail honestly* — has so far been applied to **engines**. This doc extends it to
@@ -403,15 +410,49 @@ Recursive CTEs (Fabric rejects them too — Class B, so *reject*, don't
 implement); a general T-SQL parser; rewriting anything other than nested CTEs;
 CTAS (tracked separately below).
 
-### T7 — Class B truthfulness (proposed, lower priority)
+### T7 — Class B truthfulness. ✅ Done, behind a flag
 
-Reject, at the TDS layer, constructs Fabric documents as unsupported —
-recursive CTEs, triggers, `SET TRANSACTION ISOLATION LEVEL`, `SET ROWCOUNT`,
-enforced constraints — so a locally green build means a Fabric-green build.
-This is *removing* capability the sidecar happens to have, which is the right
-direction for an emulator but will break anyone relying on it, so it belongs
-behind a flag (`-tsql-strict`) with a documented default before it becomes the
-default.
+`-tsql-strict` (`FABRIC_TSQL_STRICT`) refuses constructs real Fabric rejects
+that the sidecar would happily run, so a locally green build means a
+Fabric-green build. **Off by default**, because unlike all of T6 this *removes*
+capability: SQL that works today starts failing. The default flips only once
+the checks have been exercised widely enough to trust.
+
+Checked *before* any rewrite — "would Fabric run this at all?" precedes "how do
+we make the sidecar run it?" — and applied to statements carried as RPC
+parameters as well as batches.
+
+| Class B construct | Refused as |
+|---|---|
+| **Recursive CTE** (a CTE referencing itself) | `recursive-cte` |
+| **Triggers** | `triggers` |
+| **Synonyms** | `synonyms` |
+| `CREATE USER` | `create-user` |
+| `SET TRANSACTION ISOLATION LEVEL` | `set-isolation-level` |
+| `SET ROWCOUNT` | `set-rowcount` |
+| `SET IDENTITY_INSERT` | `identity-insert` |
+| `SELECT … FOR XML` | `for-xml` |
+| `IDENTITY(seed, increment)` | `identity-seed` |
+| Enforced `PRIMARY KEY` / `UNIQUE` / `FOREIGN KEY` | `enforced-constraint` |
+| Multi-column statistics | `multi-column-stats` |
+| `PREDICT` | `predict` |
+| `sp_showspaceused` | `sp-showspaceused` |
+
+**Still not enforced, with the reason** — a lexer cannot see these, and
+guessing would trade a silent Class B for a noisy false refusal:
+
+- **indexed ("materialized") views** — needs correlating a `CREATE INDEX` with
+  the view it targets, across statements;
+- **`FOR JSON` in a subquery** — Fabric allows `FOR JSON` only as the last
+  operator, which needs real parsing to tell from the legal form;
+- **queries against system tables**, and the **vector type** — SQL Server 2022
+  has no vector type either, so that row is not actually a divergence here.
+
+The same false-positive trade as T6d applies, and is more acceptable here: an
+operator who turned strict mode on did so precisely to be told about
+divergence, so a loud refusal beats a silent one. What it costs is spelled out
+rather than hidden — a column named `identity` or a CTE whose name also names a
+column can be refused.
 
 ### T8 — CTAS (proposed)
 
