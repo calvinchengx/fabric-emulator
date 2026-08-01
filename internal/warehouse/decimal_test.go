@@ -3,13 +3,12 @@ package warehouse
 import (
 	"bytes"
 	"context"
-	"database/sql"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 	"math/big"
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
-	_ "modernc.org/sqlite"
 )
 
 // decRow exercises both physical encodings delta-rs picks for a decimal by
@@ -124,11 +123,7 @@ func TestReflectDecimalColumn(t *testing.T) {
 		t.Errorf("literal = %q, want 1.50", got)
 	}
 
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := testsupport.OpenMSSQL(t)
 	tbl := &Table{
 		Columns: []string{"price"},
 		Rows: [][]any{
@@ -137,7 +132,7 @@ func TestReflectDecimalColumn(t *testing.T) {
 			{Decimal{Unscaled: big.NewInt(300), Precision: 10, Scale: 2}},
 		},
 	}
-	if err := reflectTable(context.Background(), db, "orders", tbl, ""); err != nil {
+	if err := reflectTable(context.Background(), db, "orders", tbl, "N"); err != nil {
 		t.Fatal(err)
 	}
 	var sum float64

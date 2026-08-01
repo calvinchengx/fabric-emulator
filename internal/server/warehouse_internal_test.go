@@ -5,12 +5,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/parquet-go/parquet-go"
-	_ "modernc.org/sqlite"
 )
 
 // fakeWH is a warehouseBackend that hands back a fixed *sql.DB (SQLite in the
@@ -65,11 +65,7 @@ func TestWarehouseRouter(t *testing.T) {
 	seed("Tables/m/part-0.parquet", buf.Bytes())
 	seed("Tables/m/_delta_log/00000000000000000000.json", []byte(`{"add":{"path":"part-0.parquet"}}`))
 
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := testsupport.OpenMSSQL(t)
 	ctx := context.Background()
 	// Identity principalOf: the "token" passed in is the principal id.
 	idOf := func(tok string) (string, error) { return tok, nil }
@@ -188,11 +184,7 @@ func TestSQLDBFor(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := testsupport.OpenMSSQL(t)
 	ctx := context.Background()
 
 	// Unknown item → error.

@@ -2,35 +2,32 @@ package tds
 
 import (
 	"context"
-	"database/sql"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 	"testing"
-
-	_ "modernc.org/sqlite"
 )
 
 // TestSQLServerBackendQuery exercises the backend's row-materialisation logic
-// against a real database/sql *DB (in-memory SQLite — no CGO, already a
-// dependency). This covers the same Query path the SQL Server backend uses:
+// against a real SQL Server. This covers the same Query path production uses:
 // column names, per-row scanning, []byte→string normalisation, NULLs, and the
 // no-column (DDL/DML) case.
+//
+// It was written against SQLite and declared its columns as TEXT/BLOB, neither
+// of which SQL Server has. That went unnoticed for as long as the only backend
+// under test was the one that accepted them.
 func TestSQLServerBackendQuery(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := testsupport.OpenMSSQL(t)
 	be := &sqlServerBackend{db: db}
 	ctx := context.Background()
 
 	// A statement with no result set → a Result with no columns.
-	res, err := be.Query(ctx, "CREATE TABLE t (region TEXT, amount INT, blob BLOB)")
+	res, err := be.Query(ctx, "CREATE TABLE t (region NVARCHAR(50), amount INT, blob VARBINARY(50))")
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if len(res.Columns) != 0 {
 		t.Fatalf("DDL should yield no columns, got %v", res.Columns)
 	}
-	if _, err := be.Query(ctx, "INSERT INTO t VALUES ('us', 80, x'0102'), (NULL, 60, NULL)"); err != nil {
+	if _, err := be.Query(ctx, "INSERT INTO t VALUES ('us', 80, 0x0102), (NULL, 60, NULL)"); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 
