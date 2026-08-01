@@ -123,6 +123,7 @@ git wrote. This is what makes `fabric-cicd` and deployment pipelines testable.
 | Method + path | Notes |
 |---|---|
 | `POST /workspaces/{id}/items/{itemId}/jobs/instances?jobType=…` | schedule → operation |
+| `GET  /workspaces/{id}/items/{itemId}/jobs/instances` | **List Item Job Instances** — paged, newest first *sync* |
 | `GET  /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}` | status *sync* |
 | `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/cancel` | cancel |
 | `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/queryactivityruns` | DataPipeline: the recorded activity runs *sync* |
@@ -148,6 +149,65 @@ clock, and — for the two executing job types — actually do work at trigger:
 
 `Cancelled` is implemented (the `cancel` path sets it); `Deduped` (from the REST
 reference) is the only state not yet emulated.
+
+## Job scheduler (Fabric's own, per item)
+
+| Method + path | Notes |
+|---|---|
+| `POST   /workspaces/{id}/items/{itemId}/jobs/{jobType}/schedules` | create → the `ItemSchedule` *sync* |
+| `GET    /workspaces/{id}/items/{itemId}/jobs/{jobType}/schedules` | list, paged *sync* |
+| `GET    /workspaces/{id}/items/{itemId}/jobs/{jobType}/schedules/{id}` | read one *sync* |
+| `PATCH  /workspaces/{id}/items/{itemId}/jobs/{jobType}/schedules/{id}` | replace `enabled` + `configuration` *sync* |
+| `DELETE /workspaces/{id}/items/{itemId}/jobs/{jobType}/schedules/{id}` | remove |
+
+This is Fabric's **native** scheduler, distinct from the `ApacheAirflowJob`
+item, which hands scheduling to a real Airflow sidecar (docs/14).
+
+`configuration` is the documented `ScheduleConfig` union, discriminated on
+`type`. All four members carry `startDateTime`, `endDateTime` and
+`localTimeZoneId`:
+
+| `type` | Fields |
+|---|---|
+| `Cron` | `interval` minutes, 1–5,270,400 |
+| `Daily` | `times[]` as `hh:mm`, at most 100 |
+| `Weekly` | `times[]` + `weekdays[]` (`Monday`…`Sunday`) |
+| `Monthly` | `occurrence` (`DayOfMonth` with `dayOfMonth`, or `OrdinalWeekday` with `weekIndex` `First`…`Fifth` + `weekday`), `recurrence` 1–12 months, `times[]` |
+
+An item accepts at most **20 schedules per job type**; the 21st is
+`ScheduleExceedsLimit`. An invalid configuration is refused at write time
+rather than stored to silently never fire.
+
+`localTimeZoneId` takes a **Windows** zone id (`Pacific Standard Time`) as real
+Fabric does, or an IANA name (`America/Los_Angeles`). Times are real local wall
+times: a daily `09:00` stays 09:00 across a daylight-saving change rather than
+drifting an hour. Ids outside the mapped set are rejected — a schedule that
+fires at the wrong hour is worse than one that refuses to be created.
+
+### How a schedule fires without a background worker
+
+The emulator's defining property is a controllable clock; a goroutine ticking
+on wall time would make a job's outcome depend on how long a test took. So
+schedules are evaluated **on demand**, at every moment a caller could observe
+the result:
+
+- `POST /_emulator/clock` — the deterministic lever. The response reports
+  `scheduledJobsStarted`, and `{"advance": 0}` is a plain "tick now".
+- listing an item's job instances, or its schedules;
+- creating or updating a schedule — which is what makes the documented *"if the
+  start time is in the past, it will trigger a job instantly"* true, with no
+  special case: the first window simply opens at `startDateTime`.
+
+Each evaluation materialises every occurrence in the half-open window
+(last fired, now], so nothing fires twice and nothing in between is missed.
+Firing goes through the same path a manual run takes — **a scheduled
+DataPipeline really executes the interpreter** — and only
+`invokeType: "Scheduled"` distinguishes it from an on-demand run.
+
+**One boundary, stated:** catch-up is capped at 100 occurrences per evaluation,
+keeping the newest. Real Fabric never needs the cap because its clock advances
+one second per second; here a caller can advance a year against a one-minute
+Cron, and half a million job instances is not a useful answer.
 
 ## Git integration (unlocks CI/CD testing)
 

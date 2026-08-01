@@ -12,46 +12,32 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
-// createJobInstance schedules an item job (nothing executes — state is
-// clock-derived). 202 with Location pointing at the job instance, per the
-// documented run-on-demand shape.
-func (a *API) createJobInstance(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	wid := r.PathValue("wid")
-	if _, _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
-		return
-	}
-	it, err := a.Store.GetItem(wid, r.PathValue("iid"))
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "ItemNotFound", "The item is not available.")
-		return
-	}
-	jobType := r.URL.Query().Get("jobType")
-	if jobType == "" {
-		writeErr(w, http.StatusBadRequest, "InvalidRequest", "jobType query parameter is required.")
-		return
-	}
+// startJob creates a job instance and drives whatever really executes for that
+// item type. It is the single entry point every invoker shares — the on-demand
+// API below, the native scheduler (schedules.go), and event triggers — so a
+// scheduled DataPipeline runs the same interpreter a manually-started one
+// does, and only invokeType tells them apart.
+//
+// executionData is the decoded `executionData` object of the request (or of
+// the schedule/trigger that fired), left as a generic map because each item
+// type reads different keys out of it.
+func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, exec map[string]any) (*store.JobInstance, error) {
 	delay, failWith := a.nextOpFate()
-	j := &store.JobInstance{ItemID: it.ID, JobType: jobType, FailWith: failWith}
+	j := &store.JobInstance{ItemID: it.ID, JobType: jobType, InvokeType: invokeType, FailWith: failWith}
 	j.CompleteAt = a.Store.Now() + delay
 	if it.Type == "ApacheAirflowJob" && jobType == "Run" {
 		// A real engine callback finalises this job; virtual time must not.
 		j.CompleteAt = math.MaxInt64
 	}
 	if err := a.Store.CreateJobInstance(j); err != nil {
-		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
-		return
+		return nil, err
 	}
 	// DataPipeline jobs actually execute: the interpreter runs the definition's
 	// control flow now and records the activity runs; a pipeline failure sets
 	// the job's terminal status (overriding fault injection).
 	if it.Type == "DataPipeline" {
-		var body struct {
-			ExecutionData struct {
-				Parameters map[string]any `json:"parameters"`
-			} `json:"executionData"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if code := a.runPipeline(wid, it, j.ID, body.ExecutionData.Parameters); code != "" && j.FailWith == "" {
+		params, _ := exec["parameters"].(map[string]any)
+		if code := a.runPipeline(wid, it, j.ID, params); code != "" && j.FailWith == "" {
 			j.FailWith = code
 			_ = a.Store.SetJobFailure(it.ID, j.ID, code)
 		}
@@ -72,31 +58,81 @@ func (a *API) createJobInstance(w http.ResponseWriter, r *http.Request, p *auth.
 		}
 	}
 	if it.Type == "ApacheAirflowJob" && jobType == "Run" {
-		var body struct {
-			ExecutionData struct {
-				DAGID string         `json:"dagId"`
-				Conf  map[string]any `json:"conf"`
-			} `json:"executionData"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body.ExecutionData.DAGID == "" {
+		dagID, _ := exec["dagId"].(string)
+		conf, _ := exec["conf"].(map[string]any)
+		if dagID == "" {
 			j.FailWith = "AirflowDAGIDRequired"
 			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
 		} else if a.Airflow == nil {
 			j.FailWith = "AirflowNotConfigured"
 			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
 		} else {
-			go a.runAirflow(context.Background(), it, j, body.ExecutionData.DAGID, body.ExecutionData.Conf)
+			go a.runAirflow(context.Background(), it, j, dagID, conf)
 		}
 	}
 	if it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish") {
 		j.FailWith = "DataflowEngineNotImplemented"
 		_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
 	}
+	return j, nil
+}
+
+// createJobInstance runs an item job on demand. 202 with Location pointing at
+// the job instance, per the documented run-on-demand shape.
+func (a *API) createJobInstance(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	wid := r.PathValue("wid")
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
+		return
+	}
+	it, err := a.Store.GetItem(wid, r.PathValue("iid"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "ItemNotFound", "The item is not available.")
+		return
+	}
+	jobType := r.URL.Query().Get("jobType")
+	if jobType == "" {
+		writeErr(w, http.StatusBadRequest, "InvalidRequest", "jobType query parameter is required.")
+		return
+	}
+	var body struct {
+		ExecutionData map[string]any `json:"executionData"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	j, err := a.startJob(wid, it, jobType, store.InvokeManual, body.ExecutionData)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
 	loc := fmt.Sprintf("https://%s/v1/workspaces/%s/items/%s/jobs/instances/%s", r.Host, wid, it.ID, j.ID)
 	w.Header().Set("Location", loc)
 	w.Header().Set("Retry-After", fmt.Sprintf("%d", a.RetryAfterSeconds))
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// listJobInstances is Fabric's **List Item Job Instances**. Schedules are
+// evaluated first so a caller polling this endpoint sees runs that have come
+// due — the emulator has no background worker by design (see schedules.go).
+func (a *API) listJobInstances(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	wid := r.PathValue("wid")
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleViewer); !ok {
+		return
+	}
+	it, err := a.Store.GetItem(wid, r.PathValue("iid"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "ItemNotFound", "The item is not available.")
+		return
+	}
+	a.tickItemSchedules(it.ID)
+	jobs, err := a.Store.ListItemJobInstances(it.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	out := make([]map[string]any, 0, len(jobs))
+	for _, j := range jobs {
+		out = append(out, a.jobBody(j, wid))
+	}
+	writePage(a, w, r, out)
 }
 
 // jobBody is the wire shape of a job instance.

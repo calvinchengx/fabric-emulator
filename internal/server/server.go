@@ -207,8 +207,14 @@ func (s *Server) registerControl() {
 				s.Clock.Unfreeze()
 			}
 		}
+		// Moving the clock is what makes a schedule due, so evaluate now:
+		// the emulator runs no background scheduler on purpose (wall-clock
+		// ticking would make job outcomes depend on how long a test took).
+		// `{"advance":0}` is therefore also a plain "tick now".
+		started := s.API.TickSchedules()
 		offset, frozen, now := s.Clock.State()
-		writeJSON(w, http.StatusOK, map[string]any{"offset": offset, "frozen": frozen, "now": now})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"offset": offset, "frozen": frozen, "now": now, "scheduledJobsStarted": started})
 	})
 
 	// Fault injection: fail the next N operations, reject the next N

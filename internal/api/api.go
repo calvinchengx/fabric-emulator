@@ -83,6 +83,12 @@ type API struct {
 	// hc holds high-concurrency Livy session-packing state (lazily created).
 	hc *hcManager
 
+	// tickMu serialises scheduler/event-trigger evaluation so two concurrent
+	// evaluations cannot read the same high-water mark and start the same run
+	// twice. Separate from the fault mutex: an evaluation can execute a whole
+	// pipeline, and must not block unrelated requests for that long.
+	tickMu sync.Mutex
+
 	// Fault switches (set via the /_emulator control surface).
 	mu        sync.Mutex
 	failNext  int   // force the next N operations to Failed
@@ -175,6 +181,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/deploymentPipelines/{pid}/roleAssignments", a.withAuth(a.addDeploymentPipelineRole))
 	mux.HandleFunc("DELETE /v1/deploymentPipelines/{pid}/roleAssignments/{prid}", a.withAuth(a.deleteDeploymentPipelineRole))
 
+	a.registerSchedules(mux)
 	a.registerTyped(mux)
 	a.registerAdminDomains(mux)
 	a.registerActivityEvents(mux)

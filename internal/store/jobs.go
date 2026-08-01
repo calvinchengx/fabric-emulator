@@ -76,6 +76,29 @@ FROM job_instances WHERE item_id = ? AND id = ?`, itemID, id).
 	return j, err
 }
 
+// ListItemJobInstances returns an item's job instances, newest first — the
+// order List Item Job Instances is useful in (the last run is the one you
+// want). Distinct from the portal's tenant-wide ListJobInstances.
+func (s *Store) ListItemJobInstances(itemID string) ([]*JobInstance, error) {
+	rows, err := s.db.Query(`
+SELECT id, item_id, job_type, invoke_type, created_at, complete_at, cancelled, fail_with
+FROM job_instances WHERE item_id = ? ORDER BY created_at DESC, rowid DESC`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*JobInstance
+	for rows.Next() {
+		j := &JobInstance{}
+		if err := rows.Scan(&j.ID, &j.ItemID, &j.JobType, &j.InvokeType, &j.CreatedAt,
+			&j.CompleteAt, &j.Cancelled, &j.FailWith); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 // SetPipelineRun records the interpreter's activity-run detail for a pipeline
 // job (queried back by the queryactivityruns surface).
 func (s *Store) SetPipelineRun(jobID, status, activityRunsJSON string) error {

@@ -118,6 +118,36 @@ func TestClosedDBErrors(t *testing.T) {
 	if _, err := s.GetJobInstance("i", "x"); err == nil {
 		t.Error("GetJobInstance on closed DB succeeded")
 	}
+	if _, err := s.ListItemJobInstances("i"); err == nil {
+		t.Error("ListItemJobInstances on closed DB succeeded")
+	}
+	if _, err := s.CountItemSchedules("i", "RunNotebook"); err == nil {
+		t.Error("CountItemSchedules on closed DB succeeded")
+	}
+	if err := s.CreateItemSchedule(&ItemSchedule{ItemID: "i", JobType: "RunNotebook"}); err == nil {
+		t.Error("CreateItemSchedule on closed DB succeeded")
+	}
+	if _, err := s.GetItemSchedule("i", "RunNotebook", "x"); err == nil {
+		t.Error("GetItemSchedule on closed DB succeeded")
+	}
+	if _, err := s.ListItemSchedules("i", "RunNotebook"); err == nil {
+		t.Error("ListItemSchedules on closed DB succeeded")
+	}
+	if _, err := s.ListEnabledSchedulesForItem("i"); err == nil {
+		t.Error("ListEnabledSchedulesForItem on closed DB succeeded")
+	}
+	if _, err := s.ListEnabledSchedules(); err == nil {
+		t.Error("ListEnabledSchedules on closed DB succeeded")
+	}
+	if err := s.UpdateItemSchedule(&ItemSchedule{ItemID: "i", JobType: "RunNotebook", ID: "x"}); err == nil {
+		t.Error("UpdateItemSchedule on closed DB succeeded")
+	}
+	if err := s.SetScheduleFiredThrough("x", 1); err == nil {
+		t.Error("SetScheduleFiredThrough on closed DB succeeded")
+	}
+	if err := s.DeleteItemSchedule("i", "RunNotebook", "x"); err == nil {
+		t.Error("DeleteItemSchedule on closed DB succeeded")
+	}
 	if err := s.CancelJobInstance("i", "x"); err == nil {
 		t.Error("CancelJobInstance on closed DB succeeded")
 	}
