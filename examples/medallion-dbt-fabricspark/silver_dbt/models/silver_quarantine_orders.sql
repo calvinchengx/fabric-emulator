@@ -24,7 +24,27 @@
 -- so both forms are legal; this one keeps `_rn` in scope at the point it is
 -- filtered, which is portable and costs nothing.
 {% set src = source('bronze', 'bronze_orders') %}
-{% set cols = adapter.get_columns_in_relation(src) %}
+{#
+  Column names WITHOUT `describe`.
+
+  `adapter.get_columns_in_relation` issues DESCRIBE, and Sail returns DESCRIBE
+  against a catalog-registered Delta table with the right schema and ZERO ROWS —
+  no error. The adapter reads that as "no columns", this loop emits nothing, and
+  the model compiles to `select` followed by `from`, which fails much later with
+  a message naming neither DESCRIBE nor the empty list. Minimal repro:
+
+      SELECT COUNT(*) FROM s.t     rows=1   ok
+      SHOW TABLES IN s             rows=1   ok
+      DESCRIBE TABLE s.t           rows=0   <- schema right, no rows
+
+  A `select ... limit 0` carries the schema in its result envelope, so the names
+  come back without DESCRIBE being involved. `execute` guards it because
+  run_query returns None during parsing.
+#}
+{%- set cols = [] -%}
+{%- if execute -%}
+  {%- set cols = run_query("select * from " ~ src ~ " limit 0").column_names -%}
+{%- endif -%}
 
 with latest as (
 
@@ -50,7 +70,7 @@ quarantined as (
 
 select
     {% for c in cols -%}
-    {{ c.name }}{% if not loop.last %},{% endif %}
+    {{ c }}{% if not loop.last %},{% endif %}
     {% endfor %}
 
 from quarantined
