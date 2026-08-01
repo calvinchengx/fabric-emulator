@@ -5,18 +5,14 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 )
 
-// TestReflectTable materialises a Delta table into a real database/sql engine
-// (SQLite — same code path SQL Server uses) and reads it back: inferred types,
-// literal encoding (strings with quotes, NULLs, bool/int/float), and row count.
+// TestReflectTable materialises a Delta table into a real SQL Server and reads
+// it back: inferred types, literal encoding (strings with quotes, NULLs,
+// bool/int/float), and row count.
 func TestReflectTable(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := testsupport.OpenMSSQL(t)
 	ctx := context.Background()
 
 	tbl := &Table{
@@ -27,7 +23,7 @@ func TestReflectTable(t *testing.T) {
 			{nil, int64(0), 0.0, nil},          // NULLs
 		},
 	}
-	if err := reflectTable(ctx, db, "sales", tbl, ""); err != nil {
+	if err := reflectTable(ctx, db, "sales", tbl, "N"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,14 +99,10 @@ func TestReflectFromOneLake(t *testing.T) {
 	// A non-table folder under Tables/ is skipped, not fatal.
 	put(t, st, wsID, itemID, "Tables/notatable/readme.txt", []byte("hi"))
 
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := testsupport.OpenMSSQL(t)
 	ctx := context.Background()
 
-	done, err := reflect(ctx, db, st, itemID, "")
+	done, err := reflect(ctx, db, st, itemID, "N")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,11 +131,7 @@ func TestReflect(t *testing.T) {
 	// A loose file directly under Tables/ (not a directory) is skipped.
 	put(t, st, wsID, itemID, "Tables/loose.txt", []byte("x"))
 
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := testsupport.OpenMSSQL(t)
 	ctx := context.Background()
 
 	done, err := Reflect(ctx, db, st, itemID)
@@ -166,11 +154,7 @@ func TestReflect(t *testing.T) {
 func TestReflectListError(t *testing.T) {
 	st, _, itemID := seedLakehouse(t)
 	st.Close() // a closed store makes ListOneLakePaths fail
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := testsupport.OpenMSSQL(t)
 	if _, err := Reflect(context.Background(), db, st, itemID); err == nil {
 		t.Fatal("expected an error from the closed store")
 	}

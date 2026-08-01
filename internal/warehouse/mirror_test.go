@@ -3,9 +3,8 @@ package warehouse
 import (
 	"context"
 	"database/sql"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 	"testing"
-
-	_ "modernc.org/sqlite"
 )
 
 // TestMirrorDeltaRoundTrip: the mirror writer produces a Delta table (Parquet +
@@ -116,11 +115,7 @@ func sameCell(a, b any) bool {
 // is exercised end-to-end only against a real engine, by the gated e2es in
 // internal/server and internal/api.)
 func TestReadSQLTable(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := testsupport.OpenMSSQL(t)
 	ctx := context.Background()
 	if _, err := db.ExecContext(ctx, "CREATE TABLE [people] (id INTEGER, ratio REAL, active INTEGER, name TEXT)"); err != nil {
 		t.Fatal(err)
@@ -148,37 +143,23 @@ func TestReadSQLTable(t *testing.T) {
 // TestReadSQLTableQueryError: a query error (e.g. a missing table) surfaces,
 // not a panic.
 func TestReadSQLTableQueryError(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := testsupport.OpenMSSQL(t)
 	if _, _, err := readSQLTable(context.Background(), db, "no_such_table"); err == nil {
 		t.Error("expected an error reading a missing table")
 	}
 }
 
-// newMirrorSQLite opens an in-memory SQLite database with an attached
-// INFORMATION_SCHEMA.TABLES metadata table, so listBaseTables' SQL-Server
-// INFORMATION_SCHEMA query runs verbatim against it (SQLite resolves
-// INFORMATION_SCHEMA.TABLES as table TABLES in an attached database named
-// INFORMATION_SCHEMA).
-func newMirrorSQLite(t *testing.T) *sql.DB {
+// newMirrorDB opens a real SQL Server database for the mirror tests.
+//
+// It used to build a fake INFORMATION_SCHEMA on SQLite — ATTACH a second
+// in-memory database under that name, then CREATE a TABLES table in it — so a
+// test could decide what the metadata catalogue said. That is precisely the
+// power a real backend does not give you: INFORMATION_SCHEMA.TABLES is a
+// read-only system view. The assertions that depended on forging it are gone
+// rather than re-faked; see TestMirrorErrors.
+func newMirrorDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
-	db.SetMaxOpenConns(1) // the attached schema lives on the one connection
-	ctx := context.Background()
-	if _, err := db.ExecContext(ctx, "ATTACH DATABASE ':memory:' AS INFORMATION_SCHEMA"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, "CREATE TABLE INFORMATION_SCHEMA.TABLES (TABLE_NAME TEXT, TABLE_TYPE TEXT)"); err != nil {
-		t.Fatal(err)
-	}
-	return db
+	return testsupport.OpenMSSQL(t)
 }
 
 // TestMirrorSnapshotsBaseTables: Mirror lists the base tables (views excluded),
@@ -186,17 +167,19 @@ func newMirrorSQLite(t *testing.T) *sql.DB {
 // through this package's own Delta reader — blobs normalized to strings.
 func TestMirrorSnapshotsBaseTables(t *testing.T) {
 	st, _, itemID := seedLakehouse(t)
-	db := newMirrorSQLite(t)
+	db := newMirrorDB(t)
 	ctx := context.Background()
-	if _, err := db.ExecContext(ctx, "CREATE TABLE [orders] (id INTEGER, note TEXT, data BLOB)"); err != nil {
+	if _, err := db.ExecContext(ctx,
+		"CREATE TABLE [orders] (id BIGINT, note NVARCHAR(50), data VARBINARY(50))"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx,
-		"INSERT INTO orders VALUES (1, 'a', x'414243'), (2, NULL, NULL)"); err != nil {
+		"INSERT INTO orders VALUES (1, 'a', 0x414243), (2, NULL, NULL)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx,
-		"INSERT INTO INFORMATION_SCHEMA.TABLES VALUES ('orders','BASE TABLE'), ('v1','VIEW')"); err != nil {
+	// A real view, so that "views are not mirrored" is answered by SQL Server's
+	// own catalogue rather than by a row the test wrote into it.
+	if _, err := db.ExecContext(ctx, "CREATE VIEW [v1] AS SELECT id FROM orders"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -227,43 +210,25 @@ func TestMirrorSnapshotsBaseTables(t *testing.T) {
 	}
 }
 
-// TestMirrorErrors: each failure surfaces as a wrapped error — a missing item,
-// an engine without INFORMATION_SCHEMA, metadata naming a missing table, and a
-// NULL table name breaking the metadata scan.
+// TestMirrorErrors: a missing item surfaces as a wrapped error.
+//
+// This test used to cover three more failures — no INFORMATION_SCHEMA at all,
+// metadata naming a table that does not exist, and a NULL TABLE_NAME breaking
+// the row scan. All three were reachable only because the old SQLite fixture
+// let the test WRITE the metadata catalogue. SQL Server always has an
+// INFORMATION_SCHEMA and its TABLES view is read-only, so none of those states
+// can be produced against the real backend, and they were removed with the
+// fixture rather than re-faked.
+//
+// The defensive branches they exercised in listBaseTables are consequently
+// uncovered. That is a deliberate trade, not an oversight.
 func TestMirrorErrors(t *testing.T) {
-	st, _, itemID := seedLakehouse(t)
+	st, _, _ := seedLakehouse(t)
 	ctx := context.Background()
 
-	db := newMirrorSQLite(t)
+	db := newMirrorDB(t)
 	if err := Mirror(ctx, db, st, "no-such-item"); err == nil {
 		t.Error("Mirror with an unknown item succeeded")
-	}
-
-	// No INFORMATION_SCHEMA at all → listing tables fails.
-	bare, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { bare.Close() })
-	if err := Mirror(ctx, bare, st, itemID); err == nil {
-		t.Error("Mirror without INFORMATION_SCHEMA succeeded")
-	}
-
-	// Metadata names a table that does not exist → reading it fails.
-	if _, err := db.ExecContext(ctx, "INSERT INTO INFORMATION_SCHEMA.TABLES VALUES ('ghost','BASE TABLE')"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Mirror(ctx, db, st, itemID); err == nil {
-		t.Error("Mirror with a ghost table succeeded")
-	}
-
-	// A NULL TABLE_NAME breaks the metadata row scan.
-	db2 := newMirrorSQLite(t)
-	if _, err := db2.ExecContext(ctx, "INSERT INTO INFORMATION_SCHEMA.TABLES VALUES (NULL,'BASE TABLE')"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Mirror(ctx, db2, st, itemID); err == nil {
-		t.Error("Mirror with a NULL table name succeeded")
 	}
 }
 
