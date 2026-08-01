@@ -85,7 +85,9 @@ jobs:
           # -n prints the recipe without running it, so this exercises variable
           # expansion, quoting and the shell selection on every platform —
           # including the docker targets that cannot execute off Linux.
-          for t in help doctor up down clean restart status status-spark spark seed ps logs test; do
+          # Keep in step with .PHONY in the Makefile — a target nobody expands
+          # here is a target nobody notices breaking.
+          for t in help doctor up up-lite up-jvm down clean restart status status-spark spark seed ps logs test; do
             echo "=== make -n $t ==="
             make -n "$t"
           done
