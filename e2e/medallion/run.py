@@ -41,15 +41,20 @@ ENDPOINTS = {
 }
 
 
-def compose(*args):
-    return subprocess.run(["docker", "compose", *args], cwd=DIR).returncode
+def compose(*args, profiles=()):
+    """`--profile` before the subcommand: compose only applies it there."""
+    flags = [f for p in profiles for f in ("--profile", p)]
+    return subprocess.run(["docker", "compose", *flags, *args], cwd=DIR).returncode
 
 
-def run(example=EXAMPLE, label="medallion"):
+def run(example=EXAMPLE, label="medallion", profiles=()):
+    """`profiles` names optional services this example needs. The Livy agent is
+    one: only the dbt-fabricspark examples reach it, and starting it for the
+    others cost them a fourfold slowdown in lakehouse reflection."""
     try:
         # --wait blocks until every healthcheck passes, so the example never
         # races a backend that is still booting.
-        rc = compose("up", "-d", "--build", "--wait")
+        rc = compose("up", "-d", "--build", "--wait", profiles=profiles)
         if rc == 0:
             rc = subprocess.run(
                 ["uv", "run", "--project", example, "python", "pipeline.py"],
@@ -58,10 +63,10 @@ def run(example=EXAMPLE, label="medallion"):
             print(f"\n==== {label} FAILED (exit {rc}) ====", file=sys.stderr)
             for svc in SERVICES_TO_LOG:
                 print(f"\n==== {svc} logs (tail) ====", file=sys.stderr)
-                compose("logs", "--tail", "80", svc)
+                compose("logs", "--tail", "80", svc, profiles=profiles)
         return rc
     finally:
-        compose("down", "-v", "--remove-orphans")
+        compose("down", "-v", "--remove-orphans", profiles=profiles)
 
 
 if __name__ == "__main__":

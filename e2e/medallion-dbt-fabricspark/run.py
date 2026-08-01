@@ -23,4 +23,6 @@ import run as basic  # noqa: E402 — after the path insert above
 EXAMPLE = os.path.join(REPO, "examples", "medallion-dbt-fabricspark")
 
 if __name__ == "__main__":
-    sys.exit(basic.run(EXAMPLE, label="medallion-dbt-fabricspark"))
+    # profiles=("livy",): this example builds silver over the Livy HC
+    # surface, so it needs the statement agent the PySpark ones do not.
+    sys.exit(basic.run(EXAMPLE, label="medallion-dbt-fabricspark", profiles=("livy",)))

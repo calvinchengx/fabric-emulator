@@ -148,6 +148,13 @@ services:
   # dbt-fabricspark examples reach it — the PySpark ones talk Spark Connect to
   # Sail directly — but it must be here for those two to work at all.
   spark-agent:
+    # PROFILED, deliberately. Only the dbt-fabricspark examples reach the Livy
+    # surface; the PySpark ones drive Spark Connect directly and never touch it.
+    # The agent is not idle when running — it opens its own SparkSession against
+    # Sail — and on a two-core runner that cost the PySpark legs dearly:
+    # lakehouse reflection of 100k x 101 went from 3m10s to over 12 minutes and
+    # timed out. A service that one example needs must not tax the others.
+    profiles: ["livy"]
     build:
       context: ../..
       dockerfile: docker/python-runtime/Dockerfile
