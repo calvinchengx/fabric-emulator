@@ -68,3 +68,40 @@ func contains(s, sub string) bool {
 		return false
 	})()
 }
+
+// HashPayload is what SigV4 signs over for a request with a body. It is not
+// reachable through the shortcut write path (S3 shortcuts are read-only, so a
+// write is refused before signing), so it is pinned directly.
+func TestHashPayload(t *testing.T) {
+	// SHA256("") is the documented empty-payload constant.
+	if got := HashPayload(nil); got != EmptyPayloadHash {
+		t.Fatalf("HashPayload(nil) = %s, want the empty-payload constant", got)
+	}
+	if got := HashPayload([]byte{}); got != EmptyPayloadHash {
+		t.Fatalf("HashPayload(empty) = %s", got)
+	}
+	// A known vector: SHA256("abc").
+	const abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+	if got := HashPayload([]byte("abc")); got != abc {
+		t.Fatalf("HashPayload(\"abc\") = %s, want %s", got, abc)
+	}
+	// Different bodies must not collide.
+	if HashPayload([]byte("a")) == HashPayload([]byte("b")) {
+		t.Fatal("distinct payloads hashed the same")
+	}
+}
+
+// A signed request with a body carries that body's hash, not the empty one —
+// signing a PUT with the empty-payload hash is rejected by real S3.
+func TestSignUsesBodyHash(t *testing.T) {
+	req, _ := http.NewRequest("PUT", "https://b.s3.amazonaws.com/k", nil)
+	body := []byte("payload bytes")
+	Sign(req, Credentials{AccessKeyID: "AK", SecretAccessKey: "SK"},
+		"us-east-1", "s3", HashPayload(body), time.Unix(0, 0))
+	if got := req.Header.Get("x-amz-content-sha256"); got != HashPayload(body) {
+		t.Fatalf("x-amz-content-sha256 = %s, want the body hash", got)
+	}
+	if req.Header.Get("x-amz-content-sha256") == EmptyPayloadHash {
+		t.Fatal("a body-carrying request was signed with the empty-payload hash")
+	}
+}
