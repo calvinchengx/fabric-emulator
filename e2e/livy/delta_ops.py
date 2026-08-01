@@ -27,6 +27,55 @@ OneLake on its own account because a Connect client cannot read back the bearer
 the engine holds. See that module for why, and `docs/20-lakesail-engine.md`.
 """
 import re
+import sys
+
+# Locations of tables the emulator itself registered, name -> Delta URI.
+#
+# A statement naming a registered table has to be resolved to a physical path
+# before delta-rs can act on it. That used to be asked of the engine, with
+# `DESCRIBE DETAIL <name>`, which Sail does not implement at all — DETAIL is not
+# in its DESCRIBE grammar (see the ᶠ row in docs/engine-matrix.md). So every
+# OPTIMIZE against a NAMED table degraded to skipped on Sail, silently losing
+# compaction on every dbt-fabricspark model build, while the path-addressed form
+# worked.
+#
+# Asking the engine was the weaker design regardless of Sail's grammar: the
+# emulator WROTE these locations when it registered the tables, so querying them
+# back is asking to be told something we already recorded. register_tables in
+# the agent now calls remember() as it goes.
+_LOCATIONS = {}
+
+
+def remember(name, location, schema=None):
+    """Record where a table the emulator registered actually lives.
+
+    Both the bare and schema-qualified spellings are stored, because a client
+    may address either — the agent registers into a schema AND mirrors into
+    `default` so unqualified names resolve the way they do in a Fabric notebook.
+    """
+    if not name or not location:
+        return
+    _LOCATIONS[name.lower()] = location
+    if schema:
+        _LOCATIONS[f"{schema}.{name}".lower()] = location
+
+
+def forget_all():
+    """Drop every recorded location. For tests that need a clean registry."""
+    _LOCATIONS.clear()
+
+
+def known_location(name):
+    """The recorded location for `name`, or None. Backticks and case ignored."""
+    if not name:
+        return None
+    key = name.replace("`", "").strip().lower()
+    if key in _LOCATIONS:
+        return _LOCATIONS[key]
+    # `catalog.schema.table` addressed against a two-part registration, or the
+    # reverse — match on the last component rather than failing over spelling.
+    tail = key.rsplit(".", 1)[-1]
+    return _LOCATIONS.get(tail)
 
 # `OPTIMIZE delta.`path``, `OPTIMIZE tbl`, optionally with a WHERE predicate or
 # ZORDER clause. The predicate/zorder are captured so they can be *refused*
@@ -174,7 +223,37 @@ def install(spark, storage_options=None):
     original_sql = spark.sql
 
     def resolve(name):
-        return original_sql(f"DESCRIBE DETAIL {name}").collect()[0]["location"]
+        """Find where a named table lives: what we recorded, else ask the engine.
+
+        The recorded answer is preferred because the emulator wrote it. The
+        engine fallback stays for tables this process did not register — a user
+        CREATE TABLE in a notebook cell, or the engine-matrix probes, which
+        register their own tables and never call remember().
+
+        The fallback is LOUD on purpose. Everything that went wrong around this
+        code went wrong quietly: a DESCRIBE returning zero rows with no error, a
+        TCP fallback that reached a different server, a DSN that parsed into a
+        wrong-but-valid config. A cache miss degrading silently to a route Sail
+        does not implement would be the same mistake again, so it announces
+        itself before it tries.
+        """
+        loc = known_location(name)
+        if loc:
+            return loc
+        print(f"[delta_ops] no recorded location for {name!r}; falling back to "
+              f"DESCRIBE DETAIL, which Sail does not implement — if this fails, "
+              f"the table was not registered through the emulator",
+              file=sys.stderr, flush=True)
+        rows = original_sql(f"DESCRIBE DETAIL {name}").collect()
+        if not rows:
+            # Would have been an IndexError naming this file rather than the
+            # cause. See the ᵉ row in docs/engine-matrix.md: an engine can answer
+            # a DESCRIBE with the right schema and no rows, and raise nothing.
+            raise DeltaOpError(
+                f"cannot resolve {name!r} to a table location: the engine "
+                f"answered DESCRIBE DETAIL with no rows. Address the table by "
+                f"path, or register it through the emulator.")
+        return rows[0]["location"]
 
     def sql(query, *args, **kwargs):
         matched = match(query) if isinstance(query, str) else None
