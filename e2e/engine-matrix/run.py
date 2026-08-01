@@ -26,6 +26,22 @@ COMPOSE = ["docker", "compose", "-f", str(DIR / "docker-compose.yml")]
 ENGINES = ("sail", "sail-delta", "jvm")
 
 
+def ensure_out_writable() -> None:
+    """Make `out/` writable by whatever uid the probe containers run as.
+
+    The JVM image is `apache/spark`, which drops to `USER spark` (uid 185). The
+    bind-mounted `out/` is owned by the checkout user, so that probe ran all 19
+    capabilities and then died on `PermissionError: '/out/jvm.json'` — after the
+    measuring was done, which is the most wasteful place to fail.
+
+    It passed on macOS throughout: Docker Desktop's filesystem ignores the uid
+    mismatch, so only Linux CI ever saw it. That is why this job had never gone
+    green despite the matrix regenerating cleanly on a laptop every time.
+    """
+    OUT.mkdir(parents=True, exist_ok=True)
+    os.chmod(OUT, 0o777)
+
+
 def run_engine(engine: str) -> int:
     service = {"sail": "sail-probe", "sail-delta": "sail-delta-probe"}.get(engine, "jvm-probe")
     print(f"==> probing {engine}", flush=True)
@@ -210,6 +226,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if not args.check:
+        ensure_out_writable()
         for engine in ([args.engine] if args.engine else ENGINES):
             code = run_engine(engine)
             if code != 0:
