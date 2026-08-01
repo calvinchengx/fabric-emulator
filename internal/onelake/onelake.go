@@ -644,7 +644,15 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request, itemID, rel stri
 			// Reads go through to the target, so the local copy is redundant
 			// and would shadow later changes made at the target.
 			_ = s.Store.DeleteOneLakePath(itemID, rel)
+			// The bytes went to the external account, not to OneLake, so no
+			// OneLake file event is raised — nothing landed here.
+			w.Header().Set("Content-Length", "0")
+			w.WriteHeader(http.StatusOK)
+			return
 		}
+		// Flush is where the file becomes real, so it is where triggers fire
+		// and the flow stream reports an arrival — not the empty create above.
+		s.Store.EmitFileWritten(pth.WorkspaceID, itemID, rel)
 		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(http.StatusOK)
 	default:

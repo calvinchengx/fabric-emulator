@@ -1,7 +1,8 @@
 # Flow observability: watching data move through the emulator
 
-**Status: design, not yet built.** This document is the contract to review
-before code lands.
+**Status: step 1 built** — the event bus, `file`/`table` events, and the SSE
+endpoint. Steps 2–4 (activity/job events, attribution, the portal view) are
+still design.
 
 Running the medallion example today is a black box. It prints step numbers, and
 when something fails you reconstruct what happened afterwards from
@@ -33,17 +34,26 @@ No writer can bypass it — not an ADLS client, azcopy, delta-rs, Sail, a Copy
 activity, or the mirror writer. A real Fabric would need an Eventstream and a
 broker to get this; we get it from owning the storage layer.
 
-What is missing is only that `Store.FileEvents` is a **single** `func` field
+What was missing is only that `Store.FileEvents` was a **single** `func` field
 with one subscriber. Everything below follows from making it a fan-out.
+
+Two contracts, deliberately kept separate: `FileEvents` stays **synchronous and
+exactly-once** (a Reflex must have fired before the write returns), while the
+bus is **asynchronous and lossy** (a watching developer must never be able to
+slow a writer down).
 
 ## Design
 
 ### 1. An event bus in the store
 
 ```go
-// store.Subscribe registers a sink and returns its cancel func.
-func (s *Store) Subscribe(sink func(Event)) (cancel func())
+// Subscribe returns a channel of events and a cancel func.
+func (s *Store) Subscribe() (<-chan Event, func())
 ```
+
+A channel rather than a callback, in the end: the SSE handler already selects
+over the request context and a keepalive ticker, and a callback would have
+needed a channel behind it anyway.
 
 `FileEvents` becomes the bus's first publisher rather than the only consumer.
 
@@ -146,6 +156,25 @@ Note what this does *not* change: `lineage_edges` remains the authoritative
 record of a source→target movement. Attribution on a file event is a live
 debugging aid; the lineage edge is the durable fact.
 
+### 4a. When a file event fires — a bug this work surfaced
+
+Building the stream exposed a real defect in the *already-shipped* event
+triggers. The ADLS protocol writes in three steps — create the path, append the
+bytes, flush — and the event was firing on the **create**, while the file was
+still empty. A Reflex therefore triggered before its data existed, and a derived
+table event would have reported an empty commit.
+
+Azure's own ADLS Gen2 raises `BlobCreated` on `FlushWithClose`, not on the
+create, and the DFS handler's own comment already said flush "is the point the
+DFS protocol considers the file written". So:
+
+- a zero-length non-directory create raises **nothing** — mid-sequence it is
+  indistinguishable from an empty file, and the store cannot tell them apart;
+- the flush handler calls `Store.EmitFileWritten`, because only the protocol
+  layer knows a staged write is complete.
+
+Exactly one event per file, carrying data that is actually there.
+
 ### 5. The stream: `GET /_emulator/events`
 
 Server-Sent Events, not a WebSocket:
@@ -159,6 +188,25 @@ Server-Sent Events, not a WebSocket:
 ```
 curl -N https://localhost:9443/_emulator/events?kinds=table,activity,job
 ```
+
+Real output, captured from the test suite — an ADLS upload followed by a Delta
+commit:
+
+```
+event: file
+data: {"seq":1,"at":1785591720,"kind":"file","workspaceId":"3cfca386…","itemId":"bf775fce…",
+       "eventType":"Microsoft.Fabric.OneLake.FileCreated","path":"Files/landing/customers.csv"}
+
+event: file
+data: {"seq":2,…,"path":"Tables/bronze_customers/_delta_log/00000000000000000000.json"}
+
+event: table
+data: {"seq":3,…,"table":"Tables/bronze_customers","version":0,"rowsAdded":1203,"filesAdded":1}
+```
+
+`version` is deliberately a pointer in Go so a table's *first* commit — version
+0, the common case for a fresh medallion — is still reported, while file events
+carry no meaningless `"version": 0`.
 
 It sits under `/_emulator`, the existing testing-lever namespace (clock, faults,
 portal) — deliberately **not** part of the Fabric contract, because real Fabric
@@ -210,8 +258,10 @@ state already persisted (`job_instances`, `pipeline_runs`, `lineage_edges`,
 
 ## Build order
 
-1. **Bus + `file`/`table` events + SSE endpoint.** Useful on its own:
-   `curl -N` while the medallion runs.
+1. ~~**Bus + `file`/`table` events + SSE endpoint.**~~ **Done.** Useful on its
+   own: `curl -N` while the medallion runs. Also emitted Delta `stats`
+   (`numRecords`) from our own writer, which every real Delta writer already
+   does and without which our own commits could not report row counts.
 2. **`activity`/`job` events.** Failures arrive as they happen instead of being
    reconstructed afterwards.
 3. **Attribution** (§4) — three call sites.

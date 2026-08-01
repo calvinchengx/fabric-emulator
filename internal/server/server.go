@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	airflowclient "github.com/calvinchengx/fabric-emulator/internal/airflow"
 	"github.com/calvinchengx/fabric-emulator/internal/akv"
@@ -37,7 +38,11 @@ type Server struct {
 	// TDS is the warehouse SQL endpoint (nil when SQLTDSAddr is unset). main
 	// starts its TCP listener; it authenticates FedAuth logins against entra.
 	TDS *tds.Server
-	mux *http.ServeMux
+	// EventKeepalive overrides how often the flow stream emits a keepalive
+	// comment; 0 uses DefaultEventKeepalive. Tests lower it so teardown does
+	// not wait out a full interval (see events.go for why it must wait at all).
+	EventKeepalive time.Duration
+	mux            *http.ServeMux
 }
 
 // New wires the emulator. jwksClient overrides the JWKS-fetching HTTP client
@@ -146,6 +151,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 
 	a.Register(s.mux)
 	s.registerControl()
+	s.registerEvents()
 	s.registerPortal()
 	return s, nil
 }

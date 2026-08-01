@@ -1,0 +1,141 @@
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/calvinchengx/fabric-emulator/internal/store"
+)
+
+// DefaultEventKeepalive is how often an idle flow stream emits an SSE comment.
+//
+// It uses **wall** time deliberately: this is a transport concern, unlike
+// everything the emulator *models*, which runs on the controllable clock.
+//
+// It also bounds something less obvious. A handler parked in select does not
+// observe a client hang-up until it next tries to write — that is ordinary SSE
+// behaviour, not a bug — so this interval is the worst case for how long a
+// vanished subscriber lingers. One goroutine and one buffered channel, reaped
+// on the next tick. Tests set Server.EventKeepalive low so they need not wait
+// it out.
+const DefaultEventKeepalive = 15 * time.Second
+
+// registerEvents mounts the flow stream.
+//
+// Server-Sent Events rather than a WebSocket: the stream is one-way, `curl -N`
+// tails it with no client at all (the biggest quality-of-life win here needs no
+// portal), browsers reconnect on their own via EventSource, and it costs no new
+// dependency.
+//
+// It lives under /_emulator — the testing-lever namespace beside the clock and
+// the fault injector — because real Fabric has no such endpoint. This is an
+// emulator-only surface and docs/parity.md records it as one.
+func (s *Server) registerEvents() {
+	s.mux.HandleFunc("GET /_emulator/events", s.emulatorEvents)
+}
+
+func (s *Server) emulatorEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError,
+			map[string]any{"error": "streaming unsupported by this connection"})
+		return
+	}
+
+	// ?kinds=table,activity — narrow the firehose. Absent means everything.
+	// A `dropped` notice is never filtered out: a client that asked for a
+	// subset still needs to know it missed some of that subset.
+	var kinds map[string]bool
+	if raw := r.URL.Query().Get("kinds"); raw != "" {
+		kinds = map[string]bool{store.KindDropped: true}
+		for _, k := range strings.Split(raw, ",") {
+			if k = strings.TrimSpace(k); k != "" {
+				kinds[k] = true
+			}
+		}
+	}
+
+	// ?since=<seq> replays from the ring buffer, so a client that connects
+	// mid-run still sees it. EventSource sets Last-Event-ID itself on
+	// reconnect, which means a dropped connection resumes without a gap.
+	since := int64(0)
+	if v := r.URL.Query().Get("since"); v != "" {
+		since, _ = strconv.ParseInt(v, 10, 64)
+	}
+	if v := r.Header.Get("Last-Event-ID"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			since = n
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	// Without this an intermediary may buffer the whole response and the
+	// stream never appears to start.
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	// Subscribe *before* replaying, so an event landing between the two is
+	// queued rather than lost. Overlap is fine — the client de-duplicates on
+	// seq, and replay is bounded.
+	events, cancel := s.Store.Subscribe()
+	defer cancel()
+
+	send := func(ev store.Event) bool {
+		if kinds != nil && !kinds[ev.Kind] {
+			return true
+		}
+		body, err := json.Marshal(ev)
+		if err != nil {
+			return true
+		}
+		// id: lets EventSource resume; event: lets a browser client attach a
+		// listener per kind instead of switching on the payload.
+		if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", ev.Seq, ev.Kind, body); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	var lastSent int64
+	for _, ev := range s.Store.Replay(since) {
+		if !send(ev) {
+			return
+		}
+		lastSent = ev.Seq
+	}
+
+	every := s.EventKeepalive
+	if every <= 0 {
+		every = DefaultEventKeepalive
+	}
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev := <-events:
+			if ev.Seq <= lastSent {
+				continue // already covered by the replay above
+			}
+			if !send(ev) {
+				return
+			}
+			lastSent = ev.Seq
+		case <-ticker.C:
+			// An SSE comment: keeps the connection warm, ignored by clients.
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}

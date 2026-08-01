@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	entra "github.com/calvinchengx/entra-emulator/emulator"
 	"github.com/calvinchengx/fabric-emulator/internal/config"
@@ -43,6 +44,9 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A short keepalive so a test that opens the flow stream does not wait a
+	// full interval at teardown (internal/server/events.go explains why).
+	srv.EventKeepalive = 100 * time.Millisecond
 	t.Cleanup(func() { srv.Close() })
 	fabric := httptest.NewServer(srv.Handler())
 	t.Cleanup(fabric.Close)
