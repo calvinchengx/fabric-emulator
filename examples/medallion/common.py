@@ -110,3 +110,81 @@ def save(**kv):
 
 def load():
     return json.loads(STATE.read_text()) if STATE.exists() else {}
+
+
+# --- pipeline orchestration --------------------------------------------------
+# The emulator executes DataPipeline activities for real: a Copy moves the data
+# itself. A Notebook activity is different — the emulator parses the notebook
+# into cells and records a Pending run, then an ENGINE executes those cells and
+# reports back. That split is why these helpers exist.
+
+def create_item(display_name, item_type, parts):
+    """Create an item with a definition, resolving the LRO if the create is async."""
+    import base64
+    import time
+
+    H = fabric_headers()
+    st = load()
+    body = {"displayName": display_name, "type": item_type, "definition": {"parts": [
+        {"path": p, "payloadType": "InlineBase64",
+         "payload": base64.b64encode(c.encode() if isinstance(c, str) else c).decode()}
+        for p, c in parts.items()]}}
+    r = S.post(f"{FABRIC}/v1/workspaces/{st['workspace']}/items", headers=H, json=body)
+    assert r.status_code in (201, 202), f"create {item_type}: {r.status_code} {r.text}"
+    if r.status_code == 201:
+        return r.json()["id"]
+    op = r.headers["x-ms-operation-id"]
+    for _ in range(60):
+        status = S.get(f"{FABRIC}/v1/operations/{op}", headers=H).json()["status"]
+        if status in ("Succeeded", "Failed"):
+            break
+        time.sleep(1)
+    assert status == "Succeeded", f"create {item_type}: operation {status}"
+    return S.get(f"{FABRIC}/v1/operations/{op}/result", headers=H).json()["id"]
+
+
+def run_job(item_id, job_type, body=None):
+    """Start a job and wait for it to reach a terminal state. Returns (job_id, status)."""
+    import time
+
+    H = fabric_headers()
+    st = load()
+    base = f"{FABRIC}/v1/workspaces/{st['workspace']}/items/{item_id}/jobs/instances"
+    r = S.post(f"{base}?jobType={job_type}", headers=H, json=body)
+    assert r.status_code in (200, 202), f"run {job_type}: {r.status_code} {r.text}"
+    jid = r.headers["Location"].rsplit("/", 1)[-1]
+    for _ in range(120):
+        body = S.get(f"{base}/{jid}", headers=H).json()
+        status = body.get("status")
+        if status in ("Completed", "Failed", "Cancelled"):
+            if status == "Failed":
+                # A bare "Failed" is useless to a reader. Surface which activity
+                # broke and why, which the interpreter already recorded.
+                detail = body.get("failureReason", {})
+                try:
+                    for r in activity_runs(item_id, jid):
+                        if r.get("status") != "Succeeded":
+                            log(f"activity {r.get('activityName')!r} {r.get('status')}: {r.get('error')}")
+                except Exception:  # noqa: BLE001 — diagnostics must not mask the failure
+                    pass
+                log(f"{job_type} job {jid} failed: {detail}")
+            return jid, status
+        time.sleep(1)
+    raise SystemExit(f"{job_type} job {jid} never reached a terminal state")
+
+
+def activity_runs(item_id, job_id):
+    """The per-activity results the interpreter recorded for a pipeline run."""
+    st = load()
+    r = S.post(f"{FABRIC}/v1/workspaces/{st['workspace']}/items/{item_id}"
+               f"/jobs/instances/{job_id}/queryactivityruns", headers=fabric_headers(), json={})
+    r.raise_for_status()
+    return r.json().get("value", r.json())
+
+
+def lineage_edges():
+    """Every data-movement edge the emulator recorded for this workspace."""
+    st = load()
+    r = S.get(f"{FABRIC}/v1/workspaces/{st['workspace']}/lineage", headers=fabric_headers())
+    r.raise_for_status()
+    return r.json().get("value", [])

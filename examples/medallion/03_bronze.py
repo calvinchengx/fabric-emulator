@@ -1,41 +1,83 @@
-"""Bronze: append landing verbatim into Delta, with lineage columns. Bronze
-keeps everything — duplicates and the malformed row included."""
-import io
+"""Bronze: land the raw export into Delta tables, keeping everything —
+duplicates and the malformed row included.
+
+Both hops run as activities in a real **DataPipeline**, which is how a Fabric
+shop builds this, and which exercises the emulator rather than routing around
+it:
+
+  * `customers.csv` → `Tables/bronze_customers` with a **Copy activity**. The
+    emulator executes this itself — it reads the CSV, commits the rows as Delta,
+    and records a lineage edge. No client-side data movement at all.
+  * `orders.jsonl` → `Tables/bronze_orders` with a **Notebook activity**. Copy
+    cannot do this one: JSON Lines is not a tabular source it parses into a
+    table, and semi-structured input is exactly what a notebook is for.
+
+A notebook's cells are executed by a real Spark engine in `04_engine.py` — the
+emulator parses a notebook into cells and records a Pending run, but never runs
+it. That split is real Fabric's too, just with the engine attached for you.
+"""
 import json
 
-import pandas as pd
-from deltalake import write_deltalake
-
 import source_system as src
-from common import (FABRIC, S, STORAGE_AUD, load, log, storage_options, tables_uri, token)
+from common import activity_runs, create_item, load, log, run_job, save
 
 st = load()
-opts = storage_options()
+lake, ws = st["lakehouse"], st["workspace"]
+landing_dir = f"landing/contoso_pos/{st['landing_date']}"
 
+# The notebook a Fabric author would write for the semi-structured feed: read
+# landing with Spark, write Delta straight to OneLake.
+NOTEBOOK = f'''# Fabric notebook source
 
-def read_landing(name):
-    path = f"Files/landing/contoso_pos/{st['landing_date']}/{name}"
-    r = S.get(f"{FABRIC}/onelake/{st['workspace']}/{st['lakehouse']}/{path}",
-              headers={"Authorization": "Bearer " + token(STORAGE_AUD)})
-    r.raise_for_status()
-    return path, r.content
+# CELL ********************
 
+from pyspark.sql.functions import lit
 
-def stamp(df, source_path):
-    df["_source_path"] = source_path
-    df["_landing_date"] = st["landing_date"]
-    return df
+# ABFS addresses OneLake by its full account host, exactly as a Fabric
+# notebook does: abfs://<workspace>@onelake.dfs.fabric.microsoft.com/<item>/...
+landing = "abfs://{ws}@onelake.dfs.fabric.microsoft.com/{lake}/Files/{landing_dir}/orders.jsonl"
+bronze = "abfs://{ws}@onelake.dfs.fabric.microsoft.com/{lake}/Tables/bronze_orders"
 
+orders = spark.read.json(landing).withColumn("_landing_date", lit("{st['landing_date']}"))
+orders.write.format("delta").mode("overwrite").save(bronze)
+print("bronze_orders rows:", orders.count())
+'''
 
-path, raw = read_landing("customers.csv")
-customers = stamp(pd.read_csv(io.BytesIO(raw)), path)
-path, raw = read_landing("orders.jsonl")
-orders = stamp(pd.DataFrame(json.loads(l) for l in raw.decode().splitlines()), path)
+nb = create_item("bronze-orders", "Notebook", {"notebook-content.py": NOTEBOOK})
 
-base = tables_uri()
-write_deltalake(f"{base}/bronze_customers", customers, mode="append", storage_options=opts)
-write_deltalake(f"{base}/bronze_orders", orders, mode="append", storage_options=opts)
+# One pipeline, two activities — the shape a real medallion ingest takes.
+# Built as a dict and serialised, not string-templated: a pipeline definition is
+# nested JSON, and hand-escaping braces is how you get PipelineDefinitionInvalid.
+lakehouse = {"linkedService": {"properties": {
+    "type": "Lakehouse",
+    "typeProperties": {"workspaceId": ws, "artifactId": lake}}}}
 
-assert len(customers) == src.EXPECTED_BRONZE_CUSTOMERS, len(customers)
-assert len(orders) == src.EXPECTED_BRONZE_ORDERS, len(orders)
-log(f"bronze: {len(customers)} customer rows, {len(orders)} order events")
+definition = {"properties": {"activities": [
+    {"name": "IngestCustomers", "type": "Copy", "typeProperties": {
+        "source": {"type": "DelimitedTextSource", "rootFolder": "Files",
+                   "folderPath": landing_dir, "fileName": "customers.csv",
+                   "datasetSettings": lakehouse},
+        "sink": {"type": "LakehouseTableSink", "tableActionOption": "Overwrite",
+                 "table": "bronze_customers",
+                 "datasetSettings": lakehouse}}},
+    {"name": "IngestOrders", "type": "TridentNotebook", "typeProperties": {
+        "notebookId": nb}},
+]}}
+
+pl = create_item("bronze-ingest", "DataPipeline",
+                 {"pipeline-content.json": json.dumps(definition)})
+jid, status = run_job(pl, "Pipeline")
+assert status == "Completed", f"bronze pipeline: {status}"
+
+runs = {r["activityName"]: r for r in activity_runs(pl, jid)}
+
+# The Copy really moved rows — the emulator did the work and says how many.
+copy_out = runs["IngestCustomers"]["output"]
+assert copy_out["rowsCopied"] == src.EXPECTED_BRONZE_CUSTOMERS, copy_out
+log(f"Copy activity landed {copy_out['rowsCopied']} customer rows in Tables/bronze_customers")
+
+# The notebook activity started a real run; an engine executes it next.
+nb_out = runs["IngestOrders"]["output"]
+assert nb_out["status"] == "Pending", f"expected a run awaiting an engine: {nb_out}"
+save(bronze_pipeline=pl, orders_notebook=nb, orders_job=nb_out["jobInstanceId"])
+log(f"Notebook activity queued run {nb_out['jobInstanceId']} — Spark executes it in 04_engine.py")

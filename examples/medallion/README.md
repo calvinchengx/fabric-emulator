@@ -37,7 +37,9 @@ uv run python 01_secret.py
 ```
 
 You also need the **Microsoft ODBC Driver 18** for the dbt and TDS steps
-(macOS: `brew tap microsoft/mssql-release && brew install msodbcsql18`).
+(macOS: `brew tap microsoft/mssql-release && brew install msodbcsql18`), and a
+Spark engine for `04_engine.py` — `docker compose up` starts Sail, and the step
+reads `SPARK_REMOTE` (default `sc://localhost:50051`).
 
 ## The steps
 
@@ -46,15 +48,17 @@ You also need the **Microsoft ODBC Driver 18** for the dbt and TDS steps
 | `00_provision.py` | workspace + lakehouse + warehouse + workspace identity |
 | `01_secret.py` | secret into Key Vault; AKV-reference connection (asserts the secret never reads back) |
 | `02_extract_load.py` | pull from the vendor API, land it verbatim under `Files/landing/` |
-| `03_bronze.py` | append landing into Delta with lineage columns — duplicates kept |
-| `04_silver.py` | dedupe, conform countries, quarantine the malformed row |
-| `05_wrangle.py` | **interactive**: profile bronze vs silver in VS Code Data Wrangler |
-| `06_reflect.py` | connect to the lakehouse database — reflection makes silver queryable T-SQL |
-| `07_gold.py` | `dbt build`: the star as views in the Warehouse, plus DQ tests |
-| `08_dq_gate.py` | poison silver → dbt **fails** → restore → green again |
-| `09_semantic_model.py` | publish TMSL + rows, query with DAX, assert a wrong audience is refused |
+| `03_bronze.py` | a real **DataPipeline**: a Copy activity the emulator executes, plus a Notebook activity |
+| `04_engine.py` | **Spark (Sail)** executes the parsed cells and reports the run + its read/write set |
+| `05_silver.py` | dedupe, conform countries, quarantine the malformed row |
+| `06_wrangle.py` | **interactive**: profile bronze vs silver in VS Code Data Wrangler |
+| `07_reflect.py` | connect to the lakehouse database — reflection makes silver queryable T-SQL |
+| `08_gold.py` | `dbt build`: the star as views in the Warehouse, plus DQ tests |
+| `09_dq_gate.py` | poison silver → dbt **fails** → restore → green again |
+| `10_semantic_model.py` | publish TMSL + rows, query with DAX, assert a wrong audience is refused |
+| `11_lineage.py` | assert the graph: a `Copy` edge and a `Notebook` edge, neither guessed from code |
 
-`run_all.py` runs all of them except `05_wrangle.py`, which is meant for the
+`run_all.py` runs all of them except `06_wrangle.py`, which is meant for the
 VS Code Interactive Window.
 
 ## Files
