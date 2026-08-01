@@ -96,6 +96,9 @@ func Parse(def []byte) (*Pipeline, error) {
 }
 
 type run struct {
+	onActivity func(ActivityRun)
+	// emitted is how many of runs have been announced; see flushActivities.
+	emitted   int
 	exec      Executor
 	params    map[string]value
 	variables map[string]value
@@ -106,6 +109,12 @@ type run struct {
 
 // Options carries per-run context beyond parameters.
 type Options struct {
+	// OnActivity, when set, is called as each activity reaches its outcome —
+	// the same ActivityRun that ends up in the result, delivered while the
+	// pipeline is still running. That is what lets a watcher see a failure at
+	// the moment it happens instead of reconstructing it from the run
+	// afterwards. Nil for callers that only want the final result.
+	OnActivity func(ActivityRun)
 	// TriggerEvent populates @pipeline().TriggerEvent for a run started by an
 	// event trigger. Nil for a manual or scheduled run, which is why the
 	// documented way to read it is the safe-navigating
@@ -122,11 +131,12 @@ func (p *Pipeline) Run(params map[string]value, exec Executor) *Result {
 // RunWith is Run with per-run context — see Options.
 func (p *Pipeline) RunWith(params map[string]value, exec Executor, opts Options) *Result {
 	r := &run{
-		exec:      exec,
-		params:    map[string]value{},
-		variables: map[string]value{},
-		outputs:   map[string]value{},
-		trigger:   opts.TriggerEvent,
+		exec:       exec,
+		params:     map[string]value{},
+		variables:  map[string]value{},
+		outputs:    map[string]value{},
+		trigger:    opts.TriggerEvent,
+		onActivity: opts.OnActivity,
 	}
 	for name, def := range p.Properties.Parameters {
 		r.params[name] = def.DefaultValue
@@ -142,6 +152,7 @@ func (p *Pipeline) RunWith(params map[string]value, exec Executor, opts Options)
 		}
 	}
 	failed := r.runActivities(p.Properties.Activities, nil)
+	r.flushActivities() // defensive: nothing recorded may go unannounced
 	res := &Result{Status: StatusSucceeded, Activities: r.runs, Variables: r.variables}
 	if failed != "" {
 		res.Status = StatusFailed
@@ -188,6 +199,7 @@ func (r *run) runActivities(acts []Activity, item value) string {
 			if !satisfied {
 				status[a.Name] = StatusSkipped
 				r.record(a, StatusSkipped, nil, "", 0)
+				r.flushActivities()
 				r.outputs[a.Name] = map[string]value{"status": StatusSkipped}
 				continue
 			}
@@ -204,6 +216,7 @@ func (r *run) runActivities(acts []Activity, item value) string {
 				if _, done := status[a.Name]; !done {
 					status[a.Name] = StatusFailed
 					r.record(a, StatusFailed, nil, "unresolvable dependency (cycle or unknown activity)", 0)
+					r.flushActivities()
 					if firstFailure == "" {
 						firstFailure = fmt.Sprintf("activity %q has an unresolvable dependency", a.Name)
 					}
@@ -271,6 +284,26 @@ func (r *run) record(a *Activity, status string, output map[string]any, errMsg s
 	r.runs = append(r.runs, ActivityRun{
 		Name: a.Name, Type: a.Type, Status: status, Output: output, Error: errMsg, Duration: dur,
 	})
+}
+
+// flushActivities reports every run recorded since the last flush.
+//
+// Why not simply hook record: the retry loop *discards* failed attempts
+// (truncating r.runs) and back-patches the survivor's retryAttempt, duration
+// and — on a timeout — its status. Announcing at record time would stream
+// outcomes that never appear in the result, and stream them before they were
+// final. Flushing only at points where the records are settled keeps the
+// stream and `queryactivityruns` in agreement, which the design requires: the
+// stream is a projection, never a second source of truth.
+func (r *run) flushActivities() {
+	if r.onActivity == nil {
+		r.emitted = len(r.runs)
+		return
+	}
+	for _, ar := range r.runs[r.emitted:] {
+		r.onActivity(ar)
+	}
+	r.emitted = len(r.runs)
 }
 
 // setOutput records an activity's success output for @activity(name).output.

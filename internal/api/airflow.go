@@ -173,6 +173,7 @@ func (a *API) runAirflow(ctx context.Context, it *store.Item, job *store.JobInst
 		}
 	}
 	_ = a.Store.FinalizeJob(it.ID, job.ID, code)
+	a.publishJobOutcome(it.WorkspaceID, it.ID, job.ID, code)
 }
 
 type airflowError struct{ code string }

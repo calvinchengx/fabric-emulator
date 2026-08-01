@@ -244,6 +244,7 @@ func (a *API) reportNotebookRun(w http.ResponseWriter, r *http.Request, p *auth.
 	a.recordObservedLineage(wid, jid)
 	// Reflect the real run in the job (deterministically terminal now).
 	_ = a.Store.FinalizeJob(iid, jid, failCode)
+	a.publishJobOutcome(wid, iid, jid, failCode)
 	writeJSON(w, http.StatusOK, run)
 }
 

@@ -279,3 +279,67 @@ func TestFileEventFiresAtFlushNotAtTheEmptyCreate(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 }
+
+func TestFlowStreamShowsAFailingPipelineAsItHappens(t *testing.T) {
+	// The debugging story end to end: without touching queryactivityruns, a
+	// watcher sees which activity failed, why, and that the job failed.
+	f := newFixture(t)
+	var ws struct{ ID string }
+	f.mustStatus(f.call("POST", "/v1/workspaces", f.token,
+		map[string]string{"displayName": "FlowFail"}, &ws), http.StatusCreated, "workspace")
+	var pipe struct{ ID string }
+	f.mustStatus(f.call("POST", "/v1/workspaces/"+ws.ID+"/items", f.token,
+		map[string]any{"displayName": "breaks", "type": "DataPipeline"}, &pipe), http.StatusCreated, "pipeline")
+
+	def := `{"properties":{"activities":[
+		{"name":"Step1","type":"Wait","typeProperties":{"waitTimeInSeconds":1}},
+		{"name":"Step2","type":"Fail","typeProperties":{"message":"the gold table is empty","errorCode":"DQ001"},
+		 "dependsOn":[{"activity":"Step1","dependencyConditions":["Succeeded"]}]}]}}`
+	update := map[string]any{"definition": map[string]any{"parts": []map[string]string{{
+		"path": "pipeline-content.json", "payload": base64.StdEncoding.EncodeToString([]byte(def)),
+		"payloadType": "InlineBase64"}}}}
+	f.mustStatus(f.call("POST", "/v1/workspaces/"+ws.ID+"/items/"+pipe.ID+"/updateDefinition",
+		f.token, update, nil), http.StatusAccepted, "updateDefinition")
+
+	events, closeStream := f.openStream(t, "?kinds=job,activity")
+	defer closeStream()
+
+	f.mustStatus(f.call("POST", "/v1/workspaces/"+ws.ID+"/items/"+pipe.ID+
+		"/jobs/instances?jobType=Pipeline", f.token, map[string]any{}, nil),
+		http.StatusAccepted, "run pipeline")
+
+	started := awaitEvent(t, events, "the job starting", func(e sseEvent) bool {
+		return e.Kind == "job" && e.Data["status"] == "Started"
+	})
+	jobID, _ := started.Data["jobId"].(string)
+	if jobID == "" {
+		t.Fatalf("job event carries no jobId: %+v", started.Data)
+	}
+
+	ok := awaitEvent(t, events, "the succeeding activity", func(e sseEvent) bool {
+		return e.Kind == "activity" && e.Data["activityName"] == "Step1"
+	})
+	if ok.Data["status"] != "Succeeded" || ok.Data["activityType"] != "Wait" {
+		t.Fatalf("Step1 = %+v", ok.Data)
+	}
+
+	bad := awaitEvent(t, events, "the failing activity", func(e sseEvent) bool {
+		return e.Kind == "activity" && e.Data["activityName"] == "Step2"
+	})
+	if bad.Data["status"] != "Failed" {
+		t.Fatalf("Step2 = %+v", bad.Data)
+	}
+	if msg, _ := bad.Data["error"].(string); !strings.Contains(msg, "the gold table is empty") {
+		t.Fatalf("the failure reached the stream without its message: %+v", bad.Data)
+	}
+	if bad.Data["jobId"] != jobID {
+		t.Fatalf("activity not correlated to its job: %+v", bad.Data)
+	}
+
+	done := awaitEvent(t, events, "the job failing", func(e sseEvent) bool {
+		return e.Kind == "job" && e.Data["status"] == "Failed"
+	})
+	if done.Data["failureReason"] == "" || done.Data["jobId"] != jobID {
+		t.Fatalf("terminal job event = %+v", done.Data)
+	}
+}
