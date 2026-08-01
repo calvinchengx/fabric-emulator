@@ -128,5 +128,11 @@
     "description": "SQL over a temp view",
     "engine": "sail-delta",
     "status": "pass"
+  },
+  {
+    "id": "spark.sql_filter_unprojected_window",
+    "description": "Filter on a `row_number()` column the `SELECT` drops \u1d48",
+    "engine": "sail-delta",
+    "status": "pass"
   }
 ]

@@ -254,6 +254,38 @@ def sql_temp_view(spark):
     assert spark.sql("SELECT count(*) AS n FROM v_probe").collect()[0]["n"] == 1
 
 
+def sql_filter_on_unprojected_window_column(spark):
+    """Filter on a window-function column the outer SELECT does not project.
+
+    This is the `row_number()` deduplication shape: rank rows into `_rn` in a
+    CTE, keep `_rn = 1`, project only the real columns. Standard SQL evaluates
+    WHERE against the FROM relation, so `_rn` is in scope even though it is not
+    projected. It cost the dbt-fabricspark medallion models a rewrite after:
+
+        attribute ObjectName([Identifier("_rn")]) is missing from the schema:
+        cannot resolve attribute
+
+    The window function is load-bearing in this probe. The same query with a
+    plain unprojected column passes on all three engines — that was the first
+    version of this probe, and it was green everywhere, which is why it is
+    written this way instead. The gap is specifically a window-derived
+    attribute surviving into a filter above the projection that drops it.
+    """
+    spark.sql(
+        "SELECT 1 AS order_id, 1 AS event_seq, 5 AS qty "
+        "UNION ALL SELECT 1, 2, 7 "
+        "UNION ALL SELECT 2, 1, 9"
+    ).createOrReplaceTempView("v_win")
+    rows = spark.sql(
+        "WITH latest AS ("
+        "  SELECT *, row_number() OVER (PARTITION BY order_id ORDER BY event_seq DESC) AS _rn"
+        "  FROM v_win"
+        ") "
+        "SELECT order_id, qty FROM latest WHERE _rn = 1 ORDER BY order_id"
+    ).collect()
+    assert [(r["order_id"], r["qty"]) for r in rows] == [(1, 7), (2, 9)], rows
+
+
 PROBES = [
     ("delta.write", "Delta write", delta_write),
     ("delta.append", "Delta append", delta_append),
@@ -274,6 +306,7 @@ PROBES = [
     ("spark.create_dataframe_local", "`createDataFrame(local_rows)`", create_dataframe_local_rows),
     ("spark.python_udf", "Python UDF", python_udf),
     ("spark.sql_temp_view", "SQL over a temp view", sql_temp_view),
+    ("spark.sql_filter_unprojected_window", "Filter on a `row_number()` column the `SELECT` drops ᵈ", sql_filter_on_unprojected_window_column),
 ]
 
 
