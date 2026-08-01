@@ -1,6 +1,7 @@
 package tsql
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,4 +34,39 @@ func TestParseRealWorldCorpus(t *testing.T) {
 			t.Logf("%-56s ctes=%d nested=%v", filepath.Base(f), len(st.With.CTEs), st.HasNestedCTE())
 		}
 	}
+}
+
+// Emits {original, flattened} pairs as JSON for the captured corpus when
+// TSQL_FLATTEN_OUT is set, so the pairs can be executed against a real engine
+// (the T6f witness). Skipped by default.
+func TestDumpFlattenedCorpus(t *testing.T) {
+	dir, out := os.Getenv("TSQL_CORPUS"), os.Getenv("TSQL_FLATTEN_OUT")
+	if dir == "" || out == "" {
+		t.Skip("set TSQL_CORPUS and TSQL_FLATTEN_OUT")
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*.sql"))
+	type pair struct {
+		Name, Original, Flattened string
+		Changed                   bool
+	}
+	var pairs []pair
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fl, changed, err := Flatten(string(b))
+		if err != nil {
+			t.Fatalf("%s: %v", filepath.Base(f), err)
+		}
+		pairs = append(pairs, pair{filepath.Base(f), string(b), fl, changed})
+	}
+	blob, err := json.MarshalIndent(pairs, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, blob, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("wrote %d pairs to %s", len(pairs), out)
 }
