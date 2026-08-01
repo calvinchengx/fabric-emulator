@@ -67,6 +67,9 @@ func NewSQLServerBackend(dsn string) (*sqlServerBackend, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkProtocolResolved(dsn, cfg); err != nil {
+		return nil, err
+	}
 	master := sql.OpenDB(mssql.NewConnectorConfig(cfg))
 	return &sqlServerBackend{db: master, base: &cfg, pools: map[string]*sql.DB{}}, nil
 }
@@ -148,22 +151,74 @@ func (b *sqlServerBackend) Dial(ctx context.Context, database string) (net.Conn,
 	if b.base == nil {
 		return nil, nil, fmt.Errorf("no backend DSN configured for splicing")
 	}
-	port := b.base.Port
-	if port == 0 {
-		port = 1433
-	}
-	addr := net.JoinHostPort(b.base.Host, strconv.FormatUint(port, 10))
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", addr)
+	conn, err := b.dialBackend(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	loginResp, err := clientLogin(conn, b.base.User, b.base.Password, database, b.base.Host)
+	serverName := b.base.Host
+	if serverName == "" {
+		serverName = "." // a pipe DSN carries no host; "." is the local server
+	}
+	loginResp, err := clientLogin(conn, b.base.User, b.base.Password, database, serverName)
 	if err != nil {
 		conn.Close()
 		return nil, nil, err
 	}
 	return conn, loginResp, nil
+}
+
+// dialBackend opens a raw connection to the backend over whichever protocol the
+// DSN resolved to, trying them in the order msdsn put them in.
+//
+// This used to be a bare `net.Dial("tcp", JoinHostPort(base.Host, port))`, which
+// is correct for every TCP DSN and silently wrong for any other. A named-pipe
+// DSN parses with an EMPTY Host — the pipe path goes into ProtocolParameters,
+// not Host — so that formatting produced the address ":1433" and the splice
+// failed with `dial tcp :1433`, an error naming a protocol the DSN never asked
+// for. It cost a CI cycle to read because only the splice path was affected:
+// ordinary queries go through go-mssqldb's own dialer, which has always honoured
+// the protocol, so warehouse tests passed while the mirror and two-surface e2es
+// failed on the same DSN.
+//
+// TCP stays hand-rolled rather than delegated because the splice genuinely needs
+// a raw net.Conn: go-mssqldb's TCP dialer is an MssqlProtocolDialer and wants a
+// *Connector to build a driver connection, which is the opposite of what this
+// path wants. Non-TCP protocols implement the simpler ProtocolDialer interface
+// and hand back exactly the raw conn required.
+func (b *sqlServerBackend) dialBackend(ctx context.Context) (net.Conn, error) {
+	var attempts []string
+	for _, proto := range b.base.Protocols {
+		var (
+			conn net.Conn
+			err  error
+		)
+		switch proto {
+		case "tcp", "admin":
+			port := b.base.Port
+			if port == 0 {
+				port = 1433
+			}
+			var d net.Dialer
+			conn, err = d.DialContext(ctx, "tcp",
+				net.JoinHostPort(b.base.Host, strconv.FormatUint(port, 10)))
+		default:
+			d, ok := msdsn.ProtocolDialers[proto]
+			if !ok {
+				attempts = append(attempts, proto+": no dialer registered")
+				continue
+			}
+			conn, err = d.DialConnection(ctx, b.base)
+		}
+		if err == nil {
+			return conn, nil
+		}
+		attempts = append(attempts, proto+": "+err.Error())
+	}
+	if len(attempts) == 0 {
+		// Parse resolved no protocol at all. Saying so beats dialing ":1433".
+		return nil, fmt.Errorf("backend DSN resolved to no usable protocol")
+	}
+	return nil, fmt.Errorf("backend dial failed (%s)", strings.Join(attempts, "; "))
 }
 
 // colTypeFromDB maps a driver's column type name to a wire ColType. Integer,
@@ -222,4 +277,66 @@ func materialize(rows *sql.Rows) (*Result, error) {
 		res.Rows = append(res.Rows, vals)
 	}
 	return res, rows.Err()
+}
+
+// checkProtocolResolved refuses a DSN that named a protocol msdsn did not
+// actually resolve.
+//
+// msdsn does not reject an unhandled protocol prefix. Its ADO parser strips
+// "<proto>:" from the server value only for protocols in the REGISTERED parser
+// list; anything else stays attached and falls through to the TCP parser, which
+// splits on the first backslash and returns no error:
+//
+//	server=np:\\.\pipe\LOCALDB#1AAF806D\tsql\query
+//	  -> Host "np:", Instance `\.\pipe\LOCALDB#1AAF806D\tsql\query`, Protocols [tcp]
+//
+// A wrong-but-valid config is worse than a rejected one. Nothing fails until
+// the dial, and then it fails as `dial tcp :1433` or a SQL Browser lookup for
+// an "instance" that is really a pipe path — errors that name a protocol nobody
+// configured and point at the network rather than at the DSN. That cost two CI
+// cycles to read, so the emulator now refuses at construction and says which
+// import is missing.
+//
+// Checked against the DSN text rather than the config alone because the
+// evidence is the mismatch between the two: the user asked for a protocol and
+// the parse did not deliver it.
+func checkProtocolResolved(dsn string, cfg msdsn.Config) error {
+	prefix, ok := dsnProtocolPrefix(dsn)
+	if !ok {
+		return nil
+	}
+	for _, p := range cfg.Protocols {
+		if p == prefix {
+			return nil
+		}
+	}
+	return fmt.Errorf("DSN asks for the %q protocol but it is not registered, so the "+
+		"server name parsed as TCP (host %q, instance %q, protocols %v) and any "+
+		"connection would fail somewhere unrelated. Blank-import the driver's "+
+		"protocol package (for %q: github.com/microsoft/go-mssqldb/namedpipe) in a "+
+		"package this binary links",
+		prefix, cfg.Host, cfg.Instance, cfg.Protocols, prefix)
+}
+
+// dsnProtocolPrefix reports the "<proto>:" a keyword-form DSN put on its server
+// value. Only the keyword form is inspected: the URL form has no such prefix,
+// it carries the protocol as a query parameter that msdsn validates itself.
+func dsnProtocolPrefix(dsn string) (string, bool) {
+	if strings.HasPrefix(dsn, "sqlserver://") {
+		return "", false
+	}
+	for _, kv := range strings.Split(dsn, ";") {
+		k, v, found := strings.Cut(kv, "=")
+		if !found || !strings.EqualFold(strings.TrimSpace(k), "server") {
+			continue
+		}
+		proto, rest, found := strings.Cut(strings.TrimSpace(v), ":")
+		// A bare "host,port" has no colon; "tcp:host" and "np:\\..." do. Guard
+		// against a stray colon inside a value by requiring a plausible scheme.
+		if !found || proto == "" || strings.ContainsAny(proto, `\/,`) || rest == "" {
+			return "", false
+		}
+		return strings.ToLower(proto), true
+	}
+	return "", false
 }
