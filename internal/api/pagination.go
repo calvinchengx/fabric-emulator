@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // writePage writes a Fabric-shaped list response — `{"value":[...]}` — with
@@ -15,6 +16,17 @@ import (
 // more remain, a `continuationToken` (an opaque offset cursor) and a
 // `continuationUri` are included; the client passes the token back via
 // `?continuationToken` to fetch the next page.
+//
+// **Known divergence, deliberately kept.** Real Fabric paginates on its own
+// schedule — its List Items reference documents `continuationToken` as a
+// *response* field with no client-supplied page-size parameter, so a real client
+// must always be prepared to follow a token. Here the emulator returns
+// everything in one response unless asked to page, which means a client that
+// ignores `continuationToken` passes locally and could still break against
+// Fabric. Paginating by default would be more faithful, but it would change the
+// response of every list endpoint for every existing caller and test, so the
+// choice is recorded rather than made silently (docs/parity.md, list
+// pagination).
 func writePage[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	writePageKeyed(w, r, "value", items)
 }
@@ -48,9 +60,31 @@ func writePageKeyed[T any](w http.ResponseWriter, r *http.Request, key string, i
 		resp["continuationToken"] = tok
 		q := r.URL.Query()
 		q.Set("continuationToken", tok)
-		resp["continuationUri"] = r.URL.Path + "?" + q.Encode()
+		resp["continuationUri"] = absoluteURI(r, r.URL.Path+"?"+q.Encode())
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// absoluteURI renders a path+query as the fully-qualified URL real Fabric
+// returns — its reference shows
+// `https://api.fabric.microsoft.com/v1/workspaces/…/items?continuationToken=…`,
+// not a bare path. A client that treats continuationUri as a URL (the obvious
+// reading, and what the field name says) must be able to request it directly.
+//
+// The scheme follows the connection the request arrived on, so the emulator's
+// TLS and -disable-tls modes each advertise a URI that actually works, and the
+// host is echoed from the request rather than assumed — clients reach this
+// server under several names (api.fabric.microsoft.com, localhost:9443, a
+// compose service).
+func absoluteURI(r *http.Request, pathAndQuery string) string {
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	if r.Host == "" {
+		return pathAndQuery // nothing to qualify it with; better than a wrong host
+	}
+	return scheme + "://" + r.Host + pathAndQuery
 }
 
 // encodePageToken/decodePageToken carry the next-item offset as an opaque token

@@ -400,7 +400,10 @@
     "section": "Data Factory (`data-factory/`)",
     "claim": "List **pagination** (`continuationToken`)",
     "witnesses": [
-      "go:TestListPagination"
+      "ci:fabric-cli",
+      "go:TestListPagination",
+      "go:TestContinuationUriIsAbsolute",
+      "boundary:the emulator pages only when asked (?maxPageSize); real Fabric pages on its own schedule, so a client that ignores continuationToken still passes here (internal/api/pagination.go)"
     ]
   },
   "invoke-pipeline-executepipeline": {
