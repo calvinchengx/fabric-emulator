@@ -244,3 +244,78 @@ func TestExternalShortcutWriteSurfacesUpstreamFailure(t *testing.T) {
 		t.Fatalf("a 403 from the target produced %+v, want ExternalTargetError", derr)
 	}
 }
+
+// The signer's region is overridable: a bucket outside us-east-1 rejects a
+// signature scoped to the wrong region with SignatureDoesNotMatch.
+func TestS3RegionOverride(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(st, nil)
+	if got := svc.S3Region(); got != "us-east-1" {
+		t.Fatalf("default region = %q", got)
+	}
+	t.Setenv("FABRIC_S3_REGION", "eu-west-2")
+	if got := svc.S3Region(); got != "eu-west-2" {
+		t.Fatalf("override region = %q", got)
+	}
+}
+
+// Every failure mode of an external write must surface as an error. A write
+// that cannot be delivered must never look like a success to the caller.
+func TestExternalWriteAndDeleteFailurePaths(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(st, nil)
+
+	// A shortcut whose connection no longer exists.
+	orphan := &store.Shortcut{TargetType: "ADLSGen2", TargetLocation: "http://127.0.0.1:1",
+		TargetPath: "c", ConnectionID: "missing"}
+	if derr := svc.writeExternal(orphan, "x", []byte("d")); derr == nil ||
+		derr.code != "ExternalConnectionNotFound" {
+		t.Fatalf("missing connection produced %+v", derr)
+	}
+	if derr := svc.deleteExternal(orphan, "x"); derr == nil ||
+		derr.code != "ExternalConnectionNotFound" {
+		t.Fatalf("missing connection on delete produced %+v", derr)
+	}
+
+	conn := &store.Connection{DisplayName: "anon", CredentialsJSON: `{"credentialType":"Anonymous"}`}
+	if err := st.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	// An unreachable target is a transport failure, not a silent success.
+	dead := &store.Shortcut{TargetType: "ADLSGen2", TargetLocation: "http://127.0.0.1:1",
+		TargetPath: "c", ConnectionID: conn.ID}
+	if derr := svc.writeExternal(dead, "x", []byte("d")); derr == nil ||
+		derr.code != "ExternalTargetUnavailable" {
+		t.Fatalf("unreachable target produced %+v", derr)
+	}
+	if derr := svc.deleteExternal(dead, "x"); derr == nil ||
+		derr.code != "ExternalTargetUnavailable" {
+		t.Fatalf("unreachable target on delete produced %+v", derr)
+	}
+	// An unparseable target location.
+	bad := &store.Shortcut{TargetType: "ADLSGen2", TargetLocation: "://nope",
+		TargetPath: "c", ConnectionID: conn.ID}
+	if derr := svc.writeExternal(bad, "x", []byte("d")); derr == nil ||
+		derr.code != "ExternalTargetInvalid" {
+		t.Fatalf("invalid location produced %+v", derr)
+	}
+	// A credential type with no HTTP mapping.
+	sp := &store.Connection{DisplayName: "sp", CredentialsJSON: `{"credentialType":"ServicePrincipal"}`}
+	if err := st.CreateConnection(sp); err != nil {
+		t.Fatal(err)
+	}
+	unsupported := &store.Shortcut{TargetType: "ADLSGen2", TargetLocation: "http://127.0.0.1:1",
+		TargetPath: "c", ConnectionID: sp.ID}
+	if derr := svc.writeExternal(unsupported, "x", []byte("d")); derr == nil ||
+		derr.code != "ExternalCredentialUnsupported" {
+		t.Fatalf("unsupported credential produced %+v", derr)
+	}
+}
