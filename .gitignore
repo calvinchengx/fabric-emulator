@@ -1,5 +1,9 @@
-# Runtime state
-data/
+# Runtime state — the emulator's store, created at the repo root on first run.
+# Anchored with a leading slash: a bare `data/` matches a directory of that name
+# at ANY depth, which silently swallowed website/src/data/ too. That one is
+# ignored deliberately by website/.gitignore; anything else landing in a nested
+# data/ should be visible rather than disappear.
+/data/
 *.log
 
 # Node
