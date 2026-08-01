@@ -67,6 +67,35 @@ jobs:
         run: |
           echo 'WAREHOUSE_MSSQL_DSN=server=localhost,1433;user id=sa;password=Str0ng!Passw0rd;encrypt=disable' >> "$GITHUB_ENV"
 
+      # Diagnostic only — never fails the leg. The first Windows attempt assumed
+      # LocalDB at a fixed "160\Tools\Binn" path and got "not recognized", which
+      # cannot distinguish "installed elsewhere" from "not installed at all".
+      # The runner manifest lists SQL.LocalDB.Runtime 17.14, but that is a Visual
+      # Studio COMPONENT version, not a SQL Server major version — an engine was
+      # inferred from a component listing.
+      #
+      # So: look, report, and decide from evidence. If this finds an engine, the
+      # Windows leg can have a real one and risk #1 (whether LocalDB supports the
+      # INSERT BULK protocol reflect.go depends on) finally becomes testable.
+      - name: Probe for LocalDB (diagnostic, non-fatal)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $found = Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server" -Filter SqlLocalDB.exe `
+                     -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+          if ($found) {
+            Write-Host "LocalDB found at:"; $found | ForEach-Object { Write-Host "  $_" }
+            & $found[0] info
+          } else {
+            Write-Host "no SqlLocalDB.exe under $env:ProgramFiles\Microsoft SQL Server"
+            Write-Host "--- what IS there ---"
+            Get-ChildItem "$env:ProgramFiles\Microsoft SQL Server" -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty Name
+            Write-Host "--- sqllocaldb on PATH? ---"
+            Get-Command sqllocaldb -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          }
+
       # The server tests start a real entra-emulator in-process and drive the
       # full token → JWKS → RBAC → LRO path over HTTP.
       # shell: bash keeps the coverage profile and the floor step below in
