@@ -45,15 +45,23 @@ services:
     build:
       context: ../..
       dockerfile: docker/python-runtime/Dockerfile
-      args: { UV_GROUP: spark-connect }
+      args: { UV_GROUP: sail-delta }
     depends_on:
       sail:
         condition: service_started
     volumes:
-      - ./agent.py:/agent.py:ro
+      - .:/livy:ro
     environment:
       SPARK_REMOTE: "sc://sail:50051"
-    command: python /agent.py
+      # delta-rs reaches OneLake on its own account (see storage.py), so the
+      # agent mints its own Storage token from the same issuer sail uses.
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+    command: python /livy/agent.py
 
   fabric-emulator:
     build:

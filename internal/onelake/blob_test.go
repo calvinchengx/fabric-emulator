@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"net/http"
+	"reflect"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -569,5 +570,78 @@ func TestShortcutResolution(t *testing.T) {
 	}
 	if w := f.do("GET", read, f.token, nil); w.Code != http.StatusNotFound {
 		t.Fatalf("dangling shortcut read = %d; want 404", w.Code)
+	}
+}
+
+// TestBlobListStartFrom pins the offset parameter object_store uses for
+// list_with_offset — and pins it as INCLUSIVE, which is where it differs from
+// S3/GCP's exclusive start-after. object_store drops the first entry itself
+// when it equals the offset, so a half-open range here loses a blob.
+//
+// The regression this guards is not cosmetic: ignoring startFrom made
+// delta-rs's get_latest_version() see a log segment starting at version 0 when
+// it asked for one starting at N, which the kernel rejects with "Invalid table
+// version: N" — breaking every OPTIMIZE/VACUUM against OneLake while plain
+// writes kept passing.
+func TestBlobListStartFrom(t *testing.T) {
+	f := newFixture(t)
+	for _, p := range []string{"Tables/t/_delta_log/00000000000000000000.json",
+		"Tables/t/_delta_log/00000000000000000001.json",
+		"Tables/t/_delta_log/00000000000000000002.json"} {
+		if w := f.doBlob("PUT", "/"+f.ws.ID+"/"+f.it.ID+"/"+p, f.token, []byte("x"), nil); w.Code != http.StatusCreated {
+			t.Fatalf("seed %s = %d", p, w.Code)
+		}
+	}
+	type listing struct {
+		Blobs struct {
+			Blob []struct {
+				Name string `xml:"Name"`
+			} `xml:"Blob"`
+		} `xml:"Blobs"`
+	}
+	base := "lake.Lakehouse/Tables/t/_delta_log/"
+	get := func(query string) []string {
+		w := f.doBlob("GET", "/"+f.ws.ID+"?comp=list&"+query, f.token, nil, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("list %s = %d", query, w.Code)
+		}
+		var l listing
+		if err := xml.Unmarshal(w.Body.Bytes(), &l); err != nil {
+			t.Fatalf("list xml: %v", err)
+		}
+		var names []string
+		for _, b := range l.Blobs.Blob {
+			names = append(names, b.Name)
+		}
+		return names
+	}
+
+	// Inclusive: the offset itself must come back.
+	got := get("prefix=" + base + "&startFrom=" + base + "00000000000000000001.json")
+	want := []string{base + "00000000000000000001.json", base + "00000000000000000002.json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("startFrom inclusive: got %v want %v", got, want)
+	}
+
+	// An offset that matches no blob still bounds the range.
+	got = get("prefix=" + base + "&startFrom=" + base + "00000000000000000001a")
+	want = []string{base + "00000000000000000002.json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("startFrom between keys: got %v want %v", got, want)
+	}
+
+	// Negative control: without the offset all three come back, so the
+	// assertions above are testing the parameter and not the seed.
+	if got = get("prefix=" + base); len(got) != 3 {
+		t.Fatalf("no startFrom: got %v, want all 3", got)
+	}
+
+	// marker wins over startFrom: object_store sends startFrom only on the
+	// first request and marker on every page after it. Exclusive, as marker is.
+	got = get("prefix=" + base + "&marker=" + base + "00000000000000000001.json" +
+		"&startFrom=" + base + "00000000000000000000.json")
+	want = []string{base + "00000000000000000002.json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("marker beats startFrom: got %v want %v", got, want)
 	}
 }

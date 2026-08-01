@@ -113,6 +113,73 @@ def main():
     print(f"sum(1..100) -> {r3}", flush=True)
     assert r3 == "5050", r3
 
+    # --- Delta maintenance on a OneLake table, through the delta-rs path.
+    #
+    # Sail's planner has no OPTIMIZE/VACUUM and rejects Change Data Feed reads,
+    # so the agent routes them to delta-rs (e2e/livy/delta_ops.py). The point of
+    # running it *here* is the URL: an abfss:// OneLake table, which delta-rs can
+    # only open with a Storage bearer of its own. A local path would prove the
+    # interception fires and nothing about the credentials.
+    onelake = "abfss://spark-ws@onelake.dfs.fabric.microsoft.com/lake.Lakehouse/Tables"
+    maint = f"{onelake}/maint"
+    # Two appends, so there is something to compact. Written by *Sail*, so the
+    # table delta-rs later opens is one the engine produced.
+    run(f"spark.sql('SELECT 1 AS id').write.format('delta').mode('overwrite').save('{maint}')")
+    run(f"spark.sql('SELECT 2 AS id').write.format('delta').mode('append').save('{maint}')")
+
+    run("import delta_ops, storage")
+
+    # Negative control: the same operation with a *wrong* bearer must be
+    # refused. Without it, a pass below would not distinguish "the token
+    # worked" from "OneLake lets anyone in" — which is the entire claim.
+    #
+    # A wrong token rather than no options at all: with empty storage_options
+    # delta-rs never reaches OneLake, it falls back to the Azure IMDS endpoint
+    # (169.254.169.254) and dies on connection-refused. That failure says
+    # nothing about whether the emulator checks bearers, so a control built on
+    # it would pass vacuously.
+    run("bad = dict(storage.options(), azure_storage_token='not-a-valid-token')")
+    try:
+        run(f"delta_ops.execute('optimize', {{'target': 'delta.`{maint}`', 'rest': ''}}, None, bad)")
+        raise AssertionError("OPTIMIZE with an invalid bearer succeeded — OneLake "
+                             "is not enforcing the Storage token, so the "
+                             "credentialed runs below prove nothing")
+    except RuntimeError as e:
+        # It must fail *on authentication*: any other error would let a typo'd
+        # URL or a missing table masquerade as proof that the bearer mattered.
+        refusal = str(e)
+        if not any(m in refusal for m in ("401", "403", "Unauthenticated",
+                                          "AuthenticationFailed",
+                                          "NoAuthenticationInformation")):
+            raise AssertionError(f"expected an auth refusal, got: {refusal[:500]}")
+    print("[DELTA] OPTIMIZE with an invalid bearer refused (negative control)", flush=True)
+
+    r_opt = run(f"spark.sql('OPTIMIZE delta.`{maint}`').collect()[0][0]")
+    print(f"[DELTA] {r_opt}", flush=True)
+    # 2 files in, 1 out: a real compaction of a real OneLake table.
+    assert "compacted 2 file(s) into 1" in r_opt and "delta-rs" in r_opt, r_opt
+
+    r_vac = run(f"spark.sql('VACUUM delta.`{maint}` RETAIN 0 HOURS DRY RUN').collect()[0][0]")
+    print(f"[DELTA] {r_vac}", flush=True)
+    assert "would delete 2 file(s)" in r_vac, r_vac
+
+    # Change Data Feed needs a CDF-enabled table, and Sail cannot create one:
+    # its writer answers "Unsupported table features required: [ChangeDataFeed]".
+    # So delta-rs writes this one — the same delta-rs the CDF helper reads with,
+    # through the same credentials. That is the honest scope of the claim: the
+    # emulator can serve a change feed on OneLake, not that Sail can enable one.
+    cdf = f"{onelake}/cdf"
+    run("from deltalake import write_deltalake; import pyarrow as pa")
+    run(f"write_deltalake('{cdf}', pa.table({{'id': [1]}}), mode='overwrite',"
+        f" configuration={{'delta.enableChangeDataFeed': 'true'}},"
+        f" storage_options=storage.options())")
+    run(f"write_deltalake('{cdf}', pa.table({{'id': [2]}}), mode='append',"
+        f" storage_options=storage.options())")
+
+    r_cdf = run(f"spark.delta_change_feed('{cdf}').count()")
+    print(f"[DELTA] change feed rows -> {r_cdf}", flush=True)
+    assert r_cdf == "2", r_cdf
+
     http("DELETE", f"{base}/sessions/{sid}", token=token)
 
     # --- High-concurrency session: a REPL slot on real Spark (the 5-REPL model).

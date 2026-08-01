@@ -148,6 +148,13 @@ def render() -> str:
         "container, not a missing capability: Sail embeds CPython via `pyo3` to run",
         "Python UDFs. Fix by pinning matching pyspark versions.",
         "",
+        "ᶜ The CDF row fails on the **write**, not the read. Sail's writer cannot",
+        "enable the table feature (`Unsupported table features required:",
+        "[ChangeDataFeed]`) even when the property and the feature are both named,",
+        "so the probe never gets a CDF-enabled table to read. The read side is real",
+        "and verified separately in `e2e/livy` against OneLake, on a table written",
+        "by delta-rs. Sail-authored CDF tables need the JVM overlay.",
+        "",
     ]
     return "\n".join(lines)
 

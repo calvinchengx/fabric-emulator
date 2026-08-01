@@ -21,6 +21,10 @@ notebook that calls `OPTIMIZE`.
 
 Scope is deliberately narrow. Anything not matched here goes to Spark
 untouched: a shim that guesses would be worse than the gap.
+
+Credentials come from `storage.py`, resolved per statement — delta-rs reaches
+OneLake on its own account because a Connect client cannot read back the bearer
+the engine holds. See that module for why, and `docs/20-lakesail-engine.md`.
 """
 import re
 
@@ -65,6 +69,17 @@ def match(sql: str):
     return None
 
 
+def _resolve_options(storage_options):
+    """`storage_options` may be a dict or a zero-arg callable returning one.
+
+    The callable form is what the agent uses: credentials are read at statement
+    time, so a refreshed bearer is picked up without restarting the session.
+    """
+    if callable(storage_options):
+        return storage_options() or {}
+    return storage_options or {}
+
+
 def execute(kind, params, resolve, storage_options=None):
     """Run the operation and return a short human-readable result line."""
     from deltalake import DeltaTable
@@ -83,7 +98,7 @@ def execute(kind, params, resolve, storage_options=None):
                 "overlay (docs/engine-matrix.md), which supports the full syntax.")
 
     uri = _table_uri(params["target"], resolve)
-    table = DeltaTable(uri, storage_options=storage_options or {})
+    table = DeltaTable(uri, storage_options=_resolve_options(storage_options))
 
     if kind == "optimize":
         metrics = table.optimize.compact()
@@ -116,12 +131,16 @@ def read_change_feed(spark, uri, starting_version=0, ending_version=None,
     so the result is a normal Spark DataFrame — but note it is *materialised*,
     not a lazily-planned scan.
     """
+    import pyarrow as pa
     from deltalake import DeltaTable
 
-    table = DeltaTable(uri, storage_options=storage_options or {})
+    table = DeltaTable(uri, storage_options=_resolve_options(storage_options))
     reader = table.load_cdf(starting_version=starting_version,
                             ending_version=ending_version)
-    frame = reader.read_all().to_pandas()
+    # deltalake 1.x returns an arro3 table, not a pyarrow one — it has no
+    # .to_pandas(). Both sides speak the Arrow PyCapsule interface, so pa.table
+    # converts without a copy through Python.
+    frame = pa.table(reader.read_all()).to_pandas()
     if frame.empty:
         raise DeltaOpError(
             "change feed is empty — enable it on the table first "
@@ -129,18 +148,6 @@ def read_change_feed(spark, uri, starting_version=0, ending_version=None,
     return spark.createDataFrame(frame)
 
 
-# KNOWN GAP — storage credentials are not wired.
-#
-# `execute()` accepts storage_options but `install()` passes none, so the
-# delta-rs path is proven only against a table delta-rs can open unauthenticated
-# (a local path, same process). Against a real `abfss://…onelake…` table it will
-# fail on credentials: delta-rs needs the bearer/SAS the Spark session already
-# holds, and there is no supported way to read it back off a Connect session.
-#
-# Found by the engine matrix's third column, which runs this module across a
-# container boundary and so cannot rely on a shared filesystem the way the unit
-# check did. Until this is wired, the parity map grades the OneLake path
-# accordingly rather than claiming it works.
 def install(spark, storage_options=None):
     """Wrap `spark.sql` so OPTIMIZE/VACUUM route here, and expose the CDF helper.
 
@@ -148,9 +155,22 @@ def install(spark, storage_options=None):
     the *same* code path users get, rather than a re-implementation that could
     drift from it.
 
+    `storage_options` defaults to `storage.options` — the callable, not its
+    result — so every statement resolves credentials afresh from the agent's
+    environment and a refreshed bearer needs no restart. Pass a dict to pin
+    them, or `{}` to force the unauthenticated path (local tables). Where
+    `storage` cannot be imported the default is `{}`, which keeps local-path
+    tables working in a runtime that has no OneLake configured at all.
+
     Returns the original `sql` callable, which the caller needs both to restore
     it and to resolve catalog names.
     """
+    if storage_options is None:
+        try:
+            import storage
+            storage_options = storage.options
+        except ImportError:  # pragma: no cover - runtime without the agent module
+            storage_options = {}
     original_sql = spark.sql
 
     def resolve(name):
@@ -166,6 +186,10 @@ def install(spark, storage_options=None):
         # OPTIMIZE rather than getting None back.
         return spark.createDataFrame([(message,)], ["result"])
 
+    def change_feed(uri, **kw):
+        kw.setdefault("storage_options", storage_options)
+        return read_change_feed(spark, uri, **kw)
+
     spark.sql = sql
-    spark.delta_change_feed = lambda uri, **kw: read_change_feed(spark, uri, **kw)
+    spark.delta_change_feed = change_feed
     return original_sql

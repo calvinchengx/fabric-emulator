@@ -105,7 +105,7 @@ first level.
 | `PUT …/{path}` + `x-ms-copy-source` | Copy Blob |
 | `GET/HEAD …/{path}` | read (Range supported) |
 | `DELETE …/{path}` | delete |
-| `GET /{workspace}?comp=list` | List Blobs (XML) |
+| `GET /{workspace}?comp=list` | List Blobs (XML) — `prefix`, `delimiter`, `marker`, `maxresults`, `startFrom` |
 
 **Delta commit primitive.** Put Blob with **`If-None-Match: *`** is a
 **put-if-absent**: it succeeds only if the blob does not yet exist, else `409
@@ -113,3 +113,14 @@ BlobAlreadyExists`. This is exactly how Delta Lake commits a new `_delta_log`
 entry atomically — the conditional create is what makes concurrent writers race
 safely for a version number. delta-rs / `object_store` rely on it; the emulator
 honors it against the same store the DFS surface reads.
+
+**Listing offsets (`startFrom`).** `object_store` implements `list_with_offset`
+on Azure with a `startFrom` parameter, and it is **inclusive** — the opposite of
+S3/GCP's exclusive `start-after`, which `object_store` reconciles by dropping the
+first entry when it equals the offset. Half-open semantics here would therefore
+lose a blob, and ignoring the parameter is worse still: delta-rs's
+`get_latest_version()` receives a log segment starting at version 0 when it asked
+for one starting at N, and the Delta kernel rejects it with `Invalid table
+version: N`. Plain writes keep working, so the breakage shows up only in the
+commit-conflict paths — `OPTIMIZE`, `VACUUM`, `MERGE`. `TestBlobListStartFrom`
+pins both the inclusivity and the precedence of `marker` over `startFrom`.

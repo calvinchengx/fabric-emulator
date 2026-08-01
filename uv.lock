@@ -1284,6 +1284,7 @@ sail-delta = [
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pyspark-client" },
+    { name = "requests" },
 ]
 spark-connect = [
     { name = "pyspark-client" },
@@ -1359,6 +1360,7 @@ sail-delta = [
     { name = "pandas", specifier = ">=2,<3" },
     { name = "pyarrow", specifier = ">=18,<24" },
     { name = "pyspark-client", specifier = "==4.2.0" },
+    { name = "requests", specifier = ">=2.32,<3" },
 ]
 spark-connect = [
     { name = "pyspark-client", specifier = "==4.2.0" },

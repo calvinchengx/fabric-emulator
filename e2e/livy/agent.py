@@ -61,15 +61,21 @@ def _install_delta_ops():
     Only installed on the Sail/Connect path. On the JVM overlay Spark runs
     these natively and interception would be a downgrade — the JVM supports the
     full syntax (ZORDER, WHERE) that the delta-rs path refuses.
+
+    Credentials come from `storage.options` — passed as the callable, so each
+    statement resolves a current bearer rather than one frozen at startup.
+    Without this the interception reaches OneLake unauthenticated and fails on
+    every `abfss://` table, which is exactly what it is installed to handle.
     """
     if not os.environ.get("SPARK_REMOTE"):
         return
     try:
         import delta_ops
+        import storage
     except ImportError:  # pragma: no cover - runtime without deltalake
         return
 
-    delta_ops.install(spark)
+    delta_ops.install(spark, storage.options)
 
 
 _install_delta_ops()

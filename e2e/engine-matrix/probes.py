@@ -170,15 +170,8 @@ def jvm_bridge(spark):
 
 # ----------------------------------------------------------- general Spark
 def create_dataframe_local_rows(spark):
-    # e2e/livy/agent.py presets this for every Connect session: Sail reports
-    # localRelationSizeLimit as the string "3GB" and pyspark's client calls
-    # int() on it. That is a client-compat quirk, not an engine capability, so
-    # the probe applies the same preset the real runtime does — otherwise it
-    # would report a gap the emulator does not actually have.
-    try:
-        spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
-    except Exception:  # noqa: BLE001 — classic sessions do not need it
-        pass
+    # The localRelationSizeLimit preset this needs is applied once at session
+    # setup in main(), as the real runtime does.
     df = spark.createDataFrame([(1, "a"), (2, "b")], ["id", "name"])
     assert df.count() == 2
 
@@ -265,6 +258,20 @@ def main():
                    .config("spark.sql.catalog.spark_catalog",
                            "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
     spark = builder.getOrCreate()
+
+    # e2e/livy/agent.py presets this for every Connect session: Sail reports
+    # localRelationSizeLimit as the string "3GB" and pyspark's client calls
+    # int() on it. A client-compat quirk, not an engine capability, so the probe
+    # applies the same preset the real runtime does — otherwise it reports gaps
+    # the emulator does not have. Session-wide, not per-probe: the delta-rs
+    # interception returns its result *as* a createDataFrame, so OPTIMIZE and
+    # VACUUM hit this too and failed on '3GB' long after the operation itself
+    # had succeeded.
+    if remote:
+        try:
+            spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
+        except Exception:  # noqa: BLE001 — engine not reachable yet
+            pass
 
     # The "sail+delta-rs" column measures the emulator's actual runtime, not a
     # bare engine: the Livy agent installs this same wrapper for every Sail
