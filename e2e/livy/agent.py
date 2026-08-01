@@ -170,6 +170,77 @@ def run_sql(code, g):
                 "evalue": tb[-1] if tb else "error", "traceback": tb}
 
 
+def register_tables(session, schema, tables):
+    """Declare a lakehouse's Delta tables in this REPL's Spark catalog.
+
+    On real Fabric a Lakehouse's `Tables/` already ARE catalog tables — attach a
+    notebook and `SELECT * FROM silver_customers` resolves, because Fabric keeps
+    a metastore in step with the folder. Nothing in this stack holds a
+    metastore: Sail is handed object storage and nothing else. So the emulator
+    enumerates the folder when a session opens and calls this, and a client that
+    addresses a table by NAME rather than by abfs path works the way it does on
+    Fabric.
+
+    Idempotent (CREATE ... IF NOT EXISTS), because a session may be re-opened
+    against a lakehouse whose tables are already registered.
+    """
+    g = ns(session)
+    spark = g.get("spark")
+    if spark is None:
+        return {"registered": 0, "error": "no spark session in this REPL namespace"}
+    registered, failed = [], []
+    try:
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{schema}`")
+    except Exception:
+        return {"registered": 0, "error": f"could not create schema {schema}: "
+                                          f"{traceback.format_exc().splitlines()[-1]}"}
+    for t in tables:
+        name, loc = t.get("name"), t.get("location")
+        if not name or not loc:
+            continue
+        try:
+            spark.sql(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{name}` "
+                      f"USING delta LOCATION '{loc}'")
+            registered.append(name)
+        except Exception:
+            # A folder under Tables/ that is not a readable Delta table is
+            # skipped, not fatal — the same tolerance warehouse.Reflect applies.
+            failed.append(f"{name}: {traceback.format_exc().splitlines()[-1]}")
+    # Make UNQUALIFIED names resolve, the way they do in a Fabric notebook
+    # attached to a lakehouse. Two routes, because engines differ:
+    #
+    #   1. move the session's current database — what Spark does for `USE`;
+    #   2. failing that, register the same tables in `default` too.
+    #
+    # Sail rejects `USE <schema>` and setCurrentDatabase outright, so route 2 is
+    # the one that actually fires there. It is a duplicate registration of the
+    # same LOCATION, not a copy of data — both names point at one Delta table.
+    unqualified = None
+    try:
+        spark.catalog.setCurrentDatabase(schema)
+        unqualified = "current-database"
+    except Exception:
+        mirrored = []
+        for name in registered:
+            loc = next((t["location"] for t in tables if t.get("name") == name), None)
+            if not loc:
+                continue
+            try:
+                spark.sql(f"CREATE TABLE IF NOT EXISTS `default`.`{name}` "
+                          f"USING delta LOCATION '{loc}'")
+                mirrored.append(name)
+            except Exception:
+                failed.append(f"default.{name}: "
+                              f"{traceback.format_exc().splitlines()[-1]}")
+        unqualified = f"mirrored-into-default ({len(mirrored)})"
+
+    out = {"registered": len(registered), "tables": registered,
+           "unqualified": unqualified}
+    if failed:
+        out["skipped"] = failed
+    return out
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj).encode()
@@ -200,6 +271,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send(200, run_code(req.get("code", ""),
                                          ns(req.get("session", "default"))))
+        elif self.path == "/register":
+            self._send(200, register_tables(req.get("session", "default"),
+                                            req.get("schema", ""),
+                                            req.get("tables") or []))
         elif self.path == "/close":
             namespaces.pop(req.get("session", ""), None)
             self._send(200, {"closed": True})

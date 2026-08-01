@@ -70,8 +70,17 @@ func (a *API) registerLakehouseTables(session, wid, lid string) {
 			len(tables), it.DisplayName, err)
 		return
 	}
+	// Report a PARTIAL failure too, not just a total one. The agent answers
+	// {"registered": N, "skipped": [...]} when some tables would not register,
+	// and checking only for an "error" key made that invisible — the table then
+	// surfaces as "table not found" much later, with nothing pointing here.
 	if msg, ok := out["error"].(string); ok && msg != "" {
 		log.Printf("livy: Spark agent could not register tables of lakehouse %s: %s",
 			it.DisplayName, msg)
+		return
+	}
+	if skipped, ok := out["skipped"].([]any); ok && len(skipped) > 0 {
+		log.Printf("livy: %d of %d table(s) of lakehouse %s did not register: %v",
+			len(skipped), len(tables), it.DisplayName, skipped)
 	}
 }

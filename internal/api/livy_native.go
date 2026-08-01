@@ -159,6 +159,8 @@ func (a *API) createLivySession(w http.ResponseWriter, r *http.Request, m *livyM
 	m.sessions[s.ID] = s
 	m.nextID++
 	m.mu.Unlock()
+	// Same as the HC path: the session's lakehouse tables become catalog tables.
+	a.registerLakehouseTables(strconv.Itoa(s.ID), r.PathValue("wid"), r.PathValue("lid"))
 	writeJSON(w, http.StatusCreated, sessionBody(s))
 }
 
