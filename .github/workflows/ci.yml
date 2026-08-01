@@ -26,8 +26,9 @@ jobs:
       # intent is one identical gate on all three legs; ONE is there so far:
       #
       #   ubuntu   docker, native amd64 — ~10s to first query. GATED.
-      #   windows  LocalDB is installed and starts, but the named-pipe DSN does
-      #            not connect yet (see below). Warn-only.
+      #   windows  LocalDB, already on the image. GATED. It runs INSERT BULK —
+      #            internal/warehouse passes there in 105.9s at the same
+      #            statement coverage as the Linux leg.
       #   macOS    NOT YET. `colima start --vm-type=vz --vz-rosetta` dies at
       #            "Setting up Rosetta share" on macos-26-arm64 — Rosetta is not
       #            exposed to the VM, so this is not a tuning problem and no flag
@@ -64,24 +65,27 @@ jobs:
         run: |
           echo 'WAREHOUSE_MSSQL_DSN=server=localhost,1433;user id=sa;password=Str0ng!Passw0rd;encrypt=disable' >> "$GITHUB_ENV"
 
-      # LocalDB is present on the runner — a probe found it at 170, not the
-      # documented 160 — and it STARTS. What is not settled is the DSN: with
-      # `server=np:\\.\pipe\LOCALDB#...` the driver dialed `tcp :1433` with an
-      # empty host, so protocol selection did not route to the named pipe. The
-      # ADO keyword form is right (a URL would truncate at the '#'), and
-      # internal/testsupport pins that string shape — but pinning the string is
-      # not the same as proving the driver connects with it, and this is the
-      # difference.
+      # LocalDB, which the runner already ships — no container needed. The
+      # Windows image has Docker but only WSLv1, which has no Linux kernel, and
+      # mssql/server publishes no Windows manifest.
       #
-      # So: start it and PRINT the pipe name, which is free evidence for whoever
-      # settles the driver question, but do not set WAREHOUSE_MSSQL_DSN from a
-      # form that has already failed once. The floor keys on that variable, so
-      # this leg stays warn-only until the connection is proven rather than
-      # assumed. Guessing a third time would cost another full matrix run.
-      - name: SQL Server LocalDB (Windows) — start and report, no DSN yet
+      # The path is GLOBBED, not hard-coded: a first attempt assumed
+      # "160\Tools\Binn" and got "not recognized"; a probe found it at 170 on
+      # windows-2025-vs2026. Pinning a version means the next image bump loses
+      # the engine INVISIBLY, because the tests skip rather than fail.
+      #
+      # The DSN is the ADO keyword form. A URL would truncate at the '#' in
+      # `LOCALDB#A1B2C3D4` — '#' starts a fragment — and the connection would
+      # fail on half a pipe name with nothing saying why.
+      #
+      # This wiring failed once with `dial tcp :1433` and an empty host: msdsn
+      # parsed the pipe DSN as TCP because the go-mssqldb `namedpipe` blank
+      # import lived only in internal/testsupport, not where the DSN is actually
+      # parsed. It now lives in internal/tds with a test pinning it. Named-pipe
+      # misparsing returns NO error, which is why that cost a run to find.
+      - name: SQL Server LocalDB (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        continue-on-error: true
         run: |
           # @(...) forces an array: -ExpandProperty returns a bare STRING on a
           # single match, and indexing that yields its first CHARACTER.
@@ -89,11 +93,15 @@ jobs:
                      -Recurse -ErrorAction SilentlyContinue |
                    Sort-Object FullName -Descending |
                    Select-Object -ExpandProperty FullName)[0]
-          if (-not $exe) { Write-Host "no SqlLocalDB.exe found"; exit 0 }
+          if (-not $exe) { throw "no SqlLocalDB.exe under $env:ProgramFiles\Microsoft SQL Server" }
           Write-Host "using $exe"
           & $exe create MSSQLLocalDB -s 2>$null
           & $exe start  MSSQLLocalDB    2>$null
-          & $exe info MSSQLLocalDB
+          $info = & $exe info MSSQLLocalDB
+          $pipe = (($info | Select-String 'Instance pipe name:') -replace '.*Instance pipe name:\s*', '').Trim()
+          if (-not $pipe) { $info | Write-Host; throw "could not read the instance pipe name" }
+          Write-Host "pipe: $pipe"
+          "WAREHOUSE_MSSQL_DSN=server=$pipe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # The server tests start a real entra-emulator in-process and drive the
       # full token → JWKS → RBAC → LRO path over HTTP.
