@@ -22,12 +22,14 @@ the emulator; OpenMetadata's seeded basic-auth admin for the catalog.
 import base64
 import json
 import os
+import pathlib
 import sys
 import time
 import urllib.parse
 
 import requests
 import urllib3
+import yaml
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -86,6 +88,138 @@ TYPE_MAP = {
     "timestamp_ntz": "TIMESTAMP", "decimal": "DECIMAL",
     "struct": "STRUCT", "array": "ARRAY", "map": "MAP",
 }
+
+
+# --- ODCS contracts -> catalog semantics -------------------------------------
+# The emulator can tell OpenMetadata a table's SHAPE — columns, types, Delta
+# version. It cannot tell it what the table MEANS, because the emulator does
+# not know: meaning lives in the data contract. Without this, every table in the
+# catalog gets the same machine-written description and no PII marking at all,
+# which is the difference between an inventory and a catalog.
+CONTRACTS = pathlib.Path(os.environ.get(
+    "ODCS_CONTRACTS",
+    pathlib.Path(__file__).resolve().parent.parent / "examples/medallion/contracts"))
+
+# Which contract element describes which Delta table. Explicit rather than
+# derived, because it is a modelling decision and not a naming rule: a landing
+# contract's element describes the FILE the vendor sent ("customers"), and the
+# bronze table is that file ingested ("bronze_customers"). Asserting the two are
+# the same thing is a claim, so it is written down where it can be argued with.
+CONTRACT_FOR_TABLE = {
+    "bronze_customers": ("landing-contoso-pos", "customers"),
+    "bronze_orders": ("landing-contoso-pos", "orders"),
+    "bronze_erp_changes": ("landing-contoso-erp", "changes"),
+    "bronze_fx_rates": ("reference-data", "fx_rates"),
+    "bronze_product_hierarchy": ("reference-data", "product_hierarchy"),
+    "silver_customers": ("silver-sales", "silver_customers"),
+    "silver_orders": ("silver-sales", "silver_orders"),
+}
+
+
+def load_contracts():
+    """Read every ODCS contract next to the example. Missing dir is not fatal:
+    the catalog is still useful without semantics, just poorer."""
+    out = {}
+    if not CONTRACTS.is_dir():
+        return out
+    for path in sorted(CONTRACTS.glob("*.odcs.yaml")):
+        try:
+            with path.open() as f:
+                out[path.name.replace(".odcs.yaml", "")] = yaml.safe_load(f)
+        except Exception as e:  # noqa: BLE001 — a malformed contract must not
+            print(f"  ! skipping {path.name}: {e}", flush=True)
+    return out
+
+
+def contract_element(contracts, table):
+    """The (contract, schema-entry) describing `table`, or (None, None)."""
+    ref = CONTRACT_FOR_TABLE.get(table)
+    if not ref:
+        return None, None
+    contract = contracts.get(ref[0])
+    if not contract:
+        return None, None
+    for entry in contract.get("schema", []) or []:
+        if entry["name"] == ref[1]:
+            return contract, entry
+    return contract, None
+
+
+def contract_description(contract, entry, fallback):
+    """A description a human wrote, plus the limitations they wrote down.
+
+    `limitations` is the field most worth surfacing: it is where a contract
+    records what is KNOWN WRONG with a feed, and a catalog that shows the happy
+    path while hiding that is actively misleading.
+    """
+    if not contract or not entry:
+        return fallback
+    parts = [entry.get("description", "").strip()]
+    if gran := entry.get("dataGranularityDescription", "").strip():
+        parts.append(f"**Granularity.** {gran}")
+    if lim := (contract.get("description", {}) or {}).get("limitations", "").strip():
+        parts.append(f"**Known limitations.** {lim}")
+    parts.append(f"_Contract: {contract['name']} v{contract.get('version', '?')} "
+                 f"(ODCS {contract.get('apiVersion', '?')})._")
+    parts.append(fallback)
+    return "\n\n".join(p for p in parts if p)
+
+
+def contract_column_tags(entry):
+    """column name -> OM tag FQNs, from the contract's classifications.
+
+    ODCS `classification: pii` becomes OpenMetadata's built-in PII
+    classification, which is what drives its masking and access policies —
+    carrying it as prose in a description would look the same and do nothing.
+    """
+    tags = {}
+    for prop in (entry or {}).get("properties", []) or []:
+        fqns = []
+        if str(prop.get("classification", "")).lower() == "pii":
+            fqns.append("PII.Sensitive")
+        if prop.get("criticalDataElement"):
+            fqns.append("Tier.Tier1")
+        if fqns:
+            tags[prop["name"]] = fqns
+    return tags
+
+
+def apply_column_tags(columns, tags):
+    """Attach tag labels to the OM column payloads, in place."""
+    n = 0
+    for col in columns:
+        for fqn in tags.get(col["name"], []):
+            col.setdefault("tags", []).append({
+                "tagFQN": fqn, "labelType": "Manual",
+                "state": "Confirmed", "source": "Classification"})
+            n += 1
+    return n
+
+
+def contract_rule_summary(entry):
+    """The quality rules, as a line a catalog user can read.
+
+    OpenMetadata models executable tests as TestCases against a TestSuite, which
+    needs a live connection it can run them through. These are the emulator's
+    Delta tables, which OM cannot query directly — so the rules are surfaced as
+    documented expectations, and 26_contract_gates.py is what actually executes
+    them. Saying so is better than creating TestCases that would never run.
+    """
+    rules = list(entry.get("quality", []) or [])
+    for prop in entry.get("properties", []) or []:
+        rules.extend(prop.get("quality", []) or [])
+    if not rules:
+        return ""
+    named = []
+    for r in rules:
+        if r.get("metric"):
+            bound = next((f"{k} {r[k]}" for k in
+                          ("mustBe", "mustBeGreaterThan", "mustBeLessThan") if k in r), "")
+            named.append(f"`{r['metric']} {bound}`".replace(" `", "`"))
+        elif r.get("name"):
+            named.append(f"`{r['name']}` (sql)")
+    return ("**Contracted quality rules** (executed by "
+            "`examples/medallion/26_contract_gates.py`): " + ", ".join(named))
 
 
 def om_column(name, dtype, nullable=True):
@@ -430,6 +564,12 @@ def main():
     tag_by_label = export_label_taxonomy(fab, om)
 
     n_db = n_schema = n_table = n_labelled = 0
+    n_contracted = n_pii = 0
+    contracts = load_contracts()
+    if contracts:
+        print(f"loaded {len(contracts)} ODCS contract(s) from {CONTRACTS}", flush=True)
+    else:
+        print(f"no ODCS contracts at {CONTRACTS} — cataloging shape only", flush=True)
     item_fqn = {}
     for ws in workspaces:
         db_fqn = f"{SERVICE}.{ws['displayName']}"
@@ -454,15 +594,29 @@ def main():
                 print(f"  labelled {schema_fqn} -> {tag_fqn}", flush=True)
             for tbl in list_tables(storage, ws["displayName"], lh["displayName"]):
                 cols, version = delta_columns(ws["displayName"], lh["displayName"], tbl)
+                machine = (f"Delta table (version {version}) in OneLake "
+                           f"az://{ws['id']}/{lh['id']}/Tables/{tbl}")
+
+                # Semantics from the data contract, where one covers this table.
+                contract, entry = contract_element(contracts, tbl)
+                desc = contract_description(contract, entry, machine)
+                if entry and (rules := contract_rule_summary(entry)):
+                    desc = f"{desc}\n\n{rules}"
+                tagged = apply_column_tags(cols, contract_column_tags(entry))
+
                 om_put(om, "tables", {
                     "name": tbl, "databaseSchema": schema_fqn,
                     "tableType": "Regular", "columns": cols,
-                    "description": f"Delta table (version {version}) in OneLake "
-                                   f"az://{ws['id']}/{lh['id']}/Tables/{tbl}",
+                    "description": desc,
                 })
                 n_table += 1
+                if contract and entry:
+                    n_contracted += 1
+                    n_pii += tagged
+                note = (f", contract {contract['name']}, {tagged} column tag(s)"
+                        if contract and entry else "")
                 print(f"  cataloged {ws['displayName']}.{lh['displayName']}.{tbl} "
-                      f"({len(cols)} columns, delta v{version})", flush=True)
+                      f"({len(cols)} columns, delta v{version}{note})", flush=True)
 
     # Second pass: shortcuts. Needs every real table cataloged first, because
     # a shortcut edge references its target table by FQN.
@@ -527,6 +681,7 @@ def main():
     print(f"govern-ingest: {n_db} database(s), {n_schema} schema(s), "
           f"{n_table} table(s), {n_short} shortcut(s), {n_edge} shortcut lineage edge(s), "
           f"{n_activity_edge} activity lineage edge(s), "
+          f"{n_contracted} contract-described table(s), {n_pii} classified column(s), "
           f"{n_labelled} sensitivity-labelled schema(s) "
           f"-> {OM} service '{SERVICE}'", flush=True)
 

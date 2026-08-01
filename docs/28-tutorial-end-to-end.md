@@ -277,53 +277,41 @@ credential material is write-only, as in real Fabric.
 
 ## 4. Extract → landing
 
-The "source system" is a small generator that refuses to export without the
-API key — deliberately messy output (at-least-once duplicate order events,
-inconsistent country codes, a malformed row) so silver has real work to do.
+The "source system" ([`source_system.py`](../examples/medallion/source_system.py))
+is a seeded generator that refuses to export without the API key. It emits a
+**customer-360 of 101 columns** at production-like volume, and it is
+deliberately messy so silver has real work to do.
+
+The defects are injected **by ratio, not by hand**. That is the whole reason
+the fixture can be this large: pinning a lesson to a named row means the lesson
+becomes a rounding error the moment the row count grows, whereas a ratio holds
+at any scale.
+
+| Defect | Ratio | What it forces downstream |
+|---|---|---|
+| at-least-once redelivery | 2% of orders | dedupe, latest event wins |
+| duplicate customer rows | 2% of customers | dedupe on `customer_id` |
+| country spelled some other way | 20% of customers | conform 15 spellings → `US`/`GB`/`SG` |
+| mixed-case email | 10% of customers | case-fold, or double-count people |
+| no email at all | 3% of customers | **unmatchable** — resolution must admit it |
+| malformed order | 1% of orders | quarantine, not drop |
+
+Because the seed is fixed, the export is byte-identical on every machine and
+every run — which is what lets the steps below assert exact counts against it.
+The expectations are computed from the generator's own injection decisions, so
+silver has to independently arrive at the number the generator planted rather
+than agreeing with itself.
+
 Landing keeps the export **verbatim**: raw files under `Files/landing/`,
 written through OneLake's Blob dialect (the azurite-style account-prefixed
 path — one `PUT` per file).
 
 ```python
 # 02_extract_load.py
-import datetime, io, json
+import datetime
+
+import source_system as src
 from common import *
-
-# --- the fictitious SaaS -----------------------------------------------------
-CUSTOMERS_CSV = """customer_id,name,email,country
-C-001,Ava Chen,ava.chen@example.com,US
-C-002,Ben Okafor,Ben.Okafor@Example.com,USA
-C-003,Carla Diaz,carla@example.com,us
-C-004,Dev Patel,dev.patel@example.com,GB
-C-005,Emi Sato,emi.sato@example.com,U.K.
-C-006,Farid Rahman,,SG
-C-007,Grace Lim,grace.lim@example.com,SG
-C-007,Grace Lim,grace.lim@example.com,SG
-"""
-
-ORDER_EVENTS = [
-    # (order_id, customer, date, qty, unit_price, status) — O-1003 is delivered
-    # twice (at-least-once), the second event superseding the first; the last
-    # row is malformed (negative quantity, no price).
-    ("O-1001", "C-001", "2026-07-28", 2, 24.50, "shipped"),
-    ("O-1002", "C-002", "2026-07-28", 1, 129.00, "shipped"),
-    ("O-1003", "C-003", "2026-07-29", 3, 9.90, "pending"),
-    ("O-1003", "C-003", "2026-07-29", 3, 9.90, "shipped"),
-    ("O-1004", "C-004", "2026-07-30", 5, 4.20, "shipped"),
-    ("O-1005", "C-005", "2026-07-30", 1, 349.00, "shipped"),
-    ("O-1006", "C-007", "2026-07-31", 2, 62.00, "shipped"),
-    ("O-1007", "C-006", "2026-07-31", -1, None, "error"),
-]
-
-
-def contoso_pos_export(api_key):
-    if api_key != "pos-key-8843-dev":
-        raise PermissionError("Contoso POS: invalid API key")
-    orders = "\n".join(json.dumps({
-        "order_id": o, "customer_id": c, "order_date": d,
-        "quantity": q, "unit_price": p, "status": s, "event_seq": i})
-        for i, (o, c, d, q, p, s) in enumerate(ORDER_EVENTS))
-    return {"customers.csv": CUSTOMERS_CSV.encode(), "orders.jsonl": orders.encode()}
 
 
 # --- fetch the key from Key Vault (as notebookutils.credentials.getSecret does)
@@ -339,7 +327,7 @@ st_tok = token(STORAGE_AUD)
 st = load()
 today = datetime.date.today().isoformat()
 
-for name, blob in contoso_pos_export(api_key).items():
+for name, blob in src.export(api_key).items():
     path = f"Files/landing/contoso_pos/{today}/{name}"
     r = S.put(f"{FABRIC}/onelake/{st['workspace']}/{st['lakehouse']}/{path}",
               data=blob, headers={"Authorization": "Bearer " + st_tok,
@@ -500,12 +488,18 @@ In the Interactive Window's **Variables** panel, right-click
 `silver_orders` → **View Value in Data Wrangler** (or click the Data Wrangler
 icon next to the variable). Things worth checking against this dataset:
 
-- `bronze_orders` has 8 rows, `silver_orders` 6 — the duplicate `O-1003`
-  event collapsed to its latest state and the malformed `O-1007` went to
-  quarantine, not to the floor;
-- `silver_customers.country` has exactly `US`/`GB`/`SG` — the five raw
+- `bronze_orders` has 255,000 rows, `silver_orders` 247,500 — the 1,200
+  redelivered events collapsed to their latest state and the 2,500 malformed
+  ones went to quarantine, not to the floor;
+- `silver_customers` is 100,000 rows × 101 columns, down from 102,000 in
+  bronze — the repeated rows collapsed;
+- `silver_customers.country` has exactly `US`/`GB`/`SG` — all fifteen raw
   spellings conformed;
 - `amount` is a float column with no nulls, `order_date` a datetime.
+
+At this size Data Wrangler is profiling a real distribution rather than eight
+hand-written rows, which is the point: its histograms and null counts only
+tell you something when there is something to see.
 
 Data Wrangler's operations panel (filter, drop duplicates, change type…)
 **exports the pandas code for each step** — a fast way to prototype the next

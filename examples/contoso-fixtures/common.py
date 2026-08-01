@@ -48,9 +48,18 @@ PBI_AUD = "https://analysis.windows.net/powerbi/api"
 S = requests.Session()
 S.verify = False
 
-HERE = pathlib.Path(__file__).resolve().parent
+# Anchored on the CALLING example's directory, not on this file's. This module
+# is shared by both medallion examples, so `HERE` would resolve to the fixture
+# package — and state.json would be written inside site-packages, with every
+# example silently sharing one. Each example is run from its own directory, so
+# the working directory is the right anchor.
+HERE = pathlib.Path.cwd()
 STATE = pathlib.Path(os.environ.get("PIPELINE_STATE", HERE / "state.json"))
 GOLD_PROJECT = os.environ.get("GOLD_PROJECT", str(HERE / "gold"))
+# Display names are unique per emulator, so two examples provisioning against
+# one stack must not both ask for "contoso-analytics". examples/medallion-spark
+# overrides this; nothing else needs to.
+WORKSPACE_NAME = os.environ.get("WORKSPACE_NAME", "contoso-analytics")
 
 
 def log(msg):

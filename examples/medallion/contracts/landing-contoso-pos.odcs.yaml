@@ -65,22 +65,47 @@ schema:
         description: >-
           An empty export is an incident, not a valid day. This is the only
           thing landing asserts about content.
+    # The export is a customer-360: 101 columns spanning identity, address,
+    # loyalty, preferences, demographics, lifecycle, support, and the scored /
+    # affinity / flag families a marketing system bolts on (the full list is
+    # CUSTOMER_COLUMNS in source_system.py). Only the columns this contract has
+    # something to SAY about are enumerated here — governing a column means
+    # stating a rule for it, and repeating ninety generated score columns with
+    # no rule attached would be inventory, not governance.
     properties:
       - name: customer_id
         logicalType: string
         required: true
-        examples: ["C-001"]
+        examples: ["C-0000001"]
       - name: name
         logicalType: string
       - name: email
         logicalType: string
         classification: pii
-        description: May be empty; the vendor does not require it.
+        description: >-
+          May be empty (MISSING_EMAIL_RATIO) — the vendor does not require it,
+          and those customers are unmatchable against any email-keyed system.
+          Case is as the customer typed it (MIXED_CASE_EMAIL_RATIO), so a
+          consumer that does not case-fold will double-count people.
       - name: country
         logicalType: string
         description: >-
-          Free text, NOT ISO-3166. Observed values include US, USA, us, GB and
-          "U.K." — conformity is silver's job.
+          Free text, NOT ISO-3166. Observed values include US, USA, us, "U.S.",
+          "United States", GB, "U.K.", uk, GBR, "United Kingdom", SG, sg, SGP
+          and Singapore — conformity is silver's job.
+      - name: phone
+        logicalType: string
+        classification: pii
+      - name: latitude
+        logicalType: string
+        classification: pii
+        description: Present at full precision; a consumer may need to coarsen it.
+      - name: longitude
+        logicalType: string
+        classification: pii
+      - name: birth_year
+        logicalType: string
+        classification: pii
 
   - name: orders
     logicalType: object
@@ -101,7 +126,7 @@ schema:
         logicalType: string
         required: true
         description: Not unique in this feed — see event_seq.
-        examples: ["O-1003"]
+        examples: ["O-00000042"]
       - name: customer_id
         logicalType: string
         required: true

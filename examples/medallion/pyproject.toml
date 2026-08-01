@@ -9,15 +9,25 @@ version = "0.1.0"
 description = "End-to-end medallion example against the fabric-emulator family"
 requires-python = ">=3.12"
 dependencies = [
+    "contoso-fixtures",
     "dbt-fabric>=1.9",
     "deltalake>=0.23,<2",
-    "pandas>=2.2,<4",
     "pyarrow>=18,<24",
     "pyodbc>=5.2,<6",
     # Drives notebook cells onto the Sail engine over Spark Connect (no JVM).
     "pyspark-client==4.1.1",
     "requests>=2.32,<3",
+    # 26_contract_gates.py compiles the ODCS `library` rules in contracts/ into
+    # Expectation Suites. Pinned <1 to match the emulator's own
+    # great-expectations extra, so the two demonstrations cannot drift onto
+    # different major versions of the API.
+    "great-expectations>=0.18,<1",
+    # contract_gate.py reads the ODCS YAML.
+    "pyyaml>=6,<7",
 ]
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+contoso-fixtures = { path = "../contoso-fixtures", editable = true }

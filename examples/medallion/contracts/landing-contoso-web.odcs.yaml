@@ -89,8 +89,9 @@ schema:
         logicalType: string
         classification: pii
         description: >-
-          Single display name, not split. May disagree with the POS spelling of
-          the same person ("Ava M. Chen" vs "Ava Chen").
+          Single display name, not split, and deliberately disagreeing with the
+          POS spelling of the same person — the web store suffixes its own
+          rendering, so an exact-name join would find nothing.
       - name: country
         logicalType: string
         description: >-
@@ -151,7 +152,7 @@ schema:
         logicalType: string
         required: true
         unique: true
-        examples: ["W-5001"]
+        examples: ["W-00000042"]
       - name: email
         logicalType: string
         required: true

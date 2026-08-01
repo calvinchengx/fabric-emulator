@@ -59,17 +59,27 @@ schema:
     logicalType: object
     physicalType: table
     businessName: Conformed customers
-    description: One row per customer, emails lower-cased, countries conformed.
+    description: >-
+      One row per customer, emails lower-cased and case-folded, countries
+      conformed. The full customer-360 width is carried through from landing —
+      101 columns — because the star's dimensions are a projection of this
+      table, not the other way round.
     dataGranularityDescription: One row per customer_id.
     quality:
       - type: library
         metric: rowCount
-        mustBe: 7
+        mustBe: 100000
         dimension: completeness
         description: >-
-          EXPECTED_SILVER_CUSTOMERS in source_system.py — pinned because the
-          example is a fixture, not a live feed. A production contract would
-          state a range here, not an equality.
+          EXPECTED_SILVER_CUSTOMERS in source_system.py, which is N_CUSTOMERS
+          there — change the scale and this number moves with it. Pinned as an
+          equality because the example is a generated fixture with a fixed seed,
+          not a live feed; a production contract would state a range.
+      - type: library
+        metric: columnCount
+        mustBe: 101
+        dimension: completeness
+        description: EXPECTED_CUSTOMER_COLUMNS in source_system.py.
     properties:
       - name: customer_id
         logicalType: string
@@ -84,7 +94,9 @@ schema:
             mustBe: 0
             unit: rows
             dimension: uniqueness
-            description: The vendor's repeated C-007 row collapses here.
+            description: >-
+              The vendor repeats a share of its rows verbatim
+              (DUPLICATE_CUSTOMER_RATIO); they collapse here.
       - name: name
         logicalType: string
       - name: email
@@ -117,9 +129,13 @@ schema:
     quality:
       - type: library
         metric: rowCount
-        mustBe: 6
+        mustBe: 247500
         dimension: completeness
-        description: EXPECTED_SILVER_ORDERS — 8 events, less 1 redelivery, less 1 quarantined.
+        description: >-
+          EXPECTED_SILVER_ORDERS — N_ORDERS less the malformed rows diverted to
+          quarantine (MALFORMED_RATIO). The redelivered events
+          (REDELIVERY_RATIO) collapse into their originals and so never added
+          to the count.
     properties:
       - name: order_id
         logicalType: string

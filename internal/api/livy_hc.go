@@ -49,6 +49,7 @@ type hcRepl struct {
 	createdAt   int64
 	createBody  []byte // acquire payload, forwarded when the backend session is opened
 	backendID   string // real backend Livy session id (lazy; empty until first statement)
+	kind        string // session default statement language (Livy: spark/pyspark/sql)
 	statements  []*livyStatement // native-agent path: this REPL's executed statements
 	deleted     bool
 }
@@ -108,9 +109,21 @@ func (m *hcManager) acquire(scope, tag, wid, lid, creator string, now int64, bod
 		g = &hcGroup{id: store.NewID(), seq: m.nextSeq, scope: scope, tag: tag}
 		m.groups[g.id] = g
 	}
+	// The session's declared kind is the default for statements that omit one.
+	// Livy's own default is "spark"; this surface has always executed Python, so
+	// an unstated kind stays pyspark rather than silently changing behaviour for
+	// every existing caller.
+	kind := "pyspark"
+	var acquire struct {
+		Kind string `json:"kind"`
+	}
+	if json.Unmarshal(body, &acquire) == nil && acquire.Kind != "" {
+		kind = acquire.Kind
+	}
 	r := &hcRepl{
 		hcID: store.NewID(), replID: store.NewID(), groupID: g.id, tag: tag,
 		workspaceID: wid, lakehouseID: lid, creatorID: creator, createdAt: now, createBody: body,
+		kind: kind,
 	}
 	g.repls = append(g.repls, r.hcID)
 	m.byID[r.hcID] = r
@@ -302,11 +315,23 @@ func (a *API) hcStatement(w http.ResponseWriter, r *http.Request, p *auth.Princi
 func (a *API) hcStatementNative(w http.ResponseWriter, r *http.Request, repl *hcRepl) {
 	m := a.hcMgr()
 	if r.Method == http.MethodPost {
+		// `kind` selects the statement's language — Livy defines spark, pyspark,
+		// sql and sparkr, and a session's kind is the default when a statement
+		// omits it. Forwarding it matters: a SQL statement must come back as a
+		// structured result set, and a Python one as REPL text. Dropping it, as
+		// this did, left the agent guessing and effectively made the surface
+		// Python-only.
 		var body struct {
 			Code string `json:"code"`
+			Kind string `json:"kind"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		out, err := a.agentPost("/statements", map[string]any{"session": repl.replID, "code": body.Code})
+		kind := body.Kind
+		if kind == "" {
+			kind = repl.kind
+		}
+		out, err := a.agentPost("/statements", map[string]any{
+			"session": repl.replID, "code": body.Code, "kind": kind})
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "SparkAgentError", err.Error())
 			return

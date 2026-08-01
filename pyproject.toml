@@ -38,6 +38,9 @@ governance = [
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",
     "requests>=2.32,<3",
+    # govern_ingest reads the ODCS contracts, so a cataloged table carries the
+    # meaning a human wrote rather than only the shape the emulator can infer.
+    "pyyaml>=6,<7",
 ]
 great-expectations = [
     "great-expectations>=0.18,<1",

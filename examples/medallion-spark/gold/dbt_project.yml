@@ -1,0 +1,15 @@
+name: contoso_gold_spark
+version: "1.0.0"
+config-version: 2
+profile: contoso_gold_spark
+model-paths: ["models"]
+
+# Delta tables in the LAKEHOUSE, built by Spark SQL. Note what is absent
+# compared with the Warehouse project next door: no CTAS rewriting, because
+# Spark SQL's `CREATE TABLE ... AS SELECT` is the real thing rather than a
+# dialect the sidecar has to be talked into. That absence is the point of this
+# example — see 07_compare.py.
+models:
+  contoso_gold_spark:
+    +materialized: table
+    +file_format: delta

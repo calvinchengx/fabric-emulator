@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	mssql "github.com/microsoft/go-mssqldb"
+
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
@@ -46,9 +48,21 @@ func reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID, nprefix s
 	return done, nil
 }
 
-// reflectTable drops and recreates one table, then bulk-inserts its rows using
-// literal values (no bound parameters — the placeholder dialect differs between
-// SQL Server @p and SQLite ?, and reflected data is our own).
+// reflectTable drops and recreates one table, then loads its rows.
+//
+// SQL Server — the production target — is loaded with the TDS bulk-copy
+// protocol, which is how a warehouse is actually loaded: rows stream in binary
+// and the server parses no SQL for them at all. Building INSERT ... VALUES text
+// instead makes load cost scale with CHARACTER COUNT rather than row count, and
+// SQL Server's parse cost grows faster than linearly with statement size, so a
+// wide table degrades sharply: reflecting 20,000 rows x 100 columns that way
+// measured 123s of statement execution against 0.13s of reading the Delta and
+// 0.09s of building the literals. Bulk copy does the same load in ~1s.
+//
+// The literal path below is kept for the SQLite backend the unit tests inject,
+// which has no bulk protocol. That does mean the two backends load by different
+// routes; the SQL Server route is the one the e2e suites (e2e/medallion,
+// e2e/dbt-fabric, e2e/warehouse-tds) exercise against the real sidecar.
 func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table, nprefix string) error {
 	q := quoteIdent(name)
 	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS "+q); err != nil {
@@ -61,26 +75,121 @@ func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table, npre
 	if _, err := db.ExecContext(ctx, "CREATE TABLE "+q+" ("+strings.Join(defs, ", ")+")"); err != nil {
 		return err
 	}
+	if len(tbl.Rows) == 0 {
+		return nil
+	}
 
-	const batch = 500
-	for start := 0; start < len(tbl.Rows); start += batch {
-		end := start + batch
-		if end > len(tbl.Rows) {
-			end = len(tbl.Rows)
+	// Ask the DRIVER, not the literal dialect: Reflect is called with nprefix
+	// "N" by production AND by the unit tests, which hand it a SQLite handle, so
+	// the prefix says nothing about who is on the other end of the connection.
+	if isSQLServer(db) {
+		return bulkInsert(ctx, db, q, tbl)
+	}
+
+	// No bulk protocol (SQLite): batch by statement SIZE rather than a fixed row
+	// count, so a wide table's statements stay the same size as a narrow one's.
+	const (
+		maxStmtBytes     = 64 << 10
+		maxRowsPerInsert = 500
+	)
+	prefix := "INSERT INTO " + q + " VALUES "
+	var sb strings.Builder
+	sb.WriteString(prefix)
+	inBatch := 0
+
+	flush := func() error {
+		if inBatch == 0 {
+			return nil
 		}
-		values := make([]string, 0, end-start)
-		for _, row := range tbl.Rows[start:end] {
-			cells := make([]string, len(row))
-			for i, v := range row {
-				cells[i] = literal(v, nprefix)
+		if _, err := db.ExecContext(ctx, sb.String()); err != nil {
+			return err
+		}
+		sb.Reset()
+		sb.WriteString(prefix)
+		inBatch = 0
+		return nil
+	}
+
+	for _, row := range tbl.Rows {
+		cells := make([]string, len(row))
+		for i, v := range row {
+			cells[i] = literal(v, nprefix)
+		}
+		frag := "(" + strings.Join(cells, ",") + ")"
+		if inBatch > 0 && (sb.Len()+1+len(frag) > maxStmtBytes || inBatch >= maxRowsPerInsert) {
+			if err := flush(); err != nil {
+				return err
 			}
-			values = append(values, "("+strings.Join(cells, ",")+")")
 		}
-		if _, err := db.ExecContext(ctx, "INSERT INTO "+q+" VALUES "+strings.Join(values, ",")); err != nil {
+		if inBatch > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString(frag)
+		inBatch++
+	}
+	return flush()
+}
+
+// isSQLServer reports whether db really is a go-mssqldb connection, and so can
+// speak the bulk-copy protocol. Everything else (the tests' SQLite) takes the
+// literal-INSERT path.
+func isSQLServer(db *sql.DB) bool {
+	_, ok := db.Driver().(*mssql.Driver)
+	return ok
+}
+
+// bulkInsert streams a table's rows into SQL Server over the TDS bulk-copy
+// protocol. table must already be quoted: go-mssqldb interpolates the name
+// straight into "INSERT BULK %s" and the metadata probe it issues first.
+func bulkInsert(ctx context.Context, db *sql.DB, table string, tbl *Table) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once Commit succeeds
+
+	// KeepNulls: a NULL in the Delta must land as NULL, not as the destination
+	// column's default.
+	stmt, err := tx.PrepareContext(ctx,
+		mssql.CopyIn(table, mssql.BulkOptions{KeepNulls: true}, tbl.Columns...))
+	if err != nil {
+		return err
+	}
+
+	vals := make([]any, len(tbl.Columns))
+	for _, row := range tbl.Rows {
+		for i := range vals {
+			if i < len(row) {
+				vals[i] = bulkValue(row[i])
+			} else {
+				vals[i] = nil // short row: the Delta schema wins
+			}
+		}
+		if _, err := stmt.ExecContext(ctx, vals...); err != nil {
+			_ = stmt.Close()
 			return err
 		}
 	}
-	return nil
+	// A final parameterless Exec flushes the last partial batch.
+	if _, err := stmt.ExecContext(ctx); err != nil {
+		_ = stmt.Close()
+		return err
+	}
+	if err := stmt.Close(); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// bulkValue maps a Delta value onto what the bulk-copy encoder accepts. Only
+// Decimal needs help: it goes as its exact decimal string, which the encoder
+// re-parses at the destination column's scale. Passing a float64 instead would
+// reintroduce exactly the scale loss sqlType goes out of its way to avoid.
+func bulkValue(v any) any {
+	if d, ok := v.(Decimal); ok {
+		return d.String()
+	}
+	return v
 }
 
 // sqlType infers a column's SQL type from its first non-null value (default

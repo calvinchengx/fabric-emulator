@@ -45,3 +45,11 @@ examples/**/state.json
 examples/**/target/
 examples/**/logs/
 examples/**/dbt_packages/
+examples/**/.user.yml
+# The .pbip project 27_tmdl_pbip.py generates — runtime output, and it carries
+# the gold rows inline.
+examples/**/pbip/
+# Build output of the shared fixture package, and the per-run gold summary the
+# examples write for their cross-example comparison.
+examples/**/*.egg-info/
+examples/**/gold_summary.json
