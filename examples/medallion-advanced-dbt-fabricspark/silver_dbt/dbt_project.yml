@@ -13,3 +13,14 @@ models:
   contoso_silver_spark:
     +materialized: table
     +file_format: delta
+    # WITHOUT THIS, dbt creates MANAGED tables in Spark's own warehouse
+    # directory — inside the engine container, not in the lakehouse. They are
+    # real and queryable over Livy, so every row-count assertion passes, and
+    # OneLake never sees them: the reflection step then finds no silver_orders
+    # and fails with an error naming neither dbt nor the location.
+    #
+    # location_root makes them EXTERNAL tables at the lakehouse's Tables/ path,
+    # which is where ../medallion-pyspark writes and where the SQL analytics
+    # endpoint reflects from. silver.py exports it because the workspace and
+    # lakehouse GUIDs only exist at run time.
+    +location_root: "{{ env_var('ONELAKE_TABLES') }}" 
