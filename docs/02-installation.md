@@ -16,8 +16,14 @@ brew install calvinchengx/tap/fabric-emulator
 
 ## Windows — winget
 
-> The manifest [PR](https://github.com/microsoft/winget-pkgs/pull/410794) is in
-> Microsoft's moderation queue; the command works once it merges.
+> **winget deliberately lags the latest tag.** Homebrew and GHCR publish on
+> every `v*` tag; winget does not. Microsoft's moderation takes days, tags here
+> land several times a day, and a queue of superseded manifest PRs spends
+> moderator attention on versions nobody will install. So the manifest is
+> submitted for chosen releases only — the current one is
+> [PR #410794](https://github.com/microsoft/winget-pkgs/pull/410794), and the
+> command works once it merges. For the newest build, use Homebrew, the GHCR
+> image, `go install`, or the archives below.
 
 ```powershell
 winget install calvinchengx.fabric-emulator
