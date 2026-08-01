@@ -197,6 +197,24 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/azurite-shortcut/run.py
 
+  external-shortcuts:
+    name: Shortcut target kinds resolve through OneLake (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Breadth, where external-s3 and azurite-shortcut give depth: those two
+      # prove one target kind each against a real server (SigV4, SAS). This
+      # walks BOTH documented external kinds — adlsGen2 and amazonS3 — through
+      # create-shortcut then read-through-OneLake, so a kind that stops
+      # resolving cannot hide behind the other's coverage.
+      #
+      # The suite existed without a job for it: nothing ran it on push, and it
+      # only surfaced because a local runner enumerates e2e/*/run.py.
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/external-shortcuts/run.py
+
   governance:
     name: OpenMetadata governance profile catalogs the emulator (containerized)
     runs-on: ubuntu-latest

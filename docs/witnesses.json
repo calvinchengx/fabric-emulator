@@ -174,7 +174,8 @@
     "claim": "Shortcuts to external targets (S3 / ADLS Gen2 / Dataverse)",
     "witnesses": [
       "ci:external-s3",
-      "ci:azurite-shortcut"
+      "ci:azurite-shortcut",
+      "ci:external-shortcuts"
     ]
   },
   "lakehouse-item-tables-files-storage": {
