@@ -1,16 +1,22 @@
 # Overlay on e2e/medallion/docker-compose.yml — the SAME stack, a different
-# entrypoint. The advanced track continues where the basic one stops, so it
-# needs exactly the services the basic harness already defines (entra, Key
-# Vault, SQL Server, Sail, the emulator with TDS on); only the script the
-# pipeline container runs is different.
+# example image.
 #
-# Restating the stack here instead would give it its own copy to drift out of
-# sync with, which is the thing e2e/medallion's README is emphatic about.
+# The advanced track needs exactly the services the basic harness already
+# defines (entra, Key Vault, SQL Server, Sail, the emulator with TDS on). What
+# differs is the image: the advanced example is its own standalone folder with
+# its own dependencies and lockfile, so it cannot be run by overriding `command`
+# on the basic image — that image does not contain the advanced steps or the
+# advanced fixture package.
+#
+# Restating the stack here would give it a second copy to drift out of sync
+# with, which is the thing e2e/medallion's README is emphatic about.
 #
 #   docker compose -f ../medallion/docker-compose.yml -f docker-compose.advanced.yml up
 #
-# Build contexts in the base file are relative to ITS directory, so compose must
-# be invoked with that directory as the working directory — run.py does this.
+# `dockerfile` is written relative to the build CONTEXT (the repo root, set by
+# the base file), not to this file. A path relative to this directory would
+# resolve outside the context at build time and fail.
 services:
   pipeline:
-    command: ["python3", "run_advanced.py"]
+    build:
+      dockerfile: e2e/medallion-advanced/Dockerfile.pipeline

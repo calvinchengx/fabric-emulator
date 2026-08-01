@@ -35,7 +35,7 @@ TDS_SERVER = os.environ.get("TDS_SERVER", "localhost,1433")
 # own address).
 KV_INTERNAL = os.environ.get("KV_INTERNAL_URL", "https://keyvault-emulator:8444")
 
-# The Spark engine 04_engine.py drives the queued notebook run onto. Default is
+# The Spark engine engine.py drives the queued notebook run onto. Default is
 # Sail as `docker compose up` publishes it; the CI harness uses the service name.
 SPARK_REMOTE = os.environ.get("SPARK_REMOTE", "sc://localhost:50051")
 
@@ -57,7 +57,7 @@ HERE = pathlib.Path.cwd()
 STATE = pathlib.Path(os.environ.get("PIPELINE_STATE", HERE / "state.json"))
 GOLD_PROJECT = os.environ.get("GOLD_PROJECT", str(HERE / "gold"))
 # Display names are unique per emulator, so two examples provisioning against
-# one stack must not both ask for "contoso-analytics". examples/medallion-spark
+# one stack must not both ask for "contoso-analytics". examples/medallion-dbt-fabricspark
 # overrides this; nothing else needs to.
 WORKSPACE_NAME = os.environ.get("WORKSPACE_NAME", "contoso-analytics")
 

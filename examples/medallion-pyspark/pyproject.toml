@@ -1,0 +1,31 @@
+# Self-contained: this example owns its dependencies and its lockfile, so it
+# can be copied out of the repo and run anywhere, and so its versions never
+# enter the emulator's own dependency graph.
+#
+#   uv sync --frozen && uv run python pipeline.py
+#
+# bronze -> silver is PySpark (silver.py); silver -> gold is dbt-fabric over
+# TDS, because gold is a WAREHOUSE. That split is the point of this folder
+# against ../medallion-dbt-fabricspark, which differs only in the first half.
+[project]
+name = "fabric-emulator-example-medallion-pyspark"
+version = "0.1.0"
+description = "Medallion: PySpark to silver, dbt-fabric to a Warehouse gold"
+requires-python = ">=3.12"
+dependencies = [
+    "contoso-fixtures",
+    "dbt-fabric>=1.9",
+    "deltalake>=0.23,<2",
+    "pyarrow>=18,<24",
+    "pyodbc>=5.2,<6",
+    # Drives notebook cells and the silver transform onto Sail over Spark
+    # Connect (no JVM).
+    "pyspark-client==4.1.1",
+    "requests>=2.32,<3",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+contoso-fixtures = { path = "../contoso-fixtures", editable = true }

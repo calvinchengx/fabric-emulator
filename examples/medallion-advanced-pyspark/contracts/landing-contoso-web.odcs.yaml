@@ -1,0 +1,204 @@
+# ODCS v3.1.0 — the second INBOUND contract: what Contoso Web promises us.
+#
+# Companion to landing-contoso-pos.odcs.yaml, and deliberately unlike it: nested
+# JSON, no customer identifier, offset-bearing timestamps, and a third spelling
+# convention for country. Two inbound contracts that disagree about how to name
+# the same customer is the normal case, and it is what makes conformance in
+# silver a real step rather than a rename.
+#
+# Same rule as the POS contract: landing is stored verbatim, so the only quality
+# rules here are about ARRIVAL. Everything known to be wrong with the feed is
+# declared under `description.limitations`.
+apiVersion: v3.1.0
+kind: DataContract
+id: 2977f322-1e9f-5a80-a2a9-7ec28b18f54c
+name: contoso-web-landing
+version: 1.0.0
+status: draft
+domain: sales
+dataProduct: contoso-sales-analytics
+tenant: fabric-emulator
+
+description:
+  purpose: >-
+    The daily export from Contoso Web, the e-commerce channel: a product
+    catalog, a customer list, and orders with their line items nested inline.
+    Landed byte-for-byte under a date-partitioned path.
+  usage: >-
+    Read-only, by bronze only. Files are immutable once written; a correction
+    arrives as a new date partition.
+  limitations: >-
+    NO customer identifier is exported — email is the only key, and it is not
+    case-normalised by the sender. Orders are nested, so any tabular consumer
+    must flatten before reading. CANCELLED orders are included and must be
+    excluded from revenue by the consumer. Line items may reference a
+    product_id that is absent from the catalog in the same export, so the feed
+    is not internally referentially consistent. `placed_at` carries a UTC
+    offset and at least one order falls on a different calendar day in local
+    time than in UTC — the consumer must choose a timezone deliberately.
+    Country is a full display name ("United States"), matching neither ISO
+    codes nor the POS feed's spellings.
+
+servers:
+  - server: onelake-web-customers
+    type: azure
+    description: Customer list, JSON array.
+    environment: dev
+    location: abfs://${WORKSPACE_ID}@onelake.dfs.fabric.microsoft.com/${LAKEHOUSE_ID}/Files/landing/contoso_web/{yyyy-MM-dd}/customers.json
+    format: json
+  - server: onelake-web-products
+    type: azure
+    description: Product catalog, JSON array.
+    environment: dev
+    location: abfs://${WORKSPACE_ID}@onelake.dfs.fabric.microsoft.com/${LAKEHOUSE_ID}/Files/landing/contoso_web/{yyyy-MM-dd}/products.json
+    format: json
+  - server: onelake-web-orders
+    type: azure
+    description: Orders with nested line items, JSON array.
+    environment: dev
+    location: abfs://${WORKSPACE_ID}@onelake.dfs.fabric.microsoft.com/${LAKEHOUSE_ID}/Files/landing/contoso_web/{yyyy-MM-dd}/orders.json
+    format: json
+
+schema:
+  - name: customers
+    logicalType: object
+    physicalType: file
+    physicalName: customers.json
+    businessName: Web customer list
+    description: Every registered customer of the web channel.
+    dataGranularityDescription: One element per customer, keyed by email.
+    quality:
+      - type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        description: An empty export is an incident, not a valid day.
+    properties:
+      - name: email
+        logicalType: string
+        required: true
+        unique: true
+        criticalDataElement: true
+        classification: pii
+        description: >-
+          The ONLY key this system exports. Not case-normalised by the sender,
+          and the join key against the POS feed — which spells at least one
+          address differently.
+        examples: ["ava.chen@example.com"]
+      - name: full_name
+        logicalType: string
+        classification: pii
+        description: >-
+          Single display name, not split, and deliberately disagreeing with the
+          POS spelling of the same person — the web store suffixes its own
+          rendering, so an exact-name join would find nothing.
+      - name: country
+        logicalType: string
+        description: >-
+          Full display name — "United States", "United Kingdom", "Singapore".
+          Neither ISO codes nor the POS feed's spellings.
+      - name: signup_ts
+        logicalType: timestamp
+        description: Registration time, ISO 8601 with offset.
+
+  - name: products
+    logicalType: object
+    physicalType: file
+    physicalName: products.json
+    businessName: Product catalog
+    description: >-
+      The catalog. POS exports no product information at all, so this feed is
+      the sole source of a product dimension.
+    dataGranularityDescription: One element per product.
+    quality:
+      - type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+    properties:
+      - name: product_id
+        logicalType: string
+        required: true
+        unique: true
+        criticalDataElement: true
+        examples: ["P-100"]
+      - name: name
+        logicalType: string
+      - name: category
+        logicalType: string
+        examples: ["Hardware", "Accessories"]
+      - name: list_price
+        logicalType: number
+        description: >-
+          Catalogue price. A line carries the price actually charged; the two
+          are allowed to differ and neither overrides the other.
+
+  - name: orders
+    logicalType: object
+    physicalType: file
+    physicalName: orders.json
+    businessName: Web orders
+    description: Orders with their line items nested inline.
+    dataGranularityDescription: >-
+      One element per ORDER, each containing one or more lines. Not one element
+      per line.
+    quality:
+      - type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+    properties:
+      - name: web_order_id
+        logicalType: string
+        required: true
+        unique: true
+        examples: ["W-00000042"]
+      - name: email
+        logicalType: string
+        required: true
+        classification: pii
+        description: Buyer, by email — there is no customer id to reference.
+      - name: placed_at
+        logicalType: timestamp
+        description: >-
+          ISO 8601 with a UTC offset. Local and UTC calendar days differ for at
+          least one order in a typical export.
+      - name: status
+        logicalType: string
+        examples: ["fulfilled", "cancelled"]
+        description: Cancelled orders ARE exported. Excluding them is the consumer's job.
+      - name: lines
+        logicalType: array
+        required: true
+        description: >-
+          Line items. Each carries line_no, product_id, quantity and
+          unit_price. product_id is NOT guaranteed to resolve against the
+          products feed in the same export.
+
+slaProperties:
+  - property: frequency
+    value: 1
+    unit: d
+    element: orders
+    driver: operational
+    description: One export per day, date-partitioned.
+
+support:
+  - channel: contoso-web-support
+    url: https://example.com/contoso-web/support
+    tool: other
+    scope: issues
+    description: Fictitious vendor — the channel exists to show where it belongs.
+
+authoritativeDefinitions:
+  - url: https://github.com/calvinchengx/fabric-emulator/blob/main/examples/medallion-pyspark/web_store.py
+    type: implementation
+    description: >-
+      The vendor stub this contract describes, including the designed overlap
+      with the POS feed.
+
+tags:
+  - medallion
+  - landing
+  - inbound
+  - web

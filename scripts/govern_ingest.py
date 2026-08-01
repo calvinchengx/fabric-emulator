@@ -98,7 +98,7 @@ TYPE_MAP = {
 # which is the difference between an inventory and a catalog.
 CONTRACTS = pathlib.Path(os.environ.get(
     "ODCS_CONTRACTS",
-    pathlib.Path(__file__).resolve().parent.parent / "examples/medallion/contracts"))
+    pathlib.Path(__file__).resolve().parent.parent / "examples/medallion-pyspark/contracts"))
 
 # Which contract element describes which Delta table. Explicit rather than
 # derived, because it is a modelling decision and not a naming rule: a landing
@@ -202,7 +202,7 @@ def contract_rule_summary(entry):
     OpenMetadata models executable tests as TestCases against a TestSuite, which
     needs a live connection it can run them through. These are the emulator's
     Delta tables, which OM cannot query directly — so the rules are surfaced as
-    documented expectations, and 26_contract_gates.py is what actually executes
+    documented expectations, and contract_gates.py is what actually executes
     them. Saying so is better than creating TestCases that would never run.
     """
     rules = list(entry.get("quality", []) or [])
@@ -219,7 +219,7 @@ def contract_rule_summary(entry):
         elif r.get("name"):
             named.append(f"`{r['name']}` (sql)")
     return ("**Contracted quality rules** (executed by "
-            "`examples/medallion/26_contract_gates.py`): " + ", ".join(named))
+            "`examples/medallion-pyspark/contract_gates.py`): " + ", ".join(named))
 
 
 def om_column(name, dtype, nullable=True):

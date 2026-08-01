@@ -379,7 +379,7 @@ def customer_phones():
     Contoso ERP predates email and knows people by phone, so phone is the only
     key IT shares with POS — and it shares none at all with Contoso Web. Any
     ERP-to-Web match therefore has to travel through POS, which is the point of
-    25_resolve.py.
+    resolve.py.
     """
     return _built()[4]
 

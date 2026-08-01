@@ -5,7 +5,7 @@ endpoint, attribution, and the portal **Data flow** view.
 
 Running the medallion example today is a black box. It prints step numbers, and
 when something fails you reconstruct what happened afterwards from
-`queryactivityruns` — which is why `examples/medallion/common.py` grew
+`queryactivityruns` — which is why `examples/medallion-pyspark/common.py` grew
 hand-rolled activity-level failure reporting. You cannot watch the data move,
 and you cannot see a failure at the moment it happens.
 
