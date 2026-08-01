@@ -197,6 +197,7 @@ engine. Verified live, not inferred: `sc.parallelize([1,2,3,4]).map(x*2)
 |---|---|
 | Controllable clock (`/_emulator/clock`) | Advance virtual time to drive LRO / job status transitions deterministically. |
 | Fault injection (`/_emulator/faults`, `/_emulator/permissions`) | Force failures / throttling / RBAC denials to test client resilience. |
+| **Flow stream** (`/_emulator/events`) | Server-Sent Events for every byte that moves through OneLake — `file` events for writes/renames/deletes whoever made them, and `table` events derived from Delta commits (`version`, `rowsAdded`, `filesAdded`). `curl -N` tails a medallion run live; `?kinds=` narrows it and `?since=` replays the ring buffer. Delivery is deliberately lossy — a slow consumer is told what it dropped rather than being allowed to stall a writer. [31-flow-observability.md](31-flow-observability.md) |
 | Svelte management portal | Dashboard, workspaces, operations, clock, and fault controls. |
 
 ## Ecosystem conformance: real OSS/vendor clients as witnesses
