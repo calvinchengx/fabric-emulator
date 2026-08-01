@@ -70,28 +70,40 @@ Primary sources: [T-SQL surface area in Fabric Data Warehouse][sa],
 
 ### Class A — Fabric supports, the sidecar rejects
 
-| Feature | Fabric | SQL Server 2022 | Evidence | Impact |
+| Feature | Fabric | SQL Server 2022 | Evidence | Status |
 |---|---|---|---|---|
-| **Nested CTE** (`WITH` inside a CTE body) | supported (preview) | rejected, error 156 | doc + **obs** | **Blocks dbt tests** — `accepted_values`, `relationships`, unit tests |
-| **CTAS** (`CREATE TABLE AS SELECT`) | supported | not a SQL Server construct (`SELECT … INTO` instead) | doc + **obs** | Blocks dbt `table` materialization; forces `view` |
-| `ALTER TABLE` inside an explicit transaction | supported | more restricted | doc / inf | Rare |
+| **Nested CTE** (`WITH` inside a CTE body) | supported | rejected, `Msg 156` | doc + **obs** | ✅ **closed (T6)** — flattened to sequential form on the wire, in batches and RPC parameters. Unblocked dbt's `accepted_values` + `relationships` |
+| **CTAS** (`CREATE TABLE AS SELECT`) | supported | not a SQL Server construct (`SELECT … INTO` instead) | doc + **obs** | ✅ **closed (T8)** — rewritten to `SELECT … INTO`, including inside the `EXEC('…')` dbt actually ships. Unblocked `+materialized: table` |
+| `ALTER TABLE` inside an explicit transaction | supported | more restricted | doc / **inf** | ⬜ open — unwitnessed and rare; no reported impact |
 
 ### Class B — Fabric rejects, the sidecar accepts (silent divergence)
 
-| Feature | Fabric | SQL Server 2022 | Evidence | Risk |
-|---|---|---|---|---|
-| **Recursive CTE** | **not supported** | supported | doc | High — hierarchy queries pass locally, fail in Fabric |
-| **Triggers** | **not supported** | supported | doc | High |
-| **Materialized views** | not supported | indexed views exist | doc | Medium |
-| **Synonyms** | not supported | supported | doc | Medium |
-| `SET TRANSACTION ISOLATION LEVEL` | not supported | supported | doc | Medium — silently changes semantics |
-| `SET ROWCOUNT` | not supported | supported | doc | Medium |
-| `SELECT … FOR XML` | not supported | supported | doc | Low |
-| `FOR JSON` in a subquery | must be the last operator | unrestricted | doc | Low |
-| `CREATE USER` | not supported | supported | doc | Low |
-| Enforced `PRIMARY KEY` / `UNIQUE` / `FK` | only with `NOT ENFORCED` | fully enforced | doc | **High** — local constraint enforcement you won't get in Fabric |
-| `IDENTITY` seed/increment, `IDENTITY_INSERT`, `ALTER TABLE ADD` identity, non-`BIGINT` identity | not supported | supported | doc | Medium |
-| Queries against system/user tables, multi-column stats, `PREDICT`, `sp_showspaceused`, vector type | not supported | varies | doc | Low |
+Refused by **`-tsql-strict`** (T7) where the ✅ column says so; off by default,
+because refusing them removes capability that works today.
+
+| Feature | Risk if silent | `-tsql-strict` |
+|---|---|---|
+| **Recursive CTE** | High — hierarchy queries pass locally, fail in Fabric | ✅ `recursive-cte` |
+| **Triggers** | High | ✅ `triggers` |
+| Enforced `PRIMARY KEY` / `UNIQUE` / `FK` | **High** — local constraint enforcement you won't get in Fabric | ✅ `enforced-constraint` |
+| **Synonyms** | Medium | ✅ `synonyms` |
+| `SET TRANSACTION ISOLATION LEVEL` | Medium — silently changes semantics | ✅ `set-isolation-level` |
+| `SET ROWCOUNT` | Medium | ✅ `set-rowcount` |
+| `IDENTITY` seed/increment, `IDENTITY_INSERT` | Medium | ✅ `identity-seed`, `identity-insert` |
+| `ALTER TABLE ADD` identity, non-`BIGINT` identity | Medium | ⬜ needs column-type analysis |
+| **Materialized (indexed) views** | Medium | ⬜ needs correlating `CREATE INDEX` with its view, across statements |
+| `SELECT … FOR XML` | Low | ✅ `for-xml` |
+| `CREATE USER` | Low | ✅ `create-user` |
+| Multi-column statistics | Low | ✅ `multi-column-stats` |
+| `PREDICT`, `sp_showspaceused` | Low | ✅ `predict`, `sp-showspaceused` |
+| `FOR JSON` in a subquery | Low | ⬜ needs real parsing to tell from the legal last-operator form |
+| Queries against system/user tables | Low | ⬜ not attempted |
+| Vector data type | Low | n/a — SQL Server 2022 lacks it too, so not a divergence |
+
+Every row is **doc** — stated in Fabric's published surface area. What none of
+them had before T7 was a *witness*: the emulator's behaviour on each is now
+asserted by `TestCheckStrictCorpus`, which pins both what is refused and what
+must be left alone.
 
 ### Class C — agree (no action)
 
