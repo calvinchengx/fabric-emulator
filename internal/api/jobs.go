@@ -37,7 +37,8 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 	// the job's terminal status (overriding fault injection).
 	if it.Type == "DataPipeline" {
 		params, _ := exec["parameters"].(map[string]any)
-		if code := a.runPipeline(wid, it, j.ID, params); code != "" && j.FailWith == "" {
+		trigger, _ := exec["triggerEvent"].(map[string]any)
+		if code := a.runPipelineWith(wid, it, j.ID, params, trigger); code != "" && j.FailWith == "" {
 			j.FailWith = code
 			_ = a.Store.SetJobFailure(it.ID, j.ID, code)
 		}

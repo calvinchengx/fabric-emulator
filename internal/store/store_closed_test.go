@@ -148,6 +148,24 @@ func TestClosedDBErrors(t *testing.T) {
 	if err := s.DeleteItemSchedule("i", "RunNotebook", "x"); err == nil {
 		t.Error("DeleteItemSchedule on closed DB succeeded")
 	}
+	if err := s.CreateEventTrigger(&EventTrigger{ReflexID: "r", EventType: EventFileCreated}); err == nil {
+		t.Error("CreateEventTrigger on closed DB succeeded")
+	}
+	if _, err := s.GetEventTrigger("r", "x"); err == nil {
+		t.Error("GetEventTrigger on closed DB succeeded")
+	}
+	if _, err := s.ListEventTriggers("r"); err == nil {
+		t.Error("ListEventTriggers on closed DB succeeded")
+	}
+	if _, err := s.TriggersForItem("i"); err == nil {
+		t.Error("TriggersForItem on closed DB succeeded")
+	}
+	if err := s.UpdateEventTrigger(&EventTrigger{ReflexID: "r", ID: "x"}); err == nil {
+		t.Error("UpdateEventTrigger on closed DB succeeded")
+	}
+	if err := s.DeleteEventTrigger("r", "x"); err == nil {
+		t.Error("DeleteEventTrigger on closed DB succeeded")
+	}
 	if err := s.CancelJobInstance("i", "x"); err == nil {
 		t.Error("CancelJobInstance on closed DB succeeded")
 	}

@@ -619,5 +619,21 @@
       "go:TestMonthlyOrdinalWeekday",
       "go:TestCronCatchUpIsCappedAndKeepsTheNewest"
     ]
+  },
+  "event-triggers-reflex-data-activator-on-onelake-events": {
+    "section": "Item types present, engine absent",
+    "claim": "**Event triggers** — `Reflex` (Data Activator) on OneLake events",
+    "witnesses": [
+      "go:TestEventTriggerFiresFromARealOneLakeUpload",
+      "go:TestOneLakeWriteFiresTheTriggeredPipeline",
+      "go:TestTriggerEventIsReadableFromTheDefinition",
+      "go:TestTriggerEventIsNullForAManualRun",
+      "go:TestTriggerFiltersOnEventTypeAndSource",
+      "go:TestTriggerCycleIsCut",
+      "go:TestEventTriggerCRUD",
+      "go:TestEventTriggerValidationAndRBAC",
+      "go:TestRenameEmitsItsOwnEventType",
+      "go:TestSafeNavigationAndTriggerEvent"
+    ]
   }
 }
