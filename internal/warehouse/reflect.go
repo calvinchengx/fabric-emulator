@@ -44,8 +44,16 @@ func Reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID string) ([
 // log fingerprint is recorded only AFTER that table reflects successfully, so a
 // login cancelled halfway leaves the finished tables recorded and the rest not.
 // The next attempt resumes instead of restarting, and retries accumulate
-// progress. Once everything is current a login costs one directory listing per
-// table and no SQL at all.
+// progress.
+//
+// A fingerprint alone is NOT enough to skip on, and the first version of this
+// made that mistake. It answers "has the source changed" while the caller needs
+// "is the target ready", and those come apart whenever the target is missing for
+// a reason the Delta log cannot see. The result was worse than what it replaced:
+// a slow, honest `Login timeout expired` became a fast login onto a half-built
+// database and `Invalid object name 'silver_orders'`, which names neither
+// reflection nor the fingerprint. So every skip is now corroborated against what
+// the destination actually contains, and anything uncertain is reflected again.
 //
 // The zero value is a valid, empty Reflector.
 type Reflector struct {
@@ -89,6 +97,22 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 	if err != nil {
 		return nil, err
 	}
+
+	// What is ACTUALLY in the destination right now. One round trip for the
+	// whole item, not one per table.
+	//
+	// A fingerprint answers "has the source changed". The caller needs "is the
+	// target ready", and those differ whenever the target is missing for a
+	// reason the source cannot see — a fresh database, a dropped table, a
+	// reflection that recorded a name and then lost the row. Skipping on the
+	// source alone turned a slow-but-honest login timeout into a fast login
+	// onto a half-built database, and `Invalid object name 'silver_orders'`
+	// names neither reflection nor the fingerprint that caused it.
+	//
+	// Unknown means reflect everything. A redundant bulk copy costs seconds; a
+	// wrong skip costs a missing table and an error that points nowhere.
+	present, known := existingTables(ctx, db)
+
 	var done []string
 	for _, d := range dirs {
 		if !d.IsDir {
@@ -101,12 +125,17 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 			// stray folder under Tables/ has always been.
 			continue
 		}
-		if prev, ok := it.seen[name]; ok && prev == fp {
+		if prev, ok := it.seen[name]; ok && prev == fp && known && present[strings.ToLower(name)] {
 			continue
 		}
 		tbl, err := ReadDeltaTable(st, itemID, name)
 		if err != nil {
-			continue
+			// NOT a skip. deltaFingerprint already proved this is a Delta table
+			// — it found _delta_log commits — so failing to read it now is a
+			// real failure, not the stray-folder case above. Continuing here
+			// let a login report success with a table missing, which is how a
+			// caller ends up querying something that was never created.
+			return done, fmt.Errorf("reflect %q: reading the Delta table: %w", name, err)
 		}
 		if err := reflectTable(ctx, db, name, tbl); err != nil {
 			// Deliberately not recorded: this table must be retried. Tables
@@ -118,6 +147,33 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 		done = append(done, name)
 	}
 	return done, nil
+}
+
+// existingTables lists the base tables in the destination database, lowercased.
+//
+// The second return is whether the answer is TRUSTWORTHY. Anything that goes
+// wrong — no permission on sys.tables, a cancelled context, an engine without
+// it — reports false, and the caller then reflects everything rather than
+// trusting a fingerprint it cannot corroborate. Being wrong in the direction of
+// extra work is the whole point of the flag.
+func existingTables(ctx context.Context, db *sql.DB) (map[string]bool, bool) {
+	rows, err := db.QueryContext(ctx, "SELECT name FROM sys.tables")
+	if err != nil {
+		return nil, false
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, false
+		}
+		out[strings.ToLower(n)] = true
+	}
+	if rows.Err() != nil {
+		return nil, false
+	}
+	return out, true
 }
 
 // deltaFingerprint identifies a Delta table's current state cheaply enough to
