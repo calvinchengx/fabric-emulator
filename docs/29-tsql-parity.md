@@ -11,7 +11,11 @@ builds on (T1–T5).
 - **T7 ✅** — `-tsql-strict` refuses the Class B constructs Fabric rejects that
   the sidecar would otherwise run. Off by default.
 - **T8 ✅** — CTAS becomes `SELECT … INTO`, including inside the `EXEC('…')`
-  dynamic SQL dbt actually ships. Both Class A gaps are closed.
+  dynamic SQL dbt actually ships.
+
+**Class A is empty**: both real gaps are closed, and the one remaining entry was
+found on measurement to have been misclassified. Class B is 10-of-15 refusable
+behind `-tsql-strict`, each exception carrying its reason.
 
 ## Why this doc exists
 
@@ -74,7 +78,6 @@ Primary sources: [T-SQL surface area in Fabric Data Warehouse][sa],
 |---|---|---|---|---|
 | **Nested CTE** (`WITH` inside a CTE body) | supported | rejected, `Msg 156` | doc + **obs** | ✅ **closed (T6)** — flattened to sequential form on the wire, in batches and RPC parameters. Unblocked dbt's `accepted_values` + `relationships` |
 | **CTAS** (`CREATE TABLE AS SELECT`) | supported | not a SQL Server construct (`SELECT … INTO` instead) | doc + **obs** | ✅ **closed (T8)** — rewritten to `SELECT … INTO`, including inside the `EXEC('…')` dbt actually ships. Unblocked `+materialized: table` |
-| `ALTER TABLE` inside an explicit transaction | supported | more restricted | doc / **inf** | ⬜ open — unwitnessed and rare; no reported impact |
 
 ### Class B — Fabric rejects, the sidecar accepts (silent divergence)
 
@@ -105,10 +108,26 @@ them had before T7 was a *witness*: the emulator's behaviour on each is now
 asserted by `TestCheckStrictCorpus`, which pins both what is refused and what
 must be left alone.
 
+**Class A is now empty.** Both entries are closed, and the third — `ALTER TABLE`
+inside an explicit transaction — turned out not to belong here at all; see
+Class C.
+
 ### Class C — agree (no action)
 
 `MERGE` (GA in Fabric), session-scoped `#temp` tables, standard and sequential
 CTEs, views, ordinary DML, `INFORMATION_SCHEMA` / `sys` catalog views.
+
+**`ALTER TABLE` inside an explicit transaction — reclassified from Class A on
+evidence.** The row claimed Fabric supported it while SQL Server was "more
+restricted", tagged **inf**: inferred, never witnessed. Measured against SQL
+Server 2022, the inference was wrong — `ALTER TABLE ADD` inside
+`BEGIN TRANSACTION … COMMIT` succeeds, and after `ROLLBACK` the added column is
+gone, so the engine has full transactional DDL. Fabric documents the same
+support. The two agree; there was never a gap to close.
+
+That is the **inf** tag doing its job: it marked a claim as untrusted, and the
+first time anyone checked, it was false. Any remaining **inf** row here should
+be read the same way — a hypothesis, not a finding.
 
 > **Lakehouse SQL analytics endpoint** is read-only in both Fabric and the
 > emulator (`INSERT`/`UPDATE`/`DELETE` are Warehouse-only) — already enforced by
