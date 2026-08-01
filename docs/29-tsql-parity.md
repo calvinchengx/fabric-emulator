@@ -101,12 +101,16 @@ because refusing them removes capability that works today.
 | `PREDICT`, `sp_showspaceused` | Low | ✅ `predict`, `sp-showspaceused` |
 | `FOR JSON` in a subquery | Low | ⬜ needs real parsing to tell from the legal last-operator form |
 | Queries against system/user tables | Low | ⬜ not attempted |
-| Vector data type | Low | n/a — SQL Server 2022 lacks it too, so not a divergence |
+| Vector data type | Low | n/a — **obs**: SQL Server 2022 rejects `vector(3)` with `Msg 2715, Cannot find data type vector`, so both engines lack it and it is not a divergence |
 
-Every row is **doc** — stated in Fabric's published surface area. What none of
-them had before T7 was a *witness*: the emulator's behaviour on each is now
-asserted by `TestCheckStrictCorpus`, which pins both what is refused and what
-must be left alone.
+Every row's *Fabric* side is **doc** — stated in Microsoft's published surface
+area — with one exception marked inline: the vector row's claim about **SQL
+Server** is **obs**, measured against the engine, because it asserts something
+about the sidecar rather than about Fabric.
+
+What none of these rows had before T7 was a *witness* for the emulator's own
+behaviour. `TestCheckStrictCorpus` now pins both what is refused and what must
+be left alone, so the ✅ column is asserted rather than described.
 
 **Class A is now empty.** Both entries are closed, and the third — `ALTER TABLE`
 inside an explicit transaction — turned out not to belong here at all; see
