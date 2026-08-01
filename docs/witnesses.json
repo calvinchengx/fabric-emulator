@@ -131,6 +131,13 @@
       "go:TestLabelChangesAuditWithDocumentedSchema"
     ]
   },
+  "sensitivity-labels-catalog": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Sensitivity labels → catalog**",
+    "witnesses": [
+      "ci:governance"
+    ]
+  },
   "lineage-catalog-graph": {
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Lineage** (catalog graph)",
