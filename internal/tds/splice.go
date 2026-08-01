@@ -19,6 +19,7 @@ func spliceSession(client, backend net.Conn, readOnly bool) error {
 		if err != nil {
 			return nil // client closed the connection
 		}
+		traceRequest(typ, data)
 		if readOnly && typ == PktSQLBatch && isWriteStatement(sqlBatchQuery(data)) {
 			if err := WriteMessage(client, PktTabular, readOnlyReject()); err != nil {
 				return err

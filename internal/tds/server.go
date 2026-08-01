@@ -126,6 +126,7 @@ func (s *Server) handle(conn net.Conn) error {
 		if err != nil {
 			return nil // client closed the connection
 		}
+		traceRequest(typ, data)
 		if typ != PktSQLBatch {
 			continue
 		}
