@@ -1,0 +1,14 @@
+name: contoso_gold
+version: "1.0.0"
+config-version: 2
+profile: contoso_gold
+model-paths: ["models"]
+test-paths: ["tests"]
+
+# Views: standard T-SQL the SQL Server sidecar runs directly. dbt-fabric's
+# *table* materialization emits Fabric/Synapse CREATE TABLE AS SELECT, which
+# vanilla SQL Server rejects — the sidecar is a stand-in engine, not Fabric's
+# MPP warehouse (docs/16-warehouse-tds.md, scope note).
+models:
+  contoso_gold:
+    +materialized: view

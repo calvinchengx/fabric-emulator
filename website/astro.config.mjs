@@ -66,6 +66,12 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Tutorials',
+          items: [
+            { slug: '28-tutorial-end-to-end' },
+          ],
+        },
+        {
           label: 'Testing',
           items: [
             { slug: '10-testing' },
