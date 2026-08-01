@@ -30,9 +30,17 @@ referenced as (
 
 hierarchy as (
 
+    -- Joined on PRODUCT_ID, not category. The ERP hierarchy carries one row per
+    -- PRODUCT, so category is one-to-many here and joining on it fans the
+    -- dimension out — a product in a category with N products came back N
+    -- times. The `unique` test on product_id caught it (8 duplicates); without
+    -- that test the star would have silently over-counted every measure joined
+    -- through dim_product.
     select
+        h.product_id,
         h.category,
-        h.department
+        h.department,
+        h.segment
     from {{ source('silver', 'bronze_product_hierarchy') }} h
 
 )
@@ -40,10 +48,11 @@ hierarchy as (
 select
     r.product_id,
     c.product_name,
-    c.category,
+    coalesce(c.category, h.category) as category,
     h.department,
+    h.segment,
     case when c.product_id is null then 1 else 0 end as is_uncatalogued
 
 from referenced r
 left join catalogue c on c.product_id = r.product_id
-left join hierarchy h on h.category   = c.category
+left join hierarchy h on h.product_id = r.product_id
