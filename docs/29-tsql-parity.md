@@ -215,20 +215,57 @@ forward*.
   Deliberately *not* done: no understanding of SELECT bodies, which are carried
   as raw text. Also unhandled by design — a nested CTE in the *second* statement
   of a multi-statement batch, since only the leading statement is examined.
-- **T6c — the flattener, with alpha-renaming.** Hoist inner CTEs ahead of their
-  parents in dependency order. **Name shadowing is the correctness trap**:
-  Fabric explicitly permits reusing a CTE name at different nesting levels, and
-  its own documentation demonstrates it —
+- **T6c — the flattener. ✅ Done — refusing shadowed statements rather than
+  renaming them.** `tsql.Flatten` hoists inner CTEs ahead of their parents,
+  depth-first and innermost-first, so every definition precedes its first use
+  once the levels collapse. Sibling order is preserved, so an inner CTE can
+  still reference an earlier sibling of its parent. A statement with nothing to
+  rewrite comes back **byte-identical** with `changed=false`, so the relay
+  forwards the original untouched.
+
+  **On the shadowing trap, the plan offered "rename … or refuse". It refuses,
+  deliberately.** Renaming a CTE means rewriting every *reference* to it, and
+  finding those references needs a real SQL parser, not a lexer — in
+  `WITH cte1 AS (SELECT 1 AS cte1) SELECT cte1 FROM cte1` the same token is a
+  CTE, a column, and a table reference. A token-level substitution cannot tell
+  them apart, and rewriting the wrong one yields a statement that still executes
+  and **returns different rows** — exactly what "never silently approximate"
+  forbids. So shadowed statements return `ShadowedNameError`, naming the CTE and
+  telling the user to rename the inner one. Detection normalises quoting and
+  case, since `[A]`, `"a"` and `a` name the same CTE.
+
+  **Witnessed against a real engine, not just asserted in unit tests.** Five
+  statements — dbt's `accepted_values` shape, simple nesting, three-level
+  nesting, sibling-order dependency, and one with a CTE look-alike inside a
+  string literal — were run through the emulator against SQL Server in both
+  forms:
+
+  | Statement | Original (nested) | Flattened |
+  |---|---|---|
+  | dbt `accepted_values` | rejected, `Msg 156` | **✅ returns 1** (the one out-of-domain row) |
+  | simple nesting | rejected, `Msg 156` | ✅ returns 42 |
+  | three levels | rejected, `Msg 156` | ✅ returns 7 |
+  | literal look-alike | rejected, `Msg 156` | ✅ returns 3 |
+  | sibling order | rejected, `Msg 156` | ✅ returns 5 |
+
+  Each expected value was fixed in advance, so this is **semantic** equivalence
+  — the rewrite returns the answer the original was meant to produce — not
+  merely "the engine accepted it". T6f makes this harness permanent.
+- **T6d — enforce Fabric's own restrictions.** Now carries an obligation T6c
+  created: flattening **widens scope**. Fabric scopes a nested CTE to its
+  immediate higher level, so this — from Microsoft's own documentation — fails
+  on Fabric with `Msg 208, Invalid object name 'inner_cte1_1'`:
 
   ```sql
-  WITH cte1 AS ( WITH inner_1 AS (…) SELECT … ),
-       cte2 AS ( WITH cte1 AS (…) SELECT * FROM cte1 )  -- a DIFFERENT cte1
+  WITH outer_1 AS (WITH inner_cte1_1 AS (…) SELECT …),
+       outer_2 AS (WITH inner_2 AS (…) SELECT … FROM inner_cte1_1, inner_2 …)
+  SELECT * FROM outer_2;   -- inner_cte1_1 belongs to outer_1's scope
   ```
 
-  Naive hoisting collides these two and **silently returns wrong rows**. The
-  flattener must rename shadowed CTEs to fresh names and rewrite references
-  within their scope, or refuse the statement.
-- **T6d — enforce Fabric's own restrictions.** Nested CTEs are `SELECT`-only; no
+  Once flattened, every CTE is visible to the whole statement, so the emulator
+  would **accept** it — a new Class B divergence introduced by the fix. T6d must
+  reject out-of-scope references before flattening. Beyond that: nested CTEs are
+  `SELECT`-only; no
   `OPTION` hints in a nested definition; not usable in `CREATE VIEW`; permitted
   in a CTE subquery definition but **not** a general subquery; no `AS OF`; names
   unique per level; visible only to the immediate higher level. Accepting these
