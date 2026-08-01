@@ -64,6 +64,12 @@ func (d Decimal) String() string {
 type deltaAction struct {
 	Add    *struct{ Path string } `json:"add"`
 	Remove *struct{ Path string } `json:"remove"`
+	// MetaData carries the table's logical schema. Delta matches data files to
+	// it BY NAME, so the Parquet files' physical field order is an
+	// implementation detail — the schema is what a reader must present.
+	MetaData *struct {
+		SchemaString string `json:"schemaString"`
+	} `json:"metaData"`
 }
 
 // ReadParquetBytes reads a single standalone Parquet file's rows into a Table
@@ -80,7 +86,7 @@ func ReadParquetBytes(data []byte) (*Table, error) {
 // write for small tables is supported (JSON commits, no checkpoint yet).
 func ReadDeltaTable(st *store.Store, itemID, name string) (*Table, error) {
 	root := path.Join("Tables", name)
-	active, err := activeFiles(st, itemID, root)
+	active, schemaCols, err := activeFiles(st, itemID, root)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +104,13 @@ func ReadDeltaTable(st *store.Store, itemID, name string) (*Table, error) {
 		if err != nil {
 			return nil, fmt.Errorf("delta table %q: %w", name, err)
 		}
+		// Present the logical schema's column order, not the Parquet file's:
+		// our writer builds the physical schema from a map (alphabetical), and
+		// externally-written files may order differently again. Delta matches by
+		// name, so the metaData schema is the contract every reader should show.
+		if len(schemaCols) > 0 {
+			part = project(part, schemaCols)
+		}
 		if tbl == nil {
 			tbl = &Table{Columns: part.Columns}
 		}
@@ -108,11 +121,11 @@ func ReadDeltaTable(st *store.Store, itemID, name string) (*Table, error) {
 
 // activeFiles replays the _delta_log commits (added minus removed) and returns
 // the active Parquet file paths (relative to the table root), in commit order.
-func activeFiles(st *store.Store, itemID, root string) ([]string, error) {
+func activeFiles(st *store.Store, itemID, root string) ([]string, []string, error) {
 	logDir := path.Join(root, "_delta_log")
 	entries, err := st.ListOneLakePaths(itemID, logDir, false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var commits []string
 	for _, e := range entries {
@@ -121,16 +134,16 @@ func activeFiles(st *store.Store, itemID, root string) ([]string, error) {
 		}
 	}
 	if len(commits) == 0 {
-		return nil, fmt.Errorf("no _delta_log commits under %q", root)
+		return nil, nil, fmt.Errorf("no _delta_log commits under %q", root)
 	}
 	sort.Strings(commits) // 000..0.json ordering is lexicographic
 
-	var order []string
+	var order, schemaCols []string
 	active := map[string]bool{}
 	for _, c := range commits {
 		p, err := st.GetOneLakePath(itemID, c)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, line := range bytes.Split(p.Content, []byte("\n")) {
 			line = bytes.TrimSpace(line)
@@ -139,7 +152,13 @@ func activeFiles(st *store.Store, itemID, root string) ([]string, error) {
 			}
 			var a deltaAction
 			if err := json.Unmarshal(line, &a); err != nil {
-				return nil, fmt.Errorf("bad _delta_log line in %q: %w", c, err)
+				return nil, nil, fmt.Errorf("bad _delta_log line in %q: %w", c, err)
+			}
+			// A later metaData supersedes an earlier one (schema evolution).
+			if a.MetaData != nil {
+				if cols := schemaColumns(a.MetaData.SchemaString); len(cols) > 0 {
+					schemaCols = cols
+				}
 			}
 			switch {
 			case a.Add != nil:
@@ -158,7 +177,48 @@ func activeFiles(st *store.Store, itemID, root string) ([]string, error) {
 			out = append(out, f)
 		}
 	}
-	return out, nil
+	return out, schemaCols, nil
+}
+
+// schemaColumns pulls the field names, in order, out of a Delta metaData
+// schemaString ({"type":"struct","fields":[{"name":…},…]}).
+func schemaColumns(schemaString string) []string {
+	var s struct {
+		Fields []struct {
+			Name string `json:"name"`
+		} `json:"fields"`
+	}
+	if json.Unmarshal([]byte(schemaString), &s) != nil {
+		return nil
+	}
+	cols := make([]string, 0, len(s.Fields))
+	for _, f := range s.Fields {
+		if f.Name != "" {
+			cols = append(cols, f.Name)
+		}
+	}
+	return cols
+}
+
+// project reorders a part's columns onto the table's logical schema, filling a
+// column the part does not carry with nulls. Delta resolves data files to the
+// schema by name; the Parquet field order is not the contract.
+func project(part *Table, cols []string) *Table {
+	idx := make(map[string]int, len(part.Columns))
+	for i, c := range part.Columns {
+		idx[c] = i
+	}
+	out := &Table{Columns: cols, Rows: make([][]any, len(part.Rows))}
+	for r, row := range part.Rows {
+		vals := make([]any, len(cols))
+		for i, c := range cols {
+			if j, ok := idx[c]; ok && j < len(row) {
+				vals[i] = row[j]
+			}
+		}
+		out.Rows[r] = vals
+	}
+	return out
 }
 
 // readParquet reads a Parquet file into a Table (flat schemas — Delta tables

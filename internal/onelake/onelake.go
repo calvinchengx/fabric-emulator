@@ -504,6 +504,11 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Attribute this touch to the notebook cell that made it, when the caller
+	// says which one (see observe.go). Recorded before dispatch so both reads
+	// and writes are seen at one place.
+	s.observe(r, it.ID, rel)
+
 	switch r.Method {
 	case http.MethodPut: // create file/directory, rename, or append/flush
 		// The Hadoop ABFS driver sends append/flush as PUT with an action

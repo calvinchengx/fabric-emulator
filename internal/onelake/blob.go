@@ -140,6 +140,7 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blobKey := it.ID + "|" + rel
+	s.observe(r, it.ID, rel) // notebook-cell attribution; see observe.go
 
 	switch r.Method {
 	case http.MethodPut:
