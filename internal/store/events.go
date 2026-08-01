@@ -34,10 +34,29 @@ type FileEvent struct {
 // writes more files, which emits more events. Cycles are broken by the
 // dispatcher, not here (see internal/api/triggers.go).
 func (s *Store) emitFileEvent(kind, workspaceID, itemID, relPath string) {
-	if s.FileEvents == nil || relPath == "" {
+	if relPath == "" {
 		return
 	}
-	s.FileEvents(FileEvent{Type: kind, WorkspaceID: workspaceID, ItemID: itemID, RelPath: relPath})
+	// Triggers first, synchronously: a Reflex must have fired by the time the
+	// write returns.
+	if s.FileEvents != nil {
+		s.FileEvents(FileEvent{Type: kind, WorkspaceID: workspaceID, ItemID: itemID, RelPath: relPath})
+	}
+	// Observers second, asynchronously — queued and returned from immediately,
+	// because a watching developer must never be able to slow a writer down.
+	s.publish(Event{Kind: KindFile, EventType: kind,
+		WorkspaceID: workspaceID, ItemID: itemID, Path: relPath})
+}
+
+// EmitFileWritten reports that a staged write has completed — the flush step of
+// the ADLS create/append/flush sequence, which is the point the DFS protocol
+// considers a file written and the point Azure raises its own event.
+//
+// The store cannot infer this: mid-sequence the path exists and is simply
+// empty, indistinguishable from an empty file. Only the protocol handler knows
+// the write is finished, so it says so.
+func (s *Store) EmitFileWritten(workspaceID, itemID, relPath string) {
+	s.emitFileEvent(EventFileCreated, workspaceID, itemID, relPath)
 }
 
 // EventTrigger is a Reflex's subscription: an event shape to watch, and the

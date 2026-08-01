@@ -65,10 +65,18 @@ ON CONFLICT(item_id, rel_path) DO UPDATE SET
 	return err
 }
 
-// eventPath is the path a file event carries: empty for a directory, so
-// creating a folder is not reported as a file arriving.
+// eventPath is the path a file event carries — empty when this write is not
+// the arrival of data, so nothing downstream reacts to it.
+//
+// Two cases are not arrivals. A **directory** is obvious. Less obvious: a
+// **zero-length file**, which is how the ADLS protocol *starts* a write —
+// create the path, append the bytes, flush. Firing there would mean a Reflex
+// trigger ran, and a flow event claimed a table landed, while the file was
+// still empty. Azure's own ADLS Gen2 does the same thing: it raises
+// BlobCreated on FlushWithClose, not on the create. The DFS handler emits the
+// real event at flush (see EmitFileWritten).
 func eventPath(p *OneLakePath) string {
-	if p.IsDir {
+	if p.IsDir || len(p.Content) == 0 {
 		return ""
 	}
 	return p.RelPath

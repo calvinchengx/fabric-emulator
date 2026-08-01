@@ -24,7 +24,16 @@ type Store struct {
 	// committed file write, rename, or delete — whoever made it. The server
 	// wires it to the event-trigger dispatcher (internal/api/triggers.go);
 	// nil means nothing subscribes and the emit is a no-op.
+	//
+	// This hook is **synchronous and exactly-once**: a trigger must fire before
+	// the write returns, so a test that writes a file sees the pipeline it
+	// started. The flow bus below has the opposite contract — asynchronous and
+	// lossy — which is why they are separate rather than one mechanism.
 	FileEvents func(FileEvent)
+
+	// bus fans the same events out to observers (the /_emulator/events stream).
+	// See bus.go for why delivery there must never block a writer.
+	bus *bus
 }
 
 // Open opens (creating if needed) the database in dataDir; an empty dataDir
@@ -40,16 +49,23 @@ func Open(dataDir string, ck *clock.Clock) (*Store, error) {
 	}
 	// modernc/sqlite serializes writes; a single conn avoids table locks.
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, Clock: ck}
+	s := &Store{db: db, Clock: ck, bus: newBus()}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
 	}
+	go s.runBus()
 	return s, nil
 }
 
-// Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+// Close stops the flow bus and closes the database. The bus is stopped first
+// and waited for, so no dispatch goroutine is still holding the handle.
+func (s *Store) Close() error {
+	if s.bus != nil {
+		s.bus.stop()
+	}
+	return s.db.Close()
+}
 
 // Now returns the current emulator time (epoch seconds).
 func (s *Store) Now() int64 { return s.Clock.Now() }
