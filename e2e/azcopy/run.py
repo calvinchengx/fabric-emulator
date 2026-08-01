@@ -9,10 +9,18 @@ the driver. stdlib-only orchestrator — azcopy is a static binary and the drive
 needs no Python packages.
 
 Why this suite is Linux-first in CI: azcopy is a Go binary, so it honours
-SSL_CERT_FILE for the emulator's self-signed CA on Linux. The macOS system
-verifier rejects the emulator's long-lived dev cert as "not standards
-compliant" (>825-day validity), so the CI job runs on Linux — same weight
-class as the other real-engine suites (spark, livy, notebook-run)."""
+SSL_CERT_FILE for the emulator's self-signed CA on Linux. The CI job runs on
+Linux — same weight class as the other real-engine suites (spark, livy,
+notebook-run).
+
+On macOS neither half of that holds: Go builds `crypto/x509/root_unix.go` with
+`unix && !darwin`, so SSL_CERT_FILE is ignored and the system trust store is
+consulted instead, and Darwin additionally refuses any leaf valid for more than
+825 days — the emulator's own cert is good for ten years. **mkcert** satisfies
+both, since its CA lives in the keychain and its leaves are short-lived, so this
+suite runs on macOS too once `mkcert -install` has been done. No emulator change
+was needed: fabric already serves `{data-dir}/tls/cert.pem` when present and
+entra takes `TLS_CERT_DIR`."""
 
 import os
 import platform
@@ -29,6 +37,62 @@ import zipfile
 DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(DIR))
 WORK = os.path.join(tempfile.gettempdir(), "azcopy-e2e")
+
+# The emulators' own certs are self-signed with a 10-year life, and Darwin's
+# verifier rejects both properties: SSL_CERT_FILE is ignored there (Go builds
+# crypto/x509/root_unix.go with `unix && !darwin`, so a Go binary like azcopy
+# reads the system trust store instead), and a leaf valid for more than 825 days
+# is refused outright. The failure was also silent and expensive — azcopy
+# retries a rejected TLS handshake indefinitely, so the run sat at
+# "0.0 %, 0 Done, 1 Pending" until an external timeout killed it.
+#
+# mkcert fixes it properly rather than skipping: it keeps a local CA *in the
+# system keychain* — which is what Darwin actually consults — and issues leaves
+# inside the 825-day limit. Both emulators already accept a supplied cert
+# (fabric reads {data-dir}/tls/cert.pem, entra takes TLS_CERT_DIR), so this
+# needs no code change in either: seed the files before they start.
+MKCERT_HOSTS = ["localhost", "127.0.0.1", "fabric-emulator",
+                "api.fabric.microsoft.com",
+                "onelake.dfs.fabric.microsoft.com",
+                "onelake.blob.fabric.microsoft.com"]
+
+
+def mkcert_available():
+    """True when mkcert is installed AND its CA is actually trusted.
+
+    Both halves matter: `mkcert` on PATH without `mkcert -install` issues certs
+    nothing trusts, which would reproduce the original hang.
+    """
+    if not shutil.which("mkcert"):
+        return False
+    if platform.system() != "Darwin":
+        return True
+    # -install puts the CA in the login and System keychains; either is enough
+    # for the system verifier azcopy consults.
+    for kc in ("/Library/Keychains/System.keychain",
+               os.path.expanduser("~/Library/Keychains/login.keychain-db")):
+        found = subprocess.run(["security", "find-certificate", "-c", "mkcert", kc],
+                               capture_output=True)
+        if found.returncode == 0:
+            return True
+    return False
+
+
+def seed_mkcert(tls_dir):
+    """Issue a trusted cert.pem/key.pem pair into tls_dir."""
+    os.makedirs(tls_dir, exist_ok=True)
+    subprocess.run(["mkcert", "-cert-file", os.path.join(tls_dir, "cert.pem"),
+                    "-key-file", os.path.join(tls_dir, "key.pem")] + MKCERT_HOSTS,
+                   check=True, capture_output=True)
+
+
+USE_MKCERT = platform.system() == "Darwin" and mkcert_available()
+if platform.system() == "Darwin" and not USE_MKCERT:
+    print("SKIPPED: azcopy on macOS needs mkcert, because Darwin ignores "
+          "SSL_CERT_FILE and rejects the emulator's 10-year dev cert. Install "
+          "it once and this suite runs here as it does on Linux:\n"
+          "    brew install mkcert && mkcert -install")
+    raise SystemExit(0)
 ENTRA_PORT = os.environ.get("ENTRA_PORT", "18543")
 FABRIC_PORT = os.environ.get("FABRIC_PORT", "19543")
 TENANT = "11111111-1111-1111-1111-111111111111"
@@ -122,6 +186,13 @@ def start(name, cmd, env):
 
 try:
     entra_tls = os.path.join(WORK, "entra-tls")
+    if USE_MKCERT:
+        # Before either process starts: both only generate their own cert when
+        # the files are absent, so seeding first is what makes them serve a
+        # system-trusted chain.
+        log("seeding mkcert certificates (macOS system trust)")
+        seed_mkcert(entra_tls)
+        seed_mkcert(os.path.join(WORK, "data", "tls"))
     log(f"starting entra-emulator on :{ENTRA_PORT} (TLS)")
     start("entra", [entra_bin], {
         **os.environ, "ORIGIN_MODE": "compat", "PORT": ENTRA_PORT, "TLS_ENABLED": "true",
