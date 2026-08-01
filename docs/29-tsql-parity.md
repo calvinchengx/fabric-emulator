@@ -190,11 +190,31 @@ forward*.
   TYPE_INFO, and the length prefix must be recomputed. Only needed for clients
   that parameterize *and* use nested CTEs; until then T6 rejects that
   combination honestly.
-- **T6b — the parser.** A nested-CTE-aware scanner over the `WITH` prefix only:
-  find CTE definitions, their nesting, and their bodies. It must be a real
-  tokeniser (string literals, `[bracketed]` and `"quoted"` identifiers, `--` and
-  `/* */` comments, nested parens) — a regex will corrupt SQL containing the
-  word `with` in a string. It does **not** need to parse SELECT bodies.
+- **T6b — the parser. ✅ Done.** `internal/tsql` — a lexer plus a CTE-list
+  parser, protocol-free (no TDS imports) so it is testable on plain strings and
+  reusable by T8. `Parse` returns `(nil, nil)` for a statement with no `WITH`
+  prefix (the common case, "nothing to do"), a `*Statement` tree for one that
+  has, and an **error rather than a partial parse** for anything malformed or
+  unfamiliar — because the caller's correct response to "I don't fully
+  understand this" is to forward it untouched.
+
+  What the lexer had to get right, each of which defeats a regex: `'it''s'`,
+  `[a]]b]`, `"x""y"`, `N'unicode'`, `--` comments, **nestable** `/* /* */ */`
+  blocks, and parens inside any of them. Two properties are fuzzed
+  (`FuzzTokenize`, ~14M executions clean): it never panics, and its tokens
+  reconstruct the source byte for byte — the invariant that makes offset-based
+  splicing safe.
+
+  **Validated against the real thing.** Pointed at the eight statements dbt
+  actually generated in the failing run (`TSQL_CORPUS=<dir> go test`), the
+  parser flags `accepted_values` as nested and all seven `not_null`/`unique`
+  tests as not — exactly matching which statements SQL Server rejected. Nesting
+  detection is a perfect predictor of the observed failure, which is the
+  precondition for rewriting only what needs rewriting.
+
+  Deliberately *not* done: no understanding of SELECT bodies, which are carried
+  as raw text. Also unhandled by design — a nested CTE in the *second* statement
+  of a multi-statement batch, since only the leading statement is examined.
 - **T6c — the flattener, with alpha-renaming.** Hoist inner CTEs ahead of their
   parents in dependency order. **Name shadowing is the correctness trap**:
   Fabric explicitly permits reusing a CTE name at different nesting levels, and
