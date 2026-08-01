@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """e2e: the ADVANCED medallion track, executed.
 
-Runs `examples/medallion/run_advanced.py` — the whole basic pipeline, then the
+Runs `examples/medallion-pyspark/pipeline.py` — the whole basic pipeline, then the
 steps from 20 up — on the same stack the basic harness brings up. This directory
 holds no pipeline code and no stack definition: the example is the single copy
 of one, and e2e/medallion/docker-compose.yml is the single copy of the other.

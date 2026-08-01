@@ -16,8 +16,8 @@ endpoints differ, passed as environment variables the example already reads. So
 nothing can pass in CI that would fail for a reader typing the steps by hand.
 
 **Each example owns its `pyproject.toml` and `uv.lock`.** Two reasons. It can be
-copied out of this repo and run anywhere — `cp -r examples/medallion ~/mine &&
-cd ~/mine && uv sync && uv run python run_all.py`. And its dependencies
+copied out of this repo and run anywhere — `cp -r examples/medallion-pyspark ~/mine &&
+cd ~/mine && uv sync && uv run python pipeline.py`. And its dependencies
 (pandas, dbt, pyodbc, …) never enter the emulator's own dependency graph, which
 stays about building and testing the emulator.
 
@@ -35,7 +35,7 @@ Start the family from the repo root, then follow the example's README:
 
 ```sh
 docker compose up -d
-cd examples/medallion && uv sync && uv run python run_all.py
+cd examples/medallion-pyspark && uv sync && uv run python pipeline.py
 ```
 
 Or run its CI harness, which does the same thing in containers:

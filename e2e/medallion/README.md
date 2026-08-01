@@ -1,10 +1,10 @@
 # e2e: the medallion tutorial, executed
 
-The CI harness that runs [`examples/medallion`](../../examples/medallion/) — the
+The CI harness that runs [`examples/medallion-pyspark`](../../examples/medallion-pyspark/) — the
 runnable witness for [docs/28-tutorial-end-to-end.md](../../docs/28-tutorial-end-to-end.md).
 
 **This directory contains no pipeline code.** The example is the single copy of
-it: the container runs `examples/medallion/run_all.py`, which executes the same
+it: the container runs `examples/medallion-pyspark/pipeline.py`, which executes the same
 numbered scripts a reader runs by hand. Only the endpoints differ — supplied as
 environment variables the example already reads — so nothing can pass in CI that
 would fail when typed one line at a time.
@@ -95,7 +95,7 @@ that they pass on good data.
 ## Layout
 
 The harness is four files; everything it exercises lives in
-[`examples/medallion`](../../examples/medallion/).
+[`examples/medallion-pyspark`](../../examples/medallion-pyspark/).
 
 - `run.py` — brings the stack up, runs the example, tears it down.
 - `docker-compose.yml` — entra, Key Vault, SQL Server, **Sail**, fabric (TDS on), pipeline.
@@ -105,7 +105,7 @@ item into cells and records a `Pending` run, and an engine executes them and
 reports back. Without a real engine attached, a notebook hop could only be
 play-acted by the client — so the suite runs one.
 - `Dockerfile.pipeline` — python + ODBC Driver 18, then `uv sync --frozen`
-  against **the example's own lockfile** and `COPY examples/medallion/`. The
+  against **the example's own lockfile** and `COPY examples/medallion-pyspark/`. The
   example's dependencies never enter the emulator's dependency graph.
 - `README.md` — this file.
 

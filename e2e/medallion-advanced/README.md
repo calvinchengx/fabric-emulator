@@ -1,7 +1,7 @@
 # e2e: the advanced medallion track, executed
 
 The CI harness for the steps numbered 20 and up in
-[`examples/medallion`](../../examples/medallion/) — the second source system and
+[`examples/medallion-pyspark`](../../examples/medallion-pyspark/) — the second source system and
 everything it forces.
 
 **This directory contains no pipeline code and no stack definition.** It is two
@@ -16,7 +16,7 @@ docker compose \
 
 ## Why a sibling job rather than more steps in the basic one
 
-`run_advanced.py` runs the whole basic pipeline first — the advanced track
+`pipeline.py` runs the whole basic pipeline first — the advanced track
 continues where the tutorial stops, so it inherits its state. Folding it into
 the existing job would have made the basic witness slower and less legible,
 and the basic witness is the one [docs/28](../../docs/28-tutorial-end-to-end.md)

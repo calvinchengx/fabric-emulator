@@ -429,7 +429,7 @@ forward*.
   test fails if the corpus ever stops covering an outcome.
 
   **The e2e now runs dbt's builtins unmodified.**
-  `examples/medallion/gold/models/schema.yml` uses `accepted_values` and
+  `examples/medallion-pyspark/gold/models/schema.yml` uses `accepted_values` and
   `relationships` directly; the two CTE-free singular tests that stood in for
   them are **deleted** (`assert_no_negative_revenue.sql` stays — it is a genuine
   business rule, never a workaround). Adaptation #2 is gone from
@@ -518,7 +518,7 @@ concatenated expression is left alone, since its content is not knowable.
 `OPTION (LABEL = …)` needed no handling — verified directly against SQL Server
 2022, which accepts it.
 
-**Witnessed:** `examples/medallion` now uses `+materialized: table`, so CI
+**Witnessed:** `examples/medallion-pyspark` now uses `+materialized: table`, so CI
 builds real tables through the rewrite — `PASS=13 ERROR=0`, 9/9 steps, DQ gate
 still failing on poisoned data. Adaptation #1 is deleted from
 `e2e/medallion/README.md`, as T6f deleted #2. **Both Class A gaps are now

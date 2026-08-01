@@ -66,7 +66,7 @@ Docs: <https://calvinchengx.github.io/fabric-emulator/> — for a full worked
 example, the [end-to-end tutorial](docs/28-tutorial-end-to-end.md) runs Entra →
 Key Vault → landing → bronze/silver → gold with dbt → semantic model (and
 executes in CI as `e2e/medallion`). The code it walks through is
-[`examples/medallion`](examples/medallion/) — runnable on its own. Reference reading: the
+[`examples/medallion-pyspark`](examples/medallion-pyspark/) — runnable on its own. Reference reading: the
 [architecture](docs/03-architecture.md), the
 [control-plane API](docs/07-control-plane-api.md), [OneLake](docs/08-onelake.md),
 the [roadmap](docs/13-roadmap.md), [real compute](docs/14-real-compute.md), the

@@ -20,13 +20,13 @@ flowchart LR
 ```
 
 **This tutorial is itself a test.** Every script below lives in
-[`examples/medallion/`](../examples/medallion/) and runs end to end in CI via
+[`examples/medallion-pyspark/`](../examples/medallion-pyspark/) and runs end to end in CI via
 [`e2e/medallion`](../e2e/medallion/) — the same files, unmodified, so the
 instructions cannot rot silently. Read the tutorial to understand the flow; run
 it yourself with:
 
 ```bash
-cd examples/medallion && uv sync && uv run python run_all.py
+cd examples/medallion-pyspark && uv sync && uv run python pipeline.py
 ```
 
 or watch the containerized version with `python3 e2e/medallion/run.py`. Each
@@ -43,7 +43,7 @@ suite — this tutorial composes proven paths rather than inventing new ones:
 | Silver → SQL | Delta→SQL reflection on the lakehouse endpoint | [16-warehouse-tds.md](16-warehouse-tds.md) |
 | Gold with dbt | Microsoft's dbt-fabric over TDS + FedAuth (ODBC Driver 18) | `e2e/dbt-fabric` |
 | Semantic model | TMSL definition + `executeQueries` DAX | `e2e/semantic-model`, [18-semantic-model-references.md](18-semantic-model-references.md) |
-| **All of the above, in sequence** | this tutorial, executed | **`examples/medallion` via `e2e/medallion`** |
+| **All of the above, in sequence** | this tutorial, executed | **`examples/medallion-pyspark` via `e2e/medallion`** |
 
 **Honesty box.** The Warehouse engine is a vanilla SQL Server sidecar, not
 Fabric's MPP engine. Where its T-SQL dialect differs from Fabric's, the
@@ -194,7 +194,7 @@ def load():
 ## 2. Provision — workspace, lakehouse, warehouse, identity
 
 ```python
-# 00_provision.py
+# provision.py
 from common import *
 
 ft = token(FABRIC_AUD)
@@ -237,7 +237,7 @@ azure-keyvault-emulator, never in code or config. Two consumers read it:
   the workspace identity.
 
 ```python
-# 01_secret.py
+# secret.py
 from common import *
 
 ensure_app(VAULT_AUD, "Azure Key Vault")
@@ -277,7 +277,7 @@ credential material is write-only, as in real Fabric.
 
 ## 4. Extract → landing
 
-The "source system" ([`source_system.py`](../examples/medallion/source_system.py))
+The "source system" ([`source_system.py`](../examples/medallion-pyspark/source_system.py))
 is a seeded generator that refuses to export without the API key. It emits a
 **customer-360 of 101 columns** at production-like volume, and it is
 deliberately messy so silver has real work to do.
@@ -307,7 +307,7 @@ written through OneLake's Blob dialect (the azurite-style account-prefixed
 path — one `PUT` per file).
 
 ```python
-# 02_extract_load.py
+# extract_load.py
 import datetime
 
 import source_system as src
@@ -351,7 +351,7 @@ shop builds this:
   into a table, and semi-structured input is what a notebook is for.
 
 ```python
-# 03_bronze.py  (see examples/medallion for the full file)
+# bronze.py  (see examples/medallion-pyspark for the full file)
 definition = {"properties": {"activities": [
     {"name": "IngestCustomers", "type": "Copy", "typeProperties": {
         "source": {"type": "DelimitedTextSource", "rootFolder": "Files",
@@ -374,10 +374,10 @@ The emulator parses a Notebook item into ordered cells and records a `Pending`
 run. **It never executes them.** An engine does, and reports the outcome to
 `notebookRunResult`. Real Fabric works the same way with its own Spark pools;
 here the engine is **Sail** (Rust Spark Connect, no JVM), attached to the stack,
-and `04_engine.py` plays the driver:
+and `engine.py` plays the driver:
 
 ```python
-# 04_engine.py — fetch the cells the EMULATOR parsed, run them on Spark, report
+# engine.py — fetch the cells the EMULATOR parsed, run them on Spark, report
 run = S.get(f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}/notebookRun", ...)
 spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
 for c in sorted(run.json()["cells"], key=lambda c: c["index"]):
@@ -402,7 +402,7 @@ Silver applies the rules bronze deliberately does not: latest event wins per
 quarantined into their own table instead of silently dropped.
 
 ```python
-# 05_silver.py
+# silver.py
 import pandas as pd
 from deltalake import DeltaTable, write_deltalake
 from common import *
@@ -464,7 +464,7 @@ extensions, then open this cell script and run it in the Interactive Window
 (`Shift+Enter` on a `# %%` cell):
 
 ```python
-# 06_wrangle.py — run cells in the VS Code Interactive Window
+# wrangle.py — run cells in the VS Code Interactive Window
 # %%
 from deltalake import DeltaTable
 from common import *
@@ -503,7 +503,7 @@ tell you something when there is something to see.
 
 Data Wrangler's operations panel (filter, drop duplicates, change type…)
 **exports the pandas code for each step** — a fast way to prototype the next
-silver rule interactively, then paste the generated code into `05_silver.py`.
+silver rule interactively, then paste the generated code into `silver.py`.
 
 ## 8. Reflect silver into the SQL analytics endpoint
 
@@ -513,7 +513,7 @@ One authenticated connection makes silver queryable T-SQL — and refreshes it
 after every silver rewrite:
 
 ```python
-# 07_reflect.py
+# reflect.py
 import time
 from common import *
 
@@ -769,7 +769,7 @@ good = DeltaTable(url, storage_options=opts).to_pandas()
 write_deltalake(url, pd.concat([good, good.head(1).assign(amount=-5.0)], ignore_index=True),
                 mode="overwrite", storage_options=opts)
 EOF
-uv run python 07_reflect.py
+uv run python reflect.py
 DBT_PROFILES_DIR=. uv run dbt build
 ```
 
@@ -784,7 +784,7 @@ Done. PASS=9 WARN=0 ERROR=1 SKIP=3 NO-OP=0 REUSED=0 TOTAL=13
 data already known to be bad. That is the property you want: a broken contract
 halts the graph instead of propagating into the reporting layer.
 
-Restore silver (`uv run python 05_silver.py && uv run python 07_reflect.py`)
+Restore silver (`uv run python silver.py && uv run python reflect.py`)
 and the build goes green again. That loop — silver rule ↔ gold test — is the
 medallion working as designed, and `e2e/medallion` asserts **both** halves of
 it in CI (green on clean data, red on poisoned) so the gate can't quietly stop
@@ -799,7 +799,7 @@ Direct Lake; the emulator seeds them as a `data.json` definition part
 exported straight from the warehouse gold you just built, closing the loop.
 
 ```python
-# 10_semantic_model.py
+# semantic_model.py
 import base64, json, time
 from common import *
 

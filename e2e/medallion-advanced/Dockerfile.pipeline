@@ -1,4 +1,4 @@
-# Runs examples/medallion-pyspark — the same scripts a reader runs by hand, unmodified.
+# Runs examples/medallion-advanced-pyspark (three source systems) — the same scripts a reader runs by hand, unmodified.
 # pandas + delta-rs write OneLake Delta, the Microsoft ODBC Driver 18 carries
 # FedAuth TDS to the warehouse surface, and Microsoft's real dbt-fabric builds
 # gold. One image runs every hop.
@@ -22,15 +22,16 @@ RUN apt-get update \
 # only the example directory leaves that path dangling and `uv sync --frozen`
 # cannot resolve it.
 COPY examples/contoso-fixtures/ /contoso-fixtures/
+COPY examples/contoso-fixtures-advanced/ /contoso-fixtures-advanced/
 
 # The example owns its dependencies and its lockfile, so CI installs exactly
 # what a reader gets — and the emulator's own dependency graph stays clean of
 # pandas/dbt/pyodbc. Lock first for layer caching, then bring in the code.
 WORKDIR /example
-COPY examples/medallion-pyspark/pyproject.toml examples/medallion-pyspark/uv.lock ./
+COPY examples/medallion-advanced-pyspark/pyproject.toml examples/medallion-advanced-pyspark/uv.lock ./
 RUN uv sync --frozen
 ENV PATH="/example/.venv/bin:${PATH}"
 
-COPY examples/medallion-pyspark/ /example/
+COPY examples/medallion-advanced-pyspark/ /example/
 
 CMD ["python3", "pipeline.py"]

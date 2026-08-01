@@ -1,0 +1,40 @@
+version: 2
+
+# The data-quality contract on gold, written with dbt's own builtins — no
+# emulator-shaped workarounds.
+#
+# `accepted_values` and `relationships` compile to bodies that themselves open
+# with `with`, and dbt-fabric wraps every test body in `with test_main_sql as
+# (…)` — a nested CTE. Fabric Warehouse runs those; vanilla SQL Server rejects
+# them ("Incorrect syntax near the keyword 'with'"). The emulator closes that
+# gap on the wire by flattening the nesting into the sequential form the
+# sidecar accepts, so these tests run here exactly as they would on Fabric.
+# See docs/29-tsql-parity.md (T6).
+models:
+  - name: dim_customer
+    description: "Conformed customer dimension from silver."
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+      - name: country
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["US", "GB", "SG"]   # silver's conformed domain
+  - name: fct_orders
+    description: "Order-grain fact — one row per order after silver's dedupe."
+    columns:
+      - name: order_id
+        tests: [unique, not_null]   # the at-least-once redelivery must be gone
+      - name: amount
+        tests: [not_null]
+      - name: customer_id
+        tests:
+          - relationships:          # every order resolves to a customer
+              to: ref('dim_customer')
+              field: customer_id
+  - name: fct_daily_revenue
+    description: "Reporting aggregate: revenue by day and country."
+    columns:
+      - name: revenue
+        tests: [not_null]

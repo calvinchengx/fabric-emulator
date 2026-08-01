@@ -123,7 +123,7 @@ services:
       SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
       RUST_LOG: "info"
 
-  # Runs examples/medallion unmodified — the same scripts the tutorial teaches.
+  # Runs examples/medallion-pyspark unmodified — the same scripts the tutorial teaches.
   # Only the endpoints differ (compose service names, plain HTTP), supplied by
   # the environment the example already reads.
   pipeline:

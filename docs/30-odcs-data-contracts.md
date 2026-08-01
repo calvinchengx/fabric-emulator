@@ -2,7 +2,7 @@
 
 **Status: mapped, contracts written and schema-valid, not yet enforced.** Three
 [ODCS v3.1.0](https://bitol-io.github.io/open-data-contract-standard/) contracts
-live in [`examples/medallion/contracts/`](../examples/medallion/contracts/) and
+live in [`examples/medallion-pyspark/contracts/`](../examples/medallion-pyspark/contracts/) and
 validate against the standard's own JSON Schema. Nothing checks them against
 reality yet — that is O1–O4 below, and until it exists these files are
 documentation, not a guarantee.
@@ -33,7 +33,7 @@ consumers:
 | Source | authored by the data owner | read from `_delta_log` / TDS |
 | Written | before the data | after the data |
 | Fails when | reality diverges from the promise | never — it just reports |
-| Lives in | `examples/medallion/contracts/*.odcs.yaml` | the catalog service |
+| Lives in | `examples/medallion-pyspark/contracts/*.odcs.yaml` | the catalog service |
 
 That subtraction is the whole reason to bother, and it is what O2 builds.
 
@@ -54,7 +54,7 @@ agreement to write, and a file that pretends otherwise is worse than no file.
 
 ### Why bronze gets no contract
 
-Bronze is defined by [`03_bronze.py`](../examples/medallion/03_bronze.py) as
+Bronze is defined by [`bronze.py`](../examples/medallion-pyspark/bronze.py) as
 "land the raw export into Delta tables, keeping everything — duplicates and the
 malformed row included." Any `unique`, `not_null` or `accepted_values` rule on
 bronze would be a promise the layer exists to *not* make. What is left after
@@ -79,7 +79,7 @@ mapping is what makes the contracts checkable rather than decorative:
 | `domain`, `dataProduct`, `tenant` | workspace / item naming | `tenant: fabric-emulator` marks these as emulator-scoped |
 | `servers` | the emulator's endpoints | `type: azure` + `format: delta` for OneLake; `type: sqlserver` for the TDS surface. `database` is an item **GUID created at run time**, so it is a `${...}` placeholder — a literal would be a lie one run later |
 | `schema` objects/properties | the **real Delta log** (delta-rs) and `INFORMATION_SCHEMA` | the same two sources [`govern_ingest.py`](../scripts/govern_ingest.py) already reads |
-| `quality` | dbt tests in [`gold/models/schema.yml`](../examples/medallion/gold/models/schema.yml) and the asserts in [`05_silver.py`](../examples/medallion/05_silver.py) | mapped rule-by-rule below |
+| `quality` | dbt tests in [`gold/models/schema.yml`](../examples/medallion-pyspark/gold/models/schema.yml) and the asserts in [`silver.py`](../examples/medallion-pyspark/silver.py) | mapped rule-by-rule below |
 | `slaProperties` | landing partition freshness | the example runs daily |
 | `support`, `team`, `roles` | entra principals and workspace roles | only `support` is populated; roles would duplicate what the control plane holds |
 | `authoritativeDefinitions` | docs and code URLs | for a real vendor this is where the **OpenAPI document** goes |
@@ -128,7 +128,7 @@ the only thing keeping those queries from also hard-coding table names.
 Adding these files creates a **third** copy of the same rules:
 
 1. `gold/models/schema.yml` — dbt tests, executed by `dbt build`
-2. `05_silver.py` asserts + `EXPECTED_*` in `source_system.py` — executed by the pipeline
+2. `silver.py` asserts + `EXPECTED_*` in `source_system.py` — executed by the pipeline
 3. `contracts/*.odcs.yaml` — executed by nothing
 
 Three copies of a rule is worse than one copy, because two of them will quietly
@@ -192,7 +192,7 @@ because its provider is external. Two things make that binding concrete:
 
 - **`authoritativeDefinitions` points at the vendor's OpenAPI document**, not at
   a description of it. The stub currently points at
-  [`source_system.py`](../examples/medallion/source_system.py) and says so.
+  [`source_system.py`](../examples/medallion-pyspark/source_system.py) and says so.
 - **The schema is generated from that spec, not typed by hand.** An OpenAPI
   `components.schemas` entry maps to an ODCS object almost one-for-one:
   `properties` → `properties`, `required` → `required: true`, `enum` →
@@ -228,9 +228,9 @@ Stated plainly so nobody goes looking:
 
 ## Files
 
-- [`contracts/landing-contoso-pos.odcs.yaml`](../examples/medallion/contracts/landing-contoso-pos.odcs.yaml) — inbound, from the vendor
-- [`contracts/silver-sales.odcs.yaml`](../examples/medallion/contracts/silver-sales.odcs.yaml) — internal
-- [`contracts/gold-sales.odcs.yaml`](../examples/medallion/contracts/gold-sales.odcs.yaml) — published
+- [`contracts/landing-contoso-pos.odcs.yaml`](../examples/medallion-pyspark/contracts/landing-contoso-pos.odcs.yaml) — inbound, from the vendor
+- [`contracts/silver-sales.odcs.yaml`](../examples/medallion-pyspark/contracts/silver-sales.odcs.yaml) — internal
+- [`contracts/gold-sales.odcs.yaml`](../examples/medallion-pyspark/contracts/gold-sales.odcs.yaml) — published
 
 All three validate against
 [`odcs-json-schema-v3.1.0.json`](https://github.com/bitol-io/open-data-contract-standard/blob/main/schema/odcs-json-schema-v3.1.0.json).

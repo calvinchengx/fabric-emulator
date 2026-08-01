@@ -1,0 +1,31 @@
+# The second and third source systems, shared by the two advanced examples.
+#
+# Separate from `contoso-fixtures` rather than folded into it, because the
+# simple examples have no business generating a web store or an ERP change log —
+# and it DEPENDS on that package rather than restating the POS generator. One
+# seeded generator for Contoso POS, used by all four examples, is the property
+# that makes cross-example comparison meaningful: two copies could drift by a
+# single RNG draw, both examples would still pass their own EXPECTED_* asserts
+# (those being computed from their own generator), and the comparison would
+# report green while comparing two different datasets.
+[project]
+name = "contoso-fixtures-advanced"
+version = "0.1.0"
+description = "Web-store and ERP source fixtures for the advanced medallion examples"
+requires-python = ">=3.12"
+dependencies = [
+    "contoso-fixtures",
+    "pyarrow>=18,<24",  # the ERP feed is Parquet, as a columnar source would be
+]
+
+# Flat modules for the same reason as contoso-fixtures: `import web_store as web`
+# reads better in a walkthrough than a package path.
+[tool.setuptools]
+py-modules = ["web_store", "erp_system", "reference_data"]
+
+[tool.uv.sources]
+contoso-fixtures = { path = "../contoso-fixtures", editable = true }
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
