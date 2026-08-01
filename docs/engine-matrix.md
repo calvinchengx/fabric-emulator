@@ -123,10 +123,11 @@ tests never touch.
 | Python UDF | ✅ | ✅ | ✅ |
 | SQL over a temp view | ✅ | ✅ | ✅ |
 | Filter on a `row_number()` column the `SELECT` drops ᵈ | ✅ | ✅ | ✅ |
+| `CREATE TABLE` with no `USING` defaults to Delta ᵍ | ❌ `Invalid table location: No commit files found in _delta_log` | ❌ `Invalid table location: No commit files found in _delta_log` | ❌ `[NOT_SUPPORTED_COMMAND_WITHOUT_HIVE_SUPPORT] CREATE Hive TABLE (AS SELECT) is not supporte` |
 | `DESCRIBE TABLE` on a registered Delta table ᵉ | ❌ `DESCRIBE returned 0 rows: []` | ❌ `DESCRIBE returned 0 rows: []` | ✅ |
 | `DESCRIBE DETAIL` on a registered Delta table ᶠ | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ✅ |
 
-**10 of 22 capabilities differ between the engines.**
+**10 of 23 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the
 candidate list for upstream Sail contributions.
 
@@ -191,6 +192,23 @@ The medallion models now read columns from
 `run_query("select * from t limit 0").column_names`, which carries the
 schema in the result envelope and never asks the catalog. This row going
 green is what would say that workaround can be dropped.
+
+ᵍ Delta-by-default is a FABRIC property, and this row is red on BOTH
+engines — that is the finding, not a defect in either. dbt-fabricspark's
+file_format_clause macro emits NO clause for exactly one value of
+file_format: `delta`, the one the adapter assumes is the default. So a
+model configured `+file_format: delta` with `+location_root` pointing at
+the lakehouse emitted `create or replace table ... location '...' as ...`
+with no USING, and the lakehouse never received silver while dbt reported
+success. Two rounds of debugging went into a config that was being
+applied correctly the whole time: the same value that proved it was
+applied was the value that suppressed the clause.
+
+Because it is red on the JVM overlay too, the examples'
+fabricspark__file_format_clause override is not a Sail workaround waiting
+for a better engine — it is the price of running dbt-fabricspark anywhere
+that is not Fabric. That is worth knowing before someone deletes it as
+Sail-specific.
 
 ᶠ The same question asked of the OTHER introspection route, and it fails
 the opposite way: `DETAIL` is not in Sail's DESCRIBE grammar at all, so

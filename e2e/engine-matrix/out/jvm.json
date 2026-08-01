@@ -120,6 +120,14 @@
     "status": "pass"
   },
   {
+    "id": "spark.sql_create_table_default_format",
+    "description": "`CREATE TABLE` with no `USING` defaults to Delta \u1d4d",
+    "engine": "jvm",
+    "status": "fail",
+    "error_class": "AnalysisException",
+    "error": "[NOT_SUPPORTED_COMMAND_WITHOUT_HIVE_SUPPORT] CREATE Hive TABLE (AS SELECT) is not supported, if you want to enable it, please set \"spark.sql.catalogImplementation\" to \"hive\".; 'Cre"
+  },
+  {
     "id": "spark.sql_describe_registered_delta",
     "description": "`DESCRIBE TABLE` on a registered Delta table \u1d49",
     "engine": "jvm",
