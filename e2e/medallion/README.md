@@ -77,7 +77,7 @@ CI runs `ubuntu-latest` (native amd64) and pays none of this.
 | 4 | Bronze | 8 customer rows + 8 order events appended to Delta with lineage columns — duplicates and the malformed row kept |
 | 5 | Silver | 7 customers, 6 orders, 1 quarantined; countries conformed to `{US, GB, SG}`; `order_id` unique |
 | 6 | Reflection | connecting to the lakehouse database reflects its Delta into SQL; `GROUP BY` over `silver_orders` returns 6 orders / 701.70 |
-| 7 | Gold | `dbt build` green — 3 view models + 10 DQ tests over TDS via ODBC Driver 18, including dbt's **native `accepted_values` and `relationships`**, which compile to nested CTEs the emulator flattens on the wire ([docs/29](../../docs/29-tsql-parity.md)) |
+| 7 | Gold | `dbt build` green — 3 **table** models + 10 DQ tests over TDS via ODBC Driver 18, including dbt's **native `accepted_values` and `relationships`**, which compile to nested CTEs the emulator flattens on the wire ([docs/29](../../docs/29-tsql-parity.md)) |
 | 8 | DQ gate | poisoning silver with a duplicate + negative-amount order makes `dbt build` **fail**, then restoring it makes gold green again |
 | 9 | Semantic model | TMSL + rows published as a `SemanticModel` item; a DAX query over `executeQueries` returns the same 701.70; a wrong-audience token is rejected with 401 |
 
@@ -99,20 +99,14 @@ The harness is four files; everything it exercises lives in
 
 ## Documented adaptations
 
-1. **dbt materializes views, not tables.** dbt-fabric's `table` materialization
-   emits Fabric/Synapse `CREATE TABLE AS SELECT`, which the vanilla SQL Server
-   sidecar rejects. The sidecar is a stand-in T-SQL engine, not Fabric's MPP
-   warehouse — the same scope note as [`e2e/dbt-fabric`](../dbt-fabric/) and
-   [docs/16](../../docs/16-warehouse-tds.md).
-
-2. **Plain HTTP between services.** All three emulators run with TLS off, as the
+1. **Plain HTTP between services.** All three emulators run with TLS off, as the
    other containerized harnesses do, so none of the five TLS stacks in play (Go,
    Python/requests, rustls behind delta-rs, OpenSSL behind unixodbc, SQL Server)
    needs a CA distributed into it. The default developer stack
    (`docker-compose.yml`) keeps self-signed TLS **on** — mirroring production
    Azure trust is the product's point; it just isn't what this harness tests.
 
-3. **Semantic-model rows are seeded, not Direct Lake.** The model's rows are
+2. **Semantic-model rows are seeded, not Direct Lake.** The model's rows are
    exported from warehouse gold into a `data.json` definition part. Real Fabric
    would Direct-Lake them from OneLake Delta; the emulator's boundary here is
    recorded in [docs/18](../../docs/18-semantic-model-references.md), which also

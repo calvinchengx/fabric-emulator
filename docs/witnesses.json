@@ -568,5 +568,25 @@
       "go:TestRewriteBatchPreservesHeadersAndRoundTrips",
       "boundary:parameter types the RPC walker does not model (TEXT/NTEXT/IMAGE, XML, UDT, SQL_VARIANT) are forwarded untouched rather than rewritten, so a nested CTE alongside one of those is refused by name (docs/29-tsql-parity.md, T6g)"
     ]
+  },
+  "class-b-strict-mode-tsql-strict": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**Class B strict mode** (`-tsql-strict`)",
+    "witnesses": [
+      "go:TestCheckStrictCorpus",
+      "go:TestStrictCorpusCoversEveryFeature",
+      "go:TestStrictModeGatesClassBConstructs",
+      "boundary:indexed ('materialized') views and FOR JSON in a subquery are not enforced — a lexer cannot see them (docs/29-tsql-parity.md, T7)"
+    ]
+  },
+  "ctas-create-table-as-select": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**CTAS** (`CREATE TABLE … AS SELECT`)",
+    "witnesses": [
+      "ci:medallion",
+      "go:TestRewriteCTASCorpus",
+      "go:TestAdaptRewritesCTASInsideEXEC",
+      "go:TestDialectFixRewritesCTAS"
+    ]
   }
 }

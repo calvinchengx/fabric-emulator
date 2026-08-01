@@ -243,3 +243,31 @@ func TestStrictRejectIsInertWhenDisabled(t *testing.T) {
 		t.Fatal("strict check did not run while enabled")
 	}
 }
+
+// T8: a CTAS must reach the sidecar as SELECT … INTO.
+func TestDialectFixRewritesCTAS(t *testing.T) {
+	in := withHeaders(ucs2Bytes("create table dst as select a, b from src where x = 1"))
+	out, reject := dialectFix(PktSQLBatch, in, false)
+	if reject != "" {
+		t.Fatalf("reject: %s", reject)
+	}
+	if got := sqlBatchQuery(out); got != "select a, b into dst from src where x = 1" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// CTAS carried as a parameterized statement is rewritten too.
+func TestDialectFixRewritesCTASInRPC(t *testing.T) {
+	in := spPrepexec("create table dst as select a from src where k = @P1")
+	out, reject := dialectFix(PktRPC, in, false)
+	if reject != "" {
+		t.Fatalf("reject: %s", reject)
+	}
+	req, err := parseRPC(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.params[2].text != "select a into dst from src where k = @P1" {
+		t.Fatalf("got %q", req.params[2].text)
+	}
+}
