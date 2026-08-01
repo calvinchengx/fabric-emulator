@@ -170,6 +170,21 @@ def run_sql(code, g):
                 "evalue": tb[-1] if tb else "error", "traceback": tb}
 
 
+def _remember_location(name, location, schema=None):
+    """Tell delta_ops where a table we just registered lives.
+
+    Tolerant of delta_ops being absent: it is only imported on the Sail/Connect
+    path, and on the JVM overlay Spark resolves names natively so there is
+    nothing to record. A missing module here must not fail a registration that
+    otherwise succeeded.
+    """
+    try:
+        import delta_ops
+    except ImportError:
+        return
+    delta_ops.remember(name, location, schema)
+
+
 def register_tables(session, schema, tables):
     """Declare a lakehouse's Delta tables in this REPL's Spark catalog.
 
@@ -202,6 +217,10 @@ def register_tables(session, schema, tables):
             spark.sql(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{name}` "
                       f"USING delta LOCATION '{loc}'")
             registered.append(name)
+            # Record where it lives so a statement naming this table can be
+            # resolved without asking the engine. Sail cannot answer
+            # DESCRIBE DETAIL at all, and we already know the answer.
+            _remember_location(name, loc, schema)
         except Exception:
             # A folder under Tables/ that is not a readable Delta table is
             # skipped, not fatal — the same tolerance warehouse.Reflect applies.
@@ -229,6 +248,7 @@ def register_tables(session, schema, tables):
                 spark.sql(f"CREATE TABLE IF NOT EXISTS `default`.`{name}` "
                           f"USING delta LOCATION '{loc}'")
                 mirrored.append(name)
+                _remember_location(name, loc, "default")
             except Exception:
                 failed.append(f"default.{name}: "
                               f"{traceback.format_exc().splitlines()[-1]}")
