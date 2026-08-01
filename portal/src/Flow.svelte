@@ -21,8 +21,18 @@
   let link = $state('connecting');
   let dropped = $state(0);
   let kinds = $state({ file: false, table: true, activity: true, job: true });
-  // itemId|Tables/name -> epoch seconds of the last write, for the pulse.
+  // itemId|Tables/name -> client clock (ms) of the last write. Client clock,
+  // not the emulator's: this drives a *visual* decay, and the emulator's clock
+  // can be frozen or advanced by hours, which would make "recent" meaningless.
   let touched = $state({});
+  // Ticks so freshness decays on its own; without it a node stays lit until
+  // some other event happens to re-render the graph.
+  let now = $state(Date.now());
+  let workspace = $state('');
+  let workspaces = $state([]);
+  let selected = $state(null);
+  let detail = $state(null);
+  let detailError = $state('');
   // itemId|Tables/name -> true when an activity writing it failed.
   let broken = $state({});
 
@@ -34,6 +44,25 @@
       .catch((e) => (error = e.message));
   }
   loadLineage();
+
+  api.get('/_emulator/portal/workspaces')
+    .then((r) => (workspaces = r.value || []))
+    .catch(() => {});
+
+  // FRESH_MS is how long a write keeps a node bright. Long enough to notice in
+  // a run, short enough that "recent" still means something afterwards.
+  const FRESH_MS = 10000;
+
+  /** inspect loads what a table holds now — the question that follows "it changed". */
+  function inspect(n) {
+    selected = n;
+    detail = null;
+    detailError = '';
+    if (!n.path.startsWith('Tables/')) return;
+    api.get(`/_emulator/portal/table?itemId=${encodeURIComponent(n.itemId)}&table=${encodeURIComponent(n.path)}`)
+      .then((d) => (detail = d))
+      .catch((e) => (detailError = e.message));
+  }
 
   function nodeKey(itemId, path) {
     return `${itemId}|${path}`;
@@ -74,7 +103,11 @@
     events = [ev, ...events].slice(0, MAX_LOG);
 
     if (ev.kind === 'table') {
-      touched = { ...touched, [nodeKey(ev.itemId, ev.table)]: ev.at };
+      touched = { ...touched, [nodeKey(ev.itemId, ev.table)]: Date.now() };
+      // The open inspector is now stale — the table it describes just changed.
+      if (selected && nodeKey(selected.itemId, selected.path) === nodeKey(ev.itemId, ev.table)) {
+        inspect(selected);
+      }
     }
     if (ev.kind === 'activity' && ev.status === 'Failed') {
       // Mark whatever this activity is known to write. The lineage edge is what
@@ -92,8 +125,10 @@
   }
 
   $effect(() => {
+    const t = setInterval(() => (now = Date.now()), 1000);
     connect();
     return () => {
+      clearInterval(t);
       source?.close();
       source = null;
     };
@@ -104,6 +139,8 @@
     dropped = 0;
     touched = {};
     broken = {};
+    selected = null;
+    detail = null;
   }
 
   // ---- graph layout ----
@@ -163,10 +200,14 @@
     return leaf;
   }
 
+  // Two levels, because they answer different questions: what just changed,
+  // and what this session has written at all.
   function nodeClass(n) {
-    if (broken[n.key]) return 'node broken';
-    if (touched[n.key]) return 'node touched';
-    return 'node';
+    let c = 'node';
+    if (broken[n.key]) c += ' broken';
+    else if (touched[n.key]) c += now - touched[n.key] < FRESH_MS ? ' fresh' : ' written';
+    if (selected && selected.key === n.key) c += ' selected';
+    return c;
   }
 
   function edgePath(l) {
@@ -181,7 +222,9 @@
     return `M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`;
   }
 
-  let shown = $derived(events.filter((e) => kinds[e.kind]));
+  let shown = $derived(
+    events.filter((e) => kinds[e.kind] && (!workspace || e.workspaceId === workspace)),
+  );
 
   function fmt(epoch) {
     return new Date(epoch * 1000).toISOString().replace('T', ' ').slice(11, 19);
@@ -248,7 +291,15 @@
         <path class="link {l.producer?.toLowerCase() || ''}" d={edgePath(l)} />
       {/each}
       {#each graph.nodes as n}
-        <g class={nodeClass(n)} transform="translate({n.x},{n.y})">
+        <g
+          class={nodeClass(n)}
+          transform="translate({n.x},{n.y})"
+          role="button"
+          tabindex="0"
+          aria-label={`Inspect ${n.path}`}
+          onclick={() => inspect(n)}
+          onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && inspect(n)}
+        >
           <rect width="160" height="36" rx="6" />
           <text x="10" y="15">{label(n)}</text>
           <text class="sub" x="10" y="28">{n.item || n.itemId.slice(0, 8)}</text>
@@ -256,14 +307,70 @@
       {/each}
     </svg>
   </div>
+  <p class="muted mt-2">Select a node to see what it holds now.</p>
+{/if}
+
+{#if selected}
+  <div class="panel">
+    <div class="flex flex-wrap items-baseline gap-2">
+      <strong class="text-base">{selected.path}</strong>
+      <span class="muted">{selected.item || selected.itemId}</span>
+      {#if detail && detail.version >= 0}
+        <span class="chip completed">v{detail.version}</span>
+      {/if}
+      {#if detail?.readable}
+        <span class="muted">{detail.rowCount} row{detail.rowCount === 1 ? '' : 's'}</span>
+      {/if}
+    </div>
+
+    {#if detailError}
+      <p class="error mt-2">{detailError}</p>
+    {:else if !selected.path.startsWith('Tables/')}
+      <p class="muted mt-2">
+        A file in OneLake, not a Delta table — the flow stream reports its
+        writes, but there is no schema to read.
+      </p>
+    {:else if detail === null}
+      <p class="muted mt-2">Reading…</p>
+    {:else if !detail.readable}
+      <p class="muted mt-2">Not readable yet: {detail.message}</p>
+    {:else}
+      <div class="graph-scroll mt-3">
+        <table>
+          <thead>
+            <tr>{#each detail.columns as c}<th>{c}</th>{/each}</tr>
+          </thead>
+          <tbody>
+            {#each detail.preview as row}
+              <tr>{#each row as cell}<td class="mono">{cell}</td>{/each}</tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      {#if detail.truncated}
+        <p class="muted mt-2">
+          First {detail.preview.length} of {detail.rowCount} rows.
+        </p>
+      {/if}
+    {/if}
+  </div>
 {/if}
 
 <h2>Events</h2>
-<p class="filters">
+<div class="filters">
   {#each ['file', 'table', 'activity', 'job'] as k}
     <label><input type="checkbox" bind:checked={kinds[k]} /> {k}</label>
   {/each}
-</p>
+  {#if workspaces.length > 1}
+    <label>
+      workspace
+      <select bind:value={workspace} class="w-48">
+        <option value="">all</option>
+        {#each workspaces as w}<option value={w.id}>{w.displayName}</option>{/each}
+      </select>
+    </label>
+  {/if}
+</div>
 
 {#if shown.length === 0}
   <p class="muted">Nothing yet — start a job, or upload a file to OneLake.</p>
@@ -314,9 +421,26 @@
     fill: var(--muted-foreground);
     font-size: 10px;
   }
-  .node.touched rect {
+  .node {
+    cursor: pointer;
+  }
+  .node:focus-visible rect {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  /* Just written: bright. Written earlier this session: a quieter mark, so a
+     finished run still shows its shape without everything shouting. */
+  .node.fresh rect {
     fill: var(--success-bg);
     stroke: var(--success);
+  }
+  .node.written rect {
+    fill: var(--muted);
+    stroke: var(--success);
+  }
+  .node.selected rect {
+    stroke: var(--primary);
+    stroke-width: 2;
   }
   .node.broken rect {
     fill: var(--danger-bg);
