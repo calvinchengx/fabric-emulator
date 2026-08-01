@@ -44,6 +44,14 @@ ADVANCED = [
     ("erp_scd2", "SCD2: the change log becomes a dimension with history"),
     ("resolve", "resolve three customer sets transitively; name who cannot be"),
     ("star_silver", "materialise the resolution + the web order-line grain"),
+    # A SECOND reflect, and it is not redundant. Reflection happens on a
+    # lakehouse LOGIN, so the one in BASIC ran before star_silver existed and
+    # could only carry the tables silver.py wrote. gold_star reads
+    # silver_customer_conformed and silver_customer_xref from the Warehouse by
+    # three-part name, so they have to reach the SQL endpoint too — without
+    # this the star fails on `Invalid object name '<lakehouse GUID>...'`, an
+    # error that names the database and not the missing step.
+    ("reflect", "reflect the resolved tables star_silver just wrote"),
     ("gold_star", "dbt-fabric: the multi-source star, joined in the WAREHOUSE"),
     ("contract_gates", "run the ODCS contracts as gates at every layer"),
     ("tmdl_pbip", "serialise the model as TMDL; lay out a .pbip project"),

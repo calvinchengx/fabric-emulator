@@ -91,7 +91,14 @@ ca.write_text(ssl.get_server_certificate((host, int(port or 443))))
 
 from livy_query import query  # noqa: E402 — after the profile is written
 
+# Where the models must LAND: the lakehouse's Tables/ area, the same place
+# ../medallion-pyspark writes to. Without it dbt materialises into Spark's own
+# warehouse directory and the lakehouse never receives silver.
+onelake_tables = (f"abfs://{st['workspace']}@onelake.dfs.fabric.microsoft.com"
+                  f"/{st['lakehouse']}/Tables")
+
 env = {**os.environ, "DBT_PROFILES_DIR": str(PROJECT), "LAKEHOUSE_NAME": lakehouse_name,
+       "ONELAKE_TABLES": onelake_tables,
        "REQUESTS_CA_BUNDLE": str(ca), "SSL_CERT_FILE": str(ca)}
 t0 = time.time()
 rc = subprocess.run(["dbt", "build"], cwd=PROJECT, env=env).returncode
