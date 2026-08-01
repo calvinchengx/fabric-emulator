@@ -1,8 +1,10 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import tailwindcss from '@tailwindcss/vite';
+import path from 'node:path';
 
 export default defineConfig(({ mode }) => ({
-  plugins: [svelte()],
+  plugins: [tailwindcss(), svelte()],
   base: './',
   build: { outDir: 'dist', emptyOutDir: true },
   server: {
@@ -16,7 +18,12 @@ export default defineConfig(({ mode }) => ({
   // mount in jsdom. In dev/build we must NOT override resolve.conditions — an
   // empty list clobbers Vite's defaults and makes Svelte resolve to its server
   // build (`mount(...)` unavailable → the app never mounts in the browser).
-  resolve: mode === 'test' ? { conditions: ['browser'] } : {},
+  resolve: {
+    // $lib is what shadcn-svelte's components import each other by; this is a
+    // plain Vite app rather than SvelteKit, so the alias is declared here.
+    alias: { $lib: path.resolve('./src/lib') },
+    ...(mode === 'test' ? { conditions: ['browser'] } : {}),
+  },
   test: {
     environment: 'jsdom',
     globals: true,

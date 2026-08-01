@@ -16,13 +16,13 @@ func TestPipelineExpressionEdges(t *testing.T) {
 	ws := seedWorkspace(t, st)
 
 	exprs := []string{
-		`@@esc`,                     // whole-value escape → literal "@esc"
-		`x@@y`,                      // interpolated escape
-		`a@{concat('{','}')}b`,      // braces inside an interpolated expression
-		`@concat('it''s')`,          // escaped quote in a string literal
-		`@{if(true,'x','y')}!`,      // interpolation with trailing text
+		`@@esc`,                        // whole-value escape → literal "@esc"
+		`x@@y`,                         // interpolated escape
+		`a@{concat('{','}')}b`,         // braces inside an interpolated expression
+		`@concat('it''s')`,             // escaped quote in a string literal
+		`@{if(true,'x','y')}!`,         // interpolation with trailing text
 		`@string(createArray(1,2)[1])`, // index into an array
-		`@if(null,'a','b')`,         // null condition → false branch
+		`@if(null,'a','b')`,            // null condition → false branch
 		`@string(equals(coalesce(null,null),null))`, // coalesce of nothing
 		`@string(and(true,false))`,
 		`@string(and(true,true))`,
@@ -30,9 +30,9 @@ func TestPipelineExpressionEdges(t *testing.T) {
 		`@string(or(false,false))`,
 		`@string(equals(true,true))`,
 		`@string(equals(true,false))`,
-		`@string(greater(1,false))`, // bool coerced to 0
-		`@string(empty(1))`,         // length of a number → 0
-		`@string(empty())`,          // no argument at all
+		`@string(greater(1,false))`,                  // bool coerced to 0
+		`@string(empty(1))`,                          // length of a number → 0
+		`@string(empty())`,                           // no argument at all
 		`@string(equals(first(createArray()),null))`, // first of empty
 		`@string(equals(last(createArray()),null))`,  // last of empty
 		`@string(false)`,

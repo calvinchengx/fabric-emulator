@@ -124,3 +124,55 @@ func TestCoercionEdges(t *testing.T) {
 		t.Error("toArray(non-array)")
 	}
 }
+
+// TestSafeNavigationAndTriggerEvent covers the `?.` operator and the
+// TriggerEvent system object it exists for. Fabric's own event-trigger samples
+// are written `@pipeline()?.TriggerEvent?.FileName`, and the point of the '?'
+// is that the *same* definition must also run when started by hand — when
+// there is no trigger event at all.
+func TestSafeNavigationAndTriggerEvent(t *testing.T) {
+	triggered := &evalContext{
+		Parameters: map[string]value{"p": "x"},
+		Trigger: map[string]value{
+			"FileName": "orders.csv", "FolderPath": "Files/landing",
+		},
+	}
+	manual := &evalContext{Parameters: map[string]value{"p": "x"}}
+
+	cases := []struct {
+		ctx  *evalContext
+		expr string
+		want value
+	}{
+		{triggered, "@pipeline()?.TriggerEvent?.FileName", "orders.csv"},
+		{triggered, "@concat(pipeline()?.TriggerEvent?.FolderPath,'/',pipeline()?.TriggerEvent?.FileName)",
+			"Files/landing/orders.csv"},
+		// '?.' also works where '.' would: it is not a different lookup.
+		{triggered, "@pipeline()?.parameters?.p", "x"},
+		// Started by hand: TriggerEvent is absent, so the chain yields null
+		// instead of failing, and interpolation renders it as empty.
+		{manual, "@pipeline()?.TriggerEvent?.FileName", nil},
+		{manual, "file=@{pipeline()?.TriggerEvent?.FileName}", "file="},
+		// A missing member one level down is null too, not an error.
+		{triggered, "@pipeline()?.TriggerEvent?.NoSuchField", nil},
+	}
+	for _, c := range cases {
+		got, err := evalString(c.expr, c.ctx)
+		if err != nil {
+			t.Errorf("%s: %v", c.expr, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s = %v (%T), want %v", c.expr, got, got, c.want)
+		}
+	}
+
+	// Plain '.' keeps failing loudly — safe navigation is opt-in, so a typo in
+	// an ordinary expression is still an error rather than a silent null.
+	if _, err := evalString("@pipeline().TriggerEvent.FileName", manual); err == nil {
+		t.Error("plain '.' on a missing member did not fail")
+	}
+	if _, err := evalString("@pipeline()?.TriggerEvent?.", triggered); err == nil {
+		t.Error("a dangling '?.' did not fail")
+	}
+}

@@ -13,7 +13,14 @@ func callFunc(name string, args []value, ctx *evalContext) (value, error) {
 	switch name {
 	// --- system objects ---
 	case "pipeline":
-		return map[string]value{"parameters": asMap(ctx.Parameters), "globalParameters": map[string]value{}}, nil
+		obj := map[string]value{"parameters": asMap(ctx.Parameters), "globalParameters": map[string]value{}}
+		// Only present when an event trigger started this run — which is why
+		// Fabric's own samples reach it through safe navigation,
+		// `@pipeline()?.TriggerEvent?.FileName`.
+		if ctx.Trigger != nil {
+			obj["TriggerEvent"] = ctx.Trigger
+		}
+		return obj, nil
 	case "variables":
 		if err := arity(name, args, 1); err != nil {
 			return nil, err

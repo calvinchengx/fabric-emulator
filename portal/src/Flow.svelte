@@ -1,0 +1,473 @@
+<script>
+  import { api } from './api.js';
+  import { Button } from '$lib/components/ui/button/index.js';
+
+  // The flow view: the emulator's own event stream, live.
+  //
+  // Two halves that answer different questions. The *graph* answers "what does
+  // this pipeline do" — it comes from recorded lineage, so it is there before
+  // anything runs. The *log* answers "what is happening right now, and what
+  // broke" — it comes from the SSE stream. Nodes light up as table events land
+  // on them, which is what ties the two together.
+
+  const MAX_LOG = 300;
+
+  let events = $state([]);
+  let edges = $state([]);
+  let error = $state('');
+  // Three states, not two: before the first connection resolves we are
+  // *connecting*, and flashing a red "disconnected" in that window would be a
+  // lie the user has to learn to ignore.
+  let link = $state('connecting');
+  let dropped = $state(0);
+  let kinds = $state({ file: false, table: true, activity: true, job: true });
+  // itemId|Tables/name -> client clock (ms) of the last write. Client clock,
+  // not the emulator's: this drives a *visual* decay, and the emulator's clock
+  // can be frozen or advanced by hours, which would make "recent" meaningless.
+  let touched = $state({});
+  // Ticks so freshness decays on its own; without it a node stays lit until
+  // some other event happens to re-render the graph.
+  let now = $state(Date.now());
+  let workspace = $state('');
+  let workspaces = $state([]);
+  let selected = $state(null);
+  let detail = $state(null);
+  let detailError = $state('');
+  // itemId|Tables/name -> true when an activity writing it failed.
+  let broken = $state({});
+
+  let source = null;
+
+  function loadLineage() {
+    api.get('/_emulator/portal/lineage')
+      .then((r) => (edges = r.value || []))
+      .catch((e) => (error = e.message));
+  }
+  loadLineage();
+
+  api.get('/_emulator/portal/workspaces')
+    .then((r) => (workspaces = r.value || []))
+    .catch(() => {});
+
+  // FRESH_MS is how long a write keeps a node bright. Long enough to notice in
+  // a run, short enough that "recent" still means something afterwards.
+  const FRESH_MS = 10000;
+
+  /** inspect loads what a table holds now — the question that follows "it changed". */
+  function inspect(n) {
+    selected = n;
+    detail = null;
+    detailError = '';
+    if (!n.path.startsWith('Tables/')) return;
+    api.get(`/_emulator/portal/table?itemId=${encodeURIComponent(n.itemId)}&table=${encodeURIComponent(n.path)}`)
+      .then((d) => (detail = d))
+      .catch((e) => (detailError = e.message));
+  }
+
+  function nodeKey(itemId, path) {
+    return `${itemId}|${path}`;
+  }
+
+  // Every event kind is subscribed to; filtering happens here so toggling a
+  // checkbox never loses history the stream already delivered.
+  function connect() {
+    if (source) return; // never open a second stream: events would double up
+    source = new EventSource('/_emulator/events');
+    source.onopen = () => {
+      link = 'streaming';
+      error = '';
+    };
+    source.onerror = () => {
+      // EventSource reconnects on its own; onopen will say so.
+      link = 'reconnecting';
+    };
+    source.onmessage = (m) => ingest(m.data);
+    for (const k of ['file', 'table', 'activity', 'job', 'dropped']) {
+      source.addEventListener(k, (m) => ingest(m.data));
+    }
+  }
+
+  function ingest(raw) {
+    let ev;
+    try {
+      ev = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (ev.kind === 'dropped') {
+      dropped += ev.dropped || 0;
+      return;
+    }
+    // Newest first, bounded: an unbounded log is how a long run turns a
+    // debugging tool into a memory leak.
+    events = [ev, ...events].slice(0, MAX_LOG);
+
+    if (ev.kind === 'table') {
+      touched = { ...touched, [nodeKey(ev.itemId, ev.table)]: Date.now() };
+      // The open inspector is now stale — the table it describes just changed.
+      if (selected && nodeKey(selected.itemId, selected.path) === nodeKey(ev.itemId, ev.table)) {
+        inspect(selected);
+      }
+    }
+    if (ev.kind === 'activity' && ev.status === 'Failed') {
+      // Mark whatever this activity is known to write. The lineage edge is what
+      // knows that — the event itself only names the activity.
+      const next = { ...broken };
+      for (const e of edges) {
+        if (e.jobId === ev.jobId && e.activityName === ev.activityName) {
+          next[nodeKey(e.targetItemId, e.targetPath)] = true;
+        }
+      }
+      broken = next;
+    }
+    // A new run may have produced edges the graph has not seen yet.
+    if (ev.kind === 'job' && ev.status !== 'Started') loadLineage();
+  }
+
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now()), 1000);
+    connect();
+    return () => {
+      clearInterval(t);
+      source?.close();
+      source = null;
+    };
+  });
+
+  function clear() {
+    events = [];
+    dropped = 0;
+    touched = {};
+    broken = {};
+    selected = null;
+    detail = null;
+  }
+
+  // ---- graph layout ----
+  //
+  // Nodes are laid out in columns by how far they are from a source, which on a
+  // medallion draws itself: landing → bronze → silver → gold. Depth is computed
+  // by relaxation rather than a topological sort, so a cyclic graph still
+  // renders (bounded by the node count) instead of hanging.
+  let graph = $derived.by(() => {
+    const nodes = new Map();
+    const add = (itemId, item, path) => {
+      const key = nodeKey(itemId, path);
+      if (!nodes.has(key)) {
+        nodes.set(key, { key, itemId, item, path, depth: 0 });
+      }
+      return key;
+    };
+    const links = [];
+    for (const e of edges) {
+      const from = add(e.sourceItemId, e.sourceItem, e.sourcePath);
+      const to = add(e.targetItemId, e.targetItem, e.targetPath);
+      links.push({ from, to, producer: e.producer, activityName: e.activityName });
+    }
+    for (let i = 0; i < nodes.size; i++) {
+      let moved = false;
+      for (const l of links) {
+        const a = nodes.get(l.from);
+        const b = nodes.get(l.to);
+        if (b.depth < a.depth + 1) {
+          b.depth = a.depth + 1;
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    const byDepth = new Map();
+    for (const n of nodes.values()) {
+      const col = byDepth.get(n.depth) || [];
+      col.push(n);
+      byDepth.set(n.depth, col);
+    }
+    const colW = 220;
+    const rowH = 64;
+    for (const [depth, col] of byDepth) {
+      col.forEach((n, i) => {
+        n.x = 20 + depth * colW;
+        n.y = 20 + i * rowH;
+      });
+    }
+    const width = 40 + (Math.max(0, ...[...byDepth.keys()]) + 1) * colW;
+    const height = 40 + Math.max(1, ...[...byDepth.values()].map((c) => c.length)) * rowH;
+    return { nodes: [...nodes.values()], links, width, height };
+  });
+
+  function label(n) {
+    const leaf = n.path.split('/').filter(Boolean).pop() || n.path;
+    return leaf;
+  }
+
+  // Two levels, because they answer different questions: what just changed,
+  // and what this session has written at all.
+  function nodeClass(n) {
+    let c = 'node';
+    if (broken[n.key]) c += ' broken';
+    else if (touched[n.key]) c += now - touched[n.key] < FRESH_MS ? ' fresh' : ' written';
+    if (selected && selected.key === n.key) c += ' selected';
+    return c;
+  }
+
+  function edgePath(l) {
+    const a = graph.nodes.find((n) => n.key === l.from);
+    const b = graph.nodes.find((n) => n.key === l.to);
+    if (!a || !b) return '';
+    const x1 = a.x + 160;
+    const y1 = a.y + 18;
+    const x2 = b.x;
+    const y2 = b.y + 18;
+    const mid = (x1 + x2) / 2;
+    return `M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`;
+  }
+
+  let shown = $derived(
+    events.filter((e) => kinds[e.kind] && (!workspace || e.workspaceId === workspace)),
+  );
+
+  function fmt(epoch) {
+    return new Date(epoch * 1000).toISOString().replace('T', ' ').slice(11, 19);
+  }
+
+  function describe(ev) {
+    switch (ev.kind) {
+      case 'file':
+        return `${ev.eventType?.split('.').pop() || 'File'} ${ev.path}`;
+      case 'table':
+        return `${ev.table} → v${ev.version}` +
+          (ev.rowsAdded ? ` (+${ev.rowsAdded} rows)` : '') +
+          (ev.filesRemoved ? `, ${ev.filesRemoved} file(s) removed` : '');
+      case 'activity':
+        return `${ev.activityName} (${ev.activityType}) ${ev.status}` +
+          (ev.error ? ` — ${ev.error}` : '');
+      case 'job':
+        return `job ${ev.status}` + (ev.failureReason ? ` — ${ev.failureReason}` : '');
+      default:
+        return ev.kind;
+    }
+  }
+
+  function who(ev) {
+    const a = ev.attribution;
+    if (!a) return '';
+    if (a.activityName) return a.activityName;
+    if (a.cellIndex !== undefined && a.cellIndex !== null) return `cell[${a.cellIndex}]`;
+    return a.jobId ? a.jobId.slice(0, 8) : '';
+  }
+</script>
+
+<h1>Data flow</h1>
+<p class="muted">
+  Every byte that moves through OneLake, live. The emulator owns its storage
+  layer, so a write is seen at the source whoever made it — an ADLS client,
+  azcopy, delta-rs, Sail, a Copy activity, the mirror writer. Tail it without a
+  browser with <code>curl -N /_emulator/events</code>.
+</p>
+
+<div class="mt-4 flex flex-wrap items-center gap-2">
+  <span class="chip {link === 'streaming' ? 'completed' : link === 'connecting' ? 'notstarted' : 'failed'}">{link}</span>
+  {#if dropped > 0}
+    <span class="chip failed" title="This browser fell behind; the emulator was never slowed down.">
+      {dropped} event(s) dropped
+    </span>
+  {/if}
+  <Button variant="outline" size="sm" onclick={clear}>Clear</Button>
+  <Button variant="outline" size="sm" onclick={loadLineage}>Reload graph</Button>
+</div>
+
+{#if error}<p class="error">{error}</p>{/if}
+
+<h2>Graph</h2>
+{#if graph.nodes.length === 0}
+  <p class="muted">
+    No lineage recorded yet. Run a pipeline with a Copy activity, or report a
+    notebook run, and its source → target edges appear here.
+  </p>
+{:else}
+  <div class="graph-scroll">
+    <svg width={graph.width} height={graph.height} role="img" aria-label="Data flow graph">
+      {#each graph.links as l}
+        <path class="link {l.producer?.toLowerCase() || ''}" d={edgePath(l)} />
+      {/each}
+      {#each graph.nodes as n}
+        <g
+          class={nodeClass(n)}
+          transform="translate({n.x},{n.y})"
+          role="button"
+          tabindex="0"
+          aria-label={`Inspect ${n.path}`}
+          onclick={() => inspect(n)}
+          onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && inspect(n)}
+        >
+          <rect width="160" height="36" rx="6" />
+          <text x="10" y="15">{label(n)}</text>
+          <text class="sub" x="10" y="28">{n.item || n.itemId.slice(0, 8)}</text>
+        </g>
+      {/each}
+    </svg>
+  </div>
+  <p class="muted mt-2">Select a node to see what it holds now.</p>
+{/if}
+
+{#if selected}
+  <div class="panel">
+    <div class="flex flex-wrap items-baseline gap-2">
+      <strong class="text-base">{selected.path}</strong>
+      <span class="muted">{selected.item || selected.itemId}</span>
+      {#if detail && detail.version >= 0}
+        <span class="chip completed">v{detail.version}</span>
+      {/if}
+      {#if detail?.readable}
+        <span class="muted">{detail.rowCount} row{detail.rowCount === 1 ? '' : 's'}</span>
+      {/if}
+    </div>
+
+    {#if detailError}
+      <p class="error mt-2">{detailError}</p>
+    {:else if !selected.path.startsWith('Tables/')}
+      <p class="muted mt-2">
+        A file in OneLake, not a Delta table — the flow stream reports its
+        writes, but there is no schema to read.
+      </p>
+    {:else if detail === null}
+      <p class="muted mt-2">Reading…</p>
+    {:else if !detail.readable}
+      <p class="muted mt-2">Not readable yet: {detail.message}</p>
+    {:else}
+      <div class="graph-scroll mt-3">
+        <table>
+          <thead>
+            <tr>{#each detail.columns as c}<th>{c}</th>{/each}</tr>
+          </thead>
+          <tbody>
+            {#each detail.preview as row}
+              <tr>{#each row as cell}<td class="mono">{cell}</td>{/each}</tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      {#if detail.truncated}
+        <p class="muted mt-2">
+          First {detail.preview.length} of {detail.rowCount} rows.
+        </p>
+      {/if}
+    {/if}
+  </div>
+{/if}
+
+<h2>Events</h2>
+<div class="filters">
+  {#each ['file', 'table', 'activity', 'job'] as k}
+    <label><input type="checkbox" bind:checked={kinds[k]} /> {k}</label>
+  {/each}
+  {#if workspaces.length > 1}
+    <label>
+      workspace
+      <select bind:value={workspace} class="w-48">
+        <option value="">all</option>
+        {#each workspaces as w}<option value={w.id}>{w.displayName}</option>{/each}
+      </select>
+    </label>
+  {/if}
+</div>
+
+{#if shown.length === 0}
+  <p class="muted">Nothing yet — start a job, or upload a file to OneLake.</p>
+{:else}
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Kind</th><th>What</th><th>By</th></tr>
+    </thead>
+    <tbody>
+      {#each shown as ev (ev.seq)}
+        <tr class={ev.status === 'Failed' ? 'failed-row' : ''}>
+          <td class="mono">{fmt(ev.at)}</td>
+          <td><span class="chip {ev.kind}">{ev.kind}</span></td>
+          <td>{describe(ev)}</td>
+          <td class="mono muted">{who(ev)}</td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+{/if}
+
+<style>
+  @reference '../src/app.css';
+
+  .graph-scroll {
+    @apply overflow-x-auto rounded-lg border bg-card p-2;
+  }
+  .link {
+    fill: none;
+    stroke: var(--border);
+    stroke-width: 1.5;
+  }
+  /* Solid where the emulator moved the bytes itself, dashed where an engine
+     reported the movement — the same distinction lineage records as `producer`. */
+  .link.notebook,
+  .link.notebookobserved {
+    stroke-dasharray: 4 3;
+  }
+  .node rect {
+    fill: var(--muted);
+    stroke: var(--border);
+  }
+  .node text {
+    fill: var(--foreground);
+    font-size: 12px;
+  }
+  .node .sub {
+    fill: var(--muted-foreground);
+    font-size: 10px;
+  }
+  .node {
+    cursor: pointer;
+  }
+  .node:focus-visible rect {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  /* Just written: bright. Written earlier this session: a quieter mark, so a
+     finished run still shows its shape without everything shouting. */
+  .node.fresh rect {
+    fill: var(--success-bg);
+    stroke: var(--success);
+  }
+  .node.written rect {
+    fill: var(--muted);
+    stroke: var(--success);
+  }
+  .node.selected rect {
+    stroke: var(--primary);
+    stroke-width: 2;
+  }
+  .node.broken rect {
+    fill: var(--danger-bg);
+    stroke: var(--danger);
+  }
+  .filters {
+    @apply flex flex-wrap items-center gap-4;
+  }
+  .filters label {
+    @apply m-0 inline-flex items-center gap-1.5 font-normal;
+  }
+  .filters input[type='checkbox'] {
+    @apply m-0 h-4 w-4;
+  }
+  .chip.file {
+    @apply bg-muted text-muted-foreground border-transparent;
+  }
+  .chip.table {
+    @apply bg-[var(--success-bg)] text-success border-transparent;
+  }
+  .chip.activity {
+    @apply bg-[var(--caution-bg)] text-caution border-transparent;
+  }
+  .chip.job {
+    @apply bg-accent text-accent-foreground border-transparent;
+  }
+  .failed-row td {
+    @apply bg-[var(--danger-bg)];
+  }
+</style>

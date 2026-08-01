@@ -32,12 +32,22 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 	if err := a.Store.CreateJobInstance(j); err != nil {
 		return nil, err
 	}
+	a.Store.PublishJobEvent(wid, it.ID, j.ID, jobType, invokeType, store.JobStarted, "")
+	// Announce the outcome for the item types that reach one *now*. A generic
+	// item's status is derived from the clock and never has such a moment, so
+	// nothing further is claimed for it — the stream says only what happened.
+	defer func() {
+		if terminal := a.terminalStatusOf(it, jobType, j); terminal != "" {
+			a.Store.PublishJobEvent(wid, it.ID, j.ID, jobType, invokeType, terminal, j.FailWith)
+		}
+	}()
 	// DataPipeline jobs actually execute: the interpreter runs the definition's
 	// control flow now and records the activity runs; a pipeline failure sets
 	// the job's terminal status (overriding fault injection).
 	if it.Type == "DataPipeline" {
 		params, _ := exec["parameters"].(map[string]any)
-		if code := a.runPipeline(wid, it, j.ID, params); code != "" && j.FailWith == "" {
+		trigger, _ := exec["triggerEvent"].(map[string]any)
+		if code := a.runPipelineWith(wid, it, j.ID, params, trigger); code != "" && j.FailWith == "" {
 			j.FailWith = code
 			_ = a.Store.SetJobFailure(it.ID, j.ID, code)
 		}
@@ -75,6 +85,42 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 		_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
 	}
 	return j, nil
+}
+
+// terminalStatusOf reports the status a job has already reached by the time
+// startJob returns, or "" when its outcome is still clock-derived (a generic
+// item) or awaiting an engine callback (a notebook, a Spark job, an Airflow
+// DAG — each finalised later, by its own reporting path).
+func (a *API) terminalStatusOf(it *store.Item, jobType string, j *store.JobInstance) string {
+	executesNow := it.Type == "DataPipeline" ||
+		(it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish"))
+	if !executesNow {
+		// A notebook or Spark job that failed to even start is terminal now.
+		if j.FailWith != "" && (it.Type == "Notebook" || it.Type == "SparkJobDefinition") {
+			return store.JobFailed
+		}
+		return ""
+	}
+	if j.FailWith != "" {
+		return store.JobFailed
+	}
+	return store.JobCompleted
+}
+
+// publishJobOutcome announces a job's terminal state on the flow stream. Called
+// where an engine reports back — the point a notebook, Spark job, or Airflow
+// DAG actually finishes, which the clock cannot know.
+func (a *API) publishJobOutcome(wid, itemID, jobID, failWith string) {
+	status := store.JobCompleted
+	if failWith != "" {
+		status = store.JobFailed
+	}
+	j, err := a.Store.GetJobInstance(itemID, jobID)
+	jobType, invokeType := "", ""
+	if err == nil {
+		jobType, invokeType = j.JobType, j.InvokeType
+	}
+	a.Store.PublishJobEvent(wid, itemID, jobID, jobType, invokeType, status, failWith)
 }
 
 // createJobInstance runs an item job on demand. 202 with Location pointing at

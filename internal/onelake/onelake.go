@@ -536,7 +536,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		isDir := r.URL.Query().Get("resource") == "directory"
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 64<<20))
 		ifNoneMatch := r.Header.Get("If-None-Match") == "*"
-		err := s.Store.CreateOneLakePath(&store.OneLakePath{
+		err := s.Store.CreateOneLakePathAs(s.attributionOf(r), &store.OneLakePath{
 			WorkspaceID: ws.ID, ItemID: it.ID, RelPath: rel, IsDir: isDir, Content: body,
 		}, ifNoneMatch)
 		if errors.Is(err, store.ErrPathExists) {
@@ -644,7 +644,15 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request, itemID, rel stri
 			// Reads go through to the target, so the local copy is redundant
 			// and would shadow later changes made at the target.
 			_ = s.Store.DeleteOneLakePath(itemID, rel)
+			// The bytes went to the external account, not to OneLake, so no
+			// OneLake file event is raised — nothing landed here.
+			w.Header().Set("Content-Length", "0")
+			w.WriteHeader(http.StatusOK)
+			return
 		}
+		// Flush is where the file becomes real, so it is where triggers fire
+		// and the flow stream reports an arrival — not the empty create above.
+		s.Store.EmitFileWritten(pth.WorkspaceID, itemID, rel, s.attributionOf(r))
 		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(http.StatusOK)
 	default:
