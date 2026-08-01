@@ -9,9 +9,12 @@ The emulator's design bet is that the durable, testable surface is
 *contracts + storage + identity + orchestration*, and those are done for real
 (real signed JWTs, real Delta bytes on disk, real RBAC, a real pipeline
 interpreter, real cross-engine SQL, real Livy high-concurrency session packing).
-The heavyweight or proprietary **compute engines** are either bring-your-own
-(Spark behind the Livy proxy — which is how Fabric itself layers a Livy endpoint
-over Spark) or honestly stubbed.
+The heavyweight or proprietary **compute engines** run by default: `docker
+compose up` auto-loads an override that starts Sail (Spark Connect) and a SQL
+Server sidecar, so Livy sessions, notebook cells and the T-SQL warehouse do real
+work out of the box. What stays 🟠 is the narrower set that needs a *different*
+engine — the JVM overlay, or an opt-in profile — and what cannot be done
+honestly at all is stubbed.
 
 **"Real via our own wire-protocol implementation."** A row is 🟢 **Real** not
 only when an external engine/client does the work, but also when the emulator
@@ -21,8 +24,8 @@ control plane, OneLake's ADLS/Blob surfaces, the Data Pipeline expression
 language + control flow, and the Livy **high-concurrency** session-packing layer
 are all in this category: no engine is being proxied, yet the observable
 contract matches real Fabric because we built the protocol, not a mock of it.
-Where a row's *execution* still needs a heavyweight engine (a REPL's Spark
-statements, a notebook's cells), that part is split out as 🟠 BYO-engine or 🔴.
+Where a row's *execution* needs an engine that is not the default — JVM-only
+Spark surfaces, an opt-in KQL profile — that part is split out as 🟠 or 🔴.
 
 ## Legend
 
@@ -30,7 +33,7 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 |---|---|
 | 🟢 **Real** | Genuine work: real signed JWTs, real bytes on disk, a real engine/client computes, real logic enforced — no pretending. |
 | 🟡 **Emulated** | Faithful API contract + persisted state, but no engine — status is clock-derived / management-only. |
-| 🟠 **Bring-your-own-engine** | Real when a real external engine is attached (Spark via the Livy proxy; notebook cells on the Spark sidecar); contract-only (honest 501) otherwise. |
+| 🟠 **Non-default engine** | Real, but only on an engine that is *not* the default: the JVM Spark overlay (`docker-compose.spark-jvm.yml`) or an opt-in profile such as `--profile rti`. **Not** "bring your own": `docker compose up` already starts Sail and the SQL Server sidecar, so the everyday Spark and T-SQL surfaces are 🟢. |
 | 🔴 **Not implemented** | Honest 501 or absent. |
 
 ## Platform / fundamentals
@@ -83,11 +86,11 @@ statements, a notebook's cells), that part is split out as 🟠 BYO-engine or �
 | Lakehouse item + Tables/Files storage | Full (via OneLake) | 🟢 Real |
 | Notebook authoring / definition round-trip | Full | 🟢 Real |
 | `notebookutils` / `mssparkutils` (fs, credentials, getSecret, lakehouse, runtime) | Functional stdlib shim (`python/notebookutils`) | 🟢 Real |
-| Spark session / statement / batch via the **Livy API** | **Native termination** (`--spark-agent-url`): the emulator implements the Livy contract and drives a persistent statement-executor agent. The default agent is a PySpark Connect client of Sail, not Apache Spark. An external Livy backend remains configurable with `--spark-livy-url` | 🟢 protocol / 🟠 Sail execution |
-| Notebook **cell execution** | The emulator parses and records the notebook run, resolves attached lakehouse/Environment metadata, and Sail executes cells by default. The same fixture runs on Spark 3.5 JVM and proves unqualified `saveAsTable`/`spark.table` bind to OneLake `Tables/` | 🟢 orchestration+binding / 🟠 Sail subset |
-| Livy **High-Concurrency** (5-REPL) sessions | Fabric's packing layer is implemented directly: `sessionTag` packing, 5-REPL cap + spill, independent lifecycle and slot reuse. Statements use Sail by default, so engine compatibility is limited to the Spark Connect subset | 🟢 protocol / 🟠 Sail execution |
-| Environments | Run binding resolves Python requirements, Spark properties, and JAR declarations. Python packages are provisioned per run; config is applied to the real session; JAR-bearing runs explicitly require JVM Spark | 🟢 portable subset / 🟠 engine-specific JARs |
-| Spark Job Definitions | V1 definition/main/arguments/libraries parsing, attached lakehouse+Environment resolution, Pending→Completed/Failed callback lifecycle, and real Sail/JVM execution witness | 🟢 orchestration / 🟠 selected engine |
+| Spark session / statement / batch via the **Livy API** | **Native termination** (`--spark-agent-url`): the emulator implements the Livy contract and drives a persistent statement-executor agent. The default agent is a PySpark Connect client of Sail, not Apache Spark. An external Livy backend remains configurable with `--spark-livy-url` | 🟢 Real (default engine) |
+| Notebook **cell execution** | The emulator parses and records the notebook run, resolves attached lakehouse/Environment metadata, and Sail executes cells by default. The same fixture runs on Spark 3.5 JVM and proves unqualified `saveAsTable`/`spark.table` bind to OneLake `Tables/` | 🟢 Real (default engine; per-capability detail in [engine-matrix.md](engine-matrix.md)) |
+| Livy **High-Concurrency** (5-REPL) sessions | Fabric's packing layer is implemented directly: `sessionTag` packing, 5-REPL cap + spill, independent lifecycle and slot reuse. Statements use Sail by default, so engine compatibility is limited to the Spark Connect subset | 🟢 Real (default engine) |
+| Environments | Run binding resolves Python requirements, Spark properties, and JAR declarations. Python packages are provisioned per run; config is applied to the real session; JAR-bearing runs explicitly require JVM Spark | 🟢 portable subset / 🟠 JAR-bearing runs need the JVM overlay |
+| Spark Job Definitions | V1 definition/main/arguments/libraries parsing, attached lakehouse+Environment resolution, Pending→Completed/Failed callback lifecycle, and real Sail/JVM execution witness | 🟢 orchestration / 🟡 engine execution witnessed at the parse layer only |
 
 ### Notebook code on the default engine (LakeSail's Sail)
 
@@ -101,7 +104,7 @@ statement agent still has its classic-session path. It is also exposed as a
 **user-facing overlay** — `docker compose -f docker-compose.yml -f
 docker-compose.override.yml -f docker-compose.spark-jvm.yml up` swaps the
 statement agent onto it — so the JVM-only rows below are graded 🟠
-(BYO-engine): real with that overlay attached, unavailable on the default
+(🟠 non-default engine): real with that overlay attached, unavailable on the default
 engine. Verified live, not inferred: `sc.parallelize([1,2,3,4]).map(x*2)
 .sum()` returns 20 through the Livy agent, and `spark._jvm.io.delta.tables
 .DeltaTable` resolves.
@@ -128,7 +131,7 @@ engine. Verified live, not inferred: `sc.parallelize([1,2,3,4]).map(x*2)
 |---|---|---|
 | SQL-analytics-endpoint semantics over lakehouse Delta | DuckDB runs real SQL (aggregation / join / filter), e2e | 🟢 Real (engine in e2e) |
 | Warehouse item management | Full | 🟢 Real |
-| **T-SQL over TDS + Entra FedAuth** | Pure-Go TDS front (`internal/tds`) terminates the FedAuth handshake (real Entra token, `database.windows.net` audience), then **byte-splices** the client's post-login session to a real per-item **SQL Server** connection so the engine emits every token itself. Unmodified `go-mssqldb` *and* Microsoft **ODBC Driver 18** (pyodbc) clients connect and run T-SQL — including RPCs, prepared statements, and transactions. Verified against a real SQL Server; Microsoft's real **dbt-fabric** adapter passes `debug`/`seed`/`run`/`test` end-to-end (`e2e/dbt-fabric/`) | 🟢 Real (front) / 🟠 SQL Server sidecar |
+| **T-SQL over TDS + Entra FedAuth** | Pure-Go TDS front (`internal/tds`) terminates the FedAuth handshake (real Entra token, `database.windows.net` audience), then **byte-splices** the client's post-login session to a real per-item **SQL Server** connection so the engine emits every token itself. Unmodified `go-mssqldb` *and* Microsoft **ODBC Driver 18** (pyodbc) clients connect and run T-SQL — including RPCs, prepared statements, and transactions. Verified against a real SQL Server; Microsoft's real **dbt-fabric** adapter passes `debug`/`seed`/`run`/`test` end-to-end (`e2e/dbt-fabric/`) | 🟢 Real (front + default sidecar) |
 | **Lakehouse SQL analytics endpoint — Delta → engine** | The emulator reads the lakehouse's `Tables/<t>` Delta in pure Go and reflects (CREATE+INSERT) it into the sidecar on connect, so `SELECT` hits real OneLake data (matches DuckDB), **read-only** (writes rejected). *Not PolyBase* — SQL Server reading Delta in place is a proven dead-end on the Linux container (a throwaway spike; see [16-warehouse-tds.md](16-warehouse-tds.md)) | 🟢 Real (reflection) |
 | **Warehouse — read-write T-SQL** | Client `CREATE`/`INSERT`/`SELECT` relay straight to the sidecar; the warehouse owns its data (no reflection) | 🟢 Real (relay) |
 | **Fabric SQL Database (`database/`)** — OLTP + OneLake mirror | Same read-write TDS/FedAuth path (its own SQL Server database), plus **mirroring**: `POST …/sqlDatabases/{id}/refreshMirror` snapshots every table to OneLake as **Delta** (real Parquet + `_delta_log`), so Spark / DuckDB / delta-rs query the operational data. Verified with a `go-mssqldb`-writes → mirror → Delta-reads-back e2e (gated). *Continuous/CDC mirroring and write-back-to-Delta are the deferred edge* | 🟢 Real (snapshot mirror) |
@@ -147,7 +150,7 @@ engine. Verified live, not inferred: `sc.parallelize([1,2,3,4]).map(x*2)
 | **ForEach** sequential / parallel (`isSequential`, `batchCount`) | Iterations run in array order (deterministic); the mode sets the reported wall-clock — sequential iterations add, a parallel batch costs its slowest — matching how real Fabric overlaps them | 🟢 Real |
 | List **pagination** (`continuationToken`) | Opt-in via `?maxPageSize` on list endpoints (workspaces, items, capacities, folders, connections, role assignments, shortcuts): returns a page + a `continuationToken`/`continuationUri` when more remain; omitted → the full set | 🟢 Real |
 | **Invoke pipeline** (ExecutePipeline) | Resolves the referenced `DataPipeline` (GUID or name, optional other workspace) and runs it through a fresh interpreter — **real recursive interpretation**, one level deeper on the same engines. `waitOnCompletion` (default) gates the parent on the child's terminal status; parameters flow into the child; a cycle or excessive nesting fails loudly | 🟢 Real |
-| Pipeline → notebook activity (TridentNotebook) | Resolves the notebook reference and creates a **real RunNotebook job instance** the pipeline gates on — the pipeline→jobs linkage is real; the notebook's **cells** execute only on the Spark sidecar (otherwise the job is clock-derived, like any RunNotebook job) | 🟢 Real chain / 🟠 exec |
+| Pipeline → notebook activity (TridentNotebook) | Resolves the notebook reference and creates a **real RunNotebook job instance** the pipeline gates on — the pipeline→jobs linkage is real; the notebook's **cells** execute only on the Spark sidecar (otherwise the job is clock-derived, like any RunNotebook job) | 🟢 Real chain / 🟡 cell execution witnessed at the binding layer only |
 | `queryactivityruns` detail | Full | 🟢 Real |
 | Activity-level lineage | Successful Copy execution persists its resolved workspace/item/path source→sink edge, returns it in activity output, and exposes workspace lineage for OpenMetadata ingestion | 🟢 Real (Copy) |
 | Copy activity — **OneLake → OneLake** | Really moves the bytes through the storage layer: a file, or a directory subtree preserving structure; source/sink locations `{workspaceId?, itemId, path}` are expression-resolved (GUID or name); returns real `filesWritten` / `dataWritten`. External stores / format transformation are out of scope and **fail loudly** | 🟢 Real (in-family) / 🔴 external |
@@ -172,7 +175,7 @@ engine. Verified live, not inferred: `sc.parallelize([1,2,3,4]).map(x*2)
 
 | Fabric area | Emulator | Type |
 |---|---|---|
-| Real-Time Intelligence — Eventhouse / KQL Database (`real-time-intelligence/`) | Full item management (including the default child database an eventhouse creates, and `creationPayload.parentEventhouseItemId`), plus the **Kusto REST protocol** on the eventhouse's published `properties.queryServiceUri` — `/v1/rest/mgmt`, `/v1/rest/query`, `/v2/rest/query` — terminated by the emulator (Kusto-audience bearer, workspace RBAC, one isolated engine database per Fabric KQL Database) and **executed by Microsoft's own KQL engine container** (`kustainer`) when the `rti` profile attaches it. No engine attached → honest 501. [25-rti-kusto.md](25-rti-kusto.md) | 🟡 mgmt / 🟠 exec (BYO Kusto engine) |
+| Real-Time Intelligence — Eventhouse / KQL Database (`real-time-intelligence/`) | Full item management (including the default child database an eventhouse creates, and `creationPayload.parentEventhouseItemId`), plus the **Kusto REST protocol** on the eventhouse's published `properties.queryServiceUri` — `/v1/rest/mgmt`, `/v1/rest/query`, `/v2/rest/query` — terminated by the emulator (Kusto-audience bearer, workspace RBAC, one isolated engine database per Fabric KQL Database) and **executed by Microsoft's own KQL engine container** (`kustainer`) when the `rti` profile attaches it. No engine attached → honest 501. [25-rti-kusto.md](25-rti-kusto.md) | 🟡 mgmt / 🟠 exec (opt-in `--profile rti`) |
 | Real-Time Intelligence — Eventstream (`real-time-intelligence/event-streams/`) | Item management only. The attached Kusto engine is a query/ingest engine with **no streaming ingestion** — a streaming pipeline is a different service, deferred with cause | 🟡 mgmt / 🔴 exec |
 | `CopyJob`, `KQLDashboard`, `KQLQueryset`, `Reflex` (Data Activator), `WarehouseSnapshot` | Typed collections over the generic item surface — create/get/list/patch/delete and definition round-trip, with the collection forcing its type. Type names taken from fabric-docs payloads; **no execution engine** for any of them (a Reflex does not trigger, a Copy Job does not copy) | 🟡 mgmt / 🔴 exec |
 | Mirroring — Mirrored Database (`mirroring/`) | `POST …/mirroredDatabases/{id}/refreshMirror` mirrors an **external** SQL Server source (reached via a Connection with Basic credentials) to OneLake as real Delta — reusing the exact same mirror writer the Fabric SQL Database uses (`warehouse.Mirror`; same code, external source). Proven by a gated e2e: a table seeded directly on an external database (bypassing the emulator's own per-item routing entirely) mirrors and reads back correctly. *Snapshot-on-trigger, not continuous/CDC replication*; other source engines (Snowflake, CosmosDB, on-prem via gateway) are out of scope | 🟢 Real (snapshot mirror, SQL Server sources) |
@@ -210,7 +213,7 @@ contract holds better than any assertion we could write ourselves.
 | PySpark behind the **Livy API** | Spark sessions / statements | 🟢 `e2e/spark`, `e2e/livy`, `e2e/notebook-run` |
 | `notebookutils` | Notebook utility shim | 🟢 `e2e/notebookutils` |
 | `go-mssqldb` | Warehouse/Lakehouse **TDS + FedAuth** | 🟢 `internal/server`, `internal/tds` |
-| **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy HC sessions | 🟠 `e2e/dbt-fabricspark` — debug→seed→run→test on Sail |
+| **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy HC sessions | 🟢 `e2e/dbt-fabricspark` — debug→seed→run→test on Sail |
 | **`dbt-fabric`** (Microsoft) | Warehouse **TDS via ODBC Driver 18** | 🟢 `e2e/dbt-fabric` — debug→seed→run→test through the TDS splice |
 | **`azure-kusto-data`** (Microsoft) + raw Kusto REST, over **`kustainer`** (Microsoft's own KQL engine) | Eventhouse / KQL Database: `/v1/rest/mgmt`, `/v1/rest/query`, `/v2/rest/query` on the published `queryServiceUri` — create table, ingest, query values back, per-database isolation | 🟠 `e2e/rti` — witness of record is CI (amd64). The engine needs AVX2, which Rosetta does not provide, so the default Docker setup on Apple silicon cannot run it; a QEMU x86-64 VM with `--cpu-type max` can, and does ([25-rti-kusto.md](25-rti-kusto.md)) |
 

@@ -1,7 +1,7 @@
 # 24 — Parity completion: what "100% real" would take
 
 The [parity map](parity.md) grades every Fabric capability 🟢 Real / 🟡 Emulated
-/ 🟠 BYO-engine / 🔴 Not implemented. This doc answers the obvious follow-up —
+/ 🟠 non-default engine / 🔴 Not implemented. This doc answers the obvious follow-up —
 *what would it take to make everything 🟢?* — and gives the honest answer:
 
 > **100% is not reachable, ~88–90% is, and three rows should deliberately never
