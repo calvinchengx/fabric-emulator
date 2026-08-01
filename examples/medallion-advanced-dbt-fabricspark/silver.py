@@ -90,6 +90,27 @@ env = {**os.environ, "DBT_PROFILES_DIR": str(PROJECT), "LAKEHOUSE_NAME": lakehou
 t0 = time.time()
 rc = subprocess.run(["dbt", "build"], cwd=PROJECT, env=env).returncode
 build_secs = time.time() - t0
+
+if rc != 0:
+    # Print what the ENGINE was actually asked to run.
+    #
+    # dbt reports the engine's error and the model it came from, but never the
+    # statement itself — so a failure like `attribute Identifier("from") is
+    # missing from the schema` sends you to read the Jinja template, which is a
+    # guess about what the template produced rather than evidence. Two rounds of
+    # diagnosis went into a template that renders correctly in isolation.
+    #
+    # dbt writes the rendered SQL to target/compiled/ before executing it. That
+    # is the artefact worth having in a CI log, because it is the only place the
+    # template's output and the engine's input are the same text.
+    compiled = PROJECT / "target" / "compiled"
+    if compiled.exists():
+        for f in sorted(compiled.rglob("*.sql")):
+            log(f"--- compiled SQL: {f.relative_to(compiled)} ---")
+            print(f.read_text(), flush=True)
+    else:
+        log(f"no compiled SQL under {compiled} — dbt failed before rendering")
+
 assert rc == 0, f"dbt build failed: exit {rc}"
 
 # Read silver back through the same Livy surface dbt used, so the numbers are
@@ -111,6 +132,17 @@ assert n_orders == src.EXPECTED_SILVER_ORDERS, n_orders
 assert n_quarantine == src.EXPECTED_QUARANTINED, n_quarantine
 assert countries == src.EXPECTED_COUNTRIES, countries
 assert n_missing_email > 0, "the missing-email cohort vanished"
+
+# WIDTH, not just row count. silver is the conformed customer-360 and the star's
+# dimensions are a projection of it, so a narrow silver is a correctness failure
+# that every row-count assertion above would pass through untouched.
+#
+# This model builds its projection from adapter.get_columns_in_relation. If that
+# ever returns an empty list the model still compiles to valid SQL — the two
+# computed columns remain — and silver_customers would silently be 2 columns
+# wide instead of 101. Nothing else here would notice.
+n_cols = len(query(f"DESCRIBE TABLE {lakehouse_name}.silver_customers"))
+assert n_cols == src.EXPECTED_CUSTOMER_COLUMNS, (n_cols, src.EXPECTED_CUSTOMER_COLUMNS)
 
 log(f"silver (dbt-fabricspark): {n_customers:,} customers, {n_orders:,} orders, "
     f"{n_quarantine:,} quarantined — built in {build_secs:.1f}s")
