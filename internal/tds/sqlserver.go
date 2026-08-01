@@ -11,6 +11,23 @@ import (
 
 	mssql "github.com/microsoft/go-mssqldb"
 	"github.com/microsoft/go-mssqldb/msdsn"
+	// Registers the "np" (named pipe) protocol with msdsn, and only when
+	// GOOS=windows — the init is a no-op everywhere else, so this costs nothing
+	// on Linux or macOS.
+	//
+	// Without it msdsn.Parse does NOT reject a named-pipe DSN. It degrades to
+	// the TCP parser, which splits on the first backslash and returns no error:
+	//
+	//	server=np:\\.\pipe\LOCALDB#659D5BB9\tsql\query
+	//	  -> Host "np:", Instance `\.\pipe\LOCALDB#659D5BB9\tsql\query`, Protocols [tcp]
+	//
+	// The emulator then tries a SQL Browser lookup for an "instance" that is
+	// really a pipe path, on a "host" that is really a protocol prefix, and
+	// fails at connect time with an error that names neither. Silent
+	// misparsing, not a parse failure — which is why this import is load-bearing
+	// rather than cosmetic. See internal/testsupport/mssql.go, which needs the
+	// same registration for the tests that open SQL Server directly.
+	_ "github.com/microsoft/go-mssqldb/namedpipe"
 )
 
 // dbKey carries the target database (a Fabric item id) through the query
