@@ -46,7 +46,7 @@ is [26-platform-setup.md](26-platform-setup.md).
 ## 1. Start the family — one command
 
 ```bash
-docker compose up          # or: make up
+docker compose up          # or: make up (which also adds OpenMetadata)
 ```
 
 That single command brings up the whole emulator family **with Spark-compatible
@@ -254,6 +254,8 @@ get the same switch via `eval "$(python -m fabric_target env real)"`.
 
 ## Where next
 
+- Change engine, go lite, or point at real Fabric:
+  [running modes](27-running-modes.md).
 - Point the **real `fabric-cicd` tool** at the emulator:
   [testing with fabric-cicd](11-testing-with-fabric-cicd.md).
 - Freeze time and inject faults: [testing](10-testing.md).

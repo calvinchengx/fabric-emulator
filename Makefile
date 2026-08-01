@@ -46,7 +46,7 @@ endif
 PY ?= $(shell if command -v uv >/dev/null 2>&1; then echo "uv run --frozen --no-sync python"; \
 	else for c in python3 python py; do if "$$c" -c '' >/dev/null 2>&1; then echo "$$c"; break; fi; done; fi)
 
-.PHONY: help doctor up down restart clean status status-spark spark logs ps seed test
+.PHONY: help doctor up up-lite up-jvm down restart clean status status-spark spark logs ps seed test
 
 help: ## Show the available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -57,6 +57,12 @@ doctor: ## Check the toolchain and the docker context this Makefile needs
 
 up: ## Start the whole stack in the background
 	$(COMPOSE) up -d
+
+up-lite: ## Contract-only pair — no compute sidecars, honest 501s on Spark/SQL
+	docker compose -f docker-compose.yml up -d
+
+up-jvm: ## Swap the default Sail engine for JVM Spark (RDD, streaming sinks, JVM UDFs)
+	docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.spark-jvm.yml up -d
 
 down: ## Stop and remove containers (volumes SURVIVE)
 	$(COMPOSE) down
