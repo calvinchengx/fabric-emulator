@@ -12,16 +12,15 @@ lineage. The emulator records those edges verbatim; it never parses the
 notebook's code to guess what it touched.
 """
 import io
-import os
 import time
 from contextlib import redirect_stdout
 
-from common import FABRIC, S, fabric_headers, load, log
+from common import FABRIC, S, SPARK_REMOTE, fabric_headers, load, log
 
 st = load()
 jid, nb = st["orders_job"], st["orders_notebook"]
-remote = os.environ.get("SPARK_REMOTE")
-assert remote, "SPARK_REMOTE is unset — no Spark engine is attached to run the notebook"
+remote = SPARK_REMOTE
+assert remote, "SPARK_REMOTE is empty — no Spark engine is attached to run the notebook"
 
 # The cells the EMULATOR parsed, not the source we uploaded: the run is what an
 # engine is asked to execute.
