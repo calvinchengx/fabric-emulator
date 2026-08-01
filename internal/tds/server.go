@@ -146,7 +146,16 @@ func (s *Server) handle(conn net.Conn) error {
 			}
 			continue
 		}
-		resp := s.runQuery(targetDB, query)
+		// Same dialect adaptation as the splice path, so the re-encode relay and
+		// the byte-forwarding relay agree on what they accept.
+		fixed, reject := dialectFix(typ, data)
+		if reject != "" {
+			if err := WriteMessage(conn, PktTabular, dialectReject(reject)); err != nil {
+				return err
+			}
+			continue
+		}
+		resp := s.runQuery(targetDB, sqlBatchQuery(fixed))
 		if err := WriteMessage(conn, PktTabular, resp); err != nil {
 			return err
 		}

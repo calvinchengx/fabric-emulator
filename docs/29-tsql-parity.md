@@ -299,9 +299,47 @@ forward*.
   is a false positive. That costs a refused statement (loud, Class A) rather
   than a wrong answer (silent, Class B), which is the direction this document
   asks for.
-- **T6e — re-encode.** Rebuild the SQLBatch payload: preserve the ALL_HEADERS
-  block verbatim, re-encode the rewritten text as UTF-16LE, and recompute packet
-  framing. Oversized batches must chunk correctly.
+- **T6e — re-encode, and connect it to the wire. ✅ Done.**
+  `internal/tds/dialect.go` is the single place the emulator alters a client's
+  SQL, and it implements the three outcomes this document demands:
+
+  - **rewrite** — a nested CTE is flattened and re-encoded;
+  - **reject** — anything Fabric itself refuses, or that cannot be flattened
+    faithfully, is answered with a TDS error naming the limitation;
+  - **forward** — everything else passes through **byte-identical**, including
+    statements the parser fails on. "I don't understand this" must never become
+    "I'll guess".
+
+  `rewriteBatch` copies the ALL_HEADERS block verbatim (it describes the
+  request, not the statement) and re-encodes the text as UTF-16LE; framing is
+  left to `WriteMessage`, which already chunks, so a rewrite that grows past one
+  packet goes out correctly (tested at 20 kB). Wired into **both** request paths
+  — the byte-forwarding splice relay and the re-encode stub loop — so the two
+  agree on what they accept.
+
+  Per T6a, a nested CTE arriving inside `sp_prepexec`/`sp_executesql` is
+  rejected by name rather than left to surface as a bare `Msg 156`. The
+  statement text is recovered with the tracer's heuristic, which is *only* ever
+  used to reject, and only when the recovered text genuinely parses as a
+  nested-CTE statement — garbage does not parse, so a misread yields no
+  rejection rather than a wrong one.
+
+  **The witness: dbt's native builtins now pass.** Restoring `accepted_values`
+  and `relationships` to the medallion project — the two tests this whole
+  milestone chain exists for — and running the full e2e:
+
+  ```
+  accepted_values_dim_customer_country__…                     PASS
+  relationships_fct_orders_customer_id__customer_id__ref_…    PASS
+  Done. PASS=15 WARN=0 ERROR=0 SKIP=0 TOTAL=15
+  ==> medallion pipeline complete: 9/9 steps passed
+  ```
+
+  Zero `Msg 156` anywhere in the session, and the DQ gate still bites when the
+  data is poisoned (`PASS=11 ERROR=1`), so the tests are real rather than
+  vacuously green. Adaptation #2 in `e2e/medallion/README.md` is now removable —
+  left in place until **T6f** makes this harness permanent rather than a
+  hand-run overlay.
 - **T6f — witnesses.** Unit tests over a golden corpus of nested-CTE statements
   (including the shadowing case, comment/literal traps, and every rejection in
   T6d), plus a gated e2e running the *unmodified* dbt builtins end to end. The

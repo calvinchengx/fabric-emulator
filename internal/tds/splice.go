@@ -26,7 +26,17 @@ func spliceSession(client, backend net.Conn, readOnly bool) error {
 			}
 			continue
 		}
-		if err := WriteMessage(backend, typ, data); err != nil {
+		// Adapt the statement's dialect where Fabric and the sidecar disagree:
+		// a nested CTE is flattened, anything Fabric itself refuses is rejected
+		// here rather than executed (docs/29-tsql-parity.md).
+		fixed, reject := dialectFix(typ, data)
+		if reject != "" {
+			if err := WriteMessage(client, PktTabular, dialectReject(reject)); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := WriteMessage(backend, typ, fixed); err != nil {
 			return err
 		}
 		rtyp, rdata, err := ReadMessage(backend)
