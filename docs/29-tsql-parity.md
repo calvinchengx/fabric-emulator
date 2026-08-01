@@ -184,12 +184,44 @@ forward*.
     UCS-2 decoding of it must scan both parities (learned by getting it wrong:
     the first trace showed `text="*"` for a statement that was plainly there).
 
-- **T6g — RPC-carried statements (deferred).** Parse `sp_prepexec` /
-  `sp_executesql` / `sp_prepare` parameters, rewrite the statement parameter,
-  and re-encode with corrected lengths. Bounded but real work: parameters carry
-  TYPE_INFO, and the length prefix must be recomputed. Only needed for clients
-  that parameterize *and* use nested CTEs; until then T6 rejects that
-  combination honestly.
+- **T6g — RPC-carried statements. ✅ Done.** `internal/tds/rpc.go` walks an RPC
+  parameter list, finds the parameter carrying the statement, rewrites it and
+  re-encodes with corrected lengths — closing the gap T6a found and T6e could
+  only name.
+
+  **Written to a stricter rule than the rest of T6, because the blast radius is
+  larger.** A SQLBatch is one length-prefixed string; an RPC is a parameter list
+  where every element must be measured exactly to reach the next, and a wrong
+  width silently mis-frames everything after it. So:
+
+  - any parameter type this file does not model → give up, forward untouched
+    (TEXT/NTEXT/IMAGE, XML, UDT, `SQL_VARIANT` are all unmodelled);
+  - any inconsistency while walking → give up, forward untouched;
+  - after rewriting, the result is **re-parsed and compared with the original**:
+    every other parameter must be byte-identical and the rewritten one must
+    decode to exactly the SQL intended. If not, the original is forwarded.
+
+  The failure mode of a bug is therefore *"the rewrite doesn't happen"*, never
+  *"a corrupted request reaches the engine"*. When the parameter list cannot be
+  measured at all, T6e's named rejection remains as the fallback, so the user
+  still learns the cause instead of meeting a bare `Msg 156`.
+
+  A rewrite that outgrows the parameter's declared maximum widens it to
+  `nvarchar(max)` (PLP) rather than truncating — though in practice flattening
+  *shrinks* a statement, since it removes a `WITH` keyword and a paren pair.
+
+  **Witnessed against the real ODBC driver**, with values fixed in advance:
+
+  | Statement (parameterized → RPC `sp_prepexec`) | Result |
+  |---|---|
+  | nested CTE with a bound parameter | ✅ 20 |
+  | three-level nesting with a bound parameter | ✅ 50 |
+  | sequential CTE (must stay untouched) | ✅ 50 |
+  | plain `SELECT` (must stay untouched) | ✅ 30 |
+
+  Backed by a truncation sweep (every prefix of a valid message either fails to
+  parse or round-trips exactly) and `FuzzParseRPC` — 1.8M executions clean on
+  the invariant that anything the parser accepts re-serialises byte for byte.
 - **T6b — the parser. ✅ Done.** `internal/tsql` — a lexer plus a CTE-list
   parser, protocol-free (no TDS imports) so it is testable on plain strings and
   reusable by T8. `Parse` returns `(nil, nil)` for a statement with no `WITH`
