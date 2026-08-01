@@ -82,6 +82,13 @@ func (a *API) livyMgr() *livyManager {
 
 // agentPost calls the Spark agent's JSON endpoint.
 func (a *API) agentPost(path string, body any) (map[string]any, error) {
+	// A nil agent here used to dereference and panic, which net/http turns into
+	// a closed connection with no response — the client sees only
+	// "Remote end closed connection without response" and nothing names the
+	// cause. An error is recoverable and says what happened.
+	if a.livyAgent == nil {
+		return nil, fmt.Errorf("no Spark agent configured")
+	}
 	u := *a.livyAgent
 	u.Path = strings.TrimRight(u.Path, "/") + path
 	b, _ := json.Marshal(body)
@@ -165,6 +172,9 @@ func (a *API) createLivySession(w http.ResponseWriter, r *http.Request, m *livyM
 }
 
 func (a *API) agentGet(path string) (map[string]any, error) {
+	if a.livyAgent == nil {
+		return nil, fmt.Errorf("no Spark agent configured")
+	}
 	u := *a.livyAgent
 	u.Path = strings.TrimRight(u.Path, "/") + path
 	resp, err := a.hcClient().Get(u.String())
