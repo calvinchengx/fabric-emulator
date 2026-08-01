@@ -17,6 +17,7 @@ import (
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/calvinchengx/fabric-emulator/internal/tds"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 	"github.com/microsoft/go-mssqldb/msdsn"
 )
@@ -29,6 +30,17 @@ func TestRefreshMirroredDatabaseE2E(t *testing.T) {
 	cfg, err := msdsn.Parse(dsn)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A MirroredDatabase names its source by HOST in connectionDetails, and
+	// mirror.go builds a sqlserver:// URL from it. A named-pipe DSN parses with
+	// no host at all — the pipe lives in ProtocolParameters — so the source
+	// simply cannot be expressed in that shape. That is faithful to Fabric,
+	// where a mirrored source is always a hostname, so this skips rather than
+	// pretending: the Windows LocalDB leg reaches SQL Server over a pipe.
+	if cfg.Host == "" {
+		t.Skipf("%s addresses SQL Server without a host (a named pipe); a "+
+			"MirroredDatabase source is a hostname, so it cannot be expressed",
+			testsupport.DSNEnv)
 	}
 	host := cfg.Host
 	if cfg.Port != 0 {
@@ -47,7 +59,11 @@ func TestRefreshMirroredDatabaseE2E(t *testing.T) {
 	if _, err := master.DB("").ExecContext(ctx, "IF DB_ID('"+extDB+"') IS NULL CREATE DATABASE ["+extDB+"]"); err != nil {
 		t.Fatal(err)
 	}
-	tblDSN := fmt.Sprintf("sqlserver://%s:%s@%s?database=%s&encrypt=disable", cfg.User, cfg.Password, host, extDB)
+	// Rewrite the DSN we were GIVEN rather than rebuilding one from cfg.Host:
+	// a named-pipe DSN parses with an empty Host (the pipe is in
+	// ProtocolParameters), so reconstructing produced a hostless URL and a
+	// browser lookup for an empty instance on the Windows LocalDB leg.
+	tblDSN := testsupport.WithDatabase(dsn, extDB)
 	tblBE, err := tds.NewSQLServerBackend(tblDSN)
 	if err != nil {
 		t.Fatal(err)

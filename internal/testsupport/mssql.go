@@ -117,6 +117,15 @@ func quote(name string) string {
 	return "[" + strings.ReplaceAll(name, "]", "]]") + "]"
 }
 
+// WithDatabase rewrites a DSN to point at `name`, PRESERVING everything else
+// about it. Exported because tests outside this package need it and the
+// hand-rolled alternative is a trap: rebuilding a DSN from a parsed Config's
+// Host and Port silently drops a named pipe, which lives in ProtocolParameters
+// and leaves Host empty. That produced "sqlserver://sa:pw@?database=..." on the
+// Windows leg — no host, no pipe — and a SQL Browser lookup for an empty
+// instance. Rewrite the DSN you were given; never reconstruct one.
+func WithDatabase(dsn, name string) string { return withDatabase(dsn, name) }
+
 // withDatabase rewrites a DSN to point at `name`. Both DSN shapes the driver
 // accepts are handled: the URL form and the ADO/keyword form the repo's CI job
 // actually uses ("server=...;user id=...;...").
