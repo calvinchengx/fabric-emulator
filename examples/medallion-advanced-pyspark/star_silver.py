@@ -70,14 +70,38 @@ erp_now = (read("dim_customer_scd2").filter(F.col("is_current"))
            .select("erp_customer_id", "legal_name", "account_tier", "segment",
                    "credit_band", F.trim(F.col("phone").cast("string")).alias("phone_key")))
 
-# Web inherits the POS key where the email matches, and mints its own where it
-# does not. A left join from web onto pos, never the reverse: a POS customer
-# with no web account must keep their key.
-web_keyed = (web_c.join(pos.select("email_key", "customer_key"), "email_key", "left")
+# An AMBIGUOUS key is not a match.
+#
+# POS phone numbers are not unique — the generator collides on a handful out of
+# 100,000, which is realistic and would be far more common in a real CRM. If an
+# ERP account's phone matches several POS customers, we cannot say WHICH person
+# it is, and joining anyway does two bad things at once: it fans the row out, so
+# one source record acquires several customer_keys and every downstream
+# aggregate double-counts; and it asserts an identity nobody established.
+#
+# So a key that is not unique on the POS side is excluded from matching. The
+# affected records then key on their own identity and join the unresolved
+# cohorts, which is what resolve.py already says about people it cannot place.
+# Guessing would be worse than not matching: a wrong merge is invisible, while
+# an unmatched record is counted and reported.
+def unambiguous(df, col):
+    """The values of `col` that identify exactly one POS customer."""
+    return (df.filter(F.col(col).isNotNull())
+              .groupBy(col).agg(F.count("*").alias("_n"), F.first("customer_key").alias("customer_key"))
+              .filter(F.col("_n") == 1)
+              .select(col, "customer_key"))
+
+
+pos_by_email = unambiguous(pos, "email_key")
+pos_by_phone = unambiguous(pos, "phone_key")
+
+# Left joins from web/erp onto those, never the reverse: a POS customer with no
+# web or ERP counterpart must keep their key.
+web_keyed = (web_c.join(pos_by_email, "email_key", "left")
              .withColumn("customer_key",
                          F.coalesce(F.col("customer_key"), key("web", F.col("email_key")))))
 
-erp_keyed = (erp_now.join(pos.select("phone_key", "customer_key"), "phone_key", "left")
+erp_keyed = (erp_now.join(pos_by_phone, "phone_key", "left")
              .withColumn("customer_key",
                          F.coalesce(F.col("customer_key"), key("erp", F.col("erp_customer_id")))))
 
@@ -167,6 +191,17 @@ assert web_lines.filter(F.col("customer_key").isNull()).count() == 0, \
     "a web order line does not resolve to a customer"
 
 multi = conformed.filter(F.col("source_count") > 1).count()
+# Say how many keys were too ambiguous to match on, rather than letting the
+# match rate quietly absorb them. A phone shared by two customers is not a
+# match nobody made — it is a match nobody could safely make.
+amb_phone = pos.filter(F.col("phone_key").isNotNull()).select("phone_key").count() \
+    - pos_by_phone.count()
+amb_email = pos.filter(F.col("email_key").isNotNull()).select("email_key").count() \
+    - pos_by_email.count()
 log(f"materialised: {n_xref:,} source records -> {n_conformed:,} identities "
     f"({multi:,} multi-source, {web_only:,} web-only, {erp_only:,} erp-only)")
+if amb_phone or amb_email:
+    log(f"ambiguous keys excluded from matching: {amb_phone:,} phone, "
+        f"{amb_email:,} email — shared by more than one POS customer, so no "
+        f"match could be made safely")
 log(f"web fact grain: {n_lines:,} clean order lines, all resolved to a customer_key")
