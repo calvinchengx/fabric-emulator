@@ -122,8 +122,9 @@ tests never touch.
 | `createDataFrame(local_rows)` | ✅ | ✅ | ✅ |
 | Python UDF | ✅ | ✅ | ✅ |
 | SQL over a temp view | ✅ | ✅ | ✅ |
+| Filter on a `row_number()` column the `SELECT` drops ᵈ | ✅ | ✅ | ✅ |
 
-**8 of 19 capabilities differ between the engines.**
+**8 of 20 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the
 candidate list for upstream Sail contributions.
 
@@ -149,3 +150,20 @@ enable the table feature (`Unsupported table features required:
 so the probe never gets a CDF-enabled table to read. The read side is real
 and verified separately in `e2e/livy` against OneLake, on a table written
 by delta-rs. Sail-authored CDF tables need the JVM overlay.
+
+ᵈ This row is green, and it is here to keep it that way — it records a
+capability we briefly believed was MISSING. The dbt-fabricspark medallion
+models failed with `attribute ObjectName([Identifier("_rn")]) is missing
+from the schema: cannot resolve attribute` and were rewritten into two
+CTEs, with the cause attributed to Sail. This probe is that exact shape —
+rank into `_rn`, keep `_rn = 1`, project only the real columns — and Sail
+executes it correctly over Spark Connect. So does a plain unprojected
+filter, and so does the view-materialised form.
+
+The attribution was therefore wrong, or at least unproven: whatever
+rejected `_rn` lives on the **Livy path** (emulator to spark-agent to
+Sail) or in dbt's generated SQL, not in Sail's SQL support. Not yet
+localised further — dbt projects an explicit column list over a wide
+Delta source, which this probe does not reproduce at that width. The
+two-CTE rewrite is portable and costs nothing, so it should stay; what
+should not stay is the belief that Sail cannot do this.
