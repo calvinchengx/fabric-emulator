@@ -1,7 +1,7 @@
 # Flow observability: watching data move through the emulator
 
-**Status: steps 1–3 built** — the event bus, all four event kinds, the SSE
-endpoint, and attribution. Step 4 (the portal view) is still design.
+**Status: built.** All four steps — the event bus, every event kind, the SSE
+endpoint, attribution, and the portal **Data flow** view.
 
 Running the medallion example today is a black box. It prints step numbers, and
 when something fails you reconstruct what happened afterwards from
@@ -260,6 +260,16 @@ which already has the section structure:
 Polling would have worked for the log. It would not have worked for the graph:
 the point is watching it happen.
 
+Nodes are laid out in columns by distance from a source — computed by
+relaxation rather than a topological sort, so a cyclic graph still renders
+instead of hanging — which makes a medallion draw itself:
+landing → bronze → silver → gold. Copy edges are solid, notebook edges dashed,
+straight from `producer`.
+
+The graph reads `/_emulator/portal/lineage`, a tenant-wide listing added for
+this view: the API-facing `/v1/workspaces/{id}/lineage` is workspace-scoped
+because it sits behind RBAC, and the portal has no principal.
+
 ## What this deliberately does not do
 
 **It does not pack every emulator into one UI.** entra, Key Vault, Sail, SQL
@@ -293,7 +303,7 @@ state already persisted (`job_instances`, `pipeline_runs`, `lineage_edges`,
    activity; a notebook cell's writes name the cell — including cell 0, and
    including engines that cannot set headers, via the bearer claims that were
    already there.
-4. **Portal `Flow` view.**
+4. ~~**Portal `Flow` view.**~~ **Done.**
 
 Each step is independently useful, and each stops at a point where the tree is
 green.
