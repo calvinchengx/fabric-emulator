@@ -155,7 +155,7 @@ func (a *API) listDomainWorkspaces(w http.ResponseWriter, r *http.Request, p *au
 		domainErr(w, err)
 		return
 	}
-	writePage(w, r, ws)
+	writePage(a, w, r, ws)
 }
 
 // workspaceIDsBody is the shape both assign and unassign take.
@@ -209,7 +209,7 @@ func (a *API) listDomainRoles(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		domainErr(w, err)
 		return
 	}
-	writePage(w, r, ras)
+	writePage(a, w, r, ras)
 }
 
 // domainRoleBody is the bulk role-assignment shape: a role plus the

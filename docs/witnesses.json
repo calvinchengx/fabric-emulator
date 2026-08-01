@@ -401,9 +401,10 @@
     "claim": "List **pagination** (`continuationToken`)",
     "witnesses": [
       "ci:fabric-cli",
+      "go:TestPaginationIsOnByDefault",
       "go:TestListPagination",
       "go:TestContinuationUriIsAbsolute",
-      "boundary:the emulator pages only when asked (?maxPageSize); real Fabric pages on its own schedule, so a client that ignores continuationToken still passes here (internal/api/pagination.go)"
+      "go:TestMaxPageSizeCannotExceedTheServerPageSize"
     ]
   },
   "invoke-pipeline-executepipeline": {

@@ -280,7 +280,7 @@ func (a *API) recordNotebookLineage(wid, jid string, body notebookResultBody) {
 					WorkspaceID: wid, JobID: jid, ActivityName: activity,
 					SourceWorkspaceID: srcWS, SourceItemID: in.ItemID, SourcePath: in.Path,
 					TargetWorkspaceID: dstWS, TargetItemID: out.ItemID, TargetPath: out.Path,
-					Producer:          store.ProducerNotebook,
+					Producer: store.ProducerNotebook,
 				})
 			}
 		}
@@ -323,7 +323,7 @@ func (a *API) recordObservedLineage(wid, jid string) {
 					WorkspaceID: wid, JobID: jid, ActivityName: fmt.Sprintf("cell[%d]", idx),
 					SourceWorkspaceID: wid, SourceItemID: in.ItemID, SourcePath: in.Path,
 					TargetWorkspaceID: wid, TargetItemID: out.ItemID, TargetPath: out.Path,
-					Producer:          store.ProducerNotebookObserved,
+					Producer: store.ProducerNotebookObserved,
 				})
 			}
 		}

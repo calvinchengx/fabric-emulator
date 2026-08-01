@@ -50,6 +50,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	}
 	v := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)
 	a := api.New(st, v, cfg.RetryAfterSeconds, cfg.LRODelaySeconds)
+	a.ListPageSize = cfg.ListPageSize
 	// Workspace-identity provisioning drives entra's admin API at the
 	// issuer's origin, over the same HTTP client trust as JWKS.
 	if origin, err := entra.OriginFromIssuer(cfg.EntraIssuer); err == nil {

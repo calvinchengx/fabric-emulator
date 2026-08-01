@@ -181,7 +181,7 @@ func (a *API) listFolders(w http.ResponseWriter, r *http.Request, p *auth.Princi
 	if fs == nil {
 		fs = []*store.Folder{}
 	}
-	writePage(w, r, fs)
+	writePage(a, w, r, fs)
 }
 
 // createFolder creates a folder (201, sync).

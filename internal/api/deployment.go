@@ -48,7 +48,7 @@ func (a *API) listDeploymentPipelines(w http.ResponseWriter, r *http.Request, p 
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	writePage(w, r, ps)
+	writePage(a, w, r, ps)
 }
 
 // createDeploymentPipeline creates a pipeline; the caller becomes its Admin.
@@ -158,7 +158,7 @@ func (a *API) listDeploymentStages(w http.ResponseWriter, r *http.Request, p *au
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	writePage(w, r, sts)
+	writePage(a, w, r, sts)
 }
 
 // requireStage resolves a stage within an already-gated pipeline.
@@ -316,7 +316,7 @@ func (a *API) listDeploymentPipelineRoles(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	writePage(w, r, ras)
+	writePage(a, w, r, ras)
 }
 
 // addDeploymentPipelineRole grants a principal a role on the pipeline.
@@ -467,7 +467,7 @@ func (a *API) listDeploymentOperations(w http.ResponseWriter, r *http.Request, p
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	writePage(w, r, ops)
+	writePage(a, w, r, ops)
 }
 
 // listDeploymentStageItems returns the supported items in the workspace
@@ -479,7 +479,7 @@ func (a *API) listDeploymentStageItems(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 	if st.WorkspaceID == "" {
-		writePage(w, r, []*store.Item{})
+		writePage(a, w, r, []*store.Item{})
 		return
 	}
 	items, err := a.Store.ListItems(st.WorkspaceID, "")
@@ -490,5 +490,5 @@ func (a *API) listDeploymentStageItems(w http.ResponseWriter, r *http.Request, p
 	if items == nil {
 		items = []*store.Item{}
 	}
-	writePage(w, r, items)
+	writePage(a, w, r, items)
 }

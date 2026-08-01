@@ -10,31 +10,41 @@ import (
 // writePage writes a Fabric-shaped list response — `{"value":[...]}` — with
 // optional continuation-token pagination (the shape real Fabric list APIs use).
 //
-// Pagination is **opt-in**: without a `?maxPageSize` the full set is returned and
-// no token is emitted, so existing callers and an empty list still serialize as
-// `{"value":[]}`. With `?maxPageSize=N`, at most N items are returned and, when
-// more remain, a `continuationToken` (an opaque offset cursor) and a
-// `continuationUri` are included; the client passes the token back via
-// `?continuationToken` to fetch the next page.
+// Pagination is **on by default**, as it is in real Fabric: a list longer than
+// the server's page size comes back with a `continuationToken` (an opaque
+// offset cursor) and a `continuationUri`, and the client passes the token back
+// via `?continuationToken` for the next page. Fabric's List Items reference
+// documents the token as a *response* field with no client-supplied page-size
+// parameter, so a correct client must always be prepared to follow one.
 //
-// **Known divergence, deliberately kept.** Real Fabric paginates on its own
-// schedule — its List Items reference documents `continuationToken` as a
-// *response* field with no client-supplied page-size parameter, so a real client
-// must always be prepared to follow a token. Here the emulator returns
-// everything in one response unless asked to page, which means a client that
-// ignores `continuationToken` passes locally and could still break against
-// Fabric. Paginating by default would be more faithful, but it would change the
-// response of every list endpoint for every existing caller and test, so the
-// choice is recorded rather than made silently (docs/parity.md, list
-// pagination).
-func writePage[T any](w http.ResponseWriter, r *http.Request, items []T) {
-	writePageKeyed(w, r, "value", items)
+// `?maxPageSize=N` narrows the page further when a caller wants smaller pages;
+// it can only reduce the page, never raise it past the server's size.
+//
+// # The page size is a testing lever
+//
+// DefaultListPageSize mirrors a realistic Fabric page: large enough that
+// ordinary use never sees a token. That makes the *contract* faithful but the
+// *path* rare — and a pagination bug in a client is exactly the kind that hides
+// until production data grows. So the size is configurable
+// (`-list-page-size` / `FABRIC_LIST_PAGE_SIZE`): set it to 1 or 2 and every
+// list forces the client through the token loop on the spot. Same idea as the
+// controllable clock for LROs and the fault injector for failures — make the
+// rare condition reproducible on demand rather than hoping to meet it.
+//
+// A size of 0 or less disables paging entirely (the pre-default behaviour), for
+// a caller that needs whole lists.
+// DefaultListPageSize is the server's page size when none is configured —
+// large enough that everyday lists return whole, as Fabric's do.
+const DefaultListPageSize = 100
+
+func writePage[T any](a *API, w http.ResponseWriter, r *http.Request, items []T) {
+	writePageKeyed(a, w, r, "value", items)
 }
 
 // writePageKeyed is writePage with a caller-chosen envelope key. The admin
 // list APIs name their array after the resource (`workspaces`) rather than
 // using `value`, per the REST reference.
-func writePageKeyed[T any](w http.ResponseWriter, r *http.Request, key string, items []T) {
+func writePageKeyed[T any](a *API, w http.ResponseWriter, r *http.Request, key string, items []T) {
 	offset := 0
 	if tok := r.URL.Query().Get("continuationToken"); tok != "" {
 		if n := decodePageToken(tok); n > 0 {
@@ -44,7 +54,12 @@ func writePageKeyed[T any](w http.ResponseWriter, r *http.Request, key string, i
 	if offset > len(items) {
 		offset = len(items)
 	}
+	// The server's page size applies unless disabled; a client may ask for a
+	// smaller page but never a larger one, since the limit is the server's.
 	end := len(items)
+	if size := a.pageSize(); size > 0 && offset+size < end {
+		end = offset + size
+	}
 	if ms := r.URL.Query().Get("maxPageSize"); ms != "" {
 		if n, err := strconv.Atoi(ms); err == nil && n > 0 && offset+n < end {
 			end = offset + n
@@ -103,4 +118,16 @@ func decodePageToken(tok string) int {
 		return 0
 	}
 	return n
+}
+
+// pageSize is the configured server page size, defaulting when unset. A
+// negative value means "never page".
+func (a *API) pageSize() int {
+	if a.ListPageSize < 0 {
+		return 0
+	}
+	if a.ListPageSize == 0 {
+		return DefaultListPageSize
+	}
+	return a.ListPageSize
 }

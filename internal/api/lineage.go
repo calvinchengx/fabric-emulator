@@ -20,5 +20,5 @@ func (a *API) listLineage(w http.ResponseWriter, r *http.Request, p *auth.Princi
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	writePage(w, r, edges)
+	writePage(a, w, r, edges)
 }
