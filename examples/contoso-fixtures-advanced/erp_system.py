@@ -27,6 +27,7 @@ The overlap with POS is built from POS's own generated phone numbers
 overlap from POS's emails: a hard-coded list would drift the moment the seed or
 the scale changed.
 """
+import collections
 import io
 import random
 
@@ -88,6 +89,10 @@ def _build():
     # missing-email cohort is irrelevant here: ERP joins on phone, and that is
     # precisely why it can reach people Web never can.
     pos_phones = [p for p in pos.customer_phones() if p]
+    # POS phones are not unique — the generator collides on a handful out of
+    # 100,000, which is realistic. Which ones matters to the expectations below,
+    # because an ambiguous key cannot be matched on.
+    _pos_phone_counts = collections.Counter(pos_phones)
     n_shared = min(int(N_ERP_CUSTOMERS * OVERLAP_RATIO), len(pos_phones))
     shared = rnd.sample(pos_phones, n_shared)
     erp_only = [f"+00{i:07d}" for i in range(N_ERP_CUSTOMERS - n_shared)]
@@ -167,6 +172,30 @@ def _build():
         "EXPECTED_SCD2_CURRENT": len(phones) - n_deletes,
         "EXPECTED_ERP_SHARED_PHONE_COUNT": n_shared,
         "EXPECTED_ERP_ONLY_COUNT": len(phones) - n_shared,
+        # The same cohort as the star sees it, which is NOT the line above.
+        #
+        # EXPECTED_ERP_ONLY_COUNT is this generator's intent: accounts we did
+        # not give a POS phone to. Two things move the number the star actually
+        # counts, and both are real rather than bookkeeping:
+        #
+        #   - a soft-deleted account is not is_current, so it is absent from the
+        #     SCD2 dimension the star reads (~476 of the 12,000 here);
+        #   - an account whose phone is AMBIGUOUS in POS cannot be matched — a
+        #     phone shared by two customers identifies nobody — so it falls back
+        #     to its own identity and joins this cohort (2 here).
+        #
+        # star_silver.py asserting the intent against the observation was worth
+        # 11,526 vs 12,000, and the gap decomposed exactly into those two terms.
+        #
+        # `!= 1` rather than `> 1` on purpose: it is the same test the star
+        # applies (a key must identify EXACTLY one POS customer), so this stays
+        # coupled to the resolution rule instead of drifting the next time it
+        # changes. It is the coupling that makes the assertion worth having —
+        # invariants alone hold even if accounts move between cohorts.
+        "EXPECTED_ERP_ONLY_CURRENT": sum(
+            1 for i, p in enumerate(phones)
+            if i not in deleted and (i >= n_shared or _pos_phone_counts[p] != 1)
+        ),
         # Customers whose final row by capture_seq is NOT their final row by
         # effective_date. 24_erp_scd2.py asserts the two orderings disagree by
         # exactly this many, so the hazard is measured rather than asserted.
