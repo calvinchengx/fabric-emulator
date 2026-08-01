@@ -69,6 +69,20 @@ Ports: entra `:8443`, Key Vault `:8444`, fabric + OneLake + portal `:9443`,
 warehouse TDS `:1433`. All TLS is self-signed — every snippet below disables
 verification, exactly like the e2e suites.
 
+Two endpoints are **not** addressed as `localhost`, and both defaults are set
+for you in `common.py`:
+
+| | Default | Why not `localhost` |
+|---|---|---|
+| `KV_INTERNAL_URL` | `https://keyvault-emulator:8444` | Fabric resolves an AKV reference **server-side**, so the vault URI is followed by the emulator container, which cannot reach your machine's `localhost` |
+| `SPARK_REMOTE` | `sc://localhost:50051` | this one *is* yours — the Sail engine as the root compose publishes it; the CI harness overrides it to `sc://sail:50051` |
+
+> **On a git checkout, build the emulator from your tree.** `docker compose up`
+> pulls the *published* `fabric-emulator:latest`, which can lag `main`. These
+> steps assert against current behaviour, so a stale image fails in ways that
+> read like example bugs. Use
+> `docker build -t ghcr.io/calvinchengx/fabric-emulator:dev . && FABRIC_EMULATOR_VERSION=dev docker compose up -d`.
+
 For the dbt leg you need the **Microsoft ODBC Driver 18** (macOS:
 `brew tap microsoft/mssql-release && brew install msodbcsql18`; Linux: see
 `e2e/dbt-fabric/Dockerfile.dbt` for the apt recipe).
