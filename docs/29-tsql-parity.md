@@ -138,13 +138,58 @@ forward*.
 
 #### Milestones
 
-- **T6a — reconnaissance (do this first; it can invalidate the rest).**
-  Instrument the relay and record which TDS packet type actually carries the
-  CTE-bearing statements for each client. `PktRPC` (0x03) is *defined* in
-  `internal/tds/packet.go` but **handled nowhere** — if pyodbc/dbt send queries
-  as `sp_executesql` RPC with the SQL as an nvarchar parameter, a SQLBatch-only
-  rewriter silently misses them. Deliverable: a table of client → packet type,
-  and a go/no-go on whether RPC parsing is in scope.
+- **T6a — reconnaissance. ✅ Done — GO, with a caveat that shapes the scope.**
+  `tds.TraceFunc` (`internal/tds/trace.go`, enabled by `FABRIC_TDS_TRACE=1`)
+  logs every client→server message. Measured against the real Microsoft ODBC
+  Driver 18 and a full nine-step `e2e/medallion` run:
+
+  | Statement shape | Message type | A SQLBatch-only rewriter sees it? |
+  |---|---|---|
+  | plain `SELECT` | `SQLBatch` | ✅ |
+  | sequential CTE | `SQLBatch` | ✅ |
+  | **nested CTE, no parameters** | **`SQLBatch`** | ✅ |
+  | parameterized `SELECT` | RPC `sp_prepexec` | ❌ |
+  | **parameterized nested CTE** | **RPC `sp_prepexec`** | ❌ |
+  | driver metadata | RPC `[sys].sp_datatype_info_100` | n/a — carries no SQL |
+  | transaction control | `0x0E` (TransactionManagerRequest) | n/a |
+
+  **The finding: parameterization, not statement content, decides the path.**
+  A nested CTE sent by `cursor.execute(sql)` arrives as `SQLBatch`; the *same*
+  statement sent as `cursor.execute(sql, [param])` arrives as an RPC
+  `sp_prepexec` with the text in a parameter —
+
+  ```
+  SQLBatch bytes=166 sql="with o as (with i as (select 1 probe_c) select * from i) select * from o"
+  RPC proc=sp_prepexec bytes=256 text="with o as (with i as (select @P1 probe_f) select * from i) select * from o"
+  ```
+
+  **Why this is still a GO:** across a complete nine-step medallion run, dbt
+  issued **73 SQLBatch messages and zero SQL-carrying RPCs** — every one of its
+  28 RPCs was `sp_datatype_info_100`, a metadata call. dbt does not
+  parameterize, so SQLBatch alone unblocks the driving use case.
+
+  **What it changes:** RPC parsing moves from "possibly required" to "required
+  for completeness, not for dbt." T6 ships SQLBatch-first, and per the
+  rewrite-or-reject principle must *detect* a nested CTE arriving via
+  `sp_prepexec`/`sp_executesql`/`sp_prepare` and answer with an error naming the
+  limitation, rather than forwarding it to surface as a bare `Msg 156`. Full RPC
+  rewriting is deferred to **T6g** (below).
+
+  Two incidental findings, both of which constrain T6b:
+
+  - **dbt prefixes every statement with a comment** —
+    `/* {"app": "dbt", "dbt_version": "1.12.0", …} */` — so the tokeniser cannot
+    assume `WITH` is the first token; leading comments must be skipped.
+  - **RPC parameter text is not 2-byte aligned** within the message, so any
+    UCS-2 decoding of it must scan both parities (learned by getting it wrong:
+    the first trace showed `text="*"` for a statement that was plainly there).
+
+- **T6g — RPC-carried statements (deferred).** Parse `sp_prepexec` /
+  `sp_executesql` / `sp_prepare` parameters, rewrite the statement parameter,
+  and re-encode with corrected lengths. Bounded but real work: parameters carry
+  TYPE_INFO, and the length prefix must be recomputed. Only needed for clients
+  that parameterize *and* use nested CTEs; until then T6 rejects that
+  combination honestly.
 - **T6b — the parser.** A nested-CTE-aware scanner over the `WITH` prefix only:
   find CTE definitions, their nesting, and their bodies. It must be a real
   tokeniser (string literals, `[bracketed]` and `"quoted"` identifiers, `--` and
@@ -200,14 +245,30 @@ Rewrite Fabric/Synapse `CREATE TABLE AS SELECT` into SQL Server `SELECT … INTO
 restoring dbt's `table` materialization and removing adaptation #1. Mechanically
 simpler than T6 but shares the tokeniser, so it should follow it.
 
+## Reproducing the measurements
+
+`FABRIC_TDS_TRACE=1` logs one line per client→server TDS message — the
+instrument every milestone above is measured with:
+
+```sh
+docker compose -f e2e/medallion/docker-compose.yml \
+  -f <(echo 'services: {fabric-emulator: {environment: {FABRIC_TDS_TRACE: "1"}}}') up
+```
+
+It is a diagnostic, not a contract: the RPC text extraction is a
+longest-printable-run heuristic over parameter bytes, deliberately not a
+TYPE_INFO decoder, and nothing it produces is used to rewrite anything. Off
+unless the variable is set (a nil `TraceFunc` costs one nil check per message).
+
 ## Risks and open questions
 
 1. **Is rewriting SQL a line this project should cross?** Today the TDS layer
    relays T-SQL verbatim (one guard aside). T6 makes the emulator a *translator*.
    The mitigation is the rewrite-or-reject principle plus witnesses, but the
    architectural precedent is real and deliberate.
-2. **The RPC path (T6a) may dominate the work.** If clients send SQL as
-   `sp_executesql`, scope grows substantially.
+2. ~~**The RPC path (T6a) may dominate the work.**~~ **Settled by T6a:** it does
+   not. dbt sends 100% SQLBatch; only *parameterized* statements take the RPC
+   path, and that combination is deferred to T6g behind an honest rejection.
 3. **Nested CTE is a preview feature in Fabric.** Its semantics may shift; the
    witnesses must be re-checked against the GA behaviour.
 4. **dbt-fabric is itself broken here.** [microsoft/dbt-fabric#318][i318]

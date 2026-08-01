@@ -5,7 +5,9 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	airflowclient "github.com/calvinchengx/fabric-emulator/internal/airflow"
@@ -101,6 +103,13 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 			_, err := sqlv.Validate(token)
 			return err
 		}}
+		// FABRIC_TDS_TRACE logs every client→server TDS message to stderr: which
+		// message type carries a statement decides what a SQL rewriter has to
+		// parse (docs/29-tsql-parity.md, T6a). Off unless set — nil TraceFunc
+		// costs one nil check per message.
+		if os.Getenv("FABRIC_TDS_TRACE") != "" {
+			tds.TraceFunc = func(line string) { log.Println("tds:", line) }
+		}
 		// With a backend configured, authenticated queries relay to a real SQL
 		// Server; without one, the endpoint answers the T1 stub.
 		if cfg.WarehouseSQLURL != "" {
