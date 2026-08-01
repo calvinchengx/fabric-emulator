@@ -21,6 +21,9 @@ type Authenticator func(token string) error
 type Server struct {
 	Auth    Authenticator
 	Backend Backend
+	// Strict refuses constructs real Fabric rejects that the backend would
+	// otherwise run (docs/29-tsql-parity.md, T7). Off by default.
+	Strict bool
 	// OnConnect, if set, is called after a successful login with the client's
 	// requested server name, target database, and FedAuth token. The database is
 	// either a Fabric item id (GUID) or — real Fabric's addressing — a
@@ -113,7 +116,7 @@ func (s *Server) handle(conn net.Conn) error {
 		if err := WriteMessage(conn, PktTabular, spliceLoginResponse(backendLogin)); err != nil {
 			return err
 		}
-		return spliceSession(conn, backendConn, readOnly)
+		return spliceSession(conn, backendConn, readOnly, s.Strict)
 	}
 
 	// Fallback re-encode relay: fake test backends and the no-engine stub. Each
@@ -148,7 +151,7 @@ func (s *Server) handle(conn net.Conn) error {
 		}
 		// Same dialect adaptation as the splice path, so the re-encode relay and
 		// the byte-forwarding relay agree on what they accept.
-		fixed, reject := dialectFix(typ, data)
+		fixed, reject := dialectFix(typ, data, s.Strict)
 		if reject != "" {
 			if err := WriteMessage(conn, PktTabular, dialectReject(reject)); err != nil {
 				return err

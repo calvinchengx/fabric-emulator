@@ -30,20 +30,33 @@ import (
 //
 // A nil error path is deliberate: only a statement this package fully
 // understands is altered.
-func dialectFix(typ byte, data []byte) (out []byte, reject string) {
+func dialectFix(typ byte, data []byte, strict bool) (out []byte, reject string) {
 	switch typ {
 	case PktSQLBatch:
-		return fixBatch(data)
+		return fixBatch(data, strict)
 	case PktRPC:
-		return fixRPC(data)
+		return fixRPC(data, strict)
 	}
 	return data, ""
+}
+
+// strictReject reports a construct real Fabric rejects, when strict mode is on.
+// It runs before any rewrite: the question "would Fabric run this at all?"
+// comes before "how do we make the sidecar run it?".
+func strictReject(sql string, strict bool) string {
+	if !strict {
+		return ""
+	}
+	if err := tsql.CheckStrict(sql); err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 // fixRPC rewrites a nested CTE carried inside a procedure parameter
 // (sp_prepexec and friends). Every failure path forwards the original: a
 // mis-parsed parameter list must cost us the rewrite, never the request.
-func fixRPC(data []byte) (out []byte, reject string) {
+func fixRPC(data []byte, strict bool) (out []byte, reject string) {
 	proc, _ := rpcProc(data)
 	if !procsCarryingSQL[proc] {
 		return data, ""
@@ -60,6 +73,9 @@ func fixRPC(data []byte) (out []byte, reject string) {
 	for i, p := range req.params {
 		if !p.isText || p.text == "" {
 			continue
+		}
+		if msg := strictReject(p.text, strict); msg != "" {
+			return data, msg
 		}
 		rewritten, changed, ferr := tsql.Flatten(p.text)
 		if ferr != nil {
@@ -126,8 +142,12 @@ func rewriteIsFaithful(orig *rpcRequest, encoded []byte, idx int, want string) b
 	return true
 }
 
-func fixBatch(data []byte) (out []byte, reject string) {
-	sql, changed, err := tsql.Flatten(sqlBatchQuery(data))
+func fixBatch(data []byte, strict bool) (out []byte, reject string) {
+	raw := sqlBatchQuery(data)
+	if msg := strictReject(raw, strict); msg != "" {
+		return data, msg
+	}
+	sql, changed, err := tsql.Flatten(raw)
 	switch {
 	case err != nil:
 		// A statement Fabric itself refuses, or one that cannot be flattened

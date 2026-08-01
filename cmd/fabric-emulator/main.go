@@ -58,6 +58,7 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	fs.StringVar(&cfg.SparkLivyURL, "spark-livy-url", cfg.SparkLivyURL, "real Apache Livy backend for the Livy passthrough (empty = 501)")
 	fs.StringVar(&cfg.SparkAgentURL, "spark-agent-url", cfg.SparkAgentURL, "Spark statement-executor agent for native Livy sessions (empty = off)")
 	fs.StringVar(&cfg.SQLTDSAddr, "sql-tds-addr", cfg.SQLTDSAddr, "listen address for the warehouse SQL/TDS endpoint (e.g. :1433; empty = off)")
+	fs.BoolVar(&cfg.TSQLStrict, "tsql-strict", cfg.TSQLStrict, "refuse T-SQL that real Fabric rejects but SQL Server accepts (recursive CTEs, triggers, enforced constraints; see docs/29)")
 	fs.StringVar(&cfg.WarehouseSQLURL, "warehouse-sql-url", cfg.WarehouseSQLURL, "real SQL Server backend the SQL endpoint relays to (go-mssqldb DSN; empty = stub result)")
 	fs.StringVar(&cfg.AirflowURL, "airflow-url", cfg.AirflowURL, "Apache Airflow 2.10 REST API base URL (empty = off)")
 	fs.StringVar(&cfg.AirflowDAGDir, "airflow-dag-dir", cfg.AirflowDAGDir, "shared Airflow DAG directory")

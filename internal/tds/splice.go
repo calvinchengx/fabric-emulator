@@ -13,7 +13,7 @@ import "net"
 // The only interception is the read-only guard: on a read-only surface (a
 // lakehouse SQL analytics endpoint, or a Viewer) a write SQL batch is answered
 // with an error and never forwarded, so the reflected mirror can't be mutated.
-func spliceSession(client, backend net.Conn, readOnly bool) error {
+func spliceSession(client, backend net.Conn, readOnly, strict bool) error {
 	for {
 		typ, data, err := ReadMessage(client)
 		if err != nil {
@@ -29,7 +29,7 @@ func spliceSession(client, backend net.Conn, readOnly bool) error {
 		// Adapt the statement's dialect where Fabric and the sidecar disagree:
 		// a nested CTE is flattened, anything Fabric itself refuses is rejected
 		// here rather than executed (docs/29-tsql-parity.md).
-		fixed, reject := dialectFix(typ, data)
+		fixed, reject := dialectFix(typ, data, strict)
 		if reject != "" {
 			if err := WriteMessage(client, PktTabular, dialectReject(reject)); err != nil {
 				return err

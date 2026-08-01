@@ -52,7 +52,7 @@ func TestRewriteBatchHandlesOversizedStatement(t *testing.T) {
 }
 
 func TestDialectFixFlattensNestedBatch(t *testing.T) {
-	out, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(nestedSQL)))
+	out, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(nestedSQL)), false)
 	if reject != "" {
 		t.Fatalf("unexpected reject: %s", reject)
 	}
@@ -74,7 +74,7 @@ func TestDialectFixForwardsUnaffectedBatchesByteIdentical(t *testing.T) {
 		"select 'with o as (with i as (select 1) select 1)' as literal",
 	} {
 		in := withHeaders(ucs2Bytes(sql))
-		out, reject := dialectFix(PktSQLBatch, in)
+		out, reject := dialectFix(PktSQLBatch, in, false)
 		if reject != "" {
 			t.Fatalf("%q rejected: %s", sql, reject)
 		}
@@ -87,7 +87,7 @@ func TestDialectFixForwardsUnaffectedBatchesByteIdentical(t *testing.T) {
 // A statement Fabric itself refuses is rejected here, naming the rule.
 func TestDialectFixRejectsFabricRestriction(t *testing.T) {
 	sql := "with o as (with i as (select 1 x) select * from i) insert into t select * from o"
-	_, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(sql)))
+	_, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(sql)), false)
 	if !strings.Contains(reject, "select-only") {
 		t.Fatalf("reject = %q", reject)
 	}
@@ -95,7 +95,7 @@ func TestDialectFixRejectsFabricRestriction(t *testing.T) {
 
 func TestDialectFixRejectsShadowedNames(t *testing.T) {
 	sql := "with c as (with c as (select 1 x) select * from c) select * from c"
-	_, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(sql)))
+	_, reject := dialectFix(PktSQLBatch, withHeaders(ucs2Bytes(sql)), false)
 	if !strings.Contains(reject, "nesting level") {
 		t.Fatalf("reject = %q", reject)
 	}
@@ -106,7 +106,7 @@ func TestDialectFixRejectsShadowedNames(t *testing.T) {
 func TestDialectFixForwardsUnparseableStatements(t *testing.T) {
 	sql := "with a as (select 'unterminated"
 	in := withHeaders(ucs2Bytes(sql))
-	out, reject := dialectFix(PktSQLBatch, in)
+	out, reject := dialectFix(PktSQLBatch, in, false)
 	if reject != "" {
 		t.Fatalf("unparseable statement rejected: %s", reject)
 	}
@@ -118,7 +118,7 @@ func TestDialectFixForwardsUnparseableStatements(t *testing.T) {
 // T6a: a parameterized nested CTE arrives as RPC sp_prepexec, which T6e cannot
 // rewrite — reject by name rather than let it surface as a bare Msg 156.
 func TestDialectFixRejectsNestedCTEInRPC(t *testing.T) {
-	_, reject := dialectFix(PktRPC, rpcByProcID(13, nestedSQL)) // 13 = sp_prepexec
+	_, reject := dialectFix(PktRPC, rpcByProcID(13, nestedSQL), false) // 13 = sp_prepexec
 	if !strings.Contains(reject, "sp_prepexec") || !strings.Contains(reject, "nested CTE") {
 		t.Fatalf("reject = %q", reject)
 	}
@@ -129,7 +129,7 @@ func TestDialectFixLeavesOrdinaryRPCsAlone(t *testing.T) {
 		rpcByProcID(13, "select @P1 as x"),      // parameterized, no nesting
 		rpcByProcID(10, "with a as (select 1)"), // sequential CTE only
 	} {
-		if _, reject := dialectFix(PktRPC, data); reject != "" {
+		if _, reject := dialectFix(PktRPC, data, false); reject != "" {
 			t.Fatalf("ordinary RPC rejected: %s", reject)
 		}
 	}
@@ -140,7 +140,7 @@ func TestDialectFixIgnoresMetadataRPC(t *testing.T) {
 	name := "sp_datatype_info_100"
 	body := ucs2Bytes(name)
 	msg := withHeaders(append(lenPrefix(len(name)), body...))
-	if _, reject := dialectFix(PktRPC, msg); reject != "" {
+	if _, reject := dialectFix(PktRPC, msg, false); reject != "" {
 		t.Fatalf("metadata RPC rejected: %s", reject)
 	}
 }
@@ -169,7 +169,7 @@ func lenPrefix(n int) []byte {
 func TestDialectFixIgnoresNonStatementMessages(t *testing.T) {
 	for _, typ := range []byte{PktAttention, PktBulkLoad, PktLogin7, PktPreLogin} {
 		in := []byte{1, 2, 3}
-		out, reject := dialectFix(typ, in)
+		out, reject := dialectFix(typ, in, false)
 		if reject != "" || string(out) != string(in) {
 			t.Fatalf("type %#x: reject=%q altered=%v", typ, reject, string(out) != string(in))
 		}
@@ -181,7 +181,65 @@ func TestRPCProcHandlesTruncatedProcID(t *testing.T) {
 	if proc, _ := rpcProc(withHeaders([]byte{0xFF, 0xFF})); proc != "?" {
 		t.Fatalf("proc = %q, want ?", proc)
 	}
-	if _, reject := dialectFix(PktRPC, withHeaders([]byte{0xFF, 0xFF})); reject != "" {
+	if _, reject := dialectFix(PktRPC, withHeaders([]byte{0xFF, 0xFF}), false); reject != "" {
 		t.Fatalf("truncated RPC rejected: %s", reject)
+	}
+}
+
+// Strict mode is a gate, not a default: the same statement must pass without
+// it and be refused with it.
+func TestStrictModeGatesClassBConstructs(t *testing.T) {
+	recursive := "with r as (select 1 n union all select n+1 from r where n < 5) select * from r"
+	in := withHeaders(ucs2Bytes(recursive))
+
+	out, reject := dialectFix(PktSQLBatch, in, false)
+	if reject != "" {
+		t.Fatalf("refused with strict mode OFF: %s", reject)
+	}
+	if string(out) != string(in) {
+		t.Fatal("statement altered with strict mode off")
+	}
+
+	out, reject = dialectFix(PktSQLBatch, in, true)
+	if !strings.Contains(reject, "recursive-cte") {
+		t.Fatalf("not refused with strict mode ON: %q", reject)
+	}
+	if string(out) != string(in) {
+		t.Fatal("a refused statement must be returned untouched")
+	}
+}
+
+// The gate applies to statements carried as RPC parameters too.
+func TestStrictModeGatesClassBInRPCParameter(t *testing.T) {
+	recursive := "with r as (select 1 n union all select n+1 from r) select * from r"
+	in := spPrepexec(recursive)
+
+	if _, reject := dialectFix(PktRPC, in, false); reject != "" {
+		t.Fatalf("refused with strict mode OFF: %s", reject)
+	}
+	if _, reject := dialectFix(PktRPC, in, true); !strings.Contains(reject, "recursive-cte") {
+		t.Fatalf("not refused with strict mode ON: %q", reject)
+	}
+}
+
+// Strict mode must not disturb what T6 already handles: a nested CTE is still
+// rewritten, because Fabric runs it.
+func TestStrictModeStillRewritesNestedCTEs(t *testing.T) {
+	in := withHeaders(ucs2Bytes(nestedSQL))
+	out, reject := dialectFix(PktSQLBatch, in, true)
+	if reject != "" {
+		t.Fatalf("nested CTE refused in strict mode: %s", reject)
+	}
+	if !strings.HasPrefix(sqlBatchQuery(out), "with i as (select 1 x), o as (") {
+		t.Fatalf("not rewritten: %q", sqlBatchQuery(out))
+	}
+}
+
+func TestStrictRejectIsInertWhenDisabled(t *testing.T) {
+	if msg := strictReject("create trigger t on x after insert as select 1", false); msg != "" {
+		t.Fatalf("strict check ran while disabled: %s", msg)
+	}
+	if msg := strictReject("create trigger t on x after insert as select 1", true); msg == "" {
+		t.Fatal("strict check did not run while enabled")
 	}
 }

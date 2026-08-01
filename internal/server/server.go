@@ -102,7 +102,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 		s.TDS = &tds.Server{Auth: func(token string) error {
 			_, err := sqlv.Validate(token)
 			return err
-		}}
+		}, Strict: cfg.TSQLStrict}
 		// FABRIC_TDS_TRACE logs every client→server TDS message to stderr: which
 		// message type carries a statement decides what a SQL rewriter has to
 		// parse (docs/29-tsql-parity.md, T6a). Off unless set — nil TraceFunc

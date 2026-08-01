@@ -61,6 +61,13 @@ type Config struct {
 	// endpoint answering the T1 stub result.
 	WarehouseSQLURL string
 
+	// TSQLStrict refuses T-SQL that the SQL Server sidecar accepts but real
+	// Fabric rejects — recursive CTEs, triggers, enforced constraints and the
+	// rest of docs/29-tsql-parity.md's Class B. Off by default because it
+	// *removes* capability: it makes a locally green build mean a
+	// Fabric-green build, at the cost of failing SQL that works today.
+	TSQLStrict bool
+
 	// AirflowURL attaches an upstream Apache Airflow 2.10 REST API. DAG files
 	// are materialised into AirflowDAGDir, which must be a shared volume mounted
 	// as the scheduler's DAG folder.
@@ -102,6 +109,7 @@ func FromEnvPartial() *Config {
 		SparkAgentURL:     os.Getenv("FABRIC_SPARK_AGENT_URL"),
 		SQLTDSAddr:        os.Getenv("FABRIC_SQL_TDS_ADDR"),
 		WarehouseSQLURL:   os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
+		TSQLStrict:        boolEnv("FABRIC_TSQL_STRICT"),
 		AirflowURL:        os.Getenv("FABRIC_AIRFLOW_URL"),
 		AirflowDAGDir:     os.Getenv("FABRIC_AIRFLOW_DAG_DIR"),
 		AirflowUsername:   os.Getenv("FABRIC_AIRFLOW_USERNAME"),

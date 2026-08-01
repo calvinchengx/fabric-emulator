@@ -90,3 +90,14 @@ func TestBoolEnvShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestTSQLStrictFromEnv(t *testing.T) {
+	t.Setenv("FABRIC_TSQL_STRICT", "true")
+	if !FromEnvPartial().TSQLStrict {
+		t.Fatal("FABRIC_TSQL_STRICT=true did not enable strict mode")
+	}
+	t.Setenv("FABRIC_TSQL_STRICT", "")
+	if FromEnvPartial().TSQLStrict {
+		t.Fatal("strict mode is on by default; it must be opt-in")
+	}
+}
