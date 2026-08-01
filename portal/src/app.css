@@ -1,71 +1,324 @@
-/* Fluent-mimic tokens per upstream DESIGN.md: white surfaces, 4px corners,
-   Azure blue actions, amber LOCAL EMULATOR badge. */
-:root {
-  --primary: #0078d4; --primary-hover: #106ebe; --primary-active: #005a9e;
-  --primary-tint: #deecf9; --primary-ink: #004578;
-  --caution: #f59e0b; --caution-tint: #fef3c7; --caution-ink: #92400e;
-  --success: #107c10; --success-tint: #dff6dd;
-  --error: #d13438; --error-ink: #a4262c; --error-tint: #fde7e9;
-  --ink: #201f1e; --ink-2: #323130; --muted: #605e5c;
-  --border: #e1dfdd; --divider: #edebe9; --hover: #f3f2f1;
-  --surface: #fff; --canvas: #faf9f8;
-}
-* { box-sizing: border-box; }
-body { margin: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  background: var(--canvas); color: var(--ink); font-size: 14px; }
-h1 { font-size: 24px; font-weight: 600; margin: 0 0 16px; }
-h2 { font-size: 20px; font-weight: 600; margin: 0 0 12px; }
-button { font: inherit; cursor: pointer; }
-.btn { background: var(--primary); color: #fff; border: none; border-radius: 4px;
-  height: 32px; padding: 0 20px; font-weight: 600; }
-.btn:hover { background: var(--primary-hover); }
-.btn:active { background: var(--primary-active); }
-.btn-secondary { background: var(--surface); color: var(--ink-2);
-  border: 1px solid var(--border); border-radius: 4px; height: 32px; padding: 0 20px; font-weight: 600; }
-.btn-secondary:hover { background: var(--hover); }
-.btn-danger { background: var(--surface); color: var(--error);
-  border: 1px solid var(--border); border-radius: 4px; height: 28px; padding: 0 12px; font-weight: 600; }
-.btn-danger:hover { background: var(--error-tint); }
-.badge { background: var(--caution); color: var(--ink); font-size: 11px; font-weight: 600;
-  letter-spacing: 0.06em; border-radius: 4px; padding: 3px 8px; }
-.chip { font-family: 'Cascadia Mono', ui-monospace, Consolas, monospace; font-size: 12px;
-  background: var(--canvas); border: 1px solid var(--divider); border-radius: 4px;
-  padding: 2px 8px; color: var(--ink-2); cursor: pointer; }
-.chip:hover { background: var(--divider); }
-.card { background: var(--surface); border-radius: 4px; padding: 24px;
-  box-shadow: 0 0.6px 1.8px rgba(0,0,0,0.1), 0 0.15px 0.45px rgba(0,0,0,0.07); }
-table { width: 100%; border-collapse: collapse; }
-th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted);
-  padding: 8px 12px; border-bottom: 1px solid var(--divider); }
-td { padding: 8px 12px; border-bottom: 1px solid var(--divider); }
-tr:hover td { background: var(--canvas); }
-input, select { height: 32px; border: 1px solid var(--border); border-radius: 4px;
-  padding: 6px 8px; font: inherit; width: 100%; }
-input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
-label { display: block; font-weight: 600; margin: 12px 0 4px; }
-.banner-caution { background: var(--caution-tint); color: var(--caution-ink);
-  border-left: 3px solid var(--caution); border-radius: 4px; padding: 12px 16px; margin-bottom: 16px; }
-.banner-error { background: var(--error-tint); color: var(--error-ink);
-  border-radius: 4px; padding: 12px 16px; margin-bottom: 16px; }
-pre.code { background: var(--ink); color: #fff; border-radius: 4px; padding: 16px 18px;
-  font-family: 'Cascadia Mono', ui-monospace, monospace; font-size: 13px; overflow-x: auto; }
-.muted { color: var(--muted); font-size: 12px; }
+@import 'tailwindcss';
 
-/* Portal view utilities (shared by Dashboard/Workspaces/Operations/Clock/Faults). */
-.cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-.cards .card { min-width: 140px; text-align: center; }
-.num { font-size: 28px; font-weight: 600; }
-.num.small { font-size: 14px; }
-.mono { font-family: 'Cascadia Mono', ui-monospace, Consolas, monospace; font-size: 12px; }
-.panel { background: var(--surface); border: 1px solid var(--divider); border-radius: 4px;
-  padding: 16px; margin: 12px 0; }
-.controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.controls label { margin: 0; display: flex; align-items: center; gap: 6px; font-weight: 600; }
-.controls input, .panel input { width: 110px; }
-.error { color: var(--error-ink); background: var(--error-tint); border-radius: 4px; padding: 8px 12px; }
-.ok { color: var(--success); background: var(--success-tint); border-radius: 4px; padding: 8px 12px; }
-.row { cursor: pointer; }
-.chip.succeeded, .chip.completed { background: var(--success-tint); color: var(--success); }
-.chip.failed { background: var(--error-tint); color: var(--error-ink); }
-.chip.running, .chip.notstarted, .chip.inprogress { background: var(--caution-tint); color: var(--caution-ink); }
-.chip.cancelled { background: var(--divider); color: var(--muted); }
+/* The portal dresses as Fluent on purpose. It is the operator console for an
+   emulator of a Microsoft product, and a developer should recognise where they
+   are: Azure blue actions, 4px corners, white surfaces on a warm-grey canvas,
+   the Segoe stack. shadcn-svelte supplies the component quality — accessible
+   primitives, real focus rings, dark mode — and its tokens are mapped to those
+   Fluent values here rather than shipping its default slate palette.
+
+   Everything a shadcn component references (bg-background, text-muted-foreground,
+   border-border …) resolves through @theme inline to the variables below, so a
+   retheme is one block rather than a sweep through markup. */
+
+:root {
+  --radius: 4px;
+
+  --background: #faf9f8;
+  --foreground: #201f1e;
+  --card: #ffffff;
+  --card-foreground: #201f1e;
+  --popover: #ffffff;
+  --popover-foreground: #201f1e;
+
+  /* Azure blue — the one action colour. */
+  --primary: #0078d4;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f3f2f1;
+  --secondary-foreground: #323130;
+  --muted: #f3f2f1;
+  --muted-foreground: #605e5c;
+  --accent: #deecf9;
+  --accent-foreground: #004578;
+
+  --destructive: #d13438;
+  --destructive-foreground: #ffffff;
+
+  --border: #e1dfdd;
+  --input: #e1dfdd;
+  --ring: #0078d4;
+
+  /* Semantic status, used by the state chips. */
+  --success: #107c10;
+  --success-bg: #dff6dd;
+  --caution: #92400e;
+  --caution-bg: #fef3c7;
+  --danger: #a4262c;
+  --danger-bg: #fde7e9;
+  --brand-amber: #f59e0b;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #201f1e;
+  --sidebar-accent: #deecf9;
+  --sidebar-accent-foreground: #004578;
+  --sidebar-border: #edebe9;
+}
+
+/* Dark mode follows the OS: the portal is a local tool with no account, so it
+   has nowhere to store a preference and no business asking for one. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #1b1a19;
+    --foreground: #f3f2f1;
+    --card: #252423;
+    --card-foreground: #f3f2f1;
+    --popover: #252423;
+    --popover-foreground: #f3f2f1;
+
+    --primary: #2899f5;
+    --primary-foreground: #06182b;
+
+    --secondary: #323130;
+    --secondary-foreground: #f3f2f1;
+    --muted: #323130;
+    --muted-foreground: #a19f9d;
+    --accent: #123a5c;
+    --accent-foreground: #c7e0f4;
+
+    --destructive: #f1707b;
+    --destructive-foreground: #2b0b0e;
+
+    --border: #3b3a39;
+    --input: #3b3a39;
+    --ring: #2899f5;
+
+    --success: #6bb700;
+    --success-bg: #133a13;
+    --caution: #fbbf24;
+    --caution-bg: #3d2f0b;
+    --danger: #f1707b;
+    --danger-bg: #3b1417;
+
+    --sidebar: #201f1e;
+    --sidebar-foreground: #f3f2f1;
+    --sidebar-accent: #123a5c;
+    --sidebar-accent-foreground: #c7e0f4;
+    --sidebar-border: #3b3a39;
+  }
+}
+
+@theme inline {
+  --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Cascadia Mono', ui-monospace, Consolas, monospace;
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 6px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-caution: var(--caution);
+  --color-caution-bg: var(--caution-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-brand-amber: var(--brand-amber);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    @apply bg-background text-foreground font-sans text-sm antialiased;
+    margin: 0;
+  }
+  h1 {
+    @apply text-2xl font-semibold tracking-tight mb-1;
+  }
+  h2 {
+    @apply text-lg font-semibold tracking-tight mt-8 mb-3;
+  }
+  code {
+    @apply font-mono text-[0.85em] bg-muted text-foreground rounded px-1 py-0.5;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   The shared vocabulary the views speak. Reimplemented on the tokens above, so
+   restyling the portal is this file — the eleven views keep their markup and
+   all improve together, which is the only way a small portal stays coherent.
+   --------------------------------------------------------------------------- */
+@layer components {
+  .card {
+    @apply bg-card text-card-foreground border rounded-lg p-6 shadow-sm;
+  }
+  .cards {
+    @apply grid gap-4 mb-4;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .cards .card {
+    @apply p-4 text-center;
+  }
+  .num {
+    @apply text-3xl font-semibold tabular-nums tracking-tight;
+  }
+  .num.small {
+    @apply text-sm font-medium;
+  }
+  .panel {
+    @apply bg-card border rounded-lg p-4 my-3;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 h-8 px-4 rounded-md
+      bg-primary text-primary-foreground text-sm font-semibold
+      transition-colors hover:brightness-95 active:brightness-90
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
+      focus-visible:ring-offset-2 focus-visible:ring-offset-background
+      disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 h-8 px-4 rounded-md
+      bg-card text-secondary-foreground border text-sm font-semibold
+      transition-colors hover:bg-muted
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
+      focus-visible:ring-offset-2 focus-visible:ring-offset-background
+      disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-2 h-7 px-3 rounded-md
+      bg-card text-danger border text-xs font-semibold
+      transition-colors hover:bg-[var(--danger-bg)]
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+  }
+
+  /* The product mark: an emulator must never be mistaken for the real thing. */
+  .badge {
+    @apply inline-flex items-center rounded-md bg-brand-amber px-2 py-0.5
+      text-[11px] font-bold uppercase tracking-wider text-[#3d2f0b];
+  }
+
+  /* One class per state so a status reads at a glance and the colour vocabulary
+     lives here rather than in every view. */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-md border bg-card
+      px-2 py-0.5 font-mono text-xs text-muted-foreground whitespace-nowrap;
+  }
+  .chip.succeeded,
+  .chip.completed {
+    @apply bg-[var(--success-bg)] text-success border-transparent;
+  }
+  .chip.failed {
+    @apply bg-[var(--danger-bg)] text-danger border-transparent;
+  }
+  .chip.running,
+  .chip.notstarted,
+  .chip.inprogress,
+  .chip.connecting {
+    @apply bg-[var(--caution-bg)] text-caution border-transparent;
+  }
+  .chip.cancelled {
+    @apply bg-muted text-muted-foreground border-transparent;
+  }
+
+  .banner-caution {
+    @apply rounded-md border-l-[3px] border-l-brand-amber bg-[var(--caution-bg)]
+      text-caution px-4 py-3 mb-4;
+  }
+  .banner-error {
+    @apply rounded-md bg-[var(--danger-bg)] text-danger px-4 py-3 mb-4;
+  }
+  .error {
+    @apply rounded-md bg-[var(--danger-bg)] text-danger px-3 py-2;
+  }
+  .ok {
+    @apply rounded-md bg-[var(--success-bg)] text-success px-3 py-2;
+  }
+
+  .muted {
+    @apply text-muted-foreground text-xs leading-relaxed;
+  }
+  .mono {
+    @apply font-mono text-xs;
+  }
+
+  .controls {
+    @apply flex items-center gap-3 flex-wrap;
+  }
+  .controls label {
+    @apply m-0 flex items-center gap-1.5 font-semibold;
+  }
+  .controls input,
+  .panel input {
+    @apply w-28;
+  }
+  .row {
+    @apply cursor-pointer;
+  }
+
+  pre.code {
+    @apply rounded-md bg-foreground text-background font-mono text-[13px]
+      px-4 py-4 overflow-x-auto;
+  }
+
+  /* Tables: the portal's primary surface, so they get real rhythm. */
+  table {
+    @apply w-full border-collapse text-sm;
+  }
+  thead th {
+    @apply text-left text-xs font-semibold uppercase tracking-wide
+      text-muted-foreground px-3 py-2 border-b;
+  }
+  tbody td {
+    @apply px-3 py-2 border-b align-middle;
+  }
+  tbody tr:hover td {
+    @apply bg-muted/60;
+  }
+  tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  input,
+  select {
+    @apply h-8 w-full rounded-md border bg-card px-2.5 text-sm
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+  }
+  input[type='checkbox'] {
+    @apply h-4 w-4 accent-primary;
+  }
+  label {
+    @apply block font-semibold mt-3 mb-1;
+  }
+
+  /* A bare <button> gets the secondary treatment. The views are full of small
+     Refresh/Apply actions, and styling the element means they all improve at
+     once rather than each view remembering a class. shadcn's Button always
+     renders with classes, so it is untouched by this. */
+  button:not([class]) {
+    @apply inline-flex items-center justify-center gap-2 h-8 px-4 rounded-md
+      bg-card text-secondary-foreground border text-sm font-semibold
+      cursor-pointer transition-colors hover:bg-muted
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring
+      focus-visible:ring-offset-2 focus-visible:ring-offset-background
+      disabled:opacity-50 disabled:pointer-events-none;
+  }
+}
