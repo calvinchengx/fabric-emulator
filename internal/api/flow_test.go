@@ -37,14 +37,14 @@ func TestJobAndActivityEventsForASucceedingPipeline(t *testing.T) {
 		{"name":"Second","type":"SetVariable","typeProperties":{"variableName":"v","value":"x"},
 		 "dependsOn":[{"activity":"First","dependencyConditions":["Succeeded"]}]}],
 		"variables":{"v":{"type":"String"}}}}`)
-	events, cancel := st.Subscribe()
-	defer cancel()
+	sub := st.Subscribe()
+	defer sub.Close()
 
 	j, err := a.startJob(ws.ID, pipe, "Pipeline", store.InvokeManual, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := drainEvents(t, events)
+	got := drainEvents(t, sub.C)
 
 	// The job brackets the run: started first, terminal last.
 	if len(got) < 4 {
@@ -86,13 +86,13 @@ func TestActivityFailureIsOnTheStreamWithItsError(t *testing.T) {
 	ws := seedWorkspace(t, st)
 	pipe := createPipeline(t, st, ws.ID, `{"properties":{"activities":[
 		{"name":"Boom","type":"Fail","typeProperties":{"message":"synthetic failure","errorCode":"E42"}}]}}`)
-	events, cancel := st.Subscribe()
-	defer cancel()
+	sub := st.Subscribe()
+	defer sub.Close()
 
 	if _, err := a.startJob(ws.ID, pipe, "Pipeline", store.InvokeManual, nil); err != nil {
 		t.Fatal(err)
 	}
-	got := drainEvents(t, events)
+	got := drainEvents(t, sub.C)
 
 	var failed *store.Event
 	for i, ev := range got {
@@ -122,14 +122,14 @@ func TestRetriedAttemptsAreNotAnnouncedTwice(t *testing.T) {
 	pipe := createPipeline(t, st, ws.ID, `{"properties":{"activities":[
 		{"name":"Flaky","type":"Fail","typeProperties":{"message":"always fails"},
 		 "policy":{"retry":2,"retryIntervalInSeconds":5}}]}}`)
-	events, cancel := st.Subscribe()
-	defer cancel()
+	sub := st.Subscribe()
+	defer sub.Close()
 
 	if _, err := a.startJob(ws.ID, pipe, "Pipeline", store.InvokeManual, nil); err != nil {
 		t.Fatal(err)
 	}
 	var acts []store.Event
-	for _, ev := range drainEvents(t, events) {
+	for _, ev := range drainEvents(t, sub.C) {
 		if ev.Kind == store.KindActivity {
 			acts = append(acts, ev)
 		}
@@ -169,14 +169,14 @@ func TestSkippedActivitiesReachTheStream(t *testing.T) {
 		{"name":"Boom","type":"Fail","typeProperties":{"message":"nope"}},
 		{"name":"Never","type":"Wait","typeProperties":{"waitTimeInSeconds":1},
 		 "dependsOn":[{"activity":"Boom","dependencyConditions":["Succeeded"]}]}]}}`)
-	events, cancel := st.Subscribe()
-	defer cancel()
+	sub := st.Subscribe()
+	defer sub.Close()
 
 	if _, err := a.startJob(ws.ID, pipe, "Pipeline", store.InvokeManual, nil); err != nil {
 		t.Fatal(err)
 	}
 	seen := map[string]string{}
-	for _, ev := range drainEvents(t, events) {
+	for _, ev := range drainEvents(t, sub.C) {
 		if ev.Kind == store.KindActivity {
 			seen[ev.ActivityName] = ev.Status
 		}
@@ -195,13 +195,13 @@ func TestGenericItemJobAnnouncesOnlyItsStart(t *testing.T) {
 	if err := st.CreateItem(it, nil); err != nil {
 		t.Fatal(err)
 	}
-	events, cancel := st.Subscribe()
-	defer cancel()
+	sub := st.Subscribe()
+	defer sub.Close()
 
 	if _, err := a.startJob(ws.ID, it, "Refresh", store.InvokeManual, nil); err != nil {
 		t.Fatal(err)
 	}
-	got := drainEvents(t, events)
+	got := drainEvents(t, sub.C)
 	if len(got) != 1 || got[0].Kind != store.KindJob || got[0].Status != store.JobStarted {
 		t.Fatalf("events = %+v, want only the start", got)
 	}
@@ -236,8 +236,8 @@ func TestCopyActivityAttributesTheBytesItMoved(t *testing.T) {
 	}
 	pipe := copyPipeline(t, st, ws.ID, lake.ID, "IngestCustomers")
 
-	events, cancel := st.Subscribe()
-	defer cancel()
+	sub := st.Subscribe()
+	defer sub.Close()
 	j, err := a.startJob(ws.ID, pipe, "Pipeline", store.InvokeManual, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func TestCopyActivityAttributesTheBytesItMoved(t *testing.T) {
 
 	var table *store.Event
 	var attributedFiles int
-	for _, ev := range drainEvents(t, events) {
+	for _, ev := range drainEvents(t, sub.C) {
 		if ev.Attribution == nil {
 			continue
 		}
@@ -284,13 +284,13 @@ func TestWritesWithNothingToSayCarryNoAttribution(t *testing.T) {
 	if err := st.CreateItem(lake, nil); err != nil {
 		t.Fatal(err)
 	}
-	events, cancel := st.Subscribe()
-	defer cancel()
+	sub := st.Subscribe()
+	defer sub.Close()
 	if err := st.CreateOneLakePath(&store.OneLakePath{WorkspaceID: ws.ID, ItemID: lake.ID,
 		RelPath: "Files/plain.csv", Content: []byte("x")}, false); err != nil {
 		t.Fatal(err)
 	}
-	for _, ev := range drainEvents(t, events) {
+	for _, ev := range drainEvents(t, sub.C) {
 		if ev.Attribution != nil {
 			t.Fatalf("invented attribution: %+v", *ev.Attribution)
 		}
