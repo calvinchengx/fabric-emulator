@@ -132,7 +132,15 @@ services:
   # Mirrors OpenMetadata's own quickstart compose (docker-compose-postgres.yml
   # @ 1.13.2), profile-gated so `docker compose up` never starts or pulls it.
   # The OM env schema defaults every connection var; we set only the hosts.
-  # Heavier than the emulators: Elasticsearch alone wants ~1 GB heap.
+  # Heavier than the emulators: the search backend alone wants ~1 GB heap.
+  #
+  # OpenSearch, not Elasticsearch, and deliberately so. OpenMetadata supports
+  # both via SEARCH_TYPE, but **semantic search works only on OpenSearch** —
+  # its docs state Elasticsearch "is not supported" for it. Defaulting to
+  # Elasticsearch would foreclose a whole feature class at the infrastructure
+  # layer, silently: nothing fails, the option simply is not there. OpenSearch
+  # is also Apache-2.0 in its binaries, where the elastic.co images remain
+  # ELv2/SSPL even though the source regained an AGPL option in 8.16.
   om-postgresql:
     profiles: [governance]
     image: docker.getcollate.io/openmetadata/postgresql:1.13.2
@@ -148,15 +156,21 @@ services:
       timeout: 10s
       retries: 10
 
-  om-elasticsearch:
+  om-opensearch:
     profiles: [governance]
-    image: docker.elastic.co/elasticsearch/elasticsearch:9.3.0
+    # Mirrors OpenMetadata's own docker-compose-opensearch-standalone.yml,
+    # with ONE deviation: upstream asks -Xms2g -Xmx4g, which is a lot to
+    # reserve in a dev-loop stack whose quickstart already asks for 8 GB. 1 GB
+    # matches what the Elasticsearch service used here and is enough for the
+    # governance e2e's catalog; raise it if you index a real estate.
+    image: opensearchproject/opensearch:3.4.0
     environment:
       - discovery.type=single-node
-      - ES_JAVA_OPTS=-Xms1024m -Xmx1024m
-      - xpack.security.enabled=false
+      - OPENSEARCH_JAVA_OPTS=-Xms1024m -Xmx1024m
+      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
     volumes:
-      - om-es-data:/usr/share/elasticsearch/data
+      - om-search-data:/usr/share/opensearch/data
     healthcheck:
       test: "curl -s http://localhost:9200/_cluster/health?pretty | grep status | grep -qE 'green|yellow' || exit 1"
       interval: 15s
@@ -175,11 +189,16 @@ services:
       DB_SCHEME: postgresql
       DB_DRIVER_CLASS: org.postgresql.Driver
       DB_PARAMS: "allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC"
-      ELASTICSEARCH_HOST: om-elasticsearch
+      # SEARCH_TYPE picks the backend; the CONNECTION vars stay
+      # ELASTICSEARCH_*-prefixed for both, which is OpenMetadata's naming, not a
+      # copy/paste slip — there is no OPENSEARCH_HOST. Setting one silently does
+      # nothing and the server falls back to localhost:9200.
+      SEARCH_TYPE: opensearch
+      ELASTICSEARCH_HOST: om-opensearch
     depends_on:
       om-postgresql:
         condition: service_healthy
-      om-elasticsearch:
+      om-opensearch:
         condition: service_healthy
 
   openmetadata:
@@ -195,7 +214,12 @@ services:
       DB_SCHEME: postgresql
       DB_DRIVER_CLASS: org.postgresql.Driver
       DB_PARAMS: "allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC"
-      ELASTICSEARCH_HOST: om-elasticsearch
+      # SEARCH_TYPE picks the backend; the CONNECTION vars stay
+      # ELASTICSEARCH_*-prefixed for both, which is OpenMetadata's naming, not a
+      # copy/paste slip — there is no OPENSEARCH_HOST. Setting one silently does
+      # nothing and the server falls back to localhost:9200.
+      SEARCH_TYPE: opensearch
+      ELASTICSEARCH_HOST: om-opensearch
     depends_on:
       om-migrate:
         condition: service_completed_successfully
@@ -230,4 +254,4 @@ services:
 
 volumes:
   om-db-data:
-  om-es-data:
+  om-search-data:

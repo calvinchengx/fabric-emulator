@@ -73,7 +73,7 @@ edge but needs a real browser, so it is not asserted.
 
 ## How it stays optional (and honest)
 
-- The five services (`om-postgresql`, `om-elasticsearch`, `om-migrate`,
+- The five services (`om-postgresql`, `om-opensearch`, `om-migrate`,
   `openmetadata`, `govern-ingest`) are tagged `profiles: [governance]` in
   [docker-compose.yml](../docker-compose.yml) — without the flag they are
   invisible to `docker compose up`, cost nothing, pull nothing.
@@ -81,10 +81,27 @@ edge but needs a real browser, so it is not asserted.
   **1.13.2** (same pin-for-reproducibility rule as everything else here) —
   **Postgres-backed** (OM's own Postgres image; the server image's MySQL
   defaults are explicitly overridden).
+- **Search backend: OpenSearch, not Elasticsearch** — a deliberate departure
+  from OM's `docker-compose-postgres.yml`, which defaults to Elasticsearch.
+  OpenMetadata supports both through `SEARCH_TYPE`, but **semantic search works
+  only on OpenSearch**: its docs state Elasticsearch "is not supported" for it.
+  Defaulting to Elasticsearch would foreclose a feature class at the
+  infrastructure layer without anything ever failing. OpenSearch binaries are
+  also Apache-2.0, where the `docker.elastic.co` images stay ELv2/SSPL even
+  after the source regained an AGPL option in 8.16. The service mirrors OM's
+  `docker-compose-opensearch-standalone.yml`, heap tuned down from upstream's
+  `-Xms2g -Xmx4g` to 1 GB for a dev-loop stack.
+- Two traps if you touch that wiring. There is **no `OPENSEARCH_HOST`** — the
+  connection variables stay `ELASTICSEARCH_*` for both backends, so an
+  OpenSearch-prefixed one does nothing while the server quietly falls back to
+  `localhost:9200`. And switching does **not** enable semantic search: that
+  needs `SEMANTIC_SEARCH_ENABLED=true` plus an embedding provider (OpenAI,
+  Bedrock, or DJL, which downloads and runs a HuggingFace model in-process).
+  This removes the blocker; it does not turn the feature on.
 - **CI witness**: `e2e/governance/run.py` (CI job `governance`) boots the
   profile, seeds a real Delta table, runs the ingest, and asserts the
   cataloged columns through OM's API on every push.
-- **Weight warning:** this is a real Java server + Elasticsearch (~1 GB heap)
+- **Weight warning:** this is a real Java server + OpenSearch (~1 GB heap)
   + Postgres. Expect ~2–3 GB RAM on top of the family, and a couple of
   minutes of first-boot migration.
 

@@ -76,7 +76,7 @@ def main():
     # long-running services, then start the OM chain and poll its API.
     compose_pulling("up", "-d", "--build", "--wait", "--wait-timeout", "600",
                     "entra-emulator", "keyvault-emulator", "fabric-emulator",
-                    "om-postgresql", "om-elasticsearch")
+                    "om-postgresql", "om-opensearch")
 
     log("starting OpenMetadata (first-boot migration takes a few minutes)")
     compose_pulling("up", "-d", "--no-recreate", "openmetadata")
