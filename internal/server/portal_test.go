@@ -12,6 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
+
 	"github.com/calvinchengx/fabric-emulator/internal/config"
 	"github.com/calvinchengx/fabric-emulator/internal/server"
 )
@@ -439,5 +442,143 @@ func TestPortalSPAServing(t *testing.T) {
 	resp.Body.Close()
 	if !strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
 		t.Fatal("/health should still serve JSON")
+	}
+}
+
+func TestPortalLineage(t *testing.T) {
+	// The Flow view's graph reads this: every recorded source→target movement,
+	// tenant-wide (the portal has no principal) with item names resolved so a
+	// node can be labelled by something a human recognises.
+	f := newFixture(t)
+
+	var empty struct {
+		Value []json.RawMessage `json:"value"`
+	}
+	if code := f.portalJSON(t, "/_emulator/portal/lineage", &empty); code != 200 {
+		t.Fatalf("portal lineage: %d", code)
+	}
+	if len(empty.Value) != 0 {
+		t.Fatalf("expected no edges, got %d", len(empty.Value))
+	}
+
+	var ws struct {
+		ID string `json:"id"`
+	}
+	f.mustStatus(f.call("POST", "/v1/workspaces", f.token,
+		map[string]any{"displayName": "lineage-ws"}, &ws), 201, "create workspace")
+	lake := f.createItemNow(t, ws.ID, "Lakehouse", "lin-lake")
+	job := &store.JobInstance{ItemID: lake, JobType: "Pipeline"}
+	if err := f.srv.Store.CreateJobInstance(job); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.srv.Store.CreateLineageEdge(&store.LineageEdge{
+		WorkspaceID: ws.ID, JobID: job.ID, ActivityName: "IngestCustomers",
+		SourceWorkspaceID: ws.ID, SourceItemID: lake, SourcePath: "Files/landing/customers.csv",
+		TargetWorkspaceID: ws.ID, TargetItemID: lake, TargetPath: "Tables/bronze_customers",
+		Producer: store.ProducerCopy,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		Value []struct {
+			JobID        string `json:"jobId"`
+			ActivityName string `json:"activityName"`
+			Producer     string `json:"producer"`
+			SourceItem   string `json:"sourceItem"`
+			SourcePath   string `json:"sourcePath"`
+			TargetItem   string `json:"targetItem"`
+			TargetPath   string `json:"targetPath"`
+		} `json:"value"`
+	}
+	if code := f.portalJSON(t, "/_emulator/portal/lineage", &got); code != 200 {
+		t.Fatalf("portal lineage: %d", code)
+	}
+	if len(got.Value) != 1 {
+		t.Fatalf("edges = %+v", got.Value)
+	}
+	e := got.Value[0]
+	if e.ActivityName != "IngestCustomers" || e.Producer != store.ProducerCopy || e.JobID != job.ID {
+		t.Fatalf("edge = %+v", e)
+	}
+	// The names are what make a node label readable rather than a GUID.
+	if e.SourceItem != "lin-lake" || e.TargetItem != "lin-lake" {
+		t.Fatalf("item names not resolved: %+v", e)
+	}
+	if e.SourcePath != "Files/landing/customers.csv" || e.TargetPath != "Tables/bronze_customers" {
+		t.Fatalf("paths = %s → %s", e.SourcePath, e.TargetPath)
+	}
+}
+
+func TestPortalTable(t *testing.T) {
+	// The Data flow view's inspector: the stream says a table changed, this
+	// says what it changed into — read through the real warehouse reader.
+	f := newFixture(t)
+	var ws struct {
+		ID string `json:"id"`
+	}
+	f.mustStatus(f.call("POST", "/v1/workspaces", f.token,
+		map[string]any{"displayName": "table-ws"}, &ws), 201, "create workspace")
+	lake := f.createItemNow(t, ws.ID, "Lakehouse", "tbl-lake")
+
+	tbl := &warehouse.Table{
+		Columns: []string{"id", "name"},
+		Rows:    [][]any{{int64(1), "ada"}, {int64(2), "grace"}, {int64(3), "edsger"}},
+	}
+	if err := warehouse.WriteDeltaTable(f.srv.Store, ws.ID, lake, "bronze_customers",
+		warehouse.WriteOverwrite, tbl); err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		Table     string     `json:"table"`
+		Version   int64      `json:"version"`
+		Readable  bool       `json:"readable"`
+		Columns   []string   `json:"columns"`
+		RowCount  int        `json:"rowCount"`
+		Preview   [][]string `json:"preview"`
+		Truncated bool       `json:"truncated"`
+		Message   string     `json:"message"`
+	}
+	url := "/_emulator/portal/table?itemId=" + lake + "&table=Tables/bronze_customers"
+	if code := f.portalJSON(t, url, &got); code != 200 {
+		t.Fatalf("portal table: %d", code)
+	}
+	if !got.Readable || got.RowCount != 3 || got.Version != 0 {
+		t.Fatalf("table = %+v", got)
+	}
+	// The version must match what a table event reports, or the inspector and
+	// the stream would be speaking different units.
+	if got.Table != "Tables/bronze_customers" {
+		t.Fatalf("table name = %q", got.Table)
+	}
+	if len(got.Columns) != 2 || got.Columns[0] != "id" || got.Columns[1] != "name" {
+		t.Fatalf("columns = %v", got.Columns)
+	}
+	if len(got.Preview) != 3 || got.Preview[0][1] != "ada" || got.Truncated {
+		t.Fatalf("preview = %v truncated=%v", got.Preview, got.Truncated)
+	}
+
+	// A second write moves the version, which is what makes the inspector
+	// useful next to a stream reporting v1, v2, v3.
+	if err := warehouse.WriteDeltaTable(f.srv.Store, ws.ID, lake, "bronze_customers",
+		warehouse.WriteAppend, tbl); err != nil {
+		t.Fatal(err)
+	}
+	if code := f.portalJSON(t, url, &got); code != 200 || got.Version != 1 || got.RowCount != 6 {
+		t.Fatalf("after append: version %d, %d rows", got.Version, got.RowCount)
+	}
+
+	// A table with no commits is not a server error — it is a fact to report.
+	if code := f.portalJSON(t, "/_emulator/portal/table?itemId="+lake+"&table=Tables/nope", &got); code != 200 {
+		t.Fatalf("unknown table: %d", code)
+	}
+	if got.Readable || got.Message == "" || got.Version != -1 {
+		t.Fatalf("unknown table = %+v", got)
+	}
+
+	// Missing parameters are a client error.
+	if code := f.portalJSON(t, "/_emulator/portal/table?itemId="+lake, &got); code != 400 {
+		t.Fatalf("no table param: %d", code)
 	}
 }

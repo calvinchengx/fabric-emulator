@@ -334,7 +334,7 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 	var bytesCopied int
 	for _, f := range files {
 		p := &store.OneLakePath{WorkspaceID: dst.wsID, ItemID: dst.itemID, RelPath: f.rel, Content: f.content}
-		if err := e.a.Store.CreateOneLakePath(p, false); err != nil {
+		if err := e.a.Store.CreateOneLakePathAs(store.ActivityBy(e.jobID, act.Name), p, false); err != nil {
 			return nil, fmt.Errorf("copy %q: writing %s: %v", act.Name, f.rel, err)
 		}
 		bytesCopied += len(f.content)
@@ -632,6 +632,13 @@ func (a *API) pipelineDefinition(itemID string) ([]byte, error) {
 // runs against the job. It returns a failure code ("" on success) used to set
 // the job's terminal status.
 func (a *API) runPipeline(wid string, it *store.Item, jobID string, params map[string]any) string {
+	return a.runPipelineWith(wid, it, jobID, params, nil)
+}
+
+// runPipelineWith is runPipeline with the event that started it, which the
+// definition reads as `@pipeline()?.TriggerEvent?.FileName`. nil for a manual
+// or scheduled run — which is why the documented way to read it safe-navigates.
+func (a *API) runPipelineWith(wid string, it *store.Item, jobID string, params, trigger map[string]any) string {
 	def, err := a.pipelineDefinition(it.ID)
 	if err != nil {
 		a.savePipelineRun(jobID, pipeline.StatusFailed, nil)
@@ -642,7 +649,17 @@ func (a *API) runPipeline(wid string, it *store.Item, jobID string, params map[s
 		a.savePipelineRun(jobID, pipeline.StatusFailed, nil)
 		return "PipelineDefinitionInvalid"
 	}
-	res := p.Run(params, &pipelineExecutor{a: a, wid: wid, jobID: jobID, chain: []string{it.ID}})
+	res := p.RunWith(params, &pipelineExecutor{a: a, wid: wid, jobID: jobID, chain: []string{it.ID}},
+		pipeline.Options{
+			TriggerEvent: trigger,
+			// Each activity is announced as it settles, so a watcher sees a
+			// failure at the moment it happens rather than reconstructing it
+			// from the run afterwards.
+			OnActivity: func(ar pipeline.ActivityRun) {
+				a.Store.PublishActivityEvent(wid, it.ID, jobID, ar.Name, ar.Type,
+					ar.Status, ar.Error, ar.Duration, ar.Retry)
+			},
+		})
 	a.savePipelineRun(jobID, res.Status, res.Activities)
 	if res.Status != pipeline.StatusSucceeded {
 		return "PipelineActivityFailed"
@@ -728,7 +745,8 @@ func (e *pipelineExecutor) copyIntoTable(act pipeline.Activity, tp map[string]js
 	} else if strings.EqualFold(action, "Append") {
 		mode = warehouse.WriteAppend
 	}
-	if err := warehouse.WriteDeltaTable(e.a.Store, dst.wsID, dst.itemID, table, mode, tbl); err != nil {
+	if err := warehouse.WriteDeltaTableAs(store.ActivityBy(e.jobID, act.Name),
+		e.a.Store, dst.wsID, dst.itemID, table, mode, tbl); err != nil {
 		return nil, false, fmt.Errorf("copy %q: writing table %s: %v", act.Name, table, err)
 	}
 

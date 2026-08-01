@@ -87,5 +87,6 @@ func (a *API) reportSparkJobRun(w http.ResponseWriter, r *http.Request, p *auth.
 		fail = "SparkJobExecutionFailed"
 	}
 	_ = a.Store.FinalizeJob(iid, jid, fail)
+	a.publishJobOutcome(wid, iid, jid, fail)
 	writeJSON(w, http.StatusOK, run)
 }

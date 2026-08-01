@@ -25,6 +25,7 @@ type evalContext struct {
 	Parameters map[string]value
 	Variables  map[string]value
 	Activities map[string]value // name -> {"output": ..., "status": ...}
+	Trigger    map[string]value // @pipeline().TriggerEvent; nil unless event-started
 	Item       value            // @item() inside ForEach
 	HasItem    bool
 }
@@ -106,6 +107,13 @@ func tokenize(s string) ([]token, error) {
 				i++
 			}
 			toks = append(toks, token{"str", b.String()})
+		case c == '?' && i+1 < len(s) && s[i+1] == '.':
+			// Safe navigation. Fabric's own event-trigger samples are written
+			// `@pipeline()?.TriggerEvent?.FileName` — the '?' is what makes the
+			// expression yield null instead of failing when the pipeline was
+			// not started by a trigger.
+			toks = append(toks, token{"punct", "?."})
+			i += 2
 		case c == '(' || c == ')' || c == ',' || c == '.' || c == '[' || c == ']':
 			toks = append(toks, token{"punct", string(c)})
 			i++
@@ -186,16 +194,23 @@ func (p *parser) parsePostfix() (value, error) {
 			break
 		}
 		switch t.text {
-		case ".":
+		case ".", "?.":
+			safe := t.text == "?."
 			p.pos++
 			mem := p.peek()
 			if mem == nil || mem.kind != "ident" {
-				return nil, fmt.Errorf("expected member name after '.'")
+				return nil, fmt.Errorf("expected member name after '%s'", t.text)
 			}
 			p.pos++
+			if safe && v == nil {
+				continue // null propagates through the rest of the chain
+			}
 			v, err = member(v, mem.text)
 			if err != nil {
-				return nil, err
+				if !safe {
+					return nil, err
+				}
+				v = nil // a missing member on a '?.' access is null, not an error
 			}
 		case "[":
 			p.pos++

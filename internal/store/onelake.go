@@ -30,6 +30,17 @@ func newETag() string { return `"` + NewID() + `"` }
 // is true the create is conditional: an existing path is ErrPathExists and
 // nothing is written. Parent directories are implicit, like ADLS.
 func (s *Store) CreateOneLakePath(p *OneLakePath, ifNoneMatch bool) error {
+	return s.CreateOneLakePathAs(Attribution{}, p, ifNoneMatch)
+}
+
+// CreateOneLakePathAs is CreateOneLakePath for a caller that knows which unit
+// of work is doing the writing, so the flow event can say so.
+//
+// A sibling rather than a `context.Context` threaded through every caller:
+// CreateOneLakePath is called from the DFS and Blob handlers, git, deployment,
+// the mirror and the Delta writer, and only a few of those know anything worth
+// reporting. Explicit at the sites that do, untouched everywhere else.
+func (s *Store) CreateOneLakePathAs(attr Attribution, p *OneLakePath, ifNoneMatch bool) error {
 	p.CreatedAt = s.Now()
 	p.ModifiedAt = p.CreatedAt
 	p.ETag = newETag()
@@ -49,6 +60,7 @@ ON CONFLICT(item_id, rel_path) DO NOTHING`,
 		if n == 0 {
 			return ErrPathExists
 		}
+		s.emitFileEvent(EventFileCreated, p.WorkspaceID, p.ItemID, eventPath(p), attr)
 		return nil
 	}
 	_, err := s.db.Exec(`
@@ -58,7 +70,27 @@ ON CONFLICT(item_id, rel_path) DO UPDATE SET
 	is_dir = excluded.is_dir, content = excluded.content,
 	etag = excluded.etag, modified_at = excluded.modified_at`,
 		p.WorkspaceID, p.ItemID, p.RelPath, p.IsDir, p.Content, p.CreatedAt, p.ETag, p.ModifiedAt)
+	if err == nil {
+		s.emitFileEvent(EventFileCreated, p.WorkspaceID, p.ItemID, eventPath(p), attr)
+	}
 	return err
+}
+
+// eventPath is the path a file event carries — empty when this write is not
+// the arrival of data, so nothing downstream reacts to it.
+//
+// Two cases are not arrivals. A **directory** is obvious. Less obvious: a
+// **zero-length file**, which is how the ADLS protocol *starts* a write —
+// create the path, append the bytes, flush. Firing there would mean a Reflex
+// trigger ran, and a flow event claimed a table landed, while the file was
+// still empty. Azure's own ADLS Gen2 does the same thing: it raises
+// BlobCreated on FlushWithClose, not on the create. The DFS handler emits the
+// real event at flush (see EmitFileWritten).
+func eventPath(p *OneLakePath) string {
+	if p.IsDir || len(p.Content) == 0 {
+		return ""
+	}
+	return p.RelPath
 }
 
 // GetOneLakePath fetches one path.
@@ -126,7 +158,13 @@ WHERE item_id = ? AND (rel_path = ? OR rel_path LIKE ? || '/%')`,
 		dst, len(src)+1, etag, now, itemID, src, src); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if p, err := s.GetOneLakePath(itemID, dst); err == nil {
+		s.emitFileEvent(EventFileRenamed, p.WorkspaceID, itemID, eventPath(p), Attribution{})
+	}
+	return nil
 }
 
 // ListOneLakePaths returns paths under prefix ("" = whole item). Non-recursive
@@ -181,13 +219,23 @@ FROM onelake_paths WHERE item_id = ? ORDER BY rel_path`, itemID)
 
 // DeleteOneLakePath removes a file, or a directory and everything under it.
 func (s *Store) DeleteOneLakePath(itemID, relPath string) error {
+	// Read the workspace before the delete: afterwards there is nothing left
+	// to attribute the event to.
+	wsID := ""
+	if p, err := s.GetOneLakePath(itemID, relPath); err == nil {
+		wsID = p.WorkspaceID
+	}
 	res, err := s.db.Exec(`
 DELETE FROM onelake_paths WHERE item_id = ? AND (rel_path = ? OR rel_path LIKE ? || '/%')`,
 		itemID, relPath, relPath)
 	if err != nil {
 		return err
 	}
-	return oneRow(res)
+	if err := oneRow(res); err != nil {
+		return err
+	}
+	s.emitFileEvent(EventFileDeleted, wsID, itemID, relPath, Attribution{})
+	return nil
 }
 
 // GetWorkspaceByName resolves a workspace by display name (OneLake's

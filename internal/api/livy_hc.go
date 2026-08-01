@@ -47,9 +47,9 @@ type hcRepl struct {
 	lakehouseID string
 	creatorID   string
 	createdAt   int64
-	createBody  []byte // acquire payload, forwarded when the backend session is opened
-	backendID   string // real backend Livy session id (lazy; empty until first statement)
-	kind        string // session default statement language (Livy: spark/pyspark/sql)
+	createBody  []byte           // acquire payload, forwarded when the backend session is opened
+	backendID   string           // real backend Livy session id (lazy; empty until first statement)
+	kind        string           // session default statement language (Livy: spark/pyspark/sql)
 	statements  []*livyStatement // native-agent path: this REPL's executed statements
 	deleted     bool
 }
@@ -222,6 +222,9 @@ func (a *API) acquireHC(w http.ResponseWriter, r *http.Request, p *auth.Principa
 	_ = json.Unmarshal(body, &req)
 	wid, lid := r.PathValue("wid"), r.PathValue("lid")
 	repl := a.hcMgr().acquire(wid+"/"+lid, req.SessionTag, wid, lid, p.ID, a.Store.Now(), body)
+	// Give the REPL the lakehouse's tables by name, the way a Fabric notebook
+	// attached to a lakehouse already has them.
+	a.registerLakehouseTables(repl.replID, wid, lid)
 	writeJSON(w, http.StatusOK, a.hcBody(repl))
 }
 

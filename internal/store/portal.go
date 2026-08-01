@@ -46,6 +46,34 @@ func (s *Store) ListJobInstances(limit int) ([]*JobInstance, error) {
 	return out, rows.Err()
 }
 
+// ListAllLineageEdges returns recent lineage edges across every workspace,
+// newest first. The API-facing ListLineageEdges is workspace-scoped because it
+// is behind RBAC; the portal has no principal and shows the whole tenant.
+func (s *Store) ListAllLineageEdges(limit int) ([]*LineageEdge, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := s.db.Query(`
+SELECT id, workspace_id, job_id, activity_name, source_workspace_id, source_item_id, source_path,
+       target_workspace_id, target_item_id, target_path, producer, created_at
+FROM lineage_edges ORDER BY rowid DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*LineageEdge
+	for rows.Next() {
+		e := &LineageEdge{}
+		if err := rows.Scan(&e.ID, &e.WorkspaceID, &e.JobID, &e.ActivityName,
+			&e.SourceWorkspaceID, &e.SourceItemID, &e.SourcePath,
+			&e.TargetWorkspaceID, &e.TargetItemID, &e.TargetPath, &e.Producer, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // ListOperations returns the most recent operations, newest first.
 func (s *Store) ListOperations(limit int) ([]*Operation, error) {
 	if limit <= 0 {

@@ -20,6 +20,20 @@ import (
 type Store struct {
 	db    *sql.DB
 	Clock *clock.Clock
+	// FileEvents, when set, receives a OneLake data-plane event after every
+	// committed file write, rename, or delete — whoever made it. The server
+	// wires it to the event-trigger dispatcher (internal/api/triggers.go);
+	// nil means nothing subscribes and the emit is a no-op.
+	//
+	// This hook is **synchronous and exactly-once**: a trigger must fire before
+	// the write returns, so a test that writes a file sees the pipeline it
+	// started. The flow bus below has the opposite contract — asynchronous and
+	// lossy — which is why they are separate rather than one mechanism.
+	FileEvents func(FileEvent)
+
+	// bus fans the same events out to observers (the /_emulator/events stream).
+	// See bus.go for why delivery there must never block a writer.
+	bus *bus
 }
 
 // Open opens (creating if needed) the database in dataDir; an empty dataDir
@@ -35,16 +49,23 @@ func Open(dataDir string, ck *clock.Clock) (*Store, error) {
 	}
 	// modernc/sqlite serializes writes; a single conn avoids table locks.
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, Clock: ck}
+	s := &Store{db: db, Clock: ck, bus: newBus()}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
 	}
+	go s.runBus()
 	return s, nil
 }
 
-// Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+// Close stops the flow bus and closes the database. The bus is stopped first
+// and waited for, so no dispatch goroutine is still holding the handle.
+func (s *Store) Close() error {
+	if s.bus != nil {
+		s.bus.stop()
+	}
+	return s.db.Close()
+}
 
 // Now returns the current emulator time (epoch seconds).
 func (s *Store) Now() int64 { return s.Clock.Now() }
@@ -180,6 +201,25 @@ CREATE TABLE IF NOT EXISTS item_schedules (
 	-- fires the window (fired_through, now]. 0 = never fired.
 	fired_through INTEGER NOT NULL DEFAULT 0
 );
+-- Event triggers: a Reflex's subscription to OneLake file events, and the item
+-- job it starts. Real Fabric binds these in the portal (an Eventstream feeding
+-- a Reflex rule) with no public REST, so the flattened shape here is an
+-- emulator-native control surface — see internal/store/events.go.
+CREATE TABLE IF NOT EXISTS event_triggers (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	reflex_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	display_name TEXT NOT NULL DEFAULT '',
+	enabled INTEGER NOT NULL DEFAULT 1,
+	event_type TEXT NOT NULL,
+	source_item_id TEXT NOT NULL,
+	path_prefix TEXT NOT NULL DEFAULT '',
+	target_workspace_id TEXT NOT NULL,
+	target_item_id TEXT NOT NULL,
+	target_job_type TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_event_triggers_source ON event_triggers (source_item_id);
 CREATE TABLE IF NOT EXISTS pipeline_runs (
 	job_id TEXT PRIMARY KEY REFERENCES job_instances(id) ON DELETE CASCADE,
 	status TEXT NOT NULL,

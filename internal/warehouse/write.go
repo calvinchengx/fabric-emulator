@@ -32,6 +32,13 @@ const (
 // The table is created on first write, so the caller need not distinguish
 // create from append.
 func WriteDeltaTable(st *store.Store, wsID, itemID, name, mode string, tbl *Table) error {
+	return WriteDeltaTableAs(store.Attribution{}, st, wsID, itemID, name, mode, tbl)
+}
+
+// WriteDeltaTableAs is WriteDeltaTable for a caller that knows which unit of
+// work is writing — a Copy activity, say — so the resulting file and table
+// events can name it.
+func WriteDeltaTableAs(attr store.Attribution, st *store.Store, wsID, itemID, name, mode string, tbl *Table) error {
 	if tbl == nil || len(tbl.Columns) == 0 {
 		return fmt.Errorf("delta write %q: no columns", name)
 	}
@@ -61,16 +68,16 @@ func WriteDeltaTable(st *store.Store, wsID, itemID, name, mode string, tbl *Tabl
 	}
 
 	dataFile := fmt.Sprintf("part-%d.parquet", version)
-	if err := st.CreateOneLakePath(&store.OneLakePath{
+	if err := st.CreateOneLakePathAs(attr, &store.OneLakePath{
 		WorkspaceID: wsID, ItemID: itemID,
 		RelPath: path.Join(root, dataFile), Content: pq,
 	}, false); err != nil {
 		return err
 	}
-	return st.CreateOneLakePath(&store.OneLakePath{
+	return st.CreateOneLakePathAs(attr, &store.OneLakePath{
 		WorkspaceID: wsID, ItemID: itemID,
 		RelPath: path.Join(root, "_delta_log", commitFileName(version)),
-		Content: commitJSON(tbl.Columns, kinds, dataFile, len(pq), removes, version, time.Now().UnixMilli()),
+		Content: commitJSON(tbl.Columns, kinds, dataFile, len(pq), len(tbl.Rows), removes, version, time.Now().UnixMilli()),
 	}, false)
 }
 
@@ -119,7 +126,7 @@ func commitFileName(version int) string { return fmt.Sprintf("%020d.json", versi
 // commitJSON builds one _delta_log commit. protocol/metaData are written on the
 // first commit and on an overwrite (which may change the schema); an append
 // carries only its add action, as Delta writers do.
-func commitJSON(cols []string, kinds []colKind, dataFile string, size int, removes []string, version int, nowMillis int64) []byte {
+func commitJSON(cols []string, kinds []colKind, dataFile string, size, rows int, removes []string, version int, nowMillis int64) []byte {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 
@@ -146,12 +153,18 @@ func commitJSON(cols []string, kinds []colKind, dataFile string, size int, remov
 			"path": r, "deletionTimestamp": nowMillis, "dataChange": true,
 		}})
 	}
+	// stats is a JSON *string* per the Delta spec, and carries numRecords —
+	// what every real writer (delta-rs, Spark) emits and what readers use for
+	// data skipping. We omitted it, which also meant our own commits could not
+	// report how many rows a write added.
+	stats, _ := json.Marshal(map[string]any{"numRecords": rows})
 	_ = enc.Encode(map[string]any{"add": map[string]any{
 		"path":             dataFile,
 		"partitionValues":  map[string]any{},
 		"size":             size,
 		"modificationTime": nowMillis,
 		"dataChange":       true,
+		"stats":            string(stats),
 	}})
 	return buf.Bytes()
 }

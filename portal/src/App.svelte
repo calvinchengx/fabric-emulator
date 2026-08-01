@@ -10,6 +10,7 @@
   import Capacities from './Capacities.svelte';
   import Jobs from './Jobs.svelte';
   import Warehouse from './Warehouse.svelte';
+  import Flow from './Flow.svelte';
   import { api } from './api.js';
 
   let route = $state(location.hash.slice(1) || 'dashboard');
@@ -30,6 +31,7 @@
       ['jobs', 'Jobs'],
     ]],
     ['Data plane', [
+      ['flow', 'Data flow'],
       ['shortcuts', 'OneLake shortcuts'],
       ['warehouse', 'Warehouse SQL'],
     ]],
@@ -44,8 +46,8 @@
 </script>
 
 <div class="topbar">
-  <strong>Fabric Emulator</strong>
-  <span class="badge">LOCAL EMULATOR</span>
+  <strong class="text-[15px] font-semibold tracking-tight">Fabric Emulator</strong>
+  <span class="badge">Local emulator</span>
   {#if health}
     <span class="health"><span class="dot"></span>{health.status}</span>
   {/if}
@@ -66,6 +68,7 @@
     {:else if route === 'capacities'}<Capacities />
     {:else if route === 'operations'}<Operations />
     {:else if route === 'jobs'}<Jobs />
+    {:else if route === 'flow'}<Flow />
     {:else if route === 'shortcuts'}<Shortcuts />
     {:else if route === 'warehouse'}<Warehouse />
     {:else if route === 'clock'}<Clock />
@@ -76,21 +79,46 @@
 </div>
 
 <style>
-  .topbar { height: 48px; background: var(--surface); border-bottom: 1px solid var(--divider);
-    display: flex; align-items: center; gap: 12px; padding: 0 16px; }
-  .health { margin-left: auto; color: var(--muted); font-size: 12px;
-    display: flex; align-items: center; gap: 6px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #038387; display: inline-block; }
-  .shell { display: flex; min-height: calc(100vh - 49px); }
-  .sidenav { width: 240px; background: var(--canvas); padding: 8px; flex-shrink: 0;
-    display: flex; flex-direction: column; gap: 2px; }
-  .section-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
-    text-transform: uppercase; color: var(--muted); padding: 12px 12px 4px; }
-  .sidenav a { display: block; padding: 8px 12px; border-radius: 4px; color: var(--ink-2);
-    text-decoration: none; font-weight: 600; }
-  .sidenav a:hover { background: var(--hover); }
-  .sidenav a.active { background: var(--primary-tint); color: var(--primary-ink);
-    border-left: 2px solid var(--primary); }
-  main { flex: 1; padding: 24px; max-width: 1280px; }
-  .note { margin-top: auto; padding: 12px; }
+  @reference '../src/app.css';
+
+  .topbar {
+    @apply sticky top-0 z-10 flex h-12 items-center gap-3 border-b
+      bg-card px-4 backdrop-blur;
+  }
+  .health {
+    @apply ml-auto flex items-center gap-1.5 text-xs text-muted-foreground;
+  }
+  .dot {
+    @apply inline-block h-2 w-2 rounded-full bg-success;
+  }
+  .shell {
+    @apply flex;
+    min-height: calc(100vh - 48px);
+  }
+  .sidenav {
+    @apply flex w-60 shrink-0 flex-col gap-0.5 border-r bg-sidebar p-2;
+  }
+  .section-label {
+    @apply px-3 pt-4 pb-1 text-[11px] font-semibold uppercase tracking-wider
+      text-muted-foreground;
+  }
+  .sidenav a {
+    @apply relative block rounded-md px-3 py-2 font-medium text-sidebar-foreground
+      no-underline transition-colors hover:bg-muted;
+  }
+  .sidenav a.active {
+    @apply bg-sidebar-accent font-semibold text-sidebar-accent-foreground;
+  }
+  /* The active marker is a pseudo-element rather than a border, so selecting an
+     item does not shift its label by the border width. */
+  .sidenav a.active::before {
+    @apply absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-primary;
+    content: '';
+  }
+  main {
+    @apply w-full max-w-[1400px] flex-1 p-6 lg:p-8;
+  }
+  .note {
+    @apply mt-auto p-3;
+  }
 </style>
