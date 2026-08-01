@@ -340,11 +340,30 @@ forward*.
   vacuously green. Adaptation #2 in `e2e/medallion/README.md` is now removable —
   left in place until **T6f** makes this harness permanent rather than a
   hand-run overlay.
-- **T6f — witnesses.** Unit tests over a golden corpus of nested-CTE statements
-  (including the shadowing case, comment/literal traps, and every rejection in
-  T6d), plus a gated e2e running the *unmodified* dbt builtins end to end. The
-  parity claim is only real when `accepted_values` passes with no singular-test
-  substitute.
+- **T6f — witnesses. ✅ Done. The workaround is deleted, not merely unnecessary.**
+
+  **The golden corpus** (`internal/tsql/golden_test.go`) states the contract in
+  one table: every statement shape T6 claims to handle, with its outcome —
+  `flatten` (with the exact expected SQL), `same` (forwarded byte-identical),
+  `rule:X` (refused as a named Fabric restriction), `shadow`, or `parse`. It
+  covers the dbt wrapper, three-level nesting, sibling dependencies, the
+  `;WITH` idiom, quoted names with column lists, all five T6d refusals, both
+  shadowing forms, and the four traps a regex falls into — a CTE look-alike
+  inside a string literal, inside a comment, inside a quoted identifier, and a
+  `WITH (NOLOCK)` table hint. Rewrites are asserted idempotent, and a companion
+  test fails if the corpus ever stops covering an outcome.
+
+  **The e2e now runs dbt's builtins unmodified.**
+  `examples/medallion/gold/models/schema.yml` uses `accepted_values` and
+  `relationships` directly; the two CTE-free singular tests that stood in for
+  them are **deleted** (`assert_no_negative_revenue.sql` stays — it is a genuine
+  business rule, never a workaround). Adaptation #2 is gone from
+  `e2e/medallion/README.md`.
+
+  That is what makes the parity claim real: the statements that could not run
+  here three milestones ago are now the ones CI runs on every push, with no
+  emulator-shaped substitute in the project. If the rewriter regresses, the
+  medallion job goes red.
 
 #### Non-goals for T6
 
