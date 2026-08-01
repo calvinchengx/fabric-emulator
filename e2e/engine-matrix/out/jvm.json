@@ -118,5 +118,17 @@
     "description": "Filter on a `row_number()` column the `SELECT` drops \u1d48",
     "engine": "jvm",
     "status": "pass"
+  },
+  {
+    "id": "spark.sql_describe_registered_delta",
+    "description": "`DESCRIBE TABLE` on a registered Delta table \u1d49",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "spark.sql_describe_detail_registered",
+    "description": "`DESCRIBE DETAIL` on a registered Delta table \u1da0",
+    "engine": "jvm",
+    "status": "pass"
   }
 ]

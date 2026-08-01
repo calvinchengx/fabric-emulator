@@ -123,8 +123,10 @@ tests never touch.
 | Python UDF | ✅ | ✅ | ✅ |
 | SQL over a temp view | ✅ | ✅ | ✅ |
 | Filter on a `row_number()` column the `SELECT` drops ᵈ | ✅ | ✅ | ✅ |
+| `DESCRIBE TABLE` on a registered Delta table ᵉ | ❌ `DESCRIBE returned 0 rows: []` | ❌ `DESCRIBE returned 0 rows: []` | ✅ |
+| `DESCRIBE DETAIL` on a registered Delta table ᶠ | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ✅ |
 
-**8 of 20 capabilities differ between the engines.**
+**10 of 22 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the
 candidate list for upstream Sail contributions.
 
@@ -167,3 +169,39 @@ localised further — dbt projects an explicit column list over a wide
 Delta source, which this probe does not reproduce at that width. The
 two-CTE rewrite is portable and costs nothing, so it should stay; what
 should not stay is the belief that Sail cannot do this.
+
+ᵉ The real cause of the `_rn` failure ᵈ was chasing. Sail answers
+`DESCRIBE TABLE` on a catalog-registered Delta table with the correct
+SCHEMA and ZERO ROWS, and raises nothing. Against a temp view it answers
+correctly, so the gap is specific to registered tables — which is exactly
+what the emulator's `registerLakehouseTables` creates for every lakehouse
+table, so it reaches any consumer that introspects, not just dbt.
+
+It stayed invisible because every component behaved reasonably. Sail
+returns no rows and no error; the Livy agent forwards that faithfully
+(the schema has three fields, so it is not an empty envelope); dbt's
+`get_columns_in_relation` reads it as "this table has no columns"; the
+model's Jinja loops over an empty list and emits nothing; the compiled
+SQL becomes `select` followed by `from`. Nobody lied — the information
+that the answer was MISSING did not survive the chain. A consumer cannot
+tell "no columns" from "the engine did not answer", and that
+indistinguishability is the actual defect.
+
+The medallion models now read columns from
+`run_query("select * from t limit 0").column_names`, which carries the
+schema in the result envelope and never asks the catalog. This row going
+green is what would say that workaround can be dropped.
+
+ᶠ The same question asked of the OTHER introspection route, and it fails
+the opposite way: `DETAIL` is not in Sail's DESCRIBE grammar at all, so
+this RAISES rather than returning nothing. That is the better failure —
+`e2e/livy/delta_ops.py` resolves a registered table to its physical
+location this way and does `collect()[0]`, which would have been an
+IndexError on an empty result; instead it gets a parse error naming the
+statement. The route is still unavailable on Sail, which is why OPTIMIZE
+against a NAMED table degrades to skipped there while the path-addressed
+form works.
+
+Kept as its own row rather than folded into ᵉ because the contrast is the
+lesson: the silent one cost a day, the loud one cost minutes, and they
+are the same missing capability.
