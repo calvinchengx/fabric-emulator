@@ -1,41 +1,31 @@
 #!/usr/bin/env python3
-"""e2e: the ADVANCED medallion track, executed.
+"""e2e: the ADVANCED medallion, executed.
 
-Runs `examples/medallion-pyspark/pipeline.py` — the whole basic pipeline, then the
-steps from 20 up — on the same stack the basic harness brings up. This directory
-holds no pipeline code and no stack definition: the example is the single copy
-of one, and e2e/medallion/docker-compose.yml is the single copy of the other.
+Same stack, different example. This harness holds no stack definition and no
+pipeline code: `e2e/medallion/docker-compose.yml` is the single copy of one and
+`examples/medallion-advanced-pyspark` is the single copy of the other. It reuses
+the basic harness's runner outright, pointed at the advanced folder.
+
+That reuse is only possible because the example runs on the HOST. While the
+client was containerised, "same stack, different example" meant a second image
+and a compose overlay to swap it in — machinery that existed solely to put
+Python somewhere it did not need to be.
 
   python3 e2e/medallion-advanced/run.py
 
-Linux weight class (SQL Server container), same as the basic harness.
+Same requirements as the basic harness: Microsoft ODBC Driver 18 on the host,
+Linux weight class.
 """
 import os
-import subprocess
 import sys
 
 DIR = os.path.dirname(os.path.abspath(__file__))
-BASE = os.path.join(DIR, "..", "medallion")
-SERVICES_TO_LOG = ["pipeline", "fabric-emulator", "sqlserver", "keyvault-emulator"]
+REPO = os.path.dirname(os.path.dirname(DIR))
+sys.path.insert(0, os.path.join(REPO, "e2e", "medallion"))
 
+import run as basic  # noqa: E402 — after the path insert above
 
-def compose(*args):
-    # cwd is the BASE directory because the base file's build contexts are
-    # relative to it. A distinct project name keeps this run from colliding with
-    # the basic harness's containers and volumes.
-    return subprocess.run([
-        "docker", "compose",
-        "-f", os.path.join(BASE, "docker-compose.yml"),
-        "-f", os.path.join(DIR, "docker-compose.advanced.yml"),
-        "-p", "medallion-advanced", *args], cwd=BASE).returncode
+EXAMPLE = os.path.join(REPO, "examples", "medallion-advanced-pyspark")
 
-
-try:
-    rc = compose("up", "--build", "--abort-on-container-exit", "--exit-code-from", "pipeline")
-    if rc != 0:
-        for svc in SERVICES_TO_LOG:
-            print(f"\n==== {svc} logs (tail) ====", file=sys.stderr)
-            compose("logs", "--tail", "80", svc)
-    sys.exit(rc)
-finally:
-    compose("down", "-v", "--remove-orphans")
+if __name__ == "__main__":
+    sys.exit(basic.run(EXAMPLE, label="advanced medallion"))

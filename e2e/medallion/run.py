@@ -1,29 +1,68 @@
 #!/usr/bin/env python3
 """e2e: the medallion tutorial, executed.
 
-Brings up the family (entra + keyvault + fabric + SQL Server) and runs the full
-pipeline — Key Vault secret → landing → bronze → silver → gold (dbt) → semantic
-model — asserting every hop. The runnable witness for
-docs/28-tutorial-end-to-end.md. Linux weight class (SQL Server container).
+Brings up the emulator stack in docker, then runs
+`examples/medallion-pyspark/pipeline.py` **on this machine**, exactly as the
+example's README tells a reader to. The stack is containerised; the example is
+not.
+
+Containerising the client is how this harness ended up running over plain HTTP
+against compose service names while the README documented self-signed TLS
+against localhost — CI proving a path the documentation never describes. Running
+the example the way a reader runs it removes that gap rather than documenting it
+as an adaptation.
+
+  python3 e2e/medallion/run.py
+
+Needs the Microsoft ODBC Driver 18 on the host, because dbt-fabric and pyodbc do
+(macOS: `brew install msodbcsql18`; CI installs it on the runner). Linux weight
+class regardless — the SQL Server container is amd64-only.
 """
 import os
 import subprocess
 import sys
 
 DIR = os.path.dirname(os.path.abspath(__file__))
-SERVICES_TO_LOG = ["pipeline", "fabric-emulator", "sqlserver", "keyvault-emulator"]
+REPO = os.path.dirname(os.path.dirname(DIR))
+EXAMPLE = os.path.join(REPO, "examples", "medallion-pyspark")
+SERVICES_TO_LOG = ["fabric-emulator", "sqlserver", "keyvault-emulator", "sail"]
+
+# The endpoints a reader uses: the stack's published ports over its self-signed
+# TLS. KV_INTERNAL_URL is the one that differs in kind — Fabric resolves an
+# AzureKeyVaultReference server-side, so the vault URI it STORES must be
+# reachable from the fabric container, not from here.
+ENDPOINTS = {
+    "ENTRA_URL": "https://localhost:8443",
+    "KV_URL": "https://localhost:8444",
+    "FABRIC_REST_URL": "https://localhost:9443",
+    "TDS_SERVER": "localhost,1433",
+    "SPARK_REMOTE": "sc://localhost:50051",
+    "KV_INTERNAL_URL": "https://keyvault-emulator:8444",
+}
 
 
 def compose(*args):
     return subprocess.run(["docker", "compose", *args], cwd=DIR).returncode
 
 
-try:
-    rc = compose("up", "--build", "--abort-on-container-exit", "--exit-code-from", "pipeline")
-    if rc != 0:
-        for svc in SERVICES_TO_LOG:
-            print(f"\n==== {svc} logs (tail) ====", file=sys.stderr)
-            subprocess.run(["docker", "compose", "logs", "--tail", "80", svc], cwd=DIR)
-    sys.exit(rc)
-finally:
-    compose("down", "-v", "--remove-orphans")
+def run(example=EXAMPLE, label="medallion"):
+    try:
+        # --wait blocks until every healthcheck passes, so the example never
+        # races a backend that is still booting.
+        rc = compose("up", "-d", "--build", "--wait")
+        if rc == 0:
+            rc = subprocess.run(
+                ["uv", "run", "--project", example, "python", "pipeline.py"],
+                cwd=example, env={**os.environ, **ENDPOINTS}).returncode
+        if rc != 0:
+            print(f"\n==== {label} FAILED (exit {rc}) ====", file=sys.stderr)
+            for svc in SERVICES_TO_LOG:
+                print(f"\n==== {svc} logs (tail) ====", file=sys.stderr)
+                compose("logs", "--tail", "80", svc)
+        return rc
+    finally:
+        compose("down", "-v", "--remove-orphans")
+
+
+if __name__ == "__main__":
+    sys.exit(run())
