@@ -44,6 +44,11 @@ PROJECT="${COMPOSE_PROJECT_NAME:-fabric-emulator}"
 # distinguishes "job still working" from "server that never became ready", and
 # reporting a mid-flight job as an unverified service is just wrong.
 ONESHOT="om-migrate govern-ingest"
+# Set while walking the containers below: OpenMetadata only exists under
+# `--profile governance`, and demanding it unconditionally reported a perfectly
+# healthy lean stack (`docker compose -f docker-compose.yml up`, which the
+# compose file documents) as broken.
+HAVE_OM=0
 FABRIC="${FABRIC_URL:-https://localhost:9443}"
 ENTRA="${ENTRA_URL:-https://localhost:8443}"
 OM="${OM_URL:-http://localhost:8585}"
@@ -130,6 +135,10 @@ else
     note=""
     mark="ok  "
     case " $ONESHOT " in *" $svc "*) oneshot=1 ;; *) oneshot=0 ;; esac
+    # OpenMetadata is profile-gated (`--profile governance`), so its endpoint
+    # is only worth probing when this stack actually asked for it. Note it
+    # here, while we are already walking the container list.
+    case "$svc" in openmetadata) HAVE_OM=1 ;; esac
     case "$status" in
       running)
         case "$health" in
@@ -179,7 +188,11 @@ say "endpoints"
 check_http "$FABRIC/health" "fabric /health" 200
 check_http "$FABRIC/" "operator portal" 200
 check_http "$ENTRA/$TENANT/v2.0/.well-known/openid-configuration" "entra discovery" 200
-check_http "$OM/" "openmetadata UI" 200
+if [ "$HAVE_OM" = "1" ]; then
+  check_http "$OM/" "openmetadata UI" 200
+else
+  printf '  skip  %-22s not in this stack (--profile governance adds it)\n' "openmetadata UI"
+fi
 
 say ""
 say "emulator state (via the portal API the SPA reads)"
