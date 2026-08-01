@@ -182,8 +182,18 @@ CREATE TABLE IF NOT EXISTS lineage_edges (
 	target_workspace_id TEXT NOT NULL,
 	target_item_id TEXT NOT NULL,
 	target_path TEXT NOT NULL,
+	producer TEXT NOT NULL DEFAULT 'Copy',
 	created_at INTEGER NOT NULL,
 	UNIQUE(job_id, activity_name, source_item_id, source_path, target_item_id, target_path)
+);
+CREATE TABLE IF NOT EXISTS notebook_accesses (
+	job_id TEXT NOT NULL REFERENCES job_instances(id) ON DELETE CASCADE,
+	cell_index INTEGER NOT NULL,
+	item_id TEXT NOT NULL,
+	path TEXT NOT NULL,
+	direction TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	UNIQUE(job_id, cell_index, item_id, path, direction)
 );
 CREATE TABLE IF NOT EXISTS capacities (
 	id TEXT PRIMARY KEY,
@@ -351,6 +361,7 @@ PRAGMA foreign_keys = ON;
 		`ALTER TABLE connections ADD COLUMN sso_type TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN encryption TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN credentials_json TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE lineage_edges ADD COLUMN producer TEXT NOT NULL DEFAULT 'Copy'`,
 		`ALTER TABLE onelake_paths ADD COLUMN etag TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE onelake_paths ADD COLUMN modified_at INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE shortcuts ADD COLUMN target_type TEXT NOT NULL DEFAULT 'OneLake'`,

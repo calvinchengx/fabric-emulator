@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 	"github.com/parquet-go/parquet-go"
 )
 
@@ -1135,5 +1136,301 @@ func TestPipelineScriptNoDatabaseRef(t *testing.T) {
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("script with no database ref = %s, want Failed", s)
+	}
+}
+
+// TestCopyAcceptsFabricWireShape: a Copy authored in Fabric — `type`
+// discriminators, `datasetSettings` with a `linkedService`, `rootFolder` +
+// `table` addressing — runs unchanged. Before this the emulator read only its
+// own simplified `location` shape and silently ignored every Fabric field, so a
+// real pipeline JSON failed with "a OneLake location is required".
+func TestCopyAcceptsFabricWireShape(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	payload := []byte("parquet-ish bytes")
+	seedFile(t, st, ws.ID, src.ID, "Tables/orders/part-0.parquet", payload)
+
+	content := `{"properties":{"activities":[
+      {"name":"Ingest","type":"Copy","typeProperties":{
+        "source":{"type":"LakehouseTableSource",
+          "datasetSettings":{"type":"LakehouseTable",
+            "typeProperties":{"table":"orders","schema":"dbo"},
+            "linkedService":{"properties":{"type":"Lakehouse",
+              "typeProperties":{"workspaceId":"` + ws.ID + `","artifactId":"` + src.ID + `"}}}}},
+        "sink":{"type":"LakehouseTableSink","tableActionOption":"Overwrite",
+          "datasetSettings":{"type":"LakehouseTable",
+            "typeProperties":{"table":"bronze_orders"},
+            "linkedService":{"properties":{"type":"Lakehouse",
+              "typeProperties":{"workspaceId":"` + ws.ID + `","artifactId":"` + dst.ID + `"}}}}}
+      }}]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	got, err := st.GetOneLakePath(dst.ID, "Tables/bronze_orders/part-0.parquet")
+	if err != nil {
+		t.Fatalf("sink table file missing: %v", err)
+	}
+	if string(got.Content) != string(payload) {
+		t.Fatalf("sink content = %q", got.Content)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	lineage := runs[0]["output"].(map[string]any)["lineage"].(map[string]any)
+	if lineage["sourcePath"] != "Tables/orders" || lineage["targetPath"] != "Tables/bronze_orders" {
+		t.Fatalf("lineage paths = %+v", lineage)
+	}
+}
+
+// TestCopyFilesRootFolderAddressing: Fabric's Files-area addressing
+// (rootFolder + folderPath + fileName) resolves under Files/.
+func TestCopyFilesRootFolderAddressing(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	payload := []byte("id,name\n1,ada\n")
+	seedFile(t, st, ws.ID, lh.ID, "Files/landing/day1/customers.csv", payload)
+
+	content := `{"properties":{"activities":[
+      {"name":"Land","type":"Copy","typeProperties":{
+        "source":{"type":"DelimitedTextSource","rootFolder":"Files",
+          "folderPath":"landing/day1","fileName":"customers.csv",
+          "datasetSettings":{"linkedService":{"properties":{"typeProperties":{"artifactId":"` + lh.ID + `"}}}}},
+        "sink":{"type":"DelimitedTextSink","rootFolder":"Files",
+          "folderPath":"raw","fileName":"customers.csv",
+          "datasetSettings":{"linkedService":{"properties":{"typeProperties":{"artifactId":"` + lh.ID + `"}}}}}
+      }}]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	if _, err := st.GetOneLakePath(lh.ID, "Files/raw/customers.csv"); err != nil {
+		t.Fatalf("sink file missing: %v", err)
+	}
+}
+
+// TestCopyRejectsUnsupportedLoudly: the emulator must refuse what it cannot
+// honour by name, never accept the payload and quietly do something else.
+func TestCopyRejectsUnsupportedLoudly(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	seedFile(t, st, ws.ID, lh.ID, "Files/in.csv", []byte("x"))
+	loc := `"datasetSettings":{"linkedService":{"properties":{"typeProperties":{"artifactId":"` + lh.ID + `"}}}}`
+
+	for _, tc := range []struct{ name, source string }{
+		{"external connector", `{"type":"AzureBlobStorageSource","rootFolder":"Files","fileName":"in.csv",` + loc + `}`},
+		{"t-sql query", `{"type":"LakehouseTableSource","sqlReaderQuery":"SELECT 1","table":"orders",` + loc + `}`},
+		{"wildcards", `{"type":"DelimitedTextSource","rootFolder":"Files","wildcardFileName":"*.csv",` + loc + `}`},
+		{"time travel", `{"type":"LakehouseTableSource","table":"orders","versionAsOf":3,` + loc + `}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := `{"properties":{"activities":[
+              {"name":"Bad","type":"Copy","typeProperties":{
+                "source":` + tc.source + `,
+                "sink":{"type":"BinarySink","rootFolder":"Files","fileName":"out.csv",` + loc + `}
+              }}]}}`
+			pl := createPipeline(t, st, ws.ID, content)
+			_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+			if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+				t.Fatalf("unsupported %s: job status = %s, want Failed", tc.name, s)
+			}
+		})
+	}
+}
+
+// TestCopyRejectsUnhonourableSinkSemantics: the copy moves whole files, so it
+// is an overwrite by construction. Accepting tableActionOption=Append would
+// silently REPLACE the target's data instead of adding to it — data loss
+// dressed as success — and MergeFiles/FlattenHierarchy would reshape the output
+// we do not reshape. Overwrite and PreserveHierarchy are honoured for real.
+func TestCopyRejectsUnhonourableSinkSemantics(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	seedFile(t, st, ws.ID, lh.ID, "Tables/orders/part-0.parquet", []byte("rows"))
+	loc := `"datasetSettings":{"linkedService":{"properties":{"typeProperties":{"artifactId":"` + lh.ID + `"}}}}`
+
+	for _, tc := range []struct {
+		name, sinkOpts string
+		wantFailed     bool
+	}{
+		{"append", `"tableActionOption":"Append",`, false}, // real since A3
+		{"upsert", `"tableActionOption":"Upsert",`, true},
+		{"merge files", `"copyBehavior":"MergeFiles",`, true},
+		{"flatten hierarchy", `"copyBehavior":"FlattenHierarchy",`, true},
+		{"overwrite", `"tableActionOption":"Overwrite",`, false},
+		{"preserve hierarchy", `"copyBehavior":"PreserveHierarchy",`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dst := seedLakehouse(t, st, ws.ID, "sink-"+strings.ReplaceAll(tc.name, " ", "-"))
+			content := `{"properties":{"activities":[
+              {"name":"C","type":"Copy","typeProperties":{
+                "source":{"type":"LakehouseTableSource","table":"orders",` + loc + `},
+                "sink":{"type":"LakehouseTableSink",` + tc.sinkOpts + `"table":"bronze",
+                  "datasetSettings":{"linkedService":{"properties":{"typeProperties":{"artifactId":"` + dst.ID + `"}}}}}
+              }}]}}`
+			pl := createPipeline(t, st, ws.ID, content)
+			_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+			s := jobStatus(t, a, ws.ID, pl.ID, jid)
+			if tc.wantFailed && s != "Failed" {
+				t.Fatalf("%s: status = %s, want Failed (it would silently do something else)", tc.name, s)
+			}
+			if !tc.wantFailed && s != "Completed" {
+				t.Fatalf("%s: status = %s, want Completed", tc.name, s)
+			}
+		})
+	}
+}
+
+// TestPipelineNotebookActivityStartsRealRun: a notebook invoked from a pipeline
+// must actually start a run — the Go parser produces cells and an engine has
+// something to execute and report against. It previously fabricated a
+// "Completed" job with no run behind it, leaving nothing for lineage or the
+// notebookRunResult callback to attach to.
+func TestPipelineNotebookActivityStartsRealRun(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "etl"}
+	body := "# Fabric notebook source\n\n# CELL ********************\n\nprint('hello')\n"
+	if err := st.CreateItem(nb, []store.DefinitionPart{{
+		Path: "notebook-content.py", PayloadType: "InlineBase64",
+		Payload: base64.StdEncoding.EncodeToString([]byte(body))}}); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"properties":{"activities":[
+      {"name":"RunEtl","type":"TridentNotebook","typeProperties":{"notebookId":"` + nb.ID + `"}}]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("pipeline status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	out := runs[0]["output"].(map[string]any)
+	nbJob, _ := out["jobInstanceId"].(string)
+	if nbJob == "" {
+		t.Fatalf("activity output has no jobInstanceId: %+v", out)
+	}
+	// The run exists and the Go parser really produced cells.
+	status, runJSON, err := st.GetNotebookRun(nbJob)
+	if err != nil {
+		t.Fatalf("no notebook run recorded for the pipeline-invoked notebook: %v", err)
+	}
+	if status != "Pending" {
+		t.Fatalf("run status = %q, want Pending (no engine has reported yet)", status)
+	}
+	if !strings.Contains(runJSON, "hello") {
+		t.Fatalf("parsed cells missing the notebook source: %s", runJSON)
+	}
+	if out["status"] != "Pending" {
+		t.Fatalf("activity status = %v, want Pending — the run has not been executed", out["status"])
+	}
+}
+
+// TestCopyPathAddressingVariants: the addressing styles Fabric emits all map to
+// the right OneLake path — schema-qualified tables, an explicit Files/ prefix,
+// a bare folder with no file name, and the error when Tables has no table.
+func TestCopyPathAddressingVariants(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	loc := `"datasetSettings":{"linkedService":{"properties":{"typeProperties":{"artifactId":"` + lh.ID + `"}}}}`
+
+	for _, tc := range []struct {
+		name, source, seed, want string
+		fail                     bool
+	}{
+		{name: "schema-qualified table",
+			source: `{"type":"LakehouseTableSource","table":"orders","schema":"sales",` + loc + `}`,
+			seed:   "Tables/sales/orders/part-0.parquet", want: "Tables/sales/orders/part-0.parquet"},
+		{name: "folderPath already rooted at Files",
+			source: `{"type":"BinarySource","folderPath":"Files/raw","fileName":"a.bin",` + loc + `}`,
+			seed:   "Files/raw/a.bin", want: "Files/raw/a.bin"},
+		{name: "rootFolder Tables without a table name",
+			source: `{"type":"LakehouseTableSource","rootFolder":"Tables",` + loc + `}`, fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dst := seedLakehouse(t, st, ws.ID, "sink-"+strings.ReplaceAll(tc.name, " ", "-"))
+			if tc.seed != "" {
+				seedFile(t, st, ws.ID, lh.ID, tc.seed, []byte("payload"))
+			}
+			content := `{"properties":{"activities":[
+              {"name":"C","type":"Copy","typeProperties":{
+                "source":` + tc.source + `,
+                "sink":{"type":"BinarySink","path":"Files/out",
+                  "datasetSettings":{"linkedService":{"properties":{"typeProperties":{"artifactId":"` + dst.ID + `"}}}}}
+              }}]}}`
+			pl := createPipeline(t, st, ws.ID, content)
+			_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+			s := jobStatus(t, a, ws.ID, pl.ID, jid)
+			if tc.fail {
+				if s != "Failed" {
+					t.Fatalf("status = %s, want Failed", s)
+				}
+				return
+			}
+			if s != "Completed" {
+				t.Fatalf("status = %s, want Completed", s)
+			}
+			_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+			lineage := runs[0]["output"].(map[string]any)["lineage"].(map[string]any)
+			if got := lineage["sourcePath"]; !strings.HasPrefix(tc.want, got.(string)) {
+				t.Fatalf("sourcePath = %v, want a prefix of %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCopyCsvIntoDeltaTableAppends: the medallion's landing->bronze hop as a
+// real Copy — a CSV under Files/ committed into Tables/<name> as Delta, with
+// Append accumulating across runs instead of clobbering.
+func TestCopyCsvIntoDeltaTableAppends(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	seedFile(t, st, ws.ID, lh.ID, "Files/landing/day1.csv", []byte("id,name\n1,ada\n2,grace\n"))
+	seedFile(t, st, ws.ID, lh.ID, "Files/landing/day2.csv", []byte("id,name\n3,alan\n"))
+	loc := `"datasetSettings":{"linkedService":{"properties":{"typeProperties":{"artifactId":"` + lh.ID + `"}}}}`
+
+	ingest := func(file, action string) {
+		content := `{"properties":{"activities":[
+          {"name":"Ingest","type":"Copy","typeProperties":{
+            "source":{"type":"DelimitedTextSource","rootFolder":"Files","folderPath":"landing","fileName":"` + file + `",` + loc + `},
+            "sink":{"type":"LakehouseTableSink","tableActionOption":"` + action + `","table":"bronze_orders",` + loc + `}
+          }}]}}`
+		pl := createPipeline(t, st, ws.ID, content)
+		_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+		if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+			t.Fatalf("%s %s: status = %s", file, action, s)
+		}
+		_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+		if _, ok := runs[0]["output"].(map[string]any)["rowsCopied"]; !ok {
+			t.Fatalf("table copy should report rowsCopied: %+v", runs[0]["output"])
+		}
+	}
+
+	ingest("day1.csv", "Overwrite")
+	tbl, err := warehouse.ReadDeltaTable(st, lh.ID, "bronze_orders")
+	if err != nil || len(tbl.Rows) != 2 {
+		t.Fatalf("after first ingest: %v rows=%v", err, tbl)
+	}
+
+	ingest("day2.csv", "Append")
+	tbl, err = warehouse.ReadDeltaTable(st, lh.ID, "bronze_orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tbl.Rows) != 3 {
+		t.Fatalf("Append should accumulate: got %d rows %v", len(tbl.Rows), tbl.Rows)
+	}
+
+	// Overwrite really replaces, it does not pile up.
+	ingest("day2.csv", "Overwrite")
+	tbl, err = warehouse.ReadDeltaTable(st, lh.ID, "bronze_orders")
+	if err != nil || len(tbl.Rows) != 1 {
+		t.Fatalf("Overwrite should replace: %v rows=%v", err, tbl)
 	}
 }

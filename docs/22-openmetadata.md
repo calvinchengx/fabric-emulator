@@ -45,7 +45,9 @@ fact — it never infers a graph:
 |---|---|---|
 | target table → shortcut table | a OneLake **shortcut** *is* the data-flow edge; the shortcut is cataloged as a table carrying the target's Delta schema (that is the data it exposes) | ✅ exact |
 | Copy source table → sink table | the pipeline executor persists the resolved workspace/item/path pair after successful byte movement | ✅ exact |
-| Notebook/Script activity → tables | would require parsing user code or engine query plans | ❌ not invented |
+| Notebook cell → tables (observed) | the emulator's own data plane serves the I/O, and the runtime identifies the cell making it — via request headers (`notebookutils`) or claims inside the bearer (delta-rs/Sail, whose Rust object_store client cannot set headers). The touch is **witnessed**, not asserted; reads and writes pair within a cell | ✅ exact, observed |
+| Notebook cell → tables (reported) | the engine that ran the cell reports the datasets it read and wrote (`notebookRunResult`); recorded verbatim, one edge per read×write pair, named `cell[N]` | ✅ exact, when reported |
+| Script/SqlServerStoredProcedure → tables | would require parsing user T-SQL or engine query plans | ❌ not invented |
 
 The CI witness seeds `lake.orders`, shortcuts it as `curated.orders_ref`, then
 executes a Copy to `curated.orders_copy`. OpenMetadata must return both

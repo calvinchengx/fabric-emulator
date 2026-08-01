@@ -92,6 +92,40 @@ def token(env=None):
     return minted
 
 
+def _forge_attributed(env):
+    """Mint a storage token carrying notebook attribution as extra claims.
+
+    delta-rs takes credentials, not HTTP options: Rust object_store exposes no
+    way to add a request header, so the cell identity cannot ride alongside the
+    request the way notebookutils sends it. It can ride *inside* the bearer —
+    entra's token forge merges `extraClaims`, and the emulator surfaces them on
+    the validated principal, so its storage layer attributes the I/O to the cell
+    that caused it.
+
+    Returns None when no cell context is set, so ordinary statements keep using
+    the cached client-credentials token.
+    """
+    job, cell = env.get("FABRIC_JOB_ID"), env.get("FABRIC_CELL_INDEX")
+    forge = env.get("ENTRA_FORGE_URL")
+    if not job or not cell or not forge:
+        return None
+    body = json.dumps({
+        "clientId": env["ENTRA_CLIENT_ID"],
+        "audience": env.get("ENTRA_AUDIENCE", "https://storage.azure.com"),
+        "extraClaims": {"fabric_job_id": job, "fabric_cell_index": str(cell)},
+    }).encode()
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(forge, data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as response:
+            forged = json.loads(response.read())
+    except Exception:  # noqa: BLE001 — attribution is best effort, never fatal
+        return None
+    return forged.get("access_token") or forged.get("token")
+
+
 def options(env=None):
     """Build delta-rs `storage_options` from the environment.
 
@@ -111,7 +145,7 @@ def options(env=None):
         opts["azure_allow_http"] = env["AZURE_ALLOW_HTTP"]
     if env.get("AZURE_ALLOW_INVALID_CERTIFICATES"):
         opts["azure_allow_invalid_certificates"] = env["AZURE_ALLOW_INVALID_CERTIFICATES"]
-    bearer = token(env)
+    bearer = _forge_attributed(env) or token(env)
     if bearer:
         opts["azure_storage_token"] = bearer
     return opts

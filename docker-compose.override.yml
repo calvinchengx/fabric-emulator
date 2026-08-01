@@ -82,6 +82,11 @@ services:
       # credentials — a Connect client cannot read back the bearer sail holds.
       # Same issuer, same Storage audience, so it acts as the same principal.
       ENTRA_TOKEN_URL: "https://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
+      # Notebook attribution for the delta-rs path: Rust object_store cannot set
+      # request headers, so the agent mints a bearer carrying fabric_job_id /
+      # fabric_cell_index as extra claims and the emulator reads them off the
+      # validated principal. See internal/onelake/observe.go.
+      ENTRA_FORGE_URL: "https://entra-emulator:8443/admin/api/tokens"
       ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
       ENTRA_CLIENT_SECRET: "daemon-app-secret"
       AZURE_STORAGE_ACCOUNT_NAME: "onelake"

@@ -32,6 +32,12 @@ type Principal struct {
 	ID   string // oid claim (falls back to sub)
 	Type string // "User" | "ServicePrincipal"
 	App  string // appid claim when present
+	// JobID/CellIndex attribute a request to the notebook cell that caused it,
+	// when the token was minted for one. Engines whose storage client cannot
+	// set request headers (Rust object_store behind delta-rs and Sail) carry
+	// the attribution in the bearer instead. Empty for ordinary tokens.
+	JobID     string
+	CellIndex string
 }
 
 // Validator verifies RS256 bearer tokens against a JWKS.
@@ -123,6 +129,9 @@ func (v *Validator) Validate(token string) (*Principal, error) {
 		Sub   string          `json:"sub"`
 		AppID string          `json:"appid"`
 		IdTyp string          `json:"idtyp"`
+		// Fabric notebook attribution, minted via entra's extraClaims.
+		JobID     string `json:"fabric_job_id"`
+		CellIndex string `json:"fabric_cell_index"`
 	}
 	if err := json.Unmarshal(payloadB, &claims); err != nil {
 		return nil, fmt.Errorf("%w: claims", ErrBadToken)
@@ -142,7 +151,8 @@ func (v *Validator) Validate(token string) (*Principal, error) {
 		return nil, fmt.Errorf("%w: not yet valid", ErrBadToken)
 	}
 
-	p := &Principal{ID: claims.Oid, App: claims.AppID, Type: "User"}
+	p := &Principal{ID: claims.Oid, App: claims.AppID, Type: "User",
+		JobID: claims.JobID, CellIndex: claims.CellIndex}
 	if p.ID == "" {
 		p.ID = claims.Sub
 	}
