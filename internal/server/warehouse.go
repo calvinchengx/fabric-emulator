@@ -31,6 +31,12 @@ type warehouseBackend interface {
 // endpoint) or a Viewer — read-write for a Warehouse with Contributor+.
 // principalOf resolves the FedAuth token to its principal id.
 func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(token string) (string, error)) func(context.Context, string, string, string) (string, bool, error) {
+	// One Reflector for the life of the server, captured here rather than made
+	// per connection — its whole value is remembering across logins. See its
+	// doc: without that memory a retrying client restarts the entire reflection
+	// every attempt and can only finish if one attempt fits inside the login
+	// timeout.
+	reflector := &warehouse.Reflector{}
 	return func(ctx context.Context, server, database, token string) (string, bool, error) {
 		principal, err := principalOf(token)
 		if err != nil {
@@ -55,7 +61,7 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 		readOnly := it.Type == "Lakehouse" || store.RoleRank(role) < store.RoleRank(store.RoleContributor)
 		switch it.Type {
 		case "Lakehouse":
-			if _, err := warehouse.Reflect(ctx, be.DB(it.ID), st, it.ID); err != nil {
+			if _, err := reflector.Reflect(ctx, be.DB(it.ID), st, it.ID); err != nil {
 				return "", false, fmt.Errorf("reflecting lakehouse: %w", err)
 			}
 			return it.ID, readOnly, nil

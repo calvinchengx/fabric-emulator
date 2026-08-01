@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path"
+	"sort"
 	"strings"
+	"sync"
 
 	mssql "github.com/microsoft/go-mssqldb"
 
@@ -15,7 +18,73 @@ import (
 // warehouse endpoint can query them: for each Tables/<name>, read the Delta
 // table and DROP/CREATE/INSERT it into db. Idempotent — safe to call on every
 // connect. Returns the names reflected.
+//
+// This is the unconditional form: every table, every time. It is what the tests
+// use and what a caller wants when it has nowhere to keep state. A server
+// handling repeated logins should use a Reflector instead — see its doc for why
+// reflecting everything on every connect is not merely wasteful but unable to
+// converge.
 func Reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID string) ([]string, error) {
+	return (&Reflector{}).Reflect(ctx, db, st, itemID)
+}
+
+// A Reflector is a Reflect that remembers what it already did.
+//
+// Reflection runs during TDS login, synchronously, before the connection is
+// usable. On a lakehouse holding real data that takes minutes, so the client's
+// login timeout expires first and it retries. Without memory those retries
+// cannot converge: each one DROPs and reloads every table from zero and is
+// killed at the same deadline, so the only way to finish is for the whole
+// reflection to fit inside one login timeout — which it does only once caches
+// are warm enough, by luck. The medallion e2e was passing this way, on attempt
+// 10 of 40 with a 12-minute budget; a little more load on the runner and it
+// exhausted all 40 and went red.
+//
+// Remembering fixes the shape of that, not just the speed. Each table's Delta
+// log fingerprint is recorded only AFTER that table reflects successfully, so a
+// login cancelled halfway leaves the finished tables recorded and the rest not.
+// The next attempt resumes instead of restarting, and retries accumulate
+// progress. Once everything is current a login costs one directory listing per
+// table and no SQL at all.
+//
+// The zero value is a valid, empty Reflector.
+type Reflector struct {
+	mu    sync.Mutex              // guards items
+	items map[string]*reflectItem // itemID -> its lock and fingerprints
+}
+
+type reflectItem struct {
+	mu   sync.Mutex        // serialises reflections of this one item
+	seen map[string]string // table name -> the fingerprint last reflected
+}
+
+func (r *Reflector) item(itemID string) *reflectItem {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.items == nil {
+		r.items = map[string]*reflectItem{}
+	}
+	it, ok := r.items[itemID]
+	if !ok {
+		it = &reflectItem{seen: map[string]string{}}
+		r.items[itemID] = it
+	}
+	return it
+}
+
+// Reflect brings itemID's tables up to date, skipping those whose Delta log has
+// not advanced. Returns the tables it actually loaded — not the tables present,
+// so an unchanged lakehouse reports nothing rather than reporting work it did
+// not do.
+func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID string) ([]string, error) {
+	// Per item, not global: a slow reflection of one lakehouse must not block a
+	// login to a different one. Concurrent logins to the SAME item queue here,
+	// so they share one reflection instead of racing to redo it — which
+	// previously meant N clients each DROPping the same table under each other.
+	it := r.item(itemID)
+	it.mu.Lock()
+	defer it.mu.Unlock()
+
 	dirs, err := st.ListOneLakePaths(itemID, "Tables", false)
 	if err != nil {
 		return nil, err
@@ -26,17 +95,57 @@ func Reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID string) ([
 			continue
 		}
 		name := strings.TrimPrefix(d.RelPath, "Tables/")
+		fp, err := deltaFingerprint(st, itemID, name)
+		if err != nil {
+			// Not a Delta table (no _delta_log): skipped, not fatal — same as a
+			// stray folder under Tables/ has always been.
+			continue
+		}
+		if prev, ok := it.seen[name]; ok && prev == fp {
+			continue
+		}
 		tbl, err := ReadDeltaTable(st, itemID, name)
 		if err != nil {
-			// A folder under Tables/ that isn't a Delta table is skipped, not fatal.
 			continue
 		}
 		if err := reflectTable(ctx, db, name, tbl); err != nil {
+			// Deliberately not recorded: this table must be retried. Tables
+			// already recorded above stay recorded, which is what lets a
+			// cancelled login resume rather than restart.
 			return done, fmt.Errorf("reflect %q: %w", name, err)
 		}
+		it.seen[name] = fp
 		done = append(done, name)
 	}
 	return done, nil
+}
+
+// deltaFingerprint identifies a Delta table's current state cheaply enough to
+// check on every login: the names of its _delta_log commits, which change on
+// every write and require listing one directory rather than reading any data.
+//
+// It deliberately does not read the commit CONTENTS or the Parquet. Reading the
+// log to resolve active files would be correct too, and more precise, but it
+// costs a read per commit on a path whose whole purpose is to be near-free when
+// nothing has changed. A new commit that somehow left the data identical would
+// cause one needless reload, which is the harmless direction to be wrong in.
+func deltaFingerprint(st *store.Store, itemID, name string) (string, error) {
+	logDir := path.Join("Tables", name, "_delta_log")
+	entries, err := st.ListOneLakePaths(itemID, logDir, false)
+	if err != nil {
+		return "", err
+	}
+	var commits []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.RelPath, ".json") {
+			commits = append(commits, e.RelPath)
+		}
+	}
+	if len(commits) == 0 {
+		return "", fmt.Errorf("no _delta_log commits under %q", logDir)
+	}
+	sort.Strings(commits)
+	return strings.Join(commits, "\n"), nil
 }
 
 // reflectTable drops and recreates one table, then loads its rows over the TDS
@@ -50,10 +159,11 @@ func Reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID string) ([
 // 100 columns measured 123s of statement execution against 0.13s of reading the
 // Delta. Bulk copy does the same load in about a second.
 //
-// That branch is gone with the SQLite double. Reflect has exactly one caller,
-// and the backend it passes is only ever built by tds.NewSQLServerBackend, so
-// the text path was unreachable in production and untestable without a double —
-// as were the nprefix parameter and literal() that existed solely to serve it.
+// That branch is gone with the SQLite double. Reflection has exactly one
+// production caller, and the backend it passes is only ever built by
+// tds.NewSQLServerBackend, so the text path was unreachable in production and
+// untestable without a double — as were the nprefix parameter and literal()
+// that existed solely to serve it.
 func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table) error {
 	q := quoteIdent(name)
 	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS "+q); err != nil {
