@@ -166,7 +166,22 @@ type notebookResultBody struct {
 		Status string `json:"status"` // Succeeded | Failed | Skipped
 		Output string `json:"output"`
 		Error  string `json:"error"`
+		// Reads/Writes are the datasets this cell actually touched, reported by
+		// the engine that executed it. Shaped after OpenLineage's
+		// RunEvent{inputs,outputs}. The emulator never parses notebook code to
+		// infer these — an engine reporting what it did is an exact fact, a
+		// static guess is not.
+		Reads  []lineageRef `json:"reads"`
+		Writes []lineageRef `json:"writes"`
 	} `json:"cells"`
+}
+
+// lineageRef addresses one dataset a notebook cell read or wrote. workspaceId
+// defaults to the run's own workspace.
+type lineageRef struct {
+	WorkspaceID string `json:"workspaceId"`
+	ItemID      string `json:"itemId"`
+	Path        string `json:"path"`
 }
 
 // reportNotebookRun is the engine → service callback (the Spark runner posts
@@ -225,7 +240,92 @@ func (a *API) reportNotebookRun(w http.ResponseWriter, r *http.Request, p *auth.
 	}
 
 	a.saveNotebookRun(jid, run)
+	a.recordNotebookLineage(wid, jid, body)
+	a.recordObservedLineage(wid, jid)
 	// Reflect the real run in the job (deterministically terminal now).
 	_ = a.Store.FinalizeJob(iid, jid, failCode)
 	writeJSON(w, http.StatusOK, run)
+}
+
+// recordNotebookLineage turns a cell's reported read/write set into lineage
+// edges — one per (read x write) pair, so a cell joining two tables into one
+// records both inputs.
+//
+// The activity name is cell[<index>], which matters: the store's unique key is
+// (job, activity, source, target), so without a per-cell name a notebook
+// touching the same pair in several cells would collapse into a single row.
+//
+// A cell that only reads produces no edge. That is not a limitation to work
+// around — lineage describes movement, and a read that produced nothing did not
+// move anything.
+func (a *API) recordNotebookLineage(wid, jid string, body notebookResultBody) {
+	for _, c := range body.Cells {
+		if len(c.Reads) == 0 || len(c.Writes) == 0 {
+			continue
+		}
+		activity := fmt.Sprintf("cell[%d]", c.Index)
+		for _, in := range c.Reads {
+			for _, out := range c.Writes {
+				if in.ItemID == "" || in.Path == "" || out.ItemID == "" || out.Path == "" {
+					continue // an incomplete reference is not an exact fact
+				}
+				srcWS, dstWS := in.WorkspaceID, out.WorkspaceID
+				if srcWS == "" {
+					srcWS = wid
+				}
+				if dstWS == "" {
+					dstWS = wid
+				}
+				_ = a.Store.CreateLineageEdge(&store.LineageEdge{
+					WorkspaceID: wid, JobID: jid, ActivityName: activity,
+					SourceWorkspaceID: srcWS, SourceItemID: in.ItemID, SourcePath: in.Path,
+					TargetWorkspaceID: dstWS, TargetItemID: out.ItemID, TargetPath: out.Path,
+					Producer:          store.ProducerNotebook,
+				})
+			}
+		}
+	}
+}
+
+// recordObservedLineage turns the I/O the storage layer actually saw during
+// this run into lineage edges. The runtime tags each request with the cell it
+// is executing, so reads and writes pair within a cell — no cross-product
+// across the whole notebook, and nothing inferred from user code.
+//
+// These edges carry ProducerNotebookObserved so a catalog can tell evidence
+// (the emulator watched it happen) from a report (the engine said so).
+func (a *API) recordObservedLineage(wid, jid string) {
+	accesses, err := a.Store.ListNotebookAccesses(jid)
+	if err != nil || len(accesses) == 0 {
+		return
+	}
+	type cellIO struct{ reads, writes []*store.NotebookAccess }
+	byCell := map[int]*cellIO{}
+	for _, ac := range accesses {
+		c, ok := byCell[ac.CellIndex]
+		if !ok {
+			c = &cellIO{}
+			byCell[ac.CellIndex] = c
+		}
+		if ac.Direction == store.AccessRead {
+			c.reads = append(c.reads, ac)
+		} else {
+			c.writes = append(c.writes, ac)
+		}
+	}
+	for idx, io := range byCell {
+		for _, in := range io.reads {
+			for _, out := range io.writes {
+				if in.ItemID == out.ItemID && in.Path == out.Path {
+					continue // reading a table to rewrite it is not an edge to itself
+				}
+				_ = a.Store.CreateLineageEdge(&store.LineageEdge{
+					WorkspaceID: wid, JobID: jid, ActivityName: fmt.Sprintf("cell[%d]", idx),
+					SourceWorkspaceID: wid, SourceItemID: in.ItemID, SourcePath: in.Path,
+					TargetWorkspaceID: wid, TargetItemID: out.ItemID, TargetPath: out.Path,
+					Producer:          store.ProducerNotebookObserved,
+				})
+			}
+		}
+	}
 }

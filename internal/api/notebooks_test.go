@@ -211,3 +211,199 @@ print(1)`
 		t.Fatalf("run = %+v", run)
 	}
 }
+
+// edgesFor lists the lineage edges a workspace holds.
+func edgesFor(t *testing.T, a *API, wid string) []store.LineageEdge {
+	t.Helper()
+	w := do(a.listLineage, admin, "GET", "", map[string]string{"wid": wid})
+	if w.Code != 200 {
+		t.Fatalf("lineage = %d %s", w.Code, w.Body.Bytes())
+	}
+	var page struct {
+		Value []store.LineageEdge `json:"value"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	return page.Value
+}
+
+// TestNotebookLineageFromEngineReport: the engine reports what each cell read
+// and wrote, and the emulator records exact edges — never parsed from code.
+// A cell reading two tables into one records both inputs (fan-in).
+func TestNotebookLineageFromEngineReport(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+	lake := seedLakehouse(t, st, ws.ID, "lake")
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+
+	result := `{"exitValue":"ok","cells":[
+      {"index":0,"status":"Succeeded",
+       "reads":[{"itemId":"` + lake.ID + `","path":"Tables/bronze_orders"},
+                {"itemId":"` + lake.ID + `","path":"Tables/bronze_customers"}],
+       "writes":[{"itemId":"` + lake.ID + `","path":"Tables/silver_orders"}]},
+      {"index":1,"status":"Succeeded",
+       "reads":[{"itemId":"` + lake.ID + `","path":"Tables/silver_orders"}]}]}`
+	if w := do(a.reportNotebookRun, admin, "POST", result, map[string]string{"wid": ws.ID, "iid": nb.ID, "jid": jid}); w.Code != 200 {
+		t.Fatalf("report = %d %s", w.Code, w.Body.Bytes())
+	}
+
+	edges := edgesFor(t, a, ws.ID)
+	if len(edges) != 2 {
+		t.Fatalf("want 2 fan-in edges (cell 1 reads only, so no edge), got %d: %+v", len(edges), edges)
+	}
+	srcs := map[string]bool{}
+	for _, e := range edges {
+		if e.Producer != store.ProducerNotebook {
+			t.Fatalf("producer = %q, want %q", e.Producer, store.ProducerNotebook)
+		}
+		if e.ActivityName != "cell[0]" {
+			t.Fatalf("activity = %q, want cell[0]", e.ActivityName)
+		}
+		if e.TargetPath != "Tables/silver_orders" || e.JobID != jid {
+			t.Fatalf("edge = %+v", e)
+		}
+		srcs[e.SourcePath] = true
+	}
+	if !srcs["Tables/bronze_orders"] || !srcs["Tables/bronze_customers"] {
+		t.Fatalf("both inputs should be recorded: %+v", srcs)
+	}
+}
+
+// TestNotebookLineageSkipsIncompleteAndReadOnly: a read with no write moves
+// nothing, and a half-specified reference is not an exact fact — neither
+// becomes an edge.
+func TestNotebookLineageSkipsIncompleteAndReadOnly(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+	lake := seedLakehouse(t, st, ws.ID, "lake")
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+
+	result := `{"cells":[
+      {"index":0,"status":"Succeeded","reads":[{"itemId":"` + lake.ID + `","path":"Tables/a"}]},
+      {"index":1,"status":"Succeeded","writes":[{"itemId":"` + lake.ID + `","path":"Tables/b"}]},
+      {"index":2,"status":"Succeeded",
+       "reads":[{"itemId":"","path":"Tables/a"}],
+       "writes":[{"itemId":"` + lake.ID + `","path":"Tables/c"}]}]}`
+	if w := do(a.reportNotebookRun, admin, "POST", result, map[string]string{"wid": ws.ID, "iid": nb.ID, "jid": jid}); w.Code != 200 {
+		t.Fatalf("report = %d %s", w.Code, w.Body.Bytes())
+	}
+	if edges := edgesFor(t, a, ws.ID); len(edges) != 0 {
+		t.Fatalf("no edge should be recorded, got %+v", edges)
+	}
+}
+
+// TestNotebookLineagePerCellKey: the same (source,target) pair touched by two
+// cells stays two edges — the per-cell activity name is what keeps the store's
+// unique key from collapsing them.
+func TestNotebookLineagePerCellKey(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+	lake := seedLakehouse(t, st, ws.ID, "lake")
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+
+	pair := `"reads":[{"itemId":"` + lake.ID + `","path":"Tables/a"}],"writes":[{"itemId":"` + lake.ID + `","path":"Tables/b"}]`
+	result := `{"cells":[
+      {"index":0,"status":"Succeeded",` + pair + `},
+      {"index":1,"status":"Succeeded",` + pair + `}]}`
+	if w := do(a.reportNotebookRun, admin, "POST", result, map[string]string{"wid": ws.ID, "iid": nb.ID, "jid": jid}); w.Code != 200 {
+		t.Fatalf("report = %d", w.Code)
+	}
+	edges := edgesFor(t, a, ws.ID)
+	if len(edges) != 2 {
+		t.Fatalf("per-cell naming should keep both, got %d: %+v", len(edges), edges)
+	}
+	if edges[0].ActivityName == edges[1].ActivityName {
+		t.Fatalf("activity names should differ: %+v", edges)
+	}
+}
+
+// TestCopyLineageKeepsProducerCopy: existing Copy edges keep the default
+// producer, so a catalog can still tell the two mechanisms apart.
+func TestCopyLineageKeepsProducerCopy(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	seedFile(t, st, ws.ID, src.ID, "Files/in.csv", []byte("a\n1\n"))
+	content := `{"properties":{"activities":[
+      {"name":"Move","type":"Copy","typeProperties":{
+        "source":{"location":{"itemId":"` + src.ID + `","path":"Files/in.csv"}},
+        "sink":{"location":{"itemId":"` + dst.ID + `","path":"Files/out.csv"}}}}]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("status = %s", s)
+	}
+	edges := edgesFor(t, a, ws.ID)
+	if len(edges) != 1 || edges[0].Producer != store.ProducerCopy {
+		t.Fatalf("copy edge producer = %+v", edges)
+	}
+}
+
+// TestNotebookObservedLineage: the emulator's own data plane saw the I/O and
+// attributed it to the cell that made it — evidence, not a self-report. Reads
+// and writes pair WITHIN a cell, so a notebook whose cells touch different
+// tables does not produce a cross-product across the whole run.
+func TestNotebookObservedLineage(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+	lake := seedLakehouse(t, st, ws.ID, "lake")
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+
+	// What the storage layer observed: cell 0 bronze->silver, cell 1 silver->gold.
+	for _, ac := range []store.NotebookAccess{
+		{JobID: jid, CellIndex: 0, ItemID: lake.ID, Path: "Tables/bronze", Direction: store.AccessRead},
+		{JobID: jid, CellIndex: 0, ItemID: lake.ID, Path: "Tables/silver", Direction: store.AccessWrite},
+		{JobID: jid, CellIndex: 1, ItemID: lake.ID, Path: "Tables/silver", Direction: store.AccessRead},
+		{JobID: jid, CellIndex: 1, ItemID: lake.ID, Path: "Tables/gold", Direction: store.AccessWrite},
+	} {
+		if err := st.RecordNotebookAccess(&ac); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if w := do(a.reportNotebookRun, admin, "POST", `{"cells":[]}`, map[string]string{"wid": ws.ID, "iid": nb.ID, "jid": jid}); w.Code != 200 {
+		t.Fatalf("report = %d %s", w.Code, w.Body.Bytes())
+	}
+
+	edges := edgesFor(t, a, ws.ID)
+	if len(edges) != 2 {
+		t.Fatalf("want exactly 2 per-cell edges (not a 2x2 cross-product), got %d: %+v", len(edges), edges)
+	}
+	seen := map[string]string{}
+	for _, e := range edges {
+		if e.Producer != store.ProducerNotebookObserved {
+			t.Fatalf("producer = %q, want %q", e.Producer, store.ProducerNotebookObserved)
+		}
+		seen[e.SourcePath] = e.TargetPath
+	}
+	if seen["Tables/bronze"] != "Tables/silver" || seen["Tables/silver"] != "Tables/gold" {
+		t.Fatalf("edges did not follow the cells: %+v", seen)
+	}
+}
+
+// TestObservedLineageIgnoresSelfEdge: reading a table to rewrite it in place is
+// not an edge to itself.
+func TestObservedLineageIgnoresSelfEdge(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+	lake := seedLakehouse(t, st, ws.ID, "lake")
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+	for _, d := range []string{store.AccessRead, store.AccessWrite} {
+		if err := st.RecordNotebookAccess(&store.NotebookAccess{
+			JobID: jid, CellIndex: 0, ItemID: lake.ID, Path: "Tables/t", Direction: d}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if w := do(a.reportNotebookRun, admin, "POST", `{"cells":[]}`, map[string]string{"wid": ws.ID, "iid": nb.ID, "jid": jid}); w.Code != 200 {
+		t.Fatalf("report = %d", w.Code)
+	}
+	if edges := edgesFor(t, a, ws.ID); len(edges) != 0 {
+		t.Fatalf("self edge should not be recorded: %+v", edges)
+	}
+}

@@ -10,6 +10,7 @@ The DFS surface is host-routed, so every request carries the OneLake Host
 header while connecting to the emulator's address — the emulator routes on Host,
 not DNS, so no /etc/hosts trickery is needed from Python.
 """
+import os
 import urllib.parse
 
 from ._config import config
@@ -64,9 +65,26 @@ def _url(filesystem, subpath=""):
     return base + ("/" + subpath if subpath else "")
 
 
+def _cell_context():
+    """Identify the notebook cell making this request, when the runtime says so.
+
+    A notebook runtime executes cells one at a time, so it always knows which
+    one is running; it exports that as FABRIC_JOB_ID / FABRIC_CELL_INDEX before
+    each cell. Passing it here lets the emulator attribute the I/O it actually
+    serves to the cell that caused it — observed lineage, with no parsing of
+    user code. Absent outside a notebook run, in which case nothing is tagged.
+    """
+    job = os.environ.get("FABRIC_JOB_ID", "")
+    cell = os.environ.get("FABRIC_CELL_INDEX", "")
+    if not job or not cell:
+        return {}
+    return {"x-ms-fabric-job-id": job, "x-ms-fabric-cell-index": cell}
+
+
 def _headers():
     return {"Host": config().onelake_host, "x-ms-version": "2021-06-08",
-            "Authorization": "Bearer " + _storage_token()}
+            "Authorization": "Bearer " + _storage_token(),
+            **_cell_context()}
 
 
 def put(path, content, overwrite=True):

@@ -1,15 +1,20 @@
 package api
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
+	"slices"
 	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/pipeline"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 )
 
 // pipelineExecutor bridges the interpreter's leaf activities to real engines.
@@ -48,7 +53,23 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		if err := e.a.Store.CreateJobInstance(j); err != nil {
 			return nil, fmt.Errorf("notebook activity %q: %v", act.Name, err)
 		}
-		return map[string]any{"jobInstanceId": j.ID, "notebookId": nb.ID, "status": "Completed"}, nil
+		// Start the run for real, exactly as a direct RunNotebook job POST does
+		// (jobs.go): parse the notebook into cells with the Go parser, resolve the
+		// compute binding, and record the run so an engine can execute it and
+		// report back. Without this the activity fabricated a completed job with
+		// no run behind it — nothing to execute, and nothing for lineage or the
+		// notebookRunResult callback to attach to.
+		if code := e.a.startNotebookRun(nb, j.ID); code != "" {
+			_ = e.a.Store.FinalizeJob(nb.ID, j.ID, code)
+			return nil, fmt.Errorf("notebook activity %q: %s", act.Name, code)
+		}
+		// The run is Pending until an engine executes the cells and reports back;
+		// report that rather than claiming a completion that has not happened.
+		status, _, err := e.a.Store.GetNotebookRun(j.ID)
+		if err != nil || status == "" {
+			status = "Pending"
+		}
+		return map[string]any{"jobInstanceId": j.ID, "notebookId": nb.ID, "status": status}, nil
 
 	case "ExecutePipeline", "InvokePipeline":
 		// Invoke pipeline: resolve the referenced DataPipeline and run it for
@@ -262,6 +283,20 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 		return nil, fmt.Errorf("copy %q sink: %w", act.Name, err)
 	}
 
+	// A Tables/<name> sink is a Delta table, not a folder of bytes: read the
+	// source's rows and commit them, so Append really appends and Overwrite
+	// really replaces. Falls through to the byte copy for Files/ sinks and for
+	// sources this cannot parse.
+	if name, ok := deltaTableName(dst.path); ok {
+		out, handled, err := e.copyIntoTable(act, tp, src, dst, name, resolve)
+		if err != nil {
+			return nil, err
+		}
+		if handled {
+			return out, nil
+		}
+	}
+
 	root, err := e.a.Store.GetOneLakePath(src.itemID, src.path)
 	if err != nil {
 		// ADLS parent directories may be implicit: Delta writers commonly create
@@ -317,32 +352,158 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 	}, nil
 }
 
-// resolveLoc reads a Copy side's OneLake location, resolving each field as an
-// expression and mapping name-or-GUID references to concrete ids.
+// copySideTypes are the Copy source/sink `type` discriminators the emulator can
+// honour. Everything Fabric supports beyond this — external connectors, formats
+// with no reader here — is rejected by name rather than silently treated as an
+// opaque OneLake byte copy, which would be the one behaviour worse than a 501.
+var copySideTypes = map[string]bool{
+	"":                     true, // the emulator's own simplified shape
+	"LakehouseTableSource": true, "LakehouseTableSink": true,
+	"LakehouseReadSettings": true, "LakehouseWriteSettings": true,
+	"BinarySource": true, "BinarySink": true,
+	"DelimitedTextSource": true, "DelimitedTextSink": true,
+	"ParquetSource": true, "ParquetSink": true,
+	"JsonSource": true, "JsonSink": true,
+}
+
+// copyUnsupportedOpts are Copy options the emulator parses but cannot honour
+// yet. Accepting a payload while ignoring these would silently do the wrong
+// thing — an Upsert that appends, a wildcard that copies one file — so each
+// fails loudly, naming itself.
+var copyUnsupportedOpts = []struct{ key, why string }{
+	{"sqlReaderQuery", "reading a Lakehouse table through a T-SQL query is not implemented"},
+	{"wildcardFolderPath", "wildcard paths are not implemented"},
+	{"wildcardFileName", "wildcard paths are not implemented"},
+	{"fileListPath", "list-of-files sources are not implemented"},
+	{"versionAsOf", "Delta time travel is not implemented"},
+	{"timestampAsOf", "Delta time travel is not implemented"},
+	{"partitionOption", "partitioned copy is not implemented"},
+	{"keyColumns", "Upsert into a Lakehouse table is not implemented"},
+}
+
+// copyAllowedValues gates options the emulator honours for *some* values only.
+// Append/Overwrite are real for a Tables/<name> sink (the rows are committed to
+// the Delta log); Upsert needs row matching we do not do, and MergeFiles /
+// FlattenHierarchy reshape output we never reshape. Compared case-insensitively.
+var copyAllowedValues = map[string][]string{
+	"tableActionOption": {"Append", "Overwrite", "OverwriteSchema"},
+	"copyBehavior":      {"PreserveHierarchy"},
+}
+
+// resolveLoc reads a Copy side and resolves it to a OneLake location.
+//
+// Three shapes are accepted, so a pipeline authored in Fabric runs unchanged:
+//
+//  1. Fabric's script properties on the side itself — `rootFolder` (Tables or
+//     Files) with `table`/`schema`, or `folderPath`/`fileName`, plus the
+//     connection's `workspaceId`/`itemId`.
+//  2. The Fabric UI's nested dataset shape —
+//     `datasetSettings.typeProperties.{location,table,schema}` with the
+//     lakehouse identified by `datasetSettings.linkedService.properties.
+//     typeProperties.{workspaceId,artifactId}`.
+//  3. The emulator's original simplified shape — `location.{workspaceId,itemId,
+//     path}` — which existing pipelines and e2e suites use.
+//
+// Every field resolves as an expression first, so @pipeline().parameters work
+// throughout.
 func (e *pipelineExecutor) resolveLoc(side string, raw json.RawMessage, resolve func(json.RawMessage) (any, error)) (oneLakeLoc, error) {
 	var obj map[string]json.RawMessage
 	if len(raw) == 0 || json.Unmarshal(raw, &obj) != nil {
 		return oneLakeLoc{}, fmt.Errorf("missing %s", side)
 	}
-	loc := obj
-	if l, ok := obj["location"]; ok {
-		loc = map[string]json.RawMessage{}
-		_ = json.Unmarshal(l, &loc)
+
+	// Flatten the shapes into one lookup, innermost last so an explicit nested
+	// value wins over an outer one.
+	scopes := []map[string]json.RawMessage{obj}
+	descend := func(m map[string]json.RawMessage, keys ...string) map[string]json.RawMessage {
+		cur := m
+		for _, k := range keys {
+			v, ok := cur[k]
+			if !ok {
+				return nil
+			}
+			next := map[string]json.RawMessage{}
+			if json.Unmarshal(v, &next) != nil {
+				return nil
+			}
+			cur = next
+		}
+		return cur
+	}
+	if ds := descend(obj, "datasetSettings"); ds != nil {
+		scopes = append(scopes, ds)
+		if ls := descend(ds, "linkedService", "properties", "typeProperties"); ls != nil {
+			scopes = append(scopes, ls)
+		}
+		if tp := descend(ds, "typeProperties"); tp != nil {
+			scopes = append(scopes, tp)
+			if loc := descend(tp, "location"); loc != nil {
+				scopes = append(scopes, loc)
+			}
+		}
+	}
+	if loc := descend(obj, "location"); loc != nil {
+		scopes = append(scopes, loc)
+	}
+	if st := descend(obj, "storeSettings"); st != nil {
+		scopes = append(scopes, st)
+	}
+
+	lookup := func(k string) (json.RawMessage, bool) {
+		for i := len(scopes) - 1; i >= 0; i-- {
+			if v, ok := scopes[i][k]; ok {
+				return v, true
+			}
+		}
+		return nil, false
 	}
 	field := func(k string) (string, error) {
-		raw, ok := loc[k]
+		raw, ok := lookup(k)
 		if !ok {
 			return "", nil
 		}
 		v, err := resolve(raw)
-		if err != nil {
+		if err != nil || v == nil {
 			return "", err
-		}
-		if v == nil {
-			return "", nil
 		}
 		return fmt.Sprint(v), nil
 	}
+
+	// The discriminator is the side's own `type`, never an inner one: nested
+	// objects carry their own (`datasetSettings.type` is a *dataset* type like
+	// "LakehouseTable", `location.type` a store type like "LakehouseLocation").
+	sideType := ""
+	if raw, ok := obj["type"]; ok {
+		v, err := resolve(raw)
+		if err != nil {
+			return oneLakeLoc{}, err
+		}
+		if v != nil {
+			sideType = fmt.Sprint(v)
+		}
+	}
+	if !copySideTypes[sideType] {
+		return oneLakeLoc{}, fmt.Errorf("%s type %q is not supported by the emulator", side, sideType)
+	}
+	for _, opt := range copyUnsupportedOpts {
+		if _, ok := lookup(opt.key); ok {
+			return oneLakeLoc{}, fmt.Errorf("%s option %q: %s", side, opt.key, opt.why)
+		}
+	}
+	for key, allowed := range copyAllowedValues {
+		got, err := field(key)
+		if err != nil {
+			return oneLakeLoc{}, err
+		}
+		if got == "" {
+			continue
+		}
+		if !slices.ContainsFunc(allowed, func(a string) bool { return strings.EqualFold(a, got) }) {
+			return oneLakeLoc{}, fmt.Errorf("%s option %s=%q is not supported by the emulator (supported: %s)",
+				side, key, got, strings.Join(allowed, ", "))
+		}
+	}
+
 	wsRef, err := field("workspaceId")
 	if err != nil {
 		return oneLakeLoc{}, err
@@ -351,7 +512,13 @@ func (e *pipelineExecutor) resolveLoc(side string, raw json.RawMessage, resolve 
 	if err != nil {
 		return oneLakeLoc{}, err
 	}
-	path, err := field("path")
+	if itemRef == "" {
+		// Fabric's linkedService names the lakehouse "artifactId".
+		if itemRef, err = field("artifactId"); err != nil {
+			return oneLakeLoc{}, err
+		}
+	}
+	path, err := e.copyPath(field)
 	if err != nil {
 		return oneLakeLoc{}, err
 	}
@@ -363,6 +530,55 @@ func (e *pipelineExecutor) resolveLoc(side string, raw json.RawMessage, resolve 
 		return oneLakeLoc{}, err
 	}
 	return oneLakeLoc{wsID: wsID, itemID: itemID, path: path}, nil
+}
+
+// copyPath derives the OneLake-relative path from whichever of Fabric's
+// addressing styles the side used: an explicit `path`, a Tables-rooted `table`,
+// or a Files-rooted `folderPath`/`fileName`.
+func (e *pipelineExecutor) copyPath(field func(string) (string, error)) (string, error) {
+	if p, err := field("path"); err != nil || p != "" {
+		return p, err
+	}
+	root, err := field("rootFolder")
+	if err != nil {
+		return "", err
+	}
+	table, err := field("table")
+	if err != nil {
+		return "", err
+	}
+	if table != "" || strings.EqualFold(root, "Tables") {
+		if table == "" {
+			return "", fmt.Errorf("rootFolder Tables requires a table name")
+		}
+		// A schema-enabled lakehouse addresses Tables/<schema>/<table>; the
+		// default dbo schema is implicit, matching Fabric.
+		schema, err := field("schema")
+		if err != nil {
+			return "", err
+		}
+		if schema != "" && !strings.EqualFold(schema, "dbo") {
+			return path.Join("Tables", schema, table), nil
+		}
+		return path.Join("Tables", table), nil
+	}
+	folder, err := field("folderPath")
+	if err != nil {
+		return "", err
+	}
+	name, err := field("fileName")
+	if err != nil {
+		return "", err
+	}
+	if folder == "" && name == "" {
+		return "", nil
+	}
+	// folderPath is relative to the Files area unless it already names it.
+	joined := path.Join(folder, name)
+	if !strings.EqualFold(root, "Files") && (strings.HasPrefix(joined, "Files/") || joined == "Files") {
+		return joined, nil
+	}
+	return path.Join("Files", joined), nil
 }
 
 // resolveItemRef maps a workspace/item reference (GUID or name) to ids; an
@@ -464,4 +680,114 @@ func (a *API) queryActivityRuns(w http.ResponseWriter, r *http.Request, p *auth.
 		runs = []json.RawMessage{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": status, "value": runs})
+}
+
+// copyIntoTable lands a Copy's rows into a Tables/<name> Delta table. It
+// reports handled=false when the source is not something it can parse into
+// rows, leaving the caller's opaque byte copy as the fallback.
+//
+// This is what makes a medallion ingest real: Files/landing/*.csv into
+// Tables/bronze_* with Append accumulating across runs, rather than one
+// directory of bytes clobbering another.
+func (e *pipelineExecutor) copyIntoTable(act pipeline.Activity, tp map[string]json.RawMessage, src, dst oneLakeLoc, table string, resolve func(json.RawMessage) (any, error)) (map[string]any, bool, error) {
+	var srcProps map[string]json.RawMessage
+	_ = json.Unmarshal(tp["source"], &srcProps)
+
+	var tbl *warehouse.Table
+	switch lookupFormat(srcProps, src.path) {
+	case "delta":
+		name, ok := deltaTableName(src.path)
+		if !ok {
+			return nil, false, nil
+		}
+		t, err := warehouse.ReadDeltaTable(e.a.Store, src.itemID, name)
+		if err != nil {
+			// Not a readable Delta table (no _delta_log yet, or a shape this
+			// reader does not cover): fall back to the opaque directory copy
+			// rather than failing a Copy that used to work.
+			return nil, false, nil
+		}
+		tbl = t
+	case "parquet", "csv":
+		p, err := e.a.Store.GetOneLakePath(src.itemID, src.path)
+		if err != nil || p.IsDir {
+			return nil, false, nil // a directory or missing file: let the byte copy decide
+		}
+		t, err := parseTabular(p.Content, lookupFormat(srcProps, src.path))
+		if err != nil {
+			return nil, false, fmt.Errorf("copy %q: parsing source: %v", act.Name, err)
+		}
+		tbl = t
+	default:
+		return nil, false, nil
+	}
+
+	mode := warehouse.WriteOverwrite
+	if action, err := e.copySinkAction(tp, resolve); err != nil {
+		return nil, false, err
+	} else if strings.EqualFold(action, "Append") {
+		mode = warehouse.WriteAppend
+	}
+	if err := warehouse.WriteDeltaTable(e.a.Store, dst.wsID, dst.itemID, table, mode, tbl); err != nil {
+		return nil, false, fmt.Errorf("copy %q: writing table %s: %v", act.Name, table, err)
+	}
+
+	edge := &store.LineageEdge{WorkspaceID: e.wid, JobID: e.jobID, ActivityName: act.Name,
+		SourceWorkspaceID: src.wsID, SourceItemID: src.itemID, SourcePath: src.path,
+		TargetWorkspaceID: dst.wsID, TargetItemID: dst.itemID, TargetPath: dst.path}
+	if err := e.a.Store.CreateLineageEdge(edge); err != nil {
+		return nil, false, fmt.Errorf("copy %q lineage: %v", act.Name, err)
+	}
+	return map[string]any{
+		"rowsRead": len(tbl.Rows), "rowsCopied": len(tbl.Rows),
+		"filesRead": 1, "filesWritten": 1, "copyDuration": 0,
+		"writeBehavior": mode, "lineage": edge,
+	}, true, nil
+}
+
+// copySinkAction reads the sink's tableActionOption (Fabric's Append /
+// Overwrite / OverwriteSchema). Unsupported values were already rejected while
+// resolving the location.
+func (e *pipelineExecutor) copySinkAction(tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error)) (string, error) {
+	var sink map[string]json.RawMessage
+	if json.Unmarshal(tp["sink"], &sink) != nil {
+		return "", nil
+	}
+	raw, ok := sink["tableActionOption"]
+	if !ok {
+		return "", nil
+	}
+	v, err := resolve(raw)
+	if err != nil || v == nil {
+		return "", err
+	}
+	return fmt.Sprint(v), nil
+}
+
+// parseTabular reads a single CSV or Parquet file into a warehouse.Table so a
+// Copy can commit it as Delta rows. CSV values stay strings — the Delta writer
+// types each column from its first non-null value, and inventing numeric types
+// here would guess at data the file does not describe.
+func parseTabular(content []byte, format string) (*warehouse.Table, error) {
+	if format == "parquet" {
+		return warehouse.ReadParquetBytes(content)
+	}
+	recs, err := csv.NewReader(bytes.NewReader(content)).ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(recs) == 0 {
+		return nil, fmt.Errorf("empty CSV")
+	}
+	tbl := &warehouse.Table{Columns: recs[0]}
+	for _, rec := range recs[1:] {
+		row := make([]any, len(tbl.Columns))
+		for i := range tbl.Columns {
+			if i < len(rec) {
+				row[i] = rec[i]
+			}
+		}
+		tbl.Rows = append(tbl.Rows, row)
+	}
+	return tbl, nil
 }
