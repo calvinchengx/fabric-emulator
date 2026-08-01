@@ -55,7 +55,7 @@ def main():
     log("starting family + OM backing stores (SSO overlay)")
     compose("up", "-d", "--build", "--wait", "--wait-timeout", "600",
             "entra-emulator", "keyvault-emulator", "fabric-emulator",
-            "om-postgresql", "om-elasticsearch")
+            "om-postgresql", "om-opensearch")
     log("starting OpenMetadata with entra as its authenticator")
     compose("up", "-d", "--no-recreate", "openmetadata")
 
