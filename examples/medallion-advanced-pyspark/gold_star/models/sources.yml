@@ -1,0 +1,26 @@
+version: 2
+
+# Silver lives in the LAKEHOUSE database (the SQL analytics endpoint reflects
+# its Delta); the star builds in the WAREHOUSE. Both are databases on the same
+# engine, so dbt reads across them with three-part names.
+#
+# The list below is the difference between this project and ../gold: that one
+# declares two POS tables, because a single-source star has nothing to join to.
+# Here every source system appears, and the fact model is where they meet.
+sources:
+  - name: silver
+    database: "{{ env_var('LAKEHOUSE_ID') }}"
+    schema: dbo
+    tables:
+      # The resolution, materialised by star_silver.py. Without these two the
+      # star cannot exist: there is no key on which a POS order and a web order
+      # line describe the same person.
+      - name: silver_customer_conformed
+      - name: silver_customer_xref
+      # POS: one line per order, keyed by the POS customer_id.
+      - name: silver_orders
+      # Web: true order-line grain, already carrying customer_key.
+      - name: silver_web_order_lines
+      # The only catalogue any source publishes, and the ERP hierarchy above it.
+      - name: bronze_web_products
+      - name: bronze_product_hierarchy

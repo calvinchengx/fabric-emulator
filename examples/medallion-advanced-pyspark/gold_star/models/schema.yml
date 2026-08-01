@@ -1,0 +1,62 @@
+version: 2
+
+# The data-quality contract on the multi-source star, in dbt's own builtins.
+#
+# The tests that matter here are the ones a single-source star cannot even
+# express: that a fact line from EITHER channel resolves to a customer, and that
+# every product referenced by either channel exists in the dimension. Those are
+# the two ways a cross-source join goes wrong quietly — it drops rows, and the
+# totals still look plausible.
+models:
+  - name: dim_customer
+    description: "One row per resolved person across POS, Web and ERP."
+    columns:
+      - name: customer_key
+        tests: [unique, not_null]
+      - name: source_count
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3]
+              quote: false
+
+  - name: dim_product
+    description: "Every product any channel transacted, catalogued or not."
+    columns:
+      - name: product_id
+        tests: [unique, not_null]
+
+  - name: dim_date
+    description: "The days on which trade actually happened."
+    columns:
+      - name: date_key
+        tests: [unique, not_null]
+
+  - name: fct_order_lines
+    description: "Order-line grain across both selling channels."
+    columns:
+      - name: customer_key
+        tests:
+          - not_null
+          # The join being TOTAL is the whole claim of the star. An order line
+          # that resolves to nobody would otherwise be dropped by every
+          # downstream aggregate without trace.
+          - relationships:
+              to: ref('dim_customer')
+              field: customer_key
+      - name: product_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_product')
+              field: product_id
+      - name: channel
+        tests: [not_null]
+      - name: amount
+        tests: [not_null]
+
+  - name: fct_channel_revenue
+    description: "Revenue by day, channel and country — the cross-channel view."
+    columns:
+      - name: revenue
+        tests: [not_null]

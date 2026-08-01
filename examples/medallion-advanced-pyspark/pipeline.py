@@ -43,12 +43,8 @@ ADVANCED = [
     ("erp_bronze", "bronze: three Copy activities reading a columnar source"),
     ("erp_scd2", "SCD2: the change log becomes a dimension with history"),
     ("resolve", "resolve three customer sets transitively; name who cannot be"),
-    # Not yet written, so deliberately absent rather than listed and failing:
-    #   ("star_silver", "materialise the resolution + the web order lines"),
-    #   ("gold_star",   "dbt-fabric: the multi-source star, joined in the WAREHOUSE"),
-    # resolve.py today computes the identity graph and writes nothing, so gold
-    # has no key to join on and the star cannot exist yet. That is the next
-    # piece of work, not an oversight.
+    ("star_silver", "materialise the resolution + the web order-line grain"),
+    ("gold_star", "dbt-fabric: the multi-source star, joined in the WAREHOUSE"),
     ("contract_gates", "run the ODCS contracts as gates at every layer"),
     ("tmdl_pbip", "serialise the model as TMDL; lay out a .pbip project"),
 ]
