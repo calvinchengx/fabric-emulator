@@ -563,8 +563,10 @@
       "go:TestGoldenCorpus",
       "go:TestGoldenCorpusCoversEveryOutcome",
       "go:TestDialectFixFlattensNestedBatch",
+      "go:TestFixRPCRewritesNestedCTEInStatementParameter",
+      "go:TestParseRPCTruncationSweep",
       "go:TestRewriteBatchPreservesHeadersAndRoundTrips",
-      "boundary:parameterized statements (sp_prepexec/sp_executesql) carry the SQL inside a typed parameter; those are refused by name rather than rewritten (docs/29-tsql-parity.md, T6g)"
+      "boundary:parameter types the RPC walker does not model (TEXT/NTEXT/IMAGE, XML, UDT, SQL_VARIANT) are forwarded untouched rather than rewritten, so a nested CTE alongside one of those is refused by name (docs/29-tsql-parity.md, T6g)"
     ]
   }
 }

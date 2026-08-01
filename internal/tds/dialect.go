@@ -17,6 +17,7 @@ package tds
 // running real T-SQL. Only the dialect of the statement changes.
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -34,9 +35,95 @@ func dialectFix(typ byte, data []byte) (out []byte, reject string) {
 	case PktSQLBatch:
 		return fixBatch(data)
 	case PktRPC:
-		return data, rpcNestedCTEReject(data)
+		return fixRPC(data)
 	}
 	return data, ""
+}
+
+// fixRPC rewrites a nested CTE carried inside a procedure parameter
+// (sp_prepexec and friends). Every failure path forwards the original: a
+// mis-parsed parameter list must cost us the rewrite, never the request.
+func fixRPC(data []byte) (out []byte, reject string) {
+	proc, _ := rpcProc(data)
+	if !procsCarryingSQL[proc] {
+		return data, ""
+	}
+	req, err := parseRPC(data)
+	if err != nil {
+		// Not a shape this file models. Fall back to T6e's behaviour: name the
+		// limitation if a statement is visibly in there, rather than let it
+		// surface as a bare Msg 156.
+		return data, heuristicNestedReject(data, proc)
+	}
+
+	idx, flattened := -1, ""
+	for i, p := range req.params {
+		if !p.isText || p.text == "" {
+			continue
+		}
+		rewritten, changed, ferr := tsql.Flatten(p.text)
+		if ferr != nil {
+			var restriction *tsql.RestrictionError
+			var shadowed *tsql.ShadowedNameError
+			if errors.As(ferr, &restriction) || errors.As(ferr, &shadowed) {
+				return data, ferr.Error()
+			}
+			continue // unparseable parameter: not ours to judge
+		}
+		if changed {
+			idx, flattened = i, rewritten
+			break
+		}
+	}
+	if idx < 0 {
+		return data, "" // nothing to rewrite
+	}
+
+	rebuilt := *req
+	rebuilt.params = append([]rpcParam(nil), req.params...)
+	rebuilt.params[idx].typeInfo, rebuilt.params[idx].value =
+		encodeCharValue(req.params[idx], flattened)
+	encoded := rebuilt.encode()
+
+	// Verify our own output before it reaches the engine. This branch is
+	// defence in depth against an encoder bug, so it is unreachable while the
+	// encoder is correct — rewriteIsFaithful's own logic is tested directly
+	// (TestRewriteIsFaithfulRejects*); only this wiring line is uncovered, and
+	// deliberately so rather than propped up by a contrived fake.
+	if !rewriteIsFaithful(req, encoded, idx, flattened) {
+		return data, ""
+	}
+	return encoded, ""
+}
+
+// rewriteIsFaithful re-parses a rewritten RPC and proves it differs from the
+// original in exactly one place: the statement parameter, which must decode to
+// the SQL we meant to send. Anything else — a lost parameter, a shifted
+// boundary, a mangled value — means the encoder is wrong, and the original is
+// forwarded instead.
+func rewriteIsFaithful(orig *rpcRequest, encoded []byte, idx int, want string) bool {
+	got, err := parseRPC(encoded)
+	if err != nil ||
+		!bytes.Equal(got.headers, orig.headers) ||
+		!bytes.Equal(got.proc, orig.proc) ||
+		!bytes.Equal(got.flags, orig.flags) ||
+		len(got.params) != len(orig.params) {
+		return false
+	}
+	for i := range got.params {
+		if i == idx {
+			if got.params[i].text != want {
+				return false
+			}
+			continue
+		}
+		a, b := orig.params[i], got.params[i]
+		if !bytes.Equal(a.name, b.name) || a.status != b.status ||
+			!bytes.Equal(a.typeInfo, b.typeInfo) || !bytes.Equal(a.value, b.value) {
+			return false
+		}
+	}
+	return true
 }
 
 func fixBatch(data []byte) (out []byte, reject string) {
@@ -86,27 +173,21 @@ var procsCarryingSQL = map[string]bool{
 	"sp_prepexecrpc": true, "sp_cursorprepare": true, "sp_cursorprepexec": true,
 }
 
-// rpcNestedCTEReject returns a message when a parameterized statement carries a
-// nested CTE, which T6e cannot rewrite (the statement lives inside a typed
-// parameter; rewriting it is T6g). Rejecting by name beats forwarding it to
-// surface as a bare Msg 156 with no hint of the cause.
-//
-// The statement text is recovered with the same printable-run heuristic the
-// tracer uses, which cannot be trusted to be exact — so it is only ever used to
-// *reject*, and only when the recovered text actually parses as a nested-CTE
-// statement. Garbage does not parse, so a misread yields no rejection rather
-// than a wrong one.
-func rpcNestedCTEReject(data []byte) string {
-	proc, rest := rpcProc(data)
-	if !procsCarryingSQL[proc] {
-		return ""
-	}
+// heuristicNestedReject is the last resort for an RPC whose parameter list this
+// file cannot measure exactly — an unmodelled parameter type, say. The
+// statement text is recovered with the tracer's printable-run heuristic, which
+// cannot be trusted to be exact, so it is only ever used to *reject*, and only
+// when the recovered text genuinely parses as a nested-CTE statement. Garbage
+// does not parse, so a misread yields no rejection rather than a wrong one.
+func heuristicNestedReject(data []byte, proc string) string {
+	_, rest := rpcProc(data)
 	st, err := tsql.Parse(longestUCS2Text(rest))
 	if err != nil || st == nil || !st.HasNestedCTE() {
 		return ""
 	}
-	return fmt.Sprintf("a nested CTE sent as a parameterized statement (%s) is not rewritten by the "+
-		"emulator yet; send it without parameters, or flatten the CTE by hand", proc)
+	return fmt.Sprintf("a nested CTE sent as a parameterized statement (%s) could not be rewritten: "+
+		"its parameter list uses a type the emulator does not model. Send it without parameters, "+
+		"or flatten the CTE by hand", proc)
 }
 
 // dialectReject is the TDS response for a statement refused on dialect grounds.
