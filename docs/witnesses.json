@@ -366,6 +366,7 @@
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "Connection by item *name* (vs GUID)",
     "witnesses": [
+      "ci:warehouse-tds",
       "go:TestGetWorkspaceAndItemByName"
     ]
   },
