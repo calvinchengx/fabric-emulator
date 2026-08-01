@@ -8,6 +8,7 @@
 package onelake
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -191,7 +192,11 @@ func (s *Service) resolveRead(itemID, rel, principalID string) (*store.OneLakePa
 	return p, nil
 }
 
-func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.OneLakePath, *dfsError) {
+// externalRequest builds an authenticated upstream request for a shortcut
+// target. Shared by the read, write and delete paths so a credential is
+// applied identically however the shortcut is being used — the read path
+// having its own copy is how the S3 signing bug stayed invisible to writes.
+func (s *Service) externalRequest(sc *store.Shortcut, method, remainder string, body []byte) (*http.Request, *dfsError) {
 	target, err := url.Parse(sc.TargetLocation + "/" + joinPath(sc.TargetPath, remainder))
 	if err != nil {
 		return nil, &dfsError{"ExternalTargetInvalid", http.StatusBadGateway, err.Error()}
@@ -200,7 +205,11 @@ func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.
 	if err != nil {
 		return nil, &dfsError{"ExternalConnectionNotFound", http.StatusBadGateway, "The shortcut connection is unavailable."}
 	}
-	req, _ := http.NewRequest(http.MethodGet, target.String(), nil)
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, _ := http.NewRequest(method, target.String(), reader)
 	var creds struct {
 		CredentialType, Username, Password, Key, Token string
 	}
@@ -217,12 +226,15 @@ func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.
 	// `Basic` is the only documented type carrying two secrets. So the pair
 	// travels as Basic's username/password rather than on invented fields.
 	if sc.TargetType == "AmazonS3" && creds.CredentialType == "Basic" {
+		payload := awssig.EmptyPayloadHash
+		if body != nil {
+			payload = awssig.HashPayload(body)
+		}
 		awssig.Sign(req, awssig.Credentials{
 			AccessKeyID:     creds.Username,
 			SecretAccessKey: creds.Password,
-		}, s.S3Region(), "s3", awssig.EmptyPayloadHash, time.Unix(s.Store.Now(), 0).UTC())
-		resp, err := s.Client.Do(req)
-		return s.readExternalBody(resp, err, remainder)
+		}, s.S3Region(), "s3", payload, time.Unix(s.Store.Now(), 0).UTC())
+		return req, nil
 	}
 	switch creds.CredentialType {
 	case "Basic":
@@ -236,8 +248,77 @@ func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.
 	default:
 		return nil, &dfsError{"ExternalCredentialUnsupported", http.StatusBadGateway, "The shortcut credential type is not supported for HTTP read-through."}
 	}
+	return req, nil
+}
+
+// resolveExternal reads a file from the shortcut target.
+func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.OneLakePath, *dfsError) {
+	req, derr := s.externalRequest(sc, http.MethodGet, remainder, nil)
+	if derr != nil {
+		return nil, derr
+	}
 	resp, err := s.Client.Do(req)
 	return s.readExternalBody(resp, err, remainder)
+}
+
+// externalWritable reports whether writes may be forwarded to this target.
+//
+// Fabric documents S3 shortcuts as read-only — "They don't support write
+// operations regardless of the user's permissions"
+// (onelake/create-s3-shortcut.md) — so a write there must fail rather than be
+// forwarded. ADLS Gen2 carries no such restriction, and the shortcuts doc
+// describes deleting through one deleting in the target account.
+func externalWritable(sc *store.Shortcut) bool { return sc.TargetType == "ADLSGen2" }
+
+// writeExternal pushes the assembled file to the shortcut target. Called at
+// flush, which is the point the DFS protocol considers a file written.
+func (s *Service) writeExternal(sc *store.Shortcut, remainder string, content []byte) *dfsError {
+	if !externalWritable(sc) {
+		return &dfsError{"UnsupportedOperation", http.StatusBadRequest,
+			"Writes are not supported through a shortcut to this target type."}
+	}
+	req, derr := s.externalRequest(sc, http.MethodPut, remainder, content)
+	if derr != nil {
+		return derr
+	}
+	// Blob PUT semantics: real ADLS Gen2 accounts expose a Blob endpoint
+	// alongside DFS, and a single authenticated PUT is what both accept for a
+	// whole-file write.
+	req.Header.Set("x-ms-blob-type", "BlockBlob")
+	req.ContentLength = int64(len(content))
+	return s.discardExternalBody(s.Client.Do(req))
+}
+
+// deleteExternal removes a file in the shortcut target. Deleting a file
+// *within* a shortcut deletes it at the target, which the shortcuts doc states
+// explicitly; deleting the shortcut object itself is a control-plane
+// operation and leaves the target untouched.
+func (s *Service) deleteExternal(sc *store.Shortcut, remainder string) *dfsError {
+	if !externalWritable(sc) {
+		return &dfsError{"UnsupportedOperation", http.StatusBadRequest,
+			"Deletes are not supported through a shortcut to this target type."}
+	}
+	req, derr := s.externalRequest(sc, http.MethodDelete, remainder, nil)
+	if derr != nil {
+		return derr
+	}
+	return s.discardExternalBody(s.Client.Do(req))
+}
+
+// discardExternalBody turns an upstream response into a dfsError or nil. The
+// upstream status is surfaced rather than swallowed: a write that the target
+// refused must not look like a success to the caller.
+func (s *Service) discardExternalBody(resp *http.Response, err error) *dfsError {
+	if err != nil {
+		return &dfsError{"ExternalTargetUnavailable", http.StatusBadGateway, err.Error()}
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &dfsError{"ExternalTargetError", http.StatusBadGateway,
+			fmt.Sprintf("external target returned HTTP %d", resp.StatusCode)}
+	}
+	return nil
 }
 
 // S3Region is the region the shortcut signer signs for. S3-compatible servers
@@ -497,6 +578,19 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serveContent(w, r, pth.Content)
 
 	case http.MethodDelete:
+		// Deleting a file *within* a shortcut deletes it at the target
+		// (onelake/onelake-shortcuts.md, "How do shortcuts handle
+		// deletions?"). Deleting the shortcut object itself is a
+		// control-plane operation and does not reach here.
+		if sc, remainder, err := s.Store.ShortcutFor(it.ID, rel); err == nil && sc != nil &&
+			(sc.TargetType == "ADLSGen2" || sc.TargetType == "AmazonS3") {
+			if derr := s.deleteExternal(sc, remainder); derr != nil {
+				writeDFSErr(w, *derr)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		if err := s.Store.DeleteOneLakePath(it.ID, rel); err != nil {
 			writeDFSErr(w, dfsError{"PathNotFound", http.StatusNotFound, "The path does not exist."})
 			return
@@ -529,6 +623,22 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request, itemID, rel stri
 		if pos != int64(len(pth.Content)) {
 			writeDFSErr(w, dfsError{"InvalidFlushPosition", http.StatusBadRequest, "Flush position does not match data length."})
 			return
+		}
+		// A path under an external shortcut belongs to the target, not to us.
+		// Flush is the point the DFS protocol considers the file written, so
+		// that is where the bytes go upstream. Without this the write would
+		// succeed locally and silently never reach the storage account.
+		if sc, remainder, err := s.Store.ShortcutFor(itemID, rel); err == nil && sc != nil &&
+			(sc.TargetType == "ADLSGen2" || sc.TargetType == "AmazonS3") {
+			if derr := s.writeExternal(sc, remainder, pth.Content); derr != nil {
+				// Drop the local buffer: it must not masquerade as target data.
+				_ = s.Store.DeleteOneLakePath(itemID, rel)
+				writeDFSErr(w, *derr)
+				return
+			}
+			// Reads go through to the target, so the local copy is redundant
+			// and would shadow later changes made at the target.
+			_ = s.Store.DeleteOneLakePath(itemID, rel)
 		}
 		w.Header().Set("Content-Length", "0")
 		w.WriteHeader(http.StatusOK)
