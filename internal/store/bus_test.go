@@ -48,15 +48,15 @@ func next(t *testing.T, ch <-chan Event) Event {
 func TestBusPublishesFileEvents(t *testing.T) {
 	s := newBusStore(t)
 	it := seedItem(t, s)
-	events, cancel := s.Subscribe()
-	defer cancel()
+	sub := s.Subscribe()
+	defer sub.Close()
 
 	if err := s.CreateOneLakePath(&OneLakePath{
 		WorkspaceID: it.WorkspaceID, ItemID: it.ID,
 		RelPath: "Files/landing/a.csv", Content: []byte("id\n1\n")}, false); err != nil {
 		t.Fatal(err)
 	}
-	ev := next(t, events)
+	ev := next(t, sub.C)
 	if ev.Kind != KindFile || ev.EventType != EventFileCreated {
 		t.Fatalf("kind/eventType = %s/%s", ev.Kind, ev.EventType)
 	}
@@ -72,13 +72,13 @@ func TestBusPublishesFileEvents(t *testing.T) {
 	if err := s.RenameOneLakePath(it.ID, "Files/landing/a.csv", "Files/landing/b.csv"); err != nil {
 		t.Fatal(err)
 	}
-	if ev := next(t, events); ev.EventType != EventFileRenamed || ev.Path != "Files/landing/b.csv" {
+	if ev := next(t, sub.C); ev.EventType != EventFileRenamed || ev.Path != "Files/landing/b.csv" {
 		t.Fatalf("rename event = %+v", ev)
 	}
 	if err := s.DeleteOneLakePath(it.ID, "Files/landing/b.csv"); err != nil {
 		t.Fatal(err)
 	}
-	if ev := next(t, events); ev.EventType != EventFileDeleted {
+	if ev := next(t, sub.C); ev.EventType != EventFileDeleted {
 		t.Fatalf("delete event = %+v", ev)
 	}
 }
@@ -88,8 +88,8 @@ func TestBusDoesNotDisturbDirectoryCreates(t *testing.T) {
 	// consumer's stream.
 	s := newBusStore(t)
 	it := seedItem(t, s)
-	events, cancel := s.Subscribe()
-	defer cancel()
+	sub := s.Subscribe()
+	defer sub.Close()
 
 	if err := s.CreateOneLakePath(&OneLakePath{
 		WorkspaceID: it.WorkspaceID, ItemID: it.ID,
@@ -101,7 +101,7 @@ func TestBusDoesNotDisturbDirectoryCreates(t *testing.T) {
 		RelPath: "Files/folder/real.csv", Content: []byte("x")}, false); err != nil {
 		t.Fatal(err)
 	}
-	if ev := next(t, events); ev.Path != "Files/folder/real.csv" {
+	if ev := next(t, sub.C); ev.Path != "Files/folder/real.csv" {
 		t.Fatalf("first event was %+v, want the file not the directory", ev)
 	}
 }
@@ -111,8 +111,8 @@ func TestBusDerivesTableEventsFromDeltaCommits(t *testing.T) {
 	// version, so a consumer can watch a medallion instead of part-file paths.
 	s := newBusStore(t)
 	it := seedItem(t, s)
-	events, cancel := s.Subscribe()
-	defer cancel()
+	sub := s.Subscribe()
+	defer sub.Close()
 
 	stats, _ := json.Marshal(map[string]any{"numRecords": 1203})
 	commit := mustJSONL(
@@ -128,10 +128,10 @@ func TestBusDerivesTableEventsFromDeltaCommits(t *testing.T) {
 	}
 	// The raw file event still goes out — a consumer debugging a writer wants
 	// it — and the derived table event follows it.
-	if ev := next(t, events); ev.Kind != KindFile {
+	if ev := next(t, sub.C); ev.Kind != KindFile {
 		t.Fatalf("first = %+v, want the file event", ev)
 	}
-	ev := next(t, events)
+	ev := next(t, sub.C)
 	if ev.Kind != KindTable {
 		t.Fatalf("second = %+v, want the derived table event", ev)
 	}
@@ -181,8 +181,8 @@ func TestTableEventWithoutStatsReportsFilesNotRows(t *testing.T) {
 	// unknown — never a guessed number.
 	s := newBusStore(t)
 	it := seedItem(t, s)
-	events, cancel := s.Subscribe()
-	defer cancel()
+	sub := s.Subscribe()
+	defer sub.Close()
 
 	commit := mustJSONL(map[string]any{"add": map[string]any{"path": "part-0.parquet"}})
 	if err := s.CreateOneLakePath(&OneLakePath{
@@ -190,8 +190,8 @@ func TestTableEventWithoutStatsReportsFilesNotRows(t *testing.T) {
 		RelPath: "Tables/t/_delta_log/00000000000000000000.json", Content: commit}, false); err != nil {
 		t.Fatal(err)
 	}
-	next(t, events) // the file event
-	ev := next(t, events)
+	next(t, sub.C) // the file event
+	ev := next(t, sub.C)
 	if ev.Kind != KindTable || ev.FilesAdded != 1 || ev.RowsAdded != 0 {
 		t.Fatalf("event = %+v", ev)
 	}
@@ -203,8 +203,8 @@ func TestSlowSubscriberIsDroppedNotBlocking(t *testing.T) {
 	// reads must not be able to stall a writer.
 	s := newBusStore(t)
 	it := seedItem(t, s)
-	_, cancel := s.Subscribe() // deliberately never read from
-	defer cancel()
+	sub := s.Subscribe() // deliberately never read from
+	defer sub.Close()
 
 	done := make(chan struct{})
 	go func() {
@@ -232,34 +232,59 @@ func TestSlowSubscriberIsDroppedNotBlocking(t *testing.T) {
 	}
 }
 
-func TestSubscriberIsToldWhatItMissed(t *testing.T) {
+func TestSubscriberCanSeeWhatItMissed(t *testing.T) {
+	// A gap the consumer cannot see would be worse than one it is told about.
+	//
+	// Note what this asserts and what it does not. The *count* is available the
+	// moment a drop happens — that is a real guarantee and is what this test
+	// checks. Delivering a notice is the consumer's job (see TakeDropped): the
+	// bus could only announce one while dispatching a later event, so a
+	// subscriber that fell behind and then went quiet would never hear about
+	// it. An earlier version of this test waited for such an announcement and
+	// was therefore racy — it passed only when a late event happened to arrive
+	// after the reader had freed a slot.
 	s := newBusStore(t)
 	it := seedItem(t, s)
-	events, cancel := s.Subscribe()
-	defer cancel()
+	sub := s.Subscribe()
+	defer sub.Close()
 
-	// Overflow the buffer while not reading, then start reading: a gap the
-	// consumer cannot see would be worse than one it is told about.
-	for i := 0; i < subBuffer+50; i++ {
+	const overflow = 50
+	for i := 0; i < subBuffer+overflow; i++ {
 		if err := s.CreateOneLakePath(&OneLakePath{
 			WorkspaceID: it.WorkspaceID, ItemID: it.ID,
 			RelPath: fmt.Sprintf("Files/y/%d.csv", i), Content: []byte("x")}, false); err != nil {
 			t.Fatal(err)
 		}
 	}
+
+	// Dispatch is asynchronous, so wait for the queue to drain into the (full)
+	// subscriber rather than assuming it already has.
+	var dropped int64
 	deadline := time.After(5 * time.Second)
-	for {
+	for dropped == 0 {
 		select {
-		case ev := <-events:
-			if ev.Kind == KindDropped {
-				if ev.Dropped <= 0 {
-					t.Fatalf("dropped notice with no count: %+v", ev)
-				}
-				return
-			}
 		case <-deadline:
-			t.Fatal("never told about the dropped events")
+			t.Fatal("the subscriber was never credited with the events it missed")
+		default:
 		}
+		dropped = sub.TakeDropped()
+		if dropped == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	// Every event past the buffer is accounted for, and none before it.
+	if dropped > overflow {
+		t.Fatalf("dropped %d, more than the %d that overflowed", dropped, overflow)
+	}
+
+	// Taking the count clears it: a drop is reported once, not on every poll.
+	if again := sub.TakeDropped(); again != 0 {
+		t.Fatalf("TakeDropped reported %d a second time", again)
+	}
+
+	// And the events that did fit are still there to read.
+	if ev := next(t, sub.C); ev.Kind != KindFile {
+		t.Fatalf("buffered event = %+v", ev)
 	}
 }
 
@@ -299,19 +324,19 @@ func TestReplayServesLateJoinersAndSince(t *testing.T) {
 	}
 }
 
-func TestCancelStopsDelivery(t *testing.T) {
+func TestCloseStopsDelivery(t *testing.T) {
 	s := newBusStore(t)
 	it := seedItem(t, s)
-	events, cancel := s.Subscribe()
+	sub := s.Subscribe()
 
 	if err := s.CreateOneLakePath(&OneLakePath{
 		WorkspaceID: it.WorkspaceID, ItemID: it.ID,
 		RelPath: "Files/a.csv", Content: []byte("x")}, false); err != nil {
 		t.Fatal(err)
 	}
-	next(t, events)
-	cancel()
-	cancel() // idempotent
+	next(t, sub.C)
+	sub.Close()
+	sub.Close() // idempotent
 
 	if err := s.CreateOneLakePath(&OneLakePath{
 		WorkspaceID: it.WorkspaceID, ItemID: it.ID,
@@ -321,8 +346,8 @@ func TestCancelStopsDelivery(t *testing.T) {
 	// Give the dispatcher time to have delivered, had it still been subscribed.
 	time.Sleep(200 * time.Millisecond)
 	select {
-	case ev := <-events:
-		t.Fatalf("received %+v after cancel", ev)
+	case ev := <-sub.C:
+		t.Fatalf("received %+v after Close", ev)
 	default:
 	}
 }

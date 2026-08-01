@@ -62,8 +62,17 @@ writes for every caller. So:
 
 - each subscriber gets a **buffered channel** (256) and its own goroutine;
 - a full buffer **drops the event and increments a counter**, it never blocks;
-- the drop count is reported on the stream, so a consumer knows it missed
-  something rather than silently seeing a gap.
+- the consumer collects that count (`Subscription.TakeDropped`) and reports it,
+  so a gap is visible rather than silent.
+
+**Why the consumer reports it, and not the bus.** The first cut had the bus
+announce drops by injecting a `dropped` event during dispatch. That is subtly
+broken: dispatch only runs when an event arrives, so a subscriber that falls
+behind and *then goes quiet* is never told — exactly when it most needs to
+know. CI found it as a flaky test on one platform; the test was racy because
+the guarantee was. The count is now available the instant a drop happens, and
+the SSE handler polls it on every event and every keepalive, so a gap surfaces
+within one interval whether or not traffic continues.
 
 Slow consumers degrade themselves, never the emulator. This is the one place a
 mistake here would be expensive, so it is stated first.
