@@ -4,12 +4,49 @@ Five minutes from nothing to a workspace, an item, and a file in OneLake — no
 tenant, no capacity. Every value below is a **seeded dev default** from
 entra-emulator; nothing needs registering.
 
-## 1. Start the family — one command
+## 0. Prerequisites — one line per platform
+
+You need a container runtime with **Compose v2**, plus GNU Make for the
+convenience targets. Python 3 is optional (only `make spark` and `make seed`
+use it). Pick your platform:
+
+```bash
+# Linux — engine + compose plugin, then join the docker group
+curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker "$USER" && newgrp docker
+```
+
+```bash
+# macOS — Make and Python come with the Xcode CLT; then any runtime, e.g. Colima
+xcode-select --install && brew install colima docker docker-compose && colima start --memory 8
+```
+
+```powershell
+# Windows — Git supplies sh.exe + grep/awk/curl; ezwinports supplies make
+winget install Git.Git; winget install ezwinports.make
+```
+
+Then clone, and confirm the machine is actually wired up before starting
+anything:
 
 ```bash
 git clone https://github.com/calvinchengx/fabric-emulator
 cd fabric-emulator
-docker compose up
+make doctor
+```
+
+It checks the shell tools, a *runnable* Python, the docker CLI **and** the
+daemon behind the active context, and the ports the stack publishes — and names
+what is missing rather than letting it surface later as a broken recipe or an
+unreachable socket. Allow the runtime **8 GB of memory**.
+
+Full per-platform detail — including Rancher Desktop's context selection on
+Windows and the Apple-silicon sidecar constraints —
+is [26-platform-setup.md](26-platform-setup.md).
+
+## 1. Start the family — one command
+
+```bash
+docker compose up          # or: make up
 ```
 
 That single command brings up the whole emulator family **with Spark-compatible
@@ -31,7 +68,7 @@ hence `-k` below.
 To confirm the stack is actually usable (not just that containers exist):
 
 ```bash
-./scripts/status.sh
+./scripts/status.sh      # or: make status  (works on Windows too)
 ```
 
 It rolls up container health, the HTTP surfaces, and emulator state in one

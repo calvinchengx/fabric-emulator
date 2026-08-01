@@ -27,6 +27,17 @@ for arg in "$@"; do
   esac
 done
 
+# The null device is not spelled the same everywhere. Under Git for Windows the
+# SHELL understands /dev/null, but curl.exe is a native Windows binary that does
+# not: `-o /dev/null` fails to open its output file and curl exits 23 AFTER
+# already printing the status code. That turned every probe below into
+# "HTTP 200---" (the code, then the failure fallback appended) and reported a
+# healthy stack as broken. NUL is the Windows spelling and creates no file.
+NULDEV=/dev/null
+case "$(uname -s 2>/dev/null || echo unknown)" in
+  MINGW*|MSYS*|CYGWIN*) NULDEV=NUL ;;
+esac
+
 PROJECT="${COMPOSE_PROJECT_NAME:-fabric-emulator}"
 # One-shot jobs, not services: they are SUPPOSED to run once and exit. Naming
 # them explicitly is the only reliable signal — nothing in the container labels
@@ -44,11 +55,22 @@ bad() { RC=1; }
 
 # Portal payloads nest children (capacities embed their workspaces), so
 # counting `"id"` occurrences over-reports. Parse the top-level list instead,
-# and degrade to "?" rather than lying if python3 is absent.
-if command -v python3 >/dev/null 2>&1; then HAVE_PY=1; else HAVE_PY=0; fi
+# and degrade to "?" rather than lying if no python is available.
+#
+# Locating an interpreter is not enough to know one exists: on Windows
+# `python3` is normally the Microsoft Store ALIAS STUB, which sits on PATH (so
+# `command -v python3` succeeds) and then exits 49 telling you to install from
+# the Store. Run each candidate instead, and take the first that executes.
+PY="${PY:-}"
+if [ -z "$PY" ]; then
+  for c in python3 python py; do
+    if "$c" -c '' >/dev/null 2>&1; then PY="$c"; break; fi
+  done
+fi
+if [ -n "$PY" ]; then HAVE_PY=1; else HAVE_PY=0; fi
 count_value() {
   if [ "$HAVE_PY" = "1" ]; then
-    printf '%s' "$1" | python3 -c 'import sys,json
+    printf '%s' "$1" | "$PY" -c 'import sys,json
 d = json.load(sys.stdin)
 print(len(d.get("value", [])) if isinstance(d, dict) else len(d))' 2>/dev/null || printf '?'
   else
@@ -57,7 +79,18 @@ print(len(d.get("value", [])) if isinstance(d, dict) else len(d))' 2>/dev/null |
 }
 
 # HTTP probe: prints the status code, or "---" when unreachable.
-code() { curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null || printf '%s' "---"; }
+#
+# curl's exit status is deliberately NOT chained with `||` here. It prints the
+# code on stdout and then can still exit non-zero for reasons unrelated to the
+# HTTP result (see NULDEV above), and inside `$(...)` a fallback `printf` would
+# be APPENDED to the code rather than replacing it. Decide from the value.
+code() {
+  c=$(curl -sk -o "$NULDEV" -w '%{http_code}' --max-time 5 "$1" 2>/dev/null)
+  case "$c" in
+    ''|000|*[!0-9]*) printf '%s' "---" ;;
+    *)               printf '%s' "$c" ;;
+  esac
+}
 
 check_http() { # url label expected
   c=$(code "$1")
@@ -162,9 +195,9 @@ if [ "$SPARK_DEEP" = "1" ]; then
   say ""
   say "spark (deep: a real Livy session executing statements)"
   if [ "$HAVE_PY" = "1" ]; then
-    if python3 "$(dirname "$0")/spark_check.py"; then :; else bad; fi
+    if "$PY" "$(dirname "$0")/spark_check.py"; then :; else bad; fi
   else
-    say "  skip  python3 not available to run scripts/spark_check.py"
+    say "  skip  no working python to run scripts/spark_check.py"
   fi
 fi
 

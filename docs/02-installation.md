@@ -79,6 +79,11 @@ docker compose -f docker-compose.yml up
 This is the recommended way to run the full stack — see the
 [quickstart](01-quickstart.md).
 
+Prerequisites differ per platform — the Docker group on Linux, the VM memory
+cap and Apple-silicon sidecar constraints on macOS, `sh.exe` and GNU Make on
+Windows. [26-platform-setup.md](26-platform-setup.md) covers all three, and
+`make doctor` verifies the result on any of them.
+
 ## Release archives
 
 Tagged releases carry `tar.gz`/`zip` archives per OS/arch plus
