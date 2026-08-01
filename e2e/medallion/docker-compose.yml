@@ -102,6 +102,9 @@ services:
       timeout: 2s
       retries: 20
 
+  # Runs examples/medallion unmodified — the same scripts the tutorial teaches.
+  # Only the endpoints differ (compose service names, plain HTTP), supplied by
+  # the environment the example already reads.
   pipeline:
     build:
       context: ../..

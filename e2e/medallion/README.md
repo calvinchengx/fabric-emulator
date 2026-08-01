@@ -1,6 +1,13 @@
 # e2e: the medallion tutorial, executed
 
-The runnable witness for [docs/28-tutorial-end-to-end.md](../../docs/28-tutorial-end-to-end.md).
+The CI harness that runs [`examples/medallion`](../../examples/medallion/) — the
+runnable witness for [docs/28-tutorial-end-to-end.md](../../docs/28-tutorial-end-to-end.md).
+
+**This directory contains no pipeline code.** The example is the single copy of
+it: the container runs `examples/medallion/run_all.py`, which executes the same
+numbered scripts a reader runs by hand. Only the endpoints differ — supplied as
+environment variables the example already reads — so nothing can pass in CI that
+would fail when typed one line at a time.
 A complete analytics loop — a fictitious SaaS source system whose API key lives
 in **Key Vault**, extraction into **landing**, a **bronze → silver** medallion in
 lakehouse Delta, **silver → gold with dbt** into the Warehouse (data-quality
@@ -80,13 +87,15 @@ that they pass on good data.
 
 ## Layout
 
-- `pipeline/source_system.py` — the fictitious "Contoso POS" vendor API, plus
-  the expected row counts each stage must produce (the oracle).
-- `pipeline/steps.py` — one function per hop, each asserting its own outcome.
-- `pipeline/driver.py` — runs the nine steps in order inside the container.
-- `pipeline/gold/` — the dbt project (models, sources, schema tests, singular tests).
-- `Dockerfile.pipeline` — python + ODBC Driver 18 + the `medallion` dependency group.
+The harness is four files; everything it exercises lives in
+[`examples/medallion`](../../examples/medallion/).
+
+- `run.py` — brings the stack up, runs the example, tears it down.
 - `docker-compose.yml` — entra, Key Vault, SQL Server, fabric (TDS on), pipeline.
+- `Dockerfile.pipeline` — python + ODBC Driver 18, then `uv sync --frozen`
+  against **the example's own lockfile** and `COPY examples/medallion/`. The
+  example's dependencies never enter the emulator's dependency graph.
+- `README.md` — this file.
 
 ## Documented adaptations
 
@@ -102,19 +111,17 @@ that they pass on good data.
    `relationships` compile to bodies that *themselves* open with `with`,
    producing a **nested CTE** — which the SQL Server sidecar rejects
    (`Incorrect syntax near the keyword 'with'`, error 156). Those two checks
-   live in `pipeline/gold/tests/` as CTE-free singular tests asserting exactly
-   the same thing.
+   live in [`examples/medallion/gold/tests/`](../../examples/medallion/gold/tests/)
+   as CTE-free singular tests asserting exactly the same thing.
 
    **This is a gap in the stand-in engine, not faithful Fabric behaviour.**
-   Fabric Data Warehouse *does* support nested CTEs ([Microsoft
-   Learn][nested-cte]); SQL Server does not. Closing it is planned as T6 in
+   Fabric Data Warehouse *does* support nested CTEs
+   ([Microsoft Learn](https://learn.microsoft.com/en-us/sql/t-sql/queries/nested-common-table-expression?view=fabric&preserve-view=true));
+   SQL Server does not. Closing it is planned as T6 in
    [docs/29-tsql-parity.md](../../docs/29-tsql-parity.md), after which these two
    builtins should run unmodified. (Independently, dbt-fabric has its own open
-   bug in this area — [microsoft/dbt-fabric#318][i318] — so the adapter may
-   still fail against real Fabric regardless of the engine.)
-
-[nested-cte]: https://learn.microsoft.com/en-us/sql/t-sql/queries/nested-common-table-expression?view=fabric&preserve-view=true
-[i318]: https://github.com/microsoft/dbt-fabric/issues/318
+   bug in this area — [microsoft/dbt-fabric#318](https://github.com/microsoft/dbt-fabric/issues/318)
+   — so the adapter may still fail against real Fabric regardless of the engine.)
 
 3. **Plain HTTP between services.** All three emulators run with TLS off, as the
    other containerized harnesses do, so none of the five TLS stacks in play (Go,
