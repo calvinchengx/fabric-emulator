@@ -62,7 +62,10 @@ The bare binary runs none of the engines (clock-derived, milliseconds) — but
 documented path is engine-backed by default. Heavier engines (KQL, OpenMetadata)
 stay behind opt-in profiles. Coverage floor is 90% (currently ~90%).
 
-Docs: <https://calvinchengx.github.io/fabric-emulator/> — start with
+Docs: <https://calvinchengx.github.io/fabric-emulator/> — for a full worked
+example, the [end-to-end tutorial](docs/28-tutorial-end-to-end.md) runs Entra →
+Key Vault → landing → bronze/silver → gold with dbt → semantic model (and
+executes in CI as `e2e/medallion`). Reference reading: the
 [architecture](docs/03-architecture.md), the
 [control-plane API](docs/07-control-plane-api.md), [OneLake](docs/08-onelake.md),
 the [roadmap](docs/13-roadmap.md), [real compute](docs/14-real-compute.md), the

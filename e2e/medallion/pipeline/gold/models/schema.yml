@@ -1,0 +1,29 @@
+version: 2
+
+# The data-quality contract on gold. `unique` / `not_null` compile to plain
+# SELECTs that the sidecar runs as-is. The CTE-based builtins
+# (accepted_values, relationships) do NOT survive dbt-fabric's test wrapper on
+# vanilla SQL Server — it wraps the body in `with test_main_sql as (…)`, and a
+# body that itself opens with `with` nests two CTEs, which T-SQL rejects
+# ("Incorrect syntax near the keyword 'with'"). Those two checks are expressed
+# as CTE-free singular tests in tests/ instead — same assertion, same gate.
+models:
+  - name: dim_customer
+    description: "Conformed customer dimension from silver."
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+      - name: country
+        tests: [not_null]
+  - name: fct_orders
+    description: "Order-grain fact — one row per order after silver's dedupe."
+    columns:
+      - name: order_id
+        tests: [unique, not_null]   # the at-least-once redelivery must be gone
+      - name: amount
+        tests: [not_null]
+  - name: fct_daily_revenue
+    description: "Reporting aggregate: revenue by day and country."
+    columns:
+      - name: revenue
+        tests: [not_null]

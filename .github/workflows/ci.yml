@@ -469,6 +469,23 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/dbt-fabric/run.py
 
+  medallion:
+    name: End-to-end medallion tutorial — Key Vault, landing, bronze/silver/gold, semantic model (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The runnable witness for docs/28-tutorial-end-to-end.md: a Key Vault
+      # secret behind an AKV-reference connection, an extract landed in OneLake,
+      # bronze -> silver in Delta (delta-rs), silver -> gold with Microsoft's
+      # dbt-fabric over TDS + FedAuth, and a semantic model queried through
+      # executeQueries with a Power BI audience token. Also proves the gold DQ
+      # tests REJECT bad data, not just pass on good. Linux-only (SQL Server
+      # image + ODBC Driver 18).
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/medallion/run.py
+
   duckdb:
     name: Real DuckDB SQL over lakehouse Delta
     strategy:

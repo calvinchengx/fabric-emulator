@@ -1,0 +1,12 @@
+version: 2
+
+# Silver lives in the LAKEHOUSE database (the SQL analytics endpoint reflects
+# its Delta); gold builds in the WAREHOUSE database. Both are databases on the
+# same engine, so dbt reads across them with three-part names.
+sources:
+  - name: silver
+    database: "{{ env_var('LAKEHOUSE_ID') }}"
+    schema: dbo
+    tables:
+      - name: silver_orders
+      - name: silver_customers
