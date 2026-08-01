@@ -164,7 +164,7 @@ def test_publish_roundtrip(t): ...
 - **Nightly / manual (`workflow_dispatch`):** the same suite with
   `FABRIC_TARGET=real`, gated on repo secrets (`AZURE_TENANT_ID`, SP creds,
   a dedicated throwaway workspace). Every divergence found feeds the
-  [parity map](../parity.md) — the toggle doubles as a **fidelity oracle**:
+  [parity map](parity.md) — the toggle doubles as a **fidelity oracle**:
   the emulator's behavior is continuously diffed against the real service.
 
 ## Phasing
