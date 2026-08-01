@@ -53,6 +53,42 @@ You also need the **Microsoft ODBC Driver 18** for the dbt and TDS steps
 Spark engine for `04_engine.py` — `docker compose up` starts Sail, and the step
 reads `SPARK_REMOTE` (default `sc://localhost:50051`).
 
+## How big is it
+
+Both source systems are **seeded generators**, so the data is production-shaped
+but byte-identical on every run — which is what lets each step assert exact
+counts against it.
+
+| | rows | columns |
+|---|---:|---:|
+| `bronze_customers` | 102,000 | 101 |
+| `bronze_orders` | 255,000 | 17 |
+| `silver_customers` | 100,000 | 101 |
+| `silver_orders` | 247,500 | 17 |
+| `bronze_web_order_lines` | ~226,000 | 8 |
+| `bronze_erp_changes` | ~93,600 | 12 |
+| `dim_customer_scd2` | ~92,400 | 13 |
+| `bronze_fx_rates` | 132 | 3 |
+| `bronze_product_hierarchy` | 8 | 6 |
+
+A full `run_all.py` takes **under two minutes** on a laptop; `run_advanced.py`
+runs all 17 steps in about the same. The landed files are ~75 MB of CSV, ~95 MB
+of JSON Lines, ~30 MB of nested JSON and ~1.9 MB of Parquet.
+
+Change the scale with `N_CUSTOMERS` / `N_ORDERS` in
+[`source_system.py`](source_system.py) and `N_WEB_CUSTOMERS` / `N_WEB_ORDERS` in
+[`web_store.py`](web_store.py). Every `EXPECTED_*` value is computed from those
+constants and the defect ratios, so nothing needs updating alongside them.
+
+Two things to know before raising them. The emulator keeps OneLake in an
+**in-memory** store by default (`docker-compose.yml` sets `FABRIC_DATA_DIR`
+empty), so every bronze and silver table is resident at once — the run above
+peaks around 2 GB. And the lakehouse SQL endpoint re-reflects **every**
+`Tables/` Delta into the SQL sidecar on each connect, which steps 07, 08 and 09
+each pay; that load uses the TDS bulk-copy protocol, so the ~29M cells above
+reflect in about 15s rather than the ~31 minutes the old literal-`INSERT` path
+would have taken.
+
 ## The steps
 
 | Script | What it does |
@@ -76,14 +112,28 @@ VS Code Interactive Window.
 ## The advanced track (steps 20+)
 
 Steps 00–11 are the tutorial and do not change. The **advanced track** picks up
-from there with a second source system, which is what makes conformance,
-a genuine star schema, SCD2 and incremental loading possible at all — one source
-can only ever be deduplicated against itself.
+from there with three more feeds. Each exists for one reason the others cannot
+cover:
+
+| Feed | Why it exists |
+|---|---|
+| **Contoso POS** (base) | flat batch export, `customer_id` on every row, dirty everything |
+| **Contoso Web** | nested JSON, and **email is the only key** — one source can only ever be deduplicated against itself; two that share no key must be *resolved* |
+| **Contoso ERP** | **change over time.** An append-only CDC log is the only shape from which "what was true on this date" can be reconstructed, which is what makes SCD2 and incremental loading real rather than aspirational |
+| **Reference data** | **comparability.** FX rates and a product hierarchy, published by finance and merchandising — what makes numbers from the other three add up to something |
+
+No key spans all three systems. POS↔Web join on email, POS↔ERP on phone, and
+ERP↔Web share nothing at all — so identity is a graph, and an ERP account
+reaches a Web account only by travelling through POS.
 
 | Script | What it does |
 |---|---|
 | `20_web_extract.py` | second source: Contoso Web gets its own Key Vault secret and AKV-reference connection; nested JSON lands verbatim |
 | `21_web_bronze.py` | flatten orders → line rows; pin the **designed overlap** with the POS customer set |
+| `22_erp_extract.py` | third source + the reference publisher: two more secrets, two more AKV connections; **Parquet** lands verbatim |
+| `23_erp_bronze.py` | three Copy activities reading a **columnar** source — the emulator's `ParquetSource` path, where 03 exercised its delimited-text one |
+| `24_erp_scd2.py` | the change log becomes `dim_customer_scd2`: one row per version, `valid_from`/`valid_to`/`is_current`, plus a point-in-time lookup |
+| `25_resolve.py` | resolve three customer sets **transitively**, and name the three cohorts that cannot be |
 
 ```sh
 uv run python run_advanced.py     # the basic pipeline, then 20+
@@ -101,6 +151,11 @@ the basic track cannot drift out from under the advanced one.
 - `web_store.py` — the second source, "Contoso Web": nested JSON, no customer
   id, a product catalog POS does not have, and a **designed** overlap with the
   POS customer set (advanced track)
+- `erp_system.py` — the third source, "Contoso ERP": an append-only **CDC change
+  log** in Parquet, keyed by phone. The only feed that carries change over time,
+  which is what makes SCD2 possible (advanced track)
+- `reference_data.py` — the fourth feed, and the only one that is not a system:
+  published **FX rates and a product hierarchy**, in Parquet (advanced track)
 - `contracts/` — ODCS v3.1.0 data contracts over the layers; see
   [docs/30](../../docs/30-odcs-data-contracts.md)
 - `gold/` — the dbt project (models, sources, schema tests, singular tests)

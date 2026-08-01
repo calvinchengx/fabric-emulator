@@ -21,9 +21,14 @@ silver_customers = DeltaTable(f"{base}/silver_customers", storage_options=opts).
 quarantine = DeltaTable(f"{base}/silver_quarantine_orders", storage_options=opts).to_pandas()
 
 # What to check in Data Wrangler's profiling column:
-#   bronze_orders    8 rows  -> silver_orders 6: the duplicate O-1003 event
-#                               collapsed and the malformed O-1007 was quarantined
-#   silver_customers country is exactly {US, GB, SG} — five raw spellings conformed
+#   bronze_orders    255,000 rows -> silver_orders 247,500: the redelivered
+#                    events collapsed and the malformed ones were quarantined
+#   silver_customers 100,000 rows x 101 columns; country is exactly
+#                    {US, GB, SG} — all fifteen raw spellings conformed
 #   silver_orders    amount has no nulls; order_date is a datetime
+#
+# At this size the profiler is describing a real distribution rather than a
+# handful of hand-written rows, which is when its histograms and null counts
+# start being worth reading.
 print(f"bronze={len(bronze_orders)} silver={len(silver_orders)} "
       f"quarantined={len(quarantine)} customers={len(silver_customers)}")

@@ -1,0 +1,13 @@
+version: 2
+
+# Silver is read DIRECTLY from the lakehouse as Delta. There is no SQL
+# analytics endpoint in this path, no reflection step, and no second database:
+# Spark reads the same Delta files the silver transform wrote. That is the
+# structural difference between the two gold builds, and it is why this example
+# has no step 07 equivalent to the Warehouse path's `reflect`.
+sources:
+  - name: silver
+    schema: "{{ env_var('LAKEHOUSE_NAME') }}"
+    tables:
+      - name: silver_orders
+      - name: silver_customers

@@ -13,8 +13,11 @@ package api
 // data.json definition parts feed the bounded DAX evaluator (internal/semanticmodel).
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/semanticmodel"
@@ -109,13 +112,16 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
-// loadSemanticModel parses the item's model.bim + optional data.json parts.
+// loadSemanticModel parses the item's model definition + optional data.json.
+//
+// Two serialisations are accepted, because Fabric itself accepts both: TMSL
+// (one `model.bim` JSON document, what the REST API has always taken) and TMDL
+// (a folder of `.tmdl` text files, what Power BI Desktop writes and what a
+// `.pbip` project on disk contains). TMSL wins when both are present — it is
+// the older, fully-covered path, so a definition carrying both is not a place
+// to start guessing.
 func (a *API) loadSemanticModel(itemID string, p *auth.Principal) (*semanticmodel.Model, semanticmodel.Data, error) {
-	bim, err := a.definitionPart(itemID, "model.bim")
-	if err != nil {
-		return nil, nil, err
-	}
-	m, err := semanticmodel.ParseTMSL(bim)
+	m, err := a.parseModelDefinition(itemID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -129,6 +135,33 @@ func (a *API) loadSemanticModel(itemID string, p *auth.Principal) (*semanticmode
 		return nil, nil, err
 	}
 	return m, data, nil
+}
+
+// parseModelDefinition reads the item's definition and parses whichever model
+// serialisation it carries.
+func (a *API) parseModelDefinition(itemID string) (*semanticmodel.Model, error) {
+	if bim, err := a.definitionPart(itemID, "model.bim"); err == nil {
+		return semanticmodel.ParseTMSL(bim)
+	}
+	parts, err := a.Store.GetDefinition(itemID)
+	if err != nil {
+		return nil, err
+	}
+	tmdl := map[string][]byte{}
+	for _, part := range parts {
+		if !strings.HasSuffix(strings.ToLower(part.Path), ".tmdl") {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(part.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("decoding %s: %w", part.Path, err)
+		}
+		tmdl[part.Path] = raw
+	}
+	if len(tmdl) == 0 {
+		return nil, fmt.Errorf("no model.bim and no .tmdl parts in definition")
+	}
+	return semanticmodel.ParseTMDL(tmdl)
 }
 
 // rowsToJSON renders result rows, dropping null (blank) cells unless includeNulls.

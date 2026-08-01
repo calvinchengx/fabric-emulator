@@ -136,6 +136,40 @@ def run_code(code, g):
         return {"status": "error", "ename": "Error", "evalue": tb[-1] if tb else "error", "traceback": tb}
 
 
+def run_sql(code, g):
+    """Execute one Spark SQL statement, returning a Livy SQL statement output.
+
+    A statement whose plan has output columns (SELECT, SHOW, DESCRIBE, …)
+    returns the SQL envelope with schema + rows, which is what a client like
+    dbt-fabricspark reads a result set out of. DDL/DML (CREATE, INSERT, USE, …)
+    has no output columns — an empty envelope, which dbt reads as an empty
+    result set.
+    """
+    spark = g.get("spark")
+    if spark is None:
+        return {"status": "error", "ename": "NoSparkSession",
+                "evalue": "no spark session in this REPL namespace", "traceback": []}
+    try:
+        df = spark.sql(code)
+        if len(df.schema.fields) == 0:
+            return {"status": "ok", "execution_count": 0, "data": {}}
+        rows = [list(r) for r in df.collect()]
+        return {"status": "ok", "execution_count": 0,
+                "data": {"application/json": {"schema": df.schema.jsonValue(),
+                                              "data": rows}}}
+    except Exception:
+        tb = traceback.format_exc().splitlines()
+        # Sail quirk carried over from e2e/dbt-fabricspark/sql_agent.py: DML
+        # executes fine but DataFusion reports its row count as uint64, which
+        # the Arrow conversion rejects (Spark has no unsigned types). The write
+        # has already landed, so treat that one conversion failure as an empty
+        # result; every other error still surfaces.
+        if "uint64" in tb[-1] or "Unsigned" in tb[-1]:
+            return {"status": "ok", "execution_count": 0, "data": {}}
+        return {"status": "error", "ename": "SqlError",
+                "evalue": tb[-1] if tb else "error", "traceback": tb}
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj).encode()
@@ -155,7 +189,17 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0) or 0)
         req = json.loads(self.rfile.read(n) or b"{}")
         if self.path == "/statements":
-            self._send(200, run_code(req.get("code", ""), ns(req.get("session", "default"))))
+            # Livy statements carry a `kind`. A `sql` statement is Spark SQL and
+            # must come back as a structured result set; anything else is Python
+            # and comes back as REPL text. Before this dispatch existed the agent
+            # was Python-only, which is why dbt-fabricspark needed a second,
+            # SQL-only agent to talk to (e2e/dbt-fabricspark/sql_agent.py).
+            if (req.get("kind") or "").lower() == "sql":
+                self._send(200, run_sql(req.get("code", ""),
+                                        ns(req.get("session", "default"))))
+            else:
+                self._send(200, run_code(req.get("code", ""),
+                                         ns(req.get("session", "default"))))
         elif self.path == "/close":
             namespaces.pop(req.get("session", ""), None)
             self._send(200, {"closed": True})

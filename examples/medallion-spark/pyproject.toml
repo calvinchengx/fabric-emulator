@@ -1,0 +1,25 @@
+# Self-contained, like the Warehouse example next door. Separate lockfile so the
+# two dbt adapters — which pin different dbt-core ranges — never have to be
+# resolved into one environment.
+#
+#   uv sync --frozen && uv run python run_all.py
+[project]
+name = "fabric-emulator-example-medallion-spark"
+version = "0.1.0"
+description = "Lakehouse medallion: gold built by dbt-fabricspark over Livy HC on Sail"
+requires-python = ">=3.12"
+dependencies = [
+    "contoso-fixtures",
+    "dbt-fabricspark>=1.9",
+    "deltalake>=0.23,<2",
+    "pyarrow>=18,<24",
+    "pyspark-client==4.1.1",
+    "requests>=2.32,<3",
+]
+
+[tool.uv.sources]
+contoso-fixtures = { path = "../contoso-fixtures", editable = true }
+
+
+[tool.uv]
+package = false

@@ -217,13 +217,22 @@ func (a *API) submitLivyStatement(w http.ResponseWriter, r *http.Request, id str
 	if !ok {
 		return
 	}
+	// `kind` selects the statement's language; the session's kind is the default
+	// when a statement omits it. It has to reach the agent, or a SQL statement
+	// comes back as Python REPL text instead of a result set.
 	var body struct {
 		Code string `json:"code"`
+		Kind string `json:"kind"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	kind := body.Kind
+	if kind == "" {
+		kind = s.Kind
+	}
 
 	// Drive the agent's REPL for this session's namespace — real Spark runs it.
-	out, err := a.agentPost("/statements", map[string]any{"session": strconv.Itoa(s.ID), "code": body.Code})
+	out, err := a.agentPost("/statements", map[string]any{
+		"session": strconv.Itoa(s.ID), "code": body.Code, "kind": kind})
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "SparkAgentError", err.Error())
 		return

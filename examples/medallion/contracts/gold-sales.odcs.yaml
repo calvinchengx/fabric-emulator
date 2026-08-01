@@ -62,7 +62,7 @@ schema:
         required: true
         unique: true
         criticalDataElement: true
-        examples: ["C-001", "C-007"]
+        examples: ["C-0000001", "C-0099999"]
         quality:
           - type: library
             metric: duplicateValues
@@ -127,8 +127,8 @@ schema:
             unit: rows
             dimension: uniqueness
             description: >-
-              dbt `unique` — the at-least-once redelivery of O-1003 must be
-              collapsed by the time gold is built.
+              dbt `unique` — the at-least-once redeliveries (REDELIVERY_RATIO in
+              source_system.py) must be collapsed by the time gold is built.
           - type: library
             metric: nullValues
             mustBe: 0

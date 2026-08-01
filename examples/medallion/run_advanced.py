@@ -20,6 +20,12 @@ HERE = pathlib.Path(__file__).resolve().parent
 ADVANCED_STEPS = [
     ("20_web_extract.py", "second source: Contoso Web -> Key Vault + Files/landing"),
     ("21_web_bronze.py", "bronze: flatten nested orders, pin the overlap with POS"),
+    ("22_erp_extract.py", "third source: Contoso ERP (CDC) + reference data, as Parquet"),
+    ("23_erp_bronze.py", "bronze: three Copy activities reading a columnar source"),
+    ("24_erp_scd2.py", "SCD2: the change log becomes a dimension with history"),
+    ("25_resolve.py", "resolve three customer sets transitively, and name who cannot be"),
+    ("26_contract_gates.py", "run the ODCS contracts as gates at every layer"),
+    ("27_tmdl_pbip.py", "serialise the model as TMDL; lay out a .pbip project"),
 ]
 
 
