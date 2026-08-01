@@ -47,8 +47,8 @@ type hcRepl struct {
 	lakehouseID string
 	creatorID   string
 	createdAt   int64
-	createBody  []byte // acquire payload, forwarded when the backend session is opened
-	backendID   string // real backend Livy session id (lazy; empty until first statement)
+	createBody  []byte           // acquire payload, forwarded when the backend session is opened
+	backendID   string           // real backend Livy session id (lazy; empty until first statement)
 	statements  []*livyStatement // native-agent path: this REPL's executed statements
 	deleted     bool
 }

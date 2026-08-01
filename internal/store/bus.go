@@ -29,9 +29,11 @@ import (
 
 // Event kinds carried on the bus.
 const (
-	KindFile    = "file"    // a OneLake path was written, renamed, or deleted
-	KindTable   = "table"   // a Delta commit landed: a table has a new version
-	KindDropped = "dropped" // a subscriber fell behind; N events were lost
+	KindFile     = "file"     // a OneLake path was written, renamed, or deleted
+	KindTable    = "table"    // a Delta commit landed: a table has a new version
+	KindJob      = "job"      // an item job started or reached a terminal state
+	KindActivity = "activity" // a pipeline activity reached its outcome
+	KindDropped  = "dropped"  // a subscriber fell behind; N events were lost
 )
 
 // Event is one thing that happened, in the flat envelope the SSE endpoint
@@ -57,8 +59,49 @@ type Event struct {
 	FilesAdded   int    `json:"filesAdded,omitempty"`
 	FilesRemoved int    `json:"filesRemoved,omitempty"`
 
+	// KindJob. Field names match the job-instance wire shape, so a consumer
+	// reading the stream and a consumer polling the API see the same words.
+	JobID         string `json:"jobId,omitempty"`
+	JobType       string `json:"jobType,omitempty"`
+	InvokeType    string `json:"invokeType,omitempty"`
+	Status        string `json:"status,omitempty"`
+	FailureReason string `json:"failureReason,omitempty"`
+
+	// KindActivity — pipeline.ActivityRun's fields, under its own JSON names.
+	ActivityName string  `json:"activityName,omitempty"`
+	ActivityType string  `json:"activityType,omitempty"`
+	Error        string  `json:"error,omitempty"`
+	Duration     float64 `json:"durationInSeconds,omitempty"`
+	RetryAttempt int     `json:"retryAttempt,omitempty"`
+
 	// KindDropped
 	Dropped int64 `json:"dropped,omitempty"`
+}
+
+// Job statuses a flow event reports at the moment they are known. Generic
+// items derive status from the clock and have no such moment, so they get a
+// Started event and nothing more — the stream reports what actually happened,
+// and says nothing where there is nothing to say.
+const (
+	JobStarted = "Started"
+)
+
+// PublishJobEvent announces a job starting or reaching a terminal state.
+func (s *Store) PublishJobEvent(workspaceID, itemID, jobID, jobType, invokeType, status, failureReason string) {
+	s.publish(Event{
+		Kind: KindJob, WorkspaceID: workspaceID, ItemID: itemID, JobID: jobID,
+		JobType: jobType, InvokeType: invokeType, Status: status, FailureReason: failureReason,
+	})
+}
+
+// PublishActivityEvent announces one pipeline activity's settled outcome.
+func (s *Store) PublishActivityEvent(workspaceID, itemID, jobID, name, actType, status, errMsg string,
+	duration float64, retry int) {
+	s.publish(Event{
+		Kind: KindActivity, WorkspaceID: workspaceID, ItemID: itemID, JobID: jobID,
+		ActivityName: name, ActivityType: actType, Status: status, Error: errMsg,
+		Duration: duration, RetryAttempt: retry,
+	})
 }
 
 // ringSize is how many recent events are replayable via Replay, so a client
