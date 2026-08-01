@@ -69,6 +69,7 @@
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "Key Vault references in connections",
     "witnesses": [
+      "ci:medallion",
       "go:TestAKVReferenceConnectionViaWorkspaceIdentity"
     ]
   },
@@ -171,6 +172,7 @@
     "section": "OneLake (`onelake/`)",
     "claim": "Shortcuts (OneLake → OneLake)",
     "witnesses": [
+      "ci:governance",
       "go:TestShortcutResolution",
       "go:TestShortcutAuthAndMissingItem",
       "go:TestShortcutStore"
