@@ -167,6 +167,24 @@ jobs:
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python scripts/check_witnesses.py --strict
+
+  example-parity:
+    name: The advanced medallion pair differs only in silver
+    runs-on: ubuntu-latest
+    steps:
+      # Full history is not needed, but the check asks GIT for its file list
+      # rather than walking the filesystem — running either example leaves
+      # artifacts behind, and only one of the pair is ever run at a time.
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # No job dependency and no emulator: this is a source-level claim, so it
+      # answers in a second and fails before the medallion legs have finished
+      # booting a stack. It is also the ONLY check that can see this class of
+      # bug — the pair silently diverged once already and both legs stayed
+      # green, because each leg runs one copy and neither compares them.
+      - run: python scripts/check_example_parity.py
   portal:
     name: Portal builds from source
     runs-on: ubuntu-latest
