@@ -19,9 +19,9 @@ func TestReportLineageRecordsAStepsMovement(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := `{"step":"silver",
-	  "reads":[{"itemId":"` + lake.ID + `","path":"Tables/bronze_orders"},
-	           {"itemId":"` + lake.ID + `","path":"Tables/bronze_customers"}],
+	body := `{"step":"silver","reads":[
+	    {"itemId":"` + lake.ID + `","path":"Tables/bronze_orders"},
+	    {"itemId":"` + lake.ID + `","path":"Tables/bronze_customers"}],
 	  "writes":[{"itemId":"` + lake.ID + `","path":"Tables/silver_orders"}]}`
 
 	w := do(a.reportLineage, admin, "POST", body, map[string]string{"wid": ws.ID})
@@ -102,5 +102,68 @@ func TestReportLineageRejectsHalfAMovement(t *testing.T) {
 		`{"step":"s","reads":`+ref+`,"writes":`+ref+`}`, map[string]string{"wid": ws.ID})
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("viewer report = %d; want 403", w.Code)
+	}
+}
+
+// TestReportLineageMovesAreNotACrossProduct: the precise form. A silver step
+// reads two bronze tables and writes three silver ones, but the quarantine
+// comes from the orders alone — so the cross product would record three
+// movements that never happened. `moves` reports the derivations the code
+// actually computes.
+func TestReportLineageMovesAreNotACrossProduct(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "lake"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	ref := func(p string) string { return `{"itemId":"` + lake.ID + `","path":"Tables/` + p + `"}` }
+
+	body := `{"step":"silver","moves":[
+	  {"reads":[` + ref("bronze_customers") + `],"writes":[` + ref("silver_customers") + `]},
+	  {"reads":[` + ref("bronze_orders") + `],
+	   "writes":[` + ref("silver_orders") + `,` + ref("silver_quarantine_orders") + `]}]}`
+	w := do(a.reportLineage, admin, "POST", body, map[string]string{"wid": ws.ID})
+	if w.Code != http.StatusOK {
+		t.Fatalf("report = %d %s", w.Code, w.Body)
+	}
+
+	edges, err := st.ListLineageEdges(ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, e := range edges {
+		got[e.SourcePath+" -> "+e.TargetPath] = true
+	}
+	want := []string{
+		"Tables/bronze_customers -> Tables/silver_customers",
+		"Tables/bronze_orders -> Tables/silver_orders",
+		"Tables/bronze_orders -> Tables/silver_quarantine_orders",
+	}
+	if len(edges) != len(want) {
+		t.Fatalf("recorded %d edges, want %d: %v", len(edges), len(want), got)
+	}
+	for _, k := range want {
+		if !got[k] {
+			t.Errorf("missing edge %q", k)
+		}
+	}
+	// The three the cross product would have invented.
+	for _, k := range []string{
+		"Tables/bronze_customers -> Tables/silver_orders",
+		"Tables/bronze_customers -> Tables/silver_quarantine_orders",
+		"Tables/bronze_orders -> Tables/silver_customers",
+	} {
+		if got[k] {
+			t.Errorf("recorded %q, a movement that never happened", k)
+		}
+	}
+
+	// A movement missing an end is rejected, per movement rather than overall.
+	half := `{"step":"s","moves":[{"reads":[` + ref("a") + `],"writes":[` + ref("b") + `]},
+	                              {"reads":[` + ref("c") + `]}]}`
+	if w := do(a.reportLineage, admin, "POST", half, map[string]string{"wid": ws.ID}); w.Code != http.StatusBadRequest {
+		t.Fatalf("half a movement = %d; want 400", w.Code)
 	}
 }

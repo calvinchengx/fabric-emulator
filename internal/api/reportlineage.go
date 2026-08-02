@@ -27,14 +27,30 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
-// reportLineageBody is the wire shape: one step, its inputs and its outputs.
-// It mirrors the notebook result's `reads`/`writes` so an engine that already
-// speaks one speaks the other.
+// reportLineageBody is the wire shape: one step and what it moved.
+//
+// A step may report SEVERAL movements, and usually should. The obvious shape —
+// one list of reads, one of writes — pairs them as a cross product, and that
+// overstates: a silver step reading `bronze_customers` and `bronze_orders`
+// while writing `silver_customers`, `silver_orders` and `silver_quarantine`
+// did NOT derive the quarantine from the customers. Six edges, three of them
+// describing movements that never happened.
+//
+// So `moves` is the precise form, and top-level `reads`/`writes` remain as the
+// shorthand for the case where the cross product is genuinely what happened —
+// a survivorship join really does read everything to write its output.
 type reportLineageBody struct {
 	// Step names the unit of work — "silver", "star_silver", "semantic_model".
 	// It becomes the edge's activity name, which is also part of the store's
 	// uniqueness key, so two steps moving the same pair stay two edges.
 	Step   string        `json:"step"`
+	Reads  []lineageRef2 `json:"reads"`
+	Writes []lineageRef2 `json:"writes"`
+	Moves  []lineageMove `json:"moves"`
+}
+
+// lineageMove is one derivation: these inputs produced these outputs.
+type lineageMove struct {
 	Reads  []lineageRef2 `json:"reads"`
 	Writes []lineageRef2 `json:"writes"`
 }
@@ -66,40 +82,51 @@ func (a *API) reportLineage(w http.ResponseWriter, r *http.Request, p *auth.Prin
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "step is required: it names the unit of work that moved the data.")
 		return
 	}
-	// A step that read nothing, or wrote nothing, moved nothing. Saying so is
-	// clearer than silently recording zero edges and returning success.
-	if len(body.Reads) == 0 || len(body.Writes) == 0 {
+	moves := body.Moves
+	if len(body.Reads) > 0 || len(body.Writes) > 0 {
+		moves = append(moves, lineageMove{Reads: body.Reads, Writes: body.Writes})
+	}
+	if len(moves) == 0 {
 		writeErr(w, http.StatusBadRequest, "InvalidRequest",
-			"both reads and writes are required: lineage describes movement, and a step with only one end did not move anything.")
+			"reads and writes, or moves, are required: lineage describes movement.")
 		return
 	}
 
 	recorded := 0
-	for _, in := range body.Reads {
-		for _, out := range body.Writes {
-			if in.ItemID == "" || in.Path == "" || out.ItemID == "" || out.Path == "" {
-				writeErr(w, http.StatusBadRequest, "InvalidRequest",
-					"every read and write needs an itemId and a path; an incomplete reference is not an exact fact.")
-				return
+	for _, mv := range moves {
+		// A movement with only one end did not move anything. Saying so is
+		// clearer than silently recording zero edges and returning success.
+		if len(mv.Reads) == 0 || len(mv.Writes) == 0 {
+			writeErr(w, http.StatusBadRequest, "InvalidRequest",
+				"every movement needs both reads and writes: a step with only one end did not move anything.")
+			return
+		}
+		for _, in := range mv.Reads {
+			for _, out := range mv.Writes {
+				if in.ItemID == "" || in.Path == "" || out.ItemID == "" || out.Path == "" {
+					writeErr(w, http.StatusBadRequest, "InvalidRequest",
+						"every read and write needs an itemId and a path; an incomplete reference is not an exact fact.")
+					return
+				}
+				srcWS, dstWS := in.WorkspaceID, out.WorkspaceID
+				if srcWS == "" {
+					srcWS = wid
+				}
+				if dstWS == "" {
+					dstWS = wid
+				}
+				if err := a.Store.CreateLineageEdge(&store.LineageEdge{
+					WorkspaceID:       wid,
+					ActivityName:      body.Step,
+					SourceWorkspaceID: srcWS, SourceItemID: in.ItemID, SourcePath: in.Path,
+					TargetWorkspaceID: dstWS, TargetItemID: out.ItemID, TargetPath: out.Path,
+					Producer: store.ProducerReported,
+				}); err != nil {
+					writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+					return
+				}
+				recorded++
 			}
-			srcWS, dstWS := in.WorkspaceID, out.WorkspaceID
-			if srcWS == "" {
-				srcWS = wid
-			}
-			if dstWS == "" {
-				dstWS = wid
-			}
-			if err := a.Store.CreateLineageEdge(&store.LineageEdge{
-				WorkspaceID:       wid,
-				ActivityName:      body.Step,
-				SourceWorkspaceID: srcWS, SourceItemID: in.ItemID, SourcePath: in.Path,
-				TargetWorkspaceID: dstWS, TargetItemID: out.ItemID, TargetPath: out.Path,
-				Producer: store.ProducerReported,
-			}); err != nil {
-				writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
-				return
-			}
-			recorded++
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"step": body.Step, "edgesRecorded": recorded})

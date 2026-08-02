@@ -209,7 +209,7 @@ def lineage_edges():
     return r.json().get("value", [])
 
 
-def report_lineage(step, reads, writes):
+def report_lineage(step, moves):
     """Tell the emulator what this step moved, so it appears in the flow graph.
 
     A queued notebook run reports its read/write set when it finishes, and the
@@ -219,12 +219,20 @@ def report_lineage(step, reads, writes):
     says so itself, and the edge is marked `Reported` to distinguish a claim
     from something the emulator watched happen.
 
-    reads/writes are (item_id, path) pairs, e.g. (lakehouse, "Tables/bronze_orders").
+    `moves` is a list of (reads, writes) pairs, each a real derivation. It is a
+    LIST rather than one reads/writes pair because pairing them as a cross
+    product overstates: silver reads bronze_customers and bronze_orders and
+    writes three tables, but the quarantine comes from the orders alone. Six
+    edges, three of them describing movements that never happened. Report the
+    groups the code actually computes.
+
+    Each read/write is an (item_id, path) pair, e.g. (lakehouse, "Tables/x").
     """
     st = load()
-    body = {"step": step,
-            "reads": [{"itemId": i, "path": p} for i, p in reads],
-            "writes": [{"itemId": i, "path": p} for i, p in writes]}
+    body = {"step": step, "moves": [
+        {"reads": [{"itemId": i, "path": p} for i, p in reads],
+         "writes": [{"itemId": i, "path": p} for i, p in writes]}
+        for reads, writes in moves]}
     r = S.post(f"{FABRIC}/v1/workspaces/{st['workspace']}/lineage",
                headers=fabric_headers(), json=body)
     assert r.status_code == 200, f"report lineage: {r.status_code} {r.text}"
