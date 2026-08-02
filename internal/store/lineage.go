@@ -90,25 +90,35 @@ ON CONFLICT DO NOTHING`,
 	return nil
 }
 
-// RenameLineagePath moves every edge touching one item's path onto a new path.
+// RenameLineagePath moves the edges that BUILT one path onto its new name.
 //
 // It exists for the build-then-swap a warehouse tool performs: dbt materialises
 // into `x__dbt_temp` and renames to `x`. Without this the graph would name the
 // scaffold and never the table anyone queries.
 //
-// Both ends are rewritten: the renamed table is a source of whatever was built
-// from it as well as the target of its own build.
+// Only the TARGET end is rewritten, and the asymmetry is the whole subtlety.
+// Rebuilding a table that already exists, dbt renames the OLD one out of the
+// way first:
+//
+//	rename x            -> x__dbt_backup
+//	rename x__dbt_temp  -> x
+//	drop   x__dbt_backup
+//
+// Rewriting sources too meant step 1 quietly repointed every edge that READ x —
+// a downstream aggregate's inputs — at the backup, which step 3 then dropped.
+// The medallion showed it plainly: `fct_orders__dbt_backup -> fct_daily_revenue`,
+// an edge from a table that no longer exists.
+//
+// Targets alone is also sufficient: nothing is ever built FROM the temp name,
+// so the temp only ever appears as a target. And an edge records where data
+// came from at the time it moved — a later rename of the source does not
+// rewrite that history.
 func (s *Store) RenameLineagePath(itemID, from, to string) error {
 	if from == to {
 		return nil
 	}
-	if _, err := s.db.Exec(
-		`UPDATE OR REPLACE lineage_edges SET target_path = ? WHERE target_item_id = ? AND target_path = ?`,
-		to, itemID, from); err != nil {
-		return err
-	}
 	_, err := s.db.Exec(
-		`UPDATE OR REPLACE lineage_edges SET source_path = ? WHERE source_item_id = ? AND source_path = ?`,
+		`UPDATE OR REPLACE lineage_edges SET target_path = ? WHERE target_item_id = ? AND target_path = ?`,
 		to, itemID, from)
 	return err
 }
