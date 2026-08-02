@@ -91,5 +91,9 @@ ps: ## Container states for this project
 logs: ## Tail logs (SVC=<service> to narrow)
 	$(COMPOSE) logs -f --tail 100 $(SVC)
 
-test: ## Go build, vet and unit tests
+check: ## Repo invariants — the checks that used to exist only in CI
+	@$(PY) scripts/check_witnesses.py --strict
+	@$(PY) scripts/check_example_parity.py
+
+test: check ## Repo invariants, then Go build, vet and unit tests
 	go build ./... && go vet ./... && go test ./...
