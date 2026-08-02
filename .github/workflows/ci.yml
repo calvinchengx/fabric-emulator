@@ -670,6 +670,20 @@ jobs:
           name: silver-summary-${{ matrix.harness }}
           path: examples/${{ matrix.example }}/silver_summary.json
           if-no-files-found: warn
+      # The advanced pair compares more than silver — the resolution and the
+      # star are downstream of it and are where a silver difference would
+      # actually show. Separate step rather than a glob on the one above so the
+      # simple legs, which write neither file, are not made to look broken.
+      # `ignore` for exactly that reason: on a simple leg finding nothing here
+      # is correct, and `warn` would train people to skim past it.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: advanced-summaries-${{ matrix.harness }}
+          path: |
+            examples/${{ matrix.example }}/star_silver_summary.json
+            examples/${{ matrix.example }}/gold_star_summary.json
+          if-no-files-found: ignore
 
   # The assertion the dbt-fabricspark example exists to make: two tools, one
   # answer. It cannot run inside either leg — each produces one half — so it runs
@@ -716,6 +730,57 @@ jobs:
             [ -f "$f" ] || { echo "::error::$f was not published by the medallion legs"; exit 1; }
           done
       - run: uv run --frozen --no-sync python examples/medallion-dbt-fabricspark/compare.py
+
+  # The same assertion for the advanced pair, and a stronger one: not that two
+  # silver builds agree, but that the silver engine choice does not perturb the
+  # identity resolution or the star built on top of it. Everything between
+  # silver and the star is byte-identical across the pair (the example-parity
+  # job proves that), so a difference here is attributable to silver alone.
+  #
+  # Load-bearing for compare.py's skip in the same way medallion-compare is:
+  # delete this and the comparison silently stops being made. Remove them
+  # together or not at all.
+  medallion-advanced-compare:
+    name: Both advanced builds agree, through silver to the star
+    needs: medallion
+    # See medallion-compare: `needs` on a matrix waits on EVERY leg, so an
+    # unrelated failing leg would skip this one — and a skip is not a failure,
+    # so the assertion would quietly stop being made.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: silver-summary-medallion-advanced
+          path: examples/medallion-advanced-pyspark
+      - uses: actions/download-artifact@v4
+        with:
+          name: advanced-summaries-medallion-advanced
+          path: examples/medallion-advanced-pyspark
+      - uses: actions/download-artifact@v4
+        with:
+          name: silver-summary-medallion-advanced-dbt-fabricspark
+          path: examples/medallion-advanced-dbt-fabricspark
+      - uses: actions/download-artifact@v4
+        with:
+          name: advanced-summaries-medallion-advanced-dbt-fabricspark
+          path: examples/medallion-advanced-dbt-fabricspark
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      # Fail loudly if a summary is missing rather than letting compare.py's
+      # skip fire here — in THIS job an absent half means the artifact plumbing
+      # broke, not that a developer ran one example. All six are required: a
+      # comparison that silently drops a stage is the failure this job is for.
+      - run: |
+          for e in medallion-advanced-pyspark medallion-advanced-dbt-fabricspark; do
+            for f in silver_summary.json star_silver_summary.json gold_star_summary.json; do
+              p="examples/$e/$f"
+              [ -f "$p" ] || { echo "::error::$p was not published by the advanced legs"; exit 1; }
+            done
+          done
+      - run: uv run --frozen --no-sync python examples/medallion-advanced-dbt-fabricspark/compare.py
 
   duckdb:
     name: Real DuckDB SQL over lakehouse Delta

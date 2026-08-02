@@ -195,3 +195,26 @@ log("revenue by source and channel: " + ", ".join(
     f"{s}/{c}={float(v):,.2f}" for (s, c), v in sorted(by_channel.items())))
 log(f"{both:,} customers bought from more than one SOURCE SYSTEM — a row that exists "
     f"only because identity was resolved across sources")
+
+# --- what compare.py reads ----------------------------------------------------
+# The star is the far end of the pipeline, so agreeing here is the strongest form
+# of "the silver engine did not change the answer": everything between silver and
+# this table had to agree too, or these numbers would not.
+#
+# Revenue is carried per (source_system, channel) rather than as one total. A
+# single figure can match while the split behind it is wrong — which is exactly
+# what happened when 'web' meant both a POS channel and a source system, and the
+# grand total was the one number that still looked right.
+import json  # noqa: E402
+import pathlib  # noqa: E402
+
+_here = pathlib.Path(__file__).resolve().parent
+_here.joinpath("gold_star_summary.json").write_text(json.dumps({
+    "example": _here.name,
+    "rows": {"fct_order_lines": lines, "dim_customer_360": people,
+             "dim_product": products},
+    "lines_by_source": by_source,
+    "revenue_by_source_and_channel": {f"{s}/{c}": round(float(v), 2)
+                                      for (s, c), v in sorted(by_channel.items())},
+    "multi_source_customers": both,
+}, indent=2))

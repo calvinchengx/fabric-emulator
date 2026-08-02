@@ -55,6 +55,9 @@ ADVANCED = [
     ("gold_star", "dbt-fabric: the multi-source star, joined in the WAREHOUSE"),
     ("contract_gates", "run the ODCS contracts as gates at every layer"),
     ("tmdl_pbip", "serialise the model as TMDL; lay out a .pbip project"),
+    # Last, because it reads what every step above wrote — and it reads the
+    # OTHER example's output too, so it skips when run alone. See compare.py.
+    ("compare", "compare this build against the PySpark example's"),
 ]
 
 STEPS = BASIC + ADVANCED
