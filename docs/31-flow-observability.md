@@ -265,7 +265,8 @@ which already has the section structure:
   activity failed goes red. Two levels rather than one because they answer
   different questions — *what just changed* and *what this run has touched at
   all*; a single state means a finished run is uniformly lit and says nothing.
-  On the medallion this draws itself: landing → bronze → silver → gold.
+  On the medallion this draws itself: source → landing → bronze → silver →
+  gold → semantic model, with a Power BI read pulsing at the far end.
 - **A table inspector** — select a node for the current Delta version, schema,
   row count and a 20-row sample, read through the same warehouse reader the SQL
   endpoint uses (`/_emulator/portal/table`). The stream says a table *changed*;
@@ -283,6 +284,31 @@ relaxation rather than a topological sort, so a cyclic graph still renders
 instead of hanging — which makes a medallion draw itself:
 landing → bronze → silver → gold. Copy edges are solid, notebook edges dashed,
 straight from `producer`.
+
+### The hops that are not OneLake writes
+
+Three parts of a medallion move data without writing a byte through OneLake,
+and each needed its own answer rather than an inference:
+
+| Hop | How it is known | `producer` |
+|---|---|---|
+| silver → gold | the TDS front parses each statement it forwards and records what the engine ACCEPTED (`internal/tsql.DataFlows`, `internal/server/warehouselineage.go`) | `Warehouse` |
+| gold → semantic model | a Direct Lake table's binding names its source, so the edge is recorded when the definition lands | `DirectLake` |
+| bronze → silver, and an import model's sources | the step reports its own read/write set to `POST /v1/workspaces/{wid}/lineage` | `Reported` |
+
+The producer is the point. `Warehouse` is evidence — the emulator watched the
+engine accept the statement — while `Reported` is a claim by the caller, and a
+consumer must never have to guess which it is holding. An IMPORT semantic
+model gets no automatic edge at all: its rows arrive in the definition already
+detached from wherever they were selected, and manufacturing a source would be
+the guess this design refuses everywhere else.
+
+A **query** is not a movement, so Power BI consumption is a `query` event on
+the bus and never an edge. `lineage_edges` stays a record of things that moved.
+
+Because a warehouse build has no job, the graph reloads on a `lineage` event
+rather than waiting for a job to reach a terminal state — coalesced, since one
+dbt model emits an edge per source and they all describe the same redraw.
 
 The graph reads `/_emulator/portal/lineage`, a tenant-wide listing added for
 this view: the API-facing `/v1/workspaces/{id}/lineage` is workspace-scoped
