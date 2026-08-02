@@ -27,7 +27,7 @@ than saying so.
 import erp_system as erp
 import source_system as src
 import web_store as web
-from common import SPARK_REMOTE, load, log
+from common import SPARK_REMOTE, load, log, report_lineage
 
 st = load()
 assert SPARK_REMOTE, "SPARK_REMOTE is empty — no Spark engine is attached"
@@ -294,3 +294,21 @@ if amb_phone or amb_email:
         f"{amb_email:,} email — shared by more than one POS customer, so no "
         f"match could be made safely")
 log(f"web fact grain: {n_lines:,} clean order lines, all resolved to a customer_key")
+
+# The resolution is the advanced example's whole claim, so it belongs in the
+# graph — reported as the derivations the code actually computes.
+#
+# Identity resolution really does read all three customer sets to write both
+# the xref and the conformed dimension: survivorship is a full outer join, so
+# that cross product is the truth. The web order-line grain is a SEPARATE
+# movement over the web catalogue and lines, joined to the xref for its
+# customer_key — and it never touched the ERP dimension.
+_lake = load()["lakehouse"]
+report_lineage("star_silver", [
+    ([(_lake, "Tables/silver_customers"), (_lake, "Tables/bronze_web_customers"),
+      (_lake, "Tables/dim_customer_scd2")],
+     [(_lake, "Tables/silver_customer_xref"), (_lake, "Tables/silver_customer_conformed")]),
+    ([(_lake, "Tables/bronze_web_products"), (_lake, "Tables/bronze_web_order_lines"),
+      (_lake, "Tables/silver_customer_xref")],
+     [(_lake, "Tables/silver_web_order_lines")]),
+])
