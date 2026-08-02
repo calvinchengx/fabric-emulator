@@ -235,6 +235,15 @@ services:
   #   docker compose run --rm govern-ingest
   govern-ingest:
     profiles: [governance]
+    # `build:` with no `image:` — this one exists ONLY as a local build, so
+    # `docker compose pull` skips it and cannot refresh it. After a pull that
+    # touches pyproject.toml / uv.lock, rebuild or the container runs against a
+    # stale dependency set:
+    #   docker compose --profile governance build govern-ingest
+    # The symptom is quiet: every other service is healthy and only this
+    # one-shot exits non-zero (it was `ModuleNotFoundError: No module named
+    # 'yaml'` when govern_ingest.py gained its pyyaml dependency). See
+    # docs/22-openmetadata.md.
     build:
       context: .
       dockerfile: docker/python-runtime/Dockerfile

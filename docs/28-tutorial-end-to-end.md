@@ -277,7 +277,7 @@ credential material is write-only, as in real Fabric.
 
 ## 4. Extract → landing
 
-The "source system" ([`source_system.py`](../examples/medallion-pyspark/source_system.py))
+The "source system" ([`source_system.py`](../examples/contoso-fixtures/source_system.py))
 is a seeded generator that refuses to export without the API key. It emits a
 **customer-360 of 101 columns** at production-like volume, and it is
 deliberately messy so silver has real work to do.

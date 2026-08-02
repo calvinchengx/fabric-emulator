@@ -19,6 +19,32 @@ docker compose --profile governance up
 docker compose run --rm govern-ingest
 ```
 
+### After a `git pull`: rebuild, don't just pull
+
+`govern-ingest` is the one service in this stack with a `build:` and **no
+`image:`** — it exists only as a local build. `docker compose pull` skips it
+entirely (and `--ignore-buildable` skips `sail` and `spark-agent` too), so a
+pull that brings in new Python dependencies leaves a stale image behind. The
+failure is not obvious from the outside: every other container is healthy and
+only the one-shot exits non-zero.
+
+```
+govern-ingest-1  | ModuleNotFoundError: No module named 'yaml'
+```
+
+That is a real example — `govern_ingest.py` began reading ODCS contracts and
+gained a `pyyaml` dependency, which was correctly declared in the `governance`
+group of [`pyproject.toml`](../pyproject.toml) but absent from an image built
+before it. Rebuild after any pull that touches `pyproject.toml` or `uv.lock`:
+
+```bash
+docker compose --profile governance build govern-ingest
+docker compose --profile governance up -d
+```
+
+`make status` catches this — the one-shot shows `FAIL … Exited (1)` while the
+rest of the stack reads healthy — which is exactly the case it exists for.
+
 ## What `govern-ingest` catalogs
 
 [`scripts/govern_ingest.py`](../scripts/govern_ingest.py) walks live emulator
