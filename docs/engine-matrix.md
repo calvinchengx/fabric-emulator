@@ -67,7 +67,7 @@ neither.
 
 **Sail is the default, and should stay the default.** This table only
 measures capability; it says nothing about the axis Sail was chosen for.
-Measured on the same 19 probes:
+Measured on the same 23 probes:
 
 | | Sail | Spark JVM |
 |---|---|---|
