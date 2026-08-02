@@ -8,7 +8,7 @@ version: 2
 # the two ways a cross-source join goes wrong quietly — it drops rows, and the
 # totals still look plausible.
 models:
-  - name: dim_customer
+  - name: dim_customer_360
     description: "One row per resolved person across POS, Web and ERP."
     columns:
       - name: customer_key
@@ -42,7 +42,7 @@ models:
           # that resolves to nobody would otherwise be dropped by every
           # downstream aggregate without trace.
           - relationships:
-              to: ref('dim_customer')
+              to: ref('dim_customer_360')
               field: customer_key
       - name: product_id
         tests:
