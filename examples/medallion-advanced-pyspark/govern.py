@@ -234,6 +234,29 @@ def sql_columns(database):
     return out
 
 
+def rule_prose(rules):
+    """The rules as a markdown list, for the humans OM's UI shows nothing to.
+
+    Each line states the bound the contract actually sets, so it can be checked
+    against the structured copy rather than paraphrasing it away.
+    """
+    lines = ["**Contracted quality rules** — executed by `contract_gates.py`; "
+             "the structured copy is on this contract's `odcsQualityRules`."]
+    bounds = ("mustBe", "mustNotBe", "mustBeGreaterThan", "mustBeGreaterOrEqualTo",
+              "mustBeLessThan", "mustBeLessOrEqualTo")
+    for r in rules:
+        what = r.get("metric") or r.get("name") or "rule"
+        if r.get("column"):
+            what += f" on `{r['column']}`"
+        bound = next((f"{k} {r[k]:g}" if isinstance(r[k], float) else f"{k} {r[k]}"
+                      for k in bounds if k in r), "")
+        if "validValues" in r and r["validValues"]:
+            bound = (bound + " " if bound else "") + f"in {r['validValues']}"
+        dim = f" _{r['dimension']}_" if r.get("dimension") else ""
+        lines.append(f"- **{what}** {bound}{dim}".rstrip())
+    return "\n".join(lines)
+
+
 def register_tables(om, st, ws_name):
     """Catalog the medallion's own tables, with the contract's meaning attached.
 
@@ -365,13 +388,25 @@ def main():
         rules = odcs_rules(entry)
         if not rules:
             continue
+        # The rules go in TWICE, deliberately, and the duplication is the point.
+        #
+        # `odcsQualityRules` is the machine-readable copy: a tool reading OM's
+        # API gets each rule structured, with its metric, dimension and bound.
+        # But OpenMetadata 1.13.2's contract tab renders only the header and
+        # the description — measured, by driving the UI and reading the page —
+        # so a human browsing the catalog would see a contract with no visible
+        # promises at all. The prose summary below is what they read.
+        #
+        # Dropping either one loses something real: without the structure the
+        # rules cannot be queried, and without the prose they cannot be seen.
         put(om, "dataContracts", {
             "name": f"{table}-contract",
             "displayName": f"{contract.get('name', table)} — {entry['name']}",
             "entity": {"id": tbl["id"], "type": "table"},
             "domains": [DOMAIN],
-            "description": (entry.get("description") or "").strip() or
-                           f"ODCS contract governing {table}.",
+            "description": ((entry.get("description") or "").strip() or
+                            f"ODCS contract governing {table}.")
+                           + "\n\n" + rule_prose(rules),
             "odcsQualityRules": rules})
         registered += 1
         rules_total += len(rules)
