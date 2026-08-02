@@ -1,7 +1,7 @@
 # Example: the advanced medallion
 
 Three source systems, resolved into one customer identity, joined into a star in
-the Warehouse, and served to Power BI — **22 steps in about four and a half
+the Warehouse, and served to Power BI — **23 steps in about five
 minutes, on a laptop, with no Azure subscription.**
 
 `bronze → silver` is PySpark on a real engine; `silver → gold` is dbt-fabric
@@ -9,11 +9,12 @@ over real TDS, because gold is a Warehouse. The whole run asserts its own
 results, so it is a test rather than a demo script.
 
 ```sh
-docker compose up -d          # from the repo root
+make up                       # from the repo root (starts OpenMetadata too)
 uv sync --frozen && uv run python pipeline.py
 ```
 
-Open <https://localhost:9443/#flow> while it runs.
+Open <https://localhost:9443/#flow> while it runs, and
+<http://localhost:8585> for the catalog it publishes at the end.
 
 ## What this demo shows
 
@@ -176,6 +177,7 @@ track is what a second and third source force.
 | 20 | `gold_star` | dbt-fabric: the multi-source star, joined in the Warehouse |
 | 21 | `contract_gates` | run the ODCS contracts as gates at every layer |
 | 22 | `tmdl_pbip` | serialise the model as TMDL; lay out a `.pbip` project |
+| 23 | `govern` | catalog the medallion in OpenMetadata — domain, glossary, metrics, ODCS contracts, lineage (skips if OM is not running) |
 
 `reflect` appears twice and neither is redundant: reflection happens on a
 lakehouse **login**, so the first ran before `star_silver` existed.
