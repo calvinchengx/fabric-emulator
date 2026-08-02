@@ -14,7 +14,7 @@ references and the provenance pattern.
 |---|---|---|---|
 | **Model format** (TMSL/TMDL) | `bi-shared-docs` `tmsl/`, `tmdl/` | TMSL JSON schema; TMDL grammar | ✅ round-trip vs real `.tmdl`/`model.bim` fixtures |
 | **DAX language** | learn.microsoft.com/dax (function ref); [MS-SSAS-T] query semantics | ❌ no grammar/OpenAPI | ⚠️ **only a live AS engine** → oracle = *captured (query → rows) fixtures* |
-| **XMLA wire** | [MS-SSAS-T], [MS-SSAS] `xmla-rs:rowset`, `bi-shared-docs` XMLA ref | XSD for envelopes/rowsets | ⚠️ **ADOMD.NET, and it IS endpoint-overridable** — runs on Linux and connects to a host we name; see `spikes/xmla-client` |
+| **XMLA wire** | [MS-SSAS-T], [MS-SSAS] `xmla-rs:rowset`, `bi-shared-docs` XMLA ref | XSD for envelopes/rowsets | ⚠️ **ADOMD.NET, and it IS endpoint-overridable** — runs on Linux and connects to a host we name; asserted weekly by `e2e/xmla` |
 | **executeQueries REST** | `third_party/powerbi-rest-swagger/swagger.json` | ✅ **official OpenAPI (MIT)** | ✅ real REST client + the schema |
 
 ## The decisive distinction
@@ -24,15 +24,18 @@ emulator via an endpoint override (delta-rs, ABFS, azure-sdk, fabric-cicd, the
 Livy proxy). Two of these four layers cannot support that:
 
 - **XMLA** — deferred, but the CAUSE recorded here was wrong and has been
-  retested. `spikes/xmla-client` points Microsoft's own ADOMD.NET at a listener
-  we control, from Linux, in a container, and it connects: the `powerbi://<host>`
-  form is endpoint-overridable, a self-signed CA is trusted the usual way, and
-  the bearer token comes from the connection string. Its first call is plain
-  JSON REST (`GET /powerbi/databases/v201606/workspaces`), not SOAP.
+  retested. [`e2e/xmla`](https://github.com/calvinchengx/fabric-emulator/tree/main/e2e/xmla)
+  points Microsoft's own ADOMD.NET at a listener we control, from Linux, in a
+  container, and it connects: the `powerbi://<host>` form is endpoint-overridable,
+  a self-signed CA is trusted the usual way, and the bearer token comes from the
+  connection string. Its first call is plain JSON REST
+  (`GET /powerbi/databases/v201606/workspaces`), not SOAP. That suite runs weekly,
+  so a change in the client's contract is a failing build rather than a
+  rediscovery.
 
   So "can't be pointed at a hand-rolled Go server" is false, and a CI oracle
-  exists. What stands is the SIZE: the spike never reached XMLA/SOAP — the
-  client is still routing when the stub refuses it — so how much of [MS-SSAS-T]
+  exists. What stands is the SIZE: the client never reaches XMLA/SOAP — it is
+  still routing when the stub refuses it — so how much of [MS-SSAS-T]
   a useful implementation needs is still unmeasured, and `docs/24`'s `L` is
   unchanged. **Deferred on cost, not on feasibility.**
 - **DAX** — correctness is defined by a live engine (Power BI / SSAS / AS),
