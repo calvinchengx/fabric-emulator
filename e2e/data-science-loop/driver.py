@@ -184,6 +184,55 @@ after_totals = {r["Sales[Region]"]: r["[Total]"] for r in after["results"][0]["t
 assert after_totals == totals, (totals, after_totals)
 print("post-refresh DAX unchanged — Direct Lake was already current", flush=True)
 
+# THE SCANNER — how a catalog crawler learns what the tenant contains, rather
+# than querying one thing it already knows about. This is the only surface that
+# returns a model's tables, columns and measures, which is exactly what a
+# governance tool needs and what nothing else here can supply.
+#
+# The four-call shape is the real one: find what changed, ask, poll, read. The
+# emulator finishes synchronously, but a crawler written against the service
+# polls scanStatus, so that call has to work rather than be skippable.
+admin_base = f"{FABRIC}/v1.0/myorg/admin/workspaces"
+modified = request("GET", f"{admin_base}/modified", token=fabric_token)[2]
+assert any(m["id"] == workspace["id"] for m in modified), (workspace["id"], modified)
+
+scan = request("POST", f"{admin_base}/getInfo"
+               "?datasetSchema=true&datasetExpressions=true&datasourceDetails=true",
+               {"workspaces": [workspace["id"]]}, fabric_token)[2]
+assert scan["status"] == "Succeeded", scan
+status = request("GET", f"{admin_base}/scanStatus/{scan['id']}", token=fabric_token)[2]
+assert status["id"] == scan["id"] and status["status"] == "Succeeded", status
+
+result = request("GET", f"{admin_base}/scanResult/{scan['id']}", token=fabric_token)[2]
+scanned = [d for w in result["workspaces"] for d in w["datasets"] if d["id"] == semantic["id"]]
+assert len(scanned) == 1, (semantic["id"], result)
+model_info = scanned[0]
+
+# Structure: the tables, columns and measures a catalog would ingest.
+tables = {t["name"]: t for t in model_info["tables"]}
+assert "Sales" in tables, tables
+cols = {c["name"] for c in tables["Sales"]["columns"]}
+assert {"Id", "Region", "Amount"} <= cols, cols
+measures = {m["name"]: m["expression"] for m in tables["Sales"]["measures"]}
+assert measures.get("Total"), measures
+
+# Lineage in the SAME payload — the reason a crawler scans instead of calling
+# /datasources per dataset.
+assert any(lakehouse["id"] in d["connectionDetails"]["url"]
+           for d in result["datasourceInstances"]), result["datasourceInstances"]
+print(f"scan: {len(cols)} columns, measure {list(measures)[0]}, "
+      f"{len(result['datasourceInstances'])} datasource(s)", flush=True)
+
+# And the flags are honoured: without datasetSchema the dataset is still listed
+# but carries no schema. A crawler that forgets the flag and gets the schema
+# anyway would ship, then break against real Fabric.
+bare_id = request("POST", f"{admin_base}/getInfo", {"workspaces": [workspace["id"]]}, fabric_token)[2]["id"]
+bare = request("GET", f"{admin_base}/scanResult/{bare_id}", token=fabric_token)[2]
+bare_ds = [d for w in bare["workspaces"] for d in w["datasets"] if d["id"] == semantic["id"]][0]
+assert not bare_ds.get("tables"), bare_ds
+assert bare_ds["name"], bare_ds
+print("scan without datasetSchema: dataset listed, schema withheld", flush=True)
+
 # Track the DAX observation through the real MLflow client and attached server.
 tracking_uri = f"{FABRIC}/mlflow/workspaces/{workspace['id']}"
 os.environ["MLFLOW_TRACKING_URI"] = tracking_uri

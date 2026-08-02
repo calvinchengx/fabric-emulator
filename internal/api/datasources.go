@@ -24,6 +24,7 @@ import (
 	"net/http"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
+	"github.com/calvinchengx/fabric-emulator/internal/semanticmodel"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
@@ -67,7 +68,26 @@ func (a *API) listDatasources(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		writeErr(w, http.StatusBadRequest, "InvalidDataset", err.Error())
 		return
 	}
+	out, err := a.modelDatasources(m)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "InvalidDataset", err.Error())
+		return
+	}
 
+	writeJSON(w, http.StatusOK, map[string]any{
+		"@odata.context": odataContext(r, fmt.Sprintf("datasets/%s/datasources", it.ID)),
+		"value":          out,
+	})
+}
+
+// modelDatasources resolves a parsed model's declared sources. Shared with the
+// admin scanner, which needs the same answer for its datasourceInstances.
+//
+// Returns what it resolved AND the error, so the two callers can differ: the
+// datasources endpoint refuses a broken model outright, while a scan reports
+// the problem against that dataset and carries on — one unreadable model must
+// not cost a crawler the whole tenant.
+func (a *API) modelDatasources(m *semanticmodel.Model) ([]datasource, error) {
 	out := []datasource{}
 	seen := map[string]bool{}
 	for _, t := range m.Tables {
@@ -77,21 +97,17 @@ func (a *API) listDatasources(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		expr, found := m.Expressions[t.DirectLake.ExpressionSource]
 		if !found {
 			// A table pointing at an expression that is not there is a broken
-			// model, and saying so beats omitting the row and reporting a
-			// shorter list as though the model were smaller.
-			writeErr(w, http.StatusBadRequest, "InvalidDataset",
-				fmt.Sprintf("table %q references missing expression %q",
-					t.Name, t.DirectLake.ExpressionSource))
-			return
+			// model. Saying so beats omitting the row and reporting a shorter
+			// list as though the model were smaller.
+			return out, fmt.Errorf("table %q references missing expression %q",
+				t.Name, t.DirectLake.ExpressionSource)
 		}
 		wsRef, lakeRef, err := parseDirectLakeLocation(expr)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "InvalidDataset",
-				fmt.Sprintf("table %q: %v", t.Name, err))
-			return
+			return out, fmt.Errorf("table %q: %w", t.Name, err)
 		}
 		// Resolve to ids where possible so the answer is stable under rename,
-		// and fall back to what the model said when it names something that no
+		// falling back to what the model said when it names something that no
 		// longer exists — reporting the declared source is more useful than
 		// dropping it, and the caller can see it does not resolve.
 		wsID, lakeID := wsRef, lakeRef
@@ -116,9 +132,5 @@ func (a *API) listDatasources(w http.ResponseWriter, r *http.Request, p *auth.Pr
 			},
 		})
 	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"@odata.context": odataContext(r, fmt.Sprintf("datasets/%s/datasources", it.ID)),
-		"value":          out,
-	})
+	return out, nil
 }
