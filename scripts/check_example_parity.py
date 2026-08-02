@@ -1,25 +1,33 @@
 #!/usr/bin/env python3
-"""The two advanced medallion examples must differ ONLY in how silver is built.
+"""Each medallion PAIR must differ only in how silver is built.
 
-`examples/medallion-advanced-pyspark` and `examples/medallion-advanced-dbt-fabricspark`
-run the same twenty-two steps over the same three source systems. Exactly one of
-those steps differs — bronze to silver, imperative PySpark against declarative
-dbt-fabricspark — and that single difference is the entire point of shipping two
-examples instead of one.
+There are two pairs, and both make the same promise:
 
-Everything else being byte-identical is what makes the `medallion-compare` job's
-claim meaningful. "Both silver builds agree, row for row" is only a statement
-about the two ENGINES if every other step is the same code; the moment a second
-file diverges, the comparison is measuring that too and cannot say which caused
-what.
+    medallion-pyspark           vs  medallion-dbt-fabricspark
+    medallion-advanced-pyspark  vs  medallion-advanced-dbt-fabricspark
 
-WHY THIS EXISTS. The pair silently diverged: a lineage change landed in the
-pyspark copies of star_silver.py and semantic_model.py and not in the
-dbt-fabricspark ones. Both legs stayed green — the dbt leg simply reported less
-lineage, and nothing asserted that it should report any. That is the failure
-mode this repo keeps meeting: an absence that every available check reports as a
-presence. Two files drifting apart cannot be seen by any test that runs one of
-them.
+Within a pair, exactly one step changes — bronze to silver, imperative PySpark
+against declarative dbt-fabricspark — and that single difference is the entire
+point of shipping two examples instead of one. Gold is a Warehouse in all four,
+built by dbt-fabric over TDS, because dbt-fabricspark materialises into a
+Lakehouse and has no path to a Warehouse.
+
+Everything else being byte-identical is what makes the comparison meaningful.
+"Both silver builds agree, row for row" is a statement about two ENGINES only if
+every other step is the same code; the moment a second file diverges, the
+comparison is measuring that too and cannot say which caused what.
+
+WHY THIS EXISTS. The advanced pair silently diverged: a lineage change landed in
+the pyspark copies of star_silver.py and semantic_model.py and not in the
+dbt-fabricspark ones. Both CI legs stayed green — the dbt leg simply reported
+eleven fewer lineage edges, and nothing asserted it should report any. Then a
+README landed in one advanced example and not the other, and that was green too.
+Neither is visible to any test that runs ONE example: two files drifting apart
+cannot be seen from inside either one.
+
+The simple pair was unguarded for the same reasons and by the same accident —
+the advanced pair got a check first only because that is where the drift was
+noticed.
 
 THE ALLOWLISTS ARE THE CONTRACT. Every entry below is a difference that is
 DELIBERATE, and each says why. Adding an entry is how you declare "these two
@@ -27,36 +35,26 @@ examples are now allowed to differ here" — a real decision about what the pair
 claims, to be argued for in the commit that makes it rather than slipped in to
 make a red build green.
 
-There are TWO lists, because "the content may differ" and "the file may be
-absent" are different permissions and one list cannot express both.
+There are TWO lists per pair, because "the content may differ" and "the file may
+be absent" are different permissions and one list cannot express both. A single
+list did conflate them, and the README failure showed why: exempting README.md
+for its content would ALSO have permitted it being missing, greening the check
+on the exact defect it had just caught.
 """
 import pathlib
 import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-A = ROOT / "examples" / "medallion-advanced-pyspark"
-B = ROOT / "examples" / "medallion-advanced-dbt-fabricspark"
+EXAMPLES = ROOT / "examples"
 
-# Two different exemptions, because "these may differ" and "this may be missing"
-# are different claims and conflating them hides the second.
-#
-# A single ALLOWED set did conflate them, and the first real failure showed why:
-# a README landed in one example and not the other. README content MUST differ —
-# each describes its own silver engine — so the obvious fix was to exempt it,
-# and under one combined set that exemption would ALSO have permitted the
-# missing file, silently blessing a standalone example with no README. The
-# check would have gone green on the exact defect it had just caught.
-
-# Present in BOTH, content may differ.
-ALLOWED_CONTENT = {
-    # The one real difference, and the reason both examples exist.
+# Present in BOTH halves of a pair; content may differ. Shared by both pairs
+# because both make the same promise for the same reasons.
+CONTENT = {
     "silver.py": "the step under comparison: PySpark vs dbt-fabricspark",
-    # One docstring line and one step LABEL name the engine. The step list, the
-    # order, and the runner are identical — the step SEQUENCE is asserted
-    # separately below, so this exemption cannot hide a dropped step.
+    # One docstring line and one step LABEL name the engine. The step SEQUENCE
+    # is asserted separately below, so this cannot hide a dropped step.
     "pipeline.py": "docstring + the silver step's human-readable label",
-    # Different silver engines pull different dependency trees.
     "pyproject.toml": "dbt-fabricspark and its transitive deps",
     "uv.lock": "resolved from the pyproject above",
     # Each example is standalone and a reader may copy out either one, so both
@@ -64,101 +62,149 @@ ALLOWED_CONTENT = {
     "README.md": "each describes its own silver engine",
 }
 
-# May exist in ONE example only.
+# May exist in ONE half only. Shared entries here, per-pair extras below.
 ONLY_IN = {
-    # dbt-fabricspark needs a dbt project and a Livy client to drive it; the
-    # PySpark example needs neither.
     "livy_query.py": "dbt-fabricspark only: the Livy HC client silver.py drives",
     "silver_dbt": "dbt-fabricspark only: the dbt project that builds silver",
-    # The PySpark example carries a warehouse probe the dbt one has no use for.
-    "check_wh.py": "PySpark only: warehouse probe",
 }
 
+PAIRS = [
+    {
+        "label": "simple medallion",
+        "a": "medallion-pyspark",
+        "b": "medallion-dbt-fabricspark",
+        "only_in": {
+            # The comparison lives with the dbt half and reads the pyspark
+            # half's summary; only one copy can own it.
+            "compare.py": "dbt-fabricspark only: reads both silver summaries",
+        },
+        # `compare` is a real extra step, not a drifted one. Named here so the
+        # sequence check still compares everything else in order.
+        "extra_steps_in_b": ["compare"],
+    },
+    {
+        "label": "advanced medallion",
+        "a": "medallion-advanced-pyspark",
+        "b": "medallion-advanced-dbt-fabricspark",
+        "only_in": {
+            "check_wh.py": "PySpark only: warehouse probe",
+        },
+        "extra_steps_in_b": [],
+    },
+]
 
-def files(root):
+
+def tracked(root):
     """Every TRACKED file under `root`, relative to it.
 
-    Asked of git rather than the filesystem, deliberately. Running either
-    example leaves artifacts behind — state.json, gold_summary.json, a whole
-    pbip/ project, dbt's target/ and logs/ — and only one of the pair gets run
+    Asked of git rather than the filesystem, deliberately. Running an example
+    leaves artifacts behind — state.json, gold_summary.json, a whole pbip/
+    project, dbt's target/ and logs/ — and only one half of a pair is ever run
     at a time, so a filesystem walk reports a dozen phantom divergences that say
     nothing about the source. Tracked files are also exactly what this check is
-    about: two examples that must be the same IN THE REPOSITORY.
+    about: examples that must be the same IN THE REPOSITORY.
     """
     out = subprocess.run(["git", "ls-files", "-z", "--", str(root)],
                          cwd=ROOT, capture_output=True, text=True, check=True)
-    rel = pathlib.Path(root).relative_to(ROOT).as_posix() + "/"
+    rel = root.relative_to(ROOT).as_posix() + "/"
     return {p[len(rel):] for p in out.stdout.split("\0") if p.startswith(rel)}
 
 
-def _in(rel, table):
-    """True if `rel` is listed in `table`, by exact name or as a child of a dir."""
+def listed(rel, table):
+    """True if `rel` is in `table`, by exact name or as a child of a dir."""
     return any(rel == a or rel.startswith(a + "/") for a in table)
 
 
-def main():
-    if not A.is_dir() or not B.is_dir():
-        sys.exit(f"missing example directory: {A if not A.is_dir() else B}")
+def steps(pipeline):
+    """The step names, in order, as pipeline.py declares them."""
+    return [ln.split('("', 1)[1].split('"', 1)[0]
+            for ln in pipeline.read_text().splitlines()
+            if ln.strip().startswith('("')]
 
-    fa, fb = files(A), files(B)
+
+def check(pair):
+    """Return a list of divergences for one pair."""
+    a, b = EXAMPLES / pair["a"], EXAMPLES / pair["b"]
+    for d in (a, b):
+        if not d.is_dir():
+            return [f"missing example directory: {d}"]
+
+    only_in = {**ONLY_IN, **pair["only_in"]}
+    fa, fb = tracked(a), tracked(b)
     problems = []
 
-    # Only ONLY_IN excuses an absence. A file exempted for its CONTENT is still
-    # required in both — that is the whole distinction.
     def absence(rel, have, lack):
         why = (" — exempt for content, which does not excuse it being missing"
-               if _in(rel, ALLOWED_CONTENT) else "")
+               if listed(rel, CONTENT) else "")
         # The file list comes from git, so a file written but never `git add`ed
         # is invisible here. Without this line the author of the fix re-runs the
-        # check, sees the identical failure, and goes looking for the wrong bug.
+        # check, sees the identical failure, and looks for the wrong bug.
         if (lack / rel).exists():
             why += (f"\n      (it EXISTS at {lack.name}/{rel} but is untracked — "
                     f"this check reads `git ls-files`; `git add` it)")
         return f"{rel}: present in {have.name}, absent from {lack.name}{why}"
 
+    # Only ONLY_IN excuses an absence. A file exempted for its CONTENT is still
+    # required in both — that is the whole distinction.
     for rel in sorted(fa - fb):
-        if not _in(rel, ONLY_IN):
-            problems.append(absence(rel, A, B))
+        if not listed(rel, only_in):
+            problems.append(absence(rel, a, b))
     for rel in sorted(fb - fa):
-        if not _in(rel, ONLY_IN):
-            problems.append(absence(rel, B, A))
+        if not listed(rel, only_in):
+            problems.append(absence(rel, b, a))
     for rel in sorted(fa & fb):
-        if _in(rel, ALLOWED_CONTENT) or _in(rel, ONLY_IN):
+        if listed(rel, CONTENT) or listed(rel, only_in):
             continue
-        if (A / rel).read_bytes() != (B / rel).read_bytes():
+        if (a / rel).read_bytes() != (b / rel).read_bytes():
             problems.append(f"{rel}: differs between the two examples")
 
     # The step SEQUENCE must match even though pipeline.py is exempt, or the
     # exemption granted for a docstring would also cover a dropped step.
-    steps = {}
-    for root in (A, B):
-        src = (root / "pipeline.py").read_text()
-        steps[root.name] = [ln.split('("', 1)[1].split('"', 1)[0]
-                            for ln in src.splitlines()
-                            if ln.strip().startswith('("')]
-    if steps[A.name] != steps[B.name]:
+    sa, sb = steps(a / "pipeline.py"), steps(b / "pipeline.py")
+    extra = pair["extra_steps_in_b"]
+    # A stale exemption is its own bug: if the extra step is gone, the allowance
+    # silently starts covering a step that drifted out of the OTHER pipeline.
+    for name in extra:
+        if name not in sb:
+            problems.append(
+                f"pipeline.py: '{name}' is exempted as an extra step in "
+                f"{b.name} but is not in its pipeline — remove the exemption")
+    trimmed = [s for s in sb if s not in extra]
+    if trimmed != sa:
         problems.append(
             f"pipeline.py step ORDER differs, which the exemption does not "
-            f"cover:\n      {A.name}: {steps[A.name]}\n      {B.name}: {steps[B.name]}")
+            f"cover:\n      {a.name}: {sa}\n      {b.name} (less {extra}): {trimmed}")
 
-    if problems:
-        print(f"The advanced medallion pair has diverged in "
-              f"{len(problems)} place(s):\n", file=sys.stderr)
-        for p in problems:
-            print(f"  - {p}", file=sys.stderr)
-        print("\nThese two examples must differ ONLY in how silver is built — that is\n"
-              "what lets the medallion-compare job attribute a difference to the\n"
-              "ENGINE rather than to the code around it. Mirror the change into both\n"
-              "copies, or add an entry to ALLOWED_CONTENT (must exist in both) or\n"
-              "ONLY_IN (may exist in one) in this script, SAYING WHY the\n"
-              "difference is deliberate.", file=sys.stderr)
+    return problems
+
+
+def main():
+    failed = False
+    for pair in PAIRS:
+        problems = check(pair)
+        if problems:
+            failed = True
+            print(f"\n{pair['label']}: diverged in {len(problems)} place(s):",
+                  file=sys.stderr)
+            for p in problems:
+                print(f"  - {p}", file=sys.stderr)
+        else:
+            a, b = EXAMPLES / pair["a"], EXAMPLES / pair["b"]
+            shared = tracked(a) & tracked(b)
+            only_in = {**ONLY_IN, **pair["only_in"]}
+            n = sum(1 for r in shared
+                    if not (listed(r, CONTENT) or listed(r, only_in)))
+            print(f"{pair['label']}: {n} files byte-identical, "
+                  f"{len(CONTENT)} may differ in content, "
+                  f"{len(only_in)} may exist in one half, step order matches")
+
+    if failed:
+        print("\nEach pair must differ ONLY in how silver is built — that is what lets\n"
+              "the comparison attribute a difference to the ENGINE rather than to the\n"
+              "code around it. Mirror the change into both halves, or add an entry to\n"
+              "CONTENT (must exist in both) or the pair's only_in (may exist in one),\n"
+              "SAYING WHY the difference is deliberate.", file=sys.stderr)
         return 1
-
-    n = len(fa & fb) - sum(1 for r in fa & fb
-                           if _in(r, ALLOWED_CONTENT) or _in(r, ONLY_IN))
-    print(f"advanced medallion pair: {n} files byte-identical, "
-          f"{len(ALLOWED_CONTENT)} may differ in content, "
-          f"{len(ONLY_IN)} may exist in one only, step order matches")
     return 0
 
 
