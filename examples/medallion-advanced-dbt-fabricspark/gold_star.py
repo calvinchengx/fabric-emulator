@@ -15,6 +15,7 @@ import os
 import subprocess
 import time
 
+import source_system as src
 import web_store as web
 from common import SQL_AUD, TDS_SERVER, load, log, tds_connect, token
 
@@ -51,6 +52,33 @@ with tds_connect(st["warehouse"], sql_tok) as c:
     lines = cur.execute("SELECT COUNT(*) FROM fct_order_lines").fetchone()[0]
     people = cur.execute("SELECT COUNT(*) FROM dim_customer").fetchone()[0]
     products = cur.execute("SELECT COUNT(*) FROM dim_product").fetchone()[0]
+
+    # Every count above is checked below, and none of them was before. They were
+    # printed, which is not the same thing: a star that dropped half its POS
+    # orders on a bad join, or a dimension that quietly became POS-only, prints
+    # a smaller number and nothing else changes.
+    by_source = dict(cur.execute(
+        "SELECT source_system, COUNT(*) FROM fct_order_lines "
+        "GROUP BY source_system").fetchall())
+
+    # The identity count, from the table dim_customer was NOT built from.
+    # star_silver.py writes silver_customer_conformed by full-outer joining the
+    # three sources and silver_customer_xref by unioning them — different code
+    # paths over the same resolution, so an identity dropped or invented in
+    # either shows up as a disagreement here. dim_customer selects straight from
+    # conformed, so comparing it against conformed would prove nothing.
+    xref_identities = cur.execute(
+        f"SELECT COUNT(DISTINCT customer_key) FROM [{st['lakehouse']}]"
+        f".dbo.silver_customer_xref").fetchone()[0]
+
+    # The referential break must still be broken. web_store.py emits lines
+    # against products no catalogue carries; silver quarantines them, so they
+    # must not have arrived in the dimension by way of dim_product's union with
+    # what the facts reference. If they did, the star would be reporting revenue
+    # for products that do not exist.
+    unknown = cur.execute(
+        "SELECT COUNT(*) FROM dim_product WHERE product_id IN ({})".format(
+            ", ".join(f"'{p}'" for p in web.UNKNOWN_PRODUCT_IDS))).fetchone()[0]
     # BY (source_system, channel), not channel alone. "web" is a POS channel AND
     # the name of a separate source system, so grouping on the word merges
     # 50,871 POS web-channel orders into the web store's total. The collision is
@@ -101,6 +129,43 @@ with tds_connect(st["warehouse"], sql_tok) as c:
         ) x""").fetchone()[0]
 
 assert len({c for _, c in by_channel} ) > 1, f"the star has only one channel: {by_channel}"
+
+# --- the three counts the log line used to report unchecked --------------------
+#
+# LINES, per source. The POS side travels through silver_customer_xref on an
+# INNER join, so a customer who failed to resolve takes their orders out of the
+# star with them — silently, and the remaining totals stay plausible. Counting
+# the survivors against silver's own oracle is what fct_order_lines.sql says
+# should happen; it said so next to a dbt schema test that was never written.
+pos_lines = by_source.get("contoso_pos", 0)
+web_lines = by_source.get("contoso_web", 0)
+assert pos_lines == src.EXPECTED_SILVER_ORDERS, \
+    (pos_lines, src.EXPECTED_SILVER_ORDERS,
+     "POS orders vanished between silver and the star — the xref inner join")
+assert web_lines == web.EXPECTED_WEB_CLEAN_LINES, \
+    (web_lines, web.EXPECTED_WEB_CLEAN_LINES)
+# And nothing else is in the fact. A third source_system appearing here would
+# pass both counts above and change every aggregate in the star.
+assert lines == pos_lines + web_lines, (lines, sorted(by_source))
+
+# PEOPLE. Not a row count for its own sake: the claim dim_customer makes is that
+# it spans three systems rather than being a POS dimension wearing a general
+# name, and that is only true if it holds MORE than POS ever knew.
+assert people == xref_identities, \
+    (people, xref_identities,
+     "dim_customer and silver_customer_xref disagree on how many people exist")
+assert people > src.EXPECTED_SILVER_CUSTOMERS, \
+    (people, src.EXPECTED_SILVER_CUSTOMERS,
+     "dim_customer holds no more people than POS alone — resolution added nobody")
+
+# PRODUCTS. Both source systems transact the same eight catalogue ids, so the
+# dimension is exactly the catalogue; the uncatalogued path in dim_product.sql
+# is real but unexercised at this fixture size, and saying so here is better
+# than a number that could be anything.
+assert products == web.EXPECTED_WEB_PRODUCTS, (products, web.EXPECTED_WEB_PRODUCTS)
+assert unknown == 0, \
+    (f"{unknown} quarantined products reached dim_product: "
+     f"{web.UNKNOWN_PRODUCT_IDS} are referential breaks, not products")
 
 # The web STORE's revenue — its own source system, not every line labelled web.
 web_revenue = float(by_channel.get(("contoso_web", "web"), 0))
