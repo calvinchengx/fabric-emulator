@@ -31,6 +31,25 @@ def load(path, how):
     return json.loads(path.read_text())
 
 
+# The counterpart is produced by a DIFFERENT example, so running this one alone
+# cannot produce it. Locally that is a nudge, not a failure — you ran half the
+# comparison and the fix is one command. In CI the two examples are separate
+# matrix legs on separate runners, so this path is the normal case there and
+# failing the leg on it would mean the medallion could never be green.
+#
+# Skipping is only honest because the assertion still runs SOMEWHERE: the
+# `medallion-compare` job in .github/workflows/ci.yml collects both summaries as
+# artifacts and runs this file with both present. If that job is ever removed,
+# this skip becomes an assertion nobody makes — which is exactly the shape of
+# failure this comparison exists to catch, so remove them together or not at all.
+if not PYSPARK_SUMMARY.exists():
+    print("==> silver comparison SKIPPED — the other half is not here\n")
+    print(f"    missing {PYSPARK_SUMMARY}")
+    print("    it is written by ../medallion-pyspark, a separate example, so this")
+    print("    run could not have produced it. Locally: `uv run python pipeline.py`")
+    print("    there, then re-run this step. In CI the medallion-compare job does it.")
+    sys.exit(0)
+
 ps = load(PYSPARK_SUMMARY, "`uv run python pipeline.py` in ../medallion-pyspark")
 db = load(DBT_SUMMARY, "`uv run python pipeline.py` here")
 
