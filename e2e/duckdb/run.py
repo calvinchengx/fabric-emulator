@@ -24,6 +24,38 @@ def log(msg):
     print(f"==> {msg}", flush=True)
 
 
+
+def require_free_port(port, what):
+    """Refuse to start when something else already owns `port`.
+
+    Without this, a bind failure is INDISTINGUISHABLE FROM SUCCESS: the child
+    process dies, wait_healthy then health-checks whatever else is listening,
+    gets its 200, and the harness proceeds against a stranger's service. That is
+    exactly what happened — an unrelated compose project published its own entra
+    on 18443, so tokens were minted by that issuer and the emulator correctly
+    refused them with a 401 at workspace create. The failure looked like a bug
+    in the code under test and cost a day before someone checked `docker ps`.
+
+    Checked before anything starts, so the message names the real problem rather
+    than a symptom three steps downstream.
+    """
+    import socket
+    # CONNECT, do not bind. A bind test is wrong twice over: SO_REUSEADDR lets a
+    # 127.0.0.1 bind succeed on macOS while another socket holds 0.0.0.0 (which
+    # is exactly how a docker -p publish looks), and without it the test races
+    # its own TIME_WAIT. Asking "does anything answer here" has neither problem
+    # and is the actual question.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        if s.connect_ex(("127.0.0.1", int(port))) == 0:
+            raise SystemExit(
+                f"port {port} is already in use, so this harness cannot start its own "
+                f"{what}.\n"
+                f"  A health check would then pass against the OTHER service and every\n"
+                f"  token would carry the wrong issuer.\n"
+                f"  Free the port (`docker ps | grep {port}`) or override it:\n"
+                f"    ENTRA_PORT=<free> FABRIC_PORT=<free> python3 <this harness>")
+
 def wait_healthy(url, deadline=60):
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -65,6 +97,8 @@ def start(name, cmd, env):
 
 
 try:
+    require_free_port(ENTRA_PORT, "entra")
+    require_free_port(FABRIC_PORT, "fabric")
     log(f"starting entra-emulator on :{ENTRA_PORT}")
     start("entra", [entra_bin], {**os.environ, "ORIGIN_MODE": "compat", "PORT": ENTRA_PORT,
           "DB_PATH": os.path.join(WORK, "entra.sqlite"), "TLS_CERT_DIR": os.path.join(WORK, "entra-tls")})
