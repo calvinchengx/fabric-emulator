@@ -63,6 +63,8 @@ type API struct {
 	// refreshes is per-dataset refresh history for the Power BI refresh
 	// endpoints. In memory on purpose — see refreshes.go.
 	refreshes refreshLog
+	// scans holds completed admin metadata scans — see scanner.go.
+	scans scanStore
 	// RetryAfterSeconds is advertised on 202 responses.
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.
@@ -203,6 +205,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerDatasets(mux)
 	a.registerRefreshes(mux)
 	a.registerDatasources(mux)
+	a.registerScanner(mux)
 	a.registerVSCodeCompatibility(mux)
 	a.registerAirflow(mux)
 	a.registerMLflow(mux)
@@ -252,6 +255,15 @@ func (a *API) withAuth(h handler) http.HandlerFunc {
 			return
 		}
 		a.mu.Unlock()
+		if a.Auth == nil {
+			// Symmetric with withPBIAuth. Without this the nil validator is a
+			// method call on nil, which panics: net/http closes the socket and
+			// the client sees EOF with nothing naming the cause. A 501 that
+			// says "not configured" is the same information, delivered.
+			writeErr(w, http.StatusNotImplemented, "AuthNotConfigured",
+				"This emulator has no token validator configured.")
+			return
+		}
 		p, err := a.Auth.ValidateRequest(r)
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer authorization_uri="`+a.Auth.Issuer+`"`)
