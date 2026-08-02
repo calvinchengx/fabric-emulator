@@ -65,6 +65,63 @@ Every package covers itself (90% floor cross-package, currently ~90%), on
 Linux, macOS, and Windows. The full matrix of what CI verifies — including
 the real-tool e2e — is in [12-e2e-matrix.md](12-e2e-matrix.md).
 
+## The failure this codebase keeps producing
+
+Seven times in one day, across two people working in parallel, a bug took the
+same shape: **something was missing or invented, and every available check
+reported success.** They are collected here because each was expensive, each
+looked different at the time, and the pattern is what makes the next one cheap.
+
+Two directions. The first is an absence reported as a presence:
+
+| what was absent | what every check said |
+|---|---|
+| a `DESCRIBE` returning zero rows for a table that has columns | correct schema, no error — dbt read "this table has no columns" |
+| a `USING delta` clause dbt never emitted, because `delta` is the one value its macro omits | the config was demonstrably applied; that same value suppressed the clause |
+| the `np` protocol, unregistered, so a pipe DSN parsed as TCP | `msdsn.Parse` returned **no error** and a usable-looking config |
+| the lakehouse tables a reflection never loaded | reflection reported success; the fingerprint said "already done" |
+| an `entra` process that never bound its port | the health check passed — against a different service on that port |
+| a `keep-alive` scoped to a step's shell, dead before it was needed | the step ran green |
+| lineage edges a whole warehouse build never recorded | a clean run, no error, an empty graph |
+
+The second direction is worse and rarer: **a fabrication reported as
+evidence.** A lineage endpoint that paired reads against writes as a cross
+product recorded six well-formed bronze-to-silver edges where three of the
+movements never happened. Nothing was missing, the count went *up*, and the
+result looked more complete than the truth. No schema check can catch that;
+only comparing against what actually moved.
+
+### What actually caught them
+
+Not review, and not more assertions. In every case it was **looking at what the
+thing produced** rather than at whether it ran without complaint:
+
+- reading dbt's compiled SQL instead of the Jinja that generated it;
+- listing the edges instead of trusting the edge count;
+- printing the parsed DSN (`Host "np:"`, `Protocols [tcp]`, `err = nil`);
+- `docker ps`, which settled a day-long misdiagnosis in one line.
+
+### Three habits that follow
+
+**A test that cannot fail is worse than no test**, because it certifies the area
+as covered. A parse-only test sat green next to a dial that could not connect;
+the handler tests injected path values and would have passed with every route
+mis-registered. Check a new test fails when you break the thing it guards —
+several here did not, and the guard for the port collision above passed its own
+review while sailing straight past the collision it was written for.
+
+**Prefer a loud failure to a plausible answer.** Endpoints in this repo refuse
+rather than return an empty list where empty is indistinguishable from missing
+(`GET /v1.0/myorg/datasets` for a personal workspace), refuse a refresh that
+would re-read nothing, and refuse `modifiedSince` rather than silently doing a
+full pass. Where empty IS the truth — a model with no datasources — it is
+returned, and the difference is the point.
+
+**A skip is only honest while the assertion still runs somewhere.** The
+`medallion-compare` job exists because `compare.py` skips when its counterpart
+is absent; delete the job and the comparison stops being made with nothing going
+red. Both carry a comment saying to remove them together or not at all.
+
 ## Running Python: always through `uv`
 
 Every Python entry point — e2e runners, `scripts/`, Makefile targets, CI steps —
