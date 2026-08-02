@@ -140,6 +140,50 @@ totals = {row["Sales[Region]"]: row["[Total]"] for row in rows}
 assert totals == {"us": 125, "eu": 60, "apac": 125}, totals
 print(f"OneLake Delta -> Direct Lake DAX: PASS {totals}", flush=True)
 
+# The POSITIVE branch of the Power BI lineage/refresh surface, witnessed here
+# because this is the only e2e that builds a real Direct Lake model. The
+# negative branch — an inline-data model reporting no datasources and refusing
+# a refresh — is witnessed in e2e/semantic-model.
+#
+# DATASOURCES is the lineage a governance tool asks for: until this endpoint
+# existed, "this model reads that lakehouse" lived only inside the TMSL and the
+# emulator's resolver, and nothing could be asked.
+base = f"{FABRIC}/v1.0/myorg/groups/{workspace['id']}/datasets/{semantic['id']}"
+srcs = request("GET", f"{base}/datasources", token=pbi_token)[2]["value"]
+assert len(srcs) == 1, f"want exactly the one lakehouse, got {srcs}"
+assert lakehouse["id"] in srcs[0]["connectionDetails"]["url"], srcs
+print(f"datasources: {srcs[0]['datasourceType']} -> {srcs[0]['connectionDetails']['path']}", flush=True)
+
+# This model NAMES a source it can re-read, so isRefreshable must be true and
+# the refresh must be accepted — the same predicate decides both, so a client
+# that trusts the flag is never then refused.
+one = request("GET", base, token=pbi_token)[2]
+assert one["isRefreshable"] is True, f"a Direct Lake model must be refreshable: {one}"
+
+status, headers, _ = request("POST", f"{base}/refreshes", {"notifyOption": "NoNotification"}, pbi_token)
+assert status == 202, status
+request_id = headers.get("RequestId")
+assert request_id, "no RequestId header; a polling client has nothing to poll on"
+
+history = request("GET", f"{base}/refreshes", token=pbi_token)[2]["value"]
+assert history and history[0]["requestId"] == request_id, (request_id, history)
+assert history[0]["status"] == "Completed", history[0]
+one_refresh = request("GET", f"{base}/refreshes/{request_id}", token=pbi_token)[2]
+assert one_refresh["requestId"] == request_id, one_refresh
+print(f"refresh: 202 -> {request_id} -> {history[0]['status']}", flush=True)
+
+# A Direct Lake model reads its Delta at QUERY time, so the refresh changed
+# nothing and the answers must be identical. That is the point of reporting
+# Completed immediately rather than staging a fake reload.
+after = request(
+    "POST", f"{base}/executeQueries",
+    {"queries": [{"query": "EVALUATE SUMMARIZECOLUMNS(Sales[Region], \"Total\", [Total])"}]},
+    pbi_token,
+)[2]
+after_totals = {r["Sales[Region]"]: r["[Total]"] for r in after["results"][0]["tables"][0]["rows"]}
+assert after_totals == totals, (totals, after_totals)
+print("post-refresh DAX unchanged — Direct Lake was already current", flush=True)
+
 # Track the DAX observation through the real MLflow client and attached server.
 tracking_uri = f"{FABRIC}/mlflow/workspaces/{workspace['id']}"
 os.environ["MLFLOW_TRACKING_URI"] = tracking_uri
