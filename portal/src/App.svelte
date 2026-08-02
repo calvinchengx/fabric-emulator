@@ -60,7 +60,6 @@
         <a href={'#' + id} class:active={route === id}>{label}</a>
       {/each}
     {/each}
-    <div class="note muted">Not for production use.</div>
   </nav>
   <main>
     {#if route === 'workspaces'}<Workspaces />
@@ -117,8 +116,5 @@
   }
   main {
     @apply w-full max-w-[1400px] flex-1 p-6 lg:p-8;
-  }
-  .note {
-    @apply mt-auto p-3;
   }
 </style>
