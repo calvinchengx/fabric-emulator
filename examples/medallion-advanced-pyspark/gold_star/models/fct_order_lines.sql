@@ -28,7 +28,12 @@ with pos as (
 
     -- inner join, deliberately: a POS order whose customer did not resolve has
     -- no place in a star keyed by customer. Dropping it here would be silent,
-    -- so the schema test below counts what survives against silver.
+    -- so tests/assert_no_order_lines_dropped.sql counts what survives against
+    -- silver, per source system.
+    --
+    -- That sentence used to end "so the schema test below counts what survives
+    -- against silver", and there was no such test — not below, not anywhere.
+    -- The comment had been standing in for the check it described.
     join {{ source('silver', 'silver_customer_xref') }} x
       on  x.source_id     = o.customer_id
       and x.source_system = 'contoso_pos'
