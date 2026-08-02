@@ -197,6 +197,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerLivy(mux)
 	a.registerShortcuts(mux)
 	a.registerExecuteQueries(mux)
+	a.registerDatasets(mux)
 	a.registerVSCodeCompatibility(mux)
 	a.registerAirflow(mux)
 	a.registerMLflow(mux)
