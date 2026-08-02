@@ -67,11 +67,37 @@ with tds_connect(st["warehouse"], sql_tok) as c:
     # the log line below then credited identity resolution for someone it never
     # had to resolve. The number was large and entirely wrong about its subject.
     # Source system is what the comment always meant.
-    both = cur.execute("""
-        SELECT COUNT(*) FROM (
+    #
+    # It is also CHECKED, which it was not before. The channel bug survived
+    # because this number had no oracle: it read as proof that the example's
+    # whole thesis had been demonstrated, and nothing anywhere would have
+    # disagreed with any value it took. A wrong number that fails is a bug; a
+    # wrong number that reads as proof is the thing this example is about.
+    #
+    # `wrong_key` counts the customers here that the RESOLUTION does not agree
+    # are multi-source — a different step's answer, from silver_customer_
+    # conformed's survivorship, rather than this query grading its own work.
+    # Under the channel bug it would have been large, because a POS-only
+    # customer who bought in store and on the web has source_count = 1.
+    both, wrong_key = cur.execute("""
+        SELECT COUNT(*),
+               SUM(CASE WHEN d.source_count > 1 THEN 0 ELSE 1 END)
+        FROM (
             SELECT customer_key FROM fct_order_lines
             GROUP BY customer_key
             HAVING COUNT(DISTINCT source_system) > 1
+        ) f
+        LEFT JOIN dim_customer d ON d.customer_key = f.customer_key""").fetchone()
+    # The same cohort, counted by naming the two systems instead of counting
+    # distinct ones. A shape that cannot agree with the buggy one by accident:
+    # it also fails if ERP ever starts contributing fact rows, which
+    # COUNT(DISTINCT source_system) would absorb without a word.
+    pos_and_web = cur.execute("""
+        SELECT COUNT(*) FROM (
+            SELECT customer_key FROM fct_order_lines
+            GROUP BY customer_key
+            HAVING MAX(CASE WHEN source_system = 'contoso_pos' THEN 1 ELSE 0 END) = 1
+               AND MAX(CASE WHEN source_system = 'contoso_web' THEN 1 ELSE 0 END) = 1
         ) x""").fetchone()[0]
 
 assert len({c for _, c in by_channel} ) > 1, f"the star has only one channel: {by_channel}"
@@ -87,6 +113,16 @@ assert abs(web_revenue - web.EXPECTED_WEB_REVENUE) < 0.01, \
 pos_web = float(by_channel.get(("contoso_pos", "web"), 0))
 assert pos_web > 0, ("POS web-channel revenue vanished — the two meanings of "
                      "'web' have been merged again", sorted(by_channel))
+
+# The cross-source cohort is a CLAIM, so it gets assertions rather than a log
+# line. Non-empty first: if resolution silently stopped working, every total
+# above still balances and only this goes to zero.
+assert both > 0, "no customer buys from two source systems — resolution did nothing"
+assert int(wrong_key or 0) == 0, \
+    (f"{wrong_key} customers counted as multi-source in the fact are not "
+     f"multi-source in dim_customer — the fact is counting something else")
+assert both == pos_and_web, (both, pos_and_web,
+                             "two shapes of the same question disagree")
 
 log(f"gold star: dbt build green in {build_secs:.1f}s — {lines:,} order lines, "
     f"{people:,} customers, {products:,} products")
