@@ -600,12 +600,15 @@ jobs:
           # executeQueries with a Power BI audience token. Also proves the gold
           # DQ tests REJECT bad data, not merely pass on good.
           - harness: medallion
+            example: medallion-pyspark
             title: "Medallion — PySpark to silver, dbt-fabric to a Warehouse gold"
           # Same pipeline, silver built declaratively by Microsoft's
           # dbt-fabricspark over the Livy HC surface with Sail behind it. Its
-          # compare step asserts both silvers agree row for row — the tool
-          # choice must not change the answer.
+          # compare step SKIPS here — the other half is built by a different leg
+          # on a different runner — and the assertion that both silvers agree row
+          # for row is made by the medallion-compare job below, which has both.
           - harness: medallion-dbt-fabricspark
+            example: medallion-dbt-fabricspark
             title: "Medallion — dbt-fabricspark to silver, dbt-fabric to a Warehouse gold"
           # Three source systems. No key spans all three, so an ERP account
           # reaches a Web account only THROUGH POS — identity as a graph, which
@@ -613,8 +616,10 @@ jobs:
           # materialised and the star joins both selling channels in gold; the
           # step that resolves also names the cohorts it cannot place.
           - harness: medallion-advanced
+            example: medallion-advanced-pyspark
             title: "Advanced medallion — three sources resolved and joined (PySpark silver)"
           - harness: medallion-advanced-dbt-fabricspark
+            example: medallion-advanced-dbt-fabricspark
             title: "Advanced medallion — three sources resolved and joined (dbt-fabricspark silver)"
     runs-on: ubuntu-latest
     steps:
@@ -637,6 +642,51 @@ jobs:
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/${{ matrix.harness }}/run.py
+      # Each leg's silver summary, so the comparison below can have BOTH halves.
+      # A leg cannot compare itself: the counterpart is built by a different
+      # example on a different runner, which is why compare.py skips when run
+      # inside a single leg.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: silver-summary-${{ matrix.harness }}
+          path: examples/${{ matrix.example }}/silver_summary.json
+          if-no-files-found: warn
+
+  # The assertion the dbt-fabricspark example exists to make: two tools, one
+  # answer. It cannot run inside either leg — each produces one half — so it runs
+  # here, with both summaries downloaded, and it is a GATE rather than a nudge.
+  #
+  # This job is load-bearing for compare.py's skip. That skip is only honest
+  # while this exists to make the assertion somewhere; delete this and the
+  # comparison silently stops being made, which is precisely the failure the
+  # comparison is for. Remove them together or not at all.
+  medallion-compare:
+    name: Both silver builds agree, row for row
+    needs: medallion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: silver-summary-medallion
+          path: examples/medallion-pyspark
+      - uses: actions/download-artifact@v4
+        with:
+          name: silver-summary-medallion-dbt-fabricspark
+          path: examples/medallion-dbt-fabricspark
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      # Fail loudly if a summary is missing rather than letting compare.py's
+      # skip fire here — in THIS job an absent half means the artifact plumbing
+      # broke, not that a developer ran one example.
+      - run: |
+          for f in examples/medallion-pyspark/silver_summary.json \
+                   examples/medallion-dbt-fabricspark/silver_summary.json; do
+            [ -f "$f" ] || { echo "::error::$f was not published by the medallion legs"; exit 1; }
+          done
+      - run: uv run --frozen --no-sync python examples/medallion-dbt-fabricspark/compare.py
 
   duckdb:
     name: Real DuckDB SQL over lakehouse Delta
