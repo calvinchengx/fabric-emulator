@@ -14,7 +14,7 @@ references and the provenance pattern.
 |---|---|---|---|
 | **Model format** (TMSL/TMDL) | `bi-shared-docs` `tmsl/`, `tmdl/` | TMSL JSON schema; TMDL grammar | ✅ round-trip vs real `.tmdl`/`model.bim` fixtures |
 | **DAX language** | learn.microsoft.com/dax (function ref); [MS-SSAS-T] query semantics | ❌ no grammar/OpenAPI | ⚠️ **only a live AS engine** → oracle = *captured (query → rows) fixtures* |
-| **XMLA wire** | [MS-SSAS-T], [MS-SSAS] `xmla-rs:rowset`, `bi-shared-docs` XMLA ref | XSD for envelopes/rowsets | ❌ **ADOMD.NET + a real AS server** — native .NET, not endpoint-overridable |
+| **XMLA wire** | [MS-SSAS-T], [MS-SSAS] `xmla-rs:rowset`, `bi-shared-docs` XMLA ref | XSD for envelopes/rowsets | ⚠️ **ADOMD.NET, and it IS endpoint-overridable** — runs on Linux and connects to a host we name; see `spikes/xmla-client` |
 | **executeQueries REST** | `third_party/powerbi-rest-swagger/swagger.json` | ✅ **official OpenAPI (MIT)** | ✅ real REST client + the schema |
 
 ## The decisive distinction
@@ -23,10 +23,18 @@ Every e2e we ship works by pointing a **real, unmodified client** at the
 emulator via an endpoint override (delta-rs, ABFS, azure-sdk, fabric-cicd, the
 Livy proxy). Two of these four layers cannot support that:
 
-- **XMLA** — the client is ADOMD.NET/MSOLAP (native .NET) talking a proprietary
-  SOAP/rowset protocol; it can't be pointed at a hand-rolled Go server, and
-  reimplementing enough Analysis Services to fool it is out of scope and would
-  be "mostly faked." So **real SemPy over XMLA stays deferred-with-cause.**
+- **XMLA** — deferred, but the CAUSE recorded here was wrong and has been
+  retested. `spikes/xmla-client` points Microsoft's own ADOMD.NET at a listener
+  we control, from Linux, in a container, and it connects: the `powerbi://<host>`
+  form is endpoint-overridable, a self-signed CA is trusted the usual way, and
+  the bearer token comes from the connection string. Its first call is plain
+  JSON REST (`GET /powerbi/databases/v201606/workspaces`), not SOAP.
+
+  So "can't be pointed at a hand-rolled Go server" is false, and a CI oracle
+  exists. What stands is the SIZE: the spike never reached XMLA/SOAP — the
+  client is still routing when the stub refuses it — so how much of [MS-SSAS-T]
+  a useful implementation needs is still unmeasured, and `docs/24`'s `L` is
+  unchanged. **Deferred on cost, not on feasibility.**
 - **DAX** — correctness is defined by a live engine (Power BI / SSAS / AS),
   none of which is pure-Go or CI-runnable. Its golden reference can only be
   **captured `(DAX query → rows)` fixtures**, recorded once from a real engine
