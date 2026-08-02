@@ -120,14 +120,70 @@ func observeBatch(obs Observer, database string, typ byte, payload, response []b
 // it is what the CTAS rewrite emits, so excluding it would drop precisely the
 // statements this file exists to see. They are admitted only when the text
 // contains "into" at all, which is a substring test rather than a parse.
+//
+// What the leading keyword IS, though, has to be found rather than assumed.
+// Measured against dbt-fabric, every statement it sends arrives as
+//
+//	/* {"app": "dbt", …} */
+//	USE [<database>];
+//	EXEC('CREATE TABLE … AS SELECT …');
+//
+// so "the first keyword" was `/*` or `USE`, neither of which is a write, and
+// the entire warehouse build was filtered out before it could be parsed. The
+// tokenizer downstream splits the batch and handles each statement; this
+// prefilter simply has to look past the preamble to find the one that matters.
 func mightMove(sql string) bool {
-	switch firstKeyword(sql) {
-	case "CREATE", "INSERT", "DROP", "ALTER", "EXEC", "EXECUTE", "SP_RENAME":
-		return true
-	case "SELECT", "WITH":
-		return strings.Contains(strings.ToLower(sql), "into")
+	for range 8 { // bounded: a preamble, not an arbitrary script
+		switch leadingKeyword(sql) {
+		case "CREATE", "INSERT", "DROP", "ALTER", "EXEC", "EXECUTE", "SP_RENAME":
+			return true
+		case "SELECT", "WITH":
+			return strings.Contains(strings.ToLower(sql), "into")
+		case "USE", "SET", "DECLARE":
+			// A preamble statement: skip it and judge what follows.
+			_, rest, found := strings.Cut(sql, ";")
+			if !found {
+				return false
+			}
+			sql = rest
+		default:
+			return false
+		}
 	}
 	return false
+}
+
+// leadingKeyword returns the upper-cased first SQL word, skipping whitespace
+// and both comment forms. firstKeyword (server.go) skips only `--`, which is
+// enough for the read-only guard it serves and not enough here: dbt opens every
+// statement with a `/* … */` metadata comment.
+func leadingKeyword(sql string) string {
+	for {
+		sql = strings.TrimLeft(sql, " \t\r\n")
+		switch {
+		case strings.HasPrefix(sql, "--"):
+			_, rest, found := strings.Cut(sql, "\n")
+			if !found {
+				return ""
+			}
+			sql = rest
+		case strings.HasPrefix(sql, "/*"):
+			_, rest, found := strings.Cut(sql[2:], "*/")
+			if !found {
+				return ""
+			}
+			sql = rest
+		default:
+			end := strings.IndexFunc(sql, func(r rune) bool {
+				return !(r == '_' || r == '@' || r == '#' ||
+					(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+			})
+			if end < 0 {
+				end = len(sql)
+			}
+			return strings.ToUpper(sql[:end])
+		}
+	}
 }
 
 // statementTexts pulls the candidate SQL out of whichever message shape carries

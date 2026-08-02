@@ -145,3 +145,72 @@ func TestObserveBatchReadsEveryRPCTextParam(t *testing.T) {
 		t.Fatalf("a read recorded something: %v", got)
 	}
 }
+
+// TestObserveDbtsRealStatementShape uses the statements captured verbatim from
+// a dbt-fabric run against this emulator (examples/.../gold/logs/dbt.log).
+//
+// Every one arrives behind a `/* {"app": "dbt", …} */` metadata comment and a
+// `USE [<database>];`. The prefilter judged "the first keyword" and saw `/*`
+// or `USE`, so the whole gold build was discarded before parsing — the graph
+// showed gold with no incoming edges and nothing to explain why.
+func TestObserveDbtsRealStatementShape(t *testing.T) {
+	const db = "f590f0f7-0657-4019-9b10-bc86b5b5f74b"
+	var got []string
+	obs := func(_ string, flows []tsql.Flow) {
+		for _, f := range flows {
+			got = append(got, f.Kind+"|"+strings.Join(f.Target, "."))
+		}
+	}
+	run := func(sql string) { observeBatch(obs, db, PktSQLBatch, batchMsg(sql), done(doneFinal, 0)) }
+
+	// The CTAS, exactly as dbt sends it.
+	run(`/* {"app": "dbt", "dbt_version": "1.12.0", "node_id": "model.contoso_gold.dim_customer"} */
+    USE [` + db + `];
+    EXEC('CREATE TABLE [` + db + `].[dbo].[dim_customer__dbt_temp]  AS SELECT * FROM [` + db + `].[dbo].[dim_customer__dbt_temp__dbt_tmp_vw] OPTION (LABEL = ''dbt-fabric-dw'');');`)
+	if len(got) != 1 || got[0] != tsql.FlowCTAS+"|"+db+".dbo.dim_customer__dbt_temp" {
+		t.Fatalf("dbt CTAS = %v; want the table it built", got)
+	}
+
+	// Its catalog probe is a read behind the same preamble and must stay silent.
+	got = nil
+	run(`/* {"app": "dbt"} */
+        USE [` + db + `];
+        select sch.name as schema_name, obj.name as view_name
+        from sys.sql_expression_dependencies refs
+        inner join sys.objects obj on refs.referencing_id = obj.object_id
+    OPTION (LABEL = 'dbt-fabric-dw');`)
+	if got != nil {
+		t.Fatalf("a catalog read recorded %v", got)
+	}
+
+	// The swap, and the scaffold drop.
+	got = nil
+	run(`/* {"app": "dbt"} */
+    USE [` + db + `];
+    EXEC sp_rename 'dbo.dim_customer__dbt_temp', 'dim_customer';`)
+	if len(got) != 1 || got[0] != tsql.FlowRename+"|dbo.dim_customer__dbt_temp" {
+		t.Fatalf("dbt rename = %v", got)
+	}
+	got = nil
+	run(`/* {"app": "dbt"} */
+    USE [` + db + `];
+    EXEC('DROP table IF EXISTS [dbo].[dim_customer__dbt_temp];');`)
+	if len(got) != 1 || got[0] != tsql.FlowDropTable+"|dbo.dim_customer__dbt_temp" {
+		t.Fatalf("dbt drop = %v", got)
+	}
+}
+
+func TestLeadingKeywordSkipsCommentsAndPreamble(t *testing.T) {
+	for sql, want := range map[string]string{
+		"  select 1":                     "SELECT",
+		"-- a note\nCREATE TABLE t":      "CREATE",
+		"/* {\"app\":\"dbt\"} */ USE [x]": "USE",
+		"/* one *//* two */ drop table t": "DROP",
+		"/* never closed":                 "",
+		"":                                "",
+	} {
+		if got := leadingKeyword(sql); got != want {
+			t.Errorf("leadingKeyword(%q) = %q; want %q", sql, got, want)
+		}
+	}
+}
