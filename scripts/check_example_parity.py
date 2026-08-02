@@ -88,8 +88,9 @@ PAIRS = [
         "b": "medallion-advanced-dbt-fabricspark",
         "only_in": {
             "check_wh.py": "PySpark only: warehouse probe",
+            "compare.py": "dbt-fabricspark only: reads both halves' summaries",
         },
-        "extra_steps_in_b": [],
+        "extra_steps_in_b": ["compare"],
     },
 ]
 

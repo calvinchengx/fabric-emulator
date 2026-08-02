@@ -312,3 +312,45 @@ report_lineage("star_silver", [
       (_lake, "Tables/silver_customer_xref")],
      [(_lake, "Tables/silver_web_order_lines")]),
 ])
+
+# --- what compare.py reads ----------------------------------------------------
+# The advanced pair's claim is stronger than the simple pair's. There, two silver
+# engines are shown to agree on SILVER. Here the question is whether the engine
+# choice perturbs the IDENTITY RESOLUTION built on top of it — a harder thing to
+# get right and a quieter thing to get wrong, because the cohorts can shift
+# between each other while every row count stays put.
+#
+# This step is byte-identical in both examples (scripts/check_example_parity.py
+# enforces it), so any difference in these numbers came from silver, which is the
+# only thing that differs. That is what makes the comparison attributable.
+#
+# The example NAMES ITSELF from its directory rather than carrying an engine
+# label: a hardcoded label would be the one line that differs between two files
+# required to be identical.
+import json  # noqa: E402
+import pathlib  # noqa: E402
+
+_here = pathlib.Path(__file__).resolve().parent
+_here.joinpath("star_silver_summary.json").write_text(json.dumps({
+    "example": _here.name,
+    "rows": {
+        "silver_customer_xref": n_xref,
+        "silver_customer_conformed": n_conformed,
+        "silver_web_order_lines": n_lines,
+    },
+    # The cohorts, not just the totals. `multi_source + web_only + erp_only` can
+    # hold steady while a hundred people move between them, and a row-count
+    # comparison would report that as agreement.
+    "cohorts": {
+        "multi_source": multi,
+        "web_only": web_only,
+        "erp_only": erp_only,
+        "erp_bridged": erp_bridged,
+        "web_bridged": web_bridged,
+    },
+    # An ambiguous key is a match nobody could safely make. If one engine's
+    # silver produced a different number of them, the two resolutions are not
+    # comparable however well their totals line up.
+    "ambiguous_keys_excluded": {"phone": amb_phone, "email": amb_email},
+    "countries": sorted(countries),
+}, indent=2))
