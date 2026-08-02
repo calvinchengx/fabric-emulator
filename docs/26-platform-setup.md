@@ -257,6 +257,24 @@ To prove Spark really computes rather than merely listens: `make spark`.
 | `sqlserver` slow to become healthy | macOS (Apple silicon) | x86 emulation; expected, it does finish |
 | `kustainer` crashes on boot | macOS (Apple silicon) | no AVX2 under Rosetta — see [25-rti-kusto.md](25-rti-kusto.md#running-it-on-apple-silicon) |
 | `set: Illegal option -` running a script | Linux, macOS | the script was checked out with CRLF; see below |
+| `govern-ingest` exits 1 after a `git pull`, everything else healthy | any | its image is built locally, so `docker compose pull` cannot refresh it — rebuild, see below |
+
+### After a pull, rebuild what compose cannot pull
+
+`govern-ingest` declares a `build:` and no `image:`, so it exists only as a
+local build and `docker compose pull` skips it. A pull that changes
+[`pyproject.toml`](../pyproject.toml) or `uv.lock` therefore leaves it running
+an image with the old dependency set, and the failure is quiet — every other
+container is healthy and only the one-shot exits non-zero:
+
+```bash
+docker compose --profile governance build govern-ingest
+make up
+```
+
+`sail` and `spark-agent` declare both `image:` and `build:`, so they refresh
+from GHCR on a plain pull; only `govern-ingest` has no published image to fall
+back on. Details in [22-openmetadata.md](22-openmetadata.md).
 
 ### A note on line endings
 

@@ -192,7 +192,7 @@ because its provider is external. Two things make that binding concrete:
 
 - **`authoritativeDefinitions` points at the vendor's OpenAPI document**, not at
   a description of it. The stub currently points at
-  [`source_system.py`](../examples/medallion-pyspark/source_system.py) and says so.
+  [`source_system.py`](../examples/contoso-fixtures/source_system.py) and says so.
 - **The schema is generated from that spec, not typed by hand.** An OpenAPI
   `components.schemas` entry maps to an ODCS object almost one-for-one:
   `properties` → `properties`, `required` → `required: true`, `enum` →
