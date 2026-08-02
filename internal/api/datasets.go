@@ -54,23 +54,28 @@ type dataset struct {
 	Name         string `json:"name"`
 	Description  string `json:"description,omitempty"`
 	ConfiguredBy string `json:"configuredBy,omitempty"`
-	// A SemanticModel item here holds its data as a definition part, so it is
-	// not refreshable in the Power BI sense — there is no datasource to pull
-	// from. Stated rather than omitted, because `isRefreshable` absent and
-	// `false` mean different things to a client deciding whether to offer a
-	// refresh button, and the honest answer today is a definite no.
+	// Computed per model, not hardcoded: true when the model names a source
+	// this emulator can go and read again (Direct Lake today), false when its
+	// rows are an inline `data.json` snapshot with nothing behind them.
+	//
+	// The SAME predicate gates POST /refreshes, so a client that trusts this
+	// flag is never then refused — see modelHasReadableSource in refreshes.go.
+	// Stated rather than omitted, because absent and false mean different
+	// things to a client deciding whether to offer a refresh button.
 	IsRefreshable bool `json:"isRefreshable"`
 	// Likewise definite: the push-rows API is not implemented.
 	AddRowsAPIEnabled bool `json:"addRowsAPIEnabled"`
 }
 
-func toDataset(it *store.Item, configuredBy string) dataset {
+func (a *API) toDataset(it *store.Item, configuredBy string) dataset {
+	_, refreshable := a.refreshableModel(it.ID)
 	return dataset{
-		ID:                it.ID,
-		Name:              it.DisplayName,
-		Description:       it.Description,
-		ConfiguredBy:      configuredBy,
-		IsRefreshable:     false,
+		ID:            it.ID,
+		Name:          it.DisplayName,
+		Description:   it.Description,
+		ConfiguredBy:  configuredBy,
+		IsRefreshable: refreshable,
+		// Definite: the push-rows API is not implemented.
 		AddRowsAPIEnabled: false,
 	}
 }
@@ -94,7 +99,7 @@ func (a *API) listDatasetsInGroup(w http.ResponseWriter, r *http.Request, p *aut
 	}
 	out := make([]dataset, 0, len(items))
 	for _, it := range items {
-		out = append(out, toDataset(it, p.ID))
+		out = append(out, a.toDataset(it, p.ID))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"@odata.context": odataContext(r, fmt.Sprintf("groups/%s/datasets", wid)),
@@ -119,7 +124,7 @@ func (a *API) getDataset(w http.ResponseWriter, r *http.Request, p *auth.Princip
 	if _, _, ok := a.requireRole(w, it.WorkspaceID, p, store.RoleViewer); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, toDataset(it, p.ID))
+	writeJSON(w, http.StatusOK, a.toDataset(it, p.ID))
 }
 
 // listDatasetsMyWorkspace refuses rather than returning an empty list. See the

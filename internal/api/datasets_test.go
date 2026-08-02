@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -208,5 +209,47 @@ func TestDatasetRoutesAreRegistered(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		t.Error("executeQueries -> 404: a dataset route shadowed it")
+	}
+}
+
+// isRefreshable must be computed, not asserted. A Direct Lake model names a
+// source the emulator can re-read; an inline-data model does not.
+func TestIsRefreshableReflectsTheModel(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+
+	// Inline data.json — a snapshot with nothing behind it.
+	imported := createSemanticModel(t, st, ws.ID)
+
+	// Direct Lake — reads its Delta at query time.
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "sales-lake"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	dl := &store.Item{WorkspaceID: ws.ID, Type: "SemanticModel", DisplayName: "Direct Sales"}
+	if err := st.CreateItem(dl, []store.DefinitionPart{{
+		Path: "model.bim", PayloadType: "InlineBase64",
+		Payload: base64.StdEncoding.EncodeToString(directLakeModel(ws.ID, lake.ID))}}); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]bool{imported.ID: false, dl.ID: true}
+	w := do(a.listDatasetsInGroup, admin, "GET", "", map[string]string{"groupId": ws.ID})
+	var resp struct {
+		Value []struct {
+			ID            string `json:"id"`
+			IsRefreshable bool   `json:"isRefreshable"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Value) != 2 {
+		t.Fatalf("listed %d, want 2: %s", len(resp.Value), w.Body.Bytes())
+	}
+	for _, d := range resp.Value {
+		if d.IsRefreshable != want[d.ID] {
+			t.Errorf("dataset %s isRefreshable=%v, want %v", d.ID, d.IsRefreshable, want[d.ID])
+		}
 	}
 }
