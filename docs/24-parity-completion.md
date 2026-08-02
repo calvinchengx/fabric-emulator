@@ -78,7 +78,7 @@ real SQL Server. These are the same class of work.
 
 | Gap | Notes | Size |
 |---|---|---|
-| XMLA / ADOMD.NET (SemPy's transport) | Documented protocol (MS-XMLA / MS-SSAS); no harder than TDS was. Gated on real demand — no CI oracle today | L |
+| XMLA / ADOMD.NET (SemPy's transport) | Documented protocol (MS-XMLA / MS-SSAS); no harder than TDS was. A CI oracle DOES exist — `spikes/xmla-client` runs ADOMD.NET on Linux against a host we name. Gated on cost and real demand, not feasibility | L |
 | Full DAX | The bounded engine works; this is open-ended surface growth, not a blocker | L, open-ended |
 | On-prem gateway **contract** | Emulate the protocol, not the proprietary binary | M |
 
