@@ -30,8 +30,8 @@ def ensure_out_writable() -> None:
     """Make `out/` writable by whatever uid the probe containers run as.
 
     The JVM image is `apache/spark`, which drops to `USER spark` (uid 185). The
-    bind-mounted `out/` is owned by the checkout user, so that probe ran all 19
-    capabilities and then died on `PermissionError: '/out/jvm.json'` — after the
+    bind-mounted `out/` is owned by the checkout user, so that probe ran every
+    capability and then died on `PermissionError: '/out/jvm.json'` — after the
     measuring was done, which is the most wasteful place to fail.
 
     It passed on macOS throughout: Docker Desktop's filesystem ignores the uid
