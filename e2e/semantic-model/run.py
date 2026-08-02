@@ -191,6 +191,35 @@ try:
         raise SystemExit(f"datasets list accepted a Fabric-audience token: {code}")
     log("datasets list rejects a non-Power BI audience token (401)")
 
+    # LINEAGE and REFRESHABILITY for this model, which is an INLINE one — its
+    # rows are a data.json definition part. Both answers below are the negative
+    # branch, and both are the honest answer rather than a gap:
+    #
+    #   datasources -> []     it genuinely reads nothing
+    #   refresh     -> 400    there is nothing to re-read, so a Completed here
+    #                         would tell a caller their numbers were brought up
+    #                         to date when nothing was.
+    #
+    # The POSITIVE branch (a Direct Lake model: non-empty datasources, refresh
+    # accepted) is witnessed in e2e/data-science-loop, which already builds one.
+    _, _, srcs = http("GET", f"{FABRIC}/v1.0/myorg/groups/{ws}/datasets/{dataset}/datasources", token=pbi)
+    if srcs.get("value") != []:
+        raise SystemExit(f"an inline-data model reported datasources: {srcs}")
+    log("datasources: [] — an inline model reads nothing, and says so")
+
+    code, _, body = http("POST", f"{FABRIC}/v1.0/myorg/groups/{ws}/datasets/{dataset}/refreshes",
+                         {"notifyOption": "NoNotification"}, token=pbi, allow_error=True)
+    if code != 400:
+        raise SystemExit(f"refresh of an inline-data model returned {code}, want 400: {body}")
+    log("refresh refused (400) — nothing to re-read, and the error says why")
+
+    # And isRefreshable on the dataset must agree with that refusal, or a client
+    # that trusts the flag gets contradicted by the endpoint.
+    _, _, one = http("GET", f"{FABRIC}/v1.0/myorg/groups/{ws}/datasets/{dataset}", token=pbi)
+    if one.get("isRefreshable") is not False:
+        raise SystemExit(f"isRefreshable={one.get('isRefreshable')} contradicts the 400 above")
+    log("isRefreshable=false agrees with the refusal")
+
     # Run each DAX golden query through executeQueries and check the rows.
     golden = json.load(open(os.path.join(FIX, "golden_queries.json")))
     ran = 0
