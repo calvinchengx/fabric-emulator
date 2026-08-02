@@ -33,6 +33,7 @@ const (
 	KindTable    = "table"    // a Delta commit landed: a table has a new version
 	KindJob      = "job"      // an item job started or reached a terminal state
 	KindActivity = "activity" // a pipeline activity reached its outcome
+	KindLineage  = "lineage"  // a source→target movement was recorded
 	KindDropped  = "dropped"  // a subscriber fell behind; N events were lost
 )
 
@@ -73,6 +74,14 @@ type Event struct {
 	Error        string  `json:"error,omitempty"`
 	Duration     float64 `json:"durationInSeconds,omitempty"`
 	RetryAttempt int     `json:"retryAttempt,omitempty"`
+
+	// KindLineage — a movement was recorded, so a graph can redraw without
+	// waiting for a job to end. The edge itself stays in lineage_edges; this
+	// carries just enough to describe the hop in a log line.
+	SourceItemID string `json:"sourceItemId,omitempty"`
+	SourcePath   string `json:"sourcePath,omitempty"`
+	TargetPath   string `json:"targetPath,omitempty"`
+	Producer     string `json:"producer,omitempty"`
 
 	// KindDropped
 	Dropped int64 `json:"dropped,omitempty"`

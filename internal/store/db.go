@@ -432,6 +432,20 @@ PRAGMA foreign_keys = ON;
 			return err
 		}
 	}
+	// lineage_edges.job_id becomes OPTIONAL.
+	//
+	// Every edge used to come from an executing activity, so job_id was NOT NULL
+	// with a foreign key. A warehouse write has no Fabric job at all — dbt opens
+	// a TDS connection and builds gold — so that constraint made the last hop of
+	// a medallion unrecordable (internal/server/warehouselineage.go).
+	//
+	// NULL rather than '': a NULL foreign key is satisfied by definition, so
+	// job-produced edges keep their referential integrity and their ON DELETE
+	// CASCADE, while a job-less edge is simply not claiming a job it never had.
+	// SQLite cannot relax a column constraint in place, hence the rebuild.
+	if err := s.relaxLineageJobFK(); err != nil {
+		return err
+	}
 	// Display-name uniqueness enforced by the DATABASE, not just the
 	// pre-insert check in the API: check-then-insert races (two concurrent
 	// creates of the same name both pass the check) would otherwise violate
@@ -456,6 +470,59 @@ PRAGMA foreign_keys = ON;
 		return err
 	}
 	return s.seedTenantSettings()
+}
+
+// relaxLineageJobFK rebuilds lineage_edges so job_id may be NULL, for the
+// warehouse writes that have no Fabric job. It is a no-op once applied, so
+// startup stays idempotent.
+//
+// The rebuild runs with foreign_keys OFF (SQLite's documented procedure for
+// altering a table other tables may reference) and inside a transaction, so a
+// failure leaves the original table untouched rather than a half-migrated one.
+func (s *Store) relaxLineageJobFK() error {
+	var ddl string
+	if err := s.db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type='table' AND name='lineage_edges'`).Scan(&ddl); err != nil {
+		return err
+	}
+	if !strings.Contains(ddl, "job_id TEXT NOT NULL REFERENCES") {
+		return nil // already relaxed
+	}
+	if _, err := s.db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer func() { _, _ = s.db.Exec(`PRAGMA foreign_keys = ON`) }()
+	_, err := s.db.Exec(`
+BEGIN;
+CREATE TABLE lineage_edges_new (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	job_id TEXT REFERENCES job_instances(id) ON DELETE CASCADE,
+	activity_name TEXT NOT NULL,
+	source_workspace_id TEXT NOT NULL,
+	source_item_id TEXT NOT NULL,
+	source_path TEXT NOT NULL,
+	target_workspace_id TEXT NOT NULL,
+	target_item_id TEXT NOT NULL,
+	target_path TEXT NOT NULL,
+	producer TEXT NOT NULL DEFAULT 'Copy',
+	created_at INTEGER NOT NULL,
+	UNIQUE(job_id, activity_name, source_item_id, source_path, target_item_id, target_path)
+);
+INSERT INTO lineage_edges_new SELECT id, workspace_id, job_id, activity_name,
+	source_workspace_id, source_item_id, source_path,
+	target_workspace_id, target_item_id, target_path, producer, created_at
+	FROM lineage_edges;
+DROP TABLE lineage_edges;
+ALTER TABLE lineage_edges_new RENAME TO lineage_edges;
+-- The table's UNIQUE cannot dedupe job-less edges: SQL treats NULLs as
+-- distinct, so every dbt rebuild would append a second copy of the same
+-- movement. This partial index is that constraint for the job-less rows.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_lineage_edges_nojob
+  ON lineage_edges (activity_name, source_item_id, source_path, target_item_id, target_path)
+  WHERE job_id IS NULL;
+COMMIT;`)
+	return err
 }
 
 // NewID returns a random lowercase UUIDv4 — the id format Fabric uses for
