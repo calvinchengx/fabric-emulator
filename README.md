@@ -10,7 +10,27 @@ plane (workspaces, items, RBAC, git, LROs) plus a real **OneLake** ADLS/Blob
 data plane, a **T-SQL warehouse** over TDS, native **Livy** sessions on a real
 Spark engine, **Data Factory** pipelines, and **KQL** eventhouses.
 
-![fabric-emulator demo: a real Entra token, a workspace, a lakehouse, and a file written to and read back from OneLake — against two local binaries](docs/demo/demo.gif)
+![fabric-emulator's Data flow view: a three-source medallion building live — landing files to bronze, silver, a warehouse star, and a semantic model queried by Power BI](docs/demo/flow.gif)
+
+That is a real pipeline, running locally with no Azure subscription: three
+source systems land, get conformed, get resolved into one customer identity,
+and reach a Warehouse star that Power BI queries — while the portal draws the
+lineage as it happens. Every edge records **how** it is known, so you can tell
+what the emulator watched from what a step merely claimed.
+
+Run it yourself:
+
+```bash
+docker compose up -d
+cd examples/medallion-advanced-pyspark && uv sync --frozen && uv run python pipeline.py
+```
+
+Then open <https://localhost:9443/#flow>. Twenty-two steps, about four and a
+half minutes, and the run asserts its own results — it is a test, not a demo
+script. ([the example](examples/medallion-advanced-pyspark/) ·
+[flow observability](docs/31-flow-observability.md))
+
+## How it fits together
 
 Real Fabric layers two independent systems: **Entra ID** issues the bearer
 tokens, and the **Fabric control plane** (`https://api.fabric.microsoft.com/v1/…`)
@@ -25,6 +45,8 @@ second — and validates every incoming token against entra-emulator's JWKS,
                                                           ▼
                                                      entra-emulator  (JWKS, issuer)
 ```
+
+![a real Entra token, a workspace, a lakehouse, and a file written to and read back from OneLake — against two local binaries](docs/demo/demo.gif)
 
 ## Why
 
@@ -62,16 +84,20 @@ The bare binary runs none of the engines (clock-derived, milliseconds) — but
 documented path is engine-backed by default. Heavier engines (KQL, OpenMetadata)
 stay behind opt-in profiles. Coverage floor is 90% (currently ~90%).
 
-Docs: <https://calvinchengx.github.io/fabric-emulator/> — for a full worked
-example, the [end-to-end tutorial](docs/28-tutorial-end-to-end.md) runs Entra →
-Key Vault → landing → bronze/silver → gold with dbt → semantic model (and
-executes in CI as `e2e/medallion`). The code it walks through is
-[`examples/medallion-pyspark`](examples/medallion-pyspark/) — runnable on its own. Reference reading: the
+Docs: <https://calvinchengx.github.io/fabric-emulator/>
+
+Start with the [end-to-end tutorial](docs/28-tutorial-end-to-end.md) — Entra →
+Key Vault → landing → bronze/silver → gold with dbt → semantic model, walking
+through [`examples/medallion-pyspark`](examples/medallion-pyspark/) and executing
+in CI. The [four medallion examples](examples/) scale that up to three source
+systems and both gold engines. Reference reading: the
 [architecture](docs/03-architecture.md), the
 [control-plane API](docs/07-control-plane-api.md), [OneLake](docs/08-onelake.md),
-the [roadmap](docs/13-roadmap.md), [real compute](docs/14-real-compute.md), the
-[warehouse over TDS](docs/16-warehouse-tds.md), [running modes](docs/27-running-modes.md), and the
-[parity map](docs/parity.md).
+[real compute](docs/14-real-compute.md), the
+[warehouse over TDS](docs/16-warehouse-tds.md),
+[flow observability](docs/31-flow-observability.md),
+[running modes](docs/27-running-modes.md), the [roadmap](docs/13-roadmap.md), and
+the [parity map](docs/parity.md).
 
 ## Parity at a glance
 
@@ -85,33 +111,21 @@ the [roadmap](docs/13-roadmap.md), [real compute](docs/14-real-compute.md), the
 Every 🟢 row names the witness that proves it, and a CI job fails the build if a
 claim loses its witness. Full detail: [parity map](docs/parity.md).
 
-## Relationship to entra-emulator
+## What `docker compose up` gives you
 
 The two projects are decoupled — fabric-emulator depends on entra-emulator
 **only over HTTP** (JWKS + issuer, plus a token-mint call for workspace
-identities). A [`docker-compose.yml`](docker-compose.yml) brings up both with
-fabric pre-wired to entra's issuer. It could equally point at a real Entra
-tenant.
+identities), so it could equally point at a real Entra tenant.
 
-`docker compose up` attaches **real engines by default** — a Spark agent and a
-SQL Server sidecar, via the auto-loaded
-[`docker-compose.override.yml`](docker-compose.override.yml) — so Livy
-sessions, notebook cells, and the T-SQL/TDS warehouse surface run for real out
-of the box. `docker compose -f docker-compose.yml up` opts out to the lite,
-contract-only pair.
+| Command | You get |
+|---|---|
+| `docker compose up` | both emulators **plus real engines** — a Spark agent and a SQL Server sidecar, via the auto-loaded [override](docker-compose.override.yml). Livy sessions, notebook cells and the T-SQL/TDS warehouse run for real |
+| `docker compose -f docker-compose.yml up` | the lite, contract-only pair — honest `501`s on the engine surfaces |
+| `--profile rti` | Microsoft's own KQL engine behind Eventhouse / KQL Database ([docs/25](docs/25-rti-kusto.md)) |
+| `--profile governance` | OpenMetadata over the same state your pipelines write ([docs/22](docs/22-openmetadata.md)) |
+| `-f docker-compose.spark-jvm.yml` | **swaps** Sail for JVM Spark, buying the RDD API, structured streaming, `OPTIMIZE`/`VACUUM` and Java/Scala UDFs at the cost of image size ([docs/20](docs/20-lakesail-engine.md)) |
 
-Optional profiles add heavier engines only when asked for — nothing is pulled
-otherwise. `--profile rti` attaches Microsoft's own KQL engine behind the
-Eventhouse / KQL Database surface
-([docs/25-rti-kusto.md](docs/25-rti-kusto.md)); `--profile governance` adds
-OpenMetadata ([docs/22-openmetadata.md](docs/22-openmetadata.md)).
-
-Overlay files *swap* an engine rather than add one. Layering
-[`docker-compose.spark-jvm.yml`](docker-compose.spark-jvm.yml) runs the Spark
-surface on the **JVM** instead of the default Sail, buying the capabilities
-Spark Connect cannot express — the RDD API (`sc`), structured streaming,
-`OPTIMIZE`/`VACUUM`, and Java/Scala UDFs — at the cost of image size and
-startup ([docs/20-lakesail-engine.md](docs/20-lakesail-engine.md)).
+Profiles pull nothing unless asked for.
 
 ## Getting started on Linux, macOS or Windows
 
