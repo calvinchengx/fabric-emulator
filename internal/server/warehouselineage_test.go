@@ -2,6 +2,7 @@ package server
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
@@ -171,3 +172,47 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+// TestWarehouseLineageRebuildOverAnExistingTable: dbt's swap when the table
+// ALREADY exists moves the old one aside first —
+//
+//	rename x -> x__dbt_backup ; rename x__dbt_temp -> x ; drop x__dbt_backup
+//
+// A downstream table built from x must still read x afterwards. Rewriting
+// source paths on rename repointed those inputs at the backup, which the drop
+// then removed: the medallion showed `fct_orders__dbt_backup -> fct_daily_revenue`,
+// an edge from a table that no longer existed.
+func TestWarehouseLineageRebuildOverAnExistingTable(t *testing.T) {
+	f := newLineageFixture(t)
+
+	// First build, and an aggregate downstream of it.
+	f.observe(`SELECT * INTO dbo.fct_orders FROM [` + f.lake.ID + `].[dbo].[silver_orders]`)
+	f.observe(`SELECT * INTO dbo.fct_daily_revenue FROM dbo.fct_orders`)
+	want := []string{
+		"dw:Tables/fct_orders -> dw:Tables/fct_daily_revenue",
+		"lake:Tables/silver_orders -> dw:Tables/fct_orders",
+	}
+	if got := f.edges(t); !equal(got, want) {
+		t.Fatalf("first build:\n got %v\nwant %v", got, want)
+	}
+
+	// Rebuild fct_orders: aside, swap, drop.
+	f.observe(`SELECT * INTO dbo.fct_orders__dbt_temp FROM [` + f.lake.ID + `].[dbo].[silver_orders]`)
+	f.observe(`EXEC sp_rename 'dbo.fct_orders', 'fct_orders__dbt_backup'`)
+	f.observe(`EXEC sp_rename 'dbo.fct_orders__dbt_temp', 'fct_orders'`)
+	f.observe(`DROP TABLE dbo.fct_orders__dbt_backup`)
+
+	// Unchanged: the aggregate still reads fct_orders, and fct_orders is still
+	// built from silver. No backup name survives anywhere.
+	if got := f.edges(t); !equal(got, want) {
+		t.Fatalf("after rebuild:\n got %v\nwant %v", got, want)
+	}
+	for _, e := range got(t, f) {
+		if strings.Contains(e, "__dbt_") {
+			t.Fatalf("scaffolding leaked into the graph: %q", e)
+		}
+	}
+}
+
+// got is a tiny helper so the assertion above reads.
+func got(t *testing.T, f *lineageFixture) []string { return f.edges(t) }
