@@ -29,7 +29,7 @@ select
     sum(f.amount)       as revenue
 
 from {{ ref('fct_order_lines') }} f
-join {{ ref('dim_customer') }} c
+join {{ ref('dim_customer_360') }} c
   on c.customer_key = f.customer_key
 
 group by f.order_date, f.source_system, f.channel, c.country

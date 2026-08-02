@@ -50,7 +50,7 @@ assert rc == 0, f"dbt build failed: exit {rc}"
 with tds_connect(st["warehouse"], sql_tok) as c:
     cur = c.cursor()
     lines = cur.execute("SELECT COUNT(*) FROM fct_order_lines").fetchone()[0]
-    people = cur.execute("SELECT COUNT(*) FROM dim_customer").fetchone()[0]
+    people = cur.execute("SELECT COUNT(*) FROM dim_customer_360").fetchone()[0]
     products = cur.execute("SELECT COUNT(*) FROM dim_product").fetchone()[0]
 
     # Every count above is checked below, and none of them was before. They were
@@ -61,11 +61,11 @@ with tds_connect(st["warehouse"], sql_tok) as c:
         "SELECT source_system, COUNT(*) FROM fct_order_lines "
         "GROUP BY source_system").fetchall())
 
-    # The identity count, from the table dim_customer was NOT built from.
+    # The identity count, from the table dim_customer_360 was NOT built from.
     # star_silver.py writes silver_customer_conformed by full-outer joining the
     # three sources and silver_customer_xref by unioning them — different code
     # paths over the same resolution, so an identity dropped or invented in
-    # either shows up as a disagreement here. dim_customer selects straight from
+    # either shows up as a disagreement here. dim_customer_360 selects straight from
     # conformed, so comparing it against conformed would prove nothing.
     xref_identities = cur.execute(
         f"SELECT COUNT(DISTINCT customer_key) FROM [{st['lakehouse']}]"
@@ -115,7 +115,7 @@ with tds_connect(st["warehouse"], sql_tok) as c:
             GROUP BY customer_key
             HAVING COUNT(DISTINCT source_system) > 1
         ) f
-        LEFT JOIN dim_customer d ON d.customer_key = f.customer_key""").fetchone()
+        LEFT JOIN dim_customer_360 d ON d.customer_key = f.customer_key""").fetchone()
     # The same cohort, counted by naming the two systems instead of counting
     # distinct ones. A shape that cannot agree with the buggy one by accident:
     # it also fails if ERP ever starts contributing fact rows, which
@@ -148,15 +148,15 @@ assert web_lines == web.EXPECTED_WEB_CLEAN_LINES, \
 # pass both counts above and change every aggregate in the star.
 assert lines == pos_lines + web_lines, (lines, sorted(by_source))
 
-# PEOPLE. Not a row count for its own sake: the claim dim_customer makes is that
-# it spans three systems rather than being a POS dimension wearing a general
-# name, and that is only true if it holds MORE than POS ever knew.
+# PEOPLE. Not a row count for its own sake: the claim dim_customer_360 makes
+# is that it spans three systems rather than being a POS dimension wearing a
+# general name, and that is only true if it holds MORE than POS ever knew.
 assert people == xref_identities, \
     (people, xref_identities,
-     "dim_customer and silver_customer_xref disagree on how many people exist")
+     "dim_customer_360 and silver_customer_xref disagree on how many people exist")
 assert people > src.EXPECTED_SILVER_CUSTOMERS, \
     (people, src.EXPECTED_SILVER_CUSTOMERS,
-     "dim_customer holds no more people than POS alone — resolution added nobody")
+     "dim_customer_360 holds no more people than POS alone — resolution added nobody")
 
 # PRODUCTS. Both source systems transact the same eight catalogue ids, so the
 # dimension is exactly the catalogue; the uncatalogued path in dim_product.sql
@@ -185,7 +185,7 @@ assert pos_web > 0, ("POS web-channel revenue vanished — the two meanings of "
 assert both > 0, "no customer buys from two source systems — resolution did nothing"
 assert int(wrong_key or 0) == 0, \
     (f"{wrong_key} customers counted as multi-source in the fact are not "
-     f"multi-source in dim_customer — the fact is counting something else")
+     f"multi-source in dim_customer_360 — the fact is counting something else")
 assert both == pos_and_web, (both, pos_and_web,
                              "two shapes of the same question disagree")
 
