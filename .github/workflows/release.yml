@@ -133,3 +133,37 @@ jobs:
           build-args: ${{ matrix.build_args }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  # The fixture wheels the standalone acceptance repo installs.
+  #
+  # `contoso-data-platform` runs this medallion against the RELEASED image, and
+  # its assertions must be the same numbers the in-tree examples assert. One
+  # generator, published, is what makes that guarantee structural rather than
+  # hopeful — two copies differing by a single RNG draw would each pass their
+  # own EXPECTED_* asserts while describing different datasets.
+  #
+  # `needs: binaries` because GoReleaser creates the Release; uploading to it
+  # before it exists 404s. `--clobber` mirrors release.replace_existing_artifacts
+  # in .goreleaser.yaml, so re-running a published tag is safe.
+  fixtures:
+    name: Fixture wheels → the release
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      # Builds at the tag's version and PROVES the wheels: installs both into a
+      # clean venv outside the tree and asserts the generators' constants from
+      # site-packages. A wheel missing a module imports fine from a checkout and
+      # fails only for the consumer, which is the wrong place to find out.
+      - run: python scripts/build_fixture_wheels.py
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+      - run: gh release upload "${{ github.ref_name }}" dist/fixtures/*.whl --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
