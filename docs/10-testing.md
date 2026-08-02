@@ -91,6 +91,41 @@ movements never happened. Nothing was missing, the count went *up*, and the
 result looked more complete than the truth. No schema check can catch that;
 only comparing against what actually moved.
 
+Two more, added after the first seven, because their mechanism is different
+enough to be worth separating.
+
+**Eight — the check that never ran, with silence where the signal would be.**
+A README was added to one half of a pair that a check, landed forty minutes
+earlier, required to differ only in how silver is built. Every path the README
+referenced existed; the author verified the contents and not the context. A
+local run was silent because that check lived only in CI, so there was nothing
+to distinguish "no invariant applies here" from "the invariant lives somewhere
+I did not look". The other seven are a check running and reporting wrongly;
+this is a check not running at all.
+
+That is why `make check` exists and why `make test` depends on it. Both repo
+invariants — `scripts/check_witnesses.py` and `scripts/check_example_parity.py`
+— are stdlib-only and run in under a second, so there was never a reason for
+them to be reachable only from a workflow file. **A check that exists only in
+CI will keep catching people after the fact.**
+
+**Nine — a measurement at the wrong granularity, reported as the answer.**
+Asked whether CI was green, one person queried the RUN and saw `queued`;
+another queried the JOB inside it and saw `success`. Both were reading the API
+correctly. The run was `queued` because one of its 55 jobs had not started; the
+job in question had run for seven seconds and passed. Two true measurements,
+in conflict, each reported as "the CI result" — and nothing in either output
+says which question it answers.
+
+This is nastier than evidence that cannot discriminate, because the evidence
+discriminates perfectly; it just answers a question adjacent to the one asked.
+The same shape recurred twice more within the hour: `git log --format='%an'`
+used to attribute a commit, in a repo where every session commits under one
+author, so the signal had no discriminating power at all; and a parity check
+"verified" by moving a file on disk, when the check reads `git ls-files` and
+had not noticed. **Before believing a measurement, say out loud which question
+it answers, and check that it is the one you asked.**
+
 ### What actually caught them
 
 Not review, and not more assertions. In every case it was **looking at what the
