@@ -70,7 +70,8 @@ jobs:
           # declares: `sh -n` on a #!/usr/bin/env bash script would reject
           # legitimate bashisms, and `bash -n` on a #!/bin/sh script would let
           # real ones through. This is what catches a CRLF checkout — dash and
-          # bash both reject a brace followed by a carriage return — and any bashism creeping into an sh script.
+          # bash both reject a brace followed by a carriage return — and
+          # any bashism creeping into an sh script.
           for f in scripts/*.sh; do
             case "$(head -1 "$f")" in
               *bash) echo "bash -n $f"; bash -n "$f" ;;
@@ -87,7 +88,8 @@ jobs:
           # including the docker targets that cannot execute off Linux.
           # Keep in step with .PHONY in the Makefile — a target nobody expands
           # here is a target nobody notices breaking.
-          for t in help doctor up up-lite up-jvm down clean restart status status-spark spark seed ps logs test; do
+          for t in help doctor up up-lite up-jvm down clean restart status \
+                   status-spark spark seed ps logs check test; do
             echo "=== make -n $t ==="
             make -n "$t"
           done

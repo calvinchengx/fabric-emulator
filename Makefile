@@ -46,7 +46,7 @@ endif
 PY ?= $(shell if command -v uv >/dev/null 2>&1; then echo "uv run --frozen --no-sync python"; \
 	else for c in python3 python py; do if "$$c" -c '' >/dev/null 2>&1; then echo "$$c"; break; fi; done; fi)
 
-.PHONY: help doctor up up-lite up-jvm down restart clean status status-spark spark logs ps seed test
+.PHONY: help doctor up up-lite up-jvm down restart clean status status-spark spark logs ps seed test check
 
 help: ## Show the available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
