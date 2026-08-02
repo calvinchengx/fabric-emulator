@@ -89,6 +89,11 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		return
 	}
 	a.applyCreationPayload(it, body.CreationPayload)
+	// A Direct Lake model declares which lakehouse tables it reads, so its
+	// definition is the moment that binding becomes a recordable hop.
+	if it.Type == "SemanticModel" {
+		a.recordModelLineage(it, p)
+	}
 	a.audit(p, &store.ActivityEvent{Operation: store.OpCreateArtifact,
 		WorkspaceID: it.WorkspaceID, ArtifactID: it.ID, ArtifactName: it.DisplayName,
 		Properties: map[string]any{"ArtifactKind": it.Type}})

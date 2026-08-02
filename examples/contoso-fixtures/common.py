@@ -207,3 +207,25 @@ def lineage_edges():
     r = S.get(f"{FABRIC}/v1/workspaces/{st['workspace']}/lineage", headers=fabric_headers())
     r.raise_for_status()
     return r.json().get("value", [])
+
+
+def report_lineage(step, reads, writes):
+    """Tell the emulator what this step moved, so it appears in the flow graph.
+
+    A queued notebook run reports its read/write set when it finishes, and the
+    emulator records the OneLake bytes it sees either way. What it cannot see is
+    which read CAUSED which write — an interactive Spark session or a plain
+    script leaves no such trace, and the emulator will not guess. So the step
+    says so itself, and the edge is marked `Reported` to distinguish a claim
+    from something the emulator watched happen.
+
+    reads/writes are (item_id, path) pairs, e.g. (lakehouse, "Tables/bronze_orders").
+    """
+    st = load()
+    body = {"step": step,
+            "reads": [{"itemId": i, "path": p} for i, p in reads],
+            "writes": [{"itemId": i, "path": p} for i, p in writes]}
+    r = S.post(f"{FABRIC}/v1/workspaces/{st['workspace']}/lineage",
+               headers=fabric_headers(), json=body)
+    assert r.status_code == 200, f"report lineage: {r.status_code} {r.text}"
+    log(f"lineage: {step} recorded {r.json()['edgesRecorded']} edge(s)")

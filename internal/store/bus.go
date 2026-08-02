@@ -34,6 +34,7 @@ const (
 	KindJob      = "job"      // an item job started or reached a terminal state
 	KindActivity = "activity" // a pipeline activity reached its outcome
 	KindLineage  = "lineage"  // a source→target movement was recorded
+	KindQuery    = "query"    // a semantic model was queried (the Power BI hop)
 	KindDropped  = "dropped"  // a subscriber fell behind; N events were lost
 )
 
@@ -82,6 +83,10 @@ type Event struct {
 	SourcePath   string `json:"sourcePath,omitempty"`
 	TargetPath   string `json:"targetPath,omitempty"`
 	Producer     string `json:"producer,omitempty"`
+
+	// KindQuery — a read, not a movement, so it is an event and never an edge.
+	Dataset string `json:"dataset,omitempty"`
+	Queries int    `json:"queries,omitempty"`
 
 	// KindDropped
 	Dropped int64 `json:"dropped,omitempty"`

@@ -233,7 +233,8 @@ CREATE TABLE IF NOT EXISTS notebook_runs (
 CREATE TABLE IF NOT EXISTS lineage_edges (
 	id TEXT PRIMARY KEY,
 	workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-	job_id TEXT NOT NULL REFERENCES job_instances(id) ON DELETE CASCADE,
+	-- Nullable: a warehouse write has no Fabric job (see relaxLineageJobFK).
+	job_id TEXT REFERENCES job_instances(id) ON DELETE CASCADE,
 	activity_name TEXT NOT NULL,
 	source_workspace_id TEXT NOT NULL,
 	source_item_id TEXT NOT NULL,
@@ -245,6 +246,11 @@ CREATE TABLE IF NOT EXISTS lineage_edges (
 	created_at INTEGER NOT NULL,
 	UNIQUE(job_id, activity_name, source_item_id, source_path, target_item_id, target_path)
 );
+-- The UNIQUE above cannot dedupe job-less edges: SQL treats NULLs as distinct,
+-- so every dbt rebuild would append a second copy of the same movement.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_lineage_edges_nojob
+  ON lineage_edges (activity_name, source_item_id, source_path, target_item_id, target_path)
+  WHERE job_id IS NULL;
 CREATE TABLE IF NOT EXISTS notebook_accesses (
 	job_id TEXT NOT NULL REFERENCES job_instances(id) ON DELETE CASCADE,
 	cell_index INTEGER NOT NULL,

@@ -67,6 +67,9 @@ func (a *API) updateDefinition(w http.ResponseWriter, r *http.Request, p *auth.P
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
+	if it.Type == "SemanticModel" {
+		a.recordModelLineage(it, p)
+	}
 	// No resultRef: like real Fabric, this LRO has no result, so the poll
 	// response carries no Location and clients stop at Succeeded.
 	a.startOperation(w, r, "UpdateItemDefinition", "")

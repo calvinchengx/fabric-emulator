@@ -144,6 +144,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/sparkJobRun", a.withAuth(a.getSparkJobRun))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/sparkJobRunResult", a.withAuth(a.reportSparkJobRun))
 	mux.HandleFunc("GET /v1/workspaces/{wid}/lineage", a.withAuth(a.listLineage))
+	// Emulator-native: an engine that is not a queued notebook run reports what
+	// it moved, so an interactive step reaches the graph too (reportlineage.go).
+	mux.HandleFunc("POST /v1/workspaces/{wid}/lineage", a.withAuth(a.reportLineage))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/sqlDatabases/{iid}/refreshMirror", a.withAuth(a.refreshMirror))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/mirroredDatabases/{iid}/refreshMirror", a.withAuth(a.refreshMirroredDatabase))
 
