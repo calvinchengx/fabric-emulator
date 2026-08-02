@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Every 🟢 parity claim must name the test that witnesses it.
+"""Every parity claim marked supported must name the test that witnesses it.
 
 `docs/24-parity-completion.md` states the rule — *"Every 🟢 needs a real-client
 witness in CI"* — but nothing enforced it, and unenforced rules drift. Two
@@ -61,7 +61,11 @@ def key_for(feature: str) -> str:
 
 
 def green_claims():
-    """Yield (section, feature, key) for every row claiming 🟢."""
+    """Yield (section, feature, key) for every row claiming support.
+
+    The parity map marks support with a glyph, so that is what this matches;
+    everything this script PRINTS says "supported" in words.
+    """
     section = None
     for line in PARITY.read_text().splitlines():
         if line.startswith("## "):
@@ -119,7 +123,7 @@ def main() -> int:
             elif kind == "go" and name not in tests:
                 dangling.append(f"{key} → {witness} (no such Go test)")
 
-    print(f"🟢 capability claims: {len(claims)}")
+    print(f"supported capability claims: {len(claims)}")
     print(f"  witnessed by a real external client (ci:) : {kinds.get('ci', 0)}")
     print(f"  witnessed by our own Go tests (go:)       : {kinds.get('go', 0)}")
     print(f"  scoped by a documented boundary           : {kinds.get('boundary', 0)}")
@@ -143,7 +147,7 @@ def main() -> int:
             print(f"  {d}")
 
     if strict and (missing or dangling or todo):
-        print("\nFAIL: every 🟢 claim needs an identified, existing witness.")
+        print("\nFAIL: every supported claim needs an identified, existing witness.")
         return 1
     return 0
 

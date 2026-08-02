@@ -152,17 +152,17 @@ jobs:
       - run: uv run --frozen --no-sync python e2e/engine-matrix/run.py && git diff --exit-code docs/engine-matrix.md
 
   witnesses:
-    name: Every 🟢 parity claim names its witness
+    name: Every supported parity claim names its witness
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      # Strict: all 67 claims are mapped, so a new 🟢 row without a witness —
-      # or a witness that no longer exists — fails the build. That second case
-      # is the valuable one: it catches a test being renamed or deleted out
-      # from under the claim that depended on it.
+      # Strict: all 67 claims are mapped, so a new supported row without a
+      # witness — or a witness that no longer exists — fails the build. That
+      # second case is the valuable one: it catches a test being renamed or
+      # deleted out from under the claim that depended on it.
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.32"

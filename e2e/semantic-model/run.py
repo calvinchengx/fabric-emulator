@@ -44,7 +44,9 @@ def log(m):
     print(f"==> {m}", flush=True)
 
 
-def http(method, url, body=None, token=None, form=False):
+def http(method, url, body=None, token=None, form=False, allow_error=False):
+    """`allow_error` returns the status instead of raising, for the negative
+    cases — asserting a 401 needs the code, not an exception."""
     headers, data = {}, None
     if body is not None:
         if form:
@@ -56,9 +58,15 @@ def http(method, url, body=None, token=None, form=False):
     if token:
         headers["Authorization"] = "Bearer " + token
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
-    with urllib.request.urlopen(req, context=_CTX) as r:
-        raw = r.read()
-        return r.status, r.headers, (json.loads(raw) if raw else {})
+    try:
+        with urllib.request.urlopen(req, context=_CTX) as r:
+            raw = r.read()
+            return r.status, r.headers, (json.loads(raw) if raw else {})
+    except urllib.error.HTTPError as e:
+        if not allow_error:
+            raise
+        raw = e.read()
+        return e.code, e.headers, (json.loads(raw) if raw else {})
 
 
 def wait_healthy(url, deadline=60):
@@ -156,6 +164,32 @@ try:
     log(f"workspace={ws} dataset={dataset}")
 
     pbi = token(PBI_AUDIENCE + "/.default")
+
+    # DISCOVERY, before any query: this is where a real Power BI REST client
+    # starts. Everything above used the Fabric item API and its long-running
+    # operation, which is how the PUBLISHER learns the id — a consumer has no
+    # such handle and lists the workspace instead.
+    #
+    # Asserting the listed id equals the published one is the whole point. If
+    # discovery returned a different id, or omitted the model, every query below
+    # would still pass while a real client could not reach the model at all.
+    _, _, listed = http("GET", f"{FABRIC}/v1.0/myorg/groups/{ws}/datasets", token=pbi)
+    ids = [d["id"] for d in listed["value"]]
+    if dataset not in ids:
+        raise SystemExit(f"published dataset {dataset} not discoverable; listed {ids}")
+    if "@odata.context" not in listed:
+        raise SystemExit("datasets list is missing the OData wrapper the swagger defines")
+    _, _, one = http("GET", f"{FABRIC}/v1.0/myorg/groups/{ws}/datasets/{dataset}", token=pbi)
+    if one["id"] != dataset or not one.get("name"):
+        raise SystemExit(f"dataset GET disagrees with the published item: {one}")
+    log(f"discovered {len(ids)} dataset(s) by listing; {one['name']} is the published one")
+
+    # A Fabric-audience token must not open the Power BI surface, the same way
+    # it cannot open executeQueries.
+    code, _, _ = http("GET", f"{FABRIC}/v1.0/myorg/groups/{ws}/datasets", token=ft, allow_error=True)
+    if code != 401:
+        raise SystemExit(f"datasets list accepted a Fabric-audience token: {code}")
+    log("datasets list rejects a non-Power BI audience token (401)")
 
     # Run each DAX golden query through executeQueries and check the rows.
     golden = json.load(open(os.path.join(FIX, "golden_queries.json")))
