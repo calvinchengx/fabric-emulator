@@ -251,3 +251,84 @@ describe('Flow', () => {
     expect(screen.getByText('job Started')).toBeInTheDocument();
   });
 });
+
+// The full chain — landing → bronze → silver → gold → semantic model — only
+// draws if the view understands the hops that are not OneLake writes: a
+// warehouse build (no job to end), and a Power BI read (no movement at all).
+describe('Flow: the warehouse and Power BI hops', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+  });
+
+  const goldEdges = [
+    ...edges,
+    {
+      jobId: '', activityName: 'CTAS', producer: 'Warehouse',
+      sourceItemId: 'lake-1', sourceItem: 'lake', sourcePath: 'Tables/silver_customers',
+      targetItemId: 'wh-1', targetItem: 'dw', targetPath: 'Tables/dim_customer',
+      createdAt: 1700000200,
+    },
+    {
+      jobId: '', activityName: 'DirectLake', producer: 'DirectLake',
+      sourceItemId: 'wh-1', sourceItem: 'dw', sourcePath: 'Tables/dim_customer',
+      targetItemId: 'sm-1', targetItem: 'ContosoRevenue', targetPath: 'Tables/Customer',
+      createdAt: 1700000300,
+    },
+  ];
+
+  it('draws gold and the semantic model as further columns of the same chain', async () => {
+    mockLineage(goldEdges);
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('dim_customer')).toBeInTheDocument());
+    expect(screen.getByText('Customer')).toBeInTheDocument();
+
+    const xOf = (label) => {
+      const g = screen.getByText(label).closest('g');
+      return Number(g.getAttribute('transform').match(/translate\((-?\d+)/)[1]);
+    };
+    // Source → landing → bronze → silver → gold → model, left to right.
+    expect(xOf('silver_customers')).toBeLessThan(xOf('dim_customer'));
+    expect(xOf('dim_customer')).toBeLessThan(xOf('Customer'));
+  });
+
+  it('redraws when a movement is recorded, without waiting for a job to end', async () => {
+    // A warehouse build has no job, so the old "reload when a job finishes"
+    // rule would never fire and gold would not appear until a manual reload.
+    let served = edges;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      const body = url.includes('/portal/lineage') ? { value: served } : { value: [] };
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+    expect(screen.queryByText('dim_customer')).not.toBeInTheDocument();
+
+    served = goldEdges;
+    FakeEventSource.last.emit('lineage', {
+      seq: 9, at: 1700000200, kind: 'lineage', workspaceId: 'ws-1', itemId: 'wh-1',
+      sourceItemId: 'lake-1', sourcePath: 'Tables/silver_customers',
+      targetPath: 'Tables/dim_customer', producer: 'Warehouse', activityName: 'CTAS',
+    });
+    await waitFor(() => expect(screen.getByText('dim_customer')).toBeInTheDocument(), { timeout: 3000 });
+    // And the movement is in the log, named end to end.
+    expect(screen.getByText('Tables/silver_customers → Tables/dim_customer')).toBeInTheDocument();
+  });
+
+  it('logs a Power BI query as the last hop', async () => {
+    mockLineage(goldEdges);
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('Customer')).toBeInTheDocument());
+    FakeEventSource.last.emit('query', {
+      seq: 10, at: 1700000400, kind: 'query', workspaceId: 'ws-1', itemId: 'sm-1',
+      dataset: 'ContosoRevenue', queries: 2, status: 'Completed',
+    });
+    await waitFor(() =>
+      expect(screen.getByText('ContosoRevenue queried (2 queries)')).toBeInTheDocument());
+    expect(screen.getByText('Power BI')).toBeInTheDocument();
+  });
+});

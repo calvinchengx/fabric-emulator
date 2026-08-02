@@ -15,6 +15,14 @@ const (
 	// engine accept — the warehouse equivalent of NotebookObserved, and how a
 	// dbt-built gold layer reaches the graph (internal/server/warehouselineage.go).
 	ProducerWarehouse = "Warehouse"
+	// ProducerDirectLake is a semantic model's declared binding to a lakehouse
+	// table: the model reads that Delta at query time, so the edge states what
+	// the emulator itself does to serve a query (internal/api/modellineage.go).
+	ProducerDirectLake = "DirectLake"
+	// ProducerReported is a movement an engine CLAIMED, outside any job — an
+	// interactive Spark session or a plain script. The emulator did not watch
+	// this one happen, and the producer says so.
+	ProducerReported = "Reported"
 )
 
 // LineageEdge is an exact source-to-target data movement observed while an
@@ -53,10 +61,15 @@ func (s *Store) CreateLineageEdge(e *LineageEdge) error {
 		e.Producer = ProducerCopy
 	}
 	e.CreatedAt = s.Now()
+	// A bare ON CONFLICT, not a named target. Two uniqueness rules apply here —
+	// the table's UNIQUE for job-produced edges, and the partial index that
+	// stands in for it where job_id is NULL (see relaxLineageJobFK) — and a
+	// named target only ever suppresses one of them, turning a re-reported
+	// job-less edge into a constraint error rather than a no-op.
 	res, err := s.db.Exec(`INSERT INTO lineage_edges
 (id, workspace_id, job_id, activity_name, source_workspace_id, source_item_id, source_path, target_workspace_id, target_item_id, target_path, producer, created_at)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(job_id, activity_name, source_item_id, source_path, target_item_id, target_path) DO NOTHING`,
+ON CONFLICT DO NOTHING`,
 		e.ID, e.WorkspaceID, nullIfEmpty(e.JobID), e.ActivityName, e.SourceWorkspaceID, e.SourceItemID, e.SourcePath,
 		e.TargetWorkspaceID, e.TargetItemID, e.TargetPath, e.Producer, e.CreatedAt)
 	if err != nil {
@@ -137,4 +150,14 @@ target_workspace_id, target_item_id, target_path, producer, created_at FROM line
 		return nil, ErrNotFound
 	}
 	return e, err
+}
+
+// PublishQuery reports a read of a semantic model — the Power BI end of a
+// flow. It is an event and not an edge on purpose: a query moves no data into
+// anything, and lineage_edges records movement.
+func (s *Store) PublishQuery(workspaceID, itemID, dataset string, queries int, status string) {
+	s.publish(Event{
+		Kind: KindQuery, WorkspaceID: workspaceID, ItemID: itemID,
+		Dataset: dataset, Queries: queries, Status: status,
+	})
 }

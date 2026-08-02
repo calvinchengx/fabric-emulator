@@ -19,7 +19,7 @@ needs would be the wrong place to do it: silver is the conformed customer-360,
 and the star's dimensions are a projection of it, not the other way round.
 """
 import source_system as src
-from common import SPARK_REMOTE, load, log
+from common import SPARK_REMOTE, load, log, report_lineage
 
 st = load()
 assert SPARK_REMOTE, "SPARK_REMOTE is empty — no Spark engine is attached"
@@ -132,3 +132,13 @@ pathlib.Path(__file__).resolve().parent.joinpath("silver_summary.json").write_te
         # example does (docs/29-tsql-parity.md, T6 and T8).
         "dialect_adaptations": [],
     }, indent=2))
+
+# The flow graph's bronze → silver hop. PySpark writes Delta straight to
+# OneLake, so the emulator sees every byte and every table version — but not
+# which input produced which output. This step is the only thing that knows.
+_lake = load()["lakehouse"]
+report_lineage(
+    "silver",
+    reads=[(_lake, "Tables/bronze_customers"), (_lake, "Tables/bronze_orders")],
+    writes=[(_lake, "Tables/silver_customers"), (_lake, "Tables/silver_orders"),
+            (_lake, "Tables/silver_quarantine_orders")])

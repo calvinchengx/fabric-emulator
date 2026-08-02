@@ -99,6 +99,7 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	for _, q := range body.Queries {
 		res, err := semanticmodel.Evaluate(model, data, q.Query)
 		if err != nil {
+			a.publishQuery(it, len(body.Queries), true)
 			// A bad DAX query is a client error, per the Power BI contract.
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error": map[string]string{"code": "DAXQueryError", "message": err.Error()},
@@ -109,6 +110,9 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 			"tables": []map[string]any{{"rows": rowsToJSON(res, body.SerializerSettings.IncludeNulls)}},
 		})
 	}
+	// The Power BI hop: a read, so it is announced on the flow bus and never
+	// written to lineage_edges (see modellineage.go).
+	a.publishQuery(it, len(body.Queries), false)
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 

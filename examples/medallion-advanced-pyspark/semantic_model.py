@@ -10,7 +10,7 @@ import time
 
 import source_system as src
 from common import (FABRIC, FABRIC_AUD, PBI_AUD, S, ensure_app, fabric_headers, load, log,
-                    save, tds_connect, token)
+                    report_lineage, save, tds_connect, token)
 
 st = load()
 H = fabric_headers()
@@ -98,3 +98,19 @@ r = S.post(f"{FABRIC}/v1.0/myorg/groups/{st['workspace']}/datasets/{dataset}/exe
            json={"queries": [{"query": dax}]})
 assert r.status_code == 401, f"wrong-audience token was accepted: {r.status_code}"
 log("executeQueries rejects a non-Power BI audience token (401)")
+
+# The last hop of the graph: gold → the semantic model Power BI reads.
+#
+# This model is an IMPORT model — the rows above were selected over TDS and
+# embedded in the definition — so the emulator sees the bytes with no history
+# attached and will not invent one. A Direct Lake model would need no help
+# here: its binding names its source, and the emulator records that itself.
+# This one says what it read, which is the same contract a notebook engine
+# uses when it reports its own I/O.
+_st = load()
+report_lineage(
+    "semantic_model",
+    reads=[(_st["warehouse"], "Tables/fct_daily_revenue"),
+           (_st["warehouse"], "Tables/dim_customer")],
+    writes=[(_st["dataset"], "Tables/Revenue"),
+            (_st["dataset"], "Tables/Customer")])

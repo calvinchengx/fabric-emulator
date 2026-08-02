@@ -27,7 +27,7 @@ than saying so.
 import erp_system as erp
 import source_system as src
 import web_store as web
-from common import SPARK_REMOTE, load, log
+from common import SPARK_REMOTE, load, log, report_lineage
 
 st = load()
 assert SPARK_REMOTE, "SPARK_REMOTE is empty — no Spark engine is attached"
@@ -294,3 +294,16 @@ if amb_phone or amb_email:
         f"{amb_email:,} email — shared by more than one POS customer, so no "
         f"match could be made safely")
 log(f"web fact grain: {n_lines:,} clean order lines, all resolved to a customer_key")
+
+# The resolution is the advanced example's whole claim, so it belongs in the
+# graph: three source systems in, one identity spine and one conformed
+# dimension out.
+_lake = load()["lakehouse"]
+report_lineage(
+    "star_silver",
+    reads=[(_lake, "Tables/silver_customers"), (_lake, "Tables/bronze_web_customers"),
+           (_lake, "Tables/dim_customer_scd2"), (_lake, "Tables/bronze_web_products"),
+           (_lake, "Tables/bronze_web_order_lines")],
+    writes=[(_lake, "Tables/silver_customer_xref"),
+            (_lake, "Tables/silver_customer_conformed"),
+            (_lake, "Tables/silver_web_order_lines")])

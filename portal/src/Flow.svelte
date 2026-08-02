@@ -20,7 +20,7 @@
   // lie the user has to learn to ignore.
   let link = $state('connecting');
   let dropped = $state(0);
-  let kinds = $state({ file: false, table: true, activity: true, job: true });
+  let kinds = $state({ file: false, table: true, activity: true, job: true, lineage: true, query: true });
   // itemId|Tables/name -> client clock (ms) of the last write. Client clock,
   // not the emulator's: this drives a *visual* decay, and the emulator's clock
   // can be frozen or advanced by hours, which would make "recent" meaningless.
@@ -37,6 +37,19 @@
   let broken = $state({});
 
   let source = null;
+  // itemId -> client clock of the last query against it (the Power BI hop).
+  let queried = $state({});
+
+  // Coalesce graph reloads: a build emits many edges in a burst and they all
+  // describe the same redraw.
+  let reloadTimer = null;
+  function scheduleLineageReload() {
+    if (reloadTimer) return;
+    reloadTimer = setTimeout(() => {
+      reloadTimer = null;
+      loadLineage();
+    }, 400);
+  }
 
   function loadLineage() {
     api.get('/_emulator/portal/lineage')
@@ -82,7 +95,7 @@
       link = 'reconnecting';
     };
     source.onmessage = (m) => ingest(m.data);
-    for (const k of ['file', 'table', 'activity', 'job', 'dropped']) {
+    for (const k of ['file', 'table', 'activity', 'job', 'lineage', 'query', 'dropped']) {
       source.addEventListener(k, (m) => ingest(m.data));
     }
   }
@@ -119,6 +132,16 @@
         }
       }
       broken = next;
+    }
+    // A recorded movement changes the graph, so redraw as it happens rather
+    // than at the end of a job — a warehouse build has no job to end.
+    // Coalesced: one dbt model emits an edge per source, and reloading per
+    // edge would be a request storm for one redraw.
+    if (ev.kind === 'lineage') scheduleLineageReload();
+    // A query is the last hop: light the model up as Power BI reads it.
+    if (ev.kind === 'query') {
+      touched = { ...touched, [nodeKey(ev.itemId, 'Tables/' + (ev.dataset || ''))]: Date.now() };
+      queried = { ...queried, [ev.itemId]: Date.now() };
     }
     // A new run may have produced edges the graph has not seen yet.
     if (ev.kind === 'job' && ev.status !== 'Started') loadLineage();
@@ -206,6 +229,7 @@
     let c = 'node';
     if (broken[n.key]) c += ' broken';
     else if (touched[n.key]) c += now - touched[n.key] < FRESH_MS ? ' fresh' : ' written';
+    if (queried[n.itemId] && now - queried[n.itemId] < FRESH_MS) c += ' queried';
     if (selected && selected.key === n.key) c += ' selected';
     return c;
   }
@@ -243,12 +267,20 @@
           (ev.error ? ` — ${ev.error}` : '');
       case 'job':
         return `job ${ev.status}` + (ev.failureReason ? ` — ${ev.failureReason}` : '');
+      case 'lineage':
+        return `${ev.sourcePath} → ${ev.targetPath}`;
+      case 'query':
+        return `${ev.dataset || 'model'} queried` +
+          (ev.queries > 1 ? ` (${ev.queries} queries)` : '') +
+          (ev.status === 'Failed' ? ' — failed' : '');
       default:
         return ev.kind;
     }
   }
 
   function who(ev) {
+    if (ev.kind === 'lineage') return ev.activityName || ev.producer || '';
+    if (ev.kind === 'query') return 'Power BI';
     const a = ev.attribution;
     if (!a) return '';
     if (a.activityName) return a.activityName;
@@ -358,7 +390,7 @@
 
 <h2>Events</h2>
 <div class="filters">
-  {#each ['file', 'table', 'activity', 'job'] as k}
+  {#each ['file', 'table', 'activity', 'job', 'lineage', 'query'] as k}
     <label><input type="checkbox" bind:checked={kinds[k]} /> {k}</label>
   {/each}
   {#if workspaces.length > 1}
@@ -404,10 +436,21 @@
     stroke-width: 1.5;
   }
   /* Solid where the emulator moved the bytes itself, dashed where an engine
-     reported the movement — the same distinction lineage records as `producer`. */
+     reported the movement — the same distinction lineage records as `producer`.
+     A warehouse edge is solid: the TDS front watched the engine accept the
+     statement, so it is evidence, not a claim. */
   .link.notebook,
-  .link.notebookobserved {
+  .link.reported {
     stroke-dasharray: 4 3;
+  }
+  .link.warehouse,
+  .link.notebookobserved {
+    stroke: var(--success);
+  }
+  /* Direct Lake is a binding, not a copy: the model reads the Delta where it
+     lies, so the hop is drawn but never as bytes moving. */
+  .link.directlake {
+    stroke-dasharray: 1 3;
   }
   .node rect {
     fill: var(--muted);
@@ -433,6 +476,13 @@
   .node.fresh rect {
     fill: var(--success-bg);
     stroke: var(--success);
+  }
+  /* The last hop: a model Power BI just read. A query moves nothing, so it
+     gets its own mark rather than the write colours. */
+  .node.queried rect {
+    fill: var(--muted);
+    stroke: var(--ring);
+    stroke-width: 2;
   }
   .node.written rect {
     fill: var(--muted);
