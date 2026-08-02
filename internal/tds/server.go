@@ -36,6 +36,10 @@ type Server struct {
 	// endpoint, or a Viewer). An error rejects the login (no access, unknown or
 	// non-SQL item).
 	OnConnect func(ctx context.Context, server, database, token string) (targetDB string, readOnly bool, err error)
+	// Observe, if set, is told about each write statement the backend accepted,
+	// with the resolved target database. It is how a warehouse build (dbt over
+	// TDS) reaches the lineage graph — see observe.go.
+	Observe Observer
 }
 
 // Serve accepts and handles connections until l errors.
@@ -116,7 +120,7 @@ func (s *Server) handle(conn net.Conn) error {
 		if err := WriteMessage(conn, PktTabular, spliceLoginResponse(backendLogin)); err != nil {
 			return err
 		}
-		return spliceSession(conn, backendConn, readOnly, s.Strict)
+		return spliceSession(conn, backendConn, readOnly, s.Strict, s.Observe, targetDB)
 	}
 
 	// Fallback re-encode relay: fake test backends and the no-engine stub. Each
@@ -162,6 +166,9 @@ func (s *Server) handle(conn net.Conn) error {
 		if err := WriteMessage(conn, PktTabular, resp); err != nil {
 			return err
 		}
+		// Same observation as the splice path, so both relays record the same
+		// lineage rather than only the one a given deployment happens to use.
+		observeBatch(s.Observe, targetDB, typ, fixed, resp)
 	}
 }
 

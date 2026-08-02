@@ -140,6 +140,9 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 				return p.ID, nil
 			}
 			s.TDS.OnConnect = warehouseRouter(st, be, principalOf)
+			// Gold is built over this wire, so the flow graph only reaches it if
+			// the TDS front records what its statements moved.
+			s.TDS.Observe = newWarehouseLineage(st).observe
 			// A Fabric SQL Database mirrors its SQL tables to OneLake Delta; wire the
 			// control-plane refresh hook to the same per-item backend.
 			a.MirrorItem = mirrorItem(be, st)

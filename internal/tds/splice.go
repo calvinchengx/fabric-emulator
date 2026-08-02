@@ -13,7 +13,10 @@ import "net"
 // The only interception is the read-only guard: on a read-only surface (a
 // lakehouse SQL analytics endpoint, or a Viewer) a write SQL batch is answered
 // with an error and never forwarded, so the reflected mirror can't be mutated.
-func spliceSession(client, backend net.Conn, readOnly, strict bool) error {
+// observe, when set, is told about each write the backend accepted, so the
+// warehouse half of a data flow is recorded (see observe.go). It is called
+// after the client already has its response, so watching cannot slow a query.
+func spliceSession(client, backend net.Conn, readOnly, strict bool, obs Observer, database string) error {
 	for {
 		typ, data, err := ReadMessage(client)
 		if err != nil {
@@ -46,5 +49,6 @@ func spliceSession(client, backend net.Conn, readOnly, strict bool) error {
 		if err := WriteMessage(client, rtyp, rdata); err != nil {
 			return err
 		}
+		observeBatch(obs, database, typ, fixed, rdata)
 	}
 }

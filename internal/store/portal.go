@@ -54,7 +54,7 @@ func (s *Store) ListAllLineageEdges(limit int) ([]*LineageEdge, error) {
 		limit = 500
 	}
 	rows, err := s.db.Query(`
-SELECT id, workspace_id, job_id, activity_name, source_workspace_id, source_item_id, source_path,
+SELECT id, workspace_id, COALESCE(job_id, ''), activity_name, source_workspace_id, source_item_id, source_path,
        target_workspace_id, target_item_id, target_path, producer, created_at
 FROM lineage_edges ORDER BY rowid DESC LIMIT ?`, limit)
 	if err != nil {
