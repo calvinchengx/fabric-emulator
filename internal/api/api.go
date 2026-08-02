@@ -60,6 +60,9 @@ type API struct {
 	// SQL backend is set; nil → the pipeline Script/StoredProcedure activities
 	// fail loudly (no SQL engine attached).
 	SQLDB func(ctx context.Context, itemID string) (*sql.DB, error)
+	// refreshes is per-dataset refresh history for the Power BI refresh
+	// endpoints. In memory on purpose — see refreshes.go.
+	refreshes refreshLog
 	// RetryAfterSeconds is advertised on 202 responses.
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.
@@ -198,6 +201,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerShortcuts(mux)
 	a.registerExecuteQueries(mux)
 	a.registerDatasets(mux)
+	a.registerRefreshes(mux)
 	a.registerVSCodeCompatibility(mux)
 	a.registerAirflow(mux)
 	a.registerMLflow(mux)
