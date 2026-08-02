@@ -90,14 +90,22 @@ func observeBatch(obs Observer, database string, typ byte, payload, response []b
 	if obs == nil || database == "" {
 		return
 	}
-	sql := statementText(typ, payload)
-	if !mightMove(sql) {
+	var moving []string
+	for _, sql := range statementTexts(typ, payload) {
+		if mightMove(sql) {
+			moving = append(moving, sql)
+		}
+	}
+	if len(moving) == 0 {
 		return
 	}
 	if ok, understood := accepted(response); !ok || !understood {
 		return
 	}
-	flows := tsql.DataFlows(sql)
+	var flows []tsql.Flow
+	for _, sql := range moving {
+		flows = append(flows, tsql.DataFlows(sql)...)
+	}
 	if len(flows) == 0 {
 		return
 	}
@@ -122,27 +130,37 @@ func mightMove(sql string) bool {
 	return false
 }
 
-// statementText pulls the SQL out of whichever message shape carries it: a
-// plain batch, or the text parameter of the sp_executesql/sp_prepexec family
-// the ODBC driver prefers (the same procs dialectFix rewrites through).
-func statementText(typ byte, data []byte) string {
+// statementTexts pulls the candidate SQL out of whichever message shape carries
+// it: a plain batch, or the text parameters of the sp_executesql/sp_prepexec
+// family the ODBC driver prefers (the same procs dialectFix rewrites through).
+//
+// EVERY text parameter is returned, not the first. sp_prepexec's parameter
+// order is (@handle, @params, @stmt), so "the first text parameter" is the
+// parameter DECLARATION — `@P1 int` — and taking it meant dbt's entire
+// warehouse build went unobserved while a plain batch through the same front
+// worked fine. dialectFix already iterates for exactly this reason.
+func statementTexts(typ byte, data []byte) []string {
 	switch typ {
 	case PktSQLBatch:
-		return sqlBatchQuery(data)
+		if q := sqlBatchQuery(data); q != "" {
+			return []string{q}
+		}
 	case PktRPC:
 		proc, _ := rpcProc(data)
 		if !procsCarryingSQL[proc] {
-			return ""
+			return nil
 		}
 		req, err := parseRPC(data)
 		if err != nil {
-			return ""
+			return nil
 		}
+		var out []string
 		for _, p := range req.params {
 			if p.isText && p.text != "" {
-				return p.text
+				out = append(out, p.text)
 			}
 		}
+		return out
 	}
-	return ""
+	return nil
 }

@@ -104,3 +104,44 @@ func TestSpliceObservesAcceptedWrite(t *testing.T) {
 		t.Fatal("the splice path never observed the accepted write")
 	}
 }
+
+// TestObserveBatchReadsEveryRPCTextParam is the regression for the bug that
+// made dbt's entire warehouse build invisible while a plain batch through the
+// same front recorded fine.
+//
+// sp_prepexec's parameters are (@handle, @params, @stmt): the FIRST text
+// parameter is the declaration "@P1 int", not the statement. Taking it meant
+// mightMove saw a non-statement, rejected it, and every gold table dbt built
+// went unobserved — with nothing logged, because nothing had gone wrong.
+func TestObserveBatchReadsEveryRPCTextParam(t *testing.T) {
+	var got []string
+	obs := func(db string, flows []tsql.Flow) {
+		for _, f := range flows {
+			got = append(got, f.Kind+"|"+strings.Join(f.Target, "."))
+		}
+	}
+	// The statement is the THIRD parameter, behind @handle and @params.
+	observeBatch(obs, "wh-guid", PktRPC,
+		spPrepexec("SELECT * INTO dbo.gold FROM dbo.silver"), done(doneFinal, 0))
+	if len(got) != 1 || got[0] != tsql.FlowSelectInto+"|dbo.gold" {
+		t.Fatalf("sp_prepexec write = %v; want the statement behind the declaration", got)
+	}
+
+	// sp_executesql carries the statement first; both shapes must work.
+	got = nil
+	observeBatch(obs, "wh-guid", PktRPC,
+		rpcMsg(10, nvarcharParam("@stmt", "CREATE TABLE dbo.g AS SELECT * FROM dbo.s")),
+		done(doneFinal, 0))
+	if len(got) != 1 || got[0] != tsql.FlowCTAS+"|dbo.g" {
+		t.Fatalf("sp_executesql write = %v", got)
+	}
+
+	// A parameter declaration alone is not a statement and moves nothing.
+	got = nil
+	observeBatch(obs, "wh-guid", PktRPC,
+		rpcMsg(10, nvarcharParam("@stmt", "SELECT * FROM dbo.s"),
+			nvarcharParam("@params", "@P1 int")), done(doneFinal, 0))
+	if got != nil {
+		t.Fatalf("a read recorded something: %v", got)
+	}
+}
