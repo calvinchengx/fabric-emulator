@@ -47,7 +47,14 @@ fact — it never infers a graph:
 | Copy source table → sink table | the pipeline executor persists the resolved workspace/item/path pair after successful byte movement | ✅ exact |
 | Notebook cell → tables (observed) | the emulator's own data plane serves the I/O, and the runtime identifies the cell making it — via request headers (`notebookutils`) or claims inside the bearer (delta-rs/Sail, whose Rust object_store client cannot set headers). The touch is **witnessed**, not asserted; reads and writes pair within a cell | ✅ exact, observed |
 | Notebook cell → tables (reported) | the engine that ran the cell reports the datasets it read and wrote (`notebookRunResult`); recorded verbatim, one edge per read×write pair, named `cell[N]` | ✅ exact, when reported |
-| Script/SqlServerStoredProcedure → tables | would require parsing user T-SQL or engine query plans | ❌ not invented |
+| Warehouse build → tables | the TDS front parses every statement it forwards for dialect adaptation, so it also records what the engine **accepted** — a dbt `CREATE TABLE … AS SELECT`, `INSERT … SELECT`, or the `sp_rename` swap. Witnessed, not asserted | ✅ exact, observed |
+| Gold table → Direct Lake model | a Direct Lake table's binding names the Delta it reads, so the edge is a fact stated in the definition. An **import** model gets none — its rows arrive detached from wherever they were selected | ✅ exact, when Direct Lake |
+| Step → tables (reported) | an interactive engine or plain script reports its own read/write set to `POST /workspaces/{id}/lineage`, as `moves` that pair precisely rather than as a cross product | ✅ exact, when reported |
+| Script/SqlServerStoredProcedure activity → tables | the pipeline activity runs its T-SQL on a direct connection to the sidecar, not through the TDS front, so nothing observes it. Parsing it here would be inference | ❌ not invented |
+
+Every edge carries its `producer` into OpenMetadata's description, because
+"the emulator watched this happen" and "a caller told us this happened" are
+different facts and a catalog that flattens them is lying by omission.
 
 The CI witness seeds `lake.orders`, shortcuts it as `curated.orders_ref`, then
 executes a Copy to `curated.orders_copy`. OpenMetadata must return both

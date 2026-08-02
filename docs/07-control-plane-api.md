@@ -132,6 +132,7 @@ git wrote. This is what makes `fabric-cicd` and deployment pipelines testable.
 | `GET  /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/sparkJobRun` | SparkJobDefinition: source, arguments, binding, and Environment run contract |
 | `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/sparkJobRunResult` | engine callback: finalise Spark job output/status |
 | `GET  /workspaces/{id}/lineage` | emulator extension: exact activity source/sink edges for governance ingestion |
+| `POST /workspaces/{id}/lineage` | emulator extension: an engine reports its own read/write set for work with no job to hang it on — an interactive Spark session or a plain script. Body is a `step` name plus `moves`, each a real reads→writes group (a flat reads × writes cross product would invent derivations that never happened). Recorded as `producer: Reported` — a claim by the caller, distinct from what the emulator observed itself ([31-flow-observability.md](31-flow-observability.md)) |
 
 Jobs transition `NotStarted → InProgress → Completed/Failed` on the controllable
 clock, and — for the two executing job types — actually do work at trigger:

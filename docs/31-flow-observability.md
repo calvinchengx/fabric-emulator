@@ -93,10 +93,17 @@ every other timestamp in the system is.
 | `table` | a Delta commit lands (see below) | `itemId`, `table`, `version`, `rowsAdded`, `filesAdded`, `filesRemoved`, `attribution` |
 | `activity` | a pipeline activity starts or finishes | `jobId`, `activityName`, `activityType`, `status`, `error`, `durationInSeconds`, `retryAttempt` |
 | `job` | a job instance starts or reaches a terminal state | `workspaceId`, `itemId`, `jobId`, `jobType`, `invokeType`, `status`, `failureReason` |
+| `lineage` | a source→target movement is recorded | `workspaceId`, `itemId`, `table` (the target path), `producer` |
+| `query` | a semantic model is read | `workspaceId`, `itemId`, `table` (the model), `activityType` (the caller) |
 
 Existing shapes are reused verbatim where they exist — `activity` is
 `pipeline.ActivityRun` plus the job id, `job` is the `jobBody` fields. Nothing
 new to learn, and no second source of truth for a status.
+
+The last two exist because a medallion's final hops have no job to end and no
+OneLake write to observe — see [The hops that are not OneLake
+writes](#the-hops-that-are-not-onelake-writes). A `query` is deliberately an
+event and never an edge: reading a model moves no data.
 
 **When an activity is announced.** Not when it is recorded. The interpreter's
 retry loop *discards* failed attempts and back-patches the survivor's
@@ -282,8 +289,20 @@ the point is watching it happen.
 Nodes are laid out in columns by distance from a source — computed by
 relaxation rather than a topological sort, so a cyclic graph still renders
 instead of hanging — which makes a medallion draw itself:
-landing → bronze → silver → gold. Copy edges are solid, notebook edges dashed,
-straight from `producer`.
+landing → bronze → silver → gold → semantic model.
+
+An edge is drawn straight from its `producer`, and the styling encodes *how
+well the movement is known* rather than merely who caused it:
+
+| Producer | Drawn | Because |
+|---|---|---|
+| `Copy` | solid | the emulator's own executor moved the bytes |
+| `Warehouse`, `NotebookObserved` | solid, in the success colour | the emulator **watched** it happen — evidence, not a claim |
+| `Notebook`, `Reported` | dashed | an engine or a step *reported* the movement |
+| `DirectLake` | finely dotted | a binding, not a copy: the model reads the Delta where it lies, so the hop is real but no bytes move |
+
+A reader can therefore tell at a glance which parts of a graph are observed and
+which are asserted, which is the distinction the whole design rests on.
 
 ### The hops that are not OneLake writes
 
