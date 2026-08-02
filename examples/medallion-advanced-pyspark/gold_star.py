@@ -51,8 +51,13 @@ with tds_connect(st["warehouse"], sql_tok) as c:
     lines = cur.execute("SELECT COUNT(*) FROM fct_order_lines").fetchone()[0]
     people = cur.execute("SELECT COUNT(*) FROM dim_customer").fetchone()[0]
     products = cur.execute("SELECT COUNT(*) FROM dim_product").fetchone()[0]
-    by_channel = dict(cur.execute(
-        "SELECT channel, SUM(amount) FROM fct_order_lines GROUP BY channel").fetchall())
+    # BY (source_system, channel), not channel alone. "web" is a POS channel AND
+    # the name of a separate source system, so grouping on the word merges
+    # 50,871 POS web-channel orders into the web store's total. The collision is
+    # real data, not a modelling slip, and the star keeps both meanings apart.
+    by_channel = {(s, c): v for s, c, v in cur.execute(
+        "SELECT source_system, channel, SUM(amount) FROM fct_order_lines "
+        "GROUP BY source_system, channel").fetchall()}
     # A customer who bought in BOTH channels is the row that only exists because
     # resolution worked. If identity had stayed per-source, this count is zero
     # and every other total still looks correct.
@@ -63,14 +68,23 @@ with tds_connect(st["warehouse"], sql_tok) as c:
             HAVING COUNT(DISTINCT channel) > 1
         ) x""").fetchone()[0]
 
-assert len(by_channel) > 1, f"the star has only one channel: {by_channel}"
-web_revenue = float(by_channel.get("web", 0))
+assert len({c for _, c in by_channel} ) > 1, f"the star has only one channel: {by_channel}"
+
+# The web STORE's revenue — its own source system, not every line labelled web.
+web_revenue = float(by_channel.get(("contoso_web", "web"), 0))
 assert abs(web_revenue - web.EXPECTED_WEB_REVENUE) < 0.01, \
     (web_revenue, web.EXPECTED_WEB_REVENUE)
 
+# And POS's own web channel is still there, distinct and non-empty. Asserting it
+# exists is what stops a future "simplification" from folding the two back into
+# one bucket and quietly restoring the 15,093,542.80 overcount.
+pos_web = float(by_channel.get(("contoso_pos", "web"), 0))
+assert pos_web > 0, ("POS web-channel revenue vanished — the two meanings of "
+                     "'web' have been merged again", sorted(by_channel))
+
 log(f"gold star: dbt build green in {build_secs:.1f}s — {lines:,} order lines, "
     f"{people:,} customers, {products:,} products")
-log("revenue by channel: " + ", ".join(
-    f"{k}={float(v):,.2f}" for k, v in sorted(by_channel.items())))
+log("revenue by source and channel: " + ", ".join(
+    f"{s}/{c}={float(v):,.2f}" for (s, c), v in sorted(by_channel.items())))
 log(f"{both:,} customers bought in more than one channel — a row that exists "
     f"only because identity was resolved across sources")
