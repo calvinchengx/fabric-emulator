@@ -58,14 +58,20 @@ with tds_connect(st["warehouse"], sql_tok) as c:
     by_channel = {(s, c): v for s, c, v in cur.execute(
         "SELECT source_system, channel, SUM(amount) FROM fct_order_lines "
         "GROUP BY source_system, channel").fetchall()}
-    # A customer who bought in BOTH channels is the row that only exists because
-    # resolution worked. If identity had stayed per-source, this count is zero
-    # and every other total still looks correct.
+    # A customer who bought from more than one SOURCE SYSTEM is the row that
+    # only exists because resolution worked.
+    #
+    # This counted distinct CHANNEL until the same collision that inflated web
+    # revenue was found above. POS alone has five channels, so a POS-only
+    # customer who bought in store and on the web scored as multi-channel — and
+    # the log line below then credited identity resolution for someone it never
+    # had to resolve. The number was large and entirely wrong about its subject.
+    # Source system is what the comment always meant.
     both = cur.execute("""
         SELECT COUNT(*) FROM (
             SELECT customer_key FROM fct_order_lines
             GROUP BY customer_key
-            HAVING COUNT(DISTINCT channel) > 1
+            HAVING COUNT(DISTINCT source_system) > 1
         ) x""").fetchone()[0]
 
 assert len({c for _, c in by_channel} ) > 1, f"the star has only one channel: {by_channel}"
@@ -86,5 +92,5 @@ log(f"gold star: dbt build green in {build_secs:.1f}s — {lines:,} order lines,
     f"{people:,} customers, {products:,} products")
 log("revenue by source and channel: " + ", ".join(
     f"{s}/{c}={float(v):,.2f}" for (s, c), v in sorted(by_channel.items())))
-log(f"{both:,} customers bought in more than one channel — a row that exists "
+log(f"{both:,} customers bought from more than one SOURCE SYSTEM — a row that exists "
     f"only because identity was resolved across sources")
