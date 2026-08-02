@@ -3,9 +3,28 @@
 Working code that *uses* the emulator, kept deliberately apart from the code
 that *is* the emulator.
 
-| Example | What it shows | Tutorial | CI witness |
+Four medallions, on two axes. **Across:** one source system, or three that
+share no key. **Down:** which engine builds the star — `dbt-fabric` over TDS
+into a **Warehouse**, or `dbt-fabricspark` over Livy into the **Lakehouse**.
+Fabric offers both and real shops pick one, so both are shown building the same
+data from the same fixtures.
+
+| Example | Sources | Gold built by | CI witness |
 |---|---|---|---|
-| [`medallion/`](medallion/) | the whole loop in one sitting: Key Vault → landing → bronze/silver → gold with dbt → semantic model, from one source | [docs/28](../docs/28-tutorial-end-to-end.md) | [`e2e/medallion`](../e2e/medallion/) |
+| [`medallion-pyspark/`](medallion-pyspark/) | one | `dbt-fabric` → Warehouse | [`e2e/medallion`](../e2e/medallion/) |
+| [`medallion-advanced-pyspark/`](medallion-advanced-pyspark/) | **three** | `dbt-fabric` → Warehouse | [`e2e/medallion-advanced`](../e2e/medallion-advanced/) |
+| [`medallion-dbt-fabricspark/`](medallion-dbt-fabricspark/) | one | `dbt-fabricspark` → Lakehouse | [`e2e/medallion-dbt-fabricspark`](../e2e/medallion-dbt-fabricspark/) |
+| [`medallion-advanced-dbt-fabricspark/`](medallion-advanced-dbt-fabricspark/) | **three** | `dbt-fabricspark` → Lakehouse | [`e2e/medallion-advanced-dbt-fabricspark`](../e2e/medallion-advanced-dbt-fabricspark/) |
+
+Start with [`medallion-pyspark/`](medallion-pyspark/) — it is the code
+[docs/28](../docs/28-tutorial-end-to-end.md) walks through. Go to
+[`medallion-advanced-pyspark/`](medallion-advanced-pyspark/) for the problems a
+second and third source create: identity that must be *resolved* rather than
+joined, change over time, and conformance that is real.
+
+The `contoso-fixtures*` directories are not examples. They are the **shared
+seeded generators** every example builds from — one copy, so two examples can
+never assert against different data.
 
 ## The conventions
 
