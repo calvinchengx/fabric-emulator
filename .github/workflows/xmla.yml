@@ -1,0 +1,29 @@
+name: XMLA client compatibility
+
+# Weekly rather than per-push. The thing under test is a THIRD-PARTY client's
+# wire contract, which changes when Microsoft ships a new ADOMD.NET — not when
+# this repo changes. Per-push would pay a .NET 8 SDK image pull on every commit
+# to learn nothing; weekly still catches a contract change long before anyone
+# would act on it, since the XMLA surface itself is deferred (docs/24).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 3' # weekly, Wednesday 05:17 UTC
+
+jobs:
+  xmla:
+    name: ADOMD.NET first-call contract on Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      # XMLA_REQUIRE turns the harness's local-convenience skips (no docker, no
+      # openssl) into failures. A suite that reports success because it never
+      # ran is the failure this repo keeps producing — see docs/10, entry eight.
+      - run: uv run --frozen --no-sync python e2e/xmla/run.py
+        env:
+          XMLA_REQUIRE: "1"

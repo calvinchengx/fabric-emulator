@@ -1,0 +1,331 @@
+#!/usr/bin/env python3
+"""e2e: Microsoft's real ADOMD.NET client, on Linux, aimed at a host we name.
+
+This is a CLIENT-CONTRACT oracle, not an emulator test. The emulator implements
+no XMLA surface (docs/24 defers it on cost). What this pins down is what a real
+XMLA client *demands* — the exact first call any future implementation would
+have to answer — and the platform facts that make such an implementation
+testable at all.
+
+It exists because those facts were believed, wrongly, for months. docs/18
+recorded XMLA as blocked because ADOMD.NET was "native .NET, not
+endpoint-overridable" and had no CI oracle. Both were false, and the only thing
+that established that was pointing the client at a listener and reading what
+came out. A claim that costs a quarter of roadmap when wrong should be a check,
+not a memory.
+
+What it asserts, all of it measured off the wire:
+
+  1. ADOMD.NET loads and runs on Linux/.NET 8 (`PLATFORM Unix/...`).
+  2. `Data Source=powerbi://<host>:<port>/...` sends TLS to whatever host is
+     named — the endpoint override that was said not to exist.
+  3. It trusts an ordinary `update-ca-certificates` CA, the same route every
+     other e2e here uses for localhost TLS. (Implied by 2: a rejected chain
+     shows up as a completed TCP connect with no HTTP request, which this
+     harness reports as such rather than as "nothing connected".)
+  4. The bearer comes from the connection string, so nothing in the credential
+     path is interactive or Windows-only.
+  5. The first call is plain JSON REST, not SOAP:
+         GET /powerbi/databases/v201606/workspaces?PreferClientRouting=true
+         User-Agent: ASClient/...
+         Authorization: Bearer <token from the connection string>
+     This is the one that can change under us when ADOMD.NET ships a new
+     version, and the reason this runs weekly rather than once.
+  6. The `https://<host>/xmla` and bare `host:port` Data Source forms remain
+     Windows-only on .NET Core, so a Linux oracle must use `powerbi://`.
+
+What it does NOT establish: the client never reaches XMLA/SOAP — it is still in
+workspace *routing* when the capture stub refuses it. So this says nothing about
+how much of [MS-SSAS-T] a useful implementation needs, and the `L` sizing in
+docs/24 is unchanged. Feasibility is measured here; cost is not.
+
+Runs the .NET client in a container (the NuGet package is
+`...retail.amd64`, hence `--platform linux/amd64` — native on CI, QEMU
+elsewhere). stdlib-only orchestrator.
+"""
+
+import http.server
+import os
+import shutil
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import threading
+
+DIR = os.path.dirname(os.path.abspath(__file__))
+WORK = os.path.join(tempfile.gettempdir(), "xmla-e2e")
+# 18080 was the ad-hoc choice while this was a one-off; it is already taken by
+# another suite here, and the guard below caught the collision on first run.
+PORT = int(os.environ.get("XMLA_PORT", "18446"))
+# The value asserted back out of the Authorization header. Not a credential —
+# nothing validates it; it is a marker proving the connection string is what
+# fed the header.
+TOKEN = "xmla-e2e-marker-8f21"
+# Reachable from inside the container; the cert is issued for it.
+CONTAINER_HOST = "host.docker.internal"
+SDK_IMAGE = "mcr.microsoft.com/dotnet/sdk:8.0"
+
+# Set by CI. Without it a machine with no Docker skips, which is right locally
+# and would be a lie in CI — a skipped suite that reports success is the exact
+# failure this repo keeps producing (docs/10, entry eight).
+REQUIRED = os.environ.get("XMLA_REQUIRE") == "1"
+
+
+def log(msg):
+    print(f"==> {msg}", flush=True)
+
+
+def skip_or_fail(reason):
+    if REQUIRED:
+        raise SystemExit(f"FAILED: {reason}\n  XMLA_REQUIRE=1, so this may not skip.")
+    print(f"SKIPPED: {reason}")
+    raise SystemExit(0)
+
+
+def require_free_port(port, what):
+    """Refuse to start when something else already owns `port`.
+
+    Without this, a bind failure is INDISTINGUISHABLE FROM SUCCESS: our listener
+    dies and the probe's requests are captured by a stranger's service — or not
+    captured at all, which here reads as "the client did not connect" and would
+    retract a finding that is actually true.
+    """
+    # CONNECT, do not bind: SO_REUSEADDR lets a 127.0.0.1 bind succeed on macOS
+    # while another socket holds 0.0.0.0 (exactly how a docker -p publish looks).
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        if s.connect_ex(("127.0.0.1", int(port))) == 0:
+            raise SystemExit(
+                f"port {port} is already in use, so this harness cannot start its own "
+                f"{what}.\n"
+                f"  Free the port (`docker ps | grep {port}`) or override it:\n"
+                f"    XMLA_PORT=<free> python3 e2e/xmla/run.py")
+
+
+# ---------------------------------------------------------------------------
+# The capture listener: a TLS endpoint that records what arrives and refuses it.
+#
+# Its responses are deliberately unhelpful (404 to the routing GET, a SOAP fault
+# to anything POSTed). That is not laziness — it is what was measured. Answering
+# the routing call would send the client down a different path and the recorded
+# first-call contract would no longer be the one a fresh client performs.
+# ---------------------------------------------------------------------------
+
+REQUESTS = []          # [{method, path, headers: {lower: value}, body}]
+HANDSHAKE_ERRORS = []  # TCP connected, TLS refused — a distinct diagnosis
+LOCK = threading.Lock()
+
+
+class Capture(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def _record(self):
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(n) if n else b""
+        with LOCK:
+            REQUESTS.append({
+                "method": self.command,
+                "path": self.path,
+                "headers": {k.lower(): v for k, v in self.headers.items()},
+                "body": body.decode("utf-8", "replace"),
+            })
+        print(f"    <- {self.command} {self.path}", flush=True)
+
+    def do_GET(self):
+        self._record()
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_POST(self):
+        self._record()
+        b = (b'<?xml version="1.0"?><soap:Envelope '
+             b'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
+             b'<soap:Fault><faultcode>capture</faultcode>'
+             b'<faultstring>capture only</faultstring></soap:Fault>'
+             b'</soap:Body></soap:Envelope>')
+        self.send_response(500)
+        self.send_header("Content-Type", "text/xml")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+
+    def log_message(self, *a):
+        pass
+
+
+class TLSServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def get_request(self):
+        try:
+            return super().get_request()
+        except ssl.SSLError as e:
+            # The TCP connect landed and the handshake did not. Recorded rather
+            # than swallowed, so "no requests captured" can be told apart from
+            # "the client would not trust our CA" — two findings with opposite
+            # meanings for whether XMLA is testable at all.
+            with LOCK:
+                HANDSHAKE_ERRORS.append(str(e))
+            raise OSError(str(e))
+
+
+def make_cert(dest):
+    """Self-signed leaf valid for the container's view of the host."""
+    if not shutil.which("openssl"):
+        skip_or_fail("openssl is not on PATH, so no TLS cert can be issued")
+    subprocess.run([
+        "openssl", "req", "-x509", "-newkey", "rsa:2048",
+        "-keyout", os.path.join(dest, "key.pem"),
+        "-out", os.path.join(dest, "cert.pem"),
+        "-days", "2", "-nodes", "-subj", f"/CN={CONTAINER_HOST}",
+        "-addext",
+        f"subjectAltName=DNS:{CONTAINER_HOST},DNS:localhost,IP:127.0.0.1",
+    ], check=True, capture_output=True)
+
+
+# ---------------------------------------------------------------------------
+# Assertions
+# ---------------------------------------------------------------------------
+
+FAILURES = []
+
+
+def check(ok, what, detail=""):
+    if ok:
+        print(f"  PASS  {what}", flush=True)
+    else:
+        FAILURES.append(f"{what}{chr(10) + '        ' + detail if detail else ''}")
+        print(f"  FAIL  {what}{'  — ' + detail if detail else ''}", flush=True)
+
+
+def parse_cases(stdout):
+    """`CASE <label> :: <outcome> [:: <detail>]` -> {label: (outcome, detail)}."""
+    out = {}
+    for line in stdout.splitlines():
+        if not line.startswith("CASE "):
+            continue
+        parts = [p.strip() for p in line[len("CASE "):].split("::")]
+        out[parts[0]] = (parts[1] if len(parts) > 1 else "",
+                         parts[2] if len(parts) > 2 else "")
+    return out
+
+
+def assert_contract(stdout):
+    cases = parse_cases(stdout)
+
+    # 1. It runs here at all.
+    plat = next((l for l in stdout.splitlines() if l.startswith("PLATFORM ")), "")
+    check("Unix" in plat,
+          "ADOMD.NET loads and runs on Linux/.NET 8",
+          f"probe reported {plat!r}")
+
+    # 2/3. Bytes reached the host we named, over a chain it accepted.
+    if not REQUESTS:
+        detail = (f"{len(HANDSHAKE_ERRORS)} TLS handshake(s) failed after connecting — "
+                  f"the client did not accept our CA: {HANDSHAKE_ERRORS[:1]}"
+                  if HANDSHAKE_ERRORS else
+                  "nothing connected to the listener at all")
+        check(False, "powerbi:// sends TLS to the host named in the Data Source", detail)
+        return
+    check(True, "powerbi:// sends TLS to the host named in the Data Source")
+    check(True, "an update-ca-certificates CA is trusted (the handshake completed)")
+
+    first = REQUESTS[0]
+
+    # 5. The contract a future implementation must answer.
+    check(first["method"] == "GET" and
+          first["path"].startswith("/powerbi/databases/v201606/workspaces"),
+          "first call is GET /powerbi/databases/v201606/workspaces",
+          f"got {first['method']} {first['path']}")
+    check("PreferClientRouting=true" in first["path"],
+          "first call carries PreferClientRouting=true",
+          f"query was {first['path']}")
+    ua = first["headers"].get("user-agent", "")
+    check(ua.startswith("ASClient"),
+          "identifies itself as ASClient",
+          f"User-Agent was {ua!r}")
+
+    # 4. The credential path is non-interactive.
+    check(first["headers"].get("authorization") == f"Bearer {TOKEN}",
+          "bearer token comes from the connection string",
+          f"Authorization was {first['headers'].get('authorization')!r}")
+
+    # The powerbi:// forms must stay usable on Linux — a NotSupportedException
+    # here would mean the oracle has no remaining connection form.
+    for label in ("powerbi-userid", "powerbi-bare", "powerbi-claimstoken"):
+        outcome = cases.get(label, ("<missing>", ""))
+        check(outcome[0] not in ("NotSupportedException", "<missing>"),
+              f"Data Source form {label} still reaches the network on Linux",
+              f"probe reported {outcome[0]} {outcome[1]}")
+
+    # 6. The documented Windows-only constraint, kept checkable.
+    for label in ("http-xmla", "hostport"):
+        outcome = cases.get(label, ("<missing>", ""))
+        check(outcome[0] == "NotSupportedException",
+              f"Data Source form {label} is still Windows-only",
+              f"probe reported {outcome[0]} {outcome[1]} — if this form now works "
+              f"on Linux, docs/18 and this harness should say so")
+
+
+# ---------------------------------------------------------------------------
+
+if not shutil.which("docker"):
+    skip_or_fail("docker is not on PATH; the ADOMD.NET probe needs the .NET 8 SDK image")
+
+require_free_port(PORT, "TLS capture listener")
+
+shutil.rmtree(WORK, ignore_errors=True)
+os.makedirs(WORK)
+log("issuing a self-signed CA for the container's view of this host")
+make_cert(WORK)
+
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain(os.path.join(WORK, "cert.pem"), os.path.join(WORK, "key.pem"))
+srv = TLSServer(("0.0.0.0", PORT), Capture)
+srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+log(f"TLS capture listener on :{PORT}")
+
+target = f"{CONTAINER_HOST}:{PORT}"
+log(f"running ADOMD.NET against {target} (linux/amd64, {SDK_IMAGE})")
+try:
+    # The project is mounted READ-ONLY and copied inside, so a restore never
+    # writes bin/obj into the repo.
+    proc = subprocess.run([
+        "docker", "run", "--rm", "--platform", "linux/amd64",
+        "--add-host", f"{CONTAINER_HOST}:host-gateway",
+        "-v", f"{os.path.join(DIR, 'probe')}:/probe:ro",
+        "-v", f"{os.path.join(WORK, 'cert.pem')}:/usr/local/share/ca-certificates/xmla-e2e.crt:ro",
+        "-e", f"XMLA_TARGET={target}",
+        "-e", f"XMLA_TOKEN={TOKEN}",
+        "-w", "/work", SDK_IMAGE,
+        "sh", "-c",
+        "cp -r /probe/. /work/ && update-ca-certificates >/dev/null 2>&1 && dotnet run --nologo",
+    ], capture_output=True, text=True, timeout=900)
+except subprocess.TimeoutExpired:
+    srv.shutdown()
+    raise SystemExit("FAILED: the ADOMD.NET probe did not finish within 15 minutes")
+
+srv.shutdown()
+
+print("\n---- probe stdout ----", flush=True)
+print(proc.stdout.strip() or "(empty)", flush=True)
+if proc.returncode != 0:
+    sys.stderr.write("\n---- probe stderr ----\n" + proc.stderr + "\n")
+    raise SystemExit(f"FAILED: the probe exited {proc.returncode}")
+
+print(f"\n---- captured {len(REQUESTS)} request(s), "
+      f"{len(HANDSHAKE_ERRORS)} handshake failure(s) ----", flush=True)
+for r in REQUESTS:
+    print(f"  {r['method']} {r['path']}", flush=True)
+
+print("\n---- client contract ----", flush=True)
+assert_contract(proc.stdout)
+
+if FAILURES:
+    raise SystemExit("\nFAILED: the ADOMD.NET client contract changed:\n  - " +
+                     "\n  - ".join(FAILURES))
+print("\nPASSED: the ADOMD.NET client contract is unchanged.")
