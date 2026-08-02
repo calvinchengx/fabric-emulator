@@ -49,15 +49,21 @@ checked += contract_gate.validate(read("silver_orders"), "silver-sales", "silver
 log(f"{checked} contract rules satisfied across landing and silver")
 
 # --- gold: the rules that need a query engine --------------------------------
-# gold-sales carries two `type: sql` rules, because ODCS's library has no
+# gold-sales carries `type: sql` rules, because ODCS's library has no
 # referential-integrity metric (docs/30). Until now those were covered only BY
 # PROXY — dbt runs equivalent tests in 08 — which meant the contract itself was
 # never executed and could drift from the dbt models without anything noticing.
 # They run here against the warehouse, over the same TDS the models were built
 # through.
+#
+# dim_customer_360 is in this list, not just in the contract. An element the
+# loop does not name is declared and never executed, which is the failure the
+# comment above describes — writing the contract entry and stopping would have
+# reproduced it exactly.
 sql_checked = 0
 with tds_connect(load()["warehouse"]) as conn:
-    for element in ("dim_customer", "fct_orders", "fct_daily_revenue"):
+    for element in ("dim_customer", "dim_customer_360", "fct_orders",
+                    "fct_daily_revenue"):
         sql_checked += contract_gate.validate_sql(conn, "gold-sales", element)
 log(f"{sql_checked} sql contract rule(s) executed against gold — "
     f"the contract now runs, rather than being covered by proxy")

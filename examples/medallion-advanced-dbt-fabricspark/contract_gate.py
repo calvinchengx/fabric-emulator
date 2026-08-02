@@ -176,9 +176,26 @@ def validate_sql(conn, contract_name, element, verbose=True):
         if rule.get("type") != "sql":
             return
         checked += 1
+        # `mustBe` is the ONLY comparator this runner implements, so anything
+        # else must be fatal rather than defaulted. `rule.get("mustBe", 0)`
+        # alone would take a rule written `mustBeGreaterThan: 0` — which the
+        # library path above does support, so it is a reasonable thing to write
+        # — and silently compare against equality with 0 instead. The rule would
+        # then pass or fail for a reason its author never expressed, and the log
+        # would count it as executed.
+        others = {k for k in ("mustNotBe", "mustBeGreaterThan", "mustBeLessThan",
+                              "mustBeGreaterOrEqualTo", "mustBeLessOrEqualTo",
+                              "mustBeBetween") if k in rule}
+        if others or "mustBe" not in rule:
+            raise ContractViolation(
+                f"{contract_name} / {element}: sql rule "
+                f"{rule.get('name', '<unnamed>')!r} uses "
+                f"{sorted(others) or ['no comparator']} — validate_sql "
+                f"implements `mustBe` only and must learn the rest before a "
+                f"contract relies on them")
         query = rule["query"].replace("{object}", obj).replace("{property}", "")
         got = conn.cursor().execute(query).fetchone()[0]
-        want = rule.get("mustBe", 0)
+        want = rule["mustBe"]
         if got != want:
             failures.append(f"{rule.get('name', 'sql')}: expected {want}, got {got:,}"
                             f" — {rule.get('description', '')}".rstrip(" —"))
