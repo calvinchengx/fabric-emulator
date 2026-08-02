@@ -664,6 +664,17 @@ jobs:
   medallion-compare:
     name: Both silver builds agree, row for row
     needs: medallion
+    # `needs` on a MATRIX job waits on every leg, so one unrelated leg failing
+    # skips this one — and a skipped job is not a failure, so the assertion just
+    # silently stops being made. That happened on the first run: both legs this
+    # job depends on were green, two advanced legs were not, and the comparison
+    # never ran while CI showed no complaint about it.
+    #
+    # So it runs unless the workflow was cancelled, and the summaries-present
+    # check below decides. A missing summary fails loudly rather than skipping,
+    # which is noisier when a basic leg is already red and worth it: this job
+    # exists so the comparison cannot quietly not happen.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
