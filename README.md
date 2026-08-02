@@ -10,25 +10,31 @@ plane (workspaces, items, RBAC, git, LROs) plus a real **OneLake** ADLS/Blob
 data plane, a **T-SQL warehouse** over TDS, native **Livy** sessions on a real
 Spark engine, **Data Factory** pipelines, and **KQL** eventhouses.
 
-![fabric-emulator's Data flow view: a three-source medallion building live — landing files to bronze, silver, a warehouse star, and a semantic model queried by Power BI](docs/demo/flow.gif)
+![a three-source medallion building live in the Data flow view — landing files to bronze, silver, a warehouse star and a semantic model — then the catalog it produced in OpenMetadata](docs/demo/flow.gif)
 
-That is a real pipeline, running locally with no Azure subscription: three
+That is a real pipeline, running locally with no Azure subscription. Three
 source systems land, get conformed, get resolved into one customer identity,
 and reach a Warehouse star that Power BI queries — while the portal draws the
-lineage as it happens. Every edge records **how** it is known, so you can tell
-what the emulator watched from what a step merely claimed.
+lineage as it happens. Then the same run publishes itself to **OpenMetadata**:
+domain, business glossary, metrics, data contracts and lineage, all derived
+from what the pipeline already knows rather than typed in twice.
+
+Every lineage edge records **how** it is known, so you can tell what the
+emulator watched from what a step merely claimed.
 
 Run it yourself:
 
 ```bash
-docker compose up -d
+make up
 cd examples/medallion-advanced-pyspark && uv sync --frozen && uv run python pipeline.py
 ```
 
-Then open <https://localhost:9443/#flow>. Twenty-two steps, about four and a
-half minutes, and the run asserts its own results — it is a test, not a demo
+Then open <https://localhost:9443/#flow> for the live flow, and
+<http://localhost:8585> for the catalog. Twenty-three steps, about five
+minutes, and the run asserts its own results — it is a test, not a demo
 script. ([the example](examples/medallion-advanced-pyspark/) ·
-[flow observability](docs/31-flow-observability.md))
+[flow observability](docs/31-flow-observability.md) ·
+[governance](docs/22-openmetadata.md))
 
 ## How it fits together
 
