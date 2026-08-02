@@ -55,6 +55,7 @@ ADVANCED = [
     ("gold_star", "dbt-fabric: the multi-source star, joined in the WAREHOUSE"),
     ("contract_gates", "run the ODCS contracts as gates at every layer"),
     ("tmdl_pbip", "serialise the model as TMDL; lay out a .pbip project"),
+    ("govern", "catalog the medallion in OpenMetadata (skipped if not running)"),
 ]
 
 STEPS = BASIC + ADVANCED
