@@ -204,17 +204,31 @@ schema:
       - name: country
         logicalType: string
         description: >-
-          NOT CONFORMED, and this contract will not pretend otherwise. Silver
-          conforms POS's five spellings to ISO-3166 alpha-2, but survivorship
-          coalesces POS's conformed value with the web store's RAW one, and the
-          web store spells countries in full ("United States"). ERP carries no
-          country at all. So this column holds ISO-2 for POS-known people, full
-          names for the 18,000 web-only, and NULL for the 11,526 ERP-only.
-          `dim_customer.country` above is conformed and carries an
-          `accepted_values` rule; copying that rule here would state a guarantee
-          the pipeline does not deliver. Conforming web_country in
-          star_silver.py is the fix, and it is a transform change, not a
-          contract change.
+          ISO-3166 alpha-2, conformed from FOUR source conventions: POS's five
+          spellings, the web store's full names ("United States"), and ERP's
+          ISO-3 ("USA"). `dim_customer.country` above is conformed from POS's
+          alone, because a single-source star never has to reconcile anything —
+          this column is the one that earns the word.
+        quality:
+          - type: sql
+            name: country_is_conformed_across_all_sources
+            query: |
+              SELECT COUNT(*) FROM {object}
+              WHERE country IS NULL OR country NOT IN ('US', 'GB', 'SG')
+            mustBe: 0
+            dimension: conformity
+            businessImpact: operational
+            description: >-
+              This rule is here because the column failed it. Survivorship used
+              to coalesce POS's CONFORMED country with the web store's RAW one
+              and never selected ERP's at all, so the column held ISO-2 for
+              POS-known people, "United States" for 18,000 web-only rows and
+              NULL for 11,526 ERP-only ones — three answers in the column whose
+              job is to have one. Every consumer grouping by country was
+              splitting the same country into separate rows. NULL is a
+              violation too: every identity reaches at least one system that
+              states a country, so a NULL means one was lost in survivorship
+              rather than never supplied.
       - name: account_tier
         logicalType: string
         description: >-

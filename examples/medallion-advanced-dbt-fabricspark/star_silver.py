@@ -25,6 +25,7 @@ registry and records merge/split events; pretending this is that would be worse
 than saying so.
 """
 import erp_system as erp
+import source_system as src
 import web_store as web
 from common import SPARK_REMOTE, load, log
 
@@ -53,6 +54,40 @@ def key(namespace, col):
     return F.sha2(F.concat(F.lit(namespace + ":"), col), 256)
 
 
+# Country, conformed across FOUR spelling conventions.
+#
+# silver.py conforms POS's five variants and stops there, because POS is all it
+# sees. Survivorship then used to coalesce that conformed value with the web
+# store's RAW one, so `country` in the resolved dimension held ISO-2 for anyone
+# POS knew, "United States" for the web-only, and NULL for the ERP-only —
+# because ERP's country was never even selected. Three answers to one question,
+# in the column whose entire job is to have one answer.
+#
+# Written out here rather than imported from the fixtures, for the reason
+# silver.py gives: a rule derived from the generator's own COUNTRY_VARIANTS
+# agrees with itself by construction, and a new upstream variant would conform
+# silently instead of failing. Duplicated from silver.py for the same reason it
+# is duplicated into the dbt model — it is silver's business rule, and silver
+# has more than one implementation.
+COUNTRY = {
+    "US": "US", "USA": "US", "U.S.": "US", "UNITED STATES": "US",
+    "GB": "GB", "GBR": "GB", "U.K.": "GB", "UK": "GB", "UNITED KINGDOM": "GB",
+    "SG": "SG", "SGP": "SG", "SINGAPORE": "SG",
+}
+_conform = F.create_map([F.lit(x) for kv in COUNTRY.items() for x in kv])
+
+
+def conform_country(col):
+    """ISO-3166 alpha-2, or the upper-cased input if the rule does not know it.
+
+    Falling through unchanged rather than to NULL is deliberate: an unknown
+    spelling must stay visible so the assertion below fails on it, instead of
+    being quietly erased into "we have no country for this person".
+    """
+    k = F.upper(F.trim(col))
+    return F.coalesce(_conform[k], k)
+
+
 # --- the spine ---------------------------------------------------------------
 pos = (read("silver_customers")
        .select("customer_id", "name", "email", "country", "phone")
@@ -64,11 +99,17 @@ pos = (read("silver_customers")
 
 web_c = (read("bronze_web_customers")
          .select(F.lower(F.trim("email")).alias("email_key"),
-                 F.col("full_name"), F.col("country").alias("web_country")))
+                 F.col("full_name"),
+                 conform_country(F.col("country")).alias("web_country")))
 
+# ERP's country comes through CONFORMED like the others, where it used to be
+# dropped on the floor. ERP spells countries ISO-3 (USA/GBR/SGP) — a fourth
+# convention — and an ERP-only customer is someone no other system has ever
+# seen, so this column is the only place their country can come from.
 erp_now = (read("dim_customer_scd2").filter(F.col("is_current"))
            .select("erp_customer_id", "legal_name", "account_tier", "segment",
-                   "credit_band", F.trim(F.col("phone").cast("string")).alias("phone_key")))
+                   "credit_band", conform_country(F.col("country")).alias("erp_country"),
+                   F.trim(F.col("phone").cast("string")).alias("phone_key")))
 
 # An AMBIGUOUS key is not a match.
 #
@@ -126,13 +167,20 @@ xref = (
 conformed = (
     pos.select("customer_key", "customer_id", "name", "email", "country", "phone")
     .join(web_keyed.select("customer_key", "full_name", "web_country"), "customer_key", "full_outer")
-    .join(erp_keyed.select("customer_key", "legal_name", "account_tier", "segment", "credit_band"),
+    .join(erp_keyed.select("customer_key", "legal_name", "account_tier", "segment",
+                           "credit_band", "erp_country"),
           "customer_key", "full_outer")
     .select(
         "customer_key",
         F.coalesce("full_name", "name", "legal_name").alias("name"),
         F.when(F.col("email") != "", F.col("email")).alias("email"),
-        F.coalesce("country", "web_country").alias("country"),
+        # POS first, then web, then ERP — all three now conformed, so the
+        # precedence decides WHOSE ANSWER wins rather than which spelling
+        # survives. ERP is appended rather than inserted: it can only fill rows
+        # where neither of the other two holds a country, so no existing value
+        # changes hands and the only rows affected are the ERP-only, which were
+        # NULL before.
+        F.coalesce("country", "web_country", "erp_country").alias("country"),
         "phone", "account_tier", "segment", "credit_band",
         F.col("customer_id").isNotNull().alias("in_pos"),
         F.col("full_name").isNotNull().alias("in_web"),
@@ -217,6 +265,19 @@ assert web_only <= web.EXPECTED_WEB_ONLY_EMAIL_COUNT, \
 assert n_lines == web.EXPECTED_WEB_CLEAN_LINES, (n_lines, web.EXPECTED_WEB_CLEAN_LINES)
 assert web_lines.filter(F.col("customer_key").isNull()).count() == 0, \
     "a web order line does not resolve to a customer"
+
+# CONFORMANCE, asserted rather than assumed. Four source conventions reach this
+# column — POS's five variants, the web store's full names, ERP's ISO-3 — and
+# conform_country falls unknown spellings THROUGH unchanged, so a convention
+# nobody taught it appears here as itself and fails. That is the whole point of
+# not mapping to NULL: silent erasure would leave this set looking correct.
+#
+# NULL is absent from the expected set deliberately: every identity now reaches
+# at least one system that states a country, so a NULL means a cohort lost its
+# country on the way through survivorship.
+countries = {r["country"] for r in conformed.select("country").distinct().collect()}
+assert countries == src.EXPECTED_COUNTRIES, (sorted(map(str, countries)),
+                                             sorted(src.EXPECTED_COUNTRIES))
 
 multi = conformed.filter(F.col("source_count") > 1).count()
 # Say how many keys were too ambiguous to match on, rather than letting the
