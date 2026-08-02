@@ -2,8 +2,15 @@
 #
 # This is the only layer with a consumer outside the pipeline (the semantic
 # model, and Power BI behind it), so it is the layer a data contract is
-# actually for. Every `quality` rule below is enforced today by a dbt test in
-# gold/models/schema.yml — the mapping is in docs/30-odcs-data-contracts.md.
+# actually for. Every `library` rule below is enforced today by a dbt test —
+# gold/models/schema.yml for the single-source star, gold_star/models/schema.yml
+# for dim_customer_360 — and the mapping is in docs/30-odcs-data-contracts.md.
+#
+# THIS COPY HAS DIVERGED from the one in ../../medallion-pyspark/contracts/.
+# The advanced pipeline builds BOTH stars into the same warehouse, so its gold
+# is strictly larger, and dim_customer_360 exists only here. The four examples
+# share fixtures, not contracts: a contract describes what a pipeline actually
+# published, and these two pipelines publish different things.
 #
 # `physicalType` is deliberately ABSENT on properties: nobody has measured what
 # the warehouse reflects these columns as. Declaring a guess would be the kind
@@ -24,6 +31,8 @@ description:
     The conformed sales star served from the Warehouse: a customer dimension,
     an order-grain fact, and the daily revenue aggregate the semantic model
     reads. This is the layer downstream consumers are entitled to depend on.
+    The advanced pipeline also publishes `dim_customer_360`, the customer
+    dimension resolved across all three source systems.
   usage: >-
     Query over TDS (FedAuth) against the warehouse database, or through the
     published semantic model with the Power BI `executeQueries` API. Grain is
@@ -103,6 +112,158 @@ schema:
             description: >-
               dbt `accepted_values` — silver's conformed domain. Widening this
               list is a contract change, not a transform change.
+
+  - name: dim_customer_360
+    logicalType: object
+    physicalType: table
+    businessName: Resolved customer dimension
+    description: >-
+      One row per RESOLVED PERSON across Contoso POS, Contoso Web and Contoso
+      ERP — not one row per source record. `dim_customer` above is the
+      single-source star's dimension and is keyed by the POS `customer_id`;
+      this one is keyed by the surrogate star_silver.py derives, and the two
+      are different tables on purpose. They were briefly the same table name,
+      which made the later build silently overwrite the earlier one.
+    dataGranularityDescription: One row per customer_key.
+    quality:
+      # Both rules below are `sql` rather than `library` DELIBERATELY. Gold has
+      # no DataFrame path — contract_gates.py runs only validate_sql against the
+      # warehouse for this contract — so a library rule here would be declared
+      # and never executed. The dbt tests in gold_star/models/schema.yml are the
+      # library-equivalent enforcement; these two are the ones that run HERE.
+      - type: sql
+        name: resolution_produced_multi_source_identities
+        query: |
+          SELECT CASE WHEN EXISTS (
+            SELECT 1 FROM {object} WHERE source_count > 1
+          ) THEN 0 ELSE 1 END
+        mustBe: 0
+        dimension: coverage
+        businessImpact: operational
+        description: >-
+          At least one person is known to more than one source system. This is
+          the entire claim of the advanced example, and it is the one number
+          that goes to zero silently: if resolution stops matching anybody,
+          every row count and every revenue total still balances, because the
+          orders are all still present — they just stop sharing a customer.
+      - type: sql
+        name: every_identity_belongs_to_a_source
+        query: SELECT COUNT(*) FROM {object} WHERE source_count < 1
+        mustBe: 0
+        dimension: consistency
+        businessImpact: operational
+        description: >-
+          Survivorship full-outer-joins three sources, so a row belonging to
+          none of them cannot come from data — it can only be invented by the
+          join. dbt `accepted_values` on source_count states the same domain,
+          but as a library rule it does not execute against gold.
+    properties:
+      - name: customer_key
+        logicalType: string
+        businessName: Resolved customer key
+        primaryKey: true
+        primaryKeyPosition: 1
+        required: true
+        unique: true
+        criticalDataElement: true
+        description: >-
+          A deterministic hash of a namespaced identity ("pos:C-0000001"), not a
+          sequence — so a rebuild reproduces it with no registry to carry. The
+          cost is real and stated in star_silver.py: the key is a FUNCTION of
+          the identity, so a POS-only customer who later supplies an email is
+          re-keyed and reads as a new person.
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+            unit: rows
+            dimension: uniqueness
+            description: dbt `unique` on dim_customer_360.customer_key.
+          - type: library
+            metric: nullValues
+            mustBe: 0
+            unit: rows
+            dimension: completeness
+            description: dbt `not_null` on dim_customer_360.customer_key.
+      - name: name
+        logicalType: string
+        description: >-
+          Survivorship order is web, then POS, then ERP — the web store is where
+          a customer maintains their own profile, POS captures whatever the
+          cashier typed, ERP holds the legal name. Falling THROUGH a null is the
+          rule that matters: a higher-priority source that does not hold the
+          attribute must not blank out one that does.
+      - name: email
+        logicalType: string
+        classification: pii
+        description: >-
+          POS's email only, and NULL where POS holds none. A web-only customer
+          therefore has a NULL email here even though email is the very key that
+          identified them — survivorship reads this attribute from the POS spine
+          alone. Consumers needing the web address must join silver.
+      - name: country
+        logicalType: string
+        description: >-
+          NOT CONFORMED, and this contract will not pretend otherwise. Silver
+          conforms POS's five spellings to ISO-3166 alpha-2, but survivorship
+          coalesces POS's conformed value with the web store's RAW one, and the
+          web store spells countries in full ("United States"). ERP carries no
+          country at all. So this column holds ISO-2 for POS-known people, full
+          names for the 18,000 web-only, and NULL for the 11,526 ERP-only.
+          `dim_customer.country` above is conformed and carries an
+          `accepted_values` rule; copying that rule here would state a guarantee
+          the pipeline does not deliver. Conforming web_country in
+          star_silver.py is the fix, and it is a transform change, not a
+          contract change.
+      - name: account_tier
+        logicalType: string
+        description: >-
+          ERP's commercial attributes, NULL for anyone ERP has never seen. That
+          is most people, and it is not a data-quality defect — it is what
+          "three systems know different things" means.
+      - name: segment
+        logicalType: string
+        description: ERP's segment. NULL outside ERP, as above.
+      - name: credit_band
+        logicalType: string
+        description: ERP's credit band. NULL outside ERP, as above.
+      - name: in_pos
+        logicalType: boolean
+        description: >-
+          Whether Contoso POS knows this person. Carried deliberately: a
+          dimension that cannot say which systems know a customer makes "we have
+          129,526 customers" an unanswerable claim.
+      - name: in_web
+        logicalType: boolean
+        description: Whether Contoso Web knows this person.
+      - name: in_erp
+        logicalType: boolean
+        description: >-
+          Whether Contoso ERP knows this person, as of its CURRENT SCD2 version.
+          A deleted ERP account has history rows and no current one, so it is
+          false here and correctly absent from the star.
+      - name: source_count
+        logicalType: integer
+        description: >-
+          in_pos + in_web + in_erp. 1 means nobody could be matched to this
+          person; 3 means the transitive hop through POS reached all three.
+        quality:
+          - type: library
+            metric: nullValues
+            mustBe: 0
+            unit: rows
+            dimension: completeness
+            description: dbt `not_null` on dim_customer_360.source_count.
+          - type: library
+            metric: invalidValues
+            mustBe: 0
+            unit: rows
+            dimension: conformity
+            arguments:
+              validValues: [1, 2, 3]
+            description: >-
+              dbt `accepted_values` — three sources, so no other value is
+              reachable. A 4 would mean the survivorship join fanned out.
 
   - name: fct_orders
     logicalType: object
@@ -232,7 +393,10 @@ authoritativeDefinitions:
     description: The tutorial this contract's pipeline implements.
   - url: https://github.com/calvinchengx/fabric-emulator/blob/main/examples/medallion-pyspark/gold/models/schema.yml
     type: implementation
-    description: The dbt tests that enforce every quality rule above.
+    description: The dbt tests that enforce the single-source star's quality rules.
+  - url: https://github.com/calvinchengx/fabric-emulator/blob/main/examples/medallion-advanced-pyspark/gold_star/models/schema.yml
+    type: implementation
+    description: The dbt tests that enforce dim_customer_360's library rules.
 
 tags:
   - medallion
