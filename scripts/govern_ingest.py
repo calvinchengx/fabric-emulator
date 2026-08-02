@@ -672,8 +672,15 @@ def main():
             dst_schema = item_fqn.get(edge.get("targetItemId"))
             if not src_schema or not dst_schema:
                 continue
+            # Name the PRODUCER, not "Copy". This loop reads every exact edge
+            # the emulator recorded, and since flow observability landed that
+            # includes a warehouse build the TDS front watched, a Direct Lake
+            # binding, and a step's own report — none of which is a Copy
+            # activity. Describing them all as one would put a claim about
+            # provenance into the catalog that the emulator never made.
+            producer = edge.get("producer") or "Copy"
             if om_lineage(om, f"{src_schema}.{src_table}", f"{dst_schema}.{dst_table}",
-                          f"Fabric Copy activity {edge.get('activityName')} (fabric-emulator)"):
+                          f"Fabric {producer} {edge.get('activityName')} (fabric-emulator)"):
                 n_activity_edge += 1
                 print(f"  activity lineage {src_schema}.{src_table} -> "
                       f"{dst_schema}.{dst_table}", flush=True)
