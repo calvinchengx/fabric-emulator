@@ -136,9 +136,14 @@ pathlib.Path(__file__).resolve().parent.joinpath("silver_summary.json").write_te
 # The flow graph's bronze → silver hop. PySpark writes Delta straight to
 # OneLake, so the emulator sees every byte and every table version — but not
 # which input produced which output. This step is the only thing that knows.
+#
+# Two movements, not one cross product: the conformed customers come from the
+# customer export alone, and both order tables — clean and quarantined — are
+# the two halves of the same order export. Reporting one reads/writes pair
+# would claim bronze_customers produced the quarantine, which it did not.
 _lake = load()["lakehouse"]
-report_lineage(
-    "silver",
-    reads=[(_lake, "Tables/bronze_customers"), (_lake, "Tables/bronze_orders")],
-    writes=[(_lake, "Tables/silver_customers"), (_lake, "Tables/silver_orders"),
-            (_lake, "Tables/silver_quarantine_orders")])
+report_lineage("silver", [
+    ([(_lake, "Tables/bronze_customers")], [(_lake, "Tables/silver_customers")]),
+    ([(_lake, "Tables/bronze_orders")],
+     [(_lake, "Tables/silver_orders"), (_lake, "Tables/silver_quarantine_orders")]),
+])

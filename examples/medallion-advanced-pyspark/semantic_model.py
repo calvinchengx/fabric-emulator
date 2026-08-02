@@ -107,10 +107,12 @@ log("executeQueries rejects a non-Power BI audience token (401)")
 # here: its binding names its source, and the emulator records that itself.
 # This one says what it read, which is the same contract a notebook engine
 # uses when it reports its own I/O.
+#
+# One movement per model table, because that is how the two SELECTs above run:
+# Revenue is fct_daily_revenue and Customer is dim_customer, and neither table
+# was built from the other's source.
 _st = load()
-report_lineage(
-    "semantic_model",
-    reads=[(_st["warehouse"], "Tables/fct_daily_revenue"),
-           (_st["warehouse"], "Tables/dim_customer")],
-    writes=[(_st["dataset"], "Tables/Revenue"),
-            (_st["dataset"], "Tables/Customer")])
+report_lineage("semantic_model", [
+    ([(_st["warehouse"], "Tables/fct_daily_revenue")], [(_st["dataset"], "Tables/Revenue")]),
+    ([(_st["warehouse"], "Tables/dim_customer")], [(_st["dataset"], "Tables/Customer")]),
+])

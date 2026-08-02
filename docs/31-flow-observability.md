@@ -294,7 +294,7 @@ and each needed its own answer rather than an inference:
 |---|---|---|
 | silver → gold | the TDS front parses each statement it forwards and records what the engine ACCEPTED (`internal/tsql.DataFlows`, `internal/server/warehouselineage.go`) | `Warehouse` |
 | gold → semantic model | a Direct Lake table's binding names its source, so the edge is recorded when the definition lands | `DirectLake` |
-| bronze → silver, and an import model's sources | the step reports its own read/write set to `POST /v1/workspaces/{wid}/lineage` | `Reported` |
+| bronze → silver, and an import model's sources | the step reports its own derivations to `POST /v1/workspaces/{wid}/lineage` — a list of `moves`, each a real (reads → writes) group, because pairing one flat read list against one flat write list is a cross product that overstates: silver reads two bronze tables and writes three silver ones, but the quarantine comes from the orders alone | `Reported` |
 
 The producer is the point. `Warehouse` is evidence — the emulator watched the
 engine accept the statement — while `Reported` is a claim by the caller, and a
