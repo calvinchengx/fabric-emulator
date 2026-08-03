@@ -25,6 +25,28 @@ const (
 	ProducerReported = "Reported"
 )
 
+// What a lineage edge's SOURCE ref names.
+//
+// A medallion does not begin in Fabric. It begins at a vendor's REST API, a
+// production database, a change stream — and until these existed every edge
+// endpoint had to be a (workspace, item, path) triple, so the first hop could
+// only ever be drawn from a file already sitting in Files/landing. The system
+// that PUT it there could not be said at all.
+const (
+	// SourceKindItem: SourceItemID is a Fabric item, SourcePath a path in it.
+	SourceKindItem = "item"
+	// SourceKindConnection: SourceItemID is a CONNECTION id, and the source is
+	// the system that connection addresses. SourceWorkspaceID and SourcePath
+	// are empty — a REST API has neither.
+	//
+	// A connection and not a free-form URI because the connection already
+	// exists: the pipeline created it to hold the vendor's credential, it
+	// carries a display name and a connectivity type, and it is what the
+	// ingesting client actually authenticated through. Naming it keeps the
+	// design's rule — an edge records what happened, never a guess about it.
+	SourceKindConnection = "connection"
+)
+
 // LineageEdge is an exact source-to-target data movement observed while an
 // activity executes. Paths are retained so table-level catalog adapters can
 // select Tables/<name> edges without guessing from user code.
@@ -40,9 +62,15 @@ type LineageEdge struct {
 	TargetItemID      string `json:"targetItemId"`
 	TargetPath        string `json:"targetPath"`
 	// Producer is what observed this edge: ProducerCopy or ProducerNotebook.
-	Producer  string `json:"producer"`
-	CreatedAt int64  `json:"-"`
+	Producer string `json:"producer"`
+	// SourceKind types the source ref: SourceKindItem (the default, and what
+	// every edge before connections was) or SourceKindConnection.
+	SourceKind string `json:"sourceKind,omitempty"`
+	CreatedAt  int64  `json:"-"`
 }
+
+// SourceIsConnection reports whether this edge starts outside Fabric.
+func (e *LineageEdge) SourceIsConnection() bool { return e.SourceKind == SourceKindConnection }
 
 // nullIfEmpty maps "no job" to SQL NULL, which the foreign key accepts and ''
 // would not. See relaxLineageJobFK.
@@ -60,6 +88,9 @@ func (s *Store) CreateLineageEdge(e *LineageEdge) error {
 	if e.Producer == "" {
 		e.Producer = ProducerCopy
 	}
+	if e.SourceKind == "" {
+		e.SourceKind = SourceKindItem
+	}
 	e.CreatedAt = s.Now()
 	// A bare ON CONFLICT, not a named target. Two uniqueness rules apply here —
 	// the table's UNIQUE for job-produced edges, and the partial index that
@@ -67,11 +98,11 @@ func (s *Store) CreateLineageEdge(e *LineageEdge) error {
 	// named target only ever suppresses one of them, turning a re-reported
 	// job-less edge into a constraint error rather than a no-op.
 	res, err := s.db.Exec(`INSERT INTO lineage_edges
-(id, workspace_id, job_id, activity_name, source_workspace_id, source_item_id, source_path, target_workspace_id, target_item_id, target_path, producer, created_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+(id, workspace_id, job_id, activity_name, source_workspace_id, source_item_id, source_path, target_workspace_id, target_item_id, target_path, producer, source_kind, created_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT DO NOTHING`,
 		e.ID, e.WorkspaceID, nullIfEmpty(e.JobID), e.ActivityName, e.SourceWorkspaceID, e.SourceItemID, e.SourcePath,
-		e.TargetWorkspaceID, e.TargetItemID, e.TargetPath, e.Producer, e.CreatedAt)
+		e.TargetWorkspaceID, e.TargetItemID, e.TargetPath, e.Producer, e.SourceKind, e.CreatedAt)
 	if err != nil {
 		return err
 	}
@@ -133,7 +164,7 @@ func (s *Store) DeleteLineageEdgesInto(itemID, path string) error {
 
 func (s *Store) ListLineageEdges(workspaceID string) ([]*LineageEdge, error) {
 	rows, err := s.db.Query(`SELECT id, workspace_id, COALESCE(job_id, ''), activity_name, source_workspace_id, source_item_id, source_path,
-target_workspace_id, target_item_id, target_path, producer, created_at FROM lineage_edges WHERE workspace_id = ? ORDER BY rowid`, workspaceID)
+target_workspace_id, target_item_id, target_path, producer, source_kind, created_at FROM lineage_edges WHERE workspace_id = ? ORDER BY rowid`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +173,7 @@ target_workspace_id, target_item_id, target_path, producer, created_at FROM line
 	for rows.Next() {
 		e := &LineageEdge{}
 		if err := rows.Scan(&e.ID, &e.WorkspaceID, &e.JobID, &e.ActivityName, &e.SourceWorkspaceID, &e.SourceItemID,
-			&e.SourcePath, &e.TargetWorkspaceID, &e.TargetItemID, &e.TargetPath, &e.Producer, &e.CreatedAt); err != nil {
+			&e.SourcePath, &e.TargetWorkspaceID, &e.TargetItemID, &e.TargetPath, &e.Producer, &e.SourceKind, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
@@ -153,9 +184,9 @@ target_workspace_id, target_item_id, target_path, producer, created_at FROM line
 func (s *Store) GetLineageEdge(id string) (*LineageEdge, error) {
 	e := &LineageEdge{}
 	err := s.db.QueryRow(`SELECT id, workspace_id, COALESCE(job_id, ''), activity_name, source_workspace_id, source_item_id, source_path,
-target_workspace_id, target_item_id, target_path, producer, created_at FROM lineage_edges WHERE id = ?`, id).Scan(
+target_workspace_id, target_item_id, target_path, producer, source_kind, created_at FROM lineage_edges WHERE id = ?`, id).Scan(
 		&e.ID, &e.WorkspaceID, &e.JobID, &e.ActivityName, &e.SourceWorkspaceID, &e.SourceItemID, &e.SourcePath,
-		&e.TargetWorkspaceID, &e.TargetItemID, &e.TargetPath, &e.Producer, &e.CreatedAt)
+		&e.TargetWorkspaceID, &e.TargetItemID, &e.TargetPath, &e.Producer, &e.SourceKind, &e.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}

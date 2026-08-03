@@ -407,3 +407,50 @@ func TestObservedLineageIgnoresSelfEdge(t *testing.T) {
 		t.Fatalf("self edge should not be recorded: %+v", edges)
 	}
 }
+
+// TestJobStatusIsNotEvidenceOfNotebookExecution pins the trap that makes a
+// RunNotebook job look successful when nothing ran.
+//
+// A job instance's status is derived from the CLOCK (store.JobInstance.StatusAt),
+// so a notebook job reports "Completed" the moment its virtual completion time
+// passes — whether or not any engine executed a single cell. The emulator parses
+// the notebook and owns the run record; Spark owns the compute, and without an
+// engine the cells stay Pending.
+//
+// This is deliberate (see the notebooks.go header), but it is a knife-edge: read
+// the job status as proof of execution and you will believe a notebook wrote a
+// table it never touched. The run detail is the honest witness, so this test
+// asserts BOTH — the misleading value and the truthful one — side by side, and
+// fails if the two ever stop disagreeing in this exact way.
+func TestJobStatusIsNotEvidenceOfNotebookExecution(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+
+	// Submit the job and report NOTHING — no engine, no callback.
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+
+	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Completed" {
+		t.Fatalf("job status without any engine = %q, want Completed "+
+			"(clock-derived); if this changed, the trap is gone and the "+
+			"comment above is stale", s)
+	}
+	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
+	if run.Status != "Pending" {
+		t.Fatalf("run status without any engine = %q, want Pending", run.Status)
+	}
+	if run.ExitValue != "" {
+		t.Fatalf("exit value without execution = %q, want empty", run.ExitValue)
+	}
+	for _, c := range run.Cells {
+		if c.Status != "Pending" {
+			t.Fatalf("cell %d = %q, want Pending — nothing executed it", c.Index, c.Status)
+		}
+		if c.Output != "" {
+			t.Fatalf("cell %d produced output with no engine: %q", c.Index, c.Output)
+		}
+	}
+	if len(run.Cells) == 0 {
+		t.Fatal("no cells parsed, so the assertions above proved nothing")
+	}
+}

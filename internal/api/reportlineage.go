@@ -61,6 +61,18 @@ type lineageRef2 struct {
 	WorkspaceID string `json:"workspaceId"`
 	ItemID      string `json:"itemId"`
 	Path        string `json:"path"`
+	// ConnectionID names a SOURCE SYSTEM instead of a Fabric item: the vendor
+	// API, database or change stream the bytes came from. Valid on a read only
+	// — a write lands somewhere in OneLake by definition — and mutually
+	// exclusive with itemId/path, since the source is the system itself and
+	// not a path inside it.
+	//
+	// A connection rather than a URI because the connection is already there:
+	// the pipeline created it to hold the credential, it carries a display
+	// name, and it is what the client authenticated through. The emulator
+	// resolves it to confirm it exists rather than trusting the caller's word
+	// for the one part it can check.
+	ConnectionID string `json:"connectionId"`
 }
 
 // reportLineage records one step's movements: an edge per (read × write) pair,
@@ -103,10 +115,31 @@ func (a *API) reportLineage(w http.ResponseWriter, r *http.Request, p *auth.Prin
 		}
 		for _, in := range mv.Reads {
 			for _, out := range mv.Writes {
-				if in.ItemID == "" || in.Path == "" || out.ItemID == "" || out.Path == "" {
+				if in.ConnectionID != "" && (in.ItemID != "" || in.Path != "") {
 					writeErr(w, http.StatusBadRequest, "InvalidRequest",
-						"every read and write needs an itemId and a path; an incomplete reference is not an exact fact.")
+						"a read names either a connectionId or an itemId+path, not both: a source system is not a path inside Fabric.")
 					return
+				}
+				if in.ConnectionID == "" && (in.ItemID == "" || in.Path == "") {
+					writeErr(w, http.StatusBadRequest, "InvalidRequest",
+						"every read needs an itemId and a path, or a connectionId; an incomplete reference is not an exact fact.")
+					return
+				}
+				if out.ItemID == "" || out.Path == "" {
+					writeErr(w, http.StatusBadRequest, "InvalidRequest",
+						"every write needs an itemId and a path; an incomplete reference is not an exact fact.")
+					return
+				}
+				// Resolve rather than trust. A connection id that names nothing
+				// would draw a source node for a system this emulator has never
+				// heard of — a graph that looks more complete than the truth,
+				// which is the one failure this design refuses everywhere else.
+				if in.ConnectionID != "" {
+					if _, err := a.Store.GetConnection(in.ConnectionID); err != nil {
+						writeErr(w, http.StatusBadRequest, "InvalidRequest",
+							"connectionId "+in.ConnectionID+" does not name a connection.")
+						return
+					}
 				}
 				srcWS, dstWS := in.WorkspaceID, out.WorkspaceID
 				if srcWS == "" {
@@ -115,13 +148,22 @@ func (a *API) reportLineage(w http.ResponseWriter, r *http.Request, p *auth.Prin
 				if dstWS == "" {
 					dstWS = wid
 				}
-				if err := a.Store.CreateLineageEdge(&store.LineageEdge{
+				// A connection source carries no workspace and no path: the
+				// system is the node. Putting the connection id in SourceItemID
+				// is what keeps the table's UNIQUE key discriminating, so two
+				// vendors landing in one table stay two edges.
+				edge := &store.LineageEdge{
 					WorkspaceID:       wid,
 					ActivityName:      body.Step,
 					SourceWorkspaceID: srcWS, SourceItemID: in.ItemID, SourcePath: in.Path,
 					TargetWorkspaceID: dstWS, TargetItemID: out.ItemID, TargetPath: out.Path,
-					Producer: store.ProducerReported,
-				}); err != nil {
+					Producer: store.ProducerReported, SourceKind: store.SourceKindItem,
+				}
+				if in.ConnectionID != "" {
+					edge.SourceKind = store.SourceKindConnection
+					edge.SourceWorkspaceID, edge.SourceItemID, edge.SourcePath = "", in.ConnectionID, ""
+				}
+				if err := a.Store.CreateLineageEdge(edge); err != nil {
 					writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 					return
 				}

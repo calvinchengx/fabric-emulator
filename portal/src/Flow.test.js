@@ -331,4 +331,58 @@ describe('Flow: the warehouse and Power BI hops', () => {
       expect(screen.getByText('ContosoRevenue queried (2 queries)')).toBeInTheDocument());
     expect(screen.getByText('Power BI')).toBeInTheDocument();
   });
+
+  // A medallion does not begin in Fabric. Before source-kind existed the first
+  // node was whatever file already sat in Files/landing, and the vendor that
+  // put it there could not be drawn at all.
+  it('draws a source system as its connection, not as a table', async () => {
+    mockLineage([
+      {
+        sourceItemId: 'conn-pos',
+        sourceItem: 'contoso-pos-api',
+        sourcePath: '',
+        sourceKind: 'connection',
+        targetItemId: 'lake',
+        targetItem: 'contoso_lake',
+        targetPath: 'Files/landing/pos/customers.csv',
+        producer: 'Reported',
+        activityName: 'ingest_pos',
+        createdAt: 1700000200,
+      },
+    ]);
+    render(Flow);
+    // Labelled by the connection's display name — a path-derived label would be
+    // empty here, since a source system has no path.
+    const node = await screen.findByLabelText(/contoso-pos-api/);
+    expect(node).toBeTruthy();
+    expect(node.getAttribute('class')).toContain('source');
+    expect(screen.getByText('source system')).toBeTruthy();
+  });
+
+  it('does not try to read a table for a source system', async () => {
+    mockApi({
+      lineage: [
+        {
+          sourceItemId: 'conn-pos',
+          sourceItem: 'contoso-pos-api',
+          sourcePath: '',
+          sourceKind: 'connection',
+          targetItemId: 'lake',
+          targetItem: 'contoso_lake',
+          targetPath: 'Files/landing/pos/customers.csv',
+          producer: 'Reported',
+          activityName: 'ingest_pos',
+          createdAt: 1700000200,
+        },
+      ],
+    });
+    render(Flow);
+    const node = await screen.findByLabelText(/contoso-pos-api/);
+    await fireEvent.click(node);
+    // The emulator holds no data for a system outside it, so the inspector
+    // explains rather than erroring or firing a /portal/table request.
+    expect(await screen.findByText(/The emulator holds no data for it/)).toBeTruthy();
+    const asked = globalThis.fetch.mock.calls.some((c) => String(c[0]).includes('/portal/table'));
+    expect(asked).toBe(false);
+  });
 });

@@ -243,6 +243,9 @@ CREATE TABLE IF NOT EXISTS lineage_edges (
 	target_item_id TEXT NOT NULL,
 	target_path TEXT NOT NULL,
 	producer TEXT NOT NULL DEFAULT 'Copy',
+	-- 'item' (a Fabric workspace/item/path) or 'connection' (source_item_id is
+	-- a connection id: a source system outside Fabric). See the migration note.
+	source_kind TEXT NOT NULL DEFAULT 'item',
 	created_at INTEGER NOT NULL,
 	UNIQUE(job_id, activity_name, source_item_id, source_path, target_item_id, target_path)
 );
@@ -427,6 +430,19 @@ PRAGMA foreign_keys = ON;
 		`ALTER TABLE connections ADD COLUMN encryption TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN credentials_json TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE lineage_edges ADD COLUMN producer TEXT NOT NULL DEFAULT 'Copy'`,
+		// What KIND of thing the source ref names. Until now every lineage
+		// endpoint was a Fabric (workspace, item, path) triple, which cannot
+		// express "these bytes came from outside Fabric" — a vendor's REST API,
+		// a database, a Kafka topic. `connection` says source_item_id holds a
+		// CONNECTION id instead of an item id.
+		//
+		// Typing the existing ref rather than adding a parallel
+		// source_connection_id column, because the UNIQUE key includes
+		// source_item_id and SQLite cannot alter a constraint without a table
+		// rebuild. A parallel column would leave two different sources landing
+		// in one target indistinguishable to that key, and the second edge
+		// would be silently dropped by ON CONFLICT DO NOTHING.
+		`ALTER TABLE lineage_edges ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'item'`,
 		`ALTER TABLE onelake_paths ADD COLUMN etag TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE onelake_paths ADD COLUMN modified_at INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE shortcuts ADD COLUMN target_type TEXT NOT NULL DEFAULT 'OneLake'`,
@@ -512,6 +528,9 @@ CREATE TABLE lineage_edges_new (
 	target_item_id TEXT NOT NULL,
 	target_path TEXT NOT NULL,
 	producer TEXT NOT NULL DEFAULT 'Copy',
+	-- 'item' (a Fabric workspace/item/path) or 'connection' (source_item_id is
+	-- a connection id: a source system outside Fabric). See the migration note.
+	source_kind TEXT NOT NULL DEFAULT 'item',
 	created_at INTEGER NOT NULL,
 	UNIQUE(job_id, activity_name, source_item_id, source_path, target_item_id, target_path)
 );

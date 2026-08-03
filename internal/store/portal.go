@@ -55,7 +55,7 @@ func (s *Store) ListAllLineageEdges(limit int) ([]*LineageEdge, error) {
 	}
 	rows, err := s.db.Query(`
 SELECT id, workspace_id, COALESCE(job_id, ''), activity_name, source_workspace_id, source_item_id, source_path,
-       target_workspace_id, target_item_id, target_path, producer, created_at
+       target_workspace_id, target_item_id, target_path, producer, source_kind, created_at
 FROM lineage_edges ORDER BY rowid DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ FROM lineage_edges ORDER BY rowid DESC LIMIT ?`, limit)
 		e := &LineageEdge{}
 		if err := rows.Scan(&e.ID, &e.WorkspaceID, &e.JobID, &e.ActivityName,
 			&e.SourceWorkspaceID, &e.SourceItemID, &e.SourcePath,
-			&e.TargetWorkspaceID, &e.TargetItemID, &e.TargetPath, &e.Producer, &e.CreatedAt); err != nil {
+			&e.TargetWorkspaceID, &e.TargetItemID, &e.TargetPath, &e.Producer, &e.SourceKind, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
