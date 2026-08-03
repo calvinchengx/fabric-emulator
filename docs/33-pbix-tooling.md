@@ -1,8 +1,11 @@
 # 33 — PBIX tooling: what can read one, what can write one
 
-**Status: Phase 0 RUN and passed** against pbix-mcp 0.9.78 / pbixray 0.15.3.
-Nothing adopted yet — Phases 1–2 are live options, not decisions, and Phase 0b
-(does Power BI Desktop itself read the file) is the honest next question.
+**Status: Phase 0 and Phase 0b BOTH RUN and passed.** A `.pbix` built from this
+platform's own TMSL is opened by **Microsoft's Power BI Desktop**, which
+evaluates the fixture DAX to bit-identical numbers — measured on a GitHub
+Windows runner, 5 runs out of 5. Nothing is adopted yet; what changed is that
+the ceiling on what can be claimed has moved, and one of the two documented
+blockers turned out not to exist.
 
 This exists because a belief in this project was wrong, in the direction that
 matters: a `.pbix` carrying a data model was recorded as not programmatically
@@ -132,14 +135,15 @@ preference to be routed around. `PBIXBuilder` is fine for *writing* — it built
 the file above. The internal DAX engine is not fine for reading, and a Phase 1
 oracle built on it would have produced confident, wrong goldens.
 
-### What Phase 0 does NOT establish
+### What Phase 0 did not establish — closed by Phase 0b
 
-**Power BI Desktop was not run.** Two independent Python implementations agree
-about this file; no Microsoft code has read it. That is a weaker claim than
-"verified `.pbix`" and the difference is exactly the kind `docs/10` already
-records twice.
+**Power BI Desktop was not run** in Phase 0. Two independent Python
+implementations agreed about the file; no Microsoft code had read it. That was
+a weaker claim than "verified `.pbix`", and the difference is exactly the kind
+`docs/10` already records twice — so it was left stated rather than glossed,
+and then closed.
 
-That gap is **closable**, and more cheaply than first written here. This
+The gap turned out to be **closable**, and more cheaply than first written here. This
 repository already runs `windows-latest` in five CI jobs (`ci.yml`,
 `make-targets.yml`), and Power BI Desktop is a free download. Desktop also
 hosts a local Analysis Services instance, which is how Tabular Editor and DAX
@@ -152,35 +156,80 @@ It is a spike, not a given: a GUI app on a headless runner, Desktop's
 auto-update moving under the assertion, and the EULA's position on automated
 use all need checking first. Scoped as **Phase 0b** below.
 
-## Phase 0b — let Power BI Desktop read it
+## Phase 0b — RUN, 5 of 5
 
-A spike on a `windows-latest` runner, in this order, stopping at the first
-answer that kills it:
+[`e2e/pbix-desktop`](../e2e/pbix-desktop/) on `windows-latest`. Every stage
+reached, on every attempt:
 
-1. **Licence.** Does the EULA permit automated/CI use? If not, everything below
-   is moot and the honest ceiling stays where Phase 0 left it.
-2. **Install.** Power BI Desktop on an Actions runner — the standalone
-   installer rather than the Store package, which is awkward there.
-3. **Attach.** Open the `.pbix`, discover the `msmdsrv` port, connect over
-   ADOMD.NET. `e2e/xmla` already drives that client, so this is reuse.
-4. **Assert.** Run the fixture DAX through Desktop's own engine and diff
-   against `executeQueries` — the same comparison Phase 0 ran, against the real
-   implementation instead of a reimplementation of it.
+```
+STAGE download :: OK (698 MB)
+STAGE install  :: OK
+STAGE locate   :: OK C:\Program Files\Microsoft Power BI Desktop\bin\PBIDesktop.exe
+STAGE launch   :: OK pid=9396
+STAGE port     :: OK …\AnalysisServicesWorkspace_3da091a2…\Data\msmdsrv.port.txt
+analysis services port: 63321
+STAGE connect  :: OK
+STAGE query    :: OK
+DESKTOP AGREES WITH executeQueries: True
+```
 
-Treat flakiness as a first-class result: a GUI app driven headlessly that
-passes four times in five is not an oracle, it is a coin. Decide on the
-measured rate, not on whether it ever went green.
+| | |
+|---|---|
+| Pass rate | **5 / 5** (run 30821205384) |
+| Duration | 6m41s – 8m05s per attempt |
+| Divergence | `rel = 0.000e+00` on all six values — **bit-identical**, not merely inside tolerance |
 
-## Phases 1–2, only if Phase 0 passes
+Bit-identical is worth stating precisely. pbix-mcp agreed with us to `1.48e-16`
+— one ulp, the signature of two engines summing in a different order. Desktop
+agrees exactly, which says it is summing the same doubles the same way.
 
-**Phase 0 passed**, so both are live options.
+### Both documented blockers were wrong, and only running it could show that
 
-1. **The oracle.** Run the fixture DAX through both engines and diff. Wired
-   like `e2e/xmla`: weekly, version-pinned, failing loudly on disagreement —
-   because the thing being tracked is another project's engine, which moves.
-   **Through the MCP tool layer, never the internal engine** — see above.
-2. **`.pbix` as a demo artifact** from the import medallion. Blocked for the
-   advanced model by the Direct Lake gap above.
+- **Windows Server.** Microsoft says use a *client* Windows; `windows-latest`
+  is Server 2025. It ran anyway — the stated rationale (IE Enhanced Security
+  blocking sign-in to the Power BI service) genuinely does not apply to opening
+  a local file, and the guidance turned out to be about the rationale.
+- **Display.** Desktop documents a 1440x900 minimum and no system account. A
+  hosted runner's virtual display under `runneradmin` satisfied it.
+
+Neither could be settled by reading. Both were settled in eight minutes.
+
+### What is still NOT established
+
+The **licence** question. Microsoft documents `-quiet ACCEPT_EULA=1` as a
+supported install switch, which is a vendor contemplating automation — but that
+is the docs, not the EULA text, and this file is not the place a legal reading
+belongs. Automated *install* is evidenced; automated *use in CI* is a decision
+for a human, and it is the one thing here no amount of running will settle.
+
+Also unmeasured: durability. Five runs on one afternoon against one Desktop
+build is a pass rate, not a trend. Desktop ships monthly, which is why the
+suite is scheduled weekly rather than run once and believed.
+
+## Phases 1–2 — and Phase 0b reorders them
+
+Both phases were scoped with pbix-mcp as the DAX oracle, because at the time it
+was the only implementation available. Phase 0b changes that: **Power BI
+Desktop is the better oracle and is now reachable.** A conformance suite should
+be built against the real engine, with pbix-mcp as the cheap fallback — the
+reverse of the original plan.
+
+The argument is not preference. pbix-mcp's goldens are *captured from* Desktop,
+so a suite built on them is a copy of an oracle we can now query directly; and
+Phase 0 found its internal engine returning wrong answers silently, which is
+not a thing an oracle may do. Desktop costs ~8 minutes and a 698 MB download
+per run — real, and the reason this is weekly rather than per-commit.
+
+1. **The oracle.** Grow `e2e/pbix-desktop` from one query to a corpus, diffing
+   `internal/semanticmodel` against Desktop. This is what turns
+   [24-parity-completion.md](24-parity-completion.md)'s open-ended "Full DAX"
+   `L` into evidence-driven work: every function added is one Desktop agreed
+   about, rather than one somebody read the docs for. pbix-mcp stays as the
+   fast local check — **through its MCP tool layer, never the internal
+   engine.**
+2. **`.pbix` as a demo artifact** from the import medallion. Now genuinely
+   deliverable, since Desktop is confirmed to open what we build. Still blocked
+   for the *advanced* model by the Direct Lake gap above.
 
 ## Non-goal
 

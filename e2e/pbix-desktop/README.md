@@ -1,7 +1,8 @@
 # pbix-desktop — does Power BI Desktop itself read what we generate?
 
-**A spike, not yet an oracle.** Its purpose is to answer one question and to
-report honestly when it cannot: *does Microsoft's own Power BI Desktop open a
+**A spike that passed: 5 of 5** (run 30821205384), 6m41s–8m05s per attempt,
+agreeing with `executeQueries` bit-for-bit (`rel = 0.000e+00`). It answers one
+question: *does Microsoft's own Power BI Desktop open a
 `.pbix` built from our TMSL, and does it evaluate the same DAX to the same
 numbers as `executeQueries`?*
 
@@ -55,19 +56,23 @@ how `test_the_tolerance_is_relative_and_this_is_the_case_that_proves_it` came
 to exist: one ulp on a 25-million figure is `3.7e-09` absolute, which an
 absolute epsilon rejects and a relative one accepts.
 
-## What it CANNOT establish
+## The two documented risks, both measured false
 
-Whether Desktop installs, launches and hosts Analysis Services on a hosted
-runner. That is the finding, and it is unknown until this runs. Two documented
-risks bear on it directly:
+- `windows-latest` is Windows **Server** 2025 and Microsoft recommends a
+  **client** Windows. It runs anyway: the stated reason — IE Enhanced Security
+  blocking sign-in to the Power BI service — does not apply to opening a local
+  file.
+- Desktop documents a **1440x900 minimum display** and no **system account**. A
+  hosted runner's virtual display under `runneradmin` satisfies both.
 
-- `windows-latest` is Windows **Server** 2025; Microsoft recommends a **client**
-  Windows. The stated reason — IE Enhanced Security blocking sign-in to the
-  Power BI service — does not apply here, since this opens a local file and
-  never signs in. The guidance still applies; only its rationale does not.
-- Desktop documents a **1440x900 minimum display** and does not support running
-  under a **system account**. A hosted runner has a virtual display and runs as
-  `runneradmin`, so both are plausible and neither is promised.
+Neither was answerable by reading. Both took eight minutes to settle.
+
+## What it still CANNOT establish
+
+The **licence** position on automated use — Microsoft documents
+`-quiet ACCEPT_EULA=1`, which evidences automated *install*, not a reading of
+the EULA. And **durability**: five runs on one afternoon against one Desktop
+build is a pass rate, not a trend, which is why the schedule is weekly.
 
 ## Flake is a result, not a nuisance
 
