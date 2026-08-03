@@ -102,12 +102,12 @@ func TestDataFlowDrop(t *testing.T) {
 
 func TestDataFlowIgnoresWhatItShould(t *testing.T) {
 	for _, sql := range []string{
-		`SELECT * FROM dbo.t`,                         // a read moves nothing
-		`CREATE TABLE dbo.t (a int)`,                  // DDL without AS
-		`SELECT name FROM sys.tables`,                 // catalog read
-		`SELECT x INTO #tmp FROM dbo.t`,               // temp target
-		`UPDATE dbo.t SET a = 1`,                      // no table-to-table movement modelled
-		`EXEC(@dynamic_sql)`,                          // unknowable content
+		`SELECT * FROM dbo.t`,                          // a read moves nothing
+		`CREATE TABLE dbo.t (a int)`,                   // DDL without AS
+		`SELECT name FROM sys.tables`,                  // catalog read
+		`SELECT x INTO #tmp FROM dbo.t`,                // temp target
+		`UPDATE dbo.t SET a = 1`,                       // no table-to-table movement modelled
+		`EXEC(@dynamic_sql)`,                           // unknowable content
 		`EXEC('EXEC(''SELECT 1 INTO dbo.two_deep'')')`, // second level stays alone
 		`this is not sql at all`,
 	} {

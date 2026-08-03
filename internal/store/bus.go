@@ -85,8 +85,8 @@ type Event struct {
 	// Without it a consumer renders an empty sourcePath — a source system has
 	// none — and shows "undefined" where the vendor's name belongs.
 	SourceKind string `json:"sourceKind,omitempty"`
-	TargetPath   string `json:"targetPath,omitempty"`
-	Producer     string `json:"producer,omitempty"`
+	TargetPath string `json:"targetPath,omitempty"`
+	Producer   string `json:"producer,omitempty"`
 
 	// KindQuery — a read, not a movement, so it is an event and never an edge.
 	Dataset string `json:"dataset,omitempty"`

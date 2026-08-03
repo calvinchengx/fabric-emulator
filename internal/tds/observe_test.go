@@ -202,8 +202,8 @@ func TestObserveDbtsRealStatementShape(t *testing.T) {
 
 func TestLeadingKeywordSkipsCommentsAndPreamble(t *testing.T) {
 	for sql, want := range map[string]string{
-		"  select 1":                     "SELECT",
-		"-- a note\nCREATE TABLE t":      "CREATE",
+		"  select 1":                      "SELECT",
+		"-- a note\nCREATE TABLE t":       "CREATE",
 		"/* {\"app\":\"dbt\"} */ USE [x]": "USE",
 		"/* one *//* two */ drop table t": "DROP",
 		"/* never closed":                 "",

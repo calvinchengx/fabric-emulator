@@ -72,7 +72,7 @@ type LineageEdge struct {
 // SourceIsConnection reports whether this edge starts outside Fabric.
 func (e *LineageEdge) SourceIsConnection() bool { return e.SourceKind == SourceKindConnection }
 
-// nullIfEmpty maps "no job" to SQL NULL, which the foreign key accepts and ''
+// nullIfEmpty maps "no job" to SQL NULL, which the foreign key accepts and ”
 // would not. See relaxLineageJobFK.
 func nullIfEmpty(s string) any {
 	if s == "" {
