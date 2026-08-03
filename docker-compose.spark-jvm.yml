@@ -11,7 +11,7 @@
 # See docs/20-lakesail-engine.md and the parity map's notebook-compatibility
 # table for exactly which rows change.
 #
-# The agent script is unchanged: e2e/livy/agent.py builds a classic in-process
+# The agent script is unchanged: python/spark_agent/agent.py builds a classic in-process
 # SparkSession when SPARK_REMOTE is unset, and a Connect client when it is set.
 # Hence the `!reset` below — Compose MERGES environment maps across files, so
 # without it the JVM container would still be handed sail's sc:// URL and
@@ -30,7 +30,7 @@ services:
     environment:
       SPARK_REMOTE: !reset null # classic JVM session, not a Connect client
     volumes: !override
-      - ./e2e/livy/agent.py:/opt/spark/work-dir/agent.py:ro
+      - ./python/spark_agent/agent.py:/opt/spark/work-dir/agent.py:ro
     command: !override
       - /opt/spark/bin/spark-submit
       - --master

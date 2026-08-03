@@ -290,7 +290,7 @@ def render() -> str:
         "ᶠ The same question asked of the OTHER introspection route, and it fails",
         "the opposite way: `DETAIL` is not in Sail's DESCRIBE grammar at all, so",
         "this RAISES rather than returning nothing. That is the better failure —",
-        "`e2e/livy/delta_ops.py` resolves a registered table to its physical",
+        "`python/spark_agent/delta_ops.py` resolves a registered table to its physical",
         "location this way and does `collect()[0]`, which would have been an",
         "IndexError on an empty result; instead it gets a parse error naming the",
         "statement. The route is still unavailable on Sail, which is why OPTIMIZE",

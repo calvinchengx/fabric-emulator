@@ -33,17 +33,11 @@ services:
   spark-agent:
     build:
       context: .
-      dockerfile: docker/python-runtime/Dockerfile
-      # sail-delta, not spark-connect: the agent routes OPTIMIZE/VACUUM/CDF
-      # through delta-rs, so deltalake belongs in the image (see
-      # docker-compose.override.yml, which makes the same change).
-      args: { UV_GROUP: sail-delta }
+      dockerfile: docker/spark-agent/Dockerfile
     depends_on:
       sail:
         condition: service_started
-    volumes:
-      # The directory — the agent imports delta_ops and storage from beside it.
-      - ./e2e/livy:/livy:ro
+    # No bind mount and no command: the agent ships inside the image.
     environment:
       SPARK_REMOTE: "sc://sail:50051" # agent becomes a Connect client — no JVM
       # delta-rs reaches OneLake on its own account: a Connect client cannot
@@ -60,7 +54,6 @@ services:
       AZURE_STORAGE_ACCOUNT_NAME: "onelake"
       AZURE_STORAGE_ENDPOINT: "https://fabric-emulator:9443/onelake"
       AZURE_ALLOW_INVALID_CERTIFICATES: "true" # emulator's self-signed TLS
-    command: python /livy/agent.py
 
   # Same warehouse sidecar as docker-compose.override.yml — restated here so
   # `-f docker-compose.yml -f docker-compose.compute.yml` is a COMPLETE stack

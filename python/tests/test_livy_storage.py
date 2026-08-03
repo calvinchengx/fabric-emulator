@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "e2e" / "livy"))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "spark_agent"))
 
 import storage  # noqa: E402
 

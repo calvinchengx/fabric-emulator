@@ -103,7 +103,7 @@ https://api.fabric.microsoft.com/v1/workspaces/{ws}/lakehouses/{lh}/livyapi/vers
 - **B1 — Livy sessions on real Spark. ✅** Those routes are implemented
   (bearer-validated, RBAC-checked like everything else). Apache Livy itself is
   retired (Attic), so the shipped path is **native**: `--spark-agent-url` points
-  the emulator at a Spark **statement-executor agent** (`e2e/livy/agent.py`) that
+  the emulator at a Spark **statement-executor agent** (`python/spark_agent/agent.py`) that
   runs each session/statement/batch on real Spark, with the session configured so
   `abfss://` resolves to our OneLake plane — Fabric-shaped URL outside, real Spark
   inside (`internal/api/livy_native.go`, `e2e/livy`). A `--spark-livy-url` mode

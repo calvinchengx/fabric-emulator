@@ -4,7 +4,7 @@
 dbt-fabricspark submits Spark **SQL** statements (``kind: sql``) over the
 emulator's Livy layer and parses the Livy *SQL* result envelope —
 ``output.data["application/json"] = {"schema": {...}, "data": [[...]]}``. The
-general-purpose Python REPL agent (``e2e/livy/agent.py``) execs Python and
+general-purpose Python REPL agent (``python/spark_agent/agent.py``) execs Python and
 returns ``text/plain``, which dbt cannot parse. This agent runs each statement
 as ``spark.sql(code)`` and returns the SQL envelope, so Sail computes
 dbt's models. Delta extensions are enabled so dbt's default ``USING delta``
@@ -17,7 +17,7 @@ ignores ``kind`` and forwards only ``code``):
   POST /statements {session,code}  -> a Livy statement *output* object
   POST /close      {session}       -> no-op (one shared SparkSession/catalog)
 
-Stdlib HTTP + pyspark, mirroring e2e/livy/agent.py.
+Stdlib HTTP + pyspark, mirroring python/spark_agent/agent.py.
 """
 import json
 import sys

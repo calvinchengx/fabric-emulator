@@ -16,7 +16,7 @@
 services:
   # One long-lived SparkSession, a REPL over HTTP — the emulator terminates the
   # Livy REST protocol itself and drives this agent (no Apache Livy server; it's
-  # retired). See e2e/livy/agent.py.
+  # retired). See python/spark_agent/agent.py.
   # LakeSail's Sail: a Rust Spark-Connect server — the engine behind the agent.
   # No JVM anywhere; PySpark clients can also connect directly at
   # sc://localhost:50051. See docs/20-lakesail-engine.md.
@@ -61,21 +61,15 @@ services:
     image: ghcr.io/calvinchengx/fabric-emulator-spark-agent:${SPARK_AGENT_VERSION:-latest}
     build:
       context: .
-      dockerfile: docker/python-runtime/Dockerfile
-      # sail-delta, not spark-connect: the agent routes OPTIMIZE/VACUUM/CDF
-      # through delta-rs (e2e/livy/delta_ops.py), so deltalake belongs in the
-      # image. With spark-connect the import failed and the interception
-      # silently never installed.
-      args: { UV_GROUP: sail-delta }
+      dockerfile: docker/spark-agent/Dockerfile
     depends_on:
       sail:
         # Now that sail reports health, wait for the engine to actually listen
         # rather than merely be started: the agent holds a Spark Connect client.
         condition: service_healthy
-    volumes:
-      # The directory, not just agent.py: the agent imports delta_ops and
-      # storage from beside itself.
-      - ./e2e/livy:/livy:ro
+    # NO BIND MOUNT. The agent is baked into the image (python/spark_agent/),
+    # so this file configures the container rather than completing it — which
+    # is what a consumer of the published tag gets too.
     environment:
       SPARK_REMOTE: "sc://sail:50051" # Spark Connect client — no JVM
       # The delta-rs path talks to OneLake directly, so it needs its own
@@ -92,9 +86,11 @@ services:
       AZURE_STORAGE_ACCOUNT_NAME: "onelake"
       AZURE_STORAGE_ENDPOINT: "https://fabric-emulator:9443/onelake"
       AZURE_ALLOW_INVALID_CERTIFICATES: "true" # emulator's self-signed TLS
-    command: python /livy/agent.py
-    # The agent already serves /health (e2e/livy/agent.py); it just was not wired
-    # up, so `running` was never evidence the statement executor could answer.
+    # No `command:` either — the image's CMD is the agent.
+    #
+    # The agent already serves /health (python/spark_agent/agent.py); it just
+    # was not wired up, so `running` was never evidence the statement executor
+    # could answer.
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3)"]
