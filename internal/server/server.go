@@ -108,6 +108,10 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	// The warehouse SQL endpoint terminates FedAuth by validating the client's
 	// TDS-presented token against entra with the Azure SQL audience.
 	if cfg.SQLTDSAddr != "" {
+		// Tell the control plane which port to advertise on a Warehouse, so a
+		// client can discover the SQL endpoint the way it does on Fabric rather
+		// than being handed a hostname out of band.
+		a.SQLEndpointPort = api.SQLPortOf(cfg.SQLTDSAddr)
 		sqlv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)
 		sqlv.Audiences = SQLAudience
 		s.TDS = &tds.Server{Auth: func(token string) error {
