@@ -6,7 +6,9 @@ blocker for months, it was wrong, and [`e2e/xmla`](../e2e/xmla/) disproved it by
 measurement. What remains genuinely unknown is size, and there is one cheap
 experiment that would settle it.
 
-[18-semantic-model-references.md](18-semantic-model-references.md) holds the
+[33-pbix-tooling.md](33-pbix-tooling.md) is the other half of the same
+question — this is how a BI client READS the model; that is what we can hand it
+as a file. [18-semantic-model-references.md](18-semantic-model-references.md) holds the
 specs; [24-parity-completion.md](24-parity-completion.md) holds the sizing this
 plan is trying to replace with a number.
 
