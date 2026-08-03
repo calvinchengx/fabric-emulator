@@ -18,12 +18,15 @@
 #   * Desktop requires >= 1440x900 and a non-system account. A hosted runner has
 #     a virtual display and runs as `runneradmin`, so both are plausible and
 #     neither is promised.
-$ErrorActionPreference = "Stop"
-
+# param() MUST be the first statement in a PowerShell script — putting
+# $ErrorActionPreference above it is a ParserError, not a style problem, and it
+# cost this suite a second CI run.
 param(
   [string]$PbixPath = "$PSScriptRoot\model.pbix",
   [int]$TimeoutSec = 300
 )
+
+$ErrorActionPreference = "Stop"
 
 function Stage($name, $outcome) { Write-Output "STAGE $name :: $outcome" }
 
