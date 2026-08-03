@@ -10,6 +10,11 @@ test = [
     "fabric-emulator-notebookutils",
     "fabric-target",
     "pytest>=8.3,<10",
+    # test_spark_agent_packaging.py reads the compose files to prove the agent
+    # ships INSIDE its image rather than over a bind mount. Declared here
+    # because a developer machine usually has pyyaml lying around and CI does
+    # not — which is exactly how it passed locally and broke on the runner.
+    "pyyaml>=6,<7",
 ]
 adls-sdk = [
     "azure-storage-blob>=12.24,<13",
