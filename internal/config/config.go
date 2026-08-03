@@ -50,6 +50,13 @@ type Config struct {
 	// itself and drive a Spark statement-executor agent (real interactive
 	// sessions, no Apache Livy server). Takes precedence over SparkLivyURL for
 	// the interactive session/statement path. See e2e/livy.
+	//
+	// It also makes RunNotebook jobs EXECUTE. Without an agent the emulator
+	// parses a notebook and waits for an external engine to report — the right
+	// contract, but one no published artifact could satisfy, so a consumer's
+	// notebook job hung forever. With an agent the emulator is the pool: it runs
+	// the cells and reports the same results a Spark pool would post. See
+	// internal/api/notebookdrive.go and e2e/notebook-driven.
 	SparkAgentURL string
 
 	// SQLTDSAddr, when set (e.g. ":1433"), starts the warehouse SQL endpoint:
