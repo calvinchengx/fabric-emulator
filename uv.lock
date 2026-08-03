@@ -1295,6 +1295,7 @@ test = [
     { name = "fabric-emulator-notebookutils" },
     { name = "fabric-target" },
     { name = "pytest" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -1372,6 +1373,7 @@ test = [
     { name = "fabric-emulator-notebookutils", editable = "python" },
     { name = "fabric-target", editable = "python/fabric-target" },
     { name = "pytest", specifier = ">=8.3,<10" },
+    { name = "pyyaml", specifier = ">=6,<7" },
 ]
 
 [[package]]
