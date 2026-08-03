@@ -126,3 +126,31 @@ func TestDataFlowTVFAndDerivedTables(t *testing.T) {
 		t.Fatalf("sources = %v; want only dbo.real_src (TVFs and derived aliases excluded)", f.Sources)
 	}
 }
+
+// The gold materialization wraps dbt's two renames in ONE transaction (see
+// examples/*/gold_star/macros/table_atomic_swap.sql), so the batch the TDS
+// front observes now carries SET/BEGIN/COMMIT around them. The observer must
+// still see both renames — otherwise gold's lineage lands on __dbt_temp
+// scaffolding and the real table appears to come from nowhere.
+func TestDataFlowsFollowsRenamesInsideATransaction(t *testing.T) {
+	batch := `SET XACT_ABORT ON;
+BEGIN TRANSACTION;
+  EXEC sp_rename 'dbo.fct_orders', 'fct_orders__dbt_backup', 'OBJECT';
+  EXEC sp_rename 'dbo.fct_orders__dbt_temp', 'fct_orders', 'OBJECT';
+COMMIT TRANSACTION;`
+	var renames []Flow
+	for _, f := range DataFlows(batch) {
+		if f.Kind == FlowRename {
+			renames = append(renames, f)
+		}
+	}
+	if len(renames) != 2 {
+		t.Fatalf("got %d rename(s) from the transactional swap, want 2", len(renames))
+	}
+	if renames[0].NewName != "fct_orders__dbt_backup" || renames[1].NewName != "fct_orders" {
+		t.Errorf("renames = %q, %q", renames[0].NewName, renames[1].NewName)
+	}
+	if got := renames[1].Target[len(renames[1].Target)-1]; got != "fct_orders__dbt_temp" {
+		t.Errorf("second rename target = %q; want the temp table", got)
+	}
+}
