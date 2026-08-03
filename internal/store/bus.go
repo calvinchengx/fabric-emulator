@@ -61,8 +61,15 @@ type Event struct {
 	FilesAdded   int    `json:"filesAdded,omitempty"`
 	FilesRemoved int    `json:"filesRemoved,omitempty"`
 
-	// KindJob. Field names match the job-instance wire shape, so a consumer
-	// reading the stream and a consumer polling the API see the same words.
+	// KindJob. Field NAMES match the job-instance wire shape, so a consumer
+	// reading the stream and a consumer polling the API use the same keys.
+	//
+	// The STATUS VALUES do not fully match, and the difference is deliberate:
+	// this is an event log, the API reports a state. A job that begins emits
+	// `Started` here, which StatusAt never returns — polling the same job shows
+	// `InProgress`. Both are right for what they describe, and a consumer that
+	// treats the stream's vocabulary as the API's enum will classify every job
+	// start as an unknown status. One did.
 	JobID         string `json:"jobId,omitempty"`
 	JobType       string `json:"jobType,omitempty"`
 	InvokeType    string `json:"invokeType,omitempty"`
