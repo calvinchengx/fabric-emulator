@@ -105,9 +105,12 @@ jobs:
           - name: sail
             dockerfile: docker/sail/Dockerfile
             build_args: ""
+          # Its own Dockerfile, not the shared python runtime. That one ships
+          # dependencies and no agent — the code arrived by bind mount, which
+          # a consumer pulling this tag does not have.
           - name: spark-agent
-            dockerfile: docker/python-runtime/Dockerfile
-            build_args: UV_GROUP=sail-delta
+            dockerfile: docker/spark-agent/Dockerfile
+            build_args: ""
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4

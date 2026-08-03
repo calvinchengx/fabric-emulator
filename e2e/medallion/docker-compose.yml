@@ -157,13 +157,11 @@ services:
     profiles: ["livy"]
     build:
       context: ../..
-      dockerfile: docker/python-runtime/Dockerfile
-      args: { UV_GROUP: sail-delta }
+      dockerfile: docker/spark-agent/Dockerfile
     depends_on:
       sail:
         condition: service_healthy
-    volumes:
-      - ../../e2e/livy:/livy:ro
+    # No mount, no command: the agent ships in the image.
     environment:
       SPARK_REMOTE: "sc://sail:50051"
       # delta-rs reaches OneLake on its own account: a Connect client cannot
@@ -176,7 +174,6 @@ services:
       AZURE_STORAGE_ACCOUNT_NAME: "onelake"
       AZURE_STORAGE_ENDPOINT: "https://fabric-emulator:9443/onelake"
       AZURE_ALLOW_INVALID_CERTIFICATES: "true" # the stack's self-signed TLS
-    command: python /livy/agent.py
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3)"]

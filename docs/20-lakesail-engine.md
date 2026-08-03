@@ -170,7 +170,7 @@ honest failure, which helps nobody testing a notebook that calls `OPTIMIZE`.
 
 delta-rs reaches OneLake **on its own account**, not the Spark session's. A
 Spark Connect client cannot read back the bearer the server holds — no such API
-exists, in Sail or in Apache Spark's own Connect client — so `e2e/livy/storage.py`
+exists, in Sail or in Apache Spark's own Connect client — so `python/spark_agent/storage.py`
 performs its own client-credentials grant against the same issuer with the same
 Storage audience. delta-rs therefore authenticates as the same principal Sail
 does, without either side reading the other's token.

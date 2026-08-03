@@ -141,7 +141,7 @@ naming neither `DESCRIBE` nor the empty list.
 ## A note on the Livy agent
 
 This example runs on the standard stack with no overlay, which was not true
-before it existed. The shipped agent ([`e2e/livy/agent.py`](../../e2e/livy/agent.py))
+before it existed. The shipped agent ([`python/spark_agent/agent.py`](../../python/spark_agent/agent.py))
 was a **Python** REPL — right for notebooks, useless to a SQL client — so
 `dbt-fabricspark` had nothing to talk to, and the dbt e2e carried its own
 SQL-only agent.

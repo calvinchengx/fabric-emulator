@@ -50,7 +50,7 @@ services:
     depends_on: [sail-delta]
     volumes:
       - ./probes.py:/probes.py:ro
-      - ../livy:/livy:ro
+      - ../../python/spark_agent:/livy:ro
       - ./out:/out
       # Sail writes the table; delta-rs, in *this* container, then opens it. In
       # the real stack both reach the same OneLake, so they must reach the same

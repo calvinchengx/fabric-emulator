@@ -116,7 +116,7 @@ def main():
     # --- Delta maintenance on a OneLake table, through the delta-rs path.
     #
     # Sail's planner has no OPTIMIZE/VACUUM and rejects Change Data Feed reads,
-    # so the agent routes them to delta-rs (e2e/livy/delta_ops.py). The point of
+    # so the agent routes them to delta-rs (python/spark_agent/delta_ops.py). The point of
     # running it *here* is the URL: an abfss:// OneLake table, which delta-rs can
     # only open with a Storage bearer of its own. A local path would prove the
     # interception fires and nothing about the credentials.

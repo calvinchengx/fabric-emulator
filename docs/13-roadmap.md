@@ -227,7 +227,7 @@ proxy would be a separate sibling.
       rather than proxy it, the emulator *terminates* the Livy contract itself
       and drives a **Spark statement-executor agent** via `--spark-agent-url` /
       `FABRIC_SPARK_AGENT_URL` (`internal/api/livy_native.go`,
-      `e2e/livy/agent.py`): sessions, statements, and batches run on **real
+      `python/spark_agent/agent.py`): sessions, statements, and batches run on **real
       Spark**, session state persists across statements, and HC REPLs each get
       their own agent namespace — so the 5-REPL model is real end to end
       (`e2e/livy`, containerized). `--spark-livy-url` still reverse-proxies an

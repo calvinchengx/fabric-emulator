@@ -2,7 +2,7 @@ package api
 
 // Native Livy termination. Instead of reverse-proxying to an (retired) Apache
 // Livy server, the emulator implements the Livy REST session/statement contract
-// itself and drives a Spark statement-executor agent (e2e/livy/agent.py) — the
+// itself and drives a Spark statement-executor agent (python/spark_agent/agent.py) — the
 // same stance as the HC packing layer and the TDS warehouse: speak the wire
 // protocol, back it with a real engine. A real Livy client (pylivy, sparkmagic,
 // plain requests) creates a session, submits statements, and gets results

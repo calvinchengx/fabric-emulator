@@ -35,7 +35,7 @@ test` all pass (`--exit-code-from dbt`) in a Linux container stack.
   runs statements at `…/repls/{replId}/statements` — the exact HC routes the
   emulator implements. Statements execute on the agent via the native path.
 - **SQL agent.** dbt submits Spark **SQL** (`kind: sql`) and parses the Livy SQL
-  result envelope. The general-purpose Python REPL agent (`e2e/livy/agent.py`)
+  result envelope. The general-purpose Python REPL agent (`python/spark_agent/agent.py`)
   execs Python and returns `text/plain` — incompatible — so this harness ships
   `sql_agent.py`, which runs `spark.sql(code)` and returns
   `data["application/json"] = {schema, data}`. Delta extensions are on so dbt's

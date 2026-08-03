@@ -330,7 +330,7 @@ def sql_describe_registered_delta_table(spark):
 def sql_describe_detail_registered_delta(spark):
     """DESCRIBE DETAIL resolves a registered Delta table to its physical location.
 
-    e2e/livy/delta_ops.py needs exactly this: when a statement names a
+    python/spark_agent/delta_ops.py needs exactly this: when a statement names a
     registered table rather than a path, the delta-rs interception has to find
     where the table actually lives before it can act on it.
 
@@ -449,7 +449,7 @@ def main():
                            "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
     spark = builder.getOrCreate()
 
-    # e2e/livy/agent.py presets this for every Connect session: Sail reports
+    # python/spark_agent/agent.py presets this for every Connect session: Sail reports
     # localRelationSizeLimit as the string "3GB" and pyspark's client calls
     # int() on it. A client-compat quirk, not an engine capability, so the probe
     # applies the same preset the real runtime does — otherwise it reports gaps
