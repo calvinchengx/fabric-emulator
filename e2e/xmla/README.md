@@ -72,6 +72,12 @@ Microsoft's own ADOMD.NET client
    directions: if a later release lifts the restriction, this suite fails and
    says so.
 
+## Where the scope lives
+
+[docs/32-xmla-plan.md](../../docs/32-xmla-plan.md) turns what this suite measured
+into a plan, and proposes the one cheap experiment — answering the routing call
+below — that would replace the unknown in the next section with an observation.
+
 ## What it does NOT establish
 
 The client never reaches XMLA/SOAP — it is still in workspace **routing** when

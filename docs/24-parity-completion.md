@@ -78,7 +78,7 @@ real SQL Server. These are the same class of work.
 
 | Gap | Notes | Size |
 |---|---|---|
-| XMLA / ADOMD.NET (SemPy's transport) | Documented protocol (MS-XMLA / MS-SSAS); no harder than TDS was. A CI oracle DOES exist — `e2e/xmla` runs ADOMD.NET on Linux against a host we name, weekly, and asserts its first-call contract. Gated on cost and real demand, not feasibility | L |
+| XMLA / ADOMD.NET (SemPy's transport) | Documented protocol (MS-XMLA / MS-SSAS); no harder than TDS was. A CI oracle DOES exist — `e2e/xmla` runs ADOMD.NET on Linux against a host we name, weekly, and asserts its first-call contract. Gated on cost and real demand, not feasibility. Scoped in [32-xmla-plan.md](32-xmla-plan.md), which names the demand (semantic-link-labs) and proposes one cheap experiment to replace this `L` with a measurement | L |
 | Full DAX | The bounded engine works; this is open-ended surface growth, not a blocker | L, open-ended |
 | On-prem gateway **contract** | Emulate the protocol, not the proprietary binary | M |
 
