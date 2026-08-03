@@ -145,9 +145,22 @@ services:
       # can take a while to finish booting.
       FABRIC_SQL_TDS_ADDR: ":1433"
       FABRIC_WAREHOUSE_SQL_URL: "server=sqlserver;user id=sa;password=Str0ng!Passw0rd;encrypt=disable;dial timeout=90;connection timeout=90"
-    # Restate the base port mapping alongside the new one — Compose replaces
-    # (not merges) list-typed fields like `ports` across files, so the full
-    # desired list must be given here.
+    # Restate the base port mapping alongside the new one. Compose APPENDS
+    # `ports` across files and de-duplicates identical entries — it does not
+    # replace the list. Restating 9443:9443 is therefore harmless (the
+    # duplicate collapses) and the merged result is exactly the two below,
+    # which is what this file wants.
+    #
+    # The distinction matters when you want a DIFFERENT host port rather than
+    # an extra one. Listing "19543:9443" here would not move the published
+    # port; it would publish BOTH, and the original still collides with
+    # whatever already holds it. Replacing the list needs Compose's explicit
+    # merge control:
+    #
+    #     ports: !override ["19543:9443"]
+    #
+    # Measured against these files, not assumed: base alone resolves to
+    # [9443->9443], base+this to [9443->9443, 1433->1433].
     ports:
       - "9443:9443" # api.fabric + onelake.dfs + portal (host-routed)
       - "1433:1433" # warehouse T-SQL/TDS (FedAuth; sqlcmd/pyodbc/dbt-fabric point here)

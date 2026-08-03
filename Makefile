@@ -56,7 +56,7 @@ doctor: ## Check the toolchain and the docker context this Makefile needs
 	@sh scripts/doctor.sh
 
 up: ## Start the whole stack in the background
-	$(COMPOSE) up -d
+	@$(COMPOSE) up -d || { sh scripts/port_conflict.sh; exit 1; }
 
 up-lite: ## Contract-only pair — no compute sidecars, honest 501s on Spark/SQL
 	docker compose -f docker-compose.yml up -d
