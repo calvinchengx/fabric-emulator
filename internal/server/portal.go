@@ -384,7 +384,12 @@ func (s *Server) portalLineage(w http.ResponseWriter, r *http.Request) {
 		TargetItemID string `json:"targetItemId"`
 		TargetItem   string `json:"targetItem"`
 		TargetPath   string `json:"targetPath"`
-		CreatedAt    int64  `json:"createdAt"`
+		// SourceKind tells the graph whether the source is a Fabric item or a
+		// source system reached through a connection. Without it the view would
+		// have to infer "outside Fabric" from an empty path, which is the kind
+		// of guess this codebase keeps out of its data.
+		SourceKind string `json:"sourceKind,omitempty"`
+		CreatedAt  int64  `json:"createdAt"`
 	}
 	names := map[string]string{}
 	nameOf := func(itemID string) string {
@@ -398,13 +403,34 @@ func (s *Server) portalLineage(w http.ResponseWriter, r *http.Request) {
 		names[itemID] = n
 		return n
 	}
+	// A connection source resolves through a different table, so it needs its
+	// own lookup — GetItemByID would return nothing and the node would be
+	// labelled with a bare GUID, which is exactly what the resolution above
+	// exists to avoid.
+	connNames := map[string]string{}
+	connNameOf := func(id string) string {
+		if n, ok := connNames[id]; ok {
+			return n
+		}
+		n := ""
+		if c, err := s.Store.GetConnection(id); err == nil {
+			n = c.DisplayName
+		}
+		connNames[id] = n
+		return n
+	}
 	out := make([]edgeRow, 0, len(edges))
 	for _, e := range edges {
+		srcName := nameOf(e.SourceItemID)
+		if e.SourceIsConnection() {
+			srcName = connNameOf(e.SourceItemID)
+		}
 		out = append(out, edgeRow{
 			JobID: e.JobID, ActivityName: e.ActivityName, Producer: e.Producer,
-			SourceItemID: e.SourceItemID, SourceItem: nameOf(e.SourceItemID), SourcePath: e.SourcePath,
+			SourceItemID: e.SourceItemID, SourceItem: srcName, SourcePath: e.SourcePath,
 			TargetItemID: e.TargetItemID, TargetItem: nameOf(e.TargetItemID), TargetPath: e.TargetPath,
-			CreatedAt: e.CreatedAt,
+			SourceKind: e.SourceKind,
+			CreatedAt:  e.CreatedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"value": out})

@@ -71,6 +71,9 @@
     selected = n;
     detail = null;
     detailError = '';
+    // Nothing to read: the emulator does not hold this system's data, it only
+    // knows the platform authenticated through this connection to reach it.
+    if (n.source) return;
     if (!n.path.startsWith('Tables/')) return;
     api.get(`/_emulator/portal/table?itemId=${encodeURIComponent(n.itemId)}&table=${encodeURIComponent(n.path)}`)
       .then((d) => (detail = d))
@@ -174,16 +177,21 @@
   // renders (bounded by the node count) instead of hanging.
   let graph = $derived.by(() => {
     const nodes = new Map();
-    const add = (itemId, item, path) => {
+    const add = (itemId, item, path, source) => {
       const key = nodeKey(itemId, path);
       if (!nodes.has(key)) {
-        nodes.set(key, { key, itemId, item, path, depth: 0 });
+        nodes.set(key, { key, itemId, item, path, depth: 0, source: !!source });
       }
       return key;
     };
     const links = [];
     for (const e of edges) {
-      const from = add(e.sourceItemId, e.sourceItem, e.sourcePath);
+      // A source system has no path — the system IS the node — so it keys on
+      // the connection id alone. Marked `source` so it can be drawn as what it
+      // is: something outside Fabric that the platform reads FROM, never a
+      // table anyone can click into.
+      const src = e.sourceKind === 'connection';
+      const from = add(e.sourceItemId, e.sourceItem, e.sourcePath, src);
       const to = add(e.targetItemId, e.targetItem, e.targetPath);
       links.push({ from, to, producer: e.producer, activityName: e.activityName });
     }
@@ -219,6 +227,10 @@
   });
 
   function label(n) {
+    // A source system has no path — its name is the connection's display name,
+    // and falling through to the path logic would label it with an empty
+    // string or a raw GUID.
+    if (n.source) return n.item || n.itemId.slice(0, 8);
     const leaf = n.path.split('/').filter(Boolean).pop() || n.path;
     return leaf;
   }
@@ -227,6 +239,7 @@
   // and what this session has written at all.
   function nodeClass(n) {
     let c = 'node';
+    if (n.source) c += ' source';
     if (broken[n.key]) c += ' broken';
     else if (touched[n.key]) c += now - touched[n.key] < FRESH_MS ? ' fresh' : ' written';
     if (queried[n.itemId] && now - queried[n.itemId] < FRESH_MS) c += ' queried';
@@ -328,13 +341,13 @@
           transform="translate({n.x},{n.y})"
           role="button"
           tabindex="0"
-          aria-label={`Inspect ${n.path}`}
+          aria-label={n.source ? `Source system ${label(n)}` : `Inspect ${n.path}`}
           onclick={() => inspect(n)}
           onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && inspect(n)}
         >
           <rect width="160" height="36" rx="6" />
           <text x="10" y="15">{label(n)}</text>
-          <text class="sub" x="10" y="28">{n.item || n.itemId.slice(0, 8)}</text>
+          <text class="sub" x="10" y="28">{n.source ? 'source system' : n.item || n.itemId.slice(0, 8)}</text>
         </g>
       {/each}
     </svg>
@@ -357,6 +370,13 @@
 
     {#if detailError}
       <p class="error mt-2">{detailError}</p>
+    {:else if selected.source}
+      <p class="muted mt-2">
+        A source system, reached through this connection. The emulator holds no
+        data for it — it records that the platform read FROM here, which is why
+        the medallion starts at a vendor rather than at a file in
+        <code>Files/landing</code>.
+      </p>
     {:else if !selected.path.startsWith('Tables/')}
       <p class="muted mt-2">
         A file in OneLake, not a Delta table — the flow stream reports its
@@ -455,6 +475,13 @@
   .node rect {
     fill: var(--muted);
     stroke: var(--border);
+  }
+  /* A source system is not a table in the lakehouse and should not look like
+     one: dashed, because what is inside it is outside this emulator. */
+  .node.source rect {
+    fill: var(--background);
+    stroke: var(--primary);
+    stroke-dasharray: 4 3;
   }
   .node text {
     fill: var(--foreground);
