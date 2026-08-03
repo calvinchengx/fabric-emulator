@@ -350,7 +350,13 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 		}
 		bytesCopied += len(f.content)
 	}
+	// Producer is STATED, not defaulted. CreateLineageEdge fills an empty
+	// producer with Copy as a backstop, but Copy asserts the emulator
+	// WATCHED the bytes move — so a caller that merely forgot would be
+	// claiming evidence it never had. These are the sites that really are
+	// Copy, and saying so keeps the backstop a backstop.
 	edge := &store.LineageEdge{WorkspaceID: e.wid, JobID: e.jobID, ActivityName: act.Name,
+		Producer:          store.ProducerCopy,
 		SourceWorkspaceID: src.wsID, SourceItemID: src.itemID, SourcePath: src.path,
 		TargetWorkspaceID: dst.wsID, TargetItemID: dst.itemID, TargetPath: dst.path}
 	if err := e.a.Store.CreateLineageEdge(edge); err != nil {
@@ -761,7 +767,13 @@ func (e *pipelineExecutor) copyIntoTable(act pipeline.Activity, tp map[string]js
 		return nil, false, fmt.Errorf("copy %q: writing table %s: %v", act.Name, table, err)
 	}
 
+	// Producer is STATED, not defaulted. CreateLineageEdge fills an empty
+	// producer with Copy as a backstop, but Copy asserts the emulator
+	// WATCHED the bytes move — so a caller that merely forgot would be
+	// claiming evidence it never had. These are the sites that really are
+	// Copy, and saying so keeps the backstop a backstop.
 	edge := &store.LineageEdge{WorkspaceID: e.wid, JobID: e.jobID, ActivityName: act.Name,
+		Producer:          store.ProducerCopy,
 		SourceWorkspaceID: src.wsID, SourceItemID: src.itemID, SourcePath: src.path,
 		TargetWorkspaceID: dst.wsID, TargetItemID: dst.itemID, TargetPath: dst.path}
 	if err := e.a.Store.CreateLineageEdge(edge); err != nil {
