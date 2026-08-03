@@ -170,21 +170,28 @@ func (a *API) getNotebookRun(w http.ResponseWriter, r *http.Request, p *auth.Pri
 
 // notebookResultBody is what an execution engine reports back per cell.
 type notebookResultBody struct {
-	Status    string `json:"status"` // Completed | Failed (optional; derived if absent)
-	ExitValue string `json:"exitValue"`
-	Cells     []struct {
-		Index  int    `json:"index"`
-		Status string `json:"status"` // Succeeded | Failed | Skipped
-		Output string `json:"output"`
-		Error  string `json:"error"`
-		// Reads/Writes are the datasets this cell actually touched, reported by
-		// the engine that executed it. Shaped after OpenLineage's
-		// RunEvent{inputs,outputs}. The emulator never parses notebook code to
-		// infer these — an engine reporting what it did is an exact fact, a
-		// static guess is not.
-		Reads  []lineageRef `json:"reads"`
-		Writes []lineageRef `json:"writes"`
-	} `json:"cells"`
+	Status    string               `json:"status"` // Completed | Failed (optional; derived if absent)
+	ExitValue string               `json:"exitValue"`
+	Cells     []notebookCellResult `json:"cells"`
+}
+
+// notebookCellResult is one cell's outcome as the engine that ran it reports.
+//
+// Named rather than inline because the emulator now produces these itself when
+// it drives the agent (notebookdrive.go), and an anonymous struct cannot be
+// built anywhere but here.
+type notebookCellResult struct {
+	Index  int    `json:"index"`
+	Status string `json:"status"` // Succeeded | Failed | Skipped
+	Output string `json:"output"`
+	Error  string `json:"error"`
+	// Reads/Writes are the datasets this cell actually touched, reported by
+	// the engine that executed it. Shaped after OpenLineage's
+	// RunEvent{inputs,outputs}. The emulator never parses notebook code to
+	// infer these — an engine reporting what it did is an exact fact, a
+	// static guess is not.
+	Reads  []lineageRef `json:"reads"`
+	Writes []lineageRef `json:"writes"`
 }
 
 // lineageRef addresses one dataset a notebook cell read or wrote. workspaceId
@@ -222,6 +229,19 @@ func (a *API) reportNotebookRun(w http.ResponseWriter, r *http.Request, p *auth.
 		return
 	}
 
+	run = a.finalizeNotebookRun(wid, iid, jid, run, body)
+	writeJSON(w, http.StatusOK, run)
+}
+
+// finalizeNotebookRun merges an engine's results into the recorded run, records
+// the lineage they imply, and takes the job to a terminal state.
+//
+// Shared by the two engines that can report: an external Spark pool posting to
+// the callback above, and the emulator driving the agent itself
+// (notebookdrive.go). One function on purpose — a second, parallel copy of
+// "what does Completed mean" is how the two paths would come to disagree about
+// a notebook that half worked.
+func (a *API) finalizeNotebookRun(wid, iid, jid string, run notebookRun, body notebookResultBody) notebookRun {
 	byIdx := map[int]int{}
 	for i, c := range run.Cells {
 		byIdx[c.Index] = i
@@ -256,7 +276,7 @@ func (a *API) reportNotebookRun(w http.ResponseWriter, r *http.Request, p *auth.
 	// Reflect the real run in the job (deterministically terminal now).
 	_ = a.Store.FinalizeJob(iid, jid, failCode)
 	a.publishJobOutcome(wid, iid, jid, failCode)
-	writeJSON(w, http.StatusOK, run)
+	return run
 }
 
 // recordNotebookLineage turns a cell's reported read/write set into lineage

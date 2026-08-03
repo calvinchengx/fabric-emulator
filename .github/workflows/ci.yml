@@ -498,6 +498,21 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/livy/run.py
 
+  notebook-driven:
+    name: A notebook runs with no runner in the stack (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The consumer's case, and the one no other suite covers. `notebook-run`
+      # proves a notebook executes — but the engine that executes it there is an
+      # e2e script that ships in no artifact, so it proves a path a user cannot
+      # walk. This stack is only published services, and the emulator drives the
+      # agent itself.
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/notebook-driven/run.py
+
   sail:
     name: LakeSail Sail (Rust Spark Connect) writes Delta through OneLake
     runs-on: ubuntu-latest

@@ -95,6 +95,13 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 		a.saveNotebookRun(j.ID, *nbRun)
 		if j.FailWith != "" {
 			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
+		} else if len(nbRun.Cells) > 0 && a.runsNotebooksItself() {
+			// Nobody else is coming. With a Spark agent configured the emulator
+			// is the pool: it executes the cells and reports the same results an
+			// external engine would post (notebookdrive.go). Without one the job
+			// stays open for a callback, which is the original contract and the
+			// only honest thing to do when there is no engine to run anything.
+			go a.driveNotebookRun(wid, it.ID, j.ID, *nbRun)
 		}
 	}
 	if sjdRun != nil {
