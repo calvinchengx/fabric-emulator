@@ -64,3 +64,6 @@ examples/*/star_silver_summary.json
 # only honours REQUESTS_CA_BUNDLE). It changes every time the stack restarts.
 examples/*/silver_dbt/.emulator-ca.pem
 examples/*/gold*/.emulator-ca.pem
+
+# Built by e2e/pbix-desktop/build_fixture.py — a 2 MB binary nobody can diff.
+e2e/pbix-desktop/model.pbix

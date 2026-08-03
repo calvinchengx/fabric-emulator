@@ -1,0 +1,62 @@
+# Does Power BI Desktop itself read a .pbix we generated?
+#
+# A SPIKE (docs/33-pbix-tooling.md, Phase 0b), not a gate. Manual and scheduled
+# only: it installs a ~500 MB GUI application and drives it headlessly, which is
+# neither fast nor certain, and nothing else should wait on it.
+#
+# `continue-on-error` because a failure here is a FINDING. The question is
+# whether Desktop can run on a hosted runner at all; a red X that blocks other
+# work would make the honest answer expensive to obtain.
+name: PBIX Desktop probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "How many times to repeat (flake rate is the real result)"
+        default: "5"
+  schedule:
+    # Weekly, like e2e/xmla: Desktop ships monthly and the thing under
+    # observation is somebody else's release cadence.
+    - cron: "0 7 * * 1"
+
+jobs:
+  desktop:
+    name: Power BI Desktop opens and answers (attempt ${{ matrix.attempt }})
+    runs-on: windows-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        # Five attempts, run independently. One green tick proves a GUI app
+        # started once; the distribution is what decides whether this is an
+        # oracle or a coin.
+        attempt: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+
+      # The logic that does not need Desktop, checked first — a failure here is
+      # ours and should not be diagnosed through a 20-minute GUI install.
+      - name: Unit-test the probe logic
+        run: uv run --frozen --group test pytest e2e/pbix-desktop/test_verify.py -q
+
+      - name: Build the .pbix from our TMSL
+        run: uv run --frozen --no-sync python e2e/pbix-desktop/build_fixture.py
+
+      - name: Install and launch Power BI Desktop
+        id: desktop
+        shell: pwsh
+        run: pwsh -File e2e/pbix-desktop/desktop.ps1 -PbixPath "${{ github.workspace }}\e2e\pbix-desktop\model.pbix" | Tee-Object -FilePath "$env:RUNNER_TEMP\desktop.log"
+
+      - name: Query Desktop's engine and diff against executeQueries
+        shell: pwsh
+        run: uv run --frozen --no-sync python e2e/pbix-desktop/run.py --desktop-log "$env:RUNNER_TEMP\desktop.log"
+
+      # Always: the stage lines ARE the finding, including when a stage failed.
+      - if: always()
+        name: Report which stage was reached
+        shell: pwsh
+        run: Get-Content "$env:RUNNER_TEMP\desktop.log" -ErrorAction SilentlyContinue
