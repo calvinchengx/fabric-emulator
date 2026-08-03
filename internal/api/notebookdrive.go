@@ -22,6 +22,7 @@ package api
 // also drove simply wins the race — both produce the same shape.
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -170,20 +171,34 @@ except Exception:
 // `notebookutils.notebook.exit()` takes no argument — so "did it exit" cannot
 // be inferred from the string being empty.
 func (a *API) notebookExitValue(session string) (string, bool) {
+	// PRINTED AS JSON, not repr'd. The obvious spelling — evaluate
+	// `repr(__nb_exit__)` and strip the quotes — is wrong twice over. The agent
+	// applies repr() to a statement's result for display, so asking for a repr
+	// gets one repr'd AGAIN, and an exit value containing quotes comes back as
+	// \'{"a": 1}\'. Stripping outer quote characters then cannot recover it.
+	//
+	// It survived the e2e because that notebook exits with str(count) — "4" has
+	// no quotes, so double-repr still trimmed clean. The first real notebook to
+	// return JSON found it immediately.
+	//
+	// json.dumps of a {exited, value} pair is unambiguous for any content, and
+	// carries the did-it-exit bit that an empty string cannot: notebookutils'
+	// exit() takes no argument, so "" is a legitimate exit value.
 	out, err := a.agentPost("/statements", map[string]any{
 		"session": session,
-		// repr, so an exit value that is itself the text "None" is not mistaken
-		// for the sentinel.
-		"code": "repr(__nb_exit__)",
+		"code":    `import json as _j; print(_j.dumps({"exited": __nb_exit__ is not None, "value": __nb_exit__}))`,
 	})
 	if err != nil {
 		return "", false
 	}
-	text := strings.TrimSpace(agentText(out))
-	if text == "" || text == "None" {
+	var probe struct {
+		Exited bool   `json:"exited"`
+		Value  string `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(agentText(out))), &probe); err != nil {
 		return "", false
 	}
-	return strings.Trim(text, "'\""), true
+	return probe.Value, probe.Exited
 }
 
 // cellResult maps one agent reply onto the per-cell record the callback uses.
