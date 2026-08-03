@@ -418,6 +418,15 @@ func (a *API) itemView(r *http.Request, it *store.Item) any {
 
 func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]any {
 	switch it.Type {
+	case "Warehouse":
+		// See warehouse_endpoint.go. Nil rather than an empty string when no SQL
+		// endpoint is running: a property that is present but blank reads as "the
+		// warehouse has no address", which is a different claim from "this build
+		// serves no SQL".
+		if cs := a.warehouseConnectionString(r); cs != "" {
+			return map[string]any{"connectionString": cs}
+		}
+		return nil
 	case "Eventhouse":
 		base := kustoBaseURI(r, it.WorkspaceID, it.ID)
 		ids := []string{}

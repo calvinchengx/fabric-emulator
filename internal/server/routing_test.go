@@ -289,3 +289,40 @@ func TestPortalStoreErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestNewAdvertisesTheSQLEndpointPortOnWarehouses.
+//
+// The unit tests for the connection string set API.SQLEndpointPort directly,
+// which proves the formatting and proves nothing about the WIRING — deleting
+// the one assignment in New() left every one of them green. A consumer's whole
+// path to the SQL endpoint runs through that line: no port, no property, and a
+// semantic model's partition has no server to name.
+//
+// Asserted against the config rather than a literal, so a changed default moves
+// the expectation with it rather than breaking a test that is not about
+// defaults.
+func TestNewAdvertisesTheSQLEndpointPortOnWarehouses(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.SQLTDSAddr = "127.0.0.1:11533"
+	srv, err := server.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	if got := srv.API.SQLEndpointPort; got != "11533" {
+		t.Fatalf("SQLEndpointPort = %q, want the port from SQLTDSAddr (11533)", got)
+	}
+
+	// No SQL endpoint configured -> nothing to advertise. A port here would put
+	// an address on a warehouse that refuses connections.
+	quiet := testConfig(t)
+	quiet.SQLTDSAddr = ""
+	s2, err := server.New(quiet, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	if got := s2.API.SQLEndpointPort; got != "" {
+		t.Fatalf("SQLEndpointPort = %q with no TDS listener; want empty", got)
+	}
+}

@@ -65,6 +65,11 @@ type API struct {
 	refreshes refreshLog
 	// scans holds completed admin metadata scans — see scanner.go.
 	scans scanStore
+	// SQLEndpointPort is the port the warehouse TDS listener serves on, used to
+	// advertise a Warehouse's connectionString. Empty → a Warehouse reports no
+	// connection string, which is honest: there is no SQL endpoint to connect
+	// to when FABRIC_SQL_TDS_ADDR is unset.
+	SQLEndpointPort string
 	// RetryAfterSeconds is advertised on 202 responses.
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.
