@@ -79,7 +79,11 @@ func TestNotebookRunParseAndReport(t *testing.T) {
 		t.Fatalf("report = %d %s", w.Code, w.Body.Bytes())
 	}
 
-	// The job is now really Completed (not clock-derived) with the run detail.
+	// The job is now really Completed *because of the report* — this assertion
+	// used to pass without any report at all, since the clock completed the job
+	// on its own. It is load-bearing only because a job with cells outstanding
+	// no longer has a clock-derived completion; see
+	// TestNotebookJobStatusReflectsExecutionNotTheClock.
 	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
@@ -408,49 +412,70 @@ func TestObservedLineageIgnoresSelfEdge(t *testing.T) {
 	}
 }
 
-// TestJobStatusIsNotEvidenceOfNotebookExecution pins the trap that makes a
-// RunNotebook job look successful when nothing ran.
+// TestNotebookJobStatusReflectsExecutionNotTheClock: a RunNotebook job with
+// cells outstanding must NOT report a terminal status until an engine has
+// actually executed them.
 //
-// A job instance's status is derived from the CLOCK (store.JobInstance.StatusAt),
-// so a notebook job reports "Completed" the moment its virtual completion time
-// passes — whether or not any engine executed a single cell. The emulator parses
-// the notebook and owns the run record; Spark owns the compute, and without an
-// engine the cells stay Pending.
+// This is the defect it guards. A job's status was derived purely from virtual
+// time, so a notebook job read "Completed" the instant its completion time
+// passed — every cell still Pending, no engine having run a line. Callers
+// reasonably read a completed job as "the notebook ran", and were wrong.
 //
-// This is deliberate (see the notebooks.go header), but it is a knife-edge: read
-// the job status as proof of execution and you will believe a notebook wrote a
-// table it never touched. The run detail is the honest witness, so this test
-// asserts BOTH — the misleading value and the truthful one — side by side, and
-// fails if the two ever stop disagreeing in this exact way.
-func TestJobStatusIsNotEvidenceOfNotebookExecution(t *testing.T) {
+// The fix is not to make the clock slower; it is to take the clock off this
+// job entirely. Only the engine's callback can finish it.
+func TestNotebookJobStatusReflectsExecutionNotTheClock(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
 	nb := createNotebook(t, st, ws.ID, sampleNotebook)
 
-	// Submit the job and report NOTHING — no engine, no callback.
 	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
 
-	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Completed" {
-		t.Fatalf("job status without any engine = %q, want Completed "+
-			"(clock-derived); if this changed, the trap is gone and the "+
-			"comment above is stale", s)
+	// Nothing has executed, so nothing terminal may be claimed.
+	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s == "Completed" || s == "Failed" {
+		t.Fatalf("job reported %q with every cell Pending and no engine", s)
 	}
 	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
-	if run.Status != "Pending" {
-		t.Fatalf("run status without any engine = %q, want Pending", run.Status)
+	if run.Status != "Pending" || len(run.Cells) == 0 {
+		t.Fatalf("run should be Pending with cells parsed: %+v", run)
 	}
-	if run.ExitValue != "" {
-		t.Fatalf("exit value without execution = %q, want empty", run.ExitValue)
+
+	// The engine reports: NOW the job is terminal, and terminal because of the
+	// report rather than because time passed.
+	result := `{"exitValue":"3","cells":[
+      {"index":0,"status":"Succeeded","output":"ok"},
+      {"index":1,"status":"Succeeded","output":"1"}]}`
+	w := do(a.reportNotebookRun, admin, "POST", result, map[string]string{"wid": ws.ID, "iid": nb.ID, "jid": jid})
+	if w.Code != 200 {
+		t.Fatalf("report = %d %s", w.Code, w.Body.Bytes())
 	}
-	for _, c := range run.Cells {
-		if c.Status != "Pending" {
-			t.Fatalf("cell %d = %q, want Pending — nothing executed it", c.Index, c.Status)
-		}
-		if c.Output != "" {
-			t.Fatalf("cell %d produced output with no engine: %q", c.Index, c.Output)
-		}
+	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Completed" {
+		t.Fatalf("job status after a real report = %q, want Completed", s)
 	}
-	if len(run.Cells) == 0 {
-		t.Fatal("no cells parsed, so the assertions above proved nothing")
+}
+
+// TestNotebookJobWithNothingToExecuteStillCompletes: the fix must not strand a
+// notebook that has no cells at all.
+//
+// A run with nothing executable is not waiting on an engine — there is no work
+// outstanding — so it completes now. This is the boundary of the rule above,
+// and it is load-bearing: `notebookutils.notebook.run` polls to a terminal
+// status, and a definition-less notebook must still reach one rather than hang
+// until the caller's timeout.
+func TestNotebookJobWithNothingToExecuteStillCompletes(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "empty"}
+	if err := st.CreateItem(nb, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+
+	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
+	if len(run.Cells) != 0 {
+		t.Fatalf("expected no executable cells, got %+v", run.Cells)
+	}
+	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Completed" {
+		t.Fatalf("job with no cells = %q, want Completed — there is nothing "+
+			"for an engine to do, so waiting for one would hang forever", s)
 	}
 }

@@ -18,10 +18,19 @@ type sparkJobRun struct {
 	Error       string              `json:"error,omitempty"`
 }
 
-func (a *API) startSparkJobRun(it *store.Item, jobID string) string {
+// parseSparkJobRun resolves a SparkJobDefinition into the run an engine will
+// execute. Like parseNotebookRun it takes no job ID, because the caller needs
+// the outcome before the job exists: a definition that parses has real work
+// outstanding, and a job with work outstanding must not be completed by the
+// clock (see startJob).
+//
+// Unlike a notebook there is no "nothing to execute" case — a Spark job
+// definition that parses always names a main file — so a successful parse
+// always means: wait for the engine.
+func (a *API) parseSparkJobRun(it *store.Item) (sparkJobRun, string) {
 	parts, err := a.Store.GetDefinition(it.ID)
 	if err != nil {
-		return "InvalidSparkJobDefinition"
+		return sparkJobRun{Status: "Failed", Error: "no definition"}, "InvalidSparkJobDefinition"
 	}
 	job, binding, err := compute.ParseSparkJob(parts)
 	run := sparkJobRun{Status: "Pending", Job: job, Binding: binding}
@@ -30,13 +39,15 @@ func (a *API) startSparkJobRun(it *store.Item, jobID string) string {
 	}
 	if err != nil {
 		run.Status, run.Error = "Failed", err.Error()
+		return run, "InvalidSparkJobDefinition"
 	}
+	return run, ""
+}
+
+// saveSparkJobRun records the parsed run against a job that now exists.
+func (a *API) saveSparkJobRun(jobID string, run sparkJobRun) {
 	blob, _ := json.Marshal(run)
 	_ = a.Store.SetNotebookRun(jobID, run.Status, string(blob))
-	if err != nil {
-		return "InvalidSparkJobDefinition"
-	}
-	return ""
 }
 
 func (a *API) getSparkJobRun(w http.ResponseWriter, r *http.Request, p *auth.Principal) {

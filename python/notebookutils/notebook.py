@@ -2,8 +2,15 @@
 
 `run` submits an on-demand RunNotebook job through the Fabric control plane and
 polls to a terminal state. Actual cell execution happens on the Spark sidecar
-(via Livy) when one is attached; without it the emulator reports the
-clock-derived job lifecycle — the honest control-plane behaviour.
+(via Livy) when one is attached.
+
+A NOTEBOOK WITH CELLS NEEDS AN ENGINE TO REACH A TERMINAL STATE. The emulator no
+longer completes such a job on its clock — that made `run` return "Completed"
+for a notebook whose cells never executed, which is the one answer this function
+must never give wrongly. With no engine attached, `run` now raises
+NotebookError on `timeoutSeconds`, and that timeout is the truth: nothing ran.
+A notebook with no executable cells still completes immediately, because there
+is nothing to wait for.
 """
 import time
 

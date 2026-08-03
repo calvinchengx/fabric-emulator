@@ -8,9 +8,19 @@ package api
 // Real Fabric runs a notebook on a Spark pool that reports back to the service.
 // The emulator mirrors that: creating the job records a run (cells Pending);
 // an execution engine (the Spark runner in the e2e) POSTs per-cell results to
-// the runner callback, which finalises the run and the job's status. Without an
-// engine the cells stay Pending — honestly "parsed, not executed" — while the
-// job still completes on the clock, as before.
+// the runner callback, which finalises the run and the job's status.
+//
+// THE JOB'S STATUS IS NOT DERIVED FROM THE CLOCK. Every other item type's job
+// completes when virtual time passes its completion instant, and a notebook
+// once did too — so a RunNotebook job read "Completed" with every cell still
+// Pending and no engine having run a line. Callers reasonably read that as "the
+// notebook ran". Now a job with cells outstanding has no completion time at all
+// (jobs.go sets it beyond any clock); only the engine's callback finishes it,
+// so a terminal status means execution happened.
+//
+// The one exception is a run with nothing to execute — no definition, or no
+// code cells. There is no engine to wait for, so it completes immediately;
+// `notebookutils.notebook.run` polls to a terminal state and must reach one.
 
 import (
 	"encoding/base64"
@@ -67,21 +77,23 @@ type notebookRun struct {
 	Cells       []notebookCellRun   `json:"cells"`
 }
 
-// startNotebookRun parses a Notebook item's definition and records a Pending
-// run for the job, so the cells are queryable before any engine executes them.
-func (a *API) startNotebookRun(it *store.Item, jobID string) string {
+// parseNotebookRun parses a Notebook item's definition into the run record an
+// engine will execute. It takes no job ID because the CALLER needs the result
+// before the job exists: whether there are cells outstanding decides whether
+// the job may complete on the clock at all (see startJob).
+func (a *API) parseNotebookRun(it *store.Item) (notebookRun, string) {
 	def, err := a.notebookContent(it.ID)
 	run := notebookRun{Status: "Pending", Cells: []notebookCellRun{}}
 	if err != nil {
-		a.saveNotebookRun(jobID, run)
-		return ""
+		// No definition: nothing to parse and nothing to execute. The run is
+		// not waiting on an engine, so it is not left hanging for one.
+		return run, ""
 	}
 	run.Binding = compute.NotebookBinding(def)
 	run.Binding, run.Environment, err = a.resolveComputeBinding(it, run.Binding)
 	if err != nil {
 		run.Status = "Failed"
-		a.saveNotebookRun(jobID, run)
-		return "ComputeBindingInvalid"
+		return run, "ComputeBindingInvalid"
 	}
 	// Re-sequence the executable code cells 0..n so the run is self-
 	// contiguous (markdown/metadata don't leave gaps) and an engine can
@@ -91,8 +103,7 @@ func (a *API) startNotebookRun(it *store.Item, jobID string) string {
 			Index: i, Kind: string(c.Kind), Language: c.Language, Source: c.Source, Status: "Pending",
 		})
 	}
-	a.saveNotebookRun(jobID, run)
-	return ""
+	return run, ""
 }
 
 func (a *API) resolveComputeBinding(owner *store.Item, binding compute.Binding) (compute.Binding, compute.Environment, error) {

@@ -29,6 +29,42 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 		// A real engine callback finalises this job; virtual time must not.
 		j.CompleteAt = math.MaxInt64
 	}
+	// A notebook is parsed BEFORE its job exists, because what the parse finds
+	// decides whether the clock may complete the job at all.
+	//
+	// WHY: a job's status is otherwise derived purely from virtual time, so a
+	// RunNotebook job reported "Completed" the moment its completion time
+	// passed — with every cell still Pending and no engine having run a line.
+	// A green job that means nothing is worse than a job stuck InProgress,
+	// because only one of the two is believed.
+	//
+	// Cells outstanding => only the engine's callback can finish this job.
+	// No cells (no definition, or nothing executable) => there is no work to
+	// wait for, and the job completes now. That is not a loophole: a run with
+	// nothing to execute is not waiting on an engine, and `notebookutils.
+	// notebook.run` against such a notebook must still reach a terminal state.
+	var nbRun *notebookRun
+	if it.Type == "Notebook" && jobType == "RunNotebook" {
+		run, code := a.parseNotebookRun(it)
+		nbRun = &run
+		if code != "" {
+			j.FailWith = code
+		} else if len(run.Cells) > 0 {
+			j.CompleteAt = math.MaxInt64
+		}
+	}
+	// A Spark job definition is the same story with no empty case: if it parses,
+	// there is a main file for an engine to run, so the clock must not finish it.
+	var sjdRun *sparkJobRun
+	if it.Type == "SparkJobDefinition" && jobType == "sparkjob" {
+		run, code := a.parseSparkJobRun(it)
+		sjdRun = &run
+		if code != "" {
+			j.FailWith = code
+		} else {
+			j.CompleteAt = math.MaxInt64
+		}
+	}
 	if err := a.Store.CreateJobInstance(j); err != nil {
 		return nil, err
 	}
@@ -52,19 +88,19 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 			_ = a.Store.SetJobFailure(it.ID, j.ID, code)
 		}
 	}
-	// A RunNotebook job: parse the notebook into cells now (real Go parser) and
-	// record a Pending run. A real Spark engine executes the cells and reports
-	// back to finalise the run + the job's status (see notebooks.go).
-	if it.Type == "Notebook" && jobType == "RunNotebook" {
-		if code := a.startNotebookRun(it, j.ID); code != "" {
-			j.FailWith = code
-			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
+	// The parse happened above; record it against the job now that one exists.
+	// A real Spark engine executes the cells and reports back to finalise the
+	// run and the job's status (see notebooks.go).
+	if nbRun != nil {
+		a.saveNotebookRun(j.ID, *nbRun)
+		if j.FailWith != "" {
+			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
 		}
 	}
-	if it.Type == "SparkJobDefinition" && jobType == "sparkjob" {
-		if code := a.startSparkJobRun(it, j.ID); code != "" {
-			j.FailWith = code
-			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
+	if sjdRun != nil {
+		a.saveSparkJobRun(j.ID, *sjdRun)
+		if j.FailWith != "" {
+			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
 		}
 	}
 	if it.Type == "ApacheAirflowJob" && jobType == "Run" {
