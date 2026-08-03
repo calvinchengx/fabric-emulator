@@ -1,0 +1,82 @@
+{
+ "name": "ContosoRevenue",
+ "compatibilityLevel": 1550,
+ "model": {
+  "culture": "en-US",
+  "tables": [
+   {
+    "name": "Customer",
+    "columns": [
+     {
+      "name": "CustomerId",
+      "dataType": "string",
+      "sourceColumn": "CustomerId"
+     },
+     {
+      "name": "Name",
+      "dataType": "string",
+      "sourceColumn": "Name"
+     },
+     {
+      "name": "Country",
+      "dataType": "string",
+      "sourceColumn": "Country"
+     }
+    ]
+   },
+   {
+    "name": "Revenue",
+    "columns": [
+     {
+      "name": "OrderDate",
+      "dataType": "string",
+      "sourceColumn": "OrderDate"
+     },
+     {
+      "name": "Country",
+      "dataType": "string",
+      "sourceColumn": "Country"
+     },
+     {
+      "name": "Orders",
+      "dataType": "int64",
+      "sourceColumn": "Orders"
+     },
+     {
+      "name": "Units",
+      "dataType": "int64",
+      "sourceColumn": "Units"
+     },
+     {
+      "name": "Revenue",
+      "dataType": "double",
+      "sourceColumn": "Revenue"
+     }
+    ],
+    "measures": [
+     {
+      "name": "Total Revenue",
+      "expression": "SUM(Revenue[Revenue])"
+     },
+     {
+      "name": "Total Units",
+      "expression": "SUM(Revenue[Units])"
+     },
+     {
+      "name": "Revenue per Unit",
+      "expression": "DIVIDE([Total Revenue], [Total Units])"
+     }
+    ]
+   }
+  ],
+  "relationships": [
+   {
+    "name": "Revenue_Customer",
+    "fromTable": "Revenue",
+    "fromColumn": "Country",
+    "toTable": "Customer",
+    "toColumn": "Country"
+   }
+  ]
+ }
+}

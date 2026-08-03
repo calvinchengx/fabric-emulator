@@ -1,0 +1,639 @@
+{
+ "Customer": [
+  {
+   "CustomerId": "C-0004581",
+   "Name": "Farid Andersen",
+   "Country": "GB"
+  },
+  {
+   "CustomerId": "C-0004605",
+   "Name": "Dev Kowalski",
+   "Country": "GB"
+  },
+  {
+   "CustomerId": "C-0004641",
+   "Name": "Noor Fernandez",
+   "Country": "GB"
+  },
+  {
+   "CustomerId": "C-0004600",
+   "Name": "Yuki Andersen",
+   "Country": "SG"
+  },
+  {
+   "CustomerId": "C-0004639",
+   "Name": "Liam Fernandez",
+   "Country": "SG"
+  },
+  {
+   "CustomerId": "C-0004648",
+   "Name": "Umar Fernandez",
+   "Country": "SG"
+  },
+  {
+   "CustomerId": "C-0004760",
+   "Name": "Carla Patel",
+   "Country": "US"
+  },
+  {
+   "CustomerId": "C-0004832",
+   "Name": "Wei Rahman",
+   "Country": "US"
+  },
+  {
+   "CustomerId": "C-0004853",
+   "Name": "Rosa Lim",
+   "Country": "US"
+  }
+ ],
+ "Revenue": [
+  {
+   "OrderDate": "2026-07-02",
+   "Country": "GB",
+   "Orders": 2917,
+   "Units": 8821,
+   "Revenue": 897927.7999999999
+  },
+  {
+   "OrderDate": "2026-07-27",
+   "Country": "GB",
+   "Orders": 2964,
+   "Units": 8814,
+   "Revenue": 895692.0
+  },
+  {
+   "OrderDate": "2026-07-05",
+   "Country": "GB",
+   "Orders": 3016,
+   "Units": 9017,
+   "Revenue": 906953.5
+  },
+  {
+   "OrderDate": "2026-07-13",
+   "Country": "US",
+   "Orders": 2878,
+   "Units": 8568,
+   "Revenue": 907187.7999999999
+  },
+  {
+   "OrderDate": "2026-07-21",
+   "Country": "SG",
+   "Orders": 2916,
+   "Units": 8565,
+   "Revenue": 872798.5
+  },
+  {
+   "OrderDate": "2026-07-08",
+   "Country": "GB",
+   "Orders": 2957,
+   "Units": 8811,
+   "Revenue": 884433.7000000001
+  },
+  {
+   "OrderDate": "2026-07-06",
+   "Country": "GB",
+   "Orders": 3024,
+   "Units": 9065,
+   "Revenue": 934353.0000000001
+  },
+  {
+   "OrderDate": "2026-07-25",
+   "Country": "SG",
+   "Orders": 3042,
+   "Units": 9069,
+   "Revenue": 902565.5
+  },
+  {
+   "OrderDate": "2026-07-04",
+   "Country": "SG",
+   "Orders": 2939,
+   "Units": 8752,
+   "Revenue": 884394.3000000003
+  },
+  {
+   "OrderDate": "2026-07-17",
+   "Country": "US",
+   "Orders": 2883,
+   "Units": 8732,
+   "Revenue": 917930.2
+  },
+  {
+   "OrderDate": "2026-07-02",
+   "Country": "US",
+   "Orders": 2926,
+   "Units": 8804,
+   "Revenue": 896701.8999999999
+  },
+  {
+   "OrderDate": "2026-07-12",
+   "Country": "US",
+   "Orders": 3009,
+   "Units": 9025,
+   "Revenue": 918222.8999999999
+  },
+  {
+   "OrderDate": "2026-07-21",
+   "Country": "GB",
+   "Orders": 2955,
+   "Units": 9020,
+   "Revenue": 907001.7
+  },
+  {
+   "OrderDate": "2026-07-01",
+   "Country": "GB",
+   "Orders": 2823,
+   "Units": 8494,
+   "Revenue": 856123.8999999999
+  },
+  {
+   "OrderDate": "2026-07-07",
+   "Country": "GB",
+   "Orders": 3007,
+   "Units": 9049,
+   "Revenue": 878070.1000000001
+  },
+  {
+   "OrderDate": "2026-07-26",
+   "Country": "GB",
+   "Orders": 2891,
+   "Units": 8737,
+   "Revenue": 891341.6
+  },
+  {
+   "OrderDate": "2026-07-08",
+   "Country": "SG",
+   "Orders": 2915,
+   "Units": 8845,
+   "Revenue": 904407.6000000001
+  },
+  {
+   "OrderDate": "2026-07-08",
+   "Country": "US",
+   "Orders": 2894,
+   "Units": 8646,
+   "Revenue": 922424.8
+  },
+  {
+   "OrderDate": "2026-07-12",
+   "Country": "SG",
+   "Orders": 2852,
+   "Units": 8548,
+   "Revenue": 877004.7
+  },
+  {
+   "OrderDate": "2026-07-20",
+   "Country": "SG",
+   "Orders": 2817,
+   "Units": 8491,
+   "Revenue": 832435.8999999999
+  },
+  {
+   "OrderDate": "2026-07-27",
+   "Country": "US",
+   "Orders": 2944,
+   "Units": 8901,
+   "Revenue": 915158.1999999998
+  },
+  {
+   "OrderDate": "2026-07-19",
+   "Country": "SG",
+   "Orders": 3051,
+   "Units": 9158,
+   "Revenue": 918980.6
+  },
+  {
+   "OrderDate": "2026-07-22",
+   "Country": "US",
+   "Orders": 3003,
+   "Units": 8992,
+   "Revenue": 921744.1000000001
+  },
+  {
+   "OrderDate": "2026-07-01",
+   "Country": "US",
+   "Orders": 2918,
+   "Units": 8832,
+   "Revenue": 869137.7999999999
+  },
+  {
+   "OrderDate": "2026-07-16",
+   "Country": "SG",
+   "Orders": 2922,
+   "Units": 8787,
+   "Revenue": 885102.2999999999
+  },
+  {
+   "OrderDate": "2026-07-23",
+   "Country": "GB",
+   "Orders": 2933,
+   "Units": 8859,
+   "Revenue": 906866.0000000001
+  },
+  {
+   "OrderDate": "2026-07-21",
+   "Country": "US",
+   "Orders": 3032,
+   "Units": 9135,
+   "Revenue": 927059.1000000002
+  },
+  {
+   "OrderDate": "2026-07-07",
+   "Country": "SG",
+   "Orders": 2960,
+   "Units": 8774,
+   "Revenue": 867413.3000000002
+  },
+  {
+   "OrderDate": "2026-07-26",
+   "Country": "SG",
+   "Orders": 2921,
+   "Units": 8815,
+   "Revenue": 910227.1
+  },
+  {
+   "OrderDate": "2026-07-18",
+   "Country": "SG",
+   "Orders": 2937,
+   "Units": 8714,
+   "Revenue": 891740.0
+  },
+  {
+   "OrderDate": "2026-07-06",
+   "Country": "SG",
+   "Orders": 2933,
+   "Units": 8891,
+   "Revenue": 881942.2
+  },
+  {
+   "OrderDate": "2026-07-23",
+   "Country": "US",
+   "Orders": 2874,
+   "Units": 8668,
+   "Revenue": 879480.1
+  },
+  {
+   "OrderDate": "2026-07-18",
+   "Country": "US",
+   "Orders": 2918,
+   "Units": 8690,
+   "Revenue": 880967.8999999999
+  },
+  {
+   "OrderDate": "2026-07-25",
+   "Country": "US",
+   "Orders": 3012,
+   "Units": 8993,
+   "Revenue": 931147.7999999998
+  },
+  {
+   "OrderDate": "2026-07-14",
+   "Country": "GB",
+   "Orders": 2832,
+   "Units": 8459,
+   "Revenue": 862840.7
+  },
+  {
+   "OrderDate": "2026-07-22",
+   "Country": "SG",
+   "Orders": 2994,
+   "Units": 8904,
+   "Revenue": 882238.5
+  },
+  {
+   "OrderDate": "2026-07-24",
+   "Country": "SG",
+   "Orders": 2885,
+   "Units": 8632,
+   "Revenue": 883685.5999999997
+  },
+  {
+   "OrderDate": "2026-07-03",
+   "Country": "SG",
+   "Orders": 2938,
+   "Units": 8880,
+   "Revenue": 866343.2
+  },
+  {
+   "OrderDate": "2026-07-14",
+   "Country": "SG",
+   "Orders": 2967,
+   "Units": 8822,
+   "Revenue": 905621.4
+  },
+  {
+   "OrderDate": "2026-07-03",
+   "Country": "GB",
+   "Orders": 2914,
+   "Units": 8712,
+   "Revenue": 916932.1
+  },
+  {
+   "OrderDate": "2026-07-24",
+   "Country": "GB",
+   "Orders": 2868,
+   "Units": 8598,
+   "Revenue": 898872.5999999999
+  },
+  {
+   "OrderDate": "2026-07-05",
+   "Country": "SG",
+   "Orders": 2996,
+   "Units": 9012,
+   "Revenue": 892031.2000000001
+  },
+  {
+   "OrderDate": "2026-07-04",
+   "Country": "GB",
+   "Orders": 2885,
+   "Units": 8698,
+   "Revenue": 897762.5999999999
+  },
+  {
+   "OrderDate": "2026-07-15",
+   "Country": "GB",
+   "Orders": 2900,
+   "Units": 8568,
+   "Revenue": 866923.3999999998
+  },
+  {
+   "OrderDate": "2026-07-19",
+   "Country": "GB",
+   "Orders": 3008,
+   "Units": 8956,
+   "Revenue": 865692.4
+  },
+  {
+   "OrderDate": "2026-07-20",
+   "Country": "US",
+   "Orders": 2895,
+   "Units": 8798,
+   "Revenue": 892383.0
+  },
+  {
+   "OrderDate": "2026-07-11",
+   "Country": "SG",
+   "Orders": 2921,
+   "Units": 8906,
+   "Revenue": 882410.8
+  },
+  {
+   "OrderDate": "2026-07-02",
+   "Country": "SG",
+   "Orders": 2904,
+   "Units": 8665,
+   "Revenue": 901742.9
+  },
+  {
+   "OrderDate": "2026-07-10",
+   "Country": "GB",
+   "Orders": 2903,
+   "Units": 8770,
+   "Revenue": 920395.9000000001
+  },
+  {
+   "OrderDate": "2026-07-11",
+   "Country": "GB",
+   "Orders": 2976,
+   "Units": 8877,
+   "Revenue": 901625.6000000001
+  },
+  {
+   "OrderDate": "2026-07-10",
+   "Country": "SG",
+   "Orders": 2928,
+   "Units": 8757,
+   "Revenue": 876701.4999999999
+  },
+  {
+   "OrderDate": "2026-07-19",
+   "Country": "US",
+   "Orders": 3012,
+   "Units": 8924,
+   "Revenue": 882725.1000000002
+  },
+  {
+   "OrderDate": "2026-07-28",
+   "Country": "SG",
+   "Orders": 3039,
+   "Units": 9063,
+   "Revenue": 905665.0999999999
+  },
+  {
+   "OrderDate": "2026-07-11",
+   "Country": "US",
+   "Orders": 2954,
+   "Units": 8934,
+   "Revenue": 893505.2
+  },
+  {
+   "OrderDate": "2026-07-15",
+   "Country": "US",
+   "Orders": 2942,
+   "Units": 8804,
+   "Revenue": 872783.0
+  },
+  {
+   "OrderDate": "2026-07-12",
+   "Country": "GB",
+   "Orders": 3086,
+   "Units": 9277,
+   "Revenue": 961022.4000000001
+  },
+  {
+   "OrderDate": "2026-07-28",
+   "Country": "GB",
+   "Orders": 2985,
+   "Units": 8890,
+   "Revenue": 886664.6000000001
+  },
+  {
+   "OrderDate": "2026-07-10",
+   "Country": "US",
+   "Orders": 2879,
+   "Units": 8653,
+   "Revenue": 860831.7000000001
+  },
+  {
+   "OrderDate": "2026-07-09",
+   "Country": "US",
+   "Orders": 3001,
+   "Units": 9036,
+   "Revenue": 879133.5
+  },
+  {
+   "OrderDate": "2026-07-07",
+   "Country": "US",
+   "Orders": 2951,
+   "Units": 8894,
+   "Revenue": 886659.3999999999
+  },
+  {
+   "OrderDate": "2026-07-15",
+   "Country": "SG",
+   "Orders": 2973,
+   "Units": 9018,
+   "Revenue": 887273.2000000001
+  },
+  {
+   "OrderDate": "2026-07-06",
+   "Country": "US",
+   "Orders": 2849,
+   "Units": 8578,
+   "Revenue": 881319.5
+  },
+  {
+   "OrderDate": "2026-07-27",
+   "Country": "SG",
+   "Orders": 2857,
+   "Units": 8530,
+   "Revenue": 868356.3
+  },
+  {
+   "OrderDate": "2026-07-26",
+   "Country": "US",
+   "Orders": 2954,
+   "Units": 8806,
+   "Revenue": 885111.0
+  },
+  {
+   "OrderDate": "2026-07-20",
+   "Country": "GB",
+   "Orders": 3030,
+   "Units": 9092,
+   "Revenue": 913198.5
+  },
+  {
+   "OrderDate": "2026-07-01",
+   "Country": "SG",
+   "Orders": 2902,
+   "Units": 8676,
+   "Revenue": 877599.0
+  },
+  {
+   "OrderDate": "2026-07-16",
+   "Country": "GB",
+   "Orders": 2932,
+   "Units": 8945,
+   "Revenue": 930513.1000000002
+  },
+  {
+   "OrderDate": "2026-07-24",
+   "Country": "US",
+   "Orders": 2926,
+   "Units": 8749,
+   "Revenue": 885343.6
+  },
+  {
+   "OrderDate": "2026-07-05",
+   "Country": "US",
+   "Orders": 3017,
+   "Units": 9105,
+   "Revenue": 924209.3
+  },
+  {
+   "OrderDate": "2026-07-14",
+   "Country": "US",
+   "Orders": 2983,
+   "Units": 8905,
+   "Revenue": 883908.2000000001
+  },
+  {
+   "OrderDate": "2026-07-09",
+   "Country": "GB",
+   "Orders": 3000,
+   "Units": 9095,
+   "Revenue": 909217.4
+  },
+  {
+   "OrderDate": "2026-07-17",
+   "Country": "GB",
+   "Orders": 2925,
+   "Units": 8883,
+   "Revenue": 919849.8999999998
+  },
+  {
+   "OrderDate": "2026-07-03",
+   "Country": "US",
+   "Orders": 2956,
+   "Units": 8773,
+   "Revenue": 890583.2999999998
+  },
+  {
+   "OrderDate": "2026-07-17",
+   "Country": "SG",
+   "Orders": 2945,
+   "Units": 8795,
+   "Revenue": 861250.9999999998
+  },
+  {
+   "OrderDate": "2026-07-13",
+   "Country": "GB",
+   "Orders": 3014,
+   "Units": 9088,
+   "Revenue": 940430.2999999998
+  },
+  {
+   "OrderDate": "2026-07-22",
+   "Country": "GB",
+   "Orders": 2981,
+   "Units": 8923,
+   "Revenue": 891967.9999999999
+  },
+  {
+   "OrderDate": "2026-07-04",
+   "Country": "US",
+   "Orders": 3007,
+   "Units": 9132,
+   "Revenue": 943273.7
+  },
+  {
+   "OrderDate": "2026-07-28",
+   "Country": "US",
+   "Orders": 2968,
+   "Units": 8870,
+   "Revenue": 905090.6000000001
+  },
+  {
+   "OrderDate": "2026-07-25",
+   "Country": "GB",
+   "Orders": 2880,
+   "Units": 8665,
+   "Revenue": 860012.7
+  },
+  {
+   "OrderDate": "2026-07-16",
+   "Country": "US",
+   "Orders": 2902,
+   "Units": 8774,
+   "Revenue": 881432.5000000002
+  },
+  {
+   "OrderDate": "2026-07-13",
+   "Country": "SG",
+   "Orders": 3070,
+   "Units": 9266,
+   "Revenue": 932749.9000000004
+  },
+  {
+   "OrderDate": "2026-07-18",
+   "Country": "GB",
+   "Orders": 2952,
+   "Units": 8805,
+   "Revenue": 924989.1999999997
+  },
+  {
+   "OrderDate": "2026-07-23",
+   "Country": "SG",
+   "Orders": 2894,
+   "Units": 8652,
+   "Revenue": 875210.2
+  },
+  {
+   "OrderDate": "2026-07-09",
+   "Country": "SG",
+   "Orders": 3037,
+   "Units": 9053,
+   "Revenue": 891324.4000000001
+  }
+ ]
+}

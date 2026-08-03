@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AssemblyName>dtprobe</AssemblyName>
+    <RootNamespace>dtprobe</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Same client e2e/xmla drives. There it talks to a capture stub; here it
+         talks to the Analysis Services instance Power BI Desktop is hosting. -->
+    <PackageReference Include="Microsoft.AnalysisServices.AdomdClient.NetCore.retail.amd64" Version="19.*" />
+  </ItemGroup>
+</Project>
