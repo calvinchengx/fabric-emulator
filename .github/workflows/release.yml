@@ -167,3 +167,40 @@ jobs:
       - run: gh release upload "${{ github.ref_name }}" dist/fixtures/*.whl --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Tell the acceptance repo a release shipped, so it verifies THIS release.
+  #
+  # `needs: fixtures` and not merely `binaries`: the downstream run installs the
+  # wheels as its first step, so dispatching before they are uploaded starts a
+  # run that fails on a missing asset — and reports it as the platform being
+  # broken rather than as a race in this workflow.
+  #
+  # A PAT, because `secrets.GITHUB_TOKEN` is scoped to THIS repository and
+  # cannot dispatch into another one. The failure mode if it is missing or
+  # expired is silence, which is why the acceptance workflow also runs on a
+  # daily schedule — see its own comment.
+  dispatch:
+    name: Tell contoso-data-platform to verify this release
+    needs: fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire repository_dispatch
+        env:
+          GH_TOKEN: ${{ secrets.ACCEPTANCE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::ACCEPTANCE_DISPATCH_TOKEN is not set — the release " \
+                 "shipped but nothing downstream was told. Add a PAT with " \
+                 "'contents: write' on calvinchengx/contoso-data-platform."
+            exit 1
+          fi
+          # The version travels WITH the event. Without it the downstream repo
+          # would verify whatever its own versions.env pins — quite possibly
+          # the previous release — and report success for a release nobody
+          # tested.
+          version="${GITHUB_REF_NAME#v}"
+          gh api repos/calvinchengx/contoso-data-platform/dispatches \
+            -f event_type=fabric-emulator-release \
+            -F "client_payload[version]=$version" \
+            -F "client_payload[tag]=${GITHUB_REF_NAME}"
+          echo "dispatched fabric-emulator-release for $version"
