@@ -126,6 +126,33 @@ author, so the signal had no discriminating power at all; and a parity check
 had not noticed. **Before believing a measurement, say out loud which question
 it answers, and check that it is the one you asked.**
 
+**Ten — a comment asserting a contract the code does not hold.** Above the
+`Status` field on the event bus stood: *"Field names match the job-instance wire
+shape, so a consumer reading the stream and a consumer polling the API see the
+same words."* The names do match. The VALUES do not: the bus publishes
+`Started`, which `StatusAt` never returns — polling the same job says
+`InProgress`. A consumer written by reading that comment classified every job
+start as an unknown status, and its report was wall-to-wall false positives with
+real failures buried inside them.
+
+The code was right; an event log and a state query legitimately differ. The
+prose was wrong, and prose is what a downstream author reads. **A comment that
+states an invariant is a claim, and an unenforced claim decays into a lie
+without anything going red.**
+
+Its twin is a DEFAULT that converts an omission into an assertion.
+`CreateLineageEdge` fills an empty producer with `Copy` — and `Copy` means *the
+emulator watched the bytes move*. Five of seven call sites named their producer;
+two relied on the default. A new caller that simply forgot would publish an edge
+claiming evidence nobody ever had, into the one structure whose entire purpose
+is telling evidence from claim. Both copy sites now say `Copy` out loud, and
+`TestEveryLineageEdgeStatesItsProducer` keeps the default a backstop rather than
+a mechanism.
+
+The tell for both: **ask what would go red if the sentence were false.** For the
+comment, nothing did — until a consumer believed it. For the default, nothing
+did — because being wrong and being defaulted are indistinguishable downstream.
+
 ### What actually caught them
 
 Not review, and not more assertions. In every case it was **looking at what the
