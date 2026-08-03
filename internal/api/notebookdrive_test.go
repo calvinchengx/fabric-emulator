@@ -25,14 +25,14 @@ type fakeAgent struct {
 	got []string
 	// reply decides what each statement returns; nil means an empty ok.
 	reply func(code string) map[string]any
-	// exit is what repr(__nb_exit__) answers — the fake's whole memory of the
-	// notebook having called notebook_exit.
+	// exit is what the notebook exited WITH; empty means it never called
+	// notebook_exit. The probe is answered as JSON, like the real agent.
 	exit string
 }
 
 func newFakeAgent(t *testing.T, a *API) *fakeAgent {
 	t.Helper()
-	f := &fakeAgent{exit: "None"}
+	f := &fakeAgent{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {
 			writeJSON(w, 200, map[string]any{"state": "idle"})
@@ -50,9 +50,15 @@ func newFakeAgent(t *testing.T, a *API) *fakeAgent {
 		defer f.mu.Unlock()
 		switch r.URL.Path {
 		case "/statements":
-			if req.Code == "repr(__nb_exit__)" {
+			if strings.Contains(req.Code, "__nb_exit__ is not None") {
+				// Model what the real agent does: the notebook's exit probe
+				// PRINTS json, and run_code returns captured stdout.
+				body := `{"exited":false,"value":""}`
+				if f.exit != "" {
+					body = `{"exited":true,"value":` + jsonQuote(f.exit) + `}`
+				}
 				writeJSON(w, 200, map[string]any{
-					"status": "ok", "data": map[string]any{"text/plain": f.exit},
+					"status": "ok", "data": map[string]any{"text/plain": body},
 				})
 				return
 			}
@@ -154,7 +160,7 @@ func TestNotebookExitStopsTheRunAndCarriesItsValue(t *testing.T) {
 	// The first cell exits; the fake then answers the exit probe with a value.
 	agent.reply = func(code string) map[string]any {
 		if strings.Contains(code, "spark.range") {
-			agent.exit = "'42'"
+			agent.exit = "42"
 			return map[string]any{"status": "error", "ename": "Error", "evalue": "_NotebookExit: 42"}
 		}
 		return nil
@@ -250,5 +256,55 @@ func TestAnUnreachableAgentFailsTheJobRatherThanHanging(t *testing.T) {
 	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
 	if !strings.Contains(run.Cells[0].Error, "unreachable") {
 		t.Fatalf("the error should name the agent: %+v", run.Cells[0])
+	}
+}
+
+// jsonQuote renders a Go string as a JSON string literal.
+func jsonQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// TestNotebookExitValueSurvivesQuotesAndBraces.
+//
+// The bug this pins: the probe used to evaluate `repr(__nb_exit__)`, and the
+// agent repr()s a statement's result for display — so the value came back
+// repr'd TWICE, and an exit value containing quotes arrived as \'{"a": 1}\'.
+// Stripping outer quote characters cannot recover that.
+//
+// It survived every earlier test because the e2e notebook exits with
+// str(count). "4" has no quotes, so double-repr still trimmed clean. The first
+// real notebook to return JSON — a medallion step reporting its row counts —
+// found it in one run.
+func TestNotebookExitValueSurvivesQuotesAndBraces(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+	agent := newFakeAgent(t, a)
+
+	const payload = `{"silver_customers": 100000, "countries": ["GB", "SG"]}`
+	agent.reply = func(code string) map[string]any {
+		if strings.Contains(code, "spark.range") {
+			agent.exit = payload
+			return map[string]any{"status": "error", "ename": "Error", "evalue": "_NotebookExit"}
+		}
+		return nil
+	}
+
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+	if s := awaitJob(t, a, ws.ID, nb.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
+	if run.ExitValue != payload {
+		t.Fatalf("exit value mangled:\n got %q\nwant %q", run.ExitValue, payload)
+	}
+	// And it must still be parseable as what it is.
+	var got map[string]any
+	if err := json.Unmarshal([]byte(run.ExitValue), &got); err != nil {
+		t.Fatalf("exit value is not the JSON the notebook returned: %v", err)
+	}
+	if got["silver_customers"] != float64(100000) {
+		t.Fatalf("decoded = %v", got)
 	}
 }

@@ -49,7 +49,14 @@ print("wrote", df.count(), "rows")
 # MAGIC SELECT count(*) AS n FROM events
 
 # CELL ********************
-notebook_exit(str(spark.table("events").count()))
+# Exits with JSON, deliberately. A notebook returning str(count) cannot detect
+# a mangled exit value — "4" survives almost any quoting mistake, and one such
+# mistake shipped: the driver read the value back with repr(), the agent repr'd
+# it AGAIN, and anything containing a quote came back as \'{"a": 1}\'. The first
+# real notebook to return a JSON summary found it immediately, so the fixture
+# now returns the shape real notebooks return.
+import json as _json
+notebook_exit(_json.dumps({"rows": spark.table("events").count(), "table": "events"}))
 
 # CELL ********************
 raise AssertionError("a cell after notebook_exit must never run")
@@ -154,7 +161,8 @@ log(f"job reached {status} with no runner in the stack")
 run = req("GET", f"{base}/notebookRun", token=ft)[2]
 cells = sorted(run["cells"], key=lambda c: c["index"])
 log(f"cells: {[(c['index'], c['status']) for c in cells]}, exit={run.get('exitValue')!r}")
-assert run["exitValue"] == "4", run
+exit_value = json.loads(run["exitValue"])  # must be JSON, not a mangled repr
+assert exit_value == {"rows": 4, "table": "events"}, run["exitValue"]
 assert [c["language"] for c in cells] == ["python", "sql", "python", "python"], cells
 for c in cells[:3]:
     assert c["status"] == "Succeeded", c
