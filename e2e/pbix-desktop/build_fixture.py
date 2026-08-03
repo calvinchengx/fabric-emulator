@@ -10,17 +10,28 @@ non-goal in docs/33-pbix-tooling.md. It is verification tooling; the emulator
 must not acquire a dependency on it.
 """
 import json
+import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 PIN = "pbix-mcp==0.9.78"  # pinned: the thing under observation is somebody else's release
 
-subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", PIN],
-               check=True)
+# `uv pip install --target`, NOT `python -m pip`. A uv-managed venv ships no pip,
+# so the obvious spelling dies with `No module named pip` — which cost this
+# suite its first CI run, failing three steps before the thing under test.
+#
+# --target keeps the install out of the environment entirely, which is the
+# non-goal in docs/33 enforced mechanically rather than by intention: the
+# package lands in a scratch directory, is put on sys.path for this process, and
+# touches neither uv.lock nor the venv.
+VENDOR = pathlib.Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir())) / "pbix-mcp-vendor"
+subprocess.run(["uv", "pip", "install", "--quiet", "--target", str(VENDOR), PIN], check=True)
+sys.path.insert(0, str(VENDOR))
 
-from pbix_mcp.builder import PBIXBuilder  # noqa: E402  (installed just above)
+from pbix_mcp.builder import PBIXBuilder  # noqa: E402  (vendored just above)
 
 model = json.loads((HERE / "fixture" / "model.bim").read_text())
 rows = json.loads((HERE / "fixture" / "rows.json").read_text())
