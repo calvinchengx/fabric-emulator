@@ -7,6 +7,7 @@ absence as a presence.
 """
 
 import math
+import pathlib
 
 import pytest
 
@@ -158,3 +159,32 @@ class TestCompare:
         ok, lines = compare(EXPECTED, rows, "Customer[Country]", FIELDS)
         assert not ok
         assert any("not a number" in ln for ln in lines)
+
+
+class TestDesktopScriptParses:
+    """desktop.ps1 only ever runs on Windows — its SYNTAX does not have to.
+
+    This suite shipped a `param()` block below `$ErrorActionPreference`, which
+    PowerShell rejects outright, and the ParserError was found by a CI run
+    rather than here. pwsh parses a script on any platform, so there was never
+    a reason to learn that from a runner.
+    """
+
+    def test_powershell_can_parse_it(self):
+        import shutil
+        import subprocess
+
+        pwsh = shutil.which("pwsh") or shutil.which("powershell")
+        if not pwsh:
+            pytest.skip("no PowerShell available to parse with")
+        script = pathlib.Path(__file__).resolve().parent / "desktop.ps1"
+        # Parse only — never execute. Tokenize+ParseFile reports syntax errors
+        # without installing a 500 MB GUI application on the contributor's
+        # machine, which is the whole distinction this file is built around.
+        r = subprocess.run(
+            [pwsh, "-NoProfile", "-Command",
+             "$e=$null; $t=$null;"
+             f"[System.Management.Automation.Language.Parser]::ParseFile('{script}',[ref]$t,[ref]$e) > $null;"
+             "if ($e) { $e | ForEach-Object { $_.ToString() }; exit 1 }"],
+            capture_output=True, text=True)
+        assert r.returncode == 0, f"desktop.ps1 does not parse:\n{r.stdout}{r.stderr}"
