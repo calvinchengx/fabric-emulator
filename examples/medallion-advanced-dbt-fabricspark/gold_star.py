@@ -206,6 +206,34 @@ log(f"{both:,} customers bought from more than one SOURCE SYSTEM — a row that 
 # what happened when 'web' meant both a POS channel and a source system, and the
 # grand total was the one number that still looked right.
 import json  # noqa: E402
+# --- the cutover, exercised ------------------------------------------------
+# The build above created gold from nothing, which takes the materialization's
+# first-build branch: one rename, no live table to protect. The interesting
+# branch is the SECOND build, where a live table already exists and has to be
+# swapped out from under readers.
+#
+# gold_star/macros/table_atomic_swap.sql puts both renames in one transaction
+# so that swap is atomic. Without this rebuild that macro would ship untested —
+# present in the project, never executed, and indistinguishable from working.
+log("rebuilding gold to exercise the atomic cutover")
+rc = subprocess.run(["dbt", "build"], cwd=PROJECT, env=env).returncode
+assert rc == 0, f"dbt rebuild failed: exit {rc}"
+
+with tds_connect(st["warehouse"], sql_tok) as c:
+    cur = c.cursor()
+    again = cur.execute("SELECT COUNT(*) FROM fct_order_lines").fetchone()[0]
+    # The table survived the swap with its contents intact. A cutover that
+    # left the backup in place, or committed a half-built temp table, shows up
+    # here as a different number rather than as an error.
+    assert again == lines, f"fct_order_lines has {again:,} rows after the swap, had {lines:,}"
+    # The scaffolding is gone. A leftover __dbt_backup means the transaction
+    # renamed the old table out and never dropped it, which is a slow leak of
+    # one full copy of gold per rebuild.
+    leftovers = [r[0] for r in cur.execute(
+        "SELECT name FROM sys.tables WHERE name LIKE '%__dbt_backup' OR name LIKE '%__dbt_temp'").fetchall()]
+    assert not leftovers, f"swap left scaffolding behind: {leftovers}"
+log(f"atomic cutover: {again:,} rows intact, no scaffolding left")
+
 import pathlib  # noqa: E402
 
 _here = pathlib.Path(__file__).resolve().parent
