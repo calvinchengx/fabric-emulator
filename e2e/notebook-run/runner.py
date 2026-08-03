@@ -12,8 +12,16 @@ a Spark pool that reports back to the service:
      %%sql cell queries it, a final cell computes a value and exits.
   4. The runner POSTs the per-cell results + exit value to the emulator, which
      finalises the run and the job's terminal status.
-  5. Assertions: the job is really Completed, the Delta table landed in OneLake,
-     and the exit value round-tripped — cells genuinely ran, not clock-derived.
+  5. Assertions: the run detail reaches Completed with the exit value, and the
+     Delta table is verified IN ONELAKE over plain HTTP — commit log, Parquet
+     magic bytes, byte lengths and row count — by a reader that is not Spark.
+
+A note on what proves what. The job instance's status is derived from the
+emulator's CLOCK, so it reads "Completed" even when no engine ran a single cell
+(see TestJobStatusIsNotEvidenceOfNotebookExecution). Asserting on it here would
+pass with the whole engine switched off. The honest witnesses are the run detail
+— which only leaves Pending when an engine reports back — and the bytes in
+OneLake, so those are what this asserts.
 """
 import base64
 import io
@@ -255,6 +263,10 @@ req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}/notebo
     {"status": overall, "exitValue": exit_value, "cells": results}, token=ft)
 
 # --- assertions: the run is real -------------------------------------------
+# Kept, but it is the WEAKEST check here and must not be read as proof of
+# execution: this value is clock-derived and reads "Completed" with no engine
+# at all. It is asserted only so a regression that made it *disagree* with the
+# run detail would surface.
 job = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}", token=ft)[2]
 assert job["status"] == "Completed", f"job status {job['status']}"
 
@@ -263,6 +275,82 @@ assert detail["status"] == "Completed" and detail["exitValue"] == "3", detail
 
 rows = sorted((r["id"], r["name"]) for r in spark.table("events").collect())
 assert rows == [(1, "a"), (2, "b"), (3, "c")], rows
+
+# --- the table is REALLY in OneLake, read by something that is not Spark ----
+#
+# The assertion above goes back through the same session that wrote the table,
+# so it cannot tell "Delta landed in OneLake" from "this Spark session still
+# remembers a table". Both look identical from inside the writer. Everything
+# below therefore reads the storage plane over plain HTTP with a STORAGE-
+# audience token: different process, different protocol, different credential,
+# no Spark anywhere in the path.
+#
+# What it establishes, in order: a Delta commit log exists; the log names
+# Parquet files; those files are really Parquet (magic bytes at BOTH ends —
+# the trailing one is what a truncated upload loses); their byte length agrees
+# with the size the commit recorded; and the row count the commit claims is the
+# row count the notebook wrote. Two independent records of the same write have
+# to agree, which is a stronger statement than either alone.
+log("verifying the Delta table in OneLake over HTTP (no Spark)")
+
+st_tok = req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
+    "grant_type": "client_credentials", "client_id": CLIENT_ID,
+    "client_secret": CLIENT_SECRET,
+    "scope": "https://storage.azure.com/.default"}, form=True)[2]["access_token"]
+
+TABLE_DIR = f"{lake['displayName']}.Lakehouse/Tables/events"
+
+
+def onelake_get(path, want_json=False):
+    """GET one path from the OneLake DFS plane. Returns raw bytes."""
+    url = f"http://{ACCT}/{ws}/{urllib.parse.quote(path)}"
+    r = urllib.request.Request(url, headers={"Authorization": "Bearer " + st_tok})
+    with urllib.request.urlopen(r) as resp:
+        raw = resp.read()
+    return json.loads(raw) if want_json else raw
+
+
+listing = req("GET", f"http://{ACCT}/{ws}?resource=filesystem&recursive=true"
+                     f"&directory={urllib.parse.quote(TABLE_DIR)}", token=st_tok)[2]
+names = [p["name"] for p in listing.get("paths", [])]
+assert names, f"OneLake has nothing under {TABLE_DIR} — the notebook wrote no bytes"
+
+commits = sorted(n for n in names if "/_delta_log/" in n and n.endswith(".json"))
+parquet = sorted(n for n in names if n.endswith(".parquet"))
+assert commits, f"no Delta commit log under {TABLE_DIR}: {names}"
+assert parquet, f"no Parquet files under {TABLE_DIR}: {names}"
+
+# The commit log is the table's own account of what was written. Parse the
+# `add` actions rather than trusting the directory listing: a stray .parquet on
+# disk is not part of the table, and a table is what the log says it is.
+added, claimed_rows = {}, 0
+for line in onelake_get(commits[0]).decode().splitlines():
+    if not line.strip():
+        continue
+    action = json.loads(line)
+    if "add" not in action:
+        continue
+    a = action["add"]
+    added[a["path"].split("/")[-1]] = a["size"]
+    # stats is a JSON string inside the JSON — Delta's own encoding.
+    claimed_rows += json.loads(a.get("stats") or "{}").get("numRecords", 0)
+
+assert added, f"the commit log records no added files: {commits[0]}"
+assert claimed_rows == 3, f"commit log claims {claimed_rows} rows, notebook wrote 3"
+
+for name, size in added.items():
+    blob = onelake_get(f"{TABLE_DIR}/{name}")
+    # PAR1 at both ends. The header alone is what a zero-length or truncated
+    # write still satisfies; the footer is what proves the file was finished.
+    assert blob[:4] == b"PAR1" and blob[-4:] == b"PAR1", (
+        f"{name} is not a complete Parquet file: "
+        f"head={blob[:4]!r} tail={blob[-4:]!r} len={len(blob)}")
+    assert len(blob) == size, (
+        f"{name} is {len(blob)} bytes in OneLake but the Delta commit "
+        f"recorded {size} — the two records of one write disagree")
+
+log(f"OneLake: {len(added)} Parquet file(s), {sum(added.values())} bytes, "
+    f"{claimed_rows} rows, Delta commit {commits[0].split('/')[-1]}")
 
 # Spark Job Definition: publish, resolve, execute on the same selected engine,
 # and report the real outcome through its independent job lifecycle.
