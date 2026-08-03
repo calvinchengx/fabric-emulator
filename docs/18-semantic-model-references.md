@@ -24,7 +24,7 @@ emulator via an endpoint override (delta-rs, ABFS, azure-sdk, fabric-cicd, the
 Livy proxy). Two of these four layers cannot support that:
 
 - **XMLA** — deferred, but the CAUSE recorded here was wrong and has been
-  retested. [`e2e/xmla`](https://github.com/calvinchengx/fabric-emulator/tree/main/e2e/xmla)
+  retested. [32-xmla-plan.md](32-xmla-plan.md) carries the scope. [`e2e/xmla`](https://github.com/calvinchengx/fabric-emulator/tree/main/e2e/xmla)
   points Microsoft's own ADOMD.NET at a listener we control, from Linux, in a
   container, and it connects: the `powerbi://<host>` form is endpoint-overridable,
   a self-signed CA is trusted the usual way, and the bearer token comes from the
