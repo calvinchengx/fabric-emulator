@@ -280,8 +280,17 @@
           (ev.error ? ` — ${ev.error}` : '');
       case 'job':
         return `job ${ev.status}` + (ev.failureReason ? ` — ${ev.failureReason}` : '');
-      case 'lineage':
+      case 'lineage': {
+        // A source system has no path, so the template would print
+        // "undefined". Its name comes from the graph's edges, which the view
+        // already reloads when a lineage event lands.
+        if (ev.sourceKind === 'connection') {
+          const named = edges.find((e) => e.sourceItemId === ev.sourceItemId);
+          const who = named?.sourceItem || ev.sourceItemId?.slice(0, 8) || 'source system';
+          return `${who} (source system) → ${ev.targetPath}`;
+        }
         return `${ev.sourcePath} → ${ev.targetPath}`;
+      }
       case 'query':
         return `${ev.dataset || 'model'} queried` +
           (ev.queries > 1 ? ` (${ev.queries} queries)` : '') +

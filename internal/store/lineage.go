@@ -113,7 +113,7 @@ ON CONFLICT DO NOTHING`,
 	if n, err := res.RowsAffected(); err == nil && n > 0 {
 		s.publish(Event{
 			Kind: KindLineage, WorkspaceID: e.WorkspaceID, ItemID: e.TargetItemID,
-			SourceItemID: e.SourceItemID, SourcePath: e.SourcePath,
+			SourceItemID: e.SourceItemID, SourcePath: e.SourcePath, SourceKind: e.SourceKind,
 			TargetPath: e.TargetPath, Producer: e.Producer,
 			JobID: e.JobID, ActivityName: e.ActivityName,
 		})

@@ -81,6 +81,10 @@ type Event struct {
 	// carries just enough to describe the hop in a log line.
 	SourceItemID string `json:"sourceItemId,omitempty"`
 	SourcePath   string `json:"sourcePath,omitempty"`
+	// SourceKind is set on a lineage event whose source is not a Fabric item.
+	// Without it a consumer renders an empty sourcePath — a source system has
+	// none — and shows "undefined" where the vendor's name belongs.
+	SourceKind string `json:"sourceKind,omitempty"`
 	TargetPath   string `json:"targetPath,omitempty"`
 	Producer     string `json:"producer,omitempty"`
 
