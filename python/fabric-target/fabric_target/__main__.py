@@ -12,7 +12,8 @@ user already controls.
 import shlex
 import sys
 
-from . import (SEED_CLIENT_ID, SEED_CLIENT_SECRET, Target, TargetError, _env)
+from . import (SEED_CLIENT_ID, SEED_CLIENT_SECRET, Target, TargetError, _env,
+               _env_any)
 
 
 def _lines(t):
@@ -23,8 +24,11 @@ def _lines(t):
             ("NOTEBOOKUTILS_ONELAKE_URL", t.onelake_url),
             ("NOTEBOOKUTILS_ENTRA_URL", t.entra_url),
             ("NOTEBOOKUTILS_TENANT", t.tenant),
-            ("NOTEBOOKUTILS_CLIENT_ID", _env("FABRIC_CLIENT_ID", SEED_CLIENT_ID)),
-            ("NOTEBOOKUTILS_CLIENT_SECRET", _env("FABRIC_CLIENT_SECRET", SEED_CLIENT_SECRET)),
+            ("NOTEBOOKUTILS_CLIENT_ID",
+             _env_any(("FABRIC_CLIENT_ID", "AZURE_CLIENT_ID"), SEED_CLIENT_ID)),
+            ("NOTEBOOKUTILS_CLIENT_SECRET",
+             _env_any(("FABRIC_CLIENT_SECRET", "AZURE_CLIENT_SECRET"),
+                      SEED_CLIENT_SECRET)),
             ("NOTEBOOKUTILS_VAULT_URL", t.vault_url),
             ("NOTEBOOKUTILS_INSECURE", "1"),
         ]

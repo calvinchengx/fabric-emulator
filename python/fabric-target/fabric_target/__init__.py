@@ -44,6 +44,22 @@ def _env(name, default=None):
     return v if v not in (None, "") else default
 
 
+def _env_any(names, default=None):
+    """First non-empty of `names`, in order.
+
+    Emulator mode names its own knobs FABRIC_*/*_EMULATOR_URL, but a consumer
+    driving BOTH targets from one compose file writes the Azure names, because
+    real mode requires them. Accepting both is what lets such a consumer adopt
+    this package without rewriting its environment contract — the FABRIC_* name
+    still wins, so nothing that already sets it changes behaviour.
+    """
+    for n in names:
+        v = _env(n)
+        if v is not None:
+            return v
+    return default
+
+
 class _EmulatorCredential:
     """TokenCredential-shaped client-credentials flow against entra-emulator.
 
@@ -103,12 +119,15 @@ class Target:
         self._workspaces = None
 
         if self.is_emulator:
-            fabric = _env("FABRIC_EMULATOR_URL", "https://localhost:9443").rstrip("/")
+            fabric = _env_any(("FABRIC_EMULATOR_URL", "FABRIC_URL"),
+                              "https://localhost:9443").rstrip("/")
             self.api_root = fabric + "/v1"
-            self.entra_url = _env("ENTRA_EMULATOR_URL", "https://localhost:8443").rstrip("/")
-            self.tenant = _env("FABRIC_TENANT", SEED_TENANT)
+            self.entra_url = _env_any(("ENTRA_EMULATOR_URL", "ENTRA_URL"),
+                                      "https://localhost:8443").rstrip("/")
+            self.tenant = _env_any(("FABRIC_TENANT", "AZURE_TENANT_ID"), SEED_TENANT)
             self.onelake_url = fabric  # Host-routed / account-prefixed locally
-            self.vault_url = _env("VAULT_EMULATOR_URL", "https://localhost:8444").rstrip("/")
+            self.vault_url = _env_any(("VAULT_EMULATOR_URL", "AZURE_KEY_VAULT_URL"),
+                                      "https://localhost:8444").rstrip("/")
             self.tls_verify = False
             self.workspace_scope = _env("FABRIC_WORKSPACE")  # optional locally
         else:
@@ -116,7 +135,10 @@ class Target:
             self.tenant = _env("AZURE_TENANT_ID", "organizations")
             self.entra_url = "https://login.microsoftonline.com"
             self.onelake_url = "https://onelake.dfs.fabric.microsoft.com"
-            self.vault_url = _env("FABRIC_VAULT_URL")  # the user's real vault
+            # The user's real vault. AZURE_KEY_VAULT_URL is the name the Azure
+            # SDKs' own samples use, so accept it too rather than making a
+            # consumer set the same URL twice.
+            self.vault_url = _env_any(("FABRIC_VAULT_URL", "AZURE_KEY_VAULT_URL"))
             self.tls_verify = True
             # Real mode is always workspace-scoped: nothing may enumerate a tenant.
             self.workspace_scope = _env("FABRIC_WORKSPACE")
@@ -124,6 +146,18 @@ class Target:
                 raise TargetError(
                     "FABRIC_TARGET=real requires FABRIC_WORKSPACE=<workspace display name> "
                     "— real mode never operates tenant-wide.")
+            # NEVER the seeds. Emulator mode accepts the AZURE_* names as
+            # aliases, so a shell left over from a local run can carry the
+            # seeded daemon into real mode — where it would authenticate
+            # against nothing and fail far from its cause, or worse, be taken
+            # for a real principal. Refuse by value, not by variable name.
+            if _env("AZURE_CLIENT_SECRET") == SEED_CLIENT_SECRET \
+                    or _env("AZURE_CLIENT_ID") == SEED_CLIENT_ID \
+                    or _env("AZURE_TENANT_ID") == SEED_TENANT:
+                raise TargetError(
+                    "FABRIC_TARGET=real was given the emulator's SEEDED credential "
+                    "— unset AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET, "
+                    "or set your own. The seeds exist only locally.")
             # A real credential source, never seeds: env SP or a live az login.
             if not _env("AZURE_CLIENT_SECRET") and not _az_logged_in():
                 raise TargetError(
@@ -148,8 +182,9 @@ class Target:
             if self.is_emulator:
                 self._credential = _EmulatorCredential(
                     self.entra_url, self.tenant,
-                    _env("FABRIC_CLIENT_ID", SEED_CLIENT_ID),
-                    _env("FABRIC_CLIENT_SECRET", SEED_CLIENT_SECRET))
+                    _env_any(("FABRIC_CLIENT_ID", "AZURE_CLIENT_ID"), SEED_CLIENT_ID),
+                    _env_any(("FABRIC_CLIENT_SECRET", "AZURE_CLIENT_SECRET"),
+                             SEED_CLIENT_SECRET))
             else:
                 try:
                     from azure.identity import DefaultAzureCredential

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Build the fixture wheels a downstream repo installs, and prove they work.
+"""Build the wheels a downstream repo installs, and prove they work.
 
-WHY THIS EXISTS. `contoso-data-platform` — the standalone acceptance repo — runs
+TWO KINDS OF PACKAGE SHIP HERE, for two different reasons.
+
+THE FIXTURES, so the DATA has one source. `contoso-data-platform` — the standalone
+acceptance repo — runs
 the medallion against a RELEASED emulator image, and its assertions have to be
 the same numbers these examples assert. The only honest way to guarantee that is
 for both repos to use ONE generator, so the data and the expectations cannot
@@ -24,6 +27,15 @@ discipline belongs downstream, as a test asserting `common` is never imported.
 Splitting it out here would mean restructuring a package four examples depend
 on, which is a far larger blast radius than the problem deserves.
 
+`fabric-target`, so the TOGGLE has one source. It is the emulator-or-real
+resolver of docs/21: endpoints, credentials, and the guards that keep seeded
+identities out of production. Unpublished, a consumer could only restate the
+contract — and `contoso-data-platform` did, losing the `DefaultAzureCredential`
+branch in the copy, so its real target demanded a client secret and could not
+have run inside a Fabric notebook at all. A restated contract is not a contract.
+Publishing it is the fix, and the same argument as the fixtures one level up:
+the thing both repos must agree about has to be ONE artifact.
+
 Usage:
     python scripts/build_fixture_wheels.py 0.11.3
     python scripts/build_fixture_wheels.py            # takes GITHUB_REF_NAME
@@ -37,7 +49,15 @@ import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PACKAGES = ["contoso-fixtures", "contoso-fixtures-advanced"]
+# (source dir, install spec). The spec is what a consumer installs, so extras
+# are exercised here rather than discovered downstream: `fabric-target` is
+# stdlib-only at its core and lazily imports azure-identity and requests, which
+# means a missing extra fails at the first real call instead of at install.
+PACKAGES = [
+    (ROOT / "examples" / "contoso-fixtures", "{whl}"),
+    (ROOT / "examples" / "contoso-fixtures-advanced", "{whl}"),
+    (ROOT / "python" / "fabric-target", "{whl}[real,sessions]"),
+]
 OUT = ROOT / "dist" / "fixtures"
 
 # Asserted against the INSTALLED wheels, never the source tree — that is the
@@ -56,6 +76,37 @@ for m in (source_system, web_store, erp_system):
     assert "site-packages" in m.__file__, (m.__name__, m.__file__)
 print("smoke ok:", s.EXPECTED_SILVER_ORDERS, w.EXPECTED_WEB_CLEAN_LINES,
       e.EXPECTED_ERP_ONLY_CURRENT)
+
+import os
+import fabric_target
+assert "site-packages" in fabric_target.__file__, fabric_target.__file__
+
+# The emulator profile resolves with no configuration at all.
+t = fabric_target.Target("emulator")
+assert t.is_emulator and t.tls_verify is False, (t.name, t.tls_verify)
+assert t.credential.__class__.__name__ == "_EmulatorCredential"
+
+# The extras really installed: both lazy imports must resolve from the wheel's
+# own metadata, which is the failure a source checkout cannot reproduce.
+import azure.identity, requests  # noqa: F401
+
+# THE BUG THIS PACKAGE EXISTS TO PREVENT: real mode must accept `az login`
+# alone, with no client secret anywhere.
+os.environ["FABRIC_WORKSPACE"] = "ws"
+fabric_target._az_logged_in = lambda: True
+r = fabric_target.Target("real")
+assert r.is_real and r.tls_verify is True, (r.name, r.tls_verify)
+assert r.credential.__class__.__name__ == "DefaultAzureCredential", r.credential
+
+# ...and must refuse the seeded identity, however it arrived.
+os.environ["AZURE_CLIENT_SECRET"] = fabric_target.SEED_CLIENT_SECRET
+try:
+    fabric_target.Target("real")
+except fabric_target.TargetError as err:
+    assert "SEEDED" in str(err), err
+else:
+    raise AssertionError("real mode accepted the seeded credential")
+print("smoke ok: fabric_target emulator+real profiles resolve")
 """
 
 
@@ -88,12 +139,13 @@ def main():
         build = tmp / "build"
         build.mkdir()
 
-        for name in PACKAGES:
-            src = ROOT / "examples" / name
+        for src, _spec in PACKAGES:
+            name = src.name
             dst = build / name
             shutil.copytree(src, dst,
                             ignore=shutil.ignore_patterns(
-                                "__pycache__", "*.egg-info", ".venv", "*.json"))
+                                "__pycache__", "*.egg-info", ".venv", "*.json",
+                                ".pytest_cache", "build"))
             pp = dst / "pyproject.toml"
             text = pp.read_text()
             stamped, n = re.subn(r'^version = "[^"]*"',
@@ -110,15 +162,26 @@ def main():
         if len(wheels) != len(PACKAGES):
             sys.exit(f"expected {len(PACKAGES)} wheels, built {len(wheels)}")
 
-        # Install BOTH together. contoso-fixtures-advanced declares
-        # `contoso-fixtures` as a plain requirement — its [tool.uv.sources] path
-        # is a uv-local convenience that does NOT survive into wheel metadata —
-        # so resolving it from an index would fail. Downstream must install the
-        # pair, and this proves the pair is sufficient.
+        # Install them ALL together, exactly as a consumer would.
+        # contoso-fixtures-advanced declares `contoso-fixtures` as a plain
+        # requirement — its [tool.uv.sources] path is a uv-local convenience
+        # that does NOT survive into wheel metadata — so resolving it from an
+        # index would fail. Installing the set is what makes it resolvable, and
+        # this proves the set is sufficient.
         venv = tmp / "venv"
         run(["uv", "venv", str(venv)])
         env = {**os.environ, "VIRTUAL_ENV": str(venv)}
-        run(["uv", "pip", "install", *[str(w) for w in wheels]], env=env)
+        # Match each built wheel back to the spec that declares its extras. The
+        # wheel name normalises `-` to `_`, which is why this is not a lookup by
+        # directory name.
+        specs = []
+        for src, spec in PACKAGES:
+            stem = src.name.replace("-", "_") + "-"
+            match = [w for w in wheels if w.name.startswith(stem)]
+            if len(match) != 1:
+                sys.exit(f"{src.name}: expected 1 wheel, matched {len(match)}")
+            specs.append(spec.format(whl=match[0]))
+        run(["uv", "pip", "install", *specs], env=env)
         # Windows puts the interpreter in Scripts\, POSIX in bin/. This script
         # runs on a Linux runner today, but a contributor on Windows must be
         # able to run it too — that is a hard requirement for everything

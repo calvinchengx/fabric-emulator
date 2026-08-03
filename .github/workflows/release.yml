@@ -137,7 +137,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # The fixture wheels the standalone acceptance repo installs.
+  # The wheels the standalone acceptance repo installs: the fixture generators
+  # and `fabric-target`.
   #
   # `contoso-data-platform` runs this medallion against the RELEASED image, and
   # its assertions must be the same numbers the in-tree examples assert. One
@@ -145,11 +146,16 @@ jobs:
   # hopeful — two copies differing by a single RNG draw would each pass their
   # own EXPECTED_* asserts while describing different datasets.
   #
+  # `fabric-target` ships for the same reason one level up: it is the
+  # emulator-or-real contract itself, and while it was unpublished the consumer
+  # could only restate it — which it did, incorrectly, dropping the
+  # `DefaultAzureCredential` branch so its real target demanded a client secret.
+  #
   # `needs: binaries` because GoReleaser creates the Release; uploading to it
   # before it exists 404s. `--clobber` mirrors release.replace_existing_artifacts
   # in .goreleaser.yaml, so re-running a published tag is safe.
   fixtures:
-    name: Fixture wheels → the release
+    name: Published wheels → the release
     needs: binaries
     runs-on: ubuntu-latest
     steps:
