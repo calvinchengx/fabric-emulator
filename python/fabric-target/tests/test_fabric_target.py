@@ -18,7 +18,9 @@ def clean_env(monkeypatch):
     for k in ("FABRIC_TARGET", "FABRIC_WORKSPACE", "FABRIC_EMULATOR_URL",
               "ENTRA_EMULATOR_URL", "VAULT_EMULATOR_URL", "AZURE_CLIENT_SECRET",
               "AZURE_TENANT_ID", "FABRIC_TARGET_ALLOW_DESTRUCTIVE",
-              "FABRIC_CLIENT_ID", "FABRIC_CLIENT_SECRET", "FABRIC_VAULT_URL"):
+              "FABRIC_CLIENT_ID", "FABRIC_CLIENT_SECRET", "FABRIC_VAULT_URL",
+              "FABRIC_URL", "ENTRA_URL", "AZURE_KEY_VAULT_URL",
+              "AZURE_CLIENT_ID"):
         monkeypatch.delenv(k, raising=False)
     fabric_target._cached = None
 
@@ -39,6 +41,56 @@ def test_emulator_urls_overridable(monkeypatch):
     t = Target("emulator")
     assert t.api_root == "https://localhost:19443/v1"
     assert t.entra_url == "https://localhost:18443"
+
+
+def test_emulator_accepts_the_azure_names(monkeypatch):
+    """A consumer driving BOTH targets from one compose file writes the Azure
+    names, because real mode requires them. Emulator mode must not make it
+    write every endpoint twice."""
+    monkeypatch.setenv("FABRIC_URL", "https://localhost:19443")
+    monkeypatch.setenv("ENTRA_URL", "https://localhost:18443")
+    monkeypatch.setenv("AZURE_KEY_VAULT_URL", "https://localhost:18444")
+    monkeypatch.setenv("AZURE_TENANT_ID", "22222222-2222-2222-2222-222222222222")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "some-app")
+    t = Target("emulator")
+    assert t.api_root == "https://localhost:19443/v1"
+    assert t.entra_url == "https://localhost:18443"
+    assert t.vault_url == "https://localhost:18444"
+    assert t.tenant == "22222222-2222-2222-2222-222222222222"
+    assert t.credential._id == "some-app"
+
+
+def test_the_fabric_names_win_over_the_azure_ones(monkeypatch):
+    """Additive, so nothing that already sets FABRIC_* changes behaviour."""
+    monkeypatch.setenv("FABRIC_EMULATOR_URL", "https://localhost:1111")
+    monkeypatch.setenv("FABRIC_URL", "https://localhost:2222")
+    assert Target("emulator").api_root == "https://localhost:1111/v1"
+
+
+def test_real_refuses_the_seeded_credential(monkeypatch):
+    """The alias above means a shell left over from a local run can carry the
+    seeded daemon into real mode. Refuse by VALUE — the variable name no longer
+    distinguishes the two."""
+    monkeypatch.setenv("FABRIC_WORKSPACE", "ws")
+    monkeypatch.setattr(fabric_target, "_az_logged_in", lambda: True)
+    monkeypatch.setenv("AZURE_CLIENT_SECRET", fabric_target.SEED_CLIENT_SECRET)
+    with pytest.raises(TargetError, match="SEEDED"):
+        Target("real")
+
+
+def test_real_refuses_the_seeded_tenant(monkeypatch):
+    monkeypatch.setenv("FABRIC_WORKSPACE", "ws")
+    monkeypatch.setattr(fabric_target, "_az_logged_in", lambda: True)
+    monkeypatch.setenv("AZURE_TENANT_ID", fabric_target.SEED_TENANT)
+    with pytest.raises(TargetError, match="SEEDED"):
+        Target("real")
+
+
+def test_real_vault_accepts_the_azure_name(monkeypatch):
+    monkeypatch.setenv("FABRIC_WORKSPACE", "ws")
+    monkeypatch.setattr(fabric_target, "_az_logged_in", lambda: True)
+    monkeypatch.setenv("AZURE_KEY_VAULT_URL", "https://kv.vault.azure.net")
+    assert Target("real").vault_url == "https://kv.vault.azure.net"
 
 
 def test_target_reads_env(monkeypatch):

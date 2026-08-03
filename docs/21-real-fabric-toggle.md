@@ -40,6 +40,29 @@ Ids are the one thing that can never match across targets — so the contract
 is **name-based**: user code holds workspace/item display names; the resolver
 translates to GUIDs per target.
 
+### Variable names, and why there are two sets
+
+Emulator-mode knobs are named `FABRIC_*`/`*_EMULATOR_URL`; real mode reads the
+standard `AZURE_*` names. A consumer driving **both** targets from one compose
+file writes the Azure names, because real mode leaves it no choice — so
+emulator mode accepts them as aliases rather than making the same URL be
+declared twice:
+
+| Resolved value | Preferred | Also accepted |
+|---|---|---|
+| Fabric API | `FABRIC_EMULATOR_URL` | `FABRIC_URL` |
+| Entra | `ENTRA_EMULATOR_URL` | `ENTRA_URL` |
+| Key Vault | `VAULT_EMULATOR_URL` (emulator), `FABRIC_VAULT_URL` (real) | `AZURE_KEY_VAULT_URL` |
+| Tenant | `FABRIC_TENANT` | `AZURE_TENANT_ID` |
+| Client id / secret | `FABRIC_CLIENT_ID` / `FABRIC_CLIENT_SECRET` | `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` |
+
+The `FABRIC_*` name wins when both are set, so the aliases change nothing for
+anyone already using them. **They do widen one hole, which is closed
+explicitly:** because emulator mode now reads `AZURE_CLIENT_SECRET`, a shell
+left over from a local run could carry the seeded daemon into real mode. Real
+mode therefore refuses the seeds **by value**, not by variable name — see
+"Seeded values never leak into real mode" below.
+
 ## The family — trust direction constrains the toggle
 
 Tokens flow one way: entra (or real AAD) **issues**; fabric and keyvault only
@@ -87,9 +110,34 @@ Per member, "real" resolves as:
   mode the resolver requires a **real credential source** — env SP vars *or*
   a live `az login` (the `DefaultAzureCredential` chain probe) — and refuses
   to fall back to seeds. No source found → fail at startup with "run
-  `az login` or set AZURE_* credentials", never a silent seed.
+  `az login` or set AZURE_* credentials", never a silent seed. Since emulator
+  mode accepts the `AZURE_*` aliases, "not a seed" is checked **by value**:
+  if `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` or `AZURE_CLIENT_SECRET` *equals* a
+  seeded constant, real mode refuses to construct at all. A leftover shell
+  fails loudly at startup instead of authenticating against nothing.
 
-## Deliverable A — `fabric_target` (Python helper, `python/fabric_target/`)
+## Deliverable A — `fabric_target` (Python helper, `python/fabric-target/`)
+
+**Published.** The release workflow builds it beside the fixture wheels and
+attaches it to the GitHub Release, stamped at the release version:
+
+```
+uv pip install "fabric-target[real,sessions] @ \
+  https://github.com/calvinchengx/fabric-emulator/releases/download/vX.Y.Z/fabric_target-X.Y.Z-py3-none-any.whl"
+```
+
+The extras matter. The core is stdlib-only and imports `azure-identity` (real
+credentials) and `requests` (`session()`) lazily, so a bare install succeeds
+and then fails at the first authenticated call.
+
+*Why it is published at all:* while it was not, a consumer could only restate
+the contract, and `contoso-data-platform` did — losing the
+`DefaultAzureCredential` branch in the copy, so its real target demanded a
+client secret. That made `az login` unusable, a managed identity unusable, and
+a Fabric notebook — which has no client secret to give — unable to run the
+platform at all. The emulator never noticed, because it does not care which
+identity shows up. A contract that must be copied is a contract that gets its
+untested branch wrong.
 
 Small sibling of the `notebookutils` shim, same env-driven style:
 
