@@ -385,4 +385,39 @@ describe('Flow: the warehouse and Power BI hops', () => {
     const asked = globalThis.fetch.mock.calls.some((c) => String(c[0]).includes('/portal/table'));
     expect(asked).toBe(false);
   });
+
+  // A source system has no path, so the lineage event's sourcePath is empty and
+  // the log rendered "undefined → Files/landing/…". Caught by looking at the
+  // screen, not by a test — the graph handled it and the event log did not.
+  it('names the source system in the event log rather than printing undefined', async () => {
+    mockLineage([
+      {
+        sourceItemId: 'conn-pos',
+        sourceItem: 'contoso-pos-api',
+        sourcePath: '',
+        sourceKind: 'connection',
+        targetItemId: 'lake',
+        targetItem: 'contoso_lake',
+        targetPath: 'Files/landing/pos/customers.csv',
+        producer: 'Reported',
+        activityName: 'ingest_pos',
+        createdAt: 1700000200,
+      },
+    ]);
+    render(Flow);
+    await screen.findByLabelText(/contoso-pos-api/);
+    FakeEventSource.last.emit('lineage', {
+      seq: 9,
+      at: 1700000200,
+      kind: 'lineage',
+      sourceItemId: 'conn-pos',
+      sourceKind: 'connection',
+      targetPath: 'Files/landing/pos/customers.csv',
+      producer: 'Reported',
+      activityName: 'ingest_pos',
+    });
+    const row = await screen.findByText(/contoso-pos-api \(source system\) → Files\/landing\/pos\/customers.csv/);
+    expect(row).toBeTruthy();
+    expect(screen.queryByText(/undefined/)).toBeNull();
+  });
 });
