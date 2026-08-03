@@ -16,12 +16,14 @@ a Spark pool that reports back to the service:
      Delta table is verified IN ONELAKE over plain HTTP — commit log, Parquet
      magic bytes, byte lengths and row count — by a reader that is not Spark.
 
-A note on what proves what. The job instance's status is derived from the
-emulator's CLOCK, so it reads "Completed" even when no engine ran a single cell
-(see TestJobStatusIsNotEvidenceOfNotebookExecution). Asserting on it here would
-pass with the whole engine switched off. The honest witnesses are the run detail
-— which only leaves Pending when an engine reports back — and the bytes in
-OneLake, so those are what this asserts.
+A note on what proves what. The job status USED to be derived from the
+emulator's clock, so it read "Completed" even when no engine ran a single cell —
+asserting on it proved nothing. A job with cells outstanding now has no
+clock-derived completion at all, so a terminal status means the engine really
+reported (see TestNotebookJobStatusReflectsExecutionNotTheClock). It is still
+the weakest of the three checks here: it says execution was *reported*, while
+the run detail says what each cell did and the OneLake bytes say what actually
+landed. All three are asserted.
 """
 import base64
 import io
@@ -263,10 +265,10 @@ req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}/notebo
     {"status": overall, "exitValue": exit_value, "cells": results}, token=ft)
 
 # --- assertions: the run is real -------------------------------------------
-# Kept, but it is the WEAKEST check here and must not be read as proof of
-# execution: this value is clock-derived and reads "Completed" with no engine
-# at all. It is asserted only so a regression that made it *disagree* with the
-# run detail would surface.
+# Now meaningful: a notebook job with cells outstanding has no clock-derived
+# completion, so reaching Completed requires the report above to have landed.
+# Still the weakest of the three checks — it proves a report arrived, not what
+# the cells did (run detail) or what reached storage (OneLake, below).
 job = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}", token=ft)[2]
 assert job["status"] == "Completed", f"job status {job['status']}"
 

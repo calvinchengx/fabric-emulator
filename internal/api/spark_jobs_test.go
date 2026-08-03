@@ -73,3 +73,61 @@ func TestSparkJobDefinitionValidationAndFailure(t *testing.T) {
 		t.Fatalf("failed status = %s", got)
 	}
 }
+
+// TestSparkJobStatusReflectsExecutionNotTheClock: the same guarantee notebooks
+// get, for the item type with the same shape.
+//
+// A SparkJobDefinition job used to report "Completed" from virtual time alone,
+// with its run still Pending and no engine having touched the main file. Unlike
+// a notebook there is no empty case to carve out — a definition that parses
+// always names an executable file — so a parsed job is always waiting on an
+// engine, and only the engine's callback may finish it.
+func TestSparkJobStatusReflectsExecutionNotTheClock(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "lake"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	item := &store.Item{WorkspaceID: ws.ID, Type: "SparkJobDefinition", DisplayName: "job"}
+	config := `{"executableFile":"main.py","defaultLakehouseArtifactId":"` + lake.ID +
+		`","defaultLakehouseWorkspaceId":"` + ws.ID + `"}`
+	if err := st.CreateItem(item, []store.DefinitionPart{
+		sparkPart("SparkJobDefinitionV1.json", config),
+		sparkPart("main.py", "print('work')"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, jid := runJob(t, a, ws.ID, item.ID, "jobType=sparkjob", "")
+	if s := jobStatus(t, a, ws.ID, item.ID, jid); s == store.JobCompleted || s == store.JobFailed {
+		t.Fatalf("job reported %q before any engine ran main.py", s)
+	}
+
+	pv := map[string]string{"wid": ws.ID, "iid": item.ID, "jid": jid}
+	if w := do(a.reportSparkJobRun, admin, "POST", `{"status":"Completed","output":"work"}`, pv); w.Code != 200 {
+		t.Fatalf("report = %d %s", w.Code, w.Body.Bytes())
+	}
+	if s := jobStatus(t, a, ws.ID, item.ID, jid); s != store.JobCompleted {
+		t.Fatalf("job status after a real report = %q, want Completed", s)
+	}
+}
+
+// TestSparkJobThatCannotParseFailsWithoutWaiting: the deferral must not strand a
+// job that will never have an engine. A definition that cannot be parsed has no
+// executable file, so nothing will ever report on it — it fails now.
+func TestSparkJobThatCannotParseFailsWithoutWaiting(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	item := &store.Item{WorkspaceID: ws.ID, Type: "SparkJobDefinition", DisplayName: "broken"}
+	if err := st.CreateItem(item, []store.DefinitionPart{
+		sparkPart("SparkJobDefinitionV1.json", `{"executableFile":""}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, jid := runJob(t, a, ws.ID, item.ID, "jobType=sparkjob", "")
+	if s := jobStatus(t, a, ws.ID, item.ID, jid); s != store.JobFailed {
+		t.Fatalf("unparseable job = %q, want Failed — no engine will ever "+
+			"report on it, so waiting would hang forever", s)
+	}
+}

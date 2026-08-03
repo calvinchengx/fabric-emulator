@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"path"
 	"slices"
@@ -48,18 +49,28 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		if err != nil || nb.Type != "Notebook" {
 			return nil, fmt.Errorf("notebook activity %q: no notebook %q in this workspace", act.Name, nbID)
 		}
+		// Parse for real, exactly as a direct RunNotebook job POST does
+		// (jobs.go): the Go parser splits the notebook into cells and the
+		// compute binding is resolved, so an engine can execute it and report
+		// back. Without this the activity fabricated a completed job with no
+		// run behind it — nothing to execute, and nothing for lineage or the
+		// notebookRunResult callback to attach to.
+		//
+		// The parse comes FIRST because it decides the job's completion time,
+		// for the reason spelled out in jobs.go: a job the clock completes says
+		// "Completed" while every cell is still Pending. Cells outstanding =>
+		// only the engine finishes this job.
+		run, code := e.a.parseNotebookRun(nb)
 		j := &store.JobInstance{ItemID: nb.ID, JobType: "RunNotebook", InvokeType: "Pipeline"}
 		j.CompleteAt = e.a.Store.Now()
+		if code == "" && len(run.Cells) > 0 {
+			j.CompleteAt = math.MaxInt64
+		}
 		if err := e.a.Store.CreateJobInstance(j); err != nil {
 			return nil, fmt.Errorf("notebook activity %q: %v", act.Name, err)
 		}
-		// Start the run for real, exactly as a direct RunNotebook job POST does
-		// (jobs.go): parse the notebook into cells with the Go parser, resolve the
-		// compute binding, and record the run so an engine can execute it and
-		// report back. Without this the activity fabricated a completed job with
-		// no run behind it — nothing to execute, and nothing for lineage or the
-		// notebookRunResult callback to attach to.
-		if code := e.a.startNotebookRun(nb, j.ID); code != "" {
+		e.a.saveNotebookRun(j.ID, run)
+		if code != "" {
 			_ = e.a.Store.FinalizeJob(nb.ID, j.ID, code)
 			return nil, fmt.Errorf("notebook activity %q: %s", act.Name, code)
 		}
