@@ -48,6 +48,62 @@ reader benefits from.
 **Every example is executable end to end and asserts its own results.** An
 example that merely *looks* right is a liability — these fail loudly instead.
 
+## Where the fidelity proof lives — and it is not here
+
+These four show what the emulator **does**. They do not show it is **right**,
+and a reader deciding whether to trust the project is asking the second
+question: *would my code notice the difference?*
+
+Nothing below is exercised by any example. Each row names the suite that runs
+it, and `test_every_fidelity_claim_names_a_suite_that_exists` fails when one of
+these paths stops being real — so this table cannot rot into a promise nobody
+keeps.
+
+**Microsoft's own tools, pointed at the emulator.** The strongest evidence
+available, because their expectations decide the outcome rather than ours:
+
+| Claim | Suite |
+|---|---|
+| The `fab` CLI does workspace and item CRUD | [`e2e/fabric-cli`](../e2e/fabric-cli/) |
+| `fabric-cicd` deploys a git-format folder | [`e2e/fabric-cicd`](../e2e/fabric-cicd/) |
+| The VS Code extension browses and runs | [`e2e/vscode-extension`](../e2e/vscode-extension/) |
+| ADOMD.NET connects, on Linux, to a host we name | [`e2e/xmla`](../e2e/xmla/) |
+| **Power BI Desktop** opens a model built from our TMSL | [`e2e/pbix-desktop`](../e2e/pbix-desktop/) |
+
+**Fabric behaviours, not conveniences:**
+
+| Claim | Suite |
+|---|---|
+| Deployment pipelines promote dev → test → prod | [`e2e/deployment-pipelines`](../e2e/deployment-pipelines/) |
+| OneLake shortcuts resolve to external storage | [`e2e/external-shortcuts`](../e2e/external-shortcuts/), [`e2e/s3`](../e2e/s3/) |
+| A notebook runs on the SERVICE, no runner attached | [`e2e/notebook-driven`](../e2e/notebook-driven/) |
+| `notebookutils` behaves as it does inside Fabric | [`e2e/notebookutils`](../e2e/notebookutils/) |
+| Livy sessions and statements run on a real engine | [`e2e/livy`](../e2e/livy/) |
+| Real-Time Intelligence over a real Kusto engine | [`e2e/rti`](../e2e/rti/) |
+| The same code runs against **real Fabric** | [`e2e/fabric-target`](../e2e/fabric-target/) |
+
+**Other people's clients, unmodified:** [`e2e/delta-rs`](../e2e/delta-rs/),
+[`e2e/duckdb`](../e2e/duckdb/), [`e2e/azcopy`](../e2e/azcopy/),
+[`e2e/adls-sdk`](../e2e/adls-sdk/), [`e2e/airflow`](../e2e/airflow/),
+[`e2e/great-expectations`](../e2e/great-expectations/), and
+[`e2e/spark-jvm`](../e2e/spark-jvm/) — Apache Spark on the JVM as an oracle for
+Sail.
+
+[docs/12](../docs/12-e2e-matrix.md) is the full matrix of what each asserts;
+[docs/parity.md](../docs/parity.md) records what is real, partial, or deferred
+with cause.
+
+### What no example touches, stated rather than left to be noticed
+
+The controllable clock, fault injection, schedules, event triggers, and
+put-if-absent (`If-None-Match` — the Delta concurrency primitive).
+
+The fullest demonstration of those is not in this repository at all. The
+[contoso-data-platform](https://github.com/calvinchengx/contoso-data-platform)
+consumer drives the clock, creates schedules and Reflex triggers, and implements
+the `FABRIC_TARGET` toggle. The emulator's own examples show a data platform; a
+downstream consumer shows the emulator's fidelity. That is the wrong way round.
+
 ## Running one
 
 Start the family from the repo root, then follow the example's README:
