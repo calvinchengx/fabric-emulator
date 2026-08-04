@@ -188,6 +188,44 @@ sets, and both halves were verified before accepting it. Forcing a test through
 it would prove nothing. The same is true of the `WriteMessage(...) → return err`
 residue in `internal/tds`. Chase the behaviour, not the number.
 
+### Open — filed, not yet done: two engine-matrix probes
+Reported 2026-08-04 from `contoso-data-platform` while building a second source
+system. **Sail accepts two JSON/text reader options and silently ignores them** —
+the false-green class the matrix exists to catch, not a missing feature. Real
+Fabric Spark honours both, so code that works on Fabric fails here, and code
+written against Sail can pass locally for the wrong reason.
+
+- `read.text(wholetext=True)` — **the higher-value probe, because it never
+  raises.** Measured on a multi-line NDJSON file: plain `.text()` → 255000 rows,
+  `wholetext=True` → 255000 rows. Honoured would be one row per FILE. JVM gives
+  1 row. Silent divergence; worth a `T.` capability flag, since nothing in the
+  API tells a caller the option did not take effect.
+- `read.json(multiLine=True)` on a file that is one JSON array — Sail raises
+  `Expected JSON record to be an object, found Array`; JVM parses. Loud, easy
+  to assert.
+
+**The fixture is the whole difficulty.** The reporter's first probe used one
+line per file, where "honoured" and "ignored" produce an identical row count —
+it reported `wholetext` as working. Any probe added here MUST use an input with
+more than one line per file or it will certify a capability that is not there.
+`delta_change_data_feed` (`e2e/engine-matrix/probes.py:108`, registered as
+`delta.cdf` at line 395) is the existing accepted-but-inert precedent to follow.
+
+Not done because `docs/engine-matrix.md` is generated and CI diffs it
+(`git diff --exit-code` in the `engine-matrix` job, `ci.yml:152`), so this needs
+a real run of all three engines — `sail`, `sail-delta`, `jvm` — not a hand-edit.
+The probe count in the prose derives from `len(order)`, so it moves on its own.
+Verified before filing: neither `wholetext` nor `multiLine` appears anywhere in
+`e2e/` or `docs/` today, so this is a genuine gap rather than a duplicate row.
+
+Workaround worth documenting wherever this lands: read the page as text and
+parse in-engine (`F.from_json` + `explode`), keeping the data path distributed.
+Caveat — `from_json` returns NULL on a schema mismatch rather than raising, and
+the row count comes from the array's length rather than its contents, so every
+count-based assertion still passes while every column is empty. Guard it with a
+"no column may be entirely NULL" check plus a test pinning the declared field
+names against the vendor's OpenAPI spec.
+
 ### Open — raised in severity by this pass
 - **MEDIUM (was LOW) — the witness checker proves presence, not coverage.**
   Promoted because it cost real time twice in one session. `TestWarehouseSQLServerRelayE2E`
