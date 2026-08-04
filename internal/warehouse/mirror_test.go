@@ -24,7 +24,7 @@ func TestMirrorDeltaRoundTrip(t *testing.T) {
 			{nil, nil, nil, "c"},         // NULL numerics/bool
 		},
 	}
-	kinds := []colKind{kindLong, kindDouble, kindBool, kindString}
+	kinds := []colType{{kind: kindLong}, {kind: kindDouble}, {kind: kindBool}, {kind: kindString}}
 	if err := writeDeltaSnapshot(st, wsID, itemID, "sales", tbl, kinds); err != nil {
 		t.Fatalf("writeDeltaSnapshot: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestMirrorDeltaRoundTrip(t *testing.T) {
 func TestMirrorEmptyTable(t *testing.T) {
 	st, wsID, itemID := seedLakehouse(t)
 	tbl := &Table{Columns: []string{"id"}, Rows: nil}
-	if err := writeDeltaSnapshot(st, wsID, itemID, "empty", tbl, []colKind{kindLong}); err != nil {
+	if err := writeDeltaSnapshot(st, wsID, itemID, "empty", tbl, []colType{{kind: kindLong}}); err != nil {
 		t.Fatalf("writeDeltaSnapshot(empty): %v", err)
 	}
 	got, err := ReadDeltaTable(st, itemID, "empty")
@@ -151,8 +151,8 @@ func TestReadSQLTable(t *testing.T) {
 	// INT column come back a BIGINT.
 	want := map[string]colKind{"id": kindInt, "ratio": kindDouble, "active": kindInt, "name": kindString}
 	for i, c := range tbl.Columns {
-		if kinds[i] != want[c] {
-			t.Errorf("column %q kind = %d, want %d", c, kinds[i], want[c])
+		if kinds[i].kind != want[c] {
+			t.Errorf("column %q kind = %d, want %d", c, kinds[i].kind, want[c])
 		}
 	}
 }
@@ -259,25 +259,25 @@ func TestMirrorErrors(t *testing.T) {
 // TestCoerce covers coerce's type-mismatch fallback branches (a value that
 // doesn't match its inferred kind is passed through unchanged).
 func TestCoerce(t *testing.T) {
-	if coerce(nil, kindLong) != nil {
+	if coerce(nil, colType{kind: kindLong}) != nil {
 		t.Error("coerce(nil) should stay nil regardless of kind")
 	}
-	if v := coerce("not-a-number", kindLong); v != "not-a-number" {
+	if v := coerce("not-a-number", colType{kind: kindLong}); v != "not-a-number" {
 		t.Errorf("coerce mismatched kindLong = %v, want passthrough", v)
 	}
-	if v := coerce("not-a-number", kindDouble); v != "not-a-number" {
+	if v := coerce("not-a-number", colType{kind: kindDouble}); v != "not-a-number" {
 		t.Errorf("coerce mismatched kindDouble = %v, want passthrough", v)
 	}
-	if v := coerce(123, kindBool); v != 123 {
+	if v := coerce(123, colType{kind: kindBool}); v != 123 {
 		t.Errorf("coerce mismatched kindBool = %v, want passthrough", v)
 	}
-	if v := coerce(int32(5), kindLong); v != int64(5) {
+	if v := coerce(int32(5), colType{kind: kindLong}); v != int64(5) {
 		t.Errorf("coerce int32->kindLong = %v (%T), want int64(5)", v, v)
 	}
-	if v := coerce(int(7), kindLong); v != int64(7) {
+	if v := coerce(int(7), colType{kind: kindLong}); v != int64(7) {
 		t.Errorf("coerce int->kindLong = %v (%T), want int64(7)", v, v)
 	}
-	if v := coerce(float32(1.5), kindDouble); v != float64(1.5) {
+	if v := coerce(float32(1.5), colType{kind: kindDouble}); v != float64(1.5) {
 		t.Errorf("coerce float32->kindDouble = %v (%T), want float64(1.5)", v, v)
 	}
 }

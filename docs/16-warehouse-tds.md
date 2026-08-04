@@ -157,9 +157,16 @@ and `TestMirrorRoundTripPreservesLogicalTypes` (both ungated), and
 `TestReflectedDateIsUsableAsADateInSQLServer`, which asserts
 `INFORMATION_SCHEMA` and a real date join against the sidecar.
 
-**Not yet mapped:** `decimal` in the mirror (SQL→Delta) direction, which still
-collapses to `string`, and the nested types (`struct`/`array`/`map`), which have
-no kind at all.
+`decimal` mirrors in both directions too, carrying its declared precision and
+scale rather than the value's: the driver returns the printed string, so `1.5`
+in a `DECIMAL(10,2)` must become the unscaled `150` and not `15`. The physical
+encoding follows delta-rs — INT32 to 9 digits, INT64 to 18, byte array beyond —
+so a reader resolving by annotation finds what it expects at every width.
+`MONEY` and `SMALLMONEY` report no `DecimalSize` and are named explicitly as
+`decimal(19,4)` and `decimal(10,4)`; without that they fall through to text.
+
+**Not yet mapped:** the nested types (`struct`/`array`/`map`), which have no
+kind at all.
 
 Reflection exists **only** for the lakehouse endpoint — it bridges Delta that
 was written *outside* SQL Server (by Spark / delta-rs / notebooks) into the
