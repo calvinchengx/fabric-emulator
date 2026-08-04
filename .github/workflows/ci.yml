@@ -149,6 +149,17 @@ jobs:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.32"
+      # Maven Central rate-limits GitHub-hosted runners (shared IP pools), and a
+      # 429 while building the Spark image failed this job twice in one day —
+      # a red that reads as a regression and is really someone else's traffic.
+      # Retrying does not fix a sustained per-IP limit; not making the request
+      # does. The Dockerfile falls back to curl when the cache is cold, so this
+      # is an optimisation rather than a dependency.
+      - uses: actions/cache@v4
+        with:
+          path: docker/spark-runtime/jars
+          key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
+      - run: scripts/fetch_spark_jars.sh
       - run: uv run --frozen --no-sync python e2e/engine-matrix/run.py && git diff --exit-code docs/engine-matrix.md
 
   witnesses:
@@ -879,6 +890,17 @@ jobs:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.32"
+      # Maven Central rate-limits GitHub-hosted runners (shared IP pools), and a
+      # 429 while building the Spark image failed this job twice in one day —
+      # a red that reads as a regression and is really someone else's traffic.
+      # Retrying does not fix a sustained per-IP limit; not making the request
+      # does. The Dockerfile falls back to curl when the cache is cold, so this
+      # is an optimisation rather than a dependency.
+      - uses: actions/cache@v4
+        with:
+          path: docker/spark-runtime/jars
+          key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
+      - run: scripts/fetch_spark_jars.sh
       - run: uv run --frozen --no-sync python e2e/notebook-run/run.py
 
   warehouse-tds:
