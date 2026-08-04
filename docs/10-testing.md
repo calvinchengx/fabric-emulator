@@ -218,6 +218,36 @@ returned, and the difference is the point.
 is absent; delete the job and the comparison stops being made with nothing going
 red. Both carry a comment saying to remove them together or not at all.
 
+## JavaScript: always through `pnpm`
+
+Every JS entry point — installs, scripts, CI — goes through **pnpm**, never npm
+or yarn:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm --filter fabric-emulator-portal test
+pnpm --filter fabric-emulator-docs build
+```
+
+The workspace pins `packageManager: pnpm@10.29.3` and every `package.json`
+carries `preinstall: npx only-allow pnpm`. **Every one, not just the root** —
+the root guard does nothing for `cd portal && npm install`, which reads that
+directory's own manifest, finds no guard, resolves its own tree, and writes a
+`package-lock.json`. Two lockfiles is worse than the wrong one: each tool reads
+its own, both report success, and the divergence surfaces later as a version
+that is somehow different in CI with nothing in the diff to explain it.
+
+`npx only-allow pnpm`, and that `npx` is not an oversight to tidy into
+`pnpm dlx`: the script has to run under the package manager being refused.
+Someone typing `npm install` has npx and may not have pnpm at all.
+
+Enforced by three guards in `internal/repo`, because a convention with nothing
+checking it is the subject of most of this document: every manifest carries the
+guard, no rival lockfile is committed, and no workflow or script shells out to
+`npm`/`yarn`. The last one has a leading word boundary — `npm install` is a
+substring of `pnpm install`, and the first version failed on the two CI lines
+that were already correct.
+
 ## Running Python: always through `uv`
 
 Every Python entry point — e2e runners, `scripts/`, Makefile targets, CI steps —
