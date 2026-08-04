@@ -332,7 +332,7 @@ func TestNotebookPreludeBindsBothFabricSpellings(t *testing.T) {
 			want := "value-from-" + spelling
 			// The prelude's whole contract is: exit() RAISES, and the raise
 			// CARRIES the value (str(e) is what the agent stashes into
-			// __nb_exit__ for the session that ran the cell — the prelude
+			// __nb_exit__ for the session that ran the cell, the prelude
 			// itself must not write it, see the prelude comment on concurrent
 			// runs). So that is exactly what is asserted.
 			probe := notebookPrelude + fmt.Sprintf(`
