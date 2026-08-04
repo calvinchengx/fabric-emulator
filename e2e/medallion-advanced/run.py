@@ -28,4 +28,4 @@ import run as basic  # noqa: E402 — after the path insert above
 EXAMPLE = os.path.join(REPO, "examples", "medallion-advanced-pyspark")
 
 if __name__ == "__main__":
-    sys.exit(basic.run(EXAMPLE, label="advanced medallion"))
+    sys.exit(basic.run(EXAMPLE, label="advanced medallion", profiles=("livy",)))
