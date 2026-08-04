@@ -264,9 +264,23 @@ attached, and their `if v, ok := r[i].(int64); ok` guard reported a type change
 as `sum(id) = 0` — pointing at the data rather than the type. They now name the
 mismatch.
 
-Documented as a table in `docs/16-warehouse-tds.md`, including what is **still**
-unmapped: `decimal` in the mirror direction (collapses to `string`) and the
-nested types, which have no kind at all.
+**Decimal in the mirror direction followed**, closing the other half. It could
+not be expressed by a kind at all — precision and scale are part of the type —
+so the carrier became a `colType` struct, and the precision/scale come from the
+driver's `DecimalSize()` rather than the value: the driver returns the printed
+string, so `1.5` in a `DECIMAL(10,2)` has to become the unscaled `150`, not
+`15`, and the two are indistinguishable by value. `MONEY`/`SMALLMONEY` report no
+`DecimalSize` and are named explicitly, or they fall through to text. All three
+physical widths are asserted, since delta-rs picks the encoding by precision.
+
+One more self-inflicted trap worth recording: the first version of the
+real-engine decimal test indexed the read-back table with the SOURCE table's
+column positions. `encodeParquet` builds a `parquet.Group`, which is a map, so
+the written schema is ordered by NAME — the mistake surfaced as a type panic
+rather than a wrong value, which is the lucky version.
+
+Documented as a table in `docs/16-warehouse-tds.md`. Still unmapped: the nested
+types (`struct`/`array`/`map`), which have no kind at all.
 
 ### Fixed — the witness checker now resolves which witnesses can skip
 The MEDIUM raised by the coverage pass. It cost real time twice in one session:

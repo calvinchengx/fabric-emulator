@@ -22,6 +22,7 @@ package warehouse
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 	"testing"
 	"time"
@@ -180,9 +181,9 @@ func TestMirrorRoundTripPreservesLogicalTypes(t *testing.T) {
 			int32(7), int64(9), "x", 1.5, true,
 		}},
 	}
-	kinds := make([]colKind, len(tbl.Columns))
+	kinds := make([]colType, len(tbl.Columns))
 	for i := range tbl.Columns {
-		kinds[i] = kindOf(tbl.Rows[0][i])
+		kinds[i] = colTypeOf(tbl.Rows[0][i])
 	}
 
 	// The Delta schema names the logical type, which is what any other reader
@@ -315,5 +316,150 @@ func TestReflectedDateIsUsableAsADateInSQLServer(t *testing.T) {
 	}
 	if !day2.UTC().Equal(day) {
 		t.Errorf("rate_date = %v, want %v", day2.UTC(), day)
+	}
+}
+
+// TestMirrorPreservesDecimalScale is the write-direction half of the decimal
+// story. `sqlType` has guarded the READ direction since the comment there was
+// written ("reflecting a decimal as BIGINT drops the scale and every aggregate
+// over it is then wrong by 10^scale") — but mirroring a SQL decimal OUT to
+// Delta collapsed it to a string, so the same value could not make the round
+// trip at all.
+//
+// Each width is asserted because the physical encoding changes with precision:
+// delta-rs picks INT32 to 9 digits, INT64 to 18, byte array beyond, and a
+// reader resolving by annotation has to find what it expects at every one.
+func TestMirrorPreservesDecimalScale(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		precision, scale int
+		in               string
+		want             string
+	}{
+		{"int32-backed", 9, 2, "1234.56", "1234.56"},
+		{"int64-backed", 18, 4, "12345678.9012", "12345678.9012"},
+		{"byte-array-backed", 30, 6, "123456789012345678.123456", "123456789012345678.123456"},
+		{"negative", 12, 3, "-42.500", "-42.500"},
+		{"scale padded from a shorter literal", 10, 2, "1.5", "1.50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ct := colType{kind: kindDecimal, precision: tc.precision, scale: tc.scale}
+			tbl := &Table{Columns: []string{"amt"}, Rows: [][]any{{tc.in}}}
+
+			// The Delta schema must name the precision and scale, since that is
+			// what any other reader resolves the column by.
+			wantType := fmt.Sprintf("decimal(%d,%d)", tc.precision, tc.scale)
+			if got := deltaTypeName(ct); got != wantType {
+				t.Fatalf("Delta type = %q, want %q", got, wantType)
+			}
+
+			pq, err := encodeParquet(tbl, []colType{ct})
+			if err != nil {
+				t.Fatal(err)
+			}
+			back, err := readParquet(pq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d, ok := back.Rows[0][0].(Decimal)
+			if !ok {
+				t.Fatalf("round-tripped as %T (%v); want Decimal — a decimal that "+
+					"comes back a string or an int has lost its scale",
+					back.Rows[0][0], back.Rows[0][0])
+			}
+			if got := d.String(); got != tc.want {
+				t.Errorf("round-trip = %s, want %s", got, tc.want)
+			}
+			// And it reflects back to SQL as the same declared type.
+			if got := sqlType(back, 0); got != fmt.Sprintf("DECIMAL(%d,%d)", tc.precision, tc.scale) {
+				t.Errorf("reflected as %s, want DECIMAL(%d,%d)", got, tc.precision, tc.scale)
+			}
+		})
+	}
+}
+
+// TestMirrorDecimalUsesTheColumnScaleNotTheValues: the driver hands back a
+// printed string, so "1.5" in a DECIMAL(10,2) must become 150 and not 15.
+// Reading the scale off the value is how it gets lost — and the two are
+// indistinguishable by value alone.
+func TestMirrorDecimalUsesTheColumnScaleNotTheValues(t *testing.T) {
+	ct := colType{kind: kindDecimal, precision: 10, scale: 2}
+	v := coerce("1.5", ct)
+	if v != int64(150) {
+		t.Fatalf("coerce(\"1.5\", decimal(10,2)) = %v (%T); want the unscaled 150", v, v)
+	}
+	// The same digits at a different declared scale are a different number.
+	if v := coerce("1.5", colType{kind: kindDecimal, precision: 10, scale: 3}); v != int64(1500) {
+		t.Errorf("coerce at scale 3 = %v; want 1500", v)
+	}
+}
+
+// TestMirroredDecimalSurvivesARealSQLServer drives the whole mirror path
+// against the engine: a SQL DECIMAL column is snapshotted to Delta and read
+// back, with the scale intact. The unit tests above construct the colType by
+// hand; this one gets it from the driver's DecimalSize, which is the part that
+// can silently return "not ok" and quietly fall back.
+func TestMirroredDecimalSurvivesARealSQLServer(t *testing.T) {
+	db := testsupport.OpenMSSQL(t)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx,
+		"CREATE TABLE [prices] (sku NVARCHAR(10), amt DECIMAL(12,3), fee MONEY)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO prices VALUES ('a', 1234.567, 9.99), ('b', -0.500, 0.01)"); err != nil {
+		t.Fatal(err)
+	}
+
+	tbl, kinds, err := readSQLTable(ctx, db, "prices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	col := func(n string) int {
+		for i, c := range tbl.Columns {
+			if c == n {
+				return i
+			}
+		}
+		t.Fatalf("no column %q in %v", n, tbl.Columns)
+		return -1
+	}
+	// The declared type, taken from the driver rather than from the values.
+	if got := deltaTypeName(kinds[col("amt")]); got != "decimal(12,3)" {
+		t.Errorf("amt mirrors as %q, want decimal(12,3)", got)
+	}
+	// MONEY reports no DecimalSize, so it has to be named explicitly or it
+	// falls through to a string.
+	if got := deltaTypeName(kinds[col("fee")]); got != "decimal(19,4)" {
+		t.Errorf("fee (MONEY) mirrors as %q, want decimal(19,4)", got)
+	}
+
+	pq, err := encodeParquet(tbl, kinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := readParquet(pq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The read-back table's own column order, not the source table's:
+	// encodeParquet builds a parquet.Group, which is a map, so the written
+	// schema is ordered by NAME. Indexing the result with the source positions
+	// reads a different column and the mistake surfaces as a type panic.
+	amt, sku := columnIndex(back, "amt"), columnIndex(back, "sku")
+	got := map[string]string{}
+	for _, r := range back.Rows {
+		d, ok := r[amt].(Decimal)
+		if !ok {
+			t.Fatalf("amt round-tripped as %T (%v); want Decimal", r[amt], r[amt])
+		}
+		key, ok := r[sku].(string)
+		if !ok {
+			t.Fatalf("sku round-tripped as %T; want string", r[sku])
+		}
+		got[key] = d.String()
+	}
+	if got["a"] != "1234.567" || got["b"] != "-0.500" {
+		t.Errorf("decimal round-trip = %v, want a=1234.567 b=-0.500", got)
 	}
 }

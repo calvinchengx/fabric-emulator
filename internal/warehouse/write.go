@@ -83,13 +83,15 @@ func WriteDeltaTableAs(attr store.Attribution, st *store.Store, wsID, itemID, na
 
 // inferKinds types each column from its first non-null value, as the SQL mirror
 // does; an all-null column falls back to string.
-func inferKinds(tbl *Table) []colKind {
-	kinds := make([]colKind, len(tbl.Columns))
+func inferKinds(tbl *Table) []colType {
+	kinds := make([]colType, len(tbl.Columns))
 	for i := range tbl.Columns {
-		kinds[i] = kindString
+		kinds[i] = colType{kind: kindString}
 		for _, row := range tbl.Rows {
 			if i < len(row) && row[i] != nil {
-				kinds[i] = kindOf(row[i])
+				// colTypeOf, not kindOf: a Decimal carries its own precision
+				// and scale, and a kind alone would drop both.
+				kinds[i] = colTypeOf(row[i])
 				break
 			}
 		}
@@ -126,7 +128,7 @@ func commitFileName(version int) string { return fmt.Sprintf("%020d.json", versi
 // commitJSON builds one _delta_log commit. protocol/metaData are written on the
 // first commit and on an overwrite (which may change the schema); an append
 // carries only its add action, as Delta writers do.
-func commitJSON(cols []string, kinds []colKind, dataFile string, size, rows int, removes []string, version int, nowMillis int64) []byte {
+func commitJSON(cols []string, kinds []colType, dataFile string, size, rows int, removes []string, version int, nowMillis int64) []byte {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 
