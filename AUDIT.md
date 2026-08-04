@@ -1,6 +1,116 @@
 # Implementation-vs-docs audit
 
-## 2026-08-04 — code audit (this update)
+## 2026-08-05 — what the previous pass got wrong (this update)
+
+Everything below was written while `v0.16.0` was being prepared. One of its
+claims did not survive contact with the released binary, and the way it failed
+is the most useful thing in this file.
+
+### The fix was real; the claim about it was not
+
+The entry further down — "nested types corrupted the whole row" — records the
+displacement bug and calls it fixed. Half of that is right, and the released
+image confirms it: `flat` and `after_flat` both carry their own values, where
+`0.15.3` returned `"SG"` for a `bigint` and dropped the real `999`.
+
+But the *other* half of that entry, the part that says the column is dropped,
+was false in the shipped binary. Measured by contoso-data-platform against
+`ghcr.io/…:0.16.0`:
+
+    probe_nested columns: ['web_order_id', 'lines', 'addr', 'tags']
+    values:               web_order_id='W-1'  lines=None  addr=None  tags=None
+
+`readParquet` skipped them correctly. `ReadDeltaTable` then re-projected each
+part onto the logical schema from the Delta log — which still names the nested
+fields — so every one was re-added with a nil value, took `sqlType`'s `varchar`
+default (no non-null value is ever seen) and served as NULL.
+
+**Why the test suite could not see it.** `types_test.go` asserted on
+`readParquet`'s output. The projection happens one stage later. A map-level
+assertion cannot observe what a downstream stage does to the thing it asserted
+on — the same map-vs-route distinction the type-map probe was built for, this
+time biting inside our own tests. The route-level test now exists and fails on
+the old code with exactly the consumer's symptom.
+
+**The second drop site, which nobody reported.** `Skipped` was also lost at
+`tbl = &Table{Columns: part.Columns}`, whether or not any projection ran. So the
+"not representable … omitted" warning — written specifically because "it is a
+miserable thing to debug without the name" — was unreachable from the read path
+entirely. Worth keeping as a general lesson, in the consumer's words: *a warning
+nobody can trigger reads exactly like a warning nobody has triggered.* A quiet
+log is not evidence of a quiet path.
+
+**The order-dependence trap, which the obvious fix walks into.** Deriving the
+nested set from the first data file's `Skipped` passes every test anyone had.
+It breaks after a schema evolution that ADDS a nested column: the oldest file is
+first in commit order, does not carry that column at all, and therefore skips
+nothing — so the nested column is re-added for every later file. The set now
+comes from the Delta `schemaString` (primitives are JSON strings, struct/array/
+map are JSON objects), which is order-independent by construction rather than by
+happening to read the right file first.
+
+**Direction matters.** NULL is a safe failure where a fabricated value was not,
+so this was milder than what it replaced. But against Fabric `SELECT lines`
+fails with an invalid column name, and against the emulator it returned NULL and
+kept going — the emulator was **more permissive than the thing it emulates**,
+which is the one asymmetry an emulator must not have: code passes locally and
+fails in production.
+
+Fixed in `v0.16.1`. `v0.16.0`'s release notes, both in-repo and the published
+GitHub body, now carry the correction at the point of the claim.
+
+### Three numeric widths, verified against Microsoft before changing anything
+
+Reported off the same page. All three failed in one direction — **one width too
+wide, with nothing raised**:
+
+| Delta | Parquet | annotation | was | Fabric |
+|---|---|---|---|---|
+| `tinyint` | INT32 | `INT(8,true)` | `int` | `smallint` |
+| `smallint` | INT32 | `INT(16,true)` | `int` | `smallint` |
+| `real` | FLOAT | — | `float` | `real` |
+
+The integer widths are the `date` bug's exact shape: physically an INT32 like
+any other, with the width living only in the annotation the reader discarded.
+`real` is milder in cause — FLOAT and DOUBLE differ in the physical kind — and
+identical in effect: `real` and `double` were indistinguishable at the endpoint.
+
+The consumer flagged these as *possibly* unreachable rather than as bugs, which
+was the right call to make and the wrong conclusion to act on: measuring took
+one scratch test and showed all three live.
+
+### Two findings from chasing where the values go
+
+Neither was reported; both came from asking what consumes `Table.Rows`.
+
+- **The bulk-copy encoder rejects `int16` outright.** Its integer arm accepts
+  `int/int32/int64/float32/float64` and defaults to
+  `mssql: invalid type for int column`, failing the entire copy. Only
+  `WAREHOUSE_MSSQL_DSN`-gated tests execute that encoder, so narrowing to
+  `int16` was green on a laptop and would have broken CI. `bulkValue` widens
+  back to `int64`; `sqlType` has already declared the column `SMALLINT` by then,
+  so only the wire encoding is affected.
+- **Pipeline expressions read every integer column as `0`** — pre-existing,
+  unrelated to the widths, and present in every build up to `v0.16.0`.
+  `toNumber` listed only `float64` and `int`, but a Lookup over a Delta table or
+  Parquet file puts the READER's types into the row map: `int32` for a Delta
+  int, `int64` for a bigint. So `@activity('L').output.firstRow.amount` on a
+  bigint column evaluated to `0`, silently, and every expression built on it was
+  wrong. `toBool` had the same hole, where it costs a wrong branch rather than a
+  wrong number.
+
+### What this pass changes about how the claims below should be read
+
+Three artifacts carried the same disproved sentence — the repo notes, the
+published release body, and this file. Correcting one is not correcting the
+claim. The published GitHub release body in particular is a **separate artifact
+from the file it was generated from**, and editing the file does not touch it;
+that gap survived because the body was published before the correction was
+written.
+
+---
+
+## 2026-08-04 — code audit
 
 A different kind of pass from the ones below. Those reconciled **docs against
 code**; this one audited the **code itself** across five dimensions in parallel
@@ -314,9 +424,14 @@ panic repaired it looped.
 `listBlobs` 90.5% -> 93.6%. Three mutations, three caught: restoring the index,
 returning the bare prefix as the marker, and listing directory rows as blobs.
 
-### Fixed — nested types corrupted the whole row, and `string` was the wrong type
+### Partly fixed — nested types corrupted the whole row, and `string` was the wrong type
 Two findings, one from a consumer and one found while checking the first against
 Microsoft's docs.
+
+> **Read with the 2026-08-05 entry at the top of this file.** The displacement
+> half below is fixed and confirmed on the released image. The omission half is
+> not: `v0.16.0` served nested columns as `varchar` NULL rather than dropping
+> them, and the warning this entry describes could not fire. Fixed in `v0.16.1`.
 
 **Nested types did not fail to map — they corrupted.** `docs/16` called them
 "not yet mapped", which reads as a blank. Measured in-repo on
