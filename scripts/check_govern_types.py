@@ -27,15 +27,50 @@ documents. It exists so that constraint is checked without containers.
 Usage:
     check_govern_types.py     exit non-zero on the first column OM would refuse
 """
+import importlib
 import importlib.util
 import pathlib
 import sys
+import types
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 INGEST = ROOT / "scripts" / "govern_ingest.py"
 
 
+def _stub_missing(name, build):
+    """Install a stand-in for `name` ONLY when it is genuinely absent.
+
+    govern_ingest imports requests/urllib3/yaml at module scope for the HTTP
+    work, none of which the column mapping touches. Those live in the
+    `governance` dependency group, so importing the module unconditionally made
+    `make check` fail with ModuleNotFoundError on any machine without that group
+    — which is how this guard, added to catch a governance break, became one.
+
+    Stubbing only what is missing means the real modules are used wherever they
+    exist, and the stub provides exactly the names used at import time: anything
+    else raises AttributeError rather than silently doing nothing.
+    """
+    try:
+        importlib.import_module(name)
+    except ImportError:
+        sys.modules[name] = build()
+
+
 def load_ingest():
+    _stub_missing("requests", lambda: types.ModuleType("requests"))
+    _stub_missing("yaml", lambda: types.ModuleType("yaml"))
+
+    def _urllib3():
+        mod = types.ModuleType("urllib3")
+        exc = types.ModuleType("urllib3.exceptions")
+        exc.InsecureRequestWarning = type("InsecureRequestWarning", (Warning,), {})
+        mod.exceptions = exc
+        mod.disable_warnings = lambda *a, **k: None
+        sys.modules["urllib3.exceptions"] = exc
+        return mod
+
+    _stub_missing("urllib3", _urllib3)
+
     spec = importlib.util.spec_from_file_location("govern_ingest", INGEST)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

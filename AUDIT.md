@@ -302,6 +302,15 @@ into `make check` and CI, and it fails when the fix is removed. It does not
 replace the e2e — it cannot observe OpenMetadata's actual behaviour, only that
 the payload satisfies the documented constraint.
 
+**The guard then became the thing it was guarding against.** Importing the real
+ingest also imports `requests`/`urllib3`/`yaml`, which live in the `governance`
+dependency group, so `make check` died with `ModuleNotFoundError` on Windows and
+macOS — a check added to catch a governance break, breaking the build itself on
+two platforms. It passed locally for the reason these keep passing locally: this
+machine happens to have `requests`. It now stubs ONLY what is genuinely absent,
+so the real modules are used where they exist, and the absent case is verified
+by blocking those imports outright rather than by hoping.
+
 ### Fixed — the witness checker now resolves which witnesses can skip
 The MEDIUM raised by the coverage pass. It cost real time twice in one session:
 `TestWarehouseSQLServerRelayE2E` skips without `WAREHOUSE_MSSQL_DSN`, so it never
