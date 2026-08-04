@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/compute"
@@ -93,7 +94,7 @@ except Exception:
 // a caller polls. Blocking the POST until a notebook finished would be a
 // different API from the one Fabric offers, and a long notebook would time the
 // client out on a request that was working perfectly.
-func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun) {
+func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map[string]any) {
 	session := "notebook-" + jid
 
 	// A goroutine that dies silently is why a notebook can leave every cell
@@ -140,7 +141,20 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun) {
 		return
 	}
 
-	for _, cell := range run.Cells {
+	// A parameterised notebook declares its defaults in the PARAMETERS cell and a
+	// caller overrides them per run: that is the whole point of `executionData.
+	// parameters`, and it is how every pipeline-driven notebook receives the
+	// workspace, lakehouse and batch ids it works on. Honoured for DataPipeline
+	// but not here, the supplied values were silently dropped and the notebook
+	// ran on its placeholder defaults — failing later on a validation the caller
+	// had in fact satisfied.
+	//
+	// Fabric's semantics are override-after-defaults, so the assignments run
+	// AFTER the parameters cell rather than replacing it: a parameter the caller
+	// did not supply keeps the notebook's default.
+	paramCode := parameterOverrides(params)
+
+	for i, cell := range run.Cells {
 		kind := "python"
 		if strings.EqualFold(cell.Language, "sql") {
 			kind = "sql"
@@ -152,6 +166,18 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun) {
 			finalised = true
 			a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("cell %d: %v", cell.Index, err))
 			return
+		}
+
+		// Overrides land immediately after the first cell, which is where a
+		// Fabric notebook keeps its PARAMETERS block.
+		if i == 0 && paramCode != "" {
+			if _, perr := a.agentPost("/statements", map[string]any{
+				"session": session, "code": paramCode, "kind": "python",
+			}); perr != nil {
+				finalised = true
+				a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("applying run parameters: %v", perr))
+				return
+			}
 		}
 
 		result := cellResult(cell.Index, out)
@@ -298,3 +324,64 @@ func (a *API) failNotebookRun(wid, iid, jid string, run notebookRun, msg string)
 // runsNotebooksItself reports whether this emulator can execute a notebook
 // without an external engine.
 func (a *API) runsNotebooksItself() bool { return a.livyAgent != nil }
+
+// parameterOverrides renders `executionData.parameters` as python assignments.
+//
+// Fabric passes each parameter as {"value": ..., "type": ...}; the value is what
+// the notebook binds, and it is rendered through JSON so a string stays quoted
+// and a number, bool or null arrives as the literal the notebook expects. A name
+// that is not a plain identifier is skipped rather than injected, because this
+// text is executed.
+func parameterOverrides(params map[string]any) string {
+	if len(params) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(params))
+	for name := range params {
+		names = append(names, name)
+	}
+	sort.Strings(names) // deterministic, so a run is reproducible
+	var b strings.Builder
+	for _, name := range names {
+		if !isPyIdentifier(name) {
+			continue
+		}
+		value := params[name]
+		if m, ok := value.(map[string]any); ok {
+			if v, present := m["value"]; present {
+				value = v
+			}
+		}
+		lit, err := json.Marshal(value)
+		if err != nil {
+			continue
+		}
+		// JSON null/true/false are not python literals.
+		switch string(lit) {
+		case "null":
+			lit = []byte("None")
+		case "true":
+			lit = []byte("True")
+		case "false":
+			lit = []byte("False")
+		}
+		fmt.Fprintf(&b, "%s = %s\n", name, lit)
+	}
+	return b.String()
+}
+
+func isPyIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r == '_':
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
