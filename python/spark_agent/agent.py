@@ -99,7 +99,7 @@ def _install_input_file_name():
     try:
         if input_file.install(spark):
             print("agent: input_file_name shim installed (engine lacks it)")
-    except Exception as exc:  # noqa: BLE001 — a broken shim must not kill the agent
+    except Exception as exc:  # noqa: BLE001, a broken shim must not kill the agent
         print(f"agent: input_file_name shim NOT installed: {exc}")
 
 
@@ -189,13 +189,13 @@ def run_code(code, g):
         # A graceful notebook exit surfaces here as an exception named
         # _NotebookExit (raised by the driver prelude's patched
         # notebookutils.notebook.exit). Stash its value in THIS session's
-        # globals — the prelude cannot: each session's prelude re-patches the
+        # globals, the prelude cannot: each session's prelude re-patches the
         # one shared notebookutils module, so under concurrent notebook runs
         # the raising function belongs to whichever session ran its prelude
         # last, and its `global __nb_exit__` writes into that session's
         # namespace, not the caller's. Observed both ways: SUCCESS exits
-        # recorded Failed, and the dual — a real failure inheriting another
-        # run's exit value — would read as a false green. Matching by type
+        # recorded Failed, and the dual, a real failure inheriting another
+        # run's exit value, would read as a false green. Matching by type
         # NAME, not identity, for the same reason: every session defines its
         # own _NotebookExit class.
         if type(exc).__name__ == "_NotebookExit":
@@ -265,7 +265,7 @@ def register_tables(session, schema, tables, schemas=None):
     Fabric.
 
     `schemas` carries a schema-enabled lakehouse's schema folders
-    (Tables/<schema>/<table>). Each is created WITH its OneLake location —
+    (Tables/<schema>/<table>). Each is created WITH its OneLake location
     that is the whole point: a schema created bare lives in the engine's own
     warehouse, so a later `saveAsTable("bronze.x")` succeeds, reports rows
     written, and leaves nothing in the lakehouse. Registering the schema at

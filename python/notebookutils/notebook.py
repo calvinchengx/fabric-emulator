@@ -46,9 +46,9 @@ def run(name, timeoutSeconds=90, arguments=None, workspaceId=None,
 
     `spark_environment` / `attach_lakehouse` are accepted because real Fabric
     accepts them, and callers inspect this signature to decide whether the
-    runtime supports the option before passing it (Alkali's custom-notebook
-    activity does exactly that, and refused to run against a signature without
-    them). The emulator has one Spark session and attaches the notebook's own
+    runtime supports the option before passing it: a framework that introspects
+    `run` and finds no such keyword will refuse to invoke a notebook at all.
+    The emulator has one Spark session and attaches the notebook's own
     binding, so there is nothing to switch: they are accepted and ignored rather
     than advertised as unsupported.
     """

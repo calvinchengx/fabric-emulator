@@ -43,7 +43,7 @@ import (
 // runs once per session, and each run re-points the one shared notebookutils
 // module's `exit` at its own copy of notebook_exit. Under concurrent notebook
 // runs, whichever session ran its prelude LAST owns that copy, so a
-// `global __nb_exit__` write in it lands in that session's namespace — not the
+// `global __nb_exit__` write in it lands in that session's namespace, not the
 // caller's. Observed as SUCCESS exits recorded Failed; the dual (a real
 // failure inheriting a stale exit value from another run) would read as a
 // false green. Only the agent knows which session executed the raising cell,

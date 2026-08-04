@@ -1,9 +1,8 @@
 """`input_file_name()` on engines that do not implement it.
 
 Sail answers `function: input_file_name`, so a notebook that records which file
-each row came from — a normal thing for a landing-to-bronze step to do — fails at
-write time, long after the read looked fine. Rosetta's LearningAnalytics bronze
-transform is exactly that shape.
+each row came from, a normal thing for a landing-to-bronze step to do, fails at
+write time, long after the read looked fine.
 
 WHY THIS IS NOT A STUB. The easy version registers a UDF returning "" and the
 column is silently wrong: every row claims it came from nowhere, and a lineage
@@ -17,7 +16,7 @@ condemn. So this reconstructs the real answer instead:
   3. strip the tag at every write, so nothing persisted differs from Fabric.
 
 Each row then genuinely carries the file it came from, which is what the
-function means. The cost is one read per file rather than one glob read — the
+function means. The cost is one read per file rather than one glob read, the
 right trade for an emulator, bounded by the landing layouts it exists to serve.
 
 DEAD ENDS, so nobody retries them:
@@ -27,7 +26,7 @@ DEAD ENDS, so nobody retries them:
     does not resolve it either.
   - Listing files via the engine (`binaryFile`): reads run on Sail's own
     filesystem and Sail has no binaryFile source, so listing must not depend on
-    the engine at all — hence the OneLake DFS listing below.
+    the engine at all, hence the OneLake DFS listing below.
 
 SAIL SCHEMA CAVEAT. Sail defers CSV schema inference to execution: the analyzed
 schema of a fresh csv read is EMPTY (select-by-name fails even unpatched), so
@@ -38,7 +37,7 @@ file would misalign silently, but it would do so in the plain glob read too.
 SCOPE, deliberately narrow. Only installed when the engine actually lacks the
 function, so the JVM overlay keeps Spark's native answer. Only the file readers
 are wrapped. A frame that never came from a file has no tag, and
-`input_file_name()` on it yields "" — Spark's own answer for a non-file source.
+`input_file_name()` on it yields "", Spark's own answer for a non-file source.
 """
 from __future__ import annotations
 
@@ -65,8 +64,8 @@ def _list_files(path: str) -> list[str]:
     """Concrete files behind a path or basename-glob, in a stable order.
 
     Never asks the engine (see DEAD ENDS above). `abfss://` paths list through
-    the OneLake DFS API with the agent's own token — the same route
-    `notebookutils.fs` already uses — and anything else falls back to the local
+    the OneLake DFS API with the agent's own token, the same route
+    `notebookutils.fs` already uses, and anything else falls back to the local
     filesystem, which only helps on a single-container layout. A glob in a
     directory segment is not expanded; the caller then keeps the plain glob
     read and the tag degrades to the glob string, which is coarse but honest.
@@ -132,7 +131,7 @@ def install(spark) -> bool:
     def _input_file_name():
         # Resolves per-frame to the tag a file read put there (coalesce guards
         # the tag going null through outer joins). Known divergence: on a frame
-        # with NO tag — one that never came from a wrapped file read — this
+        # with NO tag, one that never came from a wrapped file read, this
         # fails to resolve, where real Spark returns "". A visible error beats
         # a silently empty lineage column, and no known workload asks for file
         # provenance on a non-file frame.
