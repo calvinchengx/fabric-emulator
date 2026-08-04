@@ -65,6 +65,41 @@ func writeDFSErr(w http.ResponseWriter, e dfsError) {
 	fmt.Fprintf(w, `{"error":{"code":%q,"message":%q}}`, e.code, e.msg)
 }
 
+// Body ceilings for the data plane. These are REJECTION thresholds, and that
+// distinction is the whole point of readBounded below.
+const (
+	// maxDFSAppend is what ADLS Gen2 accepts on one ?action=append. Azure
+	// documents 100 MiB; this used to be 64, which no client had exceeded
+	// until Microsoft's own `fab cp` — it uploads a whole file in a SINGLE
+	// append rather than chunking, so any file over the ceiling hit it.
+	maxDFSAppend = 100 << 20
+	// maxDFSPut bounds a create-with-body. DFS `create` normally carries no
+	// payload; this is the same ceiling for the case where one arrives.
+	maxDFSPut = 100 << 20
+	// maxBlobWrite bounds Put Blob and Put Block on the Blob surface.
+	maxBlobWrite = 256 << 20
+)
+
+// readBounded reads at most max bytes and reports whether the body FIT.
+//
+// io.LimitReader alone is a data-corruption bug on a write path: it discards
+// everything past the limit and returns no error, so an oversized upload is
+// stored truncated and answered with success. That is not hypothetical — a
+// 71 MiB `fab cp` against the old 64 MiB append ceiling was silently cut to 64
+// MiB, and the only reason it surfaced at all is that the client then flushed
+// at the real length and the position check disagreed. A client that never
+// flushed would have had a quietly shortened file.
+//
+// Reading max+1 is what makes "too big" detectable: at max exactly, the body
+// fits; one byte more and the caller must refuse rather than store a fragment.
+func readBounded(r io.Reader, max int64) ([]byte, bool) {
+	data, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil || int64(len(data)) > max {
+		return nil, false
+	}
+	return data, true
+}
+
 // permHeaders sets OneLake's canned permission response headers.
 func permHeaders(w http.ResponseWriter) {
 	w.Header().Set("x-ms-owner", "$superuser")
@@ -534,7 +569,12 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		isDir := r.URL.Query().Get("resource") == "directory"
-		body, _ := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+		body, ok := readBounded(r.Body, maxDFSPut)
+		if !ok {
+			writeDFSErr(w, dfsError{"RequestBodyTooLarge", http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("The request body is too large. The maximum size is %d bytes.", maxDFSPut)})
+			return
+		}
 		ifNoneMatch := r.Header.Get("If-None-Match") == "*"
 		err := s.Store.CreateOneLakePathAs(s.attributionOf(r), &store.OneLakePath{
 			WorkspaceID: ws.ID, ItemID: it.ID, RelPath: rel, IsDir: isDir, Content: body,
@@ -613,7 +653,12 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request, itemID, rel stri
 	pos, _ := strconv.ParseInt(r.URL.Query().Get("position"), 10, 64)
 	switch action {
 	case "append":
-		data, _ := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+		data, ok := readBounded(r.Body, maxDFSAppend)
+		if !ok {
+			writeDFSErr(w, dfsError{"RequestBodyTooLarge", http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("The request body is too large. The maximum size for one append is %d bytes.", maxDFSAppend)})
+			return
+		}
 		if _, err := s.Store.AppendOneLakePath(itemID, rel, pos, data); err != nil {
 			writeDFSErr(w, dfsError{"InvalidFlushPosition", http.StatusBadRequest, err.Error()})
 			return

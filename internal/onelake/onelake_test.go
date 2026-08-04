@@ -612,3 +612,78 @@ func TestResolveWorkspaceAndItem(t *testing.T) {
 		t.Fatalf("unknown item via handler = %d %s", w.Code, errCode(t, w))
 	}
 }
+
+// TestOversizedWriteIsRefusedNotTruncated pins the fix for a silent
+// data-corruption bug.
+//
+// The append handler used to read its body through a bare io.LimitReader, which
+// DISCARDS everything past the ceiling and reports no error — so an oversized
+// upload was stored as a fragment and answered 202 Accepted. Microsoft's own
+// `fab cp` found it: it uploads a whole file in a SINGLE append rather than
+// chunking, so a 71 MiB file was cut to 64 MiB. It surfaced only because fab
+// then flushed at the real length and the position check disagreed; a client
+// that never flushed would have had a quietly shortened file and no signal.
+//
+// The assertion that matters is the last one. A 413 with a fragment left behind
+// would still be corruption — just corruption with a better error message.
+func TestOversizedWriteIsRefusedNotTruncated(t *testing.T) {
+	f := newFixture(t)
+	base := "/" + f.ws.ID + "/" + f.it.ID + "/Files/raw/big.bin"
+	f.do("PUT", base, f.token, nil)
+
+	// A body one byte past the ceiling, streamed rather than allocated: the
+	// point is the boundary, and holding 100 MiB to prove it would make this
+	// test the slowest in the package.
+	r := httptest.NewRequest("PATCH", base+"?action=append&position=0",
+		io.LimitReader(neverEndingReader{}, maxDFSAppend+1))
+	r.Header.Set("Authorization", "Bearer "+f.token)
+	w := httptest.NewRecorder()
+	f.svc.ServeHTTP(w, r)
+
+	if w.Code != http.StatusRequestEntityTooLarge || errCode(t, w) != "RequestBodyTooLarge" {
+		t.Fatalf("oversized append = %d %s; want 413 RequestBodyTooLarge",
+			w.Code, errCode(t, w))
+	}
+	if got := f.do("GET", base, f.token, nil); got.Body.Len() != 0 {
+		t.Fatalf("a refused append left %d bytes behind; nothing may be stored",
+			got.Body.Len())
+	}
+}
+
+// neverEndingReader yields zeroes forever, so a body of any size costs nothing.
+type neverEndingReader struct{}
+
+func (neverEndingReader) Read(p []byte) (int, error) { return len(p), nil }
+
+// TestReadBoundedFitsExactlyAtTheCeiling checks the boundary itself, which is
+// the whole of the logic: at the limit the body fits, and one byte more must
+// come back as a refusal with NO partial data — returning what fitted is how
+// the truncation bug would grow back.
+func TestReadBoundedFitsExactlyAtTheCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size int64
+		max  int64
+		ok   bool
+	}{
+		{"under", 9, 10, true},
+		{"exactly at the ceiling", 10, 10, true},
+		{"one byte over", 11, 10, false},
+		{"empty", 0, 10, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, ok := readBounded(io.LimitReader(neverEndingReader{}, tc.size), tc.max)
+			if ok != tc.ok {
+				t.Fatalf("readBounded(%d bytes, max %d) ok = %v; want %v",
+					tc.size, tc.max, ok, tc.ok)
+			}
+			if !ok && data != nil {
+				t.Fatalf("a refused read returned %d bytes; it must return none",
+					len(data))
+			}
+			if ok && int64(len(data)) != tc.size {
+				t.Fatalf("readBounded returned %d bytes; want %d", len(data), tc.size)
+			}
+		})
+	}
+}
