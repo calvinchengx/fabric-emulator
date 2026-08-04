@@ -381,3 +381,103 @@ func TestDeployClosedDBErrors(t *testing.T) {
 		t.Error("ListDeploymentOperations on closed DB succeeded")
 	}
 }
+
+// TestDeployRecreatesAnItemDeletedFromTheTarget: deleting a deployed item and
+// deploying again puts it back, as a fresh create rather than an error.
+//
+// NOTE ON WHAT THIS DOES *NOT* COVER, because the first version of this test
+// claimed otherwise. `DeployStageContent` has an `ErrNotFound` arm for a pair
+// row that outlived its item, and this test does not reach it: deleting the
+// item CASCADES the pair away (`deployment_pipeline_pairs.later_item_id
+// REFERENCES items(id) ON DELETE CASCADE`), so the row is gone before deploy
+// looks. Removing that arm does not fail this test — mutation showed exactly
+// that. It is defensive code against a state the schema forbids, in the same
+// class as ErrPairingAmbiguous, and forcing a test through it would prove
+// nothing about the store.
+//
+// What it does cover is the outcome a user sees, which is worth pinning on its
+// own: the item comes back, with a new id, and the target holds exactly one.
+func TestDeployRecreatesAnItemDeletedFromTheTarget(t *testing.T) {
+	f := newDeployFixture(t, []string{"nb"}, nil)
+
+	// First deploy pairs dev/nb to a fresh copy in test.
+	op := f.deploy(t)
+	if len(op.Items) != 1 || op.Items[0].Outcome != DeployCreated {
+		t.Fatalf("first deploy = %+v; want one created item", op.Items)
+	}
+	targetID := op.Items[0].TargetItemID
+
+	// Delete the target, leaving the pair row pointing at nothing.
+	if err := f.s.DeleteItem(f.tst.ID, targetID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The second deploy must CREATE rather than fail.
+	op2 := f.deploy(t)
+	if len(op2.Items) != 1 {
+		t.Fatalf("second deploy = %+v; want one item", op2.Items)
+	}
+	if op2.Items[0].Outcome != DeployCreated {
+		t.Errorf("outcome = %v; want %v — a pair whose item is gone is unpaired",
+			op2.Items[0].Outcome, DeployCreated)
+	}
+	if op2.Items[0].TargetItemID == targetID {
+		t.Error("the new item reused the deleted id")
+	}
+	if got := f.itemNames(t, f.tst); len(got) != 1 || got[0] != "nb" {
+		t.Errorf("target workspace = %v; want exactly one nb", got)
+	}
+}
+
+// TestPairingIsComputedEarlierToLaterWhicheverStageIsAssignedSecond.
+//
+// Pairs are directional: earlier stage first. AssignStageWorkspace has to
+// order the two stages itself, because the caller may assign them in either
+// order — and it is the SECOND assignment that computes the pairs.
+//
+// Assigning dev-then-test exercises one side of that swap; nothing exercised
+// the other. If the swap were dropped, assigning in the reverse order would
+// build every pair backwards, and a deploy would then treat the later stage as
+// the source.
+func TestPairingIsComputedEarlierToLaterWhicheverStageIsAssignedSecond(t *testing.T) {
+	forward := deployedNamesAssigning(t, false)
+	reverse := deployedNamesAssigning(t, true)
+	if forward != reverse {
+		t.Errorf("assignment order changed the deployment: dev-first produced %q, "+
+			"test-first produced %q — pairs must be earlier->later either way",
+			forward, reverse)
+	}
+	if forward != "nb:"+string(DeployUpdated) {
+		t.Errorf("deploy outcome = %q; want the paired item to be UPDATED", forward)
+	}
+}
+
+// deployedNamesAssigning builds the same pipeline, assigning the two stages in
+// the given order, then deploys and reports what happened to the one item.
+func deployedNamesAssigning(t *testing.T, testStageFirst bool) string {
+	t.Helper()
+	s := newDeploymentStore(t)
+	pl := mkPipeline(t, s, "release", 3)
+	sts, _ := s.ListDeploymentStages(pl.ID)
+	dev, _ := mkWorkspaceWith(t, s, "dev", "nb")
+	tst, _ := mkWorkspaceWith(t, s, "test", "nb")
+
+	assign := [][2]string{{sts[0].ID, dev.ID}, {sts[1].ID, tst.ID}}
+	if testStageFirst {
+		assign[0], assign[1] = assign[1], assign[0]
+	}
+	for _, a := range assign {
+		if err := s.AssignStageWorkspace(pl.ID, a[0], a[1]); err != nil {
+			t.Fatalf("assign %v: %v", a, err)
+		}
+	}
+
+	op, err := s.DeployStageContent(pl.ID, sts[0].ID, sts[1].ID, NewID(), "n", "alice", nil)
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	if len(op.Items) != 1 {
+		t.Fatalf("deploy = %+v; want one item", op.Items)
+	}
+	return op.Items[0].DisplayName + ":" + string(op.Items[0].Outcome)
+}
