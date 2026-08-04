@@ -349,3 +349,98 @@ print(__nb_exit__)
 		})
 	}
 }
+
+// jobBodyJSON returns the whole job body, not just its status: the reconciled
+// failureReason is the thing under test, and a status alone cannot show it.
+func jobBodyJSON(t *testing.T, a *API, wid, iid, jid string) map[string]any {
+	t.Helper()
+	w := do(a.getJobInstance, admin, "GET", "", map[string]string{"wid": wid, "iid": iid, "jid": jid})
+	if w.Code != 200 {
+		t.Fatalf("getJobInstance = %d %s", w.Code, w.Body.Bytes())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+// TestFailingCellFailsTheJobAndNamesTheCell covers the pair of lies this
+// package exists to prevent, from the caller's side rather than the driver's.
+//
+// A notebook whose cell raises must reach the caller as Failed, and the failure
+// must say WHICH cell and WHY. Before, the job carried only "The job failed."
+// and the per-cell error sat in a run detail nobody knew to ask for, so
+// diagnosing meant re-running the notebook by hand outside the emulator.
+func TestFailingCellFailsTheJobAndNamesTheCell(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+	agent := newFakeAgent(t, a)
+
+	agent.reply = func(code string) map[string]any {
+		if strings.Contains(code, "spark.range") {
+			return map[string]any{
+				"status": "error", "ename": "RuntimeError", "evalue": "boom",
+				"traceback": []string{"Traceback", "RuntimeError: boom"},
+			}
+		}
+		return nil
+	}
+
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+	if s := awaitJob(t, a, ws.ID, nb.ID, jid); s != "Failed" {
+		t.Fatalf("a cell that raises must fail the job; status = %s", s)
+	}
+
+	// The reason must be actionable on its own: which cell, and the error.
+	body := jobBodyJSON(t, a, ws.ID, nb.ID, jid)
+	reason, _ := body["failureReason"].(map[string]any)
+	if reason == nil {
+		t.Fatalf("no failureReason on a failed job: %+v", body)
+	}
+	msg, _ := reason["message"].(string)
+	if !strings.Contains(msg, "Cell 0") || !strings.Contains(msg, "boom") {
+		t.Fatalf("failureReason does not name the cell and error: %q", msg)
+	}
+	if d, _ := reason["detail"].(string); !strings.Contains(d, "notebookRun") {
+		t.Fatalf("failureReason should point at the run detail; got %q", d)
+	}
+
+	// And the detail endpoint still carries the per-cell truth.
+	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
+	if run.Status != "Failed" || run.Cells[0].Status != "Failed" {
+		t.Fatalf("run detail disagrees with the job: %+v", run)
+	}
+}
+
+// TestJobDoesNotReportCompletedWhileCellsArePending is the invariant that would
+// have caught a whole class of silent green.
+//
+// A job's status and the run's cells are two views of one execution. If the
+// cells never ran, Completed is not a status, it is a lie — and it is the one
+// that gets believed, because nobody investigates a green job. Here the run is
+// saved with its cells still Pending (no engine ever reported) and the job is
+// marked complete underneath it; the caller must not be told Completed.
+func TestJobDoesNotReportCompletedWhileCellsArePending(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+	// No agent: nothing will drive the run, so its cells stay Pending.
+
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+
+	// Force the underlying job terminal, as a clock or a stray finalisation
+	// would, while the run detail still says nothing executed.
+	if err := st.FinalizeJob(nb.ID, jid, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	body := jobBodyJSON(t, a, ws.ID, nb.ID, jid)
+	if got, _ := body["status"].(string); got == "Completed" {
+		t.Fatalf("job reported Completed while its cells were Pending: %+v", body)
+	}
+	if _, ok := body["endTimeUtc"]; ok {
+		t.Fatalf("a job that has not really finished must not carry endTimeUtc: %+v", body)
+	}
+}

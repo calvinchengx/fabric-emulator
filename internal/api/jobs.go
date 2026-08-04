@@ -242,7 +242,78 @@ func (a *API) jobBody(j *store.JobInstance, wid string) map[string]any {
 	if status == store.JobFailed {
 		body["failureReason"] = map[string]string{"errorCode": j.FailWith, "message": "The job failed."}
 	}
+	a.reconcileNotebookJobBody(j, body)
 	return body
+}
+
+// reconcileNotebookJobBody keeps a RunNotebook job's status honest against the
+// run detail, and says WHY when it failed.
+//
+// Two views of one execution can disagree: the job's status is derived from
+// virtual time plus finalisation, while the per-cell truth lives in the notebook
+// run. A job reporting Completed over a run whose cells never executed is the
+// worst of the pair, because only the green one is believed — the same reasoning
+// that made a definition-less notebook Failed rather than a fast success.
+//
+// So the run wins. If it says Failed, the job is Failed. If the run has not
+// reached a terminal state, the job cannot claim Completed while its cells sit
+// Pending. And a failure now names the cell and carries its error, instead of
+// the bare "The job failed." that sent a reader looking for logs that do not
+// exist (the detail is at .../jobs/instances/{jid}/notebookRun).
+func (a *API) reconcileNotebookJobBody(j *store.JobInstance, body map[string]any) {
+	if j.JobType != "RunNotebook" {
+		return
+	}
+	_, runJSON, err := a.Store.GetNotebookRun(j.ID)
+	if err != nil {
+		return
+	}
+	var run notebookRun
+	if json.Unmarshal([]byte(runJSON), &run) != nil {
+		return
+	}
+
+	failedCell, failedErr := -1, ""
+	pending := 0
+	for _, c := range run.Cells {
+		switch c.Status {
+		case "Failed":
+			if failedCell < 0 {
+				failedCell, failedErr = c.Index, c.Error
+			}
+		case "", "Pending":
+			pending++
+		}
+	}
+
+	switch {
+	case run.Status == "Failed" || failedCell >= 0:
+		body["status"] = store.JobFailed
+		msg := "The job failed."
+		if failedCell >= 0 {
+			msg = fmt.Sprintf("Cell %d failed: %s", failedCell, failedErr)
+		}
+		code, _ := body["failureReason"].(map[string]string)
+		errorCode := "NotebookExecutionFailed"
+		if code != nil && code["errorCode"] != "" {
+			errorCode = code["errorCode"]
+		}
+		body["failureReason"] = map[string]string{
+			"errorCode": errorCode,
+			"message":   msg,
+			"detail":    "Per-cell status, output and error: GET .../jobs/instances/" + j.ID + "/notebookRun",
+		}
+	case body["status"] == store.JobCompleted && run.Status != "Completed" && pending > 0:
+		// The run was never finalised, yet the job went green. Note the test is
+		// on the RUN's status, not on pending cells alone: a notebook that calls
+		// notebook_exit stops early and legitimately leaves the cells after it
+		// Pending, and that run IS Completed. What must not happen is a job
+		// claiming Completed over a run no engine ever reported on, which is the
+		// silent green this function exists to stop. InProgress is the honest
+		// reading — a caller polling keeps polling instead of acting on a lie.
+		body["status"] = store.JobInProgress
+		delete(body, "endTimeUtc")
+	}
 }
 
 // getJobInstance returns the job's clock-derived state.
