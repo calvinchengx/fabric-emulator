@@ -198,7 +198,7 @@ residue in `internal/tds`. Chase the behaviour, not the number.
   skipped tests, or the manifest record which witnesses are gated.
 
 ### Second coverage pass — the untested capability surfaces
-Total **89.35% → 89.72%** measured without a SQL Server sidecar (`ci.yml` records
+Total **89.35% → 89.84%** measured without a SQL Server sidecar (`ci.yml` records
 the sidecar's effect: 91.2% with an engine against 89.4% without, so the whole
 `internal/warehouse` family at 0% locally is *gated*, not untested — the top of a
 naive "uncovered statements" ranking is entirely that gate and is a trap).
@@ -237,6 +237,32 @@ one defect:
   client never stalls, so none of it is reachable over real HTTP — driving
   `Server.Handler()` with a `ResponseWriter` under test control is what made it
   observable.
+
+- **Lineage from a source system was never rendered.** `portalLineage` 66.7% →
+  90%. An edge whose source is a *connection* resolves its name through a
+  different table — `GetItemByID` returns nothing for a connection id — and that
+  entire branch sat at 0%. It is the medallion's FIRST hop: every ERP/CRM/
+  reference feed in the advanced demo reached the graph through code checked
+  only by eye. Weakening it labels the node `""` instead of "Contoso ERP (SQL)".
+- **The tenant-settings refusals.** `updateTenantSetting` 70.7% → 87.8%: the
+  documented `enabled`-is-required rule, the malformed-body 400, the unknown-
+  setting 404, and the reference's own contradiction rule (canSpecifySecurityGroups
+  false MEANS org-wide, so naming groups contradicts itself). The three
+  delegation flags are set ONE AT A TIME, because three near-identical patch
+  blocks are the shape where a copy-paste error assigns the wrong field and every
+  value is a bool, so a swap still round-trips something plausible.
+
+**Not every low percentage is a gap.** `internal/tlscert` sits at 77.1% and was
+left there: all 8 uncovered statements are crypto/IO error returns
+(`ecdsa.GenerateKey`, `rand.Int`, `CreateCertificate`, `MarshalECPrivateKey`,
+`WriteFile`) unreachable without fault injection, and the real behaviours —
+persist, reuse for a stable fingerprint, MkdirAll failure, regeneration over
+corrupt PEMs — were already tested. What it was *actually* missing was
+behavioural: **nothing asserted the private key's file mode**. `TestPersistedKeyIsNotWorldReadable`
+fails when 0600 becomes 0644, and adding it moved coverage by exactly **zero
+percent**, because the `WriteFile` call was already executed by every other test
+in the file. The mode argument is not a branch. This is the counter-lesson in
+its sharpest form: the number would never have pointed here.
 
 **A test can pass against the code it claims to pin.** `TestFlowStreamStopsWhenTheClientIsGone`
 passed with the event-send path's write-error check deleted, because the handler
