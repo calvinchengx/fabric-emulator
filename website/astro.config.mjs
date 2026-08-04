@@ -100,6 +100,7 @@ export default defineConfig({
             { slug: '32-xmla-plan' },
             { slug: '33-pbix-tooling' },
             { slug: '34-fab-driven-example' },
+            { slug: '35-warehouse-time-travel' },
             { slug: 'engine-matrix' },
           ],
         },
