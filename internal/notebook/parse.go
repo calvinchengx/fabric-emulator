@@ -31,6 +31,17 @@ type Cell struct {
 	Kind     Kind   `json:"kind"`
 	Language string `json:"language,omitempty"` // code cells: python | pyspark | sql | scala | …
 	Source   string `json:"source"`
+	// Parameters marks the cell Fabric designates as the PARAMETERS cell.
+	//
+	// It executes like any other code cell, so this is not about HOW it runs.
+	// It is about WHERE a caller's overrides go: Fabric adds them in a new cell
+	// beneath the designated one, so the defaults declared inside it are
+	// overridden rather than the other way round. Drop this and the only thing
+	// left to aim at is "the first code cell", which is wrong for every
+	// notebook that imports or runs setup before declaring its parameters. The
+	// overrides land first, the defaults execute on top of them, and the run
+	// proceeds on placeholder values with nothing reported.
+	Parameters bool `json:"parameters,omitempty"`
 }
 
 var (
@@ -73,7 +84,7 @@ func Parse(src []byte) []Cell {
 		}
 	}
 	if !hasMarkers {
-		return finish(nil, sectionKind("CELL"), lines[start:])
+		return finish(nil, "CELL", lines[start:])
 	}
 
 	var cells []Cell
@@ -81,7 +92,7 @@ func Parse(src []byte) []Cell {
 	var buf []string
 	for _, l := range lines[start:] {
 		if m := delim.FindStringSubmatch(l); m != nil {
-			cells = finish(cells, sectionKind(curKind), buf)
+			cells = finish(cells, curKind, buf)
 			curKind, buf = m[1], nil
 			continue
 		}
@@ -90,7 +101,7 @@ func Parse(src []byte) []Cell {
 		}
 		buf = append(buf, l)
 	}
-	return finish(cells, sectionKind(curKind), buf)
+	return finish(cells, curKind, buf)
 }
 
 func sectionKind(marker string) Kind {
@@ -105,9 +116,18 @@ func sectionKind(marker string) Kind {
 	}
 }
 
+// isParametersMarker reports whether a section marker is the PARAMETERS CELL
+// one. The delimiter allows any run of whitespace inside the marker, so match
+// the prefix rather than a fixed spelling.
+func isParametersMarker(marker string) bool {
+	return strings.HasPrefix(strings.TrimSpace(marker), "PARAMETERS")
+}
+
 // finish materialises a section's buffered lines into a cell (dropping METADATA
-// and empties), stamping the running index.
-func finish(cells []Cell, kind Kind, buf []string) []Cell {
+// and empties), stamping the running index. It takes the raw section MARKER,
+// not the derived kind, because the kind alone cannot say whether this was the
+// parameters cell: PARAMETERS CELL and CELL are both code.
+func finish(cells []Cell, marker string, buf []string) []Cell {
 	if buf == nil {
 		return cells
 	}
@@ -115,6 +135,7 @@ func finish(cells []Cell, kind Kind, buf []string) []Cell {
 	if isMeta {
 		return cells
 	}
+	kind := sectionKind(marker)
 	lang, src := "", strings.Trim(body, "\n")
 	if kind == Code {
 		lang, src = detectLanguage(src)
@@ -122,7 +143,10 @@ func finish(cells []Cell, kind Kind, buf []string) []Cell {
 	if strings.TrimSpace(src) == "" {
 		return cells
 	}
-	return append(cells, Cell{Index: len(cells), Kind: kind, Language: lang, Source: src})
+	return append(cells, Cell{
+		Index: len(cells), Kind: kind, Language: lang, Source: src,
+		Parameters: kind == Code && isParametersMarker(marker),
+	})
 }
 
 // stripMagics removes `# MAGIC ` / `# META ` decorations. `# META` lines are

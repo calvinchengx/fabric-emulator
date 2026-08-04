@@ -158,6 +158,22 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 	// did not supply keeps the notebook's default.
 	paramCode := parameterOverrides(params)
 
+	// WHERE the overrides go is the whole game. Fabric applies them immediately
+	// after the cell it designates as the PARAMETERS cell, which is not
+	// necessarily the first one: a notebook that imports, or %run's a setup
+	// notebook, before declaring its defaults puts a plain CELL first. Aiming at
+	// index 0 in that shape writes the caller's values and then lets the
+	// parameters cell assign its placeholders straight over them, so the run
+	// proceeds on defaults the caller explicitly replaced and nothing reports
+	// it. Fall back to index 0 only when the notebook designates no parameters
+	// cell at all, which is the pre-existing behaviour for that shape.
+	injectAfter := 0
+	for i, cell := range run.Cells {
+		if cell.Parameters {
+			injectAfter = i
+		}
+	}
+
 	for i, cell := range run.Cells {
 		kind := "python"
 		if strings.EqualFold(cell.Language, "sql") {
@@ -172,9 +188,9 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 			return
 		}
 
-		// Overrides land immediately after the first cell, which is where a
-		// Fabric notebook keeps its PARAMETERS block.
-		if i == 0 && paramCode != "" {
+		// "The execution engine adds a new cell beneath the parameters cell":
+		// beneath THAT cell, not beneath the first one.
+		if i == injectAfter && paramCode != "" {
 			if _, perr := a.agentPost("/statements", map[string]any{
 				"session": session, "code": paramCode, "kind": "python",
 			}); perr != nil {
