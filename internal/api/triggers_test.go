@@ -336,25 +336,80 @@ func TestTriggerEventIsNullForAManualRun(t *testing.T) {
 
 func TestTriggerCycleIsCut(t *testing.T) {
 	// A pipeline whose own Copy writes back into the folder that triggered it
-	// would recurse forever. The firing set cuts it at the first repeat while
-	// still letting the pipeline run once.
+	// would recurse forever. The activation COUNT bounds it: the cycle climbs
+	// to maxTriggerActivations and is cut there.
+	f := newTrigFixture(t, waitDef)
+	id := f.mustTrigger(t, f.trigBody("Files/landing"))
+	ev := store.FileEvent{Type: store.EventFileCreated, WorkspaceID: f.ws.ID,
+		ItemID: f.lake.ID, RelPath: "Files/landing/a.csv"}
+
+	// Fill the budget, as a runaway chain would.
+	for i := 0; i < maxTriggerActivations; i++ {
+		if !f.a.firing.enter(id) {
+			t.Fatalf("activation %d of %d was refused early", i+1, maxTriggerActivations)
+		}
+	}
+	if n := f.a.DispatchFileEvent(ev); n != 0 {
+		t.Fatalf("a trigger at its activation cap fired %d times; the cycle is not cut", n)
+	}
+
+	// One step back under the cap and it runs again — the bound is a ceiling,
+	// not a latch.
+	f.a.firing.leave(id)
+	if n := f.a.DispatchFileEvent(ev); n != 1 {
+		t.Fatalf("dispatch below the cap = %d, want 1", n)
+	}
+	// And ONE leave releases exactly ONE slot. If it released them all — a
+	// delete rather than a decrement — the budget would reset on the first
+	// unwind and a cycle would never reach the cap again.
+	if !f.a.firing.enter(id) {
+		t.Fatal("the slot freed by one leave could not be reclaimed")
+	}
+	if f.a.firing.enter(id) {
+		t.Fatal("one leave released more than one slot; a cycle would run " +
+			"forever because the budget resets every time a frame unwinds")
+	}
+	f.a.firing.leave(id)
+	for i := 0; i < maxTriggerActivations; i++ {
+		f.a.firing.leave(id)
+	}
+	if got := len(f.a.firing.on); got != 0 {
+		t.Errorf("firing set leaked %d entr(ies) after unwinding", got)
+	}
+}
+
+// TestIndependentEventsBothFire pins the behaviour real Fabric has and this
+// emulator used to lack.
+//
+// Activator "continues monitoring without waiting for the action to complete",
+// which is what "enables scalable workflows that can process many events
+// simultaneously" — two files landing in one watched folder are two events and
+// two activations. The old identity-based firing SET suppressed the second,
+// running the pipeline once, and that suppression was an artifact of this
+// emulator's synchronous dispatch rather than anything Fabric does.
+func TestIndependentEventsBothFire(t *testing.T) {
 	f := newTrigFixture(t, waitDef)
 	id := f.mustTrigger(t, f.trigBody("Files/landing"))
 
-	// Simulate the self-write: dispatch an event while that trigger is already
-	// on the stack, which is exactly the state a re-entrant write produces.
-	ev := store.FileEvent{Type: store.EventFileCreated, WorkspaceID: f.ws.ID,
+	first := store.FileEvent{Type: store.EventFileCreated, WorkspaceID: f.ws.ID,
 		ItemID: f.lake.ID, RelPath: "Files/landing/a.csv"}
+	second := store.FileEvent{Type: store.EventFileCreated, WorkspaceID: f.ws.ID,
+		ItemID: f.lake.ID, RelPath: "Files/landing/b.csv"}
+
+	// The first activation is still in flight when the second event arrives —
+	// exactly the state two simultaneous writes produce.
 	if !f.a.firing.enter(id) {
-		t.Fatal("trigger was already marked firing")
+		t.Fatal("the first activation was refused")
 	}
-	if n := f.a.DispatchFileEvent(ev); n != 0 {
-		t.Fatalf("a trigger already on the stack fired %d times", n)
+	if n := f.a.DispatchFileEvent(second); n != 1 {
+		t.Fatalf("a second, independent event fired %d times; want 1 — Fabric "+
+			"does not wait for the first action to complete", n)
 	}
 	f.a.firing.leave(id)
-	// Off the stack, the same event fires normally.
-	if n := f.a.DispatchFileEvent(ev); n != 1 {
-		t.Fatalf("dispatch after leaving = %d, want 1", n)
+
+	// And the ordinary case still works.
+	if n := f.a.DispatchFileEvent(first); n != 1 {
+		t.Fatalf("dispatch = %d, want 1", n)
 	}
 }
 

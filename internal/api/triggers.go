@@ -240,49 +240,72 @@ func (a *API) deleteEventTrigger(w http.ResponseWriter, r *http.Request, p *auth
 
 // ---- dispatch ----
 
-// firingSet tracks the triggers currently on the dispatch stack, so a cycle
-// cannot recurse forever. Its own mutex, held only around the map: dispatch
-// runs whole pipelines, and holding a lock across that would serialise the
-// whole emulator.
+// maxTriggerActivations bounds how many activations of ONE trigger may be in
+// flight at once. Named after Fabric's own limit, and chosen to match it.
 //
-// KNOWN COST, stated because it is a trade-off rather than an oversight: the
-// set is process-GLOBAL, while the thing it models is a per-chain call stack.
-// Dispatch is synchronous on the writer's goroutine (store.emitFileEvent calls
-// FileEvents inline), so a cycle really is one goroutine's stack — but Go has
-// no goroutine-local storage, and threading a chain token through the store's
-// write API to scope this properly would reach into every OneLake mutation.
+// Real Fabric bounds a runaway by RATE, not identity: Activator documents
+// "Fabric item — Activations/user/minute — 50", and "if an action exceeds the
+// limit, Activator might throttle or cancel the action". It also caps input at
+// 10,000 events/second/rule, above which "Activator stops your rule". Nothing
+// in the Activator docs describes loop detection or dedup — see
+// docs/parity.md for the citation.
+const maxTriggerActivations = 50
+
+// firingSet counts the activations of each trigger currently in flight, so a
+// runaway is bounded while independent events are not suppressed. Its own
+// mutex, held only around the map: dispatch runs whole pipelines, and holding a
+// lock across that would serialise the whole emulator.
 //
-// The consequence: two INDEPENDENT concurrent writes matching the same trigger
-// collide, and only the first starts a job. Two files landing in one watched
-// folder at the same instant run the pipeline once, not twice.
+// This used to be a SET — one activation per trigger, so a trigger already on
+// the stack did not fire at all. That cut cycles at the first repeat, and it
+// also suppressed something real Fabric does not: two files landing in one
+// watched folder at the same instant ran the pipeline once rather than twice.
+// Fabric's Activator "continues monitoring without waiting for the action to
+// complete", which is explicitly what "enables scalable workflows that can
+// process many events simultaneously" — independent events each activate.
 //
-// That is the deliberate direction of the trade. Losing a duplicate firing is
-// silent and bounded; losing the cycle guard is an unbounded recursion that
-// takes the process with it. TestTriggerCycleIsCut pins the current behaviour,
-// so changing this is a decision to make on purpose, not a refactor to drift
-// into.
+// So the bound is now a COUNT rather than an identity, which is the shape
+// Fabric's own limits take. A bronze->silver->gold chain is depth 3; a cycle
+// climbs to the cap and is cut there.
+//
+// KNOWN RESIDUAL GAP, stated because it is a trade rather than an oversight:
+// this counter cannot tell 50 nested activations (a cycle) from 50 concurrent
+// independent ones (a burst), because dispatch is synchronous on the writer's
+// goroutine (store.emitFileEvent calls FileEvents inline), Go has no
+// goroutine-local storage, and threading a chain token through the store's
+// write API to separate them would reach into every OneLake mutation. Raising
+// the bound from 1 to 50 shrinks that gap by a factor of 50 without paying for
+// the plumbing; it does not close it. A burst of more than 50 simultaneous
+// writes matching one trigger still loses the excess, where Fabric would
+// throttle at the same number.
 type firingSet struct {
 	mu sync.Mutex
-	on map[string]bool
+	on map[string]int
 }
 
 func (f *firingSet) enter(id string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.on == nil {
-		f.on = map[string]bool{}
+		f.on = map[string]int{}
 	}
-	if f.on[id] {
+	if f.on[id] >= maxTriggerActivations {
 		return false
 	}
-	f.on[id] = true
+	f.on[id]++
 	return true
 }
 
 func (f *firingSet) leave(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	delete(f.on, id)
+	// Decrement, not delete: with a count, deleting would drop the OTHER
+	// in-flight activations of the same trigger and let a cycle run forever.
+	if f.on[id] <= 1 {
+		delete(f.on, id)
+		return
+	}
+	f.on[id]--
 }
 
 // DispatchFileEvent starts the item job of every trigger matching ev, and

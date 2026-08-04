@@ -129,16 +129,36 @@ number. The suggestion stands for suites with no such committed artifact, which
 is precisely what `dbt build`'s exit code is.
 
 ### Open — triaged, deliberately not changed
-- **The trigger `firingSet` is process-global** where it models a per-chain call
-  stack, so two *independent* concurrent writes matching one trigger start one
-  job instead of two. Dispatch is synchronous on the writer's goroutine, so a
-  cycle genuinely is one stack — but Go has no goroutine-locals, and threading a
-  chain token through the store's write API to scope it properly would reach into
-  every OneLake mutation. Losing a duplicate firing is silent and bounded; losing
-  the cycle guard is unbounded recursion, so the trade points this way on
-  purpose. `TestTriggerCycleIsCut` pins it; the code now names the cost so this
-  stays a decision rather than something to drift into.
-  `internal/api/triggers.go`.
+- ~~**The trigger `firingSet` is process-global**~~ — **resolved 2026-08-04 by
+  checking what Fabric actually does**, rather than by picking a side of the
+  trade. The entry below was written as "losing a duplicate firing is silent and
+  bounded, losing the cycle guard is unbounded", which is true and was the wrong
+  frame: it never asked whether Fabric suppresses at all.
+
+  It does not. Activator's limitations page bounds a runaway by RATE — `Fabric
+  item — Activations/user/minute — 50`, and "if an action exceeds the limit,
+  Activator might throttle or cancel the action" — plus 10,000 events/second/rule
+  above which "Activator stops your rule". Neither loop detection nor dedup
+  appears anywhere in those docs. And the introduction states the concurrency
+  case outright: Activator "sends information about what happened and continues
+  monitoring without waiting for the action to complete", which "enables scalable
+  workflows that can process many events simultaneously".
+
+  So the suppression was an artifact of this emulator's synchronous dispatch, not
+  a model of Fabric, and the duplicate-firing loss was a fidelity gap rather than
+  a neutral cost. `firingSet` now counts activations instead of holding
+  identities, cut at `maxTriggerActivations = 50` — Fabric's own number.
+  Independent events each fire; a cycle climbs to the cap and stops.
+
+  **Residual gap, stated rather than papered over:** the counter still cannot
+  separate 50 NESTED activations from 50 CONCURRENT independent ones, for the
+  same reason as before — synchronous dispatch, no goroutine-locals, and a chain
+  token would reach every OneLake mutation. Raising the bound from 1 to 50
+  shrinks the gap fiftyfold without paying for that plumbing; it does not close
+  it. `TestIndependentEventsBothFire` pins the behaviour Fabric has,
+  `TestTriggerCycleIsCut` pins the bound — including that ONE `leave` releases
+  exactly ONE slot, which mutation testing showed the first version did not
+  check, and a `delete` there would let a cycle run forever.
 - **The witness checker proves presence, not coverage.**
   `scripts/check_witnesses.py` confirms a test *function name* or CI *job id*
   exists; it does not check that the test runs (some `t.Skip` without a DSN),
