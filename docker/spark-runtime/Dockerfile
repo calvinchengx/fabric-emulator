@@ -72,10 +72,11 @@ USER spark
 
 # The python a notebook actually needs. The runtime is Spark plus jars, which is
 # enough to START the agent but not to run anything real: agent.py imports only
-# stdlib, so the gap only appears once a notebook imports a framework. Alkali's
-# core dependency is `requests`, and without it every notebook on this overlay
-# dies on `ModuleNotFoundError: No module named 'requests'` — after the agent has
-# reported ready, so it reads as a notebook fault rather than a missing runtime.
+# stdlib, so the gap only appears once a notebook imports a framework. `requests`
+# is the one nearly every such framework pulls in, and without it a notebook on
+# this overlay dies on `ModuleNotFoundError: No module named 'requests'` after
+# the agent has reported ready, so it reads as a notebook fault rather than a
+# missing runtime.
 #
 # Kept to the same pin the python runtime resolves, and installed as root before
 # dropping back to spark so it lands in the image rather than a user directory a

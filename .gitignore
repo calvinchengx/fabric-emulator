@@ -73,3 +73,9 @@ docker/spark-runtime/jars/*.jar
 
 # Local working notes (not for the repo)
 LOCAL_GAPS.md
+la_e2e.env
+
+# Compiled python bytecode. These were tracked once and embedded the
+# committing machine's absolute paths in the repo.
+__pycache__/
+*.py[cod]
