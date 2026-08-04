@@ -85,6 +85,24 @@ func (s *agentStub) only(t *testing.T) agentPostRecord {
 	return got[0]
 }
 
+
+// register returns the single /register request the stub received, failing on
+// any other count. The /mount request every bind now sends first is a separate
+// contract with its own test; these assertions are about the catalog.
+func (s *agentStub) register(t *testing.T) agentPostRecord {
+	t.Helper()
+	var regs []agentPostRecord
+	for _, r := range s.recorded() {
+		if r.path == "/register" {
+			regs = append(regs, r)
+		}
+	}
+	if len(regs) != 1 {
+		t.Fatalf("agent received %d /register request(s); want exactly 1", len(regs))
+	}
+	return regs[0]
+}
+
 // captureLog redirects the standard logger for the duration of a test. These
 // functions report failure ONLY to the log, so the log is the observable.
 func captureLog(t *testing.T) *bytes.Buffer {
@@ -131,7 +149,7 @@ func TestRegisterLakehouseTablesDeclaresEachDeltaTable(t *testing.T) {
 
 	a.registerLakehouseTables("42", ws.ID, lake.ID)
 
-	got := stub.only(t)
+	got := stub.register(t)
 	if got.path != "/register" {
 		t.Errorf("posted to %q; want /register", got.path)
 	}
@@ -181,7 +199,7 @@ func TestRegisterLakehouseTablesSkipsLooseFiles(t *testing.T) {
 
 	a.registerLakehouseTables("1", ws.ID, lake.ID)
 
-	tables, _ := stub.only(t).body["tables"].([]any)
+	tables, _ := stub.register(t).body["tables"].([]any)
 	if len(tables) != 1 {
 		t.Fatalf("registered %d entr(ies); want only the orders directory, got %v", len(tables), tables)
 	}
@@ -203,8 +221,10 @@ func TestRegisterLakehouseTablesSaysNothingAboutAnEmptyLakehouse(t *testing.T) {
 
 	a.registerLakehouseTables("1", ws.ID, lake.ID)
 
-	if got := stub.recorded(); len(got) != 0 {
-		t.Fatalf("an empty lakehouse produced %d agent request(s); want none: %v", len(got), got)
+	for _, r := range stub.recorded() {
+		if r.path == "/register" {
+			t.Fatalf("an empty lakehouse produced a /register request: %v", r)
+		}
 	}
 }
 
@@ -413,7 +433,7 @@ func TestRegisterLakehouseTablesReflectsSchemaFolders(t *testing.T) {
 
 	a.registerLakehouseTables("7", ws.ID, lake.ID)
 
-	body := stub.only(t).body
+	body := stub.register(t).body
 	schemas, _ := body["schemas"].([]any)
 	got := map[string]string{}
 	for _, e := range schemas {
@@ -448,5 +468,32 @@ func TestRegisterLakehouseTablesReflectsSchemaFolders(t *testing.T) {
 	}
 	if s, ok := byName["plain_table"]["schema"]; ok && s != "" {
 		t.Errorf("plain_table carries schema %v; a first-level table must not", s)
+	}
+}
+
+// TestRegisterLakehouseTablesRequestsTheFilesMount pins the /mount contract: a
+// session binding to a lakehouse asks the agent to mirror its Files/ at
+// /lakehouse/default (real Fabric's mount), with the workspace and lakehouse
+// ids the agent needs to address OneLake — and it asks even for a lakehouse
+// with no tables, because contract files live under Files/ regardless.
+func TestRegisterLakehouseTablesRequestsTheFilesMount(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lake := seedLakehouseWithTables(t, st, ws.ID, "empty")
+	stub := newAgentStub(t, a)
+
+	a.registerLakehouseTables("9", ws.ID, lake.ID)
+
+	var mounts []agentPostRecord
+	for _, r := range stub.recorded() {
+		if r.path == "/mount" {
+			mounts = append(mounts, r)
+		}
+	}
+	if len(mounts) != 1 {
+		t.Fatalf("agent received %d /mount request(s); want exactly 1: %v", len(mounts), stub.recorded())
+	}
+	if mounts[0].body["workspace"] != ws.ID || mounts[0].body["lakehouse"] != lake.ID {
+		t.Errorf("mount = %v; want workspace %s lakehouse %s", mounts[0].body, ws.ID, lake.ID)
 	}
 }
