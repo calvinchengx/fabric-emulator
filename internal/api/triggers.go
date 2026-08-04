@@ -244,6 +244,23 @@ func (a *API) deleteEventTrigger(w http.ResponseWriter, r *http.Request, p *auth
 // cannot recurse forever. Its own mutex, held only around the map: dispatch
 // runs whole pipelines, and holding a lock across that would serialise the
 // whole emulator.
+//
+// KNOWN COST, stated because it is a trade-off rather than an oversight: the
+// set is process-GLOBAL, while the thing it models is a per-chain call stack.
+// Dispatch is synchronous on the writer's goroutine (store.emitFileEvent calls
+// FileEvents inline), so a cycle really is one goroutine's stack — but Go has
+// no goroutine-local storage, and threading a chain token through the store's
+// write API to scope this properly would reach into every OneLake mutation.
+//
+// The consequence: two INDEPENDENT concurrent writes matching the same trigger
+// collide, and only the first starts a job. Two files landing in one watched
+// folder at the same instant run the pipeline once, not twice.
+//
+// That is the deliberate direction of the trade. Losing a duplicate firing is
+// silent and bounded; losing the cycle guard is an unbounded recursion that
+// takes the process with it. TestTriggerCycleIsCut pins the current behaviour,
+// so changing this is a decision to make on purpose, not a refactor to drift
+// into.
 type firingSet struct {
 	mu sync.Mutex
 	on map[string]bool

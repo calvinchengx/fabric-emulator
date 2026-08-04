@@ -326,9 +326,23 @@ func stringArgs(sig []Token) []string {
 // JOIN operand at any depth, minus CTE aliases, temp/system objects, and
 // table-valued functions.
 func bodySources(sig []Token) [][]string {
+	// CTE names are collected at EVERY nesting level, not just the leading
+	// clause. This scan reads FROM/JOIN at any depth, so a CTE defined in a
+	// nested WITH — or in one inside a derived table — was reported as a source
+	// TABLE. Nothing downstream catches it: warehouseLineage.resolve does not
+	// check that the table exists, so a single-part name resolves against the
+	// connection's own item and a lineage edge is written for a table that never
+	// existed. Nested CTEs are a documented feature here, so this is expected
+	// traffic rather than a corner.
+	//
+	// A `with` that is not a CTE clause — the `WITH (NOLOCK)` table hint, or
+	// CTAS's `WITH (DISTRIBUTION = …)` — collects nothing, because the collector
+	// requires a name followed by `AS (` and both of those put `(` first.
 	exclude := map[string]bool{}
-	if len(sig) > 0 && wordIs(sig[0], "with") {
-		collectCTENames(sig, exclude)
+	for i := range sig {
+		if wordIs(sig[i], "with") {
+			collectCTENames(sig[i:], exclude)
+		}
 	}
 	var out [][]string
 	seen := map[string]bool{}

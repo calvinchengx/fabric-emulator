@@ -7,6 +7,7 @@ package onelake
 import (
 	"bytes"
 	"encoding/xml"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -643,5 +644,66 @@ func TestBlobListStartFrom(t *testing.T) {
 	want = []string{base + "00000000000000000002.json"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("marker beats startFrom: got %v want %v", got, want)
+	}
+}
+
+// TestBlockStageIsBounded pins the memory bound on uncommitted blocks.
+//
+// Staged bytes were freed only on commit, so an upload that never committed held
+// them for the life of the process. delta-rs makes that routine rather than
+// exotic: a `_delta_log` commit that loses the put-if-absent race retries under a
+// NEW blob key, so every losing attempt's staging was abandoned in place.
+//
+// The bound evicts whole abandoned blobs oldest-first. The blob being written is
+// never evicted, and an evicted one fails its later commit with InvalidBlockList
+// — the same answer Azure gives for expired blocks, and a loud one rather than a
+// silently truncated file.
+func TestBlockStageIsBounded(t *testing.T) {
+	var st blockStage
+	chunk := make([]byte, 1<<20) // 1 MiB per block
+
+	// Stage well past the cap under distinct blob keys, committing none.
+	const blobs = (maxStagedBytes >> 20) + 64
+	for i := range blobs {
+		st.put(fmt.Sprintf("item|Files/abandoned-%d", i), "AAAA", chunk)
+	}
+
+	st.mu.Lock()
+	total, held := st.bytes, len(st.blocks)
+	st.mu.Unlock()
+	if total > maxStagedBytes {
+		t.Errorf("staged %d bytes, above the %d bound: abandoned uploads are not evicted",
+			total, maxStagedBytes)
+	}
+	if held == 0 || held >= blobs {
+		t.Errorf("holding %d of %d blobs; want some evicted and some kept", held, blobs)
+	}
+
+	// The blob written most recently survives, and still commits.
+	last := fmt.Sprintf("item|Files/abandoned-%d", blobs-1)
+	if _, ok := st.commit(last, []string{"AAAA"}); !ok {
+		t.Error("the most recently staged blob was evicted; an in-progress upload must not be")
+	}
+
+	// An evicted blob fails its commit rather than committing a partial file.
+	if _, ok := st.commit("item|Files/abandoned-0", []string{"AAAA"}); ok {
+		t.Error("an evicted blob committed; it must fail with an unknown block id")
+	}
+}
+
+// TestBlockStageFreesOnCommit: the ordinary path still releases its bytes, so
+// the bound is not doing the work a normal commit should.
+func TestBlockStageFreesOnCommit(t *testing.T) {
+	var st blockStage
+	st.put("item|Files/a", "AAAA", make([]byte, 1024))
+	st.put("item|Files/a", "BBBB", make([]byte, 2048))
+	if _, ok := st.commit("item|Files/a", []string{"AAAA", "BBBB"}); !ok {
+		t.Fatal("commit failed")
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.bytes != 0 || len(st.blocks) != 0 {
+		t.Fatalf("after commit: %d bytes across %d blobs; want nothing held",
+			st.bytes, len(st.blocks))
 	}
 }
