@@ -98,6 +98,28 @@ class _NoSparkContext:
         return "<sc unavailable: Spark Connect engine (Sail) — DataFrame/SQL only>"
 
 
+def _notebookutils():
+    """The `notebookutils` real Fabric notebooks import, or None.
+
+    This image ships one under /app/python, but the agent runs as
+    `python3 /app/python/spark_agent/agent.py`, so only the *script's* directory
+    lands on sys.path and `import notebookutils` fails inside executed notebooks.
+    Frameworks that resolve workspace/lakehouse context through it (Alkali is the
+    one we test against) then fall through to environment-variable fallbacks, or
+    raise. Putting the package directory on sys.path is what makes the emulator
+    match Fabric here.
+    """
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if pkg_root not in sys.path:
+        sys.path.insert(0, pkg_root)
+    try:
+        import notebookutils  # noqa: PLC0415 - optional, resolved at session setup
+
+        return notebookutils
+    except Exception:  # pragma: no cover - image built without the package
+        return None
+
+
 def ns(session):
     if session not in namespaces:
         apply_connect_confs()  # survive an engine restart between sessions
@@ -107,6 +129,14 @@ def ns(session):
             namespaces[session]["sc"] = spark.sparkContext
         except Exception:
             namespaces[session]["sc"] = _NoSparkContext()
+        # Real Fabric notebooks get `notebookutils`/`mssparkutils` as globals and
+        # as importable modules; mirror both so notebook code runs unchanged.
+        nbu = _notebookutils()
+        if nbu is not None:
+            namespaces[session]["notebookutils"] = nbu
+            mssparkutils = getattr(nbu, "mssparkutils", None)
+            if mssparkutils is not None:
+                namespaces[session]["mssparkutils"] = mssparkutils
     return namespaces[session]
 
 
