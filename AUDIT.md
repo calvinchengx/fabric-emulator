@@ -99,13 +99,15 @@ The code found four defects that could not be seen from the docs.
   purpose. `TestTriggerCycleIsCut` pins it; the code now names the cost so this
   stays a decision rather than something to drift into.
   `internal/api/triggers.go`.
-- **LOW — the witness checker proves presence, not coverage.**
+- **The witness checker proves presence, not coverage.**
   `scripts/check_witnesses.py` confirms a test *function name* or CI *job id*
   exists; it does not check that the test runs (some `t.Skip` without a DSN),
   that it asserts the claim, or that the job exercises the credited suite. A
   green row can cite a real-but-irrelevant witness — which is why the manifest
   carries hand-written `note` corrections. `boundary:` witnesses are counted but
-  never dangling-checked.
+  never dangling-checked. **Raised to MEDIUM by the coverage pass below**, which
+  found two concrete instances.
+
 ### Also fixed (the lows)
 - **The MLflow proxy read its upstream response unbounded**, alone among this
   package's body reads. It is relayed verbatim, so an attached server could drive
@@ -125,6 +127,75 @@ The code found four defects that could not be seen from the docs.
   out read/write T-SQL. It only fires on a construction mistake, which is when a
   security check should be loudest; rejecting matches `api.withAuth`.
   `internal/tds/server.go`; test `TestLoginWithNoValidatorIsRejected`.
+
+### Coverage pass — what severity triage did not reach
+Total statement coverage **90.70% → 91.13%** (deduplicated cross-package
+profile, measured with a real SQL Server; the floor is 90%, so the margin was
+thinner than the README's "~90%" suggests). The number moved little because most
+of the work covered *branches* inside already-partly-covered functions. What it
+surfaced is the point:
+
+- **The lineage migration was broken and would fail any upgrade.**
+  `relaxLineageJobFK` rebuilds `lineage_edges` so a warehouse write can be
+  recorded without a Fabric job. Its `INSERT` supplied **12 values positionally
+  into a 13-column table** — `source_kind` was added to the new shape after the
+  migration was written — so the rebuild died with "has 13 columns but 12 values
+  were supplied" and took startup with it. Invisible because every test opens a
+  FRESH database, where the function returns at its first check and the rebuild
+  never runs; only someone opening a database from an older build would hit it.
+  Columns are named now. `internal/store/db.go`; tests
+  `TestRelaxLineageJobFKUpgradesAnOlderDatabase` (old schema on disk, rows
+  survive, job-less edges insert, the partial index still dedupes) and
+  `TestRelaxLineageJobFKIsIdempotent`.
+- **A 🟢 parity claim had no witness at all.** `parity.md` claims gold → semantic
+  model with `producer: DirectLake`; `directLakeSource` sat at **0%** and nothing
+  anywhere asserted such an edge. The existing Direct Lake fixtures create items
+  through the store, which bypasses the handler that records lineage. 0% → 81%,
+  driving the real `createItem` path, with the two absences that are half the
+  claim also pinned: an import model records nothing, and a binding naming a
+  lakehouse that does not exist records nothing. `internal/api/modellineage_test.go`.
+- **The VS Code surface's authorization was never exercised.** `vscodeDo`
+  hardcodes `admin`, so every refusal branch behind `vscodeAuthorizedItem` was
+  dead. It is easy to read that file as a translation layer rather than a door,
+  but every handler reaches the same item store the public API guards. Weakening
+  the guard to resolve the item while discarding the role check produces **10
+  distinct failures**. `internal/api/vscode_test.go`.
+- **`viewFlow` had eight unreached branches** (`CREATE OR ALTER`, column lists,
+  every malformed shape). A view is remembered and later resolved THROUGH, so a
+  shape that silently fails to parse loses every downstream edge that would have
+  gone via it — gold attributed to a scaffold instead of silver. 50% → 94%.
+- **The view-rename lineage path.** dbt renames views as well as tables; if the
+  memory does not move with the name the view is forgotten under the old one and
+  unknown under the new. Deleting the three lines that move it makes the new test
+  fail. Also pinned: a rename or `DROP` naming an unresolvable object leaves the
+  graph alone — retiring provenance on a guess deletes something real, the
+  destructive twin of inventing it. `rename` 58% → 92%.
+- **`deployment.go`'s description was never written by a test.** The existing
+  PATCH test proves an *absent* description is preserved, which passes just as
+  well if the field is ignored. Clearing to `""` is asserted too: the field is a
+  `*string` so "absent" and "set me to empty" stay distinguishable, and a handler
+  testing the value rather than the pointer would silently refuse to clear.
+- **`runPipeline` was deleted**, not tested: a one-line wrapper with no callers
+  anywhere, including tests. Dead code at 0% is not a gap to fill.
+
+**Uncovered is not the same as untested behaviour**, and the difference matters
+more than the percentage. Of `deployment.go`'s 21 uncovered blocks, 17 are
+`err != nil → return` plumbing and one is *structurally unreachable*: the
+`ErrPairingAmbiguous` branch cannot fire through the store because
+`ux_items_ws_name_type` forbids the duplicate that would cause it — `pairing.go`
+documents this, `PairItems` is at 100% including that branch via hand-built item
+sets, and both halves were verified before accepting it. Forcing a test through
+it would prove nothing. The same is true of the `WriteMessage(...) → return err`
+residue in `internal/tds`. Chase the behaviour, not the number.
+
+### Open — raised in severity by this pass
+- **MEDIUM (was LOW) — the witness checker proves presence, not coverage.**
+  Promoted because it cost real time twice in one session. `TestWarehouseSQLServerRelayE2E`
+  skips without `WAREHOUSE_MSSQL_DSN`, so it never ran locally and a CRITICAL fix
+  broke it undetected until CI; and the Direct Lake parity row sat 🟢 with its
+  code at 0%. A test whose *name* exists is not a test that *ran*, and a witness
+  that exists is not a witness that *covers*. Worth having the checker report
+  skipped tests, or the manifest record which witnesses are gated.
 
 ### Context for the entry below
 The 2026-07-14 pass reported "docs now track implementation", and that claim went
