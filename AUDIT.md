@@ -362,6 +362,34 @@ into `make check` and CI, and it fails when the fix is removed. It does not
 replace the e2e — it cannot observe OpenMetadata's actual behaviour, only that
 the payload satisfies the documented constraint.
 
+### Fixed — the Spark image installed a JDK that could not coexist with its own
+The engine-matrix job went red and STAYED red on 2026-08-04, and it was not the
+Maven 429 that had flaked it twice earlier the same day:
+
+    openjdk-11-jdk-headless : Depends: openjdk-11-jre-headless (= 11.0.27+...)
+                              but it is not going to be installed
+    E: Unable to correct problems, you have held broken packages.
+
+`apache/spark:3.5.3` ships a **Temurin JRE as a tarball** under
+`/opt/java/openjdk` (11.0.24) rather than as an apt package, so Ubuntu 20.04's
+JDK insists on installing its OWN `openjdk-11-jre-headless` at a different
+version, and apt will not reconcile two JREs. The install was therefore never
+sound — it worked only while the versions happened to line up, and broke the
+moment the 20.04 index moved to 11.0.27. A hard break caused by someone else's
+release, which is worse than a flake because retrying cannot clear it.
+
+The JDK existed to `javac` one file. It now comes from `eclipse-temurin:11-jdk`
+into a **build stage**, so no package manager is involved and no compiler
+reaches the runtime image. `curl` was in the base all along, so the apt line was
+redundant for that too, and the image no longer touches the Ubuntu index at all.
+
+Verified by rebuilding and re-running the JVM probe leg: 24 of 25 pass — the
+one failure is the row the committed matrix already records as ❌ — and
+`docs/engine-matrix.md` regenerates byte-identical, which is precisely what
+CI's `git diff --exit-code` asserts. The cold path (empty jar cache,
+`--no-cache`) builds clean too, and `javac` is confirmed absent from the
+runtime image.
+
 **The guard then became the thing it was guarding against.** Importing the real
 ingest also imports `requests`/`urllib3`/`yaml`, which live in the `governance`
 dependency group, so `make check` died with `ModuleNotFoundError` on Windows and
