@@ -236,11 +236,30 @@ func toString(v value) string {
 	}
 }
 
+// toNumber coerces an expression value to a float64.
+//
+// Every integer and float width is listed, not just float64 and int. Values
+// reaching here are not only JSON-decoded literals (which are always float64):
+// a Lookup over a Delta table or a Parquet file puts the READER's Go types into
+// the row map verbatim — int32 for a Delta int, int64 for a bigint, int16 for a
+// smallint, float32 for a real — and every one of those fell through to the
+// zero return. `@activity('L').output.firstRow.amount` on a bigint column
+// evaluated to 0, silently, and an expression built on it was simply wrong.
 func toNumber(v value) float64 {
 	switch t := v.(type) {
 	case float64:
 		return t
+	case float32:
+		return float64(t)
 	case int:
+		return float64(t)
+	case int8:
+		return float64(t)
+	case int16:
+		return float64(t)
+	case int32:
+		return float64(t)
+	case int64:
 		return float64(t)
 	case string:
 		n, _ := strconv.ParseFloat(strings.TrimSpace(t), 64)
@@ -261,6 +280,11 @@ func toBool(v value) bool {
 		return t == "true"
 	case float64:
 		return t != 0
+	case float32, int, int8, int16, int32, int64:
+		// Same reason as toNumber: a Lookup's row values carry the reader's
+		// widths, and a non-zero bigint reading as false is a wrong branch
+		// rather than a wrong number.
+		return toNumber(v) != 0
 	}
 	return false
 }

@@ -416,13 +416,34 @@ func goValue(v parquet.Value, lt *format.LogicalType) any {
 	case parquet.Boolean:
 		return v.Boolean()
 	case parquet.Int32:
+		// A Delta smallint/tinyint is ALSO an INT32 physically — the width
+		// lives only in the annotation, INT(16,true) or INT(8,true). Reading
+		// the kind alone reflects both as `int` where Fabric says `smallint`:
+		// one width too wide, with nothing to notice. Same shape as the date
+		// bug, and the reason the annotation is consulted first.
+		//
+		// Fabric maps 8-bit to `smallint` too, not to `tinyint`: T-SQL tinyint
+		// is not supported for persisted storage, and its own unsupported-types
+		// table says "tinyint -> Use smallint".
+		//
+		// Unsigned is deliberately excluded. Delta has no unsigned types, so
+		// this is defensive — but a uint16 up to 65535 does not fit an int16,
+		// and reflecting one width too WIDE is lossless where narrowing is not.
+		if lt != nil && lt.Integer != nil && lt.Integer.BitWidth <= 16 && lt.Integer.IsSigned {
+			return int16(v.Int32())
+		}
 		// int32, not int64: a widened int reflects as BIGINT where Fabric says
 		// int. The physical width is the logical one here.
 		return v.Int32()
 	case parquet.Int64:
 		return v.Int64()
 	case parquet.Float:
-		return float64(v.Float())
+		// float32, not float64. Fabric maps Delta FLOAT/REAL to `real` and
+		// DOUBLE to `float`; widening here made both reflect as `float`, so a
+		// 4-byte column silently became 8 bytes wide. Unlike the integer
+		// widths, this one is visible in the PHYSICAL kind — FLOAT vs DOUBLE —
+		// so no annotation is needed to tell them apart.
+		return v.Float()
 	case parquet.Double:
 		return v.Double()
 	case parquet.ByteArray, parquet.FixedLenByteArray:

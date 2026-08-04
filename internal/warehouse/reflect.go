@@ -296,6 +296,21 @@ func bulkValue(v any) any {
 	switch t := v.(type) {
 	case Decimal:
 		return t.String()
+	case int16:
+		// The bulk-copy encoder's integer arm accepts int, int32, int64,
+		// float32 and float64 — and nothing else. An int16 falls through to
+		// its default and fails the whole copy with "mssql: invalid type for
+		// int column: int16", which is a hard error on every table carrying a
+		// Delta smallint.
+		//
+		// Widening the VALUE is safe and does not undo the width fix: sqlType
+		// already read the int16 and declared the column SMALLINT, so the
+		// destination type is settled before this runs. Only the wire encoding
+		// is affected, and int64 is what the encoder wants.
+		//
+		// Worth knowing: the only tests that execute this need a real SQL
+		// Server (WAREHOUSE_MSSQL_DSN), so it is green on a laptop either way.
+		return int64(t)
 	case Date:
 		// time.Time, not the day count: the destination column is DATE, and
 		// handing it the integer would put the bug back one layer down.
@@ -351,6 +366,10 @@ func sqlType(tbl *Table, col int) string {
 				s = 0
 			}
 			return fmt.Sprintf("DECIMAL(%d,%d)", p, s)
+		case int16:
+			// TINYINT, BYTE, SMALLINT and SHORT all map to smallint — Fabric
+			// has no tinyint for persisted storage.
+			return "SMALLINT"
 		case int32:
 			// Fabric maps a Delta int to INT. Widening it to BIGINT is not
 			// wrong-looking, which is why it survived: it only shows up when a
@@ -358,6 +377,10 @@ func sqlType(tbl *Table, col int) string {
 			return "INT"
 		case int64:
 			return "BIGINT"
+		case float32:
+			// Delta FLOAT/REAL -> real; DOUBLE -> float. Reflecting both as
+			// FLOAT is the same one-width-too-wide failure as the integers.
+			return "REAL"
 		case float64:
 			return "FLOAT"
 		case []byte:

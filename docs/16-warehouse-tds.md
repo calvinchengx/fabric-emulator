@@ -134,7 +134,9 @@ Inferring from the decoded Go value alone answers all of those wrong.
 | `timestamp` | `datetime2` |
 | `integer` | `int` |
 | `long` | `bigint` |
+| `tinyint`, `byte`, `smallint`, `short` | `smallint` |
 | `double` | `float` |
+| `float`, `real` | `real` |
 | `boolean` | `bit` |
 | `string` | `varchar` (Fabric: `varchar(8000)`; Parquet has no unicode type) |
 | `binary` | `varbinary` |
@@ -148,6 +150,32 @@ worse — a join against a real date dies with `Operand type clash: date is
 incompatible with bigint`, naming neither the column nor the cause, but
 `SELECT rate_date` simply returns `20627`, a plausible integer that nothing
 marks as a date and that a report or semantic model carries straight through.
+
+The two width rows were wrong until 2026-08-05, reported the same way and off
+the same Microsoft page. Both failed in the same direction — **one width too
+wide, with nothing to notice**:
+
+| Delta | Parquet | logical annotation | emitted | Fabric |
+|---|---|---|---|---|
+| `tinyint` | INT32 | `INT(8,true)` | `int` | `smallint` |
+| `smallint` | INT32 | `INT(16,true)` | `int` | `smallint` |
+| `real` | FLOAT | — | `float` | `real` |
+
+The integer widths are the date bug's exact shape: physically an INT32 like any
+other, with the width living only in the annotation the reader discarded. `real`
+is milder in cause — FLOAT and DOUBLE differ in the *physical* kind, so nothing
+had to be decoded to tell them apart — and identical in effect: `real` and
+`double` both reflected as `float`, so the two were indistinguishable at the
+endpoint. Neither raises; both only show up when a client diffs the endpoint's
+schema against Fabric's.
+
+Widening the value is still required for the **bulk copy**, and that is not a
+retreat: `sqlType` has already declared the column `SMALLINT` by then, so only
+the wire encoding is affected. It is necessary because the encoder's integer arm
+accepts `int/int32/int64/float32/float64` and rejects everything else — an
+`int16` reaching it fails the entire copy with `mssql: invalid type for int
+column`. Only a gated test executes that encoder, so the narrowing looked safe
+on a laptop and would have broken CI.
 
 The same map applies in reverse for a **mirrored** SQL table, where the driver's
 column metadata is the authority rather than the scanned value: `DATE` and
