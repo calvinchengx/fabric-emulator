@@ -98,6 +98,42 @@ func TestContainsMap(t *testing.T) {
 	}
 }
 
+// TestCoercionCarriesReaderWidths.
+//
+// Expression values are not all JSON-decoded literals. A Lookup over a Delta
+// table or a Parquet file puts the WAREHOUSE READER's Go types into the row map
+// verbatim, and toNumber listed only float64 and int — so every integer column
+// coerced to 0. Measured before the fix:
+//
+//	toNumber(int16 2) = 0   toNumber(int32 3) = 0   toNumber(int64 4) = 0
+//	toNumber(float32 1.5) = 0
+//
+// int32 and int64 are the common cases — a Delta int and a bigint — so
+// `@activity('L').output.firstRow.amount` on a bigint column evaluated to 0 and
+// every expression built on it was silently wrong. int16/float32 joined them
+// when the reader learned Fabric's smallint and real widths.
+func TestCoercionCarriesReaderWidths(t *testing.T) {
+	for _, tc := range []struct {
+		v    value
+		want float64
+	}{
+		{int8(1), 1}, {int16(2), 2}, {int32(3), 3}, {int64(4), 4},
+		{float32(1.5), 1.5}, {float64(2.5), 2.5}, {5, 5},
+	} {
+		if got := toNumber(tc.v); got != tc.want {
+			t.Errorf("toNumber(%T %v) = %v; want %v", tc.v, tc.v, got, tc.want)
+		}
+	}
+	// A non-zero integer is true — reading it as false is a wrong branch, not
+	// merely a wrong number.
+	if !toBool(int64(4)) || !toBool(int32(3)) || !toBool(float32(1.5)) {
+		t.Error("toBool: a non-zero reader value must be true")
+	}
+	if toBool(int64(0)) || toBool(float32(0)) {
+		t.Error("toBool: a zero reader value must be false")
+	}
+}
+
 func TestCoercionEdges(t *testing.T) {
 	if toNumber(true) != 1 {
 		t.Error("toNumber(true)")

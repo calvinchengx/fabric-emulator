@@ -128,8 +128,13 @@ type mixedRow struct {
 	S   *string `parquet:"s,optional"`
 }
 
-// TestReadDeltaMixedTypes covers the value conversions: bool, int32→int64,
-// float32→float64, double, and an optional column carrying a NULL.
+// TestReadDeltaMixedTypes covers the value conversions: bool, int32, float32,
+// double, and an optional column carrying a NULL.
+//
+// The float column asserted float64 until the widths were fixed — it was
+// written to document `float32→float64`, which turned out to be the bug rather
+// than the behaviour: Fabric maps Delta FLOAT/REAL to `real` and DOUBLE to
+// `float`, and widening collapsed the two. See TestNumericWidthsMatchFabric.
 func TestReadDeltaMixedTypes(t *testing.T) {
 	st, wsID, itemID := seedLakehouse(t)
 	s := "hi"
@@ -155,7 +160,7 @@ func TestReadDeltaMixedTypes(t *testing.T) {
 	// made a Delta int reflect to the analytics endpoint as BIGINT where Fabric
 	// says INT — and, far worse, made a DATE (physically INT32) indistinguishable
 	// from a long. Preserving the width is what lets sqlType tell them apart.
-	if r0[0] != true || r0[1] != int32(7) || r0[2] != float64(1.5) || r0[3] != float64(2.5) || r0[4] != "hi" {
+	if r0[0] != true || r0[1] != int32(7) || r0[2] != float32(1.5) || r0[3] != float64(2.5) || r0[4] != "hi" {
 		t.Fatalf("row0 = %v (types %T %T %T %T %T)", r0, r0[0], r0[1], r0[2], r0[3], r0[4])
 	}
 	if tbl.Rows[1][4] != nil {

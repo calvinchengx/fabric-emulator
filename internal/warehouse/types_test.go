@@ -712,6 +712,101 @@ func TestNestedOmissionSurvivesSchemaEvolutionOrder(t *testing.T) {
 	}
 }
 
+type widthRow struct {
+	Tiny  int8    `parquet:"c_tinyint"`
+	Small int16   `parquet:"c_smallint"`
+	Int   int32   `parquet:"c_int"`
+	Long  int64   `parquet:"c_bigint"`
+	Real  float32 `parquet:"c_real"`
+	Doub  float64 `parquet:"c_double"`
+}
+
+// TestNumericWidthsMatchFabric.
+//
+// Fabric's Delta->SQL map distinguishes widths this reader collapsed:
+//
+//	TINYINT, BYTE, SMALLINT, SHORT -> smallint
+//	INT, INTEGER                   -> int
+//	LONG, BIGINT                   -> bigint
+//	FLOAT, REAL                    -> real
+//	DOUBLE                         -> float
+//
+// Measured before this fix, every one of these went one width too wide:
+//
+//	c_tinyint   INT32/INT(8,true)   -> INT     want SMALLINT
+//	c_smallint  INT32/INT(16,true)  -> INT     want SMALLINT
+//	c_real      FLOAT               -> FLOAT   want REAL
+//
+// Same shape as the date bug, and the same cause: the distinction lives only in
+// the logical annotation (INT(16,true)) or in the physical kind (FLOAT vs
+// DOUBLE), and the reader discarded it. `real` and `double` both reflecting as
+// `float` is the quiet half — a 4-byte column silently 8 bytes wide, with
+// nothing to notice until a client diffs the schema against Fabric's.
+//
+// Reported by contoso-data-platform off Microsoft's data-types page, and
+// verified against that page directly before changing anything.
+func TestNumericWidthsMatchFabric(t *testing.T) {
+	var buf bytes.Buffer
+	w := parquet.NewGenericWriter[widthRow](&buf)
+	if _, err := w.Write([]widthRow{{Tiny: 1, Small: 2, Int: 3, Long: 4, Real: 1.5, Doub: 2.5}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	tbl, err := readParquet(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct{ col, want string }{
+		{"c_tinyint", "SMALLINT"},
+		{"c_smallint", "SMALLINT"},
+		{"c_int", "INT"},
+		{"c_bigint", "BIGINT"},
+		{"c_real", "REAL"},
+		{"c_double", "FLOAT"},
+	} {
+		if got := sqlType(tbl, columnIndex(tbl, tc.col)); got != tc.want {
+			t.Errorf("%s reflects as %s; want %s", tc.col, got, tc.want)
+		}
+	}
+
+	// The VALUES survive the narrowing — a width fix that loses the number is
+	// not a fix. int16 and float32 are what carry the distinction into sqlType,
+	// so they are asserted by type as well as by value.
+	if got := tbl.Rows[0][columnIndex(tbl, "c_smallint")]; got != int16(2) {
+		t.Errorf("c_smallint = %v (%T); want int16(2)", got, got)
+	}
+	if got := tbl.Rows[0][columnIndex(tbl, "c_tinyint")]; got != int16(1) {
+		t.Errorf("c_tinyint = %v (%T); want int16(1) — Fabric maps 8-bit to "+
+			"smallint too, since T-SQL tinyint is unsupported for storage", got, got)
+	}
+	if got := tbl.Rows[0][columnIndex(tbl, "c_real")]; got != float32(1.5) {
+		t.Errorf("c_real = %v (%T); want float32(1.5)", got, got)
+	}
+	if got := tbl.Rows[0][columnIndex(tbl, "c_double")]; got != float64(2.5) {
+		t.Errorf("c_double = %v (%T); want float64(2.5)", got, got)
+	}
+	if got := tbl.Rows[0][columnIndex(tbl, "c_int")]; got != int32(3) {
+		t.Errorf("c_int = %v (%T); want int32(3)", got, got)
+	}
+
+	// The bulk-copy encoder's integer arm accepts int/int32/int64/float32/
+	// float64 and rejects the rest, so an int16 reaching it fails the whole
+	// copy with "invalid type for int column: int16". Only a gated test
+	// (WAREHOUSE_MSSQL_DSN) actually executes that encoder, so this pins the
+	// widening here where it runs on any laptop.
+	if got := bulkValue(int16(2)); got != int64(2) {
+		t.Errorf("bulkValue(int16) = %v (%T); want int64(2) — the bulk encoder "+
+			"has no int16 case and fails the copy outright", got, got)
+	}
+	// …and the widening must not leak back into the SQL type.
+	if got := sqlType(tbl, columnIndex(tbl, "c_smallint")); got != "SMALLINT" {
+		t.Errorf("c_smallint reflects as %s after the bulk widening; want SMALLINT", got)
+	}
+}
+
 // TestDeltaStringReflectsAsVarchar: Fabric maps Delta STRING to varchar(8000),
 // and says of nvarchar "there's no similar unicode data type in Parquet". We
 // emitted NVARCHAR(4000), which was a plain divergence — and one this repo

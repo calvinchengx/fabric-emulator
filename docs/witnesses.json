@@ -376,6 +376,7 @@
       "go:TestNestedColumnsAreOmittedNotFabricated",
       "go:TestNestedColumnsStayOmittedThroughTheDeltaRoute",
       "go:TestNestedOmissionSurvivesSchemaEvolutionOrder",
+      "go:TestNumericWidthsMatchFabric",
       "go:TestDeltaStringReflectsAsVarchar",
       "ci:medallion"
     ],

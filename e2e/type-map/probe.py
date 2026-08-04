@@ -75,6 +75,17 @@ COLUMNS = [
     ("c_timestamp", "to_timestamp('2026-07-15T20:00:00')", "datetime2"),
     ("c_int", "cast(42 as int)", "int"),
     ("c_bigint", "cast(42 as bigint)", "bigint"),
+    # The widths Fabric distinguishes and a positional reader collapses.
+    # TINYINT/BYTE/SMALLINT/SHORT all map to smallint — Fabric has no tinyint
+    # for persisted storage ("tinyint -> Use smallint"). Physically both are
+    # INT32; the width lives only in the INT(8|16,true) annotation, so a reader
+    # that drops it reflects `int` and nothing looks wrong.
+    ("c_smallint", "cast(2 as smallint)", "smallint"),
+    ("c_tinyint", "cast(1 as tinyint)", "smallint"),
+    # DOUBLE -> float but FLOAT/REAL -> real. These two are distinguishable by
+    # physical kind alone, and were still collapsed: a 4-byte column reflecting
+    # 8 bytes wide, with nothing to notice.
+    ("c_real", "cast(1.5 as float)", "real"),
     ("c_double", "cast(1.5 as double)", "float"),
     ("c_boolean", "true", "bit"),
     ("c_string", "'hello'", "varchar"),
