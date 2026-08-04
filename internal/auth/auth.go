@@ -144,7 +144,19 @@ func (v *Validator) Validate(token string) (*Principal, error) {
 	}
 	now := v.Now()
 	const skew = 60
-	if claims.Exp != 0 && now > claims.Exp+skew {
+	// A MISSING exp is rejected, not waved through. `exp` is required in every
+	// token real Entra issues and real validators refuse its absence, so
+	// treating 0 as "no expiry" made this emulator strictly more permissive than
+	// the thing it emulates: a token minted without one is honored here forever
+	// and refused in production — the fidelity gap that lets broken client code
+	// pass locally. It also made the controllable clock's whole purpose
+	// (expiry-lifetime scenarios) silently unenforceable for such tokens.
+	//
+	// `nbf` keeps its zero-skip: it is genuinely optional.
+	if claims.Exp == 0 {
+		return nil, fmt.Errorf("%w: no exp claim", ErrBadToken)
+	}
+	if now > claims.Exp+skew {
 		return nil, fmt.Errorf("%w: expired", ErrBadToken)
 	}
 	if claims.Nbf != 0 && now < claims.Nbf-skew {

@@ -3,6 +3,8 @@ package store
 import (
 	"bytes"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
@@ -400,5 +402,63 @@ func TestConditionalCreateAndRename(t *testing.T) {
 	// Renaming a missing source errors.
 	if err := s.RenameOneLakePath(itID, "Files/ghost", "Files/x"); err == nil {
 		t.Fatal("rename of missing source succeeded")
+	}
+}
+
+// TestConcurrentAppendsDoNotLoseData pins the fix for a silent lost update.
+//
+// The length read and the UPDATE were separate statements with no transaction.
+// The single connection serializes each STATEMENT but not the pair, so two
+// appends at the same offset could both read length N, both pass the position
+// check, and the second write could overwrite the first — one client's bytes
+// gone, no error on either side.
+//
+// ADLS append semantics make the correct outcome checkable: exactly one writer
+// at a given position may win, and the file's final length must equal the sum
+// of the appends that reported success. A lost update shows up as a length
+// smaller than the successes claim.
+func TestConcurrentAppendsDoNotLoseData(t *testing.T) {
+	s := newTestStore(t)
+	wsID, itID := newOneLakeItem(t, s)
+	const chunk = 64
+	if err := s.CreateOneLakePath(&OneLakePath{
+		WorkspaceID: wsID, ItemID: itID, RelPath: "Files/a.bin", Content: []byte{},
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Every writer targets the CURRENT length it observes, so several race at
+	// the same offset; the losers must be told, not silently dropped.
+	var wg sync.WaitGroup
+	var okCount atomic.Int64
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 8 {
+				p, err := s.GetOneLakePath(itID, "Files/a.bin")
+				if err != nil {
+					return
+				}
+				if _, err := s.AppendOneLakePath(itID, "Files/a.bin",
+					int64(len(p.Content)), make([]byte, chunk)); err == nil {
+					okCount.Add(1)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	p, err := s.GetOneLakePath(itID, "Files/a.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := okCount.Load() * chunk
+	if int64(len(p.Content)) != want {
+		t.Fatalf("file is %d bytes but %d appends reported success (%d bytes): "+
+			"a successful append was overwritten", len(p.Content), okCount.Load(), want)
+	}
+	if okCount.Load() == 0 {
+		t.Fatal("no append succeeded; the test exercised nothing")
 	}
 }

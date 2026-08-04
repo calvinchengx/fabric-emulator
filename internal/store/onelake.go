@@ -108,21 +108,46 @@ FROM onelake_paths WHERE item_id = ? AND rel_path = ?`, itemID, relPath).
 
 // AppendOneLakePath appends data at position (must equal the current length,
 // as in ADLS). Returns the new length.
+// The read and the write are ONE transaction. Split, they were a lost update:
+// two appends at the same offset both read length N, both passed the position
+// check, and the second UPDATE overwrote the first — one client's bytes gone
+// with no error on either side. The single connection serializes each
+// STATEMENT, not the pair, so the gap was real.
+//
+// RenameOneLakePath already wraps its mutations this way; this brings append to
+// the same standard.
 func (s *Store) AppendOneLakePath(itemID, relPath string, position int64, data []byte) (int64, error) {
-	p, err := s.GetOneLakePath(itemID, relPath)
+	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
-	if p.IsDir {
+	defer tx.Rollback()
+
+	var content []byte
+	var isDir bool
+	err = tx.QueryRow(`SELECT content, is_dir FROM onelake_paths WHERE item_id = ? AND rel_path = ?`,
+		itemID, relPath).Scan(&content, &isDir)
+	if err == sql.ErrNoRows {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	if isDir {
 		return 0, errors.New("cannot append to a directory")
 	}
-	if position != int64(len(p.Content)) {
+	if position != int64(len(content)) {
 		return 0, errors.New("invalid append position")
 	}
-	content := append(p.Content, data...)
-	_, err = s.db.Exec(`UPDATE onelake_paths SET content = ?, etag = ?, modified_at = ? WHERE item_id = ? AND rel_path = ?`,
-		content, newETag(), s.Now(), itemID, relPath)
-	return int64(len(content)), err
+	content = append(content, data...)
+	if _, err := tx.Exec(`UPDATE onelake_paths SET content = ?, etag = ?, modified_at = ? WHERE item_id = ? AND rel_path = ?`,
+		content, newETag(), s.Now(), itemID, relPath); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int64(len(content)), nil
 }
 
 // RenameOneLakePath moves a file, or a directory and its subtree, within an
