@@ -168,46 +168,6 @@ so a reader resolving by annotation finds what it expects at every width.
 **Not yet mapped:** the nested types (`struct`/`array`/`map`), which have no
 kind at all.
 
-##### Reproducing or verifying the mapping
-
-Two things cost time when this was verified independently, both of which look
-like a platform fault and are not:
-
-- **Register the token audience first.**
-  `ensure_audience("https://database.windows.net", "Azure SQL")` — without it the
-  token request fails with **HTTP 400**, which reads as a broken endpoint. It is
-  a missing audience registration in the harness.
-- **Rebuild ONE image, not three.** `SAIL_VERSION`, `SPARK_AGENT_VERSION` and the
-  emulator image are pinned independently. Moving them together turns a
-  single-cause experiment into a three-cause one — leave the other two at their
-  released pins so a failure has exactly one possible explanation.
-
-##### If you worked around this
-
-The natural consumer workaround is to carry dates as ISO **text** end to end and
-join `nvarchar` to `nvarchar`. That is correct on both the broken and the fixed
-build — a string column is a string column — so removing it is tidying rather
-than repair, and there is no rush.
-
-It usually spans several coupled sites (a silver transform plus the gold models
-that join it). **Unwind all of them or none:** a partial unwind puts a real
-`date` on one side of a join and text on the other, which reinstates exactly the
-`Operand type clash` the fix removed.
-
-##### Provenance of the measurements
-
-Worth keeping straight, because the two halves have different sources:
-
-- The **`date` → `bigint`** failure was measured on a released **0.15.3** build
-  from outside this repo, through a real notebook on Sail and read back over TDS
-  via `INFORMATION_SCHEMA.COLUMNS`.
-- **`timestamp`, `int` and `binary`** were measured in-repo against the pre-fix
-  tree; they are pinned by `TestReflectedSQLTypesMatchFabric` and were each
-  verified by reverting the fix and watching the test fail.
-- The **fixed** build was then independently re-measured outside this repo: all
-  nine types correct, including `decimal(9,2)` keeping both precision and scale,
-  and the originally failing `WHERE c_date = CAST(... AS date)` join matching.
-
 ##### Confirmed from outside, on the path a consumer actually uses
 
 The witnesses above write Delta from Go and read it back through the sidecar,
@@ -243,6 +203,20 @@ and unwinding early would break the only version anyone can pull. It comes out
 when the consumer pins a tag past the fix, and it has to come out everywhere at
 once — in contoso-data-platform that is one silver transform and two gold models,
 where a partial unwind reinstates the original `Operand type clash`.
+
+##### Provenance of the measurements
+
+Worth keeping straight, because the two halves have different sources:
+
+- The **`date` → `bigint`** failure was measured on a released **0.15.3** build
+  from outside this repo, through a real notebook on Sail and read back over TDS
+  via `INFORMATION_SCHEMA.COLUMNS`.
+- **`timestamp`, `int` and `binary`** were measured in-repo against the pre-fix
+  tree; they are pinned by `TestReflectedSQLTypesMatchFabric` and were each
+  verified by reverting the fix and watching the test fail.
+- The **fixed** build was then independently re-measured outside this repo: all
+  nine types correct, including `decimal(9,2)` keeping both precision and scale,
+  and the originally failing `WHERE c_date = CAST(... AS date)` join matching.
 
 Reflection exists **only** for the lakehouse endpoint — it bridges Delta that
 was written *outside* SQL Server (by Spark / delta-rs / notebooks) into the
