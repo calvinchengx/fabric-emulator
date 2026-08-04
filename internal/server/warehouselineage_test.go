@@ -1,6 +1,7 @@
 package server
 
 import (
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -216,3 +217,83 @@ func TestWarehouseLineageRebuildOverAnExistingTable(t *testing.T) {
 
 // got is a tiny helper so the assertion above reads.
 func got(t *testing.T, f *lineageFixture) []string { return f.edges(t) }
+
+// TestWarehouseLineageRenamingAViewMovesIt: dbt renames views as well as
+// tables, and a view is remembered so later statements resolve THROUGH it to
+// its base tables. If the rename does not move that memory, the view is
+// forgotten under its old name and unknown under its new one — so the next
+// read through it resolves to the view itself, and the graph shows gold coming
+// from a scaffold rather than from silver.
+func TestWarehouseLineageRenamingAViewMovesIt(t *testing.T) {
+	f := newLineageFixture(t)
+
+	// A view over a silver table, then renamed.
+	f.observe(`create view dbo.v_tmp as select * from [` + f.lake.ID + `].[dbo].[silver_orders]`)
+	f.observe(`EXEC sp_rename 'dbo.v_tmp', 'v_final'`)
+
+	// Reading through the NEW name must still resolve to silver_orders.
+	f.observe(`EXEC('CREATE TABLE [` + f.wh.ID + `].[dbo].[gold] ` +
+		`AS SELECT * FROM [` + f.wh.ID + `].[dbo].[v_final]')`)
+
+	got := f.edges(t)
+	want := []string{"lake:Tables/silver_orders -> dw:Tables/gold"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("edges = %v; want %v — the renamed view did not resolve through", got, want)
+	}
+}
+
+// TestWarehouseLineageRenameToTheSameNameIsANoop: sp_rename to the object's
+// current name changes nothing, so it must not rewrite paths or disturb the
+// view map. Cheap to get wrong, and it would silently churn every edge.
+func TestWarehouseLineageRenameToTheSameNameIsANoop(t *testing.T) {
+	f := newLineageFixture(t)
+	f.observe(`EXEC('CREATE TABLE [` + f.wh.ID + `].[dbo].[gold] ` +
+		`AS SELECT * FROM [` + f.lake.ID + `].[dbo].[silver_orders]')`)
+	before := f.edges(t)
+
+	f.observe(`EXEC sp_rename 'dbo.gold', 'gold'`)
+
+	if after := f.edges(t); !reflect.DeepEqual(after, before) {
+		t.Fatalf("a rename to the same name changed the graph:\n before %v\n after  %v",
+			before, after)
+	}
+}
+
+// TestWarehouseLineageRenameOfSomethingUnknownIsIgnored: a rename naming an
+// object no edge mentions records nothing, rather than inventing a path. Same
+// rule the resolver holds everywhere — an unrecognised name is not a licence
+// to guess.
+func TestWarehouseLineageRenameOfSomethingUnknownIsIgnored(t *testing.T) {
+	f := newLineageFixture(t)
+	f.observe(`EXEC('CREATE TABLE [` + f.wh.ID + `].[dbo].[gold] ` +
+		`AS SELECT * FROM [` + f.lake.ID + `].[dbo].[silver_orders]')`)
+	before := f.edges(t)
+
+	// A three-part name in a database this connection does not address.
+	f.observe(`EXEC sp_rename '[nope-guid].[dbo].[whatever]', 'other'`)
+
+	if after := f.edges(t); !reflect.DeepEqual(after, before) {
+		t.Fatalf("an unresolvable rename changed the graph:\n before %v\n after  %v",
+			before, after)
+	}
+}
+
+// TestWarehouseLineageDropOfSomethingUnknownIsIgnored: DROP naming an object in
+// a database this connection does not address retires nothing. Dropping edges
+// on a guess would delete real provenance — the destructive twin of inventing
+// it.
+func TestWarehouseLineageDropOfSomethingUnknownIsIgnored(t *testing.T) {
+	f := newLineageFixture(t)
+	f.observe(`EXEC('CREATE TABLE [` + f.wh.ID + `].[dbo].[gold] ` +
+		`AS SELECT * FROM [` + f.lake.ID + `].[dbo].[silver_orders]')`)
+	before := f.edges(t)
+	if len(before) == 0 {
+		t.Fatal("no edge to protect; the fixture recorded nothing")
+	}
+
+	f.observe(`DROP TABLE [nope-guid].[dbo].[gold]`)
+
+	if after := f.edges(t); !reflect.DeepEqual(after, before) {
+		t.Fatalf("an unresolvable DROP retired edges:\n before %v\n after  %v", before, after)
+	}
+}

@@ -212,3 +212,77 @@ func TestDataFlowWithClauseThatIsNotACTE(t *testing.T) {
 		}
 	}
 }
+
+// TestDataFlowCreateViewShapes covers the CREATE VIEW forms the happy-path test
+// above does not reach: eight branches of viewFlow were unexercised.
+//
+// This matters beyond the parser. A recognised view is remembered by the
+// warehouse lineage (`w.views`) and later resolved THROUGH when something reads
+// it, so a shape that silently fails to parse does not merely lose one edge —
+// every downstream edge that would have resolved through the view is attributed
+// wrongly or lost.
+func TestDataFlowCreateViewShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		sql     string
+		target  []string
+		sources [][]string
+	}{
+		{
+			name:    "CREATE OR ALTER VIEW",
+			sql:     `create or alter view dbo.v as select a from dbo.src`,
+			target:  []string{"dbo", "v"},
+			sources: [][]string{{"dbo", "src"}},
+		},
+		{
+			name:    "explicit column list",
+			sql:     `create view dbo.v (a, b) as select x, y from dbo.src`,
+			target:  []string{"dbo", "v"},
+			sources: [][]string{{"dbo", "src"}},
+		},
+		{
+			name:    "OR ALTER with a column list",
+			sql:     `create or alter view v (a) as select x from src`,
+			target:  []string{"v"},
+			sources: [][]string{{"src"}},
+		},
+		{
+			name:    "three-part target name",
+			sql:     `create view [db].[dbo].[v] as select a from [db].[dbo].[t]`,
+			target:  []string{"db", "dbo", "v"},
+			sources: [][]string{{"db", "dbo", "t"}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := one(t, tc.sql)
+			if f.Kind != FlowCreateView {
+				t.Fatalf("kind = %q; want %q", f.Kind, FlowCreateView)
+			}
+			if !reflect.DeepEqual(f.Target, tc.target) {
+				t.Errorf("target = %v; want %v", f.Target, tc.target)
+			}
+			if !reflect.DeepEqual(f.Sources, tc.sources) {
+				t.Errorf("sources = %v; want %v", f.Sources, tc.sources)
+			}
+		})
+	}
+}
+
+// TestDataFlowCreateViewMalformedIsIgnored: a shape this parser does not fully
+// understand yields NOTHING rather than a half-read guess. "I don't understand
+// this" must never become "I'll guess" — the rule the rewrite layer holds to,
+// and the one that keeps a phantom edge out of the catalog.
+func TestDataFlowCreateViewMalformedIsIgnored(t *testing.T) {
+	for _, sql := range []string{
+		`create or select v as select 1 from t`, // OR not followed by ALTER
+		`create or`,                             // truncated after OR
+		`create view`,                           // no name
+		`create view dbo.v`,                     // no AS body
+		`create view dbo.v (a, b`,               // unclosed column list
+		`create view dbo.v (a) select x from t`, // column list, then no AS
+	} {
+		if flows := DataFlows(sql); flows != nil {
+			t.Errorf("DataFlows(%q) = %+v; want nil", sql, flows)
+		}
+	}
+}
