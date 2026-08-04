@@ -89,6 +89,9 @@ type notebookCellRun struct {
 	Status   string `json:"status"` // Pending | Succeeded | Failed | Skipped
 	Output   string `json:"output,omitempty"`
 	Error    string `json:"error,omitempty"`
+	// Parameters marks Fabric's designated PARAMETERS cell, so a driver knows
+	// where the caller's overrides belong (immediately after it).
+	Parameters bool `json:"parameters,omitempty"`
 }
 
 // notebookRun is the whole run: overall status, the exit value, and per-cell detail.
@@ -139,6 +142,7 @@ func (a *API) parseNotebookRun(it *store.Item) (notebookRun, string) {
 	for i, c := range notebook.CodeCells(notebook.Parse(def)) {
 		run.Cells = append(run.Cells, notebookCellRun{
 			Index: i, Kind: string(c.Kind), Language: c.Language, Source: c.Source, Status: "Pending",
+			Parameters: c.Parameters,
 		})
 	}
 	// A definition that parses to nothing executable — all markdown, say — is a
