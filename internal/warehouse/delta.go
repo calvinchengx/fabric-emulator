@@ -24,6 +24,11 @@ import (
 type Table struct {
 	Columns []string
 	Rows    [][]any
+	// Skipped names the columns the SQL surface cannot represent — the nested
+	// types. Recorded rather than silently discarded so a caller can say WHICH
+	// column vanished; "some columns might not be available" is a miserable
+	// thing to debug without a name.
+	Skipped []string
 }
 
 // Date is a Delta DATE: a calendar day, no time and no zone.
@@ -249,19 +254,41 @@ func readParquet(data []byte) (*Table, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open parquet: %w", err)
 	}
-	fields := pf.Schema().Fields()
-	cols := make([]string, len(fields))
+	// Columns are built from the top-level LEAF fields only, and each one
+	// remembers which PARQUET leaf index carries it.
+	//
+	// A nested field (struct/array/map) occupies several leaf indices, and the
+	// reader used to assign values by position into a slice sized by top-level
+	// field count. One nested column therefore took a leaf belonging to
+	// something else and shifted every column after it — a `bigint` reading
+	// back as another column's string, with the real value dropped and nothing
+	// raised. Fabric's SQL analytics endpoint does not represent these types at
+	// all ("Types that aren't listed in the table aren't represented as the
+	// table columns"), so omitting the column is both the faithful answer and
+	// the safe one: what remains is correct.
+	//
 	// The logical annotation is the only place a date, a timestamp's unit, a
 	// decimal's scale, or "these bytes are text" is recorded — the physical kind
-	// cannot distinguish any of them. Captured per column before reading rows,
-	// and kept WHOLE rather than reduced to the decimal: reducing it is how
-	// date and timestamp were lost.
-	lts := make([]*format.LogicalType, len(fields))
-	for i, f := range fields {
-		cols[i] = f.Name()
-		lts[i] = f.Type().LogicalType()
+	// cannot distinguish any of them.
+	var (
+		cols    []string
+		lts     []*format.LogicalType
+		skipped []string
+	)
+	byLeaf := map[int]int{} // parquet leaf index -> position in cols
+	leaf := 0
+	for _, f := range pf.Schema().Fields() {
+		width := leafCount(f)
+		if f.Leaf() {
+			byLeaf[leaf] = len(cols)
+			cols = append(cols, f.Name())
+			lts = append(lts, f.Type().LogicalType())
+		} else {
+			skipped = append(skipped, f.Name())
+		}
+		leaf += width
 	}
-	tbl := &Table{Columns: cols}
+	tbl := &Table{Columns: cols, Skipped: skipped}
 
 	for _, rg := range pf.RowGroups() {
 		rows := rg.Rows()
@@ -271,9 +298,10 @@ func readParquet(data []byte) (*Table, error) {
 			for i := 0; i < n; i++ {
 				out := make([]any, len(cols))
 				for _, v := range buf[i] {
-					c := v.Column()
-					if c >= 0 && c < len(out) {
-						out[c] = goValue(v, lts[c])
+					// By LEAF index, not by position: the two coincide only
+					// when every top-level field is a leaf.
+					if pos, ok := byLeaf[v.Column()]; ok {
+						out[pos] = goValue(v, lts[pos])
 					}
 				}
 				tbl.Rows = append(tbl.Rows, out)
@@ -285,6 +313,20 @@ func readParquet(data []byte) (*Table, error) {
 		_ = rows.Close()
 	}
 	return tbl, nil
+}
+
+// leafCount is how many parquet leaf columns a node occupies: 1 for a
+// primitive, and the sum of its children otherwise. It is what lets a nested
+// field be SKIPPED without shifting the fields after it.
+func leafCount(n parquet.Node) int {
+	if n.Leaf() {
+		return 1
+	}
+	total := 0
+	for _, f := range n.Fields() {
+		total += leafCount(f)
+	}
+	return total
 }
 
 // goValue converts a parquet Value to a Go value (nil for NULL). lt is the

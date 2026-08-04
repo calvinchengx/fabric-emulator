@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"path"
 	"sort"
 	"strings"
@@ -225,6 +226,12 @@ func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table) erro
 	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS "+q); err != nil {
 		return err
 	}
+	if len(tbl.Skipped) > 0 {
+		// Named, because "some columns might not be available" is what Fabric
+		// says and it is a miserable thing to debug without the name.
+		log.Printf("warehouse: %s: %d column(s) not representable in SQL and "+
+			"omitted (nested types): %v", name, len(tbl.Skipped), tbl.Skipped)
+	}
 	defs := make([]string, len(tbl.Columns))
 	for i, c := range tbl.Columns {
 		defs[i] = quoteIdent(c) + " " + sqlType(tbl, i)
@@ -299,6 +306,20 @@ func bulkValue(v any) any {
 	return v
 }
 
+// varcharType is what a Delta string becomes.
+//
+// varchar, NOT nvarchar. Fabric's documented Delta->SQL map is
+// `STRING -> varchar(8000)` for a Lakehouse SQL analytics endpoint, and its
+// unsupported-types table says of nchar/nvarchar: "Use char and varchar
+// respectively, as there's no similar unicode data type in Parquet." Emitting
+// nvarchar was a plain divergence — Parquet has one string type and Fabric
+// surfaces it as varchar.
+//
+// The collation Fabric declares (`Latin1_General_100_BIN2_UTF8`) is NOT emitted
+// here: it changes comparison and sort semantics on the sidecar, which is a
+// larger behavioural change than a type name and is not what this fixes.
+const varcharType = "VARCHAR(8000)"
+
 // sqlType picks a column's SQL type from its first non-null value (default
 // NVARCHAR). The type names are valid in both SQL Server and SQLite.
 //
@@ -342,10 +363,10 @@ func sqlType(tbl *Table, col int) string {
 		case []byte:
 			return "VARBINARY(4000)"
 		case string:
-			return "NVARCHAR(4000)"
+			return varcharType
 		}
 	}
-	return "NVARCHAR(4000)"
+	return varcharType
 }
 
 // quoteIdent wraps an identifier in brackets (T-SQL; SQLite accepts them too).
