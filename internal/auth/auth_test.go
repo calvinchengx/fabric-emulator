@@ -111,9 +111,13 @@ func TestValidateRejections(t *testing.T) {
 		"wrong issuer":   func(o mintOpts) mintOpts { o.iss = "https://evil/v2.0"; return o },
 		"wrong audience": func(o mintOpts) mintOpts { o.aud = "https://graph.microsoft.com"; return o },
 		"expired":        func(o mintOpts) mintOpts { o.exp = 900; return o }, // 1000 > 900+60
-		"not yet valid":  func(o mintOpts) mintOpts { o.nbf = 2000; return o },
-		"unknown kid":    func(o mintOpts) mintOpts { o.kid = "other"; return o },
-		"no principal":   func(o mintOpts) mintOpts { o.oid, o.sub = "", ""; return o },
+		// A missing exp used to be read as "never expires": the check was
+		// `Exp != 0 && now > Exp`, so a token without one was honored forever
+		// here and refused by real Entra, which requires the claim.
+		"no exp":        func(o mintOpts) mintOpts { o.exp = 0; return o },
+		"not yet valid": func(o mintOpts) mintOpts { o.nbf = 2000; return o },
+		"unknown kid":   func(o mintOpts) mintOpts { o.kid = "other"; return o },
+		"no principal":  func(o mintOpts) mintOpts { o.oid, o.sub = "", ""; return o },
 	}
 	for name, mutate := range cases {
 		if _, err := v.Validate(mint(t, key, mutate(good))); err == nil {
