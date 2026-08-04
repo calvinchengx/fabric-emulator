@@ -120,3 +120,29 @@ func TestListPageSizeFromEnv(t *testing.T) {
 		t.Fatalf("negative should pass through to disable paging, got %d", got)
 	}
 }
+
+// TestBuildNamesOneIdentityWhicheverPathBuiltIt.
+//
+// The point of the string is that a screenshot, a recording and a bug report
+// all quote the SAME thing. That only holds if the two build paths converge:
+// GoReleaser stamps `0.15.2`, while the image build passes `${{ github.ref_name }}`,
+// which is `v0.15.2`. If those rendered differently, two reports of one build
+// would read as reports of two.
+func TestBuildNamesOneIdentityWhicheverPathBuiltIt(t *testing.T) {
+	sha := "eef154a9c3d1b0000000000000000000000000ab"
+	for _, tc := range []struct{ name, version, commit, want string }{
+		{"goreleaser", "0.15.2", sha, "v0.15.2-eef154a"},
+		{"image build", "v0.15.2", sha, "v0.15.2-eef154a"},
+		{"source build", "dev", "", "dev"},
+		{"unstamped", "", "", "dev"},
+		{"tag with no commit", "0.15.2", "", "v0.15.2"},
+		{"short commit already", "0.15.2", "abc123", "v0.15.2-abc123"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Config{Version: tc.version, Commit: tc.commit}
+			if got := c.Build(); got != tc.want {
+				t.Fatalf("Build() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -193,7 +193,12 @@ func (s *Server) Close() error { return s.Store.Close() }
 // registerControl mounts /health and the /_emulator control surface.
 func (s *Server) registerControl() {
 	s.mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "now": s.Clock.Now()})
+		// `build` rides on /health because the portal already fetches it on
+		// load — the top bar costs no second request — and because anyone
+		// filing a bug can read it with one curl.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ok", "now": s.Clock.Now(), "build": s.Cfg.Build(),
+		})
 	})
 
 	// Clock control — the LRO lever: advance past completeAt and a Running

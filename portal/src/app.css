@@ -216,6 +216,14 @@
       text-[11px] font-bold uppercase tracking-wider text-[#3d2f0b];
   }
 
+  /* The build identity, beside the badge. Monospace and muted: it is a value to
+     be READ BACK — quoted into a bug report, matched against a release — not a
+     label competing with the product mark for attention. Selectable for the
+     same reason. */
+  .build {
+    @apply font-mono text-[11px] text-muted-foreground select-all whitespace-nowrap;
+  }
+
   /* One class per state so a status reads at a glance and the colour vocabulary
      lives here rather than in every view. */
   .chip {

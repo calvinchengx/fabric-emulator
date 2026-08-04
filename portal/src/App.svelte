@@ -55,6 +55,13 @@
 <div class="topbar">
   <strong class="text-[15px] font-semibold tracking-tight">Fabric Emulator</strong>
   <span class="badge">Local emulator</span>
+  <!-- The build, beside the badge on purpose. A screenshot of a run, a frame of
+       a recording, or a bug report that quotes the top bar all name exactly
+       which emulator produced what is being shown — which is otherwise the
+       first question and the slowest one to answer. -->
+  {#if health?.build}
+    <span class="build" title="fabric-emulator build">{health.build}</span>
+  {/if}
   {#if health}
     <span class="health"><span class="dot"></span>{health.status}</span>
   {/if}
