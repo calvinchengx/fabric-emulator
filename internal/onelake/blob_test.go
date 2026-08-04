@@ -658,12 +658,14 @@ func TestBlobListStartFrom(t *testing.T) {
 // never evicted, and an evicted one fails its later commit with InvalidBlockList
 // — the same answer Azure gives for expired blocks, and a loud one rather than a
 // silently truncated file.
+//
+// `max` is set so the bound is exercised in kilobytes; proving it at 256 MiB
+// would allocate a quarter of a gigabyte to watch the same branches.
 func TestBlockStageIsBounded(t *testing.T) {
-	var st blockStage
-	chunk := make([]byte, 1<<20) // 1 MiB per block
+	st := &blockStage{max: 10 << 10} // 10 KiB
+	chunk := make([]byte, 1<<10)     // 1 KiB per block
 
-	// Stage well past the cap under distinct blob keys, committing none.
-	const blobs = (maxStagedBytes >> 20) + 64
+	const blobs = 24 // well past the bound
 	for i := range blobs {
 		st.put(fmt.Sprintf("item|Files/abandoned-%d", i), "AAAA", chunk)
 	}
@@ -671,9 +673,9 @@ func TestBlockStageIsBounded(t *testing.T) {
 	st.mu.Lock()
 	total, held := st.bytes, len(st.blocks)
 	st.mu.Unlock()
-	if total > maxStagedBytes {
+	if total > st.limit() {
 		t.Errorf("staged %d bytes, above the %d bound: abandoned uploads are not evicted",
-			total, maxStagedBytes)
+			total, st.limit())
 	}
 	if held == 0 || held >= blobs {
 		t.Errorf("holding %d of %d blobs; want some evicted and some kept", held, blobs)
@@ -688,6 +690,28 @@ func TestBlockStageIsBounded(t *testing.T) {
 	// An evicted blob fails its commit rather than committing a partial file.
 	if _, ok := st.commit("item|Files/abandoned-0", []string{"AAAA"}); ok {
 		t.Error("an evicted blob committed; it must fail with an unknown block id")
+	}
+}
+
+// TestBlockStageKeepsTheBlobBeingWritten: when a SINGLE blob is itself over the
+// bound there is nothing else to evict, and the upload in progress must not be
+// destroyed to satisfy the limit. It stays, over budget, rather than being
+// silently truncated mid-upload — the bound exists to stop abandoned uploads
+// accumulating, not to break the one making progress.
+func TestBlockStageKeepsTheBlobBeingWritten(t *testing.T) {
+	st := &blockStage{max: 4 << 10} // 4 KiB
+	big := make([]byte, 16<<10)     // one blob, four times the bound
+	st.put("item|Files/one-big", "AAAA", big)
+
+	st.mu.Lock()
+	held, total := len(st.blocks), st.bytes
+	st.mu.Unlock()
+	if held != 1 || total != int64(len(big)) {
+		t.Fatalf("holding %d blob(s) / %d bytes; the in-progress upload must survive",
+			held, total)
+	}
+	if _, ok := st.commit("item|Files/one-big", []string{"AAAA"}); !ok {
+		t.Error("the only staged blob was evicted; it had nothing to yield to")
 	}
 }
 
