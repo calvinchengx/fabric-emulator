@@ -78,6 +78,18 @@ func (a *API) registerLakehouseTables(session, wid, lid string) {
 	if err != nil {
 		return
 	}
+	// Ask the agent to mirror this lakehouse's Files/ at /lakehouse/default —
+	// the mount a real Fabric runtime provides and notebook code reads relative
+	// paths against (contract files, config). A separate call from /register on
+	// purpose: the catalog is about Tables/, the mount is about Files/, and a
+	// lakehouse holding only files still deserves its mount (the register below
+	// deliberately says nothing when there are no tables). Best-effort like the
+	// rest of this function; an agent predating /mount answers 404 and the
+	// notebook keeps whatever was staged by hand.
+	if _, err := a.agentPost("/mount", map[string]any{
+		"session": session, "workspace": wid, "lakehouse": lid}); err != nil {
+		log.Printf("livy: mounting lakehouse %s Files for session %s: %v", lid, session, err)
+	}
 	dirs, err := a.Store.ListOneLakePaths(lid, "Tables", false)
 	if err != nil {
 		return
