@@ -102,6 +102,7 @@ export default defineConfig({
             { slug: '34-fab-driven-example' },
             { slug: '35-warehouse-time-travel' },
             { slug: '36-capacity-job-queueing' },
+            { slug: '37-runtime-fidelity-gaps' },
             { slug: 'engine-matrix' },
           ],
         },
