@@ -29,6 +29,18 @@ on:
     branches: [main]
   pull_request:
 
+# Same supersede rule as ci.yml, and safe for the same reason: these jobs only
+# build and check, so cancelling one leaves nothing half-done.
+#
+# The `github.ref` in the group is what keeps the RELEASE GATE out of it. When
+# release.yml calls this workflow, the ref is the tag (`refs/tags/v0.16.0`),
+# never `refs/heads/main` — so a push to main while a release is publishing
+# lands in a different group and cannot cancel the gate. Dropping the ref would
+# make every release cancellable by the next commit.
+concurrency:
+  group: make-targets-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
