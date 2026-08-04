@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -569,5 +570,131 @@ func TestDeltaStringReflectsAsVarchar(t *testing.T) {
 	empty := &Table{Columns: []string{"c"}, Rows: [][]any{{nil}}}
 	if got := sqlType(empty, 0); got != "VARCHAR(8000)" {
 		t.Errorf("the all-null default is %s; want VARCHAR(8000)", got)
+	}
+}
+
+// decimalRoundTrip encodes one decimal through the mirror writer and reads it
+// back with the reader, which is the only assertion that covers both halves of
+// the encoding at once.
+func decimalRoundTrip(t *testing.T, precision, scale int, in string) string {
+	t.Helper()
+	ct := colType{kind: kindDecimal, precision: precision, scale: scale}
+	pq, err := encodeParquet(&Table{Columns: []string{"amt"}, Rows: [][]any{{in}}},
+		[]colType{ct})
+	if err != nil {
+		t.Fatalf("encode decimal(%d,%d) %q: %v", precision, scale, in, err)
+	}
+	back, err := readParquet(pq)
+	if err != nil {
+		t.Fatalf("read decimal(%d,%d) %q: %v", precision, scale, in, err)
+	}
+	d, ok := back.Rows[0][0].(Decimal)
+	if !ok {
+		t.Fatalf("decimal(%d,%d) %q round-tripped as %T", precision, scale, in, back.Rows[0][0])
+	}
+	return d.String()
+}
+
+// TestWideDecimalsRoundTripIncludingNegatives covers the BYTE-ARRAY encoding,
+// which only runs above 18 digits of precision — delta-rs picks the physical
+// width by precision, so a decimal(12,3) never reaches it. The existing
+// negative case was a decimal(12,3), so the two's-complement branch had never
+// executed at all.
+//
+// A wrong encoding here is silent and it is money: the value reads back as a
+// different number, not as an error.
+func TestWideDecimalsRoundTripIncludingNegatives(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"negative, byte-array width", "-123456789012345678.123456", "-123456789012345678.123456"},
+		{"positive, byte-array width", "123456789012345678.123456", "123456789012345678.123456"},
+		{"negative, just past int64", "-9999999999999999999", "-9999999999999999999"},
+		{"zero at byte-array width", "0", "0"},
+		{"negative zero is zero", "-0", "0"},
+		{"minus one", "-1", "-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scale := 0
+			if i := strings.IndexByte(tc.in, '.'); i >= 0 {
+				scale = len(tc.in) - i - 1
+			}
+			if got := decimalRoundTrip(t, 30, scale, tc.in); got != tc.want {
+				t.Errorf("decimal(30,%d) %q round-tripped as %s", scale, tc.in, got)
+			}
+		})
+	}
+}
+
+// TestPositiveDecimalWithAHighTopBitIsNotReadAsNegative.
+//
+// Two's complement is signed: an unscaled 200 is `0xC8`, whose top bit is set,
+// so a reader takes it for -56 unless a `0x00` byte is prefixed. The value is
+// positive, plausible, and wrong — no error anywhere.
+func TestPositiveDecimalWithAHighTopBitIsNotReadAsNegative(t *testing.T) {
+	// 200, 32768 and 8388608 are the first values at each byte width whose top
+	// bit is set; each needs the pad.
+	for _, in := range []string{"200", "32768", "8388608", "2147483648"} {
+		if got := decimalRoundTrip(t, 30, 0, in); got != in {
+			t.Errorf("positive %s round-tripped as %s — the sign pad is missing", in, got)
+		}
+	}
+}
+
+// TestDecimalUnscaledAcceptsWhatDriversActuallyReturn: the mirror path receives
+// whatever the ODBC driver produced, which is not always a string.
+func TestDecimalUnscaledAcceptsWhatDriversActuallyReturn(t *testing.T) {
+	ct := colType{kind: kindDecimal, precision: 10, scale: 2}
+	for _, tc := range []struct {
+		name string
+		in   any
+		want any
+	}{
+		{"decimal string", "1.5", int64(150)},
+		{"bytes, as some drivers return", []byte("2.25"), int64(225)},
+		{"float64", 1.5, int64(150)},
+		{"int64 scales up", int64(3), int64(300)},
+		{"int32 scales up", int32(4), int64(400)},
+		{"an already-decoded Decimal", Decimal{Unscaled: big.NewInt(175), Scale: 2}, int64(175)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := coerce(tc.in, ct); got != tc.want {
+				t.Errorf("coerce(%v) = %v (%T); want %v", tc.in, got, got, tc.want)
+			}
+		})
+	}
+	// A value that is not a number at all becomes NULL rather than a wrong
+	// number — the one place guessing would be worse than losing the cell.
+	for _, bad := range []any{"not a number", "", []byte("x.y"), struct{}{}} {
+		if got := coerce(bad, ct); got != nil {
+			t.Errorf("coerce(%v) = %v; want nil rather than a fabricated number", bad, got)
+		}
+	}
+}
+
+// TestDecimalWithMoreScaleThanItsColumnTruncates pins what happens when a value
+// carries MORE decimals than the column declares — the down-scaling branch,
+// which nothing reached.
+//
+// It truncates toward zero rather than rounding, and it does so silently. That
+// is worth pinning precisely because it is lossy: a change to rounding would be
+// invisible in every aggregate until someone reconciled a total by hand.
+func TestDecimalWithMoreScaleThanItsColumnTruncates(t *testing.T) {
+	ct := colType{kind: kindDecimal, precision: 10, scale: 2}
+	for _, tc := range []struct {
+		in   string
+		want int64
+	}{
+		{"1.239", 123}, // truncated, NOT rounded to 124
+		{"1.231", 123},
+		{"-1.239", -123}, // toward zero, not away from it
+		{"1.2", 120},     // fewer decimals still pads
+	} {
+		if got := coerce(tc.in, ct); got != tc.want {
+			t.Errorf("coerce(%q, decimal(10,2)) = %v; want %v", tc.in, got, tc.want)
+		}
+	}
+	// And an already-decoded Decimal at a wider scale narrows the same way.
+	wide := Decimal{Unscaled: big.NewInt(12345), Scale: 4} // 1.2345
+	if got := coerce(wide, ct); got != int64(123) {
+		t.Errorf("a Decimal at scale 4 into a scale-2 column = %v; want 123", got)
 	}
 }
