@@ -112,13 +112,19 @@ func ReadParquetBytes(data []byte) (*Table, error) {
 // write for small tables is supported (JSON commits, no checkpoint yet).
 func ReadDeltaTable(st *store.Store, itemID, name string) (*Table, error) {
 	root := path.Join("Tables", name)
-	active, schemaCols, err := activeFiles(st, itemID, root)
+	active, schema, err := activeFiles(st, itemID, root)
 	if err != nil {
 		return nil, err
 	}
 	if len(active) == 0 {
 		return nil, fmt.Errorf("delta table %q has no active data files", name)
 	}
+
+	// The projection target: the logical schema minus the columns SQL cannot
+	// represent. Computed once, from the schema rather than from any one data
+	// file, so every part lands on the identical column list and the rows
+	// appended below stay aligned with tbl.Columns.
+	cols := omit(schema.Cols, schema.Nested)
 
 	var tbl *Table
 	for _, f := range active {
@@ -134,11 +140,14 @@ func ReadDeltaTable(st *store.Store, itemID, name string) (*Table, error) {
 		// our writer builds the physical schema from a map (alphabetical), and
 		// externally-written files may order differently again. Delta matches by
 		// name, so the metaData schema is the contract every reader should show.
-		if len(schemaCols) > 0 {
-			part = project(part, schemaCols)
+		if len(cols) > 0 {
+			part = project(part, cols)
 		}
 		if tbl == nil {
-			tbl = &Table{Columns: part.Columns}
+			// Skipped comes along. Without it the warning in reflectTable is
+			// unreachable from this path even when no projection happens —
+			// which is every table with no metaData in its log.
+			tbl = &Table{Columns: part.Columns, Skipped: part.Skipped}
 		}
 		tbl.Rows = append(tbl.Rows, part.Rows...)
 	}
@@ -147,11 +156,11 @@ func ReadDeltaTable(st *store.Store, itemID, name string) (*Table, error) {
 
 // activeFiles replays the _delta_log commits (added minus removed) and returns
 // the active Parquet file paths (relative to the table root), in commit order.
-func activeFiles(st *store.Store, itemID, root string) ([]string, []string, error) {
+func activeFiles(st *store.Store, itemID, root string) ([]string, deltaSchema, error) {
 	logDir := path.Join(root, "_delta_log")
 	entries, err := st.ListOneLakePaths(itemID, logDir, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, deltaSchema{}, err
 	}
 	var commits []string
 	for _, e := range entries {
@@ -160,16 +169,17 @@ func activeFiles(st *store.Store, itemID, root string) ([]string, []string, erro
 		}
 	}
 	if len(commits) == 0 {
-		return nil, nil, fmt.Errorf("no _delta_log commits under %q", root)
+		return nil, deltaSchema{}, fmt.Errorf("no _delta_log commits under %q", root)
 	}
 	sort.Strings(commits) // 000..0.json ordering is lexicographic
 
-	var order, schemaCols []string
+	var order []string
+	var schema deltaSchema
 	active := map[string]bool{}
 	for _, c := range commits {
 		p, err := st.GetOneLakePath(itemID, c)
 		if err != nil {
-			return nil, nil, err
+			return nil, deltaSchema{}, err
 		}
 		for _, line := range bytes.Split(p.Content, []byte("\n")) {
 			line = bytes.TrimSpace(line)
@@ -178,12 +188,12 @@ func activeFiles(st *store.Store, itemID, root string) ([]string, []string, erro
 			}
 			var a deltaAction
 			if err := json.Unmarshal(line, &a); err != nil {
-				return nil, nil, fmt.Errorf("bad _delta_log line in %q: %w", c, err)
+				return nil, deltaSchema{}, fmt.Errorf("bad _delta_log line in %q: %w", c, err)
 			}
 			// A later metaData supersedes an earlier one (schema evolution).
 			if a.MetaData != nil {
-				if cols := schemaColumns(a.MetaData.SchemaString); len(cols) > 0 {
-					schemaCols = cols
+				if sc := schemaColumns(a.MetaData.SchemaString); len(sc.Cols) > 0 {
+					schema = sc
 				}
 			}
 			switch {
@@ -203,27 +213,51 @@ func activeFiles(st *store.Store, itemID, root string) ([]string, []string, erro
 			out = append(out, f)
 		}
 	}
-	return out, schemaCols, nil
+	return out, schema, nil
+}
+
+// deltaSchema is the logical schema from a metaData action: every field in
+// order, and which of them are nested.
+type deltaSchema struct {
+	Cols   []string
+	Nested []string
 }
 
 // schemaColumns pulls the field names, in order, out of a Delta metaData
-// schemaString ({"type":"struct","fields":[{"name":…},…]}).
-func schemaColumns(schemaString string) []string {
+// schemaString ({"type":"struct","fields":[{"name":…},…]}), and separates the
+// nested ones.
+//
+// The nested set comes from the SCHEMA rather than from what a Parquet reader
+// happened to skip, because the schema is the only order-independent answer.
+// Deciding it from the first data file instead looks equivalent and is not:
+// after a schema evolution that adds a nested column, the oldest file — which
+// is first in commit order — does not carry that column at all, so it skips
+// nothing, and the nested column would be re-added for every later file.
+func schemaColumns(schemaString string) deltaSchema {
 	var s struct {
 		Fields []struct {
-			Name string `json:"name"`
+			Name string          `json:"name"`
+			Type json.RawMessage `json:"type"`
 		} `json:"fields"`
 	}
+	var out deltaSchema
 	if json.Unmarshal([]byte(schemaString), &s) != nil {
-		return nil
+		return out
 	}
-	cols := make([]string, 0, len(s.Fields))
+	out.Cols = make([]string, 0, len(s.Fields))
 	for _, f := range s.Fields {
-		if f.Name != "" {
-			cols = append(cols, f.Name)
+		if f.Name == "" {
+			continue
+		}
+		out.Cols = append(out.Cols, f.Name)
+		// The Delta protocol's own distinction: a primitive's type is a JSON
+		// STRING ("long", "date", "decimal(9,2)"), while struct/array/map are
+		// JSON OBJECTS.
+		if t := bytes.TrimSpace(f.Type); len(t) > 0 && t[0] == '{' {
+			out.Nested = append(out.Nested, f.Name)
 		}
 	}
-	return cols
+	return out
 }
 
 // project reorders a part's columns onto the table's logical schema, filling a
@@ -234,7 +268,10 @@ func project(part *Table, cols []string) *Table {
 	for i, c := range part.Columns {
 		idx[c] = i
 	}
-	out := &Table{Columns: cols, Rows: make([][]any, len(part.Rows))}
+	// Skipped is carried across. reflectTable's "not representable … omitted"
+	// warning is guarded on it, so dropping it here silenced that warning for
+	// exactly the tables it was written for.
+	out := &Table{Columns: cols, Rows: make([][]any, len(part.Rows)), Skipped: part.Skipped}
 	for r, row := range part.Rows {
 		vals := make([]any, len(cols))
 		for i, c := range cols {
@@ -243,6 +280,32 @@ func project(part *Table, cols []string) *Table {
 			}
 		}
 		out.Rows[r] = vals
+	}
+	return out
+}
+
+// omit drops `names` from `cols`, preserving order.
+//
+// A column the reader SKIPPED is not a column a part merely lacks, and the
+// difference is the whole point of this function. The logical schema still
+// names the nested fields, so projecting onto it re-added every one of them —
+// with nils, because nothing maps to them. They then reached CREATE TABLE, took
+// sqlType's varchar default (no non-null value is ever seen) and served as
+// nullable varchar full of NULL: the opposite of omitting them, and the
+// opposite of what v0.16.0's release notes promised.
+func omit(cols, names []string) []string {
+	if len(names) == 0 {
+		return cols
+	}
+	drop := make(map[string]bool, len(names))
+	for _, c := range names {
+		drop[c] = true
+	}
+	out := make([]string, 0, len(cols))
+	for _, c := range cols {
+		if !drop[c] {
+			out = append(out, c)
+		}
 	}
 	return out
 }
