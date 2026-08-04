@@ -90,6 +90,67 @@ func TestRewriteCTASCorpus(t *testing.T) {
 
 // Adapt composes the two rewrites: CTAS produces a query, and a nested CTE
 // inside it is then flattened, so the sidecar can run both at once.
+// TestRewriteCTASStopsAtTheStatementBoundary pins the fix for a silent
+// data-corruption bug: the CTAS body used to run to the end of the BATCH, so
+// when the CTAS's own SELECT had no depth-0 FROM (a constant or aggregate
+// select), the INTO was spliced into a LATER statement's FROM.
+//
+// The batch then executed without error and filled the target from the wrong
+// source table, while the client's first statement degraded to a bare
+// resultset — the worst shape of bug this rewriter can have, because nothing
+// fails. Each case below produced corrupted SQL before the bound was added.
+func TestRewriteCTASStopsAtTheStatementBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sql  string
+		want string
+	}{
+		{
+			name: "constant select followed by a query with its own FROM",
+			sql:  "CREATE TABLE t AS SELECT 1 AS x; SELECT b FROM other",
+			// Was: "SELECT 1 AS x; SELECT b into t FROM other" — t filled from `other`.
+			want: "SELECT 1 AS x into t; SELECT b FROM other",
+		},
+		{
+			name: "aggregate select followed by a query with its own FROM",
+			sql:  "CREATE TABLE summary AS SELECT COUNT(*) AS n; SELECT * FROM audit",
+			want: "SELECT COUNT(*) AS n into summary; SELECT * FROM audit",
+		},
+		{
+			name: "trailing statement is a write",
+			sql:  "CREATE TABLE t AS SELECT 1 AS x; INSERT INTO log VALUES(1)",
+			want: "SELECT 1 AS x into t; INSERT INTO log VALUES(1)",
+		},
+		{
+			name: "the CTAS has its own FROM; the tail is untouched",
+			sql:  "CREATE TABLE t AS SELECT a FROM src; SELECT b FROM other",
+			want: "SELECT a into t FROM src; SELECT b FROM other",
+		},
+		{
+			name: "a semicolon inside parens is not a terminator",
+			sql:  "CREATE TABLE t AS SELECT (SELECT TOP 1 c FROM q) AS x; SELECT b FROM other",
+			want: "SELECT (SELECT TOP 1 c FROM q) AS x into t; SELECT b FROM other",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, changed, err := RewriteCTAS(tc.sql)
+			if err != nil || !changed {
+				t.Fatalf("RewriteCTAS(%q) = changed:%v err:%v; want a rewrite", tc.sql, changed, err)
+			}
+			if got != tc.want {
+				t.Errorf("RewriteCTAS(%q)\n got: %q\nwant: %q", tc.sql, got, tc.want)
+			}
+			// The tail must survive byte-for-byte: a later statement is not ours
+			// to edit, and an INTO landing in it is the corruption this pins.
+			if _, tail, found := strings.Cut(tc.sql, ";"); found {
+				if !strings.HasSuffix(got, tail) {
+					t.Errorf("tail after `;` was modified\n got: %q\nwant suffix: %q", got, tail)
+				}
+			}
+		})
+	}
+}
+
 func TestAdaptComposesCTASAndFlattening(t *testing.T) {
 	sql := "create table dst as with o as (with i as (select 1 x) select * from i) select * from o"
 	out, changed, err := Adapt(sql)

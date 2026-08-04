@@ -78,14 +78,50 @@ func RewriteCTAS(sql string) (out string, changed bool, err error) {
 		return sql, false, nil
 	}
 
-	body := sql[sig[i].Pos:]
-	insertAt := ctasIntoOffset(sig[i:], sig[i].Pos, len(body))
+	// The body ends at the CTAS's OWN statement terminator. Taking it to the end
+	// of the batch let `ctasIntoOffset` find a FROM belonging to a later
+	// statement and splice INTO there — so `CREATE TABLE t AS SELECT 1; SELECT b
+	// FROM other` became `SELECT 1; SELECT b into t FROM other`, which executes
+	// happily and fills t from the wrong table. Everything past the terminator is
+	// carried through untouched.
+	bodyToks, bodyEnd := ctasBodyEnd(sig[i:], len(sql))
+	body := sql[sig[i].Pos:bodyEnd]
+	tail := sql[bodyEnd:]
+	insertAt := ctasIntoOffset(bodyToks, sig[i].Pos, len(body))
 	// Trim only spaces and tabs before splicing, so the insertion cannot double
 	// an existing separator; a newline is kept, since it is still valid there
 	// and preserves the statement's shape.
 	head := strings.TrimRight(body[:insertAt], " \t")
 	rewritten := head + " into " + name + " " + strings.TrimLeft(body[insertAt:], " \t")
-	return sql[:sig[0].Pos] + strings.TrimRight(rewritten, " \t"), true, nil
+	return sql[:sig[0].Pos] + strings.TrimRight(rewritten, " \t") + tail, true, nil
+}
+
+// ctasBodyEnd bounds the CTAS to its own statement: the tokens up to its first
+// depth-0 `;`, and the character offset where that terminator begins. A `;`
+// inside parentheses is not a terminator, so depth is tracked.
+//
+// Only the batch's FIRST statement is examined for a CTAS (see the startsWith
+// guard above), so `SET NOCOUNT ON; CREATE TABLE t AS …` is still forwarded
+// unrewritten and SQL Server rejects it — loudly, with Msg 156, which is a
+// visible failure rather than the silent mis-fill this bound prevents.
+func ctasBodyEnd(bodyToks []Token, sqlLen int) ([]Token, int) {
+	depth := 0
+	for n, t := range bodyToks {
+		if t.Kind != Punct {
+			continue
+		}
+		switch t.Text {
+		case "(":
+			depth++
+		case ")":
+			depth--
+		case ";":
+			if depth == 0 {
+				return bodyToks[:n], t.Pos
+			}
+		}
+	}
+	return bodyToks, sqlLen
 }
 
 // scanQualifiedName consumes a possibly multi-part table name

@@ -95,7 +95,20 @@ func (s *Server) handle(conn net.Conn) error {
 	// login.Database when the client connected by display name.
 	readOnly := false
 	targetDB := login.Database
-	if s.OnConnect != nil && login.Database != "" {
+	if s.OnConnect != nil {
+		// An empty database is REJECTED, not waved through. OnConnect is the only
+		// place a TDS connection's workspace role and read-only-ness are decided,
+		// so skipping it leaves readOnly=false and targetDB="" — and an empty
+		// targetDB also fails the splice gate below, dropping the session into the
+		// re-encode relay, where DB("") is the backend's DEFAULT pool under the
+		// emulator's privileged credential. A token with no role on any workspace
+		// would get arbitrary read/write T-SQL against the warehouse. Real Fabric
+		// requires a database on the connection, so rejecting here is both the
+		// safe answer and the faithful one.
+		if login.Database == "" {
+			return s.reject(conn, "a database name is required: the connection's "+
+				"workspace access is resolved from it")
+		}
 		db, ro, err := s.OnConnect(context.Background(), login.ServerName, login.Database, login.FedAuthToken)
 		if err != nil {
 			return s.reject(conn, err.Error())

@@ -211,6 +211,70 @@ func TestOnConnectRejects(t *testing.T) {
 	}
 }
 
+// countingBackend records every query it is asked to run, so a test can assert
+// that an unauthorized session reached the engine ZERO times — "the login
+// failed" alone would not prove the batch never executed.
+type countingBackend struct{ queries []string }
+
+func (c *countingBackend) Query(_ context.Context, q string) (*Result, error) {
+	c.queries = append(c.queries, q)
+	return &Result{Columns: []Column{{Name: "x", Type: ColInt}}, Rows: [][]any{{int64(1)}}}, nil
+}
+
+// TestLoginWithoutDatabaseIsRejected pins the RBAC wall on the TDS surface.
+//
+// OnConnect is the ONLY place a TDS connection's workspace role and read-only
+// flag are decided. It used to be skipped when the client sent no database name,
+// which left readOnly=false and targetDB="" — and an empty targetDB also fails
+// the splice gate, so the session fell through to the re-encode relay, where
+// DB("") is the backend's DEFAULT pool under the emulator's privileged
+// credential. A token carrying no role on any workspace could therefore run
+// arbitrary read/write T-SQL against the warehouse, which real Fabric refuses.
+//
+// The assertion is deliberately two-sided: the login must fail AND the backend
+// must never be asked to run anything. Checking only the first would still pass
+// if the batch executed and the error arrived afterwards.
+func TestLoginWithoutDatabaseIsRejected(t *testing.T) {
+	be := &countingBackend{}
+	authorized := false
+	srv := &Server{
+		Auth:    func(string) error { return nil }, // a valid token, no workspace role
+		Backend: be,
+		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
+			authorized = true
+			return "db", false, nil
+		},
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go srv.Serve(ln)
+
+	// No `database=` in the DSN: LOGIN7 carries an empty database name.
+	addr := ln.Addr().(*net.TCPAddr)
+	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;encrypt=disable;dial timeout=5", addr.Port)
+	c, _ := mssql.NewAccessTokenConnector(dsn, func() (string, error) { return "a.b.c", nil })
+	db := sql.OpenDB(c)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var got int
+	err = db.QueryRowContext(ctx, "SELECT 1").Scan(&got)
+	if err == nil {
+		t.Fatal("a login with no database ran a query: the RBAC wall was skipped")
+	}
+	if len(be.queries) != 0 {
+		t.Fatalf("backend ran %d query/queries (%q) for an unauthorized session; want 0",
+			len(be.queries), be.queries)
+	}
+	if authorized {
+		t.Fatal("OnConnect ran for an empty database; it cannot authorize one")
+	}
+}
+
 // TestSpliceDialRejectsLogin: when the backend can't be dialed, the login is
 // rejected (not silently accepted).
 func TestSpliceDialRejectsLogin(t *testing.T) {
