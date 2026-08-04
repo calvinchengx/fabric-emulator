@@ -64,6 +64,14 @@ import re
 import subprocess
 import sys
 
+# Windows stdout is cp1252, and this prints text taken from the parity map —
+# em dashes, arrows, the glyphs themselves. Reading was fixed to UTF-8 first and
+# this was missed, so the same bug simply moved from the input side to the
+# output side: `make check` died on UnicodeEncodeError for a single arrow. The
+# encoding of what we PRINT is as much a portability question as what we read.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PARITY = ROOT / "docs" / "parity.md"
 MANIFEST = ROOT / "docs" / "witnesses.json"
@@ -257,7 +265,7 @@ def main() -> int:
         for reason, entries in by_reason.items():
             for witness, why in entries:
                 print(f"  {witness:<46} skips via {why}")
-            print(f"      → {reason}")
+            print(f"      -> {reason}")
     if stale:
         print("\nStale gate declarations (these witnesses no longer skip):")
         for witness in stale:

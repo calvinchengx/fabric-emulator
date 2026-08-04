@@ -342,6 +342,16 @@ UTF-8 explicitly, and by failing when the parse yields zero claims — a checker
 that parses nothing must never pass, which is the same "presence is not
 evidence" principle it exists to enforce, applied to itself.
 
+**And that fix was half a fix.** Reading was pinned to UTF-8; PRINTING was not,
+so the next Windows run died on `UnicodeEncodeError: 'charmap' codec can't
+encode character '\u2192'` — the arrow in the very report added alongside the
+first fix. The general problem is not the arrow: this script prints text taken
+from the parity map, which is full of em dashes, so any claim name reaching an
+error list would do the same. `sys.stdout` is now reconfigured to UTF-8, and the
+decoration is ASCII regardless. Reproducible without Windows —
+`PYTHONIOENCODING=cp1252` fails the old script and passes the new one — and all
+three check scripts are verified under it.
+
 **Still not proved**, and worth stating plainly rather than implying the gap is
 closed: that a witness ASSERTS its claim, and that the code behind the claim
 executes at all. Coverage answers the second — the Direct Lake row is the
