@@ -93,6 +93,7 @@ logs: ## Tail logs (SVC=<service> to narrow)
 
 check: ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_witnesses.py --strict
+	@$(PY) scripts/check_govern_types.py
 	@$(PY) scripts/check_example_parity.py
 
 test: check ## Repo invariants, then Go build, vet and unit tests

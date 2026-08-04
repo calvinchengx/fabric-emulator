@@ -167,6 +167,9 @@ jobs:
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python scripts/check_witnesses.py --strict
+      # Cheap guard for the constraint the governance e2e discovers the
+      # expensive way: a column OpenMetadata refuses costs the whole table.
+      - run: uv run --frozen --no-sync python scripts/check_govern_types.py
 
   example-parity:
     name: Each medallion pair differs only in silver
