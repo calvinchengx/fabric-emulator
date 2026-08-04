@@ -39,6 +39,7 @@ Pure CRUD + RBAC in patterns the repo has executed a dozen times.
 | ~~Item-type fidelity~~ ✅ | The documented `ItemType` enum is enforced (`InvalidItemType`, case-insensitive canonicalisation); every enum type is creatable through the generic surface, and `GraphQLApis`/`variableLibraries` gained typed collections. Remaining typed collections are cheap but each needs its own reference page — the segments are not derivable | S–M |
 | ~~Sensitivity labels~~ ✅ | bulkSetLabels/bulkRemoveLabels + documented label-change audit events. 🟢 (taxonomy is emulator-provided: Purview is not attachable) | M |
 | Dataflow Gen2 **management** completeness | Finish the non-engine surface; execution stays 501 | S |
+| Capacity **job queueing** and throttling | No admission control, queue, or `429`/`430` exists at all, so a consumer cannot exercise retry-on-throttle or a job that waits. Store state plus one admission check on the clock the scheduler already uses — NOT a broker. Scoped in [36-capacity-job-queueing.md](36-capacity-job-queueing.md) | M |
 
 ## Tier 2 — Attach a real engine that exists
 
