@@ -758,3 +758,53 @@ func TestDeploymentStoreErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestUpdateDeploymentDescriptionIsWritable completes the PATCH semantics the
+// test above only half covers: it proves an ABSENT description is preserved,
+// which passes just as well if the field is ignored entirely. Neither the
+// pipeline's nor the stage's description-writing branch was executed by
+// anything.
+//
+// Clearing to "" is asserted too, and is the case a nil-vs-empty mix-up breaks:
+// the field is a *string precisely so that "absent" and "set me to empty" stay
+// distinguishable, and a handler that tested the value rather than the pointer
+// would silently refuse to clear.
+func TestUpdateDeploymentDescriptionIsWritable(t *testing.T) {
+	a, _ := newAPI(t)
+	pl, sts := seedPipeline(t, a, `{"displayName":"release","description":"before"}`)
+
+	pids := map[string]string{"pid": pl.ID}
+	w := do(a.updateDeploymentPipeline, admin, "PATCH", `{"description":"after"}`, pids)
+	if w.Code != http.StatusOK {
+		t.Fatalf("pipeline patch = %d: %s", w.Code, w.Body)
+	}
+	got := &store.DeploymentPipeline{}
+	if err := json.Unmarshal(w.Body.Bytes(), got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Description != "after" || got.DisplayName != "release" {
+		t.Fatalf("pipeline = %+v; want description updated and name untouched", got)
+	}
+	// Explicitly clearing must work, not be mistaken for "absent".
+	w = do(a.updateDeploymentPipeline, admin, "PATCH", `{"description":""}`, pids)
+	got = &store.DeploymentPipeline{}
+	if err := json.Unmarshal(w.Body.Bytes(), got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Description != "" {
+		t.Fatalf("description = %q; an explicit empty string must clear it", got.Description)
+	}
+
+	sids := map[string]string{"pid": pl.ID, "sid": sts[0].ID}
+	w = do(a.updateDeploymentStage, admin, "PATCH", `{"description":"stage note"}`, sids)
+	if w.Code != http.StatusOK {
+		t.Fatalf("stage patch = %d: %s", w.Code, w.Body)
+	}
+	stage := &store.DeploymentStage{}
+	if err := json.Unmarshal(w.Body.Bytes(), stage); err != nil {
+		t.Fatal(err)
+	}
+	if stage.Description != "stage note" {
+		t.Fatalf("stage = %+v; want the description written", stage)
+	}
+}
