@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "DataPipeline",
+    "displayName": "bronze-ingest",
+    "description": "CSV in OneLake Files -> a Delta table, executed by the emulator itself"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "8f1b0a30-0000-4000-8000-00000000b201"
+  }
+}

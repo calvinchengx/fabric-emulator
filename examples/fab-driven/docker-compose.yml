@@ -1,0 +1,122 @@
+# The stack this example needs, and it is NOT the repo-root compose.
+#
+# WHY ITS OWN FILE. `fab` hardcodes two hostnames — the MSAL authority
+# `login.microsoftonline.com` and the API `api.fabric.microsoft.com` — and
+# reaches both on :443 over TLS. `FAB_API_ENDPOINT_FABRIC` overrides the HOST
+# but carries no port, so `https://localhost:9443`, which every other example
+# talks to, is not an address `fab` can reach at all.
+#
+# Here those hostnames are compose network ALIASES, so `fab` (running as a
+# service on this network) resolves and reaches the real thing. The host ports
+# stay where you expect them — 8443 and 9443 — so the verification steps on
+# YOUR machine are unchanged. That split is the whole design; see
+# ../../docs/34-fab-driven-example.md.
+#
+# Pinned in .env, never `latest`: a green run has to say WHICH images it
+# verified. `:?` rather than a default on purpose — a missing pin must fail
+# loudly, because the fallback would silently be a version this example is
+# known not to work against.
+# Override for a local build:  FABRIC_EMULATOR_VERSION=dev docker compose up -d
+#
+# No `sqlserver` here. Gold is a Warehouse and needs one, but this example stops
+# at silver (see README) — which also means it runs natively on Apple silicon,
+# where the SQL Server image does not.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:?see .env}
+    user: "0:0" # bind privileged :443 — the MSAL authority carries no port
+    environment:
+      PUBLIC_ORIGIN: "https://login.microsoftonline.com"
+      LOCAL_DOMAINS: "login.microsoftonline.com"
+      PORT: "443"
+      TLS_ENABLED: "true"
+    ports:
+      - "${ENTRA_HOST_PORT:-8443}:443"
+    networks:
+      default:
+        aliases: ["login.microsoftonline.com"]
+
+  fabric-emulator:
+    image: ghcr.io/calvinchengx/fabric-emulator:${FABRIC_EMULATOR_VERSION:?see .env}
+    user: "0:0"
+    depends_on: [entra-emulator]
+    environment:
+      FABRIC_ADDR: ":443"
+      FABRIC_DATA_DIR: "" # no volume mounted; keep the store in memory
+      # The issuer must be the origin entra ADVERTISES, which is now the real
+      # Microsoft hostname rather than a service name.
+      FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0"
+      FABRIC_ENTRA_JWKS_URL: "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/discovery/v2.0/keys"
+      FABRIC_ENTRA_TLS_INSECURE: "true"
+      # Without this the emulator parks a RunNotebook job forever — the honest
+      # behaviour when no engine is attached. With it, the emulator drives the
+      # agent itself, so `fab job run` on a Notebook reaches Completed.
+      FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
+    ports:
+      - "${FABRIC_HOST_PORT:-9443}:443"
+    networks:
+      default:
+        # THREE hostnames, not two. The control plane is api.fabric, but `fab
+        # cp` reaches OneLake on its own data-plane host — which is how this
+        # example first failed, with a certificate error against a hostname
+        # nothing had aliased. The emulator routes both off the Host header on
+        # one listener, so both names point at the same container.
+        aliases:
+          - "api.fabric.microsoft.com"
+          - "onelake.dfs.fabric.microsoft.com"
+
+  sail:
+    image: ghcr.io/calvinchengx/fabric-emulator-sail:${SAIL_VERSION:?see .env}
+    depends_on:
+      fabric-emulator: { condition: service_healthy }
+    environment:
+      ENTRA_TOKEN_URL: "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "https://api.fabric.microsoft.com/onelake"
+      AZURE_ALLOW_INVALID_CERTIFICATES: "true"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+
+  spark-agent:
+    image: ghcr.io/calvinchengx/fabric-emulator-spark-agent:${SPARK_AGENT_VERSION:?see .env}
+    depends_on:
+      sail: { condition: service_started }
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+      ENTRA_TOKEN_URL: "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
+      ENTRA_FORGE_URL: "https://login.microsoftonline.com/admin/api/tokens"
+      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "https://api.fabric.microsoft.com/onelake"
+      AZURE_ALLOW_INVALID_CERTIFICATES: "true"
+    healthcheck:
+      # `started` is not `listening`: the agent builds a Spark session before it
+      # answers, and a notebook submitted into that window fails on a refused
+      # connection rather than waiting.
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://localhost:8099/health',timeout=2)\""]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+
+  # Microsoft's Fabric CLI, on the network where those two hostnames resolve.
+  #
+  # `profiles` keeps it out of `docker compose up` — it is a one-shot you invoke
+  # per command, which is what fabctl.py does:
+  #   docker compose run --rm fab ls myws.Workspace
+  fab:
+    profiles: ["cli"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # NO depends_on, deliberately. `docker compose run` starts a service's
+    # dependencies and recreates any whose config has drifted — and recreating
+    # the emulator wipes its in-memory store halfway through a run. entrypoint.sh
+    # waits for TLS on its own, so nothing is lost by leaving this out.
+    # fabctl.py also passes --no-deps, so re-adding it here would still be safe.
+    volumes:
+      # The example directory itself: `fab import` reads definitions from here
+      # and `fab export` writes back to it, so both are visible on your machine.
+      - ./:/work
+    working_dir: /work

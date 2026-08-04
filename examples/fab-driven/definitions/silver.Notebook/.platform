@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "silver",
+    "description": "bronze -> silver: dedupe, conform country, fold email case"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "8f1b0a30-0000-4000-8000-00000000b202"
+  }
+}

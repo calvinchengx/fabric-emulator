@@ -1,0 +1,36 @@
+# Self-contained: this example owns its dependencies and its lockfile, so it
+# can be copied out of the repo and run anywhere, and so its versions never
+# enter the emulator's own dependency graph.
+#
+#   uv sync --frozen && uv run python pipeline.py
+#
+# NOTE what is NOT here: `ms-fabric-cli`. `fab` runs in a container on the
+# compose network, because it can only reach the emulator through hostnames that
+# resolve on :443 with a trusted certificate — see docker-compose.yml and
+# ../../docs/34-fab-driven-example.md. Its version is pinned in the Dockerfile.
+#
+# Also not here: dbt-fabric and pyodbc. This example stops at silver; gold is a
+# Warehouse and `fab` has no hand in T-SQL modelling. ../medallion-pyspark
+# covers that half.
+[project]
+name = "fabric-emulator-example-fab-driven"
+version = "0.1.0"
+description = "Provision, import, and run the emulator with Microsoft's own Fabric CLI"
+requires-python = ">=3.12"
+dependencies = [
+    "contoso-fixtures",
+    # Reads the Delta bytes back independently of anything fab said — the
+    # second opinion readback.py is built on.
+    "deltalake>=0.23,<2",
+    "pyarrow>=18,<24",
+    "requests>=2.32,<3",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3,<10"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+contoso-fixtures = { path = "../contoso-fixtures", editable = true }
