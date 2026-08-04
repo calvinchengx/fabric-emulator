@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"io"
 	"net/http"
 	"net/url"
@@ -73,7 +74,10 @@ func (c *Client) do(method, path string, body any, out any) error {
 		return fmt.Errorf("entra unreachable: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, ok := httpx.ReadBounded(resp.Body, httpx.MaxControlBody)
+	if !ok {
+		return fmt.Errorf("entra %s %s: response larger than %d bytes, or the read failed", method, path, int64(httpx.MaxControlBody))
+	}
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("entra %s %s: status %d: %s", method, path, resp.StatusCode, raw)
 	}
@@ -125,6 +129,8 @@ func (c *Client) ValidateClientCredentials(tenantID, clientID, secret string) er
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		// bounded-read-exempt: this body is only ever quoted into an error
+		// message, so clipping it is the intent rather than a hazard.
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("service principal credentials rejected (status %d): %s", resp.StatusCode, raw)
 	}

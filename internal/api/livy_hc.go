@@ -22,7 +22,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"net/http"
 	"strconv"
 	"strings"
@@ -216,7 +216,14 @@ func (a *API) acquireHC(w http.ResponseWriter, r *http.Request, p *auth.Principa
 	if !a.hcScope(w, r, p, store.RoleContributor) {
 		return
 	}
-	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	// The raw body is RETAINED on the session (passed to acquire below), so a
+	// truncated one is stored, not merely misparsed.
+	body, ok := httpx.ReadBounded(r.Body, httpx.MaxControlBody)
+	if !ok {
+		writeErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
+			"The request body is too large.")
+		return
+	}
 	var req struct {
 		SessionTag string `json:"sessionTag"`
 	}

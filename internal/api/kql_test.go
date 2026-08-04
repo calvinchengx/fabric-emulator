@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
@@ -595,5 +597,64 @@ func TestEventhouseDuplicateChildNameIsTolerated(t *testing.T) {
 		`{"displayName":"telemetry"}`, map[string]string{"wid": ws.ID})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create eventhouse: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestAnOversizedEngineResponseIsRefusedNotRelayedShort covers the last read in
+// the truncation sweep, and the one with the most surprising blast radius.
+//
+// callKusto's body is handed to the client as the ENGINE's answer. Truncated,
+// it becomes a result set that parses (KQL responses are JSON arrays of tables,
+// and a cut one can still be valid) but is missing rows — a query that silently
+// returns less data than it matched. Refusing is the only honest option; there
+// is no partial answer worth relaying.
+func TestAnOversizedEngineResponseIsRefusedNotRelayedShort(t *testing.T) {
+	a, _ := newAPI(t)
+	// An engine that streams past the ceiling. Written in chunks with no
+	// Content-Length, as a genuinely large result set would arrive.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := make([]byte, 1<<20)
+		for sent := int64(0); sent <= int64(httpx.MaxProxyBody); sent += int64(len(chunk)) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+	if err := a.SetKQLBackend(srv.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	status, payload, err := a.callKusto(context.Background(), "v1", "query",
+		kustoRequest{CSL: "print 1"})
+	if err == nil {
+		t.Fatalf("an oversized engine response was relayed: status %d, %d bytes",
+			status, len(payload))
+	}
+	if payload != nil {
+		t.Fatalf("a refused relay still returned %d bytes", len(payload))
+	}
+}
+
+// TestAnEngineResponseInsideTheCeilingIsRelayedWhole keeps the test above from
+// passing on a relay that had simply broken.
+func TestAnEngineResponseInsideTheCeilingIsRelayedWhole(t *testing.T) {
+	a, _ := newAPI(t)
+	body := strings.Repeat("k", 2<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	if err := a.SetKQLBackend(srv.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	status, payload, err := a.callKusto(context.Background(), "v1", "query",
+		kustoRequest{CSL: "print 1"})
+	if err != nil || status != http.StatusOK {
+		t.Fatalf("a 2 MiB engine response failed: status %d, %v", status, err)
+	}
+	if len(payload) != len(body) {
+		t.Fatalf("relayed %d bytes of %d", len(payload), len(body))
 	}
 }

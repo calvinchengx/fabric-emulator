@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"io"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"net/http"
 	"path"
 	"strings"
@@ -111,9 +111,13 @@ func (a *API) putAirflowFile(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		writeErr(w, 400, "InvalidPath", "filePath must stay within the job.")
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
-	if err != nil {
-		writeErr(w, 400, "InvalidFile", err.Error())
+	// A file WRITE: the bytes are stored as the DAG. The UTF-8 check below
+	// would catch some truncations of a .py file and none of any other kind,
+	// which is not a bound.
+	raw, ok := httpx.ReadBounded(r.Body, httpx.MaxItemContent)
+	if !ok {
+		writeErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
+			"The file is too large.")
 		return
 	}
 	if strings.HasSuffix(strings.ToLower(rel), ".py") && !utf8Valid(raw) {

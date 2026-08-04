@@ -153,6 +153,36 @@ The tell for both: **ask what would go red if the sentence were false.** For the
 comment, nothing did — until a consumer believed it. For the default, nothing
 did — because being wrong and being defaulted are indistinguishable downstream.
 
+**Eleven: a BOUND that truncates instead of refusing.**
+`io.ReadAll(io.LimitReader(body, max))` is the obvious way to cap a read, and on
+a write path it is data corruption. LimitReader reports clean EOF at the
+ceiling: the excess is discarded, `err` is nil, and the handler cannot tell a
+body that fitted from one that was cut. It stores the fragment and answers
+success.
+
+Nine sites had it. The one that mattered was OneLake's append, and it took
+Microsoft's `fab cp` to reach it — every client this project drives chunks its
+uploads, so none had ever crossed the ceiling. `fab` sends a whole file in one
+append, and a 71 MiB upload was stored as 64 MiB with a 202. It surfaced ONLY
+because `fab` then flushed at the real length and a position check disagreed. A
+client that never flushed would have had a short file and no signal.
+
+Several sites looked safe because they parse the body afterwards, so a truncated
+JSON document 400s. That is luck wearing the costume of a design: the caller is
+told their input is malformed when what happened is that it was too big, and the
+first site that stops parsing inherits the silent version.
+
+The tell is the same as ever — **ask what would go red if the sentence were
+false.** "This read is bounded" was true. "This read is *safely* bounded" was
+not, and nothing anywhere could tell the difference.
+
+What closed it was not nine fixes. It was `internal/httpx`, one `ReadBounded`
+that reads `max+1` so "too big" is detectable, plus a test that walks the source
+and fails on the banned idiom — with an explicit `bounded-read-exempt:` marker
+for the two places that genuinely discard what they read, and a second test
+pinning the exemption list so the escape hatch cannot quietly widen. Fixing nine
+sites is a day's work that lasts until someone writes the tenth.
+
 ### What actually caught them
 
 Not review, and not more assertions. In every case it was **looking at what the
@@ -161,7 +191,11 @@ thing produced** rather than at whether it ran without complaint:
 - reading dbt's compiled SQL instead of the Jinja that generated it;
 - listing the edges instead of trusting the edge count;
 - printing the parsed DSN (`Host "np:"`, `Protocols [tcp]`, `err = nil`);
-- `docker ps`, which settled a day-long misdiagnosis in one line.
+- `docker ps`, which settled a day-long misdiagnosis in one line;
+- a `log.Printf` compiled into the binary, which settled whether a fix was
+  running at all after `docker compose ps` and `docker inspect` had both
+  reported the tag and image id expected — for three runs against a stale
+  image. **Verify the running code, not the label on it.**
 
 ### Three habits that follow
 

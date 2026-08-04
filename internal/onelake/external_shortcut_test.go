@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
@@ -317,5 +318,84 @@ func TestExternalWriteAndDeleteFailurePaths(t *testing.T) {
 	if derr := svc.writeExternal(unsupported, "x", []byte("d")); derr == nil ||
 		derr.code != "ExternalCredentialUnsupported" {
 		t.Fatalf("unsupported credential produced %+v", derr)
+	}
+}
+
+// TestAnOversizedShortcutReadIsRefusedRatherThanServedShort covers the READ
+// side of the truncation defect, which is the worse half.
+//
+// A shortcut read hands the target's bytes back to the client AS the file. A
+// silent truncation here is not this emulator losing data of its own — it is
+// this emulator reporting a short file as the complete contents of somebody
+// else's storage account, with a 200 on it. There is no flush afterwards to
+// catch the disagreement the way the append path had.
+func TestAnOversizedShortcutReadIsRefusedRatherThanServedShort(t *testing.T) {
+	// Streams forever without declaring a length, exactly as a target holding
+	// a genuinely enormous object would.
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := make([]byte, 1<<20)
+		for sent := int64(0); sent <= int64(httpx.MaxExternalRead); sent += int64(len(chunk)) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	defer target.Close()
+
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(st, nil)
+
+	conn := &store.Connection{DisplayName: "anon", CredentialsJSON: `{"credentialType":"Anonymous"}`}
+	if err := st.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	sc := &store.Shortcut{TargetType: "ADLSGen2", TargetLocation: target.URL,
+		TargetPath: "bucket", ConnectionID: conn.ID}
+
+	p, derr := svc.resolveExternal(sc, "huge.bin")
+	if derr == nil {
+		t.Fatalf("an oversized shortcut read succeeded with %d bytes; it must be "+
+			"refused rather than served as the whole file", len(p.Content))
+	}
+	if p != nil {
+		t.Fatalf("a refused shortcut read still returned a path with %d bytes", len(p.Content))
+	}
+	if derr.status != http.StatusBadGateway {
+		t.Fatalf("status = %d; want 502 (the fault is upstream, not the caller's)", derr.status)
+	}
+}
+
+// TestAShortcutReadInsideTheCeilingIsUnchanged keeps the test above from
+// passing on a resolver that had simply stopped working.
+func TestAShortcutReadInsideTheCeilingIsUnchanged(t *testing.T) {
+	body := strings.Repeat("x", 2<<20)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer target.Close()
+
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := New(st, nil)
+	conn := &store.Connection{DisplayName: "anon2", CredentialsJSON: `{"credentialType":"Anonymous"}`}
+	if err := st.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	sc := &store.Shortcut{TargetType: "ADLSGen2", TargetLocation: target.URL,
+		TargetPath: "bucket", ConnectionID: conn.ID}
+
+	p, derr := svc.resolveExternal(sc, "fine.bin")
+	if derr != nil {
+		t.Fatalf("a 2 MiB shortcut read failed: %+v", derr)
+	}
+	if len(p.Content) != len(body) {
+		t.Fatalf("read back %d bytes of %d", len(p.Content), len(body))
 	}
 }

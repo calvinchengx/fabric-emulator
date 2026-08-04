@@ -15,7 +15,6 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -26,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
@@ -152,7 +152,7 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 				writeBlobErr(w, http.StatusBadRequest, "InvalidQueryParameterValue", "blockid must be base64.")
 				return
 			}
-			data, ok := readBounded(r.Body, maxBlobWrite)
+			data, ok := httpx.ReadBounded(r.Body, httpx.MaxBlobWrite)
 			if !ok {
 				writeBlobErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
 					"The request body is too large.")
@@ -166,7 +166,17 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 				Committed   []string `xml:"Committed"`
 				Uncommitted []string `xml:"Uncommitted"`
 			}
-			raw, _ := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+			// Bounded explicitly even though the XML parse would reject a
+			// truncated document anyway: "InvalidXmlDocument" tells the caller
+			// their XML is malformed, which is a lie when what actually
+			// happened is that their block list was too big — and the day this
+			// stops parsing the body it would inherit the silent bug.
+			raw, ok := httpx.ReadBounded(r.Body, httpx.MaxBlobMetadata)
+			if !ok {
+				writeBlobErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
+					"The block list is too large.")
+				return
+			}
 			if err := xml.Unmarshal(raw, &bl); err != nil {
 				writeBlobErr(w, http.StatusBadRequest, "InvalidXmlDocument", err.Error())
 				return
@@ -183,7 +193,7 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 				s.copyBlob(w, r, ws, it, rel, src)
 				return
 			}
-			data, ok := readBounded(r.Body, maxBlobWrite)
+			data, ok := httpx.ReadBounded(r.Body, httpx.MaxBlobWrite)
 			if !ok {
 				writeBlobErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
 					"The request body is too large.")

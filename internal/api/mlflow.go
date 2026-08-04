@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"io"
 	"net/http"
 	"net/url"
@@ -55,9 +56,12 @@ func (a *API) mlflowProxy(w http.ResponseWriter, r *http.Request, principal *aut
 		writeErr(w, http.StatusNotFound, "MLflowEndpointNotSupported", "The MLflow endpoint is not available.")
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 128<<20))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "InvalidRequest", err.Error())
+	// A relay, so a truncated body would be a request we do not own, silently
+	// altered — MLflow would answer it as if the caller had sent it that way.
+	raw, ok := httpx.ReadBounded(r.Body, httpx.MaxProxyBody)
+	if !ok {
+		writeErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
+			"The request body is too large to relay.")
 		return
 	}
 	original, transformed, query, err := transformMLflowRequest(wid, upstreamPath, raw, r.URL.Query())

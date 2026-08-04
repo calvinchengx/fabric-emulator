@@ -29,7 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"net/http"
 	"net/url"
 	"strings"
@@ -142,9 +142,10 @@ func (a *API) kustoRelay(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		writeKustoErr(w, http.StatusNotFound, "General_BadRequest", "The eventhouse was not found.")
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 128<<20))
-	if err != nil {
-		writeKustoErr(w, http.StatusBadRequest, "General_BadRequest", err.Error())
+	raw, ok := httpx.ReadBounded(r.Body, httpx.MaxProxyBody)
+	if !ok {
+		writeKustoErr(w, http.StatusRequestEntityTooLarge, "General_BadRequest",
+			"The request body is too large.")
 		return
 	}
 	var body kustoRequest
@@ -343,9 +344,12 @@ func (a *API) callKusto(ctx context.Context, ver, kind string, body kustoRequest
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(resp.Body, 128<<20))
-	if err != nil {
-		return 0, nil, err
+	// The engine's answer is relayed to the caller verbatim, so a truncated
+	// read would serve a corrupt result set as a complete one — the read-side
+	// twin of the OneLake append bug.
+	payload, ok := httpx.ReadBounded(resp.Body, httpx.MaxProxyBody)
+	if !ok {
+		return 0, nil, fmt.Errorf("the Kusto engine returned more than %d bytes, or the read failed; refusing to relay a partial result", int64(httpx.MaxProxyBody))
 	}
 	return resp.StatusCode, payload, nil
 }

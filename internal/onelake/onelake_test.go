@@ -13,10 +13,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -635,7 +637,7 @@ func TestOversizedWriteIsRefusedNotTruncated(t *testing.T) {
 	// point is the boundary, and holding 100 MiB to prove it would make this
 	// test the slowest in the package.
 	r := httptest.NewRequest("PATCH", base+"?action=append&position=0",
-		io.LimitReader(neverEndingReader{}, maxDFSAppend+1))
+		io.LimitReader(neverEndingReader{}, httpx.MaxDFSAppend+1))
 	r.Header.Set("Authorization", "Bearer "+f.token)
 	w := httptest.NewRecorder()
 	f.svc.ServeHTTP(w, r)
@@ -672,9 +674,9 @@ func TestReadBoundedFitsExactlyAtTheCeiling(t *testing.T) {
 		{"empty", 0, 10, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			data, ok := readBounded(io.LimitReader(neverEndingReader{}, tc.size), tc.max)
+			data, ok := httpx.ReadBounded(io.LimitReader(neverEndingReader{}, tc.size), tc.max)
 			if ok != tc.ok {
-				t.Fatalf("readBounded(%d bytes, max %d) ok = %v; want %v",
+				t.Fatalf("ReadBounded(%d bytes, max %d) ok = %v; want %v",
 					tc.size, tc.max, ok, tc.ok)
 			}
 			if !ok && data != nil {
@@ -685,5 +687,105 @@ func TestReadBoundedFitsExactlyAtTheCeiling(t *testing.T) {
 				t.Fatalf("readBounded returned %d bytes; want %d", len(data), tc.size)
 			}
 		})
+	}
+}
+
+// TestEveryOneLakeWriteSurfaceRefusesAnOversizedBody covers the DFS and Blob
+// dialects together, because they are two spellings of the same store.
+//
+// TestOversizedWriteIsRefusedNotTruncated pins the append that `fab cp` found.
+// This one pins the three siblings that had the identical idiom and simply had
+// not been reached yet: a DFS create-with-body, a Blob Put Blob, and a Blob Put
+// Block. Fixing only what a client happened to hit is how a class of bug
+// survives being fixed.
+func TestEveryOneLakeWriteSurfaceRefusesAnOversizedBody(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		method string
+		target func(f *fixture) string
+		max    int64
+		blob   bool
+		// stored names the path that must NOT exist afterwards; empty when the
+		// write does not create one (a staged block).
+		stored string
+	}{
+		{
+			name: "DFS create with a body", method: "PUT",
+			target: func(f *fixture) string {
+				return "/" + f.ws.ID + "/" + f.it.ID + "/Files/raw/put.bin"
+			},
+			max: httpx.MaxDFSPut, stored: "Files/raw/put.bin",
+		},
+		{
+			name: "Blob Put Blob", method: "PUT",
+			target: func(f *fixture) string {
+				return "/" + f.ws.ID + "/" + f.it.ID + "/Files/raw/blob.bin"
+			},
+			max: httpx.MaxBlobWrite, blob: true, stored: "Files/raw/blob.bin",
+		},
+		{
+			name: "Blob Put Block", method: "PUT",
+			target: func(f *fixture) string {
+				return "/" + f.ws.ID + "/" + f.it.ID + "/Files/raw/blk.bin?comp=block&blockid=" +
+					base64.StdEncoding.EncodeToString([]byte("block-1"))
+			},
+			max: httpx.MaxBlobWrite, blob: true,
+		},
+		{
+			name: "Blob block list", method: "PUT",
+			target: func(f *fixture) string {
+				return "/" + f.ws.ID + "/" + f.it.ID + "/Files/raw/blk.bin?comp=blocklist"
+			},
+			max: httpx.MaxBlobMetadata, blob: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			r := httptest.NewRequest(tc.method, tc.target(f),
+				io.LimitReader(neverEndingReader{}, tc.max+1))
+			r.Header.Set("Authorization", "Bearer "+f.token)
+			w := httptest.NewRecorder()
+			if tc.blob {
+				f.svc.ServeBlob(w, r)
+			} else {
+				f.svc.ServeHTTP(w, r)
+			}
+			if w.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("one byte over %d gave %d %s; want 413",
+					tc.max, w.Code, w.Body.String())
+			}
+			if tc.stored != "" {
+				if _, err := f.svc.Store.GetOneLakePath(f.it.ID, tc.stored); err == nil {
+					t.Fatalf("a refused write left %s behind; nothing may be stored", tc.stored)
+				}
+			}
+		})
+	}
+}
+
+// TestAWriteAtTheCeilingStillLandsWhole is the counterweight: without it, every
+// assertion above would also pass on a surface that refused everything.
+func TestAWriteAtTheCeilingStillLandsWhole(t *testing.T) {
+	f := newFixture(t)
+	base := "/" + f.ws.ID + "/" + f.it.ID + "/Files/raw/ok.bin"
+	const n = 3 << 20 // real bytes, well inside every ceiling
+
+	f.do("PUT", base, f.token, nil)
+	r := httptest.NewRequest("PATCH", base+"?action=append&position=0",
+		io.LimitReader(neverEndingReader{}, n))
+	r.Header.Set("Authorization", "Bearer "+f.token)
+	w := httptest.NewRecorder()
+	f.svc.ServeHTTP(w, r)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("append = %d %s", w.Code, w.Body.String())
+	}
+	// Flush at the true length: this is exactly the check that exposed the
+	// original truncation, so it is the right one to assert now.
+	if w := f.do("PATCH", base+"?action=flush&position="+strconv.Itoa(n), f.token, nil); w.Code != http.StatusOK {
+		t.Fatalf("flush at the real length = %d %s — the body did not arrive whole",
+			w.Code, w.Body.String())
+	}
+	if got := f.do("GET", base, f.token, nil); got.Body.Len() != n {
+		t.Fatalf("stored %d bytes of %d", got.Body.Len(), n)
 	}
 }

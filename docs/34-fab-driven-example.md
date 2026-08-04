@@ -79,11 +79,40 @@ shortened file and no signal at all.** Every other client this project has
 driven — delta-rs, the Azure SDK, Hadoop's ABFS driver — chunks its uploads, so
 none had ever crossed the ceiling.
 
-Fixed in `internal/onelake`: the ceiling is now a rejection threshold
-(`RequestBodyTooLarge`, 413) rather than a truncation point, and it is 100 MiB
-to match what ADLS Gen2 documents. `TestOversizedWriteIsRefusedNotTruncated`
-asserts that a refused write leaves **nothing** stored — a 413 with a fragment
-behind it would still be corruption, just better-labelled.
+Fixed as a CLASS, not as one site. The idiom appeared **nine times**, and only
+this one had ever been reached:
+
+| Where | What a truncated body became |
+|---|---|
+| OneLake DFS append | the file, stored short (the one `fab cp` hit) |
+| OneLake DFS create-with-body | the file |
+| OneLake Blob Put Blob / Put Block | the file |
+| OneLake Blob block list | a mis-parsed commit, reported as bad XML |
+| VS Code resource PUT | the file, **with nothing parsing it** |
+| VS Code notebook content PUT | the notebook definition |
+| Airflow DAG file PUT | the DAG |
+| MLflow proxy / Kusto relay | a request or a result set, silently altered |
+| Livy HC acquire | the body retained on the session |
+| Shortcut read, Key Vault, Entra, Kusto responses | data served **as** the file |
+
+Several of those "looked safe" because they parse the body afterwards, so a
+truncation 400s. That is luck, not design: the caller is told their input is
+malformed when it was merely too big, and the first site that stops parsing
+inherits the silent version.
+
+[`internal/httpx`](../internal/httpx/) now holds one `ReadBounded` that reads
+`max+1`, so "too big" is detectable, and returns **no data** on refusal — handing
+back the part that fitted is how the truncation grows back one caller at a time.
+Ceilings are named constants, and `MaxDFSAppend` is 100 MiB to match ADLS Gen2.
+
+The part that outlasts the nine fixes is
+`TestNoHandlerReadsABodyThroughABareLimitReader`: it walks the source and fails
+on the banned idiom, with an explicit `bounded-read-exempt:` marker for the two
+places that genuinely discard what they read — and a second test pinning that
+exemption list, so the escape hatch cannot quietly widen. Every site also has a
+behavioural test asserting 413, and one asserting that a refused write leaves
+**nothing** behind: a 413 with a fragment after it is still corruption, just
+better-labelled.
 
 ### `mssparkutils` did not exist
 
