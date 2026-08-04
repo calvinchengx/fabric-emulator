@@ -1,0 +1,129 @@
+# Release notes — next tag (draft)
+
+Draft for the tag after `v0.15.3`, covering 49 commits. **Suggest `v0.16.0`, not
+a patch:** four changes below alter behaviour a client can observe, and one of
+them rejects a connection that previously worked.
+
+Not published. Cut the tag when you are ready; nothing here tags or publishes.
+
+---
+
+## Breaking changes — read these first
+
+**A TDS connection must now name a database.** Previously, connecting with no
+database name skipped `OnConnect` — the only place a connection's workspace role
+and read-only-ness are decided — leaving the session on the backend's default
+pool under the emulator's privileged credential. A token with no role on any
+workspace could run arbitrary read/write T-SQL. Real Fabric requires a database
+on the connection, so rejecting is both the faithful answer and the safe one.
+Any client that connected without `database=` must now supply the item id.
+
+**Delta `string` now reflects as `varchar`, not `nvarchar`.** Fabric documents
+`STRING -> varchar(8000)` for a Lakehouse SQL analytics endpoint, and says of
+nvarchar: "Use char and varchar respectively, as there's no similar unicode data
+type in Parquet." We emitted `NVARCHAR(4000)`. If you pinned the old value —
+in a probe, a test, or a generated model — it moves. The collation Fabric
+declares (`Latin1_General_100_BIN2_UTF8`) is deliberately *not* emitted, because
+it changes comparison and sort semantics.
+
+**Nested columns (`struct`/`array`/`map`) are now omitted rather than
+materialised.** They never worked: the reader assigned Parquet *leaf* values by
+position, so one nested column took another field's leaf and displaced **every
+column after it**, dropping the real values, with nothing raised. Fabric does
+not represent these types at all, so the column is now dropped and the rest of
+the table is correct. **If you have a nested column, columns that previously
+returned (wrong) values will now be absent** — which is the point. The omitted
+names are logged.
+
+**Event triggers no longer suppress independent firings.** Two files landing in
+one watched folder used to start one job; they now start two, because Fabric's
+Activator "continues monitoring without waiting for the action to complete". A
+runaway is bounded by an activation count (50 — Fabric's own documented
+`Activations/user/minute`) rather than by trigger identity.
+
+---
+
+## The SQL analytics endpoint type map
+
+Four types were wrong in both directions. `date`, `timestamp` and `int` all
+arrived as Go `int64` and reflected as `bigint`; `binary` arrived as a string and
+reflected as `nvarchar`.
+
+| Delta | before | now |
+|---|---|---|
+| `date` | `bigint` | `date` |
+| `timestamp` | `bigint` | `datetime2` |
+| `int` | `bigint` | `int` |
+| `binary` | `nvarchar` | `varbinary` |
+| `string` | `nvarchar` | `varchar` |
+| `decimal(p,s)` | `decimal(p,s)` | unchanged — and now also **mirrors** SQL→Delta with its declared precision and scale |
+
+It failed two ways and the quiet one was worse: a join against a real date died
+with `Operand type clash: date is incompatible with bigint`, but a plain
+`SELECT` returned `20627` — a plausible integer nothing marks as a date, which a
+report or semantic model carries straight through.
+
+**If you worked around this** by carrying dates as ISO text and joining
+`nvarchar` to `nvarchar`, that remains correct on this build — a string column is
+a string column — so removing it is tidying, not repair. Unwind **all** coupled
+sites at once; a partial unwind puts a real `date` on one side of a join and text
+on the other, reinstating the clash.
+
+---
+
+## Security and data integrity
+
+- **RBAC bypass on the TDS surface** — see Breaking changes above.
+- **`CREATE TABLE AS SELECT` spliced `INTO` into the wrong statement.** A CTAS
+  whose own `SELECT` had no depth-0 `FROM` found one belonging to a later
+  statement, so `CREATE TABLE t AS SELECT 1 AS x; SELECT b FROM other` filled `t`
+  from `other` — silently, on every batch, RPC parameter and `EXEC('…')` literal.
+- **A self-referential DAX measure took the whole process down.** `M = [M]`
+  recursed without bound, and Go treats stack overflow as fatal — one
+  `executeQueries` request killed every other in-flight request. Also fixed:
+  `SUM()`/`COUNTROWS()` panicked on a zero-argument call a client can send.
+- **The event bus panicked on shutdown**, on the writer's own goroutine, failing
+  a request that had already committed.
+- **A JWT with no `exp` never expired.** Honoured forever here, refused by real
+  Entra, which requires the claim.
+- **Concurrent OneLake appends lost data.** The length read and the update were
+  separate statements, so two appends at the same offset both won.
+- **Staged upload blocks grew without bound** — routine with delta-rs, which
+  retries a lost commit under a new blob key and abandons the previous staging.
+- **The MLflow proxy read upstream responses unbounded.**
+
+## Correctness
+
+- **A single-file TMDL semantic model was parsed as TMSL** and failed with a JSON
+  error about a file containing no JSON. Models split across several `.tmdl`
+  files always worked, which is why nothing caught it.
+- **Nested CTE aliases became phantom lineage edges** — a real edge written for a
+  table that never existed.
+- **A lineage migration would have failed every upgrade** from an older build,
+  inserting 12 values into a 13-column table. Invisible because tests only ever
+  open a fresh database.
+- **Direct Lake lineage, VS Code authorization, the Blob dialect's RBAC gate and
+  five cross-workspace MLflow authorization branches** were all claimed but never
+  executed by any test. Each is now covered; none was broken.
+
+## Tooling and CI
+
+- The witness checker now resolves which witnesses can **skip** — including
+  transitively, through a helper — and fails on an undeclared gate or a claim
+  whose every witness is gated. It had also been parsing **zero claims on
+  Windows** for its whole life, silently.
+- `dbt` invocations pass `--no-partial-parse`: a cached manifest could shrink the
+  test set and still exit 0.
+- The Spark image no longer installs a JDK via apt (it conflicted with the base
+  image's own Temurin JRE), and its Maven jars are cached rather than re-fetched.
+- New engine-matrix probes for `read.text(wholetext=True)` and
+  `read.json(multiLine=True)`.
+
+## Known issues
+
+- **Nested types are not representable.** Omitted, matching Fabric. If you need
+  them through SQL, stringify in Spark first.
+- **`decimal` in the mirror (SQL→Delta) direction** carries precision and scale;
+  the nested types have no kind at all in that direction either.
+- The trigger activation bound cannot distinguish 50 nested activations from 50
+  concurrent independent ones; it bounds both.
