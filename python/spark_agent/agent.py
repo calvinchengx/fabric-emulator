@@ -186,7 +186,21 @@ def run_code(code, g):
         if result is not None:
             text += repr(result)
         return {"status": "ok", "execution_count": 0, "data": {"text/plain": text}}
-    except Exception:
+    except Exception as exc:
+        # A graceful notebook exit surfaces here as an exception named
+        # _NotebookExit (raised by the driver prelude's patched
+        # notebookutils.notebook.exit). Stash its value in THIS session's
+        # globals — the prelude cannot: each session's prelude re-patches the
+        # one shared notebookutils module, so under concurrent notebook runs
+        # the raising function belongs to whichever session ran its prelude
+        # last, and its `global __nb_exit__` writes into that session's
+        # namespace, not the caller's. Observed both ways: SUCCESS exits
+        # recorded Failed, and the dual — a real failure inheriting another
+        # run's exit value — would read as a false green. Matching by type
+        # NAME, not identity, for the same reason: every session defines its
+        # own _NotebookExit class.
+        if type(exc).__name__ == "_NotebookExit":
+            g["__nb_exit__"] = str(exc)
         tb = traceback.format_exc().splitlines()
         return {"status": "error", "ename": "Error", "evalue": tb[-1] if tb else "error", "traceback": tb}
 

@@ -330,14 +330,19 @@ func TestNotebookPreludeBindsBothFabricSpellings(t *testing.T) {
 	for _, spelling := range []string{"notebookutils", "mssparkutils"} {
 		t.Run(spelling, func(t *testing.T) {
 			want := "value-from-" + spelling
+			// The prelude's whole contract is: exit() RAISES, and the raise
+			// CARRIES the value (str(e) is what the agent stashes into
+			// __nb_exit__ for the session that ran the cell — the prelude
+			// itself must not write it, see the prelude comment on concurrent
+			// runs). So that is exactly what is asserted.
 			probe := notebookPrelude + fmt.Sprintf(`
-exited = False
+exited = None
 try:
     %s.notebook.exit(%q)
-except _NotebookExit:
-    exited = True
-assert exited, "exit() returned instead of raising; later cells would still run"
-print(__nb_exit__)
+except _NotebookExit as e:
+    exited = str(e)
+assert exited is not None, "exit() returned instead of raising; later cells would still run"
+print(exited)
 `, spelling, want)
 			out, err := osexec.Command(py, "-c", probe).CombinedOutput()
 			if err != nil {
