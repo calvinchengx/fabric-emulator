@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -71,6 +72,17 @@ func TestLoadFailureModes(t *testing.T) {
 // argument could be changed to 0644 without moving the coverage number at all
 // while making the emulator's key readable by every account on the host.
 func TestPersistedKeyIsNotWorldReadable(t *testing.T) {
+	// Windows has no POSIX mode bits: Go's os.WriteFile maps them to the
+	// read-only attribute and Stat reports 0666 (or 0444) whatever was passed,
+	// so the assertion below measures nothing there. Skipped rather than
+	// weakened — the emulator ships as a distroless Linux container, which is
+	// where a world-readable key would actually be exposed, and loosening the
+	// check to satisfy Windows would stop it failing on the platform that
+	// matters.
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are not POSIX on Windows; Stat reports 0666 regardless")
+	}
+
 	dir := t.TempDir()
 	if _, err := Load(dir); err != nil {
 		t.Fatal(err)
