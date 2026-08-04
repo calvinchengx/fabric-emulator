@@ -822,3 +822,52 @@ func TestBlobHeadAndGetOnSomethingThatIsNotABlob(t *testing.T) {
 		}
 	}
 }
+
+// TestCopyBlobRefusesASourceItCannotVerify.
+//
+// Copy Blob resolves the source itself before writing anything. Each refusal
+// below had never executed, and the failure they prevent is the bad kind: a
+// copy that "succeeds" having written an empty or wrong blob, because the
+// source it named was never checked.
+//
+// Azure answers CannotVerifyCopySource for these, so the error code is part of
+// the contract — a client distinguishes "your source is wrong" from "your
+// destination is wrong" by it.
+func TestCopyBlobRefusesASourceItCannotVerify(t *testing.T) {
+	f := newFixture(t)
+	dst := "/" + f.ws.ID + "/" + f.it.ID + "/Files/dst.txt"
+	missing := "00000000-0000-0000-0000-0000000000ff"
+
+	for _, tc := range []struct {
+		name, source, code string
+		status             int
+	}{
+		{"a workspace that does not exist",
+			"http://x/" + missing + "/" + f.it.ID + "/Files/src.txt",
+			"CannotVerifyCopySource", http.StatusNotFound},
+		{"an item that does not exist",
+			"http://x/" + f.ws.ID + "/" + missing + "/Files/src.txt",
+			"CannotVerifyCopySource", http.StatusNotFound},
+		{"a source that is not a URL at all",
+			"http://\x7f/bad", "InvalidHeaderValue", http.StatusBadRequest},
+		{"a source naming no path",
+			"http://x/" + f.ws.ID, "InvalidHeaderValue", http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := f.doBlob("PUT", dst, f.token, nil,
+				map[string]string{"x-ms-copy-source": tc.source})
+			if w.Code != tc.status {
+				t.Errorf("status = %d, want %d (%s)", w.Code, tc.status, w.Body.String())
+			}
+			if got := w.Header().Get("x-ms-error-code"); got != tc.code {
+				t.Errorf("error code = %q, want %q", got, tc.code)
+			}
+		})
+	}
+
+	// And nothing was written: a refused copy must not leave a destination
+	// behind, or a retry would find a blob it never created.
+	if w := f.doBlob("GET", dst, f.token, nil, nil); w.Code != http.StatusNotFound {
+		t.Errorf("a refused copy left a destination behind (GET = %d)", w.Code)
+	}
+}

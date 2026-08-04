@@ -1434,3 +1434,101 @@ func TestCopyCsvIntoDeltaTableAppends(t *testing.T) {
 		t.Fatalf("Overwrite should replace: %v rows=%v", err, tbl)
 	}
 }
+
+// TestCopySinkActionDefaultsToOverwrite.
+//
+// The sink's tableActionOption decides whether a Copy appends or overwrites,
+// and every way of NOT saying so has to mean overwrite. Three of those ways
+// had never been exercised: no sink at all, a sink without the option, and an
+// expression that resolves to nothing.
+//
+// Defaulting the wrong way is not a crash, it is a table that doubles on every
+// run — which looks like a source problem for as long as it takes someone to
+// count rows.
+func TestCopySinkActionDefaultsToOverwrite(t *testing.T) {
+	e := &pipelineExecutor{}
+	keep := func(raw json.RawMessage) (any, error) { return string(raw), nil }
+
+	for _, tc := range []struct {
+		name string
+		tp   map[string]json.RawMessage
+		want string
+	}{
+		{"no sink at all", map[string]json.RawMessage{}, ""},
+		{"a sink that is not an object",
+			map[string]json.RawMessage{"sink": json.RawMessage(`"nonsense"`)}, ""},
+		{"a sink with no tableActionOption",
+			map[string]json.RawMessage{"sink": json.RawMessage(`{"other":1}`)}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := e.copySinkAction(tc.tp, keep)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("action = %q, want %q (empty means Overwrite)", got, tc.want)
+			}
+			if strings.EqualFold(got, "Append") {
+				t.Error("an unstated action resolved to Append — a table that " +
+					"doubles every run")
+			}
+		})
+	}
+
+	// A stated Append is still honoured, so the default is a default and not a
+	// hard-coded answer.
+	got, err := e.copySinkAction(map[string]json.RawMessage{
+		"sink": json.RawMessage(`{"tableActionOption":"Append"}`)}, keep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "Append") {
+		t.Errorf("a stated Append resolved to %q", got)
+	}
+
+	// And a resolver that fails propagates, rather than silently overwriting.
+	boom := func(json.RawMessage) (any, error) { return nil, fmt.Errorf("unresolved") }
+	if _, err := e.copySinkAction(map[string]json.RawMessage{
+		"sink": json.RawMessage(`{"tableActionOption":"@pipeline().x"}`)}, boom); err == nil {
+		t.Error("an unresolvable tableActionOption was swallowed; a Copy would " +
+			"then overwrite on a expression the author expected to append")
+	}
+}
+
+// TestCopyIntoTableFailsOnAMalformedSourceRatherThanFallingBack.
+//
+// copyIntoTable has two ways of not producing a table, and they must not be
+// confused. A source that is not a table at all — a directory, a format this
+// does not parse — falls back to the opaque byte copy, "rather than failing a
+// Copy that used to work". But a source that CLAIMS to be a table and cannot be
+// parsed is an error: falling back there would write the raw bytes into
+// Tables/<name>, leaving something that is not a Delta table where a reader
+// expects one, and reporting success.
+//
+// The parse-failure arm had never executed.
+func TestCopyIntoTableFailsOnAMalformedSourceRatherThanFallingBack(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	// A CSV whose rows disagree with its header — encoding/csv rejects it.
+	seedFile(t, st, ws.ID, lh.ID, "Files/landing/bad.csv",
+		[]byte("id,name\n1,ada,surplus\n"))
+	loc := `"datasetSettings":{"linkedService":{"properties":{"typeProperties":{"artifactId":"` + lh.ID + `"}}}}`
+
+	content := `{"properties":{"activities":[
+      {"name":"Ingest","type":"Copy","typeProperties":{
+        "source":{"type":"DelimitedTextSource","rootFolder":"Files","folderPath":"landing","fileName":"bad.csv",` + loc + `},
+        "sink":{"type":"LakehouseTableSink","tableActionOption":"Overwrite","table":"bronze_bad",` + loc + `}
+      }}]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("status = %s; a source that claims to be a table and will not "+
+			"parse must FAIL, not fall back to copying raw bytes into Tables/", s)
+	}
+	// And nothing was written where a Delta table belongs.
+	if _, err := warehouse.ReadDeltaTable(st, lh.ID, "bronze_bad"); err == nil {
+		t.Error("a failed table copy left something readable at Tables/bronze_bad")
+	}
+}
