@@ -12,9 +12,12 @@ it:
     cannot do this one: JSON Lines is not a tabular source it parses into a
     table, and semi-structured input is exactly what a notebook is for.
 
-A notebook's cells are executed by a real Spark engine in `engine.py` — the
-emulator parses a notebook into cells and records a Pending run, but never runs
-it. That split is real Fabric's too, just with the engine attached for you.
+Fabric's notebook activity is SYNCHRONOUS: the pipeline gates on the notebook's
+terminal state, which is what makes `dependsOn: Succeeded` mean anything. With a
+Spark agent attached the emulator drives the run itself and the activity reports
+that terminal state, exactly as a Fabric pipeline does. `engine.py` still shows
+the other half of the contract — the `notebookRunResult` callback an external
+engine uses.
 """
 import json
 
@@ -76,8 +79,10 @@ copy_out = runs["IngestCustomers"]["output"]
 assert copy_out["rowsCopied"] == src.EXPECTED_BRONZE_CUSTOMERS, copy_out
 log(f"Copy activity landed {copy_out['rowsCopied']} customer rows in Tables/bronze_customers")
 
-# The notebook activity started a real run; an engine executes it next.
+# The activity gated on the notebook: it reports the run's terminal state, not
+# a queued one. A pipeline cannot depend on an activity that always says
+# "Pending", which is why Fabric's is synchronous.
 nb_out = runs["IngestOrders"]["output"]
-assert nb_out["status"] == "Pending", f"expected a run awaiting an engine: {nb_out}"
+assert nb_out["status"] == "Completed", f"expected a finished run: {nb_out}"
 save(bronze_pipeline=pl, orders_notebook=nb, orders_job=nb_out["jobInstanceId"])
-log(f"Notebook activity queued run {nb_out['jobInstanceId']} — Spark executes it in engine.py")
+log(f"Notebook activity ran {nb_out['jobInstanceId']} to completion")

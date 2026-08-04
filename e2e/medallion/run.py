@@ -25,7 +25,14 @@ import sys
 DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(DIR))
 EXAMPLE = os.path.join(REPO, "examples", "medallion-pyspark")
-SERVICES_TO_LOG = ["fabric-emulator", "sqlserver", "keyvault-emulator", "sail"]
+# spark-agent is in this list because it EXECUTES the notebook cells. Since the
+# notebook activity became synchronous the emulator drives the run through the
+# agent, so a failing cell's traceback lives there and nowhere else — the
+# emulator only logs "notebook drive … start" and then reports
+# NotebookExecutionFailed. Without the agent's tail, a CI failure says a cell
+# failed and cannot say why.
+SERVICES_TO_LOG = ["fabric-emulator", "spark-agent", "sqlserver",
+                   "keyvault-emulator", "sail"]
 
 # The endpoints a reader uses: the stack's published ports over its self-signed
 # TLS. KV_INTERNAL_URL is the one that differs in kind — Fabric resolves an
@@ -88,4 +95,7 @@ def run(example=EXAMPLE, label="medallion", profiles=()):
 
 
 if __name__ == "__main__":
-    sys.exit(run())
+    # profiles=("livy",): the notebook activity is synchronous, so the
+    # emulator needs the Spark agent to execute the cells. MEASURING whether
+    # that costs the PySpark legs what the agent's profile comment claims.
+    sys.exit(run(profiles=("livy",)))
