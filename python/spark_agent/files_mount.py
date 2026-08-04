@@ -41,6 +41,16 @@ def sync(workspace: str, lakehouse: str) -> dict:
     not raised: a missing Files/ area is the normal state of a fresh lakehouse
     and must not fail session creation.
     """
+    # The notebookutils package ships under /app/python, which reaches sys.path
+    # when a SESSION initialises (agent._notebookutils). /mount arrives at
+    # session BIND, before any statement, so on a fresh agent that path is not
+    # there yet and a bare import fails — which made the first notebook run
+    # after every agent recreate silently lose its mount while all later runs
+    # worked. Ensure the path ourselves; never depend on call order.
+    import sys
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if pkg_root not in sys.path:
+        sys.path.insert(0, pkg_root)
     try:
         from notebookutils import fs
     except ImportError:  # pragma: no cover - image without the package
