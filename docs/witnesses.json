@@ -321,7 +321,8 @@
     "claim": "**Lakehouse SQL analytics endpoint — Delta → engine**",
     "witnesses": [
       "ci:warehouse-tds",
-      "go:TestWarehouseDeltaReflectionE2E"
+      "go:TestWarehouseDeltaReflectionE2E",
+      "ci:medallion"
     ]
   },
   "warehouse-read-write-t-sql": {
@@ -370,8 +371,13 @@
     "claim": "Per-column type fidelity (real SQL types over the wire)",
     "witnesses": [
       "go:TestResultTypeFidelity",
-      "go:TestReflectDecimalColumn"
-    ]
+      "go:TestReflectDecimalColumn",
+      "go:TestReflectedSQLTypesMatchFabric",
+      "go:TestNestedColumnsAreOmittedNotFabricated",
+      "go:TestDeltaStringReflectsAsVarchar",
+      "ci:medallion"
+    ],
+    "note": "The Go witnesses prove the MAP (a Parquet column of each logical type reflects to the right SQL type). ci:medallion proves the ROUTE: e2e/type-map/probe.py writes the nine types from Spark and reads INFORMATION_SCHEMA back over ODBC, which no Go test can cover because neither end of that seam is Go."
   },
   "connection-by-item-name-vs-guid": {
     "section": "Data Warehouse (`data-warehouse/`)",
