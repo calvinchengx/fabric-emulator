@@ -731,3 +731,94 @@ func TestBlockStageFreesOnCommit(t *testing.T) {
 			st.bytes, len(st.blocks))
 	}
 }
+
+// TestBlobRefusesBelowContributor.
+//
+// The Blob dialect is what delta-rs speaks, so this gate is what stops a
+// principal with read-only rights from writing Delta into a workspace. It had
+// never executed: every blob test used the admin token, so the whole
+// `RoleRank(role) < Contributor` branch was dark, and so was the case of a
+// principal with no assignment at all.
+func TestBlobRefusesBelowContributor(t *testing.T) {
+	f := newFixture(t)
+	path := "/" + f.ws.ID + "/" + f.it.ID + "/Tables/t/part-0.parquet"
+
+	// Seed a blob as admin so the refusals below cannot pass merely because
+	// there is nothing there to read.
+	if w := f.doBlob("PUT", path, f.token, []byte("PAR1"), nil); w.Code != http.StatusCreated {
+		t.Fatalf("seed put = %d %s", w.Code, w.Body.Bytes())
+	}
+
+	// A Viewer is below Contributor: OneLake API access requires ReadAll.
+	if err := f.st.CreateRoleAssignment(&store.RoleAssignment{
+		WorkspaceID: f.ws.ID,
+		Principal:   store.Principal{ID: "viewer-1", Type: "User"},
+		Role:        store.RoleViewer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	viewer := f.storageToken("viewer-1")
+
+	for _, tc := range []struct{ method string }{{"GET"}, {"HEAD"}, {"PUT"}, {"DELETE"}} {
+		var body []byte
+		if tc.method == "PUT" {
+			body = []byte("overwritten")
+		}
+		w := f.doBlob(tc.method, path, viewer, body, nil)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s as Viewer = %d %s; want 403", tc.method, w.Code, w.Body.Bytes())
+			continue
+		}
+		if code := w.Header().Get("x-ms-error-code"); code != "AuthorizationFailure" &&
+			tc.method != "HEAD" {
+			t.Errorf("%s as Viewer error code = %q; want AuthorizationFailure", tc.method, code)
+		}
+	}
+
+	// A principal with NO assignment in the workspace is refused the same way.
+	stranger := f.storageToken("stranger-1")
+	if w := f.doBlob("GET", path, stranger, nil, nil); w.Code != http.StatusForbidden {
+		t.Errorf("GET as an ungranted principal = %d; want 403", w.Code)
+	}
+
+	// The refusals changed nothing.
+	if w := f.doBlob("GET", path, f.token, nil, nil); w.Code != http.StatusOK ||
+		w.Body.String() != "PAR1" {
+		t.Fatalf("content after refused writes = %d %q", w.Code, w.Body.String())
+	}
+}
+
+// TestBlobHeadAndGetOnSomethingThatIsNotABlob: a directory is not a blob, and
+// neither is a path that was never written. Answering 200 for a directory would
+// hand object_store an empty body for a prefix it is about to list.
+func TestBlobHeadAndGetOnSomethingThatIsNotABlob(t *testing.T) {
+	f := newFixture(t)
+	base := "/" + f.ws.ID + "/" + f.it.ID
+	if w := f.doBlob("PUT", base+"/Tables/t/part-0.parquet", f.token, []byte("PAR1"), nil); w.Code != http.StatusCreated {
+		t.Fatalf("seed put = %d", w.Code)
+	}
+
+	// An EXPLICIT directory row, which is what a mkdir through the DFS surface
+	// leaves behind. The implied directory below is a different case: it has no
+	// row at all, so it 404s on the lookup rather than on the IsDir check, and
+	// a test that used only that one would never reach the IsDir branch.
+	if err := f.st.CreateOneLakePath(&store.OneLakePath{
+		WorkspaceID: f.ws.ID, ItemID: f.it.ID, RelPath: "Files/adir",
+		IsDir: true, Content: []byte{},
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, target := range []string{
+		base + "/Files/adir",             // an explicit directory row
+		base + "/Tables/t",               // a directory implied by the blob above
+		base + "/Tables/t/never-written", // nothing there
+	} {
+		for _, method := range []string{"HEAD", "GET"} {
+			w := f.doBlob(method, target, f.token, nil, nil)
+			if w.Code != http.StatusNotFound {
+				t.Errorf("%s %s = %d %s; want 404", method, target, w.Code, w.Body.Bytes())
+			}
+		}
+	}
+}
