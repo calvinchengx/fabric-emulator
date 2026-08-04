@@ -98,8 +98,13 @@ except Exception:
 // a caller polls. Blocking the POST until a notebook finished would be a
 // different API from the one Fabric offers, and a long notebook would time the
 // client out on a request that was working perfectly.
+// notebookSessionID is the Livy session a notebook run executes in. One
+// definition, because the pipeline activity reports it as result.sessionId and a
+// second spelling would report a session that never existed.
+func notebookSessionID(jid string) string { return "notebook-" + jid }
+
 func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map[string]any) {
-	session := "notebook-" + jid
+	session := notebookSessionID(jid)
 
 	// A goroutine that dies silently is why a notebook can leave every cell
 	// Pending under a job nobody can explain. Nothing here logged, and a panic

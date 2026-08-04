@@ -32,6 +32,42 @@ type pipelineExecutor struct {
 	chain []string
 }
 
+// notebookActivityOutput builds the notebook activity's `output` object.
+//
+// Fabric publishes no schema for it. The REST definition specifies the
+// activity's INPUT, and the only published output sample belongs to the Synapse
+// ancestor, so that sample is the closest thing to a specification that exists
+// and is what this mirrors: result.{runId, runStatus, sessionId, exitCode}.
+//
+// exitValue rides alongside exitCode because the sources disagree on the name
+// and real pipelines are written against both: Synapse's prose and Fabric's
+// portal say exitValue, while Synapse's own output sample names the field
+// exitCode. Emitting both means either expression resolves, instead of betting
+// the run on one spelling. jobInstanceId is an emulator extension, kept because
+// it correlates the activity to the job the emulator created and nothing in
+// Fabric's output does. An extra field costs nothing (an expression that does
+// not name it cannot see it); a missing documented one breaks a real pipeline.
+//
+// sessionID is empty when no engine ran the notebook, and then no sessionId is
+// reported at all, because there was no session.
+func notebookActivityOutput(jobID, notebookID, status, exitValue, sessionID string) map[string]any {
+	result := map[string]any{
+		"runId":     jobID,
+		"runStatus": status,
+		"exitCode":  exitValue,
+		"exitValue": exitValue,
+	}
+	if sessionID != "" {
+		result["sessionId"] = sessionID
+	}
+	return map[string]any{
+		"status":        status,
+		"notebookId":    notebookID,
+		"jobInstanceId": jobID,
+		"result":        result,
+	}
+}
+
 func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawMessage) (any, error)) (map[string]any, error) {
 	tp := map[string]json.RawMessage{}
 	_ = json.Unmarshal(act.TypeProperties, &tp)
@@ -45,8 +81,31 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 			return nil, fmt.Errorf("notebook activity %q: notebookId is required", act.Name)
 		}
 		nbID := fmt.Sprint(idv)
-		nb, err := e.a.Store.GetItem(e.wid, nbID)
+		// workspaceId says WHICH workspace holds the notebook, and Fabric marks
+		// it required alongside notebookId precisely because the notebook need
+		// not live beside the pipeline. Ignoring it and always reading the
+		// pipeline's own workspace turns a legitimate cross-workspace activity
+		// into "no notebook %q in this workspace", which blames the id for a
+		// property that was in fact supplied and correct. Absent, it defaults to
+		// the pipeline's workspace, which is the single-workspace shape.
+		nbWID := e.wid
+		if raw, ok := tp["workspaceId"]; ok && len(raw) > 0 {
+			wv, werr := resolve(raw)
+			if werr != nil {
+				return nil, fmt.Errorf("notebook activity %q: workspaceId: %v", act.Name, werr)
+			}
+			// The zero GUID is Fabric's own sentinel for "this pipeline's
+			// workspace" (it is what a same-workspace activity carries in Git),
+			// so it must resolve to e.wid rather than be looked up literally.
+			if s := fmt.Sprint(wv); wv != nil && s != "" && s != "00000000-0000-0000-0000-000000000000" {
+				nbWID = s
+			}
+		}
+		nb, err := e.a.Store.GetItem(nbWID, nbID)
 		if err != nil || nb.Type != "Notebook" {
+			if nbWID != e.wid {
+				return nil, fmt.Errorf("notebook activity %q: no notebook %q in workspace %q", act.Name, nbID, nbWID)
+			}
 			return nil, fmt.Errorf("notebook activity %q: no notebook %q in this workspace", act.Name, nbID)
 		}
 		// The activity's parameters become the run's parameter overrides — the
@@ -71,6 +130,20 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 				v, err := resolve(target)
 				if err != nil {
 					return nil, fmt.Errorf("notebook activity %q parameter %q: %v", act.Name, name, err)
+				}
+				// Fabric takes "simple types such as int, float, bool, and
+				// string"; "complex types such as list and dict aren't yet
+				// supported". Rendering one anyway would be the emulator being
+				// MORE permissive than the thing it emulates, which is the one
+				// direction that actively misleads: the pipeline passes here and
+				// fails in Fabric, so the emulator has certified something it
+				// cannot vouch for. Refuse it here, where the activity contract
+				// lives, before the notebook runs.
+				switch v.(type) {
+				case []any, map[string]any:
+					return nil, fmt.Errorf(
+						"notebook activity %q parameter %q: Fabric notebook parameters support only int, float, bool and string; list and dict are not supported",
+						act.Name, name)
 				}
 				nbParams[name] = v
 			}
@@ -109,7 +182,7 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// external engine's callback, which is the original contract and the
 		// only honest answer when nothing can execute the cells.
 		if e.a.runsNotebooksItself() && len(run.Cells) > 0 {
-			e.a.driveNotebookRun(e.wid, nb.ID, j.ID, run, nbParams)
+			e.a.driveNotebookRun(nbWID, nb.ID, j.ID, run, nbParams)
 			status, runJSON, err := e.a.Store.GetNotebookRun(j.ID)
 			if err != nil {
 				return nil, fmt.Errorf("notebook activity %q: run detail lost: %v", act.Name, err)
@@ -124,10 +197,7 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 				}
 				return nil, fmt.Errorf("notebook activity %q: notebook run ended %s", act.Name, status)
 			}
-			return map[string]any{
-				"jobInstanceId": j.ID, "notebookId": nb.ID, "status": status,
-				"result": map[string]any{"exitValue": detail.ExitValue},
-			}, nil
+			return notebookActivityOutput(j.ID, nb.ID, status, detail.ExitValue, notebookSessionID(j.ID)), nil
 		}
 		// No engine: the run is Pending until one executes the cells and
 		// reports back; say that rather than claiming a completion that has
@@ -136,7 +206,7 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		if err != nil || status == "" {
 			status = "Pending"
 		}
-		return map[string]any{"jobInstanceId": j.ID, "notebookId": nb.ID, "status": status}, nil
+		return notebookActivityOutput(j.ID, nb.ID, status, "", ""), nil
 
 	case "ExecutePipeline", "InvokePipeline":
 		// Invoke pipeline: resolve the referenced DataPipeline and run it for
