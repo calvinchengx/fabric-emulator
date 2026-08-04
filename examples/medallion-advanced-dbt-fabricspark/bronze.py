@@ -15,11 +15,9 @@ it:
 Fabric's notebook activity is SYNCHRONOUS: the pipeline gates on the notebook's
 terminal state, which is what makes `dependsOn: Succeeded` mean anything. With a
 Spark agent attached the emulator drives the run itself and the activity reports
-that terminal state, exactly as a Fabric pipeline does.
-
-There is no separate `engine.py` step: the activity runs the notebook. The other
-half of the contract — the `notebookRunResult` callback an external engine posts
-back — is covered by `e2e/notebook-run`.
+that terminal state, exactly as a Fabric pipeline does. `engine.py` still shows
+the other half of the contract — the `notebookRunResult` callback an external
+engine uses.
 """
 import json
 
