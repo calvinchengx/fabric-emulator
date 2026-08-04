@@ -289,6 +289,15 @@ def _remember_location(name, location, schema=None):
     delta_ops.remember(name, location, schema)
 
 
+def _remember_schema_location(name, location):
+    """Tell delta_ops where a schema lives. Same tolerance as tables above."""
+    try:
+        import delta_ops
+    except ImportError:
+        return
+    delta_ops.remember_schema(name, location)
+
+
 def register_tables(session, schema, tables, schemas=None):
     """Declare a lakehouse's Delta tables in this REPL's Spark catalog.
 
@@ -328,6 +337,9 @@ def register_tables(session, schema, tables, schemas=None):
             continue
         try:
             spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{sname}` LOCATION '{sloc}'")
+            # Recorded for delta_ops: a CTAS naming this schema must land at
+            # this location, and Sail's own CTAS placement ignores it.
+            _remember_schema_location(sname, sloc)
         except Exception:
             failed.append(f"schema {sname}: {traceback.format_exc().splitlines()[-1]}")
     for t in tables:
