@@ -38,10 +38,40 @@ describe('Models', () => {
     render(Models);
     await waitFor(() => expect(screen.getByText('ContosoRevenue')).toBeInTheDocument());
     // The summary is the point of the collapsed row: counts, not contents.
-    expect(screen.getByText('1 table, 1 measures, 1 relationship')).toBeInTheDocument();
+    //
+    // This line read `1 measures` for a long time, and this test asserted it —
+    // written from what the component printed rather than from the rule it was
+    // meant to follow, so it froze the typo instead of catching it. Two of the
+    // three counts pluralised and one did not, which is invisible until a model
+    // with exactly one measure exists.
+    expect(screen.getByText('1 table, 1 measure, 1 relationship')).toBeInTheDocument();
     // DAX must NOT be on screen until asked for — a page that opens with every
     // measure of every model expanded buries the list it exists to show.
     expect(screen.queryByText('SUM(Revenue[Revenue])')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [1, 1, 1, '1 table, 1 measure, 1 relationship'],
+    [2, 3, 0, '2 tables, 3 measures, 0 relationships'],
+  ])('pluralises every count independently (%i/%i/%i)', async (nt, nm, nr, want) => {
+    // All three counts, at one and at not-one. A single fixture can only ever
+    // exercise one side of each ternary, which is how `1 measures` survived.
+    const tables = Array.from({ length: nt }, (_, i) => ({
+      name: `T${i}`,
+      mode: 'import',
+      columns: [],
+      measures: i === 0 ? Array.from({ length: nm }, (_, j) => ({ name: `M${j}`, expression: 'X' })) : [],
+    }));
+    mockList([
+      {
+        ...model,
+        itemId: `m-${nt}-${nm}-${nr}`,
+        tables,
+        relationships: Array.from({ length: nr }, (_, i) => ({ name: `R${i}`, from: 'a', to: 'b' })),
+      },
+    ]);
+    render(Models);
+    await waitFor(() => expect(screen.getByText(want)).toBeInTheDocument());
   });
 
   it('expands to the columns, the DAX and the binding', async () => {
