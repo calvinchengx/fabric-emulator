@@ -188,11 +188,14 @@ Every column round-tripped: `date`→`date`, `timestamp`→`datetime2`, `int`→
 SELECT COUNT(*) FROM probe_types WHERE c_date = CAST('2026-07-15' AS date)  -- 1
 ```
 
-Two things that cost the reporter time and belong in any reproduction:
-`ensure_audience("https://database.windows.net", "Azure SQL")` has to run first
-or the token request fails `HTTP 400`, which reads as a platform fault and is
-not one; and the three image pins are independent, so rebuilding all of them
-turns one possible cause into three.
+Two things that cost the reporter time and belong in any reproduction. First,
+the token has to be minted for the **Azure SQL** audience — the reporter's
+`HTTP 400` was their own harness not registering it, which reads as a platform
+fault and is not one. That one is a CONSUMER-side caveat, not a general rule:
+inside this repo the audience is built in (`server.SQLAudience`,
+`internal/server/server.go`), so a suite here has nothing to register. Second,
+the three image pins are independent, so rebuilding all of them turns one
+possible cause into three — move only the emulator image.
 
 **What a consumer has to do until this ships.** The workaround is to carry dates
 as ISO text end to end and join `nvarchar` to `nvarchar`, which is correct on
