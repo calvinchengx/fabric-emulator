@@ -22,9 +22,37 @@ Witness kinds, deliberately distinguished because they are not equal evidence:
   boundary:...  the claim is scoped by a documented limitation, with the reason
   TODO          not yet identified — the point of --strict
 
+A witness whose NAME exists is not a witness that RAN. That gap cost real time
+twice: `TestWarehouseSQLServerRelayE2E` skips without `WAREHOUSE_MSSQL_DSN`, so
+it never ran on a laptop and a security fix broke it undetected until CI; and a
+row sat green while the code behind it executed in no test at all. Presence was
+all this script ever checked.
+
+So it now also resolves which Go witnesses can SKIP — including transitively,
+through a helper like `testsupport.OpenMSSQL` that skips on the caller's behalf,
+which is the form no reader spots. A gated witness is legitimate; an UNDECLARED
+one is not. Each must be named in the manifest's `_gated` map with its reason,
+which makes adding one a deliberate act rather than a silent downgrade of the
+evidence behind a green row.
+
+Two rules follow, both enforced under --strict:
+
+  * a gated witness that the manifest does not declare (and, symmetrically, a
+    declaration for a witness that no longer skips — a stale note is how the
+    map drifts back out of step);
+  * a claim whose witnesses are ALL gated, which is a green row that a default
+    `go test ./...` proves nothing about. That count is 0 today; the rule is
+    here to keep it there.
+
+What it still does not prove: that a witness ASSERTS the claim, or that the
+code behind the claim executes. Coverage answers the second — see AUDIT.md,
+where a green row with 0% coverage is recorded — and nothing here answers the
+first.
+
 Usage:
     check_witnesses.py            report the mapping and exit 0
-    check_witnesses.py --strict   also fail on TODO or dangling references
+    check_witnesses.py --strict   also fail on TODO, dangling refs, or an
+                                  undeclared/stale gate
 """
 import json
 import pathlib
@@ -86,6 +114,52 @@ def ci_job_ids() -> set:
     return set(re.findall(r"^  ([a-z0-9-]+):$", CI.read_text(), re.M))
 
 
+# Function bodies are taken from the `func` header to the next line that starts
+# a column-0 `}`. That is not a Go parser, and it does not need to be: it is
+# exact for gofmt'd code, which every file here is (CI runs gofmt).
+FUNC_RE = re.compile(r"^func (?:\([^)]*\)\s*)?([A-Za-z0-9_]+)\(([^)]*)\)[^{]*\{", re.M)
+SKIP_RE = re.compile(r"\.Skipf?\(")
+
+
+def go_func_bodies() -> dict:
+    """name -> list of (signature, body) for every Go func under internal/."""
+    out: dict[str, list] = {}
+    for path in (ROOT / "internal").rglob("*.go"):
+        src = path.read_text(errors="ignore")
+        for m in FUNC_RE.finditer(src):
+            tail = src[m.end():]
+            stop = re.search(r"^\}", tail, re.M)
+            body = tail[: stop.start()] if stop else tail
+            out.setdefault(m.group(1), []).append((m.group(2), body))
+    return out
+
+
+def gated_go_tests() -> dict:
+    """Go test name -> why it can skip.
+
+    Resolved to a fixed point rather than one level deep: `TestReflectDecimalColumn`
+    does not skip and contains no gate, it calls `testsupport.OpenMSSQL(t)`, which
+    skips for it. A one-level check would miss a helper that fronts another helper,
+    and the whole point is that this form is the one a reader does not see.
+    """
+    bodies = go_func_bodies()
+    takes_t = {n for n, vs in bodies.items() if any("testing.T" in sig for sig, _ in vs)}
+    gated = {n: "its own t.Skip" for n in takes_t
+             if any(SKIP_RE.search(b) for _, b in bodies.get(n, []))}
+    changed = True
+    while changed:
+        changed = False
+        for name in takes_t - set(gated):
+            for _, body in bodies.get(name, []):
+                hit = next((g for g in gated
+                            if g != name and re.search(r"\b" + re.escape(g) + r"\(", body)), None)
+                if hit:
+                    gated[name] = f"{gated[hit].replace('its own t.Skip', 'a t.Skip')} via {hit}()"
+                    changed = True
+                    break
+    return {n: why for n, why in gated.items() if n.startswith("Test")}
+
+
 def go_test_names() -> set:
     out = subprocess.run(
         ["grep", "-rhoE", r"^func (Test[A-Za-z0-9_]+)", "--include=*_test.go", str(ROOT / "internal")],
@@ -97,9 +171,15 @@ def go_test_names() -> set:
 def main() -> int:
     strict = "--strict" in sys.argv
     manifest = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
+    # `_gated` is a declaration, not a claim: witness -> why it can skip.
+    declared_gates = manifest.pop("_gated", {})
     jobs, tests = ci_job_ids(), go_test_names()
+    gated_tests = gated_go_tests()
 
     missing, dangling, todo = [], [], []
+    # witness -> reason, for the gated witnesses actually credited to a claim.
+    gated_used: dict[str, str] = {}
+    ungated_by_key: dict[str, int] = {}
     kinds = {"ci": 0, "go": 0, "boundary": 0}
     # Which claims lean on each witness — a witness covering many claims is
     # where bundling hides.
@@ -122,6 +202,13 @@ def main() -> int:
                 dangling.append(f"{key} → {witness} (no such CI job)")
             elif kind == "go" and name not in tests:
                 dangling.append(f"{key} → {witness} (no such Go test)")
+            if kind == "go" and name in gated_tests:
+                gated_used[witness] = gated_tests[name]
+            else:
+                # A boundary is not evidence that runs, so it does not count
+                # towards a claim having ungated support.
+                if kind != "boundary":
+                    ungated_by_key[key] = ungated_by_key.get(key, 0) + 1
 
     print(f"supported capability claims: {len(claims)}")
     print(f"  witnessed by a real external client (ci:) : {kinds.get('ci', 0)}")
@@ -129,6 +216,41 @@ def main() -> int:
     print(f"  scoped by a documented boundary           : {kinds.get('boundary', 0)}")
     print(f"  not yet identified (TODO)                 : {len(todo)}")
     print(f"  absent from the manifest                  : {len(missing)}")
+    print(f"  credited witnesses that can SKIP          : {len(gated_used)}")
+
+    undeclared = {w: why for w, why in gated_used.items() if w not in declared_gates}
+    stale = [w for w in declared_gates if w not in gated_used]
+    # A claim with no witness that runs unconditionally is a green row a default
+    # `go test ./...` proves nothing about.
+    unproven = [(section, feature, key) for section, feature, key in claims
+                if key in {k for _, _, k in claims}
+                and manifest.get(key) and not ungated_by_key.get(key)
+                and any(w in gated_used for w in manifest[key].get("witnesses", []))]
+
+    if gated_used:
+        n_undeclared = len(undeclared)
+        state = "all declared" if not n_undeclared else f"{n_undeclared} UNDECLARED"
+        print(f"\nWitnesses that can skip ({len(gated_used)}, {state}) — a declared")
+        print("gate is expected, not an error:")
+        # Grouped by reason: the same gate covering nine witnesses is one fact,
+        # and printing it nine times buries the one that is undeclared.
+        by_reason: dict[str, list] = {}
+        for witness, why in sorted(gated_used.items()):
+            reason = declared_gates.get(witness, "!! UNDECLARED — add it to `_gated`")
+            by_reason.setdefault(reason, []).append((witness, why))
+        for reason, entries in by_reason.items():
+            for witness, why in entries:
+                print(f"  {witness:<46} skips via {why}")
+            print(f"      → {reason}")
+    if stale:
+        print("\nStale gate declarations (these witnesses no longer skip):")
+        for witness in stale:
+            print(f"  {witness}")
+    if unproven:
+        print("\nClaims whose every witness can skip — a default test run proves")
+        print("nothing about these:")
+        for section, feature, key in unproven:
+            print(f"  [{section}] {feature[:70]}\n      key: {key}")
 
     heavy = sorted(((w, c) for w, c in shared.items() if len(c) > 3),
                    key=lambda x: -len(x[1]))
@@ -146,10 +268,25 @@ def main() -> int:
         for d in dangling:
             print(f"  {d}")
 
+    failed = False
     if strict and (missing or dangling or todo):
         print("\nFAIL: every supported claim needs an identified, existing witness.")
-        return 1
-    return 0
+        failed = True
+    if strict and undeclared:
+        print("\nFAIL: a witness that can skip must be declared in the manifest's")
+        print("`_gated` map with the reason. A gated witness is fine; an undeclared")
+        print("one silently downgrades the evidence behind a green row.")
+        for witness, why in sorted(undeclared.items()):
+            print(f'  "{witness}": "<reason>"   (skips via {why})')
+        failed = True
+    if strict and stale:
+        print("\nFAIL: remove the stale `_gated` entries above — they no longer skip,")
+        print("and a stale note is how this map drifts back out of step.")
+        failed = True
+    if strict and unproven:
+        print("\nFAIL: a claim needs at least one witness that runs unconditionally.")
+        failed = True
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
