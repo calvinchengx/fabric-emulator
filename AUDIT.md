@@ -106,10 +106,25 @@ The code found four defects that could not be seen from the docs.
   green row can cite a real-but-irrelevant witness — which is why the manifest
   carries hand-written `note` corrections. `boundary:` witnesses are counted but
   never dangling-checked.
-- **LOW** — unbounded read of the upstream MLflow response body (the sibling
-  Kusto proxy bounds its own); `RenameOneLakePath`'s existence check sits outside
-  its transaction; a nil TDS validator fails open rather than closed (latent —
-  production always sets one).
+### Also fixed (the lows)
+- **The MLflow proxy read its upstream response unbounded**, alone among this
+  package's body reads. It is relayed verbatim, so an attached server could drive
+  allocation without limit and a truncated read would serve a partial result as a
+  complete one. Bounded like the Kusto proxy beside it, and tested the same way —
+  a server streaming past the ceiling, plus the companion proving an in-ceiling
+  response still relays whole. `internal/api/mlflow.go`; tests
+  `TestAnOversizedMLflowResponseIsRefusedNotRelayedShort`,
+  `TestAnMLflowResponseInsideTheCeilingIsRelayedWhole`.
+- **`RenameOneLakePath` counted its source rows outside its own transaction.** A
+  concurrent delete in the gap produced a committed success that moved nothing.
+  Counted inside now; `TestRenameIsAtomicWithItsExistenceCheck` asserts that every
+  rename reporting success left a destination, and reproduced the phantom success
+  5 runs of 5 beforehand. `internal/store/onelake.go`.
+- **The TDS validator guard failed open.** `if s.Auth != nil` meant a server built
+  without a validator accepted every token unvalidated, on a surface that hands
+  out read/write T-SQL. It only fires on a construction mistake, which is when a
+  security check should be loudest; rejecting matches `api.withAuth`.
+  `internal/tds/server.go`; test `TestLoginWithNoValidatorIsRejected`.
 
 ### Context for the entry below
 The 2026-07-14 pass reported "docs now track implementation", and that claim went
