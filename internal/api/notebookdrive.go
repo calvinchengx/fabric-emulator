@@ -41,6 +41,16 @@ import (
 // and telling an intentional exit from a real failure by matching text in a
 // stack trace would break the first time an unrelated message contained the
 // word.
+//
+// BOTH Fabric spellings are BOUND, not patched-if-present. The previous version
+// wrapped the assignment in `try: import notebookutils`, which on this engine
+// always raised ImportError and left nothing defined — so the fallback silently
+// did nothing and every notebook written against real Fabric died on
+// `NameError: name 'mssparkutils' is not defined`. Microsoft's own `fab` found
+// it, running a notebook that used the older `mssparkutils` spelling. A helper
+// that exists only when an absent package happens to be installed is the same
+// class of defect as a check that cannot fail: it looks like support and
+// provides none.
 const notebookPrelude = `
 class _NotebookExit(Exception):
     pass
@@ -52,12 +62,28 @@ def notebook_exit(value=""):
     __nb_exit__ = str(value)
     raise _NotebookExit(__nb_exit__)
 
-# The Fabric spelling, for a notebook written against the real thing.
+class _NotebookNamespace(object):
+    pass
+
+_nb_ns = _NotebookNamespace()
+_nb_ns.exit = notebook_exit
+_utils_ns = _NotebookNamespace()
+_utils_ns.notebook = _nb_ns
+
+# notebookutils is the current name, mssparkutils the older one that a great
+# deal of real Fabric code still uses. Real packages win where they exist; where
+# they do not — which is here — the names still resolve.
 try:
     import notebookutils
     notebookutils.notebook.exit = notebook_exit
 except Exception:
-    pass
+    notebookutils = _utils_ns
+
+try:
+    import mssparkutils
+    mssparkutils.notebook.exit = notebook_exit
+except Exception:
+    mssparkutils = _utils_ns
 `
 
 // driveNotebookRun executes a parsed run's cells on the Spark agent and

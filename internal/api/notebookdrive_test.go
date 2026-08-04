@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	osexec "os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -306,5 +308,44 @@ func TestNotebookExitValueSurvivesQuotesAndBraces(t *testing.T) {
 	}
 	if got["silver_customers"] != float64(100000) {
 		t.Fatalf("decoded = %v", got)
+	}
+}
+
+// TestNotebookPreludeBindsBothFabricSpellings runs the prelude through a real
+// Python and checks that a notebook written against real Fabric can stop.
+//
+// Asserting on the TEXT of the prelude would be worthless here: the bug it
+// pins was `try: import notebookutils` silently doing nothing when the package
+// is absent, and a substring check would have passed on that code too. Only
+// executing it distinguishes "the name is mentioned" from "the name resolves".
+//
+// Both spellings, because both appear in real Fabric notebooks — mssparkutils
+// is the older one, and it is what Microsoft's `fab` was running when this
+// surfaced as `NameError: name 'mssparkutils' is not defined`.
+func TestNotebookPreludeBindsBothFabricSpellings(t *testing.T) {
+	py, err := osexec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not on PATH; the prelude can only be checked by running it")
+	}
+	for _, spelling := range []string{"notebookutils", "mssparkutils"} {
+		t.Run(spelling, func(t *testing.T) {
+			want := "value-from-" + spelling
+			probe := notebookPrelude + fmt.Sprintf(`
+exited = False
+try:
+    %s.notebook.exit(%q)
+except _NotebookExit:
+    exited = True
+assert exited, "exit() returned instead of raising; later cells would still run"
+print(__nb_exit__)
+`, spelling, want)
+			out, err := osexec.Command(py, "-c", probe).CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s: %v\n%s", spelling, err, out)
+			}
+			if got := strings.TrimSpace(string(out)); got != want {
+				t.Fatalf("%s.notebook.exit recorded %q; want %q", spelling, got, want)
+			}
+		})
 	}
 }
