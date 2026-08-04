@@ -197,6 +197,55 @@ residue in `internal/tds`. Chase the behaviour, not the number.
   that exists is not a witness that *covers*. Worth having the checker report
   skipped tests, or the manifest record which witnesses are gated.
 
+### Second coverage pass — the untested capability surfaces
+Total **89.35% → 89.72%** measured without a SQL Server sidecar (`ci.yml` records
+the sidecar's effect: 91.2% with an engine against 89.4% without, so the whole
+`internal/warehouse` family at 0% locally is *gated*, not untested — the top of a
+naive "uncovered statements" ranking is entirely that gate and is a trap).
+
+The pass targeted the functions whose *capability* nothing witnessed, and found
+one defect:
+
+- **A single-file TMDL semantic model was rejected.** `definitionPart` falls back
+  to an item's sole definition part when the requested path is absent — correct
+  for notebooks, whose content part is named inconsistently by publishing
+  clients, and wrong for a lookup whose bytes are then parsed as a *specific
+  format*. Asking for `model.bim` returned the only `.tmdl` file, which failed as
+  TMSL, so the user saw `invalid TMSL model: invalid character 'a'` about a file
+  containing no JSON — and the TMDL branch was never reached. The identical model
+  split across two `.tmdl` files always worked, which is exactly why nothing
+  caught it: every TMDL fixture in the tree is a folder with more than one part.
+  Fixed with `definitionPartExact` at the one call site that misfires;
+  `TestExecuteQueriesReadsASingleFileTMDLModel` fails without it.
+- **TMDL had no consumer witness at all.** `internal/semanticmodel` proves
+  `ParseTMDL` correct in isolation, but neither consumer executed it:
+  `parseModelDefinition` 50% → 93.8% and `parseModelParts` 50% → 83.3%. The only
+  test that mentioned TMDL asserted that it *loses* to TMSL. Since a `.pbip`
+  project from Power BI Desktop **is** TMDL, this was the serialisation a real
+  client is most likely to arrive with, unproven end to end.
+- **What the emulator tells the Spark agent.** `registerLakehouseTables` 32% →
+  92%, `bindDefaultLakehouse` 0% → 100%. Both are best-effort — they log and
+  return rather than failing session creation — so nothing upstream observes
+  them and a silent regression stays silent. Neither needs a real agent: an
+  `httptest` server is a complete stand-in for the request the emulator decides
+  to send. The mutation that binds the catalog to the engine's own warehouse
+  directory instead of OneLake reproduces the exact bug the source comment
+  describes, and is now caught.
+- **The flow stream's transport edges.** `emulatorEvents` 79.1% → 89.6%: the
+  non-Flusher refusal, `Last-Event-ID` resume, giving up on a dead connection,
+  and the dropped-gap notice. `net/http` always supplies a Flusher and a healthy
+  client never stalls, so none of it is reachable over real HTTP — driving
+  `Server.Handler()` with a `ResponseWriter` under test control is what made it
+  observable.
+
+**A test can pass against the code it claims to pin.** `TestFlowStreamStopsWhenTheClientIsGone`
+passed with the event-send path's write-error check deleted, because the handler
+was escaping through the *keepalive* write instead — the fixture sets a 100ms
+keepalive. Pushing it out of reach (`EventKeepalive = time.Hour`) makes the send
+path the only exit, and the mutation then fails it. Same class as the witness
+finding above: green is not evidence unless something was verified to turn it
+red. Every test added in this pass was checked by mutating the source it covers.
+
 ### Context for the entry below
 The 2026-07-14 pass reported "docs now track implementation", and that claim went
 **104 commits** without re-verification — `executeQueries`, RTI/Kusto, Reflex
