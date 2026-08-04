@@ -16,6 +16,18 @@ data from the same fixtures.
 | [`medallion-dbt-fabricspark/`](medallion-dbt-fabricspark/) | one | `dbt-fabricspark` → Lakehouse | [`e2e/medallion-dbt-fabricspark`](../e2e/medallion-dbt-fabricspark/) |
 | [`medallion-advanced-dbt-fabricspark/`](medallion-advanced-dbt-fabricspark/) | **three** | `dbt-fabricspark` → Lakehouse | [`e2e/medallion-advanced-dbt-fabricspark`](../e2e/medallion-advanced-dbt-fabricspark/) |
 
+A fifth example is not a medallion at all. [`fab-driven/`](fab-driven/) does
+the same bronze → silver work, but every control-plane action is performed by
+**Microsoft's own `fab` CLI** — provision, upload, `fab import` of real item
+definitions, `fab job run`, and read-back. It is the only example here whose
+evidence comes from a client this project did not write, and building it found
+two emulator defects nothing else had reached
+([docs/34](../docs/34-fab-driven-example.md)).
+
+| Example | Driven by | Gold built by | CI witness |
+|---|---|---|---|
+| [`fab-driven/`](fab-driven/) | **`fab`, Microsoft's CLI** | *(stops at silver)* | [`e2e/fab-driven`](../e2e/fab-driven/) |
+
 Start with [`medallion-pyspark/`](medallion-pyspark/) — it is the code
 [docs/28](../docs/28-tutorial-end-to-end.md) walks through. Go to
 [`medallion-advanced-pyspark/`](medallion-advanced-pyspark/) for the problems a
@@ -65,6 +77,7 @@ available, because their expectations decide the outcome rather than ours:
 | Claim | Suite |
 |---|---|
 | The `fab` CLI does workspace and item CRUD | [`e2e/fabric-cli`](../e2e/fabric-cli/) |
+| `fab` imports real definitions and RUNS them, and the bytes check out | [`e2e/fab-driven`](../e2e/fab-driven/) |
 | `fabric-cicd` deploys a git-format folder | [`e2e/fabric-cicd`](../e2e/fabric-cicd/) |
 | The VS Code extension browses and runs | [`e2e/vscode-extension`](../e2e/vscode-extension/) |
 | ADOMD.NET connects, on Linux, to a host we name | [`e2e/xmla`](../e2e/xmla/) |

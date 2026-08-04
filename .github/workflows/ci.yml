@@ -559,6 +559,23 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/fabric-cli/run.py
 
+  fab-driven:
+    name: The fab-driven example — fab imports definitions, RUNS them, and the bytes are checked
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # e2e/fabric-cli drives `fab` over EMPTY items and can execute nothing.
+      # This runs examples/fab-driven, where fab uploads real definitions
+      # (`fab import`), moves 71 MB into OneLake (`fab cp`), runs both items
+      # (`fab job run`), and an independent Delta reader checks what landed.
+      # That difference found two emulator defects — a silently truncated
+      # oversized upload and an undefined `mssparkutils` — so it earns its own
+      # job rather than folding into the CRUD suite. See docs/34.
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/fab-driven/run.py
+
   deployment-pipelines-ps:
     name: Azure PowerShell drives deployment pipelines (containerized)
     runs-on: ubuntu-latest

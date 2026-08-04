@@ -1,0 +1,45 @@
+{
+  "properties": {
+    "activities": [
+      {
+        "name": "IngestCustomers",
+        "type": "Copy",
+        "typeProperties": {
+          "source": {
+            "type": "DelimitedTextSource",
+            "rootFolder": "Files",
+            "folderPath": "landing",
+            "fileName": "customers.csv",
+            "datasetSettings": {
+              "linkedService": {
+                "properties": {
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "{{WORKSPACE_ID}}",
+                    "artifactId": "{{LAKEHOUSE_ID}}"
+                  }
+                }
+              }
+            }
+          },
+          "sink": {
+            "type": "LakehouseTableSink",
+            "tableActionOption": "Overwrite",
+            "table": "bronze_customers",
+            "datasetSettings": {
+              "linkedService": {
+                "properties": {
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "{{WORKSPACE_ID}}",
+                    "artifactId": "{{LAKEHOUSE_ID}}"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
