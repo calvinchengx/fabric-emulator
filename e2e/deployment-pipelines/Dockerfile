@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
          arm64) PS_ARCH=arm64 ;; \
          *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
        esac \
-    && curl -fsSL -o /tmp/pwsh.tar.gz \
+    && curl -fsSL --retry 5 --retry-connrefused --retry-max-time 180 -o /tmp/pwsh.tar.gz \
        "https://github.com/PowerShell/PowerShell/releases/download/v${PS_VERSION}/powershell-${PS_VERSION}-linux-${PS_ARCH}.tar.gz" \
     && mkdir -p /opt/microsoft/powershell/7 \
     && tar zxf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 \
