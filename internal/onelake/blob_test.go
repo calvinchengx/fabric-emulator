@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -869,5 +870,123 @@ func TestCopyBlobRefusesASourceItCannotVerify(t *testing.T) {
 	// behind, or a retry would find a blob it never created.
 	if w := f.doBlob("GET", dst, f.token, nil, nil); w.Code != http.StatusNotFound {
 		t.Errorf("a refused copy left a destination behind (GET = %d)", w.Code)
+	}
+}
+
+// listPage runs one List Blobs request and returns its blobs, prefixes and
+// continuation marker.
+func (f *fixture) listPage(t *testing.T, prefix, delimiter, marker string, maxResults int) ([]string, []string, string) {
+	t.Helper()
+	target := fmt.Sprintf("/%s?comp=list&maxresults=%d&prefix=%s", f.ws.ID, maxResults, url.QueryEscape(prefix))
+	if delimiter != "" {
+		target += "&delimiter=" + url.QueryEscape(delimiter)
+	}
+	if marker != "" {
+		target += "&marker=" + url.QueryEscape(marker)
+	}
+	w := f.doBlob("GET", target, f.token, nil, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list = %d %s", w.Code, w.Body.String())
+	}
+	var res struct {
+		Blobs struct {
+			Blob       []struct{ Name string } `xml:"Blob"`
+			BlobPrefix []struct{ Name string } `xml:"BlobPrefix"`
+		} `xml:"Blobs"`
+		NextMarker string `xml:"NextMarker"`
+	}
+	if err := xml.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("list body: %v", err)
+	}
+	var blobs, prefixes []string
+	for _, b := range res.Blobs.Blob {
+		blobs = append(blobs, b.Name)
+	}
+	for _, p := range res.Blobs.BlobPrefix {
+		prefixes = append(prefixes, p.Name)
+	}
+	return blobs, prefixes, res.NextMarker
+}
+
+// TestListBlobsPagesThroughDirectoriesWithoutLoopingOrRepeating.
+//
+// Two bugs lived in the continuation marker, both reachable from a plain
+// `?comp=list&delimiter=/&maxresults=N` — the shape object_store issues for a
+// directory listing.
+//
+//  1. It read `blobs[len(blobs)-1]` unconditionally, so a page filled entirely
+//     by common prefixes PANICKED with index -1. Any caller could drop the
+//     connection at will.
+//  2. When it did return a prefix as the marker, paging never advanced: a
+//     prefix is a directory name and every blob under it sorts AFTER it, so the
+//     next request's `name <= marker` filter skipped nothing and re-derived the
+//     same prefix with the same marker, forever.
+//
+// The walk below is the assertion: it must terminate, cover every entry, and
+// report each directory exactly once.
+func TestListBlobsPagesThroughDirectoriesWithoutLoopingOrRepeating(t *testing.T) {
+	f := newFixture(t)
+	for _, p := range []string{
+		"Files/a/1.txt", "Files/a/2.txt", "Files/b/1.txt", "Files/c.txt",
+	} {
+		if w := f.doBlob("PUT", "/"+f.ws.ID+"/"+f.it.ID+"/"+p, f.token, []byte("x"), nil); w.Code != http.StatusCreated {
+			t.Fatalf("seed %s = %d", p, w.Code)
+		}
+	}
+	base := f.it.DisplayName + "." + f.it.Type + "/Files/"
+
+	// maxresults=1 forces a page boundary inside the first directory, which is
+	// precisely where both bugs lived.
+	marker, seen := "", []string{}
+	for page := 0; ; page++ {
+		if page > 6 {
+			t.Fatalf("paging did not terminate; saw %v", seen)
+		}
+		blobs, prefixes, next := f.listPage(t, base, "/", marker, 1)
+		seen = append(seen, append(prefixes, blobs...)...)
+		if next == "" {
+			break
+		}
+		if next == marker {
+			t.Fatalf("page %d repeated marker %q — a client loops forever", page, marker)
+		}
+		marker = next
+	}
+
+	want := []string{base + "a/", base + "b/", base + "c.txt"}
+	if len(seen) != len(want) {
+		t.Fatalf("walk produced %v; want each directory once plus the loose file: %v", seen, want)
+	}
+	for i, w := range want {
+		if seen[i] != w {
+			t.Errorf("entry %d = %q, want %q", i, seen[i], w)
+		}
+	}
+}
+
+// TestListBlobsOmitsDirectories: the Blob namespace is flat, so an explicit
+// directory row is not a blob. Listing one would hand object_store an entry
+// with no content that it would then try to read.
+func TestListBlobsOmitsDirectories(t *testing.T) {
+	f := newFixture(t)
+	if err := f.st.CreateOneLakePath(&store.OneLakePath{
+		WorkspaceID: f.ws.ID, ItemID: f.it.ID, RelPath: "Files/dir",
+		IsDir: true, Content: []byte{},
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	if w := f.doBlob("PUT", "/"+f.ws.ID+"/"+f.it.ID+"/Files/real.txt", f.token, []byte("x"), nil); w.Code != http.StatusCreated {
+		t.Fatalf("seed = %d", w.Code)
+	}
+	base := f.it.DisplayName + "." + f.it.Type + "/Files/"
+
+	blobs, _, _ := f.listPage(t, base, "", "", 100)
+	for _, b := range blobs {
+		if strings.HasSuffix(b, "/dir") {
+			t.Errorf("a directory was listed as a blob: %v", blobs)
+		}
+	}
+	if len(blobs) != 1 || !strings.HasSuffix(blobs[0], "real.txt") {
+		t.Errorf("blobs = %v; want only the real file", blobs)
 	}
 }

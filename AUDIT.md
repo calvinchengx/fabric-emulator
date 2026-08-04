@@ -286,6 +286,34 @@ parse in-engine (`from_json` + `explode`) — with its own documented trap, that
 count comes from the array's length rather than its contents, so every
 count-based assertion passes while every column is empty.
 
+### Fixed — List Blobs could panic, and could never finish paging
+Found by chasing coverage into `listBlobs`, not by a report. Both are reachable
+from `?comp=list&delimiter=/&maxresults=N` — the shape object_store issues for a
+directory listing — and both live in one line that computed the continuation
+marker.
+
+- **A page filled entirely by common prefixes panicked.** `next =
+  blobs[len(blobs)-1].Name` indexes the emitted BLOBS, which is empty when
+  everything folded into a directory. `index out of range [-1]`, from a query
+  parameter any authenticated caller controls; net/http turns it into a dropped
+  connection with no explanation.
+- **Worse: paging never advanced.** When it did return a prefix as the marker,
+  the next request filtered `name <= marker` — but a prefix is a DIRECTORY name
+  and every blob under it sorts AFTER it, so nothing was skipped, the same
+  prefix was re-derived, and the same marker came back. A client walking pages
+  loops forever.
+
+The marker is now the last entry CONSUMED rather than the last thing emitted,
+and when a page ends inside a directory it already reported, it resumes past
+that directory using the prefix's byte-wise upper bound (`dir` ends with the
+delimiter, so incrementing the final byte bounds every name under it). A walk of
+`a/1, a/2, b/1, c.txt` at `maxresults=1` now terminates in three pages with each
+directory reported exactly once; before the fix it panicked, and with only the
+panic repaired it looped.
+
+`listBlobs` 90.5% -> 93.6%. Three mutations, three caught: restoring the index,
+returning the bare prefix as the marker, and listing directory rows as blobs.
+
 ### Fixed — nested types corrupted the whole row, and `string` was the wrong type
 Two findings, one from a consumer and one found while checking the first against
 Microsoft's docs.
