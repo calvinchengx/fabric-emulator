@@ -29,11 +29,32 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
+// maxStagedBytes bounds the total uncommitted Put Block data held in memory.
+//
+// Staged blocks are freed on commit, and a client that never commits used to
+// hold its bytes for the life of the process. That is not hypothetical: an
+// aborted upload leaks, and delta-rs retries a lost `_delta_log` commit under a
+// NEW blob key, so the abandoned staging of every losing attempt accumulated.
+//
+// Real Azure expires uncommitted blocks after 7 days, which a process that
+// rarely lives that long cannot meaningfully emulate — and tying eviction to the
+// emulator's clock would make it stop entirely whenever a test freezes time. A
+// size bound is the honest substitute: it targets the actual failure (unbounded
+// growth) with behaviour that does not depend on how long anything ran.
+//
+// 256 MiB is far above any real staging set — the Blob path caps a single block
+// at 256 MiB and Delta commits are kilobytes — so eviction only ever reaches
+// abandoned uploads.
+const maxStagedBytes = 256 << 20
+
 // blockStage holds uncommitted Put Block data per blob (transient, like the
 // real service's uncommitted block list).
 type blockStage struct {
 	mu     sync.Mutex
 	blocks map[string]map[string][]byte // blobKey → blockID → data
+	bytes  int64                        // total staged, for the eviction bound
+	seq    int64                        // monotonic, to evict oldest-first
+	staged map[string]int64             // blobKey → seq of its first block
 }
 
 func (b *blockStage) put(key, id string, data []byte) {
@@ -41,11 +62,51 @@ func (b *blockStage) put(key, id string, data []byte) {
 	defer b.mu.Unlock()
 	if b.blocks == nil {
 		b.blocks = map[string]map[string][]byte{}
+		b.staged = map[string]int64{}
 	}
 	if b.blocks[key] == nil {
 		b.blocks[key] = map[string][]byte{}
+		b.seq++
+		b.staged[key] = b.seq
 	}
+	// Replacing a block id replaces its bytes, as Azure does.
+	b.bytes -= int64(len(b.blocks[key][id]))
 	b.blocks[key][id] = data
+	b.bytes += int64(len(data))
+	b.evictLocked(key)
+}
+
+// evictLocked drops whole abandoned blobs, oldest first, until the stage is back
+// under its bound. `keep` is the blob being written right now, which is never
+// evicted — dropping it would fail the upload that is actively making progress.
+//
+// A dropped blob's later commit fails with InvalidBlockList, which is what Azure
+// answers for expired blocks: a loud, correct error rather than a silent
+// truncation.
+func (b *blockStage) evictLocked(keep string) {
+	for b.bytes > maxStagedBytes {
+		oldest, oldestSeq := "", int64(0)
+		for k, s := range b.staged {
+			if k == keep {
+				continue
+			}
+			if oldestSeq == 0 || s < oldestSeq {
+				oldest, oldestSeq = k, s
+			}
+		}
+		if oldest == "" {
+			return // only the in-progress blob is left; it is not ours to drop
+		}
+		b.dropLocked(oldest)
+	}
+}
+
+func (b *blockStage) dropLocked(key string) {
+	for _, d := range b.blocks[key] {
+		b.bytes -= int64(len(d))
+	}
+	delete(b.blocks, key)
+	delete(b.staged, key)
 }
 
 func (b *blockStage) commit(key string, ids []string) ([]byte, bool) {
@@ -60,7 +121,7 @@ func (b *blockStage) commit(key string, ids []string) ([]byte, bool) {
 		}
 		out = append(out, data...)
 	}
-	delete(b.blocks, key)
+	b.dropLocked(key)
 	return out, true
 }
 

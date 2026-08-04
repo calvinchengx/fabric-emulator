@@ -154,3 +154,61 @@ COMMIT TRANSACTION;`
 		t.Errorf("second rename target = %q; want the temp table", got)
 	}
 }
+
+// TestDataFlowExcludesNestedCTENames pins the fix for a PHANTOM lineage edge.
+//
+// CTE names were collected from the leading WITH only, while FROM/JOIN are read
+// at every depth — so a CTE defined in a nested WITH was reported as a source
+// TABLE. Nothing downstream rejects it: warehouseLineage.resolve does not verify
+// the table exists, so a single-part name resolves against the connection's own
+// item and a real lineage edge is written for a table that never existed. A
+// catalog inventing provenance is worse than one missing it.
+//
+// Nested CTEs are a supported, documented shape here, so this is expected
+// traffic rather than an exotic input.
+func TestDataFlowExcludesNestedCTENames(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "CTE nested inside a CTE",
+			sql: `CREATE TABLE t AS
+			  WITH a AS (WITH b AS (SELECT * FROM src) SELECT * FROM b)
+			  SELECT * FROM a`,
+		},
+		{
+			name: "CTE inside a derived table",
+			sql:  `SELECT x INTO t FROM (WITH b AS (SELECT * FROM src) SELECT * FROM b) q`,
+		},
+		{
+			name: "two levels of nesting",
+			sql: `CREATE TABLE t AS
+			  WITH a AS (WITH b AS (WITH c AS (SELECT * FROM src) SELECT * FROM c) SELECT * FROM b)
+			  SELECT * FROM a`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := one(t, tc.sql)
+			if !reflect.DeepEqual(f.Sources, [][]string{{"src"}}) {
+				t.Errorf("Sources = %+v; want only [[src]] — a CTE alias was "+
+					"reported as a table, which becomes a lineage edge to a "+
+					"table that does not exist", f.Sources)
+			}
+		})
+	}
+}
+
+// A `WITH` that is not a CTE clause must not swallow the real source: the
+// table-hint and CTAS table-option forms both put `(` where a CTE name goes.
+func TestDataFlowWithClauseThatIsNotACTE(t *testing.T) {
+	for _, sql := range []string{
+		`CREATE TABLE t AS SELECT a FROM src WITH (NOLOCK)`,
+		`CREATE TABLE t WITH (DISTRIBUTION = ROUND_ROBIN) AS SELECT a FROM src`,
+	} {
+		f := one(t, sql)
+		if !reflect.DeepEqual(f.Sources, [][]string{{"src"}}) {
+			t.Errorf("DataFlows(%q) sources = %+v; want [[src]]", sql, f.Sources)
+		}
+	}
+}
