@@ -1080,6 +1080,66 @@ func TestPipelineLookupParquetFile(t *testing.T) {
 	}
 }
 
+// TestPipelineLookupNumericFlowsThroughAnExpression.
+//
+// THE GAP THIS CLOSES. Every Lookup test above asserts a STRING — `region`,
+// `name`. The fixtures have carried a numeric column the whole time
+// (`lookupRow.Amount`) and nothing ever read it, so nothing exercised the
+// coercion an expression applies to it.
+//
+// That mattered, because `toNumber` listed only float64 and int. Values from a
+// CSV or JSON Lookup are JSON-decoded and arrive as float64, which it handled;
+// values from a PARQUET or DELTA Lookup arrive as the warehouse reader's own
+// types — int64 for a bigint, int32 for a Delta int — and every one of those
+// coerced to 0. So `@add(activity('Lk').output.firstRow.amount, 1)` returned 1
+// rather than 6, on every build up to v0.16.0, silently.
+//
+// The string assertions could not see it: a string flows through untouched. It
+// is the same map-vs-route gap as the nested-column bug, one system over — the
+// value was carried correctly and destroyed one stage later, by the consumer of
+// it rather than the producer.
+//
+// Reported by contoso-data-platform, who were NOT affected and said why that
+// does not count as reassurance: they orchestrate with a plain Python runner
+// and have no DataPipeline items at all, so the evaluator was never exercised
+// on any build. Anyone using DataPipelines — the more Fabric-native choice —
+// was exposed, and nothing raises.
+func TestPipelineLookupNumericFlowsThroughAnExpression(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	seedFile(t, st, ws.ID, src.ID, "Files/snap.parquet",
+		seedParquetBytes(t, []lookupRow{{"us", 5}, {"eu", 9}}))
+
+	content := `{"properties":{"activities":[
+        {"name":"Lk","type":"Lookup","typeProperties":{
+          "source":{"location":{"itemId":"` + src.ID + `","path":"Files/snap.parquet"}}}},
+        {"name":"Sum","type":"SetVariable","dependsOn":[{"activity":"Lk","dependencyConditions":["Succeeded"]}],
+          "typeProperties":{"variableName":"total","value":"@string(add(activity('Lk').output.firstRow.amount,1))"}},
+        {"name":"Branch","type":"SetVariable","dependsOn":[{"activity":"Lk","dependencyConditions":["Succeeded"]}],
+          "typeProperties":{"variableName":"nonzero","value":"@string(bool(activity('Lk').output.firstRow.amount))"}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+
+	// 6, not 1. `1` is what an int64 coercing to 0 produces, and it is a
+	// plausible-looking number — there is no loud half here either.
+	if got := outputOf(runs, "Sum")["value"]; got != "6" {
+		t.Errorf("add(amount,1) = %v; want \"6\" — a bigint column from a "+
+			"parquet Lookup must not coerce to 0", got)
+	}
+	// The branch form, where the cost is a wrong path rather than a wrong
+	// number: a non-zero amount must be true.
+	if got := outputOf(runs, "Branch")["value"]; got != "true" {
+		t.Errorf("bool(amount) = %v; want \"true\" — a non-zero bigint reading "+
+			"as false takes the wrong branch", got)
+	}
+}
+
 // TestPipelineScriptNoBackend: a Script activity fails loudly (not silently
 // stubbed) when no warehouse SQL backend is attached — the honest 🔴, not a
 // pretend success.
