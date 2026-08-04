@@ -129,10 +129,9 @@ def _notebookutils():
     This image ships one under /app/python, but the agent runs as
     `python3 /app/python/spark_agent/agent.py`, so only the *script's* directory
     lands on sys.path and `import notebookutils` fails inside executed notebooks.
-    Frameworks that resolve workspace/lakehouse context through it (Alkali is the
-    one we test against) then fall through to environment-variable fallbacks, or
-    raise. Putting the package directory on sys.path is what makes the emulator
-    match Fabric here.
+    Frameworks that resolve workspace/lakehouse context through it then fall
+    through to environment-variable fallbacks, or raise. Putting the package
+    directory on sys.path is what makes the emulator match Fabric here.
     """
     pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if pkg_root not in sys.path:
@@ -254,7 +253,7 @@ def _remember_location(name, location, schema=None):
     delta_ops.remember(name, location, schema)
 
 
-def register_tables(session, schema, tables):
+def register_tables(session, schema, tables, schemas=None):
     """Declare a lakehouse's Delta tables in this REPL's Spark catalog.
 
     On real Fabric a Lakehouse's `Tables/` already ARE catalog tables — attach a
@@ -264,6 +263,15 @@ def register_tables(session, schema, tables):
     enumerates the folder when a session opens and calls this, and a client that
     addresses a table by NAME rather than by abfs path works the way it does on
     Fabric.
+
+    `schemas` carries a schema-enabled lakehouse's schema folders
+    (Tables/<schema>/<table>). Each is created WITH its OneLake location —
+    that is the whole point: a schema created bare lives in the engine's own
+    warehouse, so a later `saveAsTable("bronze.x")` succeeds, reports rows
+    written, and leaves nothing in the lakehouse. Registering the schema at
+    its real location makes schema-qualified writes land where Fabric would
+    put them. Entries in `tables` may carry a "schema" of their own for the
+    same layout; those without one belong to the lakehouse-name schema.
 
     Idempotent (CREATE ... IF NOT EXISTS), because a session may be re-opened
     against a lakehouse whose tables are already registered.
@@ -278,18 +286,27 @@ def register_tables(session, schema, tables):
     except Exception:
         return {"registered": 0, "error": f"could not create schema {schema}: "
                                           f"{traceback.format_exc().splitlines()[-1]}"}
+    for s in schemas or []:
+        sname, sloc = s.get("name"), s.get("location")
+        if not sname or not sloc:
+            continue
+        try:
+            spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{sname}` LOCATION '{sloc}'")
+        except Exception:
+            failed.append(f"schema {sname}: {traceback.format_exc().splitlines()[-1]}")
     for t in tables:
         name, loc = t.get("name"), t.get("location")
+        tschema = t.get("schema") or schema
         if not name or not loc:
             continue
         try:
-            spark.sql(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{name}` "
+            spark.sql(f"CREATE TABLE IF NOT EXISTS `{tschema}`.`{name}` "
                       f"USING delta LOCATION '{loc}'")
             registered.append(name)
             # Record where it lives so a statement naming this table can be
             # resolved without asking the engine. Sail cannot answer
             # DESCRIBE DETAIL at all, and we already know the answer.
-            _remember_location(name, loc, schema)
+            _remember_location(name, loc, tschema)
         except Exception:
             # A folder under Tables/ that is not a readable Delta table is
             # skipped, not fatal — the same tolerance warehouse.Reflect applies.
@@ -310,7 +327,10 @@ def register_tables(session, schema, tables):
     except Exception:
         mirrored = []
         for name in registered:
-            loc = next((t["location"] for t in tables if t.get("name") == name), None)
+            # Schema-qualified tables stay qualified: on Fabric a
+            # schema-enabled lakehouse resolves `bronze.x`, not a bare `x`.
+            loc = next((t["location"] for t in tables
+                        if t.get("name") == name and not t.get("schema")), None)
             if not loc:
                 continue
             try:
@@ -363,7 +383,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/register":
             self._send(200, register_tables(req.get("session", "default"),
                                             req.get("schema", ""),
-                                            req.get("tables") or []))
+                                            req.get("tables") or [],
+                                            req.get("schemas") or []))
         elif self.path == "/close":
             namespaces.pop(req.get("session", ""), None)
             self._send(200, {"closed": True})
