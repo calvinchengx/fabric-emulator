@@ -255,10 +255,25 @@ func (s *Store) publish(ev Event) {
 		return
 	}
 	ev.At = s.Now()
+	// The send happens UNDER the lock, not after releasing it. Checking
+	// `stopped` and then unlocking left a window in which stop() could close
+	// b.raw before the send landed — and a send on a closed channel is a *ready*
+	// case, so the `default:` does not save it. It panics on the writer's own
+	// goroutine, which for a OneLake write means crashing a request that had
+	// already succeeded.
+	//
+	// This is safe against stop() closing outside the lock (bus.stop) because
+	// stop sets `stopped` under the lock BEFORE closing. So either this
+	// publisher holds the lock first and sends while the channel is still open,
+	// or stop sets the flag first and this publisher returns without sending —
+	// there is no ordering where a send meets a closed channel.
+	//
+	// Holding the lock costs nothing: the send is non-blocking, so it queues or
+	// falls to default immediately. The contract stays "never block a writer";
+	// it just no longer kills one at shutdown.
 	b.mu.Lock()
-	stopped := b.stopped
-	b.mu.Unlock()
-	if stopped {
+	defer b.mu.Unlock()
+	if b.stopped {
 		return
 	}
 	select {
