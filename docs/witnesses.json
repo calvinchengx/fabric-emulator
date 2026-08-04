@@ -374,10 +374,12 @@
       "go:TestReflectDecimalColumn",
       "go:TestReflectedSQLTypesMatchFabric",
       "go:TestNestedColumnsAreOmittedNotFabricated",
+      "go:TestNestedColumnsStayOmittedThroughTheDeltaRoute",
+      "go:TestNestedOmissionSurvivesSchemaEvolutionOrder",
       "go:TestDeltaStringReflectsAsVarchar",
       "ci:medallion"
     ],
-    "note": "The Go witnesses prove the MAP (a Parquet column of each logical type reflects to the right SQL type). ci:medallion proves the ROUTE: e2e/type-map/probe.py writes the nine types from Spark and reads INFORMATION_SCHEMA back over ODBC, which no Go test can cover because neither end of that seam is Go."
+    "note": "The Go witnesses prove the MAP (a Parquet column of each logical type reflects to the right SQL type). ci:medallion proves the ROUTE: e2e/type-map/probe.py writes the types from Spark and reads INFORMATION_SCHEMA back over ODBC, which no Go test can cover because neither end of that seam is Go. The two DeltaRoute/SchemaEvolution witnesses exist because a map-only assertion missed a real defect: v0.16.0 omitted nested columns in the reader and then re-added them as NULL in the projection, and the map test asserted one stage too early to see it."
   },
   "connection-by-item-name-vs-guid": {
     "section": "Data Warehouse (`data-warehouse/`)",

@@ -554,6 +554,164 @@ func TestNestedColumnsAreOmittedNotFabricated(t *testing.T) {
 	}
 }
 
+// TestNestedColumnsStayOmittedThroughTheDeltaRoute.
+//
+// The test above proves the READER omits nested columns. It calls readParquet
+// directly, and that is exactly the hole: on the real route ReadDeltaTable
+// re-projects the part onto the LOGICAL schema from the Delta log, and the
+// logical schema still names the nested fields. project() re-added every one of
+// them — with nils, since no part column maps to them — and built its output
+// without carrying Skipped across. So on the served path the columns were
+// PRESENT, typed varchar (sqlType never sees a non-null value), holding NULL,
+// and the "not representable … omitted" log line never fired for precisely the
+// tables that needed it.
+//
+// Measured by contoso-data-platform on the RELEASED v0.16.0 image, Delta
+// written by a notebook on Sail:
+//
+//	probe_nested columns: [web_order_id lines addr tags]
+//	values:               web_order_id="W-1"  lines=nil  addr=nil  tags=nil
+//
+// v0.16.0's release notes promised these columns would be ABSENT, and Fabric's
+// own wording is "some columns … might not be available" — so NULL-valued
+// varchar is the wrong behaviour, not merely undocumented behaviour.
+//
+// This is the same map-vs-route distinction the type-map probe was built for,
+// biting inside the test suite: an assertion on readParquet's output cannot see
+// what a later stage does to it.
+func TestNestedColumnsStayOmittedThroughTheDeltaRoute(t *testing.T) {
+	var buf bytes.Buffer
+	w := parquet.NewGenericWriter[nestedRow](&buf)
+	if _, err := w.Write([]nestedRow{{
+		Flat:  "control",
+		Lines: []nestedLine{{LineNo: 7, ProductID: "P-100", Quantity: 3}},
+		Addr:  nestedAddr{Country: "SG", No: "1"},
+		Tags:  map[string]string{"k": "v"},
+		After: 999,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The logical schema names all five, nested included — which is what a real
+	// writer emits, and what makes the projection re-add them.
+	schema := `{\"type\":\"struct\",\"fields\":[` +
+		`{\"name\":\"flat\",\"type\":\"string\"},` +
+		`{\"name\":\"lines\",\"type\":{\"type\":\"array\"}},` +
+		`{\"name\":\"addr\",\"type\":{\"type\":\"struct\"}},` +
+		`{\"name\":\"tags\",\"type\":{\"type\":\"map\"}},` +
+		`{\"name\":\"after_flat\",\"type\":\"long\"}]}`
+
+	st, wsID, itemID := seedLakehouse(t)
+	put(t, st, wsID, itemID, "Tables/orders/part-0.parquet", buf.Bytes())
+	put(t, st, wsID, itemID, "Tables/orders/_delta_log/00000000000000000000.json",
+		[]byte(`{"metaData":{"schemaString":"`+schema+`"}}`+"\n"+
+			`{"add":{"path":"part-0.parquet"}}`))
+
+	tbl, err := ReadDeltaTable(st, itemID, "orders")
+	if err != nil {
+		t.Fatalf("a nested schema must read, not error: %v", err)
+	}
+
+	if got := strings.Join(tbl.Columns, ","); got != "flat,after_flat" {
+		t.Fatalf("columns = %q; want only the flat ones — a nested column must "+
+			"not be re-added by the projection onto the logical schema", got)
+	}
+	if got := strings.Join(tbl.Skipped, ","); got != "lines,addr,tags" {
+		t.Errorf("skipped = %q; want lines,addr,tags — the projection must "+
+			"carry it, or reflectTable's warning never fires", got)
+	}
+	// Still the decisive one: the flat column after the nested run keeps its own
+	// value through the projection, not just through the reader.
+	if got := tbl.Rows[0][columnIndex(tbl, "after_flat")]; got != int64(999) {
+		t.Errorf("after_flat = %v (%T); want int64(999)", got, got)
+	}
+	if got := tbl.Rows[0][columnIndex(tbl, "flat")]; got != "control" {
+		t.Errorf("flat = %v; want \"control\"", got)
+	}
+}
+
+type flatOnlyRow struct {
+	Flat  string `parquet:"flat"`
+	After int64  `parquet:"after_flat"`
+}
+
+// TestNestedOmissionSurvivesSchemaEvolutionOrder.
+//
+// The nested set must come from the SCHEMA, not from whichever data file
+// happens to be read first. After an evolution that adds a nested column, the
+// OLDEST file — first in commit order — does not carry that column at all, so
+// it skips nothing. Deciding the projection target from it would re-add the
+// nested column for every later file, which is the original defect back again
+// for one specific table history.
+//
+// Two files, oldest first: part-0 predates `lines`/`addr`/`tags`, part-1 has
+// them. The metaData names all five.
+func TestNestedOmissionSurvivesSchemaEvolutionOrder(t *testing.T) {
+	var old bytes.Buffer
+	ow := parquet.NewGenericWriter[flatOnlyRow](&old)
+	if _, err := ow.Write([]flatOnlyRow{{Flat: "before", After: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ow.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var newer bytes.Buffer
+	nw := parquet.NewGenericWriter[nestedRow](&newer)
+	if _, err := nw.Write([]nestedRow{{
+		Flat:  "after",
+		Lines: []nestedLine{{LineNo: 7, ProductID: "P-100", Quantity: 3}},
+		Addr:  nestedAddr{Country: "SG", No: "1"},
+		Tags:  map[string]string{"k": "v"},
+		After: 2,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := nw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	schema := `{\"type\":\"struct\",\"fields\":[` +
+		`{\"name\":\"flat\",\"type\":\"string\"},` +
+		`{\"name\":\"lines\",\"type\":{\"type\":\"array\"}},` +
+		`{\"name\":\"addr\",\"type\":{\"type\":\"struct\"}},` +
+		`{\"name\":\"tags\",\"type\":{\"type\":\"map\"}},` +
+		`{\"name\":\"after_flat\",\"type\":\"long\"}]}`
+
+	st, wsID, itemID := seedLakehouse(t)
+	put(t, st, wsID, itemID, "Tables/evolved/part-0.parquet", old.Bytes())
+	put(t, st, wsID, itemID, "Tables/evolved/part-1.parquet", newer.Bytes())
+	put(t, st, wsID, itemID, "Tables/evolved/_delta_log/00000000000000000000.json",
+		[]byte(`{"add":{"path":"part-0.parquet"}}`))
+	put(t, st, wsID, itemID, "Tables/evolved/_delta_log/00000000000000000001.json",
+		[]byte(`{"metaData":{"schemaString":"`+schema+`"}}`+"\n"+
+			`{"add":{"path":"part-1.parquet"}}`))
+
+	tbl, err := ReadDeltaTable(st, itemID, "evolved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(tbl.Columns, ","); got != "flat,after_flat" {
+		t.Fatalf("columns = %q; want flat,after_flat — the nested set must come "+
+			"from the schema, not from the first data file read", got)
+	}
+	// Both rows keep their own values, and neither is shifted by the other's
+	// column count.
+	if len(tbl.Rows) != 2 {
+		t.Fatalf("rows = %d; want 2", len(tbl.Rows))
+	}
+	flat, after := columnIndex(tbl, "flat"), columnIndex(tbl, "after_flat")
+	if tbl.Rows[0][flat] != "before" || tbl.Rows[0][after] != int64(1) {
+		t.Errorf("row0 = %v; want before/1", tbl.Rows[0])
+	}
+	if tbl.Rows[1][flat] != "after" || tbl.Rows[1][after] != int64(2) {
+		t.Errorf("row1 = %v; want after/2", tbl.Rows[1])
+	}
+}
+
 // TestDeltaStringReflectsAsVarchar: Fabric maps Delta STRING to varchar(8000),
 // and says of nvarchar "there's no similar unicode data type in Parquet". We
 // emitted NVARCHAR(4000), which was a plain divergence — and one this repo

@@ -32,11 +32,22 @@ measured the original failure and re-measured the fix. Their version tolerated
 documents `STRING -> varchar(8000)` and says of nvarchar "there's no similar
 unicode data type in Parquet". It pins `varchar`.
 
-NESTED COLUMNS ARE NOT LISTED BELOW ON PURPOSE. Fabric does not represent
-struct/array/map at all, so the faithful behaviour is that those columns are
-ABSENT from INFORMATION_SCHEMA. Write one if you want to check that — the
-assertion is that it does not appear and that the columns around it are still
-correct, which is what a nested column used to destroy.
+NESTED COLUMNS ARE COVERED, and this is the second thing they have caught.
+Fabric does not represent struct/array/map at all, so the faithful behaviour is
+that those columns are ABSENT from INFORMATION_SCHEMA.
+
+The first version of this file declined to check that — "write one if you want
+to check that" — and the gap cost a release. v0.16.0 announced nested columns as
+omitted; on the released image they were PRESENT, typed varchar, holding NULL,
+because ReadDeltaTable re-projected each part onto the logical schema from the
+Delta log and that schema still names the nested fields. The Go test asserted on
+the reader's output, one stage earlier than the projection, so it passed. That
+is the same map-vs-route distinction this file exists for, and the route is the
+only place it was visible.
+
+So the nested assertions here are not decoration: they are the ONLY automated
+check that a nested column is absent rather than NULL, measured over ODBC
+against Delta a real engine wrote.
 
 Usage. Inside an example's project it needs nothing but the endpoints, because
 it borrows that example's own state and token helpers:
@@ -69,8 +80,23 @@ COLUMNS = [
     ("c_string", "'hello'", "varchar"),
     ("c_decimal", "cast(1.5 as decimal(9,2))", "decimal"),
     ("c_binary", "cast('hello' as binary)", "varbinary"),
+    # WRITTEN AFTER the nested columns below, and that position is the point.
+    # A nested column occupies several parquet LEAVES; a reader that assigns by
+    # top-level position takes a leaf belonging to something else and shifts
+    # every column after it. This sentinel is what such a shift lands on, so its
+    # value being 999 is the displacement check.
+    ("c_after", "cast(999 as bigint)", "bigint"),
 ]
 DECIMAL_PRECISION, DECIMAL_SCALE = 9, 2
+SENTINEL = ("c_after", 999)
+
+# Written between c_binary and c_after, and expected to be ABSENT from the
+# endpoint — not present-and-NULL, which is what v0.16.0 actually served.
+NESTED = [
+    ("n_struct", "named_struct('country', 'SG', 'no', '1')"),
+    ("n_array", "array(1, 2)"),
+    ("n_map", "map('k', 'v')"),
+]
 
 
 def bootstrap():
@@ -102,7 +128,12 @@ def write_through_spark(tables_uri):
     from pyspark.sql import SparkSession
 
     spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
-    select = ", ".join(f"{expr} AS {name}" for name, expr, _ in COLUMNS)
+    # Scalars, then the nested block, then the sentinel — so the sentinel sits
+    # after several extra parquet leaves and a positional reader lands on the
+    # wrong one.
+    head = [(n, e) for n, e, _ in COLUMNS if n != SENTINEL[0]]
+    tail = [(n, e) for n, e, _ in COLUMNS if n == SENTINEL[0]]
+    select = ", ".join(f"{expr} AS {name}" for name, expr in head + NESTED + tail)
     df = spark.sql(f"SELECT {select}")
 
     # Printed BEFORE the write, deliberately: if Spark did not write the type
@@ -114,7 +145,11 @@ def write_through_spark(tables_uri):
     # types, the endpoint will reflect something odd and the failure will read
     # as a type-map bug — blaming the wrong component. Naming it here as a
     # WRITE-side limitation keeps that diagnosis honest.
-    missing = [name for name, _, _ in COLUMNS if f"{name}:" not in schema]
+    #
+    # The nested ones are checked too: "absent from the endpoint" only means
+    # something if they were genuinely WRITTEN.
+    want_written = [n for n, _, _ in COLUMNS] + [n for n, _ in NESTED]
+    missing = [name for name in want_written if f"{name}:" not in schema]
     if missing:
         sys.exit(f"FAIL (write side, not the type map): the Spark engine did not "
                  f"produce {missing} — the endpoint cannot reflect what was never "
@@ -148,7 +183,20 @@ def read_through_tds():
         if not rows:
             sys.exit(f"FAIL: {TABLE} has no columns — was it reflected at all?")
 
+        # Nested columns must not be here AT ALL. Present-and-NULL is the
+        # failure v0.16.0 shipped, and it is invisible to a per-column type
+        # check: `n_struct -> varchar` reads like any other string column.
+        served = {r[0] for r in rows}
+        for name, _ in NESTED:
+            present = name in served
+            print(f"  {name:<13} -> {'PRESENT' if present else 'absent':<8} "
+                  f"expected absent      {'MISMATCH' if present else 'OK'}")
+            if present:
+                bad.append((name, "present (Fabric omits nested types)", "absent"))
+
         for name, dtype, precision, scale in rows:
+            if name in {n for n, _ in NESTED}:
+                continue  # already reported above
             expected = want.get(name, "?")
             ok = dtype == expected
             extra = ""
@@ -162,6 +210,23 @@ def read_through_tds():
                   f"{'OK' if ok else 'MISMATCH'}")
             if not ok:
                 bad.append((name, f"{dtype}{extra}", expected))
+
+        # The displacement check, over the route. The sentinel is written after
+        # the nested block, so a reader that assigns parquet leaves by top-level
+        # position returns one of the nested leaves here instead of 999 — the
+        # exact corruption that shipped in 0.15.3 and is fixed in 0.16.0. It is
+        # a VALUE check because the type would still read as bigint.
+        sname, swant = SENTINEL
+        try:
+            got = cur.execute(f"SELECT {sname} FROM {TABLE}").fetchval()
+            ok = got == swant
+            print(f"  {sname} value  -> {got!r:<12} expected {swant!r:<12}"
+                  f"{'OK' if ok else 'MISMATCH'}")
+            if not ok:
+                bad.append((sname, repr(got), repr(swant)))
+        except Exception as exc:  # noqa: BLE001 — the message IS the finding
+            print(f"  {sname} value  -> FAILED: {str(exc)[:140]}")
+            bad.append((sname, "select raised", repr(swant)))
 
         # The quiet half. A right DATA_TYPE over a wrong stored value passes
         # every check above and fails here.
@@ -191,7 +256,8 @@ def main() -> int:
     if bad:
         print(f"\nVERDICT: {len(bad)} column(s) wrong: {bad}")
         return 1
-    print(f"\nVERDICT: all {len(COLUMNS)} types correct, and a date joins as a date")
+    print(f"\nVERDICT: all {len(COLUMNS)} types correct, a date joins as a date, "
+          f"and {len(NESTED)} nested column(s) are absent rather than NULL")
     return 0
 
 

@@ -165,13 +165,21 @@ so a reader resolving by annotation finds what it expects at every width.
 `MONEY` and `SMALLMONEY` report no `DecimalSize` and are named explicitly as
 `decimal(19,4)` and `decimal(10,4)`; without that they fall through to text.
 
-**Broken, not merely unmapped — the nested types (`struct`/`array`/`map`).**
-"No kind at all" would be the safe failure. What actually happens is worse: the
-reader walks Parquet LEAF columns positionally and hands each top-level column
-whatever leaf shares its index, so a nested column both fabricates a value and
-**displaces every column after it**. Measured in-repo on a table of
-`flat, lines array<struct<line_no,product_id,quantity>>, addr struct<country,no>,
-tags map<string,string>, after_flat bigint`:
+**The nested types (`struct`/`array`/`map`) are omitted.** Fabric does not
+represent them — "Types that aren't listed in the table aren't represented as
+the table columns in the SQL analytics endpoint", and "Some columns that exist
+in the Spark Delta tables might not be available" — so the faithful behaviour is
+that the column is ABSENT from `INFORMATION_SCHEMA`, and everything around it is
+correct. The omitted names are logged.
+
+This took two fixes, and the history is worth keeping because both failures were
+silent in different ways.
+
+*Displacement (through v0.15.3).* The reader walked Parquet LEAF columns
+positionally and handed each top-level column whatever leaf shared its index, so
+a nested column both fabricated a value and **displaced every column after it**.
+Measured in-repo on `flat, lines array<struct<line_no,product_id,quantity>>,
+addr struct<country,no>, tags map<string,string>, after_flat bigint`:
 
 | column | declared | reflected as | value returned |
 |---|---|---|---|
@@ -181,16 +189,39 @@ tags map<string,string>, after_flat bigint`:
 | `tags` | map | `INT` | `4` — `lines.quantity` |
 | `after_flat` | bigint = `999` | `NVARCHAR` | `"SG"` — `addr.country`; the real `999` is **dropped** |
 
-Nothing raises. A `SELECT` succeeds and returns plausible values, so there is no
-loud half at all — unlike the date bug, which at least announced itself with
-`Operand type clash` on a join. A reported figure computed over such a table is
-simply wrong, with nothing to notice.
+Nothing raised. A `SELECT` succeeded and returned plausible values, so there was
+no loud half at all — unlike the date bug, which at least announced itself with
+`Operand type clash` on a join. Fixed in v0.16.0, and confirmed from outside on
+the released image: `flat` and `after_flat` both carry their own values.
 
-Reflection is per TABLE, so a lakehouse's other tables are unaffected; the
-damage is confined to the table holding the nested column, and to every column
-at or after it. **Until this is fixed, a lakehouse table with a nested column
-should not be trusted through the SQL analytics endpoint at all** — including
-its flat columns.
+*Present-and-NULL (v0.16.0 only).* v0.16.0 announced these columns as omitted
+and did not omit them. The reader dropped them correctly, then `ReadDeltaTable`
+re-projected each part onto the LOGICAL schema from the Delta log — which still
+names the nested fields — so every one was re-added with a nil value, reflected
+as `varchar` (no non-null value is ever seen, so the default wins) and served as
+NULL. The `Skipped` list was dropped in the same step, so the "not representable
+… omitted" warning never fired for exactly the tables that needed it.
+
+Measured by contoso-data-platform on `ghcr.io/…:0.16.0`, Delta written by a
+notebook on Sail:
+
+```
+probe_nested columns: ['web_order_id', 'lines', 'addr', 'tags']
+values:               web_order_id='W-1'  lines=None  addr=None  tags=None
+```
+
+NULL is a safe failure where a fabricated value was not, so this was milder than
+what it replaced — but "absent" is what the docs promised and what Fabric does.
+The in-repo test could not see it: it asserted on the reader's output, one stage
+before the projection. That is the map-vs-route distinction again, this time
+inside the test suite, and the route-level probe now covers it
+(`e2e/type-map/probe.py` writes a nested block between two scalars and asserts
+the nested names are absent while the trailing sentinel still reads `999`).
+
+The nested set is now taken from the Delta **schema**, not from whichever data
+file is read first: after a schema evolution that adds a nested column the
+oldest file does not carry it at all, so a first-file heuristic would re-add it
+for every later file.
 
 ##### Confirmed from outside, on the path a consumer actually uses
 
