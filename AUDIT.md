@@ -188,43 +188,43 @@ sets, and both halves were verified before accepting it. Forcing a test through
 it would prove nothing. The same is true of the `WriteMessage(...) → return err`
 residue in `internal/tds`. Chase the behaviour, not the number.
 
-### Open — filed, not yet done: two engine-matrix probes
-Reported 2026-08-04 from `contoso-data-platform` while building a second source
-system. **Sail accepts two JSON/text reader options and silently ignores them** —
-the false-green class the matrix exists to catch, not a missing feature. Real
-Fabric Spark honours both, so code that works on Fabric fails here, and code
-written against Sail can pass locally for the wrong reason.
+### Done — two engine-matrix probes, and half the report was wrong
+Reported 2026-08-04 from `contoso-data-platform`: Sail supposedly ACCEPTS AND
+IGNORES two reader options. Measuring it against all three engines found **one
+real gap and one false alarm**, and the false alarm is the more useful half.
 
-- `read.text(wholetext=True)` — **the higher-value probe, because it never
-  raises.** Measured on a multi-line NDJSON file: plain `.text()` → 255000 rows,
-  `wholetext=True` → 255000 rows. Honoured would be one row per FILE. JVM gives
-  1 row. Silent divergence; worth a `T.` capability flag, since nothing in the
-  API tells a caller the option did not take effect.
-- `read.json(multiLine=True)` on a file that is one JSON array — Sail raises
-  `Expected JSON record to be an object, found Array`; JVM parses. Loud, easy
-  to assert.
+- **`read.json(multiLine=True)` — real.** Sail's JSON reader is NDJSON-only, so
+  a file that is one JSON array cannot be parsed; Spark JVM reads it. Now a red
+  row in `docs/engine-matrix.md`.
+- **`read.text(wholetext=True)` — NOT a Sail limit.** It passes on all three
+  engines. The reported symptom (one row per LINE) reproduces exactly, but it is
+  a PySpark spelling artifact: `DataFrameReader.text(path, wholetext=False, ...)`
+  passes that DEFAULT into `_set_opts`, overwriting any `.option("wholetext", …)`
+  set beforehand, so the `.option()` form cannot take effect on ANY engine.
+  Measured on one JVM session against one file: `.option()` → 3 rows,
+  `text(p, wholetext=True)` → 1 row. Kept as a GREEN row to keep it that way,
+  the same reason the `_rn` row exists.
 
-**The fixture is the whole difficulty.** The reporter's first probe used one
-line per file, where "honoured" and "ignored" produce an identical row count —
-it reported `wholetext` as working. Any probe added here MUST use an input with
-more than one line per file or it will certify a capability that is not there.
-`delta_change_data_feed` (`e2e/engine-matrix/probes.py:108`, registered as
-`delta.cdf` at line 395) is the existing accepted-but-inert precedent to follow.
+**The reference column is the tell.** Written the `.option()` way, the probe
+turned every engine red — including Spark JVM, which honours the option. A red
+cell on the reference engine means the probe is measuring itself, and that
+check is what caught this before it was published as a Sail defect. It is the
+mirror of the reporter's own first mistake (a single-line fixture, where
+honoured and ignored give an identical row count, which is how `wholetext` was
+first concluded to WORK). Both probes now use a multi-line fixture AND assert
+the plain read first, so a broken fixture reports itself as a broken fixture.
 
-Not done because `docs/engine-matrix.md` is generated and CI diffs it
-(`git diff --exit-code` in the `engine-matrix` job, `ci.yml:152`), so this needs
-a real run of all three engines — `sail`, `sail-delta`, `jvm` — not a hand-edit.
-The probe count in the prose derives from `len(order)`, so it moves on its own.
-Verified before filing: neither `wholetext` nor `multiLine` appears anywhere in
-`e2e/` or `docs/` today, so this is a genuine gap rather than a duplicate row.
+Fixtures are written through the ENGINE rather than a client-side `open()`: on
+the `sail` profile the probe runs in a different container and shares no volume
+with the engine, so a client-written file would not be there to read.
 
-Workaround worth documenting wherever this lands: read the page as text and
-parse in-engine (`F.from_json` + `explode`), keeping the data path distributed.
-Caveat — `from_json` returns NULL on a schema mismatch rather than raising, and
-the row count comes from the array's length rather than its contents, so every
-count-based assertion still passes while every column is empty. Guard it with a
-"no column may be entirely NULL" check plus a test pinning the declared field
-names against the vendor's OpenAPI spec.
+Worth passing back to `contoso-data-platform`: their `wholetext` workaround is
+unnecessary, and any code that reaches for `.option("wholetext", …)` is a no-op
+wherever it runs. The `multiLine` workaround stands — read the page as text and
+parse in-engine (`from_json` + `explode`) — with its own documented trap, that
+`from_json` returns NULL on a schema mismatch rather than raising and the row
+count comes from the array's length rather than its contents, so every
+count-based assertion passes while every column is empty.
 
 ### Open — raised in severity by this pass
 - **MEDIUM (was LOW) — the witness checker proves presence, not coverage.**

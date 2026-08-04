@@ -67,7 +67,7 @@ neither.
 
 **Sail is the default, and should stay the default.** This table only
 measures capability; it says nothing about the axis Sail was chosen for.
-Measured on the same 23 probes:
+Measured on the same 25 probes:
 
 | | Sail | Spark JVM |
 |---|---|---|
@@ -126,8 +126,10 @@ tests never touch.
 | `CREATE TABLE` with no `USING` defaults to Delta ᵍ | ❌ `Invalid table location: No commit files found in _delta_log` | ❌ `Invalid table location: No commit files found in _delta_log` | ❌ `[NOT_SUPPORTED_COMMAND_WITHOUT_HIVE_SUPPORT] CREATE Hive TABLE (AS SELECT) is not supporte` |
 | `DESCRIBE TABLE` on a registered Delta table ᵉ | ❌ `DESCRIBE returned 0 rows: []` | ❌ `DESCRIBE returned 0 rows: []` | ✅ |
 | `DESCRIBE DETAIL` on a registered Delta table ᶠ | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ✅ |
+| `read.text(wholetext=True)` — one row per file (must not be inert) ʰ | ✅ | ✅ | ✅ |
+| `read.json(multiLine=True)` over a JSON-array file ʰ | ❌ `Json error: Not valid JSON: EOF while parsing a list at line 1 column 1` | ❌ `Json error: Not valid JSON: EOF while parsing a list at line 1 column 1` | ✅ |
 
-**10 of 23 capabilities differ between the engines.**
+**11 of 25 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the
 candidate list for upstream Sail contributions.
 
@@ -223,3 +225,50 @@ form works.
 Kept as its own row rather than folded into ᵉ because the contrast is the
 lesson: the silent one cost a day, the loud one cost minutes, and they
 are the same missing capability.
+
+ʰ These two arrived as a report that Sail ACCEPTS AND IGNORES both
+options. Measuring it found one real gap and one false alarm, and the
+false alarm is the more useful half.
+
+`multiLine` is real: Sail's JSON reader is NDJSON-only, so a file that is
+one JSON array cannot be parsed at all, while Spark JVM reads it. The
+exact message depends on the fixture's shape, so read the cell as
+evidence of NDJSON-only parsing rather than as a fixed string — the array
+here spans lines, so the reader fails on a bare `[`; an array on ONE line
+fails differently (`Expected JSON record to be an object, found Array`).
+The multi-line fixture is kept because it exercises both halves of the
+option: spanning lines AND being an array.
+
+`wholetext` is GREEN on Sail, and this row exists to keep it that way —
+like ᵈ, it records a capability we were told was missing and is not.
+The reported symptom (one row per LINE, on both engines) reproduces
+exactly, but it is a PySpark spelling artifact rather than an engine
+limit: `DataFrameReader.text(path, wholetext=False, ...)` passes that
+DEFAULT into `_set_opts`, which overwrites any `.option("wholetext", ...)`
+set beforehand. So the `.option()` form cannot take effect for this
+reader on ANY engine. Measured on one JVM session against one file:
+`.option()` -> 3 rows, `text(p, wholetext=True)` -> 1 row. Both probes
+therefore use the keyword form.
+
+That is why the JVM column is worth reading first. A probe written the
+`.option()` way turns every engine red, including the reference one, and
+a red reference cell is the tell that the probe is measuring itself. The
+companion trap is the fixture: with ONE line per file, honoured and
+ignored give an identical row count, which is how the original report
+first concluded `wholetext` WORKED. Both probes therefore use a
+multi-line fixture and assert the PLAIN read first, so a broken fixture
+reports itself as a broken fixture rather than as a missing capability —
+the same discipline as the streaming rows ᶜ, which assert rows reached
+the sink rather than that a query started.
+
+The fixtures are written through the ENGINE, not with a client-side
+open(): on the `sail` profile the probe runs in a different container
+and shares no volume with the engine, so a client-written file would not
+be there to read.
+
+Reported from contoso-data-platform, where the `multiLine` workaround is
+to read the page as text and parse in-engine (`from_json` + `explode`),
+keeping the data path distributed. That has its own trap: `from_json`
+returns NULL on a schema mismatch rather than raising, and the row count
+comes from the array's length rather than its contents, so every
+count-based assertion still passes while every column is empty.

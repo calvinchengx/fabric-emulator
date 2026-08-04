@@ -383,6 +383,73 @@ def sql_filter_on_unprojected_window_column(spark):
     assert [(r["order_id"], r["qty"]) for r in rows] == [(1, 7), (2, 9)], rows
 
 
+# ---------------------------------------------------------- reader options
+#
+# Two options Sail ACCEPTS AND IGNORES. Accepted-but-inert is a different
+# outcome from rejected — the same distinction `delta_change_data_feed` above
+# is built around — and it is the more dangerous one: nothing in the API tells
+# a caller the option did not take effect, so code written against Sail passes
+# locally for the wrong reason while the same code on real Fabric Spark, which
+# honours both, behaves differently.
+#
+# The fixture is the whole difficulty. A file with ONE line makes "honoured"
+# and "ignored" produce an identical row count, and the first attempt at this
+# measurement reported `wholetext` as working for exactly that reason. So every
+# fixture here has more than one line, and each probe asserts the PLAIN read
+# first — a broken fixture must report itself as a broken fixture rather than
+# as a missing capability.
+#
+# The fixtures are written THROUGH THE ENGINE rather than with a client-side
+# open(): on the `sail` profile the probe runs in a different container from
+# the engine and shares no volume with it (only `sail-delta` does, and the
+# compose file says why), so a client-written file would not be there to read
+# and the probe would measure a missing file.
+
+
+def _write_text_through_engine(spark, name, body):
+    """Write `body` verbatim as a text file using the engine's own writer."""
+    p = _table_path(name)
+    (spark.createDataFrame([(body,)], "value string")
+     .coalesce(1).write.mode("overwrite").text(p))
+    return p
+
+
+def read_text_wholetext(spark):
+    """`wholetext=True` must return ONE row per FILE, not one per line."""
+    p = _write_text_through_engine(spark, "t_wholetext", "line-1\nline-2\nline-3")
+    plain = spark.read.text(p).count()
+    assert plain == 3, (
+        f"fixture is not 3 lines (a plain read gave {plain}), so the option "
+        "cannot be measured — this is a fixture failure, not a capability one")
+    # The KEYWORD form, not .option("wholetext", True). PySpark's
+    # DataFrameReader.text(path, wholetext=False, ...) calls _set_opts with
+    # that default, which OVERWRITES an option set beforehand — so the
+    # .option() spelling can never take effect here and a probe written that
+    # way reports every engine as ignoring the option, including Spark JVM,
+    # which honours it. Measured: .option() -> 3 rows, keyword -> 1 row, on the
+    # same JVM session and the same file.
+    n = spark.read.text(p, wholetext=True).count()
+    assert n == 1, (
+        f"wholetext returned {n} rows over a {plain}-line file; honoured means "
+        "one row per file, so the option was accepted and silently ignored")
+
+
+def read_json_multiline(spark):
+    """`multiLine=True` must read a file that is a single JSON array."""
+    p = _write_text_through_engine(
+        spark, "t_multiline", '[\n  {"id": 1},\n  {"id": 2}\n]')
+    plain = spark.read.text(p).count()
+    assert plain == 4, (
+        f"fixture is not a 4-line JSON array (a plain read gave {plain}) — "
+        "this is a fixture failure, not a capability one")
+    # Keyword form for the same reason, though json()'s parameters default to
+    # None rather than False, so .option() does survive there. Spelling both
+    # the same way keeps the pair from depending on that difference.
+    rows = spark.read.json(p, multiLine=True).collect()
+    assert len(rows) == 2, (
+        f"multiLine returned {len(rows)} rows; the array holds 2 objects")
+
+
 PROBES = [
     ("delta.write", "Delta write", delta_write),
     ("delta.append", "Delta append", delta_append),
@@ -407,6 +474,8 @@ PROBES = [
     ("spark.sql_create_table_default_format", "`CREATE TABLE` with no `USING` defaults to Delta ᵍ", sql_create_table_defaults_to_delta),
     ("spark.sql_describe_registered_delta", "`DESCRIBE TABLE` on a registered Delta table ᵉ", sql_describe_registered_delta_table),
     ("spark.sql_describe_detail_registered", "`DESCRIBE DETAIL` on a registered Delta table ᶠ", sql_describe_detail_registered_delta),
+    ("read.text_wholetext", "`read.text(wholetext=True)` — one row per file (must not be inert) ʰ", read_text_wholetext),
+    ("read.json_multiline", "`read.json(multiLine=True)` over a JSON-array file ʰ", read_json_multiline),
 ]
 
 
