@@ -52,7 +52,7 @@ with open(os.path.join(GOLD_PROJECT, "profiles.yml"), "w") as f:
 
 env = {**os.environ, "DBT_PROFILES_DIR": GOLD_PROJECT, "LAKEHOUSE_ID": st["lakehouse"]}
 t0 = time.time()
-rc = subprocess.run(["dbt", "build"], cwd=GOLD_PROJECT, env=env).returncode
+rc = subprocess.run(["dbt", "--no-partial-parse", "build"], cwd=GOLD_PROJECT, env=env).returncode
 build_secs = time.time() - t0
 assert rc == 0, f"dbt build failed: exit {rc}"
 

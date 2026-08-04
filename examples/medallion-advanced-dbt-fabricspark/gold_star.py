@@ -43,7 +43,7 @@ with open(os.path.join(PROJECT, "profiles.yml"), "w") as f:
 
 env = {**os.environ, "DBT_PROFILES_DIR": PROJECT, "LAKEHOUSE_ID": st["lakehouse"]}
 t0 = time.time()
-rc = subprocess.run(["dbt", "build"], cwd=PROJECT, env=env).returncode
+rc = subprocess.run(["dbt", "--no-partial-parse", "build"], cwd=PROJECT, env=env).returncode
 build_secs = time.time() - t0
 assert rc == 0, f"dbt build failed: exit {rc}"
 
@@ -216,7 +216,7 @@ import json  # noqa: E402
 # so that swap is atomic. Without this rebuild that macro would ship untested —
 # present in the project, never executed, and indistinguishable from working.
 log("rebuilding gold to exercise the atomic cutover")
-rc = subprocess.run(["dbt", "build"], cwd=PROJECT, env=env).returncode
+rc = subprocess.run(["dbt", "--no-partial-parse", "build"], cwd=PROJECT, env=env).returncode
 assert rc == 0, f"dbt rebuild failed: exit {rc}"
 
 with tds_connect(st["warehouse"], sql_tok) as c:

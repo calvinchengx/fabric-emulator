@@ -101,7 +101,7 @@ env = {**os.environ, "DBT_PROFILES_DIR": str(PROJECT), "LAKEHOUSE_NAME": lakehou
        "ONELAKE_TABLES": onelake_tables,
        "REQUESTS_CA_BUNDLE": str(ca), "SSL_CERT_FILE": str(ca)}
 t0 = time.time()
-rc = subprocess.run(["dbt", "build"], cwd=PROJECT, env=env).returncode
+rc = subprocess.run(["dbt", "--no-partial-parse", "build"], cwd=PROJECT, env=env).returncode
 build_secs = time.time() - t0
 
 if rc != 0:

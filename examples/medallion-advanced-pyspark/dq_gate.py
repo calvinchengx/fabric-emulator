@@ -21,7 +21,7 @@ env = {**os.environ, "DBT_PROFILES_DIR": GOLD_PROJECT, "LAKEHOUSE_ID": st["lakeh
 def rebuild():
     with tds_connect(st["lakehouse"]):  # re-reflect whatever silver now holds
         pass
-    return subprocess.run(["dbt", "build"], cwd=GOLD_PROJECT, env=env).returncode
+    return subprocess.run(["dbt", "--no-partial-parse", "build"], cwd=GOLD_PROJECT, env=env).returncode
 
 
 good = DeltaTable(url, storage_options=opts).to_pandas()
