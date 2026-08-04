@@ -199,3 +199,57 @@ func TestPortalModelsListsOnlySemanticModels(t *testing.T) {
 		t.Fatalf("non-model items appeared: %v", got)
 	}
 }
+
+// TestPortalModelsDescribesATMDLModel is the other half of the precedence pair.
+// TestPortalModelsPrefersTMSLLikeTheQueryPathDoes proves TMDL LOSES when both
+// are present, and until this existed that was the only test touching TMDL at
+// all — so the branch that actually parses one had never run. A model published
+// from Power BI Desktop is a .tmdl folder, so this is the shape the portal is
+// most likely to be pointed at.
+func TestPortalModelsDescribesATMDLModel(t *testing.T) {
+	s := newPortalServer(t)
+	ws := seedPortalWorkspace(t, s)
+	it := &store.Item{WorkspaceID: ws.ID, Type: "SemanticModel", DisplayName: "tmdl-only"}
+	if err := s.Store.CreateItem(it, []store.DefinitionPart{
+		part("definition/model.tmdl", "model SalesModel\n\tculture: en-US\n"),
+		part("definition/tables/Sales.tmdl", "table Sales\n"+
+			"\n\tcolumn Region\n\t\tdataType: string\n\t\tsourceColumn: Region\n"+
+			"\n\tcolumn Amount\n\t\tdataType: double\n\t\tsourceColumn: Amount\n"+
+			"\n\tmeasure 'Total Amount' = SUM(Sales[Amount])\n"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := portalModelsOf(t, s)
+	if len(got) != 1 {
+		t.Fatalf("models = %v", got)
+	}
+	m := got[0]
+	// The format is reported, not guessed: a portal that said TMSL here would
+	// send someone looking for a model.bim that does not exist.
+	if m["format"] != "TMDL" {
+		t.Fatalf("format = %v, want TMDL", m["format"])
+	}
+	tables, _ := m["tables"].([]any)
+	if len(tables) != 1 {
+		t.Fatalf("tables = %v", tables)
+	}
+	sales, _ := tables[0].(map[string]any)
+	if sales["name"] != "Sales" {
+		t.Fatalf("table = %v", sales)
+	}
+	// The measure's DAX has to survive the TMDL parser too — the whole point of
+	// this view is answering "why is this measure returning nothing".
+	measures, _ := sales["measures"].([]any)
+	if len(measures) != 1 {
+		t.Fatalf("measures = %v", measures)
+	}
+	if ms, _ := measures[0].(map[string]any); ms["expression"] != "SUM(Sales[Amount])" {
+		t.Errorf("measure = %v", ms)
+	}
+	// No data.json: an import model that cannot answer a query must say so,
+	// because an empty DAX result otherwise looks like a wrong measure.
+	if m["rowsLoaded"] != false {
+		t.Errorf("rowsLoaded = %v, want false", m["rowsLoaded"])
+	}
+}
