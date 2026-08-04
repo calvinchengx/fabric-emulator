@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -258,4 +259,75 @@ func mustJSON(t *testing.T, s string) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// vscodeDoAs is vscodeDo with the principal under test. vscodeDo hardcodes
+// admin, which is why every refusal branch on this surface was unexercised.
+func vscodeDoAs(h handler, p *auth.Principal, method, target, body string, pth map[string]string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, target, strings.NewReader(body))
+	for k, v := range pth {
+		r.SetPathValue(k, v)
+	}
+	w := httptest.NewRecorder()
+	h(w, r, p)
+	return w
+}
+
+// TestVSCodeSurfaceEnforcesRBAC walks every item-scoped handler on the VS Code
+// protocol and asserts the two refusals its guard exists for: a principal with
+// no role on the workspace is denied, and a Viewer is denied the writes.
+//
+// This surface is a private Microsoft protocol the real extension speaks, so it
+// is easy to think of it as a translation layer rather than a door. It is a
+// door: every handler reaches the same item store the public API guards, and
+// each one calls vscodeAuthorizedItem for that reason. Nothing exercised those
+// refusals, so the whole surface's authorization rested on code that no test
+// ran — the same shape as the TDS empty-database hole.
+func TestVSCodeSurfaceEnforcesRBAC(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "nb"}
+	if err := st.CreateItem(nb, nil); err != nil {
+		t.Fatal(err)
+	}
+	iid := map[string]string{"iid": nb.ID}
+
+	// Writes: a Viewer holds a role but not enough of one.
+	writes := map[string]handler{
+		"vscodeUpdateArtifact":        a.vscodeUpdateArtifact,
+		"vscodeDeleteArtifact":        a.vscodeDeleteArtifact,
+		"vscodeNotebookContent":       a.vscodeNotebookContent,
+		"vscodeUpdateNotebookContent": a.vscodeUpdateNotebookContent,
+		"vscodeRunSparkJob":           a.vscodeRunSparkJob,
+		"vscodeCancelSparkJob":        a.vscodeCancelSparkJob,
+	}
+	for name, h := range writes {
+		if w := vscodeDoAs(h, viewer, "POST", "/x", "{}", iid); w.Code != http.StatusForbidden {
+			t.Errorf("%s as viewer = %d; want 403 — a Viewer must not write", name, w.Code)
+		}
+	}
+
+	// Reads and writes alike: a principal with NO role on the workspace.
+	all := map[string]handler{
+		"vscodeArtifact":        a.vscodeArtifact,
+		"vscodeSparkJobs":       a.vscodeSparkJobs,
+		"vscodeLakehouseTables": a.vscodeLakehouseTables,
+	}
+	for name, h := range writes {
+		all[name] = h
+	}
+	for name, h := range all {
+		if w := vscodeDoAs(h, nobody, "POST", "/x", "{}", iid); w.Code != http.StatusForbidden {
+			t.Errorf("%s as an ungranted principal = %d; want 403", name, w.Code)
+		}
+	}
+
+	// An unknown artifact is 404 before any role is considered, so a probe
+	// cannot use the difference to learn which ids exist.
+	unknown := map[string]string{"iid": "no-such-item"}
+	for name, h := range all {
+		if w := vscodeDoAs(h, admin, "POST", "/x", "{}", unknown); w.Code != http.StatusNotFound {
+			t.Errorf("%s on an unknown artifact = %d; want 404", name, w.Code)
+		}
+	}
 }
