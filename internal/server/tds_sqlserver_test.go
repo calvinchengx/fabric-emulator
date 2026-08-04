@@ -18,6 +18,7 @@ import (
 	entra "github.com/calvinchengx/entra-emulator/emulator"
 	"github.com/calvinchengx/fabric-emulator/internal/config"
 	"github.com/calvinchengx/fabric-emulator/internal/server"
+	"github.com/calvinchengx/fabric-emulator/internal/store"
 	mssql "github.com/microsoft/go-mssqldb"
 )
 
@@ -44,6 +45,22 @@ func TestWarehouseSQLServerRelayE2E(t *testing.T) {
 	if srv.TDS == nil || srv.TDS.Backend == nil {
 		t.Fatal("expected a TDS server with a SQL Server backend")
 	}
+	// A workspace and a Warehouse to connect TO. This test used to connect with
+	// NO database, which reached the engine only because an empty database name
+	// skipped OnConnect — the RBAC wall — and fell through to the re-encode
+	// relay's default pool. That path is now rejected, so the test connects the
+	// way a real client does: by naming the item, which is also what makes this
+	// exercise the byte-splice path production actually uses.
+	ws := &store.Workspace{DisplayName: "relay-e2e-ws"}
+	if err := srv.Store.CreateWorkspace(ws, store.Principal{
+		ID: entra.DaemonClientID, Type: "ServicePrincipal"}); err != nil {
+		t.Fatal(err)
+	}
+	wh := &store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "wh"}
+	if err := srv.Store.CreateItem(wh, nil); err != nil {
+		t.Fatal(err)
+	}
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +70,8 @@ func TestWarehouseSQLServerRelayE2E(t *testing.T) {
 
 	// Connect the real SQL client to the emulator with a real entra token.
 	addr := ln.Addr().(*net.TCPAddr)
-	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;encrypt=disable;dial timeout=5", addr.Port)
+	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;database=%s;encrypt=disable;dial timeout=5",
+		addr.Port, wh.ID)
 	token := forgeAppToken(t, emu, "https://database.windows.net")
 	c, err := mssql.NewAccessTokenConnector(dsn, func() (string, error) { return token, nil })
 	if err != nil {
