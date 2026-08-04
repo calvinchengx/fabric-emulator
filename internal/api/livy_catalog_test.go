@@ -85,7 +85,6 @@ func (s *agentStub) only(t *testing.T) agentPostRecord {
 	return got[0]
 }
 
-
 // register returns the single /register request the stub received, failing on
 // any other count. The /mount request every bind now sends first is a separate
 // contract with its own test; these assertions are about the catalog.
