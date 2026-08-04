@@ -585,3 +585,42 @@ func TestSpliceDialRejectsLogin(t *testing.T) {
 		t.Fatal("login succeeded despite the backend being undialable")
 	}
 }
+
+// TestLoginWithNoValidatorIsRejected: a server built without a token validator
+// must refuse every login, not accept every token.
+//
+// The guard used to be `if s.Auth != nil`, which failed OPEN: a construction
+// mistake turned the surface — read/write T-SQL against the warehouse — into an
+// unauthenticated one. Production always wires Auth, so this only fires on
+// misconfiguration, which is precisely when a security check should be loudest.
+// api.withAuth answers "not configured" for the same reason.
+func TestLoginWithNoValidatorIsRejected(t *testing.T) {
+	be := &countingBackend{}
+	srv := &Server{ // deliberately no Auth
+		Backend: be,
+		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
+			return "db", false, nil
+		},
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go srv.Serve(ln)
+	addr := ln.Addr().(*net.TCPAddr)
+	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;database=db;encrypt=disable;dial timeout=5", addr.Port)
+	c, _ := mssql.NewAccessTokenConnector(dsn, func() (string, error) { return "any.token.at.all", nil })
+	db := sql.OpenDB(c)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var got int
+	if err := db.QueryRowContext(ctx, "select 1").Scan(&got); err == nil {
+		t.Fatal("a server with no validator accepted a token and ran a query")
+	}
+	if ran := be.ran(); len(ran) != 0 {
+		t.Fatalf("backend ran %q with no validator configured; want nothing", ran)
+	}
+}

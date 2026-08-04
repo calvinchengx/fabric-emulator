@@ -84,10 +84,18 @@ func (s *Server) handle(conn net.Conn) error {
 	if login.FedAuthToken == "" {
 		return s.reject(conn, "a federated (Microsoft Entra) token is required")
 	}
-	if s.Auth != nil {
-		if err := s.Auth(login.FedAuthToken); err != nil {
-			return s.reject(conn, "login failed: "+err.Error())
-		}
+	// No validator configured is a REJECTION, not a free pass. `if s.Auth != nil`
+	// failed open: a misconfigured server accepted every token unvalidated, and
+	// the surface it hands out is read/write T-SQL. Production always sets Auth
+	// (server.go wires it beside the backend), so this only ever fires on a
+	// construction mistake — which is exactly when a security check should be
+	// loudest. Symmetric with api.withAuth, which answers "not configured"
+	// rather than waving the request through.
+	if s.Auth == nil {
+		return s.reject(conn, "this endpoint has no token validator configured")
+	}
+	if err := s.Auth(login.FedAuthToken); err != nil {
+		return s.reject(conn, "login failed: "+err.Error())
 	}
 	// Resolve + prepare the target item's database (reflect a lakehouse's Delta)
 	// and learn whether it is a read-only surface. OnConnect returns the resolved

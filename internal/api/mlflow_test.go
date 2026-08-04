@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -218,5 +219,60 @@ func TestMLflowResponseFilterLeavesNonJSON(t *testing.T) {
 	}
 	if models := got["registered_models"].([]any); len(models) != 1 {
 		t.Fatalf("filtered models = %#v", models)
+	}
+}
+
+// TestAnOversizedMLflowResponseIsRefusedNotRelayedShort mirrors the Kusto
+// proxy's guarantee for the MLflow relay, which previously read the upstream
+// body with an unbounded io.ReadAll.
+//
+// The response is handed to the caller as MLflow's own answer, so a truncated
+// read becomes a JSON document that may still parse while missing entries — a
+// run list silently shorter than the truth. An attached server could also drive
+// allocation here without limit. Refusing is the only honest option.
+func TestAnOversizedMLflowResponseIsRefusedNotRelayedShort(t *testing.T) {
+	a, _ := newAPI(t)
+	// A server that streams past the ceiling, in chunks with no Content-Length,
+	// as a genuinely large artifact listing would arrive.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := make([]byte, 1<<20)
+		for sent := int64(0); sent <= int64(httpx.MaxProxyBody); sent += int64(len(chunk)) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+	if err := a.SetMLflowBackend(srv.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	in := httptest.NewRequest(http.MethodGet, "/mlflow/workspaces/w/api/2.0/mlflow/experiments/search", nil)
+	status, _, payload, err := a.callMLflow(in, "/api/2.0/mlflow/experiments/search", nil, nil)
+	if err == nil {
+		t.Fatalf("an oversized MLflow response was relayed: status %d, %d bytes",
+			status, len(payload))
+	}
+	if payload != nil {
+		t.Fatalf("a refused relay still returned %d bytes", len(payload))
+	}
+}
+
+// TestAnMLflowResponseInsideTheCeilingIsRelayedWhole keeps the test above from
+// passing on a relay that had simply broken.
+func TestAnMLflowResponseInsideTheCeilingIsRelayedWhole(t *testing.T) {
+	a, _ := newAPI(t)
+	body := `{"experiments":[]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	if err := a.SetMLflowBackend(srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	in := httptest.NewRequest(http.MethodGet, "/mlflow/workspaces/w/api/2.0/mlflow/experiments/search", nil)
+	status, _, payload, err := a.callMLflow(in, "/api/2.0/mlflow/experiments/search", nil, nil)
+	if err != nil || status != http.StatusOK || string(payload) != body {
+		t.Fatalf("in-ceiling relay: status=%d payload=%q err=%v", status, payload, err)
 	}
 }
