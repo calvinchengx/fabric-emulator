@@ -34,8 +34,31 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
+// definitionPartExact decodes one named part, by path and nothing else.
+//
+// definitionPart's sole-part fallback exists for notebooks, whose content part
+// is named inconsistently by the clients that publish it. Applied to a lookup
+// whose CONTENT is format-specific it silently returns the wrong bytes: asking
+// a semantic model for `model.bim` when its definition is a single .tmdl file
+// answered with the TMDL, which then failed as TMSL and reported a JSON parse
+// error about a model that contains no JSON.
+func (a *API) definitionPartExact(itemID, path string) ([]byte, error) {
+	parts, err := a.Store.GetDefinition(itemID)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range parts {
+		if p.Path == path {
+			return base64.StdEncoding.DecodeString(p.Payload)
+		}
+	}
+	return nil, fmt.Errorf("no %s in definition", path)
+}
+
 // definitionPart decodes one named part (by path) from an item's definition,
-// falling back to the sole part when there's exactly one.
+// falling back to the sole part when there's exactly one. Use
+// definitionPartExact where the caller then parses the bytes as a specific
+// format — the fallback cannot tell one format from another.
 func (a *API) definitionPart(itemID, path string) ([]byte, error) {
 	parts, err := a.Store.GetDefinition(itemID)
 	if err != nil {

@@ -144,7 +144,9 @@ func (a *API) loadSemanticModel(itemID string, p *auth.Principal) (*semanticmode
 // parseModelDefinition reads the item's definition and parses whichever model
 // serialisation it carries.
 func (a *API) parseModelDefinition(itemID string) (*semanticmodel.Model, error) {
-	if bim, err := a.definitionPart(itemID, "model.bim"); err == nil {
+	// Exact: a definition whose sole part is a .tmdl must fall through to the
+	// TMDL branch below, not be handed to the TMSL parser (definitionPartExact).
+	if bim, err := a.definitionPartExact(itemID, "model.bim"); err == nil {
 		return semanticmodel.ParseTMSL(bim)
 	}
 	parts, err := a.Store.GetDefinition(itemID)
