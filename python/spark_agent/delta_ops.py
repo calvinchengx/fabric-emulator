@@ -60,9 +60,30 @@ def remember(name, location, schema=None):
         _LOCATIONS[f"{schema}.{name}".lower()] = location
 
 
+# Locations of SCHEMAS the emulator registered (schema-enabled lakehouse
+# folders reflected at session bind), lowercase name -> Tables/<schema> URI.
+# CTAS interception needs them: a `CREATE TABLE schema.t AS SELECT` must land
+# under the schema's real location, and only the emulator knows it.
+_SCHEMA_LOCATIONS = {}
+
+
+def remember_schema(name, location):
+    """Record where a schema the emulator registered actually lives."""
+    if name and location:
+        _SCHEMA_LOCATIONS[name.lower()] = location.rstrip("/")
+
+
+def known_schema_location(name):
+    """The recorded location for schema `name`, or None."""
+    if not name:
+        return None
+    return _SCHEMA_LOCATIONS.get(name.replace("`", "").strip().lower())
+
+
 def forget_all():
     """Drop every recorded location. For tests that need a clean registry."""
     _LOCATIONS.clear()
+    _SCHEMA_LOCATIONS.clear()
 
 
 def known_location(name):
@@ -92,6 +113,41 @@ _VACUUM = re.compile(
     r"(?P<dry>\s+DRY\s+RUN)?\s*;?\s*$",
     re.IGNORECASE | re.DOTALL)
 
+# `CREATE [OR REPLACE] TABLE schema.tbl [USING delta] AS <query>`.
+#
+# Sail executes CTAS happily but places the table in its OWN warehouse,
+# ignoring the schema's registered LOCATION — so a notebook building gold
+# tables goes green while the lakehouse stays empty, the false-green write
+# the emulator exists to prevent. Only statements whose SCHEMA the emulator
+# itself registered (with a location) are intercepted; everything else passes
+# to the engine untouched.
+_CTAS = re.compile(
+    r"^\s*CREATE\s+(?P<replace>OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"(?P<target>[\w.`]+)\s+(?:USING\s+delta\s+)?AS\s+(?P<query>\(?\s*SELECT\b.+)$",
+    re.IGNORECASE | re.DOTALL)
+
+# The bounded MERGE shape an upsert notebook writes (Rosetta's silver layer is
+# the motivating case):
+#
+#   MERGE INTO <target> [AS] t USING <source-name> [AS] s ON <cond>
+#   [WHEN MATCHED [AND <cond>] THEN UPDATE SET <assignments>]
+#   [WHEN NOT MATCHED THEN INSERT (<cols>) VALUES (<vals>)]
+#
+# Sail parses MERGE but its plan resolver fails on any Delta TARGET holding a
+# date or timestamp column ("attribute #N is missing from the schema"),
+# reproduced minimally and unchanged in pysail 0.7.0 — which makes every
+# audit-columned table unmergeable, i.e. practically all of them. The source
+# must be a bare view/table NAME: a subquery source does not match and falls
+# through to the engine, honest failure included.
+_MERGE = re.compile(
+    r"^\s*MERGE\s+INTO\s+(?P<target>delta\.`[^`]+`|[\w.`]+)(?:\s+AS)?\s+(?P<talias>\w+)\s+"
+    r"USING\s+(?P<source>[\w.]+)(?:\s+AS)?\s+(?P<salias>\w+)\s+"
+    r"ON\s+(?P<on>.+?)\s+"
+    r"(?:WHEN\s+MATCHED(?:\s+AND\s+(?P<mcond>.+?))?\s+THEN\s+UPDATE\s+SET\s+(?P<sets>.+?)\s*)?"
+    r"(?:WHEN\s+NOT\s+MATCHED\s+THEN\s+INSERT\s*\((?P<icols>[^)]+)\)\s*VALUES\s*\((?P<ivals>[^)]+)\)\s*)?"
+    r";?\s*$",
+    re.IGNORECASE | re.DOTALL)
+
 
 class DeltaOpError(RuntimeError):
     """Raised for a matched statement we decline to execute — never for one we
@@ -115,7 +171,144 @@ def match(sql: str):
     m = _OPTIMIZE.match(text)
     if m:
         return "optimize", m.groupdict()
+    m = _MERGE.match(text)
+    if m:
+        params = m.groupdict()
+        # A MERGE with neither branch parsed is one this grammar did not really
+        # understand (DELETE clauses, subquery source, ...): fall through.
+        if params.get("sets") or params.get("icols"):
+            return "merge", params
+    m = _CTAS.match(text)
+    if m:
+        params = m.groupdict()
+        target = params["target"].replace("`", "")
+        # Only a two-part name whose schema the emulator registered is ours;
+        # anything else is the engine's own business (its warehouse IS the
+        # right place for a schema nobody gave a location).
+        if "." in target and known_schema_location(target.split(".", 1)[0]):
+            return "ctas", params
     return None
+
+
+def execute_ctas(spark, original_sql, params, storage_options=None):
+    """Run a CTAS whose schema has a registered location, landing it there.
+
+    The SELECT runs on the ENGINE (arbitrary SQL is its job); only the write
+    is redirected: DataFrame.save to the schema-location path, then a catalog
+    registration so later statements resolve the name. Without this, Sail
+    places the table in its own warehouse and the lakehouse silently stays
+    empty.
+    """
+    target = params["target"].replace("`", "")
+    schema, tbl = target.split(".", 1)
+    loc = f"{known_schema_location(schema)}/{tbl}"
+    replace = bool(params.get("replace"))
+
+    df = original_sql(params["query"].strip().rstrip(";"))
+    df.write.format("delta").mode("overwrite" if replace else "errorifexists").save(loc)
+    if replace:
+        try:
+            original_sql(f"DROP TABLE IF EXISTS `{schema}`.`{tbl}`")
+        except Exception:  # noqa: BLE001 - a stale entry must not block the re-register
+            pass
+    original_sql(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{tbl}` USING delta LOCATION '{loc}'")
+    remember(tbl, loc, schema)
+    return f"CREATE TABLE: {schema}.{tbl} at its schema location (delta write + register)"
+
+
+def _dequote(expr: str) -> str:
+    """Backtick identifiers -> double-quoted, for delta-rs (DataFusion) SQL.
+
+    Also load-bearing for CASE: DataFusion lowercases bare identifiers, so a
+    column like `Strm` must arrive quoted or it will not resolve.
+    """
+    return re.sub(r"`([^`]+)`", r'"\1"', expr).strip()
+
+
+def _split_top(text: str, sep: str = ","):
+    """Split on `sep` outside quotes/parens — assignment lists may hold both."""
+    parts, depth, buf, quote = [], 0, [], None
+    for ch in text:
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            buf.append(ch)
+        elif ch == "(":
+            depth += 1
+            buf.append(ch)
+        elif ch == ")":
+            depth -= 1
+            buf.append(ch)
+        elif ch == sep and depth == 0:
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        parts.append("".join(buf))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _plain_column(ref: str, alias: str) -> str:
+    """`t.\\`col\\``/`t.col`/`\\`col\\`` -> the bare column name."""
+    ref = ref.strip().strip("`\"")
+    prefix = alias + "."
+    if ref.lower().startswith(prefix.lower()):
+        ref = ref[len(prefix):]
+    return ref.strip().strip("`\"")
+
+
+def execute_merge(spark, params, resolve, storage_options=None):
+    """Run a bounded MERGE through delta-rs and return a result line.
+
+    The engine cannot: Sail fails plan resolution for any Delta merge target
+    holding a date/timestamp column. delta-rs performs the same upsert against
+    the same table, so the observable outcome is real; the executor differs,
+    which is this module's standing, documented divergence.
+
+    The source is materialised from the session (`spark.table` -> Arrow):
+    delta-rs cannot see Spark temp views, and Arrow preserves the date and
+    timestamp types whose presence is the whole reason we are here.
+    """
+    from deltalake import DeltaTable
+
+    talias, salias = params["talias"], params["salias"]
+    uri = _table_uri(params["target"].replace("`", ""), resolve)
+    source = spark.table(params["source"]).toArrow()
+
+    merger = DeltaTable(uri, storage_options=_resolve_options(storage_options)).merge(
+        source=source,
+        predicate=_dequote(params["on"]),
+        source_alias=salias,
+        target_alias=talias,
+    )
+    if params.get("sets"):
+        updates = {}
+        for assign in _split_top(params["sets"]):
+            lhs, _, rhs = assign.partition("=")
+            if not rhs:
+                raise DeltaOpError(f"MERGE: cannot parse assignment {assign!r}")
+            updates[_plain_column(lhs, talias)] = _dequote(rhs)
+        merger = merger.when_matched_update(
+            updates=updates,
+            predicate=_dequote(params["mcond"]) if params.get("mcond") else None,
+        )
+    if params.get("icols"):
+        cols = [_plain_column(c, talias) for c in _split_top(params["icols"])]
+        vals = [_dequote(v) for v in _split_top(params["ivals"])]
+        if len(cols) != len(vals):
+            raise DeltaOpError(
+                f"MERGE: INSERT names {len(cols)} column(s) but {len(vals)} value(s)")
+        merger = merger.when_not_matched_insert(updates=dict(zip(cols, vals)))
+
+    metrics = merger.execute()
+    upd = metrics.get("num_target_rows_updated", "?")
+    ins = metrics.get("num_target_rows_inserted", "?")
+    return f"MERGE: updated {upd} row(s), inserted {ins} (delta-rs)"
 
 
 def _resolve_options(storage_options):
@@ -260,7 +453,12 @@ def install(spark, storage_options=None):
         if matched is None:
             return original_sql(query, *args, **kwargs)
         kind, params = matched
-        message = execute(kind, params, resolve, storage_options)
+        if kind == "merge":
+            message = execute_merge(spark, params, resolve, storage_options)
+        elif kind == "ctas":
+            message = execute_ctas(spark, original_sql, params, storage_options)
+        else:
+            message = execute(kind, params, resolve, storage_options)
         # A DataFrame, so callers can .show()/.collect() as after a native
         # OPTIMIZE rather than getting None back.
         return spark.createDataFrame([(message,)], ["result"])
