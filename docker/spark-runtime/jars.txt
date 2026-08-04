@@ -1,0 +1,11 @@
+# The jars this image adds to Spark, one URL per line.
+#
+# A list rather than inline curls because two things read it: the Dockerfile,
+# which fetches whatever is not already in the build context, and
+# scripts/fetch_spark_jars.sh, which pre-populates that context so CI can cache
+# them. One source of truth means a version bump cannot leave the two disagreeing.
+https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-azure/3.3.4/hadoop-azure-3.3.4.jar
+https://repo1.maven.org/maven2/com/microsoft/azure/azure-storage/7.0.1/azure-storage-7.0.1.jar
+https://repo1.maven.org/maven2/org/wildfly/openssl/wildfly-openssl/1.0.7.Final/wildfly-openssl-1.0.7.Final.jar
+https://repo1.maven.org/maven2/io/delta/delta-spark_2.12/3.2.0/delta-spark_2.12-3.2.0.jar
+https://repo1.maven.org/maven2/io/delta/delta-storage/3.2.0/delta-storage-3.2.0.jar

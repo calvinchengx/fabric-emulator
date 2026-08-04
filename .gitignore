@@ -67,3 +67,6 @@ examples/*/gold*/.emulator-ca.pem
 
 # Built by e2e/pbix-desktop/build_fixture.py — a 2 MB binary nobody can diff.
 e2e/pbix-desktop/model.pbix
+
+# Pre-fetched Spark jars (scripts/fetch_spark_jars.sh); the list is jars.txt.
+docker/spark-runtime/jars/*.jar
