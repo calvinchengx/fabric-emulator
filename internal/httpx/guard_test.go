@@ -77,8 +77,11 @@ func TestNoHandlerReadsABodyThroughABareLimitReader(t *testing.T) {
 				}
 			}
 			if !exempt {
+				// ToSlash, because filepath.Rel yields backslashes on Windows
+				// and this string is compared and printed on three platforms.
 				rel, _ := filepath.Rel(root, path)
-				offenders = append(offenders, rel+":"+itoa(i+1)+": "+strings.TrimSpace(line))
+				offenders = append(offenders,
+					filepath.ToSlash(rel)+":"+itoa(i+1)+": "+strings.TrimSpace(line))
 			}
 		}
 		return nil
@@ -116,9 +119,14 @@ func TestTheExemptionsAreStillTheOnesWeApproved(t *testing.T) {
 		}
 		src, _ := os.ReadFile(path)
 		if n := strings.Count(string(src), exemptMarker); n > 0 {
+			// Forward slashes always: the approved list below is written one
+			// way, and on Windows filepath.Rel returns `internal\\entra\\...`,
+			// so the lookup missed and the test failed there and only there.
+			// Caught by CI on windows-latest — a reminder that a guard test is
+			// code and gets its own bugs.
 			rel, _ := filepath.Rel(root, path)
 			for i := 0; i < n; i++ {
-				found = append(found, rel)
+				found = append(found, filepath.ToSlash(rel))
 			}
 		}
 		return nil
