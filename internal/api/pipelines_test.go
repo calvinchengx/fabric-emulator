@@ -84,7 +84,7 @@ func TestPipelineJobSuccess(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
 	nb := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "child"}
-	if err := st.CreateItem(nb, nil); err != nil {
+	if err := st.CreateItem(nb, notebookParts("")); err != nil {
 		t.Fatal(err)
 	}
 	content := `{"properties":{

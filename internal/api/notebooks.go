@@ -85,9 +85,24 @@ func (a *API) parseNotebookRun(it *store.Item) (notebookRun, string) {
 	def, err := a.notebookContent(it.ID)
 	run := notebookRun{Status: "Pending", Cells: []notebookCellRun{}}
 	if err != nil {
-		// No definition: nothing to parse and nothing to execute. The run is
-		// not waiting on an engine, so it is not left hanging for one.
-		return run, ""
+		// NO DEFINITION IS A FAILURE, not a fast success.
+		//
+		// This used to return no error code, which left the job's completion
+		// time clock-derived — so a Notebook item that had never been given a
+		// definition reported `Completed`, with nothing executed and nothing
+		// ever posted to notebookRunResult. Indistinguishable, in the portal
+		// and over the API, from a notebook that ran.
+		//
+		// That is the same lie ce219af removed for the cells-outstanding case,
+		// with the count at zero: a green job nobody can act on is worse than a
+		// red one, because only the green is believed. DataPipeline has always
+		// failed here (TestPipelineNoDefinition); the notebook path was the
+		// outlier.
+		//
+		// Still terminal, so `notebookutils.notebook.run` polls to an end — it
+		// just ends the way asking an empty item to run deserves.
+		run.Status = "Failed"
+		return run, "NotebookDefinitionInvalid"
 	}
 	run.Binding = compute.NotebookBinding(def)
 	run.Binding, run.Environment, err = a.resolveComputeBinding(it, run.Binding)
@@ -102,6 +117,14 @@ func (a *API) parseNotebookRun(it *store.Item) (notebookRun, string) {
 		run.Cells = append(run.Cells, notebookCellRun{
 			Index: i, Kind: string(c.Kind), Language: c.Language, Source: c.Source, Status: "Pending",
 		})
+	}
+	// A definition that parses to nothing executable — all markdown, say — is a
+	// real run with no work in it, and jobs.go lets the clock complete it. Say
+	// so HERE too: leaving the detail `Pending` under a job the same API calls
+	// `Completed` is two views of one execution contradicting each other, and a
+	// caller reading either alone is misled by whichever it picked.
+	if len(run.Cells) == 0 {
+		run.Status = "Completed"
 	}
 	return run, ""
 }

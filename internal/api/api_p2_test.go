@@ -153,7 +153,9 @@ func TestJobLifecycleAndBody(t *testing.T) {
 	st.Clock.Freeze()
 	ws := seedWorkspace(t, st)
 	it := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "nb"}
-	if err := st.CreateItem(it, nil); err != nil {
+	// Markdown only: this test is about the JOB lifecycle on the clock, so
+	// the notebook must have nothing an engine would be waited for.
+	if err := st.CreateItem(it, notebookParts("# Fabric notebook source\n\n# MARKDOWN ********************\n# MAGIC ## no code\n")); err != nil {
 		t.Fatal(err)
 	}
 	pv := map[string]string{"wid": ws.ID, "iid": it.ID}
