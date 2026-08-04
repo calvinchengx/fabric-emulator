@@ -55,9 +55,14 @@ def compose(*args, profiles=()):
 
 
 def run(example=EXAMPLE, label="medallion", profiles=()):
-    """`profiles` names optional services this example needs. The Livy agent is
-    one: only the dbt-fabricspark examples reach it, and starting it for the
-    others cost them a fourfold slowdown in lakehouse reflection."""
+    """`profiles` names optional services this example needs.
+
+    EVERY leg now needs the Livy agent, because Fabric's notebook activity is
+    synchronous and the emulator drives the run through that agent. It used to
+    be profiled away from the PySpark legs on the grounds that starting it cost
+    them "a fourfold slowdown in lakehouse reflection" (ece5e17). Measured on CI
+    when the legs were switched over: 5m -> 5m and 9m -> 10m. The fourfold cost
+    was the `_rn` projection bug fixed in that same commit, not the agent."""
     try:
         # --wait blocks until every healthcheck passes, so the example never
         # races a backend that is still booting.
@@ -95,7 +100,6 @@ def run(example=EXAMPLE, label="medallion", profiles=()):
 
 
 if __name__ == "__main__":
-    # profiles=("livy",): the notebook activity is synchronous, so the
-    # emulator needs the Spark agent to execute the cells. MEASURING whether
-    # that costs the PySpark legs what the agent's profile comment claims.
+    # The notebook activity is synchronous, so the emulator needs the Spark
+    # agent to execute the cells — see run()'s docstring for the cost.
     sys.exit(run(profiles=("livy",)))
