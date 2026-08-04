@@ -141,8 +141,13 @@ func TestNotebookRunRBACAndScope(t *testing.T) {
 	}
 }
 
-// TestNotebookRunNoDefinition: a Notebook with no content still records an
-// (empty) run rather than crashing.
+// TestNotebookRunNoDefinition: a Notebook with no content FAILS the job.
+//
+// It used to complete. A job whose item was never given a definition reported
+// `Completed`, with no cells parsed, no engine asked and nothing posted to
+// notebookRunResult — indistinguishable from a notebook that ran. That is the
+// lie ce219af removed for cells-outstanding, with the count at zero.
+// DataPipeline has always failed here (TestPipelineNoDefinition).
 func TestNotebookRunNoDefinition(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
@@ -151,9 +156,49 @@ func TestNotebookRunNoDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Failed" {
+		t.Fatalf("job status = %s, want Failed", s)
+	}
+	// Terminal, so notebookutils.notebook.run still polls to an end — and the
+	// detail agrees with the job rather than contradicting it.
 	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
-	if run.Status != "Pending" || len(run.Cells) != 0 {
+	if run.Status != "Failed" || len(run.Cells) != 0 {
 		t.Fatalf("empty notebook run = %+v", run)
+	}
+}
+
+// TestNotebookRunDetailNeverContradictsItsJob.
+//
+// A definition that parses to nothing executable is a real run with no work in
+// it, and the clock completes the job. The run detail must say so too: a job
+// reading `Completed` while its own detail reads `Pending` is two views of one
+// execution disagreeing, and whichever a caller happens to read is the one that
+// misleads them. This is how a notebook that never ran looked healthy in the
+// portal while the endpoint that would have shown the truth said nothing.
+func TestNotebookRunDetailNeverContradictsItsJob(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "markdown-only"}
+	// A definition with no code in it at all.
+	body := "# Fabric notebook source\n\n# MARKDOWN ********************\n# MAGIC ## nothing to run\n"
+	if err := st.CreateItem(nb, []store.DefinitionPart{{
+		Path: "notebook-content.py", Payload: base64.StdEncoding.EncodeToString([]byte(body)),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+	status := jobStatus(t, a, ws.ID, nb.ID, jid)
+	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
+	if len(run.Cells) != 0 {
+		t.Fatalf("markdown-only notebook parsed %d code cell(s)", len(run.Cells))
+	}
+	if status != run.Status {
+		t.Fatalf("job says %q, its run detail says %q", status, run.Status)
+	}
+	// Equality alone would pass if BOTH said Pending, which is the bug wearing
+	// a different face: the pair must agree AND be terminal.
+	if status != "Completed" {
+		t.Fatalf("a run with nothing to execute = %s, want Completed", status)
 	}
 }
 
@@ -465,7 +510,11 @@ func TestNotebookJobWithNothingToExecuteStillCompletes(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
 	nb := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "empty"}
-	if err := st.CreateItem(nb, nil); err != nil {
+	// A definition that PARSES to nothing executable. The no-definition case is
+	// a different thing and now fails (TestNotebookRunNoDefinition): an item
+	// nobody gave content to has not "run with nothing to do", it was never
+	// runnable. This is the genuine empty case, and it still must not hang.
+	if err := st.CreateItem(nb, notebookParts("# Fabric notebook source\n\n# MARKDOWN ********************\n# MAGIC ## no code\n")); err != nil {
 		t.Fatal(err)
 	}
 	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")

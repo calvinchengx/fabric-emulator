@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	entra "github.com/calvinchengx/entra-emulator/emulator"
+
+	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
 const platformPart = `{"path":".platform","payload":"e30=","payloadType":"InlineBase64"}`
@@ -193,6 +195,16 @@ func TestJobInstancesOnTheClock(t *testing.T) {
 	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "jobs"}, &ws)
 	var nb struct{ ID string }
 	f.call("POST", "/v1/workspaces/"+ws.ID+"/notebooks", f.token, map[string]any{"displayName": "nb"}, &nb)
+	// Its definition out-of-band: this test walks a job to a terminal status on
+	// the CLOCK, and a notebook carrying code waits for an engine instead. It
+	// needs one at all because a notebook with no definition now fails its job
+	// rather than completing (TestNotebookRunNoDefinition).
+	if err := f.srv.API.Store.SetDefinition(nb.ID, []store.DefinitionPart{
+		{Path: "notebook-content.py", PayloadType: "InlineBase64",
+			Payload: "IyBGYWJyaWMgbm90ZWJvb2sgc291cmNlCgojIE1BUktET1dOICoqKioqKioqKioqKioqKioqKioqCiMgTUFHSUMgIyMgbm8gY29kZQo="},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Missing jobType → 400.
 	resp := f.call("POST", "/v1/workspaces/"+ws.ID+"/items/"+nb.ID+"/jobs/instances", f.token, nil, nil)

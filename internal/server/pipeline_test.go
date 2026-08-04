@@ -59,7 +59,17 @@ func TestPipelineRunE2E(t *testing.T) {
 	// A notebook the pipeline will invoke.
 	var nb struct{ ID string }
 	f.mustStatus(f.call("POST", "/v1/workspaces/"+ws.ID+"/items", f.token,
-		map[string]string{"displayName": "etl-nb", "type": "Notebook"}, &nb), http.StatusCreated, "create notebook")
+		map[string]string{"displayName": "etl-nb", "type": "Notebook"}, &nb),
+		http.StatusCreated, "create notebook")
+	// Its definition out-of-band, like the pipeline's below: creating an item
+	// WITH one is a 202 + operation, and this test is not about that path. The
+	// content is markdown only — the pipeline asserts its activity ran, not
+	// that an engine did, and a notebook carrying code would wait for one.
+	if err := f.srv.API.Store.SetDefinition(nb.ID, []store.DefinitionPart{
+		{Path: "notebook-content.py", Payload: "IyBGYWJyaWMgbm90ZWJvb2sgc291cmNlCgojIE1BUktET1dOICoqKioqKioqKioqKioqKioqKioqCiMgTUFHSUMgIyMgbm8gY29kZQo=", PayloadType: "InlineBase64"},
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// The pipeline item (definition published out-of-band via the store; the
 	// fabric-cicd e2e already covers the HTTP publish path).

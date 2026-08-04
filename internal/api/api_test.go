@@ -5,6 +5,7 @@ package api
 // to reach the error branches cheaply.
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -281,4 +282,22 @@ func TestFaultRejectNextRequests(t *testing.T) {
 	if left != 0 {
 		t.Fatalf("rejectAll = %d after two requests; want 0", left)
 	}
+}
+
+// notebookParts is a minimal real notebook definition.
+//
+// Tests that need a Notebook item as a STUB — a pipeline activity's target, a
+// job to watch through its lifecycle — used to create one with nil parts. That
+// is no longer inert: a Notebook with no definition fails its RunNotebook job
+// (TestNotebookRunNoDefinition), because reporting success for an item nobody
+// gave any content is the lie this emulator exists to avoid. A stub that is
+// meant to run needs something to run.
+func notebookParts(src string) []store.DefinitionPart {
+	if src == "" {
+		src = "# Fabric notebook source\n\n# CELL ********************\nprint('stub')\n"
+	}
+	return []store.DefinitionPart{{
+		Path:    "notebook-content.py",
+		Payload: base64.StdEncoding.EncodeToString([]byte(src)),
+	}}
 }
