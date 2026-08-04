@@ -115,9 +115,10 @@ services:
       retries: 20
 
   # A real Spark engine (LakeSail's Sail — Rust Spark Connect, no JVM). The
-  # emulator never executes notebooks itself: it parses them into cells and
-  # records a Pending run, and an engine executes those cells and reports back.
-  # Without this, a notebook hop could only be play-acted by the client.
+  # emulator parses notebooks into cells but cannot run Spark itself, so it
+  # drives them through the Spark agent onto Sail — synchronously, because
+  # Fabric's notebook activity is. Without this, a notebook hop could only be
+  # play-acted by the client.
   sail:
     build:
       context: ../..
@@ -148,12 +149,15 @@ services:
   # dbt-fabricspark examples reach it — the PySpark ones talk Spark Connect to
   # Sail directly — but it must be here for those two to work at all.
   spark-agent:
-    # PROFILED, deliberately. Only the dbt-fabricspark examples reach the Livy
-    # surface; the PySpark ones drive Spark Connect directly and never touch it.
-    # The agent is not idle when running — it opens its own SparkSession against
-    # Sail — and on a two-core runner that cost the PySpark legs dearly:
-    # lakehouse reflection of 100k x 101 went from 3m10s to over 12 minutes and
-    # timed out. A service that one example needs must not tax the others.
+    # PROFILED so a stack that does not want it can leave it out, but EVERY
+    # medallion leg asks for it now: the notebook activity is synchronous and
+    # the emulator drives the run through this agent.
+    #
+    # It used to be kept away from the PySpark legs because it "cost the
+    # PySpark legs dearly: lakehouse reflection of 100k x 101 went from 3m10s
+    # to over 12 minutes and timed out". That was measured in ece5e17, which
+    # ALSO fixed an `_rn` projection bug — and the projection was the cause.
+    # Re-measured on CI with every leg running the agent: 5m -> 5m, 9m -> 10m.
     profiles: ["livy"]
     build:
       context: ../..

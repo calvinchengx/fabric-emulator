@@ -35,8 +35,8 @@ TDS_SERVER = os.environ.get("TDS_SERVER", "localhost,1433")
 # own address).
 KV_INTERNAL = os.environ.get("KV_INTERNAL_URL", "https://keyvault-emulator:8444")
 
-# The Spark engine engine.py drives the queued notebook run onto. Default is
-# Sail as `docker compose up` publishes it; the CI harness uses the service name.
+# The Spark engine silver.py drives its PySpark work onto. Default is Sail as
+# `docker compose up` publishes it; the CI harness uses the service name.
 SPARK_REMOTE = os.environ.get("SPARK_REMOTE", "sc://localhost:50051")
 
 FABRIC_AUD = "https://api.fabric.microsoft.com"
@@ -133,9 +133,10 @@ def load():
 
 # --- pipeline orchestration --------------------------------------------------
 # The emulator executes DataPipeline activities for real: a Copy moves the data
-# itself. A Notebook activity is different — the emulator parses the notebook
-# into cells and records a Pending run, then an ENGINE executes those cells and
-# reports back. That split is why these helpers exist.
+# itself, and a Notebook activity is SYNCHRONOUS like Fabric's — the emulator
+# parses the notebook into cells and, with a Spark agent attached, drives the
+# run to a terminal state before the activity reports. That is why these
+# helpers poll the job rather than assuming it finished.
 
 def create_item(display_name, item_type, parts):
     """Create an item with a definition, resolving the LRO if the create is async."""

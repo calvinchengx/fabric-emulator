@@ -368,25 +368,36 @@ Build the definition as a **dict and serialise it** — a pipeline definition is
 nested JSON, and hand-escaping braces in a template is how you earn a
 `PipelineDefinitionInvalid`.
 
-### The notebook does not run yet — and that is faithful
+### The activity waits for the notebook
 
-The emulator parses a Notebook item into ordered cells and records a `Pending`
-run. **It never executes them.** An engine does, and reports the outcome to
-`notebookRunResult`. Real Fabric works the same way with its own Spark pools;
-here the engine is **Sail** (Rust Spark Connect, no JVM), attached to the stack,
-and `engine.py` plays the driver:
+Fabric's notebook activity is **synchronous**: the pipeline gates on the run's
+terminal state. That is what makes `dependsOn: Succeeded` mean anything — an
+activity that always reported "queued" could never be depended on, and Fabric's
+own guidance to set a session tag "to minimize the amount of time it takes to
+execute your notebook job" only matters to a pipeline that is waiting.
+
+So the activity here does the same. With a Spark agent attached the emulator
+drives the run itself and the activity succeeds or fails on the outcome:
 
 ```python
-# engine.py — fetch the cells the EMULATOR parsed, run them on Spark, report
-run = S.get(f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}/notebookRun", ...)
-spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
-for c in sorted(run.json()["cells"], key=lambda c: c["index"]):
-    exec(c["source"], ns)          # running notebook code IS the engine's job
+nb_out = runs["IngestOrders"]["output"]
+assert nb_out["status"] == "Completed"      # not "Pending"
 ```
 
-Reporting the cell's **read/write set** alongside the results is what turns the
-run into lineage. The emulator records those edges verbatim; it never parses the
-notebook's code to guess what it touched.
+The engine underneath is **Sail** (Rust Spark Connect, no JVM). Without an agent
+the run stays `Pending` for an external engine to execute and report to
+`notebookRunResult` — that callback is a real API surface and still supported;
+`e2e/notebook-run` covers it. It is simply not what a *pipeline* notebook
+activity does.
+
+> This tutorial used to say the opposite — "the notebook does not run yet, and
+> that is faithful", with a separate `engine.py` step driving Sail after the
+> pipeline finished. That split was an emulator affordance, not Fabric's
+> behaviour, and the wording claimed fidelity for it. The step is gone.
+
+Lineage no longer depends on the engine declaring what it touched: the emulator
+records the I/O the **storage layer actually saw** during the run. It still
+never parses the notebook's code to guess.
 
 Inside the notebook, OneLake is addressed the way a Fabric notebook addresses
 it — by the **full account host**, not a bare account name:

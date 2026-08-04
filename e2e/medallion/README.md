@@ -100,10 +100,11 @@ The harness is four files; everything it exercises lives in
 - `run.py` — brings the stack up, runs the example, tears it down.
 - `docker-compose.yml` — entra, Key Vault, SQL Server, **Sail**, fabric (TDS on), pipeline.
 
-**Why Sail is here.** The emulator never executes notebooks: it parses a Notebook
-item into cells and records a `Pending` run, and an engine executes them and
-reports back. Without a real engine attached, a notebook hop could only be
-play-acted by the client — so the suite runs one.
+**Why Sail is here.** The emulator parses a Notebook item into cells but cannot
+run Spark itself. Fabric's notebook activity is synchronous, so the pipeline
+gates on the run — the emulator drives it through the Spark agent onto Sail.
+Without a real engine attached, a notebook hop could only be play-acted by the
+client — so the suite runs one.
 - `Dockerfile.pipeline` — python + ODBC Driver 18, then `uv sync --frozen`
   against **the example's own lockfile** and `COPY examples/medallion-pyspark/`. The
   example's dependencies never enter the emulator's dependency graph.

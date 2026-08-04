@@ -22,7 +22,6 @@ STEPS = [
     ("secret", "source API key into Key Vault + an AKV-reference connection"),
     ("extract_load", "extract from Contoso POS into Files/landing"),
     ("bronze", "a real DataPipeline: a Copy activity plus a Notebook activity"),
-    ("engine", "Spark executes the queued notebook run and reports lineage"),
     # The one step that differs from ../medallion-pyspark.
     ("silver", "dbt-fabricspark: bronze -> silver, declaratively, on Sail"),
     ("reflect", "reflect silver into the lakehouse SQL endpoint"),

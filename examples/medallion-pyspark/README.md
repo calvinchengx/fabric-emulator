@@ -50,8 +50,8 @@ uv run python secret.py
 
 You also need the **Microsoft ODBC Driver 18** for the dbt and TDS steps
 (macOS: `brew tap microsoft/mssql-release && brew install msodbcsql18`), and a
-Spark engine for `engine.py` — `docker compose up` starts Sail, and the step
-reads `SPARK_REMOTE` (default `sc://localhost:50051`).
+Spark engine — `docker compose up` starts Sail, and the steps read
+`SPARK_REMOTE` (default `sc://localhost:50051`).
 
 ## How big is it
 
@@ -97,7 +97,6 @@ would have taken.
 | `secret.py` | secret into Key Vault; AKV-reference connection (asserts the secret never reads back) |
 | `extract_load.py` | pull from the vendor API, land it verbatim under `Files/landing/` |
 | `bronze.py` | a real **DataPipeline**: a Copy activity the emulator executes, plus a Notebook activity |
-| `engine.py` | **Spark (Sail)** executes the parsed cells and reports the run + its read/write set |
 | `silver.py` | dedupe, conform countries, quarantine the malformed row |
 | `wrangle.py` | **interactive**: profile bronze vs silver in VS Code Data Wrangler |
 | `reflect.py` | connect to the lakehouse database — reflection makes silver queryable T-SQL |
@@ -174,7 +173,7 @@ at compose service names over plain HTTP:
 | `FABRIC_REST_URL` | `https://localhost:9443` |
 | `TDS_SERVER` | `localhost,1433` |
 | `KV_INTERNAL_URL` | `https://keyvault-emulator:8444` — the vault URI **Fabric** resolves, so it must be reachable from the emulator, not from you. That is why it is a service name and not `localhost` even when you run these steps on your machine |
-| `SPARK_REMOTE` | `sc://localhost:50051` — the Spark engine `engine.py` drives the notebook run onto (Sail, as the root compose publishes it) |
+| `SPARK_REMOTE` | `sc://localhost:50051` — the Spark engine the notebook activity and `silver.py` run onto (Sail, as the root compose publishes it) |
 | `PIPELINE_STATE` | `./state.json` |
 | `GOLD_PROJECT` | `./gold` |
 
