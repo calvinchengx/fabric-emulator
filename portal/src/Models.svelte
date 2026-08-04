@@ -19,10 +19,18 @@
   // A table's row count is not knowable from the definition — an import
   // table's rows live in data.json and a Direct Lake table's live in Delta —
   // so the summary counts what the DEFINITION actually states.
+  // Pluralised through ONE helper rather than three inline ternaries. Two of
+  // the three had one and `measures` did not, so a model with a single measure
+  // read "1 measures" — invisible until a second model with exactly one turned
+  // up, because the only model anyone had ever looked at has three.
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
   const summary = (m) =>
-    `${m.tables.length} table${m.tables.length === 1 ? '' : 's'}, ` +
-    `${m.tables.reduce((n, t) => n + t.measures.length, 0)} measures, ` +
-    `${m.relationships.length} relationship${m.relationships.length === 1 ? '' : 's'}`;
+    [
+      plural(m.tables.length, 'table'),
+      plural(m.tables.reduce((n, t) => n + t.measures.length, 0), 'measure'),
+      plural(m.relationships.length, 'relationship'),
+    ].join(', ');
 </script>
 
 <h1>Semantic models</h1>
