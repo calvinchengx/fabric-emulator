@@ -282,6 +282,26 @@ rather than a wrong value, which is the lucky version.
 Documented as a table in `docs/16-warehouse-tds.md`. Still unmapped: the nested
 types (`struct`/`array`/`map`), which have no kind at all.
 
+**The honest type broke the catalog, one commit later.** Reporting a Delta
+column as `binary` instead of collapsing it to `string` made the governance job
+fail with `For column data types char, varchar, binary, varbinary dataLength
+must not be null` — OpenMetadata refuses the WHOLE table for one such column,
+so the table simply vanishes from the catalog rather than arriving degraded.
+The fix belongs in the ingest, not in a revert: a real Fabric table with a
+binary column would have broken it identically, so the emulator was merely the
+first thing to produce one. `scripts/govern_ingest.py` now sends the width the
+SQL analytics endpoint reflects (`VARBINARY(4000)`), since Delta declares none.
+
+Nothing connected the two ends: the change was to a Go type map, the failure
+appeared in an OpenMetadata container, and the only witness was an e2e needing
+the full OpenMetadata stack — which cannot be run here at all while another
+session holds port 8585. So the constraint now has a second, container-free
+witness: `scripts/check_govern_types.py` drives the real ingest over every type
+in its own map and fails on any column OpenMetadata would refuse. It is wired
+into `make check` and CI, and it fails when the fix is removed. It does not
+replace the e2e — it cannot observe OpenMetadata's actual behaviour, only that
+the payload satisfies the documented constraint.
+
 ### Fixed — the witness checker now resolves which witnesses can skip
 The MEDIUM raised by the coverage pass. It cost real time twice in one session:
 `TestWarehouseSQLServerRelayE2E` skips without `WAREHOUSE_MSSQL_DSN`, so it never

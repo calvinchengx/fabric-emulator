@@ -90,6 +90,15 @@ TYPE_MAP = {
 }
 
 
+# OpenMetadata rejects a table outright when a column of one of these types
+# carries no dataLength.
+LENGTH_REQUIRED = {"CHAR", "VARCHAR", "BINARY", "VARBINARY"}
+
+# Matches the VARBINARY(4000) the SQL analytics endpoint reflects a Delta
+# `binary` column as.
+DEFAULT_BINARY_LENGTH = 4000
+
+
 # --- ODCS contracts -> catalog semantics -------------------------------------
 # The emulator can tell OpenMetadata a table's SHAPE — columns, types, Delta
 # version. It cannot tell it what the table MEANS, because the emulator does
@@ -240,6 +249,17 @@ def om_column(name, dtype, nullable=True):
         "dataTypeDisplay": str(kind) if isinstance(dtype, str) else base,
         "constraint": "NULL" if nullable else "NOT_NULL",
     }
+    # OpenMetadata REFUSES these without a length: "For column data types char,
+    # varchar, binary, varbinary dataLength must not be null" — a 400 on the
+    # whole table, not a warning on the column, so one binary column loses the
+    # entire table from the catalog.
+    #
+    # Delta declares no length for `binary`, so there is nothing to carry
+    # across. The width the emulator's own SQL analytics endpoint exposes is
+    # used instead (VARBINARY(4000) — see internal/warehouse/reflect.go), which
+    # at least makes the catalog agree with the surface a client queries.
+    if col["dataType"] in LENGTH_REQUIRED:
+        col["dataLength"] = DEFAULT_BINARY_LENGTH
     if base == "decimal" and "(" in str(kind):
         precision, _, scale = str(kind).split("(", 1)[1].rstrip(")").partition(",")
         try:
