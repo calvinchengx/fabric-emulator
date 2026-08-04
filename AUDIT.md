@@ -56,29 +56,49 @@ The code found four defects that could not be seen from the docs.
   request that had already committed. The send now happens under the same lock.
   `internal/store/bus.go`; test `TestPublishDuringCloseDoesNotPanic`.
 
-### Open — found and triaged, not yet fixed
-Ranked; all verified against the code, none speculative:
-- **MEDIUM — a JWT with no `exp` never expires.** `internal/auth/auth.go` guards
-  `if claims.Exp != 0`, but real Entra tokens must carry `exp` and real
-  validators reject its absence. A token minted without one is honored forever
-  here and refused by Fabric.
-- **MEDIUM — `AppendOneLakePath` is a non-atomic read-modify-write.** The length
-  read and the `UPDATE` are separate statements with no transaction (unlike
-  `RenameOneLakePath`), so two concurrent appends at the same offset silently
-  lose one. `internal/store/onelake.go`.
-- **MEDIUM — staged blocks are never evicted.** `blockStage` frees bytes only on
-  commit, so aborted or retried uploads (common on delta-rs commit conflicts)
-  hold memory for the process lifetime. Real Azure expires uncommitted blocks
-  after 7 days. `internal/onelake/blob.go`.
-- **MEDIUM — the trigger `firingSet` is process-global.** It exists to break
-  dispatch cycles, but being global rather than per-chain means two *independent*
-  concurrent writes matching one trigger start only one job.
+### Also fixed in this pass (the mediums)
+- **A JWT with no `exp` never expired.** The guard was `Exp != 0 && now > Exp`,
+  so a token without the claim skipped expiry entirely — honored forever here,
+  refused by real Entra, which requires it. That also made the controllable
+  clock's expiry scenarios unenforceable for such tokens. `nbf` keeps its
+  zero-skip, being genuinely optional. `internal/auth/auth.go`; case added to
+  `TestValidateRejections`.
+- **`AppendOneLakePath` lost data.** The length read and the `UPDATE` were
+  separate statements: one connection serializes each STATEMENT, not the pair,
+  so two appends at the same offset both read length N, both passed the position
+  check, and the second overwrote the first. Now one transaction, as
+  `RenameOneLakePath` already was. `internal/store/onelake.go`; test
+  `TestConcurrentAppendsDoNotLoseData` asserts the file's length equals the sum
+  of the appends that reported success — it reproduced the loss 3 runs of 3.
+- **Staged blocks grew without bound.** Freed only on commit, so an upload that
+  never committed held its bytes for the process lifetime — routine with
+  delta-rs, which retries a lost `_delta_log` commit under a NEW blob key and
+  abandons the previous staging. Now size-bounded, evicting whole abandoned
+  blobs oldest-first and never the one being written; an evicted blob fails its
+  commit with an unknown block id, which is what Azure answers for expired
+  blocks. Azure's real 7-day expiry is not emulated: a process rarely lives that
+  long, and tying eviction to the emulator clock would stop it whenever a test
+  freezes time. `internal/onelake/blob.go`; tests `TestBlockStageIsBounded`,
+  `TestBlockStageFreesOnCommit`.
+- **Nested-CTE aliases became phantom lineage edges.** Names were collected from
+  the leading `WITH` only while `FROM`/`JOIN` are read at every depth, so a CTE
+  in a nested `WITH` was emitted as a source *table* — and
+  `warehouseLineage.resolve` does not check that a table exists, so a real edge
+  was written for one that never did. Collected at every level now; a `with`
+  that is not a CTE clause still collects nothing. `internal/tsql/dataflow.go`;
+  tests `TestDataFlowExcludesNestedCTENames`, `TestDataFlowWithClauseThatIsNotACTE`.
+
+### Open — triaged, deliberately not changed
+- **The trigger `firingSet` is process-global** where it models a per-chain call
+  stack, so two *independent* concurrent writes matching one trigger start one
+  job instead of two. Dispatch is synchronous on the writer's goroutine, so a
+  cycle genuinely is one stack — but Go has no goroutine-locals, and threading a
+  chain token through the store's write API to scope it properly would reach into
+  every OneLake mutation. Losing a duplicate firing is silent and bounded; losing
+  the cycle guard is unbounded recursion, so the trade points this way on
+  purpose. `TestTriggerCycleIsCut` pins it; the code now names the cost so this
+  stays a decision rather than something to drift into.
   `internal/api/triggers.go`.
-- **MEDIUM — nested-CTE aliases become phantom lineage edges.** `collectCTENames`
-  excludes only the top-level `WITH`, so a CTE defined in a nested `WITH` is
-  emitted as a source table; `warehouseLineage.resolve` does not verify the table
-  exists, so a real edge is written for a table that never existed. Lineage only
-  — the rewrite path handles nesting correctly. `internal/tsql/dataflow.go`.
 - **LOW — the witness checker proves presence, not coverage.**
   `scripts/check_witnesses.py` confirms a test *function name* or CI *job id*
   exists; it does not check that the test runs (some `t.Skip` without a DSN),
