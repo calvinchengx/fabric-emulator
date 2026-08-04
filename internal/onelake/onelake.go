@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/calvinchengx/fabric-emulator/internal/awssig"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"io"
 	"log"
 	"net/http"
@@ -63,41 +64,6 @@ func writeDFSErr(w http.ResponseWriter, e dfsError) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(e.status)
 	fmt.Fprintf(w, `{"error":{"code":%q,"message":%q}}`, e.code, e.msg)
-}
-
-// Body ceilings for the data plane. These are REJECTION thresholds, and that
-// distinction is the whole point of readBounded below.
-const (
-	// maxDFSAppend is what ADLS Gen2 accepts on one ?action=append. Azure
-	// documents 100 MiB; this used to be 64, which no client had exceeded
-	// until Microsoft's own `fab cp` — it uploads a whole file in a SINGLE
-	// append rather than chunking, so any file over the ceiling hit it.
-	maxDFSAppend = 100 << 20
-	// maxDFSPut bounds a create-with-body. DFS `create` normally carries no
-	// payload; this is the same ceiling for the case where one arrives.
-	maxDFSPut = 100 << 20
-	// maxBlobWrite bounds Put Blob and Put Block on the Blob surface.
-	maxBlobWrite = 256 << 20
-)
-
-// readBounded reads at most max bytes and reports whether the body FIT.
-//
-// io.LimitReader alone is a data-corruption bug on a write path: it discards
-// everything past the limit and returns no error, so an oversized upload is
-// stored truncated and answered with success. That is not hypothetical — a
-// 71 MiB `fab cp` against the old 64 MiB append ceiling was silently cut to 64
-// MiB, and the only reason it surfaced at all is that the client then flushed
-// at the real length and the position check disagreed. A client that never
-// flushed would have had a quietly shortened file.
-//
-// Reading max+1 is what makes "too big" detectable: at max exactly, the body
-// fits; one byte more and the caller must refuse rather than store a fragment.
-func readBounded(r io.Reader, max int64) ([]byte, bool) {
-	data, err := io.ReadAll(io.LimitReader(r, max+1))
-	if err != nil || int64(len(data)) > max {
-		return nil, false
-	}
-	return data, true
 }
 
 // permHeaders sets OneLake's canned permission response headers.
@@ -348,6 +314,8 @@ func (s *Service) discardExternalBody(resp *http.Response, err error) *dfsError 
 		return &dfsError{"ExternalTargetUnavailable", http.StatusBadGateway, err.Error()}
 	}
 	defer resp.Body.Close()
+	// bounded-read-exempt: this DISCARDS the body to let the connection be
+	// reused. Nothing is stored or served, so there is nothing to truncate.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &dfsError{"ExternalTargetError", http.StatusBadGateway,
@@ -375,9 +343,13 @@ func (s *Service) readExternalBody(resp *http.Response, err error, remainder str
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, &dfsError{"ExternalTargetError", http.StatusBadGateway, fmt.Sprintf("external target returned HTTP %d", resp.StatusCode)}
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
-	if err != nil {
-		return nil, &dfsError{"ExternalTargetError", http.StatusBadGateway, err.Error()}
+	// Bounded like a write, and for the same reason: whatever comes back is
+	// handed to the client AS the file. A silent truncation here would be this
+	// emulator lying about somebody else's storage account.
+	body, ok := httpx.ReadBounded(resp.Body, httpx.MaxExternalRead)
+	if !ok {
+		return nil, &dfsError{"ExternalTargetError", http.StatusBadGateway,
+			fmt.Sprintf("The shortcut target returned more than %d bytes, or the read failed; refusing to serve a partial file.", int64(httpx.MaxExternalRead))}
 	}
 	return &store.OneLakePath{RelPath: remainder, Content: body, CreatedAt: s.Store.Now(), ModifiedAt: s.Store.Now()}, nil
 }
@@ -569,10 +541,10 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		isDir := r.URL.Query().Get("resource") == "directory"
-		body, ok := readBounded(r.Body, maxDFSPut)
+		body, ok := httpx.ReadBounded(r.Body, httpx.MaxDFSPut)
 		if !ok {
 			writeDFSErr(w, dfsError{"RequestBodyTooLarge", http.StatusRequestEntityTooLarge,
-				fmt.Sprintf("The request body is too large. The maximum size is %d bytes.", maxDFSPut)})
+				fmt.Sprintf("The request body is too large. The maximum size is %d bytes.", int64(httpx.MaxDFSPut))})
 			return
 		}
 		ifNoneMatch := r.Header.Get("If-None-Match") == "*"
@@ -653,10 +625,10 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request, itemID, rel stri
 	pos, _ := strconv.ParseInt(r.URL.Query().Get("position"), 10, 64)
 	switch action {
 	case "append":
-		data, ok := readBounded(r.Body, maxDFSAppend)
+		data, ok := httpx.ReadBounded(r.Body, httpx.MaxDFSAppend)
 		if !ok {
 			writeDFSErr(w, dfsError{"RequestBodyTooLarge", http.StatusRequestEntityTooLarge,
-				fmt.Sprintf("The request body is too large. The maximum size for one append is %d bytes.", maxDFSAppend)})
+				fmt.Sprintf("The request body is too large. The maximum size for one append is %d bytes.", int64(httpx.MaxDFSAppend))})
 			return
 		}
 		if _, err := s.Store.AppendOneLakePath(itemID, rel, pos, data); err != nil {

@@ -99,6 +99,7 @@ export default defineConfig({
             { slug: '31-flow-observability' },
             { slug: '32-xmla-plan' },
             { slug: '33-pbix-tooling' },
+            { slug: '34-fab-driven-example' },
             { slug: 'engine-matrix' },
           ],
         },

@@ -181,3 +181,27 @@ func TestValidateClientCredentials(t *testing.T) {
 		t.Fatal("unreachable entra accepted")
 	}
 }
+
+// TestAnOversizedEntraResponseIsRefused — the same read-side bound as the vault
+// client. Entra's answers are small, which is exactly why this was easy to
+// leave unbounded and why the failure, if it ever came, would be reported as
+// "bad JSON" from a service that had sent perfectly good JSON.
+func TestAnOversizedEntraResponseIsRefused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := make([]byte, 64<<10)
+		for sent := 0; sent <= 1<<20; sent += len(chunk) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL, false, srv.Client()).CreateWorkspaceIdentity("ws-1", "W")
+	if err == nil {
+		t.Fatal("an oversized entra response was accepted")
+	}
+	if strings.Contains(err.Error(), "bad JSON") {
+		t.Fatalf("reported as malformed JSON rather than oversized: %v", err)
+	}
+}

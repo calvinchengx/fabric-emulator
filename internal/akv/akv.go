@@ -9,7 +9,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"net/http"
 	"net/url"
 	"strings"
@@ -50,7 +50,10 @@ func (c *Client) ResolveSecret(vaultURI, name, bearer string) (string, error) {
 		return "", fmt.Errorf("vault unreachable: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, ok := httpx.ReadBounded(resp.Body, httpx.MaxControlBody)
+	if !ok {
+		return "", fmt.Errorf("vault returned more than %d bytes, or the read failed", int64(httpx.MaxControlBody))
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("vault rejected the reference (status %d): %s", resp.StatusCode, raw)
 	}

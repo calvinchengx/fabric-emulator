@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"net/http"
 	"path"
 	"strings"
@@ -359,8 +359,16 @@ func (a *API) vscodeUpdateNotebookContent(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusPreconditionFailed, "ArtifactModified", "The notebook changed since it was downloaded.")
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
-	if err != nil || !json.Valid(raw) {
+	// json.Valid would reject most truncations, but it would report them as
+	// malformed content — telling the caller their notebook is broken when
+	// what happened is that it was too big.
+	raw, ok := httpx.ReadBounded(r.Body, httpx.MaxItemContent)
+	if !ok {
+		writeErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
+			"The notebook is too large.")
+		return
+	}
+	if !json.Valid(raw) {
 		writeErr(w, 400, "InvalidNotebookContent", "Notebook content must be valid JSON.")
 		return
 	}
@@ -580,9 +588,14 @@ func (a *API) vscodeResourcePut(w http.ResponseWriter, r *http.Request, p *auth.
 		return
 	}
 	isDir := strings.EqualFold(r.Header.Get("ms-filesystem-entry-type"), "folder")
-	content, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
-	if err != nil {
-		writeErr(w, 400, "InvalidResource", err.Error())
+	// THE ONE THAT WAS STILL LIVE. Nothing parses this — `content` goes
+	// straight into the store as the file — so an oversized resource was
+	// stored short and answered 200, exactly the OneLake defect on the VS Code
+	// extension's write path.
+	content, ok := httpx.ReadBounded(r.Body, httpx.MaxItemContent)
+	if !ok {
+		writeErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
+			"The resource file is too large.")
 		return
 	}
 	rel, valid := vscodeResourcePath(r)
