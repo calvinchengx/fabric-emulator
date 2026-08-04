@@ -154,10 +154,19 @@ func (s *Store) AppendOneLakePath(itemID, relPath string, position int64, data [
 // item (the DFS x-ms-rename-source operation; Hadoop committers depend on
 // it). Destination paths are overwritten.
 func (s *Store) RenameOneLakePath(itemID, src, dst string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	// The source may be an explicit path or an implicit prefix (a directory
 	// with no row of its own); either must cover at least one stored path.
+	//
+	// Counted INSIDE the transaction. Outside it, a concurrent delete between the
+	// count and the UPDATE produced a committed "success" that moved nothing —
+	// the caller was told the rename happened and no rows had changed.
 	var n int
-	if err := s.db.QueryRow(
+	if err := tx.QueryRow(
 		`SELECT COUNT(*) FROM onelake_paths WHERE item_id = ? AND (rel_path = ? OR rel_path LIKE ? || '/%')`,
 		itemID, src, src).Scan(&n); err != nil {
 		return err
@@ -165,11 +174,6 @@ func (s *Store) RenameOneLakePath(itemID, src, dst string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	now, etag := s.Now(), newETag()
 	// Overwrite any existing destination subtree, then move.
 	if _, err := tx.Exec(`

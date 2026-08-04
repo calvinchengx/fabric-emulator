@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/calvinchengx/fabric-emulator/internal/httpx"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -134,8 +133,17 @@ func (a *API) callMLflow(in *http.Request, upstreamPath string, query url.Values
 		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	return resp.StatusCode, resp.Header.Clone(), raw, err
+	// Bounded, like the Kusto proxy next door and every other body this package
+	// reads. The response is relayed to the caller verbatim, so an unbounded read
+	// let an attached MLflow server drive allocation here without limit, and a
+	// truncated one would serve a partial result as a complete answer.
+	raw, ok := httpx.ReadBounded(resp.Body, httpx.MaxProxyBody)
+	if !ok {
+		return 0, nil, nil, fmt.Errorf(
+			"the MLflow server returned more than %d bytes, or the read failed; "+
+				"refusing to relay a partial result", int64(httpx.MaxProxyBody))
+	}
+	return resp.StatusCode, resp.Header.Clone(), raw, nil
 }
 
 func transformMLflowRequest(wid, endpoint string, raw []byte, query url.Values) (map[string]any, []byte, url.Values, error) {

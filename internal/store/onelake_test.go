@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -460,5 +461,75 @@ func TestConcurrentAppendsDoNotLoseData(t *testing.T) {
 	}
 	if okCount.Load() == 0 {
 		t.Fatal("no append succeeded; the test exercised nothing")
+	}
+}
+
+// TestRenameIsAtomicWithItsExistenceCheck: the "does the source exist" count
+// runs inside the rename's transaction.
+//
+// Outside it, a concurrent delete landing between the count and the UPDATE
+// produced a committed success that moved nothing — the caller was told the
+// rename happened while no row had changed. The invariant is checkable without
+// timing the race: a rename that reports success must leave the destination
+// present, and one that fails must leave the source alone.
+func TestRenameIsAtomicWithItsExistenceCheck(t *testing.T) {
+	s := newTestStore(t)
+	wsID, itID := newOneLakeItem(t, s)
+
+	var wg sync.WaitGroup
+	var renamed, missing atomic.Int64
+	for i := range 40 {
+		src := fmt.Sprintf("Files/src-%d", i)
+		dst := fmt.Sprintf("Files/dst-%d", i)
+		if err := s.CreateOneLakePath(&OneLakePath{
+			WorkspaceID: wsID, ItemID: itID, RelPath: src, Content: []byte("x"),
+		}, false); err != nil {
+			t.Fatal(err)
+		}
+		wg.Add(2)
+		// A rename racing a delete of its own source.
+		go func() {
+			defer wg.Done()
+			switch err := s.RenameOneLakePath(itID, src, dst); err {
+			case nil:
+				renamed.Add(1)
+			case ErrNotFound:
+				missing.Add(1)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			_ = s.DeleteOneLakePath(itID, src)
+		}()
+	}
+	wg.Wait()
+
+	// Every rename that claimed success must have produced its destination.
+	for i := range 40 {
+		dst := fmt.Sprintf("Files/dst-%d", i)
+		_, err := s.GetOneLakePath(itID, dst)
+		got := err == nil
+		if !got {
+			// Fine only if that rename did not report success.
+			continue
+		}
+		if _, err := s.GetOneLakePath(itID, fmt.Sprintf("Files/src-%d", i)); err == nil {
+			t.Fatalf("%s exists and so does its source: the move was not atomic", dst)
+		}
+	}
+	if renamed.Load()+missing.Load() == 0 {
+		t.Fatal("no rename reached a terminal outcome; the test exercised nothing")
+	}
+	// The load-bearing assertion: a reported success left a real destination.
+	var claimed, present int64
+	for i := range 40 {
+		if _, err := s.GetOneLakePath(itID, fmt.Sprintf("Files/dst-%d", i)); err == nil {
+			present++
+		}
+	}
+	claimed = renamed.Load()
+	if present < claimed {
+		t.Fatalf("%d renames reported success but only %d destinations exist: "+
+			"a rename committed having moved nothing", claimed, present)
 	}
 }
