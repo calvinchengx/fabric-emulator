@@ -138,7 +138,7 @@ def main():
 
     # 4) Drive the real dbt through the emulator's TDS front + ODBC Driver 18.
     env = {**os.environ, "DBT_PROFILES_DIR": PROJECT}
-    for cmd in (["dbt", "debug"], ["dbt", "seed", "--full-refresh"], ["dbt", "run"], ["dbt", "test"]):
+    for cmd in (["dbt", "--no-partial-parse", "debug"], ["dbt", "--no-partial-parse", "seed", "--full-refresh"], ["dbt", "--no-partial-parse", "run"], ["dbt", "--no-partial-parse", "test"]):
         log(" ".join(cmd))
         rc = subprocess.run(cmd, cwd=PROJECT, env=env).returncode
         if rc != 0:

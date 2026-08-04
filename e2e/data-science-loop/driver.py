@@ -271,7 +271,7 @@ env = {
     "AZURE_STORAGE_ENDPOINT": f"{FABRIC}/onelake",
 }
 subprocess.run([
-    "dbt", "build", "--project-dir", "/dbt", "--profiles-dir", "/dbt",
+    "dbt", "--no-partial-parse", "build", "--project-dir", "/dbt", "--profiles-dir", "/dbt",
     "--target-path", "/tmp/dbt-target", "--log-path", "/tmp/dbt-logs",
 ], check=True, env=env)
 with duckdb.connect("/tmp/analytics_db.duckdb", read_only=True) as connection:

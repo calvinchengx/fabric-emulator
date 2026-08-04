@@ -88,6 +88,46 @@ The code found four defects that could not be seen from the docs.
   that is not a CTE clause still collects nothing. `internal/tsql/dataflow.go`;
   tests `TestDataFlowExcludesNestedCTENames`, `TestDataFlowWithClauseThatIsNotACTE`.
 
+### Fixed — dbt's cached manifest could silently shrink the test set
+Reported 2026-08-04 from `contoso-data-platform`, and explicitly NOT a
+fabric-emulator bug — it is dbt-core behaviour. It is here because the shape is
+the same as the other two reports: a suite that reports PASS without reporting
+how much it ran.
+
+Measured by the reporter on dbt-core/dbt-fabric 1.9.10: after editing
+`schema.yml`, a build against a cached manifest reported `Found 8 models, 19
+data tests` / `PASS=27 ERROR=0`, fully green. `rm -rf target/` on the identical
+tree reported `46 data tests` / `PASS=44 ERROR=1 SKIP=9`. So 27 of 46 tests had
+never run, five of eight models had no assertions executed against them, and one
+of the skipped tests was genuinely failing.
+
+Fixed by adding `--no-partial-parse` to **every** dbt invocation — 20 call sites
+across 15 files, not the 5 the report listed: the medallion examples exist in
+four parallel variants, and `e2e/data-science-loop/driver.py` spreads its
+argument list over several lines. Applied uniformly because
+`scripts/check_example_parity.py` requires the variants to differ only in
+silver, so a partial fix would have failed `make check` — a useful forcing
+function. Written in the global position (`dbt --no-partial-parse build`) rather
+than trailing, since the pin is `>=1.9` with no ceiling.
+
+CI is unaffected either way — its runners are fresh containers with no cache.
+The exposure is a warm workspace, which is exactly what `docs/12-e2e-matrix.md`
+and `docs/28-tutorial-end-to-end.md` tell a reader to use, and it is the worse
+case because that is where someone decides a change is safe.
+
+**One place already failed safe**, and is worth not "fixing" into silence:
+`dq_gate.py` asserts `rebuild() != 0` — it REQUIRES the build to fail on
+poisoned data. A shrunken test set would make dbt exit 0 there and trip the
+assertion loudly. Inverse gates are self-protecting; forward ones are not.
+
+**The report's general suggestion — assert the expected probe COUNT — is already
+satisfied for the engine matrix, by a stronger mechanism.** `run.py` regenerates
+`docs/engine-matrix.md` and CI runs `git diff --exit-code` on it, so a probe that
+stopped running would drop out of `out/jvm.json`, shrink `order`, remove a table
+row and fail the diff. That pins the IDENTITY of all 25 probes rather than their
+number. The suggestion stands for suites with no such committed artifact, which
+is precisely what `dbt build`'s exit code is.
+
 ### Open — triaged, deliberately not changed
 - **The trigger `firingSet` is process-global** where it models a per-chain call
   stack, so two *independent* concurrent writes matching one trigger start one

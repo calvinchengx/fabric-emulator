@@ -109,10 +109,10 @@ def main():
     #    session + a statement on real Spark; seed/run/test build & verify models.
     env = {**os.environ, "DBT_PROFILES_DIR": PROJECT}
     stages = [
-        ["dbt", "debug"],
-        ["dbt", "seed", "--full-refresh"],
-        ["dbt", "run"],
-        ["dbt", "test"],
+        ["dbt", "--no-partial-parse", "debug"],
+        ["dbt", "--no-partial-parse", "seed", "--full-refresh"],
+        ["dbt", "--no-partial-parse", "run"],
+        ["dbt", "--no-partial-parse", "test"],
     ]
     for cmd in stages:
         log(" ".join(cmd))
