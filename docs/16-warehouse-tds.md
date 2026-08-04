@@ -168,6 +168,42 @@ so a reader resolving by annotation finds what it expects at every width.
 **Not yet mapped:** the nested types (`struct`/`array`/`map`), which have no
 kind at all.
 
+##### Confirmed from outside, on the path a consumer actually uses
+
+The witnesses above write Delta from Go and read it back through the sidecar,
+which proves the map without proving the *route*. The reflection path exists for
+Delta written by something else entirely, so it was also measured end to end
+from contoso-data-platform — the consumer that reported the bug: a Fabric
+**notebook** on **Sail** wrote a nine-column table, and `INFORMATION_SCHEMA` was
+read back over TDS through ODBC. Only the emulator image moved (built at
+`0a89452`); `SAIL_VERSION` and `SPARK_AGENT_VERSION` stayed on released `0.15.3`,
+so the type map was the one variable and a failure would have had one cause.
+
+Every column round-tripped: `date`→`date`, `timestamp`→`datetime2`, `int`→`int`,
+`long`→`bigint`, `double`→`float`, `boolean`→`bit`, `string`→`nvarchar`,
+`decimal(9,2)`→`decimal(9,2)` with precision **and** scale intact, and
+`binary`→`varbinary`. The join that originally failed now matches:
+
+```sql
+SELECT COUNT(*) FROM probe_types WHERE c_date = CAST('2026-07-15' AS date)  -- 1
+```
+
+Two things that cost the reporter time and belong in any reproduction:
+`ensure_audience("https://database.windows.net", "Azure SQL")` has to run first
+or the token request fails `HTTP 400`, which reads as a platform fault and is
+not one; and the three image pins are independent, so rebuilding all of them
+turns one possible cause into three.
+
+**What a consumer has to do until this ships.** The workaround is to carry dates
+as ISO text end to end and join `nvarchar` to `nvarchar`, which is correct on
+both the broken and the fixed build — a string column is a string column — so
+nothing downstream is broken and removal is tidying rather than repair. That
+matters for sequencing: there is no reason to rush it out ahead of a release,
+and unwinding early would break the only version anyone can pull. It comes out
+when the consumer pins a tag past the fix, and it has to come out everywhere at
+once — in contoso-data-platform that is one silver transform and two gold models,
+where a partial unwind reinstates the original `Operand type clash`.
+
 Reflection exists **only** for the lakehouse endpoint — it bridges Delta that
 was written *outside* SQL Server (by Spark / delta-rs / notebooks) into the
 query engine. The warehouse needs no reflection: its data is created *in* the
