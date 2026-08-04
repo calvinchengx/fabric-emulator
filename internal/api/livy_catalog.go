@@ -94,9 +94,16 @@ func (a *API) registerLakehouseTables(session, wid, lid string) {
 	// deliberately says nothing when there are no tables). Best-effort like the
 	// rest of this function; an agent predating /mount answers 404 and the
 	// notebook keeps whatever was staged by hand.
-	if _, err := a.agentPost("/mount", map[string]any{
+	if out, err := a.agentPost("/mount", map[string]any{
 		"session": session, "workspace": wid, "lakehouse": lid}); err != nil {
 		log.Printf("livy: mounting lakehouse %s Files for session %s: %v", lid, session, err)
+	} else if mounted, _ := out["mounted"].(bool); !mounted {
+		// The agent answers 200 with mounted:false when it could not mirror
+		// (its error rides in the body). Treating that as success is how a
+		// missing mount stayed invisible until a notebook hit
+		// FileNotFoundError; the cause belongs in THIS log, at bind time.
+		log.Printf("livy: lakehouse %s Files did NOT mount for session %s: %v",
+			lid, session, out["error"])
 	}
 	dirs, err := a.Store.ListOneLakePaths(lid, "Tables", false)
 	if err != nil {
