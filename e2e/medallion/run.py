@@ -59,6 +59,24 @@ def run(example=EXAMPLE, label="medallion", profiles=()):
             rc = subprocess.run(
                 ["uv", "run", "--project", example, "python", "pipeline.py"],
                 cwd=example, env={**os.environ, **ENDPOINTS}).returncode
+        if rc == 0 and label == "medallion":
+            # The type map along the ROUTE, once a lakehouse exists.
+            #
+            # internal/warehouse proves the mapping in Go: a Parquet column of
+            # each logical type reflects to the right SQL type. It cannot prove
+            # the route, because reflection exists for Delta written by
+            # SOMETHING ELSE and read by a real ODBC client, and neither end of
+            # that seam is Go. This suite is the only one with both halves, so
+            # the probe runs here rather than in a compose file of its own.
+            #
+            # Run inside the example's project so it borrows that example's
+            # state and token helpers — the same route the tutorial documents.
+            rc = subprocess.run(
+                ["uv", "run", "--project", example, "python",
+                 os.path.join(REPO, "e2e", "type-map", "probe.py")],
+                cwd=example, env={**os.environ, **ENDPOINTS}).returncode
+            if rc != 0:
+                print("\n==== type-map probe FAILED ====", file=sys.stderr)
         if rc != 0:
             print(f"\n==== {label} FAILED (exit {rc}) ====", file=sys.stderr)
             for svc in SERVICES_TO_LOG:

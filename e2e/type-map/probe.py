@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """Measure the Delta -> SQL analytics endpoint type map along the REAL route.
 
-NOT A CI WITNESS. Nothing runs this automatically, and it is deliberately absent
-from docs/witnesses.json — claiming it as a witness would be the exact failure
-this repo has already paid for twice (a green row whose code never executed, a
-`t.Skip` that hid a broken CRITICAL fix). It is a reproduction recipe: run it by
-hand against a running stack when you want to see the map end to end. Wiring it
-in is described at the bottom.
+RUN BY e2e/medallion, after the tutorial pipeline has built a lakehouse — that
+suite already has both halves this needs, a Spark engine and the ODBC driver, so
+it is the cheapest honest home. It is also runnable by hand against any stack.
 
 WHY IT EXISTS ALONGSIDE THE GO TESTS. `internal/warehouse/types_test.go` proves
 the MAP: given a Parquet column of each logical type, the right SQL type comes
@@ -41,13 +38,16 @@ ABSENT from INFORMATION_SCHEMA. Write one if you want to check that — the
 assertion is that it does not appear and that the columns around it are still
 correct, which is what a nested column used to destroy.
 
-Usage (against an already-running stack):
+Usage. Inside an example's project it needs nothing but the endpoints, because
+it borrows that example's own state and token helpers:
 
-    SPARK_REMOTE=sc://localhost:50051 \\
-    TDS_SERVER=localhost,1433 \\
-    LAKEHOUSE_ID=<item id> \\
-    TDS_TOKEN=<Azure SQL audience JWT> \\
-    LAKEHOUSE_TABLES=abfss://<ws>@onelake.../<lake>/Tables \\
+    uv run --project examples/medallion-pyspark python e2e/type-map/probe.py
+
+Standalone, supply what those helpers would have resolved:
+
+    SPARK_REMOTE=sc://localhost:50051 TDS_SERVER=localhost,1433 \\
+    LAKEHOUSE_ID=<item id> TDS_TOKEN=<Azure SQL audience JWT> \\
+    LAKEHOUSE_TABLES=abfs://<ws>@onelake.dfs.fabric.microsoft.com/<lake>/Tables \\
         python e2e/type-map/probe.py
 """
 import os
@@ -73,6 +73,30 @@ COLUMNS = [
 DECIMAL_PRECISION, DECIMAL_SCALE = 9, 2
 
 
+def bootstrap():
+    """Fill LAKEHOUSE_ID / TDS_TOKEN / LAKEHOUSE_TABLES from the example's own
+    state, when running inside an example project that has already provisioned.
+
+    Borrowed rather than reimplemented: `common` is the module the medallion
+    example itself uses to mint a token and find its lakehouse, so the probe
+    reaches the endpoint by exactly the route the tutorial documents. Absent
+    (running standalone), the environment has to supply them.
+    """
+    try:
+        from common import SQL_AUD, load, token  # type: ignore
+    except ImportError:
+        return
+    st = load()
+    lake, workspace = st.get("lakehouse"), st.get("workspace")
+    if not lake or not workspace:
+        return
+    os.environ.setdefault("LAKEHOUSE_ID", lake)
+    os.environ.setdefault("TDS_TOKEN", token(SQL_AUD))
+    os.environ.setdefault(
+        "LAKEHOUSE_TABLES",
+        f"abfs://{workspace}@onelake.dfs.fabric.microsoft.com/{lake}/Tables")
+
+
 def write_through_spark(tables_uri):
     """Write the table the way a consumer does: from a notebook on Spark."""
     from pyspark.sql import SparkSession
@@ -83,7 +107,18 @@ def write_through_spark(tables_uri):
 
     # Printed BEFORE the write, deliberately: if Spark did not write the type
     # you expected, every downstream reading is about a different question.
-    print(f"SPARK SCHEMA: {df.schema.simpleString()}")
+    schema = df.schema.simpleString()
+    print(f"SPARK SCHEMA: {schema}")
+
+    # And CHECKED, not merely printed. If the engine cannot produce one of these
+    # types, the endpoint will reflect something odd and the failure will read
+    # as a type-map bug — blaming the wrong component. Naming it here as a
+    # WRITE-side limitation keeps that diagnosis honest.
+    missing = [name for name, _, _ in COLUMNS if f"{name}:" not in schema]
+    if missing:
+        sys.exit(f"FAIL (write side, not the type map): the Spark engine did not "
+                 f"produce {missing} — the endpoint cannot reflect what was never "
+                 f"written. Schema was: {schema}")
     (df.write.format("delta").mode("overwrite")
        .option("overwriteSchema", "true").save(f"{tables_uri}/{TABLE}"))
     print(f"WROTE {TABLE}")
@@ -145,6 +180,7 @@ def read_through_tds():
 
 
 def main() -> int:
+    bootstrap()
     tables = os.environ.get("LAKEHOUSE_TABLES")
     if tables:
         write_through_spark(tables)
@@ -162,8 +198,3 @@ def main() -> int:
 if __name__ == "__main__":
     sys.exit(main())
 
-# TO WIRE THIS INTO CI it needs a stack with BOTH a Spark engine and the ODBC
-# driver. e2e/medallion already has both (Spark Connect at sc://localhost:50051
-# and ODBC Driver 18), so the cheapest real home is a step there rather than a
-# new compose file. It is left unwired on purpose rather than added to
-# docs/witnesses.json as a claim nothing executes.
