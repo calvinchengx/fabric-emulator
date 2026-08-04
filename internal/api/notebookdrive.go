@@ -37,11 +37,17 @@ import (
 // `notebookutils.notebook.exit(v)` ends the run on real Fabric, so this must
 // raise rather than merely record — a notebook that exits early and then runs
 // the three cells after it has not been emulated, it has been mis-executed.
-// The value is stashed BEFORE the raise so the driver can read it back without
-// parsing a traceback: the agent reports a generic "Error" for every exception,
-// and telling an intentional exit from a real failure by matching text in a
-// stack trace would break the first time an unrelated message contained the
-// word.
+// The AGENT stashes the value into `__nb_exit__` when the raise reaches it
+// (run_code matches the exception by type name); the driver then reads it back
+// without parsing a traceback. The stash must NOT happen here: this prelude
+// runs once per session, and each run re-points the one shared notebookutils
+// module's `exit` at its own copy of notebook_exit. Under concurrent notebook
+// runs, whichever session ran its prelude LAST owns that copy, so a
+// `global __nb_exit__` write in it lands in that session's namespace — not the
+// caller's. Observed as SUCCESS exits recorded Failed; the dual (a real
+// failure inheriting a stale exit value from another run) would read as a
+// false green. Only the agent knows which session executed the raising cell,
+// so the agent writes the value.
 //
 // BOTH Fabric spellings are BOUND, not patched-if-present. The previous version
 // wrapped the assignment in `try: import notebookutils`, which on this engine
@@ -59,9 +65,7 @@ class _NotebookExit(Exception):
 __nb_exit__ = None
 
 def notebook_exit(value=""):
-    global __nb_exit__
-    __nb_exit__ = str(value)
-    raise _NotebookExit(__nb_exit__)
+    raise _NotebookExit(str(value))
 
 class _NotebookNamespace(object):
     pass
