@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,22 @@ func TestWarehouseSQLServerRelayE2E(t *testing.T) {
 	backendDSN := os.Getenv("WAREHOUSE_MSSQL_DSN")
 	if backendDSN == "" {
 		t.Skip("set WAREHOUSE_MSSQL_DSN (a reachable SQL Server) to run the relay e2e")
+	}
+	// A named-pipe backend (Windows LocalDB) cannot complete the splice
+	// handshake: SQL Server accepts the pipe, takes our PRELOGIN, and closes
+	// without replying. That is measured and documented — root cause unknown —
+	// in "tds: the splice cannot handshake over a named pipe".
+	//
+	// This test used to pass on that leg by connecting with NO database, which
+	// skipped the RBAC wall and fell through to the re-encode relay. It was
+	// therefore not evidence that the warehouse surface works over LocalDB: a
+	// real client names its database, takes the splice, and hits the same wall.
+	// Closing the empty-database hole removed the disguise, so the limitation is
+	// now stated where it bites rather than hidden by a test that avoided it.
+	if strings.Contains(strings.ToLower(backendDSN), "np:") ||
+		strings.Contains(backendDSN, `\pipe\`) {
+		t.Skip("named-pipe backend: the TDS splice cannot handshake over one, so " +
+			"the warehouse surface does not work here — see the splice/named-pipe note")
 	}
 
 	emu := entra.StartT(t)

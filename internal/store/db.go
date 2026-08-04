@@ -534,7 +534,17 @@ CREATE TABLE lineage_edges_new (
 	created_at INTEGER NOT NULL,
 	UNIQUE(job_id, activity_name, source_item_id, source_path, target_item_id, target_path)
 );
-INSERT INTO lineage_edges_new SELECT id, workspace_id, job_id, activity_name,
+-- The target columns are NAMED. Positionally, this INSERT supplied 12 values
+-- into a 13-column table -- source_kind was added to the new shape after this
+-- migration was written -- so the rebuild failed with "has 13 columns but 12
+-- values were supplied" and took startup down with it. Naming them lets
+-- source_kind take its DEFAULT, and makes the statement survive the next column
+-- added above it.
+INSERT INTO lineage_edges_new
+	(id, workspace_id, job_id, activity_name,
+	 source_workspace_id, source_item_id, source_path,
+	 target_workspace_id, target_item_id, target_path, producer, created_at)
+SELECT id, workspace_id, job_id, activity_name,
 	source_workspace_id, source_item_id, source_path,
 	target_workspace_id, target_item_id, target_path, producer, created_at
 	FROM lineage_edges;
