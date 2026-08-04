@@ -645,16 +645,13 @@ func (a *API) pipelineDefinition(itemID string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(payload)
 }
 
-// runPipeline parses the definition, executes it, and persists the activity
+// runPipelineWith parses the definition, executes it, and persists the activity
 // runs against the job. It returns a failure code ("" on success) used to set
 // the job's terminal status.
-func (a *API) runPipeline(wid string, it *store.Item, jobID string, params map[string]any) string {
-	return a.runPipelineWith(wid, it, jobID, params, nil)
-}
-
-// runPipelineWith is runPipeline with the event that started it, which the
-// definition reads as `@pipeline()?.TriggerEvent?.FileName`. nil for a manual
-// or scheduled run — which is why the documented way to read it safe-navigates.
+//
+// `trigger` is the event that started the run, which the definition reads as
+// `@pipeline()?.TriggerEvent?.FileName`. nil for a manual or scheduled run —
+// which is why the documented way to read it safe-navigates.
 func (a *API) runPipelineWith(wid string, it *store.Item, jobID string, params, trigger map[string]any) string {
 	def, err := a.pipelineDefinition(it.ID)
 	if err != nil {
