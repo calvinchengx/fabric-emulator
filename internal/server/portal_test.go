@@ -582,3 +582,109 @@ func TestPortalTable(t *testing.T) {
 		t.Fatalf("no table param: %d", code)
 	}
 }
+
+// TestPortalLineageLabelsASourceSystem covers the medallion's FIRST hop, which
+// until now nothing rendered. An edge whose source is a connection — a source
+// system reached from outside Fabric, not an item — resolves its name through a
+// different table, and GetItemByID returns nothing for a connection id. The
+// whole connection branch of portalLineage sat at 0%, so the graph node for
+// every ERP/CRM/reference feed in the advanced medallion demo was only ever
+// checked by eye.
+func TestPortalLineageLabelsASourceSystem(t *testing.T) {
+	f := newFixture(t)
+	var ws struct {
+		ID string `json:"id"`
+	}
+	f.mustStatus(f.call("POST", "/v1/workspaces", f.token,
+		map[string]any{"displayName": "src-ws"}, &ws), 201, "create workspace")
+	lake := f.createItemNow(t, ws.ID, "Lakehouse", "landing-lake")
+
+	conn := &store.Connection{DisplayName: "Contoso ERP (SQL)", ConnectivityType: "ShareableCloud"}
+	if err := f.srv.Store.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.srv.Store.CreateLineageEdge(&store.LineageEdge{
+		WorkspaceID: ws.ID, ActivityName: "CopyFromERP",
+		SourceItemID: conn.ID, SourcePath: "dbo.orders",
+		SourceKind:        store.SourceKindConnection,
+		TargetWorkspaceID: ws.ID, TargetItemID: lake, TargetPath: "Files/landing/orders.csv",
+		Producer: store.ProducerCopy,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		Value []struct {
+			SourceItem   string `json:"sourceItem"`
+			SourceItemID string `json:"sourceItemId"`
+			SourceKind   string `json:"sourceKind"`
+			TargetItem   string `json:"targetItem"`
+		} `json:"value"`
+	}
+	if code := f.portalJSON(t, "/_emulator/portal/lineage", &got); code != 200 {
+		t.Fatalf("portal lineage: %d", code)
+	}
+	if len(got.Value) != 1 {
+		t.Fatalf("edges = %+v", got.Value)
+	}
+	e := got.Value[0]
+	// The decisive assertion: the label came from the CONNECTION table. Resolving
+	// it as an item yields "", and a node labelled with a bare GUID is exactly
+	// what the name resolution exists to prevent.
+	if e.SourceItem != "Contoso ERP (SQL)" {
+		t.Fatalf("source label = %q; want the connection's display name "+
+			"(a connection id does not resolve as an item)", e.SourceItem)
+	}
+	// sourceKind is what lets the view draw this node as outside Fabric rather
+	// than inferring it from an empty path.
+	if e.SourceKind != store.SourceKindConnection {
+		t.Errorf("sourceKind = %q; want %q", e.SourceKind, store.SourceKindConnection)
+	}
+	if e.TargetItem != "landing-lake" {
+		t.Errorf("target label = %q; want landing-lake", e.TargetItem)
+	}
+}
+
+// TestPortalLineageLeavesAnUnresolvableSourceUnlabelled: a connection that has
+// been deleted must yield an empty name, not a fabricated one. The id is still
+// reported, so the view can show something honest.
+func TestPortalLineageLeavesAnUnresolvableSourceUnlabelled(t *testing.T) {
+	f := newFixture(t)
+	var ws struct {
+		ID string `json:"id"`
+	}
+	f.mustStatus(f.call("POST", "/v1/workspaces", f.token,
+		map[string]any{"displayName": "dangling-ws"}, &ws), 201, "create workspace")
+	lake := f.createItemNow(t, ws.ID, "Lakehouse", "lake")
+
+	missing := "00000000-0000-0000-0000-0000000000ff"
+	if err := f.srv.Store.CreateLineageEdge(&store.LineageEdge{
+		WorkspaceID: ws.ID, ActivityName: "CopyFromGone",
+		SourceItemID: missing, SourcePath: "dbo.orders",
+		SourceKind:        store.SourceKindConnection,
+		TargetWorkspaceID: ws.ID, TargetItemID: lake, TargetPath: "Files/landing/orders.csv",
+		Producer: store.ProducerCopy,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		Value []struct {
+			SourceItem   string `json:"sourceItem"`
+			SourceItemID string `json:"sourceItemId"`
+		} `json:"value"`
+	}
+	if code := f.portalJSON(t, "/_emulator/portal/lineage", &got); code != 200 {
+		t.Fatalf("portal lineage: %d", code)
+	}
+	if len(got.Value) != 1 {
+		t.Fatalf("edges = %+v", got.Value)
+	}
+	if got.Value[0].SourceItem != "" {
+		t.Errorf("a deleted connection was labelled %q; want no name",
+			got.Value[0].SourceItem)
+	}
+	if got.Value[0].SourceItemID != missing {
+		t.Errorf("the id was dropped: %+v", got.Value[0])
+	}
+}
