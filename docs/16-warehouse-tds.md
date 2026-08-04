@@ -136,7 +136,7 @@ Inferring from the decoded Go value alone answers all of those wrong.
 | `long` | `bigint` |
 | `double` | `float` |
 | `boolean` | `bit` |
-| `string` | `nvarchar` |
+| `string` | `varchar` (Fabric: `varchar(8000)`; Parquet has no unicode type) |
 | `binary` | `varbinary` |
 | `decimal(p,s)` | `decimal(p,s)` |
 

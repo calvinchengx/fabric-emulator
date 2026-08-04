@@ -62,7 +62,7 @@ func TestSQLType(t *testing.T) {
 		"BIGINT":          {Rows: [][]any{{int64(1)}}},
 		"FLOAT":           {Rows: [][]any{{1.5}}},
 		"VARBINARY(4000)": {Rows: [][]any{{[]byte{1}}}},
-		"NVARCHAR(4000)":  {Rows: [][]any{{nil}}}, // all-null → default
+		"VARCHAR(8000)":   {Rows: [][]any{{nil}}}, // all-null → default
 	}
 	for want, tbl := range types {
 		if got := sqlType(tbl, 0); got != want {

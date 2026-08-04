@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,7 +83,7 @@ func TestReflectedSQLTypesMatchFabric(t *testing.T) {
 		"bin": "VARBINARY(4000)",
 		"i":   "INT",
 		"l":   "BIGINT",
-		"s":   "NVARCHAR(4000)",
+		"s":   "VARCHAR(8000)", // varchar, not nvarchar — Parquet has no unicode type
 		"f":   "FLOAT",
 		"b":   "BIT",
 	} {
@@ -289,7 +290,8 @@ func TestReflectedDateIsUsableAsADateInSQLServer(t *testing.T) {
 	// The exact table from the report, plus the two that were already right.
 	for col, want := range map[string]string{
 		"rate_date": "date", "quoted_on": "datetime2",
-		"currency": "nvarchar", "rate_to_usd": "float", "carried": "bit",
+		// varchar, per Fabric's documented Delta STRING -> varchar mapping.
+		"currency": "varchar", "rate_to_usd": "float", "carried": "bit",
 	} {
 		if got[col] != want {
 			t.Errorf("INFORMATION_SCHEMA reports %s as %q, want %q", col, got[col], want)
@@ -461,5 +463,111 @@ func TestMirroredDecimalSurvivesARealSQLServer(t *testing.T) {
 	}
 	if got["a"] != "1234.567" || got["b"] != "-0.500" {
 		t.Errorf("decimal round-trip = %v, want a=1234.567 b=-0.500", got)
+	}
+}
+
+// nestedRow mixes nested columns with flat ones, and puts a flat column AFTER
+// the nested ones — which is where the old reader did its worst damage.
+type nestedLine struct {
+	LineNo    int32  `parquet:"line_no"`
+	ProductID string `parquet:"product_id"`
+	Quantity  int32  `parquet:"quantity"`
+}
+type nestedAddr struct {
+	Country string `parquet:"country"`
+	No      string `parquet:"no"`
+}
+type nestedRow struct {
+	Flat  string            `parquet:"flat"`
+	Lines []nestedLine      `parquet:"lines"`
+	Addr  nestedAddr        `parquet:"addr"`
+	Tags  map[string]string `parquet:"tags"`
+	After int64             `parquet:"after_flat"`
+}
+
+// TestNestedColumnsAreOmittedNotFabricated.
+//
+// Reported from contoso-data-platform after the date fix: a lakehouse holding a
+// nested column reflected garbage, silently. Measured before this fix, on a
+// table of flat/lines/addr/tags/after_flat:
+//
+//	flat       -> "control"   (correct, it is leaf 0)
+//	lines      -> 8           (lines.line_no of the SECOND element)
+//	addr       -> "P-200"     (lines.product_id)
+//	tags       -> 4           (lines.quantity)
+//	after_flat -> "SG"        (addr.country) — and its real 999 was DROPPED
+//
+// The reader assigned parquet LEAF values by position into a slice sized by
+// TOP-LEVEL field count, so one nested column shifted every column after it.
+// Nothing raised; a SELECT returned plausible values. Unlike the date bug there
+// was no loud half at all.
+//
+// Fabric does not represent these types: "Types that aren't listed in the table
+// aren't represented as the table columns in the SQL analytics endpoint", and
+// "Some columns that exist in the Spark Delta tables might not be available".
+// So the column is dropped and everything else stays correct.
+func TestNestedColumnsAreOmittedNotFabricated(t *testing.T) {
+	var buf bytes.Buffer
+	w := parquet.NewGenericWriter[nestedRow](&buf)
+	if _, err := w.Write([]nestedRow{{
+		Flat: "control",
+		Lines: []nestedLine{
+			{LineNo: 7, ProductID: "P-100", Quantity: 3},
+			{LineNo: 8, ProductID: "P-200", Quantity: 4},
+		},
+		Addr:  nestedAddr{Country: "SG", No: "1"},
+		Tags:  map[string]string{"k": "v"},
+		After: 999,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tbl, err := readParquet(buf.Bytes())
+	if err != nil {
+		t.Fatalf("a nested schema must read, not error: %v", err)
+	}
+
+	// The nested columns are gone, and NAMED so a reader can find out why.
+	if got := strings.Join(tbl.Columns, ","); got != "flat,after_flat" {
+		t.Fatalf("columns = %q; want only the flat ones", got)
+	}
+	if got := strings.Join(tbl.Skipped, ","); got != "lines,addr,tags" {
+		t.Errorf("skipped = %q; want lines,addr,tags recorded by name", got)
+	}
+
+	// The decisive assertion: the flat column AFTER the nested ones carries its
+	// OWN value. This is what the old reader destroyed — it read "SG".
+	after := columnIndex(tbl, "after_flat")
+	if got := tbl.Rows[0][after]; got != int64(999) {
+		t.Errorf("after_flat = %v (%T); want int64(999) — a nested column must "+
+			"not displace the columns following it", got, got)
+	}
+	if got := sqlType(tbl, after); got != "BIGINT" {
+		t.Errorf("after_flat reflects as %s; want BIGINT", got)
+	}
+	if got := tbl.Rows[0][columnIndex(tbl, "flat")]; got != "control" {
+		t.Errorf("flat = %v; want \"control\"", got)
+	}
+}
+
+// TestDeltaStringReflectsAsVarchar: Fabric maps Delta STRING to varchar(8000),
+// and says of nvarchar "there's no similar unicode data type in Parquet". We
+// emitted NVARCHAR(4000), which was a plain divergence — and one this repo
+// briefly documented as correct.
+func TestDeltaStringReflectsAsVarchar(t *testing.T) {
+	tbl, err := readParquet(writeEveryType(t, everyType{S: "x"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sqlType(tbl, columnIndex(tbl, "s")); got != "VARCHAR(8000)" {
+		t.Errorf("Delta string reflected as %s; want VARCHAR(8000)", got)
+	}
+	// An all-null column falls back to the same type, not to nvarchar.
+	empty := &Table{Columns: []string{"c"}, Rows: [][]any{{nil}}}
+	if got := sqlType(empty, 0); got != "VARCHAR(8000)" {
+		t.Errorf("the all-null default is %s; want VARCHAR(8000)", got)
 	}
 }

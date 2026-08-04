@@ -31,8 +31,15 @@ WHAT IT ASSERTS, and why each part earns its place:
 
 Adapted from throwaway probes written in contoso-data-platform, whose author
 measured the original failure and re-measured the fix. Their version tolerated
-`varchar` OR `nvarchar` because that consumer does not care which; this one pins
-`nvarchar`, because docs/16-warehouse-tds.md commits to it.
+`varchar` OR `nvarchar`; I first pinned `nvarchar` here and was WRONG — Fabric
+documents `STRING -> varchar(8000)` and says of nvarchar "there's no similar
+unicode data type in Parquet". It pins `varchar`.
+
+NESTED COLUMNS ARE NOT LISTED BELOW ON PURPOSE. Fabric does not represent
+struct/array/map at all, so the faithful behaviour is that those columns are
+ABSENT from INFORMATION_SCHEMA. Write one if you want to check that — the
+assertion is that it does not appear and that the columns around it are still
+correct, which is what a nested column used to destroy.
 
 Usage (against an already-running stack):
 
@@ -59,7 +66,7 @@ COLUMNS = [
     ("c_bigint", "cast(42 as bigint)", "bigint"),
     ("c_double", "cast(1.5 as double)", "float"),
     ("c_boolean", "true", "bit"),
-    ("c_string", "'hello'", "nvarchar"),
+    ("c_string", "'hello'", "varchar"),
     ("c_decimal", "cast(1.5 as decimal(9,2))", "decimal"),
     ("c_binary", "cast('hello' as binary)", "varbinary"),
 ]

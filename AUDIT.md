@@ -286,6 +286,55 @@ parse in-engine (`from_json` + `explode`) — with its own documented trap, that
 count comes from the array's length rather than its contents, so every
 count-based assertion passes while every column is empty.
 
+### Fixed — nested types corrupted the whole row, and `string` was the wrong type
+Two findings, one from a consumer and one found while checking the first against
+Microsoft's docs.
+
+**Nested types did not fail to map — they corrupted.** `docs/16` called them
+"not yet mapped", which reads as a blank. Measured in-repo on
+`flat, lines array<struct<…>>, addr struct<…>, tags map<…>, after_flat bigint`:
+
+    flat       -> "control"   correct, it is leaf 0
+    lines      -> 8           lines.line_no of the SECOND element
+    addr       -> "P-200"     lines.product_id
+    tags       -> 4           lines.quantity
+    after_flat -> "SG"        addr.country — and its real 999 was DROPPED
+
+`readParquet` assigned parquet LEAF values by position into a slice sized by
+TOP-LEVEL field count, so one nested column took someone else's leaf and shifted
+every column after it. Nothing raised. Unlike the date bug there was **no loud
+half at all** — a `SELECT` returns plausible values and a report carries them.
+
+The consumer's report got the direction right and three details wrong, which is
+why it was worth measuring rather than transcribing: it read the array as
+becoming its LENGTH (their fixture had one element whose `line_no` was also 1,
+so "length" and "first leaf" were indistinguishable); its `bigint`/`nvarchar`
+types were pre-fix 0.15.3 surfaces; and it scoped the damage to one column when
+in fact every column after the nested one is destroyed. The scrambling predates
+the type-map fix — `git log -S` puts that guard at `7ce9e89`, and `f26c182` only
+changed goValue's argument.
+
+**Fabric's answer, from the docs rather than from taste:** "Types that aren't
+listed in the table aren't represented as the table columns in the SQL analytics
+endpoint", and "Some columns that exist in the Spark Delta tables might not be
+available". So the column is OMITTED and the rest stay correct — not an error,
+and certainly not a fabrication. `Table.Skipped` records the names, because
+"some columns might not be available" is miserable to debug without one.
+
+**And checking that turned up a divergence of my own.** The same mapping table
+says `STRING -> varchar(8000)`, and of nvarchar: "Use char and varchar
+respectively, as there's no similar unicode data type in Parquet." We emitted
+`NVARCHAR(4000)`, this repo's own doc table asserted `nvarchar` as Fabric's
+mapping, and I had told the consumer to PIN `nvarchar` in their probe and drop
+their `varchar`/`nvarchar` tolerance. Their looseness was right and my
+instruction was wrong. Fixed in `sqlType`, the doc table, the e2e, and the
+probe. The collation Fabric declares (`Latin1_General_100_BIN2_UTF8`) is
+deliberately NOT emitted — it changes comparison and sort semantics, which is a
+larger change than a type name.
+
+Four mutations, four caught: ignoring leaf indices (the original bug), keeping
+nested columns, a constant `leafCount`, and reverting to nvarchar.
+
 ### Fixed — the Delta→SQL type map lost date, timestamp, binary and int
 Reported 2026-08-04 from `contoso-data-platform`: a Spark `DateType` column
 surfaced through the SQL analytics endpoint as `bigint`. Measuring it found
