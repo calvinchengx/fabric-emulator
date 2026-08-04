@@ -34,7 +34,17 @@ type Cell struct {
 }
 
 var (
-	delim = regexp.MustCompile(`^#\s+(CELL|MARKDOWN|METADATA)\b.*$`)
+	// PARAMETERS is a cell marker in its own right, not decoration on CELL.
+	//
+	// Fabric writes a parameterised notebook's first executable cell as
+	// `# PARAMETERS CELL ********************`, and that is where a
+	// pipeline-driven notebook declares every P_* default it later uses. Without
+	// PARAMETERS here the line is not a delimiter at all, so the declarations are
+	// swallowed into whatever cell precedes them — a markdown one, in the shape
+	// Fabric emits — and never execute. The notebook then dies on the first
+	// reference with `NameError: name 'P_...' is not defined`, which reads as a
+	// bug in the notebook rather than in the parser that dropped its cell.
+	delim = regexp.MustCompile(`^#\s+(PARAMETERS\s+CELL|CELL|MARKDOWN|METADATA)\b.*$`)
 	magic = regexp.MustCompile(`^%%(\w+)`)
 )
 
@@ -88,7 +98,10 @@ func sectionKind(marker string) Kind {
 	case "MARKDOWN":
 		return Markdown
 	default:
-		return Code // CELL, or a leading unmarked block
+		// CELL, PARAMETERS CELL, or a leading unmarked block. A parameters cell
+		// is ordinary python that happens to hold the defaults a caller may
+		// override; it must execute like any other code cell.
+		return Code
 	}
 }
 

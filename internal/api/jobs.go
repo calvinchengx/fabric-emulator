@@ -101,7 +101,8 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 			// external engine would post (notebookdrive.go). Without one the job
 			// stays open for a callback, which is the original contract and the
 			// only honest thing to do when there is no engine to run anything.
-			go a.driveNotebookRun(wid, it.ID, j.ID, *nbRun)
+			nbParams, _ := exec["parameters"].(map[string]any)
+			go a.driveNotebookRun(wid, it.ID, j.ID, *nbRun, nbParams)
 		}
 	}
 	if sjdRun != nil {

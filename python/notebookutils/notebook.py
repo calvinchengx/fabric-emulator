@@ -35,13 +35,32 @@ def _resolve_item(name, workspaceId, token):
     raise NotebookError(f"notebook {name!r} not found in workspace {ws}")
 
 
-def run(name, timeoutSeconds=90, arguments=None, workspaceId=None):
-    """Run notebook `name` and return its terminal job status."""
+def run(name, timeoutSeconds=90, arguments=None, workspaceId=None,
+        spark_environment=None, attach_lakehouse=None, **kwargs):
+    """Run notebook `name` and return its terminal job status.
+
+    `arguments` are forwarded as the child run's `executionData.parameters`,
+    which is the whole reason a caller passes them: a parameterised notebook
+    invoked with none runs on its placeholder defaults and fails a validation
+    the caller had in fact satisfied.
+
+    `spark_environment` / `attach_lakehouse` are accepted because real Fabric
+    accepts them, and callers inspect this signature to decide whether the
+    runtime supports the option before passing it (Alkali's custom-notebook
+    activity does exactly that, and refused to run against a signature without
+    them). The emulator has one Spark session and attaches the notebook's own
+    binding, so there is nothing to switch: they are accepted and ignored rather
+    than advertised as unsupported.
+    """
     token = credentials.getToken("fabric")
     ws, iid = _resolve_item(name, workspaceId, token)
+    body = None
+    if arguments:
+        body = {"executionData": {"parameters": {
+            k: {"value": v, "type": "string"} for k, v in arguments.items()}}}
     status, hdrs, _ = request(
         "POST", f"{config().fabric_url}/v1/workspaces/{ws}/items/{iid}/jobs/instances?jobType=RunNotebook",
-        token=token, raw=True)
+        token=token, body=body, raw=True)
     loc = hdrs.get("Location")
     jid = loc.rstrip("/").rsplit("/", 1)[-1]
     deadline = time.time() + timeoutSeconds
