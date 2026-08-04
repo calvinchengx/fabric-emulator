@@ -49,6 +49,10 @@ code behind the claim executes. Coverage answers the second — see AUDIT.md,
 where a green row with 0% coverage is recorded — and nothing here answers the
 first.
 
+Every file is read as UTF-8 explicitly: the parity map's glyphs are the thing
+being matched, and a locale-dependent read turns them into mojibake that matches
+nothing while still exiting 0.
+
 Usage:
     check_witnesses.py            report the mapping and exit 0
     check_witnesses.py --strict   also fail on TODO, dangling refs, or an
@@ -95,7 +99,7 @@ def green_claims():
     everything this script PRINTS says "supported" in words.
     """
     section = None
-    for line in PARITY.read_text().splitlines():
+    for line in PARITY.read_text(encoding="utf-8").splitlines():
         if line.startswith("## "):
             section = line[3:].strip()
             continue
@@ -111,7 +115,7 @@ def green_claims():
 
 
 def ci_job_ids() -> set:
-    return set(re.findall(r"^  ([a-z0-9-]+):$", CI.read_text(), re.M))
+    return set(re.findall(r"^  ([a-z0-9-]+):$", CI.read_text(encoding="utf-8"), re.M))
 
 
 # Function bodies are taken from the `func` header to the next line that starts
@@ -170,7 +174,7 @@ def go_test_names() -> set:
 
 def main() -> int:
     strict = "--strict" in sys.argv
-    manifest = json.loads(MANIFEST.read_text()) if MANIFEST.exists() else {}
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.exists() else {}
     # `_gated` is a declaration, not a claim: witness -> why it can skip.
     declared_gates = manifest.pop("_gated", {})
     jobs, tests = ci_job_ids(), go_test_names()
@@ -209,6 +213,18 @@ def main() -> int:
                 # towards a claim having ungated support.
                 if kind != "boundary":
                     ungated_by_key[key] = ungated_by_key.get(key, 0) + 1
+
+    # A parse that finds NOTHING is a broken checker, not a clean repo. This
+    # ran green on Windows for its whole life while matching zero claims:
+    # Path.read_text() uses the LOCALE encoding there, and cp1252 decodes the
+    # 🟢 bytes to mojibake without raising, so no row ever matched. Every
+    # count below was 0 and every rule vacuously satisfied — the exact shape of
+    # failure this script exists to catch, in the script itself.
+    if not claims:
+        print("FAIL: parsed 0 supported claims from docs/parity.md — the parity")
+        print("map is not empty, so this is a parsing failure (encoding? path?),")
+        print("and every check below would be vacuously true.")
+        return 1
 
     print(f"supported capability claims: {len(claims)}")
     print(f"  witnessed by a real external client (ci:) : {kinds.get('ci', 0)}")

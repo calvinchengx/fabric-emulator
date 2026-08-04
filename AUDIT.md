@@ -297,6 +297,17 @@ All nine current gates are the same one — `WAREHOUSE_MSSQL_DSN`, satisfied by
 the `build` job's SQL Server service — so the report groups by reason rather
 than repeating it nine times and burying the one that is undeclared.
 
+**The new rule immediately caught the checker itself.** `make check` went red on
+windows-latest reporting every gate stale — because it had parsed **0 claims**.
+`Path.read_text()` uses the LOCALE encoding on Windows, and cp1252 decodes the
+parity map's 🟢 bytes to mojibake *without raising*, so no row ever matched: 95
+rows match when the file is read as UTF-8, none when it is read as cp1252. Every
+count printed 0 and every rule was vacuously satisfied, so the job had been
+green for its whole life while checking nothing. Fixed by reading every file as
+UTF-8 explicitly, and by failing when the parse yields zero claims — a checker
+that parses nothing must never pass, which is the same "presence is not
+evidence" principle it exists to enforce, applied to itself.
+
 **Still not proved**, and worth stating plainly rather than implying the gap is
 closed: that a witness ASSERTS its claim, and that the code behind the claim
 executes at all. Coverage answers the second — the Direct Lake row is the
