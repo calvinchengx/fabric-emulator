@@ -1,10 +1,12 @@
 package warehouse
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 	"testing"
+	"time"
 )
 
 // TestMirrorDeltaRoundTrip: the mirror writer produces a Delta table (Parquet +
@@ -71,14 +73,25 @@ func TestMirrorEmptyTable(t *testing.T) {
 }
 
 func TestKindInference(t *testing.T) {
+	// int32 is kindInt, not kindLong, and []byte is kindBinary, not kindString.
+	// Both used to collapse, and both collapses were one-way: a mirrored INT
+	// came back a Delta long, and a varbinary came back a string whose bytes
+	// had already been through a Go string conversion.
+	//
+	// kindOf cannot tell DATE from DATETIME2 — nothing in a time.Time does —
+	// so it answers timestamp and kindFromSQL makes the precise call from the
+	// server's own column metadata.
 	cases := []struct {
 		v    any
 		want colKind
 	}{
-		{int64(1), kindLong}, {int32(1), kindLong}, {int(1), kindLong},
+		{int64(1), kindLong}, {int32(1), kindInt}, {int(1), kindInt},
 		{1.5, kindDouble}, {float32(1.5), kindDouble},
 		{true, kindBool},
-		{"x", kindString}, {[]byte("x"), kindString},
+		{"x", kindString}, {[]byte("x"), kindBinary},
+		{time.Now(), kindTimestamp},
+		{Timestamp{T: time.Now()}, kindTimestamp},
+		{Date{T: time.Now()}, kindDate},
 	}
 	for _, c := range cases {
 		if got := kindOf(c.v); got != c.want {
@@ -132,7 +145,11 @@ func TestReadSQLTable(t *testing.T) {
 	if len(tbl.Rows) != 3 {
 		t.Fatalf("rows = %d, want 3", len(tbl.Rows))
 	}
-	want := map[string]colKind{"id": kindLong, "ratio": kindDouble, "active": kindLong, "name": kindString}
+	// INTEGER is kindInt, not kindLong: the kind now comes from the driver's
+	// column metadata rather than from the scanned value, and SQL Server reports
+	// these as INT. Mirroring them as Delta long is what made a round-tripped
+	// INT column come back a BIGINT.
+	want := map[string]colKind{"id": kindInt, "ratio": kindDouble, "active": kindInt, "name": kindString}
 	for i, c := range tbl.Columns {
 		if kinds[i] != want[c] {
 			t.Errorf("column %q kind = %d, want %d", c, kinds[i], want[c])
@@ -164,7 +181,12 @@ func newMirrorDB(t *testing.T) *sql.DB {
 
 // TestMirrorSnapshotsBaseTables: Mirror lists the base tables (views excluded),
 // snapshots each to OneLake as a Delta table, and the snapshot reads back
-// through this package's own Delta reader — blobs normalized to strings.
+// through this package's own Delta reader.
+//
+// A VARBINARY column stays BYTES. It used to be "normalized to a string", which
+// is the write-direction half of the type report: the bytes went through a Go
+// string conversion, the Delta schema recorded them as `string`, and nothing
+// could tell afterwards that the column had ever been binary.
 func TestMirrorSnapshotsBaseTables(t *testing.T) {
 	st, _, itemID := seedLakehouse(t)
 	db := newMirrorDB(t)
@@ -198,8 +220,10 @@ func TestMirrorSnapshotsBaseTables(t *testing.T) {
 		gi[c] = i
 	}
 	r0 := got.Rows[0]
-	if r0[gi["id"]] != int64(1) || r0[gi["note"]] != "a" || r0[gi["data"]] != "ABC" {
-		t.Fatalf("row0 = %v", r0)
+	data, isBytes := r0[gi["data"]].([]byte)
+	if r0[gi["id"]] != int64(1) || r0[gi["note"]] != "a" ||
+		!isBytes || !bytes.Equal(data, []byte("ABC")) {
+		t.Fatalf("row0 = %v (data is %T)", r0, r0[gi["data"]])
 	}
 	if got.Rows[1][gi["note"]] != nil || got.Rows[1][gi["data"]] != nil {
 		t.Fatalf("row1 NULLs lost: %v", got.Rows[1])
@@ -255,5 +279,37 @@ func TestCoerce(t *testing.T) {
 	}
 	if v := coerce(float32(1.5), kindDouble); v != float64(1.5) {
 		t.Errorf("coerce float32->kindDouble = %v (%T), want float64(1.5)", v, v)
+	}
+}
+
+// TestKindFromSQLDistinguishesWhatValuesCannot.
+//
+// This is the half of the mapping that value inference cannot do: a DATE and a
+// DATETIME2 both scan as time.Time, an INT and a BIGINT both as int64. Mirroring
+// on the value alone collapsed each pair, so a SQL date became a Delta timestamp
+// (or worse, a string) and could never round-trip back to a date.
+func TestKindFromSQLDistinguishesWhatValuesCannot(t *testing.T) {
+	for name, want := range map[string]colKind{
+		"DATE": kindDate, "date": kindDate,
+		"DATETIME2": kindTimestamp, "DATETIME": kindTimestamp,
+		"SMALLDATETIME": kindTimestamp, "DATETIMEOFFSET": kindTimestamp,
+		"INT": kindInt, "SMALLINT": kindInt, "TINYINT": kindInt,
+		"BIGINT": kindLong,
+		"FLOAT":  kindDouble, "REAL": kindDouble,
+		"BIT":       kindBool,
+		"VARBINARY": kindBinary, "BINARY": kindBinary, "IMAGE": kindBinary,
+		"NVARCHAR": kindString, "VARCHAR": kindString,
+		"SOMETHING_NEW": kindString, // unknown types stay text rather than guessing
+	} {
+		if got := kindFromSQL(name); got != want {
+			t.Errorf("kindFromSQL(%q) = %d, want %d", name, got, want)
+		}
+	}
+	// The pairs that matter, stated as the property rather than the table.
+	if kindFromSQL("DATE") == kindFromSQL("DATETIME2") {
+		t.Error("DATE and DATETIME2 collapsed to one kind")
+	}
+	if kindFromSQL("INT") == kindFromSQL("BIGINT") {
+		t.Error("INT and BIGINT collapsed to one kind")
 	}
 }

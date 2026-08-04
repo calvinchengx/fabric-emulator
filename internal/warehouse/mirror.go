@@ -11,6 +11,7 @@ import (
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/parquet-go/parquet-go"
+	"strings"
 )
 
 // Mirror snapshots every base table in a Fabric SQL Database's SQL Server
@@ -67,6 +68,10 @@ const (
 	kindLong
 	kindDouble
 	kindBool
+	kindDate
+	kindTimestamp
+	kindBinary
+	kindInt
 )
 
 // readSQLTable reads all rows of a table into a Table plus the Parquet kind
@@ -85,6 +90,16 @@ func readSQLTable(ctx context.Context, db *sql.DB, name string) (*Table, []colKi
 		return nil, nil, err
 	}
 	tbl := &Table{Columns: cols}
+	// Resolved from the driver's column metadata BEFORE any row is read, since
+	// the scan loop's own []byte handling depends on knowing which columns are
+	// binary.
+	kinds := make([]colKind, len(cols))
+	ctypes, cterr := rows.ColumnTypes()
+	for i := range kinds {
+		if cterr == nil && i < len(ctypes) {
+			kinds[i] = kindFromSQL(ctypes[i].DatabaseTypeName())
+		}
+	}
 	for rows.Next() {
 		vals := make([]any, len(cols))
 		ptrs := make([]any, len(cols))
@@ -95,7 +110,10 @@ func readSQLTable(ctx context.Context, db *sql.DB, name string) (*Table, []colKi
 			return nil, nil, err
 		}
 		for i, v := range vals {
-			if bs, ok := v.([]byte); ok {
+			if bs, ok := v.([]byte); ok && kinds[i] != kindBinary {
+				// Bytes are text only when the COLUMN is text. A varbinary
+				// stringified here would be mirrored as a Delta string, which
+				// is how the reverse direction lost binary.
 				vals[i] = string(bs)
 			}
 		}
@@ -104,27 +122,56 @@ func readSQLTable(ctx context.Context, db *sql.DB, name string) (*Table, []colKi
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-	kinds := make([]colKind, len(cols))
-	for i := range cols {
-		kinds[i] = kindString
-		for _, row := range tbl.Rows {
-			if row[i] != nil {
-				kinds[i] = kindOf(row[i])
-				break
-			}
-		}
-	}
 	return tbl, kinds, nil
 }
 
+// kindFromSQL maps a driver-reported column type to the Delta kind.
+//
+// The server's own metadata, not the first non-null value: a DATE and a
+// DATETIME2 both scan as time.Time and an INT and a BIGINT both as int64, so
+// value inference cannot tell either pair apart and silently collapses them.
+// That is the same mistake, in the opposite direction, as reading a Parquet
+// DATE by its physical kind.
+func kindFromSQL(name string) colKind {
+	switch strings.ToUpper(name) {
+	case "DATE":
+		return kindDate
+	case "DATETIME", "DATETIME2", "SMALLDATETIME", "DATETIMEOFFSET":
+		return kindTimestamp
+	case "BINARY", "VARBINARY", "IMAGE":
+		return kindBinary
+	case "INT", "SMALLINT", "TINYINT":
+		return kindInt
+	case "BIGINT":
+		return kindLong
+	case "FLOAT", "REAL":
+		return kindDouble
+	case "BIT":
+		return kindBool
+	}
+	return kindString
+}
+
+// kindOf is the fallback for a table built without driver metadata (the
+// in-memory tests). It cannot distinguish DATE from DATETIME2 — nothing in the
+// Go value does — so it answers timestamp and leaves the precise call to
+// kindFromSQL, which has the server's own answer.
 func kindOf(v any) colKind {
 	switch v.(type) {
-	case int64, int32, int:
+	case int32, int:
+		return kindInt
+	case int64:
 		return kindLong
 	case float64, float32:
 		return kindDouble
 	case bool:
 		return kindBool
+	case time.Time, Timestamp:
+		return kindTimestamp
+	case Date:
+		return kindDate
+	case []byte:
+		return kindBinary
 	default:
 		return kindString
 	}
@@ -205,10 +252,21 @@ func leafFor(k colKind) parquet.Node {
 	switch k {
 	case kindLong:
 		return parquet.Leaf(parquet.Int64Type)
+	case kindInt:
+		return parquet.Int(32)
 	case kindDouble:
 		return parquet.Leaf(parquet.DoubleType)
 	case kindBool:
 		return parquet.Leaf(parquet.BooleanType)
+	case kindDate:
+		// The ANNOTATED node, not a bare INT32. Writing the day count without
+		// the annotation is precisely the state the reader could not recover
+		// from, and it would round-trip back as a long.
+		return parquet.Date()
+	case kindTimestamp:
+		return parquet.Timestamp(parquet.Microsecond)
+	case kindBinary:
+		return parquet.Leaf(parquet.ByteArrayType)
 	default:
 		return parquet.String()
 	}
@@ -237,9 +295,33 @@ func coerce(v any, k colKind) any {
 		case float32:
 			return float64(f)
 		}
+	case kindInt:
+		switch n := v.(type) {
+		case int32:
+			return n
+		case int64:
+			return int32(n)
+		case int:
+			return int32(n)
+		}
 	case kindBool:
 		if b, ok := v.(bool); ok {
 			return b
+		}
+	case kindDate:
+		if t, ok := dayTime(v); ok {
+			return int32(t.Sub(epochDay) / (24 * time.Hour))
+		}
+	case kindTimestamp:
+		if t, ok := dayTime(v); ok {
+			return t.UnixMicro()
+		}
+	case kindBinary:
+		switch b := v.(type) {
+		case []byte:
+			return b
+		case string:
+			return []byte(b)
 		}
 	default:
 		return fmt.Sprint(v)
@@ -247,15 +329,36 @@ func coerce(v any, k colKind) any {
 	return v
 }
 
+// dayTime extracts a time from the shapes a date/timestamp column arrives in.
+func dayTime(v any) (time.Time, bool) {
+	switch t := v.(type) {
+	case time.Time:
+		return t.UTC(), true
+	case Date:
+		return t.T.UTC(), true
+	case Timestamp:
+		return t.T.UTC(), true
+	}
+	return time.Time{}, false
+}
+
 // deltaTypeName maps a column kind to the Delta schema type string.
 func deltaTypeName(k colKind) string {
 	switch k {
 	case kindLong:
 		return "long"
+	case kindInt:
+		return "integer"
 	case kindDouble:
 		return "double"
 	case kindBool:
 		return "boolean"
+	case kindDate:
+		return "date"
+	case kindTimestamp:
+		return "timestamp"
+	case kindBinary:
+		return "binary"
 	default:
 		return "string"
 	}

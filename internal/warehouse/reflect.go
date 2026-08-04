@@ -286,19 +286,38 @@ func bulkInsert(ctx context.Context, db *sql.DB, table string, tbl *Table) error
 // re-parses at the destination column's scale. Passing a float64 instead would
 // reintroduce exactly the scale loss sqlType goes out of its way to avoid.
 func bulkValue(v any) any {
-	if d, ok := v.(Decimal); ok {
-		return d.String()
+	switch t := v.(type) {
+	case Decimal:
+		return t.String()
+	case Date:
+		// time.Time, not the day count: the destination column is DATE, and
+		// handing it the integer would put the bug back one layer down.
+		return t.T
+	case Timestamp:
+		return t.T
 	}
 	return v
 }
 
-// sqlType infers a column's SQL type from its first non-null value (default
+// sqlType picks a column's SQL type from its first non-null value (default
 // NVARCHAR). The type names are valid in both SQL Server and SQLite.
+//
+// Reading the VALUE is sound only because the reader now decodes each logical
+// type into a distinct Go type — Date, Timestamp, Decimal, []byte, int32. It
+// was not sound before: date, timestamp and int all arrived as int64 and all
+// three reflected as BIGINT.
 func sqlType(tbl *Table, col int) string {
 	for _, row := range tbl.Rows {
 		switch v := row[col].(type) {
 		case bool:
 			return "BIT"
+		case Date:
+			// The whole point of carrying Date through the reader: a date that
+			// reflects as BIGINT reads as 20627 in a report and clashes on any
+			// join against a real date.
+			return "DATE"
+		case Timestamp:
+			return "DATETIME2"
 		case Decimal:
 			// Preserve the declared precision/scale: reflecting a decimal as
 			// BIGINT drops the scale and every aggregate over it is then wrong
@@ -311,6 +330,11 @@ func sqlType(tbl *Table, col int) string {
 				s = 0
 			}
 			return fmt.Sprintf("DECIMAL(%d,%d)", p, s)
+		case int32:
+			// Fabric maps a Delta int to INT. Widening it to BIGINT is not
+			// wrong-looking, which is why it survived: it only shows up when a
+			// client compares the endpoint's schema against Fabric's.
+			return "INT"
 		case int64:
 			return "BIGINT"
 		case float64:

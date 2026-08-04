@@ -151,7 +151,11 @@ func TestReadDeltaMixedTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 	r0 := tbl.Rows[0]
-	if r0[0] != true || r0[1] != int64(7) || r0[2] != float64(1.5) || r0[3] != float64(2.5) || r0[4] != "hi" {
+	// int32, NOT int64. The reader used to widen every INT32 to int64, which
+	// made a Delta int reflect to the analytics endpoint as BIGINT where Fabric
+	// says INT — and, far worse, made a DATE (physically INT32) indistinguishable
+	// from a long. Preserving the width is what lets sqlType tell them apart.
+	if r0[0] != true || r0[1] != int32(7) || r0[2] != float64(1.5) || r0[3] != float64(2.5) || r0[4] != "hi" {
 		t.Fatalf("row0 = %v (types %T %T %T %T %T)", r0, r0[0], r0[1], r0[2], r0[3], r0[4])
 	}
 	if tbl.Rows[1][4] != nil {
