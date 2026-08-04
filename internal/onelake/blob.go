@@ -152,7 +152,12 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 				writeBlobErr(w, http.StatusBadRequest, "InvalidQueryParameterValue", "blockid must be base64.")
 				return
 			}
-			data, _ := io.ReadAll(io.LimitReader(r.Body, 256<<20))
+			data, ok := readBounded(r.Body, maxBlobWrite)
+			if !ok {
+				writeBlobErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
+					"The request body is too large.")
+				return
+			}
 			s.stage.put(blobKey, id, data)
 			w.WriteHeader(http.StatusCreated)
 		case "blocklist": // commit staged blocks in the given order
@@ -178,7 +183,12 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 				s.copyBlob(w, r, ws, it, rel, src)
 				return
 			}
-			data, _ := io.ReadAll(io.LimitReader(r.Body, 256<<20))
+			data, ok := readBounded(r.Body, maxBlobWrite)
+			if !ok {
+				writeBlobErr(w, http.StatusRequestEntityTooLarge, "RequestBodyTooLarge",
+					"The request body is too large.")
+				return
+			}
 			s.putBlob(w, r, ws, it, rel, data)
 		}
 
