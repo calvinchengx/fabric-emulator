@@ -101,6 +101,7 @@ export default defineConfig({
             { slug: '33-pbix-tooling' },
             { slug: '34-fab-driven-example' },
             { slug: '35-warehouse-time-travel' },
+            { slug: '36-capacity-job-queueing' },
             { slug: 'engine-matrix' },
           ],
         },
