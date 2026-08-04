@@ -166,3 +166,113 @@ func TestTenantSettingsUpdate(t *testing.T) {
 	f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/NoSuchSetting/update", f.token,
 		map[string]any{"enabled": true}, nil), http.StatusNotFound, "unknown setting")
 }
+
+// TestTenantSettingsUpdateRequiresEnabled: the reference documents `enabled` as
+// required, and a PATCH that omits it must be refused rather than silently
+// treated as false — which would DISABLE the setting the caller was trying to
+// adjust the delegation flags on.
+func TestTenantSettingsUpdateRequiresEnabled(t *testing.T) {
+	f := newFixture(t)
+	const name = "DatamartTenant"
+	if !f.tenantSettings(t)[name].Enabled {
+		t.Fatal("fixture precondition: DatamartTenant should start enabled")
+	}
+
+	var errBody struct {
+		ErrorCode string `json:"errorCode"`
+		Message   string `json:"message"`
+	}
+	f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/"+name+"/update", f.token,
+		map[string]any{"delegateToCapacity": true}, &errBody),
+		http.StatusBadRequest, "update with no enabled")
+	if errBody.Message == "" {
+		t.Errorf("the refusal does not say what is missing: %+v", errBody)
+	}
+	// The decisive part: refusing must not have changed anything.
+	if !f.tenantSettings(t)[name].Enabled {
+		t.Fatal("a rejected patch disabled the setting")
+	}
+}
+
+// TestTenantSettingsUpdateRejectsMalformedBody: a broken body is a client
+// error, not a 500 and not a no-op 200.
+func TestTenantSettingsUpdateRejectsMalformedBody(t *testing.T) {
+	f := newFixture(t)
+	resp := f.call("POST", "/v1/admin/tenantsettings/DatamartTenant/update", f.token,
+		json.RawMessage(`{"enabled": tru`), nil)
+	f.mustStatus(resp, http.StatusBadRequest, "malformed JSON body")
+}
+
+// TestTenantSettingsUpdateOnAnUnknownSetting is the 404 half of the contract.
+func TestTenantSettingsUpdateOnAnUnknownSetting(t *testing.T) {
+	f := newFixture(t)
+	f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/NoSuchSetting/update", f.token,
+		map[string]any{"enabled": true}, nil), http.StatusNotFound, "unknown setting")
+}
+
+// TestTenantSettingsOrgWideCannotNameSecurityGroups pins the reference's own
+// rule: canSpecifySecurityGroups false MEANS "enabled for the entire
+// organization", so naming the groups it is enabled for contradicts itself.
+// Accepting both would store a setting whose two halves disagree, and whichever
+// half a reader trusts would be a coin toss.
+func TestTenantSettingsOrgWideCannotNameSecurityGroups(t *testing.T) {
+	f := newFixture(t)
+	const name = "DatamartTenant"
+
+	var errBody struct {
+		Message string `json:"message"`
+	}
+	f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/"+name+"/update", f.token, map[string]any{
+		"enabled":                  true,
+		"canSpecifySecurityGroups": false,
+		"enabledSecurityGroups": []map[string]string{
+			{"graphId": "f51b705f-a409-4d40-9197-c5d5f349e2f0", "name": "Group"},
+		},
+	}, &errBody), http.StatusBadRequest, "org-wide plus named groups")
+	if errBody.Message == "" {
+		t.Errorf("the refusal does not explain the conflict: %+v", errBody)
+	}
+	if len(f.tenantSettings(t)[name].EnabledSecurityGroups) != 0 {
+		t.Fatal("the contradictory patch was stored anyway")
+	}
+}
+
+// TestTenantSettingsUpdateSetsEachDelegationFlagIndependently.
+//
+// The three delegation flags are patched by three near-identical blocks, which
+// is the shape where a copy-paste error assigns the wrong field and nothing
+// notices — every flag is a bool, so a swap still round-trips a plausible
+// value. Setting them ONE AT A TIME is what makes a swap visible.
+func TestTenantSettingsUpdateSetsEachDelegationFlagIndependently(t *testing.T) {
+	f := newFixture(t)
+	const name = "DatamartTenant"
+
+	for _, field := range []string{"delegateToCapacity", "delegateToDomain", "delegateToWorkspace"} {
+		var wrapped struct {
+			TenantSettings []tenantSetting `json:"tenantSettings"`
+		}
+		f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/"+name+"/update", f.token,
+			map[string]any{"enabled": true, field: true}, &wrapped),
+			http.StatusOK, "set "+field)
+		if len(wrapped.TenantSettings) != 1 {
+			t.Fatalf("%s: response = %+v", field, wrapped)
+		}
+		got := wrapped.TenantSettings[0]
+		set := map[string]bool{
+			"delegateToCapacity":  got.DelegateToCapacity,
+			"delegateToDomain":    got.DelegateToDomain,
+			"delegateToWorkspace": got.DelegateToWorkspace,
+		}
+		if !set[field] {
+			t.Errorf("%s was not applied: %+v", field, set)
+		}
+		for other, v := range set {
+			if other != field && v {
+				t.Errorf("setting %s also set %s — the patch blocks are crossed", field, other)
+			}
+		}
+		// Put it back so each iteration starts from all-false.
+		f.mustStatus(f.call("POST", "/v1/admin/tenantsettings/"+name+"/update", f.token,
+			map[string]any{"enabled": true, field: false}, nil), http.StatusOK, "reset "+field)
+	}
+}
