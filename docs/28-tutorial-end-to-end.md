@@ -391,13 +391,27 @@ the run stays `Pending` for an external engine to execute and report to
 activity does.
 
 > This tutorial used to say the opposite — "the notebook does not run yet, and
-> that is faithful", with a separate `engine.py` step driving Sail after the
-> pipeline finished. That split was an emulator affordance, not Fabric's
-> behaviour, and the wording claimed fidelity for it. The step is gone.
+> that is faithful". That split was an emulator affordance, not Fabric's
+> behaviour, and the wording claimed fidelity for it.
 
-Lineage no longer depends on the engine declaring what it touched: the emulator
-records the I/O the **storage layer actually saw** during the run. It still
-never parses the notebook's code to guess.
+**`engine.py` is still here, and it is now doing one job: lineage.** The
+activity already ran the notebook, so the step re-executes it — which is
+redundant work kept for a reason worth knowing.
+
+The emulator records the I/O the **storage layer actually saw**, and attributes
+it to a run from the job and cell ids carried in the caller's bearer token —
+engines built on Rust `object_store` (Sail, delta-rs) cannot set request headers,
+so the claims travel in the credential instead. Sail's session token is minted by
+its own launcher and carries no such claims, so nothing the *drive* path executes
+is attributable. `engine.py` closes that by **declaring** its read/write set to
+`notebookRunResult`.
+
+Removing the step therefore loses the notebook's lineage edge entirely — no
+declaration and no observation. Measured, not assumed:
+`AssertionError: Notebook edge into bronze_orders missing: []`. The real fix is
+to mint an attributed storage token for the driven session; until then the
+emulator will not guess what a notebook touched, and this step is how the edge
+gets recorded.
 
 Inside the notebook, OneLake is addressed the way a Fabric notebook addresses
 it — by the **full account host**, not a bare account name:
