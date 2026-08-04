@@ -1,5 +1,6 @@
 <script>
   import { api } from './api.js';
+  import { href as modelHref } from './router.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
   // The flow view: the emulator's own event stream, live.
@@ -39,6 +40,17 @@
   let source = null;
   // itemId -> client clock of the last query against it (the Power BI hop).
   let queried = $state({});
+
+  // Which item ids are semantic models, so those nodes can link to their own
+  // page. Until `#models/{id}` existed the Power BI hop was a dead end: the
+  // graph lit a node up when a client queried it and there was nowhere to go
+  // from there. Read from the same endpoint the models page uses, so the two
+  // cannot disagree about what a model is.
+  let modelIds = $state(new Set());
+  api
+    .get('/_emulator/portal/models')
+    .then((r) => (modelIds = new Set((r.value || []).map((m) => m.itemId))))
+    .catch(() => {}); // the graph is useful without the link
 
   // Coalesce graph reloads: a build emits many edges in a burst and they all
   // describe the same redraw.
@@ -345,19 +357,36 @@
         <path class="link {l.producer?.toLowerCase() || ''}" d={edgePath(l)} />
       {/each}
       {#each graph.nodes as n}
-        <g
-          class={nodeClass(n)}
-          transform="translate({n.x},{n.y})"
-          role="button"
-          tabindex="0"
-          aria-label={n.source ? `Source system ${label(n)}` : `Inspect ${n.path}`}
-          onclick={() => inspect(n)}
-          onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && inspect(n)}
-        >
-          <rect width="160" height="36" rx="6" />
-          <text x="10" y="15">{label(n)}</text>
-          <text class="sub" x="10" y="28">{n.source ? 'source system' : n.item || n.itemId.slice(0, 8)}</text>
-        </g>
+        {#if modelIds.has(n.itemId)}
+          <!-- A semantic model goes to its own page rather than the inspector:
+               what a reader wants from this node is the model's tables and DAX,
+               and that now has an address. An <a> so it opens in a new tab and
+               lands in browser history like any other link. -->
+          <a
+            class={nodeClass(n) + ' linked'}
+            transform="translate({n.x},{n.y})"
+            href={modelHref('models', n.itemId)}
+            aria-label={`Open semantic model ${label(n)}`}
+          >
+            <rect width="160" height="36" rx="6" />
+            <text x="10" y="15">{label(n)}</text>
+            <text class="sub" x="10" y="28">semantic model →</text>
+          </a>
+        {:else}
+          <g
+            class={nodeClass(n)}
+            transform="translate({n.x},{n.y})"
+            role="button"
+            tabindex="0"
+            aria-label={n.source ? `Source system ${label(n)}` : `Inspect ${n.path}`}
+            onclick={() => inspect(n)}
+            onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && inspect(n)}
+          >
+            <rect width="160" height="36" rx="6" />
+            <text x="10" y="15">{label(n)}</text>
+            <text class="sub" x="10" y="28">{n.source ? 'source system' : n.item || n.itemId.slice(0, 8)}</text>
+          </g>
+        {/if}
       {/each}
     </svg>
   </div>

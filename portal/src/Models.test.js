@@ -74,16 +74,33 @@ describe('Models', () => {
     await waitFor(() => expect(screen.getByText(want)).toBeInTheDocument());
   });
 
-  it('expands to the columns, the DAX and the binding', async () => {
+  it('links each row to the model\'s own address', async () => {
     mockList([model]);
     render(Models);
-    await waitFor(() => expect(screen.getByText('ContosoRevenue')).toBeInTheDocument());
-    await fireEvent.click(screen.getByRole('button'));
+    const row = await screen.findByRole('link', { name: /ContosoRevenue/ });
+    // An href, not an onclick. The whole reason this stopped being an accordion
+    // is that a detail view with no URL cannot be linked to, opened in a new
+    // tab, or pointed at from the flow graph.
+    expect(row.getAttribute('href')).toBe('#models/m1');
+  });
 
-    expect(screen.getByText('SUM(Revenue[Revenue])')).toBeInTheDocument();
+  it('renders the columns, the DAX and the binding at that address', async () => {
+    mockList([model]);
+    render(Models, { props: { id: 'm1' } });
+    await waitFor(() => expect(screen.getByText('SUM(Revenue[Revenue])')).toBeInTheDocument());
     expect(screen.getByText('dbo.fct_daily_revenue')).toBeInTheDocument();
     expect(screen.getByText('Direct Lake')).toBeInTheDocument();
     expect(screen.getByText('Revenue[Country]')).toBeInTheDocument();
+  });
+
+  it('says so when the id matches no model, rather than rendering blank', async () => {
+    mockList([model]);
+    render(Models, { props: { id: 'gone' } });
+    // A blank detail page is indistinguishable from one still loading and from
+    // a model that exists but failed to parse. A stale bookmark — this store is
+    // in memory unless a volume is mounted — must say what happened.
+    await waitFor(() => expect(screen.getByText('Model not found')).toBeInTheDocument());
+    expect(screen.getByText(/gone/)).toBeInTheDocument();
   });
 
   it('shows an unreadable model instead of dropping it', async () => {
@@ -127,14 +144,22 @@ describe('Models accessibility', () => {
   // The row's own text is chips and counts. A screen reader reading it out
   // announces everything except what the control does — which the a11y tree
   // showed as an unnamed button.
-  it('names the toggle and says which way it goes', async () => {
+  it('gives each row an accessible name that is the model, not its chips', async () => {
     mockList([model]);
     render(Models);
-    const btn = await screen.findByRole('button', { name: 'Expand ContosoRevenue' });
-    expect(btn).toHaveAttribute('aria-expanded', 'false');
-    await fireEvent.click(btn);
-    expect(
-      await screen.findByRole('button', { name: 'Collapse ContosoRevenue' }),
-    ).toHaveAttribute('aria-expanded', 'true');
+    // The row's text is a pile of chips and counts, so a screen reader
+    // announcing it raw says everything except which model it is.
+    const row = await screen.findByRole('link', { name: /ContosoRevenue/ });
+    expect(row).toBeInTheDocument();
+  });
+
+  it('offers a way back from the detail page', async () => {
+    mockList([model]);
+    render(Models, { props: { id: 'm1' } });
+    // A page reached by URL may be someone's entry point to the whole portal;
+    // without this the only way out is the browser's back button, which does
+    // not exist if the link was opened in a new tab.
+    const back = await screen.findByRole('link', { name: /Semantic models/ });
+    expect(back.getAttribute('href')).toBe('#models');
   });
 });
