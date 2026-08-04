@@ -55,6 +55,17 @@ type blockStage struct {
 	bytes  int64                        // total staged, for the eviction bound
 	seq    int64                        // monotonic, to evict oldest-first
 	staged map[string]int64             // blobKey → seq of its first block
+	// max overrides maxStagedBytes when non-zero. Only tests set it: proving the
+	// bound at its real value would mean allocating a quarter of a gigabyte to
+	// watch one branch, which is a slow test rather than a better one.
+	max int64
+}
+
+func (b *blockStage) limit() int64 {
+	if b.max > 0 {
+		return b.max
+	}
+	return maxStagedBytes
 }
 
 func (b *blockStage) put(key, id string, data []byte) {
@@ -84,7 +95,7 @@ func (b *blockStage) put(key, id string, data []byte) {
 // answers for expired blocks: a loud, correct error rather than a silent
 // truncation.
 func (b *blockStage) evictLocked(keep string) {
-	for b.bytes > maxStagedBytes {
+	for b.bytes > b.limit() {
 		oldest, oldestSeq := "", int64(0)
 		for k, s := range b.staged {
 			if k == keep {
