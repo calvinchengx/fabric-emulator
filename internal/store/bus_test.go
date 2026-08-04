@@ -3,6 +3,9 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -382,4 +385,82 @@ func mustJSONL(actions ...map[string]any) []byte {
 		out = append(out, '\n')
 	}
 	return out
+}
+
+// TestPublishDuringCloseDoesNotPanic pins a shutdown crash.
+//
+// publish used to read `stopped` under the lock, RELEASE it, and only then send
+// on b.raw. stop() sets the flag and closes the channel, so a publisher could
+// pass the check and reach the send after the close. A send on a closed channel
+// is a *ready* select case — the `default:` does not save it — so it panicked on
+// the writer's own goroutine. In the server that goroutine is serving a OneLake
+// write that had already committed: the event is best-effort, but the crash
+// was not.
+//
+// The store's own writes emit events (emitFileEvent -> publish), so this races
+// real publishers against Close the way a shutdown mid-request does. Without
+// the fix this fails as `panic: send on closed channel`, and under -race also
+// as a write/read data race on `stopped`.
+func TestPublishDuringCloseDoesNotPanic(t *testing.T) {
+	for range 50 { // the window is a few instructions wide; repeat to hit it
+		s, err := Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		var stop atomic.Bool
+		start := make(chan struct{})
+		for i := range 8 {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				// Publish continuously so writers are in flight BEFORE, DURING
+				// and AFTER the close — a fixed burst tends to finish first and
+				// never straddle it.
+				for j := 0; !stop.Load(); j++ {
+					s.publish(Event{Kind: KindFile, Path: fmt.Sprintf("f/%d/%d", i, j)})
+				}
+			}(i)
+		}
+		close(start)
+		runtime.Gosched() // let the publishers get going before shutting down
+		s.Close()         // concurrent with every publisher above
+		stop.Store(true)
+		wg.Wait()
+	}
+}
+
+// TestPublishNeverBlocksWhenTheQueueIsFull pins the bus's central contract: a
+// writer is never stalled by the observability path. The raw queue is bounded,
+// and when it fills, publish must DROP rather than wait — the alternative is a
+// OneLake write blocking on a slow or absent consumer.
+//
+// The dispatch goroutine is stopped first so nothing drains the queue, then far
+// more events than it can hold are published. If publish ever blocked, this
+// would deadlock rather than fail, so it runs under a deadline.
+func TestPublishNeverBlocksWhenTheQueueIsFull(t *testing.T) {
+	s, err := Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Wedge the dispatcher: a subscriber that never reads, plus enough events to
+	// overflow the 1024-deep raw queue several times over.
+	sub := s.Subscribe()
+	defer sub.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range 5000 {
+			s.publish(Event{Kind: KindFile, Path: fmt.Sprintf("f/%d", i)})
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("publish blocked when the queue was full; it must drop instead")
+	}
 }

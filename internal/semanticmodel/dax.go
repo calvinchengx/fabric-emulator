@@ -284,10 +284,23 @@ func (p *daxParser) parseFuncCall() (scalarExpr, error) {
 // filterCtx is an equality filter context: table → column → required value.
 type filterCtx map[string]map[string]any
 
+// maxMeasureDepth bounds how far measure references may nest before evaluation
+// gives up. A measure's expression is re-parsed and evaluated in place, so
+// `M = [M]` — or any A→B→A cycle — recurses without end. Go treats a stack
+// overflow as a FATAL error that net/http's per-request recover cannot catch,
+// so an unbounded evaluator turns one malformed model into a crash of the whole
+// emulator, taking every other in-flight request with it.
+//
+// 64 is far past any real model (measures referencing measures rarely exceed a
+// handful) and far short of the stack.
+const maxMeasureDepth = 64
+
 type evalr struct {
 	model *Model
 	data  Data
 	ctx   filterCtx
+	// depth counts measure expansions on the current evaluation path.
+	depth int
 }
 
 func (e *evalr) table(te tableExpr) (*Result, error) {
@@ -424,6 +437,10 @@ func (e *evalr) scalar(expr scalarExpr) (any, error) {
 		if m == nil {
 			return nil, fmt.Errorf("no measure [%s]", x.name)
 		}
+		if e.depth >= maxMeasureDepth {
+			return nil, fmt.Errorf("measure [%s]: reference nested more than %d deep, "+
+				"which a self-referential or cyclic definition does", x.name, maxMeasureDepth)
+		}
 		toks, err := lex(m.Expression)
 		if err != nil {
 			return nil, err
@@ -433,6 +450,8 @@ func (e *evalr) scalar(expr scalarExpr) (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("measure [%s]: %w", x.name, err)
 		}
+		e.depth++
+		defer func() { e.depth-- }()
 		return e.scalar(ast)
 	case funcCall:
 		return e.evalFunc(x)
@@ -445,6 +464,11 @@ func (e *evalr) scalar(expr scalarExpr) (any, error) {
 func (e *evalr) evalFunc(fc funcCall) (any, error) {
 	switch strings.ToUpper(fc.name) {
 	case "SUM":
+		// The arity check comes first: `SUM()` parses fine into an empty arg
+		// list, so indexing before checking panics on a query a client can send.
+		if len(fc.args) < 1 {
+			return nil, fmt.Errorf("SUM expects a column reference")
+		}
 		col, ok := fc.args[0].(columnRef)
 		if !ok {
 			return nil, fmt.Errorf("SUM expects a column reference")
@@ -472,6 +496,9 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		}
 		return toF(a) / den, nil
 	case "COUNTROWS":
+		if len(fc.args) < 1 {
+			return nil, fmt.Errorf("COUNTROWS expects a table")
+		}
 		tr, ok := fc.args[0].(tableRef)
 		if !ok {
 			return nil, fmt.Errorf("COUNTROWS expects a table")
