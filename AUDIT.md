@@ -226,14 +226,39 @@ parse in-engine (`from_json` + `explode`) — with its own documented trap, that
 count comes from the array's length rather than its contents, so every
 count-based assertion passes while every column is empty.
 
-### Open — raised in severity by this pass
-- **MEDIUM (was LOW) — the witness checker proves presence, not coverage.**
-  Promoted because it cost real time twice in one session. `TestWarehouseSQLServerRelayE2E`
-  skips without `WAREHOUSE_MSSQL_DSN`, so it never ran locally and a CRITICAL fix
-  broke it undetected until CI; and the Direct Lake parity row sat 🟢 with its
-  code at 0%. A test whose *name* exists is not a test that *ran*, and a witness
-  that exists is not a witness that *covers*. Worth having the checker report
-  skipped tests, or the manifest record which witnesses are gated.
+### Fixed — the witness checker now resolves which witnesses can skip
+The MEDIUM raised by the coverage pass. It cost real time twice in one session:
+`TestWarehouseSQLServerRelayE2E` skips without `WAREHOUSE_MSSQL_DSN`, so it never
+ran on a laptop and a CRITICAL fix broke it undetected until CI; and the Direct
+Lake parity row sat 🟢 with its code at 0%. A test whose *name* exists is not a
+test that *ran*.
+
+`scripts/check_witnesses.py` now resolves gating to a **fixed point**, which is
+the part that matters: three of the nine gated witnesses do not skip and contain
+no gate — `TestReflectDecimalColumn` calls `testsupport.OpenMSSQL(t)`, which
+skips on its behalf, and `TestMirrorSnapshotsBaseTables` reaches the same skip
+*two* levels down through `newMirrorDB()`. That transitive form is the one no
+reader spots, and a one-level check misses it. Three rules, all enforced by the
+existing `--strict` in `make check` and `ci.yml`, and each verified by breaking
+the manifest and watching it fail:
+
+- an **undeclared** gate — every skippable witness must be named in the new
+  `_gated` map with its reason, so adding one is deliberate rather than a silent
+  downgrade of the evidence behind a green row;
+- a **stale** declaration, for a witness that no longer skips — a stale note is
+  how the map drifts back out of step;
+- a claim whose witnesses are **all** gated, which is a green row a default
+  `go test ./...` proves nothing about. That count is 0 today and the rule keeps
+  it there.
+
+All nine current gates are the same one — `WAREHOUSE_MSSQL_DSN`, satisfied by
+the `build` job's SQL Server service — so the report groups by reason rather
+than repeating it nine times and burying the one that is undeclared.
+
+**Still not proved**, and worth stating plainly rather than implying the gap is
+closed: that a witness ASSERTS its claim, and that the code behind the claim
+executes at all. Coverage answers the second — the Direct Lake row is the
+recorded case — and nothing answers the first.
 
 ### Second coverage pass — the untested capability surfaces
 Total **89.35% → 89.84%** measured without a SQL Server sidecar (`ci.yml` records
