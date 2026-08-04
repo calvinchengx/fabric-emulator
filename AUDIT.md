@@ -226,6 +226,48 @@ parse in-engine (`from_json` + `explode`) — with its own documented trap, that
 count comes from the array's length rather than its contents, so every
 count-based assertion passes while every column is empty.
 
+### Fixed — the Delta→SQL type map lost date, timestamp, binary and int
+Reported 2026-08-04 from `contoso-data-platform`: a Spark `DateType` column
+surfaced through the SQL analytics endpoint as `bigint`. Measuring it found
+**three more of the same shape**, sharing one cause — `readParquet` kept only the
+DECIMAL logical annotation and discarded the rest, so `date`, `timestamp` and
+`int` all arrived as Go `int64` and all three reflected as `BIGINT`, while
+`binary` arrived as a Go string. `sqlType`'s `[]byte → VARBINARY` arm was
+therefore unreachable for anything read from Parquet.
+
+It fails two ways and the quiet one is worse: a join dies with `Operand type
+clash: date is incompatible with bigint`, naming neither the column nor the
+cause, but `SELECT rate_date` just returns `20627` — a plausible integer that
+nothing marks as a date. `Decimal` already had a special case here, added for
+exactly this failure family ("reflecting a decimal as BIGINT drops the scale").
+
+Fixed in both directions:
+- **Read**: the whole logical annotation is carried, and `Date`/`Timestamp`
+  become distinct Go types — the same shape as `Decimal` — so `sqlType` and
+  `bulkValue` can both switch on them. INT32 keeps its width.
+- **Write**: `colKind` gains date/timestamp/binary/int, and the kind now comes
+  from the driver's **column metadata** rather than the scanned value, because
+  `DATE` and `DATETIME2` both scan as `time.Time` and `INT` and `BIGINT` both as
+  `int64` — value inference collapses each pair.
+
+**A test that passed against the code it claimed to pin, again.** The first
+end-to-end version built its `Table` with `Date{…}` values by hand, so deleting
+the reader's date arm did not fail it — it exercised only the reflect half.
+Rebuilt to start from Parquet bytes, it reproduces the report exactly:
+`INFORMATION_SCHEMA` reports `int`, and the join fails with `Operand type clash`.
+Three occurrences of this pattern in one session; mutation caught all three.
+
+**Four expectations were pinning the old collapsing** and were updated rather
+than worked around: two in `internal/warehouse`, plus the mirror e2es in
+`internal/api` and `internal/server`. Those last two fail only with a SQL Server
+attached, and their `if v, ok := r[i].(int64); ok` guard reported a type change
+as `sum(id) = 0` — pointing at the data rather than the type. They now name the
+mismatch.
+
+Documented as a table in `docs/16-warehouse-tds.md`, including what is **still**
+unmapped: `decimal` in the mirror direction (collapses to `string`) and the
+nested types, which have no kind at all.
+
 ### Fixed — the witness checker now resolves which witnesses can skip
 The MEDIUM raised by the coverage pass. It cost real time twice in one session:
 `TestWarehouseSQLServerRelayE2E` skips without `WAREHOUSE_MSSQL_DSN`, so it never

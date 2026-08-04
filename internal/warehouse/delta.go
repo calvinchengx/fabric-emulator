@@ -12,6 +12,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/parquet-go/parquet-go"
@@ -24,6 +25,26 @@ type Table struct {
 	Columns []string
 	Rows    [][]any
 }
+
+// Date is a Delta DATE: a calendar day, no time and no zone.
+//
+// Same hazard as Decimal below, and the same fix. A DATE is stored as a plain
+// INT32 count of days since 1970-01-01, so decoding on the physical kind alone
+// yields 20627 — a number that is not wrong-looking, which is what makes it
+// dangerous. It reflects to the analytics endpoint as BIGINT, a report shows
+// 20627 where a date belongs, and a join against a real date fails with
+// "Operand type clash: date is incompatible with bigint" naming neither the
+// column nor the cause. Carrying the logical type is what keeps a date a date.
+type Date struct{ T time.Time }
+
+func (d Date) String() string { return d.T.Format("2006-01-02") }
+
+// Timestamp is a Delta TIMESTAMP. Physically an INT64 since the epoch, whose
+// unit (milli/micro/nano) lives only in the logical annotation — so the same
+// int64 is three different instants depending on it.
+type Timestamp struct{ T time.Time }
+
+func (t Timestamp) String() string { return t.T.UTC().Format("2006-01-02 15:04:05.999999") }
 
 // Decimal is an exact DECIMAL(precision, scale) value.
 //
@@ -230,14 +251,15 @@ func readParquet(data []byte) (*Table, error) {
 	}
 	fields := pf.Schema().Fields()
 	cols := make([]string, len(fields))
-	// A decimal's scale lives in the schema's logical annotation, not in the
-	// values, so capture it per column before reading any rows.
-	decs := make([]*format.DecimalType, len(fields))
+	// The logical annotation is the only place a date, a timestamp's unit, a
+	// decimal's scale, or "these bytes are text" is recorded — the physical kind
+	// cannot distinguish any of them. Captured per column before reading rows,
+	// and kept WHOLE rather than reduced to the decimal: reducing it is how
+	// date and timestamp were lost.
+	lts := make([]*format.LogicalType, len(fields))
 	for i, f := range fields {
 		cols[i] = f.Name()
-		if lt := f.Type().LogicalType(); lt != nil {
-			decs[i] = lt.Decimal
-		}
+		lts[i] = f.Type().LogicalType()
 	}
 	tbl := &Table{Columns: cols}
 
@@ -251,7 +273,7 @@ func readParquet(data []byte) (*Table, error) {
 				for _, v := range buf[i] {
 					c := v.Column()
 					if c >= 0 && c < len(out) {
-						out[c] = goValue(v, decs[c])
+						out[c] = goValue(v, lts[c])
 					}
 				}
 				tbl.Rows = append(tbl.Rows, out)
@@ -265,21 +287,33 @@ func readParquet(data []byte) (*Table, error) {
 	return tbl, nil
 }
 
-// goValue converts a parquet Value to a Go primitive (nil for NULL). dec is the
-// column's DECIMAL annotation when it has one, which must win over the physical
-// kind: the same INT64 is a plain long or an unscaled decimal depending on it.
-func goValue(v parquet.Value, dec *format.DecimalType) any {
+// goValue converts a parquet Value to a Go value (nil for NULL). lt is the
+// column's logical annotation, which must win over the physical kind: the same
+// INT32 is a plain int or a date, the same INT64 a long, an unscaled decimal or
+// an instant, and the same BYTE_ARRAY text or opaque bytes. Reading the
+// physical kind alone answers every one of those the same way, which is exactly
+// the bug this exists to prevent.
+func goValue(v parquet.Value, lt *format.LogicalType) any {
 	if v.IsNull() {
 		return nil
 	}
-	if dec != nil {
-		return decimalValue(v, dec)
+	if lt != nil {
+		switch {
+		case lt.Decimal != nil:
+			return decimalValue(v, lt.Decimal)
+		case lt.Date != nil:
+			return Date{T: epochDay.AddDate(0, 0, int(v.Int32()))}
+		case lt.Timestamp != nil:
+			return Timestamp{T: timestampTime(v.Int64(), lt.Timestamp)}
+		}
 	}
 	switch v.Kind() {
 	case parquet.Boolean:
 		return v.Boolean()
 	case parquet.Int32:
-		return int64(v.Int32())
+		// int32, not int64: a widened int reflects as BIGINT where Fabric says
+		// int. The physical width is the logical one here.
+		return v.Int32()
 	case parquet.Int64:
 		return v.Int64()
 	case parquet.Float:
@@ -287,9 +321,34 @@ func goValue(v parquet.Value, dec *format.DecimalType) any {
 	case parquet.Double:
 		return v.Double()
 	case parquet.ByteArray, parquet.FixedLenByteArray:
+		// Only text when the schema SAYS it is text. Unannotated bytes are
+		// binary, and stringifying them both loses the distinction and can
+		// produce invalid UTF-8 in a string column.
+		if lt != nil && (lt.UTF8 != nil || lt.Json != nil || lt.Enum != nil) {
+			return string(v.ByteArray())
+		}
+		if lt == nil {
+			return append([]byte(nil), v.ByteArray()...)
+		}
 		return string(v.ByteArray())
 	default:
 		return v.String()
+	}
+}
+
+// epochDay is the zero of a Parquet DATE.
+var epochDay = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// timestampTime applies the annotation's unit. Getting this wrong is silent:
+// microseconds read as milliseconds land in 1970 rather than failing.
+func timestampTime(n int64, ts *format.TimestampType) time.Time {
+	switch {
+	case ts.Unit.Nanos != nil:
+		return time.Unix(0, n).UTC()
+	case ts.Unit.Millis != nil:
+		return time.UnixMilli(n).UTC()
+	default: // Micros is the Delta/Spark default
+		return time.UnixMicro(n).UTC()
 	}
 }
 

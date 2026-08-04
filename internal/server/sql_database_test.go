@@ -124,8 +124,17 @@ func TestSQLDatabaseMirror(t *testing.T) {
 	var sumID int64
 	trueActives, nullNames := 0, 0
 	for _, r := range tbl.Rows {
-		if v, ok := r[idc].(int64); ok {
-			sumID += v
+		// int32: the column is declared INT, and the mirror now preserves the
+		// width instead of widening every integer to Delta long. The `ok` guard
+		// used to swallow a type change and report it as sum(id) = 0, so the
+		// mismatch is named here rather than silently skipped.
+		switch v := r[idc].(type) {
+		case int32:
+			sumID += int64(v)
+		case int64:
+			t.Errorf("id came back int64; an INT column should mirror as Delta integer")
+		default:
+			t.Errorf("id came back %T, want int32", r[idc])
 		}
 		if b, ok := r[activec].(bool); ok && b {
 			trueActives++

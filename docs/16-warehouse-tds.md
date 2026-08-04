@@ -120,6 +120,47 @@ strategy behind the same SQL Server sidecar:
 | **Lakehouse SQL analytics endpoint** | `Lakehouse` | **Reflection** — the emulator reads each `Tables/<t>` Delta (pure-Go: replay `_delta_log` + `parquet-go`) and `CREATE TABLE`+`INSERT`s it into the sidecar on connect | **read-only** mirror of externally-written Delta |
 | **Warehouse** | `Warehouse` | **Direct relay** — the client's own `CREATE`/`INSERT`/`SELECT` go straight to the sidecar, which owns the data | **read-write** T-SQL |
 
+#### The type map reflection has to preserve
+
+A Delta column's LOGICAL type is what the endpoint must surface, and the
+physical encoding cannot be read back for it: a `date` is an INT32 count of
+days, a `timestamp` an INT64 whose unit lives only in the annotation, a
+`decimal` an unscaled integer, and `binary` and `string` are both BYTE_ARRAY.
+Inferring from the decoded Go value alone answers all of those wrong.
+
+| Delta / Spark | Endpoint (`INFORMATION_SCHEMA.DATA_TYPE`) |
+|---|---|
+| `date` | `date` |
+| `timestamp` | `datetime2` |
+| `integer` | `int` |
+| `long` | `bigint` |
+| `double` | `float` |
+| `boolean` | `bit` |
+| `string` | `nvarchar` |
+| `binary` | `varbinary` |
+| `decimal(p,s)` | `decimal(p,s)` |
+
+This was wrong for the first four rows until 2026-08-04, reported from
+contoso-data-platform: `date`, `timestamp` and `integer` all arrived as Go
+`int64` and all three surfaced as `bigint`, while `binary` arrived as a Go
+string and surfaced as `nvarchar`. It fails two ways and the quiet one is
+worse — a join against a real date dies with `Operand type clash: date is
+incompatible with bigint`, naming neither the column nor the cause, but
+`SELECT rate_date` simply returns `20627`, a plausible integer that nothing
+marks as a date and that a report or semantic model carries straight through.
+
+The same map applies in reverse for a **mirrored** SQL table, where the driver's
+column metadata is the authority rather than the scanned value: `DATE` and
+`DATETIME2` both scan as `time.Time`, and `INT` and `BIGINT` both as `int64`, so
+value inference collapses each pair. Witnesses: `TestReflectedSQLTypesMatchFabric`
+and `TestMirrorRoundTripPreservesLogicalTypes` (both ungated), and
+`TestReflectedDateIsUsableAsADateInSQLServer`, which asserts
+`INFORMATION_SCHEMA` and a real date join against the sidecar.
+
+**Not yet mapped:** `decimal` in the mirror (SQL→Delta) direction, which still
+collapses to `string`, and the nested types (`struct`/`array`/`map`), which have
+no kind at all.
+
 Reflection exists **only** for the lakehouse endpoint — it bridges Delta that
 was written *outside* SQL Server (by Spark / delta-rs / notebooks) into the
 query engine. The warehouse needs no reflection: its data is created *in* the

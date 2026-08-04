@@ -124,8 +124,16 @@ func TestRefreshMirroredDatabaseE2E(t *testing.T) {
 	var sumID int64
 	var sumTotal float64
 	for _, row := range tbl.Rows {
-		if v, ok := row[idc].(int64); ok {
-			sumID += v
+		// int32: `id INT` mirrors as Delta integer now, not long. Naming the
+		// mismatch rather than skipping it — the `ok` guard reported a type
+		// change as sum(id) = 0, which points at the data and not the type.
+		switch v := row[idc].(type) {
+		case int32:
+			sumID += int64(v)
+		case int64:
+			t.Errorf("id came back int64; an INT column should mirror as Delta integer")
+		default:
+			t.Errorf("id came back %T, want int32", row[idc])
 		}
 		if v, ok := row[totalc].(float64); ok {
 			sumTotal += v

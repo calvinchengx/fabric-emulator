@@ -1,0 +1,319 @@
+package warehouse
+
+// The Delta ↔ SQL type mapping, in both directions.
+//
+// Reported from contoso-data-platform: a Spark DateType column surfaced through
+// the SQL analytics endpoint as BIGINT — the raw days-since-epoch — where real
+// Fabric says `date`. Measuring it found three more of the same shape, because
+// they share one cause: the reader kept only the DECIMAL logical annotation and
+// discarded the rest, so date, timestamp and int all arrived as int64 and all
+// three reflected as BIGINT, while binary arrived as a Go string.
+//
+// It fails two ways, and the quiet one is worse. A dbt model joining the column
+// against a real date dies with `Operand type clash: date is incompatible with
+// bigint`, naming neither the column nor the cause — loud, findable. But
+// `SELECT rate_date` just returns 20627, a perfectly plausible integer that
+// nothing marks as a date, and a report or a semantic model carries it straight
+// through.
+//
+// None of this needs a SQL Server: readParquet and sqlType are pure, so these
+// run in the default suite rather than behind WAREHOUSE_MSSQL_DSN.
+
+import (
+	"bytes"
+	"context"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
+	"testing"
+	"time"
+
+	"github.com/parquet-go/parquet-go"
+)
+
+// everyType is one column per type worth asserting, in the physical encodings
+// Spark and delta-rs actually write.
+type everyType struct {
+	Dt  int32   `parquet:"dt,date"`
+	Ts  int64   `parquet:"ts,timestamp(microsecond)"`
+	Bin []byte  `parquet:"bin"`
+	I   int32   `parquet:"i"`
+	L   int64   `parquet:"l"`
+	S   string  `parquet:"s"`
+	F   float64 `parquet:"f"`
+	B   bool    `parquet:"b"`
+}
+
+func writeEveryType(t *testing.T, row everyType) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := parquet.NewGenericWriter[everyType](&buf)
+	if _, err := w.Write([]everyType{row}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func columnIndex(tbl *Table, name string) int {
+	for i, c := range tbl.Columns {
+		if c == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestReflectedSQLTypesMatchFabric is the regression test for the report. Each
+// expectation is the type real Fabric surfaces for that Delta type.
+func TestReflectedSQLTypesMatchFabric(t *testing.T) {
+	tbl, err := readParquet(writeEveryType(t, everyType{
+		Dt: 20627, Ts: 1700000000000000, Bin: []byte{0x01, 0x02},
+		I: 7, L: 9, S: "x", F: 1.5, B: true,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for col, want := range map[string]string{
+		"dt":  "DATE",
+		"ts":  "DATETIME2",
+		"bin": "VARBINARY(4000)",
+		"i":   "INT",
+		"l":   "BIGINT",
+		"s":   "NVARCHAR(4000)",
+		"f":   "FLOAT",
+		"b":   "BIT",
+	} {
+		i := columnIndex(tbl, col)
+		if i < 0 {
+			t.Fatalf("column %q missing from %v", col, tbl.Columns)
+		}
+		if got := sqlType(tbl, i); got != want {
+			t.Errorf("%s: reflected as %s, want %s (Fabric's mapping) — value arrived as %T",
+				col, got, want, tbl.Rows[0][i])
+		}
+	}
+}
+
+// TestDateDecodesToTheCalendarDayNotTheDayCount: the type name alone is not
+// enough. If DATE were emitted while the value stayed 20627, the insert would
+// fail or store a nonsense day — the number has to become the date it denotes.
+func TestDateDecodesToTheCalendarDayNotTheDayCount(t *testing.T) {
+	tbl, err := readParquet(writeEveryType(t, everyType{Dt: 20627}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := tbl.Rows[0][columnIndex(tbl, "dt")]
+	d, ok := v.(Date)
+	if !ok {
+		t.Fatalf("date column decoded as %T (%v); want warehouse.Date", v, v)
+	}
+	// 20627 days after 1970-01-01, checked against the stdlib rather than by
+	// hand — the first version of this line said 2026-06-11, which is day 20615.
+	if got := d.String(); got != "2026-06-23" {
+		t.Errorf("Date = %s, want 2026-06-23", got)
+	}
+	// And what reaches the bulk-copy encoder is a time, not the day count.
+	if _, ok := bulkValue(d).(time.Time); !ok {
+		t.Errorf("bulkValue(Date) = %T; the destination column is DATE, so an "+
+			"integer here would put the bug back one layer down", bulkValue(d))
+	}
+}
+
+// TestTimestampHonoursItsUnit: the unit lives only in the annotation, so
+// reading microseconds as milliseconds is silent — it lands in 1970 rather
+// than failing.
+func TestTimestampHonoursItsUnit(t *testing.T) {
+	tbl, err := readParquet(writeEveryType(t, everyType{Ts: 1700000000000000}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := tbl.Rows[0][columnIndex(tbl, "ts")]
+	ts, ok := v.(Timestamp)
+	if !ok {
+		t.Fatalf("timestamp column decoded as %T; want warehouse.Timestamp", v)
+	}
+	if got := ts.T.UTC().Format("2006-01-02 15:04:05"); got != "2023-11-14 22:13:20" {
+		t.Errorf("Timestamp = %s, want 2023-11-14 22:13:20 (micros, not millis)", got)
+	}
+}
+
+// TestBinaryStaysBytes: unannotated BYTE_ARRAY is binary. Stringifying it both
+// loses the distinction and can produce invalid UTF-8 in a string column —
+// which is why sqlType's VARBINARY arm was unreachable for anything read from
+// Parquet.
+func TestBinaryStaysBytes(t *testing.T) {
+	tbl, err := readParquet(writeEveryType(t, everyType{Bin: []byte{0xff, 0x00, 0xfe}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := tbl.Rows[0][columnIndex(tbl, "bin")]
+	b, ok := v.([]byte)
+	if !ok {
+		t.Fatalf("binary column decoded as %T; want []byte", v)
+	}
+	if !bytes.Equal(b, []byte{0xff, 0x00, 0xfe}) {
+		t.Errorf("binary round-trip = % x, want ff 00 fe", b)
+	}
+	// A UTF-8 annotated column is still text.
+	if got := tbl.Rows[0][columnIndex(tbl, "s")]; got != nil {
+		if _, isStr := got.(string); !isStr {
+			t.Errorf("an annotated string column decoded as %T; want string", got)
+		}
+	}
+}
+
+// TestMirrorRoundTripPreservesLogicalTypes drives the WRITE direction: a table
+// mirrored out to Delta and read back must come home as the same logical types.
+// Before, colKind had no date/timestamp/binary/int at all and deltaTypeName
+// collapsed everything that was not long/double/boolean to "string", so this
+// was unrepresentable in both directions — the report's half that could not be
+// seen from the reporting repo.
+func TestMirrorRoundTripPreservesLogicalTypes(t *testing.T) {
+	day := time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC)
+	instant := time.Date(2023, 11, 14, 22, 13, 20, 0, time.UTC)
+	tbl := &Table{
+		Columns: []string{"dt", "ts", "bin", "i", "l", "s", "f", "b"},
+		Rows: [][]any{{
+			Date{T: day}, Timestamp{T: instant}, []byte{0x01, 0x02},
+			int32(7), int64(9), "x", 1.5, true,
+		}},
+	}
+	kinds := make([]colKind, len(tbl.Columns))
+	for i := range tbl.Columns {
+		kinds[i] = kindOf(tbl.Rows[0][i])
+	}
+
+	// The Delta schema names the logical type, which is what any other reader
+	// (Spark, delta-rs, DuckDB) resolves the file by.
+	for i, want := range map[int]string{
+		0: "date", 1: "timestamp", 2: "binary", 3: "integer",
+		4: "long", 5: "string", 6: "double", 7: "boolean",
+	} {
+		if got := deltaTypeName(kinds[i]); got != want {
+			t.Errorf("%s: Delta schema type %q, want %q", tbl.Columns[i], got, want)
+		}
+	}
+
+	pq, err := encodeParquet(tbl, kinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := readParquet(pq)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]any{}
+	for i, c := range back.Columns {
+		got[c] = back.Rows[0][i]
+	}
+	if d, ok := got["dt"].(Date); !ok || !d.T.Equal(day) {
+		t.Errorf("date round-tripped as %T %v, want %v", got["dt"], got["dt"], day)
+	}
+	if ts, ok := got["ts"].(Timestamp); !ok || !ts.T.Equal(instant) {
+		t.Errorf("timestamp round-tripped as %T %v, want %v", got["ts"], got["ts"], instant)
+	}
+	if b, ok := got["bin"].([]byte); !ok || !bytes.Equal(b, []byte{0x01, 0x02}) {
+		t.Errorf("binary round-tripped as %T %v", got["bin"], got["bin"])
+	}
+	if got["i"] != int32(7) {
+		t.Errorf("int round-tripped as %T %v, want int32(7)", got["i"], got["i"])
+	}
+	if got["l"] != int64(9) {
+		t.Errorf("long round-tripped as %T %v, want int64(9)", got["l"], got["l"])
+	}
+}
+
+// TestReflectedDateIsUsableAsADateInSQLServer is the report's own scenario, end
+// to end against a real engine: what INFORMATION_SCHEMA says, and whether a
+// join against a real date works.
+//
+// The unit tests above assert the type NAME sqlType chooses. This asserts the
+// two things the reporter actually hit — `INFORMATION_SCHEMA.COLUMNS` reporting
+// `bigint`, and `Operand type clash: date is incompatible with bigint` on a
+// join — neither of which a pure-Go test can reach.
+func TestReflectedDateIsUsableAsADateInSQLServer(t *testing.T) {
+	db := testsupport.OpenMSSQL(t)
+	ctx := context.Background()
+
+	// The table is READ FROM PARQUET, not hand-built with Date values. That is
+	// the whole chain the report describes — a Spark-written Delta file reaching
+	// the analytics endpoint — and it is the only way this test can fail when
+	// the reader stops decoding the DATE annotation. Built by hand, it passes
+	// with the reader's date arm deleted, which is how the first version of this
+	// test proved nothing.
+	day := time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC)
+	pq := writeEveryType(t, everyType{
+		Dt: 20627, Ts: day.UnixMicro(), S: "GBP", F: 1.27, B: true,
+	})
+	read, err := readParquet(pq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl := &Table{
+		Columns: []string{"rate_date", "quoted_on", "currency", "rate_to_usd", "carried"},
+		Rows: [][]any{{
+			read.Rows[0][columnIndex(read, "dt")],
+			read.Rows[0][columnIndex(read, "ts")],
+			read.Rows[0][columnIndex(read, "s")],
+			read.Rows[0][columnIndex(read, "f")],
+			read.Rows[0][columnIndex(read, "b")],
+		}},
+	}
+	if err := reflectTable(ctx, db, "silver_fx_daily", tbl); err != nil {
+		t.Fatalf("reflect: %v", err)
+	}
+
+	got := map[string]string{}
+	rows, err := db.QueryContext(ctx,
+		`SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+		 WHERE TABLE_NAME = 'silver_fx_daily'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var c, dt string
+		if err := rows.Scan(&c, &dt); err != nil {
+			t.Fatal(err)
+		}
+		got[c] = dt
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The exact table from the report, plus the two that were already right.
+	for col, want := range map[string]string{
+		"rate_date": "date", "quoted_on": "datetime2",
+		"currency": "nvarchar", "rate_to_usd": "float", "carried": "bit",
+	} {
+		if got[col] != want {
+			t.Errorf("INFORMATION_SCHEMA reports %s as %q, want %q", col, got[col], want)
+		}
+	}
+
+	// The loud failure: a join against a real date. This is the query that died
+	// with "Operand type clash: date is incompatible with bigint".
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM silver_fx_daily f
+		 JOIN (SELECT CAST('2026-06-23' AS date) AS order_date) o
+		   ON f.rate_date = o.order_date`).Scan(&n); err != nil {
+		t.Fatalf("joining the reflected date against a real date: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("join matched %d rows, want 1", n)
+	}
+
+	// The quiet failure: selecting it returns a date, not 20627.
+	var day2 time.Time
+	if err := db.QueryRowContext(ctx, "SELECT rate_date FROM silver_fx_daily").Scan(&day2); err != nil {
+		t.Fatalf("selecting the reflected date: %v", err)
+	}
+	if !day2.UTC().Equal(day) {
+		t.Errorf("rate_date = %v, want %v", day2.UTC(), day)
+	}
+}
