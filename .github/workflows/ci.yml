@@ -5,6 +5,20 @@ on:
     branches: [main]
   pull_request:
 
+# A push supersedes the run before it on the same ref. Without this, a burst of
+# pushes to main leaves every intermediate run grinding through the full
+# three-OS matrix for a commit nobody will ship — 15 of them piled up in one
+# afternoon and had to be cancelled by hand.
+#
+# `cancel-in-progress: true` is safe HERE because this workflow only reads: it
+# builds and tests, and cancelling it leaves nothing half-done. Do NOT copy this
+# to a workflow that publishes — docs-site.yml deliberately uses
+# `cancel-in-progress: false` for exactly that reason, and a cancelled deploy
+# there put the github-pages environment into `error`.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Build, vet & tests (incl. e2e vs entra-emulator)
