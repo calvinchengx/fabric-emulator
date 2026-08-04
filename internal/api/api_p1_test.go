@@ -316,3 +316,85 @@ func TestFolderStorageFailure(t *testing.T) {
 		t.Fatalf("listFolders = %d; want 500", w.Code)
 	}
 }
+
+// TestGitUpdateFromGitCreatesItemsTheWorkspaceDoesNotHave.
+//
+// TestGitUpdateFromGitMirrors covers UPDATE (nb v1→v2) and DELETE (a stale
+// item), because its remote already exists in the workspace. It never covers
+// CREATE — which is the primary use of UpdateFromGit: pointing an empty
+// workspace at a repository. An item that arrives with no definition looks
+// identical in a listing to one that arrived correctly, so the part payload is
+// asserted rather than just the item's presence.
+func TestGitUpdateFromGitCreatesItemsTheWorkspaceDoesNotHave(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	wid := map[string]string{"wid": ws.ID}
+	connectGit(t, a, ws.ID)
+
+	parts := []store.DefinitionPart{{Path: "f", Payload: "bmV3", PayloadType: "InlineBase64"}}
+	if _, err := st.CommitRemoteItems("GitHub|o||r|/", "main", []*store.RemoteItem{
+		{Type: "Notebook", DisplayName: "fresh-nb", Parts: parts},
+		{Type: "Lakehouse", DisplayName: "fresh-lake"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if w := do(a.gitUpdateFromGit, admin, "POST", "{}", wid); w.Code != http.StatusAccepted {
+		t.Fatalf("updateFromGit = %d %s", w.Code, w.Body.Bytes())
+	}
+
+	nb, err := st.GetItemByName(ws.ID, "fresh-nb", "Notebook")
+	if err != nil {
+		t.Fatalf("the remote's notebook was not created: %v", err)
+	}
+	got, err := st.GetDefinition(nb.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Payload != "bmV3" {
+		t.Fatalf("the created item has the wrong definition: %+v", got)
+	}
+	if _, err := st.GetItemByName(ws.ID, "fresh-lake", "Lakehouse"); err != nil {
+		t.Fatalf("a definition-less remote item was not created: %v", err)
+	}
+}
+
+// TestGitUpdateFromGitAdvancesTheSyncedCommit: after mirroring, the workspace
+// head must move to the remote head, which is what makes the next gitStatus
+// report "synced". Leaving it behind shows a workspace that just pulled as
+// permanently out of date, and the operator's next move is to pull again.
+func TestGitUpdateFromGitAdvancesTheSyncedCommit(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	wid := map[string]string{"wid": ws.ID}
+	connectGit(t, a, ws.ID)
+
+	hash, err := st.CommitRemoteItems("GitHub|o||r|/", "main", []*store.RemoteItem{
+		{Type: "Notebook", DisplayName: "nb",
+			Parts: []store.DefinitionPart{{Path: "f", Payload: "djE=", PayloadType: "InlineBase64"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	g, err := st.GetGitConnection(ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.SyncedCommit == hash {
+		t.Fatal("precondition: the workspace is already at the remote head")
+	}
+
+	if w := do(a.gitUpdateFromGit, admin, "POST", "{}", wid); w.Code != http.StatusAccepted {
+		t.Fatalf("updateFromGit = %d %s", w.Code, w.Body.Bytes())
+	}
+
+	g, err = st.GetGitConnection(ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.SyncedCommit != hash {
+		t.Fatalf("workspace head = %q after pulling %q; the next status would "+
+			"report this workspace as out of date", g.SyncedCommit, hash)
+	}
+}
