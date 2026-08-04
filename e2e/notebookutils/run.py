@@ -175,7 +175,21 @@ try:
     ft = token("https://api.fabric.microsoft.com/.default")
     ws = http("POST", f"{FABRIC}/v1/workspaces", {"displayName": "notebook-ws"}, ft)
     lake = http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "lake"}, ft)
-    http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items", {"displayName": "child-nb", "type": "Notebook"}, ft)
+    # child-nb carries a definition, and it is markdown only. Both halves
+    # matter. A Notebook with NO definition fails its RunNotebook job — an item
+    # nobody gave content to has not "run with nothing to do", it was never
+    # runnable — so `notebook.run` below would raise rather than return
+    # Completed. Give it code instead and the job waits for a Spark engine this
+    # e2e does not start, so `notebook.run` would poll to its timeout. Nothing
+    # executable is the one shape that reaches Completed on its own.
+    http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items", {
+        "displayName": "child-nb", "type": "Notebook",
+        "definition": {"parts": [{
+            "path": "notebook-content.py",
+            "payload": "IyBGYWJyaWMgbm90ZWJvb2sgc291cmNlCgojIE1BUktET1dOICoqKioqKioqKioqKioqKioqKioqCiMgTUFHSUMgIyMgbm90aGluZyB0byBleGVjdXRlCg==",
+            "payloadType": "InlineBase64",
+        }]},
+    }, ft)
 
     log("seeding a Key Vault secret")
     vt = token("https://vault.azure.net/.default")
