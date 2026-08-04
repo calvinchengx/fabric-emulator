@@ -165,8 +165,32 @@ so a reader resolving by annotation finds what it expects at every width.
 `MONEY` and `SMALLMONEY` report no `DecimalSize` and are named explicitly as
 `decimal(19,4)` and `decimal(10,4)`; without that they fall through to text.
 
-**Not yet mapped:** the nested types (`struct`/`array`/`map`), which have no
-kind at all.
+**Broken, not merely unmapped — the nested types (`struct`/`array`/`map`).**
+"No kind at all" would be the safe failure. What actually happens is worse: the
+reader walks Parquet LEAF columns positionally and hands each top-level column
+whatever leaf shares its index, so a nested column both fabricates a value and
+**displaces every column after it**. Measured in-repo on a table of
+`flat, lines array<struct<line_no,product_id,quantity>>, addr struct<country,no>,
+tags map<string,string>, after_flat bigint`:
+
+| column | declared | reflected as | value returned |
+|---|---|---|---|
+| `flat` | string | `NVARCHAR` | `"control"` — correct, it is leaf 0 |
+| `lines` | array&lt;struct&gt; | `INT` | `8` — `lines.line_no` of the *second* element |
+| `addr` | struct | `VARBINARY` | `P-200` — `lines.product_id` |
+| `tags` | map | `INT` | `4` — `lines.quantity` |
+| `after_flat` | bigint = `999` | `NVARCHAR` | `"SG"` — `addr.country`; the real `999` is **dropped** |
+
+Nothing raises. A `SELECT` succeeds and returns plausible values, so there is no
+loud half at all — unlike the date bug, which at least announced itself with
+`Operand type clash` on a join. A reported figure computed over such a table is
+simply wrong, with nothing to notice.
+
+Reflection is per TABLE, so a lakehouse's other tables are unaffected; the
+damage is confined to the table holding the nested column, and to every column
+at or after it. **Until this is fixed, a lakehouse table with a nested column
+should not be trusted through the SQL analytics endpoint at all** — including
+its flat columns.
 
 ##### Confirmed from outside, on the path a consumer actually uses
 
