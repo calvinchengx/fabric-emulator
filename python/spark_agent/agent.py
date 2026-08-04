@@ -79,6 +79,31 @@ def _install_delta_ops():
 
 
 _install_delta_ops()
+
+
+def _install_input_file_name():
+    """Reconstruct `input_file_name()` on engines that lack it (Sail does).
+
+    Same placement rationale as delta_ops: the control plane relays statement
+    text and never sees a Spark plan, so the only place the emulator can act on
+    an *expression* is here, where the plan is built. `input_file.install` is a
+    no-op when the engine implements the function itself, so the JVM overlay
+    keeps Spark's native answer.
+    """
+    if not os.environ.get("SPARK_REMOTE"):
+        return
+    try:
+        import input_file
+    except ImportError:  # pragma: no cover - runtime without the agent module
+        return
+    try:
+        if input_file.install(spark):
+            print("agent: input_file_name shim installed (engine lacks it)")
+    except Exception as exc:  # noqa: BLE001 — a broken shim must not kill the agent
+        print(f"agent: input_file_name shim NOT installed: {exc}")
+
+
+_install_input_file_name()
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 
 
