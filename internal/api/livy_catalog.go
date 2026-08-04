@@ -76,6 +76,14 @@ func isSchemaDir(children []*store.OneLakePath) bool {
 func (a *API) registerLakehouseTables(session, wid, lid string) {
 	it, err := a.Store.GetItem(wid, lid)
 	if err != nil {
+		// A binding naming a lakehouse this workspace does not have is how a
+		// STALE deployment presents (an emulator recreate minted new ids and
+		// the notebook still carries the old ones). Skipping silently here
+		// cost real diagnosis time: no catalog, no Files mount, and the first
+		// visible symptom was a FileNotFoundError deep inside a notebook.
+		log.Printf("livy: session %s binds lakehouse %s which does not exist in "+
+			"workspace %s; no catalog or Files mount for this session "+
+			"(stale deployment? redeploy after re-provisioning)", session, lid, wid)
 		return
 	}
 	// Ask the agent to mirror this lakehouse's Files/ at /lakehouse/default —
