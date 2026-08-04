@@ -459,6 +459,10 @@ func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Wo
 	prefixSet := map[string]bool{}
 	var prefixes []string
 	next := ""
+	// The highest entry name this page has dealt with, whether it was emitted
+	// as a blob or folded into a common prefix. `all` is walked in order, so
+	// this only ever grows.
+	lastConsumed := ""
 	for _, b := range all {
 		if prefix != "" && !strings.HasPrefix(b.name, prefix) {
 			continue
@@ -473,9 +477,31 @@ func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Wo
 			continue
 		}
 		if len(blobs)+len(prefixes) >= maxResults {
-			next = blobs[len(blobs)-1].Name
-			if len(prefixes) > 0 && prefixes[len(prefixes)-1] > next {
-				next = prefixes[len(prefixes)-1]
+			// The continuation is the last entry CONSUMED, not the last thing
+			// emitted. Two bugs lived in the difference:
+			//
+			//   * it indexed `blobs` unconditionally and panicked with index -1
+			//     when a page was filled entirely by common prefixes —
+			//     reachable from a plain `?comp=list&delimiter=/&maxresults=1`
+			//     against a folder, so any caller could drop the connection;
+			//   * and when it did return a prefix as the marker, paging never
+			//     advanced. A prefix is a DIRECTORY name, and every blob under
+			//     it sorts AFTER it, so the `name <= marker` filter on the next
+			//     request skipped nothing and re-derived the same prefix, with
+			//     the same marker, forever.
+			//
+			// The consumed name always advances, so the next page starts at the
+			// first entry this one did not reach.
+			next = lastConsumed
+			// If the page ended inside a directory it already reported, resume
+			// PAST that directory: everything under it is represented by the
+			// prefix, so returning entry-by-entry would emit the same
+			// BlobPrefix on page after page. `dir` ends with the delimiter, so
+			// incrementing its final byte is the exclusive upper bound of every
+			// name under it under byte-wise comparison.
+			if n := len(prefixes); n > 0 && strings.HasPrefix(lastConsumed, prefixes[n-1]) {
+				dir := prefixes[n-1]
+				next = dir[:len(dir)-1] + string(rune(dir[len(dir)-1])+1)
 			}
 			break
 		}
@@ -487,6 +513,7 @@ func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Wo
 					prefixSet[dir] = true
 					prefixes = append(prefixes, dir)
 				}
+				lastConsumed = b.name
 				continue
 			}
 		}
@@ -501,6 +528,7 @@ func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Wo
 		xb.Props.ContentType = "application/octet-stream"
 		xb.Props.BlobType = "BlockBlob"
 		blobs = append(blobs, xb)
+		lastConsumed = b.name
 	}
 
 	type blobPrefix struct {
