@@ -18,8 +18,14 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/tlscert"
 )
 
-// version is stamped by GoReleaser via -ldflags "-X main.version=…".
-var version = "dev"
+// version and commit are stamped at build time via
+// -ldflags "-X main.version=… -X main.commit=…" — by GoReleaser for the
+// released binaries, and by a build arg for the container image. Together
+// they are what a screenshot or a bug report quotes back (config.Build).
+var (
+	version = "dev"
+	commit  = ""
+)
 
 func main() {
 	if err := run(os.Args[1:], nil, nil); err != nil {
@@ -38,10 +44,11 @@ func main() {
 // generate a certificate.
 func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	cfg := config.FromEnvPartial()
+	cfg.Version, cfg.Commit = version, commit
 	if len(args) > 0 {
 		switch args[0] {
 		case "version":
-			fmt.Println("fabric-emulator", version)
+			fmt.Println("fabric-emulator", cfg.Build())
 			return nil
 		case "healthcheck":
 			return healthcheck(cfg.Addr)

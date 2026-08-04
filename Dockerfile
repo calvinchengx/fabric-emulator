@@ -14,13 +14,16 @@
 # under the legacy builder, where empty GOOS/GOARCH correctly mean "host".
 FROM --platform=$BUILDPLATFORM golang:1.25 AS build
 ARG VERSION=dev
+# The image is what serves the portal, so it carries the same identity the
+# released binaries do. Empty is honest for a local `docker build`.
+ARG COMMIT=
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /fabric-emulator ./cmd/fabric-emulator
+    go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /fabric-emulator ./cmd/fabric-emulator
 # Create the state dir here so it can be COPYed into the distroless image with
 # nonroot ownership — distroless has no shell to mkdir/chown at runtime.
 RUN mkdir /data

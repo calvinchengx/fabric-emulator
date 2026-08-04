@@ -101,6 +101,13 @@ type Config struct {
 	// and only the KQL itself executes upstream. Empty leaves the Kusto
 	// routes answering an honest 501. See docs/25-rti-kusto.md.
 	KQLURL string
+
+	// Version and Commit are stamped at build time — `-ldflags -X main.version`
+	// and `-X main.commit`, set by GoReleaser for the binaries and by a build
+	// arg for the image. Empty in a plain `go build`, which is honest: a source
+	// build has no release identity to claim.
+	Version string
+	Commit  string
 }
 
 // FromEnv builds a validated Config from FABRIC_* environment variables.
@@ -180,4 +187,40 @@ func intEnv(key string) int {
 		return 0
 	}
 	return n
+}
+
+// Build is how this emulator names itself: `v0.15.2-a1b2c3d`.
+//
+// WHY IT IS COMPOSED HERE and not at each call site. It is read from at least
+// three places — the `version` subcommand, /health, and the portal's top bar —
+// and the point of the string is that a screenshot, a recording and a bug
+// report all quote the SAME identity. Three formatters would eventually
+// disagree about a prefix or a separator, and then two reports of one build
+// would look like reports of two.
+//
+// The `v` is normalised because the two build paths disagree at the source:
+// GoReleaser stamps `0.15.2` while the image build passes `${{ github.ref_name }}`,
+// which is `v0.15.2`. Stripping and re-adding makes the output independent of
+// which one produced the binary.
+//
+// An unstamped build says `dev` rather than inventing a version, and a build
+// with no commit says just the version: an empty suffix reads as a bug in this
+// function rather than as the absence of a hash.
+func (c *Config) Build() string {
+	v := strings.TrimPrefix(c.Version, "v")
+	if v == "" || v == "dev" {
+		v = "dev"
+	} else {
+		v = "v" + v
+	}
+	if c.Commit == "" {
+		return v
+	}
+	// Short form: a reader quoting a hash back from a screenshot will not type
+	// forty characters, and seven is what git itself abbreviates to.
+	short := c.Commit
+	if len(short) > 7 {
+		short = short[:7]
+	}
+	return v + "-" + short
 }

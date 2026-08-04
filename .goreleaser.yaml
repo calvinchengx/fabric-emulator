@@ -16,7 +16,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .FullCommit }}
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
 
