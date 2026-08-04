@@ -3,6 +3,7 @@ package tlscert
 import (
 	"crypto/x509"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -59,5 +60,38 @@ func TestLoadFailureModes(t *testing.T) {
 	os.WriteFile(dir2+"/tls/key.pem", []byte("garbage"), 0o600)
 	if _, err := Load(dir2); err != nil {
 		t.Fatalf("Load over corrupt PEMs = %v; want regeneration", err)
+	}
+}
+
+// TestPersistedKeyIsNotWorldReadable.
+//
+// The private key is written 0600 and the certificate 0644, and nothing
+// asserted it. That is a behavioural gap rather than a coverage one — the
+// WriteFile calls are executed by every other test in this file, so the mode
+// argument could be changed to 0644 without moving the coverage number at all
+// while making the emulator's key readable by every account on the host.
+func TestPersistedKeyIsNotWorldReadable(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Load(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	ki, err := os.Stat(filepath.Join(dir, "tls", "key.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := ki.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("key.pem mode = %#o; the private key must not be group- or "+
+			"world-readable", perm)
+	}
+
+	// The certificate is public by design, so this asserts only that it exists
+	// and is readable — a key-like 0600 there would be a different bug.
+	ci, err := os.Stat(filepath.Join(dir, "tls", "cert.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ci.Mode().Perm()&0o400 == 0 {
+		t.Errorf("cert.pem mode = %#o; want it readable", ci.Mode().Perm())
 	}
 }
