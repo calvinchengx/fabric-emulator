@@ -95,7 +95,32 @@ except Exception:
 // client out on a request that was working perfectly.
 func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun) {
 	session := "notebook-" + jid
+
+	// A goroutine that dies silently is why a notebook can leave every cell
+	// Pending under a job nobody can explain. Nothing here logged, and a panic
+	// (or an early return added later) would take the drive down with no record
+	// and no terminal state, leaving the run to be completed by something else.
+	//
+	// So: record that the drive finished, and if it finished WITHOUT finalising
+	// the run, finalise it as a failure. Silence is the one outcome that must
+	// not be possible, because it is the one that reads as success.
+	finalised := false
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("notebook drive job=%s item=%s PANIC: %v", jid, iid, rec)
+			if !finalised {
+				a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("the notebook driver panicked: %v", rec))
+			}
+			return
+		}
+		if !finalised {
+			log.Printf("notebook drive job=%s item=%s ended without finalising the run", jid, iid)
+			a.failNotebookRun(wid, iid, jid, run,
+				"the notebook driver exited without reporting a result")
+		}
+	}()
 	defer func() { _, _ = a.agentPost("/close", map[string]any{"session": session}) }()
+	log.Printf("notebook drive job=%s item=%s cells=%d start", jid, iid, len(run.Cells))
 
 	// The default lakehouse, as a notebook attached to one would see it: on
 	// Fabric a Lakehouse's Tables/ ARE catalog tables, so `spark.table("x")`
@@ -110,6 +135,7 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun) {
 	if _, err := a.agentPost("/statements", map[string]any{
 		"session": session, "code": notebookPrelude,
 	}); err != nil {
+		finalised = true
 		a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("the Spark agent is unreachable: %v", err))
 		return
 	}
@@ -123,6 +149,7 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun) {
 			"session": session, "code": cell.Source, "kind": kind,
 		})
 		if err != nil {
+			finalised = true
 			a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("cell %d: %v", cell.Index, err))
 			return
 		}
@@ -152,6 +179,9 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun) {
 		}
 	}
 
+	finalised = true
+	log.Printf("notebook drive job=%s item=%s status=%s cells=%d done",
+		jid, iid, body.Status, len(body.Cells))
 	a.finalizeNotebookRun(wid, iid, jid, run, body)
 }
 
