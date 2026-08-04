@@ -138,5 +138,17 @@
     "description": "`DESCRIBE DETAIL` on a registered Delta table \u1da0",
     "engine": "jvm",
     "status": "pass"
+  },
+  {
+    "id": "read.text_wholetext",
+    "description": "`read.text(wholetext=True)` \u2014 one row per file (must not be inert) \u02b0",
+    "engine": "jvm",
+    "status": "pass"
+  },
+  {
+    "id": "read.json_multiline",
+    "description": "`read.json(multiLine=True)` over a JSON-array file \u02b0",
+    "engine": "jvm",
+    "status": "pass"
   }
 ]
