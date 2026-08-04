@@ -1,24 +1,20 @@
 <script>
   import { api } from './api.js';
+  import { href } from './router.js';
+  import ModelDetail from './ModelDetail.svelte';
+
+  // One id turns this into the detail page. Routing lives in App; this
+  // component just answers to the address it was given.
+  let { id = null } = $props();
 
   let models = $state(null);
   let error = $state('');
-  // Which model is expanded. Collapsed by default because the interesting
-  // thing at a glance is the LIST — how many models, on which target, bound
-  // how — and a page that opens with every measure of every model expanded
-  // buries that under DAX.
-  let open = $state(null);
 
   api
     .get('/_emulator/portal/models')
     .then((r) => (models = r.value || []))
     .catch((e) => (error = e.message));
 
-  const toggle = (id) => (open = open === id ? null : id);
-
-  // A table's row count is not knowable from the definition — an import
-  // table's rows live in data.json and a Direct Lake table's live in Delta —
-  // so the summary counts what the DEFINITION actually states.
   // Pluralised through ONE helper rather than three inline ternaries. Two of
   // the three had one and `measures` did not, so a model with a single measure
   // read "1 measures" — invisible until a second model with exactly one turned
@@ -33,33 +29,27 @@
     ].join(', ');
 </script>
 
-<h1>Semantic models</h1>
-<p class="muted">
-  What each published model actually contains — tables, their columns, every
-  measure's DAX, and what each table is bound to. Parsed by the same code that
-  answers <code>executeQueries</code>, so this is what the emulator believes,
-  not a second reading of the definition.
-</p>
+{#if id}
+  <ModelDetail {id} />
+{:else}
+  <h1>Semantic models</h1>
+  <p class="muted">
+    What each published model contains. Open one for its tables, their columns,
+    every measure's DAX, and what each table is bound to — at its own address,
+    so it can be linked to and shared.
+  </p>
 
-{#if error}<p class="error">{error}</p>{/if}
+  {#if error}<p class="error">{error}</p>{/if}
 
-{#if models && models.length === 0}
-  <p class="muted">No semantic models published yet.</p>
-{/if}
+  {#if models && models.length === 0}
+    <p class="muted">No semantic models published yet.</p>
+  {/if}
 
-{#each models || [] as m (m.itemId)}
-  <div class="model">
-    <!-- The label is explicit because the row's own text is a pile of chips
-         and counts: a screen reader announcing "ContosoRevenue contoso-
-         analytics TMSL rows loaded 2 tables, 3 measures" says everything
-         except what the control DOES. -->
-    <button
-      class="model-head"
-      onclick={() => toggle(m.itemId)}
-      aria-expanded={open === m.itemId}
-      aria-label={`${open === m.itemId ? 'Collapse' : 'Expand'} ${m.displayName}`}
-    >
-      <span class="caret" class:open={open === m.itemId}>▸</span>
+  {#each models || [] as m (m.itemId)}
+    <!-- A LINK, not a button. It has a URL, so it must be openable in a new
+         tab, copyable, and reachable by the browser's own history — which is
+         the entire reason this stopped being an accordion. -->
+    <a class="model-head" href={href('models', m.itemId)}>
       <strong>{m.displayName}</strong>
       <span class="muted">{m.workspace}</span>
       {#if m.error}
@@ -73,88 +63,9 @@
         {/if}
         <span class="muted summary">{summary(m)}</span>
       {/if}
-    </button>
-
-    {#if open === m.itemId}
-      {#if m.error}
-        <!-- Shown, not hidden. A model that vanishes from a list reads as
-             "never published", which is a different problem to diagnose. -->
-        <p class="error detail">{m.error}</p>
-      {:else}
-        <div class="detail">
-          <div class="meta">
-            <span><code>{m.modelName}</code></span>
-            {#if m.compatibilityLevel}<span class="muted">compatibility {m.compatibilityLevel}</span>{/if}
-            <span class="muted mono">{m.itemId}</span>
-          </div>
-
-          {#each m.tables as t (t.name)}
-            <div class="tbl">
-              <div class="tbl-head">
-                <strong>{t.name}</strong>
-                {#if t.mode === 'directLake'}
-                  <span class="chip directlake" title="read from Delta at query time">Direct Lake</span>
-                  <code class="binding">{t.binding}</code>
-                {:else}
-                  <span class="chip" title="rows are embedded in the definition">import</span>
-                {/if}
-              </div>
-
-              <table>
-                <thead>
-                  <tr><th>Column</th><th>Type</th><th>Source column</th></tr>
-                </thead>
-                <tbody>
-                  {#each t.columns as c (c.name)}
-                    <tr>
-                      <td><code>{c.name}</code></td>
-                      <td class="muted">{c.dataType}</td>
-                      <td class="muted">{c.sourceColumn === c.name ? '' : c.sourceColumn}</td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-
-              {#if t.measures.length}
-                <table class="measures">
-                  <thead>
-                    <tr><th>Measure</th><th>DAX</th></tr>
-                  </thead>
-                  <tbody>
-                    {#each t.measures as ms (ms.name)}
-                      <tr>
-                        <td><code>{ms.name}</code></td>
-                        <td><code class="dax">{ms.expression}</code></td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              {/if}
-            </div>
-          {/each}
-
-          {#if m.relationships.length}
-            <div class="tbl">
-              <div class="tbl-head"><strong>Relationships</strong></div>
-              <table>
-                <tbody>
-                  {#each m.relationships as r (r.name)}
-                    <tr>
-                      <td><code>{r.from}</code></td>
-                      <td class="muted">→</td>
-                      <td><code>{r.to}</code></td>
-                      <td class="muted">{r.name}</td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {/if}
-        </div>
-      {/if}
-    {/if}
-  </div>
-{/each}
+    </a>
+  {/each}
+{/if}
 
 <style>
   .model { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }

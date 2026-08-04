@@ -13,9 +13,14 @@
   import Flow from './Flow.svelte';
   import Models from './Models.svelte';
   import { api } from './api.js';
+  import { parse, href, onRouteChange } from './router.js';
 
-  let route = $state(location.hash.slice(1) || 'dashboard');
-  window.addEventListener('hashchange', () => (route = location.hash.slice(1) || 'dashboard'));
+  // `#view` and `#view/param`. The param is what makes a detail page
+  // addressable — see router.js for why that matters more than it looks.
+  let current = $state(parse(location.hash));
+  onRouteChange((r) => (current = r));
+  let route = $derived(current.view);
+  let param = $derived(current.param);
 
   let health = $state(null);
   api.get('/health').then((h) => (health = h)).catch(() => {});
@@ -59,7 +64,7 @@
     {#each sections as [title, items]}
       <div class="section-label">{title}</div>
       {#each items as [id, label]}
-        <a href={'#' + id} class:active={route === id}>{label}</a>
+        <a href={href(id)} class:active={route === id}>{label}</a>
       {/each}
     {/each}
   </nav>
@@ -70,7 +75,7 @@
     {:else if route === 'operations'}<Operations />
     {:else if route === 'jobs'}<Jobs />
     {:else if route === 'flow'}<Flow />
-    {:else if route === 'models'}<Models />
+    {:else if route === 'models'}<Models id={param} />
     {:else if route === 'shortcuts'}<Shortcuts />
     {:else if route === 'warehouse'}<Warehouse />
     {:else if route === 'clock'}<Clock />
