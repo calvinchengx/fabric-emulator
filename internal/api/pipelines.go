@@ -49,6 +49,32 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		if err != nil || nb.Type != "Notebook" {
 			return nil, fmt.Errorf("notebook activity %q: no notebook %q in this workspace", act.Name, nbID)
 		}
+		// The activity's parameters become the run's parameter overrides — the
+		// whole point of a pipeline driving a parameterised notebook. Fabric's
+		// shape is {name: {value, type}}; the value may itself be an
+		// expression (@pipeline().parameters.X), so it resolves against the
+		// pipeline scope before it is handed to the notebook.
+		nbParams := map[string]any{}
+		if raw, ok := tp["parameters"]; ok && len(raw) > 0 {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return nil, fmt.Errorf("notebook activity %q: parameters are not an object", act.Name)
+			}
+			for name, vraw := range fields {
+				target := vraw
+				var pv struct {
+					Value json.RawMessage `json:"value"`
+				}
+				if json.Unmarshal(vraw, &pv) == nil && len(pv.Value) > 0 {
+					target = pv.Value
+				}
+				v, err := resolve(target)
+				if err != nil {
+					return nil, fmt.Errorf("notebook activity %q parameter %q: %v", act.Name, name, err)
+				}
+				nbParams[name] = v
+			}
+		}
 		// Parse for real, exactly as a direct RunNotebook job POST does
 		// (jobs.go): the Go parser splits the notebook into cells and the
 		// compute binding is resolved, so an engine can execute it and report
@@ -74,8 +100,38 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 			_ = e.a.Store.FinalizeJob(nb.ID, j.ID, code)
 			return nil, fmt.Errorf("notebook activity %q: %s", act.Name, code)
 		}
-		// The run is Pending until an engine executes the cells and reports back;
-		// report that rather than claiming a completion that has not happened.
+		// Fabric's notebook activity is SYNCHRONOUS: the pipeline gates on the
+		// notebook's outcome. With a Spark agent configured the emulator is the
+		// pool (same contract as jobs.go), so drive the run here — in this
+		// goroutine, because the activity must not report before the notebook
+		// finishes — and let the activity succeed or fail on the run's actual
+		// terminal state. Without an agent the run stays Pending for an
+		// external engine's callback, which is the original contract and the
+		// only honest answer when nothing can execute the cells.
+		if e.a.runsNotebooksItself() && len(run.Cells) > 0 {
+			e.a.driveNotebookRun(e.wid, nb.ID, j.ID, run, nbParams)
+			status, runJSON, err := e.a.Store.GetNotebookRun(j.ID)
+			if err != nil {
+				return nil, fmt.Errorf("notebook activity %q: run detail lost: %v", act.Name, err)
+			}
+			var detail struct {
+				ExitValue string `json:"exitValue"`
+			}
+			_ = json.Unmarshal([]byte(runJSON), &detail)
+			if status != "Completed" {
+				if jb, err := e.a.Store.GetJobInstance(nb.ID, j.ID); err == nil && jb.FailWith != "" {
+					return nil, fmt.Errorf("notebook activity %q: %s", act.Name, jb.FailWith)
+				}
+				return nil, fmt.Errorf("notebook activity %q: notebook run ended %s", act.Name, status)
+			}
+			return map[string]any{
+				"jobInstanceId": j.ID, "notebookId": nb.ID, "status": status,
+				"result": map[string]any{"exitValue": detail.ExitValue},
+			}, nil
+		}
+		// No engine: the run is Pending until one executes the cells and
+		// reports back; say that rather than claiming a completion that has
+		// not happened.
 		status, _, err := e.a.Store.GetNotebookRun(j.ID)
 		if err != nil || status == "" {
 			status = "Pending"
