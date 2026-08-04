@@ -379,3 +379,74 @@ func TestBindDefaultLakehouseWithNoAgentConfigured(t *testing.T) {
 		t.Fatalf("a missing agent was not reported; log was:\n%s", out)
 	}
 }
+
+// TestRegisterLakehouseTablesReflectsSchemaFolders pins the schema-enabled
+// lakehouse layout (Tables/<schema>/<table>): the schema folder registers WITH
+// its OneLake location so a schema-qualified write lands in the lakehouse, its
+// Delta children register schema-qualified, and an EMPTY schema folder (a
+// provisioned schema before any first write) registers too. The discriminator
+// is deliberately conservative: anything holding loose files or _delta_log
+// keeps the old first-level-dir-is-a-table contract, which the tests above pin.
+func TestRegisterLakehouseTablesReflectsSchemaFolders(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "lake"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{
+		"Tables/bronze/la_cd2_users/_delta_log/00000.json", // schema-qualified Delta table
+		"Tables/plain_table/_delta_log/00000.json",         // first-level Delta table, as before
+	} {
+		p := &store.OneLakePath{WorkspaceID: ws.ID, ItemID: lake.ID,
+			RelPath: rel, Content: []byte("{}")}
+		if err := st.CreateOneLakePath(p, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	empty := &store.OneLakePath{WorkspaceID: ws.ID, ItemID: lake.ID,
+		RelPath: "Tables/silver", IsDir: true, Content: []byte{}}
+	if err := st.CreateOneLakePath(empty, false); err != nil {
+		t.Fatal(err)
+	}
+	stub := newAgentStub(t, a)
+
+	a.registerLakehouseTables("7", ws.ID, lake.ID)
+
+	body := stub.only(t).body
+	schemas, _ := body["schemas"].([]any)
+	got := map[string]string{}
+	for _, e := range schemas {
+		m, _ := e.(map[string]any)
+		name, _ := m["name"].(string)
+		loc, _ := m["location"].(string)
+		got[name] = loc
+	}
+	if len(got) != 2 {
+		t.Fatalf("registered %d schema(s) %v; want bronze and the empty silver", len(got), got)
+	}
+	wantBronze := "abfs://" + ws.ID + "@onelake.dfs.fabric.microsoft.com/" + lake.ID + "/Tables/bronze"
+	if got["bronze"] != wantBronze {
+		t.Errorf("bronze location =\n  %q\nwant\n  %q", got["bronze"], wantBronze)
+	}
+	if _, ok := got["silver"]; !ok {
+		t.Errorf("empty schema folder silver did not register; got %v", got)
+	}
+
+	tables, _ := body["tables"].([]any)
+	byName := map[string]map[string]any{}
+	for _, e := range tables {
+		m, _ := e.(map[string]any)
+		name, _ := m["name"].(string)
+		byName[name] = m
+	}
+	if len(byName) != 2 {
+		t.Fatalf("registered %d table(s) %v; want la_cd2_users and plain_table", len(byName), byName)
+	}
+	if byName["la_cd2_users"]["schema"] != "bronze" {
+		t.Errorf("la_cd2_users schema = %v; want bronze", byName["la_cd2_users"]["schema"])
+	}
+	if s, ok := byName["plain_table"]["schema"]; ok && s != "" {
+		t.Errorf("plain_table carries schema %v; a first-level table must not", s)
+	}
+}

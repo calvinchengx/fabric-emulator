@@ -24,7 +24,46 @@ import (
 	"fmt"
 	"log"
 	"strings"
+
+	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
+
+// hasDeltaLog reports whether a folder's immediate children mark it as a Delta
+// table. IsDir is deliberately not required of the match: which shape a store
+// lists _delta_log as is an implementation detail, and missing it here
+// reclassifies a real table as a schema.
+func hasDeltaLog(children []*store.OneLakePath) bool {
+	for _, c := range children {
+		if strings.HasSuffix(c.RelPath, "/_delta_log") {
+			return true
+		}
+	}
+	return false
+}
+
+// isSchemaDir is the discriminator between a table folder and a schema folder
+// under Tables/. Fabric's schema-enabled lakehouses nest tables one level down
+// (Tables/<schema>/<table>), and only the table level carries _delta_log.
+//
+// The default is TABLE, because that was the contract before schemas were
+// modelled at all and the registration path is tolerant of a folder that turns
+// out not to be one (skipped, logged). A folder is a SCHEMA only when nothing
+// about it says table: no _delta_log, and no loose files either — data files
+// sit inside tables, never directly inside a schema. That leaves two schema
+// shapes: a folder of sub-folders, and an EMPTY folder, which is what a
+// provisioned but not-yet-written schema looks like at the start of a first
+// run.
+func isSchemaDir(children []*store.OneLakePath) bool {
+	if hasDeltaLog(children) {
+		return false
+	}
+	for _, c := range children {
+		if !c.IsDir {
+			return false
+		}
+	}
+	return true
+}
 
 // registerLakehouseTables declares the lakehouse's Delta tables to the Spark
 // agent under a schema named after the lakehouse.
@@ -43,7 +82,13 @@ func (a *API) registerLakehouseTables(session, wid, lid string) {
 	if err != nil {
 		return
 	}
+	// The account-prefixed OneLake form a Fabric notebook uses, so a
+	// registered location is the same string a user would have written.
+	loc := func(rel string) string {
+		return fmt.Sprintf("abfs://%s@onelake.dfs.fabric.microsoft.com/%s/%s", wid, lid, rel)
+	}
 	tables := make([]map[string]string, 0, len(dirs))
+	schemas := make([]map[string]string, 0)
 	for _, d := range dirs {
 		if !d.IsDir {
 			continue
@@ -52,19 +97,43 @@ func (a *API) registerLakehouseTables(session, wid, lid string) {
 		if name == "" {
 			continue
 		}
-		tables = append(tables, map[string]string{
-			"name": name,
-			// The account-prefixed OneLake form a Fabric notebook uses, so the
-			// registered location is the same string a user would have written.
-			"location": fmt.Sprintf(
-				"abfs://%s@onelake.dfs.fabric.microsoft.com/%s/Tables/%s", wid, lid, name),
-		})
+		children, err := a.Store.ListOneLakePaths(lid, d.RelPath, false)
+		if err != nil {
+			continue
+		}
+		if !isSchemaDir(children) {
+			tables = append(tables, map[string]string{
+				"name": name, "location": loc(d.RelPath)})
+			continue
+		}
+		// A schema folder (Fabric's schema-enabled lakehouse layout,
+		// Tables/<schema>/<table>) is registered WITH its location so a
+		// schema-qualified write lands in the lakehouse: a schema created
+		// bare lives in the engine's own warehouse, and
+		// `saveAsTable("bronze.x")` then goes green while writing nothing
+		// anybody can find, the exact failure bindDefaultLakehouse exists to
+		// prevent for unqualified names.
+		schemas = append(schemas, map[string]string{
+			"name": name, "location": loc(d.RelPath)})
+		for _, c := range children {
+			tname := strings.TrimPrefix(c.RelPath, d.RelPath+"/")
+			if tname == "" {
+				continue
+			}
+			grand, err := a.Store.ListOneLakePaths(lid, c.RelPath, false)
+			if err != nil || !hasDeltaLog(grand) {
+				continue
+			}
+			tables = append(tables, map[string]string{
+				"name": tname, "schema": name, "location": loc(c.RelPath)})
+		}
 	}
-	if len(tables) == 0 {
+	if len(tables) == 0 && len(schemas) == 0 {
 		return
 	}
 	out, err := a.agentPost("/register", map[string]any{
-		"session": session, "schema": it.DisplayName, "tables": tables})
+		"session": session, "schema": it.DisplayName,
+		"schemas": schemas, "tables": tables})
 	if err != nil {
 		log.Printf("livy: registering %d table(s) of lakehouse %s with the Spark agent: %v",
 			len(tables), it.DisplayName, err)
