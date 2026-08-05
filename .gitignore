@@ -26,6 +26,12 @@ playwright-report/
 cover.out
 *.cover
 coverage.out
+# pytest-cov's data file and its HTML/XML reports.
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+badges/
 
 # Local TDS/scratch probes (untracked developer scratch)
 /tmpprobe/
