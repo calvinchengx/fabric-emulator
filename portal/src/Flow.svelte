@@ -393,9 +393,14 @@
   {/if}
 </div>
 
+<!-- ONE SCREEN, TWO HALVES, once the pane is live. The point of the terminal
+     is driving the pipeline while watching it run — and that claim is only
+     true if the command, the graph and the event stream are visible at the
+     same time. Until the pane connects (or when there is none) this wrapper
+     is a plain column and changes nothing. -->
+<div class="flow-body" class:split={termAvailable && termOpen && termStarted}>
+<div class="flow-side">
 {#if termAvailable && termOpen}
-  <!-- Side by side with the graph: the point of the pane is driving the
-       pipeline while watching it run, which a separate tab does not give you. -->
   <section class="terminal-pane mt-4">
     {#if !termStarted}
       <p class="muted">
@@ -444,6 +449,8 @@
        toggle that fails when clicked. -->
   <p class="muted mt-2">Terminal unavailable — {termReason}</p>
 {/if}
+</div>
+<div class="flow-main">
 
 {#if error}<p class="error">{error}</p>{/if}
 
@@ -584,8 +591,31 @@
     </tbody>
   </table>
 {/if}
+</div>
+</div>
 
 <style>
+  /* The split: terminal on the left, graph and events on the right, one
+     viewport. Grid rather than flex so the two columns keep their ratio as
+     the graph grows, and min widths so neither side collapses into a strip. */
+  .flow-body.split {
+    display: grid;
+    grid-template-columns: minmax(430px, 2fr) minmax(560px, 3fr);
+    gap: 1.25rem;
+    align-items: start;
+  }
+  /* The terminal stays put while the right column scrolls: the whole point of
+     the pane is that the command never leaves the screen. */
+  .flow-body.split .flow-side {
+    position: sticky;
+    top: 3.5rem;
+  }
+  /* Tall in split mode — the 22rem default is sized for a pane stacked above
+     the graph, not beside it. */
+  .flow-body.split .term-frame {
+    height: calc(100vh - 15rem);
+    min-height: 24rem;
+  }
   .terminal-pane {
     border: 1px solid var(--border, #333);
     border-radius: 6px;
