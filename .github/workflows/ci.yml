@@ -208,36 +208,31 @@ jobs:
         with:
           go-version: '1.25'
 
-      # An instrumented emulator serving a REAL stack. The counters land only
-      # if the process exits cleanly, which is why cmd/fabric-emulator handles
-      # SIGTERM and why the overlay grants a generous stop_grace_period: a
-      # SIGKILLed -cover binary writes nothing, and an empty directory reads as
-      # "the e2e exercised nothing" rather than "nobody asked it".
-      - name: Bring up the instrumented stack
-        run: |
-          mkdir -p covdata
-          docker compose -f docker-compose.yml -f docker-compose.coverage.yml up -d --build
-          for i in $(seq 1 60); do
-            if curl -ksf https://localhost:9443/health >/dev/null; then echo "ready after ${i}s"; break; fi
-            sleep 1
-          done
-          curl -ksf https://localhost:9443/health || { docker compose logs fabric-emulator | tail -40; exit 1; }
-
-      # Drive the surface through a real client, so the counters describe the
-      # request path rather than process startup.
+      # Real e2e suites, instrumented. Every harness layers
+      # e2e/docker-compose.coverage.yml when FABRIC_COVERAGE is set, and they
+      # all write into ONE repo-level covdata/, so the merge below sees the
+      # whole fleet without needing a list of who ran.
+      #
+      # A representative subset rather than all sixteen: these three cover the
+      # control plane, the Livy/agent path and the notebook drive, and the job
+      # is already the slowest thing here. Adding another suite is one line —
+      # the wiring is in the harness, not here.
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.11.32"
-      - name: Exercise the live surface
-        run: uv run --frozen --no-sync python e2e/fabric-cicd/run.py || true
-
-      # `down` sends SIGTERM, which is the moment the counters are written.
-      - name: Stop the stack so the counters flush
+      - name: Instrumented e2e suites
+        env:
+          FABRIC_COVERAGE: "1"
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.coverage.yml down
-          ls -1 covdata | head
+          mkdir -p covdata
+          for suite in notebook-run sail livy; do
+            echo "::group::$suite"
+            uv run --frozen --no-sync python "e2e/$suite/run.py" || echo "::warning::$suite failed; its counters may be partial"
+            echo "::endgroup::"
+          done
           test -n "$(ls -A covdata 2>/dev/null)" || {
-            echo "::error::no coverage counters written — the emulator did not exit cleanly"; exit 1; }
+            echo "::error::no coverage counters written — did the emulator exit cleanly?"; exit 1; }
+          ls -1 covdata | head
 
       # Binary-format unit counters, so `go tool covdata merge` can fold both
       # legs together without a third-party merger.

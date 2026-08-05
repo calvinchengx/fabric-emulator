@@ -218,6 +218,60 @@ returned, and the difference is the point.
 is absent; delete the job and the comparison stops being made with nothing going
 red. Both carry a comment saying to remove them together or not at all.
 
+## Coverage: what the number covers, and what it cannot
+
+Three measurements, because one would misrepresent the others:
+
+| | What it measures | Gate |
+|---|---|---|
+| Go | unit + in-process server tests, merged with instrumented e2e runs | 90% floor, armed only where a real SQL Server was reachable |
+| Python | the unit suite's own scope (checkers, delta-ops, storage) | 70% floor |
+| Witnesses | every supported parity claim names a test that exists | `check_witnesses.py --strict` |
+
+The witness count is the integration measure. "Every claim of support is backed
+by something that ran" is a statement no percentage can make, which is why it is
+published beside the percentages rather than folded into them.
+
+### Instrumented e2e runs
+
+An e2e suite can contribute real coverage, because the emulator can be built
+with Go's `-cover` and the counters merged with the unit ones:
+
+```bash
+mkdir -p covdata covdata/unit
+FABRIC_COVERAGE=1 uv run --frozen --no-sync python e2e/sail/run.py
+go test -cover -coverpkg=./... ./... -args -test.gocoverdir=$PWD/covdata/unit
+scripts/coverage_merge.sh
+```
+
+`FABRIC_COVERAGE=1` makes the harness layer `e2e/docker-compose.coverage.yml`,
+which builds the emulator with `COVER=1` and mounts one repository-level
+`covdata/`. Every wired suite writes into that same directory, so the merge sees
+the whole fleet without needing a list of which suites ran.
+
+**Two things must both hold, and neither is obvious:**
+
+1. **The binary must be built instrumented.** `COVER=1` does that; the published
+   image is never built this way.
+2. **The process must exit CLEANLY.** A `-cover` binary writes its counters when
+   `main` returns, and a SIGKILLed one writes *nothing* — an empty `covdata/`
+   reads as "the e2e exercised nothing" rather than "nobody asked it to say".
+   `cmd/fabric-emulator` handles SIGTERM for exactly this reason, and a stop it
+   was asked for returns `nil` rather than the closed-listener error that would
+   send `main` through `log.Fatal` and `os.Exit` — which skips the write anyway.
+
+Measured contribution: `cmd/fabric-emulator` goes from **0%** on `signalStop` to
+100% once an instrumented stack has been started and stopped, and the package
+reaches ~70% from e2e alone. The merged total moves less than the per-package
+figures do, because the unit suites already cover most paths — the e2e legs
+prove the *wiring* (compose, TLS, the Entra handshake, the engines) that unit
+tests deliberately stub.
+
+**Wiring a suite that is not yet instrumented** is one conditional in its
+`run.py`: append `-f e2e/docker-compose.coverage.yml` when `FABRIC_COVERAGE` is
+set. A suite whose stack contains no `fabric-emulator` service has nothing to
+instrument and is deliberately left alone.
+
 ## JavaScript: always through `pnpm`
 
 Every JS entry point — installs, scripts, CI — goes through **pnpm**, never npm

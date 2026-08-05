@@ -8,8 +8,18 @@ import sys
 DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+# Coverage: layer the overlay so this suite's run contributes counters to
+# the merged profile. Only when asked, so the default path is unchanged
+# (e2e/docker-compose.coverage.yml, docs/10-testing.md).
+def _cov():
+    if not os.environ.get("FABRIC_COVERAGE"):
+        return []
+    return ["-f", "docker-compose.yml",
+            "-f", os.path.join("..", "docker-compose.coverage.yml")]
+
+
 def compose(*args):
-    return subprocess.run(["docker", "compose", *args], cwd=DIR).returncode
+    return subprocess.run(["docker", "compose", *_cov(), *args], cwd=DIR).returncode
 
 
 try:
