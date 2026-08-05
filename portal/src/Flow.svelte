@@ -13,6 +13,21 @@
 
   const MAX_LOG = 300;
 
+  // The terminal pane. Availability is ASKED, not assumed: the emulator dials
+  // ttyd rather than reporting what was configured, so a stack whose `terminal`
+  // profile is off says so instead of offering a pane that dies when clicked.
+  // A configured-but-absent sidecar is exactly how the spark-agent profile bug
+  // produced a failure that named nothing.
+  let termAvailable = $state(false);
+  let termReason = $state('');
+  let termOpen = $state(false);
+  // Typed, never fetched. The portal is unauthenticated and reachable by anyone
+  // who can reach the port, so an endpoint serving this token would be the same
+  // as having none. The emulator prints it once at startup.
+  let termToken = $state('');
+  let termStarted = $state(false);
+
+
   let events = $state([]);
   let edges = $state([]);
   let error = $state('');
@@ -69,6 +84,29 @@
       .catch((e) => (error = e.message));
   }
   loadLineage();
+
+  function loadTerminal() {
+    api.get('/_emulator/portal/terminal/status')
+      .then((st) => {
+        termAvailable = !!st?.available;
+        termReason = st?.reason || '';
+      })
+      // A 404 is the ordinary case: no terminal configured, so no route
+      // mounted. Not an error worth showing.
+      .catch(() => {
+        termAvailable = false;
+        termReason = '';
+      });
+  }
+  loadTerminal();
+
+  /** The framed ttyd URL. The token rides as a query parameter because a
+   * browser cannot set headers on an iframe or a WebSocket handshake. */
+  const termSrc = $derived(
+    termStarted && termToken
+      ? `/_emulator/portal/terminal/?token=${encodeURIComponent(termToken)}`
+      : ''
+  );
 
   api.get('/_emulator/portal/workspaces')
     .then((r) => (workspaces = r.value || []))
@@ -340,7 +378,64 @@
   {/if}
   <Button variant="outline" size="sm" onclick={clear}>Clear</Button>
   <Button variant="outline" size="sm" onclick={loadLineage}>Reload graph</Button>
+  {#if termAvailable}
+    <Button variant="outline" size="sm" onclick={() => (termOpen = !termOpen)}>
+      {termOpen ? 'Hide terminal' : 'Terminal'}
+    </Button>
+  {/if}
 </div>
+
+{#if termAvailable && termOpen}
+  <!-- Side by side with the graph: the point of the pane is driving the
+       pipeline while watching it run, which a separate tab does not give you. -->
+  <section class="terminal-pane mt-4">
+    {#if !termStarted}
+      <p class="muted">
+        The emulator prints a terminal token once at startup
+        (<code>fabric-emulator terminal pane enabled</code>). Paste it here.
+        It is deliberately not served by any endpoint — the portal is
+        unauthenticated, so an endpoint that handed it out would be the same as
+        having no token.
+      </p>
+      <form
+        class="mt-2 flex flex-wrap items-center gap-2"
+        onsubmit={(e) => {
+          e.preventDefault();
+          if (termToken.trim()) termStarted = true;
+        }}
+      >
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          class="term-token"
+          type="password"
+          placeholder="terminal token"
+          bind:value={termToken}
+          aria-label="terminal token"
+        />
+        <Button type="submit" variant="outline" size="sm" disabled={!termToken.trim()}>
+          Connect
+        </Button>
+      </form>
+    {:else}
+      <div class="flex items-center justify-between">
+        <span class="muted">Terminal — a shell in the emulator's stack.</span>
+        <Button
+          variant="outline"
+          size="sm"
+          onclick={() => {
+            termStarted = false;
+            termToken = '';
+          }}>Disconnect</Button
+        >
+      </div>
+      <iframe class="term-frame mt-2" src={termSrc} title="Terminal"></iframe>
+    {/if}
+  </section>
+{:else if termReason}
+  <!-- Configured but unreachable: say which knob to turn rather than showing a
+       toggle that fails when clicked. -->
+  <p class="muted mt-2">Terminal unavailable — {termReason}</p>
+{/if}
 
 {#if error}<p class="error">{error}</p>{/if}
 
@@ -483,6 +578,26 @@
 {/if}
 
 <style>
+  .terminal-pane {
+    border: 1px solid var(--border, #333);
+    border-radius: 6px;
+    padding: 0.75rem;
+  }
+  .term-frame {
+    width: 100%;
+    height: 22rem;
+    border: 0;
+    background: #000;
+  }
+  .term-token {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    min-width: 22rem;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border, #333);
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+  }
   @reference '../src/app.css';
 
   .graph-scroll {
