@@ -14,6 +14,9 @@ only the parity map may have been: see
 at the end, which is the one item here that was not a gap but a mis-grade, and is
 already fixed.
 
+The suite that would have caught these before a consumer did is scoped
+separately, in [38-framework-conformance.md](38-framework-conformance.md).
+
 ## Why these four, together
 
 Three of the four are the same shape: the emulator runs **one long-lived agent

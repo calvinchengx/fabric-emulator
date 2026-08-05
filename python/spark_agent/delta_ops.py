@@ -126,8 +126,8 @@ _CTAS = re.compile(
     r"(?P<target>[\w.`]+)\s+(?:USING\s+delta\s+)?AS\s+(?P<query>\(?\s*SELECT\b.+)$",
     re.IGNORECASE | re.DOTALL)
 
-# The bounded MERGE shape an upsert notebook writes (Rosetta's silver layer is
-# the motivating case):
+# The bounded MERGE shape an upsert notebook writes, which is the shape a
+# medallion silver layer produces:
 #
 #   MERGE INTO <target> [AS] t USING <source-name> [AS] s ON <cond>
 #   [WHEN MATCHED [AND <cond>] THEN UPDATE SET <assignments>]
