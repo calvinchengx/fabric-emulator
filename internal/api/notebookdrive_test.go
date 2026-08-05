@@ -25,6 +25,10 @@ type fakeAgent struct {
 	// code received, in order, so a test can assert the driver ran the cells it
 	// was given and did not, say, run them twice or skip the prelude.
 	got []string
+	// the full statement requests, so a test can assert the cell IDENTITY the
+	// driver sent alongside the code — that is what the agent exports and what
+	// makes observed lineage possible.
+	posts []fakeStatement
 	// reply decides what each statement returns; nil means an empty ok.
 	reply func(code string) map[string]any
 	// exit is what the notebook exited WITH; empty means it never called
@@ -42,9 +46,11 @@ func newFakeAgent(t *testing.T, a *API) *fakeAgent {
 		}
 		body, _ := io.ReadAll(r.Body)
 		var req struct {
-			Session string `json:"session"`
-			Code    string `json:"code"`
-			Kind    string `json:"kind"`
+			Session   string `json:"session"`
+			Code      string `json:"code"`
+			Kind      string `json:"kind"`
+			JobID     string `json:"jobId"`
+			CellIndex *int   `json:"cellIndex"`
 		}
 		_ = json.Unmarshal(body, &req)
 
@@ -65,6 +71,8 @@ func newFakeAgent(t *testing.T, a *API) *fakeAgent {
 				return
 			}
 			f.got = append(f.got, req.Code)
+			f.posts = append(f.posts, fakeStatement{
+				code: req.Code, jobID: req.JobID, cellIndex: req.CellIndex})
 			if f.reply != nil {
 				if out := f.reply(req.Code); out != nil {
 					writeJSON(w, 200, out)
@@ -81,6 +89,20 @@ func newFakeAgent(t *testing.T, a *API) *fakeAgent {
 		t.Fatal(err)
 	}
 	return f
+}
+
+// fakeStatement is one /statements request: the code, and the cell identity
+// carried with it.
+type fakeStatement struct {
+	code      string
+	jobID     string
+	cellIndex *int
+}
+
+func (f *fakeAgent) sent() []fakeStatement {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeStatement(nil), f.posts...)
 }
 
 func (f *fakeAgent) statements() []string {
@@ -447,5 +469,57 @@ func TestJobDoesNotReportCompletedWhileCellsArePending(t *testing.T) {
 	}
 	if _, ok := body["endTimeUtc"]; ok {
 		t.Fatalf("a job that has not really finished must not carry endTimeUtc: %+v", body)
+	}
+}
+
+// TestEveryStatementCarriesTheCellIdentity.
+//
+// The identity is what makes observed lineage possible, and nothing in the
+// repo set it before: FABRIC_JOB_ID / FABRIC_CELL_INDEX had only readers.
+// `notebookutils.fs` tags its OneLake requests from those, and
+// `spark_agent/storage.py` forges a Storage token carrying them as claims
+// (delta-rs takes credentials, not request headers) — so with no exporter both
+// were dead code, and a driven notebook's I/O was attributed to nothing.
+//
+// The PRELUDE deliberately carries no identity: it is the driver's own
+// scaffolding, not the notebook's work, and attributing its I/O to cell 0
+// would invent an edge the notebook did not cause.
+//
+// This does NOT cover Spark's own writes. A `df.write` executes inside Sail,
+// whose storage token enters through startup env and cannot vary per cell
+// (docker/sail/launcher.py) — see docs/28.
+func TestEveryStatementCarriesTheCellIdentity(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+	agent := newFakeAgent(t, a)
+
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+	if s := awaitJob(t, a, ws.ID, nb.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+
+	sent := agent.sent()
+	if len(sent) != 3 {
+		t.Fatalf("statements = %d, want prelude + 2 cells", len(sent))
+	}
+	if sent[0].jobID != "" || sent[0].cellIndex != nil {
+		t.Errorf("the prelude carried an identity (%q, %v); it is the driver's "+
+			"own scaffolding and must not be attributed to a cell",
+			sent[0].jobID, sent[0].cellIndex)
+	}
+	for i, s := range sent[1:] {
+		if s.jobID != jid {
+			t.Errorf("cell %d jobId = %q; want the run's job id %q", i, s.jobID, jid)
+		}
+		if s.cellIndex == nil {
+			t.Errorf("cell %d carried no cellIndex; storage.py forges no "+
+				"attributed token without it", i)
+			continue
+		}
+		if *s.cellIndex != i {
+			t.Errorf("cell %d cellIndex = %d; want %d — a wrong index attributes "+
+				"the I/O to the wrong cell, which reads as real lineage", i, *s.cellIndex, i)
+		}
 	}
 }

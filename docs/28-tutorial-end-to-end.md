@@ -408,10 +408,23 @@ is attributable. `engine.py` closes that by **declaring** its read/write set to
 
 Removing the step therefore loses the notebook's lineage edge entirely — no
 declaration and no observation. Measured, not assumed:
-`AssertionError: Notebook edge into bronze_orders missing: []`. The real fix is
-to mint an attributed storage token for the driven session; until then the
-emulator will not guess what a notebook touched, and this step is how the edge
-gets recorded.
+`AssertionError: Notebook edge into bronze_orders missing: []`.
+
+**And minting an attributed token for the driven session does not fix it**,
+which was the obvious next move and is worth recording as a dead end. Sail takes
+its storage credentials from process env *once, before the server binds* —
+`object_store`'s `MicrosoftAzureBuilder::from_env` runs at startup, which is why
+`docker/sail/launcher.py` restarts sail to rotate a token at all. There is no
+per-session credential channel, so a `df.write` executing inside Sail can never
+carry the running cell's identity.
+
+What the emulator *can* attribute is the I/O its own agent performs: the driver
+now sends `jobId`/`cellIndex` with every statement, and the agent exports them
+as `FABRIC_JOB_ID`/`FABRIC_CELL_INDEX` for that statement's duration. That makes
+`notebookutils.fs` tag its requests and `storage.py` forge a claim-carrying
+token for delta-rs — both of which had **only readers and no writer** until
+now, so neither had ever fired. Spark's own writes stay unattributed, and this
+step is still how their edge gets recorded.
 
 Inside the notebook, OneLake is addressed the way a Fabric notebook addresses
 it — by the **full account host**, not a bare account name:
