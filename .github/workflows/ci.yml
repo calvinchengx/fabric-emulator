@@ -152,6 +152,39 @@ jobs:
           fi
           awk -v t="$total" 'BEGIN { exit (t < 90) ? 1 : 0 }'
 
+      # Badge inputs, from the ONE leg whose number is comparable: a leg
+      # without SQL Server measures ~1.2 points lower for a reason unrelated to
+      # the code, and publishing that would make a red build look like a
+      # regression. The python figure comes from the same place its floor does.
+      #
+      # Uploaded as an artifact rather than committed: the docs site consumes
+      # it on its own schedule (docs-site.yml), so no generated number lands in
+      # the repository's history.
+      - uses: actions/setup-python@v6
+        if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
+        with:
+          version: "0.11.32"
+      - name: Badge inputs
+        if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          go_pct=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
+          py_pct=$(uv run --frozen --group test pytest python/tests -q 2>&1 \
+                   | sed -n 's/.*Total coverage: \([0-9.]*\)%.*/\1/p' | tail -1)
+          echo "go=${go_pct} python=${py_pct:-unset}"
+          uv run --frozen --group test python scripts/coverage_badges.py \
+            --out badges --go "$go_pct" ${py_pct:+--python "$py_pct"}
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
+        with:
+          name: coverage-badges
+          path: badges/
+          retention-days: 14
+
   engine-matrix:
     name: Spark engine matrix (Sail vs JVM) is current
     runs-on: ubuntu-latest
