@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -250,5 +251,58 @@ func TestTerminalProxyMapsTheSubpath(t *testing.T) {
 	}
 	if got, derr := decodeTerminalStatus(rec.Body); derr != nil || !got.Available {
 		t.Errorf("status = %+v, %v; want the emulator's own answer", got, derr)
+	}
+}
+
+// TestTerminalPlainRequestsDoNotCaptureTheConnection.
+//
+// The proxy used to hijack EVERY request under the prefix, not only the
+// WebSocket upgrade. For the pane's plain requests — its HTML, its JS, its
+// /token — that spliced the browser's whole keep-alive connection to ttyd, so
+// the browser's NEXT same-origin request rode into ttyd and came back as
+// ttyd's HTML 404. On the flow page that painted `HTTP 404` beside a healthy
+// run, only for viewers with the pane open, until the browser rotated
+// connections.
+//
+// A real server and a keep-alive client, because the defect is a property of
+// the CONNECTION, which a ResponseRecorder cannot exhibit.
+func TestTerminalPlainRequestsDoNotCaptureTheConnection(t *testing.T) {
+	ttyd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ttyd-served " + r.URL.Path))
+	}))
+	defer ttyd.Close()
+
+	s := terminalServer(t, &config.Config{TerminalURL: ttyd.URL, TerminalToken: "tok"})
+	// The neighbouring route a captured connection would misdeliver. Stands in
+	// for /_emulator/portal/lineage, which is where this was found.
+	s.mux.HandleFunc("GET /_emulator/portal/lineage", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"value":[]}`))
+	})
+	srv := httptest.NewServer(s.mux)
+	defer srv.Close()
+
+	// One client, keep-alives on: both requests should ride one connection,
+	// which is exactly the condition under test.
+	client := srv.Client()
+
+	r1, err := client.Get(srv.URL + "/_emulator/portal/terminal/?token=tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b1, _ := io.ReadAll(r1.Body)
+	_ = r1.Body.Close()
+	if !strings.Contains(string(b1), "ttyd-served") {
+		t.Fatalf("the pane's plain GET did not reach ttyd: %q", b1)
+	}
+
+	r2, err := client.Get(srv.URL + "/_emulator/portal/lineage")
+	if err != nil {
+		t.Fatalf("the request after a pane load failed outright: %v", err)
+	}
+	b2, _ := io.ReadAll(r2.Body)
+	_ = r2.Body.Close()
+	if r2.StatusCode != 200 || !strings.Contains(string(b2), `"value"`) {
+		t.Fatalf("the connection was captured by ttyd: status=%d body=%q", r2.StatusCode, b2)
 	}
 }
