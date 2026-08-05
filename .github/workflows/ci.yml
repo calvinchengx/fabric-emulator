@@ -186,7 +186,8 @@ jobs:
         shell: bash
         run: |
           go_pct=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
-          py_pct=$(uv run --frozen --group test pytest python/tests -q 2>&1 \
+          py_pct=$(uv run --frozen --group test pytest python/tests -q \
+                   --cov --cov-report=term --cov-fail-under=70 2>&1 \
                    | sed -n 's/.*Total coverage: \([0-9.]*\)%.*/\1/p' | tail -1)
           echo "go=${go_pct} python=${py_pct:-unset}"
           uv run --frozen --group test python scripts/coverage_badges.py \
@@ -224,7 +225,10 @@ jobs:
         env:
           FABRIC_COVERAGE: "1"
         run: |
-          mkdir -p covdata
+          # chmod, not just mkdir: the container is nonroot (uid 65532) and a
+          # bind mount keeps the host's ownership, so counters are silently
+          # never written. Invisible on macOS, which is why this passed locally.
+          scripts/coverage_prepare.sh
           for suite in notebook-run sail livy; do
             echo "::group::$suite"
             uv run --frozen --no-sync python "e2e/$suite/run.py" || echo "::warning::$suite failed; its counters may be partial"
@@ -238,7 +242,6 @@ jobs:
       # legs together without a third-party merger.
       - name: Unit counters
         run: |
-          mkdir -p covdata/unit
           go test -cover -coverpkg=./... ./... -args -test.gocoverdir=$PWD/covdata/unit
 
       - id: merge
@@ -325,7 +328,11 @@ jobs:
       # deliberate decision with its own diff, not a side effect of linting.
       # ty is pre-1.0 and pinned tight for that reason — a checker that changes
       # its inferences between runs is a broken build nobody caused.
-      - run: uv run --frozen --group lint ty check
+      # --group test as well: a checker that cannot see pytest does not know
+      # `pytest.skip()` never returns, so a `str | None` guarded by it never
+      # narrows and subprocess.run appears to be called with None. The checker
+      # must see the packages the code actually runs with.
+      - run: uv run --frozen --group lint --group test ty check
 
   example-parity:
     name: Each medallion pair differs only in silver
@@ -1016,7 +1023,10 @@ jobs:
       # T2 unit layer: the shim resolves emulator vs real Fabric from
       # FABRIC_TARGET (endpoints, TLS, and DefaultAzureCredential in real
       # mode) with no network and no Azure.
-      - run: uv run --frozen --group test pytest python/tests -q
+      # Coverage flags live HERE, not in addopts: addopts would apply to every
+      # pytest in the repo, including the ones e2e harnesses run in containers
+      # without pytest-cov, where they are unrecognised arguments (exit 4).
+      - run: uv run --frozen --group test pytest python/tests -q --cov --cov-report=term-missing --cov-fail-under=70
       # Brings up entra + fabric + azure-keyvault and runs a real Fabric
       # notebook that drives the functional notebookutils shim: fs over
       # OneLake, credential tokens, Key Vault secret brokering, lakehouse

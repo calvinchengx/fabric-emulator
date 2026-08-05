@@ -136,7 +136,11 @@ testpaths = ["python/tests", "python/fabric-target/tests"]
 markers = [
     "target: dual-target conformance runs against fabric-emulator or real Fabric per FABRIC_TARGET",
 ]
-addopts = "--cov --cov-report=term-missing --cov-fail-under=70"
+# Coverage flags are deliberately NOT in addopts. addopts applies to EVERY
+# pytest invocation in the repo, including the ones e2e harnesses run inside
+# containers that have pytest but not pytest-cov — where the flags are simply
+# unrecognised arguments and the suite dies with exit 4. The unit suite passes
+# them explicitly instead; see docs/10-testing.md.
 
 # Coverage is scoped to the code THIS suite owns, not to the whole tree.
 #

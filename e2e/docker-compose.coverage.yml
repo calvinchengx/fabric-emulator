@@ -19,6 +19,14 @@
 # with `compose down`, which sends SIGTERM; cmd/fabric-emulator handles it and
 # returns rather than dying by SIGKILL with nothing written. See
 # docs/10-testing.md and the root overlay for the full reasoning.
+#
+# The host directory MUST be world-writable before the stack starts. The image
+# runs as nonroot (uid 65532) and the bind mount keeps the host's ownership, so
+# a directory created by the checkout user is not writable by the container and
+# the counters are simply never written — no error, just an empty directory that
+# reads as "the e2e exercised nothing". Docker Desktop on macOS ignores the uid
+# mismatch, so this only ever fails on Linux CI; `scripts/coverage_prepare.sh`
+# does the chmod, and e2e/engine-matrix hit the identical trap first.
 services:
   fabric-emulator:
     build:
