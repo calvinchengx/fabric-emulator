@@ -43,8 +43,18 @@ const edges = [
 
 // The view calls several endpoints; route by URL so a test can say what each
 // one returns without the others interfering.
-function mockApi({ lineage = edges, workspaces = [], table = null } = {}) {
+function mockApi({ lineage = edges, workspaces = [], table = null, terminal = null } = {}) {
   vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+    // The terminal status route 404s when no terminal is configured, which is
+    // the ORDINARY case and must not surface as an error.
+    if (url.includes('/portal/terminal/status')) {
+      if (!terminal) {
+        return Promise.resolve({
+          ok: false, status: 404, json: () => Promise.resolve({ error: { code: 'NotFound' } }),
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(terminal) });
+    }
     const body = url.includes('/portal/lineage')
       ? { value: lineage }
       : url.includes('/portal/workspaces')
@@ -419,5 +429,98 @@ describe('Flow: the warehouse and Power BI hops', () => {
     const row = await screen.findByText(/contoso-pos-api \(source system\) → Files\/landing\/pos\/customers.csv/);
     expect(row).toBeTruthy();
     expect(screen.queryByText(/undefined/)).toBeNull();
+  });
+});
+
+describe('terminal pane', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+  });
+
+  // No terminal configured is the DEFAULT shape of this product: the route is
+  // not mounted, the status call 404s, and the view must show nothing at all —
+  // no toggle, and no error either, because nothing is wrong.
+  it('offers nothing when no terminal is configured', async () => {
+    mockApi({});
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('Graph')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Terminal' })).toBeNull();
+    expect(screen.queryByText(/Terminal unavailable/)).toBeNull();
+  });
+
+  // Configured but unreachable — the `terminal` profile is off. The view must
+  // say which knob to turn rather than offering a toggle that fails when
+  // clicked. This is the spark-agent profile bug's shape, refused in the UI.
+  it('names the reason when configured but unreachable', async () => {
+    mockApi({
+      terminal: { available: false, reason: 'no terminal at ttyd:7681 — is the `terminal` compose profile enabled?' },
+    });
+    render(Flow);
+    await waitFor(() =>
+      expect(screen.getByText(/Terminal unavailable/)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/compose profile enabled/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Terminal' })).toBeNull();
+  });
+
+  // Available: a toggle appears, and opening it asks for the token rather than
+  // connecting. The token is never fetched — the portal is unauthenticated, so
+  // serving it would be the same as having none.
+  it('asks for the token instead of fetching one', async () => {
+    mockApi({ terminal: { available: true } });
+    render(Flow);
+    const toggle = await screen.findByRole('button', { name: 'Terminal' });
+    await fireEvent.click(toggle);
+
+    expect(screen.getByLabelText('terminal token')).toBeInTheDocument();
+    // Nothing is framed until a token is supplied: an iframe with no token
+    // would just 401 in a way the user cannot see.
+    expect(document.querySelector('iframe.term-frame')).toBeNull();
+    // And no request ever asked the emulator for a token.
+    const asked = globalThis.fetch.mock.calls.map(([u]) => String(u));
+    expect(asked.some((u) => /token/i.test(u))).toBe(false);
+  });
+
+  it('frames ttyd only once a token is entered, and carries it in the URL', async () => {
+    mockApi({ terminal: { available: true } });
+    render(Flow);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Terminal' }));
+
+    const input = screen.getByLabelText('terminal token');
+    await fireEvent.input(input, { target: { value: 'deadbeef' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+
+    const frame = await waitFor(() => {
+      const el = document.querySelector('iframe.term-frame');
+      expect(el).not.toBeNull();
+      return el;
+    });
+    // A browser cannot set a header on an iframe, so the token rides in the
+    // query string — the proxy accepts both forms for that reason.
+    expect(frame.getAttribute('src')).toContain('token=deadbeef');
+    expect(frame.getAttribute('src')).toContain('/_emulator/portal/terminal/');
+  });
+
+  it('disconnecting drops the token, not just the frame', async () => {
+    mockApi({ terminal: { available: true } });
+    render(Flow);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Terminal' }));
+    await fireEvent.input(screen.getByLabelText('terminal token'), {
+      target: { value: 'deadbeef' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    await waitFor(() => expect(document.querySelector('iframe.term-frame')).not.toBeNull());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+
+    // Keeping the token in memory after disconnect would mean "Connect" silently
+    // reuses a credential the operator thinks they revoked.
+    expect(document.querySelector('iframe.term-frame')).toBeNull();
+    expect(screen.getByLabelText('terminal token').value).toBe('');
   });
 });
