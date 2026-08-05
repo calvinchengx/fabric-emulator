@@ -103,6 +103,7 @@ export default defineConfig({
             { slug: '35-warehouse-time-travel' },
             { slug: '36-capacity-job-queueing' },
             { slug: '37-runtime-fidelity-gaps' },
+            { slug: '38-framework-conformance' },
             { slug: 'engine-matrix' },
           ],
         },

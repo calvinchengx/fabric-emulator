@@ -1,7 +1,7 @@
 """The bounded MERGE grammar: what routes to delta-rs, and what falls through.
 
 Parsing only — execution needs live storage and is covered by the e2e that
-motivated the feature (Rosetta silver upsert against a temporal-columned
+motivated the feature (a silver-layer upsert against a temporal-columned
 target, which Sail's own planner cannot resolve).
 """
 import sys
