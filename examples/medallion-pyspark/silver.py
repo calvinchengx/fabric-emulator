@@ -30,6 +30,7 @@ from pyspark.sql import functions as F  # noqa: E402
 spark = SparkSession.builder.remote(SPARK_REMOTE).getOrCreate()
 
 import time as _time  # noqa: E402
+
 _t0 = _time.time()  # build clock: the transform starts here
 
 base = (f"abfs://{st['workspace']}@onelake.dfs.fabric.microsoft.com"

@@ -303,7 +303,7 @@ def execute_merge(spark, params, resolve, storage_options=None):
         if len(cols) != len(vals):
             raise DeltaOpError(
                 f"MERGE: INSERT names {len(cols)} column(s) but {len(vals)} value(s)")
-        merger = merger.when_not_matched_insert(updates=dict(zip(cols, vals)))
+        merger = merger.when_not_matched_insert(updates=dict(zip(cols, vals, strict=False)))
 
     metrics = merger.execute()
     upd = metrics.get("num_target_rows_updated", "?")

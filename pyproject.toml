@@ -20,6 +20,13 @@ test = [
     # not — which is exactly how it passed locally and broke on the runner.
     "pyyaml>=6,<7",
 ]
+lint = [
+    "ruff>=0.14,<0.16",
+    # Astral's type checker. Pre-1.0, so pinned tight: a minor bump can change
+    # which inferences it makes, and a type checker that changes its mind
+    # between runs is a broken build nobody caused.
+    "ty>=0.0.1a14",
+]
 adls-sdk = [
     "azure-storage-blob>=12.24,<13",
     "pyarrow>=18,<24",
@@ -157,3 +164,106 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+
+
+# --- ruff ------------------------------------------------------------------
+# Line length matches what this repo's prose and comments already wrap to.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["e2e/*/target", "website"]
+
+[tool.ruff.lint]
+# Deliberately not the kitchen sink. Each family here has caught something in
+# this codebase or guards a shape it already relies on; a rule that only
+# produces churn is worse than no rule, because the noise trains people to skim
+# the output.
+select = [
+    "E", "W",     # pycodestyle
+    "F",          # pyflakes: undefined names, unused imports
+    "I",          # import order
+    "UP",         # pyupgrade
+    "B",          # bugbear: mutable defaults, loop-variable capture
+    "SIM",        # simplify
+    "RUF",        # ruff's own
+]
+ignore = [
+    "E501",   # line length is enforced by the formatter, not twice
+    "SIM105", # contextlib.suppress reads worse than try/except pass in shims
+    "B008",   # call-in-default is how argparse/Path defaults are written here
+    # Blind `except Exception:` is a DELIBERATE pattern here: a best-effort
+    # mount, a cleanup that must not fail a run, an optional import. Each site
+    # already carries a comment saying why, and several carry `# noqa: BLE001`
+    # from before this config existed. Enabling the rule would flag 22 places
+    # that are correct; RUF100 is off for the same reason, so those surviving
+    # directives keep documenting intent instead of becoming lint of their own.
+    "RUF100",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Fabric notebook content. `spark`, `mssparkutils` and `notebookutils` are
+# injected into the session by the runtime and are deliberately not imported —
+# that IS the contract this emulator provides (docs/38-framework-conformance).
+# Flagging them as undefined would be flagging Fabric's own programming model.
+"**/notebook-content.py" = ["F821"]
+"e2e/**/*.py" = ["F821"]
+# Test files import a module by path before asserting on it, so the import is
+# not at the top and does not need to be.
+"python/tests/*" = ["E402"]
+# The notebookutils shim mirrors Microsoft's API, which is camelCase and takes
+# arguments this code does not use. Renaming to satisfy a linter would break
+# the thing it exists to imitate.
+"python/notebookutils/*" = ["N802", "N803", "ARG001"]
+# Harness and example code, witnessed by CI actually RUNNING it. These rules
+# are about long-term maintainability of library code; a probe script that
+# opens a file without a context manager or reuses a loop variable is read
+# once, run in one container, and proven by its own e2e. Enforcing them here
+# produces churn in code whose correctness is established a better way.
+"e2e/**" = ["B007", "B904", "B905", "E402", "E741", "RUF005", "RUF015", "RUF059", "SIM115", "RUF001"]
+"examples/**" = ["B007", "B904", "B905", "E402", "E741", "RUF005", "RUF015", "RUF059", "SIM115", "RUF001"]
+"docker/**" = ["B007", "SIM115", "RUF005"]
+
+[tool.ty.environment]
+root = ["scripts", "python"]
+
+[tool.ty.rules]
+# Unresolved by CONSTRUCTION, not by mistake:
+#   * the checkers and their tests load one another by path via importlib, so
+#     no static checker can follow the module identity;
+#   * the agent imports pyspark, which is installed only inside the Spark image;
+#   * notebook content reads `spark`/`mssparkutils` from injected globals, which
+#     is the contract this emulator exists to provide (docs/38).
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
+unresolved-reference = "ignore"
+# `BaseHTTPRequestHandler.log_message(self, format, *args)` is typed loosely in
+# typeshed, and every handler in this repo overrides it to silence request
+# logging. The override is correct; the signature comparison is not useful.
+invalid-method-override = "ignore"
+
+[[tool.ty.overrides]]
+# e2e harnesses and examples run against a live stack with pyspark present and
+# notebook globals injected. They are witnessed by CI actually RUNNING them,
+# which is a stronger check than inference over code the checker cannot import.
+# Monkeypatching socket.getaddrinfo to pin a host, for instance, is the point of
+# the harness and can never match the stdlib signature.
+include = ["e2e/**", "examples/**"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
+unsupported-operator = "ignore"
+not-subscriptable = "ignore"
+possibly-missing-submodule = "ignore"
+invalid-assignment = "ignore"
+unused-type-ignore-comment = "ignore"
+
+[[tool.ty.overrides]]
+# The checkers parse hand-maintained markdown into loosely-typed dicts, so an
+# element's type is genuinely unknown until it is used. Narrowing every access
+# would add casts that say less than the code does.
+include = ["scripts/**"]
+
+[tool.ty.overrides.rules]
+unsupported-operator = "ignore"
+invalid-argument-type = "ignore"
+call-non-callable = "ignore"

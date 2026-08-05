@@ -45,7 +45,11 @@ from contextlib import contextmanager
 # starts just under the wire still finishes with a valid bearer.
 _SKEW_SECONDS = 300
 
-_cached = {"token": None, "good_until": 0.0}
+# Two values with two types, kept apart rather than in one loosely-typed dict:
+# `good_until` is compared against a monotonic clock, and a dict holding both a
+# token and a deadline makes that comparison unverifiable.
+_cached_token: str | None = None
+_cached_good_until: float = 0.0
 
 
 def _mint(url, env):
@@ -75,6 +79,7 @@ def token(env=None):
     A static AZURE_STORAGE_TOKEN wins: it is how the image is pointed at real
     Azure, or at a fixed test token, without an issuer to call.
     """
+    global _cached_token, _cached_good_until
     env = os.environ if env is None else env
     static = env.get("AZURE_STORAGE_TOKEN")
     if static:
@@ -83,13 +88,13 @@ def token(env=None):
     if not url:
         return None
     now = time.monotonic()
-    if _cached["token"] and now < _cached["good_until"]:
-        return _cached["token"]
+    if _cached_token and now < _cached_good_until:
+        return _cached_token
     minted, lifetime = _mint(url, env)
-    _cached["token"] = minted
+    _cached_token = minted
     # Never cache for less than a minute even if the issuer returns a short
     # lifetime: minting on every statement would turn a REPL into a token flood.
-    _cached["good_until"] = now + max(60.0, lifetime - _SKEW_SECONDS)
+    _cached_good_until = now + max(60.0, lifetime - _SKEW_SECONDS)
     return minted
 
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fabric Data Engineering VS Code extension 1.18.1 contract witness."""
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 

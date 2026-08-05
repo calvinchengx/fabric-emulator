@@ -32,6 +32,9 @@ coverage.out
 coverage.xml
 htmlcov/
 badges/
+# Go coverage: binary counter dirs (unit + e2e) and the merged text profile.
+covdata/
+coverage-merged.out
 
 # Local TDS/scratch probes (untracked developer scratch)
 /tmpprobe/

@@ -16,6 +16,10 @@ Stdlib-only HTTP + pyspark. Endpoints (private, emulator-internal):
 import ast
 import io
 import json
+
+# SPARK_REMOTE (e.g. sc://sail:50051) makes this a Spark Connect client —
+# the Sail/no-JVM path (docs/20-lakesail-engine.md). Unset = classic JVM.
+import os
 import sys
 import traceback
 from contextlib import redirect_stdout
@@ -23,9 +27,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from pyspark.sql import SparkSession
 
-# SPARK_REMOTE (e.g. sc://sail:50051) makes this a Spark Connect client —
-# the Sail/no-JVM path (docs/20-lakesail-engine.md). Unset = classic JVM.
-import os
 _b = SparkSession.builder.appName("livy-agent")
 spark = (_b.remote(os.environ["SPARK_REMOTE"]) if os.environ.get("SPARK_REMOTE") else _b).getOrCreate()
 def apply_connect_confs():
@@ -173,7 +174,7 @@ def _notebookutils():
     if pkg_root not in sys.path:
         sys.path.insert(0, pkg_root)
     try:
-        import notebookutils  # noqa: PLC0415 - optional, resolved at session setup
+        import notebookutils
 
         return notebookutils
     except Exception:  # pragma: no cover - image built without the package

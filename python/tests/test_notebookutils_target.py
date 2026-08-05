@@ -13,7 +13,7 @@ import pytest
 # backslashes, so a hardcoded separator silently fails to find the package.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from notebookutils import _config, credentials  # noqa: E402
+from notebookutils import _config, credentials
 
 TARGET_ENV = [
     "FABRIC_TARGET", "AZURE_TENANT_ID",
@@ -85,7 +85,7 @@ def test_explicit_env_still_wins_in_real_mode(monkeypatch):
 
 def test_bogus_target_rejected(monkeypatch):
     monkeypatch.setenv("FABRIC_TARGET", "staging")
-    with pytest.raises(RuntimeError, match="emulator.*real"):
+    with pytest.raises(RuntimeError, match=r"emulator.*real"):
         _config.config()
 
 

@@ -10,8 +10,20 @@ the web store sends nested JSON.
 import datetime
 
 import web_store as web
-from common import (FABRIC, KV, KV_INTERNAL, S, STORAGE_AUD, VAULT_AUD, ensure_app,
-                    fabric_headers, load, log, save, token)
+from common import (
+    FABRIC,
+    KV,
+    KV_INTERNAL,
+    STORAGE_AUD,
+    VAULT_AUD,
+    S,
+    ensure_app,
+    fabric_headers,
+    load,
+    log,
+    save,
+    token,
+)
 
 ensure_app(VAULT_AUD, "Azure Key Vault")
 vt = token(VAULT_AUD)

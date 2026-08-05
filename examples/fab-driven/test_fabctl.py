@@ -13,10 +13,8 @@ fails if it is accepted. Run them without any stack up:
 """
 import json
 
-import pytest
-
 import fabctl
-
+import pytest
 
 # --- the gate --------------------------------------------------------------
 

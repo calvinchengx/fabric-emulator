@@ -206,6 +206,7 @@ log(f"{both:,} customers bought from more than one SOURCE SYSTEM — a row that 
 # what happened when 'web' meant both a POS channel and a source system, and the
 # grand total was the one number that still looked right.
 import json  # noqa: E402
+
 # --- the cutover, exercised ------------------------------------------------
 # The build above created gold from nothing, which takes the materialization's
 # first-build branch: one rename, no live table to protect. The interesting

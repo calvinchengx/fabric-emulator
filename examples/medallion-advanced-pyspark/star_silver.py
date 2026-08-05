@@ -32,8 +32,8 @@ from common import SPARK_REMOTE, load, log, report_lineage
 st = load()
 assert SPARK_REMOTE, "SPARK_REMOTE is empty — no Spark engine is attached"
 
-from pyspark.sql import functions as F  # noqa: E402
 from pyspark.sql import SparkSession  # noqa: E402
+from pyspark.sql import functions as F  # noqa: E402
 
 spark = SparkSession.builder.remote(SPARK_REMOTE).getOrCreate()
 

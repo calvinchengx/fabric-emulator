@@ -11,7 +11,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spark_agent"))
 
 import delta_ops
 
-
 SILVER_SHAPED = """
 MERGE INTO silver.la_cd2_users t
 USING tmp_silver_abc123 s

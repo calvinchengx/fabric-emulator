@@ -7,7 +7,7 @@ environment the orchestrator injects, the same way real Fabric injects the
 runtime context into the kernel.
 """
 import notebookutils
-from notebookutils import fs, credentials, lakehouse, runtime
+from notebookutils import credentials, fs, lakehouse, runtime
 
 ctx = runtime.context
 ws = ctx["currentWorkspaceId"]

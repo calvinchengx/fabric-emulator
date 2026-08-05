@@ -10,7 +10,6 @@ import math
 import pathlib
 
 import pytest
-
 from verify import ProbeError, compare, parse_port_file, parse_rows, stage_results
 
 

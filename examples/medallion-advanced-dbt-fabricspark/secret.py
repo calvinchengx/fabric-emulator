@@ -2,8 +2,19 @@
 AzureKeyVaultReference connection — which makes Fabric resolve it for real with
 a vault-audience workspace-identity token."""
 import source_system as src
-from common import (FABRIC, KV, KV_INTERNAL, S, VAULT_AUD, ensure_app, fabric_headers, load,
-                    log, save, token)
+from common import (
+                    FABRIC,
+                    KV,
+                    KV_INTERNAL,
+                    VAULT_AUD,
+                    S,
+                    ensure_app,
+                    fabric_headers,
+                    load,
+                    log,
+                    save,
+                    token,
+)
 
 ensure_app(VAULT_AUD, "Azure Key Vault")
 vt = token(VAULT_AUD)

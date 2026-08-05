@@ -1,0 +1,39 @@
+# Coverage overlay: run the emulator instrumented, so the e2e fleet reports
+# what it exercised.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.coverage.yml up -d
+#   ... run an e2e suite ...
+#   docker compose ... down          # SIGTERM is what makes the counters land
+#   scripts/coverage_merge.sh
+#
+# WHY AN OVERLAY rather than an edit to every compose file: there are dozens of
+# e2e stacks and they all layer on the root compose. One overlay instruments
+# all of them, and the published image keeps carrying an uninstrumented binary.
+#
+# TWO THINGS MUST BOTH HOLD or this silently measures nothing:
+#
+#   1. The binary is BUILT with -cover (COVER=1 below, which the root compose's
+#      plain `image:` cannot do — hence `build:` here).
+#   2. The process EXITS CLEANLY. A `-cover` binary writes its counters when
+#      main returns; a SIGKILLed one writes nothing at all and the directory is
+#      empty, which reads as "the e2e exercised nothing". cmd/fabric-emulator
+#      handles SIGTERM for exactly this reason, and `docker compose down` sends
+#      SIGTERM before it escalates.
+#
+# `stop_grace_period` is generous because the counter write happens after the
+# listener closes: the default 10s is usually plenty, but a loaded CI runner
+# tearing down a dozen containers at once is precisely where a truncated write
+# would show up as an unexplained coverage dip.
+services:
+  fabric-emulator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        COVER: "1"
+    image: fabric-emulator:coverage
+    environment:
+      GOCOVERDIR: /covdata
+    stop_grace_period: 30s
+    volumes:
+      - ./covdata:/covdata

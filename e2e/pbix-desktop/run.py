@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from verify import ProbeError, compare, parse_port_file, parse_rows, stage_results  # noqa: E402
+from verify import ProbeError, compare, parse_port_file, parse_rows, stage_results
 
 HERE = pathlib.Path(__file__).resolve().parent
 DAX = ('EVALUATE SUMMARIZECOLUMNS(Customer[Country], '

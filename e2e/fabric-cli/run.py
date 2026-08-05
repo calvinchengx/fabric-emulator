@@ -10,7 +10,10 @@ DeploymentPipelines-DeployAll.ps1 (fabric-samples): list pipelines, list
 stages, POST deploy, poll the operation, read the result. fab 1.6.1 ships no
 deployment-pipeline verbs (nothing in the package mentions them), so those
 calls go through `fab api` — still fab's auth and HTTP stack, just untyped."""
-import os, subprocess, sys
+import os
+import subprocess
+import sys
+
 DIR = os.path.dirname(os.path.abspath(__file__))
 def compose(*a): return subprocess.run(["docker", "compose", *a], cwd=DIR).returncode
 try:

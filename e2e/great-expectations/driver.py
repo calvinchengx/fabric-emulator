@@ -18,8 +18,8 @@ import os
 import re
 import urllib.request
 
-import pandas as pd
 import great_expectations as gx
+import pandas as pd
 
 FABRIC = os.environ["FABRIC_URL"]
 WS = os.environ["WS"]

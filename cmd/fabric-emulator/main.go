@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/config"
@@ -28,9 +30,28 @@ var (
 )
 
 func main() {
-	if err := run(os.Args[1:], nil, nil); err != nil {
+	if err := run(os.Args[1:], signalStop(), nil); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// signalStop closes on SIGTERM or SIGINT, so `docker compose down` ends this
+// process by its own exit rather than by SIGKILL ten seconds later.
+//
+// It matters beyond tidiness: a binary built with `go build -cover` writes its
+// coverage counters when main RETURNS, and a killed process writes nothing at
+// all. Without this the e2e coverage instrumentation produces an empty
+// GOCOVERDIR and reports 0%, which reads as "the e2e suites exercise nothing"
+// rather than "the process never got to say what it exercised".
+func signalStop() <-chan struct{} {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	stop := make(chan struct{})
+	go func() {
+		<-ch
+		close(stop)
+	}()
+	return stop
 }
 
 // run serves until the process exits, or until stop closes (nil = never).
@@ -135,7 +156,21 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 		default:
 		}
 	}
-	return http.Serve(ln, srv.Handler())
+	err = http.Serve(ln, srv.Handler())
+	// A closed listener is how a requested stop ARRIVES here: the goroutine
+	// above closes it, and Serve returns "use of closed network connection".
+	// Reporting that as a failure would make `docker compose down` exit 1 on a
+	// clean shutdown — and, because main would then log.Fatal, os.Exit would
+	// skip the coverage-counter write that a `-cover` build performs on a
+	// normal return. Asked to stop, stopping is success.
+	if stop != nil {
+		select {
+		case <-stop:
+			return nil
+		default:
+		}
+	}
+	return err
 }
 
 // healthcheck probes /health on the local instance and exits 0 when healthy —

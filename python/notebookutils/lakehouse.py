@@ -3,9 +3,9 @@
 Thin wrapper over /v1/workspaces/{id}/lakehouses using a fabric-audience token
 minted for the notebook identity. Workspace defaults to the runtime context.
 """
+from . import credentials
 from ._config import config
 from ._http import request
-from . import credentials
 
 
 def _ws(workspaceId):

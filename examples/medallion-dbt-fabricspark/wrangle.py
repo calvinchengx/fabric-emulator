@@ -7,9 +7,8 @@ cell), then in the Variables panel right-click a DataFrame ->
 Not part of pipeline.py: this step is for looking, not asserting.
 """
 # %%
-from deltalake import DeltaTable
-
 from common import storage_options, tables_uri
+from deltalake import DeltaTable
 
 opts = storage_options()
 base = tables_uri()

@@ -12,17 +12,20 @@ better than it is and neither is visible from the badge itself:
 The witness ratio is counted rather than hardcoded, so these also pin that
 `_gated` — which records why a witness may skip — is not mistaken for a claim.
 """
+import importlib.util
 import json
 import sys
 from pathlib import Path
 
-import importlib.util
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
 spec = importlib.util.spec_from_file_location(
     "coverage_badges", REPO / "scripts" / "coverage_badges.py")
+# spec_from_file_location returns Optional; a None here means the path
+# is wrong, and failing at import beats an AttributeError mid-test.
+assert spec and spec.loader
 cb = importlib.util.module_from_spec(spec)
 sys.modules["coverage_badges"] = cb
 spec.loader.exec_module(cb)

@@ -23,6 +23,9 @@ REPO = Path(__file__).resolve().parents[2]
 
 spec = importlib.util.spec_from_file_location(
     "check_example_parity", REPO / "scripts" / "check_example_parity.py")
+# spec_from_file_location returns Optional; a None here means the path
+# is wrong, and failing at import beats an AttributeError mid-test.
+assert spec and spec.loader
 cp = importlib.util.module_from_spec(spec)
 sys.modules["check_example_parity"] = cp
 spec.loader.exec_module(cp)

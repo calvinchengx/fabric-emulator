@@ -24,12 +24,10 @@ be resolved, and each is unreachable for a different reason:
 A resolution step that reports a single match rate, without naming who it could
 not place, is hiding all three.
 """
-import pandas as pd
-from deltalake import DeltaTable
-
 import erp_system as erp
 import web_store as web
 from common import log, storage_options, tables_uri
+from deltalake import DeltaTable
 
 opts = storage_options()
 base = tables_uri()

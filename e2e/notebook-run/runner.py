@@ -26,9 +26,9 @@ the run detail says what each cell did and the OneLake bytes say what actually
 landed. All three are asserted.
 """
 import base64
+import importlib
 import io
 import json
-import importlib
 import os
 import subprocess
 import sys
@@ -159,9 +159,9 @@ assert run["binding"] == {"workspaceId": ws, "lakehouseId": lake["id"],
 assert run["environment"]["pythonPackages"] == ["cloudpickle"], run["environment"]
 
 # --- selected compute engine executes the cells -----------------------------
-from pyspark.sql import SparkSession  # noqa: E402
-
 import time
+
+from pyspark.sql import SparkSession  # noqa: E402
 
 TABLE_PATH = f"abfs://{ws}@{ACCT}/lake.Lakehouse/Tables/events"
 TABLES_PATH = TABLE_PATH.rsplit("/", 1)[0]
