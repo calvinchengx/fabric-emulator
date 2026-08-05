@@ -208,3 +208,47 @@ func TestTerminalTokenIsNotForwardedUpstream(t *testing.T) {
 		t.Fatal("the proxy never reached the upstream with a valid token")
 	}
 }
+
+// TestTerminalProxyMapsTheSubpath.
+//
+// The proxy carries ttyd's WHOLE surface — its index, its xterm.js bundle, and
+// the websocket — so the pane can frame ttyd's own client instead of this repo
+// reimplementing a terminal. That only works if the subpath survives the hop.
+//
+// It also pins that /status is still answered by the status handler rather than
+// swallowed by the proxy pattern, which shares its prefix.
+func TestTerminalProxyMapsTheSubpath(t *testing.T) {
+	addr, seen := fakeTTYD(t)
+	s := terminalServer(t, &config.Config{TerminalURL: "http://" + addr, TerminalToken: "tok"})
+	srv := httptest.NewServer(s.mux)
+	defer srv.Close()
+
+	// A nested asset path, not just /ws.
+	req, err := http.NewRequest(http.MethodGet, srv.URL+terminalPrefix+"assets/xterm.js?token=tok", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp, rerr := http.DefaultTransport.RoundTrip(req); rerr == nil {
+		defer resp.Body.Close()
+	}
+	select {
+	case got := <-seen:
+		if !strings.HasPrefix(got, "/assets/xterm.js") {
+			t.Errorf("upstream saw %q; want the subpath mapped to /assets/xterm.js", got)
+		}
+	default:
+		t.Fatal("the proxy never reached the upstream")
+	}
+
+	// /status is a sibling of the proxy prefix and must not be proxied: it is
+	// the emulator's own answer, and it is deliberately readable without the
+	// token so the UI can decide whether to offer the pane at all.
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/_emulator/portal/terminal/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; the proxy pattern swallowed it", rec.Code)
+	}
+	if got, derr := decodeTerminalStatus(rec.Body); derr != nil || !got.Available {
+		t.Errorf("status = %+v, %v; want the emulator's own answer", got, derr)
+	}
+}

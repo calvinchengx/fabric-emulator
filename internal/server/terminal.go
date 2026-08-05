@@ -26,6 +26,9 @@ import (
 // fast "no".
 const terminalProbeTimeout = 2 * time.Second
 
+// terminalPrefix is the portal-origin mount point for the proxied ttyd.
+const terminalPrefix = "/_emulator/portal/terminal/"
+
 // registerTerminal mounts the proxy, but ONLY when a terminal is configured.
 // An unset TerminalURL leaves the routes absent rather than 404 — the
 // difference matters for a surface whose whole risk is existing at all.
@@ -34,7 +37,11 @@ func (s *Server) registerTerminal() {
 		return
 	}
 	s.mux.HandleFunc("GET /_emulator/portal/terminal/status", s.terminalStatus)
-	s.mux.HandleFunc("/_emulator/portal/terminal/ws", s.terminalProxy)
+	// The WHOLE ttyd surface, not just /ws: ttyd serves its own client (an
+	// xterm.js bundle), and framing that is far less code than reimplementing
+	// its wire protocol — and adds no npm dependency, which matters because
+	// portal/dist is committed and CI checks it matches source.
+	s.mux.HandleFunc("/_emulator/portal/terminal/", s.terminalProxy)
 }
 
 // terminalStatus answers whether a terminal can actually be reached, by
@@ -124,10 +131,10 @@ func (s *Server) terminalProxy(w http.ResponseWriter, r *http.Request) {
 	// emulator's bearer, and a `token` query parameter is ours, not its.
 	out := r.Clone(r.Context())
 	out.URL.Scheme, out.URL.Host = "http", target.Host
-	out.URL.Path = strings.TrimPrefix(target.Path, "/") + "/ws"
-	if !strings.HasPrefix(out.URL.Path, "/") {
-		out.URL.Path = "/" + out.URL.Path
-	}
+	// /_emulator/portal/terminal/<rest> -> <target>/<rest>. The trailing-slash
+	// root maps to "/", which is ttyd's own index.
+	rest := strings.TrimPrefix(r.URL.Path, terminalPrefix)
+	out.URL.Path = "/" + strings.TrimPrefix(rest, "/")
 	q := out.URL.Query()
 	q.Del("token")
 	out.URL.RawQuery = q.Encode()
