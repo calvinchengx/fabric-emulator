@@ -75,10 +75,14 @@ def main():
     while True:
         token, expires_in = mint()
         os.environ["AZURE_STORAGE_TOKEN"] = token
-        refresh_at = time.monotonic() + max(60, expires_in - REFRESH_MARGIN)
+        # Wall clock, NOT time.monotonic(): the token's expiry is a wall-clock
+        # fact set by the issuer, and inside a VM (docker on macOS) the
+        # monotonic clock pauses and warps against it — observed as a launcher
+        # that sat through a refresh deadline while the token expired under it.
+        refresh_at = time.time() + max(60, expires_in - REFRESH_MARGIN)
         verb = "restarting with fresh" if child else "minted"
         print(f"launcher: {verb} Storage token from {os.environ['ENTRA_TOKEN_URL']} "
-              f"(expires_in={expires_in}s, refresh in {int(refresh_at - time.monotonic())}s)",
+              f"(expires_in={expires_in}s, refresh in {int(refresh_at - time.time())}s)",
               flush=True)
 
         if child and child.poll() is None:
@@ -93,7 +97,7 @@ def main():
         # Wait for whichever comes first: the refresh deadline, or sail dying
         # on its own (in which case exit with ITS code so the container's
         # restart policy and healthcheck see the truth).
-        while time.monotonic() < refresh_at:
+        while time.time() < refresh_at:
             code = child.poll()
             if code is not None:
                 print(f"launcher: sail exited with {code}", flush=True)
