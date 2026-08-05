@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
+	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
@@ -241,4 +242,120 @@ func TestMirrorItem(t *testing.T) {
 	if err := mirrorItem(&fakeWH{db: sqldb}, st)(ctx, db.ID); err == nil {
 		t.Error("expected Mirror to surface an error against a non-SQL-Server backend")
 	}
+}
+
+// TestResolveSQLItem covers how a TDS connection's `database=` and server name
+// become an ITEM — the decision that settles which workspace's data a session
+// reads. It was reachable only through TestWarehouseRouter, which gates on a
+// real SQL Server and so skips on any machine without one; these lookups need
+// no engine at all.
+//
+// The precedence matters and is easy to get backwards. A workspace can hold a
+// Warehouse and a Lakehouse of the SAME name, and they are not
+// interchangeable: the Warehouse is read-write and owns its data, the
+// Lakehouse endpoint is a read-only reflection. Resolving to the wrong one
+// turns a client's writes into errors, or worse, points a reader at a stale
+// mirror while it believes it is on the warehouse.
+func TestResolveSQLItem(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ws := &store.Workspace{DisplayName: "analytics"}
+	if err := st.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	other := &store.Workspace{DisplayName: "other"}
+	if err := st.CreateWorkspace(other, store.Principal{ID: "u", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	// "sales" exists as BOTH kinds in the same workspace — the ambiguity the
+	// precedence rule exists to settle.
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "sales"}
+	wh := &store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "sales"}
+	lakeOnly := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "raw"}
+	for _, it := range []*store.Item{lake, wh, lakeOnly} {
+		if err := st.CreateItem(it, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("by item id, workspace-agnostic", func(t *testing.T) {
+		// No workspace in the server name at all: an id is globally unique, so
+		// it must resolve without one. This is how the emulator's own tooling
+		// connects.
+		got, err := resolveSQLItem(st, "localhost", lakeOnly.ID)
+		if err != nil || got.ID != lakeOnly.ID {
+			t.Fatalf("by id = %v, %v; want %s", got, err, lakeOnly.ID)
+		}
+	})
+
+	t.Run("by name, workspace from the server label", func(t *testing.T) {
+		got, err := resolveSQLItem(st, "analytics.datawarehouse.fabric.microsoft.com", "raw")
+		if err != nil || got.ID != lakeOnly.ID {
+			t.Fatalf("by name = %v, %v; want %s", got, err, lakeOnly.ID)
+		}
+	})
+
+	t.Run("workspace addressable by id as well as name", func(t *testing.T) {
+		got, err := resolveSQLItem(st, ws.ID+".datawarehouse.fabric.microsoft.com", "raw")
+		if err != nil || got.ID != lakeOnly.ID {
+			t.Fatalf("workspace by id = %v, %v", got, err)
+		}
+	})
+
+	t.Run("a Warehouse wins over a Lakehouse of the same name", func(t *testing.T) {
+		got, err := resolveSQLItem(st, "analytics", "sales")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.ID != wh.ID {
+			t.Errorf("resolved %q (%s); want the Warehouse %s — the Lakehouse "+
+				"endpoint is a read-only reflection and cannot serve a writer",
+				got.DisplayName, got.Type, wh.ID)
+		}
+	})
+
+	t.Run("no workspace in the server name says so", func(t *testing.T) {
+		// An IPv4 host has no workspace label, so a NAME cannot be resolved.
+		// The message has to explain that, or the user retries the same string.
+		_, err := resolveSQLItem(st, "127.0.0.1", "raw")
+		if err == nil {
+			t.Fatal("want an error when the name has no workspace to resolve in")
+		}
+		if !strings.Contains(err.Error(), "workspace in the server name") {
+			t.Errorf("error = %q; it must name the missing piece", err)
+		}
+	})
+
+	t.Run("unknown workspace, and unknown item, are different errors", func(t *testing.T) {
+		_, err := resolveSQLItem(st, "nosuchws", "raw")
+		if err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Errorf("unknown workspace error = %v", err)
+		}
+		// "raw" exists, but not in THIS workspace — a cross-workspace read
+		// must not resolve.
+		_, err = resolveSQLItem(st, "other", "raw")
+		if err == nil {
+			t.Fatal("an item in another workspace must not resolve")
+		}
+		if !strings.Contains(err.Error(), "no warehouse or lakehouse") {
+			t.Errorf("error = %q; want the item-not-in-workspace message", err)
+		}
+	})
+
+	t.Run("resolveWorkspace takes an id or a display name", func(t *testing.T) {
+		byID, err := resolveWorkspace(st, ws.ID)
+		if err != nil || byID.ID != ws.ID {
+			t.Fatalf("by id = %v, %v", byID, err)
+		}
+		byName, err := resolveWorkspace(st, "analytics")
+		if err != nil || byName.ID != ws.ID {
+			t.Fatalf("by name = %v, %v", byName, err)
+		}
+		if _, err := resolveWorkspace(st, "nope"); err == nil {
+			t.Error("want an error for an unknown workspace")
+		}
+	})
 }
