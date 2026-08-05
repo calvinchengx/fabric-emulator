@@ -78,6 +78,16 @@
     }, 400);
   }
 
+  // A failed load RETRIES ITSELF. Clearing the banner on the next success
+  // (below) closed half the hole: reloads are triggered by lineage events, and
+  // a stack that has finished its run emits none — so one transient failure
+  // during a container recreate painted `HTTP 404` and it sat there for hours,
+  // describing a moment long past as if it were now. An error banner is a
+  // claim about the present, so the failure path re-asks until it can either
+  // clear itself or say a CURRENT failure. Backoff, capped: a dead emulator
+  // should cost a request every half minute, not a hammering.
+  let retryTimer = null;
+  let retryDelay = 3000;
   function loadLineage() {
     api.get('/_emulator/portal/lineage')
       .then((r) => {
@@ -88,8 +98,21 @@
         // reads as a broken platform. Found in a demo recording, where a stale
         // `HTTP 404` sat under a pipeline that had just passed 16/16.
         error = '';
+        retryDelay = 3000;
+        if (retryTimer) {
+          clearTimeout(retryTimer);
+          retryTimer = null;
+        }
       })
-      .catch((e) => (error = e.message));
+      .catch((e) => {
+        error = e.message;
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          loadLineage();
+        }, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 30000);
+      });
   }
   loadLineage();
 
