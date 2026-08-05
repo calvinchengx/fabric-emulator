@@ -25,6 +25,17 @@
   let health = $state(null);
   api.get('/health').then((h) => (health = h)).catch(() => {});
 
+  // The sidebar folds away. The flow view earns its keep when the terminal,
+  // the graph and the event stream share one screen, and on a laptop — or in
+  // a 1600px recording — the 240px of navigation is the difference between
+  // that fitting and not. Persisted because a preference that resets on every
+  // reload is a nag, not a preference.
+  let navOpen = $state(localStorage.getItem('fe.nav') !== 'closed');
+  function toggleNav() {
+    navOpen = !navOpen;
+    localStorage.setItem('fe.nav', navOpen ? 'open' : 'closed');
+  }
+
   // Grouped navigation: the control plane's state, the data-plane surfaces,
   // the Go-native testing levers, and the entra-emulator identity handshake.
   const sections = [
@@ -53,6 +64,11 @@
 </script>
 
 <div class="topbar">
+  <!-- Plain glyphs, not an icon font: the portal ships no icon assets and one
+       hamburger is not the reason to start. -->
+  <button class="nav-toggle" aria-label="Toggle sidebar" title="Toggle sidebar" onclick={toggleNav}>
+    {navOpen ? '⟨' : '☰'}
+  </button>
   <strong class="text-[15px] font-semibold tracking-tight">Fabric Emulator</strong>
   <span class="badge">Local emulator</span>
   <!-- The build, beside the badge on purpose. A screenshot of a run, a frame of
@@ -67,15 +83,17 @@
   {/if}
 </div>
 <div class="shell">
-  <nav class="sidenav">
-    {#each sections as [title, items]}
-      <div class="section-label">{title}</div>
-      {#each items as [id, label]}
-        <a href={href(id)} class:active={route === id}>{label}</a>
+  {#if navOpen}
+    <nav class="sidenav">
+      {#each sections as [title, items]}
+        <div class="section-label">{title}</div>
+        {#each items as [id, label]}
+          <a href={href(id)} class:active={route === id}>{label}</a>
+        {/each}
       {/each}
-    {/each}
-  </nav>
-  <main>
+    </nav>
+  {/if}
+  <main class:wide={!navOpen}>
     {#if route === 'workspaces'}<Workspaces />
     {:else if route === 'connections'}<Connections />
     {:else if route === 'capacities'}<Capacities />
@@ -131,5 +149,16 @@
   }
   main {
     @apply w-full max-w-[1400px] flex-1 p-6 lg:p-8;
+  }
+  /* With the sidebar folded, the cap comes off: the point of folding it was
+     the width, and keeping a 1400px ceiling would hand the saved space to the
+     margins instead of the content. */
+  main.wide {
+    @apply max-w-none;
+  }
+  .nav-toggle {
+    @apply -ml-1 flex h-8 w-8 items-center justify-center rounded-md border
+      bg-transparent text-base leading-none text-muted-foreground
+      transition-colors hover:bg-muted;
   }
 </style>
