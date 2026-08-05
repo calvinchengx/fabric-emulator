@@ -148,6 +148,15 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 		go func() { _ = srv.TDS.Serve(tln) }()
 	}
 
+	// The terminal's token is printed ONCE, here, and served by nothing. The
+	// portal is unauthenticated and reachable by anyone who can reach the port,
+	// so an endpoint that hands the token out would be the same as having no
+	// token — the operator copies it from this line into the pane, the way
+	// Jupyter does it.
+	if cfg.TerminalURL != "" {
+		fmt.Printf("fabric-emulator terminal pane enabled (%s)\n  token: %s\n",
+			cfg.TerminalURL, cfg.TerminalToken)
+	}
 	fmt.Printf("fabric-emulator listening on %s://%s (issuer: %s)\n", scheme, ln.Addr(), cfg.EntraIssuer)
 	if ready != nil {
 		// Non-blocking: an unread channel must not wedge the server.

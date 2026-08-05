@@ -160,6 +160,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	s.registerControl()
 	s.registerEvents()
 	s.registerPortal()
+	s.registerTerminal()
 	return s, nil
 }
 
