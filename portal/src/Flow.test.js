@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Flow from './Flow.svelte';
+import { EVENT_KINDS, VIEW_KINDS } from './eventKinds.js';
 
 // A stand-in EventSource: the component subscribes to it exactly as it would to
 // the emulator's SSE endpoint, and the test pushes frames through it.
@@ -592,5 +593,82 @@ describe('the error banner', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('the event contract', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+  });
+
+  // PER-KIND COMPLETENESS, not a coverage percentage. This iterates the
+  // generated contract, so adding a kind in Go grows this test by itself — and a
+  // kind the client cannot ingest fails here rather than going quiet in
+  // production. Statement coverage would sit at 100% either way.
+  it('subscribes to every kind the contract declares', async () => {
+    mockLineage();
+    render(Flow);
+    await waitFor(() => expect(FakeEventSource.last).not.toBeNull());
+    const subscribed = Object.keys(FakeEventSource.last.listeners);
+    for (const kind of EVENT_KINDS) {
+      expect(subscribed, `no listener for '${kind}' — the stream names each frame, so it would never arrive`).toContain(kind);
+    }
+  });
+
+  it('shows a row for every filterable kind the contract declares', async () => {
+    mockLineage();
+    render(Flow);
+    await waitFor(() => expect(FakeEventSource.last).not.toBeNull());
+    const es = FakeEventSource.last;
+    es.open();
+
+    // `file` is off by default (a busy run emits far more of them), so turn
+    // every filter on — the claim is about the CONTRACT, not the defaults.
+    for (const box of screen.getAllByRole('checkbox')) {
+      if (!box.checked) await fireEvent.click(box);
+    }
+
+    for (const [i, kind] of VIEW_KINDS.entries()) {
+      es.emit(kind, {
+        seq: i + 1, at: 1700000000, kind, workspaceId: 'ws-1',
+        path: 'Files/x', table: 'Tables/t', jobId: 'j', activityName: 'a',
+      });
+    }
+
+    // One row per kind, each labelled with its own kind. A kind that parses but
+    // is discarded is the same invisible loss as one never subscribed to.
+    for (const kind of VIEW_KINDS) {
+      await waitFor(() =>
+        expect(
+          document.querySelector(`table tbody span.chip.${kind}`),
+          `no log row for '${kind}'`,
+        ).not.toBeNull(),
+      );
+    }
+  });
+
+  // Genericity as a property: an unrecognised kind must be COUNTED, not
+  // swallowed. Before this, `kinds[ev.kind]` was undefined for an unknown kind,
+  // so it vanished from the log with no trace — the same silent loss as never
+  // subscribing, one layer further in.
+  it('counts a kind it was never built for instead of swallowing it', async () => {
+    mockLineage();
+    render(Flow);
+    await waitFor(() => expect(FakeEventSource.last).not.toBeNull());
+    const es = FakeEventSource.last;
+    es.open();
+    // An UNNAMED frame arrives on onmessage, not through addEventListener —
+    // which is exactly the path a kind this build has never heard of takes.
+    es.onmessage({
+      data: JSON.stringify({ seq: 99, at: 1700000000, kind: 'schedule', workspaceId: 'ws-1' }),
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/event\(s\) of an unknown kind/)).toBeInTheDocument(),
+    );
   });
 });

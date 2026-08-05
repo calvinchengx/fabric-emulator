@@ -1,5 +1,6 @@
 <script>
   import { api } from './api.js';
+  import { EVENT_KINDS, VIEW_KINDS, KIND_DOC } from './eventKinds.js';
   import { href as modelHref } from './router.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -36,7 +37,18 @@
   // lie the user has to learn to ignore.
   let link = $state('connecting');
   let dropped = $state(0);
-  let kinds = $state({ file: false, table: true, activity: true, job: true, lineage: true, query: true });
+  // Kinds this build does not know. Generation makes drift impossible for a
+  // portal embedded in its own emulator, but this stream is also readable by
+  // anything else (`curl -N /_emulator/events`), and a filter keyed on an
+  // unknown kind is `undefined` — which would drop it from the log with no
+  // trace. Counted so an impossible thing is visible if it ever happens.
+  let unknown = $state(0);
+  // Built from the generated list, so a new kind appears here the moment it
+  // is declared in Go rather than whenever someone remembers this line.
+  // `file` starts off: a busy run emits far more of them than anything else.
+  let kinds = $state(
+    Object.fromEntries(VIEW_KINDS.map((k) => [k, k !== 'file'])),
+  );
   // itemId|Tables/name -> client clock (ms) of the last write. Client clock,
   // not the emulator's: this drives a *visual* decay, and the emulator's clock
   // can be frozen or advanced by hours, which would make "recent" meaningless.
@@ -179,7 +191,10 @@
       link = 'reconnecting';
     };
     source.onmessage = (m) => ingest(m.data);
-    for (const k of ['file', 'table', 'activity', 'job', 'lineage', 'query', 'dropped']) {
+    // EVERY kind, from the generated contract. The stream names each frame, so
+    // a kind missing here never arrives — silently, which is why this list is
+    // not written by hand.
+    for (const k of EVENT_KINDS) {
       source.addEventListener(k, (m) => ingest(m.data));
     }
   }
@@ -193,6 +208,10 @@
     }
     if (ev.kind === 'dropped') {
       dropped += ev.dropped || 0;
+      return;
+    }
+    if (!EVENT_KINDS.includes(ev.kind)) {
+      unknown += 1;
       return;
     }
     // Newest first, bounded: an unbounded log is how a long run turns a
@@ -407,6 +426,14 @@
       {dropped} event(s) dropped
     </span>
   {/if}
+  {#if unknown > 0}
+    <span
+      class="chip failed"
+      title="The emulator sent a kind this portal was not built for. It is embedded in the binary, so this should be impossible — say so rather than swallowing it."
+    >
+      {unknown} event(s) of an unknown kind
+    </span>
+  {/if}
   <Button variant="outline" size="sm" onclick={clear}>Clear</Button>
   <Button variant="outline" size="sm" onclick={loadLineage}>Reload graph</Button>
   {#if termAvailable}
@@ -581,8 +608,8 @@
 
 <h2>Events</h2>
 <div class="filters">
-  {#each ['file', 'table', 'activity', 'job', 'lineage', 'query'] as k}
-    <label><input type="checkbox" bind:checked={kinds[k]} /> {k}</label>
+  {#each VIEW_KINDS as k}
+    <label title={KIND_DOC[k]}><input type="checkbox" bind:checked={kinds[k]} /> {k}</label>
   {/each}
   {#if workspaces.length > 1}
     <label>
