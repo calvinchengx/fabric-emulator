@@ -524,3 +524,41 @@ describe('terminal pane', () => {
     expect(screen.getByLabelText('terminal token').value).toBe('');
   });
 });
+
+describe('the error banner', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+  });
+
+  // The graph reloads on a debounce for the whole session. Without clearing on
+  // success a single transient failure paints the banner permanently — which is
+  // how a demo recording ended up showing a red `HTTP 404` beside a green
+  // `streaming` chip and a pipeline that had just passed 16/16.
+  it('clears a stale error once the graph loads again', async () => {
+    let fail = true;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      if (String(url).includes('/portal/lineage') && fail) {
+        return Promise.resolve({
+          ok: false, status: 404, json: () => Promise.resolve(null),
+        });
+      }
+      const body = String(url).includes('/portal/lineage')
+        ? { value: edges }
+        : { value: [] };
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    });
+
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('HTTP 404')).toBeInTheDocument());
+
+    // The next reload succeeds — the banner must go, not linger.
+    fail = false;
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload graph' }));
+    await waitFor(() => expect(screen.queryByText('HTTP 404')).toBeNull());
+  });
+});
