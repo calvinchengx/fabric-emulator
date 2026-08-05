@@ -238,11 +238,23 @@ An e2e suite can contribute real coverage, because the emulator can be built
 with Go's `-cover` and the counters merged with the unit ones:
 
 ```bash
-mkdir -p covdata covdata/unit
+scripts/coverage_prepare.sh          # chmod 777, or the container writes nothing
 FABRIC_COVERAGE=1 uv run --frozen --no-sync python e2e/sail/run.py
 go test -cover -coverpkg=./... ./... -args -test.gocoverdir=$PWD/covdata/unit
 scripts/coverage_merge.sh
 ```
+
+The Python floor is passed **explicitly**, not through `addopts`:
+
+```bash
+uv run --frozen --group test pytest python/tests -q \
+  --cov --cov-report=term-missing --cov-fail-under=70
+```
+
+`addopts` would apply to every pytest in the repo, including the ones e2e
+harnesses run inside containers that have pytest but not pytest-cov — where the
+flags are unrecognised arguments and the suite dies with exit 4 for a reason
+that has nothing to do with what it was testing.
 
 `FABRIC_COVERAGE=1` makes the harness layer `e2e/docker-compose.coverage.yml`,
 which builds the emulator with `COVER=1` and mounts one repository-level
@@ -253,7 +265,14 @@ the whole fleet without needing a list of which suites ran.
 
 1. **The binary must be built instrumented.** `COVER=1` does that; the published
    image is never built this way.
-2. **The process must exit CLEANLY.** A `-cover` binary writes its counters when
+2. **`covdata/` must be writable by uid 65532.** The image is distroless
+   nonroot and a bind mount keeps the HOST's ownership, so a directory created
+   by the checkout user is not writable by the container — and Go's coverage
+   runtime does not complain, it just writes nothing. Docker Desktop on macOS
+   ignores the uid mismatch entirely, so this passes on a laptop and fails only
+   on Linux CI. `scripts/coverage_prepare.sh` does the chmod;
+   `e2e/engine-matrix` hit the identical trap first.
+3. **The process must exit CLEANLY.** A `-cover` binary writes its counters when
    `main` returns, and a SIGKILLed one writes *nothing* — an empty `covdata/`
    reads as "the e2e exercised nothing" rather than "nobody asked it to say".
    `cmd/fabric-emulator` handles SIGTERM for exactly this reason, and a stop it
