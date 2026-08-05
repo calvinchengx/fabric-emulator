@@ -186,6 +186,129 @@ correctly when probed.
 | 6 | Fall-through | A statement the rewrite grammar does not recognise reaches the engine unmodified, and fails honestly if the engine cannot plan it |
 | 7 | Credential lifetime | A run that outlives the token lifetime keeps reading |
 
+### Every contract proves real execution, on a real backend
+
+An assertion that passes against a stub proves nothing, so each contract is
+proven by *executing* on the backend it concerns:
+
+- **Warehouse** — a real SQL Server, reached over TDS.
+- **Lakehouse** — Parquet/Delta in OneLake, written by **Sail** and by **JVM
+  PySpark**, because the two engines fail differently and one is the other's
+  control.
+
+**The rule that makes it real: the engine that wrote must not be the one that
+confirms.** Every false green in [the table above](#4-a-success-claim-must-be-witnessed-by-the-artifact)
+happened because success was reported by the component doing the work — the
+engine's own catalog said the table existed, in the engine's own warehouse. So
+each assertion has two halves: execute through the emulator's real path
+(RunNotebook for Lakehouse, TDS for Warehouse), then **verify out of band** —
+read the Delta back through delta-rs / the OneLake DFS API, and read the
+Warehouse table through a fresh TDS connection. Both readers already exist as CI
+jobs (`e2e/delta-rs`, `e2e/warehouse-tds`); this composes them rather than
+inventing anything.
+
+<!-- APPLICABILITY:BEGIN (scripts/check_conformance.py parses this table) -->
+
+| # | Contract | sail | jvm | warehouse |
+|---|---|---|---|---|
+| 1 | Context chain | required | required | n/a |
+| 2 | Signature shape | required | required | n/a |
+| 3 | Runtime floor | required | required | n/a |
+| 4 | Write landing | required | required | required |
+| 5 | Concurrent isolation | required | required | required |
+| 6 | Rewrite fall-through | required | control | required |
+| 7 | Credential lifetime | required | required | required |
+
+<!-- APPLICABILITY:END -->
+
+`n/a` is honest, not a hole: contracts 1–3 are properties of a notebook session,
+and the Warehouse surface has none. `control` is the interesting verdict —
+**the JVM column is what makes contract 6 provable at all.** The delta-rs
+rewrites exist because Sail cannot plan `MERGE` against a temporal-columned
+target; on JVM the engine *can*, so the grammar must be proven to stay out of the
+way. The same holds for `input_file_name()`: shimmed on Sail, native on JVM. A
+single-engine suite cannot tell "the rewrite worked" from "the rewrite was not
+needed and fired anyway".
+
+### CI realisation
+
+One job, one matrix, three backends:
+
+```yaml
+conformance:
+  name: Framework conformance (${{ matrix.backend }})
+  strategy:
+    fail-fast: false
+    matrix:
+      backend: [sail, jvm, warehouse]
+  runs-on: ubuntu-latest
+  timeout-minutes: 45
+```
+
+Three things keep this from being a new tax:
+
+- **The JVM image is already built on every push.** `engine-matrix` runs all
+  three engine profiles per push. Reusing the same `actions/cache` key on
+  `docker/spark-runtime/jars` means the Maven fetch costs once per `jars.txt`
+  change, not once per run. (Worth correcting a nuance: JVM *probes* do run per
+  push. What has never run per push is the emulator composed **over** the JVM
+  overlay — which is exactly what a conformance leg fixes.)
+- **SQL Server is about ten seconds** on the ubuntu leg, and `warehouse-tds`
+  already uses the `services:` form with a healthcheck.
+- The workflow's `concurrency` group already cancels superseded runs.
+
+### A committed matrix, not a pass/fail suite
+
+Model the output on `engine-matrix`, not on an ordinary test job: regenerate
+`docs/conformance-matrix.md` from the run and fail if it differs from what is
+committed.
+
+```yaml
+- run: uv run --frozen --no-sync python e2e/conformance/run.py --backend ${{ matrix.backend }}
+- run: git diff --exit-code docs/conformance-matrix.md
+```
+
+That buys three things a green/red suite cannot:
+
+1. **The kit can land before every contract passes.** Contract 1 fails today.
+   A pass/fail suite could not merge until it is fixed; a matrix lands with the
+   cell ❌ and a pointer, which is this document's "record it as a known gap"
+   rule made executable.
+2. **No cell may regress silently** — the same mechanism that stops a stale
+   engine-gap claim surviving an upgrade that closed it.
+3. **A cell that starts passing forces the doc to change**, so the map cannot
+   drift stale in the optimistic direction either.
+
+### Gating, and what `make check` enforces
+
+Two conventions the repo already uses:
+
+- **Arm on capability, not on platform.** The coverage floor keys on
+  `WAREHOUSE_MSSQL_DSN` being present precisely so it self-arms when a leg gains
+  an engine. A backend that is not reachable records `gated` and emits a loud
+  `::warning::` — never a silent pass. That is also how macOS is handled, where
+  a containerised SQL Server is documented as unsolved.
+- **Register witnesses.** `ci:conformance-sail`, `ci:conformance-jvm` and
+  `ci:conformance-warehouse` belong in [witnesses.json](witnesses.json), so
+  `check_witnesses.py --strict` catches a contract being deleted out from under a
+  parity claim — the exact failure that let the Environments row claim
+  provisioning it never performed.
+
+The regeneration needs live backends, so it stays in CI. `make check` enforces
+the half that is checkable offline, via `scripts/check_conformance.py`: the
+applicability table above lists every contract this document defines and no
+others, and — once the matrix exists — every `required`/`control` cell carries a
+verdict, every ❌ carries a pointer, and every witness it names is real. That is
+the same division the other invariant scripts use: the expensive proof runs in
+CI, the correspondence between doc and artifact is enforced everywhere.
+
+### Write the assertions once
+
+Parameterise by backend rather than shipping three suites that drift, exactly as
+`e2e/engine-matrix` runs one `probes.py` under different profiles. A divergence
+then surfaces as a differing cell instead of as two suites that quietly stopped
+testing the same thing.
+
 ### Shape
 
 A notebook-driven suite, run through the emulator's own job API rather than
@@ -204,6 +327,12 @@ tests what already works cannot tell you what a new consumer will hit.
 **M.** No engine work and no research risk: it is notebooks, assertions, and one
 CI job. The value is entirely in items 1, 4 and 5, which are the three that
 produced false greens rather than loud failures.
+
+**Start with contract 4 (write landing) on all three backends.** It is the one
+that produced silent wrong answers rather than loud failures, and it is the only
+row where the out-of-band verification pattern has to be got exactly right. Once
+that harness exists, 5 and 6 are the same harness with different notebooks, and
+1–3 are cheap assertions inside a session that is already running.
 
 ### Why not extend the medallion examples instead
 
