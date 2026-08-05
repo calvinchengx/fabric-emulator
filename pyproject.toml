@@ -10,6 +10,10 @@ test = [
     "fabric-emulator-notebookutils",
     "fabric-target",
     "pytest>=8.3,<10",
+    # The Go side has enforced a coverage floor since the SQLite double was
+    # dropped; the python side had 28 tests and no number at all, so a checker
+    # could lose its tests without anything saying so.
+    "pytest-cov>=5,<8",
     # test_spark_agent_packaging.py reads the compose files to prove the agent
     # ships INSIDE its image rather than over a bind mount. Declared here
     # because a developer machine usually has pyyaml lying around and CI does
@@ -125,3 +129,31 @@ testpaths = ["python/tests", "python/fabric-target/tests"]
 markers = [
     "target: dual-target conformance runs against fabric-emulator or real Fabric per FABRIC_TARGET",
 ]
+addopts = "--cov --cov-report=term-missing --cov-fail-under=70"
+
+# Coverage is scoped to the code THIS suite owns, not to the whole tree.
+#
+# The modules omitted below are not untested — they are witnessed by the e2e
+# jobs in CI, which run them inside the Spark image or against a live stack and
+# cannot report statement coverage back here. Including them would average a
+# real number against a structural zero, and a floor computed from that gate
+# nothing: the four invariant checkers could lose every test and the total would
+# barely move. docs/witnesses.json is where their proof is recorded.
+[tool.coverage.run]
+source = ["scripts", "python/spark_agent"]
+omit = [
+    # Run inside the Spark image, witnessed by e2e/notebook-run and e2e/sail.
+    "python/spark_agent/agent.py",
+    "python/spark_agent/files_mount.py",
+    "python/spark_agent/input_file.py",
+    # CI harnesses and release tooling: containerized or one-shot, and each
+    # already named as the witness for the claim it proves.
+    "scripts/govern_ingest.py",
+    "scripts/spark_check.py",
+    "scripts/build_fixture_wheels.py",
+    "*/tests/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
