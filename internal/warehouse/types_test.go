@@ -951,3 +951,50 @@ func TestDecimalWithMoreScaleThanItsColumnTruncates(t *testing.T) {
 		t.Errorf("a Decimal at scale 4 into a scale-2 column = %v; want 123", got)
 	}
 }
+
+// TestTimestampAndIdentifierRendering covers two small functions that only the
+// SQL-Server-gated tests reached, so they were unexecuted on any machine
+// without a sidecar — including every laptop.
+//
+// Both render a value INTO a SQL statement, which is why they earn a test of
+// their own rather than being left to an integration path.
+func TestTimestampAndIdentifierRendering(t *testing.T) {
+	// A Timestamp renders in UTC, and to microseconds. Fabric maps Delta
+	// TIMESTAMP to datetime2, whose documented precision is 6 fractional
+	// digits — rendering local time would shift every instant by the host's
+	// offset, which is invisible on a UTC CI runner and wrong everywhere else.
+	tokyo := time.FixedZone("JST", 9*3600)
+	ts := Timestamp{T: time.Date(2026, 7, 15, 20, 0, 0, 123456000, tokyo)}
+	if got := ts.String(); got != "2026-07-15 11:00:00.123456" {
+		t.Errorf("Timestamp.String() = %q; want the UTC instant to microseconds "+
+			"— a local-time render is off by the host's offset", got)
+	}
+	// Trailing zeros are dropped by the format, which is fine for a literal.
+	if got := (Timestamp{T: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}).String(); got != "2026-01-02 03:04:05" {
+		t.Errorf("whole-second Timestamp = %q", got)
+	}
+
+	// quoteIdent is the only thing standing between a table name and the
+	// statement it is spliced into. A name containing `]` closes the bracket
+	// early unless it is doubled, so this is an escaping test, not a
+	// formatting one.
+	for _, c := range []struct{ in, want string }{
+		{"plain", "[plain]"},
+		{"with space", "[with space]"},
+		{"bracket]inside", "[bracket]]inside]"},
+		{"]", "[]]]"},
+		{"a]]b", "[a]]]]b]"},
+		{"", "[]"},
+	} {
+		if got := quoteIdent(c.in); got != c.want {
+			t.Errorf("quoteIdent(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+	// The property that matters: after escaping, every `]` in the body is
+	// doubled, so nothing can terminate the identifier early.
+	body := quoteIdent("evil]; DROP TABLE t; --")
+	if strings.Count(body, "]")%2 == 0 {
+		t.Errorf("quoteIdent produced %q — the closing bracket must be the only "+
+			"unpaired one, or the identifier can be escaped from", body)
+	}
+}
