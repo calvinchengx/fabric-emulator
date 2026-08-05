@@ -19,6 +19,15 @@ on:
   # this workflow via workflow_dispatch on main. (To restore automatic tag
   # deploys, allow the `v*` tag pattern in the github-pages environment's
   # deployment branch/tag rules, then re-add `tags: ['v*']` here.)
+  # Republish after CI succeeds on main, so the coverage badges track the CODE
+  # rather than the docs. Without this a change to internal/ moves the real
+  # number while the published badge keeps showing the figure from whenever
+  # someone last edited a markdown file — a stale number presented as current,
+  # which is worse than no badge.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 # Allow the deploy job to publish to GitHub Pages.
@@ -36,6 +45,13 @@ jobs:
   build:
     name: Build Starlight site
     runs-on: ubuntu-latest
+    # A failed CI run must not republish the site: its badge artifact is either
+    # absent or from a build that did not pass, and either way the numbers
+    # would not describe main. Other triggers carry no workflow_run context and
+    # so pass this unconditionally.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       # Full history + tags: the parity-version generator reads the map at each
       # `v*` tag (git show) and stamps the live map from `git describe`.
@@ -50,6 +66,32 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter fabric-emulator-docs build
+
+      # Coverage badges, served from this site's own origin — no third-party
+      # coverage service, no upload token, no account. The numbers come from
+      # the last CI run on main that produced them, because only that run had a
+      # real SQL Server and therefore the only Go figure comparable with the
+      # floor CI enforces. Recomputing them here would need the whole stack and
+      # would still measure a different thing.
+      #
+      # Best-effort by design: a docs push that lands before any CI run has
+      # uploaded an artifact still deploys, and coverage_badges.py writes "n/a"
+      # rather than a made-up number. A badge that says n/a is honest; a docs
+      # deploy blocked on a coverage artifact is not worth the coupling.
+      - name: Coverage badges (from the last CI run on main)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh run list --workflow=ci.yml --branch=main --status=success \
+                     --limit=1 --json databaseId --jq '.[0].databaseId' || true)
+          if [ -n "$run_id" ] && gh run download "$run_id" -n coverage-badges -D website/dist 2>/dev/null; then
+            echo "badges from CI run $run_id"
+          else
+            echo "::warning::no coverage-badges artifact found; publishing n/a badges"
+            python3 scripts/coverage_badges.py --out website/dist
+          fi
+          ls -1 website/dist/*.json
+
       - uses: actions/upload-pages-artifact@v5
         with:
           path: website/dist
