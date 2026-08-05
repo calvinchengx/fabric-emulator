@@ -125,10 +125,14 @@ def cell_context(job, cell):
         yield
     finally:
         for k in keys:
-            if prev[k] is None:
+            # Bound to a local so the None check actually narrows: a dict
+            # subscript re-reads, so `prev[k]` after `prev[k] is None` is still
+            # `str | None` to a reader and to a checker alike.
+            old = prev[k]
+            if old is None:
                 os.environ.pop(k, None)
             else:
-                os.environ[k] = prev[k]
+                os.environ[k] = old
 
 
 def _forge_attributed(env):

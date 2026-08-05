@@ -15,7 +15,7 @@ import io
 import time
 from contextlib import redirect_stdout
 
-from common import FABRIC, S, SPARK_REMOTE, fabric_headers, load, log
+from common import FABRIC, SPARK_REMOTE, S, fabric_headers, load, log
 
 st = load()
 jid, nb = st["orders_job"], st["orders_notebook"]
