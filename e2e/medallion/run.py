@@ -48,10 +48,20 @@ ENDPOINTS = {
 }
 
 
+# Coverage: layer the overlay so this suite's run contributes counters to
+# the merged profile. Only when asked, so the default path is unchanged
+# (e2e/docker-compose.coverage.yml, docs/10-testing.md).
+def _cov():
+    if not os.environ.get("FABRIC_COVERAGE"):
+        return []
+    return ["-f", "docker-compose.yml",
+            "-f", os.path.join("..", "docker-compose.coverage.yml")]
+
+
 def compose(*args, profiles=()):
     """`--profile` before the subcommand: compose only applies it there."""
     flags = [f for p in profiles for f in ("--profile", p)]
-    return subprocess.run(["docker", "compose", *flags, *args], cwd=DIR).returncode
+    return subprocess.run(["docker", "compose", *_cov(), *flags, *args], cwd=DIR).returncode
 
 
 def run(example=EXAMPLE, label="medallion", profiles=()):

@@ -1,0 +1,33 @@
+# Coverage overlay for the e2e stacks. The root stack has its own
+# (../docker-compose.coverage.yml) and the two differ only in path depth —
+# which is the entire reason there are two.
+#
+# Compose resolves every relative path in EVERY overlay against the project
+# directory, and the project directory is the directory of the FIRST `-f` file.
+# An e2e harness passes `-f e2e/<suite>/docker-compose.yml` first, so relative
+# paths here resolve from `e2e/<suite>/`: hence `../..` for the build context
+# and `../../covdata` for the counter directory. Using the root overlay from an
+# e2e harness would silently look for the Dockerfile in the wrong place.
+#
+# `../../covdata` is deliberate and shared: every suite writes its counters into
+# ONE repository-level directory, so `scripts/coverage_merge.sh` folds the whole
+# fleet into a single profile. Per-suite directories would need the merge to
+# know the suite list, which is the sort of hand-maintained inventory that goes
+# stale.
+#
+# Counters are written when the process EXITS CLEANLY. Every harness here ends
+# with `compose down`, which sends SIGTERM; cmd/fabric-emulator handles it and
+# returns rather than dying by SIGKILL with nothing written. See
+# docs/10-testing.md and the root overlay for the full reasoning.
+services:
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        COVER: "1"
+    environment:
+      GOCOVERDIR: /covdata
+    stop_grace_period: 30s
+    volumes:
+      - ../../covdata:/covdata
