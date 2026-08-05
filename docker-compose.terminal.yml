@@ -1,0 +1,32 @@
+# Terminal overlay: point the emulator at the profile-gated `ttyd` service so
+# the Flow view can open a terminal beside the graph.
+#
+#   docker compose --profile terminal \
+#     -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.terminal.yml up
+#
+# Two opt-ins on purpose, and they do different jobs:
+#   --profile terminal                starts ttyd (a shell on the network)
+#   -f docker-compose.terminal.yml    hands the emulator its URL
+#
+# THE PAIRING IS THE POINT. The emulator mounts the terminal routes only when
+# FABRIC_TERMINAL_URL is set, so the overlay alone decides whether the feature
+# exists at all. Setting the URL in the BASE file while gating the service on a
+# profile is precisely the bug this repo has already shipped once: the medallion
+# compose set FABRIC_SPARK_AGENT_URL unconditionally while `spark-agent` sat
+# behind `profiles: ["livy"]`, so the emulator drove notebooks at a container
+# that was deliberately never started and every PySpark leg failed. The status
+# endpoint dials rather than trusting config for the same reason, but the
+# structure should not need it.
+#
+# AUTHENTICATION. FABRIC_TERMINAL_TOKEN is generated and printed at startup when
+# left unset; the operator pastes it into the pane. Set it explicitly only for a
+# scripted demo, and never to a fixed value in a shared environment — the portal
+# is reachable by anyone who can reach 9443, and this token is the only thing
+# between them and a shell.
+services:
+  fabric-emulator:
+    depends_on:
+      ttyd:
+        condition: service_started
+    environment:
+      FABRIC_TERMINAL_URL: "http://ttyd:7681"

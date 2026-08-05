@@ -146,3 +146,58 @@ func TestBuildNamesOneIdentityWhicheverPathBuiltIt(t *testing.T) {
 		})
 	}
 }
+
+// TestTerminalTokenIsGeneratedOnlyWhenATerminalExists.
+//
+// A terminal with no token is a shell with no lock on it, and there is no safe
+// fixed default — so it is generated rather than defaulted. Generating one when
+// no terminal is configured would be harmless but misleading: a token in the
+// config implies a surface that is not mounted.
+func TestTerminalTokenIsGeneratedOnlyWhenATerminalExists(t *testing.T) {
+	base := func() *Config {
+		return &Config{EntraIssuer: "https://issuer.example/tenant/v2.0"}
+	}
+
+	t.Run("no terminal, no token", func(t *testing.T) {
+		c := base()
+		if err := c.Finish(); err != nil {
+			t.Fatal(err)
+		}
+		if c.TerminalToken != "" {
+			t.Errorf("token %q minted with no terminal configured", c.TerminalToken)
+		}
+	})
+
+	t.Run("terminal configured, token generated", func(t *testing.T) {
+		c := base()
+		c.TerminalURL = "http://ttyd:7681"
+		if err := c.Finish(); err != nil {
+			t.Fatal(err)
+		}
+		if len(c.TerminalToken) < 32 {
+			t.Fatalf("token %q is too short to be a secret", c.TerminalToken)
+		}
+		// And it must differ run to run: a predictable token is no token.
+		d := base()
+		d.TerminalURL = "http://ttyd:7681"
+		if err := d.Finish(); err != nil {
+			t.Fatal(err)
+		}
+		if c.TerminalToken == d.TerminalToken {
+			t.Error("two runs produced the same terminal token")
+		}
+	})
+
+	t.Run("an explicit token is respected", func(t *testing.T) {
+		// Pinning it is how a scripted demo works; overwriting it would break
+		// that silently.
+		c := base()
+		c.TerminalURL, c.TerminalToken = "http://ttyd:7681", "pinned-for-the-demo"
+		if err := c.Finish(); err != nil {
+			t.Fatal(err)
+		}
+		if c.TerminalToken != "pinned-for-the-demo" {
+			t.Errorf("explicit token was overwritten with %q", c.TerminalToken)
+		}
+	})
+}

@@ -5,6 +5,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -58,6 +60,24 @@ type Config struct {
 	// the cells and reports the same results a Spark pool would post. See
 	// internal/api/notebookdrive.go and e2e/notebook-driven.
 	SparkAgentURL string
+
+	// TerminalURL, when set (e.g. "http://ttyd:7681"), lets the Flow view open a
+	// terminal pane proxied through the portal's origin. Empty = the feature
+	// does not exist: no route is mounted and the pane never appears.
+	//
+	// THE PORTAL IS OTHERWISE UNAUTHENTICATED, and deliberately so — it is 11
+	// GET routes over local state (internal/server/portal.go). A terminal is
+	// not another read; it is arbitrary execution. So the proxy route carries
+	// its own bearer (TerminalToken) rather than inheriting the portal's
+	// premise, and the other routes are untouched.
+	TerminalURL string
+
+	// TerminalToken authorises the terminal proxy. Generated at startup when
+	// TerminalURL is set and this is empty, and printed once — the operator
+	// pastes it into the pane. It is NOT served by any portal endpoint: the
+	// portal is reachable by anyone who can reach the port, so handing the
+	// token out there would be the same as having none.
+	TerminalToken string
 
 	// SQLTDSAddr, when set (e.g. ":1433"), starts the warehouse SQL endpoint:
 	// a TDS listener that terminates Entra FedAuth and answers T-SQL. Empty
@@ -129,6 +149,8 @@ func FromEnvPartial() *Config {
 		SparkLivyURL:      os.Getenv("FABRIC_SPARK_LIVY_URL"),
 		SparkAgentURL:     os.Getenv("FABRIC_SPARK_AGENT_URL"),
 		SQLTDSAddr:        os.Getenv("FABRIC_SQL_TDS_ADDR"),
+		TerminalURL:       os.Getenv("FABRIC_TERMINAL_URL"),
+		TerminalToken:     os.Getenv("FABRIC_TERMINAL_TOKEN"),
 		WarehouseSQLURL:   os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
 		TSQLStrict:        boolEnv("FABRIC_TSQL_STRICT"),
 		ListPageSize:      intEnv("FABRIC_LIST_PAGE_SIZE"),
@@ -152,6 +174,17 @@ func (c *Config) Finish() error {
 	}
 	if c.RetryAfterSeconds <= 0 {
 		c.RetryAfterSeconds = 1
+	}
+	// A terminal without a token is a shell with no lock on it, so the token is
+	// generated rather than defaulted: there is no safe fixed value, and an
+	// empty one is refused by the proxy anyway. Set FABRIC_TERMINAL_TOKEN only
+	// to pin it for a scripted demo.
+	if c.TerminalURL != "" && c.TerminalToken == "" {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			return fmt.Errorf("generating the terminal token: %w", err)
+		}
+		c.TerminalToken = hex.EncodeToString(b)
 	}
 	return nil
 }
