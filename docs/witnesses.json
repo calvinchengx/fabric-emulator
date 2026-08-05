@@ -243,13 +243,6 @@
       "ci:spark-a2"
     ]
   },
-  "environments": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Environments",
-    "witnesses": [
-      "go:TestParseEnvironment"
-    ]
-  },
   "spark-job-definitions": {
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "Spark Job Definitions",

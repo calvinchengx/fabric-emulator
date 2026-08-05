@@ -104,6 +104,42 @@ def _install_input_file_name():
 
 
 _install_input_file_name()
+
+
+def _install_custom_wheels():
+    """Install consumer wheels from /opt/wheels, like a Fabric Environment does.
+
+    On real Fabric an Environment item's custom libraries (wheels) are
+    installed into the Spark runtime before any user code runs — that is where
+    a framework package comes from. The emulator does not execute Environment
+    items, so its equivalent is deliberately mechanical: a consumer's compose
+    overlay bind-mounts a directory of wheels at /opt/wheels and the agent
+    installs them at startup. Generic on purpose; this repo knows nothing
+    about which wheels any consumer ships.
+
+    Loud on failure but not fatal: an agent that dies here helps nobody, and
+    a missing dependency will resurface in the first notebook with a clear
+    ModuleNotFoundError naming the package.
+    """
+    import glob as _glob
+    import subprocess
+
+    wheels = sorted(_glob.glob("/opt/wheels/*.whl"))
+    if not wheels:
+        return
+    cmd = [sys.executable, "-m", "pip", "install", "--no-warn-script-location", *wheels]
+    if os.path.exists("/bin/uv"):  # the runtime image manages its venv with uv
+        cmd = ["/bin/uv", "pip", "install", "--python", sys.executable, *wheels]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    names = [os.path.basename(w) for w in wheels]
+    if r.returncode == 0:
+        print(f"agent: installed custom wheel(s): {', '.join(names)}")
+    else:
+        print(f"agent: custom wheel install FAILED for {', '.join(names)}:\n"
+              f"{(r.stderr or r.stdout)[-800:]}")
+
+
+_install_custom_wheels()
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 
 
@@ -253,6 +289,15 @@ def _remember_location(name, location, schema=None):
     delta_ops.remember(name, location, schema)
 
 
+def _remember_schema_location(name, location):
+    """Tell delta_ops where a schema lives. Same tolerance as tables above."""
+    try:
+        import delta_ops
+    except ImportError:
+        return
+    delta_ops.remember_schema(name, location)
+
+
 def register_tables(session, schema, tables, schemas=None):
     """Declare a lakehouse's Delta tables in this REPL's Spark catalog.
 
@@ -292,6 +337,9 @@ def register_tables(session, schema, tables, schemas=None):
             continue
         try:
             spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{sname}` LOCATION '{sloc}'")
+            # Recorded for delta_ops: a CTAS naming this schema must land at
+            # this location, and Sail's own CTAS placement ignores it.
+            _remember_schema_location(sname, sloc)
         except Exception:
             failed.append(f"schema {sname}: {traceback.format_exc().splitlines()[-1]}")
     for t in tables:
@@ -385,6 +433,16 @@ class Handler(BaseHTTPRequestHandler):
                                             req.get("schema", ""),
                                             req.get("tables") or [],
                                             req.get("schemas") or []))
+        elif self.path == "/mount":
+            # Mirror the bound lakehouse's Files/ at /lakehouse/default/Files,
+            # the mount a real Fabric runtime provides (files_mount.py).
+            try:
+                import files_mount
+                self._send(200, files_mount.sync(req.get("workspace", ""),
+                                                 req.get("lakehouse", "")))
+            except Exception:  # noqa: BLE001 - a failed mount must not kill a session bind
+                self._send(200, {"mounted": False,
+                                 "error": traceback.format_exc().splitlines()[-1]})
         elif self.path == "/close":
             namespaces.pop(req.get("session", ""), None)
             self._send(200, {"closed": True})
