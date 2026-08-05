@@ -16,6 +16,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"time"
@@ -109,9 +110,43 @@ func (s *Server) terminalProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Hijack rather than use httputil.ReverseProxy: this is a websocket
-	// upgrade, and the two halves must be spliced byte-for-byte once ttyd has
-	// agreed to it.
+	// TWO KINDS OF REQUEST COME THROUGH THIS PREFIX, and conflating them was a
+	// bug that corrupted the rest of the browser's session. The pane's
+	// WebSocket must be hijacked and spliced byte-for-byte once ttyd agrees to
+	// the upgrade — but the pane's PLAIN requests (its HTML, its JS, its
+	// /token) must not be. Splicing those hands ttyd the browser's whole
+	// KEEP-ALIVE connection: the next same-origin request the browser sends on
+	// it — `GET /_emulator/portal/lineage`, say — goes to ttyd, which answers
+	// with its own HTML 404. On the flow page that painted an `HTTP 404`
+	// banner beside a healthy run, only for viewers with the pane open, until
+	// the browser happened to rotate connections. Diagnosed from the 404
+	// body: ttyd's index page, not this server's JSON.
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		rp := &httputil.ReverseProxy{
+			Rewrite: func(pr *httputil.ProxyRequest) {
+				pr.Out.URL.Scheme = "http"
+				pr.Out.URL.Host = target.Host
+				rest := strings.TrimPrefix(pr.In.URL.Path, terminalPrefix)
+				pr.Out.URL.Path = "/" + strings.TrimPrefix(rest, "/")
+				// Same hygiene as the splice below: ttyd must not see the
+				// emulator's bearer, and the `token` parameter is ours.
+				q := pr.In.URL.Query()
+				q.Del("token")
+				pr.Out.URL.RawQuery = q.Encode()
+				pr.Out.Header.Del("Authorization")
+				pr.Out.Host = target.Host
+			},
+			ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+				writeJSONError(w, http.StatusBadGateway, "TerminalUnreachable",
+					fmt.Sprintf("no terminal at %s: %v", target.Host, err))
+			},
+		}
+		rp.ServeHTTP(w, r)
+		return
+	}
+
+	// The WebSocket upgrade: hijack, and splice the two halves byte-for-byte
+	// once ttyd has agreed to it.
 	upstream, err := net.DialTimeout("tcp", hostPort(target), terminalProbeTimeout)
 	if err != nil {
 		writeJSONError(w, http.StatusBadGateway, "TerminalUnreachable",
