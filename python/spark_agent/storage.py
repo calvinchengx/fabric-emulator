@@ -39,6 +39,7 @@ import ssl
 import time
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 
 # Refresh this long before the token actually expires, so a statement that
 # starts just under the wire still finishes with a valid bearer.
@@ -90,6 +91,39 @@ def token(env=None):
     # lifetime: minting on every statement would turn a REPL into a token flood.
     _cached["good_until"] = now + max(60.0, lifetime - _SKEW_SECONDS)
     return minted
+
+
+
+@contextmanager
+def cell_context(job, cell):
+    """Export the running cell's identity for the duration of one statement.
+
+    Nothing set FABRIC_JOB_ID / FABRIC_CELL_INDEX before this existed — they had
+    only readers, so `_forge_attributed` below always returned None and
+    `notebookutils.fs` tagged nothing. Both were dead paths, and a driven
+    notebook's I/O was attributed to no cell at all.
+
+    RESTORED, not cleared. The agent is long-lived and serves interleaved
+    sessions; leaving one cell's identity set would attribute the NEXT
+    statement's I/O to it. A wrong lineage edge is worse than a missing one —
+    nothing about it looks wrong. Absent job/cell (an ordinary Livy statement)
+    this sets nothing at all.
+    """
+    if not job or cell is None:
+        yield
+        return
+    keys = ("FABRIC_JOB_ID", "FABRIC_CELL_INDEX")
+    prev = {k: os.environ.get(k) for k in keys}
+    os.environ["FABRIC_JOB_ID"] = str(job)
+    os.environ["FABRIC_CELL_INDEX"] = str(cell)
+    try:
+        yield
+    finally:
+        for k in keys:
+            if prev[k] is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = prev[k]
 
 
 def _forge_attributed(env):

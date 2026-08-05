@@ -422,12 +422,24 @@ class Handler(BaseHTTPRequestHandler):
             # and comes back as REPL text. Before this dispatch existed the agent
             # was Python-only, which is why dbt-fabricspark needed a second,
             # SQL-only agent to talk to (e2e/dbt-fabricspark/sql_agent.py).
-            if (req.get("kind") or "").lower() == "sql":
-                self._send(200, run_sql(req.get("code", ""),
-                                        ns(req.get("session", "default"))))
-            else:
-                self._send(200, run_code(req.get("code", ""),
-                                         ns(req.get("session", "default"))))
+            # storage.py owns the export: it is the module whose token forge
+            # consumes it, and it carries no pyspark import so it stays unit
+            # testable. Absent (a runtime without the agent's modules) the
+            # statement still runs, just unattributed.
+            try:
+                from storage import cell_context
+            except ImportError:  # pragma: no cover - runtime without storage.py
+                from contextlib import nullcontext as cell_context_stub
+
+                def cell_context(*_a, **_k):
+                    return cell_context_stub()
+            with cell_context(req.get("jobId"), req.get("cellIndex")):
+                if (req.get("kind") or "").lower() == "sql":
+                    self._send(200, run_sql(req.get("code", ""),
+                                            ns(req.get("session", "default"))))
+                else:
+                    self._send(200, run_code(req.get("code", ""),
+                                             ns(req.get("session", "default"))))
         elif self.path == "/register":
             self._send(200, register_tables(req.get("session", "default"),
                                             req.get("schema", ""),
