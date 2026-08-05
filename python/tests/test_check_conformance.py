@@ -20,6 +20,9 @@ REPO = Path(__file__).resolve().parents[2]
 
 spec = importlib.util.spec_from_file_location(
     "check_conformance", REPO / "scripts" / "check_conformance.py")
+# spec_from_file_location returns Optional; a None here means the path
+# is wrong, and failing at import beats an AttributeError mid-test.
+assert spec and spec.loader
 cc = importlib.util.module_from_spec(spec)
 sys.modules["check_conformance"] = cc
 spec.loader.exec_module(cc)

@@ -17,11 +17,9 @@ Two decisions are load-bearing, and both are easy to get wrong:
     open version and adds none of its own. Treating `D` as "drop the customer"
     would silently destroy every past version too.
 """
-import pandas as pd
-from deltalake import DeltaTable, write_deltalake
-
 import erp_system as erp
 from common import log, storage_options, tables_uri
+from deltalake import DeltaTable, write_deltalake
 
 opts = storage_options()
 base = tables_uri()

@@ -55,7 +55,7 @@ for attempt in range(30):  # sail may still be starting
         spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
         spark.sql("SELECT 1").collect()
         break
-    except Exception as e:
+    except Exception:
         if attempt == 29:
             raise
         time.sleep(2)

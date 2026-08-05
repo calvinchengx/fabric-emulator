@@ -250,7 +250,7 @@ def rule_prose(rules):
             what += f" on `{r['column']}`"
         bound = next((f"{k} {r[k]:g}" if isinstance(r[k], float) else f"{k} {r[k]}"
                       for k in bounds if k in r), "")
-        if "validValues" in r and r["validValues"]:
+        if r.get("validValues"):
             bound = (bound + " " if bound else "") + f"in {r['validValues']}"
         dim = f" _{r['dimension']}_" if r.get("dimension") else ""
         lines.append(f"- **{what}** {bound}{dim}".rstrip())

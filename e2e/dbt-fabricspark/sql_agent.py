@@ -20,11 +20,10 @@ ignores ``kind`` and forwards only ``code``):
 Stdlib HTTP + pyspark, mirroring python/spark_agent/agent.py.
 """
 import json
+import os
 import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-import os
 
 from pyspark.sql import SparkSession
 

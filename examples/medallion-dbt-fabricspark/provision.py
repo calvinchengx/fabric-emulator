@@ -1,5 +1,5 @@
 """Provision the workspace, lakehouse, warehouse, and workspace identity."""
-from common import FABRIC, S, WORKSPACE_NAME, fabric_headers, log, save
+from common import FABRIC, WORKSPACE_NAME, S, fabric_headers, log, save
 
 H = fabric_headers()
 

@@ -98,7 +98,7 @@ def load_applicability() -> tuple[dict[int, dict[str, str]], list[str]]:
                           f"contract number: {cells}")
             continue
         verdicts = {}
-        for backend, cell in zip(BACKENDS, cells[2:]):
+        for backend, cell in zip(BACKENDS, cells[2:], strict=False):
             value = "n/a" if cell in ("—", "-", "n/a") else cell
             if value not in APPLICABILITY:
                 errors.append(f"{DOC.name}: contract {num}/{backend}: "
@@ -148,7 +148,7 @@ def check_matrix(table: dict[int, dict[str, str]]) -> list[str]:
             num = int(cells[0])
         except ValueError:
             continue
-        for backend, cell in zip(BACKENDS, cells[2:]):
+        for backend, cell in zip(BACKENDS, cells[2:], strict=False):
             seen[(num, backend)] = cell
 
     for num, verdicts in sorted(table.items()):

@@ -115,10 +115,7 @@ def run(cmd, **kw):
 
 
 def version_from_argv_or_env():
-    if len(sys.argv) > 1:
-        v = sys.argv[1]
-    else:
-        v = os.environ.get("GITHUB_REF_NAME", "")
+    v = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GITHUB_REF_NAME", "")
     v = v.lstrip("v")
     # Fail loudly rather than defaulting. A wheel silently stamped 0.1.0 on
     # every release is indistinguishable from one that was never rebuilt.

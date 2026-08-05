@@ -11,7 +11,6 @@ it, while a token from outside that trust chain is rejected.
 The browser login flow (OIDC_* confidential client) rides the same trust edge
 but needs a real browser, so it is deliberately not asserted here.
 """
-import json
 import os
 import subprocess
 import sys

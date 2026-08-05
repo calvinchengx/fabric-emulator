@@ -99,7 +99,7 @@ def test_target_reads_env(monkeypatch):
 
 
 def test_bogus_target_rejected():
-    with pytest.raises(TargetError, match="emulator.*real"):
+    with pytest.raises(TargetError, match=r"emulator.*real"):
         Target("staging")
 
 

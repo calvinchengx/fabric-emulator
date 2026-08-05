@@ -11,9 +11,8 @@ number read off a previous run.
 """
 import pathlib
 
-import source_system as src
-
 import fabctl as fab
+import source_system as src
 
 HERE = pathlib.Path(__file__).resolve().parent
 LANDING = HERE / "build" / "landing"

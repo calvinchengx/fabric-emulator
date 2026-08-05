@@ -13,13 +13,13 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "spark_agent"))
 
-import storage  # noqa: E402
+import storage
 
 
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    storage._cached["token"] = None
-    storage._cached["good_until"] = 0.0
+    storage._cached_token = None
+    storage._cached_good_until = 0.0
 
 
 def test_no_account_yields_no_options():
@@ -77,7 +77,7 @@ def test_token_is_cached_until_it_nears_expiry(monkeypatch):
 
     # Past the refresh point, a new grant is made — the reason install() takes
     # the resolver as a callable rather than a dict.
-    storage._cached["good_until"] = 0.0
+    storage._cached_good_until = 0.0
     assert storage.token(env) == "token-2"
 
 
@@ -88,4 +88,4 @@ def test_short_lifetime_still_caches_for_a_minute(monkeypatch):
     env = {"ENTRA_TOKEN_URL": "https://issuer", "ENTRA_CLIENT_ID": "c",
            "ENTRA_CLIENT_SECRET": "s"}
     storage.token(env)
-    assert storage._cached["good_until"] > 0
+    assert storage._cached_good_until > 0

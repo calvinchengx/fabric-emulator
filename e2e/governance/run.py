@@ -13,12 +13,12 @@ past our Postgres pins, and schema drift in scripts/govern_ingest.py.
 import base64
 import json
 import os
-from decimal import Decimal
 import subprocess
 import sys
 import time
 import urllib.parse
 import urllib.request
+from decimal import Decimal
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(DIR))
@@ -86,7 +86,6 @@ def main():
     fabric = f"https://localhost:{FABRIC_PORT}"
     om = f"http://localhost:{OM_PORT}"
 
-    import requests
     end = time.time() + 900
     while time.time() < end:
         try:

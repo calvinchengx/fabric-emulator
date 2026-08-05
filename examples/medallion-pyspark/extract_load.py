@@ -3,7 +3,7 @@ does), pull the vendor export, and land it verbatim in OneLake."""
 import datetime
 
 import source_system as src
-from common import (FABRIC, KV, S, STORAGE_AUD, VAULT_AUD, ensure_app, load, log, save, token)
+from common import FABRIC, KV, STORAGE_AUD, VAULT_AUD, S, ensure_app, load, log, save, token
 
 vt = token(VAULT_AUD)
 r = S.get(f"{KV}/secrets/contoso-pos-api-key?api-version=7.4",

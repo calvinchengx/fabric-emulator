@@ -13,9 +13,9 @@ not DNS, so no /etc/hosts trickery is needed from Python.
 import os
 import urllib.parse
 
+from . import credentials
 from ._config import config
 from ._http import request
-from . import credentials
 
 # OneLake authorizes with a Storage-audience token, minted once for the
 # notebook identity and reused across fs calls (as the real driver does).
@@ -105,7 +105,7 @@ def append(path, content):
         content = content.encode()
     fs, sub = _resolve(path)
     url = _url(fs, sub)
-    status, hdrs, _ = request("HEAD", url, headers=_headers(), raw=True)
+    _status, hdrs, _ = request("HEAD", url, headers=_headers(), raw=True)
     pos = int(hdrs.get("Content-Length", "0"))
     request("PATCH", f"{url}?action=append&position={pos}", body=content, headers=_headers())
     request("PATCH", f"{url}?action=flush&position={pos + len(content)}", headers=_headers())

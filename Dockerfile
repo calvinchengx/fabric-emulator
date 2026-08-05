@@ -18,15 +18,25 @@ ARG VERSION=dev
 # released binaries do. Empty is honest for a local `docker build`.
 ARG COMMIT=
 ARG TARGETOS TARGETARCH
+# COVER=1 builds an instrumented binary that writes coverage counters to
+# $GOCOVERDIR when it exits cleanly, so the e2e fleet can report what it
+# actually exercised instead of being invisible to the coverage number
+# (docs/10-testing.md). Off by default: instrumentation costs runtime and the
+# published image must not carry it.
+ARG COVER=
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# -coverpkg=./... is what makes this measure the SERVER rather than only the
+# main package: without it an instrumented binary reports coverage for
+# cmd/fabric-emulator alone, which is the one package an e2e barely touches.
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /fabric-emulator ./cmd/fabric-emulator
+    go build ${COVER:+-cover -coverpkg=./...} \
+    -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /fabric-emulator ./cmd/fabric-emulator
 # Create the state dir here so it can be COPYed into the distroless image with
 # nonroot ownership — distroless has no shell to mkdir/chown at runtime.
-RUN mkdir /data
+RUN mkdir /data /covdata
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /fabric-emulator /usr/local/bin/fabric-emulator
@@ -34,6 +44,10 @@ COPY --from=build /fabric-emulator /usr/local/bin/fabric-emulator
 # owned by the nonroot uid (65532) or the server can't open its SQLite DB —
 # a fresh anonymous/named volume inherits this dir's ownership, so chown it.
 COPY --from=build --chown=65532:65532 /data /data
+# Present in every image so the coverage overlay can mount over it; an
+# uninstrumented binary ignores GOCOVERDIR entirely, so this costs an empty
+# directory and nothing else.
+COPY --from=build --chown=65532:65532 /covdata /covdata
 ENV FABRIC_DATA_DIR=/data
 VOLUME /data
 EXPOSE 9443

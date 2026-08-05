@@ -9,8 +9,8 @@ put-if-absent (If-None-Match: *) — the correctness primitive R0 added.
 """
 import json
 import os
-import urllib.request
 import urllib.parse
+import urllib.request
 
 import pyarrow as pa
 from deltalake import DeltaTable, write_deltalake
@@ -20,6 +20,7 @@ FABRIC = f"http://127.0.0.1:{os.environ.get('FABRIC_PORT', '19080')}"
 TENANT = "11111111-1111-1111-1111-111111111111"
 
 import ssl
+
 INSECURE = ssl.create_default_context()
 INSECURE.check_hostname = False
 INSECURE.verify_mode = ssl.CERT_NONE

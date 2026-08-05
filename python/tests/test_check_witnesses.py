@@ -24,6 +24,9 @@ REPO = Path(__file__).resolve().parents[2]
 
 spec = importlib.util.spec_from_file_location(
     "check_witnesses", REPO / "scripts" / "check_witnesses.py")
+# spec_from_file_location returns Optional; a None here means the path
+# is wrong, and failing at import beats an AttributeError mid-test.
+assert spec and spec.loader
 cw = importlib.util.module_from_spec(spec)
 sys.modules["check_witnesses"] = cw
 spec.loader.exec_module(cw)

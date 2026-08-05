@@ -28,10 +28,10 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import requests
-from azure.storage.blob import BlobServiceClient, BlobSasPermissions, generate_blob_sas
+from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_blob_sas
 
 FABRIC = os.environ.get("FABRIC", "http://fabric-emulator")
 ENTRA = os.environ.get("ENTRA", "http://entra-emulator:8443")
@@ -131,7 +131,7 @@ except urllib.error.HTTPError as e:
 sas = generate_blob_sas(
     account_name=ACCOUNT, container_name=CONTAINER, blob_name=BLOB,
     account_key=ACCOUNT_KEY, permission=BlobSasPermissions(read=True),
-    expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+    expiry=datetime.now(UTC) + timedelta(hours=1),
 )
 ws = fabric_post("/v1/workspaces", {"displayName": "adls-shortcuts"})
 lakehouse = fabric_post(f"/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "lh"})
@@ -203,7 +203,7 @@ write_sas = generate_blob_sas(
     account_name=ACCOUNT, container_name=CONTAINER, blob_name=WRITTEN_BLOB,
     account_key=ACCOUNT_KEY,
     permission=BlobSasPermissions(read=True, write=True, create=True, delete=True),
-    expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+    expiry=datetime.now(UTC) + timedelta(hours=1),
 )
 write_conn = fabric_post("/v1/connections", {
     "displayName": "azurite-adls-rw",
@@ -245,6 +245,7 @@ deleted = requests.delete(base, headers=ONELAKE_HEADERS, timeout=60)
 if deleted.status_code not in (200, 202):
     raise SystemExit(f"delete failed: HTTP {deleted.status_code} {deleted.text[:300]}")
 from azure.core.exceptions import ResourceNotFoundError
+
 try:
     svc.get_blob_client(CONTAINER, WRITTEN_BLOB).download_blob().readall()
     raise SystemExit("the blob still exists in Azurite — the delete never reached the target")

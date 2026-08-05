@@ -14,9 +14,9 @@ is nothing to wait for.
 """
 import time
 
+from . import credentials
 from ._config import config
-from ._http import request, HttpError
-from . import credentials, runtime
+from ._http import request
 
 _TERMINAL = {"Completed", "Failed", "Cancelled", "Deduped"}
 
@@ -58,7 +58,7 @@ def run(name, timeoutSeconds=90, arguments=None, workspaceId=None,
     if arguments:
         body = {"executionData": {"parameters": {
             k: {"value": v, "type": "string"} for k, v in arguments.items()}}}
-    status, hdrs, _ = request(
+    _status, hdrs, _ = request(
         "POST", f"{config().fabric_url}/v1/workspaces/{ws}/items/{iid}/jobs/instances?jobType=RunNotebook",
         token=token, body=body, raw=True)
     loc = hdrs.get("Location")

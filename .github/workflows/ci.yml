@@ -33,6 +33,19 @@ jobs:
         with:
           go-version: '1.25'
       - run: go vet ./...
+      # `go vet` was gated from the start; formatting never was, which is how a
+      # stray blank line reached main and was found by hand rather than by CI.
+      # Linux only: the check is platform-independent and running it three times
+      # just triples the noise on a CRLF-related false alarm.
+      - name: gofmt
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^vendor/' || true)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would change these files:"; echo "$unformatted"; exit 1
+          fi
+          echo "gofmt clean"
       - run: go build ./...
 
       # --- a real SQL Server: Linux and Windows ---------------------------------
@@ -185,6 +198,63 @@ jobs:
           path: badges/
           retention-days: 14
 
+  coverage-e2e:
+    name: Coverage over unit + an instrumented live stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+
+      # An instrumented emulator serving a REAL stack. The counters land only
+      # if the process exits cleanly, which is why cmd/fabric-emulator handles
+      # SIGTERM and why the overlay grants a generous stop_grace_period: a
+      # SIGKILLed -cover binary writes nothing, and an empty directory reads as
+      # "the e2e exercised nothing" rather than "nobody asked it".
+      - name: Bring up the instrumented stack
+        run: |
+          mkdir -p covdata
+          docker compose -f docker-compose.yml -f docker-compose.coverage.yml up -d --build
+          for i in $(seq 1 60); do
+            if curl -ksf https://localhost:9443/health >/dev/null; then echo "ready after ${i}s"; break; fi
+            sleep 1
+          done
+          curl -ksf https://localhost:9443/health || { docker compose logs fabric-emulator | tail -40; exit 1; }
+
+      # Drive the surface through a real client, so the counters describe the
+      # request path rather than process startup.
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - name: Exercise the live surface
+        run: uv run --frozen --no-sync python e2e/fabric-cicd/run.py || true
+
+      # `down` sends SIGTERM, which is the moment the counters are written.
+      - name: Stop the stack so the counters flush
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.coverage.yml down
+          ls -1 covdata | head
+          test -n "$(ls -A covdata 2>/dev/null)" || {
+            echo "::error::no coverage counters written — the emulator did not exit cleanly"; exit 1; }
+
+      # Binary-format unit counters, so `go tool covdata merge` can fold both
+      # legs together without a third-party merger.
+      - name: Unit counters
+        run: |
+          mkdir -p covdata/unit
+          go test -cover -coverpkg=./... ./... -args -test.gocoverdir=$PWD/covdata/unit
+
+      - id: merge
+        run: scripts/coverage_merge.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-merged
+          path: coverage-merged.out
+          retention-days: 14
+
   engine-matrix:
     name: Spark engine matrix (Sail vs JVM) is current
     runs-on: ubuntu-latest
@@ -236,6 +306,31 @@ jobs:
       # yet; the flag arms in the same change that lands the matrix, so it can
       # never afterwards go missing without failing here.
       - run: uv run --frozen --no-sync python scripts/check_conformance.py
+
+  lint:
+    name: ruff + ty
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      # Python had no static enforcement at all while Go had `go vet` from the
+      # start: ~1800 statements of agent, notebookutils shim and invariant
+      # scripts with nothing checking them. Both are configured in pyproject.toml,
+      # where the ignores carry the reason they exist rather than being a bare
+      # list of rule codes.
+      - run: uv run --frozen --group lint ruff check .
+      # NOT `ruff format --check`: it would reformat 195 files. This codebase's
+      # line breaks are hand-placed to keep comments beside the code they
+      # explain, and a formatter would undo that wholesale. Adopting one is a
+      # deliberate decision with its own diff, not a side effect of linting.
+      # ty is pre-1.0 and pinned tight for that reason — a checker that changes
+      # its inferences between runs is a broken build nobody caused.
+      - run: uv run --frozen --group lint ty check
 
   example-parity:
     name: Each medallion pair differs only in silver

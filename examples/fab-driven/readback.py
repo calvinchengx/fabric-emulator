@@ -13,11 +13,10 @@ log can exist in storage that the catalogue never heard of. The counts asserted
 below come from the fixture GENERATOR — it knows how many duplicates it planted
 — so silver has to independently arrive at the same number.
 """
+import fabctl as fab
 import source_system as src
 from common import ensure_app, storage_options
 from deltalake import DeltaTable
-
-import fabctl as fab
 
 ws, lake = fab.item_id(fab.WORKSPACE), fab.item_id(fab.LAKEHOUSE)
 
@@ -81,4 +80,4 @@ assert copy_edges, (
     f"observation path is broken, not that the data is missing."
 )
 fab.log(f"{len(edges)} lineage edge(s), producers {producers}")
-fab.log(f"bronze_customers has a Copy edge — observed, not reported")
+fab.log("bronze_customers has a Copy edge — observed, not reported")

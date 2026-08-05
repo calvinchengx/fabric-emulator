@@ -83,7 +83,7 @@ def main() -> int:
 
     # Every Delta primitive the ingest claims to understand, plus the
     # parameterised spellings the emulator actually writes.
-    cases = list(gi.TYPE_MAP) + ["decimal(19,4)", "decimal(38,0)"]
+    cases = [*gi.TYPE_MAP, "decimal(19,4)", "decimal(38,0)"]
     for delta_type in cases:
         col = gi.om_column("c", delta_type)
         dt = col["dataType"]
@@ -91,8 +91,8 @@ def main() -> int:
             problems.append(
                 f"{delta_type!r} -> {dt} with no dataLength; OpenMetadata "
                 f"rejects the whole table for this")
-        if dt == "DECIMAL" and "(" in delta_type:
-            if col.get("precision") is None or col.get("scale") is None:
+        if (dt == "DECIMAL" and "(" in delta_type
+                and (col.get("precision") is None or col.get("scale") is None)):
                 problems.append(
                     f"{delta_type!r} -> DECIMAL without precision/scale; the "
                     f"scale is the thing a decimal column is for")

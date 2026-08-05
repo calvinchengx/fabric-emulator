@@ -30,7 +30,6 @@ import random
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-
 import web_store as web
 
 API_KEY = "ref-key-7734-dev"

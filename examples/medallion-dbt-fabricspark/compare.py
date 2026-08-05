@@ -66,7 +66,7 @@ assert ps["rows"] == db["rows"], (
     "the two silver builds disagree:\n"
     f"  PySpark:         {ps['rows']}\n"
     f"  dbt-fabricspark: {db['rows']}")
-print(f"\n{'rows':22} {str(ps['rows']):>58}")
+print(f"\n{'rows':22} {ps['rows']!s:>58}")
 print("   identical — the tool choice did not change the answer")
 
 # Neither path needs statement rewriting: both speak Spark SQL to the same

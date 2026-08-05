@@ -9,8 +9,19 @@ import json
 import time
 
 import source_system as src
-from common import (FABRIC, FABRIC_AUD, PBI_AUD, S, ensure_app, fabric_headers, load, log,
-                    save, tds_connect, token)
+from common import (
+    FABRIC,
+    FABRIC_AUD,
+    PBI_AUD,
+    S,
+    ensure_app,
+    fabric_headers,
+    load,
+    log,
+    save,
+    tds_connect,
+    token,
+)
 
 st = load()
 H = fabric_headers()

@@ -12,8 +12,7 @@ user already controls.
 import shlex
 import sys
 
-from . import (SEED_CLIENT_ID, SEED_CLIENT_SECRET, Target, TargetError, _env,
-               _env_any)
+from . import SEED_CLIENT_ID, SEED_CLIENT_SECRET, Target, TargetError, _env, _env_any
 
 
 def _lines(t):
@@ -72,7 +71,7 @@ def main(argv):
                      ("workspace_scope", t.workspace_scope or "—")]:
             print(f"{k:16} {v}")
         return 0
-    print(f"usage: python -m fabric_target [env|show] [emulator|real]", file=sys.stderr)
+    print("usage: python -m fabric_target [env|show] [emulator|real]", file=sys.stderr)
     return 2
 
 

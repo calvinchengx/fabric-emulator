@@ -33,7 +33,6 @@ import random
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-
 import source_system as pos
 
 API_KEY = "erp-key-2291-dev"

@@ -13,13 +13,13 @@ environment the emulator injects; see notebookutils._config.
     tok = notebookutils.credentials.getToken("storage")
     pw  = notebookutils.credentials.getSecret("myvault", "db-password")
 """
-from . import fs, credentials, lakehouse, runtime, notebook
-
 # `mssparkutils` is the older name for the same surface; alias it so notebooks
 # written against either name resolve here (attribute *and* `import mssparkutils`).
 import sys as _sys
 
+from . import credentials, fs, lakehouse, notebook, runtime
+
 mssparkutils = _sys.modules[__name__]
 _sys.modules.setdefault("mssparkutils", _sys.modules[__name__])
 
-__all__ = ["fs", "credentials", "lakehouse", "runtime", "notebook", "mssparkutils"]
+__all__ = ["credentials", "fs", "lakehouse", "mssparkutils", "notebook", "runtime"]

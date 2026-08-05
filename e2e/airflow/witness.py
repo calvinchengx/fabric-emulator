@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Entra -> Fabric item/files/jobs -> real Airflow scheduler/executor."""
 import json
-from pathlib import Path
 import ssl
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 ENTRA = "http://entra-emulator:8443"
 FABRIC = "https://fabric-emulator:9443"

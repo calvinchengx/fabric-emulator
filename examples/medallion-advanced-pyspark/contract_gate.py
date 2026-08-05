@@ -38,8 +38,8 @@ import pathlib
 # actual pass/fail output. setdefault, so a caller who wants them can ask.
 os.environ.setdefault("TQDM_DISABLE", "1")
 
-import great_expectations as gx  # noqa: E402 — must follow TQDM_DISABLE
-import yaml  # noqa: E402
+import great_expectations as gx
+import yaml
 
 HERE = pathlib.Path(__file__).resolve().parent
 CONTRACTS = HERE / "contracts"

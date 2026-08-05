@@ -68,7 +68,7 @@ def pct_badge(label: str, pct: float | None) -> dict:
     return badge(label, message, colour(pct))
 
 
-def witness_counts(path: Path = None) -> tuple[int, int]:
+def witness_counts(path: Path | None = None) -> tuple[int, int]:
     """(claims that name a witness, total claims) from the witness map.
 
     `_gated` is not a claim — it records WHY a witness can skip — so it is
@@ -80,7 +80,7 @@ def witness_counts(path: Path = None) -> tuple[int, int]:
     return witnessed, len(claims)
 
 
-def witness_badge(path: Path = None) -> dict:
+def witness_badge(path: Path | None = None) -> dict:
     witnessed, total = witness_counts(path)
     # Anything short of "all of them" is the interesting case, so it is not
     # green until it is complete.
@@ -89,7 +89,7 @@ def witness_badge(path: Path = None) -> dict:
                  "brightgreen" if ok else "orange")
 
 
-def e2e_suite_count(path: Path = None) -> int:
+def e2e_suite_count(path: Path | None = None) -> int:
     """Top-level CI jobs, less the ones that are not end-to-end suites.
 
     Counted from the workflow rather than from a hand-maintained list, because
@@ -102,7 +102,7 @@ def e2e_suite_count(path: Path = None) -> int:
     return len([j for j in jobs if j not in not_e2e])
 
 
-def e2e_badge(path: Path = None) -> dict:
+def e2e_badge(path: Path | None = None) -> dict:
     return badge("e2e suites", str(e2e_suite_count(path)), "blue")
 
 

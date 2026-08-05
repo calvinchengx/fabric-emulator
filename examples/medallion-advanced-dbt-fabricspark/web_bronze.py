@@ -17,10 +17,9 @@ was written down first.
 import json
 
 import pandas as pd
-from deltalake import DeltaTable, write_deltalake
-
 import web_store as web
-from common import FABRIC, S, STORAGE_AUD, load, log, storage_options, tables_uri, token
+from common import FABRIC, STORAGE_AUD, S, load, log, storage_options, tables_uri, token
+from deltalake import DeltaTable, write_deltalake
 
 st = load()
 ws, lake = st["workspace"], st["lakehouse"]

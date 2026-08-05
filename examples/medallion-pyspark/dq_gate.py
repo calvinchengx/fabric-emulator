@@ -8,9 +8,8 @@ import os
 import subprocess
 
 import pandas as pd
-from deltalake import DeltaTable, write_deltalake
-
 from common import GOLD_PROJECT, load, log, storage_options, tables_uri, tds_connect
+from deltalake import DeltaTable, write_deltalake
 
 st = load()
 opts = storage_options()

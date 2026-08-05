@@ -17,11 +17,10 @@ sequence. Asserting cleanliness there would be asserting something we have no
 right to, because the vendor never promised it. Cleanliness becomes assertable
 at silver, which is the first layer that promised anything.
 """
-import pandas as pd
-from deltalake import DeltaTable
-
 import contract_gate
+import pandas as pd
 from common import load, log, storage_options, tables_uri, tds_connect
+from deltalake import DeltaTable
 
 opts = storage_options()
 base = tables_uri()
