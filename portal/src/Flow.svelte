@@ -80,7 +80,15 @@
 
   function loadLineage() {
     api.get('/_emulator/portal/lineage')
-      .then((r) => (edges = r.value || []))
+      .then((r) => {
+        edges = r.value || [];
+        // Clear on success. This reloads on a debounce for the whole session,
+        // so without this one transient failure paints the banner and it stays
+        // there — beside a green `streaming` chip and a finished run, which
+        // reads as a broken platform. Found in a demo recording, where a stale
+        // `HTTP 404` sat under a pipeline that had just passed 16/16.
+        error = '';
+      })
       .catch((e) => (error = e.message));
   }
   loadLineage();
