@@ -184,8 +184,23 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 		if strings.EqualFold(cell.Language, "sql") {
 			kind = "sql"
 		}
+		// jobId/cellIndex are the cell's IDENTITY, and they travel with every
+		// statement so the agent can export them for the duration of the cell.
+		//
+		// Two things downstream read that export and are dead without it:
+		// notebookutils.fs tags its OneLake requests with the
+		// x-ms-fabric-job-id / x-ms-fabric-cell-index headers, and
+		// spark_agent/storage.py forges a Storage token carrying the same
+		// values as claims (delta-rs takes credentials, not headers). Both
+		// feed the storage layer's observed lineage, which is how an edge gets
+		// recorded without anyone parsing the notebook's code.
+		//
+		// NOT sufficient for Spark's own writes: a `df.write` executes inside
+		// Sail, whose storage token enters it through startup env and cannot
+		// vary per cell (docker/sail/launcher.py). Those stay unattributed.
 		out, err := a.agentPost("/statements", map[string]any{
 			"session": session, "code": cell.Source, "kind": kind,
+			"jobId": jid, "cellIndex": cell.Index,
 		})
 		if err != nil {
 			finalised = true
@@ -198,6 +213,7 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 		if i == injectAfter && paramCode != "" {
 			if _, perr := a.agentPost("/statements", map[string]any{
 				"session": session, "code": paramCode, "kind": "python",
+				"jobId": jid, "cellIndex": cell.Index,
 			}); perr != nil {
 				finalised = true
 				a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("applying run parameters: %v", perr))
