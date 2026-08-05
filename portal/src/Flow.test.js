@@ -561,4 +561,36 @@ describe('the error banner', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Reload graph' }));
     await waitFor(() => expect(screen.queryByText('HTTP 404')).toBeNull());
   });
+
+  // Clearing on the NEXT success is only half the fix: reloads ride on lineage
+  // events, and an idle stack emits none — so a transient during a container
+  // recreate stayed on screen for hours, presenting a long-dead failure as
+  // current. The failure path must recover by itself.
+  it('a failed lineage load retries itself until the emulator answers', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let fail = true;
+      vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+        if (String(url).includes('/portal/lineage') && fail) {
+          return Promise.resolve({
+            ok: false, status: 404, json: () => Promise.resolve(null),
+          });
+        }
+        const body = String(url).includes('/portal/lineage')
+          ? { value: edges }
+          : { value: [] };
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      });
+
+      render(Flow);
+      await waitFor(() => expect(screen.getByText('HTTP 404')).toBeInTheDocument());
+
+      // No click and no lineage event: recovery has to come from the page.
+      fail = false;
+      await vi.advanceTimersByTimeAsync(3100);
+      await waitFor(() => expect(screen.queryByText('HTTP 404')).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
