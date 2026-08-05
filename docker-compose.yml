@@ -86,6 +86,32 @@ services:
       # volume there); this compose file mounts none, so state is in-memory —
       # override back to empty or the store fails to open /data (no volume).
       FABRIC_DATA_DIR: ""
+  # The terminal pane's backend: ttyd, a shell over a websocket, for the Flow
+  # view's side-by-side terminal (drive the pipeline while you watch it run).
+  #
+  # PROFILED, and NOT published to the host. The only route in is the
+  # emulator's proxy at /_emulator/portal/terminal/ws, which demands the token
+  # printed at startup — see internal/server/terminal.go for why that route
+  # carries its own auth when the other 11 portal routes carry none.
+  #
+  # Publishing a port here would undo all of that: ttyd's own `--credential` is
+  # basic auth over whatever the host exposes, and the point is that the shell
+  # is reachable ONLY through the origin the portal is already served from.
+  #
+  # Two opt-ins, same as `rti`:
+  #   --profile terminal                    starts ttyd
+  #   -f docker-compose.terminal.yml        hands the emulator its URL
+  # Skip the overlay and the terminal routes are not mounted at all.
+  ttyd:
+    profiles: [terminal]
+    image: tsl0922/ttyd:1.7.7
+    # `-W` makes the client writable; without it the pane is a read-only
+    # viewer, which is a different (and much safer) product — if you want that,
+    # drop the flag rather than adding a second service.
+    command: ["ttyd", "-W", "-p", "7681", "bash"]
+    expose:
+      - "7681"
+
 
   # ---- Real-Time Intelligence (optional): Kusto engine, profile-gated -------
   # Microsoft's own KQL engine container (the Azure Data Explorer "Kusto
