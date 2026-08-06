@@ -53,6 +53,22 @@ function mockLineage(value: any = edges) {
   mockApi({ lineage: value });
 }
 
+/** How many times the graph has been asked for. */
+function lineageRequests(): number {
+  return fetchCalls().filter((c) => String(c[0]).includes('/portal/lineage')).length;
+}
+
+/** Drain pending promise callbacks WITHOUT moving the fake clock.
+ *
+ * `vi.waitFor` cannot be used for this under fake timers: it advances the clock
+ * while it polls, which would fire the very backoff timer a test is measuring.
+ * Advancing by 0 flushes the microtask queue and nothing else; repeating drains
+ * a chain of `.then`s.
+ */
+async function settle(rounds = 12): Promise<void> {
+  for (let i = 0; i < rounds; i++) await vi.advanceTimersByTimeAsync(0);
+}
+
 describe('Flow', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -1015,35 +1031,34 @@ describe('Flow: the last reachable arms', () => {
   });
 
   it('cancels the pending retry when a manual reload succeeds first', async () => {
-    // The retry clears its own handle before re-asking, so the success path's
-    // "cancel the retry" arm is only reached when something ELSE succeeds
-    // during the backoff — which is exactly what Reload graph does.
+    // The success path must cancel the retry it finds pending, or a stack that
+    // has recovered keeps being re-asked on a schedule nothing owns.
+    //
+    // Same formulation as its sibling below, and for the same reason: the mount's
+    // failure schedules a retry at 3s, so once both requests have been drained,
+    // advancing past 3s must fire nothing.
     vi.useFakeTimers();
     let ok = false;
     vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
-      if (!String(url).includes('/portal/lineage'))
-        return Promise.resolve(res({ value: [] }));
-      return ok
-        ? Promise.resolve(res({ value: edges }))
-        : Promise.resolve(errRes('HTTP 404', 404));
+      if (!String(url).includes('/portal/lineage')) return Promise.resolve(res({ value: [] }));
+      return ok ? Promise.resolve(res({ value: edges })) : Promise.resolve(errRes('HTTP 404', 404));
     });
     render(Flow);
-    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(lineageRequests()).toBe(1);
     expect(screen.getByText('HTTP 404')).toBeInTheDocument();
-
-    // Timers, not requests-in-a-window. Counting requests over an advance is a
-    // race — whether the in-flight straggler lands first depends on how many
-    // microtask turns the runner needs — and it failed on CI while passing
-    // here. The pending-timer count IS the property, and it is exact.
-    const armed = vi.getTimerCount(); // the 1s clock tick, plus one retry
 
     ok = true;
     await fireEvent.click(screen.getByRole('button', { name: 'Reload graph' }));
-    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(lineageRequests()).toBe(2);
     expect(screen.queryByText('HTTP 404')).not.toBeInTheDocument();
-    // One fewer: the success cancelled the retry rather than letting it re-ask
-    // an emulator that had already answered.
-    expect(vi.getTimerCount()).toBe(armed - 1);
+
+    // The cancelled retry must not fire, and nothing new is scheduled after a
+    // success — so the count is still 2 well past both the 3s and 6s marks.
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(lineageRequests()).toBe(2);
+    expect(screen.queryByText('HTTP 404')).not.toBeInTheDocument();
   });
 
   it('opens the inspector from the keyboard', async () => {
@@ -1090,30 +1105,46 @@ describe('Flow: a retry that fails again', () => {
   it('replaces the pending retry rather than stacking a second one', async () => {
     // A manual reload during the backoff that ALSO fails: the catch has to
     // cancel the handle it is about to overwrite, or every failed reload leaves
-    // another timer running and a dead emulator gets asked N times a second.
+    // another timer running and a dead emulator gets asked at a compounding rate.
+    //
+    // Asserted on the REQUEST COUNT INSIDE A KNOWN BACKOFF GAP, which is the only
+    // formulation that has held. Two earlier attempts did not:
+    //
+    //   requests over a window   — depended on promise-resolution order, and the
+    //                              in-flight straggler landed on a slower runner
+    //   vi.getTimerCount()       — a GLOBAL count, so a transient timer from
+    //                              Svelte's flush or waitFor's polling moved it
+    //
+    // Backoff doubles per failure: the mount schedules a retry at 3s, and a
+    // failed reload replaces it with one at 6s. So after both failures are
+    // OBSERVED, advancing 4s must fire nothing — the live timer is at 6s. An
+    // orphaned first timer would still be sitting at 3s and would fire.
     vi.useFakeTimers();
     vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) =>
       String(url).includes('/portal/lineage')
         ? Promise.resolve(errRes('HTTP 404', 404))
         : Promise.resolve(res({ value: [] })));
     render(Flow);
-    await vi.advanceTimersByTimeAsync(1);
+
+    // Drain both failures before touching the clock. This is what removes the
+    // ordering race: each catch has run, so each retry is scheduled, and no time
+    // has passed while we waited.
+    await settle();
+    expect(lineageRequests()).toBe(1);
     expect(screen.getByText('HTTP 404')).toBeInTheDocument();
 
-    const armed = vi.getTimerCount(); // the 1s clock tick, plus one retry
-
-    // Reload while that retry is still pending, and fail again.
     await fireEvent.click(screen.getByRole('button', { name: 'Reload graph' }));
-    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(lineageRequests()).toBe(2);
 
-    // Still the same number of timers. The catch has to cancel the handle it is
-    // about to overwrite; without that, every failed reload leaves another
-    // timer running and a dead emulator gets asked at a compounding rate.
-    // Asserted on the timer count rather than on requests within a window,
-    // because the window version depended on promise-resolution order and
-    // failed on CI (3 retries where it expected 1).
-    expect(vi.getTimerCount()).toBe(armed);
-    expect(screen.getByText('HTTP 404')).toBeInTheDocument();
+    // Past the orphan's 3s, short of the live timer's 6s.
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(lineageRequests()).toBe(2);
+
+    // And the surviving timer does still fire, so this is not passing because
+    // retrying stopped altogether.
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(lineageRequests()).toBe(3);
   });
 });
 
