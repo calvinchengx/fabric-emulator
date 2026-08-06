@@ -7,13 +7,14 @@ how to confirm it actually works, and when you would want it. Every mode has a
 If you only want to get going, [the quickstart](01-quickstart.md) walks mode 1
 end to end. Come back here when you need to change something.
 
-| Mode | Command | Spark | T-SQL | Extras |
-|---|---|---|---|---|
-| 1. Default | `make up` | Sail | SQL Server | OpenMetadata |
-| 2. Plain compose | `docker compose up` | Sail | SQL Server | — |
-| 3. Lite | `make up-lite` | ❌ 501 | ❌ 501 | — |
-| 4. JVM overlay | `make up-jvm` | **JVM Spark** | SQL Server | — |
-| 5. Real Fabric | `FABRIC_TARGET=real` | the real service | | |
+| Mode | Command | Services | Spark | T-SQL | Extras | Give the runtime |
+|---|---|---|---|---|---|---|
+| 1. Default | `make up` | 11 | Sail | SQL Server | OpenMetadata | **12 GB** |
+| 2. Plain compose | `docker compose up` | 6 | Sail | SQL Server | — | **8 GB** |
+| 3. Lite | `make up-lite` | 3 | ❌ 501 | ❌ 501 | — | **2 GB** |
+| 4. JVM overlay | `make up-jvm` | 6 | **JVM Spark** | SQL Server | — | **10 GB** |
+| 5. Real Fabric | `FABRIC_TARGET=real` | 0 | the real service | | | — |
+| [Everything](#everything-at-once) | see below | 13 | Sail | SQL Server | OpenMetadata + KQL + terminal | **16 GB** |
 
 Whatever you start, `make status` is the verdict. `make up` only means
 containers were created; `status` probes the endpoints and reports `stack OK`
@@ -103,20 +104,78 @@ It is not the default because most tests never touch those capabilities, and
 the common notebook path — Delta write/append, both time-travel forms,
 `createDataFrame`, SQL, `readStream` — passes on **both**.
 
-## Profiles — heavier engines, only when asked
+## Profiles — extra services, only when asked
 
-Profiles *add* an engine rather than swapping one, and nothing is pulled unless
-you name it:
+A profile *adds* services rather than swapping them, and nothing is pulled
+unless you name it. `--profile` is repeatable, so combine them freely.
+
+| Profile | Adds | Gives you | Costs |
+|---|---|---|---|
+| `governance` | OpenMetadata + Postgres + OpenSearch | catalog, glossary, lineage over the state your pipelines wrote ([22](22-openmetadata.md)) | ~2.8 GB |
+| `rti` | `kustainer` | Microsoft's own KQL engine behind Eventhouse ([25](25-rti-kusto.md)) | 4 GB (its own `mem_limit`) |
+| `terminal` | `ttyd` | a shell in the Flow view, beside the graph ([31](31-flow-observability.md#the-terminal-pane)) | negligible |
 
 ```bash
-make up PROFILE="--profile rti"          # Microsoft's own KQL engine (kustainer)
-make up PROFILE="--profile governance"   # OpenMetadata (already the make default)
+make up PROFILE="--profile rti"                          # KQL, no OpenMetadata
+make up PROFILE="--profile governance --profile rti"     # both
 ```
 
 `--profile rti` needs **amd64 with AVX2**. Microsoft documents ARM as
-unsupported, and Rosetta does not supply AVX2 — on Apple silicon it needs an
-x86-64 VM with a QEMU CPU type that provides it. See
-[25-rti-kusto.md](25-rti-kusto.md).
+unsupported and Rosetta does not supply AVX2 — on Apple silicon it needs an
+x86-64 VM with a QEMU CPU type that provides it.
+
+### The terminal profile needs two things
+
+The profile starts `ttyd`; a second file tells the emulator where it is. Both,
+or the pane never appears:
+
+```bash
+docker compose --profile terminal \
+  -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.terminal.yml \
+  up -d
+```
+
+Then read the token the emulator printed at startup
+(`docker compose logs fabric-emulator | grep terminal`), open
+<https://localhost:9443/#flow>, click **Terminal** and paste it. The token is
+deliberately not served by any endpoint — the portal is unauthenticated, so an
+endpoint handing it out would be the same as having none.
+
+> **Naming any `-f` disables the auto-loaded override.** That is why all three
+> files are listed above. Leave `docker-compose.override.yml` out and the stack
+> still starts — without Sail, the Spark agent or SQL Server, so Livy and the
+> warehouse answer `501` while everything looks healthy.
+>
+> Nothing cheap catches that: `docker compose ps` shows only what you asked for,
+> and plain `make status` reports containers and endpoints without asserting which
+> services *should* exist, so it prints `stack OK`. `make status-spark` opens a
+> real Livy session and is the check that fails.
+
+## Everything at once
+
+Every engine and every profile — what CI's heaviest legs approximate, and the
+most a laptop will be asked for:
+
+```bash
+docker compose --profile governance --profile rti --profile terminal \
+  -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.terminal.yml \
+  up -d
+```
+
+Thirteen services. Measured steady state, on the images this repo pins:
+
+| Service | RSS | Service | RSS |
+|---|---|---|---|
+| `kustainer` | 4.0 GB cap | `openmetadata` | ~970 MB |
+| `sqlserver` | ~1.8 GB | `fabric-emulator` | ~940 MB |
+| `om-opensearch` | ~1.7 GB | `om-postgresql` | ~100 MB |
+| `sail` | ~1.6 GB | `spark-agent` | ~90 MB |
+| | | `entra` + `keyvault` + `ttyd` | ~20 MB |
+
+≈11 GB busy, so **give the runtime 16 GB**. `make doctor` warns below 8 GB,
+which is the floor for mode 1 — not for this. Reach for it when you are
+reproducing a cross-cutting problem; for everyday work modes 1–3 are cheaper and
+`make status` is the same verdict.
 
 ## 5. Real Fabric — one environment variable
 

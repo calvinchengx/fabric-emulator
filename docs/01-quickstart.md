@@ -37,7 +37,9 @@ make doctor
 It checks the shell tools, a *runnable* Python, the docker CLI **and** the
 daemon behind the active context, and the ports the stack publishes — and names
 what is missing rather than letting it surface later as a broken recipe or an
-unreachable socket. Allow the runtime **8 GB of memory**.
+unreachable socket. Allow the runtime **8 GB of memory** — enough for the six
+services below. `make up` adds OpenMetadata and wants 12 GB; every mode's cost
+is in [27-running-modes.md](27-running-modes.md).
 
 Full per-platform detail — including Rancher Desktop's context selection on
 Windows and the Apple-silicon sidecar constraints —
