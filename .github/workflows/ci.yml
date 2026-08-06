@@ -331,6 +331,11 @@ jobs:
       # yet; the flag arms in the same change that lands the matrix, so it can
       # never afterwards go missing without failing here.
       - run: uv run --frozen --no-sync python scripts/check_conformance.py
+      # docs/03's diagram described a two-system model for as long as
+      # keyvault-emulator had been a default compose service — the topology was
+      # right, the cast of services had drifted. Nothing about adding a service
+      # reminds anyone to redraw, so the roster is asserted instead.
+      - run: uv run --frozen --no-sync python scripts/check_arch_services.py
       # The portal's event-kind list is GENERATED from internal/store/bus.go.
       # The stream names each SSE frame and EventSource has no wildcard
       # listener, so a kind missing from the client is invisible — no error,
