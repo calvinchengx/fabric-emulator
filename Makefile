@@ -96,6 +96,7 @@ check: ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_govern_types.py
 	@$(PY) scripts/check_example_parity.py
 	@$(PY) scripts/check_conformance.py
+	@$(PY) scripts/gen_event_kinds.py --check
 
 test: check ## Repo invariants, then Go build, vet and unit tests
 	go build ./... && go vet ./... && go test ./...
