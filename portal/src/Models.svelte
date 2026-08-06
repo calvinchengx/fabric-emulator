@@ -1,5 +1,8 @@
 <script lang="ts">
   import { api } from './api';
+  import StatusBadge from '$lib/StatusBadge.svelte';
+  import { Badge } from '$lib/components/ui/badge/index';
+  import * as Card from '$lib/components/ui/card/index';
   import { href } from './router';
   import ModelDetail from './ModelDetail.svelte';
 
@@ -49,21 +52,27 @@
     <!-- A LINK, not a button. It has a URL, so it must be openable in a new
          tab, copyable, and reachable by the browser's own history — which is
          the entire reason this stopped being an accordion. -->
-    <a class="model-head" href={href('models', m.itemId)}>
-      <strong>{m.displayName}</strong>
-      <span class="muted">{m.workspace}</span>
-      {#if m.error}
-        <span class="chip failed" title={m.error}>unreadable</span>
-      {:else}
-        <span class="chip">{m.format}</span>
-        {#if m.rowsLoaded}
-          <span class="chip succeeded" title="an inline data.json snapshot is present">rows loaded</span>
+    <Card.Root class="mb-2.5 transition-colors hover:bg-muted/40">
+      <a class="model-head" href={href('models', m.itemId)}>
+        <strong>{m.displayName}</strong>
+        <span class="muted">{m.workspace}</span>
+        {#if m.error}
+          <StatusBadge tone="danger" title={m.error}>unreadable</StatusBadge>
         {:else}
-          <span class="chip" title="no data.json — an import model with no rows answers every query with nothing">no rows</span>
+          <Badge variant="outline" class="font-mono text-xs">{m.format}</Badge>
+          {#if m.rowsLoaded}
+            <StatusBadge tone="success" title="an inline data.json snapshot is present">
+              rows loaded
+            </StatusBadge>
+          {:else}
+            <StatusBadge title="no data.json — an import model with no rows answers every query with nothing">
+              no rows
+            </StatusBadge>
+          {/if}
+          <span class="muted summary">{summary(m)}</span>
         {/if}
-        <span class="muted summary">{summary(m)}</span>
-      {/if}
-    </a>
+      </a>
+    </Card.Root>
   {/each}
 {/if}
 

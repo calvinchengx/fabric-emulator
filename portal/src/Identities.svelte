@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from './api';
+  import * as Table from '$lib/components/ui/table/index';
 
   let workspaces = $state<any[]>([]);
   let error = $state('');
@@ -22,16 +23,22 @@
 {#if provisioned.length === 0}
   <p class="muted">No workspace has a provisioned identity.</p>
 {:else}
-  <table>
-    <thead><tr><th>Workspace</th><th>Application id</th><th>Service principal id</th></tr></thead>
-    <tbody>
+  <Table.Root>
+    <Table.Header>
+      <Table.Row>
+        <Table.Head>Workspace</Table.Head>
+        <Table.Head>Application id</Table.Head>
+        <Table.Head>Service principal id</Table.Head>
+      </Table.Row>
+    </Table.Header>
+    <Table.Body>
       {#each provisioned as w}
-        <tr>
-          <td>{w.displayName}</td>
-          <td class="mono">{w.workspaceIdentity.applicationId}</td>
-          <td class="mono">{w.workspaceIdentity.servicePrincipalId}</td>
-        </tr>
+        <Table.Row>
+          <Table.Cell>{w.displayName}</Table.Cell>
+          <Table.Cell class="mono">{w.workspaceIdentity.applicationId}</Table.Cell>
+          <Table.Cell class="mono">{w.workspaceIdentity.servicePrincipalId}</Table.Cell>
+        </Table.Row>
       {/each}
-    </tbody>
-  </table>
+    </Table.Body>
+  </Table.Root>
 {/if}
