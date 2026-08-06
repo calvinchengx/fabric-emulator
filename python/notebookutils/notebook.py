@@ -17,8 +17,13 @@ import time
 from . import credentials
 from ._config import config
 from ._http import request
+from .common.exceptions import RunMultipleFailedException
 
 _TERMINAL = {"Completed", "Failed", "Cancelled", "Deduped"}
+
+# Fabric's documented defaults (notebookutils-notebook-run).
+_DEFAULT_TIMEOUT_PER_CELL = 90
+_DEFAULT_DAG_TIMEOUT = 43200  # 12 hours
 
 
 class NotebookError(Exception):
@@ -35,9 +40,18 @@ def _resolve_item(name, workspaceId, token):
     raise NotebookError(f"notebook {name!r} not found in workspace {ws}")
 
 
-def run(name, timeoutSeconds=90, arguments=None, workspaceId=None,
+def run(path, timeout_seconds=_DEFAULT_TIMEOUT_PER_CELL, arguments=None, workspace=None,
         spark_environment=None, attach_lakehouse=None, **kwargs):
-    """Run notebook `name` and return its terminal job status.
+    """Run notebook `path` and return ITS EXIT VALUE.
+
+    The return value is the exact string the child passed to
+    `notebookutils.notebook.exit(value)`, or `""` when the child never called
+    it — Fabric's documented contract, and not what this returned until now.
+    It returned the terminal job status ("Completed"), so a parent branching on
+    `run(...)` took the wrong branch against the emulator and the right one
+    against Fabric. Callers wanting the status can read it from the job
+    instance; only one of the two can be the return value, and Fabric has
+    already chosen.
 
     `arguments` are forwarded as the child run's `executionData.parameters`,
     which is the whole reason a caller passes them: a parameterised notebook
@@ -51,9 +65,35 @@ def run(name, timeoutSeconds=90, arguments=None, workspaceId=None,
     The emulator has one Spark session and attaches the notebook's own
     binding, so there is nothing to switch: they are accepted and ignored rather
     than advertised as unsupported.
+
+    `timeoutSeconds` and `workspaceId` remain accepted as aliases: they were
+    this function's parameter names before Fabric's own spelling was checked,
+    and code in this repository passes them by keyword.
+    """
+    timeout_seconds = kwargs.pop("timeoutSeconds", None) or timeout_seconds
+    workspace = kwargs.pop("workspaceId", None) or workspace
+    exit_value, _status, _cells = _run_detail(
+        path, timeout_seconds=timeout_seconds, arguments=arguments, workspace=workspace)
+    return exit_value
+
+
+def _run_detail(path, timeout_seconds=None, per_cell_seconds=None, arguments=None,
+                workspace=None):
+    """Run a notebook and return `(exit_value, status, cell_count)`.
+
+    One request path, two views: `run` projects the exit value, `runMultiple`
+    reads the whole tuple. Splitting it here keeps a single definition of what
+    running a notebook means.
+
+    The two timeouts are different units and both are Fabric's. `run` takes
+    `timeout_seconds`, a whole-notebook deadline. A `runMultiple` activity
+    takes `per_cell_seconds` — `timeoutPerCellInSeconds` — which becomes a
+    notebook deadline only once multiplied by the cell count. That count is
+    exact rather than assumed: creating the job parses the notebook, so
+    `…/notebookRun` can be read for it before the run finishes.
     """
     token = credentials.getToken("fabric")
-    ws, iid = _resolve_item(name, workspaceId, token)
+    ws, iid = _resolve_item(path, workspace, token)
     body = None
     if arguments:
         body = {"executionData": {"parameters": {
@@ -63,19 +103,68 @@ def run(name, timeoutSeconds=90, arguments=None, workspaceId=None,
         token=token, body=body, raw=True)
     loc = hdrs.get("Location")
     jid = loc.rstrip("/").rsplit("/", 1)[-1]
-    deadline = time.time() + timeoutSeconds
+    base = f"{config().fabric_url}/v1/workspaces/{ws}/items/{iid}/jobs/instances/{jid}"
+    if timeout_seconds is None:
+        timeout_seconds = (per_cell_seconds or _DEFAULT_TIMEOUT_PER_CELL) * _cell_count(base, token)
+    deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        job = request("GET", f"{config().fabric_url}/v1/workspaces/{ws}/items/{iid}/jobs/instances/{jid}", token=token)
+        job = request("GET", base, token=token)
         st = job.get("status")
         if st in _TERMINAL:
             if st == "Failed":
-                raise NotebookError(f"notebook {name!r} failed: {job.get('failureReason')}")
-            return st
+                raise NotebookError(f"notebook {path!r} failed: {job.get('failureReason')}")
+            return _finish(base, token, st)
         time.sleep(0.3)
-    raise NotebookError(f"notebook {name!r} did not finish within {timeoutSeconds}s")
+    raise NotebookError(f"notebook {path!r} did not finish within {timeout_seconds}s")
 
 
-def runMultiple(dag, useRootDefaultLakehouse=True, **kwargs):
+def _cell_count(base, token):
+    """How many cells this run will execute; at least 1.
+
+    Readable as soon as the job exists, because creating it parses the
+    notebook's definition into the run record. A floor of 1 keeps a notebook
+    with no executable cells — or a detail that cannot be read — from being
+    handed a zero-second deadline, which would fail instantly.
+    """
+    try:
+        detail = request("GET", f"{base}/notebookRun", token=token)
+    except Exception:  # noqa: BLE001 — an unreadable detail must not fail the run
+        return 1
+    return max(len(detail.get("cells") or []), 1)
+
+
+def _finish(base, token, status):
+    """Read the run detail a terminal job left behind.
+
+    The exit value has always been recorded — the engine posts it, the service
+    stores it, and `…/notebookRun` serves it. Nothing asked for it, which is
+    why `run` could only report a status. A run detail that cannot be read is
+    not fatal: a notebook with no cells has nothing to report and still
+    completed.
+    """
+    try:
+        detail = request("GET", f"{base}/notebookRun", token=token)
+    except Exception:  # noqa: BLE001 — an unreadable detail must not fail a completed run
+        return "", status, 0
+    return detail.get("exitValue") or "", status, len(detail.get("cells") or [])
+
+
+def validateDAG(dag):
+    """Return True if `dag` is structurally valid, else raise.
+
+    Fabric exposes this so a production workflow can fail on a malformed DAG
+    before any notebook runs. The checks are the ones `runMultiple` performs
+    anyway — duplicate names, dependencies naming an activity outside the DAG,
+    cycles — so this is the same code reached earlier, not a second opinion
+    that could drift from it.
+    """
+    activities = _normalise_dag(dag)
+    _check_dependencies(activities)
+    _in_dependency_order(activities)
+    return True
+
+
+def runMultiple(dag, config=None, **kwargs):
     """Run several notebooks, honouring `dependencies`, and return each result.
 
     This is the orchestration primitive `run` is not: `run` blocks on one
@@ -90,62 +179,135 @@ def runMultiple(dag, useRootDefaultLakehouse=True, **kwargs):
         runMultiple({"activities": [         # a DAG
             {"name": "a", "path": "nbA", "args": {...}},
             {"name": "b", "path": "nbB", "dependencies": ["a"]},
-        ], "timeoutInSeconds": 3600, "concurrency": 5})
+        ], "timeoutInSeconds": 43200, "concurrency": 12})
 
-    Returns `{name: {"exitVal": ..., "message": ...}}` keyed by activity name.
+    Returns `{name: {"exitVal": str, "exception": err or None}}` keyed by
+    activity name — Fabric's two documented keys. `status` and `error` ride
+    alongside as emulator extras, because a caller debugging a DAG locally
+    wants to distinguish "did not run" from "ran and failed" and Fabric's shape
+    cannot express it; nothing in this repository may depend on them.
 
-    SEQUENTIAL, in dependency order. `concurrency` is accepted and recorded
-    because callers pass it, but the emulator runs one notebook at a time: the
-    Spark sidecar is a single session, so running two at once would queue them
-    anyway while making the failure attribution worse. Order within a dependency
-    level is the order given, which keeps a run reproducible — the property a
-    test harness needs more than parallelism.
+    RAISES `RunMultipleFailedException` when any activity did not complete,
+    carrying the full result dict on `.result`. That is Fabric's contract and
+    the documented way to read partial results:
+
+        try:
+            results = notebookutils.notebook.runMultiple(DAG)
+        except RunMultipleFailedException as ex:
+            results = ex.result
+
+    Returning quietly instead — which this did — means code written to that
+    pattern never enters its except branch locally and never learns a notebook
+    failed.
+
+    SEQUENTIAL, in dependency order. Fabric defaults `concurrency` to 3x the
+    CPU count; the emulator runs one notebook at a time so a run is
+    reproducible, which is the property a test harness needs more than
+    parallelism. Recorded as a chosen divergence in docs/parity.md, not an
+    oversight.
 
     A failed activity stops its dependents rather than the whole DAG: they are
-    reported `Skipped` with the reason, because "did not run because `a` failed"
-    and "ran and failed" are different facts and a caller acts on them
-    differently.
+    reported with an exception saying which dependency did not complete,
+    because "did not run because `a` failed" and "ran and failed" are different
+    facts and a caller acts on them differently.
     """
     activities = _normalise_dag(dag)
     _check_dependencies(activities)
+    dag_timeout = _dag_timeout(dag)
+    deadline = time.time() + dag_timeout
 
     results, done = {}, {}
     for act in _in_dependency_order(activities):
         name = act["name"]
         blocked = [d for d in act.get("dependencies", []) if done.get(d) != "Completed"]
         if blocked:
-            results[name] = {"exitVal": None, "message": None,
-                             "status": "Skipped",
-                             "error": f"dependency {blocked[0]!r} did not complete"}
+            results[name] = _failed_result(
+                "Skipped", NotebookError(f"dependency {blocked[0]!r} did not complete"))
             done[name] = "Skipped"
             continue
-        try:
-            status = run(
-                act.get("path", name),
-                timeoutSeconds=act.get("timeoutPerCellInSeconds", 90),
-                arguments=act.get("args"),
-                workspaceId=act.get("workspaceId"),
-            )
-            results[name] = {"exitVal": "", "message": None, "status": status, "error": None}
-            done[name] = status
-        except NotebookError as e:
-            results[name] = {"exitVal": None, "message": None,
-                             "status": "Failed", "error": str(e)}
-            done[name] = "Failed"
+        if time.time() >= deadline:
+            # Every activity gets a result. A DAG that timed out halfway and
+            # returned a short dict is indistinguishable from one whose
+            # remaining activities were never in it.
+            results[name] = _failed_result(
+                "Skipped",
+                NotebookError(f"the DAG exceeded timeoutInSeconds ({dag_timeout}s) "
+                              f"before {name!r} started"))
+            done[name] = "Skipped"
+            continue
+        results[name], done[name] = _run_activity(act)
+
+    failed = [n for n, r in results.items() if r["exception"] is not None]
+    if failed:
+        raise RunMultipleFailedException(
+            f"{len(failed)} of {len(results)} activities did not complete: "
+            f"{', '.join(sorted(failed))}",
+            result=results)
     return results
 
 
+def _run_activity(act):
+    """Run one activity; return `(result, status)`.
+
+    Never raises: a failure is this activity's result, and the DAG decides what
+    that means for the rest. `runMultiple` raises at the end, once, with every
+    result in hand.
+    """
+    name = act["name"]
+    try:
+        exit_value, status, _cells = _run_detail(
+            act.get("path", name),
+            per_cell_seconds=act.get("timeoutPerCellInSeconds", _DEFAULT_TIMEOUT_PER_CELL),
+            arguments=act.get("args"),
+            workspace=act.get("workspace"),
+        )
+        return {"exitVal": exit_value, "exception": None,
+                "status": status, "error": None}, status
+    except NotebookError as e:
+        return _failed_result("Failed", e), "Failed"
+
+
+def _failed_result(status, exception):
+    """The result shape for an activity that produced no exit value."""
+    return {"exitVal": "", "exception": exception,
+            "status": status, "error": str(exception)}
+
+
+def _dag_timeout(dag):
+    """The whole-DAG wall clock; Fabric defaults it to 12 hours."""
+    if isinstance(dag, dict):
+        return dag.get("timeoutInSeconds") or _DEFAULT_DAG_TIMEOUT
+    return _DEFAULT_DAG_TIMEOUT
+
+
 def _normalise_dag(dag):
-    """Accept either a bare list of notebook names or Fabric's DAG dict."""
+    """Accept either a bare list of notebook names or Fabric's DAG dict.
+
+    `workspaceId` is folded into `workspace`, Fabric's own field name, which
+    takes a workspace name OR an id. Both spellings are accepted because this
+    module used the former before Fabric's was checked.
+
+    A duplicate `name` is refused. Activity names key the result dict and are
+    what `dependencies` point at, so a repeat silently dropped one activity's
+    result and made any dependency on that name ambiguous.
+    """
     if isinstance(dag, dict):
         acts = dag.get("activities")
         if acts is None:
             raise NotebookError("a DAG needs an 'activities' list")
-        out = []
+        out, seen = [], set()
         for a in acts:
-            if not a.get("name"):
+            name = a.get("name")
+            if not name:
                 raise NotebookError("every activity needs a 'name'")
-            out.append(dict(a))
+            if name in seen:
+                raise NotebookError(f"duplicate activity name {name!r}: names key the "
+                                    "results and are what dependencies refer to")
+            seen.add(name)
+            act = dict(a)
+            if act.get("workspaceId") and not act.get("workspace"):
+                act["workspace"] = act["workspaceId"]
+            out.append(act)
         return out
     if isinstance(dag, (list, tuple)):
         return [{"name": n, "path": n} for n in dag]

@@ -50,9 +50,13 @@ print(f"credentials.getSecret: {secret!r}", flush=True)
 assert secret == "s3cr3t-value", secret
 
 # --- notebook.run: schedule a child notebook through the control plane -------
-status = notebookutils.notebook.run("child-nb")
-print(f"notebook.run(child-nb): {status}", flush=True)
-assert status == "Completed", status
+# `run` returns the child's EXIT VALUE, per Fabric's reference — not the job
+# status, which is what this asserted until the contract was checked. child-nb
+# carries a markdown-only definition, so it never calls exit() and the
+# documented answer for that case is the empty string.
+exit_value = notebookutils.notebook.run("child-nb")
+print(f"notebook.run(child-nb): {exit_value!r}", flush=True)
+assert exit_value == "", exit_value
 
 # notebookutils.notebook.exit is the documented way a notebook returns a value.
 try:
