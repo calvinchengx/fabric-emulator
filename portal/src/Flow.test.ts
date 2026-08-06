@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Flow from './Flow.svelte';
 import { EVENT_KINDS, VIEW_KINDS } from './eventKinds';
-import { FakeEventSource, countRequests, errRes, fetchCalls, groupOf, installEventSource, removeEventSource, res, stream } from './testing';
+import { FakeEventSource, errRes, fetchCalls, groupOf, installEventSource, removeEventSource, res, stream } from './testing';
 const edges = [
   {
     jobId: 'job-1', activityName: 'IngestCustomers', producer: 'Copy',
@@ -1027,21 +1027,19 @@ describe('Flow: the last reachable arms', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(screen.getByText('HTTP 404')).toBeInTheDocument();
 
+    // Timers, not requests-in-a-window. Counting requests over an advance is a
+    // race — whether the in-flight straggler lands first depends on how many
+    // microtask turns the runner needs — and it failed on CI while passing
+    // here. The pending-timer count IS the property, and it is exact.
+    const armed = vi.getTimerCount(); // the 1s clock tick, plus one retry
+
     ok = true;
     await fireEvent.click(screen.getByRole('button', { name: 'Reload graph' }));
     await vi.advanceTimersByTimeAsync(1);
     expect(screen.queryByText('HTTP 404')).not.toBeInTheDocument();
-
-    // The claim is that the retry LOOP stops, not that not one more request is
-    // ever made: a retry already in flight when the manual reload lands is
-    // harmless — it succeeds and schedules nothing after itself. Asserting the
-    // stricter version passed here and failed on a slower runner, where that
-    // straggler had time to land.
-    await vi.advanceTimersByTimeAsync(30000);
-    const settled = countRequests('/portal/lineage');
-    await vi.advanceTimersByTimeAsync(120000);
-    expect(countRequests('/portal/lineage')).toBe(settled);
-    expect(screen.queryByText('HTTP 404')).not.toBeInTheDocument();
+    // One fewer: the success cancelled the retry rather than letting it re-ask
+    // an emulator that had already answered.
+    expect(vi.getTimerCount()).toBe(armed - 1);
   });
 
   it('opens the inspector from the keyboard', async () => {
@@ -1098,19 +1096,20 @@ describe('Flow: a retry that fails again', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(screen.getByText('HTTP 404')).toBeInTheDocument();
 
-    // Reload while the first retry is still pending.
+    const armed = vi.getTimerCount(); // the 1s clock tick, plus one retry
+
+    // Reload while that retry is still pending, and fail again.
     await fireEvent.click(screen.getByRole('button', { name: 'Reload graph' }));
     await vi.advanceTimersByTimeAsync(1);
 
-    // Exactly one retry may fire — the one this reload scheduled — and not the
-    // orphaned original as well. The window is 6s+ because each failure doubles
-    // the backoff, so the surviving timer is the 6s one.
-    const before = fetchCalls()
-      .filter((c: unknown[]) => String(c[0]).includes('/portal/lineage')).length;
-    await vi.advanceTimersByTimeAsync(6100);
-    const after = fetchCalls()
-      .filter((c: unknown[]) => String(c[0]).includes('/portal/lineage')).length;
-    expect(after - before).toBe(1);
+    // Still the same number of timers. The catch has to cancel the handle it is
+    // about to overwrite; without that, every failed reload leaves another
+    // timer running and a dead emulator gets asked at a compounding rate.
+    // Asserted on the timer count rather than on requests within a window,
+    // because the window version depended on promise-resolution order and
+    // failed on CI (3 retries where it expected 1).
+    expect(vi.getTimerCount()).toBe(armed);
+    expect(screen.getByText('HTTP 404')).toBeInTheDocument();
   });
 });
 
