@@ -100,8 +100,9 @@ are shipped and CI-verified on Linux, macOS, and Windows.
 
 The bare binary runs none of the engines (clock-derived, milliseconds) — but
 `docker compose up` auto-loads the override that attaches them, so the
-documented path is engine-backed by default. Heavier engines (KQL, OpenMetadata)
-stay behind opt-in profiles. Coverage floor is 90% (currently ~90%).
+documented path is engine-backed by default. Heavier services (KQL,
+OpenMetadata, the terminal) sit behind profiles; `make up` enables `governance`
+for you and the others are opt-in. Coverage floor is 90% (currently ~90%).
 
 Docs: <https://calvinchengx.github.io/fabric-emulator/>
 
@@ -142,9 +143,14 @@ identities), so it could equally point at a real Entra tenant.
 | `docker compose -f docker-compose.yml up` | the lite, contract-only pair — honest `501`s on the engine surfaces |
 | `--profile rti` | Microsoft's own KQL engine behind Eventhouse / KQL Database ([docs/25](docs/25-rti-kusto.md)) |
 | `--profile governance` | OpenMetadata over the same state your pipelines write ([docs/22](docs/22-openmetadata.md)) |
+| `--profile terminal` | a shell in the Flow view beside the graph — needs `-f docker-compose.terminal.yml` too ([docs/31](docs/31-flow-observability.md#the-terminal-pane)) |
 | `-f docker-compose.spark-jvm.yml` | **swaps** Sail for JVM Spark, buying the RDD API, structured streaming, `OPTIMIZE`/`VACUUM` and Java/Scala UDFs at the cost of image size ([docs/20](docs/20-lakesail-engine.md)) |
 
-Profiles pull nothing unless asked for.
+Profiles pull nothing unless asked for — but **`make up` asks for `governance`
+on your behalf**, so it starts 11 services rather than 6. `make up PROFILE=`
+gives the lean stack. Memory: 2 GB for lite, 8 GB for the default six, 12 GB with
+governance, 16 GB for everything at once —
+[running modes](docs/27-running-modes.md) has the per-service measurements.
 
 ## Getting started on Linux, macOS or Windows
 
@@ -152,7 +158,7 @@ The workflow is the same on all three — only the prerequisites differ:
 
 ```bash
 make doctor   # toolchain, docker context, memory, ports — run this first
-make up
+make up       # 11 services incl. OpenMetadata; `make up PROFILE=` for the lean 6
 make status   # "stack OK" is the real verdict; `make up` only means containers exist
 ```
 
@@ -162,6 +168,9 @@ Everything else, once it is running:
 make help     # every target with a one-line description
 make up-lite  # contract-only pair — no compute sidecars, honest 501s
 make up-jvm   # swap the default Sail engine for JVM Spark
+make status-spark  # status, plus a real Livy session executing Spark — the
+              # only target that proves the engines are attached and computing
+make seed     # catalog the emulator into OpenMetadata (governance profile)
 make ps       # container states for this project
 make logs     # tail logs (SVC=<service> to narrow to one)
 make down     # stop and remove containers — volumes SURVIVE
