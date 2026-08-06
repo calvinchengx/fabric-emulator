@@ -171,19 +171,19 @@ identities), so it could equally point at a real Entra tenant.
 | `-f docker-compose.spark-jvm.yml` | **swaps** Sail for JVM Spark, buying the RDD API, structured streaming, `OPTIMIZE`/`VACUUM` and Java/Scala UDFs at the cost of image size ([docs/20](docs/20-lakesail-engine.md)) |
 
 Profiles pull nothing unless asked for — but **`make up` asks for `governance`
-on your behalf**, so it starts 11 services rather than 6. `make up PROFILE=`
+on your behalf**, so it starts 12 services rather than 6. `make up PROFILE=`
 gives the lean stack.
 
 **How much machine you need.** Give the container runtime **8 GB** for the
-default six, **12 GB** with governance, **2 GB** for the lite pair, **16 GB** for
-everything at once. Four cores is ample; six to eight if you run PySpark or
-warehouse queries.
+default six, **13 GB** with governance and Airflow, **2 GB** for the lite pair,
+**17 GB** for everything at once. Four cores is ample; six to eight if you run
+PySpark or warehouse queries.
 
 Those numbers are for *working*, and idle is nowhere near them — a freshly booted
 lite stack is 65 MB, and the whole default six is about 1 GB. The spread is the
 work, not the container count: Sail costs 36 MB to start and ~1.9 GB to run
 PySpark through. So starting an engine you do not drive is nearly free, and
-[the per-service measurements](docs/27-running-modes.md#what-it-actually-costs)
+[the per-service measurements](docs/27-running-modes.md#what-it-costs-to-run)
 are what to size against.
 
 ## Getting started on Linux, macOS or Windows
@@ -192,7 +192,7 @@ The workflow is the same on all three — only the prerequisites differ:
 
 ```bash
 make doctor   # toolchain, docker context, memory, ports — run this first
-make up       # 11 services incl. OpenMetadata; `make up PROFILE=` for the lean 6
+make up       # 12 services incl. OpenMetadata + Airflow; `make up PROFILE=` for the lean 6
 make status   # "stack OK" is the real verdict; `make up` only means containers exist
 ```
 
