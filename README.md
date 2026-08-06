@@ -102,9 +102,14 @@ are shipped and CI-verified on Linux, macOS, and Windows.
   — a pure-Go interpreter for Fabric's own activity model, with `Copy` moving
   real bytes, `Lookup` reading real rows, `Script` running real T-SQL, plus the
   control-flow set and per-activity retry/timeout. *Notebook orchestration* —
-  `notebookutils.notebook.run` and `runMultiple`, the latter running a DAG of
-  notebooks in dependency order. *Schedules* — `.../jobs/{jobType}/schedules` on
-  any item. And *Apache Airflow jobs*, below.
+  `notebookutils.notebook.run` returns the child's **exit value** as Fabric
+  documents, and `runMultiple` runs a DAG in dependency order with per-activity
+  `retry`, a per-cell timeout, `validateDAG`, and Fabric's failure contract
+  (`RunMultipleFailedException` carrying partial results). Fabric's reference-run
+  lakehouse rule is enforced, and `concurrency` is honoured when asked for —
+  sequential by default, a divergence recorded in [parity.md](docs/parity.md).
+  *Schedules* — `.../jobs/{jobType}/schedules` on any item. And *Apache Airflow
+  jobs*, below.
 - **Real orchestration (Airflow):** `ApacheAirflowJob` items run on
   **genuine Apache Airflow** — Fabric's own code-first orchestrator *is* upstream
   Airflow, so the sidecar pins the versions Microsoft documents (2.10.5 on

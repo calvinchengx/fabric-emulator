@@ -1,7 +1,14 @@
 # `runMultiple` full-parity plan
 
+> **Status: delivered in v0.18.0**, except Phase 5 (decided against, documented
+> as a divergence) and Phase 6 (skipped). The single 🟡 parity row is now seven
+> rows, five green. Phase 0 ran first and **moved most of the plan** — several
+> assumptions below were wrong, and the sections are corrected in place. What
+> each completion level actually earns is in [What "done" buys,
+> precisely](#what-done-buys-precisely) — it is not "complete parity".
+
 `notebookutils.notebook.runMultiple` ships real DAG semantics — dependency
-order, skip cascade, cycle refusal — but the parity row is 🟡 for reasons this
+order, skip cascade, cycle refusal — but the parity row was 🟡 for reasons this
 document turns into a worked plan. Phases are independent; each lands with its
 own parity row, witness, and CI line.
 
@@ -76,20 +83,35 @@ weaken the engineless witness.
 CI: `notebookutils` job (unit) + `notebook-driven` suite (e2e). No badge-count
 change unless a new suite directory is added.
 
-## Phase 2 — `useRootDefaultLakehouse` (Python + Go)
+## Phase 2 — the reference-run lakehouse rule (Python + Go)
 
-Accepted and ignored today; children attach their own binding. When `True`, a
-child's unqualified `spark.table("x")` must resolve against the **root**
-notebook's lakehouse. Crosses into Go: `driveNotebookRun` reads `run.Binding`
-off the parsed item (`internal/api/notebookdrive.go`); the RunNotebook
-`executionData` must be able to carry a binding override that
-`parseNotebookRun`/`driveNotebookRun` prefer over the item's own.
+**Phase 0 corrected this one outright.** The plan assumed
+`useRootDefaultLakehouse` was an *inheritance* flag — make the child resolve
+against the root's lakehouse. It is not. Fabric's rule is a **refusal**:
 
-Test the asymmetry or the test proves nothing: parent bound to lakehouse A,
-child bound to B, child reads a table only A has. `True` → resolves,
-`False` → fails.
+> Reference run allows child notebooks to run only if they use the same
+> lakehouse as the parent, inherit the parent's lakehouse, or neither defines
+> one. The execution is blocked if the child specifies a different lakehouse
+> than the parent notebook. To bypass this check, set
+> `useRootDefaultLakehouse: True` in the arguments.
 
-CI: Go unit tests + an `e2e/notebook-driven` extension.
+So the work was a guard, not a binding override. The emulator ran a mis-bound
+child happily and returned green, meaning the exact mistake this rule exists to
+catch passed locally and was blocked in production. Silently rebinding the
+child instead — the original plan — would have been the same defect wearing the
+opposite mask: a green run over data the author never pointed at.
+
+Shipped: `referenceRunLakehouseCode` in `internal/api/jobs.go`, fed by
+`parentLakehouseId` / `useRootDefaultLakehouse` in the child's `executionData`,
+which `_execution_data` in the shim now sends. Failure messages gained a
+per-code message, because "The job failed." for a refusal with a specific
+fixable cause is indistinguishable from a cell that threw.
+
+Test the asymmetry or the test proves nothing: a guard that refuses everything
+passes any test that only checks the blocked case. Both directions are
+asserted, in Go and in `e2e/notebookutils`.
+
+CI: Go unit tests + the `notebookutils` e2e.
 
 ## Phase 3a — per-namespace catalog resolution (agent; a latent bug today)
 
@@ -120,11 +142,12 @@ here. Concurrency is worth having as a **race-exposure** feature, not a
 performance one. Cost is small — a concurrent notebook is a dict and a thread
 on the agent, not a second SparkSession.
 
-Decision, stated rather than implied: **default stays sequential** even if
-Fabric's default is ~50, because reproducibility-by-default is the right
-property for a test harness. Explicit `concurrency: N` is honoured with a
-bounded pool per dependency level. The sequential default is recorded in the
-parity row as a chosen, documented divergence.
+Decision, stated rather than implied: **default stays sequential** even though
+Fabric's default is 3× the CPU count, because reproducibility-by-default is the
+right property for a test harness. Explicit `concurrency: N` is honoured with a
+bounded pool per dependency level, and `0` means unlimited as Fabric documents.
+The sequential default is recorded in the parity row as a chosen divergence and
+declared in the differential suite's allowlist.
 
 Tests: rewrite "order within a level is the order given" as the
 `concurrency=1` contract; add a `concurrency=2` test asserting genuinely
@@ -152,9 +175,19 @@ reintroduces exactly the prelude-race class of defect (two children in one
 namespace racing on `__nb_exit__` and the `exit` patch).
 
 Largest change on this list, makes two other phases harder, and the benefit is
-narrow (sibling temp views). **Position: documented permanent divergence** —
-"children run in isolated sessions" in the parity row — implemented only if a
-real consumer demonstrates need.
+narrow (sibling temp views). **Decided: documented divergence** — "children run
+in isolated sessions" is now its own 🟡 parity row and a declared entry in the
+differential suite's allowlist. Implemented only if a real consumer
+demonstrates need.
+
+**Phase 0 narrowed the gap here more than expected.** Fabric runs children on
+"isolated REPL instances **within the existing Spark session**", sharing its
+compute — which is precisely the agent's architecture after Phase 3a: one
+SparkSession, a REPL namespace per Livy session. What still differs is that a
+`runMultiple` child gets its own Livy session, and therefore its own
+`newSession()`, so session-scoped state such as temp views is not shared
+between siblings. That is a smaller and better-understood gap than "we do not
+share the parent's session" implied.
 
 ## Phase 6 — progress table / Graphviz rendering: skip
 
@@ -228,9 +261,19 @@ the parity row rather than rounding up to 🟢.
 | 2 lakehouse inheritance | Python + Go | M | Do |
 | 3b concurrency | Python | M | After 3a |
 | 4 retry / timeouts | Python | S | Do |
-| 5 shared session | Go + agent | L | No — document divergence |
-| 6 progress UI | Python | S | Skip |
-| 7 differential witness | conformance suite | M | **The only phase that proves completeness** |
+| 5 shared session | Go + agent | L | ❌ No — documented divergence |
+| 6 progress UI | Python | S | ❌ Skipped |
+| 7 differential witness | conformance suite | M | ✅ **The only phase that proves completeness** |
+
+### Still open
+
+Two surfaces Phase 0 discovered are recorded but not built, because neither is
+a wrong answer today — both are absences that fail loudly:
+
+- **`@activity('name').exitValue()`** in `args`, Fabric's documented way to
+  pass a dependency's exit value into a dependent. Now that `exitVal` is real,
+  this is a small addition and the natural next increment.
+- **`config` / `displayDAGViaGraphviz`** — accepted and ignored; see Phase 6.
 
 ## Cross-cutting
 
@@ -247,7 +290,11 @@ that exists, CI job named, README orchestration bullet still accurate.
 Code and its tests are separate rows on purpose: an implementation item that
 carries its own proof inside it is how an untested change reads as done.
 
-### Phase 0 — pin the oracle (research, no code)
+**Status: every item below is done except where marked.** Phase 0 answered
+first and moved several phases; Phase 5 was decided rather than built, and
+Phase 6 was skipped. What each completion level actually earns is at the end.
+
+### Phase 0 — pin the oracle ✅
 
 | # | Action item | Output |
 |---|---|---|
@@ -258,16 +305,16 @@ carries its own proof inside it is how an untested change reads as done.
 | 0.5 | Confirm children share the parent's Spark session | Confirms Phase 5's divergence wording |
 | 0.6 | Cite each source here; unconfirmed items marked "documented divergence" | This document |
 
-### Phase 3a — per-namespace catalog (first: live bug)
+### Phase 3a — per-namespace catalog ✅
 
 | # | Action item | Files | Test proving it |
 |---|---|---|---|
 | 3a.1 | Remove process-wide current-database state: qualify table names at registration (or per-statement lock) | `python/spark_agent/agent.py` — `register_tables`, `ns` | 3a.2 |
 | 3a.2 | Concurrency test: two sessions bound to different lakehouses run simultaneously; each sees only its own tables | agent tests | new |
-| 3a.3 | Mutation check: revert the fix, confirm 3a.2 fails | — | one-off, noted in PR |
+| 3a.3 | Mutation check: revert the fix, confirm 3a.2 fails | — | done: the mutation fails 6 tests |
 | 3a.4 | Verify `e2e/livy` + `e2e/notebook-driven` still green | CI | existing suites |
 
-### Phase 1 — wrong answers shipping today
+### Phase 1 — wrong answers shipping today ✅
 
 | # | Action item | Files | Test proving it |
 |---|---|---|---|
@@ -275,25 +322,25 @@ carries its own proof inside it is how an untested change reads as done.
 | 1.2 | Move test stub from `run` to `_run_detail` | `python/tests/test_notebook_run_multiple.py` | all 14 existing tests still pass |
 | 1.3 | `runMultiple` populates `exitVal` from the child's exit value | notebook.py | 1.6 |
 | 1.4 | Fix `timeoutPerCellInSeconds`: scale by the run detail's cell count, not whole-notebook | notebook.py | 1.7 |
-| 1.5 | Apply the 0.1 decision to `run()`'s return value (breaking if exit value) | notebook.py | e2e assertion updated in same PR |
+| 1.5 | `run()` returns the exit value — Phase 0 confirmed it, so this is breaking | notebook.py | e2e assertion updated in the same commit |
 | 1.6 | Tests: exit value reaches `exitVal`; no `exit()` call → `""` not `None` | tests | new ×2 |
 | 1.7 | Test: N-cell notebook with per-cell timeout T gets N×T deadline | tests | new |
-| 1.8 | Test: failed activity's reason lands in the field 0.2 says | tests | new |
+| 1.8 | Test: a failed activity carries Fabric's `exception` key (0.2's answer) | tests | new |
 | 1.9 | E2E: extend `e2e/notebook-driven` — parent `runMultiple` over a child that calls `exit()`; assert the value round-trips through a real engine | `e2e/notebook-driven/` | new witness step |
 | 1.10 | If 1.5 breaks `run()`: update `e2e/notebookutils/notebook.py`, release-notes entry, minor bump | e2e, docs/release-notes | existing witness |
 
-### Phase 2 — `useRootDefaultLakehouse`
+### Phase 2 — the reference-run lakehouse rule ✅
 
 | # | Action item | Files | Test proving it |
 |---|---|---|---|
-| 2.1 | `executionData` carries an optional binding override | `internal/api/notebookdrive.go`, `notebooks.go` | 2.4 |
-| 2.2 | `driveNotebookRun` prefers the override over the item's binding | notebookdrive.go | 2.4 |
-| 2.3 | `runMultiple` passes the root binding when `useRootDefaultLakehouse=True` | notebook.py | 2.5 |
-| 2.4 | Go test: job submitted with override registers the override's tables | Go unit | new |
-| 2.5 | Python test: flag `True` passes root binding; `False` doesn't | tests | new ×2 |
-| 2.6 | E2E asymmetry test: child bound to B reads a table only in A — `True` resolves, `False` fails | e2e/notebook-driven | new, both directions |
+| 2.1 | `executionData` carries `parentLakehouseId` + `useRootDefaultLakehouse` | `internal/api/jobs.go` | 2.4 |
+| 2.2 | `referenceRunLakehouseCode` blocks a mismatched child | jobs.go | 2.4 |
+| 2.3 | The shim sends the parent context; the flag is lifted out of `arguments` | notebook.py | 2.5 |
+| 2.4 | Go tests: blocked / same / inherits / bypassed / not-a-reference-run | Go unit | 7 new |
+| 2.5 | Python tests: parent lakehouse sent, flag lifted, absent unless asked | tests | 4 new |
+| 2.6 | E2E asymmetry: blocked, AND bypassed — a guard refusing everything must fail | e2e/notebookutils | new, both directions |
 
-### Phase 3b — bounded concurrency (after 3a)
+### Phase 3b — bounded concurrency ✅
 
 | # | Action item | Files | Test proving it |
 |---|---|---|---|
@@ -304,7 +351,7 @@ carries its own proof inside it is how an untested change reads as done.
 | 3b.5 | Test: pool never exceeds N in-flight | tests | new |
 | 3b.6 | Parity row: sequential default recorded as chosen divergence | parity.md | witness check |
 
-### Phase 4 — retry / timeouts
+### Phase 4 — retry / timeouts ✅
 
 | # | Action item | Files | Test proving it |
 |---|---|---|---|
@@ -315,14 +362,14 @@ carries its own proof inside it is how an untested change reads as done.
 | 4.5 | Test: dependents wait out a dependency's retries before deciding skip | tests | new |
 | 4.6 | Test: DAG timeout leaves no activity in an undefined state; interval honoured without real sleeps (injectable clock) | tests | new ×2 |
 
-### Phases 5–6 — documentation only
+### Phases 5–6 — decided, not built ✅
 
 | # | Action item | Files |
 |---|---|---|
 | 5.1 | Parity row: "children run in isolated sessions" as permanent documented divergence | parity.md |
 | 6.1 | Skip recorded above — nothing further | — |
 
-### Phase 7 — differential witness
+### Phase 7 — differential witness ✅
 
 | # | Action item | Files | Test proving it |
 |---|---|---|---|
@@ -338,7 +385,7 @@ carries its own proof inside it is how an untested change reads as done.
 CI: `e2e/fabric-target` (emulator leg, every push) + `real-fabric` workflow
 (real leg, weekly, secret-gated).
 
-### Cross-cutting (definition of done, every phase)
+### Cross-cutting ✅
 
 | # | Action item | Verification |
 |---|---|---|

@@ -159,7 +159,12 @@ markers = [
 # nothing: the four invariant checkers could lose every test and the total would
 # barely move. docs/witnesses.json is where their proof is recorded.
 [tool.coverage.run]
-source = ["scripts", "python/spark_agent"]
+# notebookutils is SHIPPED code — the shim a consumer's notebook imports — and
+# it was outside this list entirely, so the module with the most user-facing
+# surface in the repo contributed nothing to the gate. Its low-coverage members
+# (fs, _http) are witnessed by e2e rather than unit tests, the same way the
+# omitted spark_agent files are.
+source = ["scripts", "python/spark_agent", "python/notebookutils"]
 omit = [
     # Run inside the Spark image, witnessed by e2e/notebook-run and e2e/sail.
     "python/spark_agent/agent.py",
