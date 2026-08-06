@@ -365,6 +365,93 @@ def test_the_dag_timeout_stops_later_activities_with_a_reason(ran, monkeypatch):
     assert [c["name"] for c in ran] == ["nbA"]
 
 
+# --- retry -------------------------------------------------------------------
+
+@pytest.fixture
+def flaky(monkeypatch):
+    """`_run_detail` that fails a set number of times, then succeeds.
+
+    `sleep` is stubbed and recorded: the retry interval is a contract worth
+    asserting, and a test that actually waits it out is a test nobody runs.
+    """
+    state = {"fail_times": 1, "calls": 0, "slept": []}
+
+    def fake_detail(path, timeout_seconds=None, per_cell_seconds=None,
+                    arguments=None, workspace=None):
+        state["calls"] += 1
+        if state["calls"] <= state["fail_times"]:
+            raise notebook.NotebookError(f"attempt {state['calls']} failed")
+        return (f"exit-of-{path}", "Completed", 1)
+
+    monkeypatch.setattr(notebook, "_run_detail", fake_detail)
+    monkeypatch.setattr(notebook.time, "sleep", lambda s: state["slept"].append(s))
+    return state
+
+
+def test_a_retried_activity_that_succeeds_reports_completed(flaky):
+    flaky["fail_times"] = 1
+    out = run_ok({"activities": [
+        {"name": "a", "path": "nbA", "retry": 2},
+    ]})
+    assert out["a"]["status"] == "Completed"
+    assert out["a"]["exception"] is None
+    assert flaky["calls"] == 2
+
+
+def test_exhausted_retries_report_the_last_error(flaky):
+    flaky["fail_times"] = 99
+    out = run_failing({"activities": [
+        {"name": "a", "path": "nbA", "retry": 2},
+    ]})
+    # 1 initial attempt + 2 retries, and the LAST failure is what is reported.
+    assert flaky["calls"] == 3
+    assert "attempt 3 failed" in str(out["a"]["exception"])
+
+
+def test_no_retry_key_means_one_attempt(flaky):
+    flaky["fail_times"] = 99
+    run_failing({"activities": [{"name": "a", "path": "nbA"}]})
+    assert flaky["calls"] == 1
+
+
+def test_the_retry_interval_is_waited_between_attempts(flaky):
+    flaky["fail_times"] = 2
+    run_ok({"activities": [
+        {"name": "a", "path": "nbA", "retry": 3, "retryIntervalInSeconds": 10},
+    ]})
+    # Two failures then a success: waited after each failure, not after the
+    # success, and not after a final exhausted attempt.
+    assert flaky["slept"] == [10, 10]
+
+
+def test_no_interval_means_no_wait(flaky):
+    flaky["fail_times"] = 1
+    run_ok({"activities": [{"name": "a", "path": "nbA", "retry": 1}]})
+    assert flaky["slept"] == []
+
+
+def test_the_last_attempt_is_not_followed_by_a_wait(flaky):
+    flaky["fail_times"] = 99
+    run_failing({"activities": [
+        {"name": "a", "path": "nbA", "retry": 2, "retryIntervalInSeconds": 5},
+    ]})
+    # 3 attempts means 2 gaps, never 3 — a trailing wait delays the whole DAG
+    # for an activity that has already given up.
+    assert flaky["slept"] == [5, 5]
+
+
+def test_dependents_wait_out_the_retries_before_deciding_to_skip(flaky):
+    # A dependent must not be skipped on the first failure of a dependency that
+    # is going to succeed on retry.
+    flaky["fail_times"] = 1
+    out = run_ok({"activities": [
+        {"name": "a", "path": "nbA", "retry": 2},
+        {"name": "b", "path": "nbB", "dependencies": ["a"]},
+    ]})
+    assert out["a"]["status"] == "Completed"
+    assert out["b"]["status"] == "Completed"
+
+
 # --- refusals ----------------------------------------------------------------
 
 def test_a_cycle_is_refused_rather_than_hanging(ran):

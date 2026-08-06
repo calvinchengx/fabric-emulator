@@ -323,17 +323,28 @@ def _run_activity(act):
     result in hand.
     """
     name = act["name"]
-    try:
-        exit_value, status, _cells = _run_detail(
-            act.get("path", name),
-            per_cell_seconds=act.get("timeoutPerCellInSeconds", _DEFAULT_TIMEOUT_PER_CELL),
-            arguments=act.get("args"),
-            workspace=act.get("workspace"),
-        )
-        return {"exitVal": exit_value, "exception": None,
-                "status": status, "error": None}, status
-    except NotebookError as e:
-        return _failed_result("Failed", e), "Failed"
+    attempts = max(int(act.get("retry", 0)), 0) + 1
+    interval = max(int(act.get("retryIntervalInSeconds", 0)), 0)
+    last = None
+    for attempt in range(attempts):
+        try:
+            exit_value, status, _cells = _run_detail(
+                act.get("path", name),
+                per_cell_seconds=act.get("timeoutPerCellInSeconds", _DEFAULT_TIMEOUT_PER_CELL),
+                arguments=act.get("args"),
+                workspace=act.get("workspace"),
+            )
+            return {"exitVal": exit_value, "exception": None,
+                    "status": status, "error": None}, status
+        except NotebookError as e:
+            # The LAST error is the one reported. Keeping the first would
+            # describe an attempt that is no longer why this activity failed,
+            # and retries exist precisely because the first one is often
+            # transient.
+            last = e
+            if attempt + 1 < attempts and interval:
+                time.sleep(interval)
+    return _failed_result("Failed", last), "Failed"
 
 
 def _failed_result(status, exception):
