@@ -112,6 +112,19 @@ services:
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+      # Bound the engine's memory. UNCAPPED, SQL Server sizes its buffer pool from
+      # what it can see — 12.8 GB of a 16 GB host — and grew to ~1.8 GB RSS under a
+      # medallion run; on a bigger dev box it takes proportionally more. This caps
+      # what it believes it has, which is the knob that matters:
+      #
+      #   uncapped   physical 12832 MB, committed target 1490 MB, ~1.8 GB busy
+      #   2048       physical  2048 MB, committed target ~1.2 GB, ~0.9 GB busy
+      #
+      # 2048 and not lower because the engine FLOORS it there: MSSQL_MEMORY_LIMIT_MB=1024
+      # still reports 2000 MB, so a smaller number would only mislead the next reader.
+      # Note this does NOT move `max server memory` in sys.configurations, which stays
+      # at its 2147483647 sentinel — checking that setting makes the cap look inert.
+      MSSQL_MEMORY_LIMIT_MB: "2048"
     healthcheck:
       test:
         - CMD
