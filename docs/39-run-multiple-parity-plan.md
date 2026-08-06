@@ -146,6 +146,63 @@ real consumer demonstrates need.
 Interactive-only. A text summary of final statuses is cheap if ever wanted;
 Graphviz is a dependency for zero harness value.
 
+## Phase 7 — differential witness: prove the gap list is complete
+
+Every gap above was found by **inspection** — reading our code and Microsoft's
+docs. That yields "gaps I could find," which is strictly smaller than "gaps
+that exist." Closing all of Phases 1–4 earns the claim *no known divergence*;
+it does not earn *no divergence*. Only running the same DAG against a real
+tenant and diffing the results does that.
+
+**The infrastructure already exists.** `python/fabric-target/conformance/`
+holds one suite that CI runs against the emulator on every push
+(`e2e/fabric-target`) and `.github/workflows/real-fabric.yml` runs against
+**real Microsoft Fabric**, secret-gated, weekly. `FABRIC_TARGET` is the only
+difference between the legs. That workflow's header already states the intent:
+divergences found there are parity-map material — it is the fidelity oracle.
+So this phase adds **test cases to an existing harness**, not a harness.
+
+### What the case asserts
+
+Ids and timings can never match across targets, so the comparison is a
+**normalised projection** of the `runMultiple` results dict:
+
+- the set of activity names present as keys
+- each activity's `status`
+- each activity's `exitVal`
+- the failure/skip reason field's *shape* (populated vs not), never its text
+- observed execution order, for the sequential contract
+
+Anything outside that projection is deliberately not compared.
+
+### Known divergences must be declared, and must still be true
+
+Phases 3b and 5 make choices that *will* diverge on the real leg — sequential
+default, isolated child sessions. A naive differential test would fail forever
+and get muted, which is worse than not having it. So the case carries an
+explicit **known-divergence allowlist**, on the model of `_gated` in
+`docs/witnesses.json`: each entry names the parity row that documents it, and
+an unlisted divergence fails the run.
+
+The allowlist needs its own anti-rot check — an entry that **no longer
+diverges** must also fail, exactly as a declared skip that no longer skips is
+an error. Otherwise the list silently accumulates lies as Fabric changes.
+
+### Relationship to Phase 0
+
+This phase largely **supersedes** Phase 0: an observed round-trip beats a
+doc-reading assumption. Phase 0 still goes first, because Phase 1 needs an
+answer on `run()`'s return type before the real leg's next weekly run, but
+every 0.x row should be revisited against what the differential case actually
+observes, and this document's assumption table rewritten as fact.
+
+### The honest ceiling
+
+Even complete, this proves parity **for the DAGs the case exercises**, on the
+tenant it ran against, at that time. It does not prove parity for all inputs.
+That is the normal limit of differential testing and it is worth stating in
+the parity row rather than rounding up to 🟢.
+
 ## Sequencing
 
 | Phase | Scope | Effort | Verdict |
@@ -158,6 +215,7 @@ Graphviz is a dependency for zero harness value.
 | 4 retry / timeouts | Python | S | Do |
 | 5 shared session | Go + agent | L | No — document divergence |
 | 6 progress UI | Python | S | Skip |
+| 7 differential witness | conformance suite | M | **The only phase that proves completeness** |
 
 ## Cross-cutting
 
@@ -249,6 +307,22 @@ carries its own proof inside it is how an untested change reads as done.
 | 5.1 | Parity row: "children run in isolated sessions" as permanent documented divergence | parity.md |
 | 6.1 | Skip recorded above — nothing further | — |
 
+### Phase 7 — differential witness
+
+| # | Action item | Files | Test proving it |
+|---|---|---|---|
+| 7.1 | Notebook fixture creatable on **both** targets by display name (a small DAG: two roots, one dependent, one failing branch) | `python/fabric-target/conformance/` | 7.3 |
+| 7.2 | Normalising projection helper: keys, statuses, `exitVal`, reason-populated, observed order — never ids or timings | conformance suite | 7.3 |
+| 7.3 | Differential case: run the DAG, project, compare emulator leg vs real leg | conformance suite | new |
+| 7.4 | Known-divergence allowlist; each entry names the parity row documenting it; an unlisted divergence fails | conformance suite | 7.5 |
+| 7.5 | Anti-rot check: an allowlist entry that no longer diverges fails, as a declared skip that no longer skips does | conformance suite | new |
+| 7.6 | Register the real leg in `docs/witnesses.json` `_gated` with its secret requirement and weekly cadence | witnesses.json | `check_witnesses.py --strict` |
+| 7.7 | Rewrite this document's Phase 0 assumption table as observed fact from the first real-leg run | doc 39 | — |
+| 7.8 | Parity row states the ceiling: proven for the DAGs exercised, on that tenant, at that time | parity.md | witness check |
+
+CI: `e2e/fabric-target` (emulator leg, every push) + `real-fabric` workflow
+(real leg, weekly, secret-gated).
+
 ### Cross-cutting (definition of done, every phase)
 
 | # | Action item | Verification |
@@ -261,6 +335,22 @@ carries its own proof inside it is how an untested change reads as done.
 | X.6 | This document updated as phases land (mark done, record the 0.x answers) | doc 39 |
 | X.7 | Release-notes entries for behaviour changes (1.5 especially) | docs/release-notes |
 
-**Totals:** ~45 items — 6 research, 13 implementation, 19 new/rewritten tests,
-7 doc/CI. The test-heavy ratio is deliberate: 1.6–1.8 and 3a.2 are the rows
-that make the parity claims mean anything.
+**Totals:** ~53 items — 6 research, 16 implementation, 22 new/rewritten tests,
+9 doc/CI. The test-heavy ratio is deliberate: 1.6–1.8 and 3a.2 are the rows
+that make the parity claims mean anything, and all of Phase 7 is the row that
+makes the *list* mean anything.
+
+### What "done" buys, precisely
+
+| Completed | Claim earned |
+|---|---|
+| Phases 1–4 | No **known** divergence in the pursued surface |
+| + Phases 5, 6 declined in writing | Three divergences chosen and documented, not overlooked |
+| + Phase 7 | No divergence **observed** against a real tenant, for the DAGs exercised |
+
+None of those is unqualified "complete parity," and the parity rows should
+never claim it. `runMultiple` is an orchestrator: its fidelity is also bounded
+by the child notebook runs underneath it, which sit on Sail or JVM Spark
+rather than Fabric's Spark runtime — a far larger surface, tracked in
+[37-runtime-fidelity-gaps.md](37-runtime-fidelity-gaps.md) and
+[38-framework-conformance.md](38-framework-conformance.md).
