@@ -56,13 +56,24 @@ export default defineConfig(({ mode }) => ({
       ],
       reporter: ['text', 'json-summary'],
       thresholds: {
-        // Ratcheted deliberately, not aspirationally: these are the numbers the
-        // suite actually holds, so a regression fails the build the day it
-        // lands. Raise them as gaps close; never lower them to make CI pass.
-        statements: 86,
-        branches: 70,
-        functions: 82,
-        lines: 87,
+        // Every statement, function and line. Exactly two statements carry a
+        // `/* v8 ignore next */`, both defensive guards no input can reach
+        // (a second `connect()`, and `edgePath` on a link whose node is gone),
+        // each with the reason written beside it.
+        statements: 100,
+        functions: 100,
+        lines: 100,
+        // BRANCHES CANNOT REACH 100, and the reason is the compiler rather than
+        // the tests. Svelte wraps every `{interpolation}` in a nullish guard, so
+        // `{j.status.toLowerCase()}` compiles to a two-armed branch whose second
+        // arm needs `status` to be nullish — which would have thrown inside
+        // `toLowerCase()` first. 38 of the 508 arms are that shape; all of them
+        // sit on markup lines with no source-level conditional at all.
+        //
+        // Set to the achieved figure, so covering a real arm can only raise it
+        // and losing one fails the build. `vitest run --coverage` prints the
+        // remaining lines if this ever needs re-deriving.
+        branches: 92,
       },
     },
   },
