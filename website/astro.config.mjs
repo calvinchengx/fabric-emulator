@@ -104,6 +104,7 @@ export default defineConfig({
             { slug: '36-capacity-job-queueing' },
             { slug: '37-runtime-fidelity-gaps' },
             { slug: '38-framework-conformance' },
+            { slug: '40-rest-connector-plan' },
             { slug: 'engine-matrix' },
           ],
         },
