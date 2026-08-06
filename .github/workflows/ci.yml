@@ -202,7 +202,7 @@ jobs:
           # Read from the machine-readable summary rather than scraped stdout:
           # the table's column layout is not a contract.
           pnpm install --frozen-lockfile
-          pnpm --filter fabric-emulator-portal test -- --coverage
+          pnpm --filter fabric-emulator-portal test:coverage
           portal_pct=$(node -e "process.stdout.write(String(require('./portal/coverage/coverage-summary.json').total.statements.pct))")
           echo "go=${go_pct} python=${py_pct:-unset} portal=${portal_pct:-unset}"
           uv run --frozen --group test python scripts/coverage_badges.py \
@@ -383,10 +383,11 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # `--coverage` is what arms the thresholds in portal/vite.config.ts: 100%
-      # statements, functions and lines. Without the flag the suite passes and
-      # the gate never runs.
-      - run: pnpm --filter fabric-emulator-portal test -- --coverage
+      # A named script, NOT `test -- --coverage`: pnpm forwards the `--`
+      # literally, so vitest reads `--coverage` as a positional test filter and
+      # the thresholds never arm. The suite still passes, which is the worst
+      # kind of green — it says the gate ran when nothing measured anything.
+      - run: pnpm --filter fabric-emulator-portal test:coverage
       - run: pnpm --filter fabric-emulator-portal build
       # portal/dist is committed (go:embed bakes it into the binary so `go build`
       # / `go install @latest` need no Node). Fail if the committed copy has
