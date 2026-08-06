@@ -65,11 +65,25 @@ type Config struct {
 	// terminal pane proxied through the portal's origin. Empty = the feature
 	// does not exist: no route is mounted and the pane never appears.
 	//
-	// THE PORTAL IS OTHERWISE UNAUTHENTICATED, and deliberately so — it is 11
-	// GET routes over local state (internal/server/portal.go). A terminal is
-	// not another read; it is arbitrary execution. So the proxy route carries
+	// THE PORTAL IS OTHERWISE UNAUTHENTICATED, and deliberately so. A terminal
+	// is not another read; it is arbitrary execution. So the proxy route carries
 	// its own bearer (TerminalToken) rather than inheriting the portal's
 	// premise, and the other routes are untouched.
+	//
+	// THAT PREMISE IS NARROWER THAN IT LOOKS. The portal is 11 GETs plus
+	// `POST /_emulator/portal/models/{id}/query`, which runs caller-supplied DAX
+	// through the same evaluator as executeQueries (internal/server/portal.go).
+	// Three consequences the read-only GETs did not carry:
+	//
+	//  1. Anyone who reaches the port can evaluate arbitrary DAX against any
+	//     import model — caller input into an evaluator, not a fixed route.
+	//  2. It is not only a read: publishQuery fires, so the request puts a
+	//     visible event in every other viewer's flow log.
+	//  3. Arbitrary DAX is unbounded compute. Cheap to limit now, awkward to
+	//     retrofit if the portal is ever reachable beyond localhost.
+	//
+	// Fine for a local emulator, and not an argument against the runner. Written
+	// down so the next feature here is weighed rather than waved through.
 	TerminalURL string
 
 	// TerminalToken authorises the terminal proxy. Generated at startup when
