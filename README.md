@@ -172,9 +172,19 @@ identities), so it could equally point at a real Entra tenant.
 
 Profiles pull nothing unless asked for — but **`make up` asks for `governance`
 on your behalf**, so it starts 11 services rather than 6. `make up PROFILE=`
-gives the lean stack. Memory: 2 GB for lite, 8 GB for the default six, 12 GB with
-governance, 16 GB for everything at once —
-[running modes](docs/27-running-modes.md) has the per-service measurements.
+gives the lean stack.
+
+**How much machine you need.** Give the container runtime **8 GB** for the
+default six, **12 GB** with governance, **2 GB** for the lite pair, **16 GB** for
+everything at once. Four cores is ample; six to eight if you run PySpark or
+warehouse queries.
+
+Those numbers are for *working*, and idle is nowhere near them — a freshly booted
+lite stack is 65 MB, and the whole default six is about 1 GB. The spread is the
+work, not the container count: Sail costs 36 MB to start and ~1.9 GB to run
+PySpark through. So starting an engine you do not drive is nearly free, and
+[the per-service measurements](docs/27-running-modes.md#what-it-actually-costs)
+are what to size against.
 
 ## Getting started on Linux, macOS or Windows
 
