@@ -91,3 +91,6 @@ __pycache__/
 
 # Vitest coverage output (the badge step reads coverage-summary.json in place).
 portal/coverage/
+
+# Intermediate frames and video from the flow.gif recording (docs/demo/flow.py).
+docs/demo/.capture/
