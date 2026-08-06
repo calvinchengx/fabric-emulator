@@ -48,4 +48,21 @@ describe('Capacities', () => {
     render(Capacities);
     await waitFor(() => expect(screen.getByText('db gone')).toBeInTheDocument());
   });
+
+
+  it('marks a capacity that is not Active differently', async () => {
+    // The state chip has two faces and only one was ever rendered. A paused
+    // capacity reading as Active is the kind of thing a screenshot hides.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ value: [{
+        id: 'cap-2', displayName: 'paused', sku: 'F2', region: 'westus',
+        state: 'Paused', workspaces: [],
+      }] }),
+    });
+    render(Capacities);
+    const chip = await screen.findByText('Paused');
+    expect(chip).toHaveClass('notstarted');
+    expect(chip).not.toHaveClass('succeeded');
+  });
 });

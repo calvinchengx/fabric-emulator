@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import Operations from './Operations.svelte';
 
@@ -35,5 +35,41 @@ describe('Operations', () => {
     });
     render(Operations);
     await waitFor(() => expect(screen.getByText(/No operations yet/)).toBeInTheDocument());
+  });
+
+
+  it('surfaces load errors', async () => {
+    // The only view whose failure path was untested. Without it a portal
+    // pointed at a stopped emulator shows "no operations yet", which reads as
+    // a working tenant with nothing in it.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false, status: 500,
+      json: () => Promise.resolve({ error: { message: 'operations unavailable' } }),
+    });
+    render(Operations);
+    await waitFor(() =>
+      expect(screen.getByText('operations unavailable')).toBeInTheDocument());
+  });
+
+  it('dashes an operation that carries no result reference', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ value: [{
+        id: 'op-1', kind: 'CreateWorkspace', status: 'Running', createdAt: 1700000000,
+      }] }),
+    });
+    render(Operations);
+    await screen.findByText('CreateWorkspace');
+    expect(screen.getByText('—')).toBeInTheDocument();
+  });
+
+  it('refetches when Refresh is clicked', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200, json: () => Promise.resolve({ value: [] }),
+    });
+    render(Operations);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });

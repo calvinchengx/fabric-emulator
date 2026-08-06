@@ -65,4 +65,81 @@ describe('Workspaces', () => {
     render(Workspaces);
     await waitFor(() => expect(screen.getByText('db gone')).toBeInTheDocument());
   });
+
+
+  it('collapses the detail panel when the same row is clicked again', async () => {
+    // `toggle` has an early-return arm that closes what is open. Untested, a
+    // second click would re-fetch and the panel would never close.
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) =>
+      String(url).match(/workspaces\/.+/)
+        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(detail) })
+        : Promise.resolve({ ok: true, status: 200,
+            json: () => Promise.resolve({ value: [ws] }) }));
+    render(Workspaces);
+    const row = await screen.findByText('analytics');
+    await fireEvent.click(row);
+    await waitFor(() => expect(screen.getByText('Role assignments')).toBeInTheDocument());
+    await fireEvent.click(row);
+    await waitFor(() =>
+      expect(screen.queryByText('Role assignments')).not.toBeInTheDocument());
+  });
+
+  it('surfaces a failure to load one workspace detail', async () => {
+    // A different request from the listing, and its own failure path: without
+    // this the panel simply never opens and nothing says why.
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) =>
+      String(url).match(/workspaces\/.+/)
+        ? Promise.resolve({ ok: false, status: 500,
+            json: () => Promise.resolve({ error: { message: 'detail exploded' } }) })
+        : Promise.resolve({ ok: true, status: 200,
+            json: () => Promise.resolve({ value: [{
+              id: 'ws-1', displayName: 'analytics', capacityId: 'cap-1',
+              itemCount: 0, roleCount: 0 }] }) }));
+    render(Workspaces);
+    await fireEvent.click(await screen.findByText('analytics'));
+    await waitFor(() => expect(screen.getByText('detail exploded')).toBeInTheDocument());
+  });
+
+  it('dashes what a workspace does not have', async () => {
+    // capacityId, git and workspaceIdentity are all optional. Each has a dash
+    // arm that had never rendered, and `undefined` in a cell looks like data.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ value: [{
+        id: 'ws-bare', displayName: 'bare', itemCount: 0, roleCount: 0 }] }),
+    });
+    render(Workspaces);
+    await screen.findByText('bare');
+    expect(screen.getAllByText('—')).toHaveLength(3);
+  });
+
+  it('reports an empty workspace and an unconnected repo as facts', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) =>
+      String(url).match(/workspaces\/.+/)
+        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+            id: 'ws-1', displayName: 'analytics', items: [], roleAssignments: [] }) })
+        : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+            value: [{ id: 'ws-1', displayName: 'analytics', itemCount: 0, roleCount: 0 }] }) }));
+    render(Workspaces);
+    await fireEvent.click(await screen.findByText('analytics'));
+    await waitFor(() => expect(screen.getByText('not connected')).toBeInTheDocument());
+    expect(screen.getByText('none')).toBeInTheDocument();
+  });
+
+  it('shows a git-connected workspace, defaulting the directory to the root', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) =>
+      String(url).match(/workspaces\/.+/)
+        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+            id: 'ws-1', displayName: 'analytics', items: [], roleAssignments: [],
+            git: { gitProviderType: 'GitHub', organizationName: 'contoso',
+                   repositoryName: 'fabric', branchName: 'main' } }) })
+        : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+            value: [{ id: 'ws-1', displayName: 'analytics', itemCount: 0, roleCount: 0,
+                      git: { branchName: 'main' } }] }) }));
+    render(Workspaces);
+    await fireEvent.click(await screen.findByText('analytics'));
+    // No directoryName on the wire means the repo root, and "(undefined)" is
+    // what renders if nothing defaults it.
+    await waitFor(() => expect(screen.getByText('(/)')).toBeInTheDocument());
+  });
 });
