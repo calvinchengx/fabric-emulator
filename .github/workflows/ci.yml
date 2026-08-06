@@ -201,9 +201,16 @@ jobs:
                    | sed -n 's/.*Total coverage: \([0-9.]*\)%.*/\1/p' | tail -1)
           # Read from the machine-readable summary rather than scraped stdout:
           # the table's column layout is not a contract.
+          #
+          # `|| true`, and the guard below, because this step PUBLISHES a number —
+          # it is not a second gate. The `portal` job already runs the same suite
+          # with the same thresholds on every push and PR. Without this, a portal
+          # failure reds the Go `test` job too, and only on main (this step is
+          # main-only), so it lands after merge instead of on the PR. That is
+          # exactly how it went wrong once.
           pnpm install --frozen-lockfile
-          pnpm --filter fabric-emulator-portal test:coverage
-          portal_pct=$(node -e "process.stdout.write(String(require('./portal/coverage/coverage-summary.json').total.statements.pct))")
+          pnpm --filter fabric-emulator-portal test:coverage || true
+          portal_pct=$(node -e "process.stdout.write(String(require('./portal/coverage/coverage-summary.json').total.statements.pct))" 2>/dev/null || true)
           echo "go=${go_pct} python=${py_pct:-unset} portal=${portal_pct:-unset}"
           uv run --frozen --group test python scripts/coverage_badges.py \
             --out badges --go "$go_pct" ${py_pct:+--python "$py_pct"} \
