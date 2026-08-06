@@ -31,7 +31,13 @@ import Default from '@astrojs/starlight/components/Head.astro';
     mermaid.initialize({
       startOnLoad: false,
       theme: themeFor(),
-      flowchart: { htmlLabels: false, useMaxWidth: true },
+      // useMaxWidth: false — the diagram renders at its NATURAL size and the
+      // container scrolls, instead of being scaled down to the prose column.
+      // The architecture diagram is 2620px wide against a 45rem (720px)
+      // content width: scaled to fit, its 16px labels land at ~4px and the
+      // whole thing is unreadable. A reader can scroll a wide diagram; nobody
+      // can zoom a raster-thin one.
+      flowchart: { htmlLabels: false, useMaxWidth: false },
     });
     mermaid.run({ nodes });
   }
@@ -44,3 +50,19 @@ import Default from '@astrojs/starlight/components/Head.astro';
     if (muts.some((m) => m.attributeName === 'data-theme')) render();
   }).observe(document.documentElement, { attributes: true });
 </script>
+
+<style is:global>
+  /* The scroll container that makes useMaxWidth:false safe. Without it a
+     natural-size diagram simply overflows and the PAGE scrolls sideways. */
+  pre.mermaid {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+  /* Defensive, not load-bearing: Starlight ships no `svg { max-width }` reset
+     today (checked — other svgs on the page compute `none`), and mermaid's own
+     inline style would outrank this anyway. It is here so that adding a global
+     image reset later cannot silently re-squash every diagram. */
+  pre.mermaid svg {
+    max-width: none;
+  }
+</style>

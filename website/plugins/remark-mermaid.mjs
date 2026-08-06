@@ -14,7 +14,10 @@ export function remarkMermaid() {
       if (node.lang !== 'mermaid' || !parent || index === null) return;
       parent.children[index] = {
         type: 'html',
-        value: `<pre class="mermaid" role="img" aria-label="diagram">${escapeHtml(node.value)}</pre>`,
+        // tabindex="0": the diagram now scrolls horizontally (see the
+        // pre.mermaid rule in src/components/Head.astro), and a scrollable
+        // region a keyboard cannot reach is unreachable content.
+        value: `<pre class="mermaid" role="img" aria-label="diagram" tabindex="0">${escapeHtml(node.value)}</pre>`,
       };
     });
   };

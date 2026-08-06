@@ -24,23 +24,33 @@ When re-auditing, diff the grounding files against this SHA
 docs/cicd/git-integration/git-automation.md docs/security/workspace-identity.md
 docs/security/permission-model.md`) and bump the pin.
 
-## The two-system model
+## The three-system model
 
-A Fabric environment is two independent products with two protocols:
+A Fabric environment is three independent Azure products with three protocols.
+Each stays a separate emulator, reached only over HTTP, because that is what the
+real boundary is — and it is what lets any one of them be swapped for the live
+service unchanged (see [21-real-fabric-toggle.md](21-real-fabric-toggle.md)):
 
 1. **Entra ID** — issues tokens (service-principal client credentials for the
    Fabric audience; **workspace identities** = auto-managed app registrations +
    service principals). Emulated by **entra-emulator**.
-2. **The Fabric control plane** — `https://api.fabric.microsoft.com/v1/…`:
+2. **Azure Key Vault** — the secrets data plane. Fabric never holds the secret
+   behind an **Azure Key Vault reference** connection: it stores a pointer and
+   resolves it at use with a vault-audience token. Same for
+   `notebookutils.credentials.getSecret()` inside a notebook. Emulated by
+   **azure-keyvault-emulator**; fabric-emulator is a *client* of it
+   ([internal/akv](../internal/akv/)).
+3. **The Fabric control plane** — `https://api.fabric.microsoft.com/v1/…`:
    workspace RBAC, item CRUD, item **definitions** (the CI/CD source format),
    git integration, deployment pipelines, long-running operations, and the
    workspace-identity *lifecycle orchestration*. Plus **OneLake**
    (`https://onelake.dfs.fabric.microsoft.com`), an ADLS-Gen2-shaped data plane.
    Emulated by **fabric-emulator**.
 
-Keeping these as two composable emulators preserves single responsibility:
-**fabric-emulator validates bearer tokens against entra-emulator's JWKS, exactly
-as real Fabric validates against Entra.**
+Keeping these as three composable emulators preserves single responsibility, and
+the token flow is one-way: **entra ISSUES; fabric and keyvault only VALIDATE**,
+each against entra-emulator's JWKS, exactly as the real products validate
+against Entra. Neither validator can mint a token.
 
 ```mermaid
 flowchart LR
@@ -57,6 +67,10 @@ flowchart LR
         JWKS["/{tenant}/discovery/v2.0/keys"]
         Forge["token forge / MSI endpoint"]
     end
+    subgraph kv["azure-keyvault-emulator"]
+        direction TB
+        Secrets["/secrets/{name} — data plane 7.4"]
+    end
     subgraph engines["opt-in engine sidecars"]
         direction TB
         Spark["Spark agent (Livy)"]
@@ -67,9 +81,17 @@ flowchart LR
     Client -->|"FedAuth (aud = database.windows.net)"| WH
     API -->|"verify (iss + aud + sig)"| JWKS
     Ident -->|"mint SP / identity tokens"| Forge
+    API -->|"resolve AKV reference (aud = vault)"| Secrets
+    Secrets -->|"verify (iss + aud + sig)"| JWKS
     API -.->|"native execution"| Spark
     WH -.->|"session splice"| SQL
 ```
+
+Every core service in [`docker-compose.yml`](../docker-compose.yml) appears in
+that diagram, and `scripts/check_arch_services.py` fails the build if one stops
+appearing. The check exists because this document described a *two*-system model
+for as long as Key Vault had been a default service — the shape was a decision
+and stayed true, but the **cast of services is a list**, and lists drift.
 
 ## Design principle: mirror entra-emulator
 
@@ -158,10 +180,19 @@ engine can be attached, the surface returns an honest **501** rather than faking
 a result. The principle is *never fake compute*, not *no compute*. See
 [14-real-compute.md](14-real-compute.md).
 
-## Decoupling from entra-emulator
+## Decoupling from the sibling emulators
 
 - Depends on entra-emulator **only over HTTP** (JWKS + issuer; plus a token-mint
   call for workspace identities — the shipped identity handshake). No shared process.
+- Depends on azure-keyvault-emulator **only over HTTP** too, and only as an
+  outbound client: `internal/akv` GETs `{vaultURI}/secrets/{name}` with a
+  vault-audience bearer when an `AzureKeyVaultReference` connection is used. The
+  secret value is returned to the caller and **never persisted** in the
+  emulator's database — only the `{vaultUri, secretName}` pointer is — which is
+  the property that makes credential-by-reference worth having.
+- There is no global vault setting to point elsewhere: **each connection carries
+  its own `vaultUri`**, as in real Fabric, so a connection naming a real vault
+  works alongside one naming the emulator with no reconfiguration.
 - For Go integration tests, it *may* import entra-emulator's public `emulator`
   package to run both in one process with no network — an ergonomics option, not
   a coupling requirement.
