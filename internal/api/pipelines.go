@@ -248,11 +248,16 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// fails loudly rather than pretending.
 		return nil, fmt.Errorf("activity %q: Dataflow Gen2 (Power Query M) is not implemented in the emulator", act.Name)
 
+	case "WebActivity", "Web", "WebHook":
+		return e.webActivity(act, tp, resolve)
+
 	default:
-		// Other leaf types (Web to arbitrary URLs, external connectors) can't be
-		// executed hermetically — firing real network calls breaks the
-		// offline/deterministic guarantee. The emulator records that the
-		// orchestration reached the leaf; the effect does not run.
+		// External connectors only: a Salesforce or ServiceNow leaf needs a
+		// vendor SDK and credentials the emulator has neither of, so it records
+		// that the orchestration reached the leaf without claiming the effect
+		// ran. Web used to be swept in here too, which meant a pipeline
+		// branching on a response got a fabricated success — see
+		// webactivity.go.
 		return map[string]any{"status": "Succeeded", "activityType": act.Type}, nil
 	}
 }

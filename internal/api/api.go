@@ -39,6 +39,15 @@ type API struct {
 	// Airflow runs ApacheAirflowJob DAGs on an attached upstream Airflow
 	// instance. Nil preserves an honest AirflowNotConfigured failure.
 	Airflow AirflowRuntime
+	// WebActivityStub records a Web activity as Succeeded WITHOUT calling
+	// anything — what the emulator used to do unconditionally. Off by default,
+	// because a fabricated success is the dangerous version: a pipeline
+	// branching on the response goes green here and behaves differently in
+	// Fabric. On for a CI leg that must not reach the network.
+	WebActivityStub bool
+	// WebHTTP is the client Web activities use. Nil uses a shared default;
+	// tests substitute one.
+	WebHTTP *http.Client
 	// MLflowURL is an attached real MLflow tracking/model-registry server. The
 	// API authenticates and workspace-namespaces traffic before proxying it.
 	MLflowURL  *url.URL
