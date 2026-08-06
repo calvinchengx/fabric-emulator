@@ -58,6 +58,14 @@ governance = [
     # meaning a human wrote rather than only the shape the emulator can infer.
     "pyyaml>=6,<7",
 ]
+# docs/demo/flow.py: the REST driver plus a real Delta writer, which is all the
+# flow.gif recording needs — the medallion it films is moved by the emulator's
+# own Copy executor rather than by an engine.
+demo = [
+    "deltalake>=0.23,<2",
+    "pyarrow>=18,<24",
+    "requests>=2.32,<3",
+]
 great-expectations = [
     "great-expectations>=0.18,<1",
     "pandas>=2.2,<4",

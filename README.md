@@ -21,14 +21,20 @@ plane (workspaces, items, RBAC, git, LROs) plus a real **OneLake** ADLS/Blob
 data plane, a **T-SQL warehouse** over TDS, native **Livy** sessions on a real
 Spark engine, **Data Factory** pipelines, and **KQL** eventhouses.
 
-![a three-source medallion building live in the Data flow view — landing files to bronze, silver, a warehouse star and a semantic model — then the catalog it produced in OpenMetadata](docs/demo/flow.gif)
+![the Data flow view drawing a medallion as it is built: bronze_orders to silver_orders to a warehouse gold table, with the event log filling in beside the graph](docs/demo/flow.gif)
 
-That is a real pipeline, running locally with no Azure subscription. Three
-source systems land, get conformed, get resolved into one customer identity,
-and reach a Warehouse star that Power BI queries — while the portal draws the
-lineage as it happens. Then the same run publishes itself to **OpenMetadata**:
-domain, business glossary, metrics, data contracts and lineage, all derived
-from what the pipeline already knows rather than typed in twice.
+Nothing in that recording is mocked: a real Delta write, two Copy activities
+run by the emulator's own executor, and the lineage it recorded for them. It is
+[generated from this repository](docs/demo/README.md#regenerate-flowgif) by two
+containers and one script, so it cannot quietly go stale.
+
+The same view scales to a real pipeline, locally and with no Azure
+subscription. Three source systems land, get conformed, get resolved into one
+customer identity, and reach a Warehouse star that Power BI queries — while the
+portal draws the lineage as it happens. Then the same run publishes itself to
+**OpenMetadata**: domain, business glossary, metrics, data contracts and
+lineage, all derived from what the pipeline already knows rather than typed in
+twice.
 
 Every lineage edge records **how** it is known, so you can tell what the
 emulator watched from what a step merely claimed.

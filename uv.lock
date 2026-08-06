@@ -1309,6 +1309,11 @@ delta-rs = [
     { name = "deltalake" },
     { name = "pyarrow" },
 ]
+demo = [
+    { name = "deltalake" },
+    { name = "pyarrow" },
+    { name = "requests" },
+]
 duckdb = [
     { name = "deltalake" },
     { name = "duckdb" },
@@ -1396,6 +1401,11 @@ dbt-fabricspark = [{ name = "dbt-fabricspark", specifier = ">=1.9" }]
 delta-rs = [
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "pyarrow", specifier = ">=18,<24" },
+]
+demo = [
+    { name = "deltalake", specifier = ">=0.23,<2" },
+    { name = "pyarrow", specifier = ">=18,<24" },
+    { name = "requests", specifier = ">=2.32,<3" },
 ]
 duckdb = [
     { name = "deltalake", specifier = ">=0.23,<2" },
