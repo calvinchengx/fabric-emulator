@@ -9,7 +9,8 @@
     "build": "vite build",
     "test": "vitest run",
     "smoke": "playwright test",
-    "check": "svelte-check --tsconfig ./tsconfig.json --threshold error"
+    "check": "svelte-check --tsconfig ./tsconfig.json --threshold error",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "@internationalized/date": "^3.12.3",
