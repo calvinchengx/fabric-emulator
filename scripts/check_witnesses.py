@@ -123,7 +123,17 @@ def green_claims():
 
 
 def ci_job_ids() -> set:
-    return set(re.findall(r"^  ([a-z0-9-]+):$", CI.read_text(encoding="utf-8"), re.M))
+    """Job ids in ci.yml, plus every workflow file's own name.
+
+    Most witnesses name a job in the main pipeline. A few name a whole
+    workflow, because that is the unit that exists: `real-fabric` is one
+    secret-gated workflow with a single `conformance` job, and crediting
+    `ci:conformance` would be ambiguous with any other workflow that names a
+    job the same. Both spellings resolve; neither invents one.
+    """
+    ids = set(re.findall(r"^  ([a-z0-9-]+):$", CI.read_text(encoding="utf-8"), re.M))
+    ids.update(p.stem for p in CI.parent.glob("*.yml"))
+    return ids
 
 
 # Function bodies are taken from the `func` header to the next line that starts
@@ -239,6 +249,15 @@ def main() -> int:
                 dangling.append(f"{key} → {witness} (no such Python test)")
             if kind == "go" and name in gated_tests:
                 gated_used[witness] = gated_tests[name]
+            elif witness in declared_gates:
+                # A gate this script cannot DETECT, only accept: a CI job that
+                # skips on absent secrets is invisible to the Go body scan, and
+                # `ci:real-fabric` — the differential leg against a real tenant —
+                # is exactly that. Counting it as unconditional evidence would
+                # let a claim rest entirely on a job that never runs on a fork.
+                # The declaration is the author's assertion; the stale check
+                # below cannot police these, which is the price of accepting them.
+                gated_used[witness] = "a declared gate this checker cannot detect"
             else:
                 # A boundary is not evidence that runs, so it does not count
                 # towards a claim having ungated support.
