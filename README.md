@@ -6,10 +6,11 @@
 
 [![go coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fcalvinchengx.github.io%2Ffabric-emulator%2Fcoverage-go.json)](https://calvinchengx.github.io/fabric-emulator/10-testing/)
 [![python coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fcalvinchengx.github.io%2Ffabric-emulator%2Fcoverage-python.json)](https://calvinchengx.github.io/fabric-emulator/10-testing/)
+[![portal coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fcalvinchengx.github.io%2Ffabric-emulator%2Fcoverage-portal.json)](https://calvinchengx.github.io/fabric-emulator/10-testing/)
 [![parity claims witnessed](https://img.shields.io/endpoint?url=https%3A%2F%2Fcalvinchengx.github.io%2Ffabric-emulator%2Fwitnesses.json)](https://calvinchengx.github.io/fabric-emulator/parity/)
 [![e2e suites](https://img.shields.io/endpoint?url=https%3A%2F%2Fcalvinchengx.github.io%2Ffabric-emulator%2Fe2e-suites.json)](https://calvinchengx.github.io/fabric-emulator/12-e2e-matrix/)
 
-> The two coverage badges measure the **unit** suites only. The work that
+> The three coverage badges measure the **unit** suites only. The work that
 > catches consumer-facing defects is the e2e fleet, which no statement counter
 > scores — so *parity claims witnessed* is published beside them: every claim of
 > support names a test that exists and ran. A percentage cannot say that.
