@@ -38,6 +38,35 @@ const (
 	KindDropped  = "dropped"  // a subscriber fell behind; N events were lost
 )
 
+// AllKinds is every kind the bus can carry, and it is the CONTRACT the SSE
+// endpoint and its clients are generated from.
+//
+// A client cannot discover kinds at runtime: the stream names each frame
+// (`event: <kind>`), and EventSource has no wildcard listener, so a kind absent
+// from a client's subscription list is invisible — no error, no dropped count,
+// nothing. The portal carried that list as a literal and drifting from this one
+// would have silently lost a whole kind.
+//
+// scripts/gen_event_kinds.py generates portal/src/eventKinds.js from this slice,
+// and `make check` fails when the committed file does not match. Because
+// portal/dist is embedded in the binary (portal/embed.go), the client and server
+// always ship together — so generating is strictly better than serving a
+// manifest the client fetches: drift becomes impossible rather than detected.
+var AllKinds = []string{
+	KindFile, KindTable, KindJob, KindActivity, KindLineage, KindQuery, KindDropped,
+}
+
+// ViewKinds are the kinds a UI offers as filters: the things that happened to
+// the PLATFORM.
+//
+// KindDropped is deliberately not among them. It reports on the SUBSCRIBER —
+// this browser fell behind and lost N events — so offering it as a filter would
+// invite someone to switch off the one signal that says the log is incomplete.
+// It is still subscribed to, and still counted; it is just not a filter.
+var ViewKinds = []string{
+	KindFile, KindTable, KindJob, KindActivity, KindLineage, KindQuery,
+}
+
 // Event is one thing that happened, in the flat envelope the SSE endpoint
 // serialises directly. Fields are per-kind and omitted when they do not apply.
 type Event struct {
