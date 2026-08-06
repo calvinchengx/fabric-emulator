@@ -79,7 +79,7 @@ mistake here would be expensive, so it is stated first.
 
 ### 2. Event kinds
 
-One envelope, four kinds. `seq` is a monotonic per-process counter so a client
+One envelope, seven kinds. `seq` is a monotonic per-process counter so a client
 can detect gaps; `at` is **emulator** time (the controllable clock), because
 every other timestamp in the system is.
 
@@ -95,6 +95,32 @@ every other timestamp in the system is.
 | `job` | a job instance starts or reaches a terminal state | `workspaceId`, `itemId`, `jobId`, `jobType`, `invokeType`, `status`, `failureReason` |
 | `lineage` | a source→target movement is recorded | `workspaceId`, `itemId`, `table` (the target path), `producer` |
 | `query` | a semantic model is read | `workspaceId`, `itemId`, `table` (the model), `activityType` (the caller) |
+| `dropped` | a subscriber fell behind | `dropped` (how many it missed) — see the ring buffer below |
+
+`dropped` is the odd one out and deliberately so: it reports on the **subscriber**,
+not on the platform. `store.ViewKinds` is the other six, and a UI offers those as
+filters — switching off the one signal that says the log is incomplete is not a
+filter worth having.
+
+**The client's list is generated, not written.** The stream names every frame
+(`event: <kind>`) and `EventSource` has no wildcard listener, so a kind missing
+from a client's subscription list is invisible: no error, no dropped count,
+nothing. `scripts/gen_event_kinds.py` therefore generates
+[`portal/src/eventKinds.ts`](../portal/src/eventKinds.ts) from `store.AllKinds`,
+`store.ViewKinds` and the `store.Event` struct — the kinds, their one-line
+descriptions, and the wire shape as an interface. `make check` fails when the
+committed file and the Go disagree, and because `portal/dist` is embedded in the
+binary the two always ship together, which makes drift impossible rather than
+merely detected.
+
+Because it is generated as **TypeScript**, the guarantee reaches past
+subscribing: `EventKind` is a union, `Flow.svelte`'s `describe()` switches over
+it exhaustively, and `ingest()` has a `never` arm for a kind that is neither
+`dropped` nor renderable. Declare a kind in Go, regenerate, and the portal stops
+compiling until something renders it. `make portal-types` proves that claim by
+declaring a kind nothing handles and requiring the build to fail — a `default:`
+arm added in good faith would otherwise restore the silent-loss bug with every
+other check still green.
 
 Existing shapes are reused verbatim where they exist — `activity` is
 `pipeline.ActivityRun` plus the job id, `job` is the `jobBody` fields. Nothing

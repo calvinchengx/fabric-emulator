@@ -32,15 +32,19 @@
 </script>
 
 <script>
+	// The `= undefined` on class/disabled/children is not redundant: a destructured
+	// prop with no default is inferred as REQUIRED, so without them every call site
+	// owes a `class` and a `disabled` it has never needed. Harmless in plain
+	// JavaScript, a type error the moment a caller is checked.
 	let {
-		class: className,
+		class: className = undefined,
 		variant = "default",
 		size = "default",
 		ref = $bindable(null),
 		href = undefined,
 		type = "button",
-		disabled,
-		children,
+		disabled = undefined,
+		children = undefined,
 		...restProps
 	} = $props();
 </script>
