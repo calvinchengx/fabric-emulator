@@ -702,5 +702,19 @@
       "ci:fabric-cicd",
       "ci:fabric-cli"
     ]
+  },
+  "rest-connector-restsource-in-a-copy": {
+    "claim": "**REST connector** — `RestSource` in a Copy",
+    "section": "Data Factory (`data-factory/`)",
+    "witnesses": [
+      "go:TestRestSourceReallyCallsAndShapesRows",
+      "go:TestRestSourceCopyLandsRowsInADeltaTable",
+      "go:TestRestSourceRefusesPaginationRulesRatherThanReadingPageOne",
+      "go:TestRestSourceRefusesToGuessBetweenArrays",
+      "go:TestRestSourceForcesAcceptJSON",
+      "go:TestRestSourceFailsOnNon2xx",
+      "go:TestRestSourceNamesSkippedNestedColumns",
+      "go:TestRestSourceRefusesAnAuthenticationTypeItCannotHonour"
+    ]
   }
 }

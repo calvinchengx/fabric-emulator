@@ -416,6 +416,14 @@ type oneLakeLoc struct {
 // to the pipeline's workspace; ids accept a GUID or a name). A file copies to
 // the sink path; a directory copies its whole subtree under the sink path.
 func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error)) (map[string]any, error) {
+	// A REST source is not a OneLake location, so it dispatches BEFORE
+	// resolveLoc — which exists to resolve one. See restconnector.go.
+	if t, err := copySideType(tp["source"], resolve); err != nil {
+		return nil, fmt.Errorf("copy %q source: %w", act.Name, err)
+	} else if t == "RestSource" {
+		return e.restToLakehouse(act, tp, resolve)
+	}
+
 	src, err := e.resolveLoc("source", tp["source"], resolve)
 	if err != nil {
 		return nil, fmt.Errorf("copy %q source: %w", act.Name, err)
