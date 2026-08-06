@@ -1,0 +1,27 @@
+# e2e override for the terminal-pane witness: build fabric-emulator from the
+# tree (the witness must test this checkout, not a released image), and allow
+# host-port remapping so the suite can run on a machine where 9443 is taken.
+#
+# The token is PINNED here because the browser has to know it: left unset the
+# emulator generates one and prints it, which the suite would have to scrape out
+# of container logs mid-run. A fixed value is safe in a throwaway project whose
+# ttyd is never published to the host — and nowhere else, because this token is
+# the only thing between a reachable portal and a shell.
+services:
+  fabric-emulator:
+    build:
+      # run.py sets TERM_BUILD_CONTEXT to the repo root (absolute) — relative
+      # contexts resolve against the project dir on some compose versions,
+      # which would point outside the repo.
+      context: ${TERM_BUILD_CONTEXT:-..}
+      dockerfile: Dockerfile
+    environment:
+      FABRIC_TERMINAL_TOKEN: "e2e-terminal-token"
+    ports: !override
+      - "${TERM_FABRIC_PORT:-9443}:9443"
+  entra-emulator:
+    ports: !override
+      - "${TERM_ENTRA_PORT:-8443}:8443"
+  keyvault-emulator:
+    ports: !override
+      - "${TERM_KV_PORT:-8444}:8444"
