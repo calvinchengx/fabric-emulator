@@ -65,11 +65,39 @@ type Config struct {
 	// terminal pane proxied through the portal's origin. Empty = the feature
 	// does not exist: no route is mounted and the pane never appears.
 	//
-	// THE PORTAL IS OTHERWISE UNAUTHENTICATED, and deliberately so — it is 11
-	// GET routes over local state (internal/server/portal.go). A terminal is
-	// not another read; it is arbitrary execution. So the proxy route carries
+	// THE PORTAL IS OTHERWISE UNAUTHENTICATED, and deliberately so. A terminal
+	// is not another read; it is arbitrary execution. So the proxy route carries
 	// its own bearer (TerminalToken) rather than inheriting the portal's
 	// premise, and the other routes are untouched.
+	//
+	// WHAT THAT PREMISE NOW COVERS — read this before assuming the portal is
+	// inert. It was 11 GET routes over local state; it is now 11 GETs plus
+	// `POST /_emulator/portal/models/{id}/query`, which evaluates caller-supplied
+	// DAX against an import model through the same evaluator as executeQueries
+	// (internal/server/portal.go, internal/api/executequeries.go). That is the
+	// right implementation — the box and the wire cannot diverge by
+	// construction — and it is still a read of local state. But three things
+	// follow that "11 read-only GETs" did not imply, and they are written down
+	// here rather than rediscovered:
+	//
+	//  1. An unauthenticated caller who can reach the port can execute arbitrary
+	//     DAX against any import model. The earlier surface was fixed GET
+	//     routes; this one takes caller input into an evaluator.
+	//  2. It has an effect beyond answering. publishQuery fires for a portal
+	//     query exactly as for a REST one — correctly, because the model WAS
+	//     queried and the flow view reports what happened — so an
+	//     unauthenticated request now puts a visible event in every other
+	//     viewer's log. "Read-only over local state" no longer quite describes
+	//     it.
+	//  3. Arbitrary DAX is arbitrary compute, unbounded and unauthenticated. A
+	//     pathological query costs whatever the evaluator costs. Almost
+	//     certainly fine for something bound to localhost, and cheap to bound
+	//     now; awkward to retrofit if the portal is ever exposed further.
+	//
+	// None of these is a defect for a local emulator, and none is a reason to
+	// remove the runner. They are the reason the next feature on this surface
+	// should be weighed rather than waved through: the premise that made 11 GETs
+	// safe is not the premise this route runs under.
 	TerminalURL string
 
 	// TerminalToken authorises the terminal proxy. Generated at startup when
