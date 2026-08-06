@@ -80,10 +80,10 @@ def test_dependencies_decide_the_order_not_the_listing(ran):
     assert [c["name"] for c in ran] == ["nbA", "nbB"]
 
 
-def test_order_within_a_level_is_the_order_given(ran):
+def test_with_the_default_concurrency_a_level_runs_in_the_order_given(ran):
     # Reproducibility over parallelism: a harness comparing two runs needs the
-    # same sequence. Fabric defaults concurrency to 3x CPU cores; running
-    # sequentially is a documented divergence, asserted here so it stays one.
+    # same sequence. Fabric defaults concurrency to 3x CPU cores; defaulting to
+    # sequential is a documented divergence, asserted here so it stays one.
     run_ok({"activities": [
         {"name": "x", "path": "nbX"},
         {"name": "y", "path": "nbY"},
@@ -201,6 +201,145 @@ def test_every_activity_gets_a_result_even_when_skipped(ran):
     ]})
     assert set(out) == {"a", "b", "c"}
     assert all("exitVal" in r and "exception" in r for r in out.values())
+
+
+# --- concurrency -------------------------------------------------------------
+
+@pytest.fixture
+def overlapping(monkeypatch):
+    """Stub `_run_detail` so overlap is observable without wall-clock timing.
+
+    Each call records enter/exit against a shared counter and waits on a
+    barrier-ish gate, so "did these two actually run at the same time" is
+    answered by the recorded interleaving rather than by how long anything
+    took. A test that asserts on elapsed time is a test that fails on a busy CI
+    box for reasons unrelated to the code.
+    """
+    import threading
+
+    state = {"live": 0, "peak": 0, "events": []}
+    lock = threading.Lock()
+    reached = threading.Event()
+    expected = {"n": 2}
+
+    def fake_detail(path, timeout_seconds=None, per_cell_seconds=None,
+                    arguments=None, workspace=None):
+        with lock:
+            state["live"] += 1
+            state["peak"] = max(state["peak"], state["live"])
+            state["events"].append(("enter", path))
+            if state["live"] >= expected["n"]:
+                reached.set()
+        # Block until enough activities are in flight together, or give up —
+        # a sequential implementation must finish rather than deadlock here.
+        reached.wait(timeout=0.5)
+        with lock:
+            state["live"] -= 1
+            state["events"].append(("exit", path))
+        return (f"exit-of-{path}", "Completed", 1)
+
+    monkeypatch.setattr(notebook, "_run_detail", fake_detail)
+    state["expect"] = expected
+    return state
+
+
+def test_an_explicit_concurrency_actually_overlaps(overlapping):
+    # The reason to want concurrency here is not speed: two independent
+    # activities writing the same table collide on Fabric and never collide
+    # under a sequential emulator, so a real defect passes locally.
+    run_ok({"activities": [
+        {"name": "a", "path": "nbA"},
+        {"name": "b", "path": "nbB"},
+    ], "concurrency": 2})
+    assert overlapping["peak"] == 2, overlapping["events"]
+
+
+def test_the_default_never_overlaps(overlapping):
+    # Same DAG, no concurrency key: one at a time. The gate opens at one in
+    # flight, so a correctly sequential run never waits it out.
+    overlapping["expect"]["n"] = 1
+    run_ok({"activities": [
+        {"name": "a", "path": "nbA"},
+        {"name": "b", "path": "nbB"},
+    ]})
+    assert overlapping["peak"] == 1, overlapping["events"]
+
+
+def test_concurrency_one_never_overlaps(overlapping):
+    overlapping["expect"]["n"] = 1
+    run_ok({"activities": [
+        {"name": "a", "path": "nbA"},
+        {"name": "b", "path": "nbB"},
+    ], "concurrency": 1})
+    assert overlapping["peak"] == 1, overlapping["events"]
+
+
+def test_the_pool_never_exceeds_the_requested_width(overlapping):
+    overlapping["expect"]["n"] = 2
+    run_ok({"activities": [
+        {"name": n, "path": f"nb{n}"} for n in "abcde"
+    ], "concurrency": 2})
+    assert overlapping["peak"] <= 2, overlapping["events"]
+
+
+def test_concurrency_zero_means_unlimited(overlapping):
+    overlapping["expect"]["n"] = 4
+    run_ok({"activities": [
+        {"name": n, "path": f"nb{n}"} for n in "abcd"
+    ], "concurrency": 0})
+    assert overlapping["peak"] == 4, overlapping["events"]
+
+
+def test_a_level_boundary_is_still_a_barrier(overlapping):
+    # `z` depends on both roots, so it must not start until they finish, no
+    # matter how wide the pool is.
+    overlapping["expect"]["n"] = 2
+    run_ok({"activities": [
+        {"name": "x", "path": "nbX"},
+        {"name": "y", "path": "nbY"},
+        {"name": "z", "path": "nbZ", "dependencies": ["x", "y"]},
+    ], "concurrency": 4})
+    order = [name for kind, name in overlapping["events"] if kind == "enter"]
+    assert order[-1] == "nbZ", overlapping["events"]
+    exits = [name for kind, name in overlapping["events"] if kind == "exit"]
+    assert set(exits[:2]) == {"nbX", "nbY"}, overlapping["events"]
+
+
+def test_results_keep_the_listed_order_not_the_completion_order(ran):
+    # Execution may be concurrent; results never are. A caller diffing two runs
+    # compares this dict, and completion order deciding it would make an
+    # unchanged DAG look changed.
+    out = run_ok({"activities": [
+        {"name": "a", "path": "nbA"},
+        {"name": "b", "path": "nbB"},
+        {"name": "c", "path": "nbC"},
+    ], "concurrency": 3})
+    assert list(out) == ["a", "b", "c"]
+
+
+def test_a_failure_inside_a_concurrent_level_still_skips_dependents(ran):
+    out = run_failing({"activities": [
+        {"name": "a", "path": "boom-a"},
+        {"name": "b", "path": "nbB"},
+        {"name": "c", "path": "nbC", "dependencies": ["a"]},
+    ], "concurrency": 3})
+    assert out["a"]["status"] == "Failed"
+    assert out["b"]["exception"] is None
+    assert out["c"]["status"] == "Skipped"
+
+
+@pytest.mark.parametrize("requested,expected", [
+    (None, 1), (1, 1), (2, 2), (12, 12), (0, None), (-5, 1),
+])
+def test_the_concurrency_cap_is_read_as_documented(requested, expected):
+    dag = {"activities": []}
+    if requested is not None:
+        dag["concurrency"] = requested
+    assert notebook._concurrency(dag) == expected
+
+
+def test_a_bare_list_has_no_concurrency_key_and_runs_sequentially():
+    assert notebook._concurrency(["nb1", "nb2"]) == 1
 
 
 # --- the DAG-level wall clock ------------------------------------------------

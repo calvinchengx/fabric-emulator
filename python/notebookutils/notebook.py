@@ -13,6 +13,7 @@ A notebook with no executable cells still completes immediately, because there
 is nothing to wait for.
 """
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from . import credentials
 from ._config import config
@@ -226,11 +227,16 @@ def runMultiple(dag, config=None, **kwargs):
     pattern never enters its except branch locally and never learns a notebook
     failed.
 
-    SEQUENTIAL, in dependency order. Fabric defaults `concurrency` to 3x the
-    CPU count; the emulator runs one notebook at a time so a run is
-    reproducible, which is the property a test harness needs more than
-    parallelism. Recorded as a chosen divergence in docs/parity.md, not an
-    oversight.
+    SEQUENTIAL BY DEFAULT, in dependency order — a CHOSEN divergence, recorded
+    in docs/parity.md. Fabric defaults `concurrency` to 3x the CPU count; a
+    harness comparing two runs needs the same sequence more than it needs
+    speed, so an unspecified `concurrency` runs one notebook at a time here.
+
+    An EXPLICIT `concurrency` is honoured, because the reason to want it is not
+    speed: sequential execution hides a real class of bug. Two independent
+    activities that write the same table collide on Fabric and never collide
+    here, so the emulator turns a genuine defect into a green run. `0` means
+    unlimited, as Fabric documents.
 
     A failed activity stops its dependents rather than the whole DAG: they are
     reported with an exception saying which dependency did not complete,
@@ -242,26 +248,32 @@ def runMultiple(dag, config=None, **kwargs):
     dag_timeout = _dag_timeout(dag)
     deadline = time.time() + dag_timeout
 
+    concurrency = _concurrency(dag)
     results, done = {}, {}
-    for act in _in_dependency_order(activities):
-        name = act["name"]
-        blocked = [d for d in act.get("dependencies", []) if done.get(d) != "Completed"]
-        if blocked:
-            results[name] = _failed_result(
-                "Skipped", NotebookError(f"dependency {blocked[0]!r} did not complete"))
-            done[name] = "Skipped"
-            continue
-        if time.time() >= deadline:
-            # Every activity gets a result. A DAG that timed out halfway and
-            # returned a short dict is indistinguishable from one whose
-            # remaining activities were never in it.
-            results[name] = _failed_result(
-                "Skipped",
-                NotebookError(f"the DAG exceeded timeoutInSeconds ({dag_timeout}s) "
-                              f"before {name!r} started"))
-            done[name] = "Skipped"
-            continue
-        results[name], done[name] = _run_activity(act)
+    for level in _dependency_levels(activities):
+        runnable = []
+        for act in level:
+            name = act["name"]
+            blocked = [d for d in act.get("dependencies", []) if done.get(d) != "Completed"]
+            if blocked:
+                results[name] = _failed_result(
+                    "Skipped", NotebookError(f"dependency {blocked[0]!r} did not complete"))
+                done[name] = "Skipped"
+                continue
+            if time.time() >= deadline:
+                # Every activity gets a result. A DAG that timed out halfway and
+                # returned a short dict is indistinguishable from one whose
+                # remaining activities were never in it.
+                results[name] = _failed_result(
+                    "Skipped",
+                    NotebookError(f"the DAG exceeded timeoutInSeconds ({dag_timeout}s) "
+                                  f"before {name!r} started"))
+                done[name] = "Skipped"
+                continue
+            runnable.append(act)
+        # strict: one result per runnable activity, or a result has been lost.
+        for act, (result, status) in zip(runnable, _run_level(runnable, concurrency), strict=True):
+            results[act["name"]], done[act["name"]] = result, status
 
     failed = [n for n, r in results.items() if r["exception"] is not None]
     if failed:
@@ -270,6 +282,37 @@ def runMultiple(dag, config=None, **kwargs):
             f"{', '.join(sorted(failed))}",
             result=results)
     return results
+
+
+def _run_level(activities, concurrency):
+    """Run one dependency level, returning results IN THE ORDER GIVEN.
+
+    Execution may be concurrent; the results never are. A caller diffing two
+    runs of the same DAG compares the returned dict, and letting completion
+    order decide it would make an unchanged DAG look changed.
+
+    `concurrency` of 1 does not touch a thread pool at all. That is not an
+    optimisation: the default path stays a plain loop, so the sequential
+    contract cannot be broken by a scheduling detail.
+    """
+    if concurrency == 1 or len(activities) <= 1:
+        return [_run_activity(a) for a in activities]
+    workers = len(activities) if concurrency is None else min(concurrency, len(activities))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_run_activity, activities))
+
+
+def _concurrency(dag):
+    """How many activities of one level may run at once.
+
+    Returns 1 for sequential (the emulator's default), None for unlimited
+    (Fabric's `0`), else the cap. Fabric's own default is 3x the CPU count;
+    diverging is deliberate and documented — see `runMultiple`.
+    """
+    if not isinstance(dag, dict) or dag.get("concurrency") is None:
+        return 1
+    requested = int(dag["concurrency"])
+    return None if requested == 0 else max(1, requested)
 
 
 def _run_activity(act):
@@ -350,25 +393,33 @@ def _check_dependencies(activities):
                     f"activity {a['name']!r} depends on {d!r}, which is not in the DAG")
 
 
-def _in_dependency_order(activities):
-    """Dependencies first, input order preserved within a level.
+def _dependency_levels(activities):
+    """Group activities into levels; everything in a level may run at once.
+
+    Level N depends only on levels before it, which is what makes bounded
+    concurrency safe to apply within one. Input order is preserved inside each
+    level, so a sequential run is reproducible.
 
     A cycle raises rather than hanging or silently dropping activities — the
     two failure modes a caller cannot debug from the outside.
     """
     remaining = list(activities)
-    emitted, out = set(), []
+    emitted, levels = set(), []
     while remaining:
         ready = [a for a in remaining
                  if all(d in emitted for d in a.get("dependencies", []))]
         if not ready:
             stuck = ", ".join(sorted(a["name"] for a in remaining))
             raise NotebookError(f"dependency cycle among: {stuck}")
-        for a in ready:
-            out.append(a)
-            emitted.add(a["name"])
+        levels.append(ready)
+        emitted.update(a["name"] for a in ready)
         remaining = [a for a in remaining if a["name"] not in emitted]
-    return out
+    return levels
+
+
+def _in_dependency_order(activities):
+    """The levels, flattened. Derived so the two orderings cannot disagree."""
+    return [a for level in _dependency_levels(activities) for a in level]
 
 
 class _Exit(Exception):
