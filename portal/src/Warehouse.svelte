@@ -1,14 +1,14 @@
-<script>
-  import { api } from './api.js';
+<script lang="ts">
+  import { api } from './api';
 
-  let wh = $state(null);
+  let wh = $state<any>(null);
   let error = $state('');
 
   api.get('/_emulator/portal/warehouse')
     .then((w) => (wh = w))
     .catch((e) => (error = e.message));
 
-  const listenerLabel = {
+  const listenerLabel: Record<string, string> = {
     off: 'no TDS listener',
     stub: 'answers the T1 probe result',
     relay: 'queries run on the configured SQL Server',

@@ -1,13 +1,13 @@
-<script>
-  import { api } from './api.js';
-  import { href } from './router.js';
+<script lang="ts">
+  import { api } from './api';
+  import { href } from './router';
   import ModelDetail from './ModelDetail.svelte';
 
   // One id turns this into the detail page. Routing lives in App; this
   // component just answers to the address it was given.
   let { id = null } = $props();
 
-  let models = $state(null);
+  let models = $state<any>(null);
   let error = $state('');
 
   api
@@ -19,12 +19,12 @@
   // the three had one and `measures` did not, so a model with a single measure
   // read "1 measures" — invisible until a second model with exactly one turned
   // up, because the only model anyone had ever looked at has three.
-  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-  const summary = (m) =>
+  const summary = (m: any) =>
     [
       plural(m.tables.length, 'table'),
-      plural(m.tables.reduce((n, t) => n + t.measures.length, 0), 'measure'),
+      plural(m.tables.reduce((n: number, t: any) => n + t.measures.length, 0), 'measure'),
       plural(m.relationships.length, 'relationship'),
     ].join(', ');
 </script>

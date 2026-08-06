@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { href, onRouteChange, parse } from './router.js';
+import { href, onRouteChange, parse } from './router';
 
 describe('router', () => {
   it.each([

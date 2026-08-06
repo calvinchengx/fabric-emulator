@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { api, copy } from './api.js';
+import { api, copy } from './api';
 
 // Build a fake fetch Response.
 function res(status, body, ok = status < 400) {

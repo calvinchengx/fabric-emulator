@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { api } from './api.js';
+  import { api } from './api';
   import { EVENT_KINDS, VIEW_KINDS, KIND_DOC, isEventKind, isViewKind } from './eventKinds';
   import type { EmulatorEvent, RawEmulatorEvent, ViewKind } from './eventKinds';
-  import { href as modelHref } from './router.js';
+  import { href as modelHref } from './router';
   import { Button } from '$lib/components/ui/button/index.js';
 
   // The flow view: the emulator's own event stream, live.
@@ -159,7 +159,7 @@
         }
       })
       .catch((e) => {
-        error = e.message;
+        error = (e as Error).message;
         if (retryTimer) clearTimeout(retryTimer);
         retryTimer = setTimeout(() => {
           retryTimer = null;

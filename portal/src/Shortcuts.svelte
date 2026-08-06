@@ -1,7 +1,7 @@
-<script>
-  import { api } from './api.js';
+<script lang="ts">
+  import { api } from './api';
 
-  let shortcuts = $state([]);
+  let shortcuts = $state<any[]>([]);
   let error = $state('');
 
   function load() {

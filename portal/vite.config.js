@@ -49,7 +49,7 @@ export default defineConfig(({ mode }) => ({
         // The mount call itself. Exercised by portal/smoke (a real browser
         // asserting the built bundle renders), which is where a broken
         // entrypoint is actually caught; jsdom cannot witness it.
-        'src/main.js',
+        'src/main.ts',
         // Types and styles, which carry no statements to cover.
         'src/**/*.d.ts',
         'src/app.css',
