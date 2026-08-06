@@ -1,8 +1,8 @@
-<script>
-  import { api } from './api.js';
+<script lang="ts">
+  import { api } from './api';
 
-  let workspaces = $state([]);
-  let operations = $state([]);
+  let workspaces = $state<any[]>([]);
+  let operations = $state<any[]>([]);
   let error = $state('');
 
   Promise.all([

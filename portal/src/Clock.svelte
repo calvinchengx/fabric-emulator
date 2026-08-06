@@ -1,7 +1,7 @@
-<script>
-  import { api } from './api.js';
+<script lang="ts">
+  import { api } from './api';
 
-  let clock = $state(null);
+  let clock = $state<any>(null);
   let advanceBy = $state(3600);
   let error = $state('');
 
@@ -10,12 +10,12 @@
   }
   load();
 
-  async function post(body) {
+  async function post(body: unknown) {
     error = '';
     try {
       clock = await api.post('/_emulator/clock', body);
     } catch (e) {
-      error = e.message;
+      error = (e as Error).message;
     }
   }
 </script>

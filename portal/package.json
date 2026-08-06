@@ -9,14 +9,17 @@
     "build": "vite build",
     "test": "vitest run",
     "smoke": "playwright test",
-    "check": "svelte-check --tsconfig ./tsconfig.json --threshold error"
+    "check": "svelte-check --tsconfig ./tsconfig.json --threshold error",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
+    "@internationalized/date": "^3.12.3",
     "@playwright/test": "^1.61.1",
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.4.2",
+    "@vitest/coverage-v8": "^4.1.10",
     "jsdom": "^29.1.1",
     "svelte": "^5.0.0",
     "svelte-check": "^4.7.4",

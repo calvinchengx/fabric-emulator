@@ -1,7 +1,7 @@
-<script>
-  import { api } from './api.js';
+<script lang="ts">
+  import { api } from './api';
 
-  let workspaces = $state([]);
+  let workspaces = $state<any[]>([]);
   let error = $state('');
 
   api.get('/_emulator/portal/workspaces')

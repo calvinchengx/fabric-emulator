@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { api } from './api.js';
+  import { api } from './api';
   import { EVENT_KINDS, VIEW_KINDS, KIND_DOC, isEventKind, isViewKind } from './eventKinds';
   import type { EmulatorEvent, RawEmulatorEvent, ViewKind } from './eventKinds';
-  import { href as modelHref } from './router.js';
-  import { Button } from '$lib/components/ui/button/index.js';
+  import { href as modelHref } from './router';
+  import { Button } from '$lib/components/ui/button/index';
 
   // The flow view: the emulator's own event stream, live.
   //
@@ -159,7 +159,7 @@
         }
       })
       .catch((e) => {
-        error = e.message;
+        error = (e as Error).message;
         if (retryTimer) clearTimeout(retryTimer);
         retryTimer = setTimeout(() => {
           retryTimer = null;
@@ -224,7 +224,13 @@
   // Every event kind is subscribed to; filtering happens here so toggling a
   // checkbox never loses history the stream already delivered.
   function connect() {
-    if (source) return; // never open a second stream: events would double up
+    // Never open a second stream: events would double up. Unreachable today —
+    // the only caller is the $effect below, which runs once per mount and nulls
+    // `source` on teardown — so it is ignored for coverage rather than deleted:
+    // it costs one comparison and it is the guard that makes a second caller
+    // safe to add.
+    /* v8 ignore next */
+    if (source) return;
     source = new EventSource('/_emulator/events');
     source.onopen = () => {
       link = 'streaming';
@@ -419,6 +425,10 @@
   function edgePath(l: Link) {
     const a = graph.nodes.find((n) => n.key === l.from);
     const b = graph.nodes.find((n) => n.key === l.to);
+    // Unreachable while `graph` builds both halves together: every link is made
+    // from keys `add()` just put in the map. Ignored rather than removed —
+    // returning '' beats rendering `M NaN,NaN` if that ever stops being true.
+    /* v8 ignore next */
     if (!a || !b) return '';
     const x1 = a.x + 160;
     const y1 = a.y + 18;

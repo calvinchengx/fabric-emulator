@@ -1,7 +1,7 @@
-<script>
-  import { api } from './api.js';
+<script lang="ts">
+  import { api } from './api';
 
-  let jobs = $state([]);
+  let jobs = $state<any[]>([]);
   let error = $state('');
 
   function load() {
@@ -11,7 +11,7 @@
   }
   load();
 
-  function fmt(epoch) {
+  function fmt(epoch: number) {
     return new Date(epoch * 1000).toISOString().replace('T', ' ').slice(0, 19);
   }
 </script>

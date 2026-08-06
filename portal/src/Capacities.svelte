@@ -1,7 +1,7 @@
-<script>
-  import { api } from './api.js';
+<script lang="ts">
+  import { api } from './api';
 
-  let capacities = $state([]);
+  let capacities = $state<any[]>([]);
   let error = $state('');
 
   api.get('/_emulator/portal/capacities')
