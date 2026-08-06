@@ -3,7 +3,13 @@
   import { EVENT_KINDS, VIEW_KINDS, KIND_DOC, isEventKind, isViewKind } from './eventKinds';
   import type { EmulatorEvent, RawEmulatorEvent, ViewKind } from './eventKinds';
   import { href as modelHref } from './router';
+  import StatusBadge from '$lib/StatusBadge.svelte';
   import { Button } from '$lib/components/ui/button/index';
+  import * as Card from '$lib/components/ui/card/index';
+  import { Checkbox } from '$lib/components/ui/checkbox/index';
+  import { Input } from '$lib/components/ui/input/index';
+  import { Label } from '$lib/components/ui/label/index';
+  import * as Table from '$lib/components/ui/table/index';
 
   // The flow view: the emulator's own event stream, live.
   //
@@ -505,19 +511,19 @@
 </p>
 
 <div class="mt-4 flex flex-wrap items-center gap-2">
-  <span class="chip {link === 'streaming' ? 'completed' : link === 'connecting' ? 'notstarted' : 'failed'}">{link}</span>
+  <StatusBadge status={link} />
   {#if dropped > 0}
-    <span class="chip failed" title="This browser fell behind; the emulator was never slowed down.">
+    <StatusBadge tone="danger" title="This browser fell behind; the emulator was never slowed down.">
       {dropped} event(s) dropped
-    </span>
+    </StatusBadge>
   {/if}
   {#if unknown > 0}
-    <span
-      class="chip failed"
+    <StatusBadge
+      tone="danger"
       title="The emulator sent a kind this portal was not built for. It is embedded in the binary, so this should be impossible — say so rather than swallowing it."
     >
       {unknown} event(s) of an unknown kind
-    </span>
+    </StatusBadge>
   {/if}
   <Button variant="outline" size="sm" onclick={clear}>Clear</Button>
   <Button variant="outline" size="sm" onclick={loadLineage}>Reload graph</Button>
@@ -553,7 +559,7 @@
         }}
       >
         <!-- svelte-ignore a11y_autofocus -->
-        <input
+        <Input
           class="term-token"
           type="password"
           placeholder="terminal token"
@@ -644,12 +650,12 @@
 {/if}
 
 {#if selected}
-  <div class="panel">
+  <Card.Root class="mt-4"><Card.Content class="pt-4">
     <div class="flex flex-wrap items-baseline gap-2">
       <strong class="text-base">{selected.path}</strong>
       <span class="muted">{selected.item || selected.itemId}</span>
       {#if detail && detail.version >= 0}
-        <span class="chip completed">v{detail.version}</span>
+        <StatusBadge tone="success">v{detail.version}</StatusBadge>
       {/if}
       {#if detail?.readable}
         <span class="muted">{detail.rowCount} row{detail.rowCount === 1 ? '' : 's'}</span>
@@ -676,16 +682,16 @@
       <p class="muted mt-2">Not readable yet: {detail.message}</p>
     {:else}
       <div class="graph-scroll mt-3">
-        <table>
-          <thead>
-            <tr>{#each detail.columns as c}<th>{c}</th>{/each}</tr>
-          </thead>
-          <tbody>
+        <Table.Root>
+          <Table.Header>
+            <Table.Row>{#each detail.columns as c}<Table.Head>{c}</Table.Head>{/each}</Table.Row>
+          </Table.Header>
+          <Table.Body>
             {#each detail.preview as row}
-              <tr>{#each row as cell}<td class="mono">{cell}</td>{/each}</tr>
+              <Table.Row>{#each row as cell}<Table.Cell class="mono">{cell}</Table.Cell>{/each}</Table.Row>
             {/each}
-          </tbody>
-        </table>
+          </Table.Body>
+        </Table.Root>
       </div>
       {#if detail.truncated}
         <p class="muted mt-2">
@@ -693,43 +699,60 @@
         </p>
       {/if}
     {/if}
-  </div>
+  </Card.Content></Card.Root>
 {/if}
 
 <h2>Events</h2>
 <div class="filters">
   {#each VIEW_KINDS as k}
-    <label title={KIND_DOC[k]}><input type="checkbox" bind:checked={kinds[k]} /> {k}</label>
+    <div class="flex items-center gap-1.5" title={KIND_DOC[k]}>
+      <Checkbox id="kind-{k}" bind:checked={kinds[k]} />
+      <Label for="kind-{k}" class="font-normal">{k}</Label>
+    </div>
   {/each}
   {#if workspaces.length > 1}
-    <label>
-      workspace
-      <select bind:value={workspace} class="w-48">
+    <div class="flex items-center gap-1.5">
+      <Label for="workspace-filter">workspace</Label>
+      <!-- A native select, deliberately. bits-ui's Select is a popover-driven
+           listbox: better looking, but it needs pointer capture and layout that
+           jsdom does not implement, so the workspace filter would become the one
+           control the suite cannot drive. Styled to match the other inputs. -->
+      <select
+        id="workspace-filter"
+        bind:value={workspace}
+        class="border-input bg-background ring-offset-background focus-visible:ring-ring h-9 w-48
+               rounded-md border px-3 py-1 text-sm focus-visible:ring-2 focus-visible:outline-none"
+      >
         <option value="">all</option>
         {#each workspaces as w}<option value={w.id}>{w.displayName}</option>{/each}
       </select>
-    </label>
+    </div>
   {/if}
 </div>
 
 {#if shown.length === 0}
   <p class="muted">Nothing yet — start a job, or upload a file to OneLake.</p>
 {:else}
-  <table>
-    <thead>
-      <tr><th>Time</th><th>Kind</th><th>What</th><th>By</th></tr>
-    </thead>
-    <tbody>
+  <Table.Root>
+    <Table.Header>
+      <Table.Row>
+        <Table.Head>Time</Table.Head>
+        <Table.Head>Kind</Table.Head>
+        <Table.Head>What</Table.Head>
+        <Table.Head>By</Table.Head>
+      </Table.Row>
+    </Table.Header>
+    <Table.Body>
       {#each shown as ev (ev.seq)}
         <tr class={ev.status === 'Failed' ? 'failed-row' : ''}>
-          <td class="mono">{fmt(ev.at)}</td>
-          <td><span class="chip {ev.kind}">{ev.kind}</span></td>
-          <td>{describe(ev)}</td>
-          <td class="mono muted">{who(ev)}</td>
+          <Table.Cell class="mono">{fmt(ev.at)}</Table.Cell>
+          <Table.Cell><StatusBadge>{ev.kind}</StatusBadge></Table.Cell>
+          <Table.Cell>{describe(ev)}</Table.Cell>
+          <Table.Cell class="mono muted">{who(ev)}</Table.Cell>
         </tr>
       {/each}
-    </tbody>
-  </table>
+    </Table.Body>
+  </Table.Root>
 {/if}
 </div>
 </div>

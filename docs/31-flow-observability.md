@@ -437,16 +437,36 @@ tokens per upstream DESIGN.md". shadcn is used for what it is good at
 contract); the palette stays Fabric's.
 
 Every token a shadcn component reads resolves through `@theme inline` to the
-variables in `portal/src/app.css`, so a retheme is one block rather than a
-sweep through markup — and dark mode is a single `prefers-color-scheme` block.
-The portal has no account and nowhere to store a preference, so it follows the
-OS rather than offering a switcher.
+variables in `portal/src/app.css`, so a retheme is one block rather than a sweep
+through markup.
 
-The shared class vocabulary the eleven views already spoke (`.card`, `.chip`,
-`.panel`, `.btn`…) was reimplemented on those tokens instead of being replaced,
-so every view improved at once without eleven parallel rewrites. A bare
-`<button>` picks up the secondary treatment from a base rule for the same
-reason.
+**Light, dark, or the OS.** The dark palette hangs off `:root[data-theme='dark']`,
+stamped on `<html>` by `portal/src/theme.ts` — and by an inline script in
+`index.html` before the bundle loads, so the first paint is already correct
+rather than flashing light. The toggle in the top bar cycles system → light →
+dark → system: three states, because "follow the machine" is a real answer that
+a two-way switch cannot express. It used to be a `prefers-color-scheme` media
+query with no switcher, on the reasoning that a local tool has nowhere to store
+a preference; the sidebar's fold already disproved that, and a recording or a
+screenshot usually wants a chosen palette rather than whatever the author's
+laptop was set to.
+
+**Every view is built from the components, not from a shared class vocabulary.**
+The eleven views used to speak `.card`, `.chip`, `.panel` and a bare `<button>`,
+reimplemented on shadcn's tokens. They now use the components themselves —
+`Table`, `Card`, `Button`, `Input`, `Label`, `Checkbox`, `Textarea`, `Badge` — so
+the accessibility and focus behaviour come from the primitives rather than from
+CSS that resembles them. Status colour goes through `src/lib/StatusBadge.svelte`,
+a wrapper of ours rather than a fork of the vendored `Badge`: `shadcn-svelte add`
+regenerates that file, so a `success` variant added to it would be overwritten by
+the next update. It carries `data-tone`, which is what a test asserts instead of
+reaching into Tailwind classes.
+
+One deliberate exception: the workspace filter stays a native `<select>`.
+bits-ui's Select is a popover-driven listbox that needs pointer capture and
+layout jsdom does not implement, and the trade — a better-looking control that
+the suite cannot drive — is not worth it for one filter. It is styled to match
+the other inputs.
 
 **Cost, stated:** the bundle grew from 66 kB JS / 5.8 kB CSS to ~145 kB / 59 kB
 (43 kB / 10 kB gzipped) — bits-ui and its primitives. For a portal embedded in a

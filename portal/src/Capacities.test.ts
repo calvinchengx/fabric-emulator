@@ -48,7 +48,8 @@ describe('Capacities', () => {
       }] }));
     render(Capacities);
     const chip = await screen.findByText('Paused');
-    expect(chip).toHaveClass('notstarted');
-    expect(chip).not.toHaveClass('succeeded');
+    // `data-tone` is StatusBadge's contract: what the badge MEANS, asserted
+    // without reaching into the palette's Tailwind classes.
+    expect(chip).toHaveAttribute('data-tone', 'caution');
   });
 });
