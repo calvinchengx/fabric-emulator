@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
-    "smoke": "playwright test"
+    "smoke": "playwright test",
+    "check": "svelte-check --tsconfig ./tsconfig.json --threshold error"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
@@ -18,7 +19,9 @@
     "@testing-library/svelte": "^5.4.2",
     "jsdom": "^29.1.1",
     "svelte": "^5.0.0",
+    "svelte-check": "^4.7.4",
     "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.3",
     "vite": "^8.1.4",
     "vitest": "^4.1.10"
   },

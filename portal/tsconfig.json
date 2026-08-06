@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "target": "ESNext",
+    "module": "ESNext",
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    // The portal is JavaScript with TypeScript islands. `allowJs` lets a .js
+    // module import a .ts one; `checkJs: false` leaves the existing components
+    // unchecked, so adopting types is per-file rather than one rewrite.
+    "allowJs": true,
+    "checkJs": false,
+    // On for the files that DO opt in. Without strictNullChecks the generated
+    // interface would accept `ev.version.toFixed()` on an optional field, which
+    // is most of the class of bug it exists to catch.
+    "strict": true,
+    // Nothing is emitted here: Vite compiles, `svelte-check` only reads.
+    "noEmit": true,
+    "skipLibCheck": true,
+    "paths": { "$lib": ["./src/lib"], "$lib/*": ["./src/lib/*"] }
+  },
+  "include": ["src/**/*.js", "src/**/*.ts", "src/**/*.svelte"]
+}

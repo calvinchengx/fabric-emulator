@@ -386,6 +386,37 @@ jobs:
       - run: pnpm --filter fabric-emulator-portal exec playwright install --with-deps chromium
       - run: pnpm --filter fabric-emulator-portal smoke
 
+  portal-types:
+    name: svelte-check + a new kind must not compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: pnpm install --frozen-lockfile
+      # A SEPARATE job from `portal`, the way `ruff + ty` is separate from the Go
+      # build: a red X here says "the types are wrong", not "the bundle is
+      # broken", and the two fail for unrelated reasons.
+      #
+      # Errors only. The warnings are svelte-check's CSS parser not knowing
+      # Tailwind's `@apply`/`@reference`, plus unused-selector notes that predate
+      # this job — real, worth a change of their own, and not a type contract.
+      - run: pnpm --filter fabric-emulator-portal check
+      # The types are only a guarantee if they still BITE. This declares a kind
+      # in Go that nothing renders and requires the portal to stop compiling —
+      # a `default:` arm or a stray `as any` in Flow.svelte would keep every
+      # other check green while quietly restoring the silent-loss bug.
+      - run: uv run --frozen --no-sync python scripts/check_kind_exhaustiveness.py
+
   fabric-cicd:
     name: Real fabric-cicd tool publishes into the emulator
     strategy:
