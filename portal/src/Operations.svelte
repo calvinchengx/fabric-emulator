@@ -1,5 +1,8 @@
 <script lang="ts">
   import { api } from './api';
+  import StatusBadge from '$lib/StatusBadge.svelte';
+  import { Button } from '$lib/components/ui/button/index';
+  import * as Table from '$lib/components/ui/table/index';
 
   let operations = $state<any[]>([]);
   let error = $state('');
@@ -22,23 +25,31 @@
   clock — freeze or advance it on the <a href="#clock">Clock</a> page to hold
   or complete them.
 </p>
-<button onclick={load}>Refresh</button>
+<Button variant="outline" size="sm" onclick={load}>Refresh</Button>
 {#if error}<p class="error">{error}</p>{/if}
 {#if operations.length === 0}
   <p class="muted">No operations yet — any async mutation on /v1 creates one.</p>
 {:else}
-  <table>
-    <thead><tr><th>Status</th><th>Kind</th><th>Id</th><th>Created</th><th>Result</th></tr></thead>
-    <tbody>
+  <Table.Root>
+    <Table.Header>
+      <Table.Row>
+        <Table.Head>Status</Table.Head>
+        <Table.Head>Kind</Table.Head>
+        <Table.Head>Id</Table.Head>
+        <Table.Head>Created</Table.Head>
+        <Table.Head>Result</Table.Head>
+      </Table.Row>
+    </Table.Header>
+    <Table.Body>
       {#each operations as op}
-        <tr>
-          <td><span class="chip {op.status.toLowerCase()}">{op.status}</span></td>
-          <td>{op.kind}</td>
-          <td class="mono">{op.id}</td>
-          <td class="mono">{fmt(op.createdAt)}</td>
-          <td class="mono">{op.resultRef || '—'}</td>
-        </tr>
+        <Table.Row>
+          <Table.Cell><StatusBadge status={op.status} /></Table.Cell>
+          <Table.Cell>{op.kind}</Table.Cell>
+          <Table.Cell class="mono">{op.id}</Table.Cell>
+          <Table.Cell class="mono">{fmt(op.createdAt)}</Table.Cell>
+          <Table.Cell class="mono">{op.resultRef || '—'}</Table.Cell>
+        </Table.Row>
       {/each}
-    </tbody>
-  </table>
+    </Table.Body>
+  </Table.Root>
 {/if}

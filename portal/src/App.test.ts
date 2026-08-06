@@ -181,3 +181,46 @@ describe('App', () => {
     });
   });
 });
+
+describe('the theme toggle', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    installEventSource();
+    mockApi();
+  });
+  afterEach(() => {
+    removeEventSource();
+    location.hash = '';
+    document.documentElement.removeAttribute('data-theme');
+  });
+
+  const toggle = () => screen.getByRole('button', { name: /^Theme:/ });
+
+  it('starts on the system preference, and says so', async () => {
+    at('#clock');
+    expect(await screen.findByRole('button', { name: /Theme: system/ })).toBeInTheDocument();
+  });
+
+  it('cycles to light, then dark, then back to following the system', async () => {
+    at('#clock');
+    await fireEvent.click(await screen.findByRole('button', { name: /Theme: system/ }));
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(localStorage.getItem('fe.theme')).toBe('light');
+
+    await fireEvent.click(toggle());
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(localStorage.getItem('fe.theme')).toBe('dark');
+
+    await fireEvent.click(toggle());
+    // Back to following the machine: the override is removed, not stored as a
+    // third value, so a machine that switches later is still obeyed.
+    expect(localStorage.getItem('fe.theme')).toBeNull();
+  });
+
+  it('reopens on the theme that was chosen', async () => {
+    localStorage.setItem('fe.theme', 'dark');
+    at('#clock');
+    expect(await screen.findByRole('button', { name: /Theme: dark/ })).toBeInTheDocument();
+  });
+});

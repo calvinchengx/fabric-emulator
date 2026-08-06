@@ -55,47 +55,50 @@
   --sidebar-border: #edebe9;
 }
 
-/* Dark mode follows the OS: the portal is a local tool with no account, so it
-   has nowhere to store a preference and no business asking for one. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #1b1a19;
-    --foreground: #f3f2f1;
-    --card: #252423;
-    --card-foreground: #f3f2f1;
-    --popover: #252423;
-    --popover-foreground: #f3f2f1;
+/* Dark mode. `data-theme` is stamped on <html> by src/theme.ts — from a stored
+   preference, or from the OS when there is none — and by an inline script in
+   index.html before the bundle loads, so the first paint is already right.
 
-    --primary: #2899f5;
-    --primary-foreground: #06182b;
+   NOT a media query: the portal is a client-rendered app, so there is no
+   no-JavaScript case to serve, and resolving in one place keeps this palette
+   written once instead of once per condition. */
+:root[data-theme='dark'] {
+  --background: #1b1a19;
+  --foreground: #f3f2f1;
+  --card: #252423;
+  --card-foreground: #f3f2f1;
+  --popover: #252423;
+  --popover-foreground: #f3f2f1;
 
-    --secondary: #323130;
-    --secondary-foreground: #f3f2f1;
-    --muted: #323130;
-    --muted-foreground: #a19f9d;
-    --accent: #123a5c;
-    --accent-foreground: #c7e0f4;
+  --primary: #2899f5;
+  --primary-foreground: #06182b;
 
-    --destructive: #f1707b;
-    --destructive-foreground: #2b0b0e;
+  --secondary: #323130;
+  --secondary-foreground: #f3f2f1;
+  --muted: #323130;
+  --muted-foreground: #a19f9d;
+  --accent: #123a5c;
+  --accent-foreground: #c7e0f4;
 
-    --border: #3b3a39;
-    --input: #3b3a39;
-    --ring: #2899f5;
+  --destructive: #f1707b;
+  --destructive-foreground: #2b0b0e;
 
-    --success: #6bb700;
-    --success-bg: #133a13;
-    --caution: #fbbf24;
-    --caution-bg: #3d2f0b;
-    --danger: #f1707b;
-    --danger-bg: #3b1417;
+  --border: #3b3a39;
+  --input: #3b3a39;
+  --ring: #2899f5;
 
-    --sidebar: #201f1e;
-    --sidebar-foreground: #f3f2f1;
-    --sidebar-accent: #123a5c;
-    --sidebar-accent-foreground: #c7e0f4;
-    --sidebar-border: #3b3a39;
-  }
+  --success: #6bb700;
+  --success-bg: #133a13;
+  --caution: #fbbf24;
+  --caution-bg: #3d2f0b;
+  --danger: #f1707b;
+  --danger-bg: #3b1417;
+
+  --sidebar: #201f1e;
+  --sidebar-foreground: #f3f2f1;
+  --sidebar-accent: #123a5c;
+  --sidebar-accent-foreground: #c7e0f4;
+  --sidebar-border: #3b3a39;
 }
 
 @theme inline {

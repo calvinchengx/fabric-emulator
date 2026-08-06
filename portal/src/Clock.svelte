@@ -1,5 +1,9 @@
 <script lang="ts">
   import { api } from './api';
+  import { Button } from '$lib/components/ui/button/index';
+  import * as Card from '$lib/components/ui/card/index';
+  import { Input } from '$lib/components/ui/input/index';
+  import { Label } from '$lib/components/ui/label/index';
 
   let clock = $state<any>(null);
   let advanceBy = $state(3600);
@@ -27,22 +31,34 @@
 </p>
 {#if error}<p class="error">{error}</p>{/if}
 {#if clock}
-  <div class="cards">
-    <div class="card"><div class="num">{clock.frozen ? 'frozen' : 'running'}</div><div>state</div></div>
-    <div class="card"><div class="num">{clock.offset}s</div><div>offset</div></div>
-    <div class="card"><div class="num mono small">{new Date(clock.now * 1000).toISOString()}</div><div>virtual now</div></div>
+  <div class="grid gap-3 sm:grid-cols-3">
+    <Card.Root><Card.Content class="py-4">
+      <div class="num">{clock.frozen ? 'frozen' : 'running'}</div>
+      <div class="text-muted-foreground text-sm">state</div>
+    </Card.Content></Card.Root>
+    <Card.Root><Card.Content class="py-4">
+      <div class="num">{clock.offset}s</div>
+      <div class="text-muted-foreground text-sm">offset</div>
+    </Card.Content></Card.Root>
+    <Card.Root><Card.Content class="py-4">
+      <div class="num mono small">{new Date(clock.now * 1000).toISOString()}</div>
+      <div class="text-muted-foreground text-sm">virtual now</div>
+    </Card.Content></Card.Root>
   </div>
-  <div class="controls">
+  <div class="mt-4 flex flex-wrap items-end gap-3">
     {#if clock.frozen}
-      <button onclick={() => post({ freeze: false })}>Unfreeze</button>
+      <Button variant="outline" onclick={() => post({ freeze: false })}>Unfreeze</Button>
     {:else}
-      <button onclick={() => post({ freeze: true })}>Freeze</button>
+      <Button variant="outline" onclick={() => post({ freeze: true })}>Freeze</Button>
     {/if}
-    <label>
-      Advance by
-      <input type="number" bind:value={advanceBy} min="1" /> seconds
-    </label>
-    <button onclick={() => post({ advance: Number(advanceBy) })}>Advance</button>
-    <button onclick={() => post({ offset: 0, freeze: false })}>Reset</button>
+    <div class="flex items-end gap-2">
+      <div class="grid gap-1.5">
+        <Label for="advance-by">Advance by</Label>
+        <Input id="advance-by" type="number" bind:value={advanceBy} min="1" class="w-28" />
+      </div>
+      <span class="text-muted-foreground pb-2 text-sm">seconds</span>
+    </div>
+    <Button variant="outline" onclick={() => post({ advance: Number(advanceBy) })}>Advance</Button>
+    <Button variant="outline" onclick={() => post({ offset: 0, freeze: false })}>Reset</Button>
   </div>
 {/if}

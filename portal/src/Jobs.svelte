@@ -1,5 +1,8 @@
 <script lang="ts">
   import { api } from './api';
+  import StatusBadge from '$lib/StatusBadge.svelte';
+  import { Button } from '$lib/components/ui/button/index';
+  import * as Table from '$lib/components/ui/table/index';
 
   let jobs = $state<any[]>([]);
   let error = $state('');
@@ -21,32 +24,39 @@
   Item job instances, newest first. Like operations, status derives from the
   emulator clock — freeze or advance it on the <a href="#clock">Clock</a> page.
 </p>
-<button onclick={load}>Refresh</button>
+<Button variant="outline" size="sm" onclick={load}>Refresh</Button>
 {#if error}<p class="error">{error}</p>{/if}
 {#if jobs.length === 0}
   <p class="muted">No jobs yet — run one via <code>POST /v1/workspaces/{'{wid}'}/items/{'{iid}'}/jobs/instances</code>.</p>
 {:else}
-  <table>
-    <thead>
-      <tr><th>Status</th><th>Job type</th><th>Item</th><th>Invoke</th><th>Id</th><th>Created</th></tr>
-    </thead>
-    <tbody>
+  <Table.Root>
+    <Table.Header>
+      <Table.Row>
+        <Table.Head>Status</Table.Head>
+        <Table.Head>Job type</Table.Head>
+        <Table.Head>Item</Table.Head>
+        <Table.Head>Invoke</Table.Head>
+        <Table.Head>Id</Table.Head>
+        <Table.Head>Created</Table.Head>
+      </Table.Row>
+    </Table.Header>
+    <Table.Body>
       {#each jobs as j}
-        <tr>
-          <td><span class="chip {j.status.toLowerCase()}">{j.status}</span></td>
-          <td>{j.jobType}</td>
-          <td>
+        <Table.Row>
+          <Table.Cell><StatusBadge status={j.status} /></Table.Cell>
+          <Table.Cell>{j.jobType}</Table.Cell>
+          <Table.Cell>
             {#if j.itemName}
               <code>{j.itemType}</code> {j.itemName} <span class="mono muted">{j.itemId}</span>
             {:else}
               <span class="muted">deleted item</span> <span class="mono muted">{j.itemId}</span>
             {/if}
-          </td>
-          <td>{j.invokeType}</td>
-          <td class="mono">{j.id}</td>
-          <td class="mono">{fmt(j.createdAt)}</td>
-        </tr>
+          </Table.Cell>
+          <Table.Cell>{j.invokeType}</Table.Cell>
+          <Table.Cell class="mono">{j.id}</Table.Cell>
+          <Table.Cell class="mono">{fmt(j.createdAt)}</Table.Cell>
+        </Table.Row>
       {/each}
-    </tbody>
-  </table>
+    </Table.Body>
+  </Table.Root>
 {/if}

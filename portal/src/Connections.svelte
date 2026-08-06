@@ -1,5 +1,8 @@
 <script lang="ts">
   import { api } from './api';
+  import StatusBadge from '$lib/StatusBadge.svelte';
+  import { Button } from '$lib/components/ui/button/index';
+  import * as Table from '$lib/components/ui/table/index';
 
   let connections = $state<any[]>([]);
   let error = $state('');
@@ -24,30 +27,36 @@
   Credential secret material is write-only — the emulator stores it but never
   serializes it back, so only the credential metadata shows here.
 </p>
-<button onclick={load}>Refresh</button>
+<Button variant="outline" size="sm" onclick={load}>Refresh</Button>
 {#if error}<p class="error">{error}</p>{/if}
 {#if connections.length === 0}
   <p class="muted">No connections yet — create one via <code>POST /v1/connections</code>.</p>
 {:else}
-  <table>
-    <thead>
-      <tr><th>Name</th><th>Id</th><th>Connectivity</th><th>Credential</th><th>Encryption</th></tr>
-    </thead>
-    <tbody>
+  <Table.Root>
+    <Table.Header>
+      <Table.Row>
+        <Table.Head>Name</Table.Head>
+        <Table.Head>Id</Table.Head>
+        <Table.Head>Connectivity</Table.Head>
+        <Table.Head>Credential</Table.Head>
+        <Table.Head>Encryption</Table.Head>
+      </Table.Row>
+    </Table.Header>
+    <Table.Body>
       {#each connections as c}
-        <tr>
-          <td>{c.displayName}</td>
-          <td class="mono">{c.id}</td>
-          <td>{c.connectivityType || '—'}</td>
-          <td>
+        <Table.Row>
+          <Table.Cell>{c.displayName}</Table.Cell>
+          <Table.Cell class="mono">{c.id}</Table.Cell>
+          <Table.Cell>{c.connectivityType || '—'}</Table.Cell>
+          <Table.Cell>
             {c.credentialType || '—'}
             {#if flags[c.credentialType]}
-              <span class="chip notstarted">{flags[c.credentialType]}</span>
+              <StatusBadge tone="caution">{flags[c.credentialType]}</StatusBadge>
             {/if}
-          </td>
-          <td>{c.connectionEncryption || '—'}</td>
-        </tr>
+          </Table.Cell>
+          <Table.Cell>{c.connectionEncryption || '—'}</Table.Cell>
+        </Table.Row>
       {/each}
-    </tbody>
-  </table>
+    </Table.Body>
+  </Table.Root>
 {/if}

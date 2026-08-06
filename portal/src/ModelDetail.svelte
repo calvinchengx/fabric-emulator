@@ -1,6 +1,10 @@
 <script lang="ts">
   import { api } from './api';
   import { href } from './router';
+  import StatusBadge from '$lib/StatusBadge.svelte';
+  import { Button } from '$lib/components/ui/button/index';
+  import * as Table from '$lib/components/ui/table/index';
+  import { Textarea } from '$lib/components/ui/textarea/index';
 
   // The model this page is FOR, by id. Addressable is the whole point: the
   // flow graph knows which node is which semantic model, and until this page
@@ -114,42 +118,49 @@
               <div class="tbl-head">
                 <strong>{t.name}</strong>
                 {#if t.mode === 'directLake'}
-                  <span class="chip directlake" title="read from Delta at query time">Direct Lake</span>
+                  <StatusBadge title="read from Delta at query time">Direct Lake</StatusBadge>
                   <code class="binding">{t.binding}</code>
                 {:else}
-                  <span class="chip" title="rows are embedded in the definition">import</span>
+                  <StatusBadge title="rows are embedded in the definition">import</StatusBadge>
                 {/if}
               </div>
 
-              <table>
-                <thead>
-                  <tr><th>Column</th><th>Type</th><th>Source column</th></tr>
-                </thead>
-                <tbody>
+              <Table.Root>
+                <Table.Header>
+                  <Table.Row>
+                    <Table.Head>Column</Table.Head>
+                    <Table.Head>Type</Table.Head>
+                    <Table.Head>Source column</Table.Head>
+                  </Table.Row>
+                </Table.Header>
+                <Table.Body>
                   {#each t.columns ?? [] as c (c.name)}
-                    <tr>
-                      <td><code>{c.name}</code></td>
-                      <td class="muted">{c.dataType}</td>
-                      <td class="muted">{c.sourceColumn === c.name ? '' : c.sourceColumn}</td>
-                    </tr>
+                    <Table.Row>
+                      <Table.Cell><code>{c.name}</code></Table.Cell>
+                      <Table.Cell class="muted">{c.dataType}</Table.Cell>
+                      <Table.Cell class="muted">{c.sourceColumn === c.name ? '' : c.sourceColumn}</Table.Cell>
+                    </Table.Row>
                   {/each}
-                </tbody>
-              </table>
+                </Table.Body>
+              </Table.Root>
 
               {#if t.measures?.length}
-                <table class="measures">
-                  <thead>
-                    <tr><th>Measure</th><th>DAX</th></tr>
-                  </thead>
-                  <tbody>
+                <Table.Root class="measures">
+                  <Table.Header>
+                    <Table.Row>
+                      <Table.Head>Measure</Table.Head>
+                      <Table.Head>DAX</Table.Head>
+                    </Table.Row>
+                  </Table.Header>
+                  <Table.Body>
                     {#each t.measures as ms (ms.name)}
-                      <tr>
-                        <td><code>{ms.name}</code></td>
-                        <td><code class="dax">{ms.expression}</code></td>
-                      </tr>
+                      <Table.Row>
+                        <Table.Cell><code>{ms.name}</code></Table.Cell>
+                        <Table.Cell><code class="dax">{ms.expression}</code></Table.Cell>
+                      </Table.Row>
                     {/each}
-                  </tbody>
-                </table>
+                  </Table.Body>
+                </Table.Root>
               {/if}
             </div>
           {/each}
@@ -162,17 +173,17 @@
             <div class="tbl-head"><strong>Query</strong>
               <span class="muted">— DAX, through the same evaluator as <code>executeQueries</code></span>
             </div>
-            <textarea
+            <Textarea
               class="dax-input"
-              rows="3"
+              rows={3}
               bind:value={dax}
               aria-label="DAX query"
               spellcheck="false"
-            ></textarea>
+            />
             <div class="query-actions">
-              <button class="run" onclick={runQuery} disabled={running || !dax.trim()}>
+              <Button size="sm" onclick={runQuery} disabled={running || !dax.trim()}>
                 {running ? 'Running…' : 'Run'}
-              </button>
+              </Button>
               {#if result}<span class="muted">{result.rows.length} row(s)</span>{/if}
             </div>
             {#if queryError}<p class="error">{queryError}</p>{/if}
@@ -180,16 +191,20 @@
               {#if result.rows.length === 0}
                 <p class="muted">No rows — the query ran and returned nothing.</p>
               {:else}
-                <table class="query-result">
-                  <thead>
-                    <tr>{#each result.columns as c (c)}<th><code>{c}</code></th>{/each}</tr>
-                  </thead>
-                  <tbody>
+                <Table.Root class="query-result">
+                  <Table.Header>
+                    <Table.Row>
+                      {#each result.columns as c (c)}<Table.Head><code>{c}</code></Table.Head>{/each}
+                    </Table.Row>
+                  </Table.Header>
+                  <Table.Body>
                     {#each result.rows as row, i (i)}
-                      <tr>{#each result.columns as c (c)}<td class="mono">{row[c] ?? ''}</td>{/each}</tr>
+                      <Table.Row>
+                        {#each result.columns as c (c)}<Table.Cell class="mono">{row[c] ?? ''}</Table.Cell>{/each}
+                      </Table.Row>
                     {/each}
-                  </tbody>
-                </table>
+                  </Table.Body>
+                </Table.Root>
               {/if}
             {/if}
           </div>
@@ -197,18 +212,18 @@
           {#if model.relationships?.length}
             <div class="tbl">
               <div class="tbl-head"><strong>Relationships</strong></div>
-              <table>
-                <tbody>
+              <Table.Root>
+                <Table.Body>
                   {#each model.relationships as r (r.name)}
-                    <tr>
-                      <td><code>{r.from}</code></td>
-                      <td class="muted">→</td>
-                      <td><code>{r.to}</code></td>
-                      <td class="muted">{r.name}</td>
-                    </tr>
+                    <Table.Row>
+                      <Table.Cell><code>{r.from}</code></Table.Cell>
+                      <Table.Cell class="muted">→</Table.Cell>
+                      <Table.Cell><code>{r.to}</code></Table.Cell>
+                      <Table.Cell class="muted">{r.name}</Table.Cell>
+                    </Table.Row>
                   {/each}
-                </tbody>
-              </table>
+                </Table.Body>
+              </Table.Root>
             </div>
           {/if}
         </div>

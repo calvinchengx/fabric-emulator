@@ -14,6 +14,9 @@
   import Models from './Models.svelte';
   import { api } from './api';
   import { parse, href, onRouteChange } from './router';
+  import * as theme from './theme';
+  import { Badge } from '$lib/components/ui/badge/index';
+  import { Button } from '$lib/components/ui/button/index';
 
   // `#view` and `#view/param`. The param is what makes a detail page
   // addressable — see router.ts for why that matters more than it looks.
@@ -30,6 +33,18 @@
   // a 1600px recording — the 240px of navigation is the difference between
   // that fitting and not. Persisted because a preference that resets on every
   // reload is a nag, not a preference.
+  // The theme, and the toggle that cycles it. Three states, because "follow
+  // the OS" is a real answer a two-way switch cannot express.
+  let themePref = $state<theme.Theme>(theme.stored());
+  const themeBadge = $derived(theme.badge(themePref));
+  function cycleTheme() {
+    themePref = theme.next(themePref);
+    theme.set(themePref);
+  }
+  // While following the OS, track it: a machine that switches at sunset should
+  // take the portal with it without a reload.
+  $effect(() => theme.followOS());
+
   let navOpen = $state(localStorage.getItem('fe.nav') !== 'closed');
   function toggleNav() {
     navOpen = !navOpen;
@@ -66,11 +81,18 @@
 <div class="topbar">
   <!-- Plain glyphs, not an icon font: the portal ships no icon assets and one
        hamburger is not the reason to start. -->
-  <button class="nav-toggle" aria-label="Toggle sidebar" title="Toggle sidebar" onclick={toggleNav}>
+  <Button
+    variant="ghost"
+    size="icon-sm"
+    class="nav-toggle"
+    aria-label="Toggle sidebar"
+    title="Toggle sidebar"
+    onclick={toggleNav}
+  >
     {navOpen ? '⟨' : '☰'}
-  </button>
+  </Button>
   <strong class="text-[15px] font-semibold tracking-tight">Fabric Emulator</strong>
-  <span class="badge">Local emulator</span>
+  <Badge variant="secondary" class="uppercase">Local emulator</Badge>
   <!-- The build, beside the badge on purpose. A screenshot of a run, a frame of
        a recording, or a bug report that quotes the top bar all name exactly
        which emulator produced what is being shown — which is otherwise the
@@ -81,6 +103,16 @@
   {#if health}
     <span class="health"><span class="dot"></span>{health.status}</span>
   {/if}
+  <Button
+    variant="ghost"
+    size="icon-sm"
+    class={health ? '' : 'ml-auto'}
+    aria-label={themeBadge.label}
+    title={themeBadge.label}
+    onclick={cycleTheme}
+  >
+    {themeBadge.glyph}
+  </Button>
 </div>
 <div class="shell">
   {#if navOpen}

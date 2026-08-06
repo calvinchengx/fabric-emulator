@@ -1,5 +1,9 @@
 <script lang="ts">
   import { api } from './api';
+  import StatusBadge from '$lib/StatusBadge.svelte';
+  import { Badge } from '$lib/components/ui/badge/index';
+  import * as Card from '$lib/components/ui/card/index';
+  import * as Table from '$lib/components/ui/table/index';
 
   let capacities = $state<any[]>([]);
   let error = $state('');
@@ -17,26 +21,37 @@
 </p>
 {#if error}<p class="error">{error}</p>{/if}
 {#each capacities as cap}
-  <div class="panel">
-    <h2>{cap.displayName}</h2>
-    <p>
-      <span class="chip">{cap.sku}</span>
-      <span class="chip">{cap.region}</span>
-      <span class="chip {cap.state === 'Active' ? 'succeeded' : 'notstarted'}">{cap.state}</span>
-      <span class="mono muted">{cap.id}</span>
-    </p>
-    <h3>Assigned workspaces</h3>
-    {#if cap.workspaces.length === 0}
-      <p class="muted">none</p>
-    {:else}
-      <table>
-        <thead><tr><th>Name</th><th>Id</th></tr></thead>
-        <tbody>
-          {#each cap.workspaces as w}
-            <tr><td>{w.displayName}</td><td class="mono">{w.id}</td></tr>
-          {/each}
-        </tbody>
-      </table>
-    {/if}
-  </div>
+  <Card.Root class="mt-4">
+    <Card.Header>
+      <Card.Title>{cap.displayName}</Card.Title>
+      <Card.Description class="flex flex-wrap items-center gap-2 pt-1">
+        <Badge variant="outline" class="font-mono text-xs">{cap.sku}</Badge>
+        <Badge variant="outline" class="font-mono text-xs">{cap.region}</Badge>
+        <!-- The tone is the view's decision, not the word's: any state that is
+             not Active reads as caution, whatever it is called. -->
+        <StatusBadge status={cap.state} tone={cap.state === 'Active' ? 'success' : 'caution'} />
+        <span class="mono muted">{cap.id}</span>
+      </Card.Description>
+    </Card.Header>
+    <Card.Content>
+      <h3>Assigned workspaces</h3>
+      {#if cap.workspaces.length === 0}
+        <p class="muted">none</p>
+      {:else}
+        <Table.Root>
+          <Table.Header>
+            <Table.Row><Table.Head>Name</Table.Head><Table.Head>Id</Table.Head></Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {#each cap.workspaces as w}
+              <Table.Row>
+                <Table.Cell>{w.displayName}</Table.Cell>
+                <Table.Cell class="mono">{w.id}</Table.Cell>
+              </Table.Row>
+            {/each}
+          </Table.Body>
+        </Table.Root>
+      {/if}
+    </Card.Content>
+  </Card.Root>
 {/each}
