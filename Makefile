@@ -18,8 +18,21 @@
 #
 # The governance profile is on by default so `make up` matches what the
 # quickstart advertises; override with PROFILE= to run the lean stack.
-PROFILE ?= --profile governance
-COMPOSE  = docker compose $(PROFILE)
+# Both real runtimes are on by default, because both back a first-class Fabric
+# item type: the catalog (OpenMetadata) and Data workflows (Apache Airflow).
+# `--profile` is REPEATABLE — a comma-joined value is read as one profile name
+# that matches nothing, and COMPOSE_PROFILES (the env var) is the comma one.
+PROFILE ?= --profile governance --profile airflow
+# The overlay travels WITH the profile. Starting `airflow` without
+# docker-compose.airflow.yml gives the emulator no FABRIC_AIRFLOW_URL, so the
+# sidecar runs and the routes still answer AirflowNotConfigured — the same
+# started-but-unwired shape the spark-agent profile shipped once. Every target
+# below uses this one variable so the -f list never varies: compose hashes the
+# configuration it is HANDED, and a shorter list recreates running containers.
+COMPOSE  = docker compose $(PROFILE) \
+             -f docker-compose.yml \
+             -f docker-compose.override.yml \
+             -f docker-compose.airflow.yml
 
 # Windows: force the recipes onto sh.exe. GNU Make on Windows falls back to
 # cmd.exe when it cannot find a shell, and cmd cannot run a single line of what
