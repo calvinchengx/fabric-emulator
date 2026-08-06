@@ -66,8 +66,12 @@ jobs:
       - name: SQL Server (Linux, native)
         if: matrix.os == 'ubuntu-latest'
         run: |
+          # Same memory cap the compose files ship, so the warehouse tests run
+          # against the configuration developers actually get. Without it CI
+          # would validate an uncapped engine nobody runs.
           docker run -d --name mssql -e ACCEPT_EULA=Y \
             -e MSSQL_SA_PASSWORD='Str0ng!Passw0rd' \
+            -e MSSQL_MEMORY_LIMIT_MB=2048 \
             -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
 
       # A started container is not a ready one. `services:` would have waited on
