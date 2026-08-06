@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installEventSource, res, stream } from './testing';
 
 // A kind the server declares AND offers as a filter, that this build cannot
 // describe.
@@ -16,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // browser pointed at a newer emulator actually does — and the answer has to be
 // "render the kind's name", not "white-screen the flow view".
 vi.mock('./eventKinds', async (importOriginal) => {
-  const real = await importOriginal();
+  const real: any = await importOriginal();
   const kinds = [...real.EVENT_KINDS, 'ghost'];
   const views = [...real.VIEW_KINDS, 'ghost'];
   return {
@@ -24,44 +25,25 @@ vi.mock('./eventKinds', async (importOriginal) => {
     EVENT_KINDS: kinds,
     VIEW_KINDS: views,
     KIND_DOC: { ...real.KIND_DOC, ghost: 'a kind from another build' },
-    isEventKind: (k) => kinds.includes(k),
-    isViewKind: (k) => views.includes(k),
+    isEventKind: (k: string) => kinds.includes(k),
+    isViewKind: (k: string) => views.includes(k),
   };
 });
 
 const Flow = (await import('./Flow.svelte')).default;
 
-class FakeEventSource {
-  static last = null;
-  constructor(url) {
-    this.url = url;
-    this.listeners = {};
-    FakeEventSource.last = this;
-  }
-  addEventListener(kind, fn) {
-    (this.listeners[kind] ||= []).push(fn);
-  }
-  close() {}
-  emit(kind, payload) {
-    for (const fn of this.listeners[kind] || []) fn({ data: JSON.stringify(payload) });
-  }
-}
-
 describe('Flow: a filterable kind this build cannot describe', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true, status: 200, json: () => Promise.resolve({ value: [] }),
-    });
+    installEventSource();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value: [] }));
   });
 
   it('lists it by name rather than failing to render the row', async () => {
     render(Flow);
     await waitFor(() => expect(screen.getByText(/Nothing yet/)).toBeInTheDocument());
 
-    FakeEventSource.last.emit('ghost', {
+    stream().emit('ghost', {
       seq: 1, at: 1700000000, kind: 'ghost', itemId: 'lake-1',
     });
 

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
+import { installEventSource, removeEventSource, res } from './testing';
 
 // The shell had no test at all — 92 statements, every route in the portal, and
 // the sidebar preference, none of it exercised. The route table is the part that
@@ -9,36 +10,24 @@ import App from './App.svelte';
 
 // Every view mounts on render and asks for something. One router by URL keeps
 // each case's setup to the thing it is actually about.
-function mockApi({ health = { status: 'healthy', build: 'v0.17.0' } } = {}) {
-  vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+function mockApi({ health = { status: 'healthy', build: 'v0.17.0' } }: { health?: any } = {}) {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
     if (String(url).includes('/health')) {
       return health
-        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(health) })
+        ? Promise.resolve(res(health))
         : Promise.reject(new Error('down'));
     }
     // Everything else: an empty tenant, plus the few scalar fields a view
     // renders unconditionally. `now` in particular is not optional — Clock
     // formats it as a Date, and `new Date(undefined * 1000)` throws
     // "Invalid time value" and takes the whole mount down.
-    return Promise.resolve({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({
+    return Promise.resolve(res({
         value: [], columns: [], preview: [],
         now: 1700000000, offset: 0, frozen: false,
-      }),
-    });
+      }));
   });
 }
-
-// Flow opens an SSE stream; jsdom has no EventSource. A stub that records
-// nothing is enough — Flow.test.js is where the stream itself is asserted.
-class SilentEventSource {
-  addEventListener() {}
-  close() {}
-}
-
-function at(hash) {
+function at(hash: string) {
   location.hash = hash;
   return render(App);
 }
@@ -47,11 +36,11 @@ describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
-    globalThis.EventSource = SilentEventSource;
+    installEventSource();
     mockApi();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
     location.hash = '';
   });
 
@@ -113,13 +102,10 @@ describe('App', () => {
     // `#models/{id}` is the reason the router carries a param at all: without
     // it a detail view can only be an accordion, and an accordion has no
     // address. Asserted through the request the detail page makes.
-    const seen = [];
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+    const seen: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
       seen.push(String(url));
-      return Promise.resolve({
-        ok: true, status: 200,
-        json: () => Promise.resolve({ value: [], status: 'healthy' }),
-      });
+      return Promise.resolve(res({ value: [], status: 'healthy' }));
     });
     at('#models/' + encodeURIComponent('model-abc'));
     await waitFor(() => expect(seen.some((u) => u.includes('/portal/models'))).toBe(true));
@@ -131,8 +117,8 @@ describe('App', () => {
     expect(active).toHaveClass('active');
     // Scoped to the nav: the Jobs view's own prose links to the Clock page, so
     // a document-wide query for "Clock" is ambiguous by two.
-    const nav = document.querySelector('nav.sidenav');
-    const others = [...nav.querySelectorAll('a')].filter((a) => a !== active);
+    const nav = document.querySelector('nav.sidenav')!;
+    const others = [...nav.querySelectorAll('a')].filter((a: Element) => a !== active);
     expect(others).toHaveLength(12);
     for (const a of others) expect(a).not.toHaveClass('active');
   });

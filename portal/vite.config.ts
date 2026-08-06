@@ -27,8 +27,8 @@ export default defineConfig(({ mode }) => ({
   test: {
     environment: 'jsdom',
     globals: true,
-    setupFiles: ['./vitest-setup.js'],
-    include: ['src/**/*.test.{js,ts}'],
+    setupFiles: ['./vitest-setup.ts'],
+    include: ['src/**/*.test.ts'],
     // The portal was the one tier with NO coverage measurement at all: Go has a
     // 90% floor and Python a 70% one, while the client — which is what a user
     // actually looks at — had never been measured. First reading was 86.4% of
@@ -53,6 +53,11 @@ export default defineConfig(({ mode }) => ({
         // Types and styles, which carry no statements to cover.
         'src/**/*.d.ts',
         'src/app.css',
+        // The tests and their support module. Coverage is a statement about the
+        // PRODUCT; measuring the suite against itself only ever says that the
+        // tests ran, which the test count already says.
+        'src/**/*.test.ts',
+        'src/testing.ts',
       ],
       reporter: ['text', 'json-summary'],
       thresholds: {

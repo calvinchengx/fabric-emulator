@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Identities from './Identities.svelte';
+import { errRes, res } from './testing';
 
 // This view answers one question — which workspaces have a provisioned
 // identity — and it answers it by FILTERING, which is the part worth pinning: a
@@ -14,12 +15,8 @@ const withIdentity = {
 };
 const withoutIdentity = { id: 'ws-2', displayName: 'scratch' };
 
-function mockWorkspaces(value) {
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: () => Promise.resolve({ value }),
-  });
+function mockWorkspaces(value: any) {
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value }));
 }
 
 describe('Identities', () => {
@@ -66,11 +63,7 @@ describe('Identities', () => {
   });
 
   it('surfaces a failed listing instead of looking like an empty tenant', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 503,
-      json: () => Promise.resolve({ error: { message: 'store unavailable' } }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(errRes('store unavailable', 503));
     render(Identities);
     await waitFor(() => expect(screen.getByText('store unavailable')).toBeInTheDocument());
     // The empty state still shows — there is genuinely nothing to list — but the

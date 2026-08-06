@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import Dashboard from './Dashboard.svelte';
+import { res } from './testing';
 
 describe('Dashboard', () => {
   beforeEach(() => {
@@ -8,8 +9,8 @@ describe('Dashboard', () => {
   });
 
   it('aggregates counts from workspaces and operations', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
-      const body = url.includes('operations')
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
+      const body = String(url).includes('operations')
         ? { value: [{ id: 'op-1', status: 'Running' }, { id: 'op-2', status: 'Succeeded' }] }
         : {
             value: [
@@ -17,7 +18,7 @@ describe('Dashboard', () => {
               { id: 'w2', itemCount: 3, workspaceIdentity: null },
             ],
           };
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      return Promise.resolve(res(body));
     });
 
     render(Dashboard);
@@ -29,11 +30,7 @@ describe('Dashboard', () => {
   });
 
   it('surfaces load errors', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 503,
-      json: () => Promise.resolve(null),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res(null, { ok: false, status: 503 }));
     render(Dashboard);
     await waitFor(() => expect(screen.getByText('HTTP 503')).toBeInTheDocument());
   });

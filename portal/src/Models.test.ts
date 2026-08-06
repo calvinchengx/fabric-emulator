@@ -1,6 +1,7 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import Models from './Models.svelte';
+import { errRes, res } from './testing';
 
 const model = {
   itemId: 'm1',
@@ -23,12 +24,8 @@ const model = {
   relationships: [{ name: 'Revenue_Customer', from: 'Revenue[Country]', to: 'Customer[Country]' }],
 };
 
-const mockList = (value) =>
-  vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: () => Promise.resolve({ value }),
-  });
+const mockList = (value: any) =>
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value }));
 
 describe('Models', () => {
   beforeEach(() => vi.restoreAllMocks());
@@ -167,17 +164,14 @@ describe('Models accessibility', () => {
 describe('ModelDetail query box', () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  const withQuery = (rows, fail) =>
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url, opts) => {
+  const withQuery = (rows: any, fail?: any) =>
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL, opts?: RequestInit) => {
       if (String(url).includes('/query')) {
         if (fail)
-          return Promise.resolve({
-            ok: false, status: 400,
-            json: () => Promise.resolve({ error: { message: 'unknown measure [Nope]' } }),
-          });
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ rows }) });
+          return Promise.resolve(errRes('unknown measure [Nope]', 400));
+        return Promise.resolve(res({ rows }));
       }
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [model] }) });
+      return Promise.resolve(res({ value: [model] }));
     });
 
   it('prefills a runnable query from the model and renders the rows', async () => {
@@ -188,7 +182,7 @@ describe('ModelDetail query box', () => {
     render(Models, { props: { id: 'm1' } });
     // Prefilled from the model's OWN measure — an empty editor daring the user
     // to remember DAX demonstrates nothing on first click.
-    const box = await screen.findByLabelText('DAX query');
+    const box = (await screen.findByLabelText('DAX query')) as HTMLTextAreaElement;
     expect(box.value).toContain('[Total Revenue]');
     await fireEvent.click(screen.getByRole('button', { name: 'Run' }));
     await waitFor(() => expect(screen.getByText('2.5')).toBeInTheDocument());
@@ -210,10 +204,7 @@ describe('ModelDetail query box', () => {
   it('surfaces a failure to list models', async () => {
     // The listing's own error path. Without it, an emulator that cannot answer
     // looks like a tenant with nothing published.
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false, status: 500,
-      json: () => Promise.resolve({ error: { message: 'models unavailable' } }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(errRes('models unavailable', 500));
     render(Models);
     await waitFor(() => expect(screen.getByText('models unavailable')).toBeInTheDocument());
   });
@@ -221,9 +212,7 @@ describe('ModelDetail query box', () => {
   it('treats a response with no value as no models', async () => {
     // `r.value || []` — a payload without the key must not leave `models` null
     // forever, which renders neither the list nor the empty state.
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true, status: 200, json: () => Promise.resolve({}),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({}));
     render(Models);
     await waitFor(() =>
       expect(screen.getByText('No semantic models published yet.')).toBeInTheDocument());
