@@ -285,13 +285,10 @@ portal survives a reload mid-medallion.
 
 ### 6. The portal `Flow` view
 
-The README's hero image is this view, and it is
-[generated](demo/README.md#regenerate-flowgif) rather than screen-recorded:
-`docs/demo/flow.py` starts two containers, films the empty graph, and only then
-writes a Delta table and runs two Copy activities — so the medallion fills in on
-camera. Worth knowing when changing the layout: the recording is reproducible,
-so a change that spoils the framing can be seen before it ships rather than
-after somebody notices the picture no longer matches the product.
+The README's hero image is this view, [generated](demo/README.md#regenerate-flowgif)
+rather than screen-recorded: `docs/demo/flow.py` films the empty graph, then
+seeds a medallion behind it. Reproducible, so a layout change that spoils the
+framing shows up before it ships.
 
 A new entry under *Data plane* in [`portal/src/App.svelte`](../portal/src/App.svelte),
 which already has the section structure:
@@ -367,6 +364,32 @@ dbt model emits an edge per source and they all describe the same redraw.
 The graph reads `/_emulator/portal/lineage`, a tenant-wide listing added for
 this view: the API-facing `/v1/workspaces/{id}/lineage` is workspace-scoped
 because it sits behind RBAC, and the portal has no principal.
+
+### The terminal pane
+
+Driving the pipeline while watching it run, in one window: the Flow view can
+open a shell beside the graph. Off unless you ask for it, and it needs **two**
+opt-ins — the `terminal` profile to start `ttyd`, and
+`docker-compose.terminal.yml` to tell the emulator where it is:
+
+```bash
+docker compose --profile terminal \
+  -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.terminal.yml \
+  up -d
+```
+
+The emulator prints a token once at startup; paste it into the pane. It is not
+served by any endpoint, because the portal is unauthenticated and an endpoint
+handing the token out would be the same as having none.
+
+**Why the route carries its own auth at all.** The other portal routes are reads
+over local state. A terminal is arbitrary execution, so it does not inherit that
+premise: `internal/server/terminal.go` demands a bearer, and the status endpoint
+**dials** ttyd rather than trusting configuration — a stack whose profile is off
+says so instead of offering a pane that dies when clicked.
+
+See [27-running-modes.md](27-running-modes.md#the-terminal-profile-needs-two-things)
+for the whole-stack picture, including what naming `-f` costs you.
 
 ## What this deliberately does not do
 

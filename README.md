@@ -10,10 +10,9 @@
 [![parity claims witnessed](https://img.shields.io/endpoint?url=https%3A%2F%2Fcalvinchengx.github.io%2Ffabric-emulator%2Fwitnesses.json)](https://calvinchengx.github.io/fabric-emulator/parity/)
 [![e2e suites](https://img.shields.io/endpoint?url=https%3A%2F%2Fcalvinchengx.github.io%2Ffabric-emulator%2Fe2e-suites.json)](https://calvinchengx.github.io/fabric-emulator/12-e2e-matrix/)
 
-> The three coverage badges measure the **unit** suites only. The work that
-> catches consumer-facing defects is the e2e fleet, which no statement counter
-> scores — so *parity claims witnessed* is published beside them: every claim of
-> support names a test that exists and ran. A percentage cannot say that.
+> Coverage measures the **unit** suites. What catches consumer-facing defects is
+> the e2e fleet, which no percentage scores — hence *parity claims witnessed*
+> beside it: every claim of support names a test that exists and ran.
 
 A clean-room, local emulator of **Microsoft Fabric**, built to compose with
 [entra-emulator](https://github.com/calvinchengx/entra-emulator) — the control
@@ -23,21 +22,18 @@ Spark engine, **Data Factory** pipelines, and **KQL** eventhouses.
 
 ![the Data flow view drawing a medallion as it is built: bronze_orders to silver_orders to a warehouse gold table, with the event log filling in beside the graph](docs/demo/flow.gif)
 
-Nothing in that recording is mocked: a real Delta write, two Copy activities
-run by the emulator's own executor, and the lineage it recorded for them. It is
-[generated from this repository](docs/demo/README.md#regenerate-flowgif) by two
-containers and one script, so it cannot quietly go stale.
+Nothing there is mocked — a real Delta write, two Copy activities run by the
+emulator's own executor, and the lineage it recorded. Two containers and one
+script [regenerate it](docs/demo/README.md#regenerate-flowgif), so it cannot go
+stale unnoticed.
 
-The same view scales to a real pipeline, locally and with no Azure
-subscription. Three source systems land, get conformed, get resolved into one
-customer identity, and reach a Warehouse star that Power BI queries — while the
-portal draws the lineage as it happens. Then the same run publishes itself to
-**OpenMetadata**: domain, business glossary, metrics, data contracts and
-lineage, all derived from what the pipeline already knows rather than typed in
-twice.
-
-Every lineage edge records **how** it is known, so you can tell what the
-emulator watched from what a step merely claimed.
+The same view scales to a real pipeline, with no Azure subscription: three
+source systems land, get conformed, resolve into one customer identity, and
+reach a Warehouse star that Power BI queries. The run then publishes itself to
+**OpenMetadata** — domain, glossary, metrics, contracts and lineage, all derived
+from what it already knows rather than typed in twice. Every lineage edge
+records **how** it is known, so you can tell what the emulator watched from what
+a step merely claimed.
 
 Run it yourself:
 
@@ -104,16 +100,17 @@ are shipped and CI-verified on Linux, macOS, and Windows.
 
 The bare binary runs none of the engines (clock-derived, milliseconds) — but
 `docker compose up` auto-loads the override that attaches them, so the
-documented path is engine-backed by default. Heavier engines (KQL, OpenMetadata)
-stay behind opt-in profiles. Coverage floor is 90% (currently ~90%).
+documented path is engine-backed by default. Heavier services (KQL,
+OpenMetadata, the terminal) sit behind profiles; `make up` enables `governance`
+for you and the others are opt-in. Coverage floor is 90% (currently ~90%).
 
 Docs: <https://calvinchengx.github.io/fabric-emulator/>
 
-Start with the [end-to-end tutorial](docs/28-tutorial-end-to-end.md) — Entra →
+Start with the [end-to-end tutorial](docs/28-tutorial-end-to-end.md): Entra →
 Key Vault → landing → bronze/silver → gold with dbt → semantic model, walking
-through [`examples/medallion-pyspark`](examples/medallion-pyspark/) and executing
-in CI. The [four medallion examples](examples/) scale that up to three source
-systems and both gold engines. Reference reading: the
+through [`examples/medallion-pyspark`](examples/medallion-pyspark/) and executed
+in CI. The [four medallion examples](examples/) scale it to three source systems
+and both gold engines. Reference:
 [architecture](docs/03-architecture.md), the
 [control-plane API](docs/07-control-plane-api.md), [OneLake](docs/08-onelake.md),
 [real compute](docs/14-real-compute.md), the
@@ -146,9 +143,14 @@ identities), so it could equally point at a real Entra tenant.
 | `docker compose -f docker-compose.yml up` | the lite, contract-only pair — honest `501`s on the engine surfaces |
 | `--profile rti` | Microsoft's own KQL engine behind Eventhouse / KQL Database ([docs/25](docs/25-rti-kusto.md)) |
 | `--profile governance` | OpenMetadata over the same state your pipelines write ([docs/22](docs/22-openmetadata.md)) |
+| `--profile terminal` | a shell in the Flow view beside the graph — needs `-f docker-compose.terminal.yml` too ([docs/31](docs/31-flow-observability.md#the-terminal-pane)) |
 | `-f docker-compose.spark-jvm.yml` | **swaps** Sail for JVM Spark, buying the RDD API, structured streaming, `OPTIMIZE`/`VACUUM` and Java/Scala UDFs at the cost of image size ([docs/20](docs/20-lakesail-engine.md)) |
 
-Profiles pull nothing unless asked for.
+Profiles pull nothing unless asked for — but **`make up` asks for `governance`
+on your behalf**, so it starts 11 services rather than 6. `make up PROFILE=`
+gives the lean stack. Memory: 2 GB for lite, 8 GB for the default six, 12 GB with
+governance, 16 GB for everything at once —
+[running modes](docs/27-running-modes.md) has the per-service measurements.
 
 ## Getting started on Linux, macOS or Windows
 
@@ -156,7 +158,7 @@ The workflow is the same on all three — only the prerequisites differ:
 
 ```bash
 make doctor   # toolchain, docker context, memory, ports — run this first
-make up
+make up       # 11 services incl. OpenMetadata; `make up PROFILE=` for the lean 6
 make status   # "stack OK" is the real verdict; `make up` only means containers exist
 ```
 
@@ -166,6 +168,9 @@ Everything else, once it is running:
 make help     # every target with a one-line description
 make up-lite  # contract-only pair — no compute sidecars, honest 501s
 make up-jvm   # swap the default Sail engine for JVM Spark
+make status-spark  # status, plus a real Livy session executing Spark — the
+              # only target that proves the engines are attached and computing
+make seed     # catalog the emulator into OpenMetadata (governance profile)
 make ps       # container states for this project
 make logs     # tail logs (SVC=<service> to narrow to one)
 make down     # stop and remove containers — volumes SURVIVE
@@ -193,17 +198,16 @@ winget install Git.Git; winget install ezwinports.make
 ```
 
 `make doctor` is the entry point on every platform: it names what is missing
-instead of letting it surface later as a broken recipe, an unreachable socket,
-or a `?` in a status column. Per-platform detail — the `docker` group on Linux,
-VM memory and Apple-silicon sidecar constraints on macOS, Rancher Desktop
-context selection on Windows:
+rather than letting it surface later as a broken recipe or a `?` in a status
+column. Per-platform detail (the `docker` group, VM memory, Apple-silicon
+sidecars, Rancher Desktop contexts):
 [docs/26-platform-setup.md](docs/26-platform-setup.md).
 
 ## Python tooling
 
-Python packages, development dependencies, and E2E clients are managed by the
-root uv workspace in [`pyproject.toml`](pyproject.toml) and [`uv.lock`](uv.lock).
-Use frozen named groups so local, CI, and container runs resolve identically:
+Packages, dev dependencies and e2e clients live in the root uv workspace
+([`pyproject.toml`](pyproject.toml), [`uv.lock`](uv.lock)). Use frozen named
+groups so local, CI and container runs resolve identically:
 
 ```bash
 uv sync --frozen --group test
@@ -211,9 +215,8 @@ uv run --frozen --group test pytest
 uv run --frozen --group governance python e2e/governance/run.py
 ```
 
-The Docker Python runtimes are also built from these locked groups. Update a
-dependency with `uv add --group <group> <package>`, then commit both project
-files.
+The Docker Python runtimes build from the same locked groups. Add a dependency
+with `uv add --group <group> <package>` and commit both files.
 
 ## License
 
