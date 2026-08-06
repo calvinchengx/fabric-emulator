@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Flow from './Flow.svelte';
-import { EVENT_KINDS, VIEW_KINDS } from './eventKinds.js';
+import { EVENT_KINDS, VIEW_KINDS } from './eventKinds';
 
 // A stand-in EventSource: the component subscribes to it exactly as it would to
 // the emulator's SSE endpoint, and the test pushes frames through it.
@@ -44,7 +44,13 @@ const edges = [
 
 // The view calls several endpoints; route by URL so a test can say what each
 // one returns without the others interfering.
-function mockApi({ lineage = edges, workspaces = [], table = null, terminal = null } = {}) {
+function mockApi({
+  lineage = edges,
+  workspaces = [],
+  table = null,
+  terminal = null,
+  models = [],
+} = {}) {
   vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
     // The terminal status route 404s when no terminal is configured, which is
     // the ORDINARY case and must not surface as an error.
@@ -60,9 +66,11 @@ function mockApi({ lineage = edges, workspaces = [], table = null, terminal = nu
       ? { value: lineage }
       : url.includes('/portal/workspaces')
         ? { value: workspaces }
-        : url.includes('/portal/table')
-          ? table
-          : { value: [] };
+        : url.includes('/portal/models')
+          ? { value: models }
+          : url.includes('/portal/table')
+            ? table
+            : { value: [] };
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   });
 }
@@ -305,6 +313,25 @@ describe('Flow: the warehouse and Power BI hops', () => {
     // Source → landing → bronze → silver → gold → model, left to right.
     expect(xOf('silver_customers')).toBeLessThan(xOf('dim_customer'));
     expect(xOf('dim_customer')).toBeLessThan(xOf('Customer'));
+  });
+
+  // The Power BI hop was a dead end until `#models/{id}` existed: the graph lit
+  // a node up when a client queried it and there was nowhere to go from there.
+  // Only nodes the models endpoint claims are drawn as links, so this needs the
+  // endpoint to answer — the plain-node case above proves the other branch.
+  it('links a node the models endpoint claims, and lays it out like any other', async () => {
+    mockApi({ lineage: goldEdges, models: [{ itemId: 'sm-1', displayName: 'ContosoRevenue' }] });
+    render(Flow);
+    const link = await waitFor(() =>
+      screen.getByRole('link', { name: 'Open semantic model Customer' }),
+    );
+    expect(link.getAttribute('href')).toBe('#models/sm-1');
+    // The transform sits on a wrapping <g>, not on the <a>: inside an <svg> an
+    // <a> is still typed as the HTML anchor, which has no transform. Asserted
+    // because moving it silently stacks every linked node at the origin.
+    expect(link.closest('g').getAttribute('transform')).toMatch(/^translate\(\d+,\d+\)$/);
+    // A model node is not clickable into the inspector — it goes to its page.
+    expect(screen.queryByText('Select a node to see what it holds now.')).toBeInTheDocument();
   });
 
   it('redraws when a movement is recorded, without waiting for a job to end', async () => {

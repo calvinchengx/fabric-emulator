@@ -98,5 +98,12 @@ check: ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_conformance.py
 	@$(PY) scripts/gen_event_kinds.py --check
 
+# Not part of `check`: these need Node and an installed portal, and `check` is
+# deliberately runnable with nothing but Python. CI runs both in the portal-types
+# job.
+portal-types: ## Type-check the portal, and prove a new event kind breaks it
+	pnpm --filter fabric-emulator-portal check
+	@$(PY) scripts/check_kind_exhaustiveness.py
+
 test: check ## Repo invariants, then Go build, vet and unit tests
 	go build ./... && go vet ./... && go test ./...

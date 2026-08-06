@@ -1,6 +1,7 @@
-<script>
+<script lang="ts">
   import { api } from './api.js';
-  import { EVENT_KINDS, VIEW_KINDS, KIND_DOC } from './eventKinds.js';
+  import { EVENT_KINDS, VIEW_KINDS, KIND_DOC, isEventKind, isViewKind } from './eventKinds';
+  import type { EmulatorEvent, RawEmulatorEvent, ViewKind } from './eventKinds';
   import { href as modelHref } from './router.js';
   import { Button } from '$lib/components/ui/button/index.js';
 
@@ -11,8 +12,44 @@
   // anything runs. The *log* answers "what is happening right now, and what
   // broke" — it comes from the SSE stream. Nodes light up as table events land
   // on them, which is what ties the two together.
+  //
+  // WHERE THE TYPES STOP, AND WHY. The event stream is typed to the hilt because
+  // its contract is GENERATED from internal/store/bus.go — the types cannot drift
+  // from the server. The other endpoints this view reads (lineage, table preview,
+  // workspaces) are not generated, so a hand-written interface for them would be
+  // an unchecked claim about the server: precisely the drift that made a
+  // hand-written kind list a bug. They stay `any` until they are generated too.
 
   const MAX_LOG = 300;
+
+  /** An event the log renders: everything except `dropped`, which reports on
+   *  this browser rather than on the platform and is counted, not listed. */
+  type LoggedEvent = EmulatorEvent & { kind: ViewKind };
+
+  /** A box in the graph: one OneLake path, or one source system outside Fabric.
+   *  Local to this view — the layout is drawn here, not served. */
+  type Node = {
+    key: string;
+    itemId: string;
+    item?: string;
+    path: string;
+    depth: number;
+    source: boolean;
+    x: number;
+    y: number;
+  };
+
+  /** An arrow between two nodes, keyed by nodeKey. */
+  type Link = { from: string; to: string; producer?: string; activityName?: string };
+
+  /** Proof at COMPILE TIME that a value cannot occur.
+   *
+   * `never` accepts no value at all, so a call that still type-checks is the
+   * compiler agreeing it has already excluded every kind. Declare a kind in Go
+   * and the calls below stop building — which is the whole reason the event
+   * contract is generated as TypeScript instead of a list of strings.
+   */
+  function impossible(_kind: never): void {}
 
   // The terminal pane. Availability is ASKED, not assumed: the emulator dials
   // ttyd rather than reporting what was configured, so a stack whose `terminal`
@@ -29,8 +66,8 @@
   let termStarted = $state(false);
 
 
-  let events = $state([]);
-  let edges = $state([]);
+  let events = $state<LoggedEvent[]>([]);
+  let edges = $state<any[]>([]);
   let error = $state('');
   // Three states, not two: before the first connection resolves we are
   // *connecting*, and flashing a red "disconnected" in that window would be a
@@ -46,42 +83,47 @@
   // Built from the generated list, so a new kind appears here the moment it
   // is declared in Go rather than whenever someone remembers this line.
   // `file` starts off: a busy run emits far more of them than anything else.
-  let kinds = $state(
-    Object.fromEntries(VIEW_KINDS.map((k) => [k, k !== 'file'])),
+  //
+  // The cast is Object.fromEntries losing what its input knew: it always returns
+  // an index signature, so the fact that these keys are exactly VIEW_KINDS has to
+  // be restated. It is checked either way — a key that is not a ViewKind cannot
+  // be read out of this record.
+  let kinds = $state<Record<ViewKind, boolean>>(
+    Object.fromEntries(VIEW_KINDS.map((k) => [k, k !== 'file'])) as Record<ViewKind, boolean>,
   );
   // itemId|Tables/name -> client clock (ms) of the last write. Client clock,
   // not the emulator's: this drives a *visual* decay, and the emulator's clock
   // can be frozen or advanced by hours, which would make "recent" meaningless.
-  let touched = $state({});
+  let touched = $state<Record<string, number>>({});
   // Ticks so freshness decays on its own; without it a node stays lit until
   // some other event happens to re-render the graph.
   let now = $state(Date.now());
   let workspace = $state('');
-  let workspaces = $state([]);
-  let selected = $state(null);
-  let detail = $state(null);
+  let workspaces = $state<any[]>([]);
+  let selected = $state<Node | null>(null);
+  let detail = $state<any>(null);
   let detailError = $state('');
   // itemId|Tables/name -> true when an activity writing it failed.
-  let broken = $state({});
+  let broken = $state<Record<string, boolean>>({});
 
-  let source = null;
+  let source: EventSource | null = null;
   // itemId -> client clock of the last query against it (the Power BI hop).
-  let queried = $state({});
+  let queried = $state<Record<string, number>>({});
 
   // Which item ids are semantic models, so those nodes can link to their own
   // page. Until `#models/{id}` existed the Power BI hop was a dead end: the
   // graph lit a node up when a client queried it and there was nowhere to go
   // from there. Read from the same endpoint the models page uses, so the two
   // cannot disagree about what a model is.
-  let modelIds = $state(new Set());
+  let modelIds = $state<Set<string>>(new Set());
   api
     .get('/_emulator/portal/models')
-    .then((r) => (modelIds = new Set((r.value || []).map((m) => m.itemId))))
+    .then((r) => (modelIds = new Set<string>((r.value || []).map((m: any) => m.itemId))))
     .catch(() => {}); // the graph is useful without the link
 
   // Coalesce graph reloads: a build emits many edges in a burst and they all
   // describe the same redraw.
-  let reloadTimer = null;
+  let reloadTimer: ReturnType<typeof setTimeout> | null = null;
   function scheduleLineageReload() {
     if (reloadTimer) return;
     reloadTimer = setTimeout(() => {
@@ -98,7 +140,7 @@
   // claim about the present, so the failure path re-asks until it can either
   // clear itself or say a CURRENT failure. Backoff, capped: a dead emulator
   // should cost a request every half minute, not a hammering.
-  let retryTimer = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let retryDelay = 3000;
   function loadLineage() {
     api.get('/_emulator/portal/lineage')
@@ -160,7 +202,7 @@
   const FRESH_MS = 10000;
 
   /** inspect loads what a table holds now — the question that follows "it changed". */
-  function inspect(n) {
+  function inspect(n: Node) {
     selected = n;
     detail = null;
     detailError = '';
@@ -173,7 +215,9 @@
       .catch((e) => (detailError = e.message));
   }
 
-  function nodeKey(itemId, path) {
+  // Optional args on purpose: the callers pass event fields, and every field
+  // but seq/at/kind is omitted when it does not apply to that kind.
+  function nodeKey(itemId?: string, path?: string) {
     return `${itemId}|${path}`;
   }
 
@@ -194,43 +238,63 @@
     // EVERY kind, from the generated contract. The stream names each frame, so
     // a kind missing here never arrives — silently, which is why this list is
     // not written by hand.
+    //
+    // The cast is EventSource's own type map, which knows only message/open/
+    // error. These frames are named by the server, so the listener sees a
+    // MessageEvent that the DOM signature cannot promise.
     for (const k of EVENT_KINDS) {
-      source.addEventListener(k, (m) => ingest(m.data));
+      source.addEventListener(k, (m) => ingest((m as MessageEvent).data));
     }
   }
 
-  function ingest(raw) {
-    let ev;
+  function ingest(raw: string) {
+    let ev: RawEmulatorEvent;
     try {
       ev = JSON.parse(raw);
     } catch {
       return;
     }
-    if (ev.kind === 'dropped') {
-      dropped += ev.dropped || 0;
-      return;
-    }
-    if (!EVENT_KINDS.includes(ev.kind)) {
+    // `kind` is read out FIRST so the narrowing below applies to a value the
+    // compiler can track: the frame itself is parsed JSON and stays untrusted.
+    const kind = ev.kind;
+    if (!isEventKind(kind)) {
       unknown += 1;
       return;
     }
+    if (kind === 'dropped') {
+      dropped += ev.dropped ?? 0;
+      return;
+    }
+    if (!isViewKind(kind)) {
+      // Declared in Go, neither `dropped` nor renderable: nothing here knows
+      // what to do with it. `impossible` makes that a BUILD failure — a kind
+      // added to AllKinds without a home lands here, where its type is `never`
+      // only for as long as one of the two lists covers everything.
+      impossible(kind);
+      unknown += 1;
+      return;
+    }
+    const logged: LoggedEvent = { ...ev, kind };
     // Newest first, bounded: an unbounded log is how a long run turns a
     // debugging tool into a memory leak.
-    events = [ev, ...events].slice(0, MAX_LOG);
+    events = [logged, ...events].slice(0, MAX_LOG);
 
-    if (ev.kind === 'table') {
-      touched = { ...touched, [nodeKey(ev.itemId, ev.table)]: Date.now() };
+    if (logged.kind === 'table') {
+      touched = { ...touched, [nodeKey(logged.itemId, logged.table)]: Date.now() };
       // The open inspector is now stale — the table it describes just changed.
-      if (selected && nodeKey(selected.itemId, selected.path) === nodeKey(ev.itemId, ev.table)) {
+      if (
+        selected &&
+        nodeKey(selected.itemId, selected.path) === nodeKey(logged.itemId, logged.table)
+      ) {
         inspect(selected);
       }
     }
-    if (ev.kind === 'activity' && ev.status === 'Failed') {
+    if (logged.kind === 'activity' && logged.status === 'Failed') {
       // Mark whatever this activity is known to write. The lineage edge is what
       // knows that — the event itself only names the activity.
       const next = { ...broken };
       for (const e of edges) {
-        if (e.jobId === ev.jobId && e.activityName === ev.activityName) {
+        if (e.jobId === logged.jobId && e.activityName === logged.activityName) {
           next[nodeKey(e.targetItemId, e.targetPath)] = true;
         }
       }
@@ -240,14 +304,17 @@
     // than at the end of a job — a warehouse build has no job to end.
     // Coalesced: one dbt model emits an edge per source, and reloading per
     // edge would be a request storm for one redraw.
-    if (ev.kind === 'lineage') scheduleLineageReload();
+    if (logged.kind === 'lineage') scheduleLineageReload();
     // A query is the last hop: light the model up as Power BI reads it.
-    if (ev.kind === 'query') {
-      touched = { ...touched, [nodeKey(ev.itemId, 'Tables/' + (ev.dataset || ''))]: Date.now() };
-      queried = { ...queried, [ev.itemId]: Date.now() };
+    if (logged.kind === 'query') {
+      touched = {
+        ...touched,
+        [nodeKey(logged.itemId, 'Tables/' + (logged.dataset || ''))]: Date.now(),
+      };
+      queried = { ...queried, [String(logged.itemId)]: Date.now() };
     }
     // A new run may have produced edges the graph has not seen yet.
-    if (ev.kind === 'job' && ev.status !== 'Started') loadLineage();
+    if (logged.kind === 'job' && logged.status !== 'Started') loadLineage();
   }
 
   $effect(() => {
@@ -276,15 +343,15 @@
   // by relaxation rather than a topological sort, so a cyclic graph still
   // renders (bounded by the node count) instead of hanging.
   let graph = $derived.by(() => {
-    const nodes = new Map();
-    const add = (itemId, item, path, source) => {
+    const nodes = new Map<string, Node>();
+    const add = (itemId: string, item: string, path: string, source?: boolean) => {
       const key = nodeKey(itemId, path);
       if (!nodes.has(key)) {
-        nodes.set(key, { key, itemId, item, path, depth: 0, source: !!source });
+        nodes.set(key, { key, itemId, item, path, depth: 0, source: !!source, x: 0, y: 0 });
       }
       return key;
     };
-    const links = [];
+    const links: Link[] = [];
     for (const e of edges) {
       // A source system has no path — the system IS the node — so it keys on
       // the connection id alone. Marked `source` so it can be drawn as what it
@@ -298,8 +365,10 @@
     for (let i = 0; i < nodes.size; i++) {
       let moved = false;
       for (const l of links) {
-        const a = nodes.get(l.from);
-        const b = nodes.get(l.to);
+        // Both ends were put in the map by `add` above, which is what returned
+        // the keys this link is built from.
+        const a = nodes.get(l.from)!;
+        const b = nodes.get(l.to)!;
         if (b.depth < a.depth + 1) {
           b.depth = a.depth + 1;
           moved = true;
@@ -307,9 +376,9 @@
       }
       if (!moved) break;
     }
-    const byDepth = new Map();
+    const byDepth = new Map<number, Node[]>();
     for (const n of nodes.values()) {
-      const col = byDepth.get(n.depth) || [];
+      const col: Node[] = byDepth.get(n.depth) || [];
       col.push(n);
       byDepth.set(n.depth, col);
     }
@@ -326,7 +395,7 @@
     return { nodes: [...nodes.values()], links, width, height };
   });
 
-  function label(n) {
+  function label(n: Node) {
     // A source system has no path — its name is the connection's display name,
     // and falling through to the path logic would label it with an empty
     // string or a raw GUID.
@@ -337,7 +406,7 @@
 
   // Two levels, because they answer different questions: what just changed,
   // and what this session has written at all.
-  function nodeClass(n) {
+  function nodeClass(n: Node) {
     let c = 'node';
     if (n.source) c += ' source';
     if (broken[n.key]) c += ' broken';
@@ -347,7 +416,7 @@
     return c;
   }
 
-  function edgePath(l) {
+  function edgePath(l: Link) {
     const a = graph.nodes.find((n) => n.key === l.from);
     const b = graph.nodes.find((n) => n.key === l.to);
     if (!a || !b) return '';
@@ -363,11 +432,16 @@
     events.filter((e) => kinds[e.kind] && (!workspace || e.workspaceId === workspace)),
   );
 
-  function fmt(epoch) {
+  function fmt(epoch: number) {
     return new Date(epoch * 1000).toISOString().replace('T', ' ').slice(11, 19);
   }
 
-  function describe(ev) {
+  // EXHAUSTIVE, and enforced. The switch covers every ViewKind; the default arm
+  // narrows `ev.kind` to `never`, so declaring a kind in Go and regenerating the
+  // contract fails this build until this function says what it looks like. The
+  // old JavaScript had `default: return ev.kind`, which printed a bare kind name
+  // in the What column and read as a rendered row.
+  function describe(ev: LoggedEvent): string {
     switch (ev.kind) {
       case 'file':
         return `${ev.eventType?.split('.').pop() || 'File'} ${ev.path}`;
@@ -393,14 +467,15 @@
       }
       case 'query':
         return `${ev.dataset || 'model'} queried` +
-          (ev.queries > 1 ? ` (${ev.queries} queries)` : '') +
+          ((ev.queries ?? 0) > 1 ? ` (${ev.queries} queries)` : '') +
           (ev.status === 'Failed' ? ' — failed' : '');
       default:
+        impossible(ev.kind);
         return ev.kind;
     }
   }
 
-  function who(ev) {
+  function who(ev: LoggedEvent): string {
     if (ev.kind === 'lineage') return ev.activityName || ev.producer || '';
     if (ev.kind === 'query') return 'Power BI';
     const a = ev.attribution;
@@ -521,17 +596,22 @@
           <!-- A semantic model goes to its own page rather than the inspector:
                what a reader wants from this node is the model's tables and DAX,
                and that now has an address. An <a> so it opens in a new tab and
-               lands in browser history like any other link. -->
-          <a
-            class={nodeClass(n) + ' linked'}
-            transform="translate({n.x},{n.y})"
-            href={modelHref('models', n.itemId)}
-            aria-label={`Open semantic model ${label(n)}`}
-          >
-            <rect width="160" height="36" rx="6" />
-            <text x="10" y="15">{label(n)}</text>
-            <text class="sub" x="10" y="28">semantic model →</text>
-          </a>
+               lands in browser history like any other link.
+
+               The transform sits on a wrapping <g>, where a group's placement
+               belongs anyway: `<a>` inside an <svg> is still typed as the HTML
+               anchor, which has no `transform`. -->
+          <g transform="translate({n.x},{n.y})">
+            <a
+              class={nodeClass(n) + ' linked'}
+              href={modelHref('models', n.itemId)}
+              aria-label={`Open semantic model ${label(n)}`}
+            >
+              <rect width="160" height="36" rx="6" />
+              <text x="10" y="15">{label(n)}</text>
+              <text class="sub" x="10" y="28">semantic model →</text>
+            </a>
+          </g>
         {:else}
           <g
             class={nodeClass(n)}

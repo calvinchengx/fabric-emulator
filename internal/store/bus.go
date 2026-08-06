@@ -47,11 +47,16 @@ const (
 // nothing. The portal carried that list as a literal and drifting from this one
 // would have silently lost a whole kind.
 //
-// scripts/gen_event_kinds.py generates portal/src/eventKinds.js from this slice,
+// scripts/gen_event_kinds.py generates portal/src/eventKinds.ts from this slice,
 // and `make check` fails when the committed file does not match. Because
 // portal/dist is embedded in the binary (portal/embed.go), the client and server
 // always ship together — so generating is strictly better than serving a
 // manifest the client fetches: drift becomes impossible rather than detected.
+//
+// It is generated as TYPESCRIPT, so the guarantee goes past subscribing: adding
+// a kind here and regenerating makes the portal stop compiling until something
+// renders it. `make portal-types` proves that, by declaring a kind nothing
+// handles and requiring the build to fail.
 var AllKinds = []string{
 	KindFile, KindTable, KindJob, KindActivity, KindLineage, KindQuery, KindDropped,
 }
