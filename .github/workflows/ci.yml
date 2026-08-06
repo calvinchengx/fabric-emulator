@@ -336,6 +336,10 @@ jobs:
       # right, the cast of services had drifted. Nothing about adding a service
       # reminds anyone to redraw, so the roster is asserted instead.
       - run: uv run --frozen --no-sync python scripts/check_arch_services.py
+      # Starlight's sidebar is an explicit list — no autogenerate. A doc left
+      # out still builds and still has a URL, but nothing links to it, so it is
+      # published and unreachable. Same drift, same guard.
+      - run: uv run --frozen --no-sync python scripts/check_docs_sidebar.py
       # The portal's event-kind list is GENERATED from internal/store/bus.go.
       # The stream names each SSE frame and EventSource has no wildcard
       # listener, so a kind missing from the client is invisible — no error,

@@ -126,7 +126,7 @@ function writeIndex() {
       `## Start here\n\n` +
       `- [Quickstart](01-quickstart.md) — compose up the pair, mint a token, create a workspace, write to OneLake\n` +
       `- [Installation](02-installation.md) — brew, winget, go install, Docker, compose\n` +
-      `- [Architecture](03-architecture.md) — the two-emulator model, token acceptance, the LRO engine\n` +
+      `- [Architecture](03-architecture.md) — the three-emulator model, token acceptance, the LRO engine\n` +
       `- [Control-plane API](07-control-plane-api.md) and [OneLake](08-onelake.md) — every emulated endpoint\n` +
       `- [Testing](10-testing.md) — freeze the clock, inject faults; [run the real fabric-cicd](11-testing-with-fabric-cicd.md)\n` +
       `- [Roadmap](13-roadmap.md) — phases P0–P3 and what's next\n`,
