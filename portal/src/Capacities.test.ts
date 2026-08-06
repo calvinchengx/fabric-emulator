@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import Capacities from './Capacities.svelte';
+import { errRes, res } from './testing';
 
 const cap = {
   id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
@@ -17,11 +18,7 @@ describe('Capacities', () => {
   });
 
   it('renders the seeded capacity with its assignments', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ value: [cap] }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value: [cap] }));
     render(Capacities);
     await waitFor(() => expect(screen.getByText('Emulator Capacity')).toBeInTheDocument());
     expect(screen.getByText('F64')).toBeInTheDocument();
@@ -30,21 +27,13 @@ describe('Capacities', () => {
   });
 
   it('shows an empty assignment list', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ value: [{ ...cap, workspaces: [] }] }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value: [{ ...cap, workspaces: [] }] }));
     render(Capacities);
     await waitFor(() => expect(screen.getByText('none')).toBeInTheDocument());
   });
 
   it('surfaces load errors', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: () => Promise.resolve({ error: { message: 'db gone' } }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(errRes('db gone', 500));
     render(Capacities);
     await waitFor(() => expect(screen.getByText('db gone')).toBeInTheDocument());
   });
@@ -53,13 +42,10 @@ describe('Capacities', () => {
   it('marks a capacity that is not Active differently', async () => {
     // The state chip has two faces and only one was ever rendered. A paused
     // capacity reading as Active is the kind of thing a screenshot hides.
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true, status: 200,
-      json: () => Promise.resolve({ value: [{
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value: [{
         id: 'cap-2', displayName: 'paused', sku: 'F2', region: 'westus',
         state: 'Paused', workspaces: [],
-      }] }),
-    });
+      }] }));
     render(Capacities);
     const chip = await screen.findByText('Paused');
     expect(chip).toHaveClass('notstarted');

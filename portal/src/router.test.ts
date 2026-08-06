@@ -33,12 +33,13 @@ describe('router', () => {
   });
 
   it('builds hrefs that round-trip through parse', () => {
-    for (const [view, param] of [
+    const cases: [string, string | null][] = [
       ['models', null],
       ['models', 'abc-123'],
       ['models', 'My Model'],
       ['models', 'a/b'],
-    ]) {
+    ];
+    for (const [view, param] of cases) {
       expect(parse(href(view, param))).toEqual({ view, param });
     }
   });

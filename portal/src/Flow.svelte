@@ -3,7 +3,7 @@
   import { EVENT_KINDS, VIEW_KINDS, KIND_DOC, isEventKind, isViewKind } from './eventKinds';
   import type { EmulatorEvent, RawEmulatorEvent, ViewKind } from './eventKinds';
   import { href as modelHref } from './router';
-  import { Button } from '$lib/components/ui/button/index.js';
+  import { Button } from '$lib/components/ui/button/index';
 
   // The flow view: the emulator's own event stream, live.
   //

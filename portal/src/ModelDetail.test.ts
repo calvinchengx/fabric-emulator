@@ -1,13 +1,14 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ModelDetail from './ModelDetail.svelte';
+import { errRes, fetchCalls, res } from './testing';
 
 // ModelDetail was only ever reached THROUGH Models, so its own arms went
 // untested: the query box's guards, the two table modes, and every "this model
 // does not have that" case. It is the page a flow-graph node links to, which
 // makes it the one page a stranger arrives at cold.
 
-const table = (over = {}) => ({
+const table = (over: any = {}) => ({
   name: 'Revenue',
   mode: 'import',
   columns: [{ name: 'Country', dataType: 'string', sourceColumn: 'Country' }],
@@ -15,7 +16,7 @@ const table = (over = {}) => ({
   ...over,
 });
 
-const model = (over = {}) => ({
+const model = (over: any = {}) => ({
   itemId: 'm1',
   workspace: 'contoso-analytics',
   displayName: 'ContosoRevenue',
@@ -27,17 +28,14 @@ const model = (over = {}) => ({
 });
 
 /** The listing this page filters by id, plus an optional query response. */
-function mockApi({ models = [model()], query, queryFails } = {}) {
-  vi.spyOn(globalThis, 'fetch').mockImplementation((url, opts) => {
+function mockApi({ models = [model()], query, queryFails }: any = {}) {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL, opts?: RequestInit) => {
     if (opts?.method === 'POST') {
       return queryFails
-        ? Promise.resolve({ ok: false, status: 400,
-            json: () => Promise.resolve({ error: { message: queryFails } }) })
-        : Promise.resolve({ ok: true, status: 200,
-            json: () => Promise.resolve(query ?? { rows: [] }) });
+        ? Promise.resolve(errRes(queryFails, 400))
+        : Promise.resolve(res(query ?? { rows: [] }));
     }
-    return Promise.resolve({ ok: true, status: 200,
-      json: () => Promise.resolve({ value: models }) });
+    return Promise.resolve(res({ value: models }));
   });
 }
 
@@ -49,10 +47,7 @@ describe('ModelDetail', () => {
   it('surfaces a failed listing rather than claiming the model is missing', async () => {
     // Two different sentences: "the store would not answer" and "no such
     // model". Collapsing them sends someone looking for a deleted model.
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false, status: 500,
-      json: () => Promise.resolve({ error: { message: 'store unavailable' } }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(errRes('store unavailable', 500));
     show();
     await waitFor(() => expect(screen.getByText('store unavailable')).toBeInTheDocument());
     expect(screen.queryByText('Model not found')).not.toBeInTheDocument();
@@ -244,9 +239,9 @@ describe('ModelDetail', () => {
       show();
       const box = await waitFor(() => screen.getByLabelText('DAX query'));
       await fireEvent.input(box, { target: { value: '   ' } });
-      const before = globalThis.fetch.mock.calls.length;
+      const before = fetchCalls().length;
       await fireEvent.click(screen.getByRole('button', { name: 'Run' }));
-      expect(globalThis.fetch.mock.calls).toHaveLength(before);
+      expect(fetchCalls()).toHaveLength(before);
     });
   });
 
@@ -284,9 +279,7 @@ describe('ModelDetail', () => {
   it('treats a listing with no value key as no models', async () => {
     // `r.value || []`. Without the fallback, `.find` runs on undefined and the
     // page throws instead of saying the id names nothing.
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true, status: 200, json: () => Promise.resolve({}),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({}));
     show();
     await waitFor(() => expect(screen.getByText('Model not found')).toBeInTheDocument());
   });

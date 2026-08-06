@@ -2,31 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Flow from './Flow.svelte';
 import { EVENT_KINDS, VIEW_KINDS } from './eventKinds';
-
-// A stand-in EventSource: the component subscribes to it exactly as it would to
-// the emulator's SSE endpoint, and the test pushes frames through it.
-class FakeEventSource {
-  static last = null;
-  constructor(url) {
-    this.url = url;
-    this.listeners = {};
-    FakeEventSource.last = this;
-  }
-  addEventListener(kind, fn) {
-    (this.listeners[kind] ||= []).push(fn);
-  }
-  close() {
-    this.closed = true;
-  }
-  open() {
-    this.onopen?.();
-  }
-  emit(kind, payload) {
-    const m = { data: JSON.stringify(payload) };
-    for (const fn of this.listeners[kind] || []) fn(m);
-  }
-}
-
+import { FakeEventSource, errRes, fetchCalls, groupOf, installEventSource, removeEventSource, res, stream } from './testing';
 const edges = [
   {
     jobId: 'job-1', activityName: 'IngestCustomers', producer: 'Copy',
@@ -50,43 +26,40 @@ function mockApi({
   table = null,
   terminal = null,
   models = [],
-} = {}) {
-  vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+}: any = {}) {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
     // The terminal status route 404s when no terminal is configured, which is
     // the ORDINARY case and must not surface as an error.
-    if (url.includes('/portal/terminal/status')) {
+    if (String(url).includes('/portal/terminal/status')) {
       if (!terminal) {
-        return Promise.resolve({
-          ok: false, status: 404, json: () => Promise.resolve({ error: { code: 'NotFound' } }),
-        });
+        return Promise.resolve(res({ error: { code: 'NotFound' } }, { ok: false, status: 404 }));
       }
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(terminal) });
+      return Promise.resolve(res(terminal));
     }
-    const body = url.includes('/portal/lineage')
+    const body = String(url).includes('/portal/lineage')
       ? { value: lineage }
-      : url.includes('/portal/workspaces')
+      : String(url).includes('/portal/workspaces')
         ? { value: workspaces }
-        : url.includes('/portal/models')
+        : String(url).includes('/portal/models')
           ? { value: models }
-          : url.includes('/portal/table')
+          : String(url).includes('/portal/table')
             ? table
             : { value: [] };
-    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    return Promise.resolve(res(body));
   });
 }
 
-function mockLineage(value = edges) {
+function mockLineage(value: any = edges) {
   mockApi({ lineage: value });
 }
 
 describe('Flow', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
   });
 
   it('says it is connecting before claiming to be disconnected', async () => {
@@ -95,7 +68,7 @@ describe('Flow', () => {
     // The window before the first connection resolves must not read as an error.
     await waitFor(() => expect(screen.getByText('connecting')).toBeInTheDocument());
     expect(screen.queryByText('disconnected')).not.toBeInTheDocument();
-    FakeEventSource.last.open();
+    stream().open();
     await waitFor(() => expect(screen.getByText('streaming')).toBeInTheDocument());
   });
 
@@ -109,9 +82,9 @@ describe('Flow', () => {
 
     // landing → bronze → silver must land in three successive columns, which is
     // what makes a medallion draw itself.
-    const xOf = (label) => {
-      const g = screen.getByText(label).closest('g');
-      return Number(g.getAttribute('transform').match(/translate\((-?\d+)/)[1]);
+    const xOf = (label: string) => {
+      const g = groupOf(screen.getByText(label));
+      return Number(g.getAttribute('transform')!.match(/translate\((-?\d+)/)![1]);
     };
     expect(xOf('customers.csv')).toBeLessThan(xOf('bronze_customers'));
     expect(xOf('bronze_customers')).toBeLessThan(xOf('silver_customers'));
@@ -128,10 +101,10 @@ describe('Flow', () => {
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
 
-    FakeEventSource.last.open();
+    stream().open();
     await waitFor(() => expect(screen.getByText('streaming')).toBeInTheDocument());
 
-    FakeEventSource.last.emit('table', {
+    stream().emit('table', {
       seq: 1, at: 1700000200, kind: 'table', itemId: 'lake-1',
       table: 'Tables/bronze_customers', version: 3, rowsAdded: 1203, filesAdded: 1,
       attribution: { jobId: 'job-1', activityName: 'IngestCustomers' },
@@ -142,7 +115,7 @@ describe('Flow', () => {
     // The attribution column names what caused it.
     expect(screen.getAllByText('IngestCustomers').length).toBeGreaterThan(0);
     // …and the node is marked as touched.
-    const node = screen.getByText('bronze_customers').closest('g');
+    const node = groupOf(screen.getByText('bronze_customers'));
     await waitFor(() => expect(node.getAttribute('class')).toContain('fresh'));
   });
 
@@ -150,16 +123,16 @@ describe('Flow', () => {
     mockLineage();
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
-    FakeEventSource.last.open();
+    stream().open();
 
-    FakeEventSource.last.emit('activity', {
+    stream().emit('activity', {
       seq: 2, at: 1700000300, kind: 'activity', jobId: 'job-1',
       activityName: 'IngestCustomers', activityType: 'Copy', status: 'Failed',
       error: 'the source file is empty',
     });
 
     await waitFor(() => expect(screen.getByText(/the source file is empty/)).toBeInTheDocument());
-    const node = screen.getByText('bronze_customers').closest('g');
+    const node = groupOf(screen.getByText('bronze_customers'));
     await waitFor(() => expect(node.getAttribute('class')).toContain('broken'));
   });
 
@@ -167,9 +140,9 @@ describe('Flow', () => {
     mockLineage();
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
-    FakeEventSource.last.open();
+    stream().open();
 
-    FakeEventSource.last.emit('dropped', { seq: 3, at: 1700000400, kind: 'dropped', dropped: 12 });
+    stream().emit('dropped', { seq: 3, at: 1700000400, kind: 'dropped', dropped: 12 });
     await waitFor(() => expect(screen.getByText(/12 event\(s\) dropped/)).toBeInTheDocument());
   });
 
@@ -177,14 +150,14 @@ describe('Flow', () => {
     mockLineage();
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
-    FakeEventSource.last.open();
+    stream().open();
 
     // `file` is off by default: the firehose is opt-in.
-    FakeEventSource.last.emit('file', {
+    stream().emit('file', {
       seq: 4, at: 1700000500, kind: 'file',
       eventType: 'Microsoft.Fabric.OneLake.FileCreated', path: 'Files/landing/customers.csv',
     });
-    FakeEventSource.last.emit('job', {
+    stream().emit('job', {
       seq: 5, at: 1700000501, kind: 'job', jobId: 'job-1', status: 'Started',
     });
     await waitFor(() => expect(screen.getByText('job Started')).toBeInTheDocument());
@@ -197,11 +170,7 @@ describe('Flow', () => {
   });
 
   it('surfaces a lineage load error', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: () => Promise.resolve({ error: { message: 'db gone' } }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(errRes('db gone', 500));
     render(Flow);
     await waitFor(() => expect(screen.getByText('db gone')).toBeInTheDocument());
   });
@@ -216,7 +185,7 @@ describe('Flow', () => {
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
 
-    await fireEvent.click(screen.getByText('bronze_customers').closest('g'));
+    await fireEvent.click(groupOf(screen.getByText('bronze_customers')));
 
     await waitFor(() => expect(screen.getByText('v4')).toBeInTheDocument());
     expect(screen.getByText('1203 rows')).toBeInTheDocument();
@@ -230,7 +199,7 @@ describe('Flow', () => {
     mockApi({});
     render(Flow);
     await waitFor(() => expect(screen.getByText('customers.csv')).toBeInTheDocument());
-    await fireEvent.click(screen.getByText('customers.csv').closest('g'));
+    await fireEvent.click(groupOf(screen.getByText('customers.csv')));
     await waitFor(() =>
       expect(screen.getByText(/no schema to read/)).toBeInTheDocument());
   });
@@ -242,7 +211,7 @@ describe('Flow', () => {
     });
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
-    await fireEvent.click(screen.getByText('bronze_customers').closest('g'));
+    await fireEvent.click(groupOf(screen.getByText('bronze_customers')));
     await waitFor(() =>
       expect(screen.getByText(/Not readable yet/)).toBeInTheDocument());
   });
@@ -251,19 +220,19 @@ describe('Flow', () => {
     mockApi({ workspaces: [{ id: 'ws-1', displayName: 'Analytics' }, { id: 'ws-2', displayName: 'Sandbox' }] });
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
-    FakeEventSource.last.open();
+    stream().open();
 
-    FakeEventSource.last.emit('job', {
+    stream().emit('job', {
       seq: 1, at: 1700000000, kind: 'job', workspaceId: 'ws-1', jobId: 'a', status: 'Started',
     });
-    FakeEventSource.last.emit('activity', {
+    stream().emit('activity', {
       seq: 2, at: 1700000001, kind: 'activity', workspaceId: 'ws-2',
       activityName: 'OtherWorkspaceStep', activityType: 'Wait', status: 'Succeeded',
     });
     await waitFor(() => expect(screen.getByText(/OtherWorkspaceStep/)).toBeInTheDocument());
 
     // Narrowing to one workspace hides the other's events without dropping them.
-    const select = screen.getByLabelText(/workspace/);
+    const select = screen.getByLabelText(/workspace/) as HTMLSelectElement;
     select.value = 'ws-1';
     select.dispatchEvent(new Event('change', { bubbles: true }));
     await waitFor(() => expect(screen.queryByText(/OtherWorkspaceStep/)).not.toBeInTheDocument());
@@ -277,11 +246,10 @@ describe('Flow', () => {
 describe('Flow: the warehouse and Power BI hops', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
   });
 
   const goldEdges = [
@@ -306,9 +274,9 @@ describe('Flow: the warehouse and Power BI hops', () => {
     await waitFor(() => expect(screen.getByText('dim_customer')).toBeInTheDocument());
     expect(screen.getByText('Customer')).toBeInTheDocument();
 
-    const xOf = (label) => {
-      const g = screen.getByText(label).closest('g');
-      return Number(g.getAttribute('transform').match(/translate\((-?\d+)/)[1]);
+    const xOf = (label: string) => {
+      const g = groupOf(screen.getByText(label));
+      return Number(g.getAttribute('transform')!.match(/translate\((-?\d+)/)![1]);
     };
     // Source → landing → bronze → silver → gold → model, left to right.
     expect(xOf('silver_customers')).toBeLessThan(xOf('dim_customer'));
@@ -329,7 +297,7 @@ describe('Flow: the warehouse and Power BI hops', () => {
     // The transform sits on a wrapping <g>, not on the <a>: inside an <svg> an
     // <a> is still typed as the HTML anchor, which has no transform. Asserted
     // because moving it silently stacks every linked node at the origin.
-    expect(link.closest('g').getAttribute('transform')).toMatch(/^translate\(\d+,\d+\)$/);
+    expect(link.closest('g')!.getAttribute('transform')).toMatch(/^translate\(\d+,\d+\)$/);
     // A model node is not clickable into the inspector — it goes to its page.
     expect(screen.queryByText('Select a node to see what it holds now.')).toBeInTheDocument();
   });
@@ -338,16 +306,16 @@ describe('Flow: the warehouse and Power BI hops', () => {
     // A warehouse build has no job, so the old "reload when a job finishes"
     // rule would never fire and gold would not appear until a manual reload.
     let served = edges;
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
-      const body = url.includes('/portal/lineage') ? { value: served } : { value: [] };
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
+      const body = String(url).includes('/portal/lineage') ? { value: served } : { value: [] };
+      return Promise.resolve(res(body));
     });
     render(Flow);
     await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
     expect(screen.queryByText('dim_customer')).not.toBeInTheDocument();
 
     served = goldEdges;
-    FakeEventSource.last.emit('lineage', {
+    stream().emit('lineage', {
       seq: 9, at: 1700000200, kind: 'lineage', workspaceId: 'ws-1', itemId: 'wh-1',
       sourceItemId: 'lake-1', sourcePath: 'Tables/silver_customers',
       targetPath: 'Tables/dim_customer', producer: 'Warehouse', activityName: 'CTAS',
@@ -361,7 +329,7 @@ describe('Flow: the warehouse and Power BI hops', () => {
     mockLineage(goldEdges);
     render(Flow);
     await waitFor(() => expect(screen.getByText('Customer')).toBeInTheDocument());
-    FakeEventSource.last.emit('query', {
+    stream().emit('query', {
       seq: 10, at: 1700000400, kind: 'query', workspaceId: 'ws-1', itemId: 'sm-1',
       dataset: 'ContosoRevenue', queries: 2, status: 'Completed',
     });
@@ -420,7 +388,7 @@ describe('Flow: the warehouse and Power BI hops', () => {
     // The emulator holds no data for a system outside it, so the inspector
     // explains rather than erroring or firing a /portal/table request.
     expect(await screen.findByText(/The emulator holds no data for it/)).toBeTruthy();
-    const asked = globalThis.fetch.mock.calls.some((c) => String(c[0]).includes('/portal/table'));
+    const asked = fetchCalls().some((c) => String(c[0]).includes('/portal/table'));
     expect(asked).toBe(false);
   });
 
@@ -444,7 +412,7 @@ describe('Flow: the warehouse and Power BI hops', () => {
     ]);
     render(Flow);
     await screen.findByLabelText(/contoso-pos-api/);
-    FakeEventSource.last.emit('lineage', {
+    stream().emit('lineage', {
       seq: 9,
       at: 1700000200,
       kind: 'lineage',
@@ -454,7 +422,7 @@ describe('Flow: the warehouse and Power BI hops', () => {
       producer: 'Reported',
       activityName: 'ingest_pos',
     });
-    const row = await screen.findByText(/contoso-pos-api \(source system\) → Files\/landing\/pos\/customers.csv/);
+    const row = await screen.findByText(/contoso-pos-api \(source system\) → Files\/landing\/pos\/customers.csv/)!;
     expect(row).toBeTruthy();
     expect(screen.queryByText(/undefined/)).toBeNull();
   });
@@ -463,11 +431,10 @@ describe('Flow: the warehouse and Power BI hops', () => {
 describe('terminal pane', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
   });
 
   // No terminal configured is the DEFAULT shape of this product: the route is
@@ -508,9 +475,9 @@ describe('terminal pane', () => {
     expect(screen.getByLabelText('terminal token')).toBeInTheDocument();
     // Nothing is framed until a token is supplied: an iframe with no token
     // would just 401 in a way the user cannot see.
-    expect(document.querySelector('iframe.term-frame')).toBeNull();
+    expect(document.querySelector('iframe.term-frame')!).toBeNull();
     // And no request ever asked the emulator for a token.
-    const asked = globalThis.fetch.mock.calls.map(([u]) => String(u));
+    const asked = fetchCalls().map(([u]) => String(u));
     expect(asked.some((u) => /token/i.test(u))).toBe(false);
   });
 
@@ -524,7 +491,7 @@ describe('terminal pane', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
 
     const frame = await waitFor(() => {
-      const el = document.querySelector('iframe.term-frame');
+      const el = document.querySelector('iframe.term-frame')!;
       expect(el).not.toBeNull();
       return el;
     });
@@ -542,25 +509,24 @@ describe('terminal pane', () => {
       target: { value: 'deadbeef' },
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
-    await waitFor(() => expect(document.querySelector('iframe.term-frame')).not.toBeNull());
+    await waitFor(() => expect(document.querySelector('iframe.term-frame')!).not.toBeNull());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
 
     // Keeping the token in memory after disconnect would mean "Connect" silently
     // reuses a credential the operator thinks they revoked.
-    expect(document.querySelector('iframe.term-frame')).toBeNull();
-    expect(screen.getByLabelText('terminal token').value).toBe('');
+    expect(document.querySelector('iframe.term-frame')!).toBeNull();
+    expect((screen.getByLabelText('terminal token') as HTMLInputElement).value).toBe('');
   });
 });
 
 describe('the error banner', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
   });
 
   // The graph reloads on a debounce for the whole session. Without clearing on
@@ -569,16 +535,14 @@ describe('the error banner', () => {
   // `streaming` chip and a pipeline that had just passed 16/16.
   it('clears a stale error once the graph loads again', async () => {
     let fail = true;
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
       if (String(url).includes('/portal/lineage') && fail) {
-        return Promise.resolve({
-          ok: false, status: 404, json: () => Promise.resolve(null),
-        });
+        return Promise.resolve(res(null, { ok: false, status: 404 }));
       }
       const body = String(url).includes('/portal/lineage')
         ? { value: edges }
         : { value: [] };
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      return Promise.resolve(res(body));
     });
 
     render(Flow);
@@ -598,16 +562,14 @@ describe('the error banner', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       let fail = true;
-      vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
         if (String(url).includes('/portal/lineage') && fail) {
-          return Promise.resolve({
-            ok: false, status: 404, json: () => Promise.resolve(null),
-          });
+          return Promise.resolve(res(null, { ok: false, status: 404 }));
         }
         const body = String(url).includes('/portal/lineage')
           ? { value: edges }
           : { value: [] };
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+        return Promise.resolve(res(body));
       });
 
       render(Flow);
@@ -626,11 +588,10 @@ describe('the error banner', () => {
 describe('the event contract', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
   });
 
   // PER-KIND COMPLETENESS, not a coverage percentage. This iterates the
@@ -641,7 +602,7 @@ describe('the event contract', () => {
     mockLineage();
     render(Flow);
     await waitFor(() => expect(FakeEventSource.last).not.toBeNull());
-    const subscribed = Object.keys(FakeEventSource.last.listeners);
+    const subscribed = Object.keys(stream().listeners);
     for (const kind of EVENT_KINDS) {
       expect(subscribed, `no listener for '${kind}' — the stream names each frame, so it would never arrive`).toContain(kind);
     }
@@ -651,13 +612,13 @@ describe('the event contract', () => {
     mockLineage();
     render(Flow);
     await waitFor(() => expect(FakeEventSource.last).not.toBeNull());
-    const es = FakeEventSource.last;
+    const es = FakeEventSource.last!;
     es.open();
 
     // `file` is off by default (a busy run emits far more of them), so turn
     // every filter on — the claim is about the CONTRACT, not the defaults.
     for (const box of screen.getAllByRole('checkbox')) {
-      if (!box.checked) await fireEvent.click(box);
+      if (!(box as HTMLInputElement).checked) await fireEvent.click(box);
     }
 
     for (const [i, kind] of VIEW_KINDS.entries()) {
@@ -687,11 +648,11 @@ describe('the event contract', () => {
     mockLineage();
     render(Flow);
     await waitFor(() => expect(FakeEventSource.last).not.toBeNull());
-    const es = FakeEventSource.last;
+    const es = FakeEventSource.last!;
     es.open();
     // An UNNAMED frame arrives on onmessage, not through addEventListener —
     // which is exactly the path a kind this build has never heard of takes.
-    es.onmessage({
+    es.onmessage!({
       data: JSON.stringify({ seq: 99, at: 1700000000, kind: 'schedule', workspaceId: 'ws-1' }),
     });
     await waitFor(() =>
@@ -707,11 +668,10 @@ describe('the event contract', () => {
 describe('Flow: redraw coalescing and recovery', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
     vi.useRealTimers();
   });
 
@@ -723,18 +683,18 @@ describe('Flow: redraw coalescing and recovery', () => {
     mockLineage();
     render(Flow);
     await vi.advanceTimersByTimeAsync(1);
-    const before = globalThis.fetch.mock.calls
-      .filter((c) => String(c[0]).includes('/portal/lineage')).length;
+    const before = fetchCalls()
+      .filter((c: unknown[]) => String(c[0]).includes('/portal/lineage')).length;
 
     for (let i = 0; i < 5; i++) {
-      FakeEventSource.last.emit('lineage', {
+      stream().emit('lineage', {
         seq: 10 + i, at: 1700000000, kind: 'lineage',
         itemId: 'lake-1', sourcePath: 'a', targetPath: 'b',
       });
     }
     await vi.advanceTimersByTimeAsync(500);
-    const after = globalThis.fetch.mock.calls
-      .filter((c) => String(c[0]).includes('/portal/lineage')).length;
+    const after = fetchCalls()
+      .filter((c: unknown[]) => String(c[0]).includes('/portal/lineage')).length;
     expect(after - before).toBe(1);
   });
 
@@ -743,14 +703,13 @@ describe('Flow: redraw coalescing and recovery', () => {
     // being re-asked on a schedule nothing cancels.
     vi.useFakeTimers();
     let ok = false;
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
       if (!String(url).includes('/portal/lineage')) {
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) });
+        return Promise.resolve(res({ value: [] }));
       }
       return ok
-        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: edges }) })
-        : Promise.resolve({ ok: false, status: 404,
-            json: () => Promise.resolve({ error: { message: 'HTTP 404' } }) });
+        ? Promise.resolve(res({ value: edges }))
+        : Promise.resolve(errRes('HTTP 404', 404));
     });
     render(Flow);
     await vi.advanceTimersByTimeAsync(1);
@@ -762,9 +721,9 @@ describe('Flow: redraw coalescing and recovery', () => {
     await vi.advanceTimersByTimeAsync(3100);
     expect(screen.queryByText('HTTP 404')).not.toBeInTheDocument();
 
-    const settled = globalThis.fetch.mock.calls.length;
+    const settled = fetchCalls().length;
     await vi.advanceTimersByTimeAsync(30000);
-    expect(globalThis.fetch.mock.calls).toHaveLength(settled);
+    expect(fetchCalls()).toHaveLength(settled);
   });
 
   it('says it is reconnecting when the stream drops', async () => {
@@ -772,9 +731,9 @@ describe('Flow: redraw coalescing and recovery', () => {
     // `streaming` chip over a dead stream is a lie.
     mockLineage();
     render(Flow);
-    FakeEventSource.last.open();
+    stream().open();
     await waitFor(() => expect(screen.getByText('streaming')).toBeInTheDocument());
-    FakeEventSource.last.onerror();
+    stream().onerror!();
     await waitFor(() => expect(screen.getByText('reconnecting')).toBeInTheDocument());
     expect(screen.getByText('reconnecting')).toHaveClass('failed');
   });
@@ -785,8 +744,8 @@ describe('Flow: redraw coalescing and recovery', () => {
     await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
     // `curl -N` users can see this stream; a proxy that injects a keep-alive
     // comment must not take the log down.
-    for (const fn of FakeEventSource.last.listeners.table || []) fn({ data: 'not json {' });
-    FakeEventSource.last.emit('table', {
+    for (const fn of stream().listeners.table || []) fn({ data: 'not json {' });
+    stream().emit('table', {
       seq: 1, at: 1700000000, kind: 'table', itemId: 'lake-1',
       table: 'Tables/bronze_customers', version: 0,
     });
@@ -801,11 +760,11 @@ describe('Flow: redraw coalescing and recovery', () => {
     });
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
-    FakeEventSource.last.emit('table', {
+    stream().emit('table', {
       seq: 1, at: 1700000000, kind: 'table', itemId: 'lake-1',
       table: 'Tables/bronze_customers', version: 1,
     });
-    await fireEvent.click(screen.getByText('bronze_customers').closest('g'));
+    await fireEvent.click(groupOf(screen.getByText('bronze_customers')));
     await waitFor(() => expect(screen.getByText('v1')).toBeInTheDocument());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
@@ -819,22 +778,22 @@ describe('Flow: redraw coalescing and recovery', () => {
     // The stream says a table CHANGED; the panel says what it holds. A panel
     // that does not re-read is quietly describing the previous version.
     let version = 1;
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
       if (String(url).includes('/portal/lineage'))
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: edges }) });
+        return Promise.resolve(res({ value: edges }));
       if (String(url).includes('/portal/table'))
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+        return Promise.resolve(res({
           itemId: 'lake-1', table: 'Tables/bronze_customers', version, readable: true,
-          columns: ['id'], rowCount: version, preview: [['1']] }) });
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) });
+          columns: ['id'], rowCount: version, preview: [['1']] }));
+      return Promise.resolve(res({ value: [] }));
     });
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
-    await fireEvent.click(screen.getByText('bronze_customers').closest('g'));
+    await fireEvent.click(groupOf(screen.getByText('bronze_customers')));
     await waitFor(() => expect(screen.getByText('v1')).toBeInTheDocument());
 
     version = 2;
-    FakeEventSource.last.emit('table', {
+    stream().emit('table', {
       seq: 2, at: 1700000000, kind: 'table', itemId: 'lake-1',
       table: 'Tables/bronze_customers', version: 2,
     });
@@ -848,12 +807,12 @@ describe('Flow: redraw coalescing and recovery', () => {
     mockLineage();
     render(Flow);
     await vi.advanceTimersByTimeAsync(1);
-    FakeEventSource.last.emit('table', {
+    stream().emit('table', {
       seq: 1, at: 1700000000, kind: 'table', itemId: 'lake-1',
       table: 'Tables/bronze_customers', version: 1,
     });
     await vi.advanceTimersByTimeAsync(50);
-    const node = () => screen.getByText('bronze_customers').closest('g');
+    const node = () => groupOf(screen.getByText('bronze_customers'));
     expect(node()).toHaveClass('fresh');
     // FRESH_MS is 10s, and `now` ticks every second on its own.
     await vi.advanceTimersByTimeAsync(11000);
@@ -865,15 +824,14 @@ describe('Flow: redraw coalescing and recovery', () => {
 describe('Flow: what the log says about each event', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
     mockLineage();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
   });
 
-  const emit = (kind, ev) => FakeEventSource.last.emit(kind, { seq: 99, at: 1700000000, kind, ...ev });
+  const emit = (kind: string, ev: any) => stream().emit(kind, { seq: 99, at: 1700000000, kind, ...ev });
 
   it('reports files removed by a commit, not only rows added', async () => {
     render(Flow);
@@ -977,7 +935,7 @@ describe('Flow: what the log says about each event', () => {
       await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
       emit('table', { itemId: 'lake-1', table: 'Tables/t', version: 0, attribution: {} });
       await waitFor(() => expect(screen.getByText('Tables/t → v0')).toBeInTheDocument());
-      const row = screen.getByText('Tables/t → v0').closest('tr');
+      const row = screen.getByText('Tables/t → v0').closest('tr')!;
       expect(row.querySelectorAll('td')[3].textContent.trim()).toBe('');
     });
   });
@@ -986,27 +944,25 @@ describe('Flow: what the log says about each event', () => {
 describe('Flow: the inspector', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
   });
 
   const openNode = async (name = 'bronze_customers') => {
     render(Flow);
     await waitFor(() => expect(screen.getByText(name)).toBeInTheDocument());
-    await fireEvent.click(screen.getByText(name).closest('g'));
+    await fireEvent.click(groupOf(screen.getByText(name)));
   };
 
   it('reports a failure to read the table rather than staying on "Reading…"', async () => {
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
       if (String(url).includes('/portal/table'))
-        return Promise.resolve({ ok: false, status: 500,
-          json: () => Promise.resolve({ error: { message: 'parquet is corrupt' } }) });
+        return Promise.resolve(errRes('parquet is corrupt', 500));
       if (String(url).includes('/portal/lineage'))
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: edges }) });
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) });
+        return Promise.resolve(res({ value: edges }));
+      return Promise.resolve(res({ value: [] }));
     });
     await openNode();
     await waitFor(() => expect(screen.getByText('parquet is corrupt')).toBeInTheDocument());
@@ -1038,20 +994,19 @@ describe('Flow: the inspector', () => {
     await openNode();
     // Scoped to the panel: every node in the graph is also labelled with its
     // owning item, so a document-wide query for "lake" is ambiguous.
-    await waitFor(() => expect(document.querySelector('.panel')).toBeTruthy());
-    expect(document.querySelector('.panel').textContent).toContain('lake');
-    expect(document.querySelector('.panel').textContent).toContain('Tables/bronze_customers');
+    await waitFor(() => expect(document.querySelector('.panel')!).toBeTruthy());
+    expect(document.querySelector('.panel')!.textContent).toContain('lake');
+    expect(document.querySelector('.panel')!.textContent).toContain('Tables/bronze_customers');
   });
 });
 
 describe('Flow: the last reachable arms', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
     vi.useRealTimers();
   });
 
@@ -1061,13 +1016,12 @@ describe('Flow: the last reachable arms', () => {
     // during the backoff — which is exactly what Reload graph does.
     vi.useFakeTimers();
     let ok = false;
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
       if (!String(url).includes('/portal/lineage'))
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) });
+        return Promise.resolve(res({ value: [] }));
       return ok
-        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: edges }) })
-        : Promise.resolve({ ok: false, status: 404,
-            json: () => Promise.resolve({ error: { message: 'HTTP 404' } }) });
+        ? Promise.resolve(res({ value: edges }))
+        : Promise.resolve(errRes('HTTP 404', 404));
     });
     render(Flow);
     await vi.advanceTimersByTimeAsync(1);
@@ -1079,9 +1033,9 @@ describe('Flow: the last reachable arms', () => {
     expect(screen.queryByText('HTTP 404')).not.toBeInTheDocument();
 
     // The retry that was pending must not fire now.
-    const settled = globalThis.fetch.mock.calls.length;
+    const settled = fetchCalls().length;
     await vi.advanceTimersByTimeAsync(30000);
-    expect(globalThis.fetch.mock.calls).toHaveLength(settled);
+    expect(fetchCalls()).toHaveLength(settled);
   });
 
   it('opens the inspector from the keyboard', async () => {
@@ -1091,7 +1045,7 @@ describe('Flow: the last reachable arms', () => {
                        preview: [['1']] } });
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
-    const node = screen.getByText('bronze_customers').closest('g');
+    const node = groupOf(screen.getByText('bronze_customers'));
     await fireEvent.keyDown(node, { key: 'Enter' });
     await waitFor(() => expect(screen.getByText('v2')).toBeInTheDocument());
   });
@@ -1101,7 +1055,7 @@ describe('Flow: the last reachable arms', () => {
                        preview: [['1']] } });
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
-    await fireEvent.keyDown(screen.getByText('bronze_customers').closest('g'), { key: ' ' });
+    await fireEvent.keyDown(groupOf(screen.getByText('bronze_customers')), { key: ' ' });
     await waitFor(() => expect(screen.getByText('v3')).toBeInTheDocument());
   });
 
@@ -1110,7 +1064,7 @@ describe('Flow: the last reachable arms', () => {
                        preview: [['1']] } });
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
-    await fireEvent.keyDown(screen.getByText('bronze_customers').closest('g'), { key: 'a' });
+    await fireEvent.keyDown(groupOf(screen.getByText('bronze_customers')), { key: 'a' });
     expect(screen.queryByText('v4')).not.toBeInTheDocument();
   });
 });
@@ -1118,11 +1072,10 @@ describe('Flow: the last reachable arms', () => {
 describe('Flow: a retry that fails again', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
     vi.useRealTimers();
   });
 
@@ -1131,11 +1084,10 @@ describe('Flow: a retry that fails again', () => {
     // cancel the handle it is about to overwrite, or every failed reload leaves
     // another timer running and a dead emulator gets asked N times a second.
     vi.useFakeTimers();
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url) =>
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) =>
       String(url).includes('/portal/lineage')
-        ? Promise.resolve({ ok: false, status: 404,
-            json: () => Promise.resolve({ error: { message: 'HTTP 404' } }) })
-        : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) }));
+        ? Promise.resolve(errRes('HTTP 404', 404))
+        : Promise.resolve(res({ value: [] })));
     render(Flow);
     await vi.advanceTimersByTimeAsync(1);
     expect(screen.getByText('HTTP 404')).toBeInTheDocument();
@@ -1147,11 +1099,11 @@ describe('Flow: a retry that fails again', () => {
     // Exactly one retry may fire — the one this reload scheduled — and not the
     // orphaned original as well. The window is 6s+ because each failure doubles
     // the backoff, so the surviving timer is the 6s one.
-    const before = globalThis.fetch.mock.calls
-      .filter((c) => String(c[0]).includes('/portal/lineage')).length;
+    const before = fetchCalls()
+      .filter((c: unknown[]) => String(c[0]).includes('/portal/lineage')).length;
     await vi.advanceTimersByTimeAsync(6100);
-    const after = globalThis.fetch.mock.calls
-      .filter((c) => String(c[0]).includes('/portal/lineage')).length;
+    const after = fetchCalls()
+      .filter((c: unknown[]) => String(c[0]).includes('/portal/lineage')).length;
     expect(after - before).toBe(1);
   });
 });
@@ -1159,20 +1111,17 @@ describe('Flow: a retry that fails again', () => {
 describe('Flow: payloads that omit what they usually carry', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
   });
 
   it('treats every listing without a value key as empty', async () => {
     // Three endpoints, three `|| []` fallbacks: lineage, models and
     // workspaces. Any of them returning `{}` must leave the view usable rather
     // than iterating undefined.
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true, status: 200, json: () => Promise.resolve({}),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({}));
     render(Flow);
     await waitFor(() => expect(screen.getByText(/No lineage recorded yet/)).toBeInTheDocument());
     expect(screen.getByText(/Nothing yet/)).toBeInTheDocument();
@@ -1186,7 +1135,7 @@ describe('Flow: payloads that omit what they usually carry', () => {
     mockLineage();
     render(Flow);
     await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
-    FakeEventSource.last.emit('dropped', { seq: 1, at: 1700000000, kind: 'dropped' });
+    stream().emit('dropped', { seq: 1, at: 1700000000, kind: 'dropped' });
     await new Promise((r) => setTimeout(r, 20));
     expect(screen.queryByText(/event\(s\) dropped/)).not.toBeInTheDocument();
   });
@@ -1228,7 +1177,7 @@ describe('Flow: payloads that omit what they usually carry', () => {
     }]);
     render(Flow);
     await waitFor(() => expect(screen.getByText('a')).toBeInTheDocument());
-    const edge = document.querySelector('path.link');
+    const edge = document.querySelector('path.link')!;
     expect(edge).toBeTruthy();
     expect(edge.getAttribute('d')).toMatch(/^M[\d.]+,/);
   });
@@ -1241,46 +1190,45 @@ describe('Flow: payloads that omit what they usually carry', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Terminal' }));
     const box = screen.getByLabelText('terminal token');
     await fireEvent.input(box, { target: { value: '   ' } });
-    await fireEvent.submit(box.closest('form'));
-    expect(document.querySelector('iframe.term-frame')).toBeNull();
+    await fireEvent.submit(box.closest('form')!);
+    expect(document.querySelector('iframe.term-frame')!).toBeNull();
   });
 });
 
 describe('Flow: a node whose owning item has no name', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    FakeEventSource.last = null;
-    globalThis.EventSource = FakeEventSource;
+    installEventSource();
   });
   afterEach(() => {
-    delete globalThis.EventSource;
+    removeEventSource();
   });
 
   it('falls back to a short item id in the node and in the inspector', async () => {
     // `n.item || n.itemId.slice(0, 8)` in two places. A lineage edge recorded
     // against an item that has since been deleted carries no display name, and
     // "undefined" under a box is worse than a truncated GUID.
-    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
       if (String(url).includes('/portal/lineage'))
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [{
+        return Promise.resolve(res({ value: [{
           jobId: '', activityName: 'Ingest', producer: 'Copy',
           sourceItemId: 'lake-11112222', sourcePath: 'Files/landing/x.csv',
           targetItemId: 'lake-11112222', targetPath: 'Tables/bronze',
           createdAt: 1700000000,
-        }] }) });
+        }] }));
       if (String(url).includes('/portal/table'))
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
-          readable: true, version: 0, columns: ['id'], rowCount: 2, preview: [['1'], ['2']] }) });
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) });
+        return Promise.resolve(res({
+          readable: true, version: 0, columns: ['id'], rowCount: 2, preview: [['1'], ['2']] }));
+      return Promise.resolve(res({ value: [] }));
     });
     render(Flow);
     await waitFor(() => expect(screen.getByText('bronze')).toBeInTheDocument());
     // The sub-label under the box.
     expect(screen.getAllByText('lake-111').length).toBeGreaterThan(0);
 
-    await fireEvent.click(screen.getByText('bronze').closest('g'));
+    await fireEvent.click(groupOf(screen.getByText('bronze')));
     // And the inspector's own heading line, which uses the same fallback.
-    await waitFor(() => expect(document.querySelector('.panel')).toBeTruthy());
-    expect(document.querySelector('.panel').textContent).toContain('lake-11112222');
+    await waitFor(() => expect(document.querySelector('.panel')!).toBeTruthy());
+    expect(document.querySelector('.panel')!.textContent).toContain('lake-11112222');
   });
 });
