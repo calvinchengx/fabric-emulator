@@ -42,6 +42,7 @@ or opt out with `docker compose -f docker-compose.yml up`.
 | `FABRIC_SPARK_AGENT_URL` | `-spark-agent-url` | *(empty)* | Spark agent endpoint fronting the Livy cluster. |
 | `FABRIC_SQL_TDS_ADDR` | `-sql-tds-addr` | *(empty)* | TDS listen address for the SQL analytics endpoint. |
 | `FABRIC_WAREHOUSE_SQL_URL` | `-warehouse-sql-url` | *(empty)* | Backing SQL engine URL for warehouse query execution. |
+| `FABRIC_WEB_ACTIVITY` | `-web-activity` | `real` | `stub` makes pipeline **Web** activities record success without calling anything — for a CI leg that must not reach the network. The default performs the real HTTP request, because a fabricated response is a false pass. |
 | `FABRIC_AIRFLOW_URL` | `-airflow-url` | *(empty)* | Apache Airflow 2.10 REST API base URL. Setting it enables real `ApacheAirflowJob` execution. |
 | `FABRIC_AIRFLOW_DAG_DIR` | `-airflow-dag-dir` | *(empty)* | Host path shared with Airflow's DAG folder. Required when `FABRIC_AIRFLOW_URL` is set. |
 | `FABRIC_AIRFLOW_USERNAME` | `-airflow-username` | *(empty)* | Optional Airflow REST basic-auth username. |
