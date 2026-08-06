@@ -8,7 +8,15 @@ onlyBuiltDependencies:
   - esbuild
   - sharp
 
-# Security floor for transitive deps (Dependabot): postcss < 8.5.18 has a
-# parsing vulnerability; nothing we use needs the old behavior.
+# Security floors for transitive deps (Dependabot). Each of these arrives through
+# something else — Astro, Starlight, their remark/rehype chains — so there is no
+# manifest to bump; the override is the only lever.
+#
+#   postcss  < 8.5.18  parsing vulnerability
+#   js-yaml  < 4.3.1   CVE-2026-59870, quadratic CPU in `!!omap` resolution.
+#                      Bounded `<5` deliberately: a bare `>=4.3.1` resolves to
+#                      5.2.3 and hands Astro's remark chain a different major.
+#                      The fix is a patch, so stay in the major that shipped it.
 overrides:
   postcss: ">=8.5.18"
+  js-yaml: ">=4.3.1 <5"
