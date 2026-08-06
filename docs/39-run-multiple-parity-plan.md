@@ -9,22 +9,37 @@ The direction that matters throughout is **passes here, fails there**. A gap
 that fails loudly on the emulator gets noticed; a gap the emulator papers over
 ships a defect to real Fabric with a green local run.
 
-## Phase 0 — pin the oracle
+## Phase 0 — pin the oracle: DONE, and it moved the plan
 
-Several semantics below are inferred, not quoted. Before building to them,
-confirm against current Microsoft docs and cite the source in the parity row.
+Answered against Microsoft's current reference,
+[NotebookUtils notebook run and orchestration](https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-run).
+Several working assumptions were wrong, and the corrections are larger than
+the gaps originally listed.
 
-| Question | Working assumption | Confidence |
+| Question | Answer | Effect |
 |---|---|---|
-| What `run()` returns | The child's exit value, not the status string | High that it's the exit value — which makes our status-string return itself a parity bug |
-| `exitVal` in `runMultiple` results | The child's `notebookutils.notebook.exit()` value | High |
-| Default `concurrency` | ~50 | Low |
-| `message` vs `error` on failure | Failure reason lands in `message` | Low |
-| DAG `timeoutInSeconds` expiry | Remaining activities marked, call returns | Low |
-| Children share the parent's Spark session | Yes — the headline difference vs `run` | Medium-high |
+| What `run()` returns | **The exit value.** "returns the exact string passed to `notebookutils.notebook.exit(value)`… If `exit()` isn't called, an empty string (`""`)" | Our status-string return is a parity bug. Breaking change, Phase 1 |
+| `runMultiple` result shape | **`{name: {"exitVal": str, "exception": err or None}}`** — two keys | Ours has `exitVal`/`message`/`status`/`error`. `exception` is absent, so `result["exception"]` KeyErrors |
+| Failure behaviour | **Raises `RunMultipleFailedException`**, partial results on `ex.result` | Ours returns quietly. Code following the documented `try/except` pattern never sees the exception |
+| Default `concurrency` | **3 × available CPU cores**; `0` means unlimited | The retired mssparkutils page still says 50; the notebookutils page is current |
+| DAG `timeoutInSeconds` | Default **43200** (12h) | As assumed |
+| `timeoutPerCellInSeconds` | Default **90**, **per cell** | Confirms the unit bug |
+| Child session model | **Isolated REPL instances within the existing Spark session**, sharing its compute | Matches the agent's post-3a architecture — Phase 5 is much closer than assumed |
+| `useRootDefaultLakehouse` | Not an inheritance flag. A child specifying a **different** lakehouse than the parent is **blocked**; the flag bypasses that check. Lives in `arguments` | Phase 2 was designed against the wrong semantics |
+| Signature | `runMultiple(dag, config=None)`; `run(path, timeout_seconds=90, arguments=None, workspace="")` | Ours takes `useRootDefaultLakehouse=` and `workspaceId=` |
 
-Anything still unconfirmed after this ships as a **documented divergence**,
-never a silent guess.
+### Surfaces the plan did not know existed
+
+- **`validateDAG(dag) -> bool`** — a public method we do not implement at all.
+  Catches duplicate activity names, missing dependencies and circular
+  references. We already perform those checks inside `runMultiple`; exposing
+  them is nearly free.
+- **`@activity('name').exitValue()`** — an expression usable inside `args` to
+  pass a dependency's exit value into a dependent. A documented data-flow
+  mechanism with no equivalent here.
+- **Duplicate activity names** must be rejected. We silently keep the last.
+- **`workspace`** accepts a name *or* an id; ours is `workspaceId` only.
+- **`config`** — a second positional parameter (`displayDAGViaGraphviz`).
 
 ## Phase 1 — wrong answers shipping today (Python only)
 
