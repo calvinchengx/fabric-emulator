@@ -53,4 +53,21 @@ describe('Faults', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Set' }));
     await waitFor(() => expect(screen.getByText('nope')).toBeInTheDocument());
   });
+
+
+  it('arms request rejection, which is a different lever from operation failure', async () => {
+    // Rejecting requests happens BEFORE a handler runs; failing operations
+    // happens inside one. Two knobs, and only one had a test.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200, json: () => Promise.resolve({ status: 'ok' }),
+    });
+    render(Faults);
+    const spinners = screen.getAllByRole('spinbutton');
+    await fireEvent.input(spinners[1], { target: { value: '2' } });
+    const arms = screen.getAllByRole('button', { name: 'Arm' });
+    await fireEvent.click(arms[arms.length - 1]);
+    await waitFor(() =>
+      expect(screen.getByText('next 2 request(s) will be rejected')).toBeInTheDocument());
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ rejectNextRequests: 2 });
+  });
 });

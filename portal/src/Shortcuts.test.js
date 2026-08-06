@@ -57,4 +57,21 @@ describe('Shortcuts', () => {
     render(Shortcuts);
     await waitFor(() => expect(screen.getByText('db gone')).toBeInTheDocument());
   });
+
+
+  it('renders a shortcut whose target path is the item root', async () => {
+    // `sc.targetPath || ''` — a shortcut to the item root carries no path, and
+    // without the fallback the cell reads ".../undefined".
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ value: [{
+        workspaceId: 'ws-1', workspaceName: 'analytics',
+        itemId: 'it-1', itemName: 'lake', path: 'Tables', name: 'root_ref',
+        targetWorkspaceId: 'ws-2', targetItemId: 'it-2', dangling: false,
+      }] }),
+    });
+    render(Shortcuts);
+    await screen.findByText('Tables/root_ref');
+    expect(screen.getByText('ws-2/it-2/')).toBeInTheDocument();
+  });
 });

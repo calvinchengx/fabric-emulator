@@ -205,4 +205,27 @@ describe('ModelDetail query box', () => {
     // The message is the product for an interactive box, not the status code.
     await waitFor(() => expect(screen.getByText(/unknown measure/)).toBeInTheDocument());
   });
+
+
+  it('surfaces a failure to list models', async () => {
+    // The listing's own error path. Without it, an emulator that cannot answer
+    // looks like a tenant with nothing published.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false, status: 500,
+      json: () => Promise.resolve({ error: { message: 'models unavailable' } }),
+    });
+    render(Models);
+    await waitFor(() => expect(screen.getByText('models unavailable')).toBeInTheDocument());
+  });
+
+  it('treats a response with no value as no models', async () => {
+    // `r.value || []` — a payload without the key must not leave `models` null
+    // forever, which renders neither the list nor the empty state.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200, json: () => Promise.resolve({}),
+    });
+    render(Models);
+    await waitFor(() =>
+      expect(screen.getByText('No semantic models published yet.')).toBeInTheDocument());
+  });
 });
