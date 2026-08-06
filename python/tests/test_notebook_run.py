@@ -79,7 +79,8 @@ def service(monkeypatch):
         monkeypatch.setattr(notebook.credentials, "getToken", lambda _a: "tok")
         monkeypatch.setattr(notebook, "config",
                             lambda: type("C", (), {"fabric_url": "https://x",
-                                                   "workspace_id": WS})())
+                                                   "workspace_id": WS,
+                                                   "lakehouse_id": "lake-1"})())
         monkeypatch.setattr(notebook.time, "sleep", lambda _s: None)
         return svc
     return install
@@ -148,18 +149,55 @@ def test_an_unreadable_run_detail_does_not_fail_a_completed_run(service):
 
 # --- arguments and aliases ---------------------------------------------------
 
+def submitted(svc):
+    """The executionData the child job was created with."""
+    body = next(b for _m, u, b in svc.calls if "jobType=RunNotebook" in u)
+    return (body or {}).get("executionData", {})
+
+
 def test_arguments_are_sent_as_execution_data_parameters(service):
     svc = service()
     notebook.run("nb", 90, {"input": 20})
-    body = next(b for _m, u, b in svc.calls if "jobType=RunNotebook" in u)
-    assert body == {"executionData": {"parameters": {
-        "input": {"value": 20, "type": "string"}}}}
+    assert submitted(svc)["parameters"] == {"input": {"value": 20, "type": "string"}}
 
 
-def test_no_arguments_sends_no_body(service):
+def test_no_arguments_and_no_lakehouse_sends_no_body(service, monkeypatch):
     svc = service()
+    monkeypatch.setattr(notebook, "config",
+                        lambda: type("C", (), {"fabric_url": "https://x",
+                                               "workspace_id": WS,
+                                               "lakehouse_id": ""})())
     notebook.run("nb")
     assert next(b for _m, u, b in svc.calls if "jobType=RunNotebook" in u) is None
+
+
+# --- the reference-run lakehouse rule ----------------------------------------
+
+def test_the_parent_lakehouse_is_sent_so_the_rule_can_fire(service):
+    # Without this the service cannot tell a reference run from a bare job
+    # submission, so Fabric's mismatch check could never apply and a DAG with a
+    # mis-bound child passed here while being blocked in production.
+    svc = service()
+    notebook.run("nb")
+    assert submitted(svc)["parentLakehouseId"] == "lake-1"
+
+
+def test_use_root_default_lakehouse_travels_out_of_the_arguments(service):
+    # Fabric puts the flag in `arguments`; it configures the RUN, so forwarding
+    # it to the child as a parameter would set a variable the notebook never
+    # declared.
+    svc = service()
+    notebook.run("nb", 90, {"input": 1, "useRootDefaultLakehouse": True})
+    exec_data = submitted(svc)
+    assert exec_data["useRootDefaultLakehouse"] is True
+    assert exec_data["parameters"] == {"input": {"value": 1, "type": "string"}}
+    assert "useRootDefaultLakehouse" not in exec_data["parameters"]
+
+
+def test_the_bypass_flag_is_absent_unless_asked_for(service):
+    svc = service()
+    notebook.run("nb", 90, {"input": 1})
+    assert "useRootDefaultLakehouse" not in submitted(svc)
 
 
 def test_the_legacy_keyword_names_still_work(service):

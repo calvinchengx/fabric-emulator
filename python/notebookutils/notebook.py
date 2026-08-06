@@ -94,10 +94,7 @@ def _run_detail(path, timeout_seconds=None, per_cell_seconds=None, arguments=Non
     """
     token = credentials.getToken("fabric")
     ws, iid = _resolve_item(path, workspace, token)
-    body = None
-    if arguments:
-        body = {"executionData": {"parameters": {
-            k: {"value": v, "type": "string"} for k, v in arguments.items()}}}
+    body = _execution_data(arguments)
     _status, hdrs, _ = request(
         "POST", f"{config().fabric_url}/v1/workspaces/{ws}/items/{iid}/jobs/instances?jobType=RunNotebook",
         token=token, body=body, raw=True)
@@ -116,6 +113,35 @@ def _run_detail(path, timeout_seconds=None, per_cell_seconds=None, arguments=Non
             return _finish(base, token, st)
         time.sleep(0.3)
     raise NotebookError(f"notebook {path!r} did not finish within {timeout_seconds}s")
+
+
+def _execution_data(arguments):
+    """Build the child run's `executionData`, including the reference-run context.
+
+    `parentLakehouseId` is what makes this a REFERENCE run rather than a bare
+    job submission, and it is what lets the service apply Fabric's rule: a
+    child bound to a different lakehouse than its parent is blocked unless
+    `useRootDefaultLakehouse` says otherwise. Sending nothing meant the rule
+    could never fire, so a DAG with a mis-bound child passed here and was
+    refused in production.
+
+    `useRootDefaultLakehouse` travels in `arguments`, which is where Fabric's
+    reference puts it. It is lifted out rather than forwarded as a notebook
+    parameter: it configures the run, and passing it through to the child's
+    parameter cell would set a variable the notebook never declared.
+    """
+    args = dict(arguments or {})
+    bypass = bool(args.pop("useRootDefaultLakehouse", False))
+    exec_data = {}
+    if args:
+        exec_data["parameters"] = {
+            k: {"value": v, "type": "string"} for k, v in args.items()}
+    parent = config().lakehouse_id
+    if parent:
+        exec_data["parentLakehouseId"] = parent
+    if bypass:
+        exec_data["useRootDefaultLakehouse"] = True
+    return {"executionData": exec_data} if exec_data else None
 
 
 def _cell_count(base, token):

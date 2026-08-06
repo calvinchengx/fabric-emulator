@@ -21,6 +21,58 @@ import (
 // executionData is the decoded `executionData` object of the request (or of
 // the schedule/trigger that fired), left as a generic map because each item
 // type reads different keys out of it.
+// jobFailureMessage turns a failure code into something a caller can act on.
+//
+// Every failed job said "The job failed." A notebook shim surfaces this text
+// as the exception a user reads, so a refusal with a specific, fixable cause
+// arrived indistinguishable from a cell that threw. Codes without an entry
+// keep the generic text — a vague message is a smaller problem than a
+// confidently wrong one.
+func jobFailureMessage(code string) string {
+	switch code {
+	case "NotebookLakehouseMismatch":
+		return "The referenced notebook is bound to a different default lakehouse " +
+			"than the notebook referencing it. Bind them to the same lakehouse, " +
+			"remove the child's binding so it inherits, or pass " +
+			"useRootDefaultLakehouse=True in the arguments to bypass this check."
+	case "ComputeBindingInvalid":
+		return "The notebook's compute binding does not resolve to an existing item."
+	}
+	return "The job failed."
+}
+
+// referenceRunLakehouseCode enforces Fabric's reference-run lakehouse rule.
+//
+// Fabric allows a referenced child notebook to run "only if they use the same
+// lakehouse as the parent, inherit the parent's lakehouse, or neither defines
+// one. The execution is blocked if the child specifies a different lakehouse
+// than the parent notebook. To bypass this check, set
+// `useRootDefaultLakehouse: True` in the arguments."
+//
+// A REFUSAL, not a rebinding. The emulator ran the child against its own
+// lakehouse and returned green, so a DAG whose child was bound to the wrong
+// lakehouse — the mistake this rule exists to catch — passed locally and was
+// blocked in production. Silently rebinding the child instead would be the
+// same defect wearing the opposite mask: the run would go green having read
+// data the author never pointed it at.
+//
+// `parentLakehouseId` is absent for a direct job submission, which is not a
+// reference run and is not subject to the rule.
+func referenceRunLakehouseCode(exec map[string]any, childLakehouse string) string {
+	parent, _ := exec["parentLakehouseId"].(string)
+	if parent == "" {
+		return ""
+	}
+	if bypass, _ := exec["useRootDefaultLakehouse"].(bool); bypass {
+		return ""
+	}
+	// No lakehouse of its own means it inherits; the same one is trivially fine.
+	if childLakehouse == "" || childLakehouse == parent {
+		return ""
+	}
+	return "NotebookLakehouseMismatch"
+}
+
 func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, exec map[string]any) (*store.JobInstance, error) {
 	delay, failWith := a.nextOpFate()
 	j := &store.JobInstance{ItemID: it.ID, JobType: jobType, InvokeType: invokeType, FailWith: failWith}
@@ -47,6 +99,9 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 	if it.Type == "Notebook" && jobType == "RunNotebook" {
 		run, code := a.parseNotebookRun(it)
 		nbRun = &run
+		if code == "" {
+			code = referenceRunLakehouseCode(exec, run.Binding.LakehouseID)
+		}
 		if code != "" {
 			j.FailWith = code
 		} else if len(run.Cells) > 0 {
@@ -241,7 +296,7 @@ func (a *API) jobBody(j *store.JobInstance, wid string) map[string]any {
 		body["endTimeUtc"] = time.Unix(now, 0).UTC().Format(time.RFC3339)
 	}
 	if status == store.JobFailed {
-		body["failureReason"] = map[string]string{"errorCode": j.FailWith, "message": "The job failed."}
+		body["failureReason"] = map[string]string{"errorCode": j.FailWith, "message": jobFailureMessage(j.FailWith)}
 	}
 	a.reconcileNotebookJobBody(j, body)
 	return body
