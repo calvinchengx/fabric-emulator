@@ -217,29 +217,37 @@ def overlapping(monkeypatch):
     """
     import threading
 
-    state = {"live": 0, "peak": 0, "events": []}
+    class Overlap:
+        """Attributes, not a dict: a dict holding both ints and lists infers as
+        a union, and `ty` rejects `+=` on it."""
+
+        def __init__(self):
+            self.live = 0
+            self.peak = 0
+            self.events = []
+            self.want = 2  # how many in flight before the gate opens
+
+    state = Overlap()
     lock = threading.Lock()
     reached = threading.Event()
-    expected = {"n": 2}
 
     def fake_detail(path, timeout_seconds=None, per_cell_seconds=None,
                     arguments=None, workspace=None):
         with lock:
-            state["live"] += 1
-            state["peak"] = max(state["peak"], state["live"])
-            state["events"].append(("enter", path))
-            if state["live"] >= expected["n"]:
+            state.live += 1
+            state.peak = max(state.peak, state.live)
+            state.events.append(("enter", path))
+            if state.live >= state.want:
                 reached.set()
         # Block until enough activities are in flight together, or give up —
         # a sequential implementation must finish rather than deadlock here.
         reached.wait(timeout=0.5)
         with lock:
-            state["live"] -= 1
-            state["events"].append(("exit", path))
+            state.live -= 1
+            state.events.append(("exit", path))
         return (f"exit-of-{path}", "Completed", 1)
 
     monkeypatch.setattr(notebook, "_run_detail", fake_detail)
-    state["expect"] = expected
     return state
 
 
@@ -251,58 +259,58 @@ def test_an_explicit_concurrency_actually_overlaps(overlapping):
         {"name": "a", "path": "nbA"},
         {"name": "b", "path": "nbB"},
     ], "concurrency": 2})
-    assert overlapping["peak"] == 2, overlapping["events"]
+    assert overlapping.peak == 2, overlapping.events
 
 
 def test_the_default_never_overlaps(overlapping):
     # Same DAG, no concurrency key: one at a time. The gate opens at one in
     # flight, so a correctly sequential run never waits it out.
-    overlapping["expect"]["n"] = 1
+    overlapping.want = 1
     run_ok({"activities": [
         {"name": "a", "path": "nbA"},
         {"name": "b", "path": "nbB"},
     ]})
-    assert overlapping["peak"] == 1, overlapping["events"]
+    assert overlapping.peak == 1, overlapping.events
 
 
 def test_concurrency_one_never_overlaps(overlapping):
-    overlapping["expect"]["n"] = 1
+    overlapping.want = 1
     run_ok({"activities": [
         {"name": "a", "path": "nbA"},
         {"name": "b", "path": "nbB"},
     ], "concurrency": 1})
-    assert overlapping["peak"] == 1, overlapping["events"]
+    assert overlapping.peak == 1, overlapping.events
 
 
 def test_the_pool_never_exceeds_the_requested_width(overlapping):
-    overlapping["expect"]["n"] = 2
+    overlapping.want = 2
     run_ok({"activities": [
         {"name": n, "path": f"nb{n}"} for n in "abcde"
     ], "concurrency": 2})
-    assert overlapping["peak"] <= 2, overlapping["events"]
+    assert overlapping.peak <= 2, overlapping.events
 
 
 def test_concurrency_zero_means_unlimited(overlapping):
-    overlapping["expect"]["n"] = 4
+    overlapping.want = 4
     run_ok({"activities": [
         {"name": n, "path": f"nb{n}"} for n in "abcd"
     ], "concurrency": 0})
-    assert overlapping["peak"] == 4, overlapping["events"]
+    assert overlapping.peak == 4, overlapping.events
 
 
 def test_a_level_boundary_is_still_a_barrier(overlapping):
     # `z` depends on both roots, so it must not start until they finish, no
     # matter how wide the pool is.
-    overlapping["expect"]["n"] = 2
+    overlapping.want = 2
     run_ok({"activities": [
         {"name": "x", "path": "nbX"},
         {"name": "y", "path": "nbY"},
         {"name": "z", "path": "nbZ", "dependencies": ["x", "y"]},
     ], "concurrency": 4})
-    order = [name for kind, name in overlapping["events"] if kind == "enter"]
-    assert order[-1] == "nbZ", overlapping["events"]
-    exits = [name for kind, name in overlapping["events"] if kind == "exit"]
-    assert set(exits[:2]) == {"nbX", "nbY"}, overlapping["events"]
+    order = [name for kind, name in overlapping.events if kind == "enter"]
+    assert order[-1] == "nbZ", overlapping.events
+    exits = [name for kind, name in overlapping.events if kind == "exit"]
+    assert set(exits[:2]) == {"nbX", "nbY"}, overlapping.events
 
 
 def test_results_keep_the_listed_order_not_the_completion_order(ran):
@@ -374,76 +382,84 @@ def flaky(monkeypatch):
     `sleep` is stubbed and recorded: the retry interval is a contract worth
     asserting, and a test that actually waits it out is a test nobody runs.
     """
-    state = {"fail_times": 1, "calls": 0, "slept": []}
+    class Flaky:
+        """Attributes rather than a dict, for the same reason as `Overlap`."""
+
+        def __init__(self):
+            self.fail_times = 1
+            self.calls = 0
+            self.slept = []
+
+    state = Flaky()
 
     def fake_detail(path, timeout_seconds=None, per_cell_seconds=None,
                     arguments=None, workspace=None):
-        state["calls"] += 1
-        if state["calls"] <= state["fail_times"]:
-            raise notebook.NotebookError(f"attempt {state['calls']} failed")
+        state.calls += 1
+        if state.calls <= state.fail_times:
+            raise notebook.NotebookError(f"attempt {state.calls} failed")
         return (f"exit-of-{path}", "Completed", 1)
 
     monkeypatch.setattr(notebook, "_run_detail", fake_detail)
-    monkeypatch.setattr(notebook.time, "sleep", lambda s: state["slept"].append(s))
+    monkeypatch.setattr(notebook.time, "sleep", lambda s: state.slept.append(s))
     return state
 
 
 def test_a_retried_activity_that_succeeds_reports_completed(flaky):
-    flaky["fail_times"] = 1
+    flaky.fail_times = 1
     out = run_ok({"activities": [
         {"name": "a", "path": "nbA", "retry": 2},
     ]})
     assert out["a"]["status"] == "Completed"
     assert out["a"]["exception"] is None
-    assert flaky["calls"] == 2
+    assert flaky.calls == 2
 
 
 def test_exhausted_retries_report_the_last_error(flaky):
-    flaky["fail_times"] = 99
+    flaky.fail_times = 99
     out = run_failing({"activities": [
         {"name": "a", "path": "nbA", "retry": 2},
     ]})
     # 1 initial attempt + 2 retries, and the LAST failure is what is reported.
-    assert flaky["calls"] == 3
+    assert flaky.calls == 3
     assert "attempt 3 failed" in str(out["a"]["exception"])
 
 
 def test_no_retry_key_means_one_attempt(flaky):
-    flaky["fail_times"] = 99
+    flaky.fail_times = 99
     run_failing({"activities": [{"name": "a", "path": "nbA"}]})
-    assert flaky["calls"] == 1
+    assert flaky.calls == 1
 
 
 def test_the_retry_interval_is_waited_between_attempts(flaky):
-    flaky["fail_times"] = 2
+    flaky.fail_times = 2
     run_ok({"activities": [
         {"name": "a", "path": "nbA", "retry": 3, "retryIntervalInSeconds": 10},
     ]})
     # Two failures then a success: waited after each failure, not after the
     # success, and not after a final exhausted attempt.
-    assert flaky["slept"] == [10, 10]
+    assert flaky.slept == [10, 10]
 
 
 def test_no_interval_means_no_wait(flaky):
-    flaky["fail_times"] = 1
+    flaky.fail_times = 1
     run_ok({"activities": [{"name": "a", "path": "nbA", "retry": 1}]})
-    assert flaky["slept"] == []
+    assert flaky.slept == []
 
 
 def test_the_last_attempt_is_not_followed_by_a_wait(flaky):
-    flaky["fail_times"] = 99
+    flaky.fail_times = 99
     run_failing({"activities": [
         {"name": "a", "path": "nbA", "retry": 2, "retryIntervalInSeconds": 5},
     ]})
     # 3 attempts means 2 gaps, never 3 — a trailing wait delays the whole DAG
     # for an activity that has already given up.
-    assert flaky["slept"] == [5, 5]
+    assert flaky.slept == [5, 5]
 
 
 def test_dependents_wait_out_the_retries_before_deciding_to_skip(flaky):
     # A dependent must not be skipped on the first failure of a dependency that
     # is going to succeed on retry.
-    flaky["fail_times"] = 1
+    flaky.fail_times = 1
     out = run_ok({"activities": [
         {"name": "a", "path": "nbA", "retry": 2},
         {"name": "b", "path": "nbB", "dependencies": ["a"]},

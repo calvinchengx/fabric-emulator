@@ -48,6 +48,11 @@ fabric-cicd = ["fabric-cicd>=0.1"]
 fabric-cli = ["ms-fabric-cli>=1.2"]
 fabric-target = [
     "fabric-target[real,sessions]",
+    # The conformance suite's runMultiple cases drive the notebookutils shim on
+    # both legs, so it belongs in this group's closure. Without it the emulator
+    # leg dies at import on a clean checkout — which it did, while passing on a
+    # laptop whose venv had other groups installed.
+    "fabric-emulator-notebookutils",
     "pytest>=8.3,<10",
 ]
 governance = [
