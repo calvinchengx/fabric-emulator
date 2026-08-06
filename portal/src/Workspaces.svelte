@@ -1,5 +1,7 @@
 <script lang="ts">
   import { api } from './api';
+  import * as Card from '$lib/components/ui/card/index';
+  import * as Table from '$lib/components/ui/table/index';
 
   let workspaces = $state<any[]>([]);
   let error = $state('');
@@ -32,24 +34,33 @@
 {#if workspaces.length === 0}
   <p class="muted">No workspaces yet — create one through the API (see the quickstart).</p>
 {:else}
-  <table>
-    <thead>
-      <tr><th>Name</th><th>Id</th><th>Capacity</th><th>Items</th><th>Roles</th><th>Git</th><th>Identity</th></tr>
-    </thead>
-    <tbody>
+  <Table.Root>
+    <Table.Header>
+      <Table.Row>
+        <Table.Head>Name</Table.Head>
+        <Table.Head>Id</Table.Head>
+        <Table.Head>Capacity</Table.Head>
+        <Table.Head>Items</Table.Head>
+        <Table.Head>Roles</Table.Head>
+        <Table.Head>Git</Table.Head>
+        <Table.Head>Identity</Table.Head>
+      </Table.Row>
+    </Table.Header>
+    <Table.Body>
       {#each workspaces as w}
-        <tr class="row" onclick={() => toggle(w.id)}>
-          <td>{w.displayName}</td>
-          <td class="mono">{w.id}</td>
-          <td class="mono">{w.capacityId || '—'}</td>
-          <td>{w.itemCount}</td>
-          <td>{w.roleCount}</td>
-          <td>{w.git ? w.git.branchName : '—'}</td>
-          <td>{w.workspaceIdentity ? 'provisioned' : '—'}</td>
-        </tr>
+        <Table.Row class="row" onclick={() => toggle(w.id)}>
+          <Table.Cell>{w.displayName}</Table.Cell>
+          <Table.Cell class="mono">{w.id}</Table.Cell>
+          <Table.Cell class="mono">{w.capacityId || '—'}</Table.Cell>
+          <Table.Cell>{w.itemCount}</Table.Cell>
+          <Table.Cell>{w.roleCount}</Table.Cell>
+          <Table.Cell>{w.git ? w.git.branchName : '—'}</Table.Cell>
+          <Table.Cell>{w.workspaceIdentity ? 'provisioned' : '—'}</Table.Cell>
+        </Table.Row>
         {#if open === w.id && detail}
-          <tr><td colspan="7">
-            <div class="panel">
+          <Table.Row><Table.Cell colspan={7}>
+            <Card.Root>
+              <Card.Content>
               <h3>Items</h3>
               {#if detail.items.length === 0}<p class="muted">none</p>{:else}
                 <ul>{#each detail.items as it}<li><code>{it.type}</code> {it.displayName} <span class="mono muted">{it.id}</span></li>{/each}</ul>
@@ -62,10 +73,11 @@
               {:else}
                 <p class="muted">not connected</p>
               {/if}
-            </div>
-          </td></tr>
+              </Card.Content>
+            </Card.Root>
+          </Table.Cell></Table.Row>
         {/if}
       {/each}
-    </tbody>
-  </table>
+    </Table.Body>
+  </Table.Root>
 {/if}

@@ -618,7 +618,7 @@ describe('the event contract', () => {
     // `file` is off by default (a busy run emits far more of them), so turn
     // every filter on — the claim is about the CONTRACT, not the defaults.
     for (const box of screen.getAllByRole('checkbox')) {
-      if (!(box as HTMLInputElement).checked) await fireEvent.click(box);
+      if (box.getAttribute('aria-checked') !== 'true') await fireEvent.click(box);
     }
 
     for (const [i, kind] of VIEW_KINDS.entries()) {
@@ -630,12 +630,16 @@ describe('the event contract', () => {
 
     // One row per kind, each labelled with its own kind. A kind that parses but
     // is discarded is the same invisible loss as one never subscribed to.
+    // Asserted on the Kind column's text rather than on a class: what a reader
+    // sees is the label, and the old `.chip.<kind>` class existed only as a
+    // test hook.
+    const kindColumn = () =>
+      [...document.querySelectorAll('table tbody tr')].map((tr) =>
+        tr.querySelectorAll('td')[1]?.textContent?.trim(),
+      );
     for (const kind of VIEW_KINDS) {
       await waitFor(() =>
-        expect(
-          document.querySelector(`table tbody span.chip.${kind}`),
-          `no log row for '${kind}'`,
-        ).not.toBeNull(),
+        expect(kindColumn(), `no log row for '${kind}'`).toContain(kind),
       );
     }
   });
@@ -735,7 +739,7 @@ describe('Flow: redraw coalescing and recovery', () => {
     await waitFor(() => expect(screen.getByText('streaming')).toBeInTheDocument());
     stream().onerror!();
     await waitFor(() => expect(screen.getByText('reconnecting')).toBeInTheDocument());
-    expect(screen.getByText('reconnecting')).toHaveClass('failed');
+    expect(screen.getByText('reconnecting')).toHaveAttribute('data-tone', 'caution');
   });
 
   it('ignores a frame that is not JSON instead of dying on it', async () => {
@@ -994,9 +998,9 @@ describe('Flow: the inspector', () => {
     await openNode();
     // Scoped to the panel: every node in the graph is also labelled with its
     // owning item, so a document-wide query for "lake" is ambiguous.
-    await waitFor(() => expect(document.querySelector('.panel')!).toBeTruthy());
-    expect(document.querySelector('.panel')!.textContent).toContain('lake');
-    expect(document.querySelector('.panel')!.textContent).toContain('Tables/bronze_customers');
+    await waitFor(() => expect(document.querySelector('[data-slot="card"]')!).toBeTruthy());
+    expect(document.querySelector('[data-slot="card"]')!.textContent).toContain('lake');
+    expect(document.querySelector('[data-slot="card"]')!.textContent).toContain('Tables/bronze_customers');
   });
 });
 
@@ -1233,7 +1237,7 @@ describe('Flow: a node whose owning item has no name', () => {
 
     await fireEvent.click(groupOf(screen.getByText('bronze')));
     // And the inspector's own heading line, which uses the same fallback.
-    await waitFor(() => expect(document.querySelector('.panel')!).toBeTruthy());
-    expect(document.querySelector('.panel')!.textContent).toContain('lake-11112222');
+    await waitFor(() => expect(document.querySelector('[data-slot="card"]')!).toBeTruthy());
+    expect(document.querySelector('[data-slot="card"]')!.textContent).toContain('lake-11112222');
   });
 });

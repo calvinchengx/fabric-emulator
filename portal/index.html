@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fabric Emulator</title>
+    <!-- Resolve the theme BEFORE the bundle loads. Deferring this to the app
+         means one frame painted light before Svelte mounts, which reads as a
+         flash on every navigation. Kept to the two lines that decide the
+         attribute; everything else lives in src/theme.ts. -->
+    <script>
+      (function () {
+        var stored = null;
+        try { stored = localStorage.getItem('fe.theme'); } catch (e) {}
+        var dark = stored === 'dark' ||
+          (stored !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

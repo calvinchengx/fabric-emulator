@@ -45,7 +45,12 @@ export default defineConfig(({ mode }) => ({
         // upstream's code, they carry no portal logic, and a test asserting
         // that `<Card>` renders a div would pin someone else's implementation
         // detail. Excluded rather than omitted silently — the reason is here.
-        'src/lib/**',
+        //
+        // Scoped to what the CLI actually writes, NOT all of src/lib: our own
+        // components live there too, and a blanket exclusion made StatusBadge
+        // invisible to coverage the moment it was added.
+        'src/lib/components/ui/**',
+        'src/lib/utils.ts',
         // The mount call itself. Exercised by portal/smoke (a real browser
         // asserting the built bundle renders), which is where a broken
         // entrypoint is actually caught; jsdom cannot witness it.

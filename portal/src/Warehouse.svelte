@@ -1,5 +1,7 @@
 <script lang="ts">
   import { api } from './api';
+  import StatusBadge from '$lib/StatusBadge.svelte';
+  import * as Table from '$lib/components/ui/table/index';
 
   let wh = $state<any>(null);
   let error = $state('');
@@ -23,35 +25,35 @@
 </p>
 {#if error}<p class="error">{error}</p>{/if}
 {#if wh}
-  <table>
-    <tbody>
-      <tr>
-        <td><code>FABRIC_SQL_TDS_ADDR</code></td>
-        <td>
+  <Table.Root>
+    <Table.Body>
+      <Table.Row>
+        <Table.Cell><code>FABRIC_SQL_TDS_ADDR</code></Table.Cell>
+        <Table.Cell>
           {#if wh.sqlTdsConfigured}
-            <span class="chip succeeded">configured</span>
+            <StatusBadge tone="success">configured</StatusBadge>
           {:else}
-            <span class="chip">not configured</span>
+            <StatusBadge>not configured</StatusBadge>
           {/if}
-        </td>
-      </tr>
-      <tr>
-        <td><code>FABRIC_WAREHOUSE_SQL_URL</code></td>
-        <td>
+        </Table.Cell>
+      </Table.Row>
+      <Table.Row>
+        <Table.Cell><code>FABRIC_WAREHOUSE_SQL_URL</code></Table.Cell>
+        <Table.Cell>
           {#if wh.warehouseSqlConfigured}
-            <span class="chip succeeded">configured</span>
+            <StatusBadge tone="success">configured</StatusBadge>
           {:else}
-            <span class="chip">not configured</span>
+            <StatusBadge>not configured</StatusBadge>
           {/if}
-        </td>
-      </tr>
-      <tr>
-        <td>TDS listener</td>
-        <td>
-          <span class="chip {wh.tdsListener === 'off' ? '' : 'succeeded'}">{wh.tdsListener}</span>
+        </Table.Cell>
+      </Table.Row>
+      <Table.Row>
+        <Table.Cell>TDS listener</Table.Cell>
+        <Table.Cell>
+          <StatusBadge status={wh.tdsListener} tone={wh.tdsListener === 'off' ? '' : 'success'} />
           <span class="muted">{listenerLabel[wh.tdsListener] || ''}</span>
-        </td>
-      </tr>
-    </tbody>
-  </table>
+        </Table.Cell>
+      </Table.Row>
+    </Table.Body>
+  </Table.Root>
 {/if}
