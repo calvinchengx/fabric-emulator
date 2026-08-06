@@ -62,6 +62,10 @@ services:
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+      # Same cap as docker-compose.override.yml — 2048 is the engine's floor.
+      # Capping only the dev stack would leave CI exercising a configuration
+      # nobody runs, which is the wrong way round for a memory limit.
+      MSSQL_MEMORY_LIMIT_MB: "2048"
     healthcheck:
       test:
         - CMD
