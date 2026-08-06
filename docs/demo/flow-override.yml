@@ -1,12 +1,10 @@
-# Compose override for the flow.gif recording: build the emulator from THIS
-# tree, and allow host-port remapping so the recording can run on a machine
-# where a dev stack already holds 9443.
+# Compose override for the flow.gif recording.
 #
-# Only two services are started (see flow.py): entra-emulator, because the
-# emulator validates real tokens, and the emulator itself. No Sail, no
-# warehouse, no OpenMetadata — the medallion this films is drawn by the
-# emulator's OWN Copy executor, which is what makes the recording reproducible
-# from this repository alone.
+# Builds the emulator from THIS tree, and remaps every published port so the
+# recording never collides with a dev stack — or with a sibling project holding
+# 9443, which is what prompted the remap. The example is pointed at these ports
+# through its own environment variables (`FABRIC_REST_URL` and friends, see
+# examples/contoso-fixtures/common.py), so nothing is hard-coded twice.
 services:
   fabric-emulator:
     build:
@@ -16,10 +14,17 @@ services:
       context: ${DEMO_BUILD_CONTEXT:-../..}
       dockerfile: Dockerfile
     ports: !override
-      - "${DEMO_FABRIC_PORT:-9443}:9443"
+      - "${DEMO_FABRIC_PORT:-9843}:9443"
+      - "${DEMO_TDS_PORT:-11533}:1433"
   entra-emulator:
     ports: !override
-      - "${DEMO_ENTRA_PORT:-8443}:8443"
+      - "${DEMO_ENTRA_PORT:-8843}:8443"
   keyvault-emulator:
     ports: !override
-      - "${DEMO_KV_PORT:-8444}:8444"
+      - "${DEMO_KV_PORT:-8844}:8444"
+  sail:
+    ports: !override
+      - "${DEMO_SPARK_PORT:-50351}:50051"
+  openmetadata:
+    ports: !override
+      - "${DEMO_OM_PORT:-8685}:8585"

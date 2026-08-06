@@ -21,9 +21,13 @@ const { chromium } = require(path.join(__dirname, '..', '..', 'portal', 'node_mo
 
 const OUT = process.env.FLOW_OUT || '/tmp/flow-capture';
 const PORTAL = process.env.FLOW_PORTAL || 'https://localhost:9443';
-const W = Number(process.env.FLOW_WIDTH || 900);
-const H = Number(process.env.FLOW_HEIGHT || 620);
-const MAX_SECONDS = Number(process.env.FLOW_MAX_SECONDS || 180);
+// Wider than the GIF ships at, and scaled down in conversion. The advanced
+// example draws 35 nodes across seven columns; at 900px the frame holds four of
+// them, so the hero would be the top-left corner of a medallion rather than its
+// shape.
+const W = Number(process.env.FLOW_WIDTH || 1280);
+const H = Number(process.env.FLOW_HEIGHT || 800);
+const MAX_SECONDS = Number(process.env.FLOW_MAX_SECONDS || 900);
 const ROLLING = path.join(OUT, '.rolling');
 const STOP = path.join(OUT, '.stop');
 
@@ -71,9 +75,19 @@ const STOP = path.join(OUT, '.stop');
     if (rows > maxRows) maxRows = rows;
   }
 
-  // Hold on the finished graph for a beat. A GIF that cuts the instant the last
-  // edge lands gives a reader no time to see the shape it drew.
-  await page.waitForTimeout(2500);
+  // Hold on the finished graph, then walk to its right-hand end. The chain runs
+  // left to right — landing, bronze, silver, the Warehouse star — and the star
+  // is the payoff the whole run exists to reach, so it is what the recording
+  // ends on rather than the bronze tables it started with.
+  await page.waitForTimeout(4000);
+  await page
+    .evaluate(() => {
+      const scroller = document.querySelector('.graph-scroll');
+      if (!scroller) return;
+      scroller.scrollTo({ left: scroller.scrollWidth, behavior: 'smooth' });
+    })
+    .catch(() => {});
+  await page.waitForTimeout(6000);
 
   await page.screenshot({ path: path.join(OUT, 'flow-final.png') });
 
