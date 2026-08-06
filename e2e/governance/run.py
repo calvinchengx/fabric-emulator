@@ -13,7 +13,6 @@ past our Postgres pins, and schema drift in scripts/govern_ingest.py.
 import base64
 import json
 import os
-import subprocess
 import sys
 import time
 import urllib.parse
@@ -22,48 +21,16 @@ from decimal import Decimal
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(DIR))
+sys.path.insert(0, DIR)
+
+from stack import Stack, log  # noqa: E402 — after the path insert above
 
 FABRIC_PORT = os.environ.get("GOV_FABRIC_PORT", "9443")
 ENTRA_PORT = os.environ.get("GOV_ENTRA_PORT", "8443")
 OM_PORT = os.environ.get("GOV_OM_PORT", "8585")
 TENANT = "11111111-1111-1111-1111-111111111111"
 
-COMPOSE = ["docker", "compose", "-p", "fabricgov-e2e",
-           "-f", os.path.join(REPO, "docker-compose.yml"),
-           "-f", os.path.join(DIR, "build-override.yml"),
-           "--profile", "governance"]
-
-
-def log(msg):
-    print(f"==> {msg}", flush=True)
-
-
-def compose(*args, check=True):
-    return subprocess.run(COMPOSE + list(args), check=check,
-                          env={**os.environ, "GOV_BUILD_CONTEXT": REPO})
-
-
-def compose_pulling(*args, attempts=3, base_delay=15):
-    """Run a compose command whose failure mode is usually a registry hiccup.
-
-    OpenMetadata ships from docker.getcollate.io — a third-party registry with
-    no mirror — so a reset connection mid-pull reds an otherwise-green run.
-    (Seen in CI: `read tcp ...:443: read: connection reset by peer`.)
-
-    Retries are bounded and each one is logged, so a real outage still fails
-    the suite rather than being silently absorbed or hanging.
-    """
-    for attempt in range(1, attempts + 1):
-        result = compose(*args, check=False)
-        if result.returncode == 0:
-            return result
-        if attempt == attempts:
-            log(f"compose {args[0]} failed {attempts}x — giving up")
-            raise subprocess.CalledProcessError(result.returncode, COMPOSE + list(args))
-        delay = base_delay * attempt
-        log(f"compose {args[0]} exited {result.returncode}; "
-            f"retrying in {delay}s ({attempt}/{attempts - 1}) — likely a registry hiccup")
-        time.sleep(delay)
+stack = Stack("fabricgov-e2e", "build-override.yml")
 
 
 def main():
@@ -75,27 +42,18 @@ def main():
     # Two phases: `up --wait` chokes on om-migrate (a one-shot that exits 0
     # is counted as failed on some compose versions), so wait only on the
     # long-running services, then start the OM chain and poll its API.
-    compose_pulling("up", "-d", "--build", "--wait", "--wait-timeout", "600",
-                    "entra-emulator", "keyvault-emulator", "fabric-emulator",
-                    "om-postgresql", "om-opensearch")
+    stack.pulling("up", "-d", "--build", "--wait", "--wait-timeout", "600",
+                  "entra-emulator", "keyvault-emulator", "fabric-emulator",
+                  "om-postgresql", "om-opensearch")
 
     log("starting OpenMetadata (first-boot migration takes a few minutes)")
-    compose_pulling("up", "-d", "--no-recreate", "openmetadata")
+    stack.pulling("up", "-d", "--no-recreate", "openmetadata")
 
     entra = f"https://localhost:{ENTRA_PORT}"
     fabric = f"https://localhost:{FABRIC_PORT}"
     om = f"http://localhost:{OM_PORT}"
 
-    end = time.time() + 900
-    while time.time() < end:
-        try:
-            if requests.get(f"{om}/api/v1/system/version", timeout=3).status_code == 200:
-                break
-        except requests.RequestException:
-            pass
-        time.sleep(5)
-    else:
-        raise RuntimeError("OpenMetadata never became healthy")
+    stack.wait_for_om(om)
 
     def token(scope):
         r = requests.post(
@@ -207,7 +165,7 @@ def main():
     # --no-deps: everything is already up; letting compose re-evaluate the
     # dependency chain here re-runs one-shots and can recreate fabric,
     # wiping its in-memory state between seed and ingest (seen on CI).
-    compose("run", "--rm", "--no-deps", "govern-ingest")
+    stack.compose("run", "--rm", "--no-deps", "govern-ingest")
 
     log("asserting through OpenMetadata's API")
     r = requests.post(f"{om}/api/v1/users/login",
@@ -331,7 +289,7 @@ def main():
 
     # Idempotency: a second ingest must succeed and not duplicate.
     log("re-running govern-ingest (idempotency)")
-    compose("run", "--rm", "--no-deps", "govern-ingest")
+    stack.compose("run", "--rm", "--no-deps", "govern-ingest")
     t2 = requests.get(f"{om}/api/v1/tables/name/fabric-emulator.govws.lake.orders",
                       headers=h, timeout=30)
     assert t2.status_code == 200
@@ -348,7 +306,7 @@ def main():
     r = s.post(f"{fabric}/v1/admin/items/bulkRemoveLabels",
                json={"items": [{"id": by_name["lake"]}]}, timeout=15)
     assert r.status_code == 200 and not r.json()["failedItems"], (r.status_code, r.text)
-    compose("run", "--rm", "--no-deps", "govern-ingest")
+    stack.compose("run", "--rm", "--no-deps", "govern-ingest")
     assert schema_label_tags("fabric-emulator.govws.lake") == set(), \
         f"label removed in Fabric but still tagged in OM: {schema_label_tags('fabric-emulator.govws.lake')}"
     # …and the removal was targeted: the other lakehouse and the hand-applied
@@ -370,9 +328,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
-        for svc in ("om-migrate", "openmetadata", "govern-ingest", "fabric-emulator"):
-            sys.stderr.write(f"\n==== {svc} log tail ====\n")
-            compose("logs", "--tail", "40", svc, check=False)
+        stack.dump_logs("om-migrate", "openmetadata", "govern-ingest", "fabric-emulator")
         raise
     finally:
-        compose("down", "-v", "--remove-orphans", check=False)
+        stack.down()

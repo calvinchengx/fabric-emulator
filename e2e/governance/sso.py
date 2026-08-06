@@ -12,12 +12,13 @@ The browser login flow (OIDC_* confidential client) rides the same trust edge
 but needs a real browser, so it is deliberately not asserted here.
 """
 import os
-import subprocess
 import sys
-import time
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(DIR))
+sys.path.insert(0, DIR)
+
+from stack import Stack, log  # noqa: E402 — after the path insert above
 
 FABRIC_PORT = os.environ.get("GOV_FABRIC_PORT", "9443")
 ENTRA_PORT = os.environ.get("GOV_ENTRA_PORT", "8443")
@@ -30,20 +31,7 @@ CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"
 ALICE_OID = "aaaaaaaa-0000-0000-0000-000000000001"
 ALICE_UPN = "alice@entraemulator.dev"
 
-COMPOSE = ["docker", "compose", "-p", "fabricgov-sso",
-           "-f", os.path.join(REPO, "docker-compose.yml"),
-           "-f", os.path.join(DIR, "build-override.yml"),
-           "-f", os.path.join(DIR, "sso-override.yml"),
-           "--profile", "governance"]
-
-
-def log(msg):
-    print(f"==> {msg}", flush=True)
-
-
-def compose(*args, check=True):
-    return subprocess.run(COMPOSE + list(args), check=check,
-                          env={**os.environ, "GOV_BUILD_CONTEXT": REPO})
+stack = Stack("fabricgov-sso", "build-override.yml", "sso-override.yml")
 
 
 def main():
@@ -52,26 +40,17 @@ def main():
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     log("starting family + OM backing stores (SSO overlay)")
-    compose("up", "-d", "--build", "--wait", "--wait-timeout", "600",
-            "entra-emulator", "keyvault-emulator", "fabric-emulator",
-            "om-postgresql", "om-opensearch")
+    stack.pulling("up", "-d", "--build", "--wait", "--wait-timeout", "600",
+                  "entra-emulator", "keyvault-emulator", "fabric-emulator",
+                  "om-postgresql", "om-opensearch")
     log("starting OpenMetadata with entra as its authenticator")
-    compose("up", "-d", "--no-recreate", "openmetadata")
+    stack.pulling("up", "-d", "--no-recreate", "openmetadata")
 
     # The SSO overlay runs the issuer over plain HTTP (see sso-override.yml).
     entra = f"http://localhost:{ENTRA_PORT}"
     om = f"http://localhost:{OM_PORT}"
 
-    end = time.time() + 900
-    while time.time() < end:
-        try:
-            if requests.get(f"{om}/api/v1/system/version", timeout=3).status_code == 200:
-                break
-        except requests.RequestException:
-            pass
-        time.sleep(5)
-    else:
-        raise RuntimeError("OpenMetadata never became healthy")
+    stack.wait_for_om(om)
 
     def forge(**over):
         # A real Entra delegated token carries the user's identity claims; the
@@ -120,9 +99,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
-        for svc in ("openmetadata", "om-migrate"):
-            sys.stderr.write(f"\n==== {svc} log tail ====\n")
-            compose("logs", "--tail", "40", svc, check=False)
+        stack.dump_logs("openmetadata", "om-migrate")
         raise
     finally:
-        compose("down", "-v", "--remove-orphans", check=False)
+        stack.down()
