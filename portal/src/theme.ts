@@ -1,11 +1,20 @@
-// Light, dark, or whatever the OS says.
+// Light, dark, or whatever the OS says. **Dark unless told otherwise.**
 //
 // The palette used to hang off `@media (prefers-color-scheme: dark)` alone,
 // with the reasoning that a local tool has "nowhere to store a preference".
 // That stopped being true when the sidebar's fold began persisting to
-// localStorage, and following the OS is the wrong default for the one thing
-// this portal is most used for: a screenshot or a recording, where the author
-// wants light regardless of how their machine is set.
+// localStorage.
+//
+// WHY DARK IS THE DEFAULT rather than the OS. This portal is looked at in two
+// situations: beside a terminal while a pipeline runs, and in a screenshot or
+// recording. Both are dark far more often than not, and following the machine
+// makes the product look different to every reader of the same document. A
+// fixed default is the one that can be designed for.
+//
+// `system` is still reachable — it is simply an explicit choice now rather than
+// the absence of one, which is why `set` STORES it instead of clearing the key.
+// Were absence to keep meaning "follow the OS", making dark the default would
+// have made "follow the OS" unreachable.
 //
 // WHY THE CSS NEEDS NO MEDIA QUERY ANY MORE. The portal is a client-rendered
 // Svelte app — with JavaScript off there is no portal to theme — so resolving
@@ -18,10 +27,13 @@ export type Resolved = 'light' | 'dark';
 
 const KEY = 'fe.theme';
 
-/** The stored preference, or 'system' when there is none (or it is nonsense). */
+/** What a portal with no stored preference shows. */
+export const DEFAULT: Theme = 'dark';
+
+/** The stored preference, or the default when there is none (or it is nonsense). */
 export function stored(): Theme {
   const raw = globalThis.localStorage?.getItem(KEY);
-  return raw === 'light' || raw === 'dark' ? raw : 'system';
+  return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : DEFAULT;
 }
 
 /** What the OS is asking for right now. */
@@ -44,21 +56,29 @@ export function apply(theme: Theme): Resolved {
   return shown;
 }
 
-/** Store a preference and paint it. 'system' clears the stored override. */
+/** Store a preference and paint it.
+ *
+ * All three are stored, including 'system'. Clearing the key would mean "no
+ * preference", and no preference now means dark — so choosing to follow the OS
+ * has to be written down or it would not survive a reload.
+ */
 export function set(theme: Theme): Resolved {
-  if (theme === 'system') globalThis.localStorage?.removeItem(KEY);
-  else globalThis.localStorage?.setItem(KEY, theme);
+  globalThis.localStorage?.setItem(KEY, theme);
   return apply(theme);
 }
 
-/** The next theme in the cycle: system → light → dark → system.
+/** The next theme in the cycle: dark → light → system → dark.
  *
  * Three states rather than two, because "follow the OS" is a real answer and a
  * two-way switch cannot express it — once flipped, it would pin the portal to
  * whatever it was that afternoon.
+ *
+ * Starting at dark, the first click goes to LIGHT rather than to system: the
+ * default is dark and most machines are too, so a first click landing on
+ * 'system' would usually change nothing on screen and read as a broken button.
  */
 export function next(theme: Theme): Theme {
-  return theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system';
+  return theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark';
 }
 
 /** Track OS changes while the preference is 'system'. Returns an unsubscribe.

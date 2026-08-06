@@ -12,13 +12,18 @@
       (function () {
         var stored = null;
         try { stored = localStorage.getItem('fe.theme'); } catch (e) {}
-        var dark = stored === 'dark' ||
-          (stored !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+        // Dark unless told otherwise; 'system' is an explicit choice. Must
+        // mirror src/theme.ts — this runs before the bundle so the first paint
+        // is right, and a disagreement here is a flash of the wrong theme.
+        var pref = stored === 'light' || stored === 'dark' || stored === 'system'
+          ? stored : 'dark';
+        var dark = pref === 'dark' ||
+          (pref === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
         document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
       })();
     </script>
-    <script type="module" crossorigin src="./assets/index-DSNJhxaY.js"></script>
+    <script type="module" crossorigin src="./assets/index-Ci2ADdt5.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-Bl57qk9g.css">
   </head>
   <body>

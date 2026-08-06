@@ -25,3 +25,28 @@ test('the portal mounts and renders its shell', async ({ page }) => {
   // there should be no uncaught exceptions.
   expect(jsErrors, jsErrors.join('\n')).toEqual([]);
 });
+
+// The first paint belongs to index.html's inline script, which runs BEFORE the
+// bundle so the portal never flashes the wrong theme. jsdom does not run it, so
+// the unit tests cannot see this half at all — and that script duplicates the
+// resolution logic in src/theme.ts, which is exactly the kind of pair that
+// drifts silently.
+test('a fresh visitor gets dark, painted before the bundle loads', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light' }); // the machine says light…
+  await page.goto('/');
+
+  // …and the portal is dark anyway: dark is the default, not a reflection of
+  // the machine.
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(await page.evaluate(() => document.documentElement.style.colorScheme)).toBe('dark');
+  await expect(page.getByRole('button', { name: /Theme: dark/ })).toBeVisible();
+});
+
+test('an explicit "follow the system" choice survives and is obeyed', async ({ page }) => {
+  // Stored as a word rather than as the absence of a key: absence now means
+  // dark, so clearing would quietly demote this back to the default.
+  await page.addInitScript(() => localStorage.setItem('fe.theme', 'system'));
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+});
