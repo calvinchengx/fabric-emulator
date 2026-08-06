@@ -6,6 +6,7 @@ Key Vault secret brokering, and the lakehouse control plane — unchanged.
 
 Run with `uv run --frozen --group test python e2e/notebookutils/run.py`; uv
 installs the workspace shim from python/ before this orchestrator starts."""
+import base64
 import json
 import os
 import shutil
@@ -187,6 +188,47 @@ try:
         "definition": {"parts": [{
             "path": "notebook-content.py",
             "payload": "IyBGYWJyaWMgbm90ZWJvb2sgc291cmNlCgojIE1BUktET1dOICoqKioqKioqKioqKioqKioqKioqCiMgTUFHSUMgIyMgbm90aGluZyB0byBleGVjdXRlCg==",
+            "payloadType": "InlineBase64",
+        }]},
+    }, ft)
+
+    # Two more markdown-only notebooks, so a runMultiple DAG has something to
+    # order. Same reasoning as child-nb: nothing executable is the one shape
+    # that reaches a terminal state without a Spark engine this e2e never
+    # starts, which keeps the DAG's ORDERING and RESULT SHAPE under test
+    # without dragging an engine into a control-plane suite.
+    for name in ("dag-a", "dag-b"):
+        http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items", {
+            "displayName": name, "type": "Notebook",
+            "definition": {"parts": [{
+                "path": "notebook-content.py",
+                "payload": "IyBGYWJyaWMgbm90ZWJvb2sgc291cmNlCgojIE1BUktET1dOICoqKioqKioqKioqKioqKioqKioqCiMgTUFHSUMgIyMgbm90aGluZyB0byBleGVjdXRlCg==",
+                "payloadType": "InlineBase64",
+            }]},
+        }, ft)
+
+    # A SECOND lakehouse, and a notebook bound to it. Fabric blocks a referenced
+    # child whose default lakehouse differs from its parent's, and proving that
+    # needs a child genuinely bound elsewhere — the mismatch is the test.
+    other = http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses",
+                 {"displayName": "other-lake"}, ft)
+    mismatched = (
+        "# Fabric notebook source\n"
+        "# METADATA ********************\n"
+        "# META {\n"
+        '# META   "dependencies": {\n'
+        '# META     "lakehouse": {"default_lakehouse":"' + other["id"] + '",'
+        ' "default_lakehouse_workspace_id":"' + ws["id"] + '"}\n'
+        "# META   }\n"
+        "# META }\n"
+        "# MARKDOWN ********************\n"
+        "# MAGIC ## bound to the other lakehouse\n"
+    )
+    http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items", {
+        "displayName": "other-lake-nb", "type": "Notebook",
+        "definition": {"parts": [{
+            "path": "notebook-content.py",
+            "payload": base64.b64encode(mismatched.encode()).decode(),
             "payloadType": "InlineBase64",
         }]},
     }, ft)

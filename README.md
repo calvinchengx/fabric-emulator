@@ -18,7 +18,8 @@ A clean-room, local emulator of **Microsoft Fabric**, built to compose with
 [entra-emulator](https://github.com/calvinchengx/entra-emulator) — the control
 plane (workspaces, items, RBAC, git, LROs) plus a real **OneLake** ADLS/Blob
 data plane, a **T-SQL warehouse** over TDS, native **Livy** sessions on a real
-Spark engine, **Data Factory** pipelines, and **KQL** eventhouses.
+Spark engine, **Data Factory** pipelines, **Apache Airflow** jobs on a real
+Airflow scheduler, and **KQL** eventhouses.
 
 ![the Data flow view drawing a medallion as it is built: bronze_orders to silver_orders to a warehouse gold table, with the event log filling in beside the graph](docs/demo/flow.gif)
 
@@ -97,6 +98,29 @@ are shipped and CI-verified on Linux, macOS, and Windows.
   end-to-end); **DuckDB** SQL over lakehouse Delta; and a pure-Go **pipeline**
   interpreter with real leaf activities. Real clients (delta-rs, the Azure Blob
   SDK, azcopy, PySpark, dbt) drive it in CI as borrowed oracles.
+- **Four orchestration surfaces, the ones real Fabric offers.** *Data pipelines*
+  — a pure-Go interpreter for Fabric's own activity model, with `Copy` moving
+  real bytes, `Lookup` reading real rows, `Script` running real T-SQL, plus the
+  control-flow set and per-activity retry/timeout. *Notebook orchestration* —
+  `notebookutils.notebook.run` returns the child's **exit value** as Fabric
+  documents, and `runMultiple` runs a DAG in dependency order with per-activity
+  `retry`, a per-cell timeout, `validateDAG`, and Fabric's failure contract
+  (`RunMultipleFailedException` carrying partial results). Fabric's reference-run
+  lakehouse rule is enforced, and `concurrency` is honoured when asked for —
+  sequential by default, a divergence recorded in [parity.md](docs/parity.md).
+  *Schedules* — `.../jobs/{jobType}/schedules` on any item. And *Apache Airflow
+  jobs*, below.
+- **Real orchestration (Airflow):** `ApacheAirflowJob` items run on
+  **genuine Apache Airflow** — Fabric's own code-first orchestrator *is* upstream
+  Airflow, so the sidecar pins the versions Microsoft documents (2.10.5 on
+  Python 3.12). DAG sources are stored as item definitions in OneLake, synced
+  into the scheduler's DAG folder, and driven through Airflow's REST API for
+  discovery, unpause, trigger and terminal-state polling. Real scheduler, real
+  executor, real DAG semantics — no orchestration emulation at all. Attach it
+  On by default in `make up`; `make up PROFILE="--profile governance"` leaves it
+  out, and without the wiring the routes answer `AirflowNotConfigured` rather
+  than pretending. See
+  [14-real-compute.md](docs/14-real-compute.md#e1) and `e2e/airflow`.
 
 The bare binary runs none of the engines (clock-derived, milliseconds) — but
 `docker compose up` auto-loads the override that attaches them, so the

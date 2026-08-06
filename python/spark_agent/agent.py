@@ -141,7 +141,12 @@ def _install_custom_wheels():
 
 
 _install_custom_wheels()
+
+import catalog  # noqa: E402 — after the engine is up; see catalog.py for why it is split out
+
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
+session_isolated = {}  # Livy session id -> did it get a private SparkSession
+catalog_claims = catalog.Claims()  # only consulted when isolation is unavailable
 
 
 class _NoSparkContext:
@@ -184,10 +189,19 @@ def _notebookutils():
 def ns(session):
     if session not in namespaces:
         apply_connect_confs()  # survive an engine restart between sessions
-        namespaces[session] = {"spark": spark}
+        # A PRIVATE SparkSession per Livy session. The agent holds one engine
+        # connection and serves concurrent requests, so a shared session makes
+        # current-database and temp views process-wide: two notebooks bound to
+        # different lakehouses used to fight over `setCurrentDatabase`, and the
+        # loser read the other's tables under an unqualified name. `newSession`
+        # keeps the engine and splits that state. Engines that lack it fall back
+        # to the shared session, where catalog.py detects the collision instead.
+        session_spark, isolated = catalog.isolate(spark)
+        session_isolated[session] = isolated
+        namespaces[session] = {"spark": session_spark}
         try:
             # JVM sessions only — Spark Connect (Sail) has no sparkContext.
-            namespaces[session]["sc"] = spark.sparkContext
+            namespaces[session]["sc"] = session_spark.sparkContext
         except Exception:
             namespaces[session]["sc"] = _NoSparkContext()
         # Real Fabric notebooks get `notebookutils`/`mssparkutils` as globals and
@@ -275,128 +289,18 @@ def run_sql(code, g):
                 "evalue": tb[-1] if tb else "error", "traceback": tb}
 
 
-def _remember_location(name, location, schema=None):
-    """Tell delta_ops where a table we just registered lives.
-
-    Tolerant of delta_ops being absent: it is only imported on the Sail/Connect
-    path, and on the JVM overlay Spark resolves names natively so there is
-    nothing to record. A missing module here must not fail a registration that
-    otherwise succeeded.
-    """
-    try:
-        import delta_ops
-    except ImportError:
-        return
-    delta_ops.remember(name, location, schema)
-
-
-def _remember_schema_location(name, location):
-    """Tell delta_ops where a schema lives. Same tolerance as tables above."""
-    try:
-        import delta_ops
-    except ImportError:
-        return
-    delta_ops.remember_schema(name, location)
-
-
 def register_tables(session, schema, tables, schemas=None):
     """Declare a lakehouse's Delta tables in this REPL's Spark catalog.
 
-    On real Fabric a Lakehouse's `Tables/` already ARE catalog tables — attach a
-    notebook and `SELECT * FROM silver_customers` resolves, because Fabric keeps
-    a metastore in step with the folder. Nothing in this stack holds a
-    metastore: Sail is handed object storage and nothing else. So the emulator
-    enumerates the folder when a session opens and calls this, and a client that
-    addresses a table by NAME rather than by abfs path works the way it does on
-    Fabric.
-
-    `schemas` carries a schema-enabled lakehouse's schema folders
-    (Tables/<schema>/<table>). Each is created WITH its OneLake location
-    that is the whole point: a schema created bare lives in the engine's own
-    warehouse, so a later `saveAsTable("bronze.x")` succeeds, reports rows
-    written, and leaves nothing in the lakehouse. Registering the schema at
-    its real location makes schema-qualified writes land where Fabric would
-    put them. Entries in `tables` may carry a "schema" of their own for the
-    same layout; those without one belong to the lakehouse-name schema.
-
-    Idempotent (CREATE ... IF NOT EXISTS), because a session may be re-opened
-    against a lakehouse whose tables are already registered.
+    The work is in catalog.py, which is importable without starting Spark and
+    therefore testable; this resolves the namespace and hands over the session's
+    isolation state so a degraded engine reports collisions instead of silently
+    resolving an unqualified name against another lakehouse.
     """
     g = ns(session)
-    spark = g.get("spark")
-    if spark is None:
-        return {"registered": 0, "error": "no spark session in this REPL namespace"}
-    registered, failed = [], []
-    try:
-        spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{schema}`")
-    except Exception:
-        return {"registered": 0, "error": f"could not create schema {schema}: "
-                                          f"{traceback.format_exc().splitlines()[-1]}"}
-    for s in schemas or []:
-        sname, sloc = s.get("name"), s.get("location")
-        if not sname or not sloc:
-            continue
-        try:
-            spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{sname}` LOCATION '{sloc}'")
-            # Recorded for delta_ops: a CTAS naming this schema must land at
-            # this location, and Sail's own CTAS placement ignores it.
-            _remember_schema_location(sname, sloc)
-        except Exception:
-            failed.append(f"schema {sname}: {traceback.format_exc().splitlines()[-1]}")
-    for t in tables:
-        name, loc = t.get("name"), t.get("location")
-        tschema = t.get("schema") or schema
-        if not name or not loc:
-            continue
-        try:
-            spark.sql(f"CREATE TABLE IF NOT EXISTS `{tschema}`.`{name}` "
-                      f"USING delta LOCATION '{loc}'")
-            registered.append(name)
-            # Record where it lives so a statement naming this table can be
-            # resolved without asking the engine. Sail cannot answer
-            # DESCRIBE DETAIL at all, and we already know the answer.
-            _remember_location(name, loc, tschema)
-        except Exception:
-            # A folder under Tables/ that is not a readable Delta table is
-            # skipped, not fatal — the same tolerance warehouse.Reflect applies.
-            failed.append(f"{name}: {traceback.format_exc().splitlines()[-1]}")
-    # Make UNQUALIFIED names resolve, the way they do in a Fabric notebook
-    # attached to a lakehouse. Two routes, because engines differ:
-    #
-    #   1. move the session's current database — what Spark does for `USE`;
-    #   2. failing that, register the same tables in `default` too.
-    #
-    # Sail rejects `USE <schema>` and setCurrentDatabase outright, so route 2 is
-    # the one that actually fires there. It is a duplicate registration of the
-    # same LOCATION, not a copy of data — both names point at one Delta table.
-    unqualified = None
-    try:
-        spark.catalog.setCurrentDatabase(schema)
-        unqualified = "current-database"
-    except Exception:
-        mirrored = []
-        for name in registered:
-            # Schema-qualified tables stay qualified: on Fabric a
-            # schema-enabled lakehouse resolves `bronze.x`, not a bare `x`.
-            loc = next((t["location"] for t in tables
-                        if t.get("name") == name and not t.get("schema")), None)
-            if not loc:
-                continue
-            try:
-                spark.sql(f"CREATE TABLE IF NOT EXISTS `default`.`{name}` "
-                          f"USING delta LOCATION '{loc}'")
-                mirrored.append(name)
-                _remember_location(name, loc, "default")
-            except Exception:
-                failed.append(f"default.{name}: "
-                              f"{traceback.format_exc().splitlines()[-1]}")
-        unqualified = f"mirrored-into-default ({len(mirrored)})"
-
-    out = {"registered": len(registered), "tables": registered,
-           "unqualified": unqualified}
-    if failed:
-        out["skipped"] = failed
-    return out
+    return catalog.register(g.get("spark"), session, schema, tables,
+                            schemas=schemas, claims=catalog_claims,
+                            isolated=session_isolated.get(session, True))
 
 
 class Handler(BaseHTTPRequestHandler):

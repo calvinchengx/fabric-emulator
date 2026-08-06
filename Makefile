@@ -18,8 +18,34 @@
 #
 # The governance profile is on by default so `make up` matches what the
 # quickstart advertises; override with PROFILE= to run the lean stack.
-PROFILE ?= --profile governance
-COMPOSE  = docker compose $(PROFILE)
+# Both real runtimes are on by default, because both back a first-class Fabric
+# item type: the catalog (OpenMetadata) and Data workflows (Apache Airflow).
+# `--profile` is REPEATABLE — a comma-joined value is read as one profile name
+# that matches nothing, and COMPOSE_PROFILES (the env var) is the comma one.
+PROFILE ?= --profile governance --profile airflow
+# The overlay travels WITH the profile, and this conditional is what makes that
+# true rather than merely intended. Both halves are needed and neither works
+# alone:
+#   --profile airflow              starts the scheduler
+#   -f docker-compose.airflow.yml  hands the emulator its URL and DAG folder
+#
+# Listing the overlay UNCONDITIONALLY breaks `make up PROFILE=`: the overlay
+# makes fabric-emulator depend on `airflow`, and with no profile that service is
+# not in the project at all — "depends on undefined service", before a single
+# container starts. Wiring the URL in the base file instead is the dual bug this
+# repo already shipped once (the medallion compose set FABRIC_SPARK_AGENT_URL
+# while spark-agent sat behind a profile, so the emulator drove notebooks at a
+# container nobody started). Coupling them is the only arrangement where the
+# lean stack answers an honest `AirflowNotConfigured`.
+#
+# Every target uses this one variable so the -f list never varies FOR A GIVEN
+# PROFILE: compose hashes the configuration it is HANDED, and a shorter list
+# recreates running containers.
+AIRFLOW_OVERLAY = $(if $(findstring --profile airflow,$(PROFILE)),-f docker-compose.airflow.yml,)
+COMPOSE  = docker compose $(PROFILE) \
+             -f docker-compose.yml \
+             -f docker-compose.override.yml \
+             $(AIRFLOW_OVERLAY)
 
 # Windows: force the recipes onto sh.exe. GNU Make on Windows falls back to
 # cmd.exe when it cannot find a shell, and cmd cannot run a single line of what
