@@ -75,6 +75,114 @@ def run(name, timeoutSeconds=90, arguments=None, workspaceId=None,
     raise NotebookError(f"notebook {name!r} did not finish within {timeoutSeconds}s")
 
 
+def runMultiple(dag, useRootDefaultLakehouse=True, **kwargs):
+    """Run several notebooks, honouring `dependencies`, and return each result.
+
+    This is the orchestration primitive `run` is not: `run` blocks on one
+    notebook, while a DAG expresses "these three, then that one". A pipeline can
+    express the same shape, but a notebook that orchestrates notebooks is its
+    own Fabric pattern and code that uses it cannot be rewritten as a pipeline
+    without changing what it is.
+
+    Two input shapes, both of which real Fabric accepts:
+
+        runMultiple(["nb1", "nb2"])          # no dependencies — run them all
+        runMultiple({"activities": [         # a DAG
+            {"name": "a", "path": "nbA", "args": {...}},
+            {"name": "b", "path": "nbB", "dependencies": ["a"]},
+        ], "timeoutInSeconds": 3600, "concurrency": 5})
+
+    Returns `{name: {"exitVal": ..., "message": ...}}` keyed by activity name.
+
+    SEQUENTIAL, in dependency order. `concurrency` is accepted and recorded
+    because callers pass it, but the emulator runs one notebook at a time: the
+    Spark sidecar is a single session, so running two at once would queue them
+    anyway while making the failure attribution worse. Order within a dependency
+    level is the order given, which keeps a run reproducible — the property a
+    test harness needs more than parallelism.
+
+    A failed activity stops its dependents rather than the whole DAG: they are
+    reported `Skipped` with the reason, because "did not run because `a` failed"
+    and "ran and failed" are different facts and a caller acts on them
+    differently.
+    """
+    activities = _normalise_dag(dag)
+    _check_dependencies(activities)
+
+    results, done = {}, {}
+    for act in _in_dependency_order(activities):
+        name = act["name"]
+        blocked = [d for d in act.get("dependencies", []) if done.get(d) != "Completed"]
+        if blocked:
+            results[name] = {"exitVal": None, "message": None,
+                             "status": "Skipped",
+                             "error": f"dependency {blocked[0]!r} did not complete"}
+            done[name] = "Skipped"
+            continue
+        try:
+            status = run(
+                act.get("path", name),
+                timeoutSeconds=act.get("timeoutPerCellInSeconds", 90),
+                arguments=act.get("args"),
+                workspaceId=act.get("workspaceId"),
+            )
+            results[name] = {"exitVal": "", "message": None, "status": status, "error": None}
+            done[name] = status
+        except NotebookError as e:
+            results[name] = {"exitVal": None, "message": None,
+                             "status": "Failed", "error": str(e)}
+            done[name] = "Failed"
+    return results
+
+
+def _normalise_dag(dag):
+    """Accept either a bare list of notebook names or Fabric's DAG dict."""
+    if isinstance(dag, dict):
+        acts = dag.get("activities")
+        if acts is None:
+            raise NotebookError("a DAG needs an 'activities' list")
+        out = []
+        for a in acts:
+            if not a.get("name"):
+                raise NotebookError("every activity needs a 'name'")
+            out.append(dict(a))
+        return out
+    if isinstance(dag, (list, tuple)):
+        return [{"name": n, "path": n} for n in dag]
+    raise NotebookError("runMultiple takes a list of notebook names or a DAG dict")
+
+
+def _check_dependencies(activities):
+    """Refuse a DAG that names a dependency it does not contain."""
+    names = {a["name"] for a in activities}
+    for a in activities:
+        for d in a.get("dependencies", []):
+            if d not in names:
+                raise NotebookError(
+                    f"activity {a['name']!r} depends on {d!r}, which is not in the DAG")
+
+
+def _in_dependency_order(activities):
+    """Dependencies first, input order preserved within a level.
+
+    A cycle raises rather than hanging or silently dropping activities — the
+    two failure modes a caller cannot debug from the outside.
+    """
+    remaining = list(activities)
+    emitted, out = set(), []
+    while remaining:
+        ready = [a for a in remaining
+                 if all(d in emitted for d in a.get("dependencies", []))]
+        if not ready:
+            stuck = ", ".join(sorted(a["name"] for a in remaining))
+            raise NotebookError(f"dependency cycle among: {stuck}")
+        for a in ready:
+            out.append(a)
+            emitted.add(a["name"])
+        remaining = [a for a in remaining if a["name"] not in emitted]
+    return out
+
+
 class _Exit(Exception):
     def __init__(self, value):
         self.value = value

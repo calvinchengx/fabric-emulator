@@ -98,15 +98,23 @@ are shipped and CI-verified on Linux, macOS, and Windows.
   end-to-end); **DuckDB** SQL over lakehouse Delta; and a pure-Go **pipeline**
   interpreter with real leaf activities. Real clients (delta-rs, the Azure Blob
   SDK, azcopy, PySpark, dbt) drive it in CI as borrowed oracles.
-- **Real orchestration (opt-in sidecar):** `ApacheAirflowJob` items run on
+- **Four orchestration surfaces, the ones real Fabric offers.** *Data pipelines*
+  — a pure-Go interpreter for Fabric's own activity model, with `Copy` moving
+  real bytes, `Lookup` reading real rows, `Script` running real T-SQL, plus the
+  control-flow set and per-activity retry/timeout. *Notebook orchestration* —
+  `notebookutils.notebook.run` and `runMultiple`, the latter running a DAG of
+  notebooks in dependency order. *Schedules* — `.../jobs/{jobType}/schedules` on
+  any item. And *Apache Airflow jobs*, below.
+- **Real orchestration (Airflow):** `ApacheAirflowJob` items run on
   **genuine Apache Airflow** — Fabric's own code-first orchestrator *is* upstream
   Airflow, so the sidecar pins the versions Microsoft documents (2.10.5 on
   Python 3.12). DAG sources are stored as item definitions in OneLake, synced
   into the scheduler's DAG folder, and driven through Airflow's REST API for
   discovery, unpause, trigger and terminal-state polling. Real scheduler, real
   executor, real DAG semantics — no orchestration emulation at all. Attach it
-  with `FABRIC_AIRFLOW_URL`; without it the routes answer
-  `AirflowNotConfigured` rather than pretending. See
+  On by default in `make up`; `make up PROFILE="--profile governance"` leaves it
+  out, and without the wiring the routes answer `AirflowNotConfigured` rather
+  than pretending. See
   [14-real-compute.md](docs/14-real-compute.md#e1) and `e2e/airflow`.
 
 The bare binary runs none of the engines (clock-derived, milliseconds) — but

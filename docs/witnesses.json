@@ -659,5 +659,13 @@
       "go:TestWebActivityResolvesExpressions",
       "go:TestWebActivityStubModeSaysItDidNotCall"
     ]
+  },
+  "notebookutilsnotebookrunmultiple-notebook-dag-orchestration": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`notebookutils.notebook.runMultiple` — notebook DAG orchestration",
+    "witnesses": [
+      "py:test_notebook_run_multiple",
+      "ci:notebookutils"
+    ]
   }
 }
