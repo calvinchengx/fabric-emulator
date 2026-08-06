@@ -17,17 +17,23 @@ import (
 // TestPipelineLeafPassthrough: an inexecutable leaf (an external connector)
 // records that orchestration reached it without running any effect.
 func TestPipelineLeafPassthrough(t *testing.T) {
+	// An EXTERNAL CONNECTOR leaf, not a Web activity. This used to use
+	// WebActivity, back when Web was passed through too — and that is exactly
+	// what made a pipeline calling a URL go green without calling it. Web now
+	// performs the request (see webactivity.go and webactivity_test.go); what
+	// still passes through is a connector needing a vendor SDK the emulator
+	// does not have.
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
 	pl := createPipeline(t, st, ws.ID, `{"properties":{"activities":[
-        {"name":"Hit","type":"WebActivity","typeProperties":{"url":"https://example.invalid"}}
+        {"name":"Hit","type":"SalesforceSource","typeProperties":{"object":"Account"}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("pass-through leaf = %s, want Completed", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
-	if out := outputOf(runs, "Hit"); out["activityType"] != "WebActivity" {
+	if out := outputOf(runs, "Hit"); out["activityType"] != "SalesforceSource" {
 		t.Fatalf("pass-through output = %+v", out)
 	}
 }
