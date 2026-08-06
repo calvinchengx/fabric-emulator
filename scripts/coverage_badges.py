@@ -6,13 +6,15 @@ account. CI computes the numbers, this writes them as shields `endpoint`
 documents, and the docs site serves them from its own origin — so the badges
 are as trustworthy as the site, and nothing leaves the project.
 
-FOUR NUMBERS, because one would lie. Coverage percentages describe the unit
+FIVE NUMBERS, because one would lie. Coverage percentages describe the unit
 suites and nothing else; the work that actually catches consumer-facing
 defects is the e2e fleet, which no statement counter can score. Publishing a
 single "coverage" badge would quietly claim the opposite:
 
   go          statement coverage of the Go unit + in-process server tests
   python      statement coverage of the scoped Python unit suite
+  portal      statement coverage of the portal's own components and modules
+              (vendored shadcn primitives excluded — see portal/vite.config.js)
   witnesses   supported parity claims that name a test which exists
   e2e         how many end-to-end suites CI runs
 
@@ -21,7 +23,7 @@ statement than any percentage: it says every claim of support is backed by
 something that ran, which is precisely what a coverage number cannot say.
 
 Usage:
-    coverage_badges.py --out DIR [--go PCT] [--python PCT]
+    coverage_badges.py --out DIR [--go PCT] [--python PCT] [--portal PCT]
 
 Percentages are supplied by the caller because only CI knows them — the Go
 figure in particular is only comparable on a leg that had a real SQL Server.
@@ -98,7 +100,13 @@ def e2e_suite_count(path: Path | None = None) -> int:
     """
     text = (path or CI).read_text(encoding="utf-8")
     jobs = re.findall(r"^  ([a-z0-9][a-z0-9-]*):$", text, re.M)
-    not_e2e = {"test", "witnesses", "example-parity", "engine-matrix", "portal"}
+    # Everything that is a job but not a suite: the unit legs, the source-level
+    # invariant checks, the linters, the type gates, and the coverage roll-up
+    # (which RUNS suites rather than being one, so counting it double-counts).
+    # A job added here without being added there overstates the fleet, which is
+    # exactly what a badge must not do.
+    not_e2e = {"test", "witnesses", "example-parity", "engine-matrix", "portal",
+               "portal-types", "lint", "coverage-e2e"}
     return len([j for j in jobs if j not in not_e2e])
 
 
@@ -115,12 +123,15 @@ def main() -> int:
                     help="Go statement coverage percent (omit for n/a)")
     ap.add_argument("--python", dest="py", type=float, default=None,
                     help="Python statement coverage percent (omit for n/a)")
+    ap.add_argument("--portal", type=float, default=None,
+                    help="portal statement coverage percent (omit for n/a)")
     args = ap.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
     documents = {
         "coverage-go.json": pct_badge("go coverage", args.go),
         "coverage-python.json": pct_badge("python coverage", args.py),
+        "coverage-portal.json": pct_badge("portal coverage", args.portal),
         "witnesses.json": witness_badge(),
         "e2e-suites.json": e2e_badge(),
     }

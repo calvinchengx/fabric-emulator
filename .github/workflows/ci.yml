@@ -181,6 +181,16 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
         with:
           version: "0.11.32"
+      # Node as well, because the portal is the third measured tier and all five
+      # badge numbers are written by one script — a second publisher would be a
+      # second place for them to disagree.
+      - uses: pnpm/action-setup@v6
+        if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
+      - uses: actions/setup-node@v6
+        if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
+        with:
+          node-version: '22'
+          cache: pnpm
       - name: Badge inputs
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
         shell: bash
@@ -189,9 +199,15 @@ jobs:
           py_pct=$(uv run --frozen --group test pytest python/tests -q \
                    --cov --cov-report=term --cov-fail-under=70 2>&1 \
                    | sed -n 's/.*Total coverage: \([0-9.]*\)%.*/\1/p' | tail -1)
-          echo "go=${go_pct} python=${py_pct:-unset}"
+          # Read from the machine-readable summary rather than scraped stdout:
+          # the table's column layout is not a contract.
+          pnpm install --frozen-lockfile
+          pnpm --filter fabric-emulator-portal test -- --coverage
+          portal_pct=$(node -e "process.stdout.write(String(require('./portal/coverage/coverage-summary.json').total.statements.pct))")
+          echo "go=${go_pct} python=${py_pct:-unset} portal=${portal_pct:-unset}"
           uv run --frozen --group test python scripts/coverage_badges.py \
-            --out badges --go "$go_pct" ${py_pct:+--python "$py_pct"}
+            --out badges --go "$go_pct" ${py_pct:+--python "$py_pct"} \
+            ${portal_pct:+--portal "$portal_pct"}
       - uses: actions/upload-artifact@v4
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
         with:
