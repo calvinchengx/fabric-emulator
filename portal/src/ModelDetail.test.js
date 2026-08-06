@@ -256,4 +256,48 @@ describe('ModelDetail', () => {
     const back = await screen.findByRole('link', { name: '← Semantic models' });
     expect(back).toHaveAttribute('href', '#models');
   });
+
+
+  it('survives a model whose optional arrays are absent entirely', async () => {
+    // `m.tables || []`, `t.measures || []`, `t.columns || []` — three fallbacks
+    // for a definition that simply omits a key. Without them the page throws
+    // while deriving its own starting query.
+    mockApi({ models: [{ itemId: 'm1', workspace: 'w', displayName: 'Sparse',
+                         modelName: 'Sparse', relationships: [] }] });
+    show();
+    await waitFor(() => expect(
+      screen.getByRole('heading', { level: 1, name: 'Sparse' })).toBeInTheDocument());
+    expect(screen.getByLabelText('DAX query')).toHaveValue('');
+  });
+
+  it('handles a table that omits its columns and measures', async () => {
+    // Keys ABSENT, not empty: `t.measures || []` and `t.columns || []` only
+    // matter when the definition leaves them out entirely.
+    mockApi({ models: [{ itemId: 'm1', workspace: 'w', displayName: 'Bare',
+                         modelName: 'Bare', relationships: [],
+                         tables: [{ name: 'Lonely', mode: 'import' }] }] });
+    show();
+    await waitFor(() => expect(screen.getByText('Lonely')).toBeInTheDocument());
+    expect(screen.getByLabelText('DAX query')).toHaveValue("EVALUATE 'Lonely'");
+  });
+
+  it('treats a listing with no value key as no models', async () => {
+    // `r.value || []`. Without the fallback, `.find` runs on undefined and the
+    // page throws instead of saying the id names nothing.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200, json: () => Promise.resolve({}),
+    });
+    show();
+    await waitFor(() => expect(screen.getByText('Model not found')).toBeInTheDocument());
+  });
+
+  it('derives a query for a table with measures but no columns key', async () => {
+    // `(t.columns || [])` is only reached once a measure was found, so the
+    // fallback needs a table that has measures and omits columns entirely.
+    mockApi({ models: [model({ tables: [{ name: 'Facts', mode: 'import',
+      measures: [{ name: 'Total', expression: 'SUM(x)' }] }] })] });
+    show();
+    await waitFor(() => expect(screen.getByLabelText('DAX query')).toHaveValue(
+      'EVALUATE SUMMARIZECOLUMNS("Total", [Total])'));
+  });
 });

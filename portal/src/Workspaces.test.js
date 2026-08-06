@@ -142,4 +142,18 @@ describe('Workspaces', () => {
     // what renders if nothing defaults it.
     await waitFor(() => expect(screen.getByText('(/)')).toBeInTheDocument());
   });
+
+  it('says provisioned for a workspace that has an identity', async () => {
+    // The other side of the identity cell. Only the dash had ever rendered, so
+    // nothing proved the positive case says anything at all.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ value: [{
+        id: 'ws-id', displayName: 'withid', itemCount: 0, roleCount: 0,
+        workspaceIdentity: { applicationId: 'app-1' } }] }),
+    });
+    render(Workspaces);
+    await screen.findByText('withid');
+    expect(screen.getByText('provisioned')).toBeInTheDocument();
+  });
 });

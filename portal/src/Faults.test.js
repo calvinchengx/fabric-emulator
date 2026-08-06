@@ -70,4 +70,20 @@ describe('Faults', () => {
       expect(screen.getByText('next 2 request(s) will be rejected')).toBeInTheDocument());
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ rejectNextRequests: 2 });
   });
+
+
+  it('sends the LRO delay that was typed, not the default', async () => {
+    // The input's binding: without this the field is never written to, and a
+    // test that clicks Set only ever proves the default is sent.
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200, json: () => Promise.resolve({ status: 'ok' }),
+    });
+    render(Faults);
+    const spinners = screen.getAllByRole('spinbutton');
+    await fireEvent.input(spinners[spinners.length - 1], { target: { value: '5' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Set' }));
+    await waitFor(() =>
+      expect(screen.getByText('operations now stay Running 5s')).toBeInTheDocument());
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ lroDelaySeconds: 5 });
+  });
 });

@@ -699,3 +699,588 @@ describe('the event contract', () => {
     );
   });
 });
+
+// The arms the suite above never reached: coalescing, the inspector's own
+// failures, the log's per-kind phrasing, and the attribution column. Each is a
+// separate `describe` so a failure names the behaviour, not "Flow".
+
+describe('Flow: redraw coalescing and recovery', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+    vi.useRealTimers();
+  });
+
+  it('coalesces a burst of lineage events into one reload', async () => {
+    // One dbt model emits an edge per source. Reloading per edge is a request
+    // storm for a single redraw, so the reload is debounced — and the guard
+    // that makes it one reload is the thing worth pinning.
+    vi.useFakeTimers();
+    mockLineage();
+    render(Flow);
+    await vi.advanceTimersByTimeAsync(1);
+    const before = globalThis.fetch.mock.calls
+      .filter((c) => String(c[0]).includes('/portal/lineage')).length;
+
+    for (let i = 0; i < 5; i++) {
+      FakeEventSource.last.emit('lineage', {
+        seq: 10 + i, at: 1700000000, kind: 'lineage',
+        itemId: 'lake-1', sourcePath: 'a', targetPath: 'b',
+      });
+    }
+    await vi.advanceTimersByTimeAsync(500);
+    const after = globalThis.fetch.mock.calls
+      .filter((c) => String(c[0]).includes('/portal/lineage')).length;
+    expect(after - before).toBe(1);
+  });
+
+  it('cancels a pending retry once a load succeeds', async () => {
+    // Otherwise the retry fires anyway, and a stack that has recovered keeps
+    // being re-asked on a schedule nothing cancels.
+    vi.useFakeTimers();
+    let ok = false;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      if (!String(url).includes('/portal/lineage')) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) });
+      }
+      return ok
+        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: edges }) })
+        : Promise.resolve({ ok: false, status: 404,
+            json: () => Promise.resolve({ error: { message: 'HTTP 404' } }) });
+    });
+    render(Flow);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(screen.getByText('HTTP 404')).toBeInTheDocument();
+
+    // The retry lands on a healthy emulator: the banner clears and the timer is
+    // cleared with it.
+    ok = true;
+    await vi.advanceTimersByTimeAsync(3100);
+    expect(screen.queryByText('HTTP 404')).not.toBeInTheDocument();
+
+    const settled = globalThis.fetch.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(globalThis.fetch.mock.calls).toHaveLength(settled);
+  });
+
+  it('says it is reconnecting when the stream drops', async () => {
+    // EventSource reconnects on its own, so this is not an error — but a green
+    // `streaming` chip over a dead stream is a lie.
+    mockLineage();
+    render(Flow);
+    FakeEventSource.last.open();
+    await waitFor(() => expect(screen.getByText('streaming')).toBeInTheDocument());
+    FakeEventSource.last.onerror();
+    await waitFor(() => expect(screen.getByText('reconnecting')).toBeInTheDocument());
+    expect(screen.getByText('reconnecting')).toHaveClass('failed');
+  });
+
+  it('ignores a frame that is not JSON instead of dying on it', async () => {
+    mockLineage();
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+    // `curl -N` users can see this stream; a proxy that injects a keep-alive
+    // comment must not take the log down.
+    for (const fn of FakeEventSource.last.listeners.table || []) fn({ data: 'not json {' });
+    FakeEventSource.last.emit('table', {
+      seq: 1, at: 1700000000, kind: 'table', itemId: 'lake-1',
+      table: 'Tables/bronze_customers', version: 0,
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/Tables\/bronze_customers → v0/)).toBeInTheDocument());
+  });
+
+  it('clears the log, the marks and the open inspector together', async () => {
+    mockApi({
+      table: { itemId: 'lake-1', table: 'Tables/bronze_customers', version: 1,
+               readable: true, columns: ['id'], rowCount: 1, preview: [['1']] },
+    });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
+    FakeEventSource.last.emit('table', {
+      seq: 1, at: 1700000000, kind: 'table', itemId: 'lake-1',
+      table: 'Tables/bronze_customers', version: 1,
+    });
+    await fireEvent.click(screen.getByText('bronze_customers').closest('g'));
+    await waitFor(() => expect(screen.getByText('v1')).toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    // The panel goes with the log: it describes a table this session wrote, and
+    // keeping it after Clear leaves a reading of something no longer listed.
+    await waitFor(() => expect(screen.queryByText('v1')).not.toBeInTheDocument());
+    expect(screen.getByText(/Nothing yet/)).toBeInTheDocument();
+  });
+
+  it('re-reads the open table when a commit lands on it', async () => {
+    // The stream says a table CHANGED; the panel says what it holds. A panel
+    // that does not re-read is quietly describing the previous version.
+    let version = 1;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      if (String(url).includes('/portal/lineage'))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: edges }) });
+      if (String(url).includes('/portal/table'))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+          itemId: 'lake-1', table: 'Tables/bronze_customers', version, readable: true,
+          columns: ['id'], rowCount: version, preview: [['1']] }) });
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) });
+    });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
+    await fireEvent.click(screen.getByText('bronze_customers').closest('g'));
+    await waitFor(() => expect(screen.getByText('v1')).toBeInTheDocument());
+
+    version = 2;
+    FakeEventSource.last.emit('table', {
+      seq: 2, at: 1700000000, kind: 'table', itemId: 'lake-1',
+      table: 'Tables/bronze_customers', version: 2,
+    });
+    await waitFor(() => expect(screen.getByText('v2')).toBeInTheDocument());
+  });
+
+  it('quietens a node written earlier in the session', async () => {
+    // Two levels, not one: "just changed" and "written at all". With a single
+    // state a finished run is uniformly lit and says nothing about order.
+    vi.useFakeTimers();
+    mockLineage();
+    render(Flow);
+    await vi.advanceTimersByTimeAsync(1);
+    FakeEventSource.last.emit('table', {
+      seq: 1, at: 1700000000, kind: 'table', itemId: 'lake-1',
+      table: 'Tables/bronze_customers', version: 1,
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    const node = () => screen.getByText('bronze_customers').closest('g');
+    expect(node()).toHaveClass('fresh');
+    // FRESH_MS is 10s, and `now` ticks every second on its own.
+    await vi.advanceTimersByTimeAsync(11000);
+    expect(node()).toHaveClass('written');
+    expect(node()).not.toHaveClass('fresh');
+  });
+});
+
+describe('Flow: what the log says about each event', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+    mockLineage();
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+  });
+
+  const emit = (kind, ev) => FakeEventSource.last.emit(kind, { seq: 99, at: 1700000000, kind, ...ev });
+
+  it('reports files removed by a commit, not only rows added', async () => {
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+    emit('table', { itemId: 'lake-1', table: 'Tables/s', version: 3,
+                    rowsAdded: 10, filesRemoved: 2 });
+    await waitFor(() => expect(
+      screen.getByText('Tables/s → v3 (+10 rows), 2 file(s) removed')).toBeInTheDocument());
+  });
+
+  it('names why a job failed', async () => {
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+    emit('job', { itemId: 'lake-1', status: 'Failed', failureReason: 'notebook exited 1' });
+    await waitFor(() => expect(
+      screen.getByText('job Failed — notebook exited 1')).toBeInTheDocument());
+  });
+
+  it('counts the queries in a batch when there was more than one', async () => {
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+    emit('query', { itemId: 'sm-1', dataset: 'ContosoRevenue', queries: 3 });
+    await waitFor(() => expect(
+      screen.getByText('ContosoRevenue queried (3 queries)')).toBeInTheDocument());
+  });
+
+  it('says a query failed', async () => {
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+    emit('query', { itemId: 'sm-1', dataset: 'ContosoRevenue', status: 'Failed' });
+    await waitFor(() => expect(
+      screen.getByText('ContosoRevenue queried — failed')).toBeInTheDocument());
+  });
+
+  it('falls back to a short id for a source system the graph has not seen', async () => {
+    // The name comes from the edges, and a lineage event can arrive before the
+    // reload that would carry it. "undefined (source system)" is the failure.
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+    emit('lineage', { sourceKind: 'connection', sourceItemId: 'conn-abcdef123456',
+                      targetPath: 'Files/landing/x.csv' });
+    await waitFor(() => expect(
+      screen.getByText('conn-abc (source system) → Files/landing/x.csv')).toBeInTheDocument());
+  });
+
+  it('still names the hop when a connection source carries no id at all', async () => {
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+    emit('lineage', { sourceKind: 'connection', targetPath: 'Files/landing/y.csv' });
+    // Reads "source system (source system)": the last-resort name and the
+    // suffix are both generic, so it stutters. Asserted as it behaves rather
+    // than as it reads — changing the copy is a separate, deliberate change.
+    await waitFor(() => expect(
+      screen.getByText('source system (source system) → Files/landing/y.csv')).toBeInTheDocument());
+  });
+
+  describe('the By column', () => {
+    it('credits a lineage hop to its activity, then its producer', async () => {
+      render(Flow);
+      await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+      emit('lineage', { sourcePath: 'a', targetPath: 'b', activityName: 'IngestCustomers' });
+      await waitFor(() => expect(screen.getByText('IngestCustomers')).toBeInTheDocument());
+    });
+
+    it('falls back to the producer when no activity is named', async () => {
+      render(Flow);
+      await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+      emit('lineage', { seq: 101, sourcePath: 'a', targetPath: 'c', producer: 'Warehouse' });
+      await waitFor(() => expect(screen.getByText('Warehouse')).toBeInTheDocument());
+    });
+
+    it('credits a write to the activity that made it', async () => {
+      render(Flow);
+      await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+      emit('table', { itemId: 'lake-1', table: 'Tables/t', version: 0,
+                      attribution: { jobId: 'job-abcdef12', activityName: 'Refine' } });
+      await waitFor(() => expect(screen.getByText('Refine')).toBeInTheDocument());
+    });
+
+    it('names the notebook cell when that is what is known', async () => {
+      // cellIndex 0 is a real cell — the first one — which is why the field is
+      // a pointer in Go and checked against null here rather than for truth.
+      render(Flow);
+      await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+      emit('table', { itemId: 'lake-1', table: 'Tables/t', version: 0,
+                      attribution: { jobId: 'job-abcdef12', cellIndex: 0 } });
+      await waitFor(() => expect(screen.getByText('cell[0]')).toBeInTheDocument());
+    });
+
+    it('falls back to a short job id', async () => {
+      render(Flow);
+      await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+      emit('table', { itemId: 'lake-1', table: 'Tables/t', version: 0,
+                      attribution: { jobId: 'job-abcdef12' } });
+      await waitFor(() => expect(screen.getByText('job-abcd')).toBeInTheDocument());
+    });
+
+    it('says nothing rather than guessing when attribution is empty', async () => {
+      // Attribution is never inferred. An empty cell is the honest answer.
+      render(Flow);
+      await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+      emit('table', { itemId: 'lake-1', table: 'Tables/t', version: 0, attribution: {} });
+      await waitFor(() => expect(screen.getByText('Tables/t → v0')).toBeInTheDocument());
+      const row = screen.getByText('Tables/t → v0').closest('tr');
+      expect(row.querySelectorAll('td')[3].textContent.trim()).toBe('');
+    });
+  });
+});
+
+describe('Flow: the inspector', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+  });
+
+  const openNode = async (name = 'bronze_customers') => {
+    render(Flow);
+    await waitFor(() => expect(screen.getByText(name)).toBeInTheDocument());
+    await fireEvent.click(screen.getByText(name).closest('g'));
+  };
+
+  it('reports a failure to read the table rather than staying on "Reading…"', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      if (String(url).includes('/portal/table'))
+        return Promise.resolve({ ok: false, status: 500,
+          json: () => Promise.resolve({ error: { message: 'parquet is corrupt' } }) });
+      if (String(url).includes('/portal/lineage'))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: edges }) });
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) });
+    });
+    await openNode();
+    await waitFor(() => expect(screen.getByText('parquet is corrupt')).toBeInTheDocument());
+  });
+
+  it('says a table is not readable yet, with the reason', async () => {
+    mockApi({ table: { readable: false, message: 'no commit has landed' } });
+    await openNode();
+    await waitFor(() =>
+      expect(screen.getByText('Not readable yet: no commit has landed')).toBeInTheDocument());
+  });
+
+  it('counts one row in the singular', async () => {
+    mockApi({ table: { readable: true, version: 0, columns: ['id'], rowCount: 1,
+                       preview: [['1']] } });
+    await openNode();
+    await waitFor(() => expect(screen.getByText('1 row')).toBeInTheDocument());
+  });
+
+  it('says how much of a truncated preview is shown', async () => {
+    mockApi({ table: { readable: true, version: 7, columns: ['id'], rowCount: 900,
+                       preview: [['1'], ['2']], truncated: true } });
+    await openNode();
+    await waitFor(() => expect(screen.getByText(/First 2 of 900 rows/)).toBeInTheDocument());
+  });
+
+  it('shows the owning item beside the path', async () => {
+    mockApi({ table: { readable: true, version: 0, columns: [], rowCount: 0, preview: [] } });
+    await openNode();
+    // Scoped to the panel: every node in the graph is also labelled with its
+    // owning item, so a document-wide query for "lake" is ambiguous.
+    await waitFor(() => expect(document.querySelector('.panel')).toBeTruthy());
+    expect(document.querySelector('.panel').textContent).toContain('lake');
+    expect(document.querySelector('.panel').textContent).toContain('Tables/bronze_customers');
+  });
+});
+
+describe('Flow: the last reachable arms', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+    vi.useRealTimers();
+  });
+
+  it('cancels the pending retry when a manual reload succeeds first', async () => {
+    // The retry clears its own handle before re-asking, so the success path's
+    // "cancel the retry" arm is only reached when something ELSE succeeds
+    // during the backoff — which is exactly what Reload graph does.
+    vi.useFakeTimers();
+    let ok = false;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      if (!String(url).includes('/portal/lineage'))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) });
+      return ok
+        ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: edges }) })
+        : Promise.resolve({ ok: false, status: 404,
+            json: () => Promise.resolve({ error: { message: 'HTTP 404' } }) });
+    });
+    render(Flow);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(screen.getByText('HTTP 404')).toBeInTheDocument();
+
+    ok = true;
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload graph' }));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(screen.queryByText('HTTP 404')).not.toBeInTheDocument();
+
+    // The retry that was pending must not fire now.
+    const settled = globalThis.fetch.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(globalThis.fetch.mock.calls).toHaveLength(settled);
+  });
+
+  it('opens the inspector from the keyboard', async () => {
+    // The nodes are focusable and carry role="button"; a graph that can only be
+    // clicked is unusable without a mouse.
+    mockApi({ table: { readable: true, version: 2, columns: ['id'], rowCount: 1,
+                       preview: [['1']] } });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
+    const node = screen.getByText('bronze_customers').closest('g');
+    await fireEvent.keyDown(node, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText('v2')).toBeInTheDocument());
+  });
+
+  it('opens the inspector with the space bar too', async () => {
+    mockApi({ table: { readable: true, version: 3, columns: ['id'], rowCount: 1,
+                       preview: [['1']] } });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
+    await fireEvent.keyDown(screen.getByText('bronze_customers').closest('g'), { key: ' ' });
+    await waitFor(() => expect(screen.getByText('v3')).toBeInTheDocument());
+  });
+
+  it('ignores other keys on a node', async () => {
+    mockApi({ table: { readable: true, version: 4, columns: ['id'], rowCount: 1,
+                       preview: [['1']] } });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('bronze_customers')).toBeInTheDocument());
+    await fireEvent.keyDown(screen.getByText('bronze_customers').closest('g'), { key: 'a' });
+    expect(screen.queryByText('v4')).not.toBeInTheDocument();
+  });
+});
+
+describe('Flow: a retry that fails again', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+    vi.useRealTimers();
+  });
+
+  it('replaces the pending retry rather than stacking a second one', async () => {
+    // A manual reload during the backoff that ALSO fails: the catch has to
+    // cancel the handle it is about to overwrite, or every failed reload leaves
+    // another timer running and a dead emulator gets asked N times a second.
+    vi.useFakeTimers();
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) =>
+      String(url).includes('/portal/lineage')
+        ? Promise.resolve({ ok: false, status: 404,
+            json: () => Promise.resolve({ error: { message: 'HTTP 404' } }) })
+        : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) }));
+    render(Flow);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(screen.getByText('HTTP 404')).toBeInTheDocument();
+
+    // Reload while the first retry is still pending.
+    await fireEvent.click(screen.getByRole('button', { name: 'Reload graph' }));
+    await vi.advanceTimersByTimeAsync(1);
+
+    // Exactly one retry may fire — the one this reload scheduled — and not the
+    // orphaned original as well. The window is 6s+ because each failure doubles
+    // the backoff, so the surviving timer is the 6s one.
+    const before = globalThis.fetch.mock.calls
+      .filter((c) => String(c[0]).includes('/portal/lineage')).length;
+    await vi.advanceTimersByTimeAsync(6100);
+    const after = globalThis.fetch.mock.calls
+      .filter((c) => String(c[0]).includes('/portal/lineage')).length;
+    expect(after - before).toBe(1);
+  });
+});
+
+describe('Flow: payloads that omit what they usually carry', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+  });
+
+  it('treats every listing without a value key as empty', async () => {
+    // Three endpoints, three `|| []` fallbacks: lineage, models and
+    // workspaces. Any of them returning `{}` must leave the view usable rather
+    // than iterating undefined.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true, status: 200, json: () => Promise.resolve({}),
+    });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText(/No lineage recorded yet/)).toBeInTheDocument());
+    expect(screen.getByText(/Nothing yet/)).toBeInTheDocument();
+    // A single workspace (or none) means no workspace filter to offer.
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('counts a dropped notice that does not say how many', async () => {
+    // `ev.dropped ?? 0`: a notice with no count still means the log is
+    // incomplete, and the chip must not read "undefined event(s) dropped".
+    mockLineage();
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
+    FakeEventSource.last.emit('dropped', { seq: 1, at: 1700000000, kind: 'dropped' });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/event\(s\) dropped/)).not.toBeInTheDocument();
+  });
+
+  it('labels a source system by its id when the connection has no name', async () => {
+    mockLineage([{
+      jobId: '', activityName: 'Ingest', producer: 'Copy', sourceKind: 'connection',
+      sourceItemId: 'conn-abcdefgh', sourcePath: '',
+      targetItemId: 'lake-1', targetItem: 'lake', targetPath: 'Files/landing/x.csv',
+      createdAt: 1700000000,
+    }]);
+    render(Flow);
+    // No sourceItem on the edge, so the node falls back to a short id.
+    await waitFor(() => expect(screen.getByText('conn-abc')).toBeInTheDocument());
+  });
+
+  it('labels a node whose path has no leaf segment', async () => {
+    // `.pop() || n.path`: a target of "Tables/" splits to nothing once empty
+    // segments are filtered, and an unlabelled box is a box you cannot identify.
+    mockLineage([{
+      jobId: '', activityName: 'Odd', producer: 'Copy',
+      sourceItemId: 'lake-1', sourceItem: 'lake', sourcePath: 'Tables/bronze',
+      targetItemId: 'lake-1', targetItem: 'lake', targetPath: '/',
+      createdAt: 1700000000,
+    }]);
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('bronze')).toBeInTheDocument());
+    expect(screen.getByText('/')).toBeInTheDocument();
+  });
+
+  it('draws an edge whose producer is not recorded', async () => {
+    // `l.producer?.toLowerCase() || ''` — the class is what colours the edge,
+    // and an edge with no producer still has to be drawn.
+    mockLineage([{
+      jobId: '', activityName: '',
+      sourceItemId: 'lake-1', sourceItem: 'lake', sourcePath: 'Tables/a',
+      targetItemId: 'lake-1', targetItem: 'lake', targetPath: 'Tables/b',
+      createdAt: 1700000000,
+    }]);
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('a')).toBeInTheDocument());
+    const edge = document.querySelector('path.link');
+    expect(edge).toBeTruthy();
+    expect(edge.getAttribute('d')).toMatch(/^M[\d.]+,/);
+  });
+
+  it('refuses to connect the terminal on a blank token', async () => {
+    // Submitting the form with whitespace must not frame ttyd with an empty
+    // token — the proxy would refuse it and the pane would show ttyd's 401.
+    mockApi({ terminal: { available: true } });
+    render(Flow);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Terminal' }));
+    const box = screen.getByLabelText('terminal token');
+    await fireEvent.input(box, { target: { value: '   ' } });
+    await fireEvent.submit(box.closest('form'));
+    expect(document.querySelector('iframe.term-frame')).toBeNull();
+  });
+});
+
+describe('Flow: a node whose owning item has no name', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    FakeEventSource.last = null;
+    globalThis.EventSource = FakeEventSource;
+  });
+  afterEach(() => {
+    delete globalThis.EventSource;
+  });
+
+  it('falls back to a short item id in the node and in the inspector', async () => {
+    // `n.item || n.itemId.slice(0, 8)` in two places. A lineage edge recorded
+    // against an item that has since been deleted carries no display name, and
+    // "undefined" under a box is worse than a truncated GUID.
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url) => {
+      if (String(url).includes('/portal/lineage'))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [{
+          jobId: '', activityName: 'Ingest', producer: 'Copy',
+          sourceItemId: 'lake-11112222', sourcePath: 'Files/landing/x.csv',
+          targetItemId: 'lake-11112222', targetPath: 'Tables/bronze',
+          createdAt: 1700000000,
+        }] }) });
+      if (String(url).includes('/portal/table'))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({
+          readable: true, version: 0, columns: ['id'], rowCount: 2, preview: [['1'], ['2']] }) });
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [] }) });
+    });
+    render(Flow);
+    await waitFor(() => expect(screen.getByText('bronze')).toBeInTheDocument());
+    // The sub-label under the box.
+    expect(screen.getAllByText('lake-111').length).toBeGreaterThan(0);
+
+    await fireEvent.click(screen.getByText('bronze').closest('g'));
+    // And the inspector's own heading line, which uses the same fallback.
+    await waitFor(() => expect(document.querySelector('.panel')).toBeTruthy());
+    expect(document.querySelector('.panel').textContent).toContain('lake-11112222');
+  });
+});

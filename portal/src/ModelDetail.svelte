@@ -104,7 +104,12 @@
             <span class="muted mono">{model.itemId}</span>
           </div>
 
-          {#each model.tables as t (t.name)}
+          <!-- `?? []` throughout: sampleQuery above already defends against a
+               definition that omits an array, and the markup must agree with it.
+               It did not — a table without a `measures` key reached
+               `t.measures.length` and took the whole page down, while the query
+               box derived from the same model perfectly happily. -->
+          {#each model.tables ?? [] as t (t.name)}
             <div class="tbl">
               <div class="tbl-head">
                 <strong>{t.name}</strong>
@@ -121,7 +126,7 @@
                   <tr><th>Column</th><th>Type</th><th>Source column</th></tr>
                 </thead>
                 <tbody>
-                  {#each t.columns as c (c.name)}
+                  {#each t.columns ?? [] as c (c.name)}
                     <tr>
                       <td><code>{c.name}</code></td>
                       <td class="muted">{c.dataType}</td>
@@ -131,7 +136,7 @@
                 </tbody>
               </table>
 
-              {#if t.measures.length}
+              {#if t.measures?.length}
                 <table class="measures">
                   <thead>
                     <tr><th>Measure</th><th>DAX</th></tr>
@@ -189,7 +194,7 @@
             {/if}
           </div>
 
-          {#if model.relationships.length}
+          {#if model.relationships?.length}
             <div class="tbl">
               <div class="tbl-head"><strong>Relationships</strong></div>
               <table>
