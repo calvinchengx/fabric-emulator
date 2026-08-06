@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { href, parse } from './router.js';
+import { describe, expect, it, vi } from 'vitest';
+import { href, onRouteChange, parse } from './router.js';
 
 describe('router', () => {
   it.each([
@@ -49,5 +49,37 @@ describe('router', () => {
     expect(href('models')).toBe('#models');
     expect(href('models', null)).toBe('#models');
     expect(href('models', '')).toBe('#models');
+  });
+
+  describe('onRouteChange', () => {
+    it('reports the parsed route on every hash change', () => {
+      const seen = vi.fn();
+      const stop = onRouteChange(seen);
+      try {
+        location.hash = '#models/abc-123';
+        window.dispatchEvent(new Event('hashchange'));
+        expect(seen).toHaveBeenCalledWith({ view: 'models', param: 'abc-123' });
+
+        // A second change must also arrive: a subscriber that fires once would
+        // leave the portal showing the page you navigated away from.
+        location.hash = '#flow';
+        window.dispatchEvent(new Event('hashchange'));
+        expect(seen).toHaveBeenLastCalledWith({ view: 'flow', param: null });
+        expect(seen).toHaveBeenCalledTimes(2);
+      } finally {
+        stop();
+      }
+    });
+
+    it('stops listening when unsubscribed', () => {
+      // The returned function is what App's teardown relies on. If it did not
+      // detach, every remount would add another listener and one hash change
+      // would set the route N times.
+      const seen = vi.fn();
+      onRouteChange(seen)();
+      location.hash = '#jobs';
+      window.dispatchEvent(new Event('hashchange'));
+      expect(seen).not.toHaveBeenCalled();
+    });
   });
 });
