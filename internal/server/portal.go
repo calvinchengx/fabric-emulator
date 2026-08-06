@@ -29,6 +29,7 @@ func (s *Server) registerPortal() {
 	s.mux.HandleFunc("GET /_emulator/portal/jobs", s.portalJobs)
 	s.mux.HandleFunc("GET /_emulator/portal/warehouse", s.portalWarehouse)
 	s.mux.HandleFunc("GET /_emulator/portal/models", s.portalModels)
+	s.mux.HandleFunc("POST /_emulator/portal/models/{id}/query", s.portalModelQuery)
 	s.mux.HandleFunc("GET /_emulator/portal/lineage", s.portalLineage)
 	s.mux.HandleFunc("GET /_emulator/portal/table", s.portalTable)
 

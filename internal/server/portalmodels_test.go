@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/calvinchengx/fabric-emulator/internal/api"
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"strings"
 )
 
 // newPortalServer is the smallest Server the portal handlers need: a store and
@@ -251,5 +253,60 @@ func TestPortalModelsDescribesATMDLModel(t *testing.T) {
 	// because an empty DAX result otherwise looks like a wrong measure.
 	if m["rowsLoaded"] != false {
 		t.Errorf("rowsLoaded = %v, want false", m["rowsLoaded"])
+	}
+}
+
+// TestPortalModelQueryRunsDAXOverAnImportModel.
+//
+// The model page DESCRIBED the model; the query box makes it answer. The whole
+// point is that this goes through the same evaluator as executeQueries — a
+// runner with its own DAX dialect would demo something the wire cannot do.
+func TestPortalModelQueryRunsDAXOverAnImportModel(t *testing.T) {
+	s := newPortalServer(t)
+	s.API = api.New(s.Store, nil, 0, 0)
+	ws := seedPortalWorkspace(t, s)
+	it := &store.Item{WorkspaceID: ws.ID, Type: "SemanticModel", DisplayName: "revenue"}
+	if err := s.Store.CreateItem(it, []store.DefinitionPart{
+		part("model.bim", tmslModel),
+		part("data.json", `{"Revenue": [{"Country": "GB", "Revenue": 2.5}, {"Country": "SG", "Revenue": 1.5}]}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	post := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/_emulator/portal/models/"+it.ID+"/query",
+			strings.NewReader(body))
+		r.SetPathValue("id", it.ID)
+		s.portalModelQuery(w, r)
+		return w
+	}
+
+	w := post(`{"query": "EVALUATE SUMMARIZECOLUMNS(Revenue[Country], \"Revenue\", [Total Revenue])"}`)
+	if w.Code != 200 {
+		t.Fatalf("query = %d %s", w.Code, w.Body.Bytes())
+	}
+	var got struct {
+		Rows []map[string]any `json:"rows"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Rows) != 2 {
+		t.Fatalf("rows = %v", got.Rows)
+	}
+	total := 0.0
+	for _, row := range got.Rows {
+		v, _ := row["[Revenue]"].(float64)
+		total += v
+	}
+	if total != 4.0 {
+		t.Fatalf("summed measure = %v, want 4.0 (rows %v)", total, got.Rows)
+	}
+
+	// A wrong query is the interactive box's ordinary case: the MESSAGE is the
+	// product, so it must survive to the client rather than collapse to a code.
+	w = post(`{"query": "EVALUATE NO_SUCH_THING()"}`)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "error") {
+		t.Fatalf("bad DAX = %d %s", w.Code, w.Body.Bytes())
 	}
 }

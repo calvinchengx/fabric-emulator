@@ -163,3 +163,46 @@ describe('Models accessibility', () => {
     expect(back.getAttribute('href')).toBe('#models');
   });
 });
+
+describe('ModelDetail query box', () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  const withQuery = (rows, fail) =>
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url, opts) => {
+      if (String(url).includes('/query')) {
+        if (fail)
+          return Promise.resolve({
+            ok: false, status: 400,
+            json: () => Promise.resolve({ error: { message: 'unknown measure [Nope]' } }),
+          });
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ rows }) });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ value: [model] }) });
+    });
+
+  it('prefills a runnable query from the model and renders the rows', async () => {
+    withQuery([
+      { 'Revenue[Country]': 'GB', '[Total Revenue]': 2.5 },
+      { 'Revenue[Country]': 'SG', '[Total Revenue]': 1.5 },
+    ]);
+    render(Models, { props: { id: 'm1' } });
+    // Prefilled from the model's OWN measure — an empty editor daring the user
+    // to remember DAX demonstrates nothing on first click.
+    const box = await screen.findByLabelText('DAX query');
+    expect(box.value).toContain('[Total Revenue]');
+    await fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    await waitFor(() => expect(screen.getByText('2.5')).toBeInTheDocument());
+    expect(screen.getByText('SG')).toBeInTheDocument();
+    expect(screen.getByText('2 row(s)')).toBeInTheDocument();
+  });
+
+  it('shows the evaluator message when the query is wrong', async () => {
+    withQuery([], true);
+    render(Models, { props: { id: 'm1' } });
+    const box = await screen.findByLabelText('DAX query');
+    await fireEvent.input(box, { target: { value: 'EVALUATE [Nope]' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    // The message is the product for an interactive box, not the status code.
+    await waitFor(() => expect(screen.getByText(/unknown measure/)).toBeInTheDocument());
+  });
+});

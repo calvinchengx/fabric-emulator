@@ -186,3 +186,51 @@ func rowsToJSON(res *semanticmodel.Result, includeNulls bool) []map[string]any {
 	}
 	return out
 }
+
+// QueryModelUnauthenticated evaluates one DAX query against an IMPORT-mode
+// semantic model, for the portal's query runner.
+//
+// WHY THIS EXISTS BESIDE executeQueries. The REST endpoint takes a Power BI
+// audience token, which is right for the wire Power BI uses and wrong for the
+// portal: the portal is deliberately unauthenticated, and making its query box
+// mint tokens would smuggle a credential flow into a surface whose whole
+// premise is "read-only over local state". Running a DAX query against an
+// import model IS a read — the rows are already in the item's definition.
+//
+// Direct Lake models are refused rather than half-served: reading their lake
+// data requires a principal (see loadDirectLakeData), and the portal has none
+// by design. executeQueries with a real token is the honest route there.
+//
+// The query is published to the flow bus either way — the graph's Power BI hop
+// lights up for a portal query exactly as for a REST one, because the model
+// WAS queried and the flow view's job is what actually happened.
+func (a *API) QueryModelUnauthenticated(itemID, query string) ([]map[string]any, error) {
+	it, err := a.Store.GetItemByID(itemID)
+	if err != nil || it.Type != "SemanticModel" {
+		return nil, fmt.Errorf("no semantic model with id %q", itemID)
+	}
+	m, err := a.parseModelDefinition(itemID)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range m.Tables {
+		if t.DirectLake != nil {
+			return nil, fmt.Errorf(
+				"table %q is Direct Lake; the portal runner only queries import "+
+					"models — use executeQueries with a Power BI token", t.Name)
+		}
+	}
+	data := semanticmodel.Data{}
+	if raw, err := a.definitionPart(itemID, "data.json"); err == nil {
+		if d, err := semanticmodel.ParseData(raw); err == nil {
+			data = d
+		}
+	}
+	res, err := semanticmodel.Evaluate(m, data, query)
+	if err != nil {
+		a.publishQuery(it, 1, true)
+		return nil, err
+	}
+	a.publishQuery(it, 1, false)
+	return rowsToJSON(res, true), nil
+}
