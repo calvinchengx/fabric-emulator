@@ -180,19 +180,40 @@ def go_test_names() -> set:
     return {line.split()[1] for line in out.stdout.splitlines() if line.startswith("func ")}
 
 
+def py_test_names() -> set:
+    """Python test modules AND test functions under python/tests.
+
+    `py:` witnesses were counted but never resolved, so one naming a test that
+    had been renamed or deleted passed --strict silently — a witness system
+    whose whole promise is that a claim names evidence that exists. Both
+    spellings are accepted because both are in use: a module (`test_foo`) when
+    a whole file is the evidence, a function (`test_foo_does_bar`) when one
+    case is.
+    """
+    tests_dir = ROOT / "python" / "tests"
+    if not tests_dir.is_dir():
+        return set()
+    names = set()
+    for path in tests_dir.glob("test_*.py"):
+        names.add(path.stem)
+        names.update(re.findall(r"^def (test_[A-Za-z0-9_]+)",
+                                path.read_text(encoding="utf-8"), re.M))
+    return names
+
+
 def main() -> int:
     strict = "--strict" in sys.argv
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.exists() else {}
     # `_gated` is a declaration, not a claim: witness -> why it can skip.
     declared_gates = manifest.pop("_gated", {})
-    jobs, tests = ci_job_ids(), go_test_names()
+    jobs, tests, py_tests = ci_job_ids(), go_test_names(), py_test_names()
     gated_tests = gated_go_tests()
 
     missing, dangling, todo = [], [], []
     # witness -> reason, for the gated witnesses actually credited to a claim.
     gated_used: dict[str, str] = {}
     ungated_by_key: dict[str, int] = {}
-    kinds = {"ci": 0, "go": 0, "boundary": 0}
+    kinds = {"ci": 0, "go": 0, "py": 0, "boundary": 0}
     # Which claims lean on each witness — a witness covering many claims is
     # where bundling hides.
     shared: dict[str, list[str]] = {}
@@ -214,6 +235,8 @@ def main() -> int:
                 dangling.append(f"{key} → {witness} (no such CI job)")
             elif kind == "go" and name not in tests:
                 dangling.append(f"{key} → {witness} (no such Go test)")
+            elif kind == "py" and name not in py_tests:
+                dangling.append(f"{key} → {witness} (no such Python test)")
             if kind == "go" and name in gated_tests:
                 gated_used[witness] = gated_tests[name]
             else:
@@ -237,6 +260,7 @@ def main() -> int:
     print(f"supported capability claims: {len(claims)}")
     print(f"  witnessed by a real external client (ci:) : {kinds.get('ci', 0)}")
     print(f"  witnessed by our own Go tests (go:)       : {kinds.get('go', 0)}")
+    print(f"  witnessed by our own Python tests (py:)   : {kinds.get('py', 0)}")
     print(f"  scoped by a documented boundary           : {kinds.get('boundary', 0)}")
     print(f"  not yet identified (TODO)                 : {len(todo)}")
     print(f"  absent from the manifest                  : {len(missing)}")

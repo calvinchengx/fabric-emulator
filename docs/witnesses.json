@@ -1,21 +1,301 @@
 {
   "_gated": {
-    "go:TestMirrorSnapshotsBaseTables": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestPipelineSQLActivitiesE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestReflectDecimalColumn": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestRefreshMirroredDatabaseE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestSQLDatabaseMirror": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestWarehouseDeltaReflectionE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestWarehouseRouter": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestWarehouseSQLServerRelayE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml)."
+    "go:TestMirrorSnapshotsBaseTables": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestPipelineSQLActivitiesE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestReflectDecimalColumn": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestRefreshMirroredDatabaseE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestSQLDatabaseMirror": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestWarehouseDeltaReflectionE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestWarehouseRouter": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestWarehouseSQLServerRelayE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "ci:real-fabric": "AZURE_* credentials + FABRIC_TEST_WORKSPACE — needs a real Fabric tenant, so it skips on a fork and on any checkout without the secrets. Satisfied weekly by the `real-fabric` workflow (.github/workflows/real-fabric.yml), which runs the SAME conformance suite the `fabric-target` job runs against the emulator on every push. It is the differential leg: a divergence shows up as a conformance failure there."
   },
-  "workspaces-crud": {
+  "abfss-onelake-dfs-fabric-microsoft-com-production-paths": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`abfss://…@onelake.dfs.fabric.microsoft.com/…` production paths",
+    "witnesses": [
+      "ci:sail"
+    ]
+  },
+  "activity-level-lineage": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Activity-level lineage",
+    "witnesses": [
+      "go:TestLineageEdgeLifecycleAndIdempotency",
+      "ci:governance"
+    ]
+  },
+  "activity-log-audit-get-v1-0-myorg-admin-activityevents": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Activity log / audit** (`GET /v1.0/myorg/admin/activityevents`)",
+    "witnesses": [
+      "go:TestActivityEventsRecordsRealOperations",
+      "go:TestActivityEventsUsesDocumentedDomainVocabulary",
+      "go:TestActivityEventsPagination"
+    ]
+  },
+  "adls-gen2-dfs-surface-create-append-flush-ranged-read-list": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "ADLS Gen2 DFS surface (create → append → flush, ranged read, list)",
+    "witnesses": [
+      "ci:adls-sdk",
+      "ci:azcopy"
+    ]
+  },
+  "apache-airflow-job": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Apache Airflow Job**",
+    "witnesses": [
+      "ci:airflow"
+    ]
+  },
+  "blob-surface": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "Blob surface",
+    "witnesses": [
+      "ci:adls-sdk"
+    ]
+  },
+  "capacities-list-assign-unassign": {
     "section": "Platform / fundamentals",
-    "claim": "Workspaces CRUD",
+    "claim": "Capacities (list, assign / unassign)",
+    "witnesses": [
+      "go:TestCapacities"
+    ]
+  },
+  "capacity-tenant-setting-overrides-get-v1-admin-capacities-delegatedtenantsettingoverrides-post-capacityid-delegatedtenantsettingoverrides-name-update": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Capacity tenant-setting overrides** (`GET /v1/admin/capacities/delegatedTenantSettingOverrides`, `POST …/{capacityId}/delegatedTenantSettingOverrides/{name}/update`)",
+    "witnesses": [
+      "go:TestCapacityOverridesRoundTrip",
+      "go:TestCapacityOverrideValidation"
+    ]
+  },
+  "change-data-feed": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Change Data Feed",
+    "witnesses": [
+      "ci:livy-native"
+    ]
+  },
+  "class-b-strict-mode-tsql-strict": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**Class B strict mode** (`-tsql-strict`)",
+    "witnesses": [
+      "go:TestCheckStrictCorpus",
+      "go:TestStrictCorpusCoversEveryFeature",
+      "go:TestStrictModeGatesClassBConstructs",
+      "boundary:indexed ('materialized') views and FOR JSON in a subquery are not enforced — a lexer cannot see them (docs/29-tsql-parity.md, T7)"
+    ]
+  },
+  "concurrent-delta-overwrite-writers": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Concurrent Delta overwrite writers",
+    "witnesses": [
+      "go:TestConcurrentDeltaCommitRace"
+    ]
+  },
+  "connection-by-item-name-vs-guid": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "Connection by item *name* (vs GUID)",
+    "witnesses": [
+      "ci:warehouse-tds",
+      "go:TestGetWorkspaceAndItemByName"
+    ]
+  },
+  "copy-activity-onelake-onelake": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Copy activity — **OneLake → OneLake**",
+    "witnesses": [
+      "go:TestPipelineCopyActivityRealBytes",
+      "go:TestPipelineCopyDirectory",
+      "go:TestPipelineCopyByName"
+    ]
+  },
+  "createdataframe-localrows": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`createDataFrame(local_rows)`",
+    "witnesses": [
+      "ci:livy-native"
+    ]
+  },
+  "ctas-create-table-as-select": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**CTAS** (`CREATE TABLE … AS SELECT`)",
+    "witnesses": [
+      "ci:medallion",
+      "go:TestRewriteCTASCorpus",
+      "go:TestAdaptRewritesCTASInsideEXEC",
+      "go:TestDialectFixRewritesCTAS"
+    ]
+  },
+  "data-pipeline-control-flow-if-foreach-until-switch-filter-fail-expression-language-dependson": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Data Pipeline control flow (If / ForEach / Until / Switch / Filter / Fail, expression language, `dependsOn`)",
+    "witnesses": [
+      "go:TestForEachInnerFailurePropagates",
+      "go:TestPipelineInvokeByName"
+    ]
+  },
+  "data-science-ml-models-experiments-mlflow-data-science": {
+    "section": "Item types present, engine absent",
+    "claim": "Data Science — ML models / experiments / MLflow (`data-science/`)",
+    "witnesses": [
+      "ci:data-science-loop",
+      "go:TestMLflowProxyContract"
+    ]
+  },
+  "delta-commits-put-if-absent-atomicity": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "Delta commits (put-if-absent atomicity)",
+    "witnesses": [
+      "ci:delta-rs"
+    ]
+  },
+  "delta-write-read-append-sql-over-temp-views": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Delta write/read/append; SQL over temp views",
+    "witnesses": [
+      "ci:sail",
+      "ci:delta-rs"
+    ]
+  },
+  "deployment-pipelines-model-assignment-item-pairing-deploy-stage-content-d0-d2": {
+    "section": "CI/CD (`cicd/`)",
+    "claim": "Deployment pipelines — model, assignment, **item pairing**, **Deploy Stage Content** (D0–D2)",
+    "witnesses": [
+      "ci:deployment-pipelines-ps",
+      "go:TestDeploymentPipelineRoleAssignments"
+    ]
+  },
+  "deployment-pipelines-role-assignment-crud-d3": {
+    "section": "CI/CD (`cicd/`)",
+    "claim": "Deployment pipelines — role-assignment CRUD (D3)",
+    "witnesses": [
+      "ci:deployment-pipelines-ps",
+      "go:TestDeploymentPipelineRoleAssignments"
+    ]
+  },
+  "entra-oauth2-tokens-jwks-client-credentials": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "Entra OAuth2 tokens / JWKS / client-credentials",
     "witnesses": [
       "ci:fabric-cicd",
       "ci:fabric-cli"
+    ]
+  },
+  "event-triggers-reflex-data-activator-on-onelake-events": {
+    "section": "Item types present, engine absent",
+    "claim": "**Event triggers** — `Reflex` (Data Activator) on OneLake events",
+    "witnesses": [
+      "go:TestEventTriggerFiresFromARealOneLakeUpload",
+      "go:TestOneLakeWriteFiresTheTriggeredPipeline",
+      "go:TestTriggerEventIsReadableFromTheDefinition",
+      "go:TestTriggerEventIsNullForAManualRun",
+      "go:TestTriggerFiltersOnEventTypeAndSource",
+      "go:TestTriggerCycleIsCut",
+      "go:TestEventTriggerCRUD",
+      "go:TestEventTriggerValidationAndRBAC",
+      "go:TestRenameEmitsItsOwnEventType",
+      "go:TestSafeNavigationAndTriggerEvent"
+    ]
+  },
+  "fabric-cicd-tool-publishing": {
+    "section": "CI/CD (`cicd/`)",
+    "claim": "`fabric-cicd` tool publishing",
+    "witnesses": [
+      "ci:fabric-cicd"
+    ]
+  },
+  "fabric-sql-database-database-oltp-onelake-mirror": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**Fabric SQL Database (`database/`)** — OLTP + OneLake mirror",
+    "witnesses": [
+      "ci:warehouse-tds",
+      "go:TestSQLDatabaseMirror"
+    ]
+  },
+  "folders": {
+    "section": "Platform / fundamentals",
+    "claim": "Folders",
+    "witnesses": [
+      "go:TestFolderHandlers"
+    ]
+  },
+  "foreach-sequential-parallel-issequential-batchcount": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**ForEach** sequential / parallel (`isSequential`, `batchCount`)",
+    "witnesses": [
+      "go:TestForEachParallelDuration",
+      "go:TestForEachInnerFailurePropagates"
+    ]
+  },
+  "getmetadata-activity-onelake-path": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "GetMetadata activity — **OneLake path**",
+    "witnesses": [
+      "go:TestPipelineGetMetadataFile",
+      "go:TestPipelineGetMetadataDir",
+      "go:TestPipelineGetMetadataMissing"
+    ]
+  },
+  "git-integration-connect-status-commit-update-disconnect": {
+    "section": "CI/CD (`cicd/`)",
+    "claim": "Git integration (connect / status / commit / update / disconnect)",
+    "witnesses": [
+      "go:TestGitRoundTrip",
+      "go:TestGitStatusAndCommitRoundTrip",
+      "go:TestGitConnectionLifecycle",
+      "go:TestGitUpdateFromGitMirrors"
+    ]
+  },
+  "governance-domains-v1-admin-domains": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Governance domains** (`/v1/admin/domains`)",
+    "witnesses": [
+      "go:TestAdminDomains"
+    ]
+  },
+  "informationschema-sys-introspection": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "`information_schema` / `sys.*` introspection",
+    "witnesses": [
+      "ci:warehouse-tds",
+      "go:TestWarehouseSQLServerRelayE2E"
+    ]
+  },
+  "invoke-pipeline-executepipeline": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Invoke pipeline** (ExecutePipeline)",
+    "witnesses": [
+      "go:TestPipelineInvokeByName",
+      "go:TestPipelineInvokeBadParameters"
+    ]
+  },
+  "item-job-execution-jobs-instances": {
+    "section": "Platform / fundamentals",
+    "claim": "Item **job execution** (`jobs/instances`)",
+    "witnesses": [
+      "go:TestJobInstanceStates",
+      "go:TestJobLifecycleAndBody",
+      "go:TestJobInstancesOnTheClock"
+    ]
+  },
+  "item-job-scheduler-items-id-jobs-jobtype-schedules": {
+    "section": "Platform / fundamentals",
+    "claim": "**Item Job Scheduler** (`…/items/{id}/jobs/{jobType}/schedules`)",
+    "witnesses": [
+      "go:TestJobSchedulerAPIEndToEnd",
+      "go:TestScheduleWithPastStartTriggersInstantly",
+      "go:TestScheduleLimitAndValidationOverHTTP",
+      "go:TestScheduleCRUDRoundTrip",
+      "go:TestClockAdvanceFiresEachDueOccurrenceExactlyOnce",
+      "go:TestScheduledPipelineReallyRuns",
+      "go:TestParseRejectsEveryDocumentedBound",
+      "go:TestDailyHoldsLocalWallTimeAcrossDST",
+      "go:TestMonthlyOrdinalWeekday",
+      "go:TestCronCatchUpIsCappedAndKeepsTheNewest"
     ]
   },
   "items-crud-typed-collections": {
@@ -28,174 +308,12 @@
       "go:TestItemTypeIsCanonicalisedNotDuplicated"
     ]
   },
-  "role-assignments-workspace-rbac": {
-    "section": "Platform / fundamentals",
-    "claim": "Role assignments / workspace RBAC",
-    "witnesses": [
-      "go:TestListWorkspacesAndRoleAssignments",
-      "go:TestItemUpdateAndRoleAssignmentLifecycle",
-      "go:TestRoleAssignmentHandlerErrors"
-    ]
-  },
-  "folders": {
-    "section": "Platform / fundamentals",
-    "claim": "Folders",
-    "witnesses": [
-      "go:TestFolderHandlers"
-    ]
-  },
-  "capacities-list-assign-unassign": {
-    "section": "Platform / fundamentals",
-    "claim": "Capacities (list, assign / unassign)",
-    "witnesses": [
-      "go:TestCapacities"
-    ]
-  },
-  "item-job-execution-jobs-instances": {
-    "section": "Platform / fundamentals",
-    "claim": "Item **job execution** (`jobs/instances`)",
-    "witnesses": [
-      "go:TestJobInstanceStates",
-      "go:TestJobLifecycleAndBody",
-      "go:TestJobInstancesOnTheClock"
-    ]
-  },
-  "entra-oauth2-tokens-jwks-client-credentials": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "Entra OAuth2 tokens / JWKS / client-credentials",
-    "witnesses": [
-      "ci:fabric-cicd",
-      "ci:fabric-cli"
-    ]
-  },
-  "workspace-managed-identity-handshake": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "Workspace managed identity handshake",
-    "witnesses": [
-      "go:TestIdentityLifecycleWithoutEntra",
-      "go:TestAKVReferenceConnectionViaWorkspaceIdentity"
-    ]
-  },
   "key-vault-references-in-connections": {
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "Key Vault references in connections",
     "witnesses": [
       "ci:medallion",
       "go:TestAKVReferenceConnectionViaWorkspaceIdentity"
-    ]
-  },
-  "governance-domains-v1-admin-domains": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Governance domains** (`/v1/admin/domains`)",
-    "witnesses": [
-      "go:TestAdminDomains"
-    ]
-  },
-  "activity-log-audit-get-v1-0-myorg-admin-activityevents": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Activity log / audit** (`GET /v1.0/myorg/admin/activityevents`)",
-    "witnesses": [
-      "go:TestActivityEventsRecordsRealOperations",
-      "go:TestActivityEventsUsesDocumentedDomainVocabulary",
-      "go:TestActivityEventsPagination"
-    ]
-  },
-  "tenant-settings-get-v1-admin-tenantsettings": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Tenant settings** (`GET /v1/admin/tenantsettings`)",
-    "witnesses": [
-      "go:TestTenantSettingsList",
-      "go:TestTenantSettingsUpdate",
-      "go:TestTenantSettingsOmitsEmptyOptionalFields"
-    ]
-  },
-  "tenant-wide-workspace-admin-get-v1-admin-workspaces": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Tenant-wide workspace admin** (`GET /v1/admin/workspaces`)",
-    "witnesses": [
-      "go:TestAdminListWorkspacesUsesDocumentedShape",
-      "go:TestAdminListWorkspacesFilters",
-      "go:TestAdminListWorkspacesReportsDomain"
-    ]
-  },
-  "tenant-wide-item-admin-get-v1-admin-items": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Tenant-wide item admin** (`GET /v1/admin/items`)",
-    "witnesses": [
-      "go:TestAdminListItemsSpansWorkspaces",
-      "go:TestAdminListItemsFiltersAndValidation"
-    ]
-  },
-  "capacity-tenant-setting-overrides-get-v1-admin-capacities-delegatedtenantsettingoverrides-post-capacityid-delegatedtenantsettingoverrides-name-update": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Capacity tenant-setting overrides** (`GET /v1/admin/capacities/delegatedTenantSettingOverrides`, `POST \u2026/{capacityId}/delegatedTenantSettingOverrides/{name}/update`)",
-    "witnesses": [
-      "go:TestCapacityOverridesRoundTrip",
-      "go:TestCapacityOverrideValidation"
-    ]
-  },
-  "sensitivity-labels-bulksetlabels-bulkremovelabels": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Sensitivity labels** (`bulkSetLabels` / `bulkRemoveLabels`)",
-    "witnesses": [
-      "go:TestBulkLabelsApplyReplaceAndRemove",
-      "go:TestBulkLabelsPartialFailureAndValidation",
-      "go:TestLabelChangesAuditWithDocumentedSchema"
-    ]
-  },
-  "sensitivity-labels-catalog": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Sensitivity labels \u2192 catalog**",
-    "witnesses": [
-      "ci:governance"
-    ]
-  },
-  "lineage-catalog-graph": {
-    "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Lineage** (catalog graph)",
-    "witnesses": [
-      "ci:governance"
-    ]
-  },
-  "adls-gen2-dfs-surface-create-append-flush-ranged-read-list": {
-    "section": "OneLake (`onelake/`)",
-    "claim": "ADLS Gen2 DFS surface (create \u2192 append \u2192 flush, ranged read, list)",
-    "witnesses": [
-      "ci:adls-sdk",
-      "ci:azcopy"
-    ]
-  },
-  "blob-surface": {
-    "section": "OneLake (`onelake/`)",
-    "claim": "Blob surface",
-    "witnesses": [
-      "ci:adls-sdk"
-    ]
-  },
-  "delta-commits-put-if-absent-atomicity": {
-    "section": "OneLake (`onelake/`)",
-    "claim": "Delta commits (put-if-absent atomicity)",
-    "witnesses": [
-      "ci:delta-rs"
-    ]
-  },
-  "shortcuts-onelake-onelake": {
-    "section": "OneLake (`onelake/`)",
-    "claim": "Shortcuts (OneLake \u2192 OneLake)",
-    "witnesses": [
-      "ci:governance",
-      "go:TestShortcutResolution",
-      "go:TestShortcutAuthAndMissingItem",
-      "go:TestShortcutStore"
-    ]
-  },
-  "shortcuts-to-external-targets-s3-adls-gen2-dataverse": {
-    "section": "OneLake (`onelake/`)",
-    "claim": "Shortcuts to external targets (S3 / ADLS Gen2 / Dataverse)",
-    "witnesses": [
-      "ci:external-s3",
-      "ci:azurite-shortcut",
-      "ci:external-shortcuts"
     ]
   },
   "lakehouse-item-tables-files-storage": {
@@ -205,32 +323,39 @@
       "ci:adls-sdk"
     ]
   },
-  "notebook-authoring-definition-round-trip": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Notebook authoring / definition round-trip",
+  "lakehouse-sql-analytics-endpoint-delta-engine": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**Lakehouse SQL analytics endpoint — Delta → engine**",
     "witnesses": [
-      "ci:fabric-cicd"
+      "ci:warehouse-tds",
+      "go:TestWarehouseDeltaReflectionE2E",
+      "ci:medallion"
     ]
   },
-  "notebookutils-mssparkutils-fs-credentials-getsecret-lakehouse-runtime": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "`notebookutils` / `mssparkutils` (fs, credentials, getSecret, lakehouse, runtime)",
+  "lineage-catalog-graph": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Lineage** (catalog graph)",
     "witnesses": [
-      "ci:notebookutils"
+      "ci:governance"
     ]
   },
-  "spark-session-statement-batch-via-the-livy-api": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Spark session / statement / batch via the **Livy API**",
+  "list-item-job-instances-get-jobs-instances": {
+    "section": "Platform / fundamentals",
+    "claim": "**List Item Job Instances** (`GET …/jobs/instances`)",
     "witnesses": [
-      "ci:livy-native"
+      "go:TestListItemJobInstances",
+      "go:TestJobSchedulerAPIEndToEnd"
     ]
   },
-  "notebook-cell-execution": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Notebook **cell execution**",
+  "list-pagination-continuationtoken": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "List **pagination** (`continuationToken`)",
     "witnesses": [
-      "ci:notebook-run"
+      "ci:fabric-cli",
+      "go:TestPaginationIsOnByDefault",
+      "go:TestListPagination",
+      "go:TestContinuationUriIsAbsolute",
+      "go:TestMaxPageSizeCannotExceedTheServerPageSize"
     ]
   },
   "livy-high-concurrency-5-repl-sessions": {
@@ -243,26 +368,11 @@
       "ci:spark-a2"
     ]
   },
-  "spark-job-definitions": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Spark Job Definitions",
+  "lookup-activity-onelake-csv-json-parquet-delta": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Lookup activity — **OneLake CSV/JSON/Parquet/Delta**",
     "witnesses": [
-      "go:TestParseSparkJobV1AndFailures"
-    ]
-  },
-  "abfss-onelake-dfs-fabric-microsoft-com-production-paths": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "`abfss://\u2026@onelake.dfs.fabric.microsoft.com/\u2026` production paths",
-    "witnesses": [
-      "ci:sail"
-    ]
-  },
-  "delta-write-read-append-sql-over-temp-views": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Delta write/read/append; SQL over temp views",
-    "witnesses": [
-      "ci:sail",
-      "ci:delta-rs"
+      "go:TestLookupFormat"
     ]
   },
   "merge-into": {
@@ -272,91 +382,83 @@
       "ci:sail"
     ]
   },
-  "createdataframe-localrows": {
+  "mirroring-mirrored-database-mirroring": {
+    "section": "Item types present, engine absent",
+    "claim": "Mirroring — Mirrored Database (`mirroring/`)",
+    "witnesses": [
+      "ci:warehouse-tds",
+      "go:TestRefreshMirroredDatabaseE2E",
+      "go:TestMirrorSnapshotsBaseTables"
+    ]
+  },
+  "nested-ctes-with-x-as-with-y-as": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**Nested CTEs** (`WITH x AS (WITH y AS …)`)",
+    "witnesses": [
+      "ci:medallion",
+      "go:TestGoldenCorpus",
+      "go:TestGoldenCorpusCoversEveryOutcome",
+      "go:TestDialectFixFlattensNestedBatch",
+      "go:TestFixRPCRewritesNestedCTEInStatementParameter",
+      "go:TestParseRPCTruncationSweep",
+      "go:TestRewriteBatchPreservesHeadersAndRoundTrips",
+      "boundary:parameter types the RPC walker does not model (TEXT/NTEXT/IMAGE, XML, UDT, SQL_VARIANT) are forwarded untouched rather than rewritten, so a nested CTE alongside one of those is refused by name (docs/29-tsql-parity.md, T6g)"
+    ]
+  },
+  "notebook-authoring-definition-round-trip": {
     "section": "Data Engineering (`data-engineering/`)",
-    "claim": "`createDataFrame(local_rows)`",
+    "claim": "Notebook authoring / definition round-trip",
+    "witnesses": [
+      "ci:fabric-cicd"
+    ]
+  },
+  "notebook-cell-execution": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Notebook **cell execution**",
+    "witnesses": [
+      "ci:notebook-run"
+    ]
+  },
+  "notebookutils-mssparkutils-fs-credentials-getsecret-lakehouse-runtime": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`notebookutils` / `mssparkutils` (fs, credentials, getSecret, lakehouse, runtime)",
+    "witnesses": [
+      "ci:notebookutils"
+    ]
+  },
+  "notebookutils-notebook-run-exit-values": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`notebookutils.notebook.run` — exit values",
+    "witnesses": [
+      "py:test_notebook_run",
+      "ci:notebookutils",
+      "ci:real-fabric"
+    ]
+  },
+  "notebookutils-notebook-runmultiple-dag-structure-and-ordering": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`notebookutils.notebook.runMultiple` — DAG structure and ordering",
+    "witnesses": [
+      "py:test_notebook_run_multiple",
+      "ci:notebookutils",
+      "ci:real-fabric"
+    ]
+  },
+  "optimize-vacuum-delta-maintenance": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`OPTIMIZE` / `VACUUM` (Delta maintenance)",
     "witnesses": [
       "ci:livy-native"
     ]
   },
-  "concurrent-delta-overwrite-writers": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Concurrent Delta overwrite writers",
+  "per-activity-policy-retry-backoff-timeout": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "Per-activity **policy — retry + backoff + timeout**",
     "witnesses": [
-      "go:TestConcurrentDeltaCommitRace"
-    ]
-  },
-  "sql-analytics-endpoint-semantics-over-lakehouse-delta": {
-    "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "SQL-analytics-endpoint semantics over lakehouse Delta",
-    "witnesses": [
-      "ci:duckdb"
-    ]
-  },
-  "warehouse-item-management": {
-    "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "Warehouse item management",
-    "witnesses": [
-      "ci:dbt-fabric"
-    ],
-    "note": "fabric-cicd was credited here first and does NOT cover it \u2014 that suite publishes Notebooks only. Caught by the over-credit report in scripts/check_witnesses.py."
-  },
-  "t-sql-over-tds-entra-fedauth": {
-    "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**T-SQL over TDS + Entra FedAuth**",
-    "witnesses": [
-      "ci:warehouse-tds",
-      "go:TestLogin7FedAuthCapture"
-    ]
-  },
-  "lakehouse-sql-analytics-endpoint-delta-engine": {
-    "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**Lakehouse SQL analytics endpoint \u2014 Delta \u2192 engine**",
-    "witnesses": [
-      "ci:warehouse-tds",
-      "go:TestWarehouseDeltaReflectionE2E",
-      "ci:medallion"
-    ]
-  },
-  "warehouse-read-write-t-sql": {
-    "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**Warehouse \u2014 read-write T-SQL**",
-    "witnesses": [
-      "ci:warehouse-tds",
-      "ci:dbt-fabric"
-    ]
-  },
-  "fabric-sql-database-database-oltp-onelake-mirror": {
-    "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**Fabric SQL Database (`database/`)** \u2014 OLTP + OneLake mirror",
-    "witnesses": [
-      "ci:warehouse-tds",
-      "go:TestSQLDatabaseMirror"
-    ]
-  },
-  "per-item-isolation-each-item-its-own-sql-server-database": {
-    "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "Per-item isolation (each item = its own SQL Server database)",
-    "witnesses": [
-      "ci:warehouse-tds",
-      "go:TestWarehouseTwoSurfaces",
-      "go:TestWarehouseRouter"
-    ]
-  },
-  "rbac-sql-permissions": {
-    "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "RBAC \u2192 SQL permissions",
-    "witnesses": [
-      "ci:warehouse-tds",
-      "go:TestWarehouseTDSEndpointE2E"
-    ]
-  },
-  "informationschema-sys-introspection": {
-    "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "`information_schema` / `sys.*` introspection",
-    "witnesses": [
-      "ci:warehouse-tds",
-      "go:TestWarehouseSQLServerRelayE2E"
+      "go:TestPipelineRetryPolicyJob",
+      "go:TestRetryBackoffAccumulates",
+      "go:TestRetryPolicyExhausted",
+      "go:TestRetryPolicySucceedsAfterRetries"
     ]
   },
   "per-column-type-fidelity-real-sql-types-over-the-wire": {
@@ -375,66 +477,32 @@
     ],
     "note": "The Go witnesses prove the MAP (a Parquet column of each logical type reflects to the right SQL type). ci:medallion proves the ROUTE: e2e/type-map/probe.py writes the types from Spark and reads INFORMATION_SCHEMA back over ODBC, which no Go test can cover because neither end of that seam is Go. The two DeltaRoute/SchemaEvolution witnesses exist because a map-only assertion missed a real defect: v0.16.0 omitted nested columns in the reader and then re-added them as NULL in the projection, and the map test asserted one stage too early to see it."
   },
-  "connection-by-item-name-vs-guid": {
+  "per-item-isolation-each-item-its-own-sql-server-database": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "Connection by item *name* (vs GUID)",
+    "claim": "Per-item isolation (each item = its own SQL Server database)",
     "witnesses": [
       "ci:warehouse-tds",
-      "go:TestGetWorkspaceAndItemByName"
-    ]
-  },
-  "data-pipeline-control-flow-if-foreach-until-switch-filter-fail-expression-language-dependson": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "Data Pipeline control flow (If / ForEach / Until / Switch / Filter / Fail, expression language, `dependsOn`)",
-    "witnesses": [
-      "go:TestForEachInnerFailurePropagates",
-      "go:TestPipelineInvokeByName"
-    ]
-  },
-  "per-activity-policy-retry-backoff-timeout": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "Per-activity **policy \u2014 retry + backoff + timeout**",
-    "witnesses": [
-      "go:TestPipelineRetryPolicyJob",
-      "go:TestRetryBackoffAccumulates",
-      "go:TestRetryPolicyExhausted",
-      "go:TestRetryPolicySucceedsAfterRetries"
-    ]
-  },
-  "foreach-sequential-parallel-issequential-batchcount": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "**ForEach** sequential / parallel (`isSequential`, `batchCount`)",
-    "witnesses": [
-      "go:TestForEachParallelDuration",
-      "go:TestForEachInnerFailurePropagates"
-    ]
-  },
-  "list-pagination-continuationtoken": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "List **pagination** (`continuationToken`)",
-    "witnesses": [
-      "ci:fabric-cli",
-      "go:TestPaginationIsOnByDefault",
-      "go:TestListPagination",
-      "go:TestContinuationUriIsAbsolute",
-      "go:TestMaxPageSizeCannotExceedTheServerPageSize"
-    ]
-  },
-  "invoke-pipeline-executepipeline": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "**Invoke pipeline** (ExecutePipeline)",
-    "witnesses": [
-      "go:TestPipelineInvokeByName",
-      "go:TestPipelineInvokeBadParameters"
+      "go:TestWarehouseTwoSurfaces",
+      "go:TestWarehouseRouter"
     ]
   },
   "pipeline-notebook-activity-tridentnotebook": {
     "section": "Data Factory (`data-factory/`)",
-    "claim": "Pipeline \u2192 notebook activity (TridentNotebook)",
+    "claim": "Pipeline → notebook activity (TridentNotebook)",
     "witnesses": [
       "go:TestNotebookBinding",
       "go:TestPipelineNotebookMissingID",
       "go:TestNotebookRunParseAndReport"
+    ]
+  },
+  "power-bi-semantic-model-query-executequeries": {
+    "section": "Item types present, engine absent",
+    "claim": "Power BI — Semantic Model **query** (`executeQueries`)",
+    "witnesses": [
+      "ci:semantic-model",
+      "go:TestExecuteQueriesE2E",
+      "go:TestExecuteQueriesGolden",
+      "go:TestExecuteQueriesDirectLakeReadsCurrentDelta"
     ]
   },
   "queryactivityruns-detail": {
@@ -445,37 +513,45 @@
       "go:TestQueryActivityRunsMissing"
     ]
   },
-  "activity-level-lineage": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "Activity-level lineage",
+  "rbac-sql-permissions": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "RBAC → SQL permissions",
     "witnesses": [
-      "go:TestLineageEdgeLifecycleAndIdempotency",
-      "ci:governance"
+      "ci:warehouse-tds",
+      "go:TestWarehouseTDSEndpointE2E"
     ]
   },
-  "copy-activity-onelake-onelake": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "Copy activity \u2014 **OneLake \u2192 OneLake**",
+  "reference-run-lakehouse-rule": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Reference-run lakehouse rule",
     "witnesses": [
-      "go:TestPipelineCopyActivityRealBytes",
-      "go:TestPipelineCopyDirectory",
-      "go:TestPipelineCopyByName"
+      "go:TestReferenceRunBlocksAChildOnADifferentLakehouse",
+      "go:TestUseRootDefaultLakehouseBypassesTheBlock",
+      "py:test_the_parent_lakehouse_is_sent_so_the_rule_can_fire"
     ]
   },
-  "lookup-activity-onelake-csv-json-parquet-delta": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "Lookup activity \u2014 **OneLake CSV/JSON/Parquet/Delta**",
+  "role-assignments-workspace-rbac": {
+    "section": "Platform / fundamentals",
+    "claim": "Role assignments / workspace RBAC",
     "witnesses": [
-      "go:TestLookupFormat"
+      "go:TestListWorkspacesAndRoleAssignments",
+      "go:TestItemUpdateAndRoleAssignmentLifecycle",
+      "go:TestRoleAssignmentHandlerErrors"
     ]
   },
-  "getmetadata-activity-onelake-path": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "GetMetadata activity \u2014 **OneLake path**",
+  "runmultiple-failure-contract": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`runMultiple` — failure contract",
     "witnesses": [
-      "go:TestPipelineGetMetadataFile",
-      "go:TestPipelineGetMetadataDir",
-      "go:TestPipelineGetMetadataMissing"
+      "py:test_a_failure_raises_and_the_results_ride_on_the_exception"
+    ]
+  },
+  "runmultiple-retry-and-timeouts": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`runMultiple` — retry and timeouts",
+    "witnesses": [
+      "py:test_exhausted_retries_report_the_last_error",
+      "py:test_a_per_cell_budget_is_multiplied_by_the_real_cell_count"
     ]
   },
   "script-sqlserverstoredprocedure-activities": {
@@ -486,167 +562,118 @@
       "go:TestPipelineSQLActivitiesE2E"
     ]
   },
-  "apache-airflow-job": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "**Apache Airflow Job**",
+  "sensitivity-labels-bulksetlabels-bulkremovelabels": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Sensitivity labels** (`bulkSetLabels` / `bulkRemoveLabels`)",
     "witnesses": [
-      "ci:airflow"
+      "go:TestBulkLabelsApplyReplaceAndRemove",
+      "go:TestBulkLabelsPartialFailureAndValidation",
+      "go:TestLabelChangesAuditWithDocumentedSchema"
     ]
   },
-  "git-integration-connect-status-commit-update-disconnect": {
-    "section": "CI/CD (`cicd/`)",
-    "claim": "Git integration (connect / status / commit / update / disconnect)",
+  "sensitivity-labels-catalog": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Sensitivity labels → catalog**",
     "witnesses": [
-      "go:TestGitRoundTrip",
-      "go:TestGitStatusAndCommitRoundTrip",
-      "go:TestGitConnectionLifecycle",
-      "go:TestGitUpdateFromGitMirrors"
+      "ci:governance"
     ]
   },
-  "fabric-cicd-tool-publishing": {
-    "section": "CI/CD (`cicd/`)",
-    "claim": "`fabric-cicd` tool publishing",
+  "shortcuts-onelake-onelake": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "Shortcuts (OneLake → OneLake)",
     "witnesses": [
-      "ci:fabric-cicd"
+      "ci:governance",
+      "go:TestShortcutResolution",
+      "go:TestShortcutAuthAndMissingItem",
+      "go:TestShortcutStore"
     ]
   },
-  "deployment-pipelines-model-assignment-item-pairing-deploy-stage-content-d0-d2": {
-    "section": "CI/CD (`cicd/`)",
-    "claim": "Deployment pipelines \u2014 model, assignment, **item pairing**, **Deploy Stage Content** (D0\u2013D2)",
+  "shortcuts-to-external-targets-s3-adls-gen2-dataverse": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "Shortcuts to external targets (S3 / ADLS Gen2 / Dataverse)",
     "witnesses": [
-      "ci:deployment-pipelines-ps",
-      "go:TestDeploymentPipelineRoleAssignments"
+      "ci:external-s3",
+      "ci:azurite-shortcut",
+      "ci:external-shortcuts"
     ]
   },
-  "deployment-pipelines-role-assignment-crud-d3": {
-    "section": "CI/CD (`cicd/`)",
-    "claim": "Deployment pipelines \u2014 role-assignment CRUD (D3)",
+  "spark-job-definitions": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Spark Job Definitions",
     "witnesses": [
-      "ci:deployment-pipelines-ps",
-      "go:TestDeploymentPipelineRoleAssignments"
+      "go:TestParseSparkJobV1AndFailures"
     ]
   },
-  "mirroring-mirrored-database-mirroring": {
-    "section": "Item types present, engine absent",
-    "claim": "Mirroring \u2014 Mirrored Database (`mirroring/`)",
+  "spark-session-statement-batch-via-the-livy-api": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Spark session / statement / batch via the **Livy API**",
+    "witnesses": [
+      "ci:livy-native"
+    ]
+  },
+  "sql-analytics-endpoint-semantics-over-lakehouse-delta": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "SQL-analytics-endpoint semantics over lakehouse Delta",
+    "witnesses": [
+      "ci:duckdb"
+    ]
+  },
+  "t-sql-over-tds-entra-fedauth": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "**T-SQL over TDS + Entra FedAuth**",
     "witnesses": [
       "ci:warehouse-tds",
-      "go:TestRefreshMirroredDatabaseE2E",
-      "go:TestMirrorSnapshotsBaseTables"
+      "go:TestLogin7FedAuthCapture"
     ]
   },
-  "power-bi-semantic-model-query-executequeries": {
-    "section": "Item types present, engine absent",
-    "claim": "Power BI \u2014 Semantic Model **query** (`executeQueries`)",
+  "tenant-settings-get-v1-admin-tenantsettings": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Tenant settings** (`GET /v1/admin/tenantsettings`)",
     "witnesses": [
-      "ci:semantic-model",
-      "go:TestExecuteQueriesE2E",
-      "go:TestExecuteQueriesGolden",
-      "go:TestExecuteQueriesDirectLakeReadsCurrentDelta"
+      "go:TestTenantSettingsList",
+      "go:TestTenantSettingsUpdate",
+      "go:TestTenantSettingsOmitsEmptyOptionalFields"
     ]
   },
-  "data-science-ml-models-experiments-mlflow-data-science": {
-    "section": "Item types present, engine absent",
-    "claim": "Data Science \u2014 ML models / experiments / MLflow (`data-science/`)",
+  "tenant-wide-item-admin-get-v1-admin-items": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Tenant-wide item admin** (`GET /v1/admin/items`)",
     "witnesses": [
-      "ci:data-science-loop",
-      "go:TestMLflowProxyContract"
+      "go:TestAdminListItemsSpansWorkspaces",
+      "go:TestAdminListItemsFiltersAndValidation"
+    ]
+  },
+  "tenant-wide-workspace-admin-get-v1-admin-workspaces": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "**Tenant-wide workspace admin** (`GET /v1/admin/workspaces`)",
+    "witnesses": [
+      "go:TestAdminListWorkspacesUsesDocumentedShape",
+      "go:TestAdminListWorkspacesFilters",
+      "go:TestAdminListWorkspacesReportsDomain"
     ]
   },
   "time-travel-dataframe-option-and-sql-version-as-of": {
     "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Time travel \u2014 DataFrame option **and** SQL `VERSION AS OF`",
+    "claim": "Time travel — DataFrame option **and** SQL `VERSION AS OF`",
     "witnesses": [
       "ci:sail",
       "ci:engine-matrix"
     ]
   },
-  "optimize-vacuum-delta-maintenance": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "`OPTIMIZE` / `VACUUM` (Delta maintenance)",
-    "witnesses": [
-      "ci:livy-native"
-    ]
-  },
-  "change-data-feed": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Change Data Feed",
-    "witnesses": [
-      "ci:livy-native"
-    ]
-  },
-  "nested-ctes-with-x-as-with-y-as": {
+  "warehouse-item-management": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**Nested CTEs** (`WITH x AS (WITH y AS \u2026)`)",
+    "claim": "Warehouse item management",
     "witnesses": [
-      "ci:medallion",
-      "go:TestGoldenCorpus",
-      "go:TestGoldenCorpusCoversEveryOutcome",
-      "go:TestDialectFixFlattensNestedBatch",
-      "go:TestFixRPCRewritesNestedCTEInStatementParameter",
-      "go:TestParseRPCTruncationSweep",
-      "go:TestRewriteBatchPreservesHeadersAndRoundTrips",
-      "boundary:parameter types the RPC walker does not model (TEXT/NTEXT/IMAGE, XML, UDT, SQL_VARIANT) are forwarded untouched rather than rewritten, so a nested CTE alongside one of those is refused by name (docs/29-tsql-parity.md, T6g)"
-    ]
+      "ci:dbt-fabric"
+    ],
+    "note": "fabric-cicd was credited here first and does NOT cover it — that suite publishes Notebooks only. Caught by the over-credit report in scripts/check_witnesses.py."
   },
-  "class-b-strict-mode-tsql-strict": {
+  "warehouse-read-write-t-sql": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**Class B strict mode** (`-tsql-strict`)",
+    "claim": "**Warehouse — read-write T-SQL**",
     "witnesses": [
-      "go:TestCheckStrictCorpus",
-      "go:TestStrictCorpusCoversEveryFeature",
-      "go:TestStrictModeGatesClassBConstructs",
-      "boundary:indexed ('materialized') views and FOR JSON in a subquery are not enforced \u2014 a lexer cannot see them (docs/29-tsql-parity.md, T7)"
-    ]
-  },
-  "ctas-create-table-as-select": {
-    "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**CTAS** (`CREATE TABLE \u2026 AS SELECT`)",
-    "witnesses": [
-      "ci:medallion",
-      "go:TestRewriteCTASCorpus",
-      "go:TestAdaptRewritesCTASInsideEXEC",
-      "go:TestDialectFixRewritesCTAS"
-    ]
-  },
-  "list-item-job-instances-get-jobs-instances": {
-    "section": "Platform / fundamentals",
-    "claim": "**List Item Job Instances** (`GET \u2026/jobs/instances`)",
-    "witnesses": [
-      "go:TestListItemJobInstances",
-      "go:TestJobSchedulerAPIEndToEnd"
-    ]
-  },
-  "item-job-scheduler-items-id-jobs-jobtype-schedules": {
-    "section": "Platform / fundamentals",
-    "claim": "**Item Job Scheduler** (`\u2026/items/{id}/jobs/{jobType}/schedules`)",
-    "witnesses": [
-      "go:TestJobSchedulerAPIEndToEnd",
-      "go:TestScheduleWithPastStartTriggersInstantly",
-      "go:TestScheduleLimitAndValidationOverHTTP",
-      "go:TestScheduleCRUDRoundTrip",
-      "go:TestClockAdvanceFiresEachDueOccurrenceExactlyOnce",
-      "go:TestScheduledPipelineReallyRuns",
-      "go:TestParseRejectsEveryDocumentedBound",
-      "go:TestDailyHoldsLocalWallTimeAcrossDST",
-      "go:TestMonthlyOrdinalWeekday",
-      "go:TestCronCatchUpIsCappedAndKeepsTheNewest"
-    ]
-  },
-  "event-triggers-reflex-data-activator-on-onelake-events": {
-    "section": "Item types present, engine absent",
-    "claim": "**Event triggers** \u2014 `Reflex` (Data Activator) on OneLake events",
-    "witnesses": [
-      "go:TestEventTriggerFiresFromARealOneLakeUpload",
-      "go:TestOneLakeWriteFiresTheTriggeredPipeline",
-      "go:TestTriggerEventIsReadableFromTheDefinition",
-      "go:TestTriggerEventIsNullForAManualRun",
-      "go:TestTriggerFiltersOnEventTypeAndSource",
-      "go:TestTriggerCycleIsCut",
-      "go:TestEventTriggerCRUD",
-      "go:TestEventTriggerValidationAndRBAC",
-      "go:TestRenameEmitsItsOwnEventType",
-      "go:TestSafeNavigationAndTriggerEvent"
+      "ci:warehouse-tds",
+      "ci:dbt-fabric"
     ]
   },
   "web-webhook-activity": {
@@ -660,12 +687,20 @@
       "go:TestWebActivityStubModeSaysItDidNotCall"
     ]
   },
-  "notebookutilsnotebookrunmultiple-notebook-dag-orchestration": {
-    "section": "Data Engineering (`data-engineering/`)",
-    "claim": "`notebookutils.notebook.runMultiple` — notebook DAG orchestration",
+  "workspace-managed-identity-handshake": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "Workspace managed identity handshake",
     "witnesses": [
-      "py:test_notebook_run_multiple",
-      "ci:notebookutils"
+      "go:TestIdentityLifecycleWithoutEntra",
+      "go:TestAKVReferenceConnectionViaWorkspaceIdentity"
+    ]
+  },
+  "workspaces-crud": {
+    "section": "Platform / fundamentals",
+    "claim": "Workspaces CRUD",
+    "witnesses": [
+      "ci:fabric-cicd",
+      "ci:fabric-cli"
     ]
   }
 }
