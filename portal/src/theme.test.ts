@@ -37,11 +37,21 @@ describe('theme', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it('follows the OS when nothing was ever chosen', () => {
-    osWants(true);
-    expect(theme.stored()).toBe('system');
-    expect(theme.apply('system')).toBe('dark');
+  it('is dark when nothing was ever chosen, whatever the machine says', () => {
+    // A fixed default is the point: the portal is read beside a terminal and in
+    // recordings, and following the machine makes it look different to every
+    // reader of the same document.
+    osWants(false);
+    expect(theme.stored()).toBe('dark');
+    expect(theme.apply(theme.stored())).toBe('dark');
     expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
+  it('still follows the OS once that is explicitly chosen', () => {
+    osWants(true);
+    expect(theme.set('system')).toBe('dark');
+    osWants(false);
+    expect(theme.apply('system')).toBe('light');
   });
 
   it('sets color-scheme too, so the browser chrome matches', () => {
@@ -58,30 +68,32 @@ describe('theme', () => {
     expect(theme.stored()).toBe('light');
   });
 
-  it('forgets the override when told to follow the system again', () => {
+  it('writes down the choice to follow the system, rather than clearing it', () => {
     osWants(false);
     theme.set('dark');
     expect(theme.stored()).toBe('dark');
     expect(theme.set('system')).toBe('light');
-    // Cleared, not stored as the word "system": the absence IS the preference,
-    // so a machine that switches later is still followed.
-    expect(localStorage.getItem('fe.theme')).toBeNull();
+    // Stored as the word, NOT cleared. Absence now means dark, so clearing
+    // would silently turn "follow the OS" back into "dark" on the next load.
+    expect(localStorage.getItem('fe.theme')).toBe('system');
     expect(theme.stored()).toBe('system');
   });
 
-  it('treats a nonsense stored value as no preference', () => {
-    osWants(true);
+  it('treats a nonsense stored value as no preference, and so as the default', () => {
+    osWants(false);
     localStorage.setItem('fe.theme', 'aubergine');
-    expect(theme.stored()).toBe('system');
+    expect(theme.stored()).toBe('dark');
     expect(theme.resolve(theme.stored())).toBe('dark');
   });
 
-  it('cycles system → light → dark → system', () => {
+  it('cycles dark → light → system → dark', () => {
     // Three states because "follow the OS" is a real answer; a two-way switch
     // would pin the portal to whatever the machine was that afternoon.
-    expect(theme.next('system')).toBe('light');
-    expect(theme.next('light')).toBe('dark');
-    expect(theme.next('dark')).toBe('system');
+    // Dark first, because dark is where a fresh portal starts and a first click
+    // onto 'system' would usually look like nothing happened.
+    expect(theme.next('dark')).toBe('light');
+    expect(theme.next('light')).toBe('system');
+    expect(theme.next('system')).toBe('dark');
   });
 
   it('labels the toggle with what it is and what it will do', () => {
@@ -95,7 +107,9 @@ describe('theme', () => {
   describe('following the OS as it changes', () => {
     it('repaints when the machine switches and no override is set', () => {
       const os = osWants(false);
-      theme.apply('system');
+      // Explicitly, because absence means dark now and followOS only acts while
+      // the stored preference is 'system'.
+      theme.set('system');
       const seen: string[] = [];
       const stop = theme.followOS((shown) => seen.push(shown));
       os.flip(true);

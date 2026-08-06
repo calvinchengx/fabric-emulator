@@ -197,25 +197,28 @@ describe('the theme toggle', () => {
 
   const toggle = () => screen.getByRole('button', { name: /^Theme:/ });
 
-  it('starts on the system preference, and says so', async () => {
+  it('starts dark, and says so', async () => {
+    // The label is the component's contract. The first paint of `data-theme` is
+    // index.html's inline script, which runs before the bundle and so never runs
+    // under jsdom — portal/smoke asserts that half in a real browser.
     at('#clock');
-    expect(await screen.findByRole('button', { name: /Theme: system/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Theme: dark/ })).toBeInTheDocument();
   });
 
-  it('cycles to light, then dark, then back to following the system', async () => {
+  it('cycles to light, then to following the system, then back to dark', async () => {
     at('#clock');
-    await fireEvent.click(await screen.findByRole('button', { name: /Theme: system/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Theme: dark/ }));
     expect(document.documentElement.dataset.theme).toBe('light');
     expect(localStorage.getItem('fe.theme')).toBe('light');
 
     await fireEvent.click(toggle());
-    expect(document.documentElement.dataset.theme).toBe('dark');
-    expect(localStorage.getItem('fe.theme')).toBe('dark');
+    // Written down rather than cleared: absence means dark now, so clearing
+    // would turn "follow the OS" back into "dark" on the next load.
+    expect(localStorage.getItem('fe.theme')).toBe('system');
 
     await fireEvent.click(toggle());
-    // Back to following the machine: the override is removed, not stored as a
-    // third value, so a machine that switches later is still obeyed.
-    expect(localStorage.getItem('fe.theme')).toBeNull();
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(localStorage.getItem('fe.theme')).toBe('dark');
   });
 
   it('reopens on the theme that was chosen', async () => {
