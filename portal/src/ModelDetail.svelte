@@ -17,11 +17,58 @@
       const all = r.value || [];
       model = all.find((m) => m.itemId === id) || null;
       loaded = true;
+      if (model) dax = sampleQuery(model);
     })
     .catch((e) => {
       error = e.message;
       loaded = true;
     });
+
+  // The query box. Describing a model answers "what is in it"; only running a
+  // query answers "what does it say" — and this goes through the SAME
+  // evaluator as executeQueries, so what works here works on the wire.
+  let dax = $state('');
+  let running = $state(false);
+  let queryError = $state('');
+  let result = $state(null); // {columns: [...], rows: [...]} once a query ran
+
+  /** A starting query derived from the model itself: its first measure over
+   * the first string column — something that returns rows on the first click
+   * rather than an empty editor daring the user to remember DAX. */
+  function sampleQuery(m) {
+    for (const t of m.tables || []) {
+      const measure = (t.measures || [])[0];
+      if (!measure) continue;
+      const col = (t.columns || []).find((c) => c.dataType === 'string');
+      const group = col ? `${t.name}[${col.name}], ` : '';
+      return `EVALUATE SUMMARIZECOLUMNS(${group}"${measure.name}", [${measure.name}])`;
+    }
+    const first = (m.tables || [])[0];
+    return first ? `EVALUATE '${first.name}'` : '';
+  }
+
+  function runQuery() {
+    if (!dax.trim() || running) return;
+    running = true;
+    queryError = '';
+    api
+      .post(`/_emulator/portal/models/${encodeURIComponent(id)}/query`, { query: dax })
+      .then((r) => {
+        const rows = r.rows || [];
+        // Column order from the rows' own keys, first-seen: DAX names columns
+        // like `Country[Country]` and `[Total Revenue]`, and the rows are the
+        // only place that vocabulary exists client-side.
+        const cols = [];
+        for (const row of rows)
+          for (const k of Object.keys(row)) if (!cols.includes(k)) cols.push(k);
+        result = { columns: cols, rows };
+      })
+      .catch((e) => {
+        queryError = e.message;
+        result = null;
+      })
+      .finally(() => (running = false));
+  }
 </script>
 
 <p class="crumb"><a href={href('models')}>← Semantic models</a></p>
@@ -102,6 +149,46 @@
             </div>
           {/each}
 
+          <!-- The runner. Import models only: their rows live in the
+               definition this page already serves, so evaluating a query is
+               still a read. Direct Lake is refused server-side with the route
+               that does work. -->
+          <div class="tbl query-box">
+            <div class="tbl-head"><strong>Query</strong>
+              <span class="muted">— DAX, through the same evaluator as <code>executeQueries</code></span>
+            </div>
+            <textarea
+              class="dax-input"
+              rows="3"
+              bind:value={dax}
+              aria-label="DAX query"
+              spellcheck="false"
+            ></textarea>
+            <div class="query-actions">
+              <button class="run" onclick={runQuery} disabled={running || !dax.trim()}>
+                {running ? 'Running…' : 'Run'}
+              </button>
+              {#if result}<span class="muted">{result.rows.length} row(s)</span>{/if}
+            </div>
+            {#if queryError}<p class="error">{queryError}</p>{/if}
+            {#if result}
+              {#if result.rows.length === 0}
+                <p class="muted">No rows — the query ran and returned nothing.</p>
+              {:else}
+                <table class="query-result">
+                  <thead>
+                    <tr>{#each result.columns as c (c)}<th><code>{c}</code></th>{/each}</tr>
+                  </thead>
+                  <tbody>
+                    {#each result.rows as row, i (i)}
+                      <tr>{#each result.columns as c (c)}<td class="mono">{row[c] ?? ''}</td>{/each}</tr>
+                    {/each}
+                  </tbody>
+                </table>
+              {/if}
+            {/if}
+          </div>
+
           {#if model.relationships.length}
             <div class="tbl">
               <div class="tbl-head"><strong>Relationships</strong></div>
@@ -124,6 +211,20 @@
 {/if}
 
 <style>
+  .query-box { padding-bottom: 10px; }
+  .dax-input {
+    width: 100%; box-sizing: border-box; margin-top: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+    background: transparent; color: inherit; resize: vertical;
+  }
+  .query-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .run {
+    font: inherit; padding: 4px 14px; border: 1px solid var(--border);
+    border-radius: 6px; background: transparent; color: inherit; cursor: pointer;
+  }
+  .run:disabled { opacity: 0.5; cursor: default; }
+  .query-result { margin-top: 8px; }
   .model { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
   .model-head {
     display: flex; align-items: center; gap: 10px; width: 100%;

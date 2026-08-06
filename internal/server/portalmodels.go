@@ -21,12 +21,12 @@ package server
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
-	"net/http"
-	"strings"
-
 	"github.com/calvinchengx/fabric-emulator/internal/semanticmodel"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"net/http"
+	"strings"
 )
 
 // errNoModelPart: the item has a definition, but nothing in it is a model.
@@ -192,4 +192,34 @@ func parseModelParts(parts []store.DefinitionPart) (*semanticmodel.Model, string
 		return m, "TMDL", nil
 	}
 	return nil, "", errNoModelPart
+}
+
+// portalModelQuery runs one DAX query against a model, for the query box on
+// the model's own page. POST {"query": "EVALUATE ..."} -> {"rows": [...]}.
+//
+// Unauthenticated like the rest of the portal, and that holds because the
+// runner is scoped to IMPORT models: their rows are already in the definition
+// this surface serves read-only. Direct Lake needs a principal and is refused
+// with the route that works (see QueryModelUnauthenticated).
+func (s *Server) portalModelQuery(w http.ResponseWriter, r *http.Request) {
+	if s.API == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "NoAPI",
+			"the portal has no API to evaluate queries")
+		return
+	}
+	var body struct {
+		Query string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Query) == "" {
+		writeJSONError(w, http.StatusBadRequest, "InvalidRequest", "query is required")
+		return
+	}
+	rows, err := s.API.QueryModelUnauthenticated(r.PathValue("id"), body.Query)
+	if err != nil {
+		// A wrong query is the ordinary case for an interactive box; the
+		// message is the product here, not the status code.
+		writeJSONError(w, http.StatusBadRequest, "DAXQueryError", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rows": rows})
 }
