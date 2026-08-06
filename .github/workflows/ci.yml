@@ -555,6 +555,35 @@ jobs:
       # from the Delta schema. Linux-only (heavy: OM server + Elasticsearch).
       - run: uv run --frozen --group governance python e2e/governance/run.py
 
+  portal-terminal:
+    name: The Flow view's terminal pane, in a real browser (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+      # Playwright comes from the portal's dev dependencies — the repo already
+      # has it for the portal smoke tests, so this suite adds no toolchain.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter fabric-emulator-portal exec playwright install --with-deps chromium
+      # The pane is a shell reachable through the portal's own origin, and until
+      # this existed it was witnessed only by unit tests against an httptest
+      # server. Those cover the proxy's rules; none of them can say that a
+      # browser, an iframe, a websocket upgrade and ttyd in another container add
+      # up to a working terminal. Boots the stack the DOCUMENTED way (`--profile
+      # terminal` plus docker-compose.terminal.yml) because that pairing of two
+      # opt-ins is itself a bug shape this repo has shipped before.
+      - run: uv run --frozen --no-sync python e2e/portal-terminal/run.py
+
   governance-sso:
     name: OpenMetadata authenticates against entra-emulator (containerized)
     runs-on: ubuntu-latest
