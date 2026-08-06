@@ -162,20 +162,26 @@ docker compose --profile governance --profile rti --profile terminal \
   up -d
 ```
 
-Thirteen services. Measured steady state, on the images this repo pins:
+Thirteen services. Measured RSS on the images this repo pins — idle after
+`up`, and while a medallion is running, because the gap between them is most of
+the sizing question:
 
-| Service | RSS | Service | RSS |
-|---|---|---|---|
-| `kustainer` | 4.0 GB cap | `openmetadata` | ~970 MB |
-| `sqlserver` | ~1.8 GB | `fabric-emulator` | ~940 MB |
-| `om-opensearch` | ~1.7 GB | `om-postgresql` | ~100 MB |
-| `sail` | ~1.6 GB | `spark-agent` | ~90 MB |
-| | | `entra` + `keyvault` + `ttyd` | ~20 MB |
+| Service | Idle | Busy |
+|---|---|---|
+| `kustainer` (rti) | — | 4.0 GB `mem_limit` |
+| `sqlserver` | 380 MB | ~1.8 GB — no cap, it grows into what is free |
+| `om-opensearch` | 930 MB | ~1.7 GB |
+| `sail` | small | ~1.6 GB — scales with the data in flight |
+| `openmetadata` | — | ~970 MB |
+| `fabric-emulator` | small | ~940 MB while writing Delta |
+| `om-postgresql` | 15 MB | ~100 MB |
+| `spark-agent` | small | ~90 MB |
+| `entra` + `keyvault` + `ttyd` | ~20 MB | ~20 MB |
 
-≈11 GB busy, so **give the runtime 16 GB**. `make doctor` warns below 8 GB,
-which is the floor for mode 1 — not for this. Reach for it when you are
-reproducing a cross-cutting problem; for everyday work modes 1–3 are cheaper and
-`make status` is the same verdict.
+So ~1.5 GB idle without `rti`, and ≈11 GB with everything working at once:
+**give the runtime 16 GB**. `make doctor` warns below 8 GB, the floor for mode 1,
+not for this. Reach for this stack when reproducing a cross-cutting problem;
+modes 1–3 are cheaper and `make status` is the same verdict.
 
 ## 5. Real Fabric — one environment variable
 
