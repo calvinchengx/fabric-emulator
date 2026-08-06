@@ -285,6 +285,14 @@ portal survives a reload mid-medallion.
 
 ### 6. The portal `Flow` view
 
+The README's hero image is this view, and it is
+[generated](demo/README.md#regenerate-flowgif) rather than screen-recorded:
+`docs/demo/flow.py` starts two containers, films the empty graph, and only then
+writes a Delta table and runs two Copy activities — so the medallion fills in on
+camera. Worth knowing when changing the layout: the recording is reproducible,
+so a change that spoils the framing can be seen before it ships rather than
+after somebody notices the picture no longer matches the product.
+
 A new entry under *Data plane* in [`portal/src/App.svelte`](../portal/src/App.svelte),
 which already has the section structure:
 
