@@ -29,6 +29,9 @@ importers:
         specifier: ^3.3.0
         version: 3.3.0(tailwind-merge@3.6.0)(tailwindcss@4.3.3)
     devDependencies:
+      '@internationalized/date':
+        specifier: ^3.12.3
+        version: 3.12.3
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.61.1
