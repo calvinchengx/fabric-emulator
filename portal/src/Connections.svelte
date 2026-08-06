@@ -1,7 +1,7 @@
-<script>
-  import { api } from './api.js';
+<script lang="ts">
+  import { api } from './api';
 
-  let connections = $state([]);
+  let connections = $state<any[]>([]);
   let error = $state('');
 
   function load() {
@@ -13,7 +13,7 @@
 
   // Credential kinds that reference another emulated system rather than
   // carrying their own secret material.
-  const flags = {
+  const flags: Record<string, string> = {
     AzureKeyVaultReference: 'Key Vault ref',
     WorkspaceIdentity: 'Workspace identity',
   };

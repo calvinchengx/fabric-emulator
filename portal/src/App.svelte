@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import Dashboard from './Dashboard.svelte';
   import Workspaces from './Workspaces.svelte';
   import Operations from './Operations.svelte';
@@ -12,17 +12,17 @@
   import Warehouse from './Warehouse.svelte';
   import Flow from './Flow.svelte';
   import Models from './Models.svelte';
-  import { api } from './api.js';
-  import { parse, href, onRouteChange } from './router.js';
+  import { api } from './api';
+  import { parse, href, onRouteChange } from './router';
 
   // `#view` and `#view/param`. The param is what makes a detail page
-  // addressable — see router.js for why that matters more than it looks.
+  // addressable — see router.ts for why that matters more than it looks.
   let current = $state(parse(location.hash));
   onRouteChange((r) => (current = r));
   let route = $derived(current.view);
   let param = $derived(current.param);
 
-  let health = $state(null);
+  let health = $state<any>(null);
   api.get('/health').then((h) => (health = h)).catch(() => {});
 
   // The sidebar folds away. The flow view earns its keep when the terminal,
