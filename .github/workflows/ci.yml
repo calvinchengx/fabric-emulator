@@ -383,7 +383,10 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter fabric-emulator-portal test
+      # `--coverage` is what arms the thresholds in portal/vite.config.ts: 100%
+      # statements, functions and lines. Without the flag the suite passes and
+      # the gate never runs.
+      - run: pnpm --filter fabric-emulator-portal test -- --coverage
       - run: pnpm --filter fabric-emulator-portal build
       # portal/dist is committed (go:embed bakes it into the binary so `go build`
       # / `go install @latest` need no Node). Fail if the committed copy has
