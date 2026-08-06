@@ -7,14 +7,31 @@ how to confirm it actually works, and when you would want it. Every mode has a
 If you only want to get going, [the quickstart](01-quickstart.md) walks mode 1
 end to end. Come back here when you need to change something.
 
-| Mode | Command | Services | Spark | T-SQL | Extras | Give the runtime |
-|---|---|---|---|---|---|---|
-| 1. Default | `make up` | 12 | Sail | SQL Server | OpenMetadata, Airflow | **13 GB** |
-| 2. Plain compose | `docker compose up` | 6 | Sail | SQL Server | — | **8 GB** |
-| 3. Lite | `make up-lite` | 3 | ❌ 501 | ❌ 501 | — | **2 GB** |
-| 4. JVM overlay | `make up-jvm` | 6 | **JVM Spark** | SQL Server | — | **10 GB** |
-| 5. Real Fabric | `FABRIC_TARGET=real` | 0 | the real service | | | — |
-| [Everything](#everything-at-once) | see below | 14 | Sail | SQL Server | OpenMetadata + Airflow + KQL + terminal | **17 GB** |
+### Choose by what you need to do
+
+| I want to work on… | Command | Services | Idle | Give the runtime |
+|---|---|---|---|---|
+| control plane, OneLake, RBAC, git, CI/CD | `make up-lite` | 3 | **~65 MB** | 2 GB |
+| …plus Spark and the T-SQL warehouse | `docker compose up` | 6 | ~1 GB | **8 GB** |
+| …plus catalog, lineage, glossary, Airflow | `make up` | 12 | ~3 GB | **13 GB** |
+| …plus KQL (Eventhouse) | add `--profile rti` | 13 | +4 GB | +4 GB |
+| …plus a shell in the Flow view | add `--profile terminal` | 14 | +5 MB | +5 MB |
+| Spark features Sail lacks (RDD, JVM UDFs) | `make up-jvm` | 6 | ~1 GB | 10 GB |
+| the real Fabric service | `FABRIC_TARGET=real` | 0 | — | — |
+
+**Idle is not the number that matters, and it is nowhere near the other one.**
+A freshly booted lite stack is 65 MB; the same three containers writing Delta are
+a few hundred. Sail costs 36 MB to start and ~1.9 GB to run PySpark through. So
+the column to size against is the last one — and the reason it is so much larger
+is the work, not the container count. [Full measurements below.](#what-it-costs-to-run)
+
+| Mode | Spark | T-SQL | Extras |
+|---|---|---|---|
+| 1. Default — `make up` | Sail | SQL Server | OpenMetadata, Airflow |
+| 2. Plain compose — `docker compose up` | Sail | SQL Server | — |
+| 3. Lite — `make up-lite` | ❌ 501 | ❌ 501 | — |
+| 4. JVM overlay — `make up-jvm` | **JVM Spark** | SQL Server | — |
+| 5. Real Fabric — `FABRIC_TARGET=real` | the real service | | |
 
 Whatever you start, `make status` is the verdict. `make up` only means
 containers were created; `status` probes the endpoints and reports `stack OK`
@@ -166,26 +183,7 @@ docker compose --profile governance --profile rti --profile terminal \
   up -d
 ```
 
-Thirteen services. Measured RSS on the images this repo pins — idle after
-`up`, and while a medallion is running, because the gap between them is most of
-the sizing question:
-
-| Service | Idle | Busy |
-|---|---|---|
-| `kustainer` (rti) | — | 4.0 GB `mem_limit` |
-| `sqlserver` | 380 MB | ~1.8 GB — no cap, it grows into what is free |
-| `om-opensearch` | 930 MB | ~1.7 GB |
-| `sail` | small | ~1.6 GB — scales with the data in flight |
-| `openmetadata` | — | ~970 MB |
-| `fabric-emulator` | small | ~940 MB while writing Delta |
-| `om-postgresql` | 15 MB | ~100 MB |
-| `spark-agent` | small | ~90 MB |
-| `entra` + `keyvault` + `ttyd` | ~20 MB | ~20 MB |
-
-So ~1.5 GB idle without `rti`, and ≈11 GB with everything working at once:
-**give the runtime 16 GB**. `make doctor` warns below 8 GB, the floor for mode 1,
-not for this. Reach for this stack when reproducing a cross-cutting problem;
-modes 1–3 are cheaper and `make status` is the same verdict.
+Thirteen services, and the most a laptop will be asked for.
 
 ## What it costs to run
 
@@ -200,7 +198,7 @@ point: the emulator is nothing at rest and grows only while it is doing work.
 | `keyvault-emulator` | 4 MiB | 7 MiB |
 | `sail` (Spark Connect) | 50 MiB | 1.8 GiB |
 | `spark-agent` | 88 MiB | 95 MiB |
-| `sqlserver` (warehouse) | 380 MiB | 1.6 GiB |
+| `sqlserver` (warehouse) | 880 MiB fresh, 380 MiB once trimmed | 1.6 GiB |
 | `om-opensearch` | 1.0 GiB | 1.5 GiB |
 | `openmetadata` | 940 MiB | 940 MiB |
 | `om-postgresql` | 8 MiB | 100 MiB |
@@ -226,6 +224,14 @@ make up PROFILE="--profile governance"   # no Airflow  (-1.1 GiB)
 make up PROFILE=                         # no catalog, no Airflow  (-3 GiB)
 make up-lite                             # contract only
 ```
+
+**CPU is not the constraint, and that is worth knowing before you size a VM.**
+Peak during a light run — a Delta write via delta-rs plus two Copy activities —
+was `sqlserver` 18%, `sail` 12%, `fabric-emulator` 1.2%. Those are fractions of a
+*single* core. Four cores is ample for control-plane and pipeline work; six to
+eight if you drive PySpark or warehouse queries in anger. One caveat for Apple
+silicon: `sqlserver` is the only amd64 container in the stack, so it runs under
+Rosetta and costs more CPU there than these figures suggest.
 
 Three things worth taking from that:
 

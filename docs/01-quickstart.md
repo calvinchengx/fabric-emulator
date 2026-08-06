@@ -38,8 +38,10 @@ It checks the shell tools, a *runnable* Python, the docker CLI **and** the
 daemon behind the active context, and the ports the stack publishes — and names
 what is missing rather than letting it surface later as a broken recipe or an
 unreachable socket. Allow the runtime **8 GB of memory** — enough for the six
-services below. `make up` adds OpenMetadata and wants 12 GB; every mode's cost
-is in [27-running-modes.md](27-running-modes.md).
+services below while they are working; they idle at about 530 MB. `make up` adds
+OpenMetadata and Airflow and wants 13 GB. Per-service measurements, and why idle
+and working differ so much, are in
+[27-running-modes.md](27-running-modes.md#what-it-costs-to-run).
 
 Full per-platform detail — including Rancher Desktop's context selection on
 Windows and the Apple-silicon sidecar constraints —
