@@ -28,11 +28,6 @@ export function fetchCalls(): unknown[][] {
   return (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
 }
 
-/** How many requests went to a path fragment. */
-export function countRequests(fragment: string): number {
-  return fetchCalls().filter((c) => String(c[0]).includes(fragment)).length;
-}
-
 /** The JSON body of a recorded fetch call.
  *
  * `RequestInit['body']` is `BodyInit | null | undefined`, so every assertion
