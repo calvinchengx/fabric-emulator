@@ -1,6 +1,8 @@
-<script module>
-	import { tv } from "tailwind-variants";
-	import { cn } from "$lib/utils.js";
+<script lang="ts" module>
+	import { type VariantProps, tv } from "tailwind-variants";
+	import { cn, type WithElementRef } from "$lib/utils.js";
+	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from "svelte/elements";
+
 	export const buttonVariants = tv({
 		base: "rounded-lg border border-transparent bg-clip-padding text-sm font-medium focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-all outline-none select-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
 		variants: {
@@ -29,24 +31,28 @@
 		},
 	});
 
+	export type ButtonVariant = VariantProps<typeof buttonVariants>["variant"];
+	export type ButtonSize = VariantProps<typeof buttonVariants>["size"];
+
+	export type ButtonProps = WithElementRef<HTMLButtonAttributes> &
+		WithElementRef<HTMLAnchorAttributes> & {
+			variant?: ButtonVariant;
+			size?: ButtonSize;
+		};
 </script>
 
-<script>
-	// The `= undefined` on class/disabled/children is not redundant: a destructured
-	// prop with no default is inferred as REQUIRED, so without them every call site
-	// owes a `class` and a `disabled` it has never needed. Harmless in plain
-	// JavaScript, a type error the moment a caller is checked.
+<script lang="ts">
 	let {
-		class: className = undefined,
+		class: className,
 		variant = "default",
 		size = "default",
 		ref = $bindable(null),
 		href = undefined,
 		type = "button",
-		disabled = undefined,
-		children = undefined,
+		disabled,
+		children,
 		...restProps
-	} = $props();
+	}: ButtonProps = $props();
 </script>
 
 {#if href}

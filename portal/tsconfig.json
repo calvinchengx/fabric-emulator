@@ -6,19 +6,24 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
-    // The portal is JavaScript with TypeScript islands. `allowJs` lets a .js
-    // module import a .ts one; `checkJs: false` leaves the existing components
-    // unchecked, so adopting types is per-file rather than one rewrite.
-    "allowJs": true,
-    "checkJs": false,
-    // On for the files that DO opt in. Without strictNullChecks the generated
+    // No JavaScript left under src/ — components.json carries
+    // `"typescript": true`, so `shadcn-svelte add` regenerates the vendored
+    // components as TypeScript too and there is nothing left for allowJs to
+    // admit.
+    //
+    // Strict throughout. Without strictNullChecks the generated
     // interface would accept `ev.version.toFixed()` on an optional field, which
     // is most of the class of bug it exists to catch.
     "strict": true,
     // Nothing is emitted here: Vite compiles, `svelte-check` only reads.
     "noEmit": true,
     "skipLibCheck": true,
+    // The globals the suite is written against: `describe`/`it`/`expect` without
+    // imports, and jest-dom's matchers (`toBeInTheDocument`, `toHaveClass`),
+    // which are added to `expect` at runtime by vitest-setup.ts and therefore
+    // have to be declared here or every assertion is a type error.
+    "types": ["vitest/globals", "@testing-library/jest-dom/vitest"],
     "paths": { "$lib": ["./src/lib"], "$lib/*": ["./src/lib/*"] }
   },
-  "include": ["src/**/*.js", "src/**/*.ts", "src/**/*.svelte"]
+  "include": ["src/**/*.ts", "src/**/*.svelte"]
 }

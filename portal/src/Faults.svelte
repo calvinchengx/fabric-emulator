@@ -1,5 +1,5 @@
-<script>
-  import { api } from './api.js';
+<script lang="ts">
+  import { api } from './api';
 
   let failNext = $state(1);
   let rejectNext = $state(1);
@@ -7,14 +7,14 @@
   let message = $state('');
   let error = $state('');
 
-  async function post(body, note) {
+  async function post(body: unknown, note: string) {
     message = '';
     error = '';
     try {
       await api.post('/_emulator/faults', body);
       message = note;
     } catch (e) {
-      error = e.message;
+      error = (e as Error).message;
     }
   }
 </script>

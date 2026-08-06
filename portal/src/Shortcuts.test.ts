@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import Shortcuts from './Shortcuts.svelte';
+import { errRes, res } from './testing';
 
 const rows = [
   {
@@ -25,21 +26,13 @@ describe('Shortcuts', () => {
   });
 
   it('renders the empty state', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ value: [] }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value: [] }));
     render(Shortcuts);
     await waitFor(() => expect(screen.getByText(/No shortcuts yet/)).toBeInTheDocument());
   });
 
   it('groups shortcuts by workspace and marks dangling targets', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ value: rows }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value: rows }));
     render(Shortcuts);
     await waitFor(() => expect(screen.getByText(/analytics/)).toBeInTheDocument());
     expect(screen.getByText('Files/linked')).toBeInTheDocument();
@@ -49,12 +42,22 @@ describe('Shortcuts', () => {
   });
 
   it('surfaces load errors', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: () => Promise.resolve({ error: { message: 'db gone' } }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(errRes('db gone', 500));
     render(Shortcuts);
     await waitFor(() => expect(screen.getByText('db gone')).toBeInTheDocument());
+  });
+
+
+  it('renders a shortcut whose target path is the item root', async () => {
+    // `sc.targetPath || ''` — a shortcut to the item root carries no path, and
+    // without the fallback the cell reads ".../undefined".
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value: [{
+        workspaceId: 'ws-1', workspaceName: 'analytics',
+        itemId: 'it-1', itemName: 'lake', path: 'Tables', name: 'root_ref',
+        targetWorkspaceId: 'ws-2', targetItemId: 'it-2', dangling: false,
+      }] }));
+    render(Shortcuts);
+    await screen.findByText('Tables/root_ref');
+    expect(screen.getByText('ws-2/it-2/')).toBeInTheDocument();
   });
 });

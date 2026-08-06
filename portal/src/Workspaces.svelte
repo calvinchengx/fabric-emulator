@@ -1,10 +1,10 @@
-<script>
-  import { api } from './api.js';
+<script lang="ts">
+  import { api } from './api';
 
-  let workspaces = $state([]);
+  let workspaces = $state<any[]>([]);
   let error = $state('');
-  let open = $state(null); // workspace id whose detail panel is expanded
-  let detail = $state(null);
+  let open = $state<any>(null); // workspace id whose detail panel is expanded
+  let detail = $state<any>(null);
 
   function load() {
     api.get('/_emulator/portal/workspaces')
@@ -13,7 +13,7 @@
   }
   load();
 
-  function toggle(id) {
+  function toggle(id: string) {
     if (open === id) {
       open = null;
       detail = null;

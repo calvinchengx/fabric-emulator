@@ -14,8 +14,11 @@
 // The param is decoded, because item ids are GUIDs today and display names are
 // the obvious next thing someone links to.
 
+/** A hash resolved into a view and its optional parameter. */
+export type Route = { view: string; param: string | null };
+
 /** Parse a location hash into the view and its optional parameter. */
-export function parse(hash) {
+export function parse(hash: string | null | undefined): Route {
   const raw = (hash || '').replace(/^#/, '');
   if (!raw) return { view: 'dashboard', param: null };
   const cut = raw.indexOf('/');
@@ -30,7 +33,7 @@ export function parse(hash) {
   };
 }
 
-function safeDecode(s) {
+function safeDecode(s: string): string {
   try {
     return decodeURIComponent(s);
   } catch {
@@ -41,14 +44,14 @@ function safeDecode(s) {
 }
 
 /** The href for a view, with an optional parameter. Encode once, here. */
-export function href(view, param) {
+export function href(view: string, param?: string | null): string {
   return param == null || param === ''
     ? `#${view}`
     : `#${view}/${encodeURIComponent(param)}`;
 }
 
 /** Subscribe to hash changes; returns an unsubscribe. */
-export function onRouteChange(fn) {
+export function onRouteChange(fn: (r: Route) => void): () => void {
   const handler = () => fn(parse(location.hash));
   window.addEventListener('hashchange', handler);
   return () => window.removeEventListener('hashchange', handler);

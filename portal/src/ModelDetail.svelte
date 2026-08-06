@@ -1,13 +1,13 @@
-<script>
-  import { api } from './api.js';
-  import { href } from './router.js';
+<script lang="ts">
+  import { api } from './api';
+  import { href } from './router';
 
   // The model this page is FOR, by id. Addressable is the whole point: the
   // flow graph knows which node is which semantic model, and until this page
   // had an address there was nowhere for it to point.
   let { id } = $props();
 
-  let model = $state(null);
+  let model = $state<any>(null);
   let error = $state('');
   let loaded = $state(false);
 
@@ -15,12 +15,12 @@
     .get('/_emulator/portal/models')
     .then((r) => {
       const all = r.value || [];
-      model = all.find((m) => m.itemId === id) || null;
+      model = all.find((m: any) => m.itemId === id) || null;
       loaded = true;
       if (model) dax = sampleQuery(model);
     })
     .catch((e) => {
-      error = e.message;
+      error = (e as Error).message;
       loaded = true;
     });
 
@@ -30,16 +30,16 @@
   let dax = $state('');
   let running = $state(false);
   let queryError = $state('');
-  let result = $state(null); // {columns: [...], rows: [...]} once a query ran
+  let result = $state<any>(null); // {columns: [...], rows: [...]} once a query ran
 
   /** A starting query derived from the model itself: its first measure over
    * the first string column — something that returns rows on the first click
    * rather than an empty editor daring the user to remember DAX. */
-  function sampleQuery(m) {
+  function sampleQuery(m: any) {
     for (const t of m.tables || []) {
       const measure = (t.measures || [])[0];
       if (!measure) continue;
-      const col = (t.columns || []).find((c) => c.dataType === 'string');
+      const col = (t.columns || []).find((c: any) => c.dataType === 'string');
       const group = col ? `${t.name}[${col.name}], ` : '';
       return `EVALUATE SUMMARIZECOLUMNS(${group}"${measure.name}", [${measure.name}])`;
     }
@@ -58,7 +58,7 @@
         // Column order from the rows' own keys, first-seen: DAX names columns
         // like `Country[Country]` and `[Total Revenue]`, and the rows are the
         // only place that vocabulary exists client-side.
-        const cols = [];
+        const cols: string[] = [];
         for (const row of rows)
           for (const k of Object.keys(row)) if (!cols.includes(k)) cols.push(k);
         result = { columns: cols, rows };
@@ -104,7 +104,12 @@
             <span class="muted mono">{model.itemId}</span>
           </div>
 
-          {#each model.tables as t (t.name)}
+          <!-- `?? []` throughout: sampleQuery above already defends against a
+               definition that omits an array, and the markup must agree with it.
+               It did not — a table without a `measures` key reached
+               `t.measures.length` and took the whole page down, while the query
+               box derived from the same model perfectly happily. -->
+          {#each model.tables ?? [] as t (t.name)}
             <div class="tbl">
               <div class="tbl-head">
                 <strong>{t.name}</strong>
@@ -121,7 +126,7 @@
                   <tr><th>Column</th><th>Type</th><th>Source column</th></tr>
                 </thead>
                 <tbody>
-                  {#each t.columns as c (c.name)}
+                  {#each t.columns ?? [] as c (c.name)}
                     <tr>
                       <td><code>{c.name}</code></td>
                       <td class="muted">{c.dataType}</td>
@@ -131,7 +136,7 @@
                 </tbody>
               </table>
 
-              {#if t.measures.length}
+              {#if t.measures?.length}
                 <table class="measures">
                   <thead>
                     <tr><th>Measure</th><th>DAX</th></tr>
@@ -189,7 +194,7 @@
             {/if}
           </div>
 
-          {#if model.relationships.length}
+          {#if model.relationships?.length}
             <div class="tbl">
               <div class="tbl-head"><strong>Relationships</strong></div>
               <table>

@@ -88,3 +88,6 @@ la_e2e.env
 # committing machine's absolute paths in the repo.
 __pycache__/
 *.py[cod]
+
+# Vitest coverage output (the badge step reads coverage-summary.json in place).
+portal/coverage/

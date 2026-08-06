@@ -140,6 +140,11 @@ def test_e2e_count_excludes_the_non_suite_jobs(tmp_path):
         "  example-parity:\n    steps: []\n"
         "  engine-matrix:\n    steps: []\n"
         "  portal:\n    steps: []\n"
+        # Not suites either: a type gate, a linter, and the coverage roll-up
+        # that RUNS suites rather than being one.
+        "  portal-types:\n    steps: []\n"
+        "  lint:\n    steps: []\n"
+        "  coverage-e2e:\n    steps: []\n"
         "  medallion:\n    steps: []\n"
         "  warehouse-tds:\n    steps: []\n",
         encoding="utf-8")
@@ -154,22 +159,23 @@ def test_e2e_count_is_read_from_the_workflow_not_hardcoded():
 
 # --- end to end ------------------------------------------------------------
 
-def test_main_writes_all_four_documents(tmp_path, monkeypatch):
+def test_main_writes_all_five_documents(tmp_path, monkeypatch):
     out = tmp_path / "badges"
     monkeypatch.setattr(sys, "argv",
                         ["coverage_badges.py", "--out", str(out),
-                         "--go", "91.2", "--python", "72.6"])
+                         "--go", "91.2", "--python", "72.6", "--portal", "100"])
     assert cb.main() == 0
     names = {p.name for p in out.iterdir()}
     assert names == {"coverage-go.json", "coverage-python.json",
-                     "witnesses.json", "e2e-suites.json"}
+                     "coverage-portal.json", "witnesses.json", "e2e-suites.json"}
     doc = json.loads((out / "coverage-go.json").read_text())
     assert doc["message"] == "91.2%"
+    assert json.loads((out / "coverage-portal.json").read_text())["message"] == "100.0%"
 
 
 def test_main_without_numbers_publishes_na_not_zero(tmp_path, monkeypatch):
     out = tmp_path / "badges"
     monkeypatch.setattr(sys, "argv", ["coverage_badges.py", "--out", str(out)])
     assert cb.main() == 0
-    for name in ("coverage-go.json", "coverage-python.json"):
+    for name in ("coverage-go.json", "coverage-python.json", "coverage-portal.json"):
         assert json.loads((out / name).read_text())["message"] == "n/a"

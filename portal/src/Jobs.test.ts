@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import Jobs from './Jobs.svelte';
+import { errRes, res } from './testing';
 
 const rows = [
   {
@@ -21,21 +22,13 @@ describe('Jobs', () => {
   });
 
   it('renders the empty state', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ value: [] }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value: [] }));
     render(Jobs);
     await waitFor(() => expect(screen.getByText(/No jobs yet/)).toBeInTheDocument());
   });
 
   it('lists jobs with clock-derived status and handles deleted items', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ value: rows }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(res({ value: rows }));
     render(Jobs);
     await waitFor(() => expect(screen.getByText('nightly')).toBeInTheDocument());
     expect(screen.getByText('RunNotebook')).toBeInTheDocument();
@@ -47,11 +40,7 @@ describe('Jobs', () => {
   });
 
   it('surfaces load errors', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: () => Promise.resolve({ error: { message: 'db gone' } }),
-    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(errRes('db gone', 500));
     render(Jobs);
     await waitFor(() => expect(screen.getByText('db gone')).toBeInTheDocument());
   });
