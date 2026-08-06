@@ -7,17 +7,17 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"github.com/calvinchengx/fabric-emulator/internal/config"
+	"github.com/calvinchengx/fabric-emulator/internal/server"
+	"github.com/calvinchengx/fabric-emulator/internal/tlscert"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
-
-	"github.com/calvinchengx/fabric-emulator/internal/config"
-	"github.com/calvinchengx/fabric-emulator/internal/server"
-	"github.com/calvinchengx/fabric-emulator/internal/tlscert"
 )
 
 // version and commit are stamped at build time via
@@ -89,6 +89,13 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	fs.IntVar(&cfg.ListPageSize, "list-page-size", cfg.ListPageSize, "page size for list APIs (0 = default 100; small values force clients through the continuation-token loop; negative disables paging)")
 	fs.BoolVar(&cfg.TSQLStrict, "tsql-strict", cfg.TSQLStrict, "refuse T-SQL that real Fabric rejects but SQL Server accepts (recursive CTEs, triggers, enforced constraints; see docs/29)")
 	fs.StringVar(&cfg.WarehouseSQLURL, "warehouse-sql-url", cfg.WarehouseSQLURL, "real SQL Server backend the SQL endpoint relays to (go-mssqldb DSN; empty = stub result)")
+	// A string rather than a bool so the flag reads like the env var it mirrors
+	// (FABRIC_WEB_ACTIVITY=stub) and leaves room for a future mode.
+	webActivity := "real"
+	if cfg.WebActivityStub {
+		webActivity = "stub"
+	}
+	fs.StringVar(&webActivity, "web-activity", webActivity, "pipeline Web activity mode: real (perform the HTTP call) or stub (record success without calling)")
 	fs.StringVar(&cfg.AirflowURL, "airflow-url", cfg.AirflowURL, "Apache Airflow 2.10 REST API base URL (empty = off)")
 	fs.StringVar(&cfg.AirflowDAGDir, "airflow-dag-dir", cfg.AirflowDAGDir, "shared Airflow DAG directory")
 	fs.StringVar(&cfg.AirflowUsername, "airflow-username", cfg.AirflowUsername, "Airflow basic-auth username")
@@ -98,6 +105,7 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	cfg.WebActivityStub = strings.EqualFold(webActivity, "stub")
 	if err := cfg.Finish(); err != nil {
 		return err
 	}

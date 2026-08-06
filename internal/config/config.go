@@ -109,6 +109,13 @@ type Config struct {
 	// pagination before real data grows into it. Negative disables paging.
 	ListPageSize int
 
+	// WebActivityStub makes pipeline Web activities record success WITHOUT
+	// calling anything — FABRIC_WEB_ACTIVITY=stub. Off by default: a Web
+	// activity that fabricates a response is a false pass, and a pipeline
+	// branching on the body would behave differently in Fabric. On for a
+	// hermetic CI leg that must not reach the network.
+	WebActivityStub bool
+
 	// TSQLStrict refuses T-SQL that the SQL Server sidecar accepts but real
 	// Fabric rejects — recursive CTEs, triggers, enforced constraints and the
 	// rest of docs/29-tsql-parity.md's Class B. Off by default because it
@@ -165,6 +172,7 @@ func FromEnvPartial() *Config {
 		SQLTDSAddr:        os.Getenv("FABRIC_SQL_TDS_ADDR"),
 		TerminalURL:       os.Getenv("FABRIC_TERMINAL_URL"),
 		TerminalToken:     os.Getenv("FABRIC_TERMINAL_TOKEN"),
+		WebActivityStub:   strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
 		WarehouseSQLURL:   os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
 		TSQLStrict:        boolEnv("FABRIC_TSQL_STRICT"),
 		ListPageSize:      intEnv("FABRIC_LIST_PAGE_SIZE"),

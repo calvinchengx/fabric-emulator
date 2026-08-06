@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // maxUntilIterations bounds an Until loop so a never-true condition fails the
@@ -85,6 +86,18 @@ func (r *run) ownRecordIdx(a *Activity, snap int) int {
 		}
 	}
 	return -1
+}
+
+// ParseTimeout is parseTimeout for callers outside the interpreter: the Web
+// activity applies policy.timeout to its HTTP request, and an activity whose
+// declared timeout the network call ignored would hang past its own budget.
+// Reports false when nothing usable was declared.
+func ParseTimeout(s string) (time.Duration, bool) {
+	secs := parseTimeout(s)
+	if secs <= 0 {
+		return 0, false
+	}
+	return time.Duration(secs * float64(time.Second)), true
 }
 
 // parseTimeout converts Fabric's "D.HH:MM:SS" (or "HH:MM:SS") timespan into
