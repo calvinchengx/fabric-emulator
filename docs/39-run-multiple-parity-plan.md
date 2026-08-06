@@ -168,3 +168,99 @@ concurrency, retry/timeout, session sharing. Each row gets its own witness in
 
 Every phase's definition of done: parity row updated, witness naming a test
 that exists, CI job named, README orchestration bullet still accurate.
+
+## Checklist
+
+Code and its tests are separate rows on purpose: an implementation item that
+carries its own proof inside it is how an untested change reads as done.
+
+### Phase 0 — pin the oracle (research, no code)
+
+| # | Action item | Output |
+|---|---|---|
+| 0.1 | Confirm what real Fabric's `run()` returns (exit value vs status) | Decision recorded here; gates 1.5 |
+| 0.2 | Confirm failure reporting shape: `message` vs `error`, `exitVal` on failure | Gates 1.8 |
+| 0.3 | Confirm default `concurrency` (~50?) | Gates 3b wording |
+| 0.4 | Confirm DAG `timeoutInSeconds` expiry behaviour | Gates 4.3 |
+| 0.5 | Confirm children share the parent's Spark session | Confirms Phase 5's divergence wording |
+| 0.6 | Cite each source here; unconfirmed items marked "documented divergence" | This document |
+
+### Phase 3a — per-namespace catalog (first: live bug)
+
+| # | Action item | Files | Test proving it |
+|---|---|---|---|
+| 3a.1 | Remove process-wide current-database state: qualify table names at registration (or per-statement lock) | `python/spark_agent/agent.py` — `register_tables`, `ns` | 3a.2 |
+| 3a.2 | Concurrency test: two sessions bound to different lakehouses run simultaneously; each sees only its own tables | agent tests | new |
+| 3a.3 | Mutation check: revert the fix, confirm 3a.2 fails | — | one-off, noted in PR |
+| 3a.4 | Verify `e2e/livy` + `e2e/notebook-driven` still green | CI | existing suites |
+
+### Phase 1 — wrong answers shipping today
+
+| # | Action item | Files | Test proving it |
+|---|---|---|---|
+| 1.1 | Extract `_run_detail()` → `(status, exit_value, failure_reason)` fetching `…/notebookRun` after terminal state | `python/notebookutils/notebook.py` | covered via 1.6–1.8 |
+| 1.2 | Move test stub from `run` to `_run_detail` | `python/tests/test_notebook_run_multiple.py` | all 14 existing tests still pass |
+| 1.3 | `runMultiple` populates `exitVal` from the child's exit value | notebook.py | 1.6 |
+| 1.4 | Fix `timeoutPerCellInSeconds`: scale by the run detail's cell count, not whole-notebook | notebook.py | 1.7 |
+| 1.5 | Apply the 0.1 decision to `run()`'s return value (breaking if exit value) | notebook.py | e2e assertion updated in same PR |
+| 1.6 | Tests: exit value reaches `exitVal`; no `exit()` call → `""` not `None` | tests | new ×2 |
+| 1.7 | Test: N-cell notebook with per-cell timeout T gets N×T deadline | tests | new |
+| 1.8 | Test: failed activity's reason lands in the field 0.2 says | tests | new |
+| 1.9 | E2E: extend `e2e/notebook-driven` — parent `runMultiple` over a child that calls `exit()`; assert the value round-trips through a real engine | `e2e/notebook-driven/` | new witness step |
+| 1.10 | If 1.5 breaks `run()`: update `e2e/notebookutils/notebook.py`, release-notes entry, minor bump | e2e, docs/release-notes | existing witness |
+
+### Phase 2 — `useRootDefaultLakehouse`
+
+| # | Action item | Files | Test proving it |
+|---|---|---|---|
+| 2.1 | `executionData` carries an optional binding override | `internal/api/notebookdrive.go`, `notebooks.go` | 2.4 |
+| 2.2 | `driveNotebookRun` prefers the override over the item's binding | notebookdrive.go | 2.4 |
+| 2.3 | `runMultiple` passes the root binding when `useRootDefaultLakehouse=True` | notebook.py | 2.5 |
+| 2.4 | Go test: job submitted with override registers the override's tables | Go unit | new |
+| 2.5 | Python test: flag `True` passes root binding; `False` doesn't | tests | new ×2 |
+| 2.6 | E2E asymmetry test: child bound to B reads a table only in A — `True` resolves, `False` fails | e2e/notebook-driven | new, both directions |
+
+### Phase 3b — bounded concurrency (after 3a)
+
+| # | Action item | Files | Test proving it |
+|---|---|---|---|
+| 3b.1 | Bounded pool per dependency level; default stays sequential | notebook.py | 3b.3–3b.5 |
+| 3b.2 | Rewrite order test as the `concurrency=1` contract | tests | rewritten |
+| 3b.3 | Test: `concurrency=2` → genuinely overlapping execution (enter/exit recording, no wall-clock) | tests | new |
+| 3b.4 | Test: failure during concurrent level still skips dependents correctly | tests | new |
+| 3b.5 | Test: pool never exceeds N in-flight | tests | new |
+| 3b.6 | Parity row: sequential default recorded as chosen divergence | parity.md | witness check |
+
+### Phase 4 — retry / timeouts
+
+| # | Action item | Files | Test proving it |
+|---|---|---|---|
+| 4.1 | Per-activity `retry` + `retryIntervalInSeconds` | notebook.py | 4.4–4.5 |
+| 4.2 | DAG-level `timeoutInSeconds` wall clock | notebook.py | 4.6 |
+| 4.3 | Expiry behaviour per 0.4 | notebook.py | 4.6 |
+| 4.4 | Tests: retried-then-succeeded → `Completed`; exhausted retries → *last* error | tests | new ×2 |
+| 4.5 | Test: dependents wait out a dependency's retries before deciding skip | tests | new |
+| 4.6 | Test: DAG timeout leaves no activity in an undefined state; interval honoured without real sleeps (injectable clock) | tests | new ×2 |
+
+### Phases 5–6 — documentation only
+
+| # | Action item | Files |
+|---|---|---|
+| 5.1 | Parity row: "children run in isolated sessions" as permanent documented divergence | parity.md |
+| 6.1 | Skip recorded above — nothing further | — |
+
+### Cross-cutting (definition of done, every phase)
+
+| # | Action item | Verification |
+|---|---|---|
+| X.1 | Split the single 🟡 row into 6: ordering (🟢 now), exit values, lakehouse inheritance, concurrency, retry/timeout, session sharing | `docs/parity.md` |
+| X.2 | One witness per new row in `docs/witnesses.json` | `check_witnesses.py --strict` exit 0 |
+| X.3 | Each phase names its CI job; new e2e steps live in existing suites (no badge-count change) — if a new suite directory is ever added, update the badge count | CI config + badge |
+| X.4 | Coverage floor: new Python keeps total ≥70% | coverage job |
+| X.5 | README orchestration bullet re-checked after each phase | README.md |
+| X.6 | This document updated as phases land (mark done, record the 0.x answers) | doc 39 |
+| X.7 | Release-notes entries for behaviour changes (1.5 especially) | docs/release-notes |
+
+**Totals:** ~45 items — 6 research, 13 implementation, 19 new/rewritten tests,
+7 doc/CI. The test-heavy ratio is deliberate: 1.6–1.8 and 3a.2 are the rows
+that make the parity claims mean anything.
