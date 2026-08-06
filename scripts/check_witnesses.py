@@ -123,7 +123,17 @@ def green_claims():
 
 
 def ci_job_ids() -> set:
-    return set(re.findall(r"^  ([a-z0-9-]+):$", CI.read_text(encoding="utf-8"), re.M))
+    """Job ids in ci.yml, plus every workflow file's own name.
+
+    Most witnesses name a job in the main pipeline. A few name a whole
+    workflow, because that is the unit that exists: `real-fabric` is one
+    secret-gated workflow with a single `conformance` job, and crediting
+    `ci:conformance` would be ambiguous with any other workflow that names a
+    job the same. Both spellings resolve; neither invents one.
+    """
+    ids = set(re.findall(r"^  ([a-z0-9-]+):$", CI.read_text(encoding="utf-8"), re.M))
+    ids.update(p.stem for p in CI.parent.glob("*.yml"))
+    return ids
 
 
 # Function bodies are taken from the `func` header to the next line that starts
@@ -180,19 +190,40 @@ def go_test_names() -> set:
     return {line.split()[1] for line in out.stdout.splitlines() if line.startswith("func ")}
 
 
+def py_test_names() -> set:
+    """Python test modules AND test functions under python/tests.
+
+    `py:` witnesses were counted but never resolved, so one naming a test that
+    had been renamed or deleted passed --strict silently — a witness system
+    whose whole promise is that a claim names evidence that exists. Both
+    spellings are accepted because both are in use: a module (`test_foo`) when
+    a whole file is the evidence, a function (`test_foo_does_bar`) when one
+    case is.
+    """
+    tests_dir = ROOT / "python" / "tests"
+    if not tests_dir.is_dir():
+        return set()
+    names = set()
+    for path in tests_dir.glob("test_*.py"):
+        names.add(path.stem)
+        names.update(re.findall(r"^def (test_[A-Za-z0-9_]+)",
+                                path.read_text(encoding="utf-8"), re.M))
+    return names
+
+
 def main() -> int:
     strict = "--strict" in sys.argv
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.exists() else {}
     # `_gated` is a declaration, not a claim: witness -> why it can skip.
     declared_gates = manifest.pop("_gated", {})
-    jobs, tests = ci_job_ids(), go_test_names()
+    jobs, tests, py_tests = ci_job_ids(), go_test_names(), py_test_names()
     gated_tests = gated_go_tests()
 
     missing, dangling, todo = [], [], []
     # witness -> reason, for the gated witnesses actually credited to a claim.
     gated_used: dict[str, str] = {}
     ungated_by_key: dict[str, int] = {}
-    kinds = {"ci": 0, "go": 0, "boundary": 0}
+    kinds = {"ci": 0, "go": 0, "py": 0, "boundary": 0}
     # Which claims lean on each witness — a witness covering many claims is
     # where bundling hides.
     shared: dict[str, list[str]] = {}
@@ -214,8 +245,19 @@ def main() -> int:
                 dangling.append(f"{key} → {witness} (no such CI job)")
             elif kind == "go" and name not in tests:
                 dangling.append(f"{key} → {witness} (no such Go test)")
+            elif kind == "py" and name not in py_tests:
+                dangling.append(f"{key} → {witness} (no such Python test)")
             if kind == "go" and name in gated_tests:
                 gated_used[witness] = gated_tests[name]
+            elif witness in declared_gates:
+                # A gate this script cannot DETECT, only accept: a CI job that
+                # skips on absent secrets is invisible to the Go body scan, and
+                # `ci:real-fabric` — the differential leg against a real tenant —
+                # is exactly that. Counting it as unconditional evidence would
+                # let a claim rest entirely on a job that never runs on a fork.
+                # The declaration is the author's assertion; the stale check
+                # below cannot police these, which is the price of accepting them.
+                gated_used[witness] = "a declared gate this checker cannot detect"
             else:
                 # A boundary is not evidence that runs, so it does not count
                 # towards a claim having ungated support.
@@ -237,6 +279,7 @@ def main() -> int:
     print(f"supported capability claims: {len(claims)}")
     print(f"  witnessed by a real external client (ci:) : {kinds.get('ci', 0)}")
     print(f"  witnessed by our own Go tests (go:)       : {kinds.get('go', 0)}")
+    print(f"  witnessed by our own Python tests (py:)   : {kinds.get('py', 0)}")
     print(f"  scoped by a documented boundary           : {kinds.get('boundary', 0)}")
     print(f"  not yet identified (TODO)                 : {len(todo)}")
     print(f"  absent from the manifest                  : {len(missing)}")

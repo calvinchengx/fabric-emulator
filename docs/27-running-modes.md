@@ -9,12 +9,12 @@ end to end. Come back here when you need to change something.
 
 | Mode | Command | Services | Spark | T-SQL | Extras | Give the runtime |
 |---|---|---|---|---|---|---|
-| 1. Default | `make up` | 11 | Sail | SQL Server | OpenMetadata | **12 GB** |
+| 1. Default | `make up` | 12 | Sail | SQL Server | OpenMetadata, Airflow | **13 GB** |
 | 2. Plain compose | `docker compose up` | 6 | Sail | SQL Server | — | **8 GB** |
 | 3. Lite | `make up-lite` | 3 | ❌ 501 | ❌ 501 | — | **2 GB** |
 | 4. JVM overlay | `make up-jvm` | 6 | **JVM Spark** | SQL Server | — | **10 GB** |
 | 5. Real Fabric | `FABRIC_TARGET=real` | 0 | the real service | | | — |
-| [Everything](#everything-at-once) | see below | 13 | Sail | SQL Server | OpenMetadata + KQL + terminal | **16 GB** |
+| [Everything](#everything-at-once) | see below | 14 | Sail | SQL Server | OpenMetadata + Airflow + KQL + terminal | **17 GB** |
 
 Whatever you start, `make status` is the verdict. `make up` only means
 containers were created; `status` probes the endpoints and reports `stack OK`
@@ -108,16 +108,20 @@ the common notebook path — Delta write/append, both time-travel forms,
 
 A profile *adds* services rather than swapping them, and nothing is pulled
 unless you name it. `--profile` is repeatable, so combine them freely.
+`governance` and `airflow` are already in `make up`'s default `PROFILE`;
+overriding `PROFILE` replaces that default rather than adding to it, so name
+them again if you still want them.
 
 | Profile | Adds | Gives you | Costs |
 |---|---|---|---|
 | `governance` | OpenMetadata + Postgres + OpenSearch | catalog, glossary, lineage over the state your pipelines wrote ([22](22-openmetadata.md)) | ~2.8 GB |
+| `airflow` | `apache/airflow` scheduler + webserver | `ApacheAirflowJob` items run on genuine Airflow ([14](14-real-compute.md#e1)) | ~1.1 GB |
 | `rti` | `kustainer` | Microsoft's own KQL engine behind Eventhouse ([25](25-rti-kusto.md)) | 4 GB (its own `mem_limit`) |
 | `terminal` | `ttyd` | a shell in the Flow view, beside the graph ([31](31-flow-observability.md#the-terminal-pane)) | negligible |
 
 ```bash
-make up PROFILE="--profile rti"                          # KQL, no OpenMetadata
-make up PROFILE="--profile governance --profile rti"     # both
+make up PROFILE="--profile rti"                          # KQL only — drops governance and airflow
+make up PROFILE="--profile governance --profile airflow --profile rti"
 ```
 
 `--profile rti` needs **amd64 with AVX2**. Microsoft documents ARM as
@@ -182,6 +186,69 @@ So ~1.5 GB idle without `rti`, and ≈11 GB with everything working at once:
 **give the runtime 16 GB**. `make doctor` warns below 8 GB, the floor for mode 1,
 not for this. Reach for this stack when reproducing a cross-cutting problem;
 modes 1–3 are cheaper and `make status` is the same verdict.
+
+## What it costs to run
+
+Measured with `docker stats --no-stream` on a 16 GB machine, idle and then
+under an active medallion. Two columns because the difference is the whole
+point: the emulator is nothing at rest and grows only while it is doing work.
+
+| Container | Idle | Under a running medallion |
+|---|---|---|
+| `fabric-emulator` | **5 MiB** | **0.9 – 1.3 GiB** |
+| `entra-emulator` | 8 MiB | 38 MiB |
+| `keyvault-emulator` | 4 MiB | 7 MiB |
+| `sail` (Spark Connect) | 50 MiB | 1.8 GiB |
+| `spark-agent` | 88 MiB | 95 MiB |
+| `sqlserver` (warehouse) | 380 MiB | 1.6 GiB |
+| `om-opensearch` | 1.0 GiB | 1.5 GiB |
+| `openmetadata` | 940 MiB | 940 MiB |
+| `om-postgresql` | 8 MiB | 100 MiB |
+| `airflow` (2.10.5) | **1.09 GiB** | 1.1 GiB+ |
+| `ttyd` | a few MiB | a few MiB |
+| `kustainer` (RTI) | not measured — amd64/AVX2 only | — |
+
+Which gives, per mode:
+
+| Mode | Services | Idle | Under load |
+|---|---|---|---|
+| `make up-lite` | 3 — control plane, OneLake, portal | **~20 MiB** | ~1 GiB |
+| `docker compose up` | 6 — adds Sail, spark-agent, SQL Server | **~530 MiB** | ~4.5 GiB |
+| **`make up`** (the default) | 10 — adds the catalog and Airflow | **~3.6 GiB** | **~7.5 GiB** |
+
+`make up` is the heavy one on purpose: `PROFILE ?= --profile governance --profile
+airflow` attaches every real runtime, because each backs a first-class Fabric
+item type and a capability that answers "not configured" looks broken rather
+than optional. Drop what you do not need:
+
+```bash
+make up PROFILE="--profile governance"   # no Airflow  (-1.1 GiB)
+make up PROFILE=                         # no catalog, no Airflow  (-3 GiB)
+make up-lite                             # contract only
+```
+
+Three things worth taking from that:
+
+- **The emulator itself is not the cost.** At rest it is ~5 MiB against a 22 MB
+  image — a single static Go binary with the portal embedded. What costs memory
+  is the real engines it attaches: a JVM-free Sail, a real SQL Server, a real
+  OpenSearch. That is the trade the project makes on purpose, and
+  [14-real-compute.md](14-real-compute.md) is the argument for it.
+- **It is not free under load.** 5 MiB idle becomes ~1 GiB while a medallion
+  runs, because Delta writes and Copy activities pass through the emulator's own
+  storage layer. Size the box for the work, not for the idle screenshot.
+- **Sail is why the Spark tier is affordable at all.** 50 MiB idle where a JVM
+  Spark would be 1–2 GiB, and a 943 MB image against 2.1 GB (the table above).
+
+[01-quickstart.md](01-quickstart.md) asks for **8 GB** of runtime memory, which
+covers everything here with room for the containers under test beside it. A
+control-plane-only loop needs a fraction of that.
+
+To re-derive any of this:
+
+```bash
+docker stats --no-stream --format '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}'
+```
 
 ## 5. Real Fabric — one environment variable
 

@@ -113,6 +113,54 @@ services:
       - "7681"
 
 
+  # ---- Orchestration (optional): real Apache Airflow, profile-gated ---------
+  # Fabric's code-first orchestrator IS upstream Apache Airflow, so this is the
+  # engine rather than an imitation of it — the same versions Microsoft
+  # documents (2.10.5 on Python 3.12), running the real scheduler and executor
+  # behind `ApacheAirflowJob` items. The emulator stores DAG sources as item
+  # definitions, syncs them into the shared DAG volume below, and drives
+  # Airflow's REST API for discovery, unpause, trigger and polling.
+  #
+  # Profile-gated so `docker compose up` neither pulls nor starts it. The
+  # emulator's FABRIC_AIRFLOW_* wiring lives in docker-compose.airflow.yml, and
+  # both are needed — a URL pointing at a container nobody started is exactly
+  # the bug the spark-agent profile shipped once, which is why the terminal
+  # overlay is split the same way.
+  #
+  # SequentialExecutor on SQLite: this is a local fidelity target, not a
+  # throughput one, and it keeps the sidecar to one container.
+  airflow:
+    profiles: [airflow]
+    image: apache/airflow:2.10.5-python3.12
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      # The emulator writes a DAG and then waits for Airflow to notice it; the
+      # defaults (5 min) make that look like a hang.
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "2"
+      AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "1"
+    volumes:
+      - airflow-dags:/opt/airflow/dags
+    ports:
+      - "8085:8080" # the Airflow UI, for looking at what a job actually did
+    command:
+      - bash
+      - -ec
+      - |
+        airflow db migrate
+        airflow users create --username admin --password admin \
+          --firstname Fabric --lastname Emulator --role Admin --email admin@example.com
+        airflow scheduler &
+        exec airflow webserver
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
   # ---- Real-Time Intelligence (optional): Kusto engine, profile-gated -------
   # Microsoft's own KQL engine container (the Azure Data Explorer "Kusto
   # emulator"), attached the same way the SQL Server sidecar backs the T-SQL
@@ -290,3 +338,7 @@ services:
 volumes:
   om-db-data:
   om-search-data:
+  # Shared with the emulator: it writes DAG files here, Airflow's scheduler
+  # reads them from the same volume. One volume is what makes the sync a file
+  # copy rather than an upload API.
+  airflow-dags:

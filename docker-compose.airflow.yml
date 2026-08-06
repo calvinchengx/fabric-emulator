@@ -1,0 +1,34 @@
+# Orchestration overlay: point the emulator at the profile-gated `airflow`
+# sidecar so `ApacheAirflowJob` items actually run.
+#
+#   docker compose --profile airflow \
+#     -f docker-compose.yml -f docker-compose.override.yml \
+#     -f docker-compose.airflow.yml up
+#
+# TWO OPT-INS, and they do different jobs — the same split as the terminal
+# overlay, for the same reason:
+#   --profile airflow                 starts the scheduler
+#   -f docker-compose.airflow.yml     hands the emulator its URL and DAG folder
+#
+# Setting the URL in the BASE file while gating the service on a profile is the
+# bug this repo has already shipped once: the medallion compose set
+# FABRIC_SPARK_AGENT_URL unconditionally while `spark-agent` sat behind a
+# profile, so the emulator drove notebooks at a container nobody started.
+# Without the URL the Airflow routes answer `AirflowNotConfigured`, which is an
+# honest 'not wired up' rather than a hang.
+#
+# THE DAG FOLDER IS A SHARED VOLUME on purpose. The emulator writes DAG sources
+# there and Airflow's scheduler reads them from the same place, so the sync is a
+# file copy rather than an upload API — which is also how Fabric describes it.
+services:
+  fabric-emulator:
+    depends_on:
+      airflow:
+        condition: service_healthy
+    environment:
+      FABRIC_AIRFLOW_URL: "http://airflow:8080"
+      FABRIC_AIRFLOW_DAG_DIR: "/airflow-dags"
+      FABRIC_AIRFLOW_USERNAME: admin
+      FABRIC_AIRFLOW_PASSWORD: admin
+    volumes:
+      - airflow-dags:/airflow-dags

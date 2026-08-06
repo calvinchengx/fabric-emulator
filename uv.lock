@@ -1326,6 +1326,7 @@ fabric-cli = [
     { name = "ms-fabric-cli" },
 ]
 fabric-target = [
+    { name = "fabric-emulator-notebookutils" },
     { name = "fabric-target", extra = ["real", "sessions"] },
     { name = "pytest" },
 ]
@@ -1415,6 +1416,7 @@ duckdb = [
 fabric-cicd = [{ name = "fabric-cicd", specifier = ">=0.1" }]
 fabric-cli = [{ name = "ms-fabric-cli", specifier = ">=1.2" }]
 fabric-target = [
+    { name = "fabric-emulator-notebookutils", editable = "python" },
     { name = "fabric-target", extras = ["real", "sessions"], editable = "python/fabric-target" },
     { name = "pytest", specifier = ">=8.3,<10" },
 ]

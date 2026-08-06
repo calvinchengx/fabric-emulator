@@ -170,6 +170,41 @@ for c in cells[:3]:
 # raised, so a Completed job is not on its own proof that it did not.
 assert cells[3]["status"] == "Pending", f"execution continued past the exit: {cells[3]}"
 
+# 2b. THE SHIM RETURNS IT. The assertion above proves the exit value reached the
+#     REST surface; it says nothing about what a notebook author actually gets
+#     back. `notebookutils.notebook.run` returned the job STATUS until 0.18.0,
+#     so every check above passed while `run()` handed the caller "Completed".
+#     This closes the loop engine -> service -> shim -> caller, which is the
+#     only path a user's code takes.
+import os  # noqa: E402 — the shim needs the env below set first
+import sys  # noqa: E402
+
+sys.path.insert(0, "/app/python")
+os.environ.update({
+    "NOTEBOOKUTILS_FABRIC_URL": FABRIC,
+    "NOTEBOOKUTILS_ENTRA_URL": ENTRA,
+    "NOTEBOOKUTILS_TENANT": TENANT,
+    "NOTEBOOKUTILS_CLIENT_ID": CLIENT_ID,
+    "NOTEBOOKUTILS_CLIENT_SECRET": CLIENT_SECRET,
+    "NOTEBOOKUTILS_WORKSPACE_ID": ws,
+    # Deliberately the SAME lakehouse the notebook is bound to. That makes this
+    # a reference run under Fabric's lakehouse rule, so it also proves the guard
+    # does not fire on a matching binding — a guard that refused everything
+    # would pass a test that only checks the blocked case.
+    "NOTEBOOKUTILS_LAKEHOUSE_ID": lake["id"],
+})
+from notebookutils import notebook as nbu  # noqa: E402
+
+shim_exit = nbu.run("etl-nb")
+log(f"notebookutils.notebook.run returned {shim_exit!r}")
+assert json.loads(shim_exit) == {"rows": 4, "table": "events"}, shim_exit
+
+# And through the orchestration primitive, where the value lands in `exitVal`.
+dag = nbu.runMultiple({"activities": [{"name": "load", "path": "etl-nb"}]})
+log(f"runMultiple exitVal = {dag['load']['exitVal']!r}")
+assert json.loads(dag["load"]["exitVal"]) == {"rows": 4, "table": "events"}, dag
+assert dag["load"]["exception"] is None, dag
+
 # 3. THE BYTES. Read the Delta log over plain HTTP — this process is not Spark
 #    and has touched none of the data, so what it finds is what actually landed.
 sft = req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
