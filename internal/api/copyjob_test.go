@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 )
 
 func createCopyJob(t *testing.T, st *store.Store, wid, contentJSON string) *store.Item {
@@ -164,5 +165,93 @@ func TestCopyJobRefusesWhatItCannotHonour(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCopyJobDeltaSourceMakesRealCommits(t *testing.T) {
+	// The parity row claims real Delta semantics for Tables/ sinks — Append
+	// appends, Overwrite replaces — so the witness must drive the Delta path,
+	// not only the byte-copy fallback the bare-parquet test exercises. A
+	// CopyJob that parsed, dispatched and returned Completed while copying
+	// nothing would pass every status assertion; the row counts are the claim.
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	seedDeltaTable(t, st, ws.ID, src.ID, "orders", []lookupRow{{"us", 80}, {"eu", 60}})
+
+	rowsAt := func(table string) int {
+		t.Helper()
+		tbl, err := warehouse.ReadDeltaTable(st, dst.ID, table)
+		if err != nil {
+			t.Fatalf("destination %s not a readable Delta table: %v", table, err)
+		}
+		return len(tbl.Rows)
+	}
+
+	// Overwrite (the default): destination holds exactly the source's rows.
+	cj := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, "Overwrite"))
+	_, jid := runJob(t, a, ws.ID, cj.ID, "jobType=Execute", "{}")
+	if s := jobStatus(t, a, ws.ID, cj.ID, jid); s != "Completed" {
+		t.Fatalf("overwrite status = %s", s)
+	}
+	if n := rowsAt("bronze_orders"); n != 2 {
+		t.Fatalf("after overwrite: %d rows, want 2", n)
+	}
+
+	// Append, twice: each run adds the source's rows — 2, then 4, then 6.
+	// Re-running an Overwrite job would also read 2; only growth proves the
+	// Append leg is honoured through the CopyJob door.
+	app := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, "Append"))
+	for i, want := range []int{4, 6} {
+		_, jid := runJob(t, a, ws.ID, app.ID, "jobType=Execute", "{}")
+		if s := jobStatus(t, a, ws.ID, app.ID, jid); s != "Completed" {
+			t.Fatalf("append run %d status = %s", i, s)
+		}
+		if n := rowsAt("bronze_orders"); n != want {
+			t.Fatalf("after append run %d: %d rows, want %d", i, n, want)
+		}
+	}
+}
+
+func TestCopyJobPublishesItsTerminalEventAtStart(t *testing.T) {
+	// Pins the SECOND dispatch site. startJob publishes a job's terminal event
+	// immediately only when terminalStatusOf says the type executes now —
+	// remove CopyJob from executesNow and every other test here still passes,
+	// because status converges later through the clock and the failure record.
+	// What breaks is the flow view's contract: a job that really finished
+	// stays unsettled on the event stream. Measured before writing this test:
+	// that mutation failed zero of the six existing cases.
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	seedFile(t, st, ws.ID, src.ID, "Tables/orders/part-0.parquet", []byte("x"))
+
+	terminal := func(jid string, evs []store.Event) string {
+		t.Helper()
+		for _, ev := range evs {
+			if ev.Kind == store.KindJob && ev.JobID == jid &&
+				(ev.Status == store.JobCompleted || ev.Status == store.JobFailed) {
+				return ev.Status
+			}
+		}
+		return ""
+	}
+
+	sub := st.Subscribe()
+	defer sub.Close()
+	cj := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, ""))
+	_, jid := runJob(t, a, ws.ID, cj.ID, "jobType=Execute", "{}")
+	if got := terminal(jid, drainEvents(t, sub.C)); got != store.JobCompleted {
+		t.Fatalf("no terminal event at start for a completed copy; got %q", got)
+	}
+
+	sub2 := st.Subscribe()
+	defer sub2.Close()
+	bad := createCopyJob(t, st, ws.ID, `{"properties":{"jobMode":"CDC"},"activities":[]}`)
+	_, jid = runJob(t, a, ws.ID, bad.ID, "jobType=Execute", "{}")
+	if got := terminal(jid, drainEvents(t, sub2.C)); got != store.JobFailed {
+		t.Fatalf("no terminal event at start for a refused copy; got %q", got)
 	}
 }
