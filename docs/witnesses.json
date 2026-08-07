@@ -734,8 +734,8 @@
       "ci:rest-helix"
     ]
   },
-  "salesforce-salesforcev2source-in-a-copy": {
-    "claim": "**Salesforce** — `SalesforceV2Source` in a Copy",
+  "salesforce-salesforcev2source-and-salesforcev2sink-in-a-copy": {
+    "claim": "**Salesforce** — `SalesforceV2Source` and `SalesforceV2Sink` in a Copy",
     "section": "Data Factory (`data-factory/`)",
     "witnesses": [
       "go:TestSalesforceRunsTheWholeJobLifecycle",
@@ -744,7 +744,13 @@
       "go:TestSalesforceFailsWhenTheJobFails",
       "go:TestSalesforceRefusesConfigurationItCannotHonour",
       "go:TestSalesforceRejectsABadToken",
-      "go:TestSalesforceCopyLandsRowsInADeltaTable"
+      "go:TestSalesforceCopyLandsRowsInADeltaTable",
+      "go:TestSalesforceSinkRunsTheWholeIngestLifecycle",
+      "go:TestSalesforceSinkOneJobPerWriteBatchSize",
+      "go:TestSalesforceCSVNullHandlingInverts",
+      "go:TestSalesforceSinkRefusesAPartialWrite",
+      "go:TestSalesforceSinkUpsertNeedsAnExternalId",
+      "go:TestSalesforceSinkResolvesARelativeContentUrl"
     ]
   }
 }

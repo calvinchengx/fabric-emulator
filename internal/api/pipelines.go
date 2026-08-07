@@ -430,6 +430,11 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 	} else if salesforceSourceTypes[t] {
 		return e.salesforceToLakehouse(act, tp, resolve)
 	}
+	if t, err := copySideType(tp["sink"], resolve); err != nil {
+		return nil, fmt.Errorf("copy %q sink: %w", act.Name, err)
+	} else if salesforceSinkTypes[t] {
+		return e.salesforceFromLakehouse(act, tp, resolve)
+	}
 	// Likewise a REST sink: resolveLoc resolves OneLake locations, and this is
 	// not one. Checked before the sink is resolved, for the same reason.
 	if t, err := copySideType(tp["sink"], resolve); err != nil {
