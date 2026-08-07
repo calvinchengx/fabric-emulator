@@ -84,8 +84,19 @@ def run_sql(code):
         # and if a write silently hadn't landed, dbt's own downstream
         # selects/tests would fail loudly.
         if "UNSUPPORTED_DATA_TYPE_FOR_ARROW_CONVERSION" in str(e):
-            print(f"[sql-agent] note: uint64 result envelope suppressed for: {code}", flush=True)
-            return {"status": "ok", "execution_count": 0, "data": {}}
+            # Recoverable, not merely suppressible: the result is a cached
+            # relation, so toArrow() reads the count the engine already
+            # reported without re-running the statement (measured — a 3-row
+            # INSERT stays 3 rows through this path). Same recovery as
+            # python/spark_agent/agent.py.
+            try:
+                rows = [list(r.values()) for r in df.toArrow().to_pylist()]
+                print(f"[sql-agent] note: uint64 envelope recovered via arrow for: {code}", flush=True)
+                return {"status": "ok", "execution_count": 0,
+                        "data": {"application/json": {"schema": df.schema.jsonValue(), "data": rows}}}
+            except Exception:
+                print(f"[sql-agent] note: uint64 result envelope suppressed for: {code}", flush=True)
+                return {"status": "ok", "execution_count": 0, "data": {}}
         tb = traceback.format_exc().splitlines()
         # The full Spark message (str(e)) is far more useful to dbt than the last
         # traceback frame; surface it as evalue and log the failing statement.

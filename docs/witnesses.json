@@ -765,5 +765,13 @@
       "py:test_a_conflicting_environment_is_refused_with_a_reason",
       "py:test_packages_and_spark_config_are_applied"
     ]
+  },
+  "dml-row-count-envelopes-insert-merge-counts": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "DML row-count envelopes (`INSERT`/`MERGE` counts)",
+    "witnesses": [
+      "ci:livy-native",
+      "py:test_spark_agent_sql_envelope"
+    ]
   }
 }
