@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	entra "github.com/calvinchengx/entra-emulator/emulator"
 	"github.com/calvinchengx/fabric-emulator/internal/config"
@@ -85,8 +86,22 @@ func TestPipelineSQLActivitiesE2E(t *testing.T) {
 	loc := run.Header.Get("Location")
 	jid := loc[strings.LastIndex(loc, "/")+1:]
 
+	// Async (doc 37 §4): poll like a real client. This site passed locally by
+	// winning a race the CI runner lost — the goroutine usually finishes before
+	// one GET on a fast machine, which is exactly why a synchronous read here
+	// is wrong rather than merely flaky.
 	var job struct{ Status string }
-	f.mustStatus(f.call("GET", base+"/"+jid, f.token, nil, &job), http.StatusOK, "get job")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mustStatus(f.call("GET", base+"/"+jid, f.token, nil, &job), http.StatusOK, "get job")
+		if job.Status != "InProgress" && job.Status != "NotStarted" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pipeline job never reached a terminal state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if job.Status != "Completed" {
 		t.Fatalf("pipeline job status = %s", job.Status)
 	}
