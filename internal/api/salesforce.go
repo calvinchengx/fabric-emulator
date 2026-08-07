@@ -161,38 +161,12 @@ func (e *pipelineExecutor) salesforceConfig(
 			"return the object's rows rather than the report's (docs/41)", act.Name, r)
 	}
 
-	cfg := &salesforceCfg{apiVersion: salesforceAPIVersion, operation: "query",
-		timeout: restDefaultTimeout}
-
-	var err error
-	if cfg.instance, err = str("instanceUrl"); err != nil {
+	base, err := e.salesforceConnection(act, "source", src, resolve)
+	if err != nil {
 		return nil, err
 	}
-	if cfg.instance == "" {
-		return nil, fmt.Errorf("copy %q: Salesforce needs an `instanceUrl` — the emulator models no "+
-			"connections, so the source names the org directly (docs/41)", act.Name)
-	}
-	if !strings.HasPrefix(cfg.instance, "http://") && !strings.HasPrefix(cfg.instance, "https://") {
-		return nil, fmt.Errorf("copy %q: Salesforce instanceUrl %q is not http(s)", act.Name, cfg.instance)
-	}
-	cfg.instance = strings.TrimSuffix(cfg.instance, "/")
-
-	if cfg.token, err = str("accessToken"); err != nil {
-		return nil, err
-	}
-	if cfg.token == "" {
-		return nil, fmt.Errorf("copy %q: Salesforce needs an `accessToken` — a Web activity can run "+
-			"the OAuth call and pass it as an expression (docs/41)", act.Name)
-	}
-
-	if v, err := str("apiVersion"); err != nil {
-		return nil, err
-	} else if v != "" {
-		if !strings.HasPrefix(v, "v") {
-			v = "v" + v
-		}
-		cfg.apiVersion = v
-	}
+	cfg := base
+	cfg.operation = "query"
 
 	// includeDeletedObjects is not a filter applied to results — it selects a
 	// DIFFERENT Bulk operation. Treating it as a post-filter would silently drop
@@ -378,4 +352,64 @@ func (e *pipelineExecutor) salesforceResults(
 		out = &warehouse.Table{}
 	}
 	return out, pages, nil
+}
+
+// salesforceConnection reads the org coordinates a Copy side names directly.
+//
+// Fabric puts these on a CONNECTION, which this emulator does not model — the
+// same wall RestSource hit, and the same shape the Script activity already uses
+// for its target. Shared between the source and the sink so one side cannot
+// drift into accepting something the other rejects.
+func (e *pipelineExecutor) salesforceConnection(
+	act pipeline.Activity,
+	side string,
+	m map[string]json.RawMessage,
+	resolve func(json.RawMessage) (any, error),
+) (*salesforceCfg, error) {
+	str := func(key string) (string, error) {
+		raw, ok := m[key]
+		if !ok || len(raw) == 0 {
+			return "", nil
+		}
+		v, err := resolve(raw)
+		if err != nil {
+			return "", fmt.Errorf("copy %q: %s %s: %w", act.Name, side, key, err)
+		}
+		if v == nil {
+			return "", nil
+		}
+		return strings.TrimSpace(fmt.Sprint(v)), nil
+	}
+
+	cfg := &salesforceCfg{apiVersion: salesforceAPIVersion, timeout: restDefaultTimeout}
+	var err error
+	if cfg.instance, err = str("instanceUrl"); err != nil {
+		return nil, err
+	}
+	if cfg.instance == "" {
+		return nil, fmt.Errorf("copy %q: Salesforce needs an `instanceUrl` — the emulator models no "+
+			"connections, so the %s names the org directly (docs/41)", act.Name, side)
+	}
+	if !strings.HasPrefix(cfg.instance, "http://") && !strings.HasPrefix(cfg.instance, "https://") {
+		return nil, fmt.Errorf("copy %q: Salesforce instanceUrl %q is not http(s)", act.Name, cfg.instance)
+	}
+	cfg.instance = strings.TrimSuffix(cfg.instance, "/")
+
+	if cfg.token, err = str("accessToken"); err != nil {
+		return nil, err
+	}
+	if cfg.token == "" {
+		return nil, fmt.Errorf("copy %q: Salesforce needs an `accessToken` — a Web activity can run "+
+			"the OAuth call and pass it as an expression (docs/41)", act.Name)
+	}
+
+	if v, err := str("apiVersion"); err != nil {
+		return nil, err
+	} else if v != "" {
+		if !strings.HasPrefix(v, "v") {
+			v = "v" + v
+		}
+		cfg.apiVersion = v
+	}
+	return cfg, nil
 }
