@@ -141,10 +141,19 @@ def test_the_schema_accepts_the_column_that_costs_the_whole_table(validator, gi)
     `dataLength` — the exact payload OpenMetadata answers with 400 for the
     ENTIRE table — validates clean here.
 
-    Asserting the gap rather than describing it means a schema that ever grows
-    the rule (an `if`/`then`, an `allOf`, a `dependentRequired`) fails this test
-    instead of silently making the prose above wrong. At that point the cheap
-    guard's job has changed and this test should be revisited, not deleted.
+    WHEN THIS FIRES, precisely — it does not watch upstream. It validates the
+    VENDORED 1.13.2 bytes, which change only when someone re-vendors, so an
+    OpenMetadata release that encodes the rule does not trip it on its own.
+    What closes the chain is the pin: `test_the_pinned_schema_matches_the_
+    version_docker_compose_runs` fails the moment the compose image is bumped
+    without re-vendoring, and re-vendoring is what brings new bytes here. So the
+    sequence is image bump -> pin test fails -> re-vendor -> this test fails if
+    the rule arrived. Do not read it as drift detection against upstream; it
+    cannot carry that.
+
+    If it does fail after a re-vendor, the schema has grown the rule (an
+    `if`/`then`, an `allOf`, a `dependentRequired`) and the cheap guard's job
+    has changed. Revisit both, do not delete either on the strength of one.
     """
     assert errors(validator, {"name": "c", "dataType": "BINARY"}) == []
 
