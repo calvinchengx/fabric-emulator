@@ -78,7 +78,8 @@ os.makedirs(os.path.join(WORK, "data"))
 entra_bin = shutil.which("entra-emulator")
 if not entra_bin:
     log("installing entra-emulator")
-    subprocess.run(["go", "install", "github.com/calvinchengx/entra-emulator/cmd/entra-emulator@latest"],
+    # Pinned to the entra-emulator version in go.mod — bump this together with go.mod.
+    subprocess.run(["go", "install", "github.com/calvinchengx/entra-emulator/cmd/entra-emulator@v0.2.0"],
                    check=True, env={**os.environ, "GOBIN": WORK})
     entra_bin = os.path.join(WORK, "entra-emulator" + EXE)
 
