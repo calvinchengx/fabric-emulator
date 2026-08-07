@@ -106,6 +106,7 @@ export default defineConfig({
             { slug: '38-framework-conformance' },
             { slug: '39-run-multiple-parity-plan' },
             { slug: '40-rest-connector-plan' },
+            { slug: '41-salesforce-connector-plan' },
             { slug: 'engine-matrix' },
           ],
         },
