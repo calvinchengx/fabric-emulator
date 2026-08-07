@@ -108,6 +108,7 @@ export default defineConfig({
             { slug: '40-rest-connector-plan' },
             { slug: '41-salesforce-connector-plan' },
             { slug: '42-sail-fidelity-plan' },
+            { slug: '43-activity-completion-plan' },
             { slug: 'engine-matrix' },
           ],
         },
