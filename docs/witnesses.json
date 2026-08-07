@@ -750,7 +750,8 @@
       "go:TestSalesforceCSVNullHandlingInverts",
       "go:TestSalesforceSinkRefusesAPartialWrite",
       "go:TestSalesforceSinkUpsertNeedsAnExternalId",
-      "go:TestSalesforceSinkResolvesARelativeContentUrl"
+      "go:TestSalesforceSinkResolvesARelativeContentUrl",
+      "ci:salesforce"
     ]
   }
 }
