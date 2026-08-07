@@ -285,6 +285,11 @@ func firstKeyword(query string) string {
 const (
 	doneFinal uint16 = 0x0000
 	doneError uint16 = 0x0002
+	// doneAttn acknowledges an ATTENTION. A client that abandons a result set
+	// before its stream ends sends one and then BLOCKS until it sees this bit
+	// come back — "did not get cancellation confirmation from the server" is
+	// what go-mssqldb reports when it does not.
+	doneAttn  uint16 = 0x0020
 	doneCount uint16 = 0x0010
 )
 
