@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -1607,11 +1608,17 @@ func TestPipelineJobOutlivesItsPOST(t *testing.T) {
 	ws := seedWorkspace(t, st)
 
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseNow := func() { releaseOnce.Do(func() { close(release) }) }
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-release // the activity is mid-flight until the test says otherwise
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
+	// LIFO: releaseNow runs BEFORE srv.Close, or a failure between here and
+	// the explicit release deadlocks Close on the still-held handler — which
+	// is how this test's own failure path hung a mutation run.
 	defer srv.Close()
+	defer releaseNow()
 
 	content := `{"properties":{"activities":[
         {"name":"Slow","type":"Web","typeProperties":{"url":"` + srv.URL + `","method":"GET"}}
@@ -1627,8 +1634,19 @@ func TestPipelineJobOutlivesItsPOST(t *testing.T) {
 	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s == "Completed" || s == "Failed" {
 		t.Fatalf("job reported %s while its activity was still executing", s)
 	}
+	// ORDERING, not just count (the CopyJob session's sharpening): a terminal
+	// event must not exist YET — one arriving now would describe a pipeline
+	// that has not run, and the exactly-once count below cannot see that on
+	// its own because a premature publish with the final one suppressed still
+	// counts 1.
+	for _, ev := range drainEvents(t, sub.C) {
+		if ev.Kind == store.KindJob && ev.JobID == jid &&
+			(ev.Status == store.JobCompleted || ev.Status == store.JobFailed) {
+			t.Fatalf("terminal event %s arrived while the activity was still executing", ev.Status)
+		}
+	}
 
-	close(release)
+	releaseNow()
 	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job = %s after the activity finished, want Completed", s)
 	}
@@ -1645,5 +1663,38 @@ func TestPipelineJobOutlivesItsPOST(t *testing.T) {
 	}
 	if terminals != 1 {
 		t.Fatalf("terminal job events = %d, want exactly 1 (a premature executesNow publish or a double finalize)", terminals)
+	}
+}
+
+// TestPipelineTerminalEventCarriesTheRealVerdict: the terminal event's status
+// must be the pipeline's outcome, not dispatch's assumption. A goroutine that
+// published Completed unconditionally would pass the happy-path test above;
+// this one fails it.
+func TestPipelineTerminalEventCarriesTheRealVerdict(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	content := `{"properties":{"activities":[
+        {"name":"Boom","type":"Fail","typeProperties":{"message":"as designed"}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+
+	sub := st.Subscribe()
+	defer sub.Close()
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job = %s, want Failed", s)
+	}
+	terminals := 0
+	for _, ev := range drainEvents(t, sub.C) {
+		if ev.Kind == store.KindJob && ev.JobID == jid &&
+			(ev.Status == store.JobCompleted || ev.Status == store.JobFailed) {
+			terminals++
+			if ev.Status != store.JobFailed {
+				t.Fatalf("terminal event says %s for a failed pipeline", ev.Status)
+			}
+		}
+	}
+	if terminals != 1 {
+		t.Fatalf("terminal events = %d, want exactly 1", terminals)
 	}
 }
