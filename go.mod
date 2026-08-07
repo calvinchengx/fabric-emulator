@@ -5,10 +5,10 @@ go 1.25.11
 toolchain go1.25.12
 
 require (
-	github.com/calvinchengx/entra-emulator v0.2.0
+	github.com/calvinchengx/entra-emulator v0.3.0
 	github.com/microsoft/go-mssqldb v1.10.0
 	github.com/parquet-go/parquet-go v0.30.1
-	modernc.org/sqlite v1.53.0
+	modernc.org/sqlite v1.54.0
 )
 
 require (
@@ -40,7 +40,7 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-	modernc.org/libc v1.73.4 // indirect
+	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
