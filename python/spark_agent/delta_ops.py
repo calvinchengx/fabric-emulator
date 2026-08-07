@@ -123,7 +123,10 @@ _VACUUM = re.compile(
 # to the engine untouched.
 _CTAS = re.compile(
     r"^\s*CREATE\s+(?P<replace>OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
-    r"(?P<target>[\w.`]+)\s+(?:USING\s+delta\s+)?AS\s+(?P<query>\(?\s*SELECT\b.+)$",
+    r"(?P<target>[\w.`]+)\s*"
+    r"(?:USING\s+(?P<using>\w+)\s*)?"
+    r"(?:LOCATION\s+'(?P<location>[^']+)'\s*)?"
+    r"AS\s+(?P<query>\(?\s*SELECT\b.+)$",
     re.IGNORECASE | re.DOTALL)
 
 # The bounded MERGE shape an upsert notebook writes, which is the shape a
@@ -216,8 +219,22 @@ def match(sql: str):
     if m:
         params = m.groupdict()
         target = params["target"].replace("`", "")
-        # Only a two-part name whose schema the emulator registered is ours;
-        # anything else is the engine's own business (its warehouse IS the
+        using = (params.get("using") or "").lower()
+        # A non-Delta format is the engine's business: `USING parquet` means
+        # parquet, and quietly writing Delta instead would be the silent wrong
+        # thing this seam exists to prevent.
+        if using and using != "delta":
+            return None
+        # An explicit LOCATION is self-describing: the statement says where the
+        # table goes, so no schema registration is needed to honour it. This is
+        # the shape dbt-fabricspark emits when `+location_root` points at the
+        # lakehouse — and the shape that used to fall through to the engine,
+        # landing silver in Sail's own warehouse while dbt reported success
+        # (the ᵍ row of docs/engine-matrix.md).
+        if params.get("location"):
+            return "ctas", params
+        # Otherwise only a two-part name whose schema the emulator registered is
+        # ours; anything else is the engine's own business (its warehouse IS the
         # right place for a schema nobody gave a location).
         if "." in target and known_schema_location(target.split(".", 1)[0]):
             return "ctas", params
@@ -234,20 +251,24 @@ def execute_ctas(spark, original_sql, params, storage_options=None):
     empty.
     """
     target = params["target"].replace("`", "")
-    schema, tbl = target.split(".", 1)
-    loc = f"{known_schema_location(schema)}/{tbl}"
+    schema, tbl = target.split(".", 1) if "." in target else (None, target)
+    # An explicit LOCATION wins: the statement named its destination, and
+    # overriding it with a schema default would ignore what the author wrote.
+    loc = params.get("location") or f"{known_schema_location(schema)}/{tbl}"
     replace = bool(params.get("replace"))
 
     df = original_sql(params["query"].strip().rstrip(";"))
     df.write.format("delta").mode("overwrite" if replace else "errorifexists").save(loc)
+    name = f"`{schema}`.`{tbl}`" if schema else f"`{tbl}`"
     if replace:
         try:
-            original_sql(f"DROP TABLE IF EXISTS `{schema}`.`{tbl}`")
+            original_sql(f"DROP TABLE IF EXISTS {name}")
         except Exception:  # noqa: BLE001 - a stale entry must not block the re-register
             pass
-    original_sql(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{tbl}` USING delta LOCATION '{loc}'")
+    original_sql(f"CREATE TABLE IF NOT EXISTS {name} USING delta LOCATION '{loc}'")
     remember(tbl, loc, schema)
-    return f"CREATE TABLE: {schema}.{tbl} at its schema location (delta write + register)"
+    where = "its stated LOCATION" if params.get("location") else "its schema location"
+    return f"CREATE TABLE: {target} at {where} (delta write + register)"
 
 
 def _dequote(expr: str) -> str:
