@@ -278,11 +278,19 @@ def sql_create_table_defaults_to_delta(spark):
     Neither side is wrong in isolation, which is what makes it worth a row:
     dbt is correct for Fabric, and an engine is entitled to its own default.
 
-    Read the row carefully — it is expected to be RED EVERYWHERE, and that is
-    the finding. Delta-by-default is a FABRIC property, and neither engine here
-    reproduces it. So the override the examples carry is not a Sail workaround
-    that a better engine would retire; it is the price of running dbt-fabricspark
-    anywhere that is not Fabric, and it would still be needed on the JVM overlay.
+    Read the row carefully — it is red on BOTH ENGINES and green in the middle.
+    Delta-by-default is a FABRIC property and neither Sail nor the JVM overlay
+    reproduces it; the EMULATOR now does, because `delta_ops` honours an explicit
+    LOCATION and writes Delta there. That makes this the one row where the
+    emulator is more faithful to Fabric than the JVM overlay is.
+
+    An earlier revision of this docstring said the row was "expected to be RED
+    EVERYWHERE, and that is the finding", and concluded the examples'
+    fabricspark__file_format_clause override was "the price of running
+    dbt-fabricspark anywhere that is not Fabric". The first half is no longer
+    true. The second is still worth testing rather than assuming: the override
+    may now be unnecessary AGAINST THE EMULATOR, and it is certainly still needed
+    against bare OSS Spark. Prove it with the medallion e2e before deleting it.
     """
     p = _table_path("t_default_fmt")
     # Plain CREATE TABLE, not CREATE OR REPLACE: the first version of this probe

@@ -124,3 +124,29 @@ def test_execute_writes_delta_to_the_stated_location():
     assert any("CREATE TABLE IF NOT EXISTS" in s and "USING delta" in s for s in statements)
     assert delta_ops.known_location("silver.users") == "az://ws/item/Tables/users"
     assert "stated LOCATION" in message
+
+
+def test_a_plain_create_table_proceeds_when_it_cannot_check_for_an_existing_one():
+    """The non-replace path, exercised with or without delta-rs installed.
+
+    `errorifexists` is the mode this used to use and the one Sail cannot
+    execute, so the guarantee moved to an existence check. That check must be
+    strictly best-effort: with delta-rs absent the import fails, with it present
+    a fresh path answers False, and either way the write proceeds. A check that
+    could block the statement would have turned a missing optional dependency
+    into a failed pipeline.
+    """
+    sink, statements = {}, []
+
+    def original_sql(query):
+        statements.append(query)
+        return FakeDF(sink)
+
+    kind, params = delta_ops.match(
+        "CREATE TABLE users LOCATION '/tmp/does-not-exist-yet/users' AS SELECT 1 AS a")
+    assert kind == "ctas"
+    assert not params["replace"]
+
+    delta_ops.execute_ctas(None, original_sql, params)
+    assert sink["path"] == "/tmp/does-not-exist-yet/users"
+    assert sink["mode"] == "overwrite"

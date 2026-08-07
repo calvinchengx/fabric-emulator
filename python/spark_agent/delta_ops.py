@@ -242,7 +242,7 @@ def match(sql: str):
 
 
 def execute_ctas(spark, original_sql, params, storage_options=None):
-    """Run a CTAS whose schema has a registered location, landing it there.
+    """Run a CTAS, landing it where the statement says.
 
     The SELECT runs on the ENGINE (arbitrary SQL is its job); only the write
     is redirected: DataFrame.save to the schema-location path, then a catalog
@@ -257,8 +257,40 @@ def execute_ctas(spark, original_sql, params, storage_options=None):
     loc = params.get("location") or f"{known_schema_location(schema)}/{tbl}"
     replace = bool(params.get("replace"))
 
+    # `errorifexists` is the semantically correct mode for a plain CREATE TABLE,
+    # and Sail does not implement it (`[UNSUPPORTED_OPERATION] errorifexists is
+    # not supported`). Asking delta-rs whether the table is already there gives
+    # the same guarantee through a route both engines have — and a better error,
+    # naming the table rather than the write mode. Found by the engine matrix
+    # when honouring LOCATION first made the non-replace path reachable.
+    if not replace:
+        try:
+            # Imported HERE, not at the top of this function: a CREATE OR
+            # REPLACE needs no existence check and must not require delta-rs at
+            # all. Hoisting this import broke two pre-existing tests on the CI
+            # leg that runs without the optional group.
+            from deltalake import DeltaTable
+
+            exists = DeltaTable.is_deltatable(
+                loc, storage_options=_resolve_options(storage_options))
+        except Exception as err:  # noqa: BLE001 - see below
+            # An UNREADABLE location is not evidence that a table is there. If
+            # storage is genuinely broken the write two lines down fails loudly
+            # with the same error, so declining to infer existence here costs
+            # nothing and keeps a credential problem from being reported as
+            # "table already exists" — which would send someone to the wrong
+            # place entirely.
+            print(f"[delta_ops] could not check {loc} for an existing table "
+                  f"({err}); proceeding, the write will surface any real problem",
+                  file=sys.stderr, flush=True)
+            exists = False
+        if exists:
+            raise DeltaOpError(
+                f"CREATE TABLE {target}: a Delta table already exists at {loc}. "
+                f"Use CREATE OR REPLACE TABLE to overwrite it.")
+
     df = original_sql(params["query"].strip().rstrip(";"))
-    df.write.format("delta").mode("overwrite" if replace else "errorifexists").save(loc)
+    df.write.format("delta").mode("overwrite").save(loc)
     name = f"`{schema}`.`{tbl}`" if schema else f"`{tbl}`"
     if replace:
         try:
