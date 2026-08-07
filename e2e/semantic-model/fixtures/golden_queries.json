@@ -85,6 +85,21 @@
       }
     },
     {
+      "name": "Derived Label via SELECTEDVALUE",
+      "asset": "DAX label built from the grouped column (issue #47)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS('Time'[FiscalYear], \"Label\", \"Fiscal \" & SELECTEDVALUE('Time'[FiscalYear]), \"Month\", SELECTEDVALUE('Time'[FiscalMonth], \"(mixed)\"))",
+      "handler": "dax",
+      "note": "A bare 'Time'[FiscalYear] in an extension expression is refused \u2014 real DAX refuses it too \u2014 so SELECTEDVALUE is the only way to DERIVE a label from the column being grouped by. [Month] exercises the other half: each FiscalYear holds two FiscalMonths, so there is no single value and the alternate is returned.",
+      "expected": {
+        "orderInsensitive": true,
+        "columns": ["Time[FiscalYear]", "[Label]", "[Month]"],
+        "rows": [
+          { "Time[FiscalYear]": "FY2013", "[Label]": "Fiscal FY2013", "[Month]": "(mixed)" },
+          { "Time[FiscalYear]": "FY2014", "[Label]": "Fiscal FY2014", "[Month]": "(mixed)" }
+        ]
+      }
+    },
+    {
       "name": "Referential Integrity Violation",
       "asset": "DMV query (tutorial: DISCOVER_STORAGE_TABLES / RIVIOLATION_COUNT)",
       "dax": "SELECT [Dimension_Name], [RIVIOLATION_COUNT] FROM $SYSTEM.DISCOVER_STORAGE_TABLES",
