@@ -117,7 +117,14 @@ func TestDAXOperatorErrors(t *testing.T) {
 		// The shape someone reaches for first when building a label with `&`.
 		// It is a genuine DAX error, not an operator gap, so the message has to
 		// say so rather than read as "& is broken".
-		{`EVALUATE SUMMARIZECOLUMNS('Store'[Territory], "v", "T: " & 'Store'[Territory])`, "group by it"},
+		{`EVALUATE SUMMARIZECOLUMNS('Store'[Territory], "v", "T: " & 'Store'[Territory])`, "group by Store[Territory]"},
+		// Summing text used to return a confident 0, so `"FY" & SUM(text)` gave
+		// a label reading "FY0" — a wrong answer, not an error.
+		{`EVALUATE SUMMARIZECOLUMNS("v", SUM('Store'[Territory]))`, "is not a number"},
+		{`EVALUATE SUMMARIZECOLUMNS("v", "FY" & SUM('Store'[Territory]))`, "cannot sum Store[Territory]"},
+		// DIVIDE coerced the same way, and string literals as scalars are new
+		// here, so this path is one this change opened.
+		{`EVALUATE SUMMARIZECOLUMNS("v", DIVIDE("abc", 2))`, "text value"},
 		// Malformed operator expressions.
 		{`EVALUATE SUMMARIZECOLUMNS("v", 1 +)`, "expected"},
 		{`EVALUATE SUMMARIZECOLUMNS("v", * 5)`, "no left-hand operand"},
@@ -165,5 +172,46 @@ func TestDAXStoredOperatorMeasureRoundTrips(t *testing.T) {
 	want := 1100.0 / 3800.0 * 100 // 28.947…; compare with a float tolerance
 	if got := toF(evalScalar(t, "[Units Growth Pct]")); math.Abs(got-want) > 1e-9 {
 		t.Errorf("[Units Growth Pct] = %v, want %v", got, want)
+	}
+}
+
+// The bare-column message has to fit the column it names. Recommending SUM on a
+// text column is how someone follows the advice and lands on "FY0"; recommending
+// it on a numeric column is genuinely the fix.
+func TestDAXBareColumnHintFitsTheColumnType(t *testing.T) {
+	m, d := loadModel(t), loadData(t)
+	for _, tc := range []struct {
+		query, want   string
+		wantAggregate bool
+	}{
+		{`EVALUATE SUMMARIZECOLUMNS('Store'[Territory], "v", "T: " & 'Store'[Territory])`, "group by Store[Territory]", false},
+		{`EVALUATE SUMMARIZECOLUMNS("v", Sales[Units] * 2)`, "group by Sales[Units]", true},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			_, err := Evaluate(m, d, tc.query)
+			if err == nil {
+				t.Fatal("a bare column reference evaluated; it must be refused")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not mention %q", err, tc.want)
+			}
+			if got := strings.Contains(err.Error(), "SUM("); got != tc.wantAggregate {
+				t.Errorf("error %q offers SUM = %v, want %v", err, got, tc.wantAggregate)
+			}
+		})
+	}
+}
+
+// SUM still totals a column whose numbers arrived as strings — the refusal must
+// reject text, not every value that is not already a float64.
+func TestDAXSumParsesNumericStrings(t *testing.T) {
+	m := loadModel(t)
+	d := Data{"Sales": []Row{{"Units": "1.5"}, {"Units": 2}, {"Units": nil}}}
+	res, err := Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", SUM(Sales[Units]))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := toF(res.Rows[0]["[v]"]); got != 3.5 {
+		t.Errorf("SUM over mixed numeric strings = %v, want 3.5", got)
 	}
 }

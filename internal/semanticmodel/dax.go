@@ -566,11 +566,18 @@ func (e *evalr) scalar(expr scalarExpr) (any, error) {
 	case columnRef:
 		// Real DAX refuses a bare column here too — a filter context gives no
 		// row from which to read one value. The likeliest way to arrive is
-		// building a label with `&`, so the message names the two ways out
-		// this evaluator actually supports.
-		return nil, fmt.Errorf("column %s[%s] has no single value in this context: "+
-			"aggregate it (SUM(%s[%s])) or group by it, so SUMMARIZECOLUMNS returns it as its own column",
-			x.table, x.col, x.table, x.col)
+		// building a label with `&`, so the message names a way out. Grouping
+		// works for every column type and leads; SUM is offered only for a
+		// column that can actually be summed, since following that advice on a
+		// text column is how someone ends up with a label reading "FY0".
+		tbl := strings.Trim(x.table, "'")
+		fix := fmt.Sprintf("group by %s[%s], so SUMMARIZECOLUMNS returns it as its own column", tbl, x.col)
+		if t := e.model.Table(tbl); t != nil {
+			if c := t.Column(x.col); c != nil && summableType(c.DataType) {
+				fix += fmt.Sprintf(", or aggregate it (SUM(%s[%s]))", tbl, x.col)
+			}
+		}
+		return nil, fmt.Errorf("column %s[%s] has no single value in this context: %s", tbl, x.col, fix)
 	}
 	return nil, fmt.Errorf("unsupported scalar expression %T", expr)
 }
@@ -629,29 +636,47 @@ func (e *evalr) binary(b binaryExpr) (any, error) {
 	return lf / rf, nil
 }
 
+// summableType reports whether a TMSL/TMDL dataType is one SUM can total. An
+// unknown or absent dataType answers false: the point is to avoid recommending
+// an aggregation that would silently return zero, so silence is the safe side.
+func summableType(t string) bool {
+	switch strings.ToLower(t) {
+	case "int64", "double", "decimal", "currency":
+		return true
+	}
+	return false
+}
+
 // arithNum coerces an operand of +, -, * or / to a number: BLANK counts as 0
 // and a numeric string converts, but text that is not a number errors rather
 // than silently becoming zero.
 func arithNum(v any, op string) (float64, error) {
-	switch n := v.(type) {
-	case nil:
-		return 0, nil
-	case bool:
-		if n {
-			return 1, nil
-		}
-		return 0, nil
-	case string:
-		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
-		if err != nil {
-			return 0, fmt.Errorf("cannot apply %q to the text value %q", op, n)
-		}
+	if f, ok := asNumber(v); ok {
 		return f, nil
 	}
-	if f, ok := numeric(v); ok {
-		return f, nil
+	if t, isText := v.(string); isText {
+		return 0, fmt.Errorf("cannot apply %q to the text value %q", op, t)
 	}
 	return 0, fmt.Errorf("cannot apply %q to %T", op, v)
+}
+
+// asNumber converts a value for arithmetic: BLANK is 0, a boolean is 1 or 0,
+// and a numeric string parses. Anything else answers false — never 0, which is
+// the coercion that let text total silently.
+func asNumber(v any) (float64, bool) {
+	switch n := v.(type) {
+	case nil:
+		return 0, true
+	case bool:
+		if n {
+			return 1, true
+		}
+		return 0, true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		return f, err == nil
+	}
+	return numeric(v)
 }
 
 // daxCmp orders two values: numerically when both sides are numbers (BLANK
@@ -723,9 +748,22 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("SUM expects a column reference")
 		}
+		tbl := strings.Trim(col.table, "'")
 		var s float64
-		for _, r := range e.activeRows(strings.Trim(col.table, "'")) {
-			s += toF(r[col.col])
+		for _, r := range e.activeRows(tbl) {
+			v := r[col.col]
+			if v == nil {
+				continue // BLANK contributes nothing to a sum
+			}
+			f, ok := asNumber(v)
+			if !ok {
+				// Every value used to go through a coercion that returned 0 for
+				// anything it could not read, so summing a text column reported
+				// a confident zero — worse than an error, because a caller acts
+				// on a number.
+				return nil, fmt.Errorf("cannot sum %s[%s]: the value %v is not a number", tbl, col.col, v)
+			}
+			s += f
 		}
 		return s, nil
 	case "DIVIDE":
@@ -740,11 +778,18 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		den := toF(b)
+		num, err := arithNum(a, "DIVIDE")
+		if err != nil {
+			return nil, err
+		}
+		den, err := arithNum(b, "DIVIDE")
+		if err != nil {
+			return nil, err
+		}
 		if den == 0 {
 			return nil, nil // DAX DIVIDE → blank on divide-by-zero
 		}
-		return toF(a) / den, nil
+		return num / den, nil
 	case "IF":
 		if len(fc.args) < 2 {
 			return nil, fmt.Errorf("IF expects a condition and a value")
