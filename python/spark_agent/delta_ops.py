@@ -123,7 +123,10 @@ _VACUUM = re.compile(
 # to the engine untouched.
 _CTAS = re.compile(
     r"^\s*CREATE\s+(?P<replace>OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
-    r"(?P<target>[\w.`]+)\s+(?:USING\s+delta\s+)?AS\s+(?P<query>\(?\s*SELECT\b.+)$",
+    r"(?P<target>[\w.`]+)\s*"
+    r"(?:USING\s+(?P<using>\w+)\s*)?"
+    r"(?:LOCATION\s+'(?P<location>[^']+)'\s*)?"
+    r"AS\s+(?P<query>\(?\s*SELECT\b.+)$",
     re.IGNORECASE | re.DOTALL)
 
 # The bounded MERGE shape an upsert notebook writes, which is the shape a
@@ -216,8 +219,22 @@ def match(sql: str):
     if m:
         params = m.groupdict()
         target = params["target"].replace("`", "")
-        # Only a two-part name whose schema the emulator registered is ours;
-        # anything else is the engine's own business (its warehouse IS the
+        using = (params.get("using") or "").lower()
+        # A non-Delta format is the engine's business: `USING parquet` means
+        # parquet, and quietly writing Delta instead would be the silent wrong
+        # thing this seam exists to prevent.
+        if using and using != "delta":
+            return None
+        # An explicit LOCATION is self-describing: the statement says where the
+        # table goes, so no schema registration is needed to honour it. This is
+        # the shape dbt-fabricspark emits when `+location_root` points at the
+        # lakehouse — and the shape that used to fall through to the engine,
+        # landing silver in Sail's own warehouse while dbt reported success
+        # (the ᵍ row of docs/engine-matrix.md).
+        if params.get("location"):
+            return "ctas", params
+        # Otherwise only a two-part name whose schema the emulator registered is
+        # ours; anything else is the engine's own business (its warehouse IS the
         # right place for a schema nobody gave a location).
         if "." in target and known_schema_location(target.split(".", 1)[0]):
             return "ctas", params
@@ -225,7 +242,7 @@ def match(sql: str):
 
 
 def execute_ctas(spark, original_sql, params, storage_options=None):
-    """Run a CTAS whose schema has a registered location, landing it there.
+    """Run a CTAS, landing it where the statement says.
 
     The SELECT runs on the ENGINE (arbitrary SQL is its job); only the write
     is redirected: DataFrame.save to the schema-location path, then a catalog
@@ -234,20 +251,56 @@ def execute_ctas(spark, original_sql, params, storage_options=None):
     empty.
     """
     target = params["target"].replace("`", "")
-    schema, tbl = target.split(".", 1)
-    loc = f"{known_schema_location(schema)}/{tbl}"
+    schema, tbl = target.split(".", 1) if "." in target else (None, target)
+    # An explicit LOCATION wins: the statement named its destination, and
+    # overriding it with a schema default would ignore what the author wrote.
+    loc = params.get("location") or f"{known_schema_location(schema)}/{tbl}"
     replace = bool(params.get("replace"))
 
+    # `errorifexists` is the semantically correct mode for a plain CREATE TABLE,
+    # and Sail does not implement it (`[UNSUPPORTED_OPERATION] errorifexists is
+    # not supported`). Asking delta-rs whether the table is already there gives
+    # the same guarantee through a route both engines have — and a better error,
+    # naming the table rather than the write mode. Found by the engine matrix
+    # when honouring LOCATION first made the non-replace path reachable.
+    if not replace:
+        try:
+            # Imported HERE, not at the top of this function: a CREATE OR
+            # REPLACE needs no existence check and must not require delta-rs at
+            # all. Hoisting this import broke two pre-existing tests on the CI
+            # leg that runs without the optional group.
+            from deltalake import DeltaTable
+
+            exists = DeltaTable.is_deltatable(
+                loc, storage_options=_resolve_options(storage_options))
+        except Exception as err:  # noqa: BLE001 - see below
+            # An UNREADABLE location is not evidence that a table is there. If
+            # storage is genuinely broken the write two lines down fails loudly
+            # with the same error, so declining to infer existence here costs
+            # nothing and keeps a credential problem from being reported as
+            # "table already exists" — which would send someone to the wrong
+            # place entirely.
+            print(f"[delta_ops] could not check {loc} for an existing table "
+                  f"({err}); proceeding, the write will surface any real problem",
+                  file=sys.stderr, flush=True)
+            exists = False
+        if exists:
+            raise DeltaOpError(
+                f"CREATE TABLE {target}: a Delta table already exists at {loc}. "
+                f"Use CREATE OR REPLACE TABLE to overwrite it.")
+
     df = original_sql(params["query"].strip().rstrip(";"))
-    df.write.format("delta").mode("overwrite" if replace else "errorifexists").save(loc)
+    df.write.format("delta").mode("overwrite").save(loc)
+    name = f"`{schema}`.`{tbl}`" if schema else f"`{tbl}`"
     if replace:
         try:
-            original_sql(f"DROP TABLE IF EXISTS `{schema}`.`{tbl}`")
+            original_sql(f"DROP TABLE IF EXISTS {name}")
         except Exception:  # noqa: BLE001 - a stale entry must not block the re-register
             pass
-    original_sql(f"CREATE TABLE IF NOT EXISTS `{schema}`.`{tbl}` USING delta LOCATION '{loc}'")
+    original_sql(f"CREATE TABLE IF NOT EXISTS {name} USING delta LOCATION '{loc}'")
     remember(tbl, loc, schema)
-    return f"CREATE TABLE: {schema}.{tbl} at its schema location (delta write + register)"
+    where = "its stated LOCATION" if params.get("location") else "its schema location"
+    return f"CREATE TABLE: {target} at {where} (delta write + register)"
 
 
 def _dequote(expr: str) -> str:

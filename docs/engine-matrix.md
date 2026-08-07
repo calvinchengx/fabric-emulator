@@ -123,13 +123,13 @@ tests never touch.
 | Python UDF | ✅ | ✅ | ✅ |
 | SQL over a temp view | ✅ | ✅ | ✅ |
 | Filter on a `row_number()` column the `SELECT` drops ᵈ | ✅ | ✅ | ✅ |
-| `CREATE TABLE` with no `USING` defaults to Delta ᵍ | ❌ `Invalid table location: No commit files found in _delta_log` | ❌ `Invalid table location: No commit files found in _delta_log` | ❌ `[NOT_SUPPORTED_COMMAND_WITHOUT_HIVE_SUPPORT] CREATE Hive TABLE (AS SELECT) is not supporte` |
+| `CREATE TABLE` with no `USING` defaults to Delta ᵍ | ❌ `Invalid table location: No commit files found in _delta_log` | ✅ | ❌ `[NOT_SUPPORTED_COMMAND_WITHOUT_HIVE_SUPPORT] CREATE Hive TABLE (AS SELECT) is not supporte` |
 | `DESCRIBE TABLE` on a registered Delta table ᵉ | ❌ `DESCRIBE returned 0 rows: []` | ❌ `DESCRIBE returned 0 rows: []` | ✅ |
 | `DESCRIBE DETAIL` on a registered Delta table ᶠ | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ✅ |
 | `read.text(wholetext=True)` — one row per file (must not be inert) ʰ | ✅ | ✅ | ✅ |
 | `read.json(multiLine=True)` over a JSON-array file ʰ | ❌ `Json error: Not valid JSON: EOF while parsing a list at line 1 column 1` | ❌ `Json error: Not valid JSON: EOF while parsing a list at line 1 column 1` | ✅ |
 
-**11 of 25 capabilities differ between the engines.**
+**12 of 25 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the
 candidate list for upstream Sail contributions.
 
