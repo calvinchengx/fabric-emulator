@@ -56,14 +56,6 @@ func (e *pipelineExecutor) webActivity(
 	tp map[string]json.RawMessage,
 	resolve func(json.RawMessage) (any, error),
 ) (map[string]any, error) {
-	if e.a.WebActivityStub {
-		// The old behaviour, kept for hermetic CI — and labelled in the output
-		// so a run that took this path cannot be mistaken for one that called.
-		return map[string]any{
-			"status": "Succeeded", "activityType": act.Type, "stubbed": true,
-		}, nil
-	}
-
 	method := "GET"
 	if raw, ok := tp["method"]; ok && len(raw) > 0 {
 		v, err := resolve(raw)
@@ -86,22 +78,62 @@ func (e *pipelineExecutor) webActivity(
 	if rawURL == "" {
 		return nil, fmt.Errorf("web activity %q: url is required", act.Name)
 	}
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-		// Named rather than handed to the client: `net/http` reports this as
-		// `unsupported protocol scheme ""`, which does not say which activity
-		// or which value produced it.
-		return nil, fmt.Errorf("web activity %q: url %q is not http(s)", act.Name, rawURL)
-	}
 
-	var body io.Reader
+	var bodyVal any
 	if raw, ok := tp["body"]; ok && len(raw) > 0 {
 		v, err := resolve(raw)
 		if err != nil {
 			return nil, fmt.Errorf("web activity %q: body: %w", act.Name, err)
 		}
-		if v != nil {
-			body = bytes.NewReader(webBody(v))
+		bodyVal = v
+	}
+
+	headers := map[string]string{}
+	if raw, ok := tp["headers"]; ok && len(raw) > 0 {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return nil, fmt.Errorf("web activity %q: headers are not an object", act.Name)
 		}
+		for name, vraw := range fields {
+			v, err := resolve(vraw)
+			if err != nil {
+				return nil, fmt.Errorf("web activity %q: header %q: %w", act.Name, name, err)
+			}
+			headers[name] = fmt.Sprint(v)
+		}
+	}
+	return e.httpActivity("web", act, method, rawURL, headers, bodyVal)
+}
+
+// httpActivity is the shared post-resolution core of the Web and Azure
+// Function activities: one real HTTP call, Fabric's output shape, Fabric's
+// non-2xx-fails rule, and the bounded body. Split out so Functions cannot
+// drift from Web on the mechanics they share — the caller owns everything
+// schema-specific (which fields exist, what is required, how the URL is
+// assembled) and this owns everything HTTP.
+func (e *pipelineExecutor) httpActivity(
+	kind string,
+	act pipeline.Activity,
+	method, rawURL string,
+	headers map[string]string,
+	bodyVal any,
+) (map[string]any, error) {
+	if e.a.WebActivityStub {
+		// The old behaviour, kept for hermetic CI — and labelled in the output
+		// so a run that took this path cannot be mistaken for one that called.
+		return map[string]any{
+			"status": "Succeeded", "activityType": act.Type, "stubbed": true,
+		}, nil
+	}
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		// Named rather than handed to the client: `net/http` reports this as
+		// `unsupported protocol scheme ""`, which does not say which activity
+		// or which value produced it.
+		return nil, fmt.Errorf("%s activity %q: url %q is not http(s)", kind, act.Name, rawURL)
+	}
+	var body io.Reader
+	if bodyVal != nil {
+		body = bytes.NewReader(webBody(bodyVal))
 	}
 
 	timeout := webDefaultTimeout
@@ -115,7 +147,7 @@ func (e *pipelineExecutor) webActivity(
 
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
-		return nil, fmt.Errorf("web activity %q: %w", act.Name, err)
+		return nil, fmt.Errorf("%s activity %q: %w", kind, act.Name, err)
 	}
 	// A JSON body with no declared type is the common case in a pipeline
 	// definition, and a receiver that reads Content-Type would otherwise get
@@ -123,23 +155,13 @@ func (e *pipelineExecutor) webActivity(
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if raw, ok := tp["headers"]; ok && len(raw) > 0 {
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &fields); err != nil {
-			return nil, fmt.Errorf("web activity %q: headers are not an object", act.Name)
-		}
-		for name, vraw := range fields {
-			v, err := resolve(vraw)
-			if err != nil {
-				return nil, fmt.Errorf("web activity %q: header %q: %w", act.Name, name, err)
-			}
-			req.Header.Set(name, fmt.Sprint(v))
-		}
+	for name, v := range headers {
+		req.Header.Set(name, v)
 	}
 
 	resp, err := e.a.webClient().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("web activity %q: %s %s: %w", act.Name, method, rawURL, err)
+		return nil, fmt.Errorf("%s activity %q: %s %s: %w", kind, act.Name, method, rawURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -149,22 +171,22 @@ func (e *pipelineExecutor) webActivity(
 	// the truncation growing back. (internal/httpx has a guard test for this.)
 	raw, ok := httpx.ReadBounded(resp.Body, webMaxBody)
 	if !ok {
-		return nil, fmt.Errorf("web activity %q: response body is unreadable or exceeds %d bytes — "+
+		return nil, fmt.Errorf("%s activity %q: response body is unreadable or exceeds %d bytes — "+
 			"the output is held in memory and in the run record, so this activity "+
-			"is not a download mechanism", act.Name, webMaxBody)
+			"is not a download mechanism", kind, act.Name, webMaxBody)
 	}
 
-	headers := map[string]any{}
+	respHeaders := map[string]any{}
 	for k := range resp.Header {
-		headers[k] = resp.Header.Get(k)
+		respHeaders[k] = resp.Header.Get(k)
 	}
 
 	// Fabric FAILS the activity on a non-2xx, rather than returning the status
 	// for the pipeline to inspect. A pipeline that treats 500 as success would
 	// behave differently here than in Fabric, so the status decides the outcome.
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("web activity %q: %s %s returned %d: %s",
-			act.Name, method, rawURL, resp.StatusCode, snippet(raw))
+		return nil, fmt.Errorf("%s activity %q: %s %s returned %d: %s",
+			kind, act.Name, method, rawURL, resp.StatusCode, snippet(raw))
 	}
 
 	out := map[string]any{}
@@ -181,7 +203,7 @@ func (e *pipelineExecutor) webActivity(
 	}
 	out["status"] = "Succeeded"
 	out["statusCode"] = resp.StatusCode
-	out[webHeadersKey] = headers
+	out[webHeadersKey] = respHeaders
 	return out, nil
 }
 
