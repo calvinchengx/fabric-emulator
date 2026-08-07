@@ -136,11 +136,37 @@ func TestCopyJobRefusesWhatItCannotHonour(t *testing.T) {
 	    "destination": {"datasetSettings": {"table": "Customers"}}}}]
 	}`
 
+	externalDst := `{
+	  "properties": {"jobMode": "Batch",
+	    "source": {"type": "LakehouseTable", "connectionSettings": {"type": "Lakehouse",
+	      "typeProperties": {"workspaceId": "` + ws.ID + `", "artifactId": "` + src.ID + `"}}},
+	    "destination": {"type": "AzureSqlTable", "connectionSettings": {"type": "AzureSqlDatabase",
+	      "typeProperties": {"database": "salesdb"}, "externalReferences": {"connection": "00000000-0000-0000-0000-000000000000"}}}},
+	  "activities": [{"properties": {
+	    "source": {"datasetSettings": {"table": "orders"}},
+	    "destination": {"datasetSettings": {"schema": "dbo", "table": "orders"}}}}]
+	}`
+	// Both sides external: source must be named, EVERY run. The first version
+	// ranged a map here, so which side got reported was up to Go's iteration
+	// order — a test asserting either side would have been a genuine flake.
+	bothExternal := `{
+	  "properties": {"jobMode": "Batch",
+	    "source": {"type": "AzureSqlTable", "connectionSettings": {"type": "AzureSqlDatabase",
+	      "typeProperties": {"database": "a"}, "externalReferences": {"connection": "00000000-0000-0000-0000-000000000000"}}},
+	    "destination": {"type": "AzureSqlTable", "connectionSettings": {"type": "AzureSqlDatabase",
+	      "typeProperties": {"database": "b"}, "externalReferences": {"connection": "00000000-0000-0000-0000-000000000000"}}}},
+	  "activities": [{"properties": {
+	    "source": {"datasetSettings": {"table": "t"}},
+	    "destination": {"datasetSettings": {"table": "t"}}}}]
+	}`
+
 	cases := []struct {
 		name, def, wantCode string
 	}{
 		{"CDC mode", `{"properties":{"jobMode":"CDC"},"activities":[]}`, "CopyJobCDCNotImplemented"},
-		{"external connection", external, "CopyJobExternalConnectionNotSupported"},
+		{"external source", external, "CopyJobExternalSourceNotSupported"},
+		{"external destination", externalDst, "CopyJobExternalDestinationNotSupported"},
+		{"both external names source first", bothExternal, "CopyJobExternalSourceNotSupported"},
 		{"merge writeBehavior", lakehouseBatchDef(ws.ID, src.ID, dst.ID, "Merge"), "CopyJobWriteBehaviorNotSupported"},
 		{"garbage content", `{not json`, "CopyJobDefinitionInvalid"},
 	}

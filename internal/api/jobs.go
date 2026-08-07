@@ -41,10 +41,14 @@ func jobFailureMessage(code string) string {
 		return "This Copy job's jobMode is CDC, which needs change tracking on a " +
 			"source the emulator cannot reach. Use jobMode Batch, or run against " +
 			"real Fabric."
-	case "CopyJobExternalConnectionNotSupported":
-		return "This Copy job names an external connection (SQL, Blob, …). The " +
-			"emulator executes Lakehouse-to-Lakehouse legs only; external stores " +
-			"need credentials and drivers it does not hold."
+	case "CopyJobExternalSourceNotSupported":
+		return "This Copy job's SOURCE is an external connection (SQL, Blob, …). " +
+			"The emulator executes Lakehouse-to-Lakehouse legs only; external " +
+			"stores need credentials and drivers it does not hold."
+	case "CopyJobExternalDestinationNotSupported":
+		return "This Copy job's DESTINATION is an external connection (SQL, " +
+			"Blob, …). The emulator executes Lakehouse-to-Lakehouse legs only; " +
+			"external stores need credentials and drivers it does not hold."
 	case "CopyJobWriteBehaviorNotSupported":
 		return "This Copy job's writeBehavior needs key-based reconciliation " +
 			"(Merge/Upsert). Append and Overwrite execute for real; a Merge " +
