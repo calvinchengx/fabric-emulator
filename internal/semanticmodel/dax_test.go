@@ -4,11 +4,18 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 type goldenFile struct {
-	Queries []struct {
+	// DAXQueryCount is the fixture's own statement of how many dax-handler
+	// queries it holds. Read rather than hardcoded here: three suites iterate
+	// these and each needs the number, so a literal in each source file is
+	// three things to move for one added query — and the way a suite quietly
+	// stops covering what it claims to.
+	DAXQueryCount int `json:"daxQueryCount"`
+	Queries       []struct {
 		Name     string `json:"name"`
 		DAX      string `json:"dax"`
 		Handler  string `json:"handler"`
@@ -104,8 +111,8 @@ func TestDAXGoldenQueries(t *testing.T) {
 			t.Errorf("%s: rows mismatch\n got=%v\nwant=%v", q.Name, res.Rows, q.Expected.Rows)
 		}
 	}
-	if ran != 6 {
-		t.Fatalf("expected 6 DAX golden queries, ran %d", ran)
+	if ran != g.DAXQueryCount {
+		t.Fatalf("ran %d DAX golden queries, fixture declares %d", ran, g.DAXQueryCount)
 	}
 }
 
@@ -227,5 +234,45 @@ func TestDAXZeroArgFunctionsAreRefused(t *testing.T) {
 				t.Fatalf("%s was accepted; want an error, not a panic", q)
 			}
 		})
+	}
+}
+
+// TestGoldenFixtureStaysOneRowPerLine guards the fixture's SHAPE, not its data.
+//
+// The expectations in golden_queries.json are hand-computed, and reviewing a
+// change to them means reading the diff. Each expected row is written on one
+// line for exactly that reason: a changed value is a one-line diff. Any tool
+// that round-trips the file through a JSON pretty-printer explodes every row
+// into six lines and turns a one-line change into a 178-line diff that nobody
+// can review — which is how this check came to exist.
+//
+// The invariant is narrow on purpose. Query objects legitimately span lines;
+// only entries inside a "rows" array must stay on one.
+func TestGoldenFixtureStaysOneRowPerLine(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(fixturesDir(), "golden_queries.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inRows := false
+	for i, line := range strings.Split(string(b), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !inRows {
+			if k := strings.Index(line, `"rows": [`); k >= 0 && !strings.Contains(line[k+len(`"rows": [`):], "]") {
+				inRows = true
+			}
+			continue
+		}
+		if trimmed == "]" || trimmed == "]," {
+			inRows = false
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "{") || !strings.Contains(trimmed, "}") {
+			t.Errorf("golden_queries.json:%d: expected rows are one per line, got %q\n"+
+				"A JSON pretty-printer was probably run over the fixture. Restore the "+
+				"compact form so a changed expectation stays a one-line diff.", i+1, trimmed)
+		}
+	}
+	if inRows {
+		t.Error("golden_queries.json: unterminated \"rows\" array")
 	}
 }

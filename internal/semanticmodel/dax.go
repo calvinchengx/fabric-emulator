@@ -773,7 +773,10 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("SUM expects a column reference")
 		}
-		tbl := strings.Trim(col.table, "'")
+		tbl, err := e.resolveColumn("SUM", col)
+		if err != nil {
+			return nil, err
+		}
 		var s float64
 		for _, r := range e.activeRows(tbl) {
 			v := r[col.col]
@@ -839,7 +842,11 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("COUNTROWS expects a table")
 		}
-		return float64(len(e.activeRows(strings.Trim(tr.name, "'")))), nil
+		tbl, err := e.resolveTable("COUNTROWS", tr.name)
+		if err != nil {
+			return nil, err
+		}
+		return float64(len(e.activeRows(tbl))), nil
 	case "SELECTEDVALUE":
 		return e.selectedValue(fc)
 	}
@@ -883,17 +890,9 @@ func (e *evalr) selectedValue(fc funcCall) (any, error) {
 		return nil, nil
 	}
 
-	tbl := strings.Trim(col.table, "'")
-	// A column that does not exist would otherwise read as BLANK on every row,
-	// collapse to one distinct value, and return BLANK — indistinguishable from
-	// a real single blank, and from the alternate path. A typo must not answer
-	// confidently.
-	t := e.model.Table(tbl)
-	if t == nil {
-		return nil, fmt.Errorf("SELECTEDVALUE: no table %q in this model", tbl)
-	}
-	if t.Column(col.col) == nil {
-		return nil, fmt.Errorf("SELECTEDVALUE: table %s has no column %q", tbl, col.col)
+	tbl, err := e.resolveColumn("SELECTEDVALUE", col)
+	if err != nil {
+		return nil, err
 	}
 
 	var seen []any
@@ -921,6 +920,39 @@ func (e *evalr) selectedValue(fc funcCall) (any, error) {
 		return seen[0], nil
 	}
 	return alternate()
+}
+
+// resolveColumn checks that a column reference names something real and returns
+// the unquoted table name. Every function that READS a column goes through it.
+//
+// WHY IT IS SHARED. A missing column is not absent, it is BLANK on every row —
+// `Row` is a map, so a typo reads as nil rather than failing. Each function
+// then folds that into its own confident answer: SUM totalled nothing and
+// returned 0, SELECTEDVALUE would have collapsed to one distinct BLANK and
+// returned it. Both are the worst shape an emulator can have — a number that
+// is wrong rather than an error — and both come from the same missing check,
+// so it lives in one place and the next column-taking function inherits it.
+func (e *evalr) resolveColumn(fn string, ref columnRef) (string, error) {
+	tbl := strings.Trim(ref.table, "'")
+	t := e.model.Table(tbl)
+	if t == nil {
+		return "", fmt.Errorf("%s: no table %q in this model", fn, tbl)
+	}
+	if t.Column(ref.col) == nil {
+		return "", fmt.Errorf("%s: table %s has no column %q", fn, tbl, ref.col)
+	}
+	return tbl, nil
+}
+
+// resolveTable is the same guard for a function that takes a whole table.
+// COUNTROWS on a name that does not exist counted zero rows and returned 0 —
+// the same confident wrong number, one type up.
+func (e *evalr) resolveTable(fn, name string) (string, error) {
+	tbl := strings.Trim(name, "'")
+	if e.model.Table(tbl) == nil {
+		return "", fmt.Errorf("%s: no table %q in this model", fn, tbl)
+	}
+	return tbl, nil
 }
 
 // activeRows returns the rows of `table` under the current filter context —
