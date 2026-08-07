@@ -38,7 +38,45 @@ func (f *fakeSpliceBackend) Dial(context.Context, string) (net.Conn, []byte, err
 // logs in over FedAuth, the server forwards the (fake) engine's login response,
 // and a query is byte-forwarded to the engine, which answers over the pipe.
 func TestSpliceEndToEnd(t *testing.T) {
-	engineServer, engineTest := net.Pipe()
+	// The engine end is a REAL SOCKET, not net.Pipe.
+	//
+	// net.Pipe is synchronous and unbuffered: every Write blocks until a Read
+	// consumes it, so the client, the splice and the fake engine advanced in
+	// lockstep in a way production never does. This test drives a real
+	// go-mssqldb client, and the flakiness that produced — "did not get
+	// cancellation confirmation from the server", once on windows-latest for a
+	// docs-only PR (issue #63) — named the splice for timing that only the pipe
+	// created. A loopback socket buffers the way the real backend connection
+	// does.
+	//
+	// Isolated rather than assumed. At `-race -count=1500 -cpu=1,2,8`:
+	//
+	//   net.Pipe, engine answers once           3 of 5 runs fail
+	//   net.Pipe, engine loops + acks ATTENTION  3 of 5 runs fail
+	//   loopback socket, same engine             7,200 iterations clean
+	//
+	// so the socket is what fixes it; the loop below is correctness, not the
+	// cure. NOTE for anyone re-running that stress: each iteration now opens two
+	// sockets, so several thousand back-to-back runs exhaust ephemeral ports and
+	// fail with "can't assign requested address" — that is the harness, not this
+	// test. Pause between rounds or lower `-count`.
+	engineLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engineLn.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, aerr := engineLn.Accept()
+		if aerr == nil {
+			accepted <- c
+		}
+	}()
+	engineServer, err := net.Dial("tcp", engineLn.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	engineTest := <-accepted
 	be := &fakeSpliceBackend{
 		engine:    engineServer,
 		loginResp: concat(loginAck(), done(doneFinal, 0)),
@@ -50,20 +88,35 @@ func TestSpliceEndToEnd(t *testing.T) {
 			return "item-db", false, nil
 		},
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	ln, lerr := net.Listen("tcp", "127.0.0.1:0")
+	if lerr != nil {
+		t.Fatal(lerr)
 	}
 	defer ln.Close()
 	go srv.Serve(ln)
 
-	// The engine end: answer the first forwarded batch with a single int = 7.
+	// Serve until the connection closes, and ANSWER AN ATTENTION, because a real
+	// engine does. Answering exactly one batch and closing was the other half of
+	// the flake: `QueryRow` closes its result set, and a driver that has not yet
+	// seen the stream end sends an ATTENTION to drain it, then blocks for the
+	// acknowledgement — a DONE carrying the ATTN bit. With the engine gone the
+	// splice reported a dead backend, and the error named the splice for a gap
+	// in this fixture.
 	go func() {
 		defer engineTest.Close()
-		if _, _, err := ReadMessage(engineTest); err != nil {
-			return
+		for {
+			typ, _, rerr := ReadMessage(engineTest)
+			if rerr != nil {
+				return // the splice closed its end: the session is over
+			}
+			reply := intResult(7)
+			if typ == PktAttention {
+				reply = done(doneAttn, 0)
+			}
+			if werr := WriteMessage(engineTest, PktTabular, reply); werr != nil {
+				return
+			}
 		}
-		_ = WriteMessage(engineTest, PktTabular, intResult(7))
 	}()
 
 	addr := ln.Addr().(*net.TCPAddr)
