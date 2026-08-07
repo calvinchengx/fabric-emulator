@@ -1684,3 +1684,28 @@ func TestPipelineDeleteMissingFailsLoudly(t *testing.T) {
 		t.Fatalf("job status = %s, want Failed", s)
 	}
 }
+
+// TestPipelineWebHookRefusesLoudly: WebHook used to silently alias Web, so a
+// webhook pipeline "worked" locally while its defining half — call back and
+// PARK — never executed. Until pipelines run async it is refused with the
+// reason and the supported alternative, not aliased.
+func TestPipelineWebHookRefusesLoudly(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	content := `{"properties":{"activities":[
+        {"name":"Hook","type":"WebHook","typeProperties":{"url":"http://x/","method":"POST"}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job status = %s, want Failed (loud refusal, not a silent Web alias)", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	for _, r := range runs {
+		if r["activityName"] == "Hook" {
+			if e, _ := r["error"].(string); !strings.Contains(e, "callback") {
+				t.Fatalf("refusal must name the missing callback semantics, got: %q", e)
+			}
+		}
+	}
+}
