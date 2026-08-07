@@ -547,3 +547,60 @@ func TestUntilNonConvergence(t *testing.T) {
 		t.Fatalf("expected Until to fail on non-convergence, got %s", res.Status)
 	}
 }
+
+// TestInactiveActivityNeverExecutes: Fabric's Deactivate feature
+// (activity-overview.md). "An inactive activity never actually runs. Instead,
+// it runs a place holder line item, with the reserved status Inactive" — and
+// branching follows "Mark activity as". Before the State field existed, a
+// deactivated activity's JSON dropped both fields on parse and the activity
+// RAN, side effects included: the exact case a user deactivated it to prevent.
+func TestInactiveActivityNeverExecutes(t *testing.T) {
+	def := `{"properties":{"activities":[
+        {"name":"off","type":"CustomLeaf","state":"Inactive","typeProperties":{}},
+        {"name":"after","type":"CustomLeaf","typeProperties":{},
+         "dependsOn":[{"activity":"off","dependencyConditions":["Succeeded"]}]}
+      ]}}`
+	exec := &flakyExec{}
+	res := mustRun(t, def, nil, exec)
+	if res.Status != StatusSucceeded {
+		t.Fatalf("status = %q, want Succeeded", res.Status)
+	}
+	if exec.attempts["off"] != 0 {
+		t.Fatalf("deactivated activity executed %d time(s); Fabric never runs it", exec.attempts["off"])
+	}
+	if got := byName(res)["off"].Status; got != "Inactive" {
+		t.Fatalf("record status = %q, want the reserved status Inactive", got)
+	}
+	// Default mark is Succeeded, so the Succeeded-gated successor runs.
+	if exec.attempts["after"] != 1 {
+		t.Fatalf("successor ran %d time(s), want 1 (default mark is Succeeded)", exec.attempts["after"])
+	}
+}
+
+// TestInactiveMarkedFailedSteersBranchesWithoutFailingTheRun: "If you mark the
+// activity as Failed, the UponFailure or UponCompletion branch runs." The mark
+// steers dependencies; it does not fail the pipeline — a placeholder cannot
+// produce an error nobody hit.
+func TestInactiveMarkedFailedSteersBranchesWithoutFailingTheRun(t *testing.T) {
+	def := `{"properties":{"activities":[
+        {"name":"off","type":"CustomLeaf","state":"Inactive","onInactiveMarkAs":"Failed","typeProperties":{}},
+        {"name":"onfail","type":"CustomLeaf","typeProperties":{},
+         "dependsOn":[{"activity":"off","dependencyConditions":["Failed"]}]},
+        {"name":"onok","type":"CustomLeaf","typeProperties":{},
+         "dependsOn":[{"activity":"off","dependencyConditions":["Succeeded"]}]}
+      ]}}`
+	exec := &flakyExec{}
+	res := mustRun(t, def, nil, exec)
+	if res.Status != StatusSucceeded {
+		t.Fatalf("status = %q, want Succeeded — an inactive mark must not fail the run", res.Status)
+	}
+	if exec.attempts["onfail"] != 1 {
+		t.Fatalf("UponFailure branch ran %d time(s), want 1", exec.attempts["onfail"])
+	}
+	if exec.attempts["onok"] != 0 {
+		t.Fatalf("Succeeded branch ran %d time(s), want 0 (skipped)", exec.attempts["onok"])
+	}
+	if got := byName(res)["onok"].Status; got != StatusSkipped {
+		t.Fatalf("onok status = %q, want Skipped", got)
+	}
+}

@@ -231,6 +231,12 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// childItems) — the storage layer answers for real.
 		return e.getMetadataActivity(act, tp, resolve)
 
+	case "Delete":
+		// Really removes the data through the storage layer — FileDeleted
+		// events fire, so downstream Reflex triggers see a pipeline Delete
+		// the same as any other writer's delete.
+		return e.deleteActivity(act, tp, resolve)
+
 	case "Script":
 		// Runs real T-SQL scripts against a Warehouse/SQLDatabase item's own SQL
 		// Server database — real rows/rowcounts back, when a warehouse SQL
@@ -248,7 +254,28 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// fails loudly rather than pretending.
 		return nil, fmt.Errorf("activity %q: Dataflow Gen2 (Power Query M) is not implemented in the emulator", act.Name)
 
-	case "WebActivity", "Web", "WebHook":
+	case "WebHook":
+		// Deliberately NOT an alias for Web, which it silently was. A real
+		// WebHook activity calls the endpoint with a generated callBackUri and
+		// PARKS until the receiver calls back (or a timeout, default 10m);
+		// branching then depends on the callback's body. Aliasing it to Web
+		// meant a webhook pipeline "worked" locally while never exercising the
+		// half that defines the activity — code paths that park in Fabric
+		// returned instantly here. Refused until pipelines run async (doc 37
+		// item 4 is the prerequisite: an inline job POST cannot park), so the
+		// gap is loud instead of a false green.
+		return nil, fmt.Errorf("activity %q: WebHook callback semantics are not implemented — "+
+			"the emulator's pipelines execute inline and cannot park awaiting a callback "+
+			"(docs/37-runtime-fidelity-gaps.md §4). Use the Web activity for fire-and-return calls",
+			act.Name)
+
+	case "AzureFunctionActivity":
+		// A real call to a function endpoint over the same HTTP core as Web;
+		// the function key travels as x-functions-key, which is how ADF
+		// authenticates the call.
+		return e.functionsActivity(act, tp, resolve)
+
+	case "WebActivity", "Web":
 		return e.webActivity(act, tp, resolve)
 
 	default:

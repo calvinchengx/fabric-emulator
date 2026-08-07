@@ -256,6 +256,76 @@ func (e *pipelineExecutor) getMetadataActivity(act pipeline.Activity, tp map[str
 	return out, nil
 }
 
+// deleteActivity really removes data through the storage layer, which is what
+// makes its side effects observable everywhere the emulator already looks: the
+// OneLake surfaces stop serving the paths, and the store emits FileDeleted
+// events, so a Reflex trigger on deletion fires for a pipeline Delete exactly
+// as it does for an ADLS client's delete.
+//
+// Semantics held to the loud side where the oracle is unmeasured: a MISSING
+// path is an error naming the path, not a zero-count success — a Delete that
+// "succeeds" against a typo'd path claims work that never happened, which is
+// this repo's least favourite failure shape. If real Fabric turns out to
+// answer zero-count success, soften this with the measurement in hand.
+// `recursive:false` on a directory deletes its direct-child FILES and leaves
+// subdirectories, matching the documented Delete-activity behaviour of not
+// descending unless asked.
+func (e *pipelineExecutor) deleteActivity(act pipeline.Activity, tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error)) (map[string]any, error) {
+	loc, err := e.readLoc(tp, resolve, "dataset", "source", "location")
+	if err != nil {
+		return nil, fmt.Errorf("delete %q: %w", act.Name, err)
+	}
+	recursive := false
+	if raw, ok := tp["recursive"]; ok {
+		if v, err := resolve(raw); err == nil {
+			recursive, _ = v.(bool)
+		}
+	}
+
+	// Directories are often IMPLICIT here — seeding "Files/d/a.txt" creates no
+	// "Files/d" row — so existence cannot be answered by a point lookup alone:
+	// a real file answers directly, and anything else is a directory exactly
+	// when something lives under its prefix.
+	p, err := e.a.Store.GetOneLakePath(loc.itemID, loc.path)
+	if err == nil && !p.IsDir {
+		if err := e.a.Store.DeleteOneLakePath(loc.itemID, loc.path); err != nil {
+			return nil, fmt.Errorf("delete %q: %v", act.Name, err)
+		}
+		return map[string]any{"filesDeleted": 1, "recursive": recursive}, nil
+	}
+	children, lerr := e.a.Store.ListOneLakePaths(loc.itemID, loc.path, true)
+	var files []string
+	for _, c := range children {
+		if !c.IsDir && c.RelPath != loc.path {
+			files = append(files, c.RelPath)
+		}
+	}
+	if err != nil && (lerr != nil || len(children) == 0) {
+		return nil, fmt.Errorf("delete %q: %q does not exist", act.Name, loc.path)
+	}
+
+	deleted := 0
+	if recursive {
+		deleted = len(files)
+		if err := e.a.Store.DeleteOneLakePath(loc.itemID, loc.path); err != nil {
+			return nil, fmt.Errorf("delete %q: %v", act.Name, err)
+		}
+	} else {
+		// Direct-child files only; subdirectories stand.
+		prefix := strings.TrimRight(loc.path, "/") + "/"
+		for _, f := range files {
+			if strings.Contains(strings.TrimPrefix(f, prefix), "/") {
+				continue
+			}
+			if err := e.a.Store.DeleteOneLakePath(loc.itemID, f); err != nil {
+				return nil, fmt.Errorf("delete %q: %v", act.Name, err)
+			}
+			deleted++
+		}
+	}
+	return map[string]any{"filesDeleted": deleted, "recursive": recursive}, nil
+}
+
 func baseName(p string) string {
 	p = strings.TrimRight(p, "/")
 	if i := strings.LastIndex(p, "/"); i >= 0 {
