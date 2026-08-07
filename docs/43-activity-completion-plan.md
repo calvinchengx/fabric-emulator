@@ -1,0 +1,134 @@
+# 43 — Every pipeline activity, and what "every" honestly means
+
+**Goal, as directed: all 34 activities Microsoft documents for Fabric data
+pipelines, implemented with full test coverage and a witness per claim.** This
+plan exists because "implement all" has two failure modes this repo has already
+paid for once each: inventing wire shapes nobody captured (the fabricated
+nested columns), and counting a stub as done (the WebHook that silently aliased
+Web). Every phase below names its oracle before its code.
+
+Current state (post-#79): **18 of 34 execute for real**, 1 refuses loudly
+(WebHook), 4 are blocked on wire-name capture, 1 has its engine but no
+activity case (Copy job), and the rest divide into HTTP-real externals,
+park-dependent activities, compute externals, and two decision gates.
+
+## The two rules every phase inherits
+
+1. **Capture before code.** No activity lands under a guessed `type` string or
+   an assumed `typeProperties` shape. The oracle is a pipeline JSON exported
+   from a real tenant (the portal's JSON view, or the secret-gated
+   `real-fabric` workflow fetching a definition via REST). A shape the docs
+   describe but no capture confirms is recorded as such in the code comment.
+2. **A stub must say so.** Where the emulator cannot reach the real service,
+   the activity either terminates the real *protocol* against a local stand-in
+   (the `kustainer`/Airflow/SeaweedFS precedent) or refuses by name. "Succeeded"
+   without an observable effect is the one output no phase may produce — the
+   Web activity's stub mode (`TestWebActivityStubModeSaysItDidNotCall`) is the
+   pattern.
+
+## Phase 0 — unblock (external input, no code)
+
+| Item | Needs | Unblocks |
+|---|---|---|
+| Wire-name capture | One throwaway pipeline in a real tenant containing Refresh SQL Endpoint, Lakehouse maintenance, KQL, and Spark Job Definition activities; paste the JSON | Phase 2 |
+| Copy job activity case | #78 to settle; owned by the CopyJob session, or claimed by notice after | The 24th real activity — wiring the existing `copyjob` executor into the `pipelines.go` dispatch |
+
+## Phase 1 — async pipelines (the prerequisite, doc 37 §4)
+
+Pipelines execute inline in the job POST. Two activities are *defined* by
+parking (WebHook's callback, Approval's human decision), so this lands first.
+Scope is doc 37's: the job goes async through the repo's own LRO pattern,
+~50 test sites move from synchronous assertion to poll-then-assert. **Size M.**
+Witness: existing pipeline suites re-run green under async, plus a test that a
+long pipeline's job POST returns 202 before the pipeline finishes — the
+behaviour inline execution cannot produce.
+
+## Phase 2 — the captured four (each S once Phase 0 lands)
+
+| Activity | Engine already present | Behaviour to honour | Witness |
+|---|---|---|---|
+| Refresh SQL Endpoint | warehouse reflection | the documented `Success` / **`NotRun`** (nothing unsynced) / `Failure` output statuses; lock-contention failure stays representable | Go: stale reflection → activity → tables current; `NotRun` on a second run with no new data |
+| Lakehouse maintenance | delta_ops OPTIMIZE/VACUUM via the Livy agent | table-scoped maintenance; v-order accepted where documented, refused-by-name where Sail cannot | Go + assertion in `e2e/livy` (compaction observed, not just exit 0) |
+| KQL | kustainer under `--profile rti` | script against a KQL DB; honest 501 without the profile | e2e under the rti job; grade ceiling 🟠 (AVX2/amd64) |
+| SJD wrapper | SJD item execution | activity → item job, both `jobs.go` switches if a job type appears, bus-subscribe-then-drain test per the CopyJob lesson | Go: SJD activity runs the item's job to terminal |
+
+## Phase 3 — HTTP-real externals (no park needed)
+
+- **Functions** — an Azure Function call is an HTTP request with a key. Execute
+  it for real like Web does; witness against a local stand-in function that
+  rejects a missing/wrong key (negative control first). **S.**
+- **Teams** — an incoming-webhook message is an HTTP POST of a documented card
+  payload. Execute for real against the connection's URL; witness with a
+  stand-in receiver asserting the card shape, plus refusal-by-name for the
+  Graph-API delivery modes the emulator does not model. **S–M.**
+
+## Phase 4 — the park pair (after Phase 1)
+
+- **WebHook, for real this time** — call with a generated `callBackUri` on the
+  emulator's own surface, park on the virtual clock (documented default 10m),
+  resume on the callback, fail on timeout; the refusal from #79 comes out the
+  same PR its replacement goes in. Witness: an e2e/Go test whose stand-in
+  receiver calls back *late* but in time, plus a timeout case.
+- **Approval** — park until a decision arrives on an approval surface
+  (`/_emulator` control plane, since Fabric's approval UI has no public REST);
+  approve and reject both witnessed, plus the timeout. Boundary stated like
+  the Reflex binding: the *decision surface* is emulator-native, everything
+  downstream is faithful. **M each.**
+
+## Phase 5 — compute externals (protocol termination, the Livy precedent)
+
+The emulator already terminates Livy itself and lets a real engine compute.
+Same shape here — terminate each service's job protocol locally, compute with
+what exists, refuse what cannot be honoured by name:
+
+| Activity | Protocol terminated | Compute | Size |
+|---|---|---|---|
+| HDInsight | the activity's Spark-job submission | Sail (JVM overlay for JAR types) | M |
+| Azure Databricks | Jobs API stand-in (runs/submit → poll) | notebook/python via the agent; JAR → JVM overlay or refusal-by-name | L |
+| Azure Batch | task submission | the script in a sandboxed container sidecar | L |
+| Azure ML | job submission | python entry via the agent; anything needing AML infra refused by name | L |
+
+Grades here say what they are: 🟢 "Real (protocol terminated, local compute)"
+— the Livy row's wording, which a reader already knows how to trust. Each needs
+its stand-in to reject bad auth (the SeaweedFS negative-control rule: a pass
+must not be satisfiable by a server that lets anyone in).
+
+## Phase 6 — Refresh Materialized Lake View (build, L)
+
+Needs a minimal MLV model first: an item holding a defining query, refresh
+re-materialises it into a Delta table through the existing engine path, staleness
+observable. The activity is then Phase-2-shaped on top. Scoped last because it
+is the only item where the *feature* is missing, not the wiring.
+
+## Decision gates — named, not buried
+
+1. **Dataflow Gen2 execution.** The engine is Power Query M; no open
+   implementation exists to attach. Choices: (a) keep the honest
+   `DataflowEngineNotImplemented` refusal and state that "all" excludes it;
+   (b) an M-subset interpreter — **XL, research-grade risk**, and a partial M
+   that silently mis-evaluates would be worse than the refusal. This plan
+   recommends (a) until a consumer produces a concrete dataflow the subset
+   would have to run.
+2. **Deactivate** is an activity *state*, not an activity — already honoured
+   (placeholder status, mark-driven branching). Counted done, not planned.
+
+## Coverage and witness accounting
+
+Every phase lands: Go tests proven able to fail (mutation-checked where the
+guard is a branch), e2e where the claim crosses a process boundary, a parity
+row whose grade matches its witness, and a `witnesses.json` entry — the strict
+checker's claim count is the plan's progress meter. Coverage floors (Go 90,
+Python `fail_under` in pyproject) must not drop; new e2e suites wire into
+`ci.yml` and `docs/12-e2e-matrix.md` in the same PR, so the matrix never lags
+a suite. One PR per activity; merge-when-green watchers pin the head SHA *and*
+require registered checks. Start-of-work notice per phase through the session
+channel — Phase 5 especially, since sidecars touch compose files other
+sessions run.
+
+## Order and the finish line
+
+Phase 0 (external) → 1 → 2 (parallel with 3) → 4 → 5 → 6. End state, if both
+gates resolve toward "keep the refusal": **26 of 34 executing for real, 7
+protocol-terminated against stand-ins with negative controls, Dataflow Gen2
+refusing by name** — and the honest sentence in `parity.md` is that every
+documented activity either does its work observably or names exactly why not.
