@@ -1,8 +1,10 @@
 # 40 — REST connector: the honest way to reach Salesforce, ServiceNow and BMC Helix
 
-**Status: R1 delivered; R2–R4 scoped.** `RestSource` makes the real request and
-commits real rows ([restconnector.go](../internal/api/restconnector.go)) — single
-page, with `paginationRules` refused rather than half-honoured. This plan replaces the `External-connector
+**Status: R1 + R2 delivered; R3–R4 scoped.** `RestSource` makes the real request and
+commits real rows ([restconnector.go](../internal/api/restconnector.go)), and
+**really pages** ([restpagination.go](../internal/api/restpagination.go)) —
+cursors, ranges, end conditions, RFC 5988, with a ceiling that refuses an
+endless `next` rather than looping. This plan replaces the `External-connector
 leaves` row in [parity.md](parity.md) — the last **stubbed success** left in the
 pipeline interpreter after [webactivity.go](../internal/api/webactivity.go)
 removed the other one.
@@ -234,7 +236,7 @@ Four PRs, each independently shippable and independently useful.
 | | Scope | Size |
 |---|---|---|
 | **R1** ✅ | `RestSource`, single page, `collectionReference` + auto-flatten, anonymous/`additionalHeaders`, `httpRequestTimeout`, bounds, → Lakehouse table sink | **M** |
-| **R2** | `paginationRules`: `AbsoluteUrl`, `QueryParameters.{p}`, `Headers.{h}`, `RANGE:`, `EndCondition:`, `MaxRequestNumber`, RFC 5988, 204 stop | **M** |
+| **R2** ✅ | `paginationRules`: `AbsoluteUrl`, `QueryParameters.{p}`, `Headers.{h}`, `RANGE:`, `EndCondition:`, `MaxRequestNumber`, RFC 5988, 204 stop | **M** |
 | **R3** | `RestSink` — batching by `writeBatchSize`, `POST`/`PUT`/`PATCH`, `gzip`, `requestInterval` | **S** |
 | **R4** | BMC Helix worked example under `examples/`, parity + witnesses + docs | **S** |
 
