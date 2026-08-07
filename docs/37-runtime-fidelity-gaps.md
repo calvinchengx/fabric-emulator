@@ -78,7 +78,7 @@ refuses a conflicting bind (see 2).
 
 **Size: S.** Four things that exist, connected.
 
-### Delivered: the wire. Not delivered: the proof.
+### Delivered: the wire, and now the proof.
 
 Steps 1–4 are built. A session carries an `environmentId` from acquire, the
 resolved `Environment` reaches the agent over a best-effort `/environment` call
@@ -299,7 +299,7 @@ lacks. That is the sequence this rule exists to force.
 | 2c | Refuse a conflicting lakehouse bind | XS | Makes 2a/2b safe; turns corruption into an error |
 | 3b | Diagnostic error for a non-file frame | XS | Behaviour stays; the message stops being cryptic |
 | ~~—~~ ✅ | ~~Correct the Environments parity row and witness~~ | XS | Done: 🟡, reworded, witness removed. Regrade to 🟢 only with an e2e |
-| 1 | Environment items reach the session | S | Finishes a feature already built four-fifths of the way |
+| ~~1~~ ✅ | ~~Environment items reach the session~~ | S | Done in #67: wire + `e2e/environment` proof with negative control; row 🟢 |
 | 2a/2b | Mount write-back and per-statement refresh | S | Both unblocked by 2c |
 | 4 | Pipelines async | M | Mechanical, but ~50 test sites |
 | 3a | `input_file_name()` in SQL | M | The only item with genuine research risk |
