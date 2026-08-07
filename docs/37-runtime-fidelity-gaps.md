@@ -1,8 +1,7 @@
 # 37 — Runtime fidelity: four documented divergences, and what closing each takes
 
-**Status: divergence 1's WIRE is built; the other three are stated in the code
-and not implemented.** The grade for Environments deliberately has not moved —
-see §1 and the rule at the end. Each is a
+**Status: divergence 1 is DONE — wire and witness. The other three are stated in
+the code and not implemented.** Each is a
 place where the emulator's *runtime* — the thing a notebook actually sees — is
 deliberately an analog of Fabric's rather than the thing itself. They were
 written down at the moment they were created, which is why this document can
@@ -97,12 +96,15 @@ never asked.
 JARs are reported as skipped rather than silently dropped — a Connect session's
 classpath is fixed at engine start, so it cannot take one.
 
-**The grade stays 🟡, on purpose.** The rule at the end of this document says the
-witness must be an e2e that imports a package only an Environment could have
-supplied, and that the grade moves "then and not before". Unit tests on the wire
-are not that witness: they prove the request is composed and the refusal fires,
-which is the layer below the claim. **That e2e is the remaining work**, and until
-it exists this row asserts nothing new.
+**The witness exists, so the grade moved.** `e2e/environment` (CI job
+`environment`) imports a package the runtime image does not have — and runs the
+same import first on a session with **no** Environment, where it must fail.
+Without that negative half a package that happened to be in the image would make
+the test pass while proving nothing. The parity row is now 🟢 for packages and
+Spark config, with JARs stated as out of scope.
+
+The rule at the end of this document was followed rather than bent: the wire
+shipped at 🟡 with unit tests, and the grade moved only when the e2e existed.
 
 ---
 
@@ -284,10 +286,11 @@ e2e that imports a package only an Environment could have supplied, and the grad
 moves to 🟢 then and not before. A parser test must never again stand behind an
 applied-to-the-session claim.
 
-**The wire is now built and the grade has still not moved** — see §1. The rule
-held against its first real test, which is the only way to know a rule works: the
-temptation was to grade 🟢 on unit tests that prove the request is composed, and
-those sit one layer below what the row would claim.
+**The rule held against its first real test, and then discharged itself.** The
+wire shipped at 🟡 with unit tests — the temptation was to grade 🟢 on tests that
+prove the request is composed, which sit one layer below what the row claims —
+and the grade moved only once `e2e/environment` imported a package the image
+lacks. That is the sequence this rule exists to force.
 
 ## Order of work
 

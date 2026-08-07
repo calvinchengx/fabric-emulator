@@ -753,5 +753,17 @@
       "go:TestSalesforceSinkResolvesARelativeContentUrl",
       "ci:salesforce"
     ]
+  },
+  "environments": {
+    "claim": "Environments",
+    "section": "Data Engineering (`data-engineering/`)",
+    "witnesses": [
+      "ci:environment",
+      "go:TestEnvironmentReachesTheAgentOnBind",
+      "go:TestAcquireCarriesTheEnvironmentOntoTheSession",
+      "go:TestAnEmptyEnvironmentSendsNothing",
+      "py:test_a_conflicting_environment_is_refused_with_a_reason",
+      "py:test_packages_and_spark_config_are_applied"
+    ]
   }
 }
