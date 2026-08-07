@@ -156,6 +156,7 @@ def _install_custom_wheels():
 _install_custom_wheels()
 
 import catalog  # noqa: E402 — after the engine is up; see catalog.py for why it is split out
+import sqlrun  # noqa: E402 — same split, same reason: importable without a session
 
 # The Environment item this process has installed, if any: id -> the request that
 # installed it. ONE per agent, deliberately.
@@ -333,40 +334,6 @@ def run_code(code, g):
         return {"status": "error", "ename": "Error", "evalue": tb[-1] if tb else "error", "traceback": tb}
 
 
-def run_sql(code, g):
-    """Execute one Spark SQL statement, returning a Livy SQL statement output.
-
-    A statement whose plan has output columns (SELECT, SHOW, DESCRIBE, …)
-    returns the SQL envelope with schema + rows, which is what a client like
-    dbt-fabricspark reads a result set out of. DDL/DML (CREATE, INSERT, USE, …)
-    has no output columns — an empty envelope, which dbt reads as an empty
-    result set.
-    """
-    spark = g.get("spark")
-    if spark is None:
-        return {"status": "error", "ename": "NoSparkSession",
-                "evalue": "no spark session in this REPL namespace", "traceback": []}
-    try:
-        df = spark.sql(code)
-        if len(df.schema.fields) == 0:
-            return {"status": "ok", "execution_count": 0, "data": {}}
-        rows = [list(r) for r in df.collect()]
-        return {"status": "ok", "execution_count": 0,
-                "data": {"application/json": {"schema": df.schema.jsonValue(),
-                                              "data": rows}}}
-    except Exception:
-        tb = traceback.format_exc().splitlines()
-        # Sail quirk carried over from e2e/dbt-fabricspark/sql_agent.py: DML
-        # executes fine but DataFusion reports its row count as uint64, which
-        # the Arrow conversion rejects (Spark has no unsigned types). The write
-        # has already landed, so treat that one conversion failure as an empty
-        # result; every other error still surfaces.
-        if "uint64" in tb[-1] or "Unsigned" in tb[-1]:
-            return {"status": "ok", "execution_count": 0, "data": {}}
-        return {"status": "error", "ename": "SqlError",
-                "evalue": tb[-1] if tb else "error", "traceback": tb}
-
-
 def register_tables(session, schema, tables, schemas=None):
     """Declare a lakehouse's Delta tables in this REPL's Spark catalog.
 
@@ -418,7 +385,7 @@ class Handler(BaseHTTPRequestHandler):
                     return cell_context_stub()
             with cell_context(req.get("jobId"), req.get("cellIndex")):
                 if (req.get("kind") or "").lower() == "sql":
-                    self._send(200, run_sql(req.get("code", ""),
+                    self._send(200, sqlrun.run_sql(req.get("code", ""),
                                             ns(req.get("session", "default"))))
                 else:
                     self._send(200, run_code(req.get("code", ""),
