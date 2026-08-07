@@ -733,5 +733,18 @@
       "go:TestRestSourceMappingsToleranceAndRefusals",
       "ci:rest-helix"
     ]
+  },
+  "salesforce-salesforcev2source-in-a-copy": {
+    "claim": "**Salesforce** — `SalesforceV2Source` in a Copy",
+    "section": "Data Factory (`data-factory/`)",
+    "witnesses": [
+      "go:TestSalesforceRunsTheWholeJobLifecycle",
+      "go:TestSalesforcePagesByLocatorUntilTheStringNull",
+      "go:TestSalesforceIncludeDeletedObjectsSelectsQueryAll",
+      "go:TestSalesforceFailsWhenTheJobFails",
+      "go:TestSalesforceRefusesConfigurationItCannotHonour",
+      "go:TestSalesforceRejectsABadToken",
+      "go:TestSalesforceCopyLandsRowsInADeltaTable"
+    ]
   }
 }
