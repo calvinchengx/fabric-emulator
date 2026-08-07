@@ -264,7 +264,7 @@ func (e *pipelineExecutor) restSourceTable(
 		pageURL = next
 	}
 
-	tbl, err := restTable(act, records)
+	tbl, err := restTable(act, records, translatorMappings(tp))
 	if err != nil {
 		return nil, "", err
 	}
@@ -539,6 +539,70 @@ func restRecordsOf(act pipeline.Activity, tp map[string]json.RawMessage, doc any
 }
 
 // collectionReference reads translator.collectionReference off the copy activity.
+// restMapping is one entry of the copy activity's `translator.mappings`: a
+// JSONPath into each RECORD, and the column it becomes.
+type restMapping struct {
+	path, name string
+}
+
+// translatorMappings reads `translator.mappings`.
+//
+// Auto-flatten covers a response whose records are flat objects. Plenty are not:
+// BMC Helix's AR System returns `{"entries":[{"values":{…},"_links":{…}}]}`, so
+// every field is one level down and auto-flatten finds NO scalar columns at all.
+// Mappings are Fabric's own answer to that, and without them a Helix example
+// could only be written by faking the response shape.
+func translatorMappings(tp map[string]json.RawMessage) []restMapping {
+	raw, ok := tp["translator"]
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	var t struct {
+		Mappings []struct {
+			Source struct {
+				Path string `json:"path"`
+				Name string `json:"name"`
+			} `json:"source"`
+			Sink struct {
+				Name string `json:"name"`
+			} `json:"sink"`
+		} `json:"mappings"`
+	}
+	if json.Unmarshal(raw, &t) != nil {
+		return nil
+	}
+	var out []restMapping
+	for _, m := range t.Mappings {
+		path := strings.TrimSpace(m.Source.Path)
+		if path == "" && m.Source.Name != "" {
+			// A bare `source.name` is the flat-record form; treat it as a
+			// one-segment path so both shapes go through the same lookup.
+			path = "$['" + m.Source.Name + "']"
+		}
+		if path == "" {
+			continue
+		}
+		name := strings.TrimSpace(m.Sink.Name)
+		if name == "" {
+			name = lastPathSegment(path)
+		}
+		out = append(out, restMapping{path: path, name: name})
+	}
+	return out
+}
+
+// lastPathSegment names a column after the leaf of its source path, for a
+// mapping that gives no sink name.
+func lastPathSegment(path string) string {
+	p := strings.TrimSuffix(strings.TrimSpace(path), "]")
+	for _, cut := range []string{"['", "[\"", "."} {
+		if i := strings.LastIndex(p, cut); i >= 0 {
+			return strings.Trim(p[i+len(cut):], "'\"")
+		}
+	}
+	return strings.Trim(p, "$'\"")
+}
+
 func collectionReference(tp map[string]json.RawMessage) string {
 	raw, ok := tp["translator"]
 	if !ok || len(raw) == 0 {
@@ -604,10 +668,14 @@ func jsonPathLookup(doc any, path string) (any, bool) {
 // gave them — unlike a CSV, a JSON document DESCRIBES its types, and discarding
 // that would be the guess. A nested object or array has no column shape, so it
 // is recorded in Skipped by name rather than silently dropped or stringified.
-func restTable(act pipeline.Activity, records []any) (*warehouse.Table, error) {
+func restTable(act pipeline.Activity, records []any, mappings []restMapping) (*warehouse.Table, error) {
 	if len(records) > restMaxRows {
 		return nil, fmt.Errorf("copy %q: the response holds %d records, above the %d-row ceiling — "+
 			"refused rather than truncated", act.Name, len(records), restMaxRows)
+	}
+
+	if len(mappings) > 0 {
+		return restMappedTable(act, records, mappings)
 	}
 
 	tbl := &warehouse.Table{}
@@ -684,4 +752,55 @@ func restBytes(tbl *warehouse.Table) int {
 		_ = enc.Encode(row)
 	}
 	return b.Len()
+}
+
+// restMappedTable shapes records through explicit `translator.mappings`.
+//
+// Column ORDER is the mapping order, not first-seen: the author wrote the list,
+// so the list is the schema. A path that matches nothing leaves the cell empty
+// rather than failing the copy — an optional field absent on some records is
+// ordinary, and failing the whole ingest over one would be worse than a gap.
+// A path that matches nothing on EVERY record is a different thing, and is
+// reported, because that is a mapping that does not describe this response.
+func restMappedTable(act pipeline.Activity, records []any, mappings []restMapping) (*warehouse.Table, error) {
+	tbl := &warehouse.Table{Columns: make([]string, 0, len(mappings))}
+	hits := make([]int, len(mappings))
+	for _, m := range mappings {
+		tbl.Columns = append(tbl.Columns, m.name)
+	}
+
+	for i, rec := range records {
+		row := make([]any, len(mappings))
+		for j, m := range mappings {
+			v, ok := jsonPathLookup(rec, m.path)
+			if !ok || v == nil {
+				continue
+			}
+			switch v.(type) {
+			case map[string]any, []any:
+				// A mapping that lands on a container has selected a subtree, not a
+				// value. Naming the record index makes it findable.
+				return nil, fmt.Errorf("copy %q: mapping %q selects a %T in record %d, not a value",
+					act.Name, m.path, v, i)
+			}
+			row[j] = v
+			hits[j]++
+		}
+		tbl.Rows = append(tbl.Rows, row)
+	}
+
+	if len(records) > 0 {
+		var dead []string
+		for j, m := range mappings {
+			if hits[j] == 0 {
+				dead = append(dead, m.path)
+			}
+		}
+		if len(dead) > 0 {
+			return nil, fmt.Errorf("copy %q: %d mapping(s) matched nothing in any of the %d records "+
+				"(%s) — the mapping does not describe this response",
+				act.Name, len(dead), len(records), strings.Join(dead, ", "))
+		}
+	}
+	return tbl, nil
 }

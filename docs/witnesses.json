@@ -728,7 +728,10 @@
       "go:TestRestSinkGzipsWhenAsked",
       "go:TestRestSinkRefusesConfigurationFabricDoesNotAllow",
       "go:TestRestSinkRefusesASourceWithNoRows",
-      "go:TestRestSinkFailsOnNon2xx"
+      "go:TestRestSinkFailsOnNon2xx",
+      "go:TestRestSourceShapesTheRealARSResponseThroughMappings",
+      "go:TestRestSourceMappingsToleranceAndRefusals",
+      "ci:rest-helix"
     ]
   }
 }

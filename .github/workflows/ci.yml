@@ -573,6 +573,30 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/azurite-shortcut/run.py
 
+  rest-helix:
+    name: BMC Helix incidents ingest through the REST connector (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The end-to-end claim the REST connector exists for, against the case that
+      # motivates it: BMC Helix has NO Fabric connector — not in Fabric, ADF or
+      # Power Query — so the generic REST connector is the only supported route.
+      # Its competitor ServiceNow has a first-party connector; Helix does not.
+      #
+      # The stand-in server is faithful in the three places that decide whether
+      # this works against Helix rather than against a convenient fiction: login
+      # answers a RAW JWT as the whole body, the scheme is AR-JWT and `Bearer` is
+      # REJECTED, and records nest under `values` so auto-flatten finds no scalar
+      # columns and translator.mappings is doing real work.
+      #
+      # 5 incidents at a page size of 2 means a connector that read only the
+      # first page reports 2 and looks healthy — the row count is the assertion
+      # that only full pagination can satisfy.
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/rest-helix/run.py
+
   external-shortcuts:
     name: Shortcut target kinds resolve through OneLake (containerized)
     runs-on: ubuntu-latest
