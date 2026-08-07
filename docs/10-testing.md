@@ -256,6 +256,18 @@ harnesses run inside containers that have pytest but not pytest-cov — where th
 flags are unrecognised arguments and the suite dies with exit 4 for a reason
 that has nothing to do with what it was testing.
 
+**Measure the floor in a clean venv.** `--frozen --group test` is what CI runs,
+so it is the only environment whose number is authoritative. A venv that has
+drifted — anything installed with an extra group or `uv run --with` persists —
+can read a point lower, because code that only runs when a dependency is
+*absent* stops running once something installs it. `scripts/check_govern_types.py`
+did exactly that: 98% clean, 85% with `urllib3` present, one point on the total
+against a 70% floor. The lesson generalises past that file — if a test's coverage
+depends on what happens to be installed, force the branch instead of inheriting
+it, or the gate fails on whoever pushes next rather than on whoever spent the
+margin. That drift happened to read low, which is the safe direction; the same
+mechanism reading high would hide a real regression under a floor that passes.
+
 `FABRIC_COVERAGE=1` makes the harness layer `e2e/docker-compose.coverage.yml`,
 which builds the emulator with `COVER=1` and mounts one repository-level
 `covdata/`. Every wired suite writes into that same directory, so the merge sees
