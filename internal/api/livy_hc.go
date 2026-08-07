@@ -39,20 +39,21 @@ const maxReplsPerLivySession = 5
 
 // hcRepl is one acquired HC session: a REPL slot inside a logical Livy session.
 type hcRepl struct {
-	hcID        string // the HC session id the client holds (response "id")
-	replID      string // the REPL id inside the group
-	groupID     string // the underlying (logical) Livy session id ("sessionId")
-	tag         string
-	workspaceID string
-	lakehouseID string
-	creatorID   string
-	createdAt   int64
-	createBody  []byte           // acquire payload, forwarded when the backend session is opened
-	backendID   string           // real backend Livy session id (lazy; empty until first statement)
-	kind        string           // session default statement language (Livy: spark/pyspark/sql)
-	registered  bool             // lakehouse tables declared to the agent (once, on first statement)
-	statements  []*livyStatement // native-agent path: this REPL's executed statements
-	deleted     bool
+	hcID          string // the HC session id the client holds (response "id")
+	replID        string // the REPL id inside the group
+	groupID       string // the underlying (logical) Livy session id ("sessionId")
+	tag           string
+	workspaceID   string
+	lakehouseID   string
+	creatorID     string
+	createdAt     int64
+	createBody    []byte           // acquire payload, forwarded when the backend session is opened
+	backendID     string           // real backend Livy session id (lazy; empty until first statement)
+	kind          string           // session default statement language (Livy: spark/pyspark/sql)
+	registered    bool             // lakehouse tables declared to the agent (once, on first statement)
+	environmentID string           // Environment item bound at acquire, applied on first statement
+	statements    []*livyStatement // native-agent path: this REPL's executed statements
+	deleted       bool
 }
 
 // hcGroup is a logical Livy session hosting up to maxReplsPerLivySession REPLs.
@@ -226,10 +227,15 @@ func (a *API) acquireHC(w http.ResponseWriter, r *http.Request, p *auth.Principa
 	}
 	var req struct {
 		SessionTag string `json:"sessionTag"`
+		// An Environment item the session's packages and Spark config come
+		// from, as a Fabric session carries one. Optional: a session without
+		// one gets the runtime image as-is.
+		EnvironmentID string `json:"environmentId"`
 	}
 	_ = json.Unmarshal(body, &req)
 	wid, lid := r.PathValue("wid"), r.PathValue("lid")
 	repl := a.hcMgr().acquire(wid+"/"+lid, req.SessionTag, wid, lid, p.ID, a.Store.Now(), body)
+	repl.environmentID = req.EnvironmentID
 	// NOTE: no agent call here. Acquire is pure control-plane state (see the
 	// header) and must succeed with no Spark backend attached at all. Catalog
 	// registration happens on the REPL's first statement instead, where an
@@ -336,6 +342,7 @@ func (a *API) hcStatementNative(w http.ResponseWriter, r *http.Request, repl *hc
 		if !repl.registered {
 			repl.registered = true
 			a.registerLakehouseTables(repl.replID, repl.workspaceID, repl.lakehouseID)
+			a.applyEnvironment(repl.replID, repl.workspaceID, repl.environmentID)
 		}
 		// `kind` selects the statement's language — Livy defines spark, pyspark,
 		// sql and sparkr, and a session's kind is the default when a statement

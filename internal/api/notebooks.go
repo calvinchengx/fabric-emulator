@@ -187,6 +187,28 @@ func (a *API) resolveComputeBinding(owner *store.Item, binding compute.Binding) 
 	return binding, env, err
 }
 
+// resolveEnvironment parses an Environment item into the packages, Spark config
+// and JARs a session should receive.
+//
+// Split out of resolveComputeBinding so a LIVY SESSION can reach it too. The
+// parse has existed since Environments were added and nothing consumed its
+// answer: the run REPORTED an environment while the session never RECEIVED one
+// (docs/37 §1). This is the front half of the wire that fixes that.
+func (a *API) resolveEnvironment(wid, envID string) (compute.Environment, error) {
+	if envID == "" {
+		return compute.Environment{}, nil
+	}
+	envItem, err := a.Store.GetItem(wid, envID)
+	if err != nil || envItem.Type != "Environment" {
+		return compute.Environment{}, fmt.Errorf("environment is unavailable")
+	}
+	parts, err := a.Store.GetDefinition(envItem.ID)
+	if err != nil {
+		return compute.Environment{}, err
+	}
+	return compute.ParseEnvironment(parts)
+}
+
 // notebookContent decodes the `notebook-content.py` payload from the item's
 // definition parts.
 func (a *API) notebookContent(itemID string) ([]byte, error) {

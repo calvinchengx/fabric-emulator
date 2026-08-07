@@ -107,42 +107,120 @@ def _install_input_file_name():
 _install_input_file_name()
 
 
-def _install_custom_wheels():
-    """Install consumer wheels from /opt/wheels, like a Fabric Environment does.
+def _install_packages(specs, source):
+    """Install a list of wheels or package specs into the runtime.
 
-    On real Fabric an Environment item's custom libraries (wheels) are
-    installed into the Spark runtime before any user code runs — that is where
-    a framework package comes from. The emulator does not execute Environment
-    items, so its equivalent is deliberately mechanical: a consumer's compose
-    overlay bind-mounts a directory of wheels at /opt/wheels and the agent
-    installs them at startup. Generic on purpose; this repo knows nothing
-    about which wheels any consumer ships.
+    Generalised from a `/opt/wheels` glob so an ENVIRONMENT ITEM can drive it:
+    on real Fabric an Environment's libraries are installed before any user code
+    runs, and the emulator parsed that item for a long time without anything
+    reading the answer (docs/37 §1). The bind-mount is now the fallback, not the
+    mechanism.
 
-    Loud on failure but not fatal: an agent that dies here helps nobody, and
-    a missing dependency will resurface in the first notebook with a clear
+    Loud on failure but not fatal: an agent that dies here helps nobody, and a
+    missing dependency resurfaces in the first notebook with a clear
     ModuleNotFoundError naming the package.
+
+    Returns (ok, detail) so a caller answering an HTTP request can report the
+    outcome rather than guess at it.
     """
-    import glob as _glob
     import subprocess
 
-    wheels = sorted(_glob.glob("/opt/wheels/*.whl"))
-    if not wheels:
-        return
-    cmd = [sys.executable, "-m", "pip", "install", "--no-warn-script-location", *wheels]
+    if not specs:
+        return True, "nothing to install"
+    cmd = [sys.executable, "-m", "pip", "install", "--no-warn-script-location", *specs]
     if os.path.exists("/bin/uv"):  # the runtime image manages its venv with uv
-        cmd = ["/bin/uv", "pip", "install", "--python", sys.executable, *wheels]
+        cmd = ["/bin/uv", "pip", "install", "--python", sys.executable, *specs]
     r = subprocess.run(cmd, capture_output=True, text=True)
-    names = [os.path.basename(w) for w in wheels]
+    shown = ", ".join(os.path.basename(s) for s in specs)
     if r.returncode == 0:
-        print(f"agent: installed custom wheel(s): {', '.join(names)}")
-    else:
-        print(f"agent: custom wheel install FAILED for {', '.join(names)}:\n"
-              f"{(r.stderr or r.stdout)[-800:]}")
+        print(f"agent: installed from {source}: {shown}")
+        return True, f"installed {len(specs)} package(s)"
+    detail = (r.stderr or r.stdout)[-800:]
+    print(f"agent: WARNING could not install from {source} ({shown}):\n{detail}")
+    return False, detail
 
+
+def _install_custom_wheels():
+    """The `/opt/wheels` fallback, for consumers who do not model an Environment.
+
+    Kept because it needs no control plane: a compose overlay bind-mounts a
+    directory and the agent installs it at startup. An Environment item, when
+    one is bound, drives installs through /environment instead.
+    """
+    import glob as _glob
+
+    wheels = sorted(_glob.glob("/opt/wheels/*.whl"))
+    if wheels:
+        _install_packages(wheels, "/opt/wheels")
 
 _install_custom_wheels()
 
 import catalog  # noqa: E402 — after the engine is up; see catalog.py for why it is split out
+
+# The Environment item this process has installed, if any: id -> the request that
+# installed it. ONE per agent, deliberately.
+#
+# Fabric gives each session its own container, so two sessions binding different
+# Environments is ordinary there. This emulator runs one long-lived process with
+# many session namespaces (docs/37), so it CANNOT isolate them. Letting the last
+# bind win would corrupt a dependency tree for a session that never asked, so a
+# conflicting bind is REFUSED and says so. That is the honest answer available
+# to a single process.
+_environment_applied = {}
+
+
+def apply_environment(req):
+    """Install an Environment item's packages and apply its Spark config.
+
+    Answers `{applied, reason}` rather than raising: a session bind must not die
+    because a package failed to install, and the caller logs what happened.
+    """
+    env_id = (req.get("environment") or "").strip()
+    packages = list(req.get("packages") or [])
+    spark_config = dict(req.get("sparkConfig") or {})
+    jars = list(req.get("jars") or [])
+    session = req.get("session") or "?"
+
+    if not env_id:
+        return {"applied": False, "reason": "no environment named"}
+
+    if _environment_applied and env_id not in _environment_applied:
+        other = ", ".join(sorted(_environment_applied))
+        return {"applied": False, "reason":
+                f"this agent already has environment {other} installed and cannot "
+                f"isolate a second one — Fabric gives each session its own "
+                f"container and the emulator runs one process (docs/37). Bind the "
+                f"same environment, or run the sessions against separate agents."}
+
+    if env_id in _environment_applied:
+        # Idempotent: a second session binding the SAME environment is fine and
+        # must not pay for a reinstall.
+        return {"applied": True, "reason": "already installed", "packages": packages}
+
+    ok, detail = _install_packages(packages, f"environment {env_id}")
+
+    applied_config = {}
+    if spark_config:
+        try:
+            for key, value in spark_config.items():
+                spark.conf.set(key, str(value))
+                applied_config[key] = str(value)
+        except Exception as err:  # noqa: BLE001 - config must not kill the bind
+            print(f"agent: WARNING could not apply Spark config from environment "
+                  f"{env_id}: {err}", file=sys.stderr, flush=True)
+
+    if jars:
+        # JARs need the classpath at JVM start, which a running Connect session
+        # cannot change. Stated rather than silently ignored: a notebook that
+        # needs one will otherwise fail far from here.
+        print(f"agent: environment {env_id} declares {len(jars)} jar(s); the "
+              f"classpath is fixed at engine start, so they are NOT applied "
+              f"(docs/37)", file=sys.stderr, flush=True)
+
+    _environment_applied[env_id] = {"session": session, "packages": packages}
+    return {"applied": ok, "reason": detail, "packages": packages,
+            "sparkConfig": applied_config, "jarsSkipped": len(jars)}
+
 
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 session_isolated = {}  # Livy session id -> did it get a private SparkSession
@@ -360,6 +438,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001 - a failed mount must not kill a session bind
                 self._send(200, {"mounted": False,
                                  "error": traceback.format_exc().splitlines()[-1]})
+        elif self.path == "/environment":
+            self._send(200, apply_environment(req))
         elif self.path == "/close":
             namespaces.pop(req.get("session", ""), None)
             self._send(200, {"closed": True})
