@@ -122,16 +122,24 @@ func (a *API) runCopyJob(wid string, itemID, jobID string) string {
 		}
 		return "CopyJobDefinitionInvalid"
 	}
-	for side, conn := range map[string]*copyJobConnection{
-		"source": def.Properties.Source, "destination": def.Properties.Destination} {
-		if !strings.Contains(conn.ConnectionSettings.Type, "Lakehouse") {
-			// The boundary, named with the side that hit it. External
-			// connections are a credential+driver surface the emulator does
-			// not fake.
-			_ = side
-			return "CopyJobExternalConnectionNotSupported"
+	// The boundary, named with the side that hit it — as a distinct CODE per
+	// side, because the failure code is the only channel a job carries and a
+	// reader debugging a refused CopyJob needs to know which leg to fix.
+	// Checked in fixed order (source first), NOT by ranging a map: Go
+	// randomises map iteration, so with both sides external the reported side
+	// would vary per run — a flake by construction. External connections are a
+	// credential+driver surface the emulator does not fake.
+	for _, side := range []struct {
+		code string
+		conn *copyJobConnection
+	}{
+		{"CopyJobExternalSourceNotSupported", def.Properties.Source},
+		{"CopyJobExternalDestinationNotSupported", def.Properties.Destination},
+	} {
+		if !strings.Contains(side.conn.ConnectionSettings.Type, "Lakehouse") {
+			return side.code
 		}
-		if conn.ConnectionSettings.TypeProperties.ArtifactID == "" {
+		if side.conn.ConnectionSettings.TypeProperties.ArtifactID == "" {
 			return "CopyJobDefinitionInvalid"
 		}
 	}
