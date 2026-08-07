@@ -328,6 +328,16 @@ class FakeWriter:
         self.sink["path"] = path
 
 
+try:
+    import deltalake as _deltalake
+
+    HAVE_DELTA_RS = True
+except ImportError:  # pragma: no cover - exercised by the CI leg without the group
+    _deltalake = None
+    HAVE_DELTA_RS = False
+
+needs_delta_rs = pytest.mark.skipif(not HAVE_DELTA_RS, reason="delta-rs group not installed")
+
 def test_ctas_lands_at_the_schema_location_not_the_engine_warehouse():
     d.remember_schema("gold", "abfss://lake/Tables/gold")
     sink, ran = {}, []
@@ -340,9 +350,52 @@ def test_ctas_lands_at_the_schema_location_not_the_engine_warehouse():
     out = d.execute_ctas(None, original_sql, params)
     assert sink["path"] == "abfss://lake/Tables/gold/fct"
     assert sink["format"] == "delta"
-    assert sink["mode"] == "errorifexists"
+    # Was `errorifexists`, the semantically right mode for a plain CREATE TABLE
+    # — and one Sail does not implement (`[UNSUPPORTED_OPERATION] errorifexists
+    # is not supported`), which the engine matrix surfaced once honouring an
+    # explicit LOCATION made this path reachable. The guarantee is now enforced
+    # by asking delta-rs whether the table is already there (below), through a
+    # route both engines have.
+    assert sink["mode"] == "overwrite"
     assert any("CREATE TABLE IF NOT EXISTS" in q for q in ran), "must re-register the name"
     assert d.known_location("fct") == "abfss://lake/Tables/gold/fct"
+    assert "gold.fct" in out
+
+
+@needs_delta_rs
+def test_plain_create_table_refuses_an_existing_delta_table(monkeypatch):
+    """The guarantee `errorifexists` used to give, enforced portably.
+
+    A plain CREATE TABLE must not silently overwrite. Sail cannot execute the
+    write mode that says so, so the check moved to delta-rs — and it must still
+    refuse, or the mode swap would have quietly turned CREATE into REPLACE.
+    """
+    d.remember_schema("gold", "abfss://lake/Tables/gold")
+    monkeypatch.setattr(d, "_resolve_options", lambda _o: {})
+    monkeypatch.setattr(_deltalake.DeltaTable, "is_deltatable",
+                        staticmethod(lambda *_a, **_k: True))
+
+    _, params = d.match("CREATE TABLE gold.fct AS SELECT * FROM silver.o")
+    with pytest.raises(d.DeltaOpError, match="already exists"):
+        d.execute_ctas(None, lambda q: None, params)
+
+
+@needs_delta_rs
+def test_an_unreadable_location_is_not_treated_as_an_existing_table(monkeypatch):
+    """A credential failure must not be reported as "table already exists".
+
+    That would send someone to entirely the wrong problem. The write itself
+    surfaces any real storage fault a moment later.
+    """
+    d.remember_schema("gold", "abfss://lake/Tables/gold")
+    def boom(*_a, **_k):
+        raise OSError("Account must be specified")
+
+    monkeypatch.setattr(_deltalake.DeltaTable, "is_deltatable", staticmethod(boom))
+    sink = {}
+    _, params = d.match("CREATE TABLE gold.fct AS SELECT * FROM silver.o")
+    out = d.execute_ctas(None, lambda q: types.SimpleNamespace(write=FakeWriter(sink)), params)
+    assert sink["mode"] == "overwrite"
     assert "gold.fct" in out
 
 
