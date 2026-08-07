@@ -794,5 +794,14 @@
       "go:TestCopyJobExecuteReallyCopies",
       "go:TestCopyJobRefusesWhatItCannotHonour"
     ]
+  },
+  "functions-activity-azurefunctionactivity": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Functions** activity (`AzureFunctionActivity`)",
+    "witnesses": [
+      "go:TestFunctionActivityCallsForReal",
+      "go:TestFunctionActivityWrongKeyFails",
+      "go:TestFunctionActivitySchemaRules"
+    ]
   }
 }

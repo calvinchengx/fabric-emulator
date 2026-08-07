@@ -269,6 +269,12 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 			"(docs/37-runtime-fidelity-gaps.md §4). Use the Web activity for fire-and-return calls",
 			act.Name)
 
+	case "AzureFunctionActivity":
+		// A real call to a function endpoint over the same HTTP core as Web;
+		// the function key travels as x-functions-key, which is how ADF
+		// authenticates the call.
+		return e.functionsActivity(act, tp, resolve)
+
 	case "WebActivity", "Web":
 		return e.webActivity(act, tp, resolve)
 
