@@ -10,8 +10,10 @@ type-map change nobody connected to it.
 Two things are worth pinning: that the guard's import shim does not mask a real
 dependency, and that the guard actually fails on the column it exists to catch.
 """
+import importlib
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -45,6 +47,57 @@ def test_stub_is_installed_when_the_module_is_missing():
         assert name in sys.modules
     finally:
         sys.modules.pop(name, None)
+
+
+def test_stub_builders_run_when_the_dependency_group_is_absent(monkeypatch):
+    """Force every stubbed dependency absent, so the BUILDERS run here too.
+
+    This exists for the measurement as much as the behaviour. `_stub_missing`
+    builds a stand-in only when the import fails, so on a machine that happens
+    to have `requests` installed — it arrives with the `sessions` extra, or in
+    any venv that has drifted — the builder bodies never execute and coverage
+    reports them missing. That made this file's number a function of the ambient
+    environment: 98% in a clean venv, 85% with urllib3 present, a full point on
+    the repo total against a 70% floor. A gate that reads differently depending
+    on which machine measured it fails on whoever pushes next.
+
+    So the builders are exercised deterministically. `urllib3`'s is the one that
+    matters: it is the only multi-line builder, and it has to supply exactly the
+    names govern_ingest touches at import time.
+    """
+    absent = {"requests", "yaml", "urllib3"}
+    saved = {n: sys.modules.get(n) for n in absent | {"urllib3.exceptions"}}
+    real_import = importlib.import_module
+
+    def missing_on_demand(name, *args, **kwargs):
+        if name in absent:
+            raise ImportError(f"forced absent for this test: {name}")
+        return real_import(name, *args, **kwargs)
+
+    for name in saved:
+        sys.modules.pop(name, None)
+    monkeypatch.setattr(importlib, "import_module", missing_on_demand)
+    try:
+        gi = cg.load_ingest()
+
+        u = sys.modules["urllib3"]
+        # The stub must carry what govern_ingest uses at import time, and no
+        # more: asserting the module merely exists would pass on an empty
+        # ModuleType and leave the real import to fail in CI instead.
+        assert issubclass(u.exceptions.InsecureRequestWarning, Warning)
+        assert u.disable_warnings() is None
+        assert sys.modules["urllib3.exceptions"] is u.exceptions
+        assert isinstance(sys.modules["requests"], types.ModuleType)
+        assert isinstance(sys.modules["yaml"], types.ModuleType)
+
+        # And the point of the stubbing: the mapping module still loads.
+        assert hasattr(gi, "TYPE_MAP") and hasattr(gi, "om_column")
+    finally:
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
 
 def test_load_ingest_returns_the_real_mapping_module():
