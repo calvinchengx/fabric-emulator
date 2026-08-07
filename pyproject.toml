@@ -190,6 +190,21 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+# THE FLOOR MUST MEAN WHAT IT PRINTS. Without a precision, coverage compares the
+# ROUNDED percentage against --cov-fail-under, so 89.88% satisfied a floor of 90
+# while pytest-cov printed
+#
+#   FAIL Required test coverage of 90% not reached. Total coverage: 89.88%
+#
+# on a build that exited 0. A FAIL line that does not fail is how people learn
+# to skim CI output — and the effective floor was 89.5, not 90. Two decimals
+# makes the comparison exact and the message truthful.
+precision = 2
+# ONE number, here. It used to live in two workflow steps as
+# `--cov-fail-under=`, which is two things to move for one change and the way a
+# ratchet quietly stops ratcheting. 92 against a measured 93.03 leaves headroom
+# for a change that lands genuinely-hard-to-cover code, and no more.
+fail_under = 92
 
 
 # --- ruff ------------------------------------------------------------------
