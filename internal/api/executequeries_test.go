@@ -116,8 +116,8 @@ func TestExecuteQueriesGolden(t *testing.T) {
 			t.Errorf("%s: rows mismatch\n got=%v\nwant=%v", q.Name, resp.Results[0].Tables[0].Rows, q.Expected.Rows)
 		}
 	}
-	if ran != 6 {
-		t.Fatalf("ran %d DAX queries, want 6", ran)
+	if ran != golden.DAXQueryCount {
+		t.Fatalf("ran %d DAX queries, fixture declares %d", ran, golden.DAXQueryCount)
 	}
 }
 
@@ -195,7 +195,10 @@ func TestExecuteQueriesEveryPublishedMeasureAnswers(t *testing.T) {
 }
 
 type goldenExq struct {
-	Queries []struct {
+	// The fixture declares its own dax-query count; see goldenFile in
+	// internal/semanticmodel/dax_test.go for why it is not a literal here.
+	DAXQueryCount int `json:"daxQueryCount"`
+	Queries       []struct {
 		Name     string `json:"name"`
 		DAX      string `json:"dax"`
 		Handler  string `json:"handler"`
