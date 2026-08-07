@@ -149,6 +149,29 @@ _MERGE = re.compile(
     re.IGNORECASE | re.DOTALL)
 
 
+# `DESCRIBE DETAIL <table>` and `DESCRIBE [TABLE] <table>`.
+#
+# Both are measured ❌ on Sail in docs/engine-matrix.md, and they fail in the two
+# ways that are hardest to notice. DETAIL is absent from Sail's grammar outright
+# (`found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', ...`). DESCRIBE on a
+# registered Delta table is worse: it returns the right SCHEMA and ZERO ROWS,
+# raising nothing — the ᵉ row of the matrix exists because that silence cost real
+# debugging time, and delta_ops' own resolve() still carries a fallback that
+# trips over it.
+#
+# These qualify under the same rule as OPTIMIZE and VACUUM: a bounded statement
+# against a table path, carrying no session state. And unlike those, the answer
+# is metadata the emulator largely WROTE — asking the engine for it was always
+# asking to be told something we already recorded.
+_DESCRIBE_DETAIL = re.compile(
+    r"^\s*DESCRIBE\s+DETAIL\s+(?P<target>delta\.`[^`]+`|[\w.`]+)\s*;?\s*$",
+    re.IGNORECASE | re.DOTALL)
+
+_DESCRIBE_TABLE = re.compile(
+    r"^\s*DESC(?:RIBE)?\s+(?:TABLE\s+)?(?P<target>delta\.`[^`]+`|[\w.`]+)\s*;?\s*$",
+    re.IGNORECASE | re.DOTALL)
+
+
 class DeltaOpError(RuntimeError):
     """Raised for a matched statement we decline to execute — never for one we
     simply do not recognise, which is passed to Spark instead."""
@@ -178,6 +201,17 @@ def match(sql: str):
         # understand (DELETE clauses, subquery source, ...): fall through.
         if params.get("sets") or params.get("icols"):
             return "merge", params
+    m = _DESCRIBE_DETAIL.match(text)
+    if m:
+        return "describe_detail", m.groupdict()
+    m = _DESCRIBE_TABLE.match(text)
+    if m:
+        target = m.group("target").replace("`", "")
+        # Only a table this emulator can locate. A DESCRIBE of anything else —
+        # a temp view, a function, an engine-managed table — is the engine's own
+        # business and passes through untouched.
+        if target.lower().startswith("delta.") or known_location(target):
+            return "describe_table", m.groupdict()
     m = _CTAS.match(text)
     if m:
         params = m.groupdict()
@@ -360,6 +394,84 @@ def execute(kind, params, resolve, storage_options=None):
     return f"VACUUM: {verb} {len(files)} file(s), retain {hours}h (delta-rs)"
 
 
+
+# Delta's primitive names are not Spark's. `long` is `bigint` in every DESCRIBE
+# a notebook has ever read, and a table whose type column says `long` is a table
+# someone will spend a while doubting.
+_SPARK_TYPES = {
+    "long": "bigint", "integer": "int", "short": "smallint", "byte": "tinyint",
+    "double": "double", "float": "float", "string": "string", "boolean": "boolean",
+    "binary": "binary", "date": "date", "timestamp": "timestamp",
+    "timestampNtz": "timestamp_ntz",
+}
+
+
+def _spark_type(field_type) -> str:
+    """Render a delta-rs field type the way Spark's DESCRIBE spells it.
+
+    delta-rs stringifies a primitive as `PrimitiveType("long")`; anything
+    structured (struct, array, map) is passed through as delta-rs renders it
+    rather than guessed at — a wrong nested type would be worse than an
+    unfamiliar one.
+    """
+    raw = str(field_type)
+    inner = raw
+    if raw.startswith("PrimitiveType(") and raw.endswith(")"):
+        inner = raw[len("PrimitiveType("):-1].strip().strip('"')
+    return _SPARK_TYPES.get(inner, inner)
+
+
+def describe_detail(spark, params, resolve, storage_options=None):
+    """Answer `DESCRIBE DETAIL` from the Delta log, as Spark's own does.
+
+    Columns are a documented SUBSET of Spark's, not a pretence at all of them:
+    the ones delta-rs can answer truthfully. `sizeInBytes` and the reader/writer
+    versions are omitted rather than filled with a plausible number.
+    """
+    from deltalake import DeltaTable
+
+    uri = _table_uri(params["target"], resolve)
+    table = DeltaTable(uri, storage_options=_resolve_options(storage_options))
+    md = table.metadata()
+    rows = [(
+        "delta",
+        str(md.id),
+        md.name or "",
+        md.description or "",
+        uri,
+        int(table.version()),
+        len(table.file_uris()),
+        list(md.partition_columns or []),
+        dict(md.configuration or {}),
+    )]
+    return spark.createDataFrame(rows, [
+        "format", "id", "name", "description", "location",
+        "version", "numFiles", "partitionColumns", "properties",
+    ])
+
+
+def describe_table(spark, params, resolve, storage_options=None):
+    """Answer `DESCRIBE TABLE` with the real column list.
+
+    Sail returns the right shape and NO ROWS here, which is the failure mode
+    this replaces: an empty answer that raises nothing reads as "the table has
+    no columns" rather than "the engine did not implement this".
+    """
+    from deltalake import DeltaTable
+
+    uri = _table_uri(params["target"], resolve)
+    table = DeltaTable(uri, storage_options=_resolve_options(storage_options))
+    partitions = set(table.metadata().partition_columns or [])
+    rows = [
+        (f.name, _spark_type(f.type), "partition" if f.name in partitions else "")
+        for f in table.schema().fields
+    ]
+    if not rows:
+        raise DeltaOpError(
+            f"DESCRIBE {params['target']}: the Delta log at {uri} declares no columns")
+    return spark.createDataFrame(rows, ["col_name", "data_type", "comment"])
+
+
 def read_change_feed(spark, uri, starting_version=0, ending_version=None,
                      storage_options=None):
     """Change Data Feed read, returned as a Spark DataFrame.
@@ -453,6 +565,12 @@ def install(spark, storage_options=None):
         if matched is None:
             return original_sql(query, *args, **kwargs)
         kind, params = matched
+        # These two answer with real rows rather than a result line, so they
+        # return directly instead of going through the message path below.
+        if kind == "describe_detail":
+            return describe_detail(spark, params, resolve, storage_options)
+        if kind == "describe_table":
+            return describe_table(spark, params, resolve, storage_options)
         if kind == "merge":
             message = execute_merge(spark, params, resolve, storage_options)
         elif kind == "ctas":
