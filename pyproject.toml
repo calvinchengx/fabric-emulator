@@ -169,7 +169,7 @@ markers = [
 # surface in the repo contributed nothing to the gate. Its low-coverage members
 # (fs, _http) are witnessed by e2e rather than unit tests, the same way the
 # omitted spark_agent files are.
-source = ["scripts", "python/spark_agent", "python/notebookutils"]
+source = ["scripts", "python/spark_agent", "python/notebookutils", "docker/sail"]
 omit = [
     # Run inside the Spark image, witnessed by e2e/notebook-run and e2e/sail.
     "python/spark_agent/agent.py",
