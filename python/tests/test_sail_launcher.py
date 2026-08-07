@@ -26,6 +26,11 @@ LAUNCHER = (
 def load():
     """Import launcher.py by path — it ships as a script, not a package."""
     spec = importlib.util.spec_from_file_location("sail_launcher", LAUNCHER)
+    # Asserted rather than assumed: `spec_from_file_location` returns None for
+    # a path it cannot load, and a moved or renamed launcher would otherwise
+    # surface as an AttributeError on None several lines later, pointing at the
+    # wrong thing entirely.
+    assert spec and spec.loader, f"cannot load {LAUNCHER}"
     mod = importlib.util.module_from_spec(spec)
     sys.modules["sail_launcher"] = mod
     spec.loader.exec_module(mod)
