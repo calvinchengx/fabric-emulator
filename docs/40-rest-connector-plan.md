@@ -1,6 +1,6 @@
 # 40 — REST connector: the honest way to reach Salesforce, ServiceNow and BMC Helix
 
-**Status: R1–R3 delivered; R4 scoped.** `RestSource` makes the real request and
+**Status: R1–R4 delivered.** `RestSource` makes the real request and
 commits real rows ([restconnector.go](../internal/api/restconnector.go)), and
 **really pages** ([restpagination.go](../internal/api/restpagination.go)) —
 cursors, ranges, end conditions, RFC 5988, with a ceiling that refuses an
@@ -240,7 +240,7 @@ Four PRs, each independently shippable and independently useful.
 | **R1** ✅ | `RestSource`, single page, `collectionReference` + auto-flatten, anonymous/`additionalHeaders`, `httpRequestTimeout`, bounds, → Lakehouse table sink | **M** |
 | **R2** ✅ | `paginationRules`: `AbsoluteUrl`, `QueryParameters.{p}`, `Headers.{h}`, `RANGE:`, `EndCondition:`, `MaxRequestNumber`, RFC 5988, 204 stop | **M** |
 | **R3** ✅ | `RestSink` — batching by `writeBatchSize`, `POST`/`PUT`/`PATCH`, `gzip`, `requestInterval` | **S** |
-| **R4** | BMC Helix worked example under `examples/`, parity + witnesses + docs | **S** |
+| **R4** ✅ | BMC Helix worked example (`e2e/rest-helix`), parity + witnesses + docs | **S** |
 
 R1 and R2 split at a real seam: R1 is one request and the row-shaping; R2 is the
 loop around it. Shipping R1 alone is honest — a single-page REST read is a
