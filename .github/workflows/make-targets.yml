@@ -29,17 +29,23 @@ on:
     branches: [main]
   pull_request:
 
-# Same supersede rule as ci.yml, and safe for the same reason: these jobs only
-# build and check, so cancelling one leaves nothing half-done.
+# Same rule as ci.yml, for the same reasons: PR refs supersede, main commits do
+# not. Safe either way — these jobs only build and check, so cancelling one
+# leaves nothing half-done. Kept in step with ci.yml deliberately; the two
+# together are what "main is green" means, and a verdict from one of them is
+# half an answer.
 #
-# The `github.ref` in the group is what keeps the RELEASE GATE out of it. When
-# release.yml calls this workflow, the ref is the tag (`refs/tags/v0.16.0`),
-# never `refs/heads/main` — so a push to main while a release is publishing
-# lands in a different group and cannot cancel the gate. Dropping the ref would
-# make every release cancellable by the next commit.
+# The RELEASE GATE still cannot be cancelled, but by a different mechanism than
+# before. release.yml triggers on a tag push and calls this workflow, so the
+# called run also sees `event_name == 'push'` and groups by sha — and a tag
+# normally points at a commit already on main, so the gate and that commit's
+# main run share ONE group rather than being separated by ref. What protects it
+# now is `cancel-in-progress: false`: the second run waits for the first instead
+# of killing it, and both finish. Under the old ref-based group they were
+# separate; under this one they queue. Either way the gate completes.
 concurrency:
-  group: make-targets-${{ github.ref }}
-  cancel-in-progress: true
+  group: make-targets-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read
