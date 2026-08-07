@@ -180,3 +180,49 @@ func (a *API) registerLakehouseTables(session, wid, lid string) {
 			len(skipped), len(tables), it.DisplayName, skipped)
 	}
 }
+
+// applyEnvironment hands a session's Environment to the agent: the packages to
+// install and the Spark config to apply, before the first statement runs.
+//
+// This closes the gap docs/37 §1 names — the parse existed and nothing read its
+// answer, so a run REPORTED an environment while the session never RECEIVED
+// one. `/opt/wheels` demotes from *the* mechanism to the fallback it should be:
+// an Environment item drives installs when one is bound, the bind-mount still
+// serves consumers who do not model one.
+//
+// Best-effort on the same contract as /mount: an agent predating /environment
+// answers 404 and the session keeps whatever the image shipped. Failures are
+// LOGGED rather than swallowed — a missing package resurfaces much later as a
+// ModuleNotFoundError inside a notebook, and a silent cause is the worst version
+// of that.
+func (a *API) applyEnvironment(session, wid, envID string) {
+	if envID == "" {
+		return
+	}
+	env, err := a.resolveEnvironment(wid, envID)
+	if err != nil {
+		log.Printf("livy: session %s binds environment %s which cannot be read: %v; "+
+			"the session gets the runtime image as-is", session, envID, err)
+		return
+	}
+	if len(env.PythonPackages) == 0 && len(env.SparkConfig) == 0 && len(env.JARs) == 0 {
+		return
+	}
+	out, err := a.agentPost("/environment", map[string]any{
+		"session": session, "environment": envID,
+		"packages": env.PythonPackages, "sparkConfig": env.SparkConfig, "jars": env.JARs})
+	if err != nil {
+		log.Printf("livy: applying environment %s to session %s: %v", envID, session, err)
+		return
+	}
+	// The agent answers applied:false with a reason when it declines — most
+	// importantly when another session already bound a DIFFERENT environment.
+	// Fabric isolates those per container and this emulator cannot, so refusing
+	// is the honest answer; letting the last bind win would corrupt a dependency
+	// tree for a session that never asked (docs/37 §1).
+	if applied, _ := out["applied"].(bool); !applied {
+		reason, _ := out["reason"].(string)
+		log.Printf("livy: environment %s NOT applied to session %s: %s",
+			envID, session, reason)
+	}
+}

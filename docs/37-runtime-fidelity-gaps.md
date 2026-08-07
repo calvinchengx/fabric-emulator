@@ -1,6 +1,8 @@
 # 37 — Runtime fidelity: four documented divergences, and what closing each takes
 
-**Status: all four are stated in the code and none is implemented.** Each is a
+**Status: divergence 1's WIRE is built; the other three are stated in the code
+and not implemented.** The grade for Environments deliberately has not moved —
+see §1 and the rule at the end. Each is a
 place where the emulator's *runtime* — the thing a notebook actually sees — is
 deliberately an analog of Fabric's rather than the thing itself. They were
 written down at the moment they were created, which is why this document can
@@ -75,9 +77,32 @@ the last bind win would recreate divergence 2's worst property in a place where
 it corrupts a dependency tree rather than a directory. The honest first version
 refuses a conflicting bind (see 2).
 
-**Size: S.** Four things that exist, connected. The value is in an e2e that binds
-an Environment declaring a package the image lacks and proves a notebook can
-import it.
+**Size: S.** Four things that exist, connected.
+
+### Delivered: the wire. Not delivered: the proof.
+
+Steps 1–4 are built. A session carries an `environmentId` from acquire, the
+resolved `Environment` reaches the agent over a best-effort `/environment` call
+on the same contract as `/mount`, `_install_packages` takes a package list
+instead of only globbing `/opt/wheels`, and `sparkConfig` is applied at bind.
+`/opt/wheels` is now the documented fallback rather than the mechanism.
+
+The conflict rule this section warned about is enforced rather than deferred:
+the agent installs **one** Environment per process, treats a second bind of the
+**same** one as a no-op, and **refuses a different one with a reason naming the
+constraint**. Fabric isolates per container; a single process cannot, and
+letting the last bind win would corrupt a dependency tree for a session that
+never asked.
+
+JARs are reported as skipped rather than silently dropped — a Connect session's
+classpath is fixed at engine start, so it cannot take one.
+
+**The grade stays 🟡, on purpose.** The rule at the end of this document says the
+witness must be an e2e that imports a package only an Environment could have
+supplied, and that the grade moves "then and not before". Unit tests on the wire
+are not that witness: they prove the request is composed and the refusal fires,
+which is the layer below the claim. **That e2e is the remaining work**, and until
+it exists this row asserts nothing new.
 
 ---
 
@@ -258,6 +283,11 @@ What remains is a rule for when divergence 1 *is* built: the witness must be an
 e2e that imports a package only an Environment could have supplied, and the grade
 moves to 🟢 then and not before. A parser test must never again stand behind an
 applied-to-the-session claim.
+
+**The wire is now built and the grade has still not moved** — see §1. The rule
+held against its first real test, which is the only way to know a rule works: the
+temptation was to grade 🟢 on unit tests that prove the request is composed, and
+those sit one layer below what the row would claim.
 
 ## Order of work
 
