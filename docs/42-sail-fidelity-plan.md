@@ -1,6 +1,6 @@
 # 42 — Sail stays the default: how close to 100% that can get
 
-**Status: taxonomy measured, first increment delivered.** `DESCRIBE TABLE` and
+**Status: the reachable bucket is closed; CDF is blocked on a decision (§3b).** `DESCRIBE TABLE` and
 `DESCRIBE DETAIL` now answer from the Delta log
 ([delta_ops.py](../python/spark_agent/delta_ops.py)).
 
@@ -67,9 +67,66 @@ CTAS already route this way. Added here:
 
 Still reachable and not yet built:
 
-- **CDF write** — enable the table feature through delta-rs so a Sail-authored
-  table is CDF-readable. The read path already works.
 - **`CREATE TABLE` defaulting to Delta** — see below; this one is special.
+
+**CDF was listed here and does not belong** — see §3b. An earlier revision of
+this plan called it "bucket 3, cheap"; that was wrong, and finding out cost less
+than building it would have.
+
+
+### 3b. CDF: not reachable through this seam, and blocked on a decision
+
+The seam wraps **`spark.sql` only**. The CDF probe — and real Fabric notebook
+code — never touches SQL:
+
+```python
+spark.sql("SELECT 1 AS id").write.format("delta") \
+     .option("delta.enableChangeDataFeed", "true").mode("overwrite").save(p)
+spark.read.format("delta").option("readChangeFeed", "true").load(p)
+```
+
+Both halves go through the **DataFrame writer and reader**. Wrapping those is
+technically precedented — `input_file.py` already patches `type(spark.read)` and
+`_ConnectDataFrame.write` — so this is not a capability problem.
+
+It is a **design** problem, and the design was already decided. From
+`read_change_feed`'s own docstring:
+
+> Sail rejects `option("readChangeFeed", "true")` outright, so this is exposed as
+> a helper rather than by intercepting the DataFrameReader: silently rewriting a
+> user's `spark.read` chain would hide which engine answered.
+
+**Nothing is currently dishonest.** The write fails loudly
+(`Unsupported table features required: [ChangeDataFeed]`) and the read has an
+explicit helper. Neither fabricates a result. Closing the row buys *convenience*
+and pays in transparency — which is why it is a decision rather than a task.
+
+#### The case for reversing
+
+Fabric has no `spark.delta_change_feed(...)`. Requiring an emulator-only API
+means **the notebook you test is not the notebook you ship**, which is itself a
+fidelity break — arguably a worse one than an executor mismatch, because it is
+the exact class of divergence this emulator exists to catch.
+
+#### The middle path
+
+The recorded objection is to **silence**, not to interception. Intercepting the
+standard API and *announcing* it — a stderr line, the executor named in the
+session output, the divergence documented as `delta_ops` already documents
+OPTIMIZE and VACUUM — would satisfy the stated principle rather than reverse it.
+Gate it on `SPARK_REMOTE`, or the interception replaces a *working* native path
+on the JVM overlay and makes the better engine worse.
+
+#### The crux, still undecided
+
+`read_change_feed` returns a **materialised** frame via `createDataFrame`, not a
+lazily-planned scan. Backing `spark.read…load()` with it means `.explain()` shows
+a LocalRelation, no predicate pushdown, no partition pruning, and the whole feed
+through the driver. **No amount of announcing fixes that**, and it is what a user
+hits at scale having written ordinary-looking Spark.
+
+That is the open question: whether that consequence is acceptable. Until it is
+answered, this stays unbuilt on purpose.
 
 ### 4. Neither engine — a Fabric property, not a Spark one
 
@@ -110,8 +167,13 @@ requires guessing.
 
 ## Next
 
-1. **CDF write** — bucket 3, closes a measured ❌.
-2. **`CREATE TABLE` → Delta by default** — bucket 4, makes Sail beat the JVM on
-   a Fabric property.
-3. Regenerate `engine-matrix.md` so the middle column reflects all of it; CI
-   already diffs that file, so the matrix cannot drift from the code.
+**The reachable bucket is now empty.** DESCRIBE and the explicit-LOCATION CTAS
+are delivered, and `engine-matrix.md` is regenerated — the `CREATE TABLE` row
+reads ❌ Sail / ✅ emulator / ❌ JVM, the one row where this emulator is more
+faithful to Fabric than the JVM overlay.
+
+What remains is not incremental work:
+
+1. **CDF** — blocked on the decision in §3b, not on effort.
+2. **Streaming sinks** — genuine Sail engine work, upstream or in the overlay.
+3. **`sc` / `_jvm`** — never, while the transport is Spark Connect.
