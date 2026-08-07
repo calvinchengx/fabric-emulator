@@ -214,7 +214,7 @@ jobs:
         run: |
           go_pct=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
           py_pct=$(uv run --frozen --group test pytest python/tests -q \
-                   --cov --cov-report=term --cov-fail-under=70 2>&1 \
+                   --cov --cov-report=term --cov-fail-under=80 2>&1 \
                    | sed -n 's/.*Total coverage: \([0-9.]*\)%.*/\1/p' | tail -1)
           # Read from the machine-readable summary rather than scraped stdout:
           # the table's column layout is not a contract.
@@ -1188,7 +1188,13 @@ jobs:
       # Coverage flags live HERE, not in addopts: addopts would apply to every
       # pytest in the repo, including the ones e2e harnesses run in containers
       # without pytest-cov, where they are unrecognised arguments (exit 4).
-      - run: uv run --frozen --group test pytest python/tests -q --cov --cov-report=term-missing --cov-fail-under=70
+      # Floor raised 70 -> 80 once the two invariant checkers (arch-services,
+      # docs-sidebar) and the notebookutils shim surface gained unit tests. It
+      # is a RATCHET, not a target: 100% is not the goal — `selectedValue` sat
+      # at 100% statement coverage in #55 while a real rule went unasserted, and
+      # only mutation testing caught it. delta_ops.py is the remaining block and
+      # needs delta-rs + Spark, which is what e2e/sail is for.
+      - run: uv run --frozen --group test pytest python/tests -q --cov --cov-report=term-missing --cov-fail-under=80
       # Brings up entra + fabric + azure-keyvault and runs a real Fabric
       # notebook that drives the functional notebookutils shim: fs over
       # OneLake, credential tokens, Key Vault secret brokering, lakehouse
