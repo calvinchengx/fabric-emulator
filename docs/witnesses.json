@@ -774,5 +774,13 @@
       "ci:livy-native",
       "py:test_spark_agent_sql_envelope"
     ]
+  },
+  "copyjob": {
+    "section": "Item types present, engine absent",
+    "claim": "**`CopyJob`**",
+    "witnesses": [
+      "go:TestCopyJobExecuteReallyCopies",
+      "go:TestCopyJobRefusesWhatItCannotHonour"
+    ]
   }
 }
