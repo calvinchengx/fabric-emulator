@@ -287,13 +287,59 @@ def _split_top(text: str, sep: str = ","):
     return [p.strip() for p in parts if p.strip()]
 
 
+def _identifier_parts(ref: str):
+    """Split a possibly-quoted identifier on the dots BETWEEN its parts.
+
+    A dot inside backticks or double quotes belongs to the name, not to the
+    path: `` `my.col` `` is one part, `` `t`.`col` `` is two. Stripping quotes
+    from the whole string first cannot tell those apart, which is the bug this
+    exists to remove.
+    """
+    parts, buf, quote = [], [], None
+    for ch in ref.strip():
+        if quote:
+            if ch == quote:
+                quote = None
+            else:
+                buf.append(ch)
+        elif ch in "`\"":
+            quote = ch
+        elif ch == ".":
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    parts.append("".join(buf).strip())
+    return [p for p in parts if p] or [""]
+
+
 def _plain_column(ref: str, alias: str) -> str:
-    """`t.\\`col\\``/`t.col`/`\\`col\\`` -> the bare column name."""
-    ref = ref.strip().strip("`\"")
-    prefix = alias + "."
-    if ref.lower().startswith(prefix.lower()):
-        ref = ref[len(prefix):]
-    return ref.strip().strip("`\"")
+    """`t.\\`col\\``/`\\`t\\`.\\`col\\``/`t.col`/`\\`col\\`` -> the bare column name.
+
+    delta-rs wants the target column's own name on the left of an update, so a
+    leading target alias has to go.
+
+    QUOTING IS PER SEGMENT, which the first version of this missed. It stripped
+    backticks from the ends of the whole string, so `` `t`.`amount` `` — valid
+    Spark SQL, and what a formatter produces — became the string
+    ``t`.`amount``: the alias prefix no longer matched, and delta-rs was handed
+    a column name no table has. A wrong answer rather than a refusal, which is
+    the shape this repo treats as worst.
+
+    A single quoted identifier that still spells the alias inside it
+    (`` `t.amount` ``) keeps its old reading. That form is ambiguous — SQL says
+    it is one column literally named "t.amount" — but anyone writing it in a
+    MERGE means the qualified column, and changing that reading is a separate
+    decision from fixing the bug above.
+    """
+    parts = _identifier_parts(ref)
+    if len(parts) > 1 and parts[0].lower() == alias.lower():
+        return ".".join(parts[1:])
+    if len(parts) == 1:
+        prefix = alias + "."
+        if parts[0].lower().startswith(prefix.lower()):
+            return parts[0][len(prefix):]
+    return ".".join(parts)
 
 
 def execute_merge(spark, params, resolve, storage_options=None):

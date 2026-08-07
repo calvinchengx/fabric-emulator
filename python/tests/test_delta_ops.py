@@ -142,22 +142,54 @@ def test_split_top_on_a_simple_list():
     assert d._split_top("a, b, c") == ["a", "b", "c"]
 
 
-def test_plain_column_strips_the_target_alias():
-    # delta-rs wants the bare column name on the left of an update.
-    assert d._plain_column("t.amount", "t") == "amount"
-    assert d._plain_column("`t.amount`", "t") == "amount"
-    assert d._plain_column("amount", "t") == "amount"
-    assert d._plain_column("  T.amount  ", "t") == "amount", "alias match is case-insensitive"
+@pytest.mark.parametrize("ref,expected", [
+    ("t.amount", "amount"),                 # the ordinary form
+    ("`t`.`amount`", "amount"),             # per-segment quoting — this was BROKEN
+    ('"t"."amount"', "amount"),             # the double-quoted spelling
+    ("`t`.amount", "amount"),               # mixed
+    ("t.`amount`", "amount"),               # mixed the other way
+    ("  T.amount  ", "amount"),             # alias match is case-insensitive
+    ("amount", "amount"),                   # unqualified
+    ("`amount`", "amount"),
+    ("s.amount", "s.amount"),               # a DIFFERENT alias is not stripped
+    ("`t.amount`", "amount"),               # one quoted identifier: old reading kept
+])
+def test_plain_column_strips_the_target_alias(ref, expected):
+    # delta-rs wants the target column's own name on the left of an update, so a
+    # leading target alias has to go — in every spelling Spark SQL accepts.
+    # `\`t\`.\`amount\`` used to yield "t`.`amount": a column no table has,
+    # handed to delta-rs as a wrong answer rather than a refusal.
+    assert d._plain_column(ref, "t") == expected
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "A fully backticked reference (`t`.`amount`) is valid Spark SQL, but "
-    "_plain_column only strips backticks from the OUTSIDE, so the alias prefix "
-    "no longer matches and delta-rs is handed the column name 't`.`amount'. "
-    "Narrow — the medallion MERGEs write `t.col` — but it is a wrong answer, "
-    "not a refusal. Remove this marker when it is fixed."))
-def test_a_fully_backticked_reference_should_also_lose_its_alias():
-    assert d._plain_column("`t`.`amount`", "t") == "amount"
+def test_a_dot_inside_quotes_belongs_to_the_name_not_the_path():
+    # `my.col` is ONE column whose name contains a dot. Splitting it would
+    # invent a qualifier that was never written.
+    assert d._plain_column("`my.col`", "t") == "my.col"
+    assert d._identifier_parts("`my.col`") == ["my.col"]
+    assert d._identifier_parts("`t`.`my.col`") == ["t", "my.col"]
+
+
+def test_identifier_parts_never_returns_nothing():
+    # A caller indexes [0]; an empty list would be an IndexError naming this
+    # file rather than the malformed input.
+    assert d._identifier_parts("") == [""]
+    assert d._identifier_parts("``") == [""]
+
+
+def test_a_backticked_merge_maps_to_real_column_names(fake_deltalake):
+    # The end-to-end shape of the bug: a MERGE written with quoted identifiers
+    # must reach delta-rs with the target's own column names as update keys.
+    spark = types.SimpleNamespace(
+        table=lambda n: types.SimpleNamespace(toArrow=lambda: "arrow"))
+    _, params = d.match(
+        "MERGE INTO silver.orders AS t USING updates AS s ON t.id = s.id "
+        "WHEN MATCHED THEN UPDATE SET `t`.`amt` = s.amt "
+        "WHEN NOT MATCHED THEN INSERT (`t`.`id`, `t`.`amt`) VALUES (s.id, s.amt)")
+    d.execute_merge(spark, params, lambda n: "abfss://lake/orders")
+    merger = FakeDeltaTable.last.merger
+    assert merger.updates == {"amt": "s.amt"}
+    assert merger.inserts == {"id": "s.id", "amt": "s.amt"}
 
 
 def test_table_uri_prefers_an_explicit_delta_path():
