@@ -1,6 +1,6 @@
 # 41 — Salesforce: a job lifecycle, not a request
 
-**Status: S1 delivered; S2–S3 scoped.** `SalesforceV2Source` runs the real Bulk
+**Status: S1 + S2 delivered; S3 scoped.** `SalesforceV2Source` runs the real Bulk
 API 2.0 query lifecycle ([salesforce.go](../internal/api/salesforce.go)).
 
 [40-rest-connector-plan.md](40-rest-connector-plan.md) deferred this deliberately
@@ -36,7 +36,7 @@ and it ends when that header is the **literal string `"null"`** — not an absen
 header, not an empty one. That is the detail most likely to be got wrong, so it
 is asserted directly.
 
-### Ingest — S2
+### Ingest — S2 (delivered)
 
 `POST /jobs/ingest` → `{id, contentUrl}`, **`PUT` the CSV** to
 `/jobs/ingest/{id}/batches` as `text/csv`, `PATCH` the job to `UploadComplete`,
@@ -86,7 +86,7 @@ Revisit if S2's ingest lifecycle or OAuth flows turn out to be where the cost is
 | | Scope | Size |
 |---|---|---|
 | **S1** ✅ | `SalesforceV2Source` — query lifecycle, `objectApiName`/`query`, `includeDeletedObjects`, locator paging, CSV → Delta | **M** |
-| **S2** | `SalesforceV2Sink` — ingest lifecycle, insert/upsert, `writeBatchSize` | **M** |
+| **S2** ✅ | `SalesforceV2Sink` — ingest lifecycle, insert/upsert, `writeBatchSize` | **M** |
 | **S3** | e2e against a stand-in Salesforce, as `e2e/rest-helix` does for Helix | **S** |
 
 S1 and S2 split at a real seam, the same way R1/R2 did: reading and writing share
