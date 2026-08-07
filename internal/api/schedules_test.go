@@ -407,11 +407,8 @@ func TestScheduledPipelineReallyRuns(t *testing.T) {
 	if jobs[0].InvokeType != store.InvokeScheduled {
 		t.Fatalf("invokeType = %q", jobs[0].InvokeType)
 	}
-	// The interpreter ran and recorded its activity detail.
-	status, runs, err := st.GetPipelineRun(jobs[0].ID)
-	if err != nil {
-		t.Fatalf("no pipeline run recorded: %v", err)
-	}
+	// The interpreter ran (async, doc 37 §4) and recorded its activity detail.
+	status, runs := awaitPipelineRun(t, st, jobs[0].ID)
 	if status != "Succeeded" || !strings.Contains(runs, "Wait1") {
 		t.Fatalf("run = %s %s", status, runs)
 	}

@@ -35,7 +35,7 @@ func TestNoJobTypeReportsSuccessForAnItemItCouldNotRead(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, jid := runJob(t, a, ws.ID, it.ID, "jobType="+tc.jobType, "")
-			if s := jobStatus(t, a, ws.ID, it.ID, jid); s == "Completed" {
+			if s := awaitJob(t, a, ws.ID, it.ID, jid); s == "Completed" {
 				t.Fatalf("%s/%s with no definition reported Completed — a caller "+
 					"cannot tell that from a run that did the work",
 					tc.itemType, tc.jobType)

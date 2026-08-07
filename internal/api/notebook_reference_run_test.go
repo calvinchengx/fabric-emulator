@@ -70,7 +70,7 @@ func TestReferenceRunBlocksAChildOnADifferentLakehouse(t *testing.T) {
 	nb := notebookBoundTo(t, st, ws.ID, childLake.ID)
 
 	jid := referenceRun(t, a, ws.ID, nb.ID, parentLake.ID, false)
-	if got := jobStatus(t, a, ws.ID, nb.ID, jid); got != store.JobFailed {
+	if got := awaitJob(t, a, ws.ID, nb.ID, jid); got != store.JobFailed {
 		t.Fatalf("a child on a different lakehouse must be blocked, got %s", got)
 	}
 }

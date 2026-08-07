@@ -132,6 +132,13 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 			j.CompleteAt = math.MaxInt64
 		}
 	}
+	// A pipeline's completion time is decided by its own execution, not the
+	// clock — same contract as a notebook with cells outstanding. Parked
+	// BEFORE create so no poll can ever observe a clock-completed pipeline
+	// whose activities are still running.
+	if it.Type == "DataPipeline" {
+		j.CompleteAt = math.MaxInt64
+	}
 	if err := a.Store.CreateJobInstance(j); err != nil {
 		return nil, err
 	}
@@ -144,16 +151,26 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 			a.Store.PublishJobEvent(wid, it.ID, j.ID, jobType, invokeType, terminal, j.FailWith)
 		}
 	}()
-	// DataPipeline jobs actually execute: the interpreter runs the definition's
-	// control flow now and records the activity runs; a pipeline failure sets
-	// the job's terminal status (overriding fault injection).
+	// DataPipeline jobs actually execute — now OUTLIVING the request, like
+	// every other job type (doc 37 §4 was the last inline one). The POST
+	// returns 202 and the client polls; a fan-out of notebooks no longer holds
+	// a socket open for its whole runtime, and the per-activity flow events
+	// become readable while the pipeline is still running instead of arriving
+	// in a burst after it finished. The goroutine finalises the job and
+	// publishes the terminal event itself — the clock cannot know when a
+	// pipeline finishes, so CompleteAt was parked at MaxInt64 before create.
 	if it.Type == "DataPipeline" {
 		params, _ := exec["parameters"].(map[string]any)
 		trigger, _ := exec["triggerEvent"].(map[string]any)
-		if code := a.runPipelineWith(wid, it, j.ID, params, trigger); code != "" && j.FailWith == "" {
-			j.FailWith = code
-			_ = a.Store.SetJobFailure(it.ID, j.ID, code)
-		}
+		injected := j.FailWith // fault injection wins over the pipeline's own outcome
+		go func() {
+			code := a.runPipelineWith(wid, it, j.ID, params, trigger)
+			if injected != "" {
+				code = injected
+			}
+			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
+			a.publishJobOutcome(wid, it.ID, j.ID, code)
+		}()
 	}
 	// The parse happened above; record it against the job now that one exists.
 	// A real Spark engine executes the cells and reports back to finalise the
@@ -213,8 +230,11 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 // item) or awaiting an engine callback (a notebook, a Spark job, an Airflow
 // DAG — each finalised later, by its own reporting path).
 func (a *API) terminalStatusOf(it *store.Item, jobType string, j *store.JobInstance) string {
-	executesNow := it.Type == "DataPipeline" ||
-		(it.Type == "CopyJob" && (jobType == "Execute" || jobType == "CopyJob")) ||
+	// DataPipeline left this list when its execution went async (doc 37 §4):
+	// listing it here reported "Completed" at POST time, which after that
+	// change would be the same lie the notebook reconciliation was built to
+	// kill — the goroutine publishes the real outcome via publishJobOutcome.
+	executesNow := (it.Type == "CopyJob" && (jobType == "Execute" || jobType == "CopyJob")) ||
 		(it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish"))
 	if !executesNow {
 		// A notebook or Spark job that failed to even start is terminal now.

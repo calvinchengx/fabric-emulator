@@ -48,7 +48,7 @@ func TestPipelineExpressionEdges(t *testing.T) {
 		strings.Join(acts, ",") + `]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 		t.Fatalf("expression edges = %s, want Completed; runs: %+v", s, runs)
 	}
@@ -83,7 +83,7 @@ func TestPipelineExpressionErrors(t *testing.T) {
           ]}}`
 		pl := createPipeline(t, st, ws.ID, content)
 		_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-		if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 			t.Errorf("%s (%s) = %s, want Failed", name, expr, s)
 		}
 	}

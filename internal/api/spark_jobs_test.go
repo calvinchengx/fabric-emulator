@@ -43,7 +43,7 @@ func TestSparkJobDefinitionRunAndReport(t *testing.T) {
 	if w := do(a.reportSparkJobRun, admin, "POST", `{"status":"Completed","output":"done"}`, pv); w.Code != 200 {
 		t.Fatalf("report = %d %s", w.Code, w.Body.Bytes())
 	}
-	if got := jobStatus(t, a, ws.ID, item.ID, jid); got != store.JobCompleted {
+	if got := awaitJob(t, a, ws.ID, item.ID, jid); got != store.JobCompleted {
 		t.Fatalf("status = %s", got)
 	}
 }
@@ -56,7 +56,7 @@ func TestSparkJobDefinitionValidationAndFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, jid := runJob(t, a, ws.ID, bad.ID, "jobType=sparkjob", "")
-	if got := jobStatus(t, a, ws.ID, bad.ID, jid); got != store.JobFailed {
+	if got := awaitJob(t, a, ws.ID, bad.ID, jid); got != store.JobFailed {
 		t.Fatalf("invalid status = %s", got)
 	}
 
@@ -69,7 +69,7 @@ func TestSparkJobDefinitionValidationAndFailure(t *testing.T) {
 	if w := do(a.reportSparkJobRun, admin, "POST", `{"status":"Failed","error":"boom"}`, pv); w.Code != 200 {
 		t.Fatalf("report failure = %d", w.Code)
 	}
-	if got := jobStatus(t, a, ws.ID, good.ID, jid); got != store.JobFailed {
+	if got := awaitJob(t, a, ws.ID, good.ID, jid); got != store.JobFailed {
 		t.Fatalf("failed status = %s", got)
 	}
 }
@@ -108,7 +108,7 @@ func TestSparkJobStatusReflectsExecutionNotTheClock(t *testing.T) {
 	if w := do(a.reportSparkJobRun, admin, "POST", `{"status":"Completed","output":"work"}`, pv); w.Code != 200 {
 		t.Fatalf("report = %d %s", w.Code, w.Body.Bytes())
 	}
-	if s := jobStatus(t, a, ws.ID, item.ID, jid); s != store.JobCompleted {
+	if s := awaitJob(t, a, ws.ID, item.ID, jid); s != store.JobCompleted {
 		t.Fatalf("job status after a real report = %q, want Completed", s)
 	}
 }
@@ -126,7 +126,7 @@ func TestSparkJobThatCannotParseFailsWithoutWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, jid := runJob(t, a, ws.ID, item.ID, "jobType=sparkjob", "")
-	if s := jobStatus(t, a, ws.ID, item.ID, jid); s != store.JobFailed {
+	if s := awaitJob(t, a, ws.ID, item.ID, jid); s != store.JobFailed {
 		t.Fatalf("unparseable job = %q, want Failed — no engine will ever "+
 			"report on it, so waiting would hang forever", s)
 	}

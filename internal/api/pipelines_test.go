@@ -107,7 +107,7 @@ func TestPipelineJobSuccess(t *testing.T) {
 	if w.Code != 202 {
 		t.Fatalf("run = %d %s", w.Code, w.Body.Bytes())
 	}
-	if st := jobStatus(t, a, ws.ID, pl.ID, jid); st != "Completed" {
+	if st := awaitJob(t, a, ws.ID, pl.ID, jid); st != "Completed" {
 		t.Fatalf("job status = %s", st)
 	}
 	status, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -149,7 +149,7 @@ func TestPipelineJobFailure(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "")
-	if st := jobStatus(t, a, ws.ID, pl.ID, jid); st != "Failed" {
+	if st := awaitJob(t, a, ws.ID, pl.ID, jid); st != "Failed" {
 		t.Fatalf("job status = %s", st)
 	}
 	status, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -168,7 +168,7 @@ func TestPipelineDataflowNotImplemented(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "")
-	if st := jobStatus(t, a, ws.ID, pl.ID, jid); st != "Failed" {
+	if st := awaitJob(t, a, ws.ID, pl.ID, jid); st != "Failed" {
 		t.Fatalf("job status = %s", st)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -190,7 +190,7 @@ func TestPipelineParameterOverride(t *testing.T) {
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline",
 		`{"executionData":{"parameters":{"greeting":"overridden"}}}`)
-	if st := jobStatus(t, a, ws.ID, pl.ID, jid); st != "Completed" {
+	if st := awaitJob(t, a, ws.ID, pl.ID, jid); st != "Completed" {
 		t.Fatalf("job status = %s", st)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -210,7 +210,7 @@ func TestPipelineNoDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("job status = %s, want Failed", s)
 	}
 	status, _ := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -225,7 +225,7 @@ func TestPipelineMalformedDefinition(t *testing.T) {
 	ws := seedWorkspace(t, st)
 	pl := createPipeline(t, st, ws.ID, "{not valid pipeline json")
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("job status = %s, want Failed", s)
 	}
 }
@@ -264,7 +264,7 @@ func TestPipelineInvokeRealWork(t *testing.T) {
       ]}}`)
 
 	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, parent.ID, jid); s != "Completed" {
 		t.Fatalf("parent job = %s, want Completed", s)
 	}
 	// The child's Copy really ran through the storage layer.
@@ -302,7 +302,7 @@ func TestPipelineInvokeParametersFlow(t *testing.T) {
       ]}}`)
 
 	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, parent.ID, jid); s != "Completed" {
 		t.Fatalf("parent job = %s, want Completed", s)
 	}
 	if _, err := st.GetOneLakePath(dst.ID, "Files/passed"); err != nil {
@@ -325,7 +325,7 @@ func TestPipelineInvokeChildFailurePropagates(t *testing.T) {
         {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipeline":{"referenceName":"`+child.ID+`"}}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, parent.ID, jid); s != "Failed" {
 		t.Fatalf("parent job = %s, want Failed", s)
 	}
 }
@@ -343,7 +343,7 @@ func TestPipelineInvokeWaitFalse(t *testing.T) {
           "pipeline":{"referenceName":"`+child.ID+`"},"waitOnCompletion":false}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, parent.ID, jid); s != "Completed" {
 		t.Fatalf("parent job = %s, want Completed (fire-and-forget)", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, parent.ID, jid)
@@ -367,7 +367,7 @@ func TestPipelineInvokeCycleDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("self-invoking pipeline = %s, want Failed", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -384,7 +384,7 @@ func TestPipelineInvokeUnknownChild(t *testing.T) {
         {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipeline":{"referenceName":"nope"}}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, parent.ID, jid); s != "Failed" {
 		t.Fatalf("unknown-child invoke = %s, want Failed", s)
 	}
 }
@@ -405,7 +405,7 @@ func TestPipelineInvokeByName(t *testing.T) {
         {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipeline":{"referenceName":"worker"}}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, parent.ID, jid); s != "Completed" {
 		t.Fatalf("invoke-by-name = %s, want Completed", s)
 	}
 	if got, err := st.GetOneLakePath(dst.ID, "Files/out"); err != nil || string(got.Content) != "hi" {
@@ -432,7 +432,7 @@ func TestPipelineInvokeByPipelineId(t *testing.T) {
           {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipelineId":"@pipeline().parameters.target"}}
         ]}}`)
 	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, parent.ID, jid); s != "Completed" {
 		t.Fatalf("invoke-by-pipelineId = %s, want Completed", s)
 	}
 	if _, err := st.GetOneLakePath(dst.ID, "Files/out"); err != nil {
@@ -451,7 +451,7 @@ func TestPipelineInvokeBadParameters(t *testing.T) {
           "pipeline":{"referenceName":"`+child.ID+`"},"parameters":["not","an","object"]}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, parent.ID, jid); s != "Failed" {
 		t.Fatalf("bad-parameters invoke = %s, want Failed", s)
 	}
 }
@@ -466,7 +466,7 @@ func TestPipelineInvokeUnknownWorkspace(t *testing.T) {
           "pipeline":{"referenceName":"child","workspaceId":"no-such-ws"}}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, parent.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, parent.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, parent.ID, jid); s != "Failed" {
 		t.Fatalf("unknown-workspace invoke = %s, want Failed", s)
 	}
 }
@@ -481,7 +481,7 @@ func TestPipelineRetryPolicyJob(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("job status = %s, want Failed", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -531,7 +531,7 @@ func TestPipelineCopyActivityRealBytes(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 
@@ -590,7 +590,7 @@ func TestPipelineCopyDirectory(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	for rel, want := range map[string]string{"Files/out/a.txt": "A", "Files/out/sub/b.txt": "BB"} {
@@ -618,7 +618,7 @@ func TestPipelineCopyByName(t *testing.T) {
         }}]}}`
 	pl := createPipeline(t, st, ws.ID, ok)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("by-name copy = %s", s)
 	}
 	got, err := st.GetOneLakePath(dst.ID, "Files/a")
@@ -634,7 +634,7 @@ func TestPipelineCopyByName(t *testing.T) {
         }}]}}`
 	pl2 := createPipeline(t, st, ws.ID, bad)
 	_, jid2 := runJob(t, a, ws.ID, pl2.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl2.ID, jid2); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl2.ID, jid2); s != "Failed" {
 		t.Fatalf("unknown-workspace copy = %s, want Failed", s)
 	}
 }
@@ -655,7 +655,7 @@ func TestPipelineCopyFailures(t *testing.T) {
         }}]}}`
 	pl := createPipeline(t, st, ws.ID, c1)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("missing-source job = %s, want Failed", s)
 	}
 
@@ -668,7 +668,7 @@ func TestPipelineCopyFailures(t *testing.T) {
 	seedFile(t, st, ws.ID, src.ID, "Files/in", []byte("x"))
 	pl2 := createPipeline(t, st, ws.ID, c2)
 	_, jid2 := runJob(t, a, ws.ID, pl2.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl2.ID, jid2); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl2.ID, jid2); s != "Failed" {
 		t.Fatalf("missing-itemId job = %s, want Failed", s)
 	}
 }
@@ -719,7 +719,7 @@ func TestPipelineLookupCSV(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -750,7 +750,7 @@ func TestPipelineLookupJSONAllRows(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -771,7 +771,7 @@ func TestPipelineLookupMissing(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("missing lookup source = %s, want Failed", s)
 	}
 }
@@ -790,7 +790,7 @@ func TestPipelineGetMetadataFile(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -818,7 +818,7 @@ func TestPipelineGetMetadataDir(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -847,7 +847,7 @@ func TestPipelineGetMetadataMissing(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -870,7 +870,7 @@ func TestPipelineLookupOnDirectory(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("lookup on directory = %s, want Failed", s)
 	}
 }
@@ -888,7 +888,7 @@ func TestPipelineGetMetadataDefaultFields(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -910,7 +910,7 @@ func TestPipelineGetMetadataNoLocation(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("no-location getMetadata = %s, want Failed", s)
 	}
 }
@@ -924,7 +924,7 @@ func TestPipelineLookupNoSource(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("no-source lookup = %s, want Failed", s)
 	}
 }
@@ -942,7 +942,7 @@ func TestPipelineLookupEmptyCSV(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -995,7 +995,7 @@ func TestPipelineLookupDelta(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -1031,7 +1031,7 @@ func TestPipelineLookupDeltaExplicitFormat(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -1052,7 +1052,7 @@ func TestPipelineLookupDeltaMissingTable(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("missing delta table = %s, want Failed", s)
 	}
 }
@@ -1071,7 +1071,7 @@ func TestPipelineLookupParquetFile(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -1121,7 +1121,7 @@ func TestPipelineLookupNumericFlowsThroughAnExpression(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -1157,7 +1157,7 @@ func TestPipelineScriptNoBackend(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("script with no SQL backend = %s, want Failed", s)
 	}
 }
@@ -1178,7 +1178,7 @@ func TestPipelineStoredProcedureNoBackend(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("stored procedure with no SQL backend = %s, want Failed", s)
 	}
 }
@@ -1194,7 +1194,7 @@ func TestPipelineScriptNoDatabaseRef(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("script with no database ref = %s, want Failed", s)
 	}
 }
@@ -1227,7 +1227,7 @@ func TestCopyAcceptsFabricWireShape(t *testing.T) {
       }}]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	got, err := st.GetOneLakePath(dst.ID, "Tables/bronze_orders/part-0.parquet")
@@ -1264,7 +1264,7 @@ func TestCopyFilesRootFolderAddressing(t *testing.T) {
       }}]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	if _, err := st.GetOneLakePath(lh.ID, "Files/raw/customers.csv"); err != nil {
@@ -1295,7 +1295,7 @@ func TestCopyRejectsUnsupportedLoudly(t *testing.T) {
               }}]}}`
 			pl := createPipeline(t, st, ws.ID, content)
 			_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-			if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+			if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 				t.Fatalf("unsupported %s: job status = %s, want Failed", tc.name, s)
 			}
 		})
@@ -1335,7 +1335,7 @@ func TestCopyRejectsUnhonourableSinkSemantics(t *testing.T) {
               }}]}}`
 			pl := createPipeline(t, st, ws.ID, content)
 			_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-			s := jobStatus(t, a, ws.ID, pl.ID, jid)
+			s := awaitJob(t, a, ws.ID, pl.ID, jid)
 			if tc.wantFailed && s != "Failed" {
 				t.Fatalf("%s: status = %s, want Failed (it would silently do something else)", tc.name, s)
 			}
@@ -1365,7 +1365,7 @@ func TestPipelineNotebookActivityStartsRealRun(t *testing.T) {
       {"name":"RunEtl","type":"TridentNotebook","typeProperties":{"notebookId":"` + nb.ID + `"}}]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("pipeline status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -1425,7 +1425,7 @@ func TestCopyPathAddressingVariants(t *testing.T) {
               }}]}}`
 			pl := createPipeline(t, st, ws.ID, content)
 			_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-			s := jobStatus(t, a, ws.ID, pl.ID, jid)
+			s := awaitJob(t, a, ws.ID, pl.ID, jid)
 			if tc.fail {
 				if s != "Failed" {
 					t.Fatalf("status = %s, want Failed", s)
@@ -1463,7 +1463,7 @@ func TestCopyCsvIntoDeltaTableAppends(t *testing.T) {
           }}]}}`
 		pl := createPipeline(t, st, ws.ID, content)
 		_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-		if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 			t.Fatalf("%s %s: status = %s", file, action, s)
 		}
 		_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -1583,12 +1583,67 @@ func TestCopyIntoTableFailsOnAMalformedSourceRatherThanFallingBack(t *testing.T)
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("status = %s; a source that claims to be a table and will not "+
 			"parse must FAIL, not fall back to copying raw bytes into Tables/", s)
 	}
 	// And nothing was written where a Delta table belongs.
 	if _, err := warehouse.ReadDeltaTable(st, lh.ID, "bronze_bad"); err == nil {
 		t.Error("a failed table copy left something readable at Tables/bronze_bad")
+	}
+}
+
+// TestPipelineJobOutlivesItsPOST is Phase 1's witness (doc 37 §4): the job
+// POST returns while the pipeline is still executing — the behaviour inline
+// execution cannot produce (before the async change this test DEADLOCKS: the
+// POST cannot return until the handler responds, and the handler is held until
+// after the POST returns). It also pins the terminal-event contract the
+// CopyJob work proved is quietly breakable: exactly ONE terminal job event,
+// published when the pipeline actually finishes — re-adding DataPipeline to
+// terminalStatusOf's executesNow publishes a premature second one and fails
+// the count below.
+func TestPipelineJobOutlivesItsPOST(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release // the activity is mid-flight until the test says otherwise
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	content := `{"properties":{"activities":[
+        {"name":"Slow","type":"Web","typeProperties":{"url":"` + srv.URL + `","method":"GET"}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+
+	sub := st.Subscribe()
+	defer sub.Close()
+
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	// The POST has returned; the activity has not. A clock-derived or
+	// executes-now status here would be the lie doc 37 §4 names.
+	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s == "Completed" || s == "Failed" {
+		t.Fatalf("job reported %s while its activity was still executing", s)
+	}
+
+	close(release)
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job = %s after the activity finished, want Completed", s)
+	}
+
+	terminals := 0
+	for _, ev := range drainEvents(t, sub.C) {
+		if ev.Kind == store.KindJob && ev.JobID == jid &&
+			(ev.Status == store.JobCompleted || ev.Status == store.JobFailed) {
+			terminals++
+			if ev.Status != store.JobCompleted {
+				t.Fatalf("terminal event says %s, want Completed", ev.Status)
+			}
+		}
+	}
+	if terminals != 1 {
+		t.Fatalf("terminal job events = %d, want exactly 1 (a premature executesNow publish or a double finalize)", terminals)
 	}
 }

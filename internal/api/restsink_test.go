@@ -90,7 +90,7 @@ func exportPipelineE(t *testing.T, sinkProps string, csv string) (*sinkRec, map[
       }}]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	status := jobStatus(t, a, ws.ID, pl.ID, jid)
+	status := awaitJob(t, a, ws.ID, pl.ID, jid)
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 	out, _ := runs[0]["output"].(map[string]any)
 	errMsg, _ := runs[0]["error"].(string)
@@ -226,7 +226,7 @@ func TestRestSinkFailsOnNon2xx(t *testing.T) {
       }}]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s == "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s == "Completed" {
 		t.Fatal("a 403 must fail the copy — a partial export reported as success is the worst outcome here")
 	}
 }
@@ -260,7 +260,7 @@ func TestRestSinkRefusesASourceWithNoRows(t *testing.T) {
       }}]}}`
 			pl := createPipeline(t, st, ws.ID, content)
 			_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-			if s := jobStatus(t, a, ws.ID, pl.ID, jid); s == "Completed" {
+			if s := awaitJob(t, a, ws.ID, pl.ID, jid); s == "Completed" {
 				t.Fatal("must fail rather than post something arbitrary")
 			}
 			_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)

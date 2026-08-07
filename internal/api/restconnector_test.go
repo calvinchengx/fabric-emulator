@@ -365,7 +365,7 @@ func TestRestSourceCopyLandsRowsInADeltaTable(t *testing.T) {
       }}]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("status = %s", s)
 	}
 
@@ -410,7 +410,7 @@ func TestRestSourceCopyRefusesANonTableSink(t *testing.T) {
       }}]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s == "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s == "Completed" {
 		t.Fatal("a non-table sink must fail rather than quietly do something else")
 	}
 }

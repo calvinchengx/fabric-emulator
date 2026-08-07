@@ -118,7 +118,7 @@ func sfExport(t *testing.T, org *sfIngestOrg, url, sinkProps, csv string) (map[s
       }}]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	status := jobStatus(t, a, ws.ID, pl.ID, jid)
+	status := awaitJob(t, a, ws.ID, pl.ID, jid)
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 	out, _ := runs[0]["output"].(map[string]any)
 	errMsg, _ := runs[0]["error"].(string)

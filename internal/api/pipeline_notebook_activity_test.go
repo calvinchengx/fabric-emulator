@@ -55,7 +55,7 @@ func TestNotebookActivityCrossWorkspace(t *testing.T) {
 		`"notebookId":"`+nb.ID+`","workspaceId":"`+nbWS.ID+`"`))
 	_, jid := runJob(t, a, pipeWS.ID, pl.ID, "jobType=Pipeline", "{}")
 
-	if s := jobStatus(t, a, pipeWS.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, pipeWS.ID, pl.ID, jid); s != "Completed" {
 		_, runs := activityRuns(t, a, pipeWS.ID, pl.ID, jid)
 		t.Fatalf("cross-workspace notebook activity = %s; runs=%+v", s, runs)
 	}
@@ -78,7 +78,7 @@ func TestNotebookActivityWorkspaceIdZeroGUID(t *testing.T) {
 		`"notebookId":"`+nb.ID+`","workspaceId":"00000000-0000-0000-0000-000000000000"`))
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 		t.Fatalf("zero-GUID workspaceId = %s, want Completed; runs=%+v", s, runs)
 	}
@@ -94,7 +94,7 @@ func TestNotebookActivityWorkspaceIdOmitted(t *testing.T) {
 	pl := createPipeline(t, st, ws.ID, notebookActivityPipeline(`"notebookId":"`+nb.ID+`"`))
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("omitted workspaceId = %s, want Completed", s)
 	}
 }
@@ -113,7 +113,7 @@ func TestNotebookActivityWorkspaceIdWrong(t *testing.T) {
 		`"notebookId":"`+nb.ID+`","workspaceId":"`+elsewhere.ID+`"`))
 	_, jid := runJob(t, a, pipeWS.ID, pl.ID, "jobType=Pipeline", "{}")
 
-	if s := jobStatus(t, a, pipeWS.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, pipeWS.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("notebook missing from the named workspace = %s, want Failed", s)
 	}
 	_, runs := activityRuns(t, a, pipeWS.ID, pl.ID, jid)
@@ -141,7 +141,7 @@ func TestNotebookActivityRejectsComplexParameters(t *testing.T) {
 				`"notebookId":"`+nb.ID+`","parameters":{`+tc.param+`}`))
 			_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 
-			if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+			if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 				t.Fatalf("a %s parameter = %s, want Failed (Fabric rejects it)", tc.name, s)
 			}
 			_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -168,7 +168,7 @@ func TestNotebookActivityAcceptsSimpleParameters(t *testing.T) {
            "b":{"value":false,"type":"bool"}}`))
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 		t.Fatalf("simple parameters = %s, want Completed; runs=%+v", s, runs)
 	}
@@ -184,6 +184,7 @@ func TestNotebookActivityOutputShape(t *testing.T) {
 
 	pl := createPipeline(t, st, ws.ID, notebookActivityPipeline(`"notebookId":"`+nb.ID+`"`))
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	awaitJob(t, a, ws.ID, pl.ID, jid) // async: the run detail exists once the job is terminal
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 
 	out, ok := runs[0]["output"].(map[string]any)

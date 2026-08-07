@@ -84,7 +84,7 @@ func TestNotebookRunParseAndReport(t *testing.T) {
 	// on its own. It is load-bearing only because a job with cells outstanding
 	// no longer has a clock-derived completion; see
 	// TestNotebookJobStatusReflectsExecutionNotTheClock.
-	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, nb.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	run = notebookRunDetail(t, a, ws.ID, nb.ID, jid)
@@ -107,7 +107,7 @@ func TestNotebookRunFailure(t *testing.T) {
 	if w := do(a.reportNotebookRun, admin, "POST", result, map[string]string{"wid": ws.ID, "iid": nb.ID, "jid": jid}); w.Code != 200 {
 		t.Fatalf("report = %d %s", w.Code, w.Body.Bytes())
 	}
-	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, nb.ID, jid); s != "Failed" {
 		t.Fatalf("job status = %s; want Failed", s)
 	}
 	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
@@ -156,7 +156,7 @@ func TestNotebookRunNoDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
-	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, nb.ID, jid); s != "Failed" {
 		t.Fatalf("job status = %s, want Failed", s)
 	}
 	// Terminal, so notebookutils.notebook.run still polls to an end — and the
@@ -187,7 +187,7 @@ func TestNotebookRunDetailNeverContradictsItsJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
-	status := jobStatus(t, a, ws.ID, nb.ID, jid)
+	status := awaitJob(t, a, ws.ID, nb.ID, jid)
 	run := notebookRunDetail(t, a, ws.ID, nb.ID, jid)
 	if len(run.Cells) != 0 {
 		t.Fatalf("markdown-only notebook parsed %d code cell(s)", len(run.Cells))
@@ -253,7 +253,7 @@ func TestNotebookRunRejectsMissingBinding(t *testing.T) {
 print(1)`
 	nb := createNotebook(t, st, ws.ID, source)
 	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
-	if got := jobStatus(t, a, ws.ID, nb.ID, jid); got != store.JobFailed {
+	if got := awaitJob(t, a, ws.ID, nb.ID, jid); got != store.JobFailed {
 		t.Fatalf("status = %s", got)
 	}
 	if run := notebookRunDetail(t, a, ws.ID, nb.ID, jid); run.Status != "Failed" {
@@ -384,7 +384,7 @@ func TestCopyLineageKeepsProducerCopy(t *testing.T) {
         "sink":{"location":{"itemId":"` + dst.ID + `","path":"Files/out.csv"}}}}]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("status = %s", s)
 	}
 	edges := edgesFor(t, a, ws.ID)
@@ -493,7 +493,7 @@ func TestNotebookJobStatusReflectsExecutionNotTheClock(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("report = %d %s", w.Code, w.Body.Bytes())
 	}
-	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, nb.ID, jid); s != "Completed" {
 		t.Fatalf("job status after a real report = %q, want Completed", s)
 	}
 }
@@ -523,7 +523,7 @@ func TestNotebookJobWithNothingToExecuteStillCompletes(t *testing.T) {
 	if len(run.Cells) != 0 {
 		t.Fatalf("expected no executable cells, got %+v", run.Cells)
 	}
-	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, nb.ID, jid); s != "Completed" {
 		t.Fatalf("job with no cells = %q, want Completed — there is nothing "+
 			"for an engine to do, so waiting for one would hang forever", s)
 	}
