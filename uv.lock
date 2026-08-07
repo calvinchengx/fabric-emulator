@@ -1373,6 +1373,7 @@ spark-connect = [
 test = [
     { name = "fabric-emulator-notebookutils" },
     { name = "fabric-target" },
+    { name = "jsonschema" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pyyaml" },
@@ -1462,6 +1463,7 @@ spark-connect = [
 test = [
     { name = "fabric-emulator-notebookutils", editable = "python" },
     { name = "fabric-target", editable = "python/fabric-target" },
+    { name = "jsonschema", specifier = ">=4.21,<5" },
     { name = "pytest", specifier = ">=8.3,<10" },
     { name = "pytest-cov", specifier = ">=5,<8" },
     { name = "pyyaml", specifier = ">=6,<7" },
