@@ -564,7 +564,13 @@ func (e *evalr) scalar(expr scalarExpr) (any, error) {
 	case funcCall:
 		return e.evalFunc(x)
 	case columnRef:
-		return nil, fmt.Errorf("column %s[%s] used outside an aggregation", x.table, x.col)
+		// Real DAX refuses a bare column here too — a filter context gives no
+		// row from which to read one value. The likeliest way to arrive is
+		// building a label with `&`, so the message names the two ways out
+		// this evaluator actually supports.
+		return nil, fmt.Errorf("column %s[%s] has no single value in this context: "+
+			"aggregate it (SUM(%s[%s])) or group by it, so SUMMARIZECOLUMNS returns it as its own column",
+			x.table, x.col, x.table, x.col)
 	}
 	return nil, fmt.Errorf("unsupported scalar expression %T", expr)
 }

@@ -113,7 +113,11 @@ func TestDAXOperatorErrors(t *testing.T) {
 		{`EVALUATE SUMMARIZECOLUMNS("v", [TotalUnits] / 0)`, "DIVIDE"},
 		// Text that is not a number must not silently become zero.
 		{`EVALUATE SUMMARIZECOLUMNS("v", "abc" + 1)`, "text value"},
-		{`EVALUATE SUMMARIZECOLUMNS("v", 'Store'[Territory] + 1)`, "outside an aggregation"},
+		{`EVALUATE SUMMARIZECOLUMNS("v", 'Store'[Territory] + 1)`, "no single value"},
+		// The shape someone reaches for first when building a label with `&`.
+		// It is a genuine DAX error, not an operator gap, so the message has to
+		// say so rather than read as "& is broken".
+		{`EVALUATE SUMMARIZECOLUMNS('Store'[Territory], "v", "T: " & 'Store'[Territory])`, "group by it"},
 		// Malformed operator expressions.
 		{`EVALUATE SUMMARIZECOLUMNS("v", 1 +)`, "expected"},
 		{`EVALUATE SUMMARIZECOLUMNS("v", * 5)`, "no left-hand operand"},
