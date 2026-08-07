@@ -132,8 +132,10 @@ def install(exe_name, module):
 shutil.rmtree(WORK, ignore_errors=True)
 os.makedirs(os.path.join(WORK, "data"))
 
-entra_bin = install("entra-emulator", "github.com/calvinchengx/entra-emulator/cmd/entra-emulator@latest")
-kv_bin = install("azure-keyvault-emulator", "github.com/calvinchengx/azure-keyvault-emulator/cmd/azure-keyvault-emulator@latest")
+# Pinned to the entra-emulator version in go.mod — bump this together with go.mod.
+entra_bin = install("entra-emulator", "github.com/calvinchengx/entra-emulator/cmd/entra-emulator@v0.3.0")
+# azure-keyvault-emulator is not in go.mod; bump this pin manually as needed.
+kv_bin = install("azure-keyvault-emulator", "github.com/calvinchengx/azure-keyvault-emulator/cmd/azure-keyvault-emulator@v0.3.0")
 
 log("building fabric-emulator")
 fabric_bin = os.path.join(WORK, "fabric-emulator" + EXE)
