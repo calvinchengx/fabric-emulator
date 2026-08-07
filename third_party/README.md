@@ -45,6 +45,10 @@ the golden truth is reviewable. Never let a reference float.
 - [`powerbi-rest-swagger/`](powerbi-rest-swagger/) — the official Power BI REST
   OpenAPI (MIT, copied in full). Golden reference for the `executeQueries` DAX
   query contract a semantic-model query endpoint would conform to.
+- [`openmetadata-schema/`](openmetadata-schema/) — OpenMetadata's own entity
+  schema for a table **column** (Apache-2.0, copied in full). Golden reference
+  for the payloads `scripts/govern_ingest.py` sends; only the eight files the
+  `column` node reaches are vendored, not the 146 the whole table schema pulls.
 - [`bi-shared-docs/`](bi-shared-docs/) — Microsoft's open BI documentation
   corpus (CC-BY-4.0, pinned by reference). Golden reference for the XMLA
   protocol, rowset encodings, schema rowsets, and the TMSL/TMDL model formats.

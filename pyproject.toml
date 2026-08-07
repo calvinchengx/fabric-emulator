@@ -14,6 +14,10 @@ test = [
     # dropped; the python side had 28 tests and no number at all, so a checker
     # could lose its tests without anything saying so.
     "pytest-cov>=5,<8",
+    # test_govern_column_schema.py validates the payloads govern_ingest builds
+    # against OpenMetadata's OWN vendored schema (third_party/openmetadata-schema).
+    # Draft-07, so `referencing` comes with it for the local $ref registry.
+    "jsonschema>=4.21,<5",
     # test_spark_agent_packaging.py reads the compose files to prove the agent
     # ships INSIDE its image rather than over a bind mount. Declared here
     # because a developer machine usually has pyyaml lying around and CI does

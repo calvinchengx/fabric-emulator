@@ -184,6 +184,18 @@ edge but needs a real browser, so it is not asserted.
 - **CI witness**: `e2e/governance/run.py` (CI job `governance`) boots the
   profile, seeds a real Delta table, runs the ingest, and asserts the
   cataloged columns through OM's API on every push.
+- **Payloads are checked before any of that runs.** The columns
+  `govern_ingest` builds are validated against **OpenMetadata's own schema**,
+  vendored at the release the compose file pins
+  ([`third_party/openmetadata-schema/`](../third_party/openmetadata-schema/)).
+  A `dataType` outside its 86-value enum, a missing `name`, a `dataLength` of
+  the wrong type or a malformed nested column now fails in
+  `python/tests/test_govern_column_schema.py` — no postgres, no OpenSearch, no
+  Java server. Three layers, each catching what the others cannot: the schema
+  cannot see the `dataLength`-is-required rule (it lives in prose and is
+  enforced in OM's Java layer, which is what `scripts/check_govern_types.py`
+  exists for), and neither can see whether OM actually accepted the payload,
+  which is the e2e above.
 - **Weight warning:** this is a real Java server + OpenSearch (~1 GB heap)
   + Postgres. Expect ~2–3 GB RAM on top of the family, and a couple of
   minutes of first-boot migration.

@@ -22,3 +22,15 @@ Dockerfile text eol=lf
 *.bat   text eol=crlf
 *.cmd   text eol=crlf
 *.ps1   text eol=crlf
+
+# Vendored golden references are hashed BYTE-FOR-BYTE in their PROVENANCE.md,
+# which is the tamper check third_party/README.md requires. Line-ending
+# normalisation would rewrite them on checkout — on Windows, where
+# core.autocrlf=true is the Git-for-Windows default, `basic.json` gains 320
+# bytes and its sha256 no longer matches the one recorded on the machine that
+# vendored it. `-text` disables the conversion in both directions, so a
+# vendored artifact is identical to upstream on every platform.
+#
+# Applies to the whole tree rather than to `*.json`: whatever a future
+# reference happens to be (a licence, a .proto, a .csv), it is still hashed.
+third_party/** -text
