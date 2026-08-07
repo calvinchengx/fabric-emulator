@@ -78,13 +78,22 @@ refuses a conflicting bind (see 2).
 
 **Size: S.** Four things that exist, connected.
 
-### Delivered: the wire. Not delivered: the proof.
+### Delivered: the wire, and now the proof.
 
 Steps 1–4 are built. A session carries an `environmentId` from acquire, the
 resolved `Environment` reaches the agent over a best-effort `/environment` call
 on the same contract as `/mount`, `_install_packages` takes a package list
 instead of only globbing `/opt/wheels`, and `sparkConfig` is applied at bind.
 `/opt/wheels` is now the documented fallback rather than the mechanism.
+
+The proof this section demanded landed with the wire (same PR, #67):
+`e2e/environment` imports a package only the Environment could have provided,
+after first requiring the same import to FAIL on a session with no Environment
+— the negative control that stops an image-resident package from faking the
+pass. CI job `environment`, witness `ci:environment`, and the parity row is
+🟢 with JARs stated out of scope. **This gap is closed**; it stays in this
+document as history because the section above explains a shape of failure the
+other three items still have.
 
 The conflict rule this section warned about is enforced rather than deferred:
 the agent installs **one** Environment per process, treats a second bind of the
@@ -299,7 +308,7 @@ lacks. That is the sequence this rule exists to force.
 | 2c | Refuse a conflicting lakehouse bind | XS | Makes 2a/2b safe; turns corruption into an error |
 | 3b | Diagnostic error for a non-file frame | XS | Behaviour stays; the message stops being cryptic |
 | ~~—~~ ✅ | ~~Correct the Environments parity row and witness~~ | XS | Done: 🟡, reworded, witness removed. Regrade to 🟢 only with an e2e |
-| 1 | Environment items reach the session | S | Finishes a feature already built four-fifths of the way |
+| ~~1~~ ✅ | ~~Environment items reach the session~~ | S | Done in #67: wire + `e2e/environment` proof with negative control; row 🟢 |
 | 2a/2b | Mount write-back and per-statement refresh | S | Both unblocked by 2c |
 | 4 | Pipelines async | M | Mechanical, but ~50 test sites |
 | 3a | `input_file_name()` in SQL | M | The only item with genuine research risk |
