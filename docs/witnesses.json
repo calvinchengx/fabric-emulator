@@ -490,6 +490,7 @@
     "section": "Data Factory (`data-factory/`)",
     "claim": "Pipeline → notebook activity (TridentNotebook)",
     "witnesses": [
+      "ci:medallion",
       "go:TestNotebookBinding",
       "go:TestPipelineNotebookMissingID",
       "go:TestNotebookRunParseAndReport"
