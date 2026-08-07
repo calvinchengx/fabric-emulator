@@ -13,11 +13,26 @@ two touch.
 import sys
 from pathlib import Path
 
-import pyarrow as pa
 import pytest
-from deltalake import write_deltalake
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spark_agent"))
+
+# delta-rs is an OPTIONAL dependency group. The `notebookutils` CI job runs this
+# suite with `--group test` alone, so importing it at module scope took the whole
+# file down on macOS and Windows. Guarded at COLLECTION time rather than with
+# importorskip inside the fixture: pytest 8 reports an ImportError raised BY a
+# module as an error rather than a skip, and the distinction is too subtle to
+# rest on. Only the two tests needing a table on disk are marked; the matcher and
+# type-mapping tests — most of the file — run everywhere.
+try:
+    import pyarrow as pa
+    from deltalake import write_deltalake
+
+    HAVE_DELTA_RS = True
+except ImportError:  # pragma: no cover - exercised by the CI leg without the group
+    HAVE_DELTA_RS = False
+
+needs_delta_rs = pytest.mark.skipif(not HAVE_DELTA_RS, reason="delta-rs group not installed")
 
 import delta_ops
 
@@ -45,6 +60,7 @@ def _resolve(_name):
     raise AssertionError("a delta.`path` target must not need the catalog")
 
 
+@needs_delta_rs
 def test_describe_detail_matches_and_reads_the_log(table):
     kind, params = delta_ops.match(f"DESCRIBE DETAIL delta.`{table}`")
     assert kind == "describe_detail"
@@ -61,6 +77,7 @@ def test_describe_detail_matches_and_reads_the_log(table):
     assert len(row["id"]) > 10
 
 
+@needs_delta_rs
 def test_describe_table_lists_real_columns_with_spark_type_names(table):
     kind, params = delta_ops.match(f"DESCRIBE TABLE delta.`{table}`")
     assert kind == "describe_table"
@@ -76,7 +93,8 @@ def test_describe_table_lists_real_columns_with_spark_type_names(table):
     assert by_name["region"][2] == "partition"
 
 
-def test_bare_desc_and_describe_both_match(table):
+def test_bare_desc_and_describe_both_match():
+    table = "/tmp/accounts"  # a path string is all the grammar sees
     for sql in (f"DESC delta.`{table}`", f"DESCRIBE delta.`{table}`",
                 f"describe table delta.`{table}` ;"):
         kind, _ = delta_ops.match(sql)
@@ -100,7 +118,8 @@ def test_describe_of_a_registered_name_is_intercepted():
     assert params["target"] == "silver.accounts"
 
 
-def test_the_plain_grammar_cannot_swallow_a_detail_statement(table):
+def test_the_plain_grammar_cannot_swallow_a_detail_statement():
+    table = "/tmp/accounts"
     # Answering a DETAIL request with a column list would be plausible output to
     # the wrong question. What prevents it is the GRAMMAR, not matcher order:
     # the plain form anchors at end-of-statement, so `DESCRIBE DETAIL x` leaves
