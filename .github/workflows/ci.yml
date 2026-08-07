@@ -593,6 +593,25 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/salesforce/run.py
 
+  environment:
+    name: An Environment item installs a package the image lacks (containerized)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The witness docs/37 §1 demands, and the reason that row's grade sat at
+      # 🟡 while the wire was already built: it must be an e2e that imports a
+      # package only an Environment could have supplied, "and the grade moves to
+      # 🟢 then and not before".
+      #
+      # BOTH halves matter. The same import runs first on a session with NO
+      # Environment and must FAIL — otherwise a package that happened to be in
+      # the image would make this pass while proving nothing, which is the
+      # accepted-but-inert trap the engine-matrix probes are written to avoid.
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/environment/run.py
+
   rest-helix:
     name: BMC Helix incidents ingest through the REST connector (containerized)
     runs-on: ubuntu-latest
