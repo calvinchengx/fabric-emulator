@@ -32,6 +32,13 @@ concurrency:
   group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
+# The `|` makes Go fall back to a direct VCS download on ANY proxy error.
+# The default (`,` fallback) only falls back on 404/410, so a transient
+# proxy.golang.org 403 — seen twice on modernc.org/sqlite@v1.54.0.zip from
+# ubuntu runners — hard-fails the job instead of retrying past the proxy.
+env:
+  GOPROXY: https://proxy.golang.org|direct
+
 jobs:
   test:
     name: Build, vet & tests (incl. e2e vs entra-emulator)
