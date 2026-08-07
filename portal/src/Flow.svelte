@@ -510,7 +510,15 @@
   browser with <code>curl -N /_emulator/events</code>.
 </p>
 
-<div class="mt-4 flex flex-wrap items-center gap-2">
+
+<!-- ONE SCREEN, TWO HALVES, once the pane is live. The point of the terminal
+     is driving the pipeline while watching it run — and that claim is only
+     true if the command, the graph and the event stream are visible at the
+     same time. Until the pane connects (or when there is none) this wrapper
+     is a plain column and changes nothing. -->
+<div class="flow-body" class:split={termAvailable && termOpen && termStarted}>
+<div class="flow-side">
+<div class="flow-controls flex flex-wrap items-center gap-2">
   <StatusBadge status={link} />
   {#if dropped > 0}
     <StatusBadge tone="danger" title="This browser fell behind; the emulator was never slowed down.">
@@ -533,14 +541,6 @@
     </Button>
   {/if}
 </div>
-
-<!-- ONE SCREEN, TWO HALVES, once the pane is live. The point of the terminal
-     is driving the pipeline while watching it run — and that claim is only
-     true if the command, the graph and the event stream are visible at the
-     same time. Until the pane connects (or when there is none) this wrapper
-     is a plain column and changes nothing. -->
-<div class="flow-body" class:split={termAvailable && termOpen && termStarted}>
-<div class="flow-side">
 {#if termAvailable && termOpen}
   <section class="terminal-pane mt-4">
     {#if !termStarted}
@@ -766,6 +766,28 @@
     grid-template-columns: minmax(430px, 2fr) minmax(560px, 3fr);
     gap: 1.25rem;
     align-items: start;
+  }
+  /* The two columns must START on the same line. The controls row lives in the
+     left column (not above the grid) so that the grid's own top edge is the
+     shared baseline — otherwise `Graph` sits a control-row lower than
+     `streaming` and the halves read as two stacked sections rather than one
+     split view.
+
+     The margin therefore belongs to the GRID, not to either first child:
+     leaving it on the controls or on the heading offsets one column by its own
+     spacing and reintroduces exactly the gap this removes. */
+  .flow-body {
+    margin-top: 1rem;
+  }
+  .flow-body.split .flow-controls,
+  .flow-body.split .flow-main > h2:first-of-type {
+    margin-top: 0;
+  }
+  /* Both headers are the same height, so matching the gap BELOW them is what
+     puts the terminal and the graph on one line too. The heading's default
+     0.75rem would leave the graph 4px proud of the pane it sits beside. */
+  .flow-body.split .flow-main > h2:first-of-type {
+    margin-bottom: 1rem;
   }
   /* The terminal stays put while the right column scrolls: the whole point of
      the pane is that the command never leaves the screen. */
