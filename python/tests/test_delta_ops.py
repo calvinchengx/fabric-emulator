@@ -518,3 +518,134 @@ def test_an_empty_change_feed_says_how_to_enable_it(monkeypatch, fake_deltalake)
     fake_deltalake.DeltaTable = CDFTable
     with pytest.raises(d.DeltaOpError, match=r"delta\.enableChangeDataFeed"):
         d.read_change_feed(FakeSpark(), "abfss://lake/t")
+
+
+# --- DESCRIBE, answered from the Delta log -----------------------------------
+#
+# The failure this replaces: Sail returns the right SHAPE and no rows for
+# DESCRIBE, so an empty answer that raises nothing reads as "the table has no
+# columns" rather than "the engine did not implement this".
+
+@pytest.mark.parametrize("sql,kind", [
+    ("DESCRIBE DETAIL silver.orders", "describe_detail"),
+    ("describe detail delta.`abfss://lake/t`", "describe_detail"),
+    ("DESCRIBE TABLE silver.orders", "describe_table"),
+    ("DESCRIBE silver.orders", "describe_table"),
+    ("DESC silver.orders", "describe_table"),
+    ("DESCRIBE delta.`abfss://lake/t`", "describe_table"),
+])
+def test_describe_statements_are_intercepted(sql, kind):
+    # DESCRIBE TABLE is answered only for a table this emulator can LOCATE.
+    d.remember("orders", "abfss://lake/Tables/orders", "silver")
+    got = d.match(sql)
+    assert got and got[0] == kind, sql
+
+
+@pytest.mark.parametrize("sql", [
+    "DESCRIBE my_temp_view",     # a temp view is the engine's own business
+    "DESCRIBE some_function",
+    "DESC unregistered.table",
+])
+def test_describe_of_something_we_cannot_locate_falls_through(sql):
+    # Answering these from the Delta log would mean inventing a table.
+    assert d.match(sql) is None, sql
+
+
+def test_describe_detail_wins_over_describe_table():
+    # `DESCRIBE DETAIL x` also matches the looser DESCRIBE pattern; order in
+    # `match` is what keeps it from being answered with a column list.
+    assert d.match("DESCRIBE DETAIL x")[0] == "describe_detail"
+
+
+class Field:
+    def __init__(self, name, type_):
+        self.name, self.type = name, type_
+
+
+def describe_table_stub(fields, partitions=(), version=3, files=2):
+    class T(FakeDeltaTable):
+        def metadata(self):
+            return types.SimpleNamespace(
+                id="abc-123", name="orders", description="",
+                partition_columns=list(partitions), configuration={"delta.enableCDF": "true"})
+
+        def version(self):
+            return version
+
+        def file_uris(self):
+            return ["f"] * files
+
+        def schema(self):
+            return types.SimpleNamespace(fields=fields)
+    return T
+
+
+def test_describe_detail_reports_the_log_not_a_guess(fake_deltalake):
+    fake_deltalake.DeltaTable = describe_table_stub([])
+    spark = FakeSpark()
+    _, params = d.match("DESCRIBE DETAIL delta.`abfss://lake/t`")
+    d.describe_detail(spark, params, lambda n: n)
+    rows, cols = spark.frames[0]
+    assert cols == ["format", "id", "name", "description", "location",
+                    "version", "numFiles", "partitionColumns", "properties"]
+    (fmt, ident, name, _desc, loc, version, numfiles, parts, props) = rows[0]
+    assert fmt == "delta" and ident == "abc-123" and name == "orders"
+    assert loc == "abfss://lake/t"
+    assert (version, numfiles) == (3, 2)
+    assert parts == [] and props == {"delta.enableCDF": "true"}
+
+
+def test_describe_detail_omits_columns_it_cannot_answer_truthfully(fake_deltalake):
+    # sizeInBytes and the reader/writer versions are LEFT OUT rather than filled
+    # with a plausible number — the documented subset is the honest answer.
+    fake_deltalake.DeltaTable = describe_table_stub([])
+    spark = FakeSpark()
+    _, params = d.match("DESCRIBE DETAIL t")
+    d.describe_detail(spark, params, lambda n: "uri")
+    assert "sizeInBytes" not in spark.frames[0][1]
+    assert not any("Version" in c for c in spark.frames[0][1])
+
+
+def test_describe_table_returns_the_real_column_list(fake_deltalake):
+    fake_deltalake.DeltaTable = describe_table_stub(
+        [Field("id", 'PrimitiveType("long")'), Field("region", 'PrimitiveType("string")')],
+        partitions=["region"])
+    d.remember("t", "abfss://lake/Tables/t")
+    spark = FakeSpark()
+    _, params = d.match("DESCRIBE TABLE t")
+    d.describe_table(spark, params, lambda n: "uri")
+    rows, cols = spark.frames[0]
+    assert cols == ["col_name", "data_type", "comment"]
+    assert rows == [("id", "bigint", ""), ("region", "string", "partition")]
+
+
+def test_a_delta_log_declaring_no_columns_is_an_error_not_an_empty_answer(fake_deltalake):
+    # The exact shape being replaced: no rows and no error reads as "no columns".
+    fake_deltalake.DeltaTable = describe_table_stub([])
+    d.remember("t", "abfss://lake/Tables/t")
+    spark = FakeSpark()
+    _, params = d.match("DESCRIBE t")
+    with pytest.raises(d.DeltaOpError, match="declares no columns"):
+        d.describe_table(spark, params, lambda n: "uri")
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('PrimitiveType("long")', "bigint"),
+    ('PrimitiveType("string")', "string"),
+    ('PrimitiveType("integer")', "int"),
+    ("StructType(...)", "StructType(...)"),   # structured types pass through
+])
+def test_spark_type_renders_primitives_and_passes_the_rest_through(raw, expected):
+    # A wrong nested type would be worse than an unfamiliar one, so anything
+    # structured is delta-rs's own rendering rather than a guess.
+    assert d._spark_type(raw) == expected
+
+
+def test_install_routes_describe_through_the_delta_log(fake_deltalake):
+    fake_deltalake.DeltaTable = describe_table_stub([Field("id", 'PrimitiveType("long")')])
+    d.remember("t", "abfss://lake/Tables/t")
+    spark = FakeSpark()
+    d.install(spark, storage_options={})
+    spark.sql("DESCRIBE TABLE t")
+    assert spark.frames, "DESCRIBE must be answered here, not passed to the engine"
+    assert spark.frames[-1][1] == ["col_name", "data_type", "comment"]

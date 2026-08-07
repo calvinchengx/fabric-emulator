@@ -249,7 +249,7 @@ def main() -> int:
                 dangling.append(f"{key} → {witness} (no such Python test)")
             if kind == "go" and name in gated_tests:
                 gated_used[witness] = gated_tests[name]
-            elif witness in declared_gates:
+            elif kind != "go" and witness in declared_gates:
                 # A gate this script cannot DETECT, only accept: a CI job that
                 # skips on absent secrets is invisible to the Go body scan, and
                 # `ci:real-fabric` — the differential leg against a real tenant —
@@ -257,6 +257,12 @@ def main() -> int:
                 # let a claim rest entirely on a job that never runs on a fork.
                 # The declaration is the author's assertion; the stale check
                 # below cannot police these, which is the price of accepting them.
+                #
+                # `kind != "go"` IS LOAD-BEARING. Without it a declared Go
+                # witness that has STOPPED skipping lands here, enters
+                # `gated_used`, and so never appears in `stale` — defeating the
+                # stale-declaration rule for precisely the case it was written
+                # for. Go gates are detected, never merely asserted.
                 gated_used[witness] = "a declared gate this checker cannot detect"
             else:
                 # A boundary is not evidence that runs, so it does not count
