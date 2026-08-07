@@ -138,3 +138,60 @@ def test_the_offset_is_read_from_the_clock_endpoint(launcher, monkeypatch):
         assert launcher.clock_offset() == 1200
     finally:
         srv.shutdown()
+
+
+def test_mint_reads_the_token_and_its_lifetime(launcher, monkeypatch):
+    # `mint` was untested, and it is where the token's declared lifetime enters
+    # the arithmetic everything above depends on — a mint that ignored
+    # `expires_in` would leave every deadline computed off a default.
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler's interface
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = b'{"access_token":"tok-123","expires_in":900}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        monkeypatch.setenv("ENTRA_TOKEN_URL", f"http://127.0.0.1:{srv.server_port}/token")
+        monkeypatch.setenv("ENTRA_CLIENT_ID", "id")
+        monkeypatch.setenv("ENTRA_CLIENT_SECRET", "secret")
+        assert launcher.mint() == ("tok-123", 900)
+    finally:
+        srv.shutdown()
+
+
+def test_mint_defaults_the_lifetime_when_the_issuer_omits_it(launcher, monkeypatch):
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler's interface
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            body = b'{"access_token":"tok-456"}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        monkeypatch.setenv("ENTRA_TOKEN_URL", f"http://127.0.0.1:{srv.server_port}/token")
+        monkeypatch.setenv("ENTRA_CLIENT_ID", "id")
+        monkeypatch.setenv("ENTRA_CLIENT_SECRET", "secret")
+        assert launcher.mint() == ("tok-456", 3600)
+    finally:
+        srv.shutdown()

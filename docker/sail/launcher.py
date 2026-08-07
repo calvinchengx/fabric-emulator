@@ -131,7 +131,7 @@ def mint():
     return body["access_token"], int(body.get("expires_in", 3600))
 
 
-def main():
+def main():  # pragma: no cover - the supervisor loop; witnessed by e2e/sail
     if not os.environ.get("ENTRA_TOKEN_URL") or os.environ.get("AZURE_STORAGE_TOKEN"):
         os.execvp("sail", ["sail"] + sys.argv[1:])
 
@@ -205,5 +205,5 @@ def main():
             time.sleep(2)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
