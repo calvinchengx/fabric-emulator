@@ -142,22 +142,54 @@ def test_split_top_on_a_simple_list():
     assert d._split_top("a, b, c") == ["a", "b", "c"]
 
 
-def test_plain_column_strips_the_target_alias():
-    # delta-rs wants the bare column name on the left of an update.
-    assert d._plain_column("t.amount", "t") == "amount"
-    assert d._plain_column("`t.amount`", "t") == "amount"
-    assert d._plain_column("amount", "t") == "amount"
-    assert d._plain_column("  T.amount  ", "t") == "amount", "alias match is case-insensitive"
+@pytest.mark.parametrize("ref,expected", [
+    ("t.amount", "amount"),                 # the ordinary form
+    ("`t`.`amount`", "amount"),             # per-segment quoting — this was BROKEN
+    ('"t"."amount"', "amount"),             # the double-quoted spelling
+    ("`t`.amount", "amount"),               # mixed
+    ("t.`amount`", "amount"),               # mixed the other way
+    ("  T.amount  ", "amount"),             # alias match is case-insensitive
+    ("amount", "amount"),                   # unqualified
+    ("`amount`", "amount"),
+    ("s.amount", "s.amount"),               # a DIFFERENT alias is not stripped
+    ("`t.amount`", "amount"),               # one quoted identifier: old reading kept
+])
+def test_plain_column_strips_the_target_alias(ref, expected):
+    # delta-rs wants the target column's own name on the left of an update, so a
+    # leading target alias has to go — in every spelling Spark SQL accepts.
+    # `\`t\`.\`amount\`` used to yield "t`.`amount": a column no table has,
+    # handed to delta-rs as a wrong answer rather than a refusal.
+    assert d._plain_column(ref, "t") == expected
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "A fully backticked reference (`t`.`amount`) is valid Spark SQL, but "
-    "_plain_column only strips backticks from the OUTSIDE, so the alias prefix "
-    "no longer matches and delta-rs is handed the column name 't`.`amount'. "
-    "Narrow — the medallion MERGEs write `t.col` — but it is a wrong answer, "
-    "not a refusal. Remove this marker when it is fixed."))
-def test_a_fully_backticked_reference_should_also_lose_its_alias():
-    assert d._plain_column("`t`.`amount`", "t") == "amount"
+def test_a_dot_inside_quotes_belongs_to_the_name_not_the_path():
+    # `my.col` is ONE column whose name contains a dot. Splitting it would
+    # invent a qualifier that was never written.
+    assert d._plain_column("`my.col`", "t") == "my.col"
+    assert d._identifier_parts("`my.col`") == ["my.col"]
+    assert d._identifier_parts("`t`.`my.col`") == ["t", "my.col"]
+
+
+def test_identifier_parts_never_returns_nothing():
+    # A caller indexes [0]; an empty list would be an IndexError naming this
+    # file rather than the malformed input.
+    assert d._identifier_parts("") == [""]
+    assert d._identifier_parts("``") == [""]
+
+
+def test_a_backticked_merge_maps_to_real_column_names(fake_deltalake):
+    # The end-to-end shape of the bug: a MERGE written with quoted identifiers
+    # must reach delta-rs with the target's own column names as update keys.
+    spark = types.SimpleNamespace(
+        table=lambda n: types.SimpleNamespace(toArrow=lambda: "arrow"))
+    _, params = d.match(
+        "MERGE INTO silver.orders AS t USING updates AS s ON t.id = s.id "
+        "WHEN MATCHED THEN UPDATE SET `t`.`amt` = s.amt "
+        "WHEN NOT MATCHED THEN INSERT (`t`.`id`, `t`.`amt`) VALUES (s.id, s.amt)")
+    d.execute_merge(spark, params, lambda n: "abfss://lake/orders")
+    merger = FakeDeltaTable.last.merger
+    assert merger.updates == {"amt": "s.amt"}
+    assert merger.inserts == {"id": "s.id", "amt": "s.amt"}
 
 
 def test_table_uri_prefers_an_explicit_delta_path():
@@ -539,3 +571,134 @@ def test_an_empty_change_feed_says_how_to_enable_it(monkeypatch, fake_deltalake)
     fake_deltalake.DeltaTable = CDFTable
     with pytest.raises(d.DeltaOpError, match=r"delta\.enableChangeDataFeed"):
         d.read_change_feed(FakeSpark(), "abfss://lake/t")
+
+
+# --- DESCRIBE, answered from the Delta log -----------------------------------
+#
+# The failure this replaces: Sail returns the right SHAPE and no rows for
+# DESCRIBE, so an empty answer that raises nothing reads as "the table has no
+# columns" rather than "the engine did not implement this".
+
+@pytest.mark.parametrize("sql,kind", [
+    ("DESCRIBE DETAIL silver.orders", "describe_detail"),
+    ("describe detail delta.`abfss://lake/t`", "describe_detail"),
+    ("DESCRIBE TABLE silver.orders", "describe_table"),
+    ("DESCRIBE silver.orders", "describe_table"),
+    ("DESC silver.orders", "describe_table"),
+    ("DESCRIBE delta.`abfss://lake/t`", "describe_table"),
+])
+def test_describe_statements_are_intercepted(sql, kind):
+    # DESCRIBE TABLE is answered only for a table this emulator can LOCATE.
+    d.remember("orders", "abfss://lake/Tables/orders", "silver")
+    got = d.match(sql)
+    assert got and got[0] == kind, sql
+
+
+@pytest.mark.parametrize("sql", [
+    "DESCRIBE my_temp_view",     # a temp view is the engine's own business
+    "DESCRIBE some_function",
+    "DESC unregistered.table",
+])
+def test_describe_of_something_we_cannot_locate_falls_through(sql):
+    # Answering these from the Delta log would mean inventing a table.
+    assert d.match(sql) is None, sql
+
+
+def test_describe_detail_wins_over_describe_table():
+    # `DESCRIBE DETAIL x` also matches the looser DESCRIBE pattern; order in
+    # `match` is what keeps it from being answered with a column list.
+    assert d.match("DESCRIBE DETAIL x")[0] == "describe_detail"
+
+
+class Field:
+    def __init__(self, name, type_):
+        self.name, self.type = name, type_
+
+
+def describe_table_stub(fields, partitions=(), version=3, files=2):
+    class T(FakeDeltaTable):
+        def metadata(self):
+            return types.SimpleNamespace(
+                id="abc-123", name="orders", description="",
+                partition_columns=list(partitions), configuration={"delta.enableCDF": "true"})
+
+        def version(self):
+            return version
+
+        def file_uris(self):
+            return ["f"] * files
+
+        def schema(self):
+            return types.SimpleNamespace(fields=fields)
+    return T
+
+
+def test_describe_detail_reports_the_log_not_a_guess(fake_deltalake):
+    fake_deltalake.DeltaTable = describe_table_stub([])
+    spark = FakeSpark()
+    _, params = d.match("DESCRIBE DETAIL delta.`abfss://lake/t`")
+    d.describe_detail(spark, params, lambda n: n)
+    rows, cols = spark.frames[0]
+    assert cols == ["format", "id", "name", "description", "location",
+                    "version", "numFiles", "partitionColumns", "properties"]
+    (fmt, ident, name, _desc, loc, version, numfiles, parts, props) = rows[0]
+    assert fmt == "delta" and ident == "abc-123" and name == "orders"
+    assert loc == "abfss://lake/t"
+    assert (version, numfiles) == (3, 2)
+    assert parts == [] and props == {"delta.enableCDF": "true"}
+
+
+def test_describe_detail_omits_columns_it_cannot_answer_truthfully(fake_deltalake):
+    # sizeInBytes and the reader/writer versions are LEFT OUT rather than filled
+    # with a plausible number — the documented subset is the honest answer.
+    fake_deltalake.DeltaTable = describe_table_stub([])
+    spark = FakeSpark()
+    _, params = d.match("DESCRIBE DETAIL t")
+    d.describe_detail(spark, params, lambda n: "uri")
+    assert "sizeInBytes" not in spark.frames[0][1]
+    assert not any("Version" in c for c in spark.frames[0][1])
+
+
+def test_describe_table_returns_the_real_column_list(fake_deltalake):
+    fake_deltalake.DeltaTable = describe_table_stub(
+        [Field("id", 'PrimitiveType("long")'), Field("region", 'PrimitiveType("string")')],
+        partitions=["region"])
+    d.remember("t", "abfss://lake/Tables/t")
+    spark = FakeSpark()
+    _, params = d.match("DESCRIBE TABLE t")
+    d.describe_table(spark, params, lambda n: "uri")
+    rows, cols = spark.frames[0]
+    assert cols == ["col_name", "data_type", "comment"]
+    assert rows == [("id", "bigint", ""), ("region", "string", "partition")]
+
+
+def test_a_delta_log_declaring_no_columns_is_an_error_not_an_empty_answer(fake_deltalake):
+    # The exact shape being replaced: no rows and no error reads as "no columns".
+    fake_deltalake.DeltaTable = describe_table_stub([])
+    d.remember("t", "abfss://lake/Tables/t")
+    spark = FakeSpark()
+    _, params = d.match("DESCRIBE t")
+    with pytest.raises(d.DeltaOpError, match="declares no columns"):
+        d.describe_table(spark, params, lambda n: "uri")
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ('PrimitiveType("long")', "bigint"),
+    ('PrimitiveType("string")', "string"),
+    ('PrimitiveType("integer")', "int"),
+    ("StructType(...)", "StructType(...)"),   # structured types pass through
+])
+def test_spark_type_renders_primitives_and_passes_the_rest_through(raw, expected):
+    # A wrong nested type would be worse than an unfamiliar one, so anything
+    # structured is delta-rs's own rendering rather than a guess.
+    assert d._spark_type(raw) == expected
+
+
+def test_install_routes_describe_through_the_delta_log(fake_deltalake):
+    fake_deltalake.DeltaTable = describe_table_stub([Field("id", 'PrimitiveType("long")')])
+    d.remember("t", "abfss://lake/Tables/t")
+    spark = FakeSpark()
+    d.install(spark, storage_options={})
+    spark.sql("DESCRIBE TABLE t")
+    assert spark.frames, "DESCRIBE must be answered here, not passed to the engine"
+    assert spark.frames[-1][1] == ["col_name", "data_type", "comment"]
