@@ -203,15 +203,66 @@ func TestDAXBareColumnHintFitsTheColumnType(t *testing.T) {
 }
 
 // SUM still totals a column whose numbers arrived as strings — the refusal must
-// reject text, not every value that is not already a float64.
+// reject text, not every value that is not already a float64. Missing values
+// count as blank: "" and "   " are how a CSV or warehouse export writes an
+// absent number, so a column that has any gaps at all must still sum.
 func TestDAXSumParsesNumericStrings(t *testing.T) {
 	m := loadModel(t)
-	d := Data{"Sales": []Row{{"Units": "1.5"}, {"Units": 2}, {"Units": nil}}}
+	d := Data{"Sales": []Row{
+		{"Units": "1.5"}, {"Units": 2}, {"Units": nil}, {"Units": ""}, {"Units": "   "},
+	}}
 	res, err := Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", SUM(Sales[Units]))`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := toF(res.Rows[0]["[v]"]); got != 3.5 {
 		t.Errorf("SUM over mixed numeric strings = %v, want 3.5", got)
+	}
+}
+
+// Which text reads as a number is a decision, not an inheritance from
+// ParseFloat: surrounding padding is an artefact of export and is tolerated,
+// but a thousands separator, a currency symbol or a percent sign is
+// locale-dependent presentation. Guessing a locale is how "1,234" becomes 1 and
+// a total silently loses a factor of a thousand, so those refuse.
+func TestDAXNumericTextBoundary(t *testing.T) {
+	m := loadModel(t)
+	for _, tc := range []struct {
+		val  string
+		want float64 // NaN sentinel below means "must refuse"
+		ok   bool
+	}{
+		{"123", 123, true},
+		{"00123", 123, true},
+		{"1.5", 1.5, true},
+		{" 42 ", 42, true},
+		{"1e3", 1000, true},
+		{"-5", -5, true},
+		{"1,234", 0, false},
+		{"$99", 0, false},
+		{"50%", 0, false},
+		{"West", 0, false},
+	} {
+		t.Run(tc.val, func(t *testing.T) {
+			d := Data{"Sales": []Row{{"Units": tc.val}}}
+			res, err := Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", SUM(Sales[Units]))`)
+			if !tc.ok {
+				if err == nil {
+					t.Fatalf("%q summed to %v; it must refuse", tc.val, res.Rows)
+				}
+				// The value has to be quoted, or a refusal over "" reads as
+				// "the value  is not a number" with a hole in it.
+				if want := `the value "` + tc.val + `" is not a number`; !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("%q refused: %v", tc.val, err)
+			}
+			if got := toF(res.Rows[0]["[v]"]); got != tc.want {
+				t.Errorf("SUM(%q) = %v, want %v", tc.val, got, tc.want)
+			}
+		})
 	}
 }

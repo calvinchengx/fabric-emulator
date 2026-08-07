@@ -660,6 +660,17 @@ func arithNum(v any, op string) (float64, error) {
 	return 0, fmt.Errorf("cannot apply %q to %T", op, v)
 }
 
+// isBlankText reports whether a column value is empty or whitespace-only text.
+// That is how every CSV and warehouse export writes a missing number, so a
+// numeric column that arrived as text would otherwise refuse the moment one
+// value is absent — which in real data is always. It applies to column values
+// only: a literal "" written into an expression stays an error, because that is
+// deliberate text rather than an absent reading.
+func isBlankText(v any) bool {
+	s, ok := v.(string)
+	return ok && strings.TrimSpace(s) == ""
+}
+
 // asNumber converts a value for arithmetic: BLANK is 0, a boolean is 1 or 0,
 // and a numeric string parses. Anything else answers false — never 0, which is
 // the coercion that let text total silently.
@@ -673,6 +684,12 @@ func asNumber(v any) (float64, bool) {
 		}
 		return 0, true
 	case string:
+		// Exactly what ParseFloat accepts once surrounding whitespace is gone —
+		// so "1e3" is 1000 and " 42 " is 42, while "1,234", "$99" and "50%"
+		// refuse. The line is deliberate: padding is an artefact of export, but
+		// separators, symbols and percent signs are locale-dependent
+		// presentation, and guessing a locale is how a sum silently loses a
+		// factor of a thousand.
 		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
 		return f, err == nil
 	}
@@ -752,7 +769,7 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		var s float64
 		for _, r := range e.activeRows(tbl) {
 			v := r[col.col]
-			if v == nil {
+			if v == nil || isBlankText(v) {
 				continue // BLANK contributes nothing to a sum
 			}
 			f, ok := asNumber(v)
@@ -761,7 +778,8 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 				// anything it could not read, so summing a text column reported
 				// a confident zero — worse than an error, because a caller acts
 				// on a number.
-				return nil, fmt.Errorf("cannot sum %s[%s]: the value %v is not a number", tbl, col.col, v)
+				return nil, fmt.Errorf("cannot sum %s[%s]: the value %q is not a number",
+					tbl, col.col, fmt.Sprint(v))
 			}
 			s += f
 		}
