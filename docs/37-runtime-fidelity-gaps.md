@@ -86,15 +86,6 @@ on the same contract as `/mount`, `_install_packages` takes a package list
 instead of only globbing `/opt/wheels`, and `sparkConfig` is applied at bind.
 `/opt/wheels` is now the documented fallback rather than the mechanism.
 
-The proof this section demanded landed with the wire (same PR, #67):
-`e2e/environment` imports a package only the Environment could have provided,
-after first requiring the same import to FAIL on a session with no Environment
-— the negative control that stops an image-resident package from faking the
-pass. CI job `environment`, witness `ci:environment`, and the parity row is
-🟢 with JARs stated out of scope. **This gap is closed**; it stays in this
-document as history because the section above explains a shape of failure the
-other three items still have.
-
 The conflict rule this section warned about is enforced rather than deferred:
 the agent installs **one** Environment per process, treats a second bind of the
 **same** one as a no-op, and **refuses a different one with a reason naming the
