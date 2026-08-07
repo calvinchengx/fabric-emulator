@@ -423,6 +423,13 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 	} else if t == "RestSource" {
 		return e.restToLakehouse(act, tp, resolve)
 	}
+	// Salesforce is a job lifecycle rather than a location — dispatched here for
+	// the same reason RestSource is. See salesforce.go.
+	if t, err := copySideType(tp["source"], resolve); err != nil {
+		return nil, fmt.Errorf("copy %q source: %w", act.Name, err)
+	} else if salesforceSourceTypes[t] {
+		return e.salesforceToLakehouse(act, tp, resolve)
+	}
 	// Likewise a REST sink: resolveLoc resolves OneLake locations, and this is
 	// not one. Checked before the sink is resolved, for the same reason.
 	if t, err := copySideType(tp["sink"], resolve); err != nil {
