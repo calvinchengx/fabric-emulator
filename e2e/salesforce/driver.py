@@ -24,6 +24,7 @@ Every activity type is real in Fabric and every one executes for real here.
 import base64
 import json
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -97,7 +98,12 @@ def run_pipeline(fabric, ws_id, name, definition):
     # The Location header is an absolute https:// URL as Fabric's is; this stack
     # runs plain HTTP, so it is followed by PATH. The contract is the path.
     loc = urllib.parse.urlparse(headers["Location"])
-    job = request("GET", FABRIC + loc.path + (f"?{loc.query}" if loc.query else ""), None, fabric)
+    # Async pipelines (doc 37 §4): poll to terminal before reading the runs.
+    for _ in range(120):
+        job = request("GET", FABRIC + loc.path + (f"?{loc.query}" if loc.query else ""), None, fabric)
+        if job.get("status") not in ("NotStarted", "InProgress"):
+            break
+        time.sleep(1)
 
     runs = request("POST",
                    f"{FABRIC}/v1/workspaces/{ws_id}/items/{pid}/jobs/instances/{job['id']}/queryactivityruns",
