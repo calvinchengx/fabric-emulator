@@ -2,17 +2,19 @@ package semanticmodel
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 )
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, and single-hop relationship filter propagation.
-// Not full DAX (no CALCULATE filter modifiers, no time-intelligence, no row
-// context beyond aggregation) — unsupported constructs error out rather than
-// mis-evaluate. Correctness is gated by the captured golden fixtures, since no
-// live DAX engine can run in CI.
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, the infix operators
+// (`+ - * / &` and the comparisons) and single-hop relationship filter
+// propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
+// no row context beyond aggregation) — unsupported constructs error out rather
+// than mis-evaluate. Correctness is gated by the captured golden fixtures, since
+// no live DAX engine can run in CI.
 
 // Result is a query result: ordered column keys + rows keyed by them, matching
 // the executeQueries JSON shape ("Table[Col]" / "[Measure]").
@@ -47,7 +49,11 @@ const (
 	tIdent                // identifier
 	tNum                  // number
 	tPunct                // ( ) ,
+	tOp                   // + - * / & = <> < <= > >=
 )
+
+// opChars are the characters that begin an infix (or unary) operator.
+const opChars = "+-*/&=<>"
 
 type dtok struct {
 	kind tkind
@@ -76,7 +82,17 @@ func lex(s string) ([]dtok, error) {
 		case c == '(' || c == ')' || c == ',':
 			out = append(out, dtok{tPunct, string(c)})
 			i++
-		case c >= '0' && c <= '9' || (c == '-' && i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9'):
+		case strings.IndexByte(opChars, c) >= 0:
+			// `-` is always an operator, never the sign of a literal: making it
+			// part of the number would lex `[A] -1` as two operands and leave
+			// the parser no subtraction to see. Negation is the parser's job.
+			op := string(c)
+			if i+1 < len(s) && (c == '<' && (s[i+1] == '=' || s[i+1] == '>') || c == '>' && s[i+1] == '=') {
+				op = s[i : i+2]
+			}
+			out = append(out, dtok{tOp, op})
+			i += len(op)
+		case c >= '0' && c <= '9':
 			j := i + 1
 			for j < len(s) && (s[j] >= '0' && s[j] <= '9' || s[j] == '.') {
 				j++
@@ -116,11 +132,27 @@ type outputCol struct {
 
 type scalarExpr interface{}
 type numberLit struct{ v float64 }
+type stringLit struct{ v string }
 type measureRef struct{ name string }
 type columnRef struct{ table, col string }
 type funcCall struct {
 	name string
 	args []scalarExpr
+}
+type binaryExpr struct {
+	op   string
+	l, r scalarExpr
+}
+
+// daxPrec lists the infix operators by binding strength, loosest group first.
+// This is DAX's own order: comparison binds loosest, then `&`, then `+`/`-`,
+// then `*`/`/`, with unary `-` tighter than all of them. Every group is
+// left-associative.
+var daxPrec = [][]string{
+	{"=", "<>", "<", "<=", ">", ">="},
+	{"&"},
+	{"+", "-"},
+	{"*", "/"},
 }
 
 // --- parser ------------------------------------------------------------------
@@ -222,12 +254,78 @@ func (p *daxParser) parseColumnRef() (columnRef, error) {
 	return columnRef{table: tbl.text, col: col.text}, nil
 }
 
-func (p *daxParser) parseScalar() (scalarExpr, error) {
+// parseScalar parses a full scalar expression, operators included.
+func (p *daxParser) parseScalar() (scalarExpr, error) { return p.parseBinary(0) }
+
+// parseBinary parses one precedence level of daxPrec by precedence climbing:
+// collect a tighter-binding operand, then fold in every operator at this level.
+func (p *daxParser) parseBinary(level int) (scalarExpr, error) {
+	if level == len(daxPrec) {
+		return p.parseUnary()
+	}
+	lhs, err := p.parseBinary(level + 1)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		t := p.peek()
+		if t == nil || t.kind != tOp || !slices.Contains(daxPrec[level], t.text) {
+			return lhs, nil
+		}
+		p.next()
+		rhs, err := p.parseBinary(level + 1)
+		if err != nil {
+			return nil, err
+		}
+		lhs = binaryExpr{op: t.text, l: lhs, r: rhs}
+	}
+}
+
+func (p *daxParser) parseUnary() (scalarExpr, error) {
+	t := p.peek()
+	if t == nil || t.kind != tOp {
+		return p.parsePrimary()
+	}
+	if t.text != "-" && t.text != "+" {
+		return nil, fmt.Errorf("operator %q has no left-hand operand", t.text)
+	}
+	p.next()
+	x, err := p.parseUnary()
+	if err != nil {
+		return nil, err
+	}
+	if t.text == "+" {
+		return x, nil // unary plus is a no-op
+	}
+	if n, ok := x.(numberLit); ok {
+		return numberLit{-n.v}, nil
+	}
+	// Negation of anything else is `0 - x`, which gets BLANK coercion for free.
+	return binaryExpr{op: "-", l: numberLit{0}, r: x}, nil
+}
+
+func (p *daxParser) parsePrimary() (scalarExpr, error) {
 	t := p.peek()
 	if t == nil {
 		return nil, fmt.Errorf("expected a scalar expression")
 	}
 	switch t.kind {
+	case tString:
+		p.next()
+		return stringLit{t.text}, nil
+	case tPunct:
+		if t.text != "(" {
+			break
+		}
+		p.next()
+		x, err := p.parseScalar()
+		if err != nil {
+			return nil, err
+		}
+		if c := p.next(); c == nil || c.text != ")" {
+			return nil, fmt.Errorf("expected ')' to close a parenthesized expression")
+		}
+		return x, nil
 	case tNum:
 		p.next()
 		v, err := strconv.ParseFloat(t.text, 64)
@@ -432,6 +530,8 @@ func (e *evalr) scalar(expr scalarExpr) (any, error) {
 	switch x := expr.(type) {
 	case numberLit:
 		return x.v, nil
+	case stringLit:
+		return x.v, nil
 	case measureRef:
 		m := e.model.Measure(x.name)
 		if m == nil {
@@ -450,15 +550,207 @@ func (e *evalr) scalar(expr scalarExpr) (any, error) {
 		if err != nil {
 			return nil, fmt.Errorf("measure [%s]: %w", x.name, err)
 		}
+		// A half-understood expression must not evaluate to its understood
+		// half: without this check `[A] + [B] IN {1}` quietly returns [A]+[B].
+		if sp.pos != len(sp.toks) {
+			return nil, fmt.Errorf("measure [%s]: unsupported DAX from %q onwards",
+				x.name, sp.toks[sp.pos].text)
+		}
 		e.depth++
 		defer func() { e.depth-- }()
 		return e.scalar(ast)
+	case binaryExpr:
+		return e.binary(x)
 	case funcCall:
 		return e.evalFunc(x)
 	case columnRef:
-		return nil, fmt.Errorf("column %s[%s] used outside an aggregation", x.table, x.col)
+		// Real DAX refuses a bare column here too — a filter context gives no
+		// row from which to read one value. The likeliest way to arrive is
+		// building a label with `&`, so the message names a way out. Grouping
+		// works for every column type and leads; SUM is offered only for a
+		// column that can actually be summed, since following that advice on a
+		// text column is how someone ends up with a label reading "FY0".
+		tbl := strings.Trim(x.table, "'")
+		fix := fmt.Sprintf("group by %s[%s], so SUMMARIZECOLUMNS returns it as its own column", tbl, x.col)
+		if t := e.model.Table(tbl); t != nil {
+			if c := t.Column(x.col); c != nil && summableType(c.DataType) {
+				fix += fmt.Sprintf(", or aggregate it (SUM(%s[%s]))", tbl, x.col)
+			}
+		}
+		return nil, fmt.Errorf("column %s[%s] has no single value in this context: %s", tbl, x.col, fix)
 	}
 	return nil, fmt.Errorf("unsupported scalar expression %T", expr)
+}
+
+// binary evaluates an infix operation. Both operands are evaluated first —
+// DAX has no short-circuiting operators.
+func (e *evalr) binary(b binaryExpr) (any, error) {
+	l, err := e.scalar(b.l)
+	if err != nil {
+		return nil, err
+	}
+	r, err := e.scalar(b.r)
+	if err != nil {
+		return nil, err
+	}
+	switch b.op {
+	case "&":
+		return dstr(l) + dstr(r), nil
+	case "=":
+		return daxCmp(l, r) == 0, nil
+	case "<>":
+		return daxCmp(l, r) != 0, nil
+	case "<":
+		return daxCmp(l, r) < 0, nil
+	case "<=":
+		return daxCmp(l, r) <= 0, nil
+	case ">":
+		return daxCmp(l, r) > 0, nil
+	case ">=":
+		return daxCmp(l, r) >= 0, nil
+	}
+
+	lf, err := arithNum(l, b.op)
+	if err != nil {
+		return nil, err
+	}
+	rf, err := arithNum(r, b.op)
+	if err != nil {
+		return nil, err
+	}
+	switch b.op {
+	case "+":
+		return lf + rf, nil
+	case "-":
+		return lf - rf, nil
+	case "*":
+		return lf * rf, nil
+	}
+	// Only "/" reaches here — the parser builds operators from daxPrec alone.
+	if rf == 0 {
+		// Real DAX yields Infinity, which has no JSON encoding; erroring keeps
+		// the difference visible instead of inventing a number. DIVIDE(a, b)
+		// is the blank-on-zero form and works.
+		return nil, fmt.Errorf("division by zero — use DIVIDE(a, b) for DAX's blank-on-zero division")
+	}
+	return lf / rf, nil
+}
+
+// summableType reports whether a TMSL/TMDL dataType is one SUM can total. An
+// unknown or absent dataType answers false: the point is to avoid recommending
+// an aggregation that would silently return zero, so silence is the safe side.
+func summableType(t string) bool {
+	switch strings.ToLower(t) {
+	case "int64", "double", "decimal", "currency":
+		return true
+	}
+	return false
+}
+
+// arithNum coerces an operand of +, -, * or / to a number: BLANK counts as 0
+// and a numeric string converts, but text that is not a number errors rather
+// than silently becoming zero.
+func arithNum(v any, op string) (float64, error) {
+	if f, ok := asNumber(v); ok {
+		return f, nil
+	}
+	if t, isText := v.(string); isText {
+		return 0, fmt.Errorf("cannot apply %q to the text value %q", op, t)
+	}
+	return 0, fmt.Errorf("cannot apply %q to %T", op, v)
+}
+
+// isBlankText reports whether a column value is empty or whitespace-only text.
+// That is how every CSV and warehouse export writes a missing number, so a
+// numeric column that arrived as text would otherwise refuse the moment one
+// value is absent — which in real data is always. It applies to column values
+// only: a literal "" written into an expression stays an error, because that is
+// deliberate text rather than an absent reading.
+func isBlankText(v any) bool {
+	s, ok := v.(string)
+	return ok && strings.TrimSpace(s) == ""
+}
+
+// asNumber converts a value for arithmetic: BLANK is 0, a boolean is 1 or 0,
+// and a numeric string parses. Anything else answers false — never 0, which is
+// the coercion that let text total silently.
+func asNumber(v any) (float64, bool) {
+	switch n := v.(type) {
+	case nil:
+		return 0, true
+	case bool:
+		if n {
+			return 1, true
+		}
+		return 0, true
+	case string:
+		// Exactly what ParseFloat accepts once surrounding whitespace is gone —
+		// so "1e3" is 1000 and " 42 " is 42, while "1,234", "$99" and "50%"
+		// refuse. The line is deliberate: padding is an artefact of export, but
+		// separators, symbols and percent signs are locale-dependent
+		// presentation, and guessing a locale is how a sum silently loses a
+		// factor of a thousand.
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		return f, err == nil
+	}
+	return numeric(v)
+}
+
+// daxCmp orders two values: numerically when both sides are numbers (BLANK
+// counting as 0 against one), lexically otherwise.
+func daxCmp(l, r any) int {
+	lf, lok := numeric(l)
+	rf, rok := numeric(r)
+	if l == nil && rok {
+		lf, lok = 0, true
+	}
+	if r == nil && lok {
+		rf, rok = 0, true
+	}
+	if lok && rok {
+		switch {
+		case lf < rf:
+			return -1
+		case lf > rf:
+			return 1
+		}
+		return 0
+	}
+	return strings.Compare(dstr(l), dstr(r))
+}
+
+// truthy reads a DAX condition: FALSE, BLANK, 0 and "" are false.
+func truthy(v any) bool {
+	switch n := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return n
+	}
+	if f, ok := numeric(v); ok {
+		return f != 0
+	}
+	return dstr(v) != ""
+}
+
+// dstr renders a value the way `&` concatenation does: BLANK is the empty
+// string and whole numbers keep no trailing ".0".
+func dstr(v any) string {
+	switch n := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return n
+	case bool:
+		if n {
+			return "TRUE"
+		}
+		return "FALSE"
+	}
+	if f, ok := numeric(v); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprint(v)
 }
 
 func (e *evalr) evalFunc(fc funcCall) (any, error) {
@@ -473,9 +765,23 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("SUM expects a column reference")
 		}
+		tbl := strings.Trim(col.table, "'")
 		var s float64
-		for _, r := range e.activeRows(strings.Trim(col.table, "'")) {
-			s += toF(r[col.col])
+		for _, r := range e.activeRows(tbl) {
+			v := r[col.col]
+			if v == nil || isBlankText(v) {
+				continue // BLANK contributes nothing to a sum
+			}
+			f, ok := asNumber(v)
+			if !ok {
+				// Every value used to go through a coercion that returned 0 for
+				// anything it could not read, so summing a text column reported
+				// a confident zero — worse than an error, because a caller acts
+				// on a number.
+				return nil, fmt.Errorf("cannot sum %s[%s]: the value %q is not a number",
+					tbl, col.col, fmt.Sprint(v))
+			}
+			s += f
 		}
 		return s, nil
 	case "DIVIDE":
@@ -490,11 +796,33 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		den := toF(b)
+		num, err := arithNum(a, "DIVIDE")
+		if err != nil {
+			return nil, err
+		}
+		den, err := arithNum(b, "DIVIDE")
+		if err != nil {
+			return nil, err
+		}
 		if den == 0 {
 			return nil, nil // DAX DIVIDE → blank on divide-by-zero
 		}
-		return toF(a) / den, nil
+		return num / den, nil
+	case "IF":
+		if len(fc.args) < 2 {
+			return nil, fmt.Errorf("IF expects a condition and a value")
+		}
+		cond, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if truthy(cond) {
+			return e.scalar(fc.args[1])
+		}
+		if len(fc.args) > 2 {
+			return e.scalar(fc.args[2])
+		}
+		return nil, nil // omitted else branch → blank
 	case "COUNTROWS":
 		if len(fc.args) < 1 {
 			return nil, fmt.Errorf("COUNTROWS expects a table")

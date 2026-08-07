@@ -42,6 +42,16 @@ Two `Sales` rows per `Time` group; grouped by `Time[FiscalYear]`,`[FiscalMonth]`
 
 `EVALUATE 'Store'` → the 4 Store rows verbatim.
 
+Two further measures are defined with infix operators — `Units Delta =
+[Total Units This Year] - [Total Units Last Year]` and `Units Growth Pct =
+DIVIDE([Units Delta], [Total Units Last Year]) * 100` — giving Δ 0 / 400 / −100 /
+800 and growth 0 / 50 / −10 / 80 % across the same four groups. They exist
+because an operator inside a stored measure is only exercised when a query
+*reads* the measure: publication stores the expression untouched, so a model can
+look complete and still be unqueryable in part (issue #42). The golden
+`Operator Measure Asset` query is what proves the round-trip, and
+`Inline Operator Precedence` pins `TY + LY*2` against `(TY+LY)*2`.
+
 ## The `executeQueries` contract (from the vendored swagger)
 
 ```
@@ -57,7 +67,11 @@ Authorization: Bearer <Power BI-audience token>
 - `EVALUATE <table>` — return all rows/columns of a table.
 - `SUMMARIZECOLUMNS(groupCol, …, "Name", <expr>, …)` — group-by + named expressions.
 - Measure references `[TotalUnits]`, and their definitions.
-- `SUM(Table[Column])`, `DIVIDE(a, b)`.
+- `SUM(Table[Column])`, `DIVIDE(a, b)`, `COUNTROWS(Table)`, `IF(cond, then[, else])`.
+- Infix operators `+ - * / &` and the comparisons `= <> < <= > >=`, with DAX
+  precedence (unary `-`, then `* /`, then `+ -`, then `&`, then comparison) and
+  parentheses. `a / 0` errors — real DAX yields Infinity, which has no JSON
+  encoding — so use `DIVIDE(a, b)` for blank-on-zero.
 - Relationship traversal for filter context (`Sales` filtered by `Time` / `Store`).
 
 Out of scope for the first cut (documented deferrals):

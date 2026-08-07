@@ -502,6 +502,7 @@
       "ci:semantic-model",
       "go:TestExecuteQueriesE2E",
       "go:TestExecuteQueriesGolden",
+      "go:TestExecuteQueriesEveryPublishedMeasureAnswers",
       "go:TestExecuteQueriesDirectLakeReadsCurrentDelta"
     ]
   },

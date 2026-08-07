@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/calvinchengx/fabric-emulator/internal/semanticmodel"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/parquet-go/parquet-go"
 )
@@ -115,8 +116,81 @@ func TestExecuteQueriesGolden(t *testing.T) {
 			t.Errorf("%s: rows mismatch\n got=%v\nwant=%v", q.Name, resp.Results[0].Tables[0].Rows, q.Expected.Rows)
 		}
 	}
-	if ran != 3 {
-		t.Fatalf("ran %d DAX queries, want 3", ran)
+	if ran != 5 {
+		t.Fatalf("ran %d DAX queries, want 5", ran)
+	}
+}
+
+// TestExecuteQueriesEveryPublishedMeasureAnswers is the witness for issue #42.
+//
+// A measure whose expression the evaluator cannot parse still publishes: the
+// definition is stored verbatim and nothing reads the DAX until a query names
+// the measure. So a model can be created, listed and shown complete in the
+// portal while part of it is unqueryable — `Gross Revenue = [Revenue USD] +
+// [Cancelled Revenue]` sat green for weeks in a downstream repo because nothing
+// had asked for it. Creation is therefore no evidence at all; only a query is.
+//
+// This walks every measure in the published model, which keeps the guarantee
+// tied to the fixture rather than to a hand-picked list: add a measure to
+// retail.bim and it must answer here too.
+func TestExecuteQueriesEveryPublishedMeasureAnswers(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	ds := createSemanticModel(t, st, ws.ID) // publish — proves nothing on its own
+
+	model, err := semanticmodel.ParseTMSL(smFixture(t, "retail.bim"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var measures []string
+	for _, tbl := range model.Tables {
+		for _, m := range tbl.Measures {
+			measures = append(measures, m.Name)
+		}
+	}
+	if len(measures) < 6 {
+		t.Fatalf("fixture has %d measures; expected the operator ones too", len(measures))
+	}
+
+	ask := func(t *testing.T, expr string) any {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]any{"queries": []map[string]string{
+			{"query": `EVALUATE SUMMARIZECOLUMNS("v", ` + expr + `)`}}})
+		w := do(a.executeQueries, admin, "POST", string(raw), map[string]string{"datasetId": ds.ID, "groupId": ws.ID})
+		if w.Code != 200 {
+			t.Fatalf("%s: %d %s", expr, w.Code, w.Body.Bytes())
+		}
+		var resp struct {
+			Results []struct {
+				Tables []struct {
+					Rows []map[string]any `json:"rows"`
+				} `json:"tables"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Results) != 1 || len(resp.Results[0].Tables) != 1 || len(resp.Results[0].Tables[0].Rows) != 1 {
+			t.Fatalf("%s: unexpected response shape %s", expr, w.Body.Bytes())
+		}
+		return resp.Results[0].Tables[0].Rows[0]["[v]"]
+	}
+
+	for _, name := range measures {
+		t.Run(name, func(t *testing.T) {
+			if v := ask(t, "["+name+"]"); v == nil {
+				t.Errorf("[%s] answered blank", name)
+			}
+		})
+	}
+
+	// The arithmetic itself, not just a 200: Σ TY − Σ LY = 4900 − 3800.
+	if got := ask(t, "[Units Delta]"); fmt.Sprintf("%v", got) != "1100" {
+		t.Errorf("[Units Delta] = %v, want 1100", got)
+	}
+	// And inline, so the operator is exercised from the query string too.
+	if got := ask(t, "[Total Units This Year] - [Total Units Last Year]"); fmt.Sprintf("%v", got) != "1100" {
+		t.Errorf("inline subtraction = %v, want 1100", got)
 	}
 }
 
