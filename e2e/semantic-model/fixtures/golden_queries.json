@@ -51,6 +51,40 @@
       }
     },
     {
+      "name": "Operator Measure Asset",
+      "asset": "Power BI measures defined with infix operators ('Units Delta', 'Units Growth Pct')",
+      "dax": "EVALUATE SUMMARIZECOLUMNS('Time'[FiscalYear], 'Time'[FiscalMonth], \"Units Delta\", [Units Delta], \"Units Growth Pct\", [Units Growth Pct])",
+      "handler": "dax",
+      "note": "The round-trip witness for issue #42: both measures live in the published model.bim and are read back by name, so the operators inside their stored expressions are exercised by the query, not by publication. 'Units Growth Pct' also nests a measure that itself uses an operator, and multiplies a DIVIDE() result.",
+      "expected": {
+        "orderInsensitive": true,
+        "columns": ["Time[FiscalYear]", "Time[FiscalMonth]", "[Units Delta]", "[Units Growth Pct]"],
+        "rows": [
+          { "Time[FiscalYear]": "FY2013", "Time[FiscalMonth]": "Jan", "[Units Delta]": 0, "[Units Growth Pct]": 0 },
+          { "Time[FiscalYear]": "FY2013", "Time[FiscalMonth]": "Apr", "[Units Delta]": 400, "[Units Growth Pct]": 50 },
+          { "Time[FiscalYear]": "FY2014", "Time[FiscalMonth]": "Jan", "[Units Delta]": -100, "[Units Growth Pct]": -10 },
+          { "Time[FiscalYear]": "FY2014", "Time[FiscalMonth]": "Apr", "[Units Delta]": 800, "[Units Growth Pct]": 80 }
+        ]
+      }
+    },
+    {
+      "name": "Inline Operator Precedence",
+      "asset": "Custom DAX with inline operators (no stored measure)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS('Time'[FiscalYear], 'Time'[FiscalMonth], \"Blended\", [Total Units This Year] + [Total Units Last Year] * 2)",
+      "handler": "dax",
+      "note": "TY + LY*2, not (TY+LY)*2 — the expected values differ under either reading, so this pins multiplicative-over-additive precedence rather than merely proving the query parses.",
+      "expected": {
+        "orderInsensitive": true,
+        "columns": ["Time[FiscalYear]", "Time[FiscalMonth]", "[Blended]"],
+        "rows": [
+          { "Time[FiscalYear]": "FY2013", "Time[FiscalMonth]": "Jan", "[Blended]": 3000 },
+          { "Time[FiscalYear]": "FY2013", "Time[FiscalMonth]": "Apr", "[Blended]": 2800 },
+          { "Time[FiscalYear]": "FY2014", "Time[FiscalMonth]": "Jan", "[Blended]": 2900 },
+          { "Time[FiscalYear]": "FY2014", "Time[FiscalMonth]": "Apr", "[Blended]": 3800 }
+        ]
+      }
+    },
+    {
       "name": "Referential Integrity Violation",
       "asset": "DMV query (tutorial: DISCOVER_STORAGE_TABLES / RIVIOLATION_COUNT)",
       "dax": "SELECT [Dimension_Name], [RIVIOLATION_COUNT] FROM $SYSTEM.DISCOVER_STORAGE_TABLES",

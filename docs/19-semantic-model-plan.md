@@ -40,8 +40,12 @@ Critical path to green: **A → C → D → E**. F is the tutorial's actual subj
 - [x] Tokenizer + parser for the subset: `EVALUATE`, `SUMMARIZECOLUMNS`, table /
       column / measure refs, function calls, string literals.
 - [x] Evaluation: filter context, relationship traversal (`Sales`→`Time`/`Store`),
-      measure expansion, `SUM`, `DIVIDE` (blank on ÷0), `EVALUATE <table>`,
-      `SUMMARIZECOLUMNS(cols…, "name", expr)`.
+      measure expansion, `SUM`, `DIVIDE` (blank on ÷0), `COUNTROWS`, `IF`,
+      `EVALUATE <table>`, `SUMMARIZECOLUMNS(cols…, "name", expr)`.
+- [x] Infix operators `+ - * / &` and comparisons, with DAX precedence and
+      parentheses (issue #42). Stored measures using them are covered by the
+      `Operator Measure Asset` golden — publication alone never reads the DAX,
+      so only a query that names the measure is evidence it works.
 - [x] Unit-tested against `fixtures/golden_queries.json` (the DAX oracle),
       order-insensitive.
 
