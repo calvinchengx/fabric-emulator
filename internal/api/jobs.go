@@ -37,6 +37,18 @@ func jobFailureMessage(code string) string {
 			"useRootDefaultLakehouse=True in the arguments to bypass this check."
 	case "ComputeBindingInvalid":
 		return "The notebook's compute binding does not resolve to an existing item."
+	case "CopyJobCDCNotImplemented":
+		return "This Copy job's jobMode is CDC, which needs change tracking on a " +
+			"source the emulator cannot reach. Use jobMode Batch, or run against " +
+			"real Fabric."
+	case "CopyJobExternalConnectionNotSupported":
+		return "This Copy job names an external connection (SQL, Blob, …). The " +
+			"emulator executes Lakehouse-to-Lakehouse legs only; external stores " +
+			"need credentials and drivers it does not hold."
+	case "CopyJobWriteBehaviorNotSupported":
+		return "This Copy job's writeBehavior needs key-based reconciliation " +
+			"(Merge/Upsert). Append and Overwrite execute for real; a Merge " +
+			"quietly downgraded to Overwrite would destroy rows."
 	}
 	return "The job failed."
 }
@@ -179,6 +191,16 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 			go a.runAirflow(context.Background(), it, j, dagID, conf)
 		}
 	}
+	// A CopyJob really copies: the definition's Lakehouse legs run through the
+	// pipeline Copy executor now (copyjob.go). Run-on-demand is documented as
+	// jobType=Execute — Microsoft's own readback example says "CopyJob", so
+	// both spellings dispatch; what was submitted is what the instance keeps.
+	if it.Type == "CopyJob" && (jobType == "Execute" || jobType == "CopyJob") {
+		if code := a.runCopyJob(wid, it.ID, j.ID); code != "" && j.FailWith == "" {
+			j.FailWith = code
+			_ = a.Store.SetJobFailure(it.ID, j.ID, code)
+		}
+	}
 	if it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish") {
 		j.FailWith = "DataflowEngineNotImplemented"
 		_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
@@ -192,6 +214,7 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 // DAG — each finalised later, by its own reporting path).
 func (a *API) terminalStatusOf(it *store.Item, jobType string, j *store.JobInstance) string {
 	executesNow := it.Type == "DataPipeline" ||
+		(it.Type == "CopyJob" && (jobType == "Execute" || jobType == "CopyJob")) ||
 		(it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish"))
 	if !executesNow {
 		// A notebook or Spark job that failed to even start is terminal now.

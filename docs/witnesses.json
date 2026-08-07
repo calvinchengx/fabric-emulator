@@ -786,5 +786,13 @@
       "go:TestWebActivityStubModeSaysItDidNotCall",
       "go:TestPipelineWebHookRefusesLoudly"
     ]
+  },
+  "copyjob": {
+    "section": "Item types present, engine absent",
+    "claim": "**`CopyJob`**",
+    "witnesses": [
+      "go:TestCopyJobExecuteReallyCopies",
+      "go:TestCopyJobRefusesWhatItCannotHonour"
+    ]
   }
 }
