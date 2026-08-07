@@ -318,3 +318,63 @@ func TestSelectedValueCountsBlankAlongsideARealValue(t *testing.T) {
 		t.Errorf("group b = %v, want \"!\" — BLANK alone is one value", got["b"])
 	}
 }
+
+// --- the same guard, everywhere a column or table is read ---------------------
+
+// A missing column is not absent — Row is a map, so a typo reads as BLANK on
+// every row and each function folds that into its own confident answer. These
+// used to return a NUMBER for a query that names nothing real.
+func TestReadingSomethingThatDoesNotExistIsAnErrorNotAZero(t *testing.T) {
+	for _, tc := range []struct{ name, dax, want string }{
+		{
+			name: "SUM of an unknown column returned 0",
+			dax:  `EVALUATE SUMMARIZECOLUMNS('Store'[Territory], "u", SUM('Sales'[Unitz]))`,
+			want: "no column",
+		},
+		{
+			name: "SUM on an unknown table returned 0",
+			dax:  `EVALUATE SUMMARIZECOLUMNS('Store'[Territory], "u", SUM('Salez'[Units]))`,
+			want: "no table",
+		},
+		{
+			name: "COUNTROWS of an unknown table returned 0",
+			dax:  `EVALUATE SUMMARIZECOLUMNS('Store'[Territory], "n", COUNTROWS('Salez'))`,
+			want: "no table",
+		},
+		{
+			name: "SELECTEDVALUE of an unknown column",
+			dax:  `EVALUATE SUMMARIZECOLUMNS('Store'[Territory], "v", SELECTEDVALUE('Sales'[Unitz]))`,
+			want: "no column",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := evalErr(t, tc.dax)
+			if !strings.Contains(msg, tc.want) {
+				t.Fatalf("error = %q, want it to mention %q", msg, tc.want)
+			}
+		})
+	}
+}
+
+func TestTheGuardNamesTheFunctionThatFailed(t *testing.T) {
+	// Three functions share one helper, so the message must say which one the
+	// caller wrote — otherwise a nested expression gives no clue where to look.
+	if msg := evalErr(t, `EVALUATE SUMMARIZECOLUMNS("u", SUM('Sales'[Unitz]))`); !strings.Contains(msg, "SUM:") {
+		t.Errorf("SUM: error = %q", msg)
+	}
+	if msg := evalErr(t, `EVALUATE SUMMARIZECOLUMNS("n", COUNTROWS('Salez'))`); !strings.Contains(msg, "COUNTROWS:") {
+		t.Errorf("COUNTROWS: error = %q", msg)
+	}
+	if msg := evalErr(t, `EVALUATE SUMMARIZECOLUMNS("v", SELECTEDVALUE('Sales'[Unitz]))`); !strings.Contains(msg, "SELECTEDVALUE:") {
+		t.Errorf("SELECTEDVALUE: error = %q", msg)
+	}
+}
+
+func TestValidColumnsAndTablesStillEvaluate(t *testing.T) {
+	// The guard must not have made a correct query fail: 275000 units over the
+	// eight seeded Sales rows, in 8 rows.
+	rows := evalRows(t, `EVALUATE SUMMARIZECOLUMNS("u", SUM('Sales'[Units]), "n", COUNTROWS('Sales'))`)
+	if len(rows) != 1 || rows[0]["[u]"] != 275000.0 || rows[0]["[n]"] != 8.0 {
+		t.Fatalf("rows = %v, want one row with 275000 units over 8 rows", rows)
+	}
+}

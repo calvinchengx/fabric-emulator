@@ -1,5 +1,7 @@
 {
   "_comment": "Golden (DAX query -> executeQueries rows) fixtures, hand-computed from seed_data.json. This is the DAX oracle (no live engine on macOS). Column keys follow the executeQueries JSON convention: 'Table[Column]' for columns, '[Name]' for named measure expressions. Compare order-insensitively. The arithmetic is shown in README.md.",
+  "_daxQueryCount": "Hand-maintained on purpose. Three suites iterate the dax-handler queries — the Go golden test, the executeQueries API test and e2e/semantic-model — and each must know how many to expect, or a fixture that failed to load passes them all vacuously. Deriving it from the file would be circular: a deleted query would lower both sides together. Counting it here rather than in three source files means adding a query is one edit, in the file the query lives in.",
+  "daxQueryCount": 6,
   "queries": [
     {
       "name": "Store Asset",
