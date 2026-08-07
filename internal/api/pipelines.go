@@ -231,6 +231,12 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// childItems) — the storage layer answers for real.
 		return e.getMetadataActivity(act, tp, resolve)
 
+	case "Delete":
+		// Really removes the data through the storage layer — FileDeleted
+		// events fire, so downstream Reflex triggers see a pipeline Delete
+		// the same as any other writer's delete.
+		return e.deleteActivity(act, tp, resolve)
+
 	case "Script":
 		// Runs real T-SQL scripts against a Warehouse/SQLDatabase item's own SQL
 		// Server database — real rows/rowcounts back, when a warehouse SQL
