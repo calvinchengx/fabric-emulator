@@ -131,6 +131,32 @@ def test_a_type_map_target_outside_the_enum_would_fail(validator, gi):
     assert errors(validator, col), "a dataType outside the enum was accepted"
 
 
+# --- and the thing it cannot see, asserted rather than described --------------
+
+def test_the_schema_accepts_the_column_that_costs_the_whole_table(validator, gi):
+    """DO NOT DELETE check_govern_types.py IN FAVOUR OF THIS FILE.
+
+    The header says the `dataLength` rule is not in the schema. This proves it,
+    so the claim cannot quietly stop being true: a BINARY column with no
+    `dataLength` — the exact payload OpenMetadata answers with 400 for the
+    ENTIRE table — validates clean here.
+
+    Asserting the gap rather than describing it means a schema that ever grows
+    the rule (an `if`/`then`, an `allOf`, a `dependentRequired`) fails this test
+    instead of silently making the prose above wrong. At that point the cheap
+    guard's job has changed and this test should be revisited, not deleted.
+    """
+    assert errors(validator, {"name": "c", "dataType": "BINARY"}) == []
+
+    column = json.loads((SCHEMA_DIR / "entity/data/table.json").read_text())
+    column = column["definitions"]["column"]
+    assert column["required"] == ["name", "dataType"]
+    assert not any(k in column for k in ("if", "then", "allOf", "dependentRequired"))
+
+    # And the guard that DOES catch it still does, on the same input.
+    assert gi.om_column("b", "binary")["dataLength"] == gi.DEFAULT_BINARY_LENGTH
+
+
 # --- the vendored copy must be what we recorded, and what we run --------------
 
 def test_vendored_files_match_their_recorded_hashes():

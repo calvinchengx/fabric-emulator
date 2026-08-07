@@ -24,6 +24,17 @@ It does not replace the e2e — it cannot see anything about how OpenMetadata
 actually behaves, only that the payload satisfies the constraint OpenMetadata
 documents. It exists so that constraint is checked without containers.
 
+AND SCHEMA VALIDATION DOES NOT REPLACE THIS, which is the obvious next thought
+now that one exists. `python/tests/test_govern_column_schema.py` validates every
+column this drives against OpenMetadata's own vendored schema — a strictly wider
+check of the enum, required fields, field types and `children` nesting. It still
+cannot see the rule above: `column` declares only `required: ["name",
+"dataType"]`, with no `if`/`then`, no `allOf` and no `dependentRequired`. The
+`dataLength` constraint lives in prose in a `description` and is enforced in
+OpenMetadata's Java layer, so `{"name": "c", "dataType": "BINARY"}` VALIDATES
+CLEAN — the exact payload that costs the whole table. That is asserted, not
+merely written down, in `test_the_schema_accepts_the_column_that_costs_the_whole_table`.
+
 Usage:
     check_govern_types.py     exit non-zero on the first column OM would refuse
 """
