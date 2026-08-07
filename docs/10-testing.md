@@ -225,7 +225,7 @@ Three measurements, because one would misrepresent the others:
 | | What it measures | Gate |
 |---|---|---|
 | Go | unit + in-process server tests, merged with instrumented e2e runs | 90% floor, armed only where a real SQL Server was reachable |
-| Python | the unit suite's own scope (checkers, delta-ops, storage) | 70% floor |
+| Python | the unit suite's own scope (checkers, delta-ops, storage) | 92% floor (`fail_under`, `pyproject.toml`) |
 | Witnesses | every supported parity claim names a test that exists | `check_witnesses.py --strict` |
 
 The witness count is the integration measure. "Every claim of support is backed
@@ -244,11 +244,10 @@ go test -cover -coverpkg=./... ./... -args -test.gocoverdir=$PWD/covdata/unit
 scripts/coverage_merge.sh
 ```
 
-The Python floor is passed **explicitly**, not through `addopts`:
+Coverage is requested **explicitly**, not through `addopts`:
 
 ```bash
-uv run --frozen --group test pytest python/tests -q \
-  --cov --cov-report=term-missing --cov-fail-under=70
+uv run --frozen --group test pytest python/tests -q --cov --cov-report=term-missing
 ```
 
 `addopts` would apply to every pytest in the repo, including the ones e2e
@@ -256,13 +255,21 @@ harnesses run inside containers that have pytest but not pytest-cov — where th
 flags are unrecognised arguments and the suite dies with exit 4 for a reason
 that has nothing to do with what it was testing.
 
+The floor itself is **not** on that command line. It is `fail_under` in
+`pyproject.toml` (**92**, with `precision = 2` so the comparison is exact), and
+it lives in one place for the reason the setting's own comment gives: as
+`--cov-fail-under=` in two workflow steps it was two things to move for one
+change, which is how a ratchet quietly stops ratcheting.
+
 **Measure the floor in a clean venv.** `--frozen --group test` is what CI runs,
 so it is the only environment whose number is authoritative. A venv that has
 drifted — anything installed with an extra group or `uv run --with` persists —
 can read a point lower, because code that only runs when a dependency is
 *absent* stops running once something installs it. `scripts/check_govern_types.py`
-did exactly that: 98% clean, 85% with `urllib3` present, one point on the total
-against a 70% floor. The lesson generalises past that file — if a test's coverage
+did exactly that: 98% clean, 85% with `urllib3` present, one point on the total.
+That was measured against a 70% floor, where a point was noise; against today's
+**92** it is most of the headroom, since the suite measures ~93. The lesson
+generalises past that file — if a test's coverage
 depends on what happens to be installed, force the branch instead of inheriting
 it, or the gate fails on whoever pushes next rather than on whoever spent the
 margin. That drift happened to read low, which is the safe direction; the same
@@ -357,3 +364,36 @@ newest interpreter it can find (3.13 at the time of writing), so the host would
 quietly run a different Python from the containers under test. Note that
 `uv run --no-sync` *reuses* a mismatched existing `.venv` with only a warning
 rather than rebuilding it — if the warning appears, `rm -rf .venv` and re-sync.
+
+### Ask what your machine has that a fresh one does not
+
+[Measure the floor in a clean venv](#coverage-what-the-number-covers-and-what-it-cannot)
+states this for the coverage number. It is not a coverage phenomenon, and it is
+filed where nobody looks when the symptom is a failing test or a `401` — so:
+**before asking "is `main` broken?", ask "what does my machine have that a fresh
+one does not?"** In one day that question would have ended three investigations
+before they started, none of which looked like environment drift:
+
+- **A combination no lockfile produces.** `deltalake` present and `pandas`
+  absent — no group declares that pair — took `test_delta_ops` down a path CI
+  never runs, dying in `pyarrow`'s pandas shim. In CI `deltalake` is absent, so
+  the test skips and the path is never reached.
+- **A coverage percentage a point low**, from a venv no longer matching the
+  lockfile — the case the coverage section already describes.
+- **A `401` that was a clock.** A container left up for hours outlived several
+  emulator restarts, and its token aged past a threshold. Nothing about it looks
+  like environment drift until you find the clock, which is why it is the one
+  worth remembering: the state that drifted was not a package at all.
+
+The shape is the same each time — the failure depends on state nobody declared —
+but only the first is a venv, so `rm -rf .venv` is a check, not the check:
+
+```bash
+gh run list --workflow ci.yml --branch main --limit 3   # is main actually red?
+rm -rf .venv && uv run --frozen --group test pytest python/tests -q
+docker compose down -v                                  # for anything long-lived
+```
+
+A green CI on the commit you are sitting on does not make the local failure
+imaginary — it was real about *an* environment. It means the difference is
+yours to find before it is anyone else's to chase.
