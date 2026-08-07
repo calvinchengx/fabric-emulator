@@ -113,6 +113,36 @@ def main():
     print(f"sum(1..100) -> {r3}", flush=True)
     assert r3 == "5050", r3
 
+    # --- DML row-count envelope, through the sql statement kind.
+    #
+    # DataFusion reports INSERT's row count as uint64, which the Arrow
+    # conversion to the Connect client rejects. The agent used to absorb that
+    # failure as an EMPTY result, so a client could not tell "wrote 3 rows"
+    # from "wrote nothing" — parity.md carried it as 🟡 for exactly that. The
+    # agent now recovers the count from the statement's cached result relation.
+    # The count-back SELECT is the half that matters: recovery must not re-run
+    # the INSERT, so 3 in the envelope AND 3 in the table is the whole claim.
+    def run_sql_stmt(code_str):
+        _, st = http("POST", f"{base}/sessions/{sid}/statements",
+                     {"code": code_str, "kind": "sql"}, token=token)
+        stid = st["id"]
+        for _ in range(120):
+            _, got = http("GET", f"{base}/sessions/{sid}/statements/{stid}", token=token)
+            if got["state"] == "available":
+                out = got["output"]
+                if out.get("status") != "ok":
+                    raise RuntimeError(f"sql statement error: {out}")
+                return out["data"].get("application/json", {})
+            time.sleep(1)
+        raise RuntimeError("sql statement never became available")
+
+    run_sql_stmt("CREATE TABLE dml_counts (id INT)")
+    ins = run_sql_stmt("INSERT INTO dml_counts VALUES (1), (2), (3)")
+    assert ins.get("data") == [[3]], f"INSERT envelope should carry its count: {ins}"
+    back = run_sql_stmt("SELECT COUNT(*) AS n FROM dml_counts")
+    assert back.get("data") == [[3]], f"count-back disagrees — re-execution or loss: {back}"
+    print("INSERT envelope -> [[3]], table still 3 (count recovered, not re-run)", flush=True)
+
     # --- Delta maintenance on a OneLake table, through the delta-rs path.
     #
     # Sail's planner has no OPTIMIZE/VACUUM and rejects Change Data Feed reads,
