@@ -162,7 +162,7 @@ func (e *pipelineExecutor) restSourceTable(
 		return strings.TrimSpace(fmt.Sprint(v)), nil
 	}
 
-	url, err := e.restURL(act, src, resolve)
+	url, err := e.restURL(act, "RestSource", src, resolve)
 	if err != nil {
 		return nil, "", err
 	}
@@ -201,7 +201,7 @@ func (e *pipelineExecutor) restSourceTable(
 	// step a placeholder inside it, and `Headers.name` rules overwrite one from
 	// the previous response.
 	tmpl, _ := http.NewRequest(method, url, nil)
-	if err := restHeaders(act, src, resolve, tmpl); err != nil {
+	if err := restHeaders(act, "RestSource", src, resolve, tmpl); err != nil {
 		return nil, "", err
 	}
 	hdr := tmpl.Header.Clone()
@@ -326,6 +326,7 @@ func (e *pipelineExecutor) restFetch(
 // resolveLoc already applies to OneLake locations.
 func (e *pipelineExecutor) restURL(
 	act pipeline.Activity,
+	kind string,
 	src map[string]json.RawMessage,
 	resolve func(json.RawMessage) (any, error),
 ) (string, error) {
@@ -383,11 +384,11 @@ func (e *pipelineExecutor) restURL(
 		url = strings.TrimSuffix(base, "/") + "/" + strings.TrimPrefix(rel, "/")
 	}
 	if url == "" {
-		return "", fmt.Errorf("copy %q: RestSource needs a url — set `url` on the source, or "+
-			"the linked service's `url` with the dataset's `relativeUrl`", act.Name)
+		return "", fmt.Errorf("copy %q: %s needs a url — set `url` on the side, or "+
+			"the linked service's `url` with the dataset's `relativeUrl`", act.Name, kind)
 	}
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		return "", fmt.Errorf("copy %q: RestSource url %q is not http(s)", act.Name, url)
+		return "", fmt.Errorf("copy %q: %s url %q is not http(s)", act.Name, kind, url)
 	}
 	return url, nil
 }
@@ -402,6 +403,7 @@ func (e *pipelineExecutor) restURL(
 // an expression. That pipeline works today.
 func restHeaders(
 	act pipeline.Activity,
+	kind string,
 	src map[string]json.RawMessage,
 	resolve func(json.RawMessage) (any, error),
 	req *http.Request,
@@ -422,10 +424,10 @@ func restHeaders(
 		if json.Unmarshal(ls, &probe) == nil {
 			at := probe.LinkedService.Properties.TypeProperties.AuthenticationType
 			if at != "" && !strings.EqualFold(at, "Anonymous") {
-				return fmt.Errorf("copy %q: RestSource authenticationType %q is not implemented — "+
+				return fmt.Errorf("copy %q: %s authenticationType %q is not implemented — "+
 					"the emulator models no connections, so R1 supports Anonymous plus "+
 					"`additionalHeaders` (a Web activity can fetch a token and pass it as an "+
-					"expression)", act.Name, at)
+					"expression)", act.Name, kind, at)
 			}
 		}
 	}
@@ -436,7 +438,7 @@ func restHeaders(
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
-		return fmt.Errorf("copy %q: RestSource additionalHeaders is not an object", act.Name)
+		return fmt.Errorf("copy %q: %s additionalHeaders is not an object", act.Name, kind)
 	}
 	for name, vraw := range fields {
 		v, err := resolve(vraw)

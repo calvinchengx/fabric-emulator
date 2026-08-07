@@ -703,8 +703,8 @@
       "ci:fabric-cli"
     ]
   },
-  "rest-connector-restsource-in-a-copy-with-pagination": {
-    "claim": "**REST connector** — `RestSource` in a Copy, with pagination",
+  "rest-connector-restsource-and-restsink-in-a-copy-with-pagination": {
+    "claim": "**REST connector** — `RestSource` and `RestSink` in a Copy, with pagination",
     "section": "Data Factory (`data-factory/`)",
     "witnesses": [
       "go:TestRestSourceReallyCallsAndShapesRows",
@@ -720,7 +720,14 @@
       "go:TestPaginationRefusesAnEndlessSelfReferentialNext",
       "go:TestPaginationFollowsRFC5988ByDefaultAndOnlyThen",
       "go:TestPaginationResendsThePostBodyOnEveryPage",
-      "go:TestPaginationRefusesATopLevelArray"
+      "go:TestPaginationRefusesATopLevelArray",
+      "go:TestRestSinkPostsRowsAsJSONArrays",
+      "go:TestRestSinkSplitsIntoBatchesOfWriteBatchSize",
+      "go:TestRestSinkSendsNothingForZeroRows",
+      "go:TestRestSinkGzipsWhenAsked",
+      "go:TestRestSinkRefusesConfigurationFabricDoesNotAllow",
+      "go:TestRestSinkRefusesASourceWithNoRows",
+      "go:TestRestSinkFailsOnNon2xx"
     ]
   }
 }

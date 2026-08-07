@@ -423,6 +423,13 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 	} else if t == "RestSource" {
 		return e.restToLakehouse(act, tp, resolve)
 	}
+	// Likewise a REST sink: resolveLoc resolves OneLake locations, and this is
+	// not one. Checked before the sink is resolved, for the same reason.
+	if t, err := copySideType(tp["sink"], resolve); err != nil {
+		return nil, fmt.Errorf("copy %q sink: %w", act.Name, err)
+	} else if t == "RestSink" {
+		return e.restFromLakehouse(act, tp, resolve)
+	}
 
 	src, err := e.resolveLoc("source", tp["source"], resolve)
 	if err != nil {
@@ -860,35 +867,13 @@ func (a *API) queryActivityRuns(w http.ResponseWriter, r *http.Request, p *auth.
 // Tables/bronze_* with Append accumulating across runs, rather than one
 // directory of bytes clobbering another.
 func (e *pipelineExecutor) copyIntoTable(act pipeline.Activity, tp map[string]json.RawMessage, src, dst oneLakeLoc, table string, resolve func(json.RawMessage) (any, error)) (map[string]any, bool, error) {
-	var srcProps map[string]json.RawMessage
-	_ = json.Unmarshal(tp["source"], &srcProps)
-
-	var tbl *warehouse.Table
-	switch lookupFormat(srcProps, src.path) {
-	case "delta":
-		name, ok := deltaTableName(src.path)
-		if !ok {
-			return nil, false, nil
-		}
-		t, err := warehouse.ReadDeltaTable(e.a.Store, src.itemID, name)
-		if err != nil {
-			// Not a readable Delta table (no _delta_log yet, or a shape this
-			// reader does not cover): fall back to the opaque directory copy
-			// rather than failing a Copy that used to work.
-			return nil, false, nil
-		}
-		tbl = t
-	case "parquet", "csv":
-		p, err := e.a.Store.GetOneLakePath(src.itemID, src.path)
-		if err != nil || p.IsDir {
-			return nil, false, nil // a directory or missing file: let the byte copy decide
-		}
-		t, err := parseTabular(p.Content, lookupFormat(srcProps, src.path))
-		if err != nil {
-			return nil, false, fmt.Errorf("copy %q: parsing source: %v", act.Name, err)
-		}
-		tbl = t
-	default:
+	tbl, readable, err := e.readTabularSource(act, tp, src)
+	if err != nil {
+		return nil, false, err
+	}
+	if !readable {
+		// Not a shape this reader covers: fall back to the opaque directory copy
+		// rather than failing a Copy that used to work.
 		return nil, false, nil
 	}
 
@@ -920,6 +905,44 @@ func (e *pipelineExecutor) copyIntoTable(act pipeline.Activity, tp map[string]js
 		"filesRead": 1, "filesWritten": 1, "copyDuration": 0,
 		"writeBehavior": mode, "lineage": edge,
 	}, true, nil
+}
+
+// readTabularSource reads a Copy source into rows, when it is a shape the
+// emulator can parse: a Delta table, or a standalone Parquet/CSV file.
+//
+// The `readable` return is the seam between two callers that want OPPOSITE
+// things from the same failure. A OneLake→OneLake copy treats "cannot parse
+// this" as a cue to fall back to the byte copy, which is right — the bytes still
+// move. A REST sink has no such fallback: there is no way to POST an opaque
+// directory as JSON rows, so it must fail and say so. Returning the fact rather
+// than the reaction is what lets both be honest.
+func (e *pipelineExecutor) readTabularSource(act pipeline.Activity, tp map[string]json.RawMessage, src oneLakeLoc) (*warehouse.Table, bool, error) {
+	var srcProps map[string]json.RawMessage
+	_ = json.Unmarshal(tp["source"], &srcProps)
+
+	switch lookupFormat(srcProps, src.path) {
+	case "delta":
+		name, ok := deltaTableName(src.path)
+		if !ok {
+			return nil, false, nil
+		}
+		t, err := warehouse.ReadDeltaTable(e.a.Store, src.itemID, name)
+		if err != nil {
+			return nil, false, nil // no _delta_log yet, or a shape this reader misses
+		}
+		return t, true, nil
+	case "parquet", "csv":
+		p, err := e.a.Store.GetOneLakePath(src.itemID, src.path)
+		if err != nil || p.IsDir {
+			return nil, false, nil
+		}
+		t, err := parseTabular(p.Content, lookupFormat(srcProps, src.path))
+		if err != nil {
+			return nil, false, fmt.Errorf("copy %q: parsing source: %v", act.Name, err)
+		}
+		return t, true, nil
+	}
+	return nil, false, nil
 }
 
 // copySinkAction reads the sink's tableActionOption (Fabric's Append /
