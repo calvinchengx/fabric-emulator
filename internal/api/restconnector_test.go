@@ -323,7 +323,7 @@ func TestRestSourceRefusesRecordsThatAreNotObjects(t *testing.T) {
 
 func TestRestTableRefusesAboveTheRowCeiling(t *testing.T) {
 	// Refused, not truncated — the same rule httpx.ReadBounded encodes for bodies.
-	_, err := restTable(pipeline.Activity{Name: "Ingest"}, make([]any, restMaxRows+1))
+	_, err := restTable(pipeline.Activity{Name: "Ingest"}, make([]any, restMaxRows+1), nil)
 	if err == nil || !strings.Contains(err.Error(), "refused rather than truncated") {
 		t.Fatalf("err = %v", err)
 	}
@@ -413,4 +413,88 @@ func TestRestSourceCopyRefusesANonTableSink(t *testing.T) {
 	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s == "Completed" {
 		t.Fatal("a non-table sink must fail rather than quietly do something else")
 	}
+}
+
+func TestRestSourceShapesTheRealARSResponseThroughMappings(t *testing.T) {
+	// The shape BMC Helix actually returns: every field one level down under
+	// `values`, alongside a `_links` sibling. Auto-flatten finds no scalar
+	// columns here at all — this is the case that made mappings necessary rather
+	// than optional, and it is why the Helix example can be written honestly.
+	srv := jsonServer(t, `{"entries":[
+		{"values":{"Incident Number":"INC000000000701","Status":"New","Priority":3},"_links":{"self":[]}},
+		{"values":{"Incident Number":"INC000000000702","Status":"Closed","Priority":1},"_links":{"self":[]}}]}`)
+
+	tbl, _, err := restSrc(t, &API{},
+		map[string]any{"type": "RestSource", "url": srv.URL},
+		map[string]any{"translator": map[string]any{
+			"type":                "TabularTranslator",
+			"collectionReference": "$['entries']",
+			"mappings": []any{
+				map[string]any{"source": map[string]any{"path": "$['values']['Incident Number']"},
+					"sink": map[string]any{"name": "incident_number"}},
+				map[string]any{"source": map[string]any{"path": "$['values']['Status']"},
+					"sink": map[string]any{"name": "status"}},
+				map[string]any{"source": map[string]any{"path": "$['values']['Priority']"}},
+			},
+		}})
+	if err != nil {
+		t.Fatalf("the real ARS shape must work through mappings: %v", err)
+	}
+	// Column order is the MAPPING order — the author wrote the list, so the list
+	// is the schema. The third column takes its name from the path's leaf.
+	if strings.Join(tbl.Columns, ",") != "incident_number,status,Priority" {
+		t.Fatalf("columns = %v", tbl.Columns)
+	}
+	if tbl.Rows[0][0] != "INC000000000701" || tbl.Rows[1][1] != "Closed" {
+		t.Fatalf("rows = %v", tbl.Rows)
+	}
+	if _, ok := tbl.Rows[0][2].(float64); !ok {
+		t.Fatalf("Priority should stay numeric, got %T", tbl.Rows[0][2])
+	}
+}
+
+func TestRestSourceMappingsToleranceAndRefusals(t *testing.T) {
+	srv := jsonServer(t, `{"entries":[
+		{"values":{"id":"A","note":"here"}},
+		{"values":{"id":"B"}}]}`)
+	m := func(path string) map[string]any {
+		return map[string]any{"source": map[string]any{"path": path}}
+	}
+
+	t.Run("a field absent on some records leaves a gap", func(t *testing.T) {
+		// Optional fields are ordinary; failing a whole ingest over one would be
+		// worse than an empty cell.
+		tbl, _, err := restSrc(t, &API{}, map[string]any{"type": "RestSource", "url": srv.URL},
+			map[string]any{"translator": map[string]any{
+				"collectionReference": "$['entries']",
+				"mappings":            []any{m("$['values']['id']"), m("$['values']['note']")}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tbl.Rows[0][1] != "here" || tbl.Rows[1][1] != nil {
+			t.Fatalf("rows = %v", tbl.Rows)
+		}
+	})
+
+	t.Run("a mapping matching nothing at all is refused", func(t *testing.T) {
+		// Absent everywhere is a mapping that does not describe this response —
+		// silently producing an all-empty column would hide the typo.
+		_, _, err := restSrc(t, &API{}, map[string]any{"type": "RestSource", "url": srv.URL},
+			map[string]any{"translator": map[string]any{
+				"collectionReference": "$['entries']",
+				"mappings":            []any{m("$['values']['id']"), m("$['values']['typo']")}}})
+		if err == nil || !strings.Contains(err.Error(), "does not describe this response") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("a mapping landing on a container is refused", func(t *testing.T) {
+		_, _, err := restSrc(t, &API{}, map[string]any{"type": "RestSource", "url": srv.URL},
+			map[string]any{"translator": map[string]any{
+				"collectionReference": "$['entries']",
+				"mappings":            []any{m("$['values']")}}})
+		if err == nil || !strings.Contains(err.Error(), "not a value") {
+			t.Fatalf("err = %v", err)
+		}
+	})
 }
