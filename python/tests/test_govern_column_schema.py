@@ -131,6 +131,41 @@ def test_a_type_map_target_outside_the_enum_would_fail(validator, gi):
     assert errors(validator, col), "a dataType outside the enum was accepted"
 
 
+# --- and the thing it cannot see, asserted rather than described --------------
+
+def test_the_schema_accepts_the_column_that_costs_the_whole_table(validator, gi):
+    """DO NOT DELETE check_govern_types.py IN FAVOUR OF THIS FILE.
+
+    The header says the `dataLength` rule is not in the schema. This proves it,
+    so the claim cannot quietly stop being true: a BINARY column with no
+    `dataLength` — the exact payload OpenMetadata answers with 400 for the
+    ENTIRE table — validates clean here.
+
+    WHEN THIS FIRES, precisely — it does not watch upstream. It validates the
+    VENDORED 1.13.2 bytes, which change only when someone re-vendors, so an
+    OpenMetadata release that encodes the rule does not trip it on its own.
+    What closes the chain is the pin: `test_the_pinned_schema_matches_the_
+    version_docker_compose_runs` fails the moment the compose image is bumped
+    without re-vendoring, and re-vendoring is what brings new bytes here. So the
+    sequence is image bump -> pin test fails -> re-vendor -> this test fails if
+    the rule arrived. Do not read it as drift detection against upstream; it
+    cannot carry that.
+
+    If it does fail after a re-vendor, the schema has grown the rule (an
+    `if`/`then`, an `allOf`, a `dependentRequired`) and the cheap guard's job
+    has changed. Revisit both, do not delete either on the strength of one.
+    """
+    assert errors(validator, {"name": "c", "dataType": "BINARY"}) == []
+
+    column = json.loads((SCHEMA_DIR / "entity/data/table.json").read_text())
+    column = column["definitions"]["column"]
+    assert column["required"] == ["name", "dataType"]
+    assert not any(k in column for k in ("if", "then", "allOf", "dependentRequired"))
+
+    # And the guard that DOES catch it still does, on the same input.
+    assert gi.om_column("b", "binary")["dataLength"] == gi.DEFAULT_BINARY_LENGTH
+
+
 # --- the vendored copy must be what we recorded, and what we run --------------
 
 def test_vendored_files_match_their_recorded_hashes():
