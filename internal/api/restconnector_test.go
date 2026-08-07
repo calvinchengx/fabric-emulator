@@ -182,23 +182,6 @@ func TestRestSourceFailsOnNon2xx(t *testing.T) {
 	}
 }
 
-func TestRestSourceRefusesPaginationRulesRatherThanReadingPageOne(t *testing.T) {
-	// THE most important refusal in R1. Accepting paginationRules and reading
-	// only the first page would report Succeeded over partial data — the exact
-	// class of fabricated result this connector exists to remove.
-	srv := jsonServer(t, `{"entries":[{"a":1}]}`)
-	_, _, err := restSrc(t, &API{}, map[string]any{
-		"type": "RestSource", "url": srv.URL,
-		"paginationRules": map[string]any{"AbsoluteUrl": "$.next"},
-	}, nil)
-	if err == nil {
-		t.Fatal("paginationRules must be refused until R2, not silently ignored")
-	}
-	if !strings.Contains(err.Error(), "first page") {
-		t.Fatalf("the refusal must say why: %v", err)
-	}
-}
-
 func TestRestSourceRefusesAnAuthenticationTypeItCannotHonour(t *testing.T) {
 	// Falling through to an anonymous request would 401 at the endpoint and be
 	// reported as a connector bug.

@@ -703,18 +703,24 @@
       "ci:fabric-cli"
     ]
   },
-  "rest-connector-restsource-in-a-copy": {
-    "claim": "**REST connector** — `RestSource` in a Copy",
+  "rest-connector-restsource-in-a-copy-with-pagination": {
+    "claim": "**REST connector** — `RestSource` in a Copy, with pagination",
     "section": "Data Factory (`data-factory/`)",
     "witnesses": [
       "go:TestRestSourceReallyCallsAndShapesRows",
       "go:TestRestSourceCopyLandsRowsInADeltaTable",
-      "go:TestRestSourceRefusesPaginationRulesRatherThanReadingPageOne",
       "go:TestRestSourceRefusesToGuessBetweenArrays",
       "go:TestRestSourceForcesAcceptJSON",
       "go:TestRestSourceFailsOnNon2xx",
       "go:TestRestSourceNamesSkippedNestedColumns",
-      "go:TestRestSourceRefusesAnAuthenticationTypeItCannotHonour"
+      "go:TestRestSourceRefusesAnAuthenticationTypeItCannotHonour",
+      "go:TestPaginationFollowsAnAbsoluteUrlCursor",
+      "go:TestPaginationStepsAQueryParameterRange",
+      "go:TestPaginationEndConditions",
+      "go:TestPaginationRefusesAnEndlessSelfReferentialNext",
+      "go:TestPaginationFollowsRFC5988ByDefaultAndOnlyThen",
+      "go:TestPaginationResendsThePostBodyOnEveryPage",
+      "go:TestPaginationRefusesATopLevelArray"
     ]
   }
 }
