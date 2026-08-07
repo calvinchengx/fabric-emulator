@@ -142,12 +142,9 @@ func (e *pipelineExecutor) restSourceTable(
 		return nil, "", fmt.Errorf("copy %q: source is not an object", act.Name)
 	}
 
-	// R2 is not here yet. Accepting the payload and reading only the first page
-	// would report Succeeded over partial data, which is worse than refusing.
-	if _, ok := src["paginationRules"]; ok {
-		return nil, "", fmt.Errorf("copy %q: RestSource paginationRules are not implemented "+
-			"(R2 of docs/40-rest-connector-plan.md); this copy would silently read only the "+
-			"first page, so it is refused", act.Name)
+	rules, err := restPaginationRulesOf(act, src, resolve)
+	if err != nil {
+		return nil, "", err
 	}
 
 	str := func(key string) (string, error) {
@@ -183,13 +180,9 @@ func (e *pipelineExecutor) restSourceTable(
 			"(Fabric permits GET and POST)", act.Name, method)
 	}
 
-	var body io.Reader
 	reqBody, err := str("requestBody")
 	if err != nil {
 		return nil, "", err
-	}
-	if reqBody != "" {
-		body = strings.NewReader(reqBody)
 	}
 
 	timeout := restDefaultTimeout
@@ -204,50 +197,124 @@ func (e *pipelineExecutor) restSourceTable(
 		timeout = d
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
-	if err != nil {
-		return nil, "", fmt.Errorf("copy %q: %w", act.Name, err)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if err := restHeaders(act, src, resolve, req); err != nil {
+	// The header set is built once and carried across pages: `Headers.{x}` rules
+	// step a placeholder inside it, and `Headers.name` rules overwrite one from
+	// the previous response.
+	tmpl, _ := http.NewRequest(method, url, nil)
+	if err := restHeaders(act, src, resolve, tmpl); err != nil {
 		return nil, "", err
+	}
+	hdr := tmpl.Header.Clone()
+	if reqBody != "" {
+		hdr.Set("Content-Type", "application/json")
 	}
 	// Set AFTER additionalHeaders so it wins: Fabric documents that the REST
 	// connector ignores any Accept the author supplied, because it only handles
 	// JSON. Honouring a user's `Accept: text/csv` here would get a body this
 	// cannot parse and blame the wrong thing.
-	req.Header.Set("Accept", "application/json")
+	hdr.Set("Accept", "application/json")
 
-	resp, err := e.a.webClient().Do(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("copy %q: %s %s: %w", act.Name, method, url, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+	var records []any
+	pageURL, pages := url, 0
+	for {
+		pages++
+		if pages > restMaxPages {
+			return nil, "", fmt.Errorf("copy %q: stopped after %d pages — a `next` that never "+
+				"terminates is a documented real case, so this is a ceiling rather than a loop; "+
+				"set MaxRequestNumber or an EndCondition if the source really is this long",
+				act.Name, restMaxPages)
+		}
+		if rules.maxRequests > 0 && pages > rules.maxRequests {
+			break
+		}
 
-	raw, ok := httpx.ReadBounded(resp.Body, restMaxBody)
-	if !ok {
-		return nil, "", fmt.Errorf("copy %q: response body is unreadable or exceeds %d bytes — "+
-			"the rows are held in memory before they are committed, so this is not a "+
-			"download mechanism", act.Name, restMaxBody)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, "", fmt.Errorf("copy %q: %s %s returned %d: %s",
-			act.Name, method, url, resp.StatusCode, snippet(raw))
+		pageHdr := hdr.Clone()
+		reqURL := rules.apply(pageURL, pageHdr)
+
+		doc, resp, err := e.restFetch(act, method, reqURL, reqBody, pageHdr, timeout)
+		if err != nil {
+			return nil, "", err
+		}
+		// 204 No Content ends the loop, as Fabric documents. It is also the one
+		// status with no body to parse.
+		if resp.StatusCode == http.StatusNoContent {
+			break
+		}
+
+		page, err := restRecordsOf(act, tp, doc, rules.declared)
+		if err != nil {
+			return nil, "", err
+		}
+		records = append(records, page...)
+		if len(records) > restMaxRows {
+			return nil, "", fmt.Errorf("copy %q: passed the %d-row ceiling after %d pages — "+
+				"refused rather than truncated", act.Name, restMaxRows, pages)
+		}
+
+		if rules.done(doc, resp.Header) {
+			break
+		}
+		if !rules.advance() {
+			break
+		}
+		next, ok := rules.nextRequest(pageURL, hdr, doc, resp)
+		if !ok {
+			break
+		}
+		pageURL = next
 	}
 
-	records, err := restRecords(act, tp, raw)
-	if err != nil {
-		return nil, "", err
-	}
 	tbl, err := restTable(act, records)
 	if err != nil {
 		return nil, "", err
 	}
 	return tbl, url, nil
+}
+
+// restFetch performs one page request and returns the decoded body.
+func (e *pipelineExecutor) restFetch(
+	act pipeline.Activity, method, reqURL, reqBody string, hdr http.Header, timeout time.Duration,
+) (any, *http.Response, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var body io.Reader
+	if reqBody != "" {
+		// Rebuilt per page: a Reader is consumed by the first request, and a POST
+		// whose second page silently sent an empty body would be a very quiet bug.
+		body = strings.NewReader(reqBody)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("copy %q: %w", act.Name, err)
+	}
+	req.Header = hdr
+
+	resp, err := e.a.webClient().Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("copy %q: %s %s: %w", act.Name, method, reqURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	raw, ok := httpx.ReadBounded(resp.Body, restMaxBody)
+	if !ok {
+		return nil, nil, fmt.Errorf("copy %q: response body is unreadable or exceeds %d bytes — "+
+			"the rows are held in memory before they are committed, so this is not a "+
+			"download mechanism", act.Name, restMaxBody)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, nil, fmt.Errorf("copy %q: %s %s returned %d: %s",
+			act.Name, method, reqURL, resp.StatusCode, snippet(raw))
+	}
+	if resp.StatusCode == http.StatusNoContent {
+		return nil, resp, nil
+	}
+
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, nil, fmt.Errorf("copy %q: response is not JSON: %v", act.Name, err)
+	}
+	return doc, resp, nil
 }
 
 // restURL assembles the request URL.
@@ -381,17 +448,48 @@ func restHeaders(
 	return nil
 }
 
-// restRecords finds the array of records in the response.
+// restPaginationRulesOf reads and parses the source's `paginationRules`. Values
+// are expression-resolved, so a page size can come from a pipeline parameter.
+func restPaginationRulesOf(
+	act pipeline.Activity,
+	src map[string]json.RawMessage,
+	resolve func(json.RawMessage) (any, error),
+) (*restPagination, error) {
+	raw, ok := src["paginationRules"]
+	if !ok || len(raw) == 0 {
+		return parsePaginationRules(act.Name, nil)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("copy %q: RestSource paginationRules is not an object", act.Name)
+	}
+	rules := make(map[string]string, len(fields))
+	for k, vraw := range fields {
+		v, err := resolve(vraw)
+		if err != nil {
+			return nil, fmt.Errorf("copy %q: pagination rule %q: %w", act.Name, k, err)
+		}
+		rules[k] = strings.TrimSpace(fmt.Sprint(v))
+	}
+	return parsePaginationRules(act.Name, rules)
+}
+
+// restRecordsOf finds the array of records in one decoded page.
 //
 // Fabric selects it with the copy activity's `translator.collectionReference`
 // (a JSONPath). When one is given it decides; when none is, a response whose
 // object holds exactly one array is unambiguous and is used. Anything else
 // fails and SAYS what it found — guessing between two arrays is how a copy
 // silently ingests the wrong one.
-func restRecords(act pipeline.Activity, tp map[string]json.RawMessage, raw []byte) ([]any, error) {
-	var doc any
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, fmt.Errorf("copy %q: response is not JSON: %v", act.Name, err)
+func restRecordsOf(act pipeline.Activity, tp map[string]json.RawMessage, doc any, paginated bool) ([]any, error) {
+	// Fabric states this outright: pagination is not supported when the response's
+	// top-level structure is a JSON array. There is nowhere for a cursor to live,
+	// so the rules could never fire and the copy would read exactly one page while
+	// looking like it paged.
+	if _, isArr := doc.([]any); isArr && paginated {
+		return nil, fmt.Errorf("copy %q: paginationRules are set, but the response's top-level "+
+			"structure is a JSON array — Fabric does not paginate that shape, and the rules "+
+			"could never fire", act.Name)
 	}
 
 	ref := collectionReference(tp)
