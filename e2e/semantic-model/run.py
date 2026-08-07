@@ -267,8 +267,8 @@ try:
         if not rows_match(rows, q["expected"]["rows"]):
             raise SystemExit(f"{q['name']}: rows mismatch\n got={rows}\nwant={q['expected']['rows']}")
         log(f"{q['name']}: {len(rows)} rows OK")
-    if ran != 5:
-        raise SystemExit(f"expected 5 DAX golden queries, ran {ran}")
+    if ran != 6:
+        raise SystemExit(f"expected 6 DAX golden queries, ran {ran}")
 
     print("\nSEMANTIC-MODEL E2E: PASS", flush=True)
 except Exception:

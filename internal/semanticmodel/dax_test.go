@@ -104,8 +104,8 @@ func TestDAXGoldenQueries(t *testing.T) {
 			t.Errorf("%s: rows mismatch\n got=%v\nwant=%v", q.Name, res.Rows, q.Expected.Rows)
 		}
 	}
-	if ran != 5 {
-		t.Fatalf("expected 5 DAX golden queries, ran %d", ran)
+	if ran != 6 {
+		t.Fatalf("expected 6 DAX golden queries, ran %d", ran)
 	}
 }
 

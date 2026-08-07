@@ -566,12 +566,20 @@ func (e *evalr) scalar(expr scalarExpr) (any, error) {
 	case columnRef:
 		// Real DAX refuses a bare column here too — a filter context gives no
 		// row from which to read one value. The likeliest way to arrive is
-		// building a label with `&`, so the message names a way out. Grouping
-		// works for every column type and leads; SUM is offered only for a
-		// column that can actually be summed, since following that advice on a
-		// text column is how someone ends up with a label reading "FY0".
+		// building a label with `&`, so the message names a way out.
+		//
+		// SELECTEDVALUE leads, because it is the only exit that keeps the
+		// caller's intent: grouping returns the raw column when the point was to
+		// DERIVE something from it. It is named only now that it exists —
+		// pointing at an unimplemented function would have walked the reader
+		// into a second `unsupported DAX function` wall.
+		//
+		// SUM is offered only for a column that can actually be summed, since
+		// following that advice on a text column is how someone ends up with a
+		// label reading "FY0".
 		tbl := strings.Trim(x.table, "'")
-		fix := fmt.Sprintf("group by %s[%s], so SUMMARIZECOLUMNS returns it as its own column", tbl, x.col)
+		fix := fmt.Sprintf("read its one value with SELECTEDVALUE(%s[%s]), or group by %s[%s] to return it as its own column",
+			tbl, x.col, tbl, x.col)
 		if t := e.model.Table(tbl); t != nil {
 			if c := t.Column(x.col); c != nil && summableType(c.DataType) {
 				fix += fmt.Sprintf(", or aggregate it (SUM(%s[%s]))", tbl, x.col)
@@ -832,8 +840,87 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, fmt.Errorf("COUNTROWS expects a table")
 		}
 		return float64(len(e.activeRows(strings.Trim(tr.name, "'")))), nil
+	case "SELECTEDVALUE":
+		return e.selectedValue(fc)
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
+}
+
+// selectedValue implements SELECTEDVALUE(<column>[, <alternate>]): the single
+// distinct value of the column under the current filter context, else the
+// alternate (BLANK when omitted).
+//
+// WHY THIS EXISTS. An extension expression cannot read a bare column — a filter
+// context supplies no row, and `scalar` refuses one for that reason. That is
+// correct DAX, but it leaves no way to DERIVE a label from the column being
+// grouped by, which is the first thing anyone reaches for once `&` works:
+//
+//	SUMMARIZECOLUMNS(T[Year], "Label", "FY" & T[Year])            -- refused
+//	SUMMARIZECOLUMNS(T[Year], "Label", "FY" & SELECTEDVALUE(T[Year]))  -- this
+//
+// It is a lookup, not a new context mechanism: evalSummarize already sets the
+// group's filter context before evaluating outputs, and activeRows honours it.
+//
+// NOT special-cased for the group column, though its value is sitting in the
+// context and a direct read would be shorter. Going through activeRows is what
+// makes the function correct for a column that is NOT grouped by — where the
+// answer is genuinely "more than one value, take the alternate" — and a
+// shortcut would quietly answer the grouped case only.
+func (e *evalr) selectedValue(fc funcCall) (any, error) {
+	if len(fc.args) < 1 {
+		return nil, fmt.Errorf("SELECTEDVALUE expects a column reference")
+	}
+	col, ok := fc.args[0].(columnRef)
+	if !ok {
+		return nil, fmt.Errorf("SELECTEDVALUE expects a column reference")
+	}
+	// The alternate is evaluated only when it is needed, so a costly or failing
+	// alternate costs nothing on the ordinary single-value path.
+	alternate := func() (any, error) {
+		if len(fc.args) > 1 {
+			return e.scalar(fc.args[1])
+		}
+		return nil, nil
+	}
+
+	tbl := strings.Trim(col.table, "'")
+	// A column that does not exist would otherwise read as BLANK on every row,
+	// collapse to one distinct value, and return BLANK — indistinguishable from
+	// a real single blank, and from the alternate path. A typo must not answer
+	// confidently.
+	t := e.model.Table(tbl)
+	if t == nil {
+		return nil, fmt.Errorf("SELECTEDVALUE: no table %q in this model", tbl)
+	}
+	if t.Column(col.col) == nil {
+		return nil, fmt.Errorf("SELECTEDVALUE: table %s has no column %q", tbl, col.col)
+	}
+
+	var seen []any
+	for _, r := range e.activeRows(tbl) {
+		v := r[col.col]
+		// BLANK IS A VALUE. Real DAX returns it when it is the only one rather
+		// than falling through to the alternate, so skipping nils here would
+		// answer the alternate for a column that is uniformly blank — a
+		// different fact.
+		dup := false
+		for _, s := range seen {
+			if valEq(s, v) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			seen = append(seen, v)
+			if len(seen) > 1 {
+				break // two is already "not exactly one"; the rest cannot change that
+			}
+		}
+	}
+	if len(seen) == 1 {
+		return seen[0], nil
+	}
+	return alternate()
 }
 
 // activeRows returns the rows of `table` under the current filter context —
