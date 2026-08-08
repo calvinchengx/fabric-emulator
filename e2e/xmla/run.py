@@ -121,6 +121,15 @@ def require_free_port(port, what):
 # fact. So the suite runs the probe TWICE: once refusing (the regression
 # witness), once answering (the measurement).
 ANSWER_ROUTING = False
+# Screen 9: answer generateastoken too. The reply contract was READ off the
+# assembly rather than screened — `PbiPremiumAuthenticationHandle+MWCToken`
+# declares a single [DataMember] `Token` — so this is not a hypothesis the way
+# the routing shapes were. See e2e/xmla/contract and docs/32.
+#
+# Kept behind its own flag so the refusing control still refuses: that run is
+# the regression witness for the first-call contract, and answering everywhere
+# would destroy the thing it pins.
+ANSWER_TOKEN = False
 WORKSPACE = "ws"   # the workspace the probe names in its Data Source
 
 # CANDIDATE ROUTING SHAPES, screened one per request.
@@ -377,6 +386,18 @@ class Capture(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         self._record()
+        if ANSWER_TOKEN and self.path.startswith("/metadata/v201606/generateastoken"):
+            # {"Token": "<string>"} — the contract, read from the assembly.
+            # The value is ours to mint: the client carries it into whatever it
+            # asks next, and capturing THAT is the point of answering here.
+            b = b'{"Token":"emulator-mwc-token"}'
+            print("    -> answering 200 with the MWCToken contract", flush=True)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+            return
         b = (b'<?xml version="1.0"?><soap:Envelope '
              b'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
              b'<soap:Fault><faultcode>capture</faultcode>'
@@ -604,6 +625,11 @@ if FAILURES:
 phase1 = [(r["method"], r["path"]) for r in REQUESTS]
 
 ANSWER_ROUTING = True
+# Screen 9: with the routing reply accepted, answer the token too. Everything
+# past it still gets the SOAP fault, so the FIRST request the client makes
+# carrying an accepted token is captured and then refused — which is the
+# recording nobody in this project has ever had.
+ANSWER_TOKEN = True
 
 # ONE PROBE RUN PER SHAPE. Screen 5 established that an accepted reply is
 # cached for the life of the client process, so a second shape in the same run

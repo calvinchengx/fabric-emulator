@@ -433,6 +433,42 @@ prints any matching `[DataContract]`'s member names. Reach for it *before*
 screening a payload shape: a screen is right when the client's behaviour is
 unknown, wrong when the answer is already written in an assembly on disk.
 
+### Screen 9 — RUN: the token is accepted, and the client leaves for :443
+
+Serving `{"Token":"emulator-mwc-token"}` — the contract read above, not a
+hypothesis — against the `L1`/`L2`/`L5` capacity-path rungs.
+
+**Observed.** The token was served three times (once per rung). Every
+connection then failed with
+
+```
+SocketException :: Connection refused  host.docker.internal:443
+```
+
+thrown from `XmlaClient.OpenConnection` → `HttpStream.Create` →
+`ConnectionInfo.ResolveHTTPConnectionPropertiesForPaaSInfrastructure`.
+
+**What that establishes.** The token is accepted — nothing rejected it, and the
+client proceeded to open its XMLA connection. It went to the routing host on
+**port 443**, discarding the port named in the Data Source. That is the first
+time the client has tried to reach anything other than the listener it was
+pointed at, and it exercises the hook `docs/32` recorded as untested:
+`pbiDedicatedRolloutFqdn`. With no rollout FQDN in the reply, the fallback is
+host-from-routing plus the default HTTPS port.
+
+**The consequence for Phase 1.** The XMLA endpoint's address is *derived*, not
+taken from the connection string, so a suite cannot reach it by pointing the
+Data Source somewhere. Either the reply must carry a host:port the client will
+honour, or the listener must occupy 443. The next screen should vary
+`capacityUri`'s **authority** — it already carries the path segment the client
+reads as `capacityObjectId`, and its host is the obvious candidate for the one
+it dials.
+
+**Not established.** Whether the client would accept a port in that authority
+at all, and whether `pbiDedicatedRolloutFqdn` is settable from any field in
+`Workspace201606` (the contract has five members, and `capacityUri` is the only
+one shaped like a host). No run has varied it.
+
 ### Where this leaves the search
 
 Phase 0's question — "what does the client ask after routing?" — is **answered**.
