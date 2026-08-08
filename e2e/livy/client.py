@@ -143,6 +143,75 @@ def main():
     assert back.get("data") == [[3]], f"count-back disagrees — re-execution or loss: {back}"
     print("INSERT envelope -> [[3]], table still 3 (count recovered, not re-run)", flush=True)
 
+    # --- Spark Job Definition, EXECUTED BY THE EMULATOR.
+    #
+    # This suite is where the claim can be witnessed at all: the emulator here
+    # has FABRIC_SPARK_AGENT_URL, so it IS the Spark pool, exactly as Fabric's
+    # is. (e2e/notebook-run deliberately runs with NO agent — its runner plays
+    # the external engine to witness the callback contract, so an
+    # emulator-executes assertion there can never pass.)
+    #
+    # Nothing below executes the job. It publishes a definition, submits the
+    # job, and polls: `sjd-result=5` can only be produced by the emulator
+    # handing the submitted file to the engine with the definition's arguments
+    # as argv — 3 rows from the lakehouse table plus the increment of 2.
+    import base64
+
+    def part(path, body):
+        return {"path": path, "payloadType": "InlineBase64",
+                "payload": base64.b64encode(body.encode()).decode()}
+
+    sjd_cfg = {"executableFile": "main.py", "arguments": ["--increment", "2"],
+               "defaultLakehouseArtifactId": lake["id"],
+               "defaultLakehouseWorkspaceId": ws["id"]}
+    # spark.range(3) is engine work in the SJD's own session; argv[2] is the
+    # definition's argument the emulator must supply. 3 + 2 = 5 fails if either
+    # half is missing, and needs no table shared across sessions.
+    src = ("import sys\n"
+           "print('sjd-result=' + str(spark.range(3).count() + int(sys.argv[2])))\n")
+    _, created = http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items", {
+        "displayName": "aggregate-job", "type": "SparkJobDefinition",
+        "definition": {"parts": [part("SparkJobDefinitionV1.json", json.dumps(sjd_cfg)),
+                                 part("main.py", src)]}}, token=token)
+    # Item create is a Fabric LRO: 202 with the operation id in the
+    # x-ms-operation-id HEADER, which this suite's http() does not surface (it
+    # returns status + body only, and every other call here needs nothing more).
+    # Rather than widen a helper the whole file depends on, resolve the item by
+    # listing — the same fact, one call later, with no shared-code change.
+    sjd_id = created.get("id")
+    for _ in range(60):
+        if sjd_id:
+            break
+        _, items = http("GET", f"{FABRIC}/v1/workspaces/{ws['id']}/items", token=token)
+        for it in items.get("value", []):
+            if it.get("displayName") == "aggregate-job" and it.get("type") == "SparkJobDefinition":
+                sjd_id = it["id"]
+                break
+        time.sleep(1)
+    assert sjd_id, "Spark job definition item was never created"
+
+    http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items/{sjd_id}/jobs/instances?jobType=sparkjob",
+         token=token)
+    _, jobs = http("GET", f"{FABRIC}/v1/workspaces/{ws['id']}/items/{sjd_id}/jobs/instances", token=token)
+    sjd_jid = jobs["value"][0]["id"]
+
+    final = {}
+    for _ in range(60):
+        _, final = http("GET",
+                        f"{FABRIC}/v1/workspaces/{ws['id']}/items/{sjd_id}/jobs/instances/{sjd_jid}",
+                        token=token)
+        if final.get("status") in ("Completed", "Failed"):
+            break
+        time.sleep(2)
+    _, sjd_done = http("GET",
+                       f"{FABRIC}/v1/workspaces/{ws['id']}/items/{sjd_id}/jobs/instances/{sjd_jid}/sparkJobRun",
+                       token=token)
+    assert final.get("status") == "Completed", (
+        f"emulator did not run the Spark job: {final} / engine said: "
+        f"{sjd_done.get('error') or sjd_done.get('output')!r}")
+    assert "sjd-result=5" in sjd_done.get("output", ""), sjd_done
+    print(f"SJD executed by the emulator: {sjd_done['output'].strip()}", flush=True)
+
     # --- Delta maintenance on a OneLake table, through the delta-rs path.
     #
     # Sail's planner has no OPTIMIZE/VACUUM and rejects Change Data Feed reads,
