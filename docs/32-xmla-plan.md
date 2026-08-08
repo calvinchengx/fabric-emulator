@@ -66,9 +66,53 @@ The evaluator is the load-bearing one. `executeQueries` and XMLA are two
 envelopes around the same DAX, so most of what an XMLA `Execute` must answer is
 already answered somewhere else in this repository.
 
-## Phase 0 — answer the routing call
+## Phase 0 — RUN, and it answered two questions
 
-**Do this one regardless of whether Phases 1–3 ever happen.**
+**Status: DONE as measurement.** `e2e/xmla` now runs the probe **twice** — once
+refusing the routing call (the regression witness for the first-call contract,
+unchanged) and once answering it. Answering in the same pass would have
+destroyed the thing the first pass pins, which is why it is a second run rather
+than an edited stub.
+
+**Finding 1 — the doubled routing call is a 404 FALLBACK, not unconditional.**
+This is the question `e2e/xmla`'s README flags as unestablished, and it is now
+settled by contrast rather than by reading:
+
+| Listener | Captured |
+|---|---|
+| Refuses (404) | `…workspaces?PreferClientRouting=true` **then** `…workspaces` — twice per connection |
+| Answers (200) | `…workspaces?PreferClientRouting=true` **only** — once per connection |
+
+An implementation therefore does *not* need to serve the un-flagged form to a
+client it answers; that form only ever appears after a refusal.
+
+**Finding 2 — the reply is CONSUMED, and the failure moved from transport to
+lookup.** With a JSON body of the hypothesised shape, ADOMD.NET no longer
+complains about the response at all. It reports:
+
+```
+AdomdConnectionException :: The specified Power BI workspace ('ws') is not found.
+```
+
+That is a *lookup* failure, not a parse failure — the client deserialised the
+body, searched it for the workspace named in the Data Source, and did not find
+a match. So the envelope is close enough to be consumed, and what remains
+unknown is narrower than "what shape": it is **which field the client matches
+the workspace name against**. The hypothesis sent `name`, `id`,
+`capacityObjectId` and `clusterUri`; one of those is wrong or one is missing.
+
+**Nothing here is asserted as a contract.** The reply shape is still a guess,
+and a suite that asserted it would pass by confirming its own guess. Both
+findings are printed observations; the next iteration turns one into a test.
+
+### The next experiment, now one edit and ~5 minutes
+
+Vary a single field at a time against the same harness and read the error. The
+client's message names the workspace it wanted, so a matching reply advances
+past routing for the first time — and that is the point at which
+`[MS-SSAS-T]`'s real size becomes observable rather than estimated.
+
+### Original framing, kept because the reasoning still holds
 
 Replace the capture stub's 404 with a real handler for
 `GET /powerbi/databases/v201606/workspaces`. It is JSON REST over the workspace
