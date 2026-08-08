@@ -17,6 +17,14 @@ onlyBuiltDependencies:
 #                      Bounded `<5` deliberately: a bare `>=4.3.1` resolves to
 #                      5.2.3 and hands Astro's remark chain a different major.
 #                      The fix is a patch, so stay in the major that shipped it.
+#   nanoid   < 3.3.17  GHSA-2v37-7h3g-55p8, a custom generator loops forever
+#                      when `size` is zero. Arrives under postcss, which is
+#                      itself transitive. Bounded `<4` for the js-yaml reason
+#                      and then some: nanoid is at 6.x and went ESM-only after
+#                      3.x, so a bare `>=3.3.17` would hand postcss a package it
+#                      cannot require(). The fix shipped as 3.3.17, in the major
+#                      that needs it.
 overrides:
   postcss: ">=8.5.18"
   js-yaml: ">=4.3.1 <5"
+  nanoid: ">=3.3.17 <4"
