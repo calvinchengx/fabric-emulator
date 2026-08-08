@@ -828,5 +828,18 @@
       "go:TestDatabricksEngineFailureFailsTheActivity",
       "go:TestDatabricksNoEngineIsHonest"
     ]
+  },
+  "azure-batch-activity-adf-custom": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Azure Batch** activity (ADF `Custom`)",
+    "witnesses": [
+      "go:TestCustomActivityIsOffByDefault",
+      "go:TestCustomActivityRunsWhenEnabled",
+      "go:TestCustomActivityNonZeroExitFails",
+      "go:TestCustomActivityUnparseableReportFails",
+      "go:TestCustomActivityRefusesByName",
+      "go:TestCustomActivityNoAgentIsHonest",
+      "go:TestCustomActivityStatementErrorFails"
+    ]
   }
 }

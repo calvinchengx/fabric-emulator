@@ -265,6 +265,11 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// variant is refused by name (no JVM). See databricksactivity.go.
 		return e.databricksActivity(act, tp, resolve)
 
+	case "Custom":
+		// Azure Batch. OFF BY DEFAULT — a shell command is arbitrary execution,
+		// not another read; see customactivity.go and config.CustomActivityShell.
+		return e.customActivity(act, tp, resolve)
+
 	case "HDInsightSpark":
 		// The submission protocol terminated locally; Sail computes. The Livy
 		// precedent applied to a second protocol — see hdinsightactivity.go for
