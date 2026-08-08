@@ -106,8 +106,12 @@ func TestPipelineRunE2E(t *testing.T) {
 
 	// Async (doc 37 §4): the 202 returns while the pipeline executes, so the
 	// test polls exactly as a real client does.
+	//
+	// 30s, not 5: nothing here measures timing, so the deadline only bounds the
+	// failure case — and 5s was missed on a loaded windows runner. See awaitJob
+	// in internal/api for the measurement.
 	var job struct{ Status string }
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		f.mustStatus(f.call("GET", base+"/"+jid, f.token, nil, &job), http.StatusOK, "get job")
 		if job.Status != "InProgress" && job.Status != "NotStarted" {
