@@ -79,6 +79,11 @@ type API struct {
 	// connection string, which is honest: there is no SQL endpoint to connect
 	// to when FABRIC_SQL_TDS_ADDR is unset.
 	SQLEndpointPort string
+	// webhookWaits holds parked WebHook activities: callback token -> the
+	// channel that resumes the pipeline goroutine. In-memory on purpose — a
+	// parked pipeline dies with the process, and pretending otherwise would be
+	// a durability claim the emulator cannot honour.
+	webhookWaits sync.Map
 	// RetryAfterSeconds is advertised on 202 responses.
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.
@@ -155,6 +160,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/queryactivityruns", a.withAuth(a.queryActivityRuns))
 	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/notebookRun", a.withAuth(a.getNotebookRun))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/notebookRunResult", a.withAuth(a.reportNotebookRun))
+	// No withAuth: the token in the path IS the credential, as ADF's own
+	// callBackUri embeds its — an external receiver has no Fabric token.
+	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/webhookcallbacks/{token}", a.webhookCallbackHandler)
 	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/sparkJobRun", a.withAuth(a.getSparkJobRun))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/jobs/instances/{jid}/sparkJobRunResult", a.withAuth(a.reportSparkJobRun))
 	mux.HandleFunc("GET /v1/workspaces/{wid}/lineage", a.withAuth(a.listLineage))
