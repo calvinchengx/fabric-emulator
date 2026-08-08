@@ -469,6 +469,69 @@ at all, and whether `pbiDedicatedRolloutFqdn` is settable from any field in
 `Workspace201606` (the contract has five members, and `capacityUri` is the only
 one shaped like a host). No run has varied it.
 
+### Screen 10 — RUN: a call nobody knew existed, and 443 is reachable after all
+
+Screen 9 left the client dialling `:443`, which looked like a hard constraint:
+the harness cannot bind a privileged port. It is not — **the Docker daemon
+publishes 443 without sudo**, and socat piping 443 to the capture listener
+keeps TLS terminating on the same self-signed cert. A door, not a proxy.
+
+With that door open the client got further and revealed a request this plan
+had never recorded:
+
+```
+POST /webapi/clusterResolve
+content-type: application/json      host: host.docker.internal   (portless — it came in on 443)
+
+{"databaseName":null,"premiumPublicXmlaEndpoint":true,
+ "serverName":"11111111-1111-1111-1111-111111111111/"}
+```
+
+`serverName` is the `capacityObjectId` — the first `capacityUri` path segment,
+trailing slash intact, exactly as screen 8 established. `databaseName` is null
+because the Data Source carries no `Initial Catalog`. The call appears **twice
+per connection**: once before routing and once after the token.
+
+**This also retired a screen before it was run.** The plan was to vary
+`capacityUri`'s authority to test whether a port is honoured. Checking first
+showed the shape is built from the request's `Host` header, so `capacityUri`
+already carried `:18446` — and the client dialled `:443` regardless. The port
+is not unhandled, it is **discarded**, and the screen would have spent several
+containers re-deriving that.
+
+### Screen 11 — RUN: the client asks us where to go, and takes an answer
+
+`PowerBIClusterResolutionResult` — read from the assembly with
+[`e2e/xmla/contract`](../e2e/xmla/contract/README.md), one run, no screening:
+
+```
+FixedClusterUri · DynamicClusterUri · NewTenantId · RuleDescription · TTLSeconds
+```
+
+That is the steering hook open since screen 5. The client does not derive its
+XMLA endpoint unilaterally — **it asks, and we answer.**
+
+Answering with `{"FixedClusterUri":"https://host.docker.internal:18446", …}`
+moved the failure again:
+
+| screen | reply to clusterResolve | client's answer |
+|---|---|---|
+| 10 | SOAP fault (the stub's refusal) | `NotSupportedException :: Specified method is not supported` |
+| 11 | the declared contract, URIs as full URLs | `AdomdConnectionException :: A connection cannot be made` |
+
+**Consumed, then rejected.** `NotSupportedException` was the client refusing to
+parse a SOAP body where JSON belongs; it is gone, so the contract is right. The
+new throw is inside `ASAzureUtility.ResolvePaaSConnectionEndpointDetail` — the
+same method that posts `clusterResolve` — and **no request reached the listener
+afterwards**. So this is resolution rejecting the value, not a failed dial.
+
+**The next screen, and it is one variable.** The URIs were sent as full URLs.
+If the client prefixes a scheme itself, `https://https://…` would fail exactly
+like this without a socket ever opening. Send `FixedClusterUri` as a bare
+`host:port`, and as a bare host, in one run each. The discriminator is already
+known: a value the client accepts produces a request at the listener, and that
+request is the first XMLA/SOAP envelope this project has seen.
+
 ### Where this leaves the search
 
 Phase 0's question — "what does the client ask after routing?" — is **answered**.

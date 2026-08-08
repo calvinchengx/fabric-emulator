@@ -130,6 +130,15 @@ ANSWER_ROUTING = False
 # the regression witness for the first-call contract, and answering everywhere
 # would destroy the thing it pins.
 ANSWER_TOKEN = False
+# Screen 11: answer /webapi/clusterResolve. Screen 10 discovered the call and
+# the contract reader named its reply —
+# `ASAzureUtility+PowerBIClusterResolutionResult` declares FixedClusterUri,
+# DynamicClusterUri, NewTenantId, RuleDescription, TTLSeconds.
+#
+# This is the steering hook that has been open since screen 5: the client ASKS
+# which cluster to use, so a URI naming our host AND PORT should bring the XMLA
+# call back to the listener instead of to :443.
+ANSWER_CLUSTER = False
 WORKSPACE = "ws"   # the workspace the probe names in its Data Source
 
 # CANDIDATE ROUTING SHAPES, screened one per request.
@@ -386,6 +395,24 @@ class Capture(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         self._record()
+        if ANSWER_CLUSTER and self.path.startswith("/webapi/clusterResolve"):
+            # Both URIs name the listener's own host:port. If the client
+            # honours them, its next request is the first XMLA/SOAP envelope
+            # this project has seen; if it still dials 443, the cluster reply
+            # is not what steers it and that is equally worth knowing.
+            target = f"https://{CONTAINER_HOST}:{PORT}"
+            b = json.dumps({
+                "FixedClusterUri": target, "DynamicClusterUri": target,
+                "NewTenantId": None, "RuleDescription": "emulator",
+                "TTLSeconds": 3600,
+            }).encode()
+            print(f"    -> answering 200 clusterResolve -> {target}", flush=True)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+            return
         if ANSWER_TOKEN and self.path.startswith("/metadata/v201606/generateastoken"):
             # {"Token": "<string>"} — the contract, read from the assembly.
             # The value is ours to mint: the client carries it into whatever it
@@ -548,6 +575,48 @@ log(f"TLS capture listener on :{PORT}")
 
 target = f"{CONTAINER_HOST}:{PORT}"
 log(f"running ADOMD.NET against {target} (linux/amd64, {SDK_IMAGE})")
+FORWARDER = "xmla-e2e-443"
+
+
+def start_443_forwarder():
+    """Publish host port 443 and pipe it to the capture listener.
+
+    Screen 9: once the token is accepted the client opens its XMLA connection
+    to the routing host on **443**, discarding the port in the Data Source —
+    `capacityUri` carried `:18446` and was dialled at `:443` anyway. So the
+    endpoint address is derived, and nothing in the reply redirects it.
+
+    The harness cannot bind 443 itself (a privileged port; the Python process
+    is not root), but the Docker daemon can publish it without sudo. socat is a
+    plain TCP pipe, so TLS still terminates at the capture listener with the
+    same self-signed cert the client already trusts — this adds a door, not a
+    man in the middle.
+
+    Returns True when the door is open; False (with a reason logged) when it is
+    not, so the caller can degrade rather than hang.
+    """
+    subprocess.run(["docker", "rm", "-f", FORWARDER],
+                   capture_output=True, text=True)
+    proc = subprocess.run([
+        "docker", "run", "-d", "--rm", "--name", FORWARDER,
+        "--add-host", f"{CONTAINER_HOST}:host-gateway",
+        "-p", "443:443", "alpine/socat",
+        "TCP-LISTEN:443,fork,reuseaddr", f"TCP:{CONTAINER_HOST}:{PORT}",
+    ], capture_output=True, text=True)
+    if proc.returncode:
+        err = (proc.stderr or "").strip()
+        log(f"NOTE: could not publish 443 ({err.splitlines()[-1] if err else '?'}).")
+        log("      The client dials 443 after the token, so anything past it "
+            "will show connection-refused rather than a captured request.")
+        return False
+    log("443 forwarder up: the client's post-token connection now reaches the listener")
+    return True
+
+
+def stop_443_forwarder():
+    subprocess.run(["docker", "rm", "-f", FORWARDER], capture_output=True, text=True)
+
+
 def run_probe():
     """One ADOMD.NET run against the listener. Identical both phases — only the
     listener's behaviour differs, so any change in what the client does is
@@ -624,12 +693,15 @@ if FAILURES:
 # ---------------------------------------------------------------------------
 phase1 = [(r["method"], r["path"]) for r in REQUESTS]
 
+FORWARDING_443 = start_443_forwarder()
+
 ANSWER_ROUTING = True
 # Screen 9: with the routing reply accepted, answer the token too. Everything
 # past it still gets the SOAP fault, so the FIRST request the client makes
 # carrying an accepted token is captured and then refused — which is the
 # recording nobody in this project has ever had.
 ANSWER_TOKEN = True
+ANSWER_CLUSTER = True
 
 # ONE PROBE RUN PER SHAPE. Screen 5 established that an accepted reply is
 # cached for the life of the client process, so a second shape in the same run
@@ -646,6 +718,7 @@ for SHAPE_INDEX, (label, *_) in enumerate(_shapes("")):
         proc2 = run_probe()
     except subprocess.TimeoutExpired:
         srv.shutdown()
+        stop_443_forwarder()
         raise SystemExit(f"FAILED: the phase-0 probe for {label} did not finish "
                          f"within 15 minutes")
     if not any(ln.startswith("CASE ") for ln in proc2.stdout.splitlines()):
@@ -654,6 +727,7 @@ for SHAPE_INDEX, (label, *_) in enumerate(_shapes("")):
         # harness has seen before. Abort on the FIRST one: the alternative is
         # N containers producing N identical non-results.
         srv.shutdown()
+        stop_443_forwarder()
         raise SystemExit(
             f"FAILED: the phase-0 probe for {label} reported no CASE line, so it "
             f"never reached a connection (exit {proc2.returncode}).\n"
@@ -670,6 +744,7 @@ for SHAPE_INDEX, (label, *_) in enumerate(_shapes("")):
     with LOCK:
         runs.append((label, [dict(r) for r in REQUESTS], proc2.stdout))
 srv.shutdown()
+stop_443_forwarder()
 
 for label, reqs, out in runs:
     phase2 = [(r["method"], r["path"]) for r in reqs]
