@@ -123,6 +123,32 @@ func (a *API) registerTyped(mux *http.ServeMux) {
 		mux.HandleFunc("GET /v1/workspaces/{wid}/"+collection+"/{iid}", a.withAuth(a.typedGet(itemType)))
 		mux.HandleFunc("PATCH /v1/workspaces/{wid}/"+collection+"/{iid}", a.withAuth(a.updateItem))
 		mux.HandleFunc("DELETE /v1/workspaces/{wid}/"+collection+"/{iid}", a.withAuth(a.deleteItem))
+		// Definition routes belong on the typed collection too. Fabric
+		// documents them there — the Copy job REST article's own samples are
+		// `POST …/copyJobs/{copyJobId}/getDefinition` and `…/updateDefinition`
+		// — and only the generic `/items/{iid}/` pair existed here, so a client
+		// following the per-item-type reference got a 404 on the exact URL that
+		// reference prints. Found by writing a witness for the Report row.
+		mux.HandleFunc("POST /v1/workspaces/{wid}/"+collection+"/{iid}/getDefinition",
+			a.withAuth(a.typedDefinition(itemType, a.getDefinition)))
+		mux.HandleFunc("POST /v1/workspaces/{wid}/"+collection+"/{iid}/updateDefinition",
+			a.withAuth(a.typedDefinition(itemType, a.updateDefinition)))
+	}
+}
+
+// typedDefinition guards a definition handler with the collection's type, so
+// `…/reports/{id}/getDefinition` refuses a notebook id the way `typedGet`
+// does. Without the guard a typed URL would happily serve another type's
+// definition — a cross-type read through a route whose whole purpose is to
+// name one type.
+func (a *API) typedDefinition(itemType string, next handler) handler {
+	return func(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+		it, err := a.Store.GetItem(r.PathValue("wid"), r.PathValue("iid"))
+		if err != nil || it.Type != itemType {
+			writeErr(w, http.StatusNotFound, "ItemNotFound", "The item is not available.")
+			return
+		}
+		next(w, r, p)
 	}
 }
 
