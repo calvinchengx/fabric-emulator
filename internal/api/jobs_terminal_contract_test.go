@@ -42,6 +42,7 @@ import (
 type jobTerminalCase struct {
 	name      string
 	jobType   string
+	body      string // the job's executionData payload; "{}" when it needs none
 	seed      func(t *testing.T, a *API, st *store.Store, wsID string) *store.Item
 	wantEvent string // the terminal status expected on the stream
 	// clockDerived marks the deliberate exception: the job finishes because
@@ -85,7 +86,11 @@ func TestEveryDispatchedJobTypeAnnouncesItsOutcome(t *testing.T) {
 			sub := st.Subscribe()
 			defer sub.Close()
 
-			_, jid := runJob(t, a, ws.ID, it.ID, "jobType="+tc.jobType, "{}")
+			body := tc.body
+			if body == "" {
+				body = "{}"
+			}
+			_, jid := runJob(t, a, ws.ID, it.ID, "jobType="+tc.jobType, body)
 
 			if tc.awaitsEngine {
 				if got := awaitTerminalEvent(t, sub.C, jid); got != "" {
@@ -242,33 +247,174 @@ func jobTerminalCases() []jobTerminalCase {
 				return it
 			},
 		},
+		{
+			// The SECOND spelling. Microsoft's own readback example says
+			// "CopyJob" where the docs say "Execute", so both dispatch — and a
+			// spelling that dispatches but is not covered here is a pair that
+			// could stop announcing with nothing failing.
+			name:      "CopyJob/CopyJob (the readback spelling)",
+			jobType:   "CopyJob",
+			wantEvent: store.JobCompleted,
+			seed: func(t *testing.T, a *API, st *store.Store, ws string) *store.Item {
+				src := seedLakehouse(t, st, ws, "src")
+				dst := seedLakehouse(t, st, ws, "dst")
+				seedFile(t, st, ws, src.ID, "Tables/orders/part-0.parquet", []byte("x"))
+				return createCopyJob(t, st, ws, lakehouseBatchDef(ws, src.ID, dst.ID, ""))
+			},
+		},
+		{
+			name:      "Dataflow/Publish",
+			jobType:   "Publish",
+			wantEvent: store.JobFailed,
+			seed: func(t *testing.T, a *API, st *store.Store, ws string) *store.Item {
+				it := &store.Item{WorkspaceID: ws, Type: "Dataflow", DisplayName: "mashup"}
+				if err := st.CreateItem(it, nil); err != nil {
+					t.Fatal(err)
+				}
+				return it
+			},
+		},
+		{
+			// The engine-attached path, which is where publishJobOutcome
+			// actually fires. Without it the table proved only that jobs which
+			// never reach an engine are announced — the easy half.
+			name:      "Notebook/RunNotebook driven by the agent",
+			jobType:   "RunNotebook",
+			wantEvent: store.JobCompleted,
+			seed: func(t *testing.T, a *API, st *store.Store, ws string) *store.Item {
+				newFakeAgent(t, a)
+				return createNotebook(t, st, ws, sampleNotebook)
+			},
+		},
+		{
+			name:      "Notebook/RunNotebook that cannot start",
+			jobType:   "RunNotebook",
+			wantEvent: store.JobFailed,
+			seed: func(t *testing.T, a *API, st *store.Store, ws string) *store.Item {
+				// No definition at all: parseNotebookRun refuses rather than
+				// reporting a fast success.
+				it := &store.Item{WorkspaceID: ws, Type: "Notebook", DisplayName: "empty"}
+				if err := st.CreateItem(it, nil); err != nil {
+					t.Fatal(err)
+				}
+				return it
+			},
+		},
+		{
+			name:      "SparkJobDefinition/sparkjob driven by the agent",
+			jobType:   "sparkjob",
+			wantEvent: store.JobCompleted,
+			seed: func(t *testing.T, a *API, st *store.Store, ws string) *store.Item {
+				newFakeAgent(t, a)
+				lake := seedLakehouse(t, st, ws, "lake")
+				it := &store.Item{WorkspaceID: ws, Type: "SparkJobDefinition", DisplayName: "job"}
+				config := `{"executableFile":"main.py","defaultLakehouseArtifactId":"` +
+					lake.ID + `","defaultLakehouseWorkspaceId":"` + ws + `"}`
+				if err := st.CreateItem(it, []store.DefinitionPart{
+					sparkPart("SparkJobDefinitionV1.json", config),
+					sparkPart("main.py", "print('done')"),
+				}); err != nil {
+					t.Fatal(err)
+				}
+				return it
+			},
+		},
+		{
+			name:      "ApacheAirflowJob/Run against a runtime",
+			jobType:   "Run",
+			body:      `{"executionData":{"dagId":"hello","conf":{"answer":42}}}`,
+			wantEvent: store.JobCompleted,
+			seed: func(t *testing.T, a *API, st *store.Store, ws string) *store.Item {
+				a.Airflow = &airflowWitness{}
+				it := &store.Item{WorkspaceID: ws, Type: "ApacheAirflowJob", DisplayName: "air"}
+				if err := st.CreateItem(it, nil); err != nil {
+					t.Fatal(err)
+				}
+				// A DAG to sync: without one the run fails for its own reason
+				// and this case would silently become a second failure test.
+				if err := st.CreateOneLakePath(&store.OneLakePath{
+					WorkspaceID: ws, ItemID: it.ID,
+					RelPath: "Files/dags/hello.py", Content: []byte("# dag"),
+				}, false); err != nil {
+					t.Fatal(err)
+				}
+				return it
+			},
+		},
+		{
+			// The other start-failure branch: a dagId given, but nothing to run
+			// it. Both branches set the outcome, so both must announce it.
+			name:      "ApacheAirflowJob/Run with no runtime attached",
+			jobType:   "Run",
+			body:      `{"executionData":{"dagId":"hello"}}`,
+			wantEvent: store.JobFailed,
+			seed: func(t *testing.T, a *API, st *store.Store, ws string) *store.Item {
+				it := &store.Item{WorkspaceID: ws, Type: "ApacheAirflowJob", DisplayName: "air"}
+				if err := st.CreateItem(it, nil); err != nil {
+					t.Fatal(err)
+				}
+				return it
+			},
+		},
 	}
 }
 
-// TestJobDispatchTableIsComplete is the structural half, and the reason this
-// file is not just nine more tests: it reads the item types `startJob` special-
-// cases and fails if one has no case above. Without it, the next job type is
-// added, its outcome is never announced, and every status-polling test still
-// passes — which is exactly how the last one got in.
+// TestJobDispatchTableIsComplete guards the PAIR space, not the type space.
+// An earlier draft checked item types only, which would have passed while
+// CopyJob's second spelling ("CopyJob" as well as "Execute") or Dataflow's
+// `Publish` went uncovered — and an uncovered pair is one that can stop
+// announcing with nothing failing. Every (item type, job type) `startJob`
+// branches on must appear above, so adding a branch without adding a case is a
+// failing test rather than a silent hole.
 func TestJobDispatchTableIsComplete(t *testing.T) {
-	// The item types startJob branches on. Kept here rather than derived from
-	// the source, because a list a human must edit is the point: adding a
-	// branch without adding a case should be a failing test, not a silent one.
-	dispatched := []string{
-		"ApacheAirflowJob", "Notebook", "SparkJobDefinition",
-		"DataPipeline", "CopyJob", "Dataflow",
+	// Maintained by hand on purpose: the point is that extending startJob
+	// forces a deliberate edit here.
+	dispatched := [][2]string{
+		{"ApacheAirflowJob", "Run"},
+		{"Notebook", "RunNotebook"},
+		{"SparkJobDefinition", "sparkjob"},
+		{"DataPipeline", "Pipeline"},
+		{"CopyJob", "Execute"},
+		{"CopyJob", "CopyJob"},
+		{"Dataflow", "Refresh"},
+		{"Dataflow", "Publish"},
 	}
-	covered := map[string]bool{}
+	type coverage struct{ settledHere, finishedByEngine bool }
+	seen := map[[2]string]bool{}
+	byType := map[string]*coverage{}
 	for _, tc := range jobTerminalCases() {
 		a, st := newAPI(t)
 		ws := seedWorkspace(t, st)
-		covered[tc.seed(t, a, st, ws.ID).Type] = true
+		typ := tc.seed(t, a, st, ws.ID).Type
+		seen[[2]string{typ, tc.jobType}] = true
+		if byType[typ] == nil {
+			byType[typ] = &coverage{}
+		}
+		switch tc.wantEvent {
+		case store.JobFailed:
+			byType[typ].settledHere = true
+		case store.JobCompleted:
+			byType[typ].finishedByEngine = true
+		}
 	}
-	for _, typ := range dispatched {
-		if !covered[typ] {
-			t.Errorf("startJob dispatches on %s but no case in jobTerminalCases() drives it — "+
-				"a job type whose outcome is never announced breaks the flow stream while "+
-				"every status-polling test keeps passing", typ)
+	for _, pair := range dispatched {
+		if !seen[pair] {
+			t.Errorf("startJob dispatches on (%s, %s) but no case above drives it — a job "+
+				"whose outcome is never announced breaks the flow stream while every "+
+				"status-polling test keeps passing", pair[0], pair[1])
+		}
+	}
+
+	// Both halves of each engine-backed type: the path that ends inside
+	// startJob AND the path an engine finishes later. Covering only the first
+	// would prove announcement for the jobs that never reach an engine, which
+	// is the easy half and not where publishJobOutcome lives.
+	for _, typ := range []string{"Notebook", "SparkJobDefinition", "ApacheAirflowJob"} {
+		c := byType[typ]
+		if c == nil || !c.settledHere || !c.finishedByEngine {
+			t.Errorf("%s is covered for only one of its two announcement paths "+
+				"(settled inside startJob: %v, finished by an engine: %v)",
+				typ, c != nil && c.settledHere, c != nil && c.finishedByEngine)
 		}
 	}
 }
