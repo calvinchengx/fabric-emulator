@@ -104,10 +104,34 @@ jobs:
           # -n prints the recipe without running it, so this exercises variable
           # expansion, quoting and the shell selection on every platform —
           # including the docker targets that cannot execute off Linux.
-          # Keep in step with .PHONY in the Makefile — a target nobody expands
-          # here is a target nobody notices breaking.
-          for t in help doctor up up-lite up-jvm down clean restart status \
-                   status-spark spark seed ps logs check lint test; do
+          #
+          # DERIVED from .PHONY rather than listed here. This used to be a
+          # hard-coded list with a comment asking the next person to keep it in
+          # step, and it drifted twice in one day — `up-jupyter` and `lint` were
+          # each added to .PHONY and not here, so each shipped as a target
+          # nobody expands, which is a target nobody notices breaking. A comment
+          # is not a mechanism.
+          #
+          # .PHONY is the right source: it is where this Makefile already
+          # declares its user-facing targets, and a target deliberately kept out
+          # of it (portal-types, which needs Node and an installed portal) is
+          # thereby excluded here too, which is the behaviour that list had.
+          targets=$(awk '/^\.PHONY:/{sub(/^\.PHONY:[[:space:]]*/,""); s=$0
+                           while (s ~ /\\$/) { sub(/\\[[:space:]]*$/,"",s); if ((getline nx) <= 0) break; s = s " " nx }
+                           print s}' Makefile | tr -s ' \t' '\n' | grep -v '^$' || true)
+          n=$(printf '%s\n' "$targets" | grep -c . || true)
+          echo "expanding $n targets derived from .PHONY: $(echo $targets)"
+          # A floor, not a specification. If .PHONY is renamed, reformatted or
+          # the parse otherwise breaks, this loop would expand nothing at all
+          # and the job would pass green having checked NOTHING — the same
+          # silent-skip failure the derivation exists to remove. The number is
+          # deliberately well below the real count so it never needs editing
+          # when a target is added or removed.
+          if [ "$n" -lt 10 ]; then
+            echo "::error::parsed only $n targets from .PHONY — the derivation is broken, not the Makefile"
+            exit 1
+          fi
+          for t in $targets; do
             echo "=== make -n $t ==="
             make -n "$t"
           done
