@@ -39,6 +39,27 @@ concurrency:
 env:
   GOPROXY: https://proxy.golang.org|direct
 
+# EVERY job carries `timeout-minutes: 25`. GitHub's default is SIX HOURS, and
+# one job of this workflow sat wedged for 78 minutes before anyone looked —
+# `LakeSail Sail (Rust Spark Connect) writes Delta through OneLake`, while its
+# sibling Sail legs in the same run finished normally. A merge-when-green
+# watcher cannot tell a wedged job from a slow one: both read as "pending".
+#
+# 25 comes from the observed distribution, not a guess. Across the 8 most
+# recent successful runs (528 job samples) the slowest job on its worst run was
+# 10.2 min (advanced medallion), everything else under 5.5, and the release
+# workflow's GoReleaser leg 3. So 25 is ~2.4x the worst legitimate case and a
+# small fraction of a hang — the gap between the two is wide enough that one
+# number separates them cleanly. It is also the value `coverage-e2e` already
+# carried, so this generalises an existing choice rather than inventing one.
+#
+# ONE number, deliberately, rather than a tuned value per job. Per-job numbers
+# would be a second list that must track observed durations as they drift, and
+# a list that must track something else is the coupling this repo has spent
+# real effort removing (check_witnesses.py, the .PHONY-derived target list).
+# A uniform bound has nothing to fall out of step with. Jobs that genuinely
+# need longer already say so and are left alone: spark-jvm and notebook-jvm at
+# 45, xmla at 30.
 jobs:
   test:
     name: Build, vet & tests (incl. e2e vs entra-emulator)
@@ -47,6 +68,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -303,6 +325,7 @@ jobs:
   engine-matrix:
     name: Spark engine matrix (Sail vs JVM) is current
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # Regenerates the matrix from both engines and fails if the committed
@@ -327,6 +350,7 @@ jobs:
   witnesses:
     name: Every supported parity claim names its witness
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -369,6 +393,7 @@ jobs:
   lint:
     name: ruff + ty
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -398,6 +423,7 @@ jobs:
   example-parity:
     name: Each medallion pair differs only in silver
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       # Full history is not needed, but the check asks GIT for its file list
       # rather than walking the filesystem — running either example leaves
@@ -415,6 +441,7 @@ jobs:
   portal:
     name: Portal builds from source
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -449,6 +476,7 @@ jobs:
   portal-types:
     name: svelte-check + a new kind must not compile
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -484,6 +512,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -507,6 +536,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -528,6 +558,7 @@ jobs:
   rti:
     name: Microsoft's Kusto engine (kustainer) executes KQL behind Eventhouse (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # The optional `rti` profile, witnessed: Microsoft's own KQL engine
@@ -547,6 +578,7 @@ jobs:
   external-s3:
     name: Real S3 server (SeaweedFS) behind a OneLake shortcut, SigV4 enforced (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # External-store shortcuts, witnessed against a real S3 server rather
@@ -565,6 +597,7 @@ jobs:
   azurite-shortcut:
     name: ADLS Gen2 shortcut reads against Azurite, SAS enforced (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # The ADLS Gen2 shortcut *read path*, witnessed against Microsoft's own
@@ -583,6 +616,7 @@ jobs:
   salesforce:
     name: Salesforce round trip through Bulk API 2.0 (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # A ROUND TRIP, not a one-way read: reading alone can pass while the rows
@@ -603,6 +637,7 @@ jobs:
   environment:
     name: An Environment item installs a package the image lacks (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # The witness docs/37 §1 demands, and the reason that row's grade sat at
@@ -622,6 +657,7 @@ jobs:
   rest-helix:
     name: BMC Helix incidents ingest through the REST connector (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # The end-to-end claim the REST connector exists for, against the case that
@@ -646,6 +682,7 @@ jobs:
   external-shortcuts:
     name: Shortcut target kinds resolve through OneLake (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # Breadth, where external-s3 and azurite-shortcut give depth: those two
@@ -664,6 +701,7 @@ jobs:
   governance:
     name: OpenMetadata governance profile catalogs the emulator (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -681,6 +719,7 @@ jobs:
   portal-terminal:
     name: The Flow view's terminal pane, in a real browser (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -710,6 +749,7 @@ jobs:
   governance-sso:
     name: OpenMetadata authenticates against entra-emulator (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -730,6 +770,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -754,6 +795,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -773,6 +815,7 @@ jobs:
   azcopy:
     name: Real azcopy transfers through OneLake
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -794,6 +837,7 @@ jobs:
   docker-smoke:
     name: Production image runs and persists (container smoke)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # Builds the distroless image and runs it with a persistent volume,
@@ -804,6 +848,7 @@ jobs:
   vscode-extension:
     name: Fabric Data Engineering VS Code extension contract (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -816,6 +861,7 @@ jobs:
   airflow:
     name: Apache Airflow job runs on the real Fabric-pinned engine (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -828,6 +874,7 @@ jobs:
   spark-a2:
     name: Spark Connect API on Sail writes Delta through OneLake (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # Builds fabric-emulator from source + the Sail image, then a real
@@ -841,6 +888,7 @@ jobs:
   livy-native:
     name: Native Livy sessions drive Sail (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # The emulator terminates the Livy REST protocol itself and drives a Spark
@@ -855,6 +903,7 @@ jobs:
   notebook-driven:
     name: A notebook runs with no runner in the stack (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # The consumer's case, and the one no other suite covers. `notebook-run`
@@ -870,6 +919,7 @@ jobs:
   sail:
     name: LakeSail Sail (Rust Spark Connect) writes Delta through OneLake
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # S0 of the JVM-replacement track (docs/20-lakesail-engine.md): a real
@@ -884,6 +934,7 @@ jobs:
   data-science-loop:
     name: Spark to Direct Lake DAX to MLflow to dbt (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # One physical OneLake Delta table crosses four real engines/clients:
@@ -897,6 +948,7 @@ jobs:
   fabric-cli:
     name: Microsoft's Fabric CLI (fab) drives the control plane + deployment pipelines (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # Microsoft's own `fab` CLI authenticates (service principal via entra-
@@ -916,6 +968,7 @@ jobs:
   fab-driven:
     name: The fab-driven example — fab imports definitions, RUNS them, and the bytes are checked
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # e2e/fabric-cli drives `fab` over EMPTY items and can execute nothing.
@@ -933,6 +986,7 @@ jobs:
   deployment-pipelines-ps:
     name: Azure PowerShell drives deployment pipelines (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # A SECOND, independent client family for the deployment-pipeline
@@ -949,6 +1003,7 @@ jobs:
   dbt-fabricspark:
     name: Microsoft's dbt-fabricspark drives Livy HC on Sail (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # Microsoft's real dbt-fabricspark adapter runs a dbt project (debug ->
@@ -964,6 +1019,7 @@ jobs:
   dbt-fabric:
     name: Microsoft's dbt-fabric drives the TDS warehouse via ODBC Driver 18 (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # Microsoft's real dbt-fabric adapter runs a dbt project (debug -> seed ->
@@ -1026,6 +1082,7 @@ jobs:
             example: medallion-advanced-dbt-fabricspark
             title: "Advanced medallion — three sources resolved and joined (dbt-fabricspark silver)"
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - name: Microsoft ODBC Driver 18 (dbt-fabric + pyodbc)
@@ -1094,6 +1151,7 @@ jobs:
     # exists so the comparison cannot quietly not happen.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
@@ -1134,6 +1192,7 @@ jobs:
     # so the assertion would quietly stop being made.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
@@ -1175,6 +1234,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -1197,6 +1257,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -1232,6 +1293,7 @@ jobs:
   notebook-run:
     name: Sail executes representative notebook cells (containerized)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       # The emulator parses a real Fabric notebook into cells, Sail executes
@@ -1257,6 +1319,7 @@ jobs:
   warehouse-tds:
     name: Real SQL Server relay through the TDS endpoint
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       sqlserver:
         image: mcr.microsoft.com/mssql/server:2022-latest
@@ -1287,6 +1350,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
@@ -1310,6 +1374,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
