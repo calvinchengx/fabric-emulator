@@ -281,7 +281,10 @@
     "witnesses": [
       "go:TestJobInstanceStates",
       "go:TestJobLifecycleAndBody",
-      "go:TestJobInstancesOnTheClock"
+      "go:TestJobInstancesOnTheClock",
+      "go:TestCopyJobStatusReflectsTheCopyNotTheClock",
+      "go:TestPipelineJobOutlivesItsPOST",
+      "ci:livy-native"
     ]
   },
   "item-job-scheduler-items-id-jobs-jobtype-schedules": {
