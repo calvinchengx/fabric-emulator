@@ -90,8 +90,12 @@ func TestPipelineSQLActivitiesE2E(t *testing.T) {
 	// winning a race the CI runner lost — the goroutine usually finishes before
 	// one GET on a fast machine, which is exactly why a synchronous read here
 	// is wrong rather than merely flaky.
+	//
+	// 30s, not 5: nothing here measures timing, so the deadline only bounds the
+	// failure case — and 5s was missed on a loaded windows runner. See awaitJob
+	// in internal/api for the measurement.
 	var job struct{ Status string }
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		f.mustStatus(f.call("GET", base+"/"+jid, f.token, nil, &job), http.StatusOK, "get job")
 		if job.Status != "InProgress" && job.Status != "NotStarted" {

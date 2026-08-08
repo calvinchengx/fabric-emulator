@@ -114,9 +114,17 @@ func (f *fakeAgent) statements() []string {
 // awaitJob polls for a terminal status. The driver runs in a goroutine because
 // submitting a job returns 202 and the caller polls — so the test polls too,
 // rather than sleeping a guessed interval and hoping.
+//
+// The deadline is generous on purpose: nothing here measures timing, so it only
+// bounds the failure case. Five seconds was too tight — a windows runner under
+// load took 106s for this package while another spent 72s on SQL Server, and a
+// pipeline doing real work missed a 5s window (TestPipelineSQLActivitiesE2E).
+// Polling every 10ms means a fast machine still returns immediately; raising
+// the ceiling costs nothing and removes a whole class of runner-starvation
+// flakes.
 func awaitJob(t *testing.T, a *API, wid, iid, jid string) string {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if s := jobStatus(t, a, wid, iid, jid); s != "InProgress" && s != "NotStarted" {
 			return s
