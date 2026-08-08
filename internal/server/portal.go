@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,7 @@ func (s *Server) registerPortal() {
 	s.mux.HandleFunc("POST /_emulator/portal/models/{id}/query", s.portalModelQuery)
 	s.mux.HandleFunc("GET /_emulator/portal/lineage", s.portalLineage)
 	s.mux.HandleFunc("GET /_emulator/portal/table", s.portalTable)
+	s.mux.HandleFunc("GET /_emulator/portal/lakehouses", s.portalLakehouses)
 
 	assets, err := portal.Dist()
 	if err != nil {
@@ -301,6 +303,109 @@ const portalTablePreviewRows = 20
 //
 // The flow stream says a table *changed*; this says what it changed *into*,
 // which is the question a developer asks next.
+// portalLakehouse is one lakehouse and what OneLake holds for it.
+type portalLakehouse struct {
+	ItemID      string   `json:"itemId"`
+	Name        string   `json:"name"`
+	WorkspaceID string   `json:"workspaceId"`
+	Workspace   string   `json:"workspace"`
+	Schemas     bool     `json:"schemaEnabled"`
+	Tables      []string `json:"tables"`
+	Files       []string `json:"files"`
+	FileCount   int      `json:"fileCount"`
+}
+
+// PortalLakehouseFileLimit bounds the file list a browse answer carries. A
+// landing zone can hold thousands of files and this view is for orientation,
+// not for paging a data lake — the count is reported in full so a truncated
+// list never reads as an empty one.
+const PortalLakehouseFileLimit = 200
+
+// portalLakehouses lists every lakehouse with its Delta tables and Files paths.
+//
+// This is the browse half of what docs/44 calls the largest genuine UI gap: the
+// portal could PREVIEW a table (/portal/table, reached from the flow graph) but
+// nothing let you find one. It is a render of stored state, which is what keeps
+// it on the right side of that document's thin/thick line — no client is being
+// re-implemented, and every byte here came out of the emulator's own store.
+func (s *Server) portalLakehouses(w http.ResponseWriter, r *http.Request) {
+	workspaces, err := s.Store.ListAllWorkspaces()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+		return
+	}
+	out := make([]portalLakehouse, 0)
+	for _, ws := range workspaces {
+		items, err := s.Store.ListItems(ws.ID, "Lakehouse")
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+			return
+		}
+		for _, it := range items {
+			lh := portalLakehouse{
+				ItemID: it.ID, Name: it.DisplayName,
+				WorkspaceID: ws.ID, Workspace: ws.DisplayName,
+				Tables: []string{}, Files: []string{},
+			}
+			paths, err := s.Store.ListOneLakePaths(it.ID, "", true)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": err.Error()}})
+				return
+			}
+			seen := map[string]bool{}
+			for _, p := range paths {
+				rel := strings.Trim(p.RelPath, "/")
+				switch {
+				case strings.HasPrefix(rel, "Tables/"):
+					// A table is the FIRST segment under Tables/, or the first two
+					// when the lakehouse is schema-enabled. Deriving it from the
+					// path rather than listing directories is what makes a table
+					// written by delta-rs — which creates no directory rows —
+					// appear at all.
+					name, ok := deltaTableFromPath(rel)
+					if ok && !seen["t:"+name] {
+						seen["t:"+name] = true
+						lh.Tables = append(lh.Tables, name)
+						if strings.Count(name, "/") == 1 {
+							lh.Schemas = true
+						}
+					}
+				case strings.HasPrefix(rel, "Files/") && !p.IsDir:
+					lh.FileCount++
+					if len(lh.Files) < PortalLakehouseFileLimit {
+						lh.Files = append(lh.Files, strings.TrimPrefix(rel, "Files/"))
+					}
+				}
+			}
+			sort.Strings(lh.Tables)
+			sort.Strings(lh.Files)
+			out = append(out, lh)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"lakehouses": out})
+}
+
+// deltaTableFromPath names the table a OneLake path belongs to.
+//
+// `Tables/<name>/...` is the plain form and `Tables/<schema>/<name>/...` the
+// schema-enabled one. They are told apart by what follows: a table's own
+// contents are `_delta_log` or data files, so a segment with children that are
+// not those is a SCHEMA. Anything directly under Tables/ with no further
+// segment is not a table yet and is skipped rather than guessed at.
+func deltaTableFromPath(rel string) (string, bool) {
+	parts := strings.Split(strings.TrimPrefix(rel, "Tables/"), "/")
+	if len(parts) < 2 || parts[0] == "" {
+		return "", false
+	}
+	if parts[1] == "_delta_log" || strings.Contains(parts[1], ".") {
+		return parts[0], true
+	}
+	if len(parts) >= 3 {
+		return parts[0] + "/" + parts[1], true
+	}
+	return parts[0], true
+}
+
 func (s *Server) portalTable(w http.ResponseWriter, r *http.Request) {
 	itemID := r.URL.Query().Get("itemId")
 	name := strings.TrimPrefix(r.URL.Query().Get("table"), "Tables/")
