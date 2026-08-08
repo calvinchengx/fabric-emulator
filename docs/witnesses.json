@@ -817,5 +817,16 @@
       "go:TestHDInsightSparkRefusesByName",
       "go:TestHDInsightSparkMissingEntryFile"
     ]
+  },
+  "azure-databricks-activities-databricksnotebook-databrickssparkpython-databrickssparkjar": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Azure Databricks** activities (`DatabricksNotebook`, `DatabricksSparkPython`, `DatabricksSparkJar`)",
+    "witnesses": [
+      "go:TestDatabricksNotebookRunsWithItsBaseParameters",
+      "go:TestDatabricksSparkPythonRunsWithArgv",
+      "go:TestDatabricksRefusesByName",
+      "go:TestDatabricksEngineFailureFailsTheActivity",
+      "go:TestDatabricksNoEngineIsHonest"
+    ]
   }
 }
