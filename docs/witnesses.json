@@ -780,7 +780,9 @@
     "claim": "**`CopyJob`**",
     "witnesses": [
       "go:TestCopyJobExecuteReallyCopies",
-      "go:TestCopyJobRefusesWhatItCannotHonour"
+      "go:TestCopyJobRefusesWhatItCannotHonour",
+      "go:TestCopyJobStatusReflectsTheCopyNotTheClock",
+      "go:TestCopyJobTerminalEventArrivesExactlyOnceAfterTheCopy"
     ]
   },
   "functions-activity-azurefunctionactivity": {

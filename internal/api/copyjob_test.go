@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/calvinchengx/fabric-emulator/internal/clock"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 )
@@ -240,44 +241,111 @@ func TestCopyJobDeltaSourceMakesRealCommits(t *testing.T) {
 	}
 }
 
-func TestCopyJobPublishesItsTerminalEventAtStart(t *testing.T) {
-	// Pins the SECOND dispatch site. startJob publishes a job's terminal event
-	// immediately only when terminalStatusOf says the type executes now —
-	// remove CopyJob from executesNow and every other test here still passes,
-	// because status converges later through the clock and the failure record.
-	// What breaks is the flow view's contract: a job that really finished
-	// stays unsettled on the event stream. Measured before writing this test:
-	// that mutation failed zero of the six existing cases.
+// TestCopyJobTerminalEventArrivesExactlyOnceAfterTheCopy: the terminal event
+// must describe a copy that HAPPENED.
+//
+// This test was `…PublishesItsTerminalEventAtStart` and passed — accurately,
+// while dispatch was synchronous. Async makes settle-at-start the bug rather
+// than the contract, so a passing test whose NAME asserts the old behaviour
+// would be a comment stating an invariant the code no longer holds: the exact
+// defect class this file's neighbours were written to catch. Renamed, not
+// deleted, because the site it pins (terminalStatusOf, the quiet second switch)
+// still needs pinning — a mutation restoring CopyJob to executesNow fails the
+// COUNT below with [Completed Completed], and would pass a presence check.
+func TestCopyJobTerminalEventArrivesExactlyOnceAfterTheCopy(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
 	src := seedLakehouse(t, st, ws.ID, "src")
 	dst := seedLakehouse(t, st, ws.ID, "dst")
 	seedFile(t, st, ws.ID, src.ID, "Tables/orders/part-0.parquet", []byte("x"))
 
-	terminal := func(jid string, evs []store.Event) string {
+	terminals := func(jid string, evs []store.Event) []string {
 		t.Helper()
+		var out []string
 		for _, ev := range evs {
 			if ev.Kind == store.KindJob && ev.JobID == jid &&
 				(ev.Status == store.JobCompleted || ev.Status == store.JobFailed) {
-				return ev.Status
+				out = append(out, ev.Status)
 			}
 		}
-		return ""
+		return out
 	}
 
+	// Subscribe BEFORE the POST and drain after: Replay() races the async
+	// dispatcher, which is measured rather than theoretical.
 	sub := st.Subscribe()
 	defer sub.Close()
 	cj := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, ""))
 	_, jid := runJob(t, a, ws.ID, cj.ID, "jobType=Execute", "{}")
-	if got := terminal(jid, drainEvents(t, sub.C)); got != store.JobCompleted {
-		t.Fatalf("no terminal event at start for a completed copy; got %q", got)
+	if s := awaitJob(t, a, ws.ID, cj.ID, jid); s != "Completed" {
+		t.Fatalf("job = %s", s)
+	}
+	if got := terminals(jid, drainEvents(t, sub.C)); len(got) != 1 || got[0] != store.JobCompleted {
+		t.Fatalf("terminal events = %v, want exactly one Completed", got)
 	}
 
+	// A refusal is terminal too, and must also arrive exactly once — the
+	// goroutine finalises with the refusal code rather than the copy's.
 	sub2 := st.Subscribe()
 	defer sub2.Close()
 	bad := createCopyJob(t, st, ws.ID, `{"properties":{"jobMode":"CDC"},"activities":[]}`)
 	_, jid = runJob(t, a, ws.ID, bad.ID, "jobType=Execute", "{}")
-	if got := terminal(jid, drainEvents(t, sub2.C)); got != store.JobFailed {
-		t.Fatalf("no terminal event at start for a refused copy; got %q", got)
+	if s := awaitJob(t, a, ws.ID, bad.ID, jid); s != "Failed" {
+		t.Fatalf("refused job = %s", s)
+	}
+	if got := terminals(jid, drainEvents(t, sub2.C)); len(got) != 1 || got[0] != store.JobFailed {
+		t.Fatalf("terminal events = %v, want exactly one Failed", got)
+	}
+}
+
+// TestCopyJobStatusReflectsTheCopyNotTheClock: a copy that has DEMONSTRABLY
+// finished must not report InProgress.
+//
+// This is the witness for the async migration, and it exists because the
+// obvious assertions cannot see the change: parked clock, exactly-once
+// terminal, correct verdict — all of those already hold under the synchronous
+// code, so they witness what worked before rather than what changed.
+//
+// The seam is the virtual clock. `StatusAt` derives a job's wire status purely
+// from `now < CompleteAt`, and synchronous dispatch leaves CompleteAt at the
+// clock-derived `Now()+lroDelay`. So with a delay configured, the emulator ran
+// the copy INLINE during the POST — the bytes are at the destination, provably
+// — and then reported InProgress for the next hour of virtual time. Status that
+// contradicts the filesystem is the same class as a notebook reporting
+// Completed with cells outstanding, inverted: there, green with nothing done;
+// here, pending with everything done.
+//
+// Async dispatch fixes it because the goroutine calls FinalizeJob, which sets
+// complete_at = Now() — the status follows the work instead of the clock. The
+// margin is deliberate: a 1-hour delay against awaitJob's 5-second deadline, so
+// this fails on the old behaviour by a factor of 720 rather than by a race.
+func TestCopyJobStatusReflectsTheCopyNotTheClock(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	a := New(st, nil, 1, 3600) // an hour of LRO delay: the clock cannot finish this job
+
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	payload := []byte("orders bytes")
+	seedFile(t, st, ws.ID, src.ID, "Tables/orders/part-0.parquet", payload)
+
+	cj := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, ""))
+	_, jid := runJob(t, a, ws.ID, cj.ID, "jobType=Execute", "{}")
+
+	if s := awaitJob(t, a, ws.ID, cj.ID, jid); s != "Completed" {
+		t.Fatalf("job = %s; a finished copy must not wait on the clock", s)
+	}
+	// And the copy really did happen — otherwise "Completed" would be the
+	// other failure this repo keeps finding.
+	got, err := st.GetOneLakePath(dst.ID, "Tables/bronze_orders/part-0.parquet")
+	if err != nil {
+		t.Fatalf("job reported Completed but the destination is empty: %v", err)
+	}
+	if string(got.Content) != string(payload) {
+		t.Fatalf("destination content = %q", got.Content)
 	}
 }
