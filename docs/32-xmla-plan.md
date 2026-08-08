@@ -398,17 +398,157 @@ authorization: Bearer <token from the connection string>
 it. `datasetName` is null because the probe's Data Source carries no
 `Initial Catalog`; that is where a database name would appear.
 
+### The token read — DONE: `generateastoken`'s reply is one field
+
+Read off the same assembly (19.84.1.0) rather than screened, because the
+routing read had already shown that beats guessing. `GetMwcToken` returns
+`PbiPremiumAuthenticationHandle+MWCToken`, and the contract is:
+
+```
+MWCToken
+    Token : string        [DataMember] ×1
+```
+
+One member, PascalCase. **The emulator's reply to `generateastoken` is
+`{"Token":"<string>"}`** — and the token is one the emulator mints, so its
+contents are ours to choose.
+
+**A free check on the method.** The same read dumped the *request* contract:
+
+```
+MWCASTokenRequest
+    capacityObjectId · workspaceObjectId · datasetName · applyAuxiliaryPermission
+    auxiliaryPermissionOwner · bypassBuildPermission · intendedUsage
+    sourceCapacityObjectId
+```
+
+That matches screen 8's captured wire body field for field. The declared
+contract and the observed request agree, so the reflection route is confirmed
+against a measurement rather than trusted on its own — which is the check the
+routing read never got.
+
+The read is now a tool rather than an ad-hoc run:
+[`e2e/xmla/contract`](../e2e/xmla/contract/README.md). `run.py [substring]`
+prints any matching `[DataContract]`'s member names. Reach for it *before*
+screening a payload shape: a screen is right when the client's behaviour is
+unknown, wrong when the answer is already written in an assembly on disk.
+
+### Screen 9 — RUN: the token is accepted, and the client leaves for :443
+
+Serving `{"Token":"emulator-mwc-token"}` — the contract read above, not a
+hypothesis — against the `L1`/`L2`/`L5` capacity-path rungs.
+
+**Observed.** The token was served three times (once per rung). Every
+connection then failed with
+
+```
+SocketException :: Connection refused  host.docker.internal:443
+```
+
+thrown from `XmlaClient.OpenConnection` → `HttpStream.Create` →
+`ConnectionInfo.ResolveHTTPConnectionPropertiesForPaaSInfrastructure`.
+
+**What that establishes.** The token is accepted — nothing rejected it, and the
+client proceeded to open its XMLA connection. It went to the routing host on
+**port 443**, discarding the port named in the Data Source. That is the first
+time the client has tried to reach anything other than the listener it was
+pointed at, and it exercises the hook `docs/32` recorded as untested:
+`pbiDedicatedRolloutFqdn`. With no rollout FQDN in the reply, the fallback is
+host-from-routing plus the default HTTPS port.
+
+**The consequence for Phase 1.** The XMLA endpoint's address is *derived*, not
+taken from the connection string, so a suite cannot reach it by pointing the
+Data Source somewhere. Either the reply must carry a host:port the client will
+honour, or the listener must occupy 443. The next screen should vary
+`capacityUri`'s **authority** — it already carries the path segment the client
+reads as `capacityObjectId`, and its host is the obvious candidate for the one
+it dials.
+
+**Not established.** Whether the client would accept a port in that authority
+at all, and whether `pbiDedicatedRolloutFqdn` is settable from any field in
+`Workspace201606` (the contract has five members, and `capacityUri` is the only
+one shaped like a host). No run has varied it.
+
+### Screen 10 — RUN: a call nobody knew existed, and 443 is reachable after all
+
+Screen 9 left the client dialling `:443`, which looked like a hard constraint:
+the harness cannot bind a privileged port. It is not — **the Docker daemon
+publishes 443 without sudo**, and socat piping 443 to the capture listener
+keeps TLS terminating on the same self-signed cert. A door, not a proxy.
+
+With that door open the client got further and revealed a request this plan
+had never recorded:
+
+```
+POST /webapi/clusterResolve
+content-type: application/json      host: host.docker.internal   (portless — it came in on 443)
+
+{"databaseName":null,"premiumPublicXmlaEndpoint":true,
+ "serverName":"11111111-1111-1111-1111-111111111111/"}
+```
+
+`serverName` is the `capacityObjectId` — the first `capacityUri` path segment,
+trailing slash intact, exactly as screen 8 established. `databaseName` is null
+because the Data Source carries no `Initial Catalog`. The call appears **twice
+per connection**: once before routing and once after the token.
+
+**This also retired a screen before it was run.** The plan was to vary
+`capacityUri`'s authority to test whether a port is honoured. Checking first
+showed the shape is built from the request's `Host` header, so `capacityUri`
+already carried `:18446` — and the client dialled `:443` regardless. The port
+is not unhandled, it is **discarded**, and the screen would have spent several
+containers re-deriving that.
+
+### Screen 11 — RUN: the client asks us where to go, and takes an answer
+
+`PowerBIClusterResolutionResult` — read from the assembly with
+[`e2e/xmla/contract`](../e2e/xmla/contract/README.md), one run, no screening:
+
+```
+FixedClusterUri · DynamicClusterUri · NewTenantId · RuleDescription · TTLSeconds
+```
+
+That is the steering hook open since screen 5. The client does not derive its
+XMLA endpoint unilaterally — **it asks, and we answer.**
+
+Answering with `{"FixedClusterUri":"https://host.docker.internal:18446", …}`
+moved the failure again:
+
+| screen | reply to clusterResolve | client's answer |
+|---|---|---|
+| 10 | SOAP fault (the stub's refusal) | `NotSupportedException :: Specified method is not supported` |
+| 11 | the declared contract, URIs as full URLs | `AdomdConnectionException :: A connection cannot be made` |
+
+**Consumed, then rejected.** `NotSupportedException` was the client refusing to
+parse a SOAP body where JSON belongs; it is gone, so the contract is right. The
+new throw is inside `ASAzureUtility.ResolvePaaSConnectionEndpointDetail` — the
+same method that posts `clusterResolve` — and **no request reached the listener
+afterwards**. So this is resolution rejecting the value, not a failed dial.
+
+**The next screen, and it is one variable.** The URIs were sent as full URLs.
+If the client prefixes a scheme itself, `https://https://…` would fail exactly
+like this without a socket ever opening. Send `FixedClusterUri` as a bare
+`host:port`, and as a bare host, in one run each. The discriminator is already
+known: a value the client accepts produces a request at the listener, and that
+request is the first XMLA/SOAP envelope this project has seen.
+
 ### Where this leaves the search
 
 Phase 0's question — "what does the client ask after routing?" — is **answered**.
 The roadmap's largest unknown is now a recorded request with a known body.
 
-Next is `generateastoken`'s RESPONSE contract, and it should be read off the
-assembly rather than screened: `GetMwcToken` deserialises into a declared
-`[DataContract]` exactly as the routing reply did, and reading it once beat
-four screens of guessing last time. "MWC" is the token the client carries into
-the XMLA calls themselves, which is the boundary where Phase 0 ends and
-Phase 1 has a client to talk to.
+~~Next is `generateastoken`'s RESPONSE contract~~ — **done**, see the token
+read above: `{"Token":"<string>"}`. "MWC" is the token the client carries into
+the XMLA calls themselves, so answering this is the boundary where Phase 0 ends
+and Phase 1 has a client to talk to.
+
+**The next unknown is therefore what the client does with a token it accepts.**
+Nothing in this project has seen a request past `generateastoken`, and that is
+the first XMLA/SOAP call — the point where `[MS-SSAS-T]` stops being a paper
+spec and becomes a recorded sequence. The step is small: serve
+`{"Token":"…"}` from the capture stub and record what arrives next. Whether
+`pbiDedicatedRolloutFqdn` can then steer that call at a host of our choosing
+remains untested and is the other half of the same run.
 
 `pbiDedicatedRolloutFqdn` — the other value `TryResolvePbiWorkspace` derives —
 remains the hook for steering the client's later calls at a host of our
