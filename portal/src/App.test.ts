@@ -119,10 +119,10 @@ describe('App', () => {
     // a document-wide query for "Clock" is ambiguous by two.
     const nav = document.querySelector('nav.sidenav')!;
     const others = [...nav.querySelectorAll('a')].filter((a: Element) => a !== active);
-    // 13 links, one per view. The count is a guard that the nav did not
-    // silently shrink, so it moves deliberately when a view is added — this
-    // went 12 -> 13 with the Lakehouses browser (docs/44).
-    expect(others).toHaveLength(13);
+    // 14 links, one per view. The count is a guard that the nav did not
+    // silently shrink, so it moves deliberately when a view is added — 12 -> 13
+    // with the Lakehouses browser, 13 -> 14 with Notebooks (both docs/44).
+    expect(others).toHaveLength(14);
     for (const a of others) expect(a).not.toHaveClass('active');
   });
 
@@ -132,6 +132,23 @@ describe('App', () => {
     // once rendered by a test.
     at('#lakehouses');
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Lakehouses' })).toBeInTheDocument());
+  });
+
+  it('mounts the Notebooks view at #notebooks', async () => {
+    at('#notebooks');
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Notebooks' })).toBeInTheDocument());
+  });
+
+  it('passes the id through to the notebook detail page', async () => {
+    // The param arm is a separate branch from the bare route, and it is the one
+    // a shared link exercises.
+    const seen: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation((url: RequestInfo | URL) => {
+      seen.push(String(url));
+      return Promise.resolve(res({ value: [], status: 'healthy' }));
+    });
+    at('#notebooks/' + encodeURIComponent('nb-abc'));
+    await waitFor(() => expect(seen.some((u) => u.includes('/portal/notebooks/nb-abc'))).toBe(true));
   });
 
   it('shows the build beside the badge, so a screenshot says which emulator it was', async () => {

@@ -34,6 +34,10 @@ func (s *Server) registerPortal() {
 	s.mux.HandleFunc("GET /_emulator/portal/lineage", s.portalLineage)
 	s.mux.HandleFunc("GET /_emulator/portal/table", s.portalTable)
 	s.mux.HandleFunc("GET /_emulator/portal/lakehouses", s.portalLakehouses)
+	s.mux.HandleFunc("GET /_emulator/portal/notebooks", s.portalNotebooks)
+	s.mux.HandleFunc("GET /_emulator/portal/notebooks/{id}", s.portalNotebookDetail)
+	s.mux.HandleFunc("POST /_emulator/portal/notebooks/{id}/run", s.portalNotebookRun)
+	s.mux.HandleFunc("GET /_emulator/portal/notebooks/runs/{jid}", s.portalNotebookRunDetail)
 
 	assets, err := portal.Dist()
 	if err != nil {
