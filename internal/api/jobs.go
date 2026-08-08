@@ -140,7 +140,12 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 	// clock — same contract as a notebook with cells outstanding. Parked
 	// BEFORE create so no poll can ever observe a clock-completed pipeline
 	// whose activities are still running.
-	if it.Type == "DataPipeline" {
+	// A CopyJob's completion time is decided by the copy, for the same reason.
+	// Bound once here because the dispatch below and this parking must agree:
+	// parking without dispatching hangs the job forever, dispatching without
+	// parking lets the clock call it Completed mid-copy.
+	isCopyJobRun := it.Type == "CopyJob" && (jobType == "Execute" || jobType == "CopyJob")
+	if it.Type == "DataPipeline" || isCopyJobRun {
 		j.CompleteAt = math.MaxInt64
 	}
 	if err := a.Store.CreateJobInstance(j); err != nil {
@@ -213,14 +218,29 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 		}
 	}
 	// A CopyJob really copies: the definition's Lakehouse legs run through the
-	// pipeline Copy executor now (copyjob.go). Run-on-demand is documented as
+	// pipeline Copy executor (copyjob.go). Run-on-demand is documented as
 	// jobType=Execute — Microsoft's own readback example says "CopyJob", so
 	// both spellings dispatch; what was submitted is what the instance keeps.
-	if it.Type == "CopyJob" && (jobType == "Execute" || jobType == "CopyJob") {
-		if code := a.runCopyJob(wid, it.ID, j.ID); code != "" && j.FailWith == "" {
-			j.FailWith = code
-			_ = a.Store.SetJobFailure(it.ID, j.ID, code)
-		}
+	//
+	// ASYNC, and not merely to free the socket. Run inline, this job's status
+	// stayed CLOCK-DERIVED: CompleteAt was `Now()+lroDelay`, so with any delay
+	// configured the emulator copied the bytes during the POST and then
+	// reported InProgress for the rest of the window — status contradicting the
+	// filesystem, the notebook bug inverted (there: green with nothing done;
+	// here: pending with everything done). The goroutine finalises, and
+	// FinalizeJob sets complete_at = Now(), so the status follows the work.
+	// CompleteAt is parked at MaxInt64 above for the same reason DataPipeline
+	// parks: no poll may observe a clock-completed copy that is still running.
+	if isCopyJobRun {
+		injected := j.FailWith // fault injection wins over the copy's outcome
+		go func() {
+			code := a.runCopyJob(wid, it.ID, j.ID)
+			if injected != "" {
+				code = injected
+			}
+			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
+			a.publishJobOutcome(wid, it.ID, j.ID, code)
+		}()
 	}
 	if it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish") {
 		j.FailWith = "DataflowEngineNotImplemented"
@@ -238,8 +258,12 @@ func (a *API) terminalStatusOf(it *store.Item, jobType string, j *store.JobInsta
 	// listing it here reported "Completed" at POST time, which after that
 	// change would be the same lie the notebook reconciliation was built to
 	// kill — the goroutine publishes the real outcome via publishJobOutcome.
-	executesNow := (it.Type == "CopyJob" && (jobType == "Execute" || jobType == "CopyJob")) ||
-		(it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish"))
+	// CopyJob left it too, for the same reason and one more: listing it here
+	// published Completed at POST time, AND left CompleteAt clock-derived, so a
+	// finished copy reported InProgress until virtual time caught up. Both
+	// halves are the same defect — a status that consults the clock instead of
+	// the work. Only Dataflow remains, whose refusal really is instantaneous.
+	executesNow := it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish")
 	if !executesNow {
 		// A notebook or Spark job that failed to even start is terminal now.
 		if j.FailWith != "" && (it.Type == "Notebook" || it.Type == "SparkJobDefinition") {
