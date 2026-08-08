@@ -1340,6 +1340,13 @@ great-expectations = [
     { name = "great-expectations" },
     { name = "pandas" },
 ]
+jupyter = [
+    { name = "deltalake" },
+    { name = "jupyterlab" },
+    { name = "pyarrow" },
+    { name = "pyspark-client" },
+    { name = "requests" },
+]
 lint = [
     { name = "ruff" },
     { name = "ty" },
@@ -1430,6 +1437,13 @@ governance = [
 great-expectations = [
     { name = "great-expectations", specifier = ">=0.18,<1" },
     { name = "pandas", specifier = ">=2.2,<4" },
+]
+jupyter = [
+    { name = "deltalake", specifier = ">=0.23,<2" },
+    { name = "jupyterlab", specifier = ">=4.2,<5" },
+    { name = "pyarrow", specifier = ">=18,<24" },
+    { name = "pyspark-client", specifier = "==4.1.1" },
+    { name = "requests", specifier = ">=2.32,<3" },
 ]
 lint = [
     { name = "ruff", specifier = ">=0.14,<0.16" },
