@@ -62,7 +62,7 @@ services:
       - "8444:8444" # Key Vault data plane (AKV references, notebookutils.credentials.getSecret)
     environment:
       # Same trust wiring as fabric: validate bearers against entra's JWKS.
-      KV_ENTRA_ISSUER: "https://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      KV_ENTRA_ISSUER: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
       KV_ENTRA_TLS_INSECURE: "true"
       # Like fabric below: the image bakes KV_DATA_DIR=/data for volume users;
       # no volume here, so run in-memory or SQLite fails to open.
@@ -77,9 +77,9 @@ services:
       - "9443:9443" # api.fabric + onelake.dfs + portal (host-routed)
     environment:
       # Must equal the iss entra advertises (see PUBLIC_ORIGIN above).
-      # 11111111-… is entra-emulator's default seeded tenant.
-      FABRIC_ENTRA_ISSUER: "https://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
-      FABRIC_ENTRA_JWKS_URL: "https://entra-emulator:8443/11111111-1111-1111-1111-111111111111/discovery/v2.0/keys"
+      # 6f89cf12-… is entra-emulator's default seeded tenant.
+      FABRIC_ENTRA_ISSUER: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      FABRIC_ENTRA_JWKS_URL: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/discovery/v2.0/keys"
       # Trust entra-emulator's self-signed cert on the internal network.
       FABRIC_ENTRA_TLS_INSECURE: "true"
       # The image bakes in FABRIC_DATA_DIR=/data (for callers who mount a
@@ -92,7 +92,7 @@ services:
       # right for a library and wrong for a dev stack you just brought up, so
       # this compose declares the well-known daemon app entra-emulator seeds.
       # Matched against the token's appid or oid; comma-separated for more.
-      FABRIC_TENANT_ADMINS: "${FABRIC_TENANT_ADMINS:-cccccccc-0000-0000-0000-000000000002}"
+      FABRIC_TENANT_ADMINS: "${FABRIC_TENANT_ADMINS:-00d88624-f0d7-46f6-a641-6232c2608928}"
   # The terminal pane's backend: ttyd, a shell over a websocket, for the Flow
   # view's side-by-side terminal (drive the pipeline while you watch it run).
   #
