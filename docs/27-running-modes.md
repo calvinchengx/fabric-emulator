@@ -221,6 +221,7 @@ than optional. Drop what you do not need:
 
 ```bash
 make up PROFILE="--profile governance"   # no Airflow  (-1.1 GiB)
+make up-jupyter                          # + JupyterLab on :8888 (docs/44)
 make up PROFILE=                         # no catalog, no Airflow  (-3 GiB)
 make up-lite                             # contract only
 ```
