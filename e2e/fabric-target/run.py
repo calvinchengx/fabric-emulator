@@ -19,7 +19,7 @@ REPO = os.path.dirname(os.path.dirname(DIR))
 WORK = os.path.join(tempfile.gettempdir(), "fabric-target-e2e")
 ENTRA_PORT = os.environ.get("ENTRA_PORT", "18445")
 FABRIC_PORT = os.environ.get("FABRIC_PORT", "19445")
-TENANT = "11111111-1111-1111-1111-111111111111"
+TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
 EXE = ".exe" if os.name == "nt" else ""
 
 

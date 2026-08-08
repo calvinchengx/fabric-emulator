@@ -95,7 +95,7 @@ if platform.system() == "Darwin" and not USE_MKCERT:
     raise SystemExit(0)
 ENTRA_PORT = os.environ.get("ENTRA_PORT", "18543")
 FABRIC_PORT = os.environ.get("FABRIC_PORT", "19543")
-TENANT = "11111111-1111-1111-1111-111111111111"
+TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
 EXE = ".exe" if os.name == "nt" else ""
 
 
