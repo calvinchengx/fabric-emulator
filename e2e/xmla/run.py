@@ -57,6 +57,26 @@ import threading
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 WORK = os.path.join(tempfile.gettempdir(), "xmla-e2e")
+
+
+def _clear_stale_bind_targets():
+    """Remove cert.pem/key.pem if anything left DIRECTORIES in their place.
+
+    Docker creates a directory when a bind mount's source does not exist, and
+    a directory mounted where the probe expects a file makes
+    `update-ca-certificates` fail with `sed: can't read …` — an error naming
+    neither the cert nor the mount, which cost a run to trace.
+
+    **This is a guard, not a diagnosis.** The main body already rmtree's WORK
+    on every run, so a leftover should not survive into one; how a directory
+    came to be there has not been established. Cleaning it is cheap and the
+    failure mode is opaque, so the guard earns its place either way — but if
+    this fires, the cause is still open.
+    """
+    for name in ("cert.pem", "key.pem"):
+        path = os.path.join(WORK, name)
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
 # 18080 was the ad-hoc choice while this was a one-off; it is already taken by
 # another suite here, and the guard below caught the collision on first run.
 PORT = int(os.environ.get("XMLA_PORT", "18446"))
@@ -339,6 +359,23 @@ def _shapes_screen5(host):
 
 
 SHAPE_INDEX = 0  # which shape this probe run serves; the phase-0 loop advances it
+
+# SCREEN 12 — the form of the cluster URI, one variable.
+#
+# Screen 11 sent a full URL and resolution rejected it without opening a
+# socket. If the client prefixes a scheme itself, "https://https://..." fails
+# exactly that way. These three rungs separate the possibilities; the routing
+# shape is pinned to the known-good L1 so the cluster form is the only thing
+# that varies.
+def _cluster_forms(host, port):
+    return [
+        ("full-url", f"https://{host}:{port}"),
+        ("host-port", f"{host}:{port}"),
+        ("host-only", f"{host}"),
+    ]
+
+
+CLUSTER_INDEX = 0
 SHAPE_LOG = []   # [(shape name, request path)] — which shape answered which call
 
 REQUESTS = []          # [{method, path, headers: {lower: value}, body}]
@@ -400,13 +437,13 @@ class Capture(http.server.BaseHTTPRequestHandler):
             # honours them, its next request is the first XMLA/SOAP envelope
             # this project has seen; if it still dials 443, the cluster reply
             # is not what steers it and that is equally worth knowing.
-            target = f"https://{CONTAINER_HOST}:{PORT}"
+            label, target = _cluster_forms(CONTAINER_HOST, PORT)[CLUSTER_INDEX]
             b = json.dumps({
                 "FixedClusterUri": target, "DynamicClusterUri": target,
                 "NewTenantId": None, "RuleDescription": "emulator",
                 "TTLSeconds": 3600,
             }).encode()
-            print(f"    -> answering 200 clusterResolve -> {target}", flush=True)
+            print(f"    -> answering 200 clusterResolve [{label}] -> {target}", flush=True)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(b)))
@@ -561,6 +598,7 @@ if not shutil.which("docker"):
 
 require_free_port(PORT, "TLS capture listener")
 
+_clear_stale_bind_targets()
 shutil.rmtree(WORK, ignore_errors=True)
 os.makedirs(WORK)
 log("issuing a self-signed CA for the container's view of this host")
@@ -709,11 +747,12 @@ ANSWER_CLUSTER = True
 # cold client — the cost is one container per shape, and the alternative is
 # results that silently describe only the first.
 runs = []   # [(label, [(method, path)], stdout)]
-for SHAPE_INDEX, (label, *_) in enumerate(_shapes("")):
+SHAPE_INDEX = 0  # L1: one path segment, established as accepted by screen 7
+for CLUSTER_INDEX, (label, _target) in enumerate(_cluster_forms(CONTAINER_HOST, PORT)):
     with LOCK:
         REQUESTS.clear()
         SHAPE_LOG.clear()
-    log(f"PHASE 0 shape {SHAPE_INDEX + 1}/{len(_shapes(''))}: {label}")
+    log(f"SCREEN 12 cluster form {CLUSTER_INDEX + 1}/3: {label}")
     try:
         proc2 = run_probe()
     except subprocess.TimeoutExpired:
