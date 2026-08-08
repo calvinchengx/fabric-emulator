@@ -16,8 +16,8 @@ from pyspark.sql import SparkSession
 
 FABRIC = os.environ["FABRIC"]
 ENTRA = os.environ["ENTRA"]
-TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
-CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
+TENANT = "11111111-1111-1111-1111-111111111111"
+CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"
 CLIENT_SECRET = "daemon-app-secret"
 PBI = "https://analysis.windows.net/powerbi/api"
 

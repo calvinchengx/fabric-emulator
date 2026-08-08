@@ -19,7 +19,7 @@ from deltalake import DeltaTable, write_deltalake
 
 ENTRA = f"https://localhost:{os.environ.get('ENTRA_PORT', '18443')}"
 FABRIC = f"http://127.0.0.1:{os.environ.get('FABRIC_PORT', '19080')}"
-TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+TENANT = "11111111-1111-1111-1111-111111111111"
 
 import ssl  # noqa: E402
 
@@ -44,13 +44,13 @@ def storage_token():
         if e.code != 409:
             raise
     t = post(f"{ENTRA}/admin/api/tokens",
-             {"clientId": "00d88624-f0d7-46f6-a641-6232c2608928", "audience": "https://storage.azure.com"})
+             {"clientId": "cccccccc-0000-0000-0000-000000000002", "audience": "https://storage.azure.com"})
     return t.get("access_token") or t["token"]
 
 
 def fabric_token():
     form = urllib.parse.urlencode({
-        "grant_type": "client_credentials", "client_id": "00d88624-f0d7-46f6-a641-6232c2608928",
+        "grant_type": "client_credentials", "client_id": "cccccccc-0000-0000-0000-000000000002",
         "client_secret": "daemon-app-secret", "scope": "https://api.fabric.microsoft.com/.default"}).encode()
     with urllib.request.urlopen(urllib.request.Request(f"{ENTRA}/{TENANT}/oauth2/v2.0/token", data=form), context=_CTX) as r:
         return json.loads(r.read())["access_token"]

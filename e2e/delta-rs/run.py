@@ -24,7 +24,7 @@ WORK = os.path.join(tempfile.gettempdir(), "delta-rs-e2e")
 ENTRA_PORT = os.environ.get("ENTRA_PORT", "18443")
 # object_store talks plain HTTP to the emulator, so this port serves HTTP.
 FABRIC_PORT = os.environ.get("FABRIC_PORT", "19080")
-TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+TENANT = "11111111-1111-1111-1111-111111111111"
 EXE = ".exe" if os.name == "nt" else ""
 
 

@@ -20,8 +20,8 @@ services:
     environment:
       # The launcher mints AZURE_STORAGE_TOKEN from entra before exec'ing sail
       # (object_store reads credentials from process env at startup only).
-      ENTRA_TOKEN_URL: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
-      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_TOKEN_URL: "https://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
       ENTRA_CLIENT_SECRET: "daemon-app-secret"
       # az://{workspace}/{item}/… → the emulator's account-prefixed Blob path.
       AZURE_STORAGE_ACCOUNT_NAME: "onelake"
@@ -43,13 +43,13 @@ services:
       # delta-rs reaches OneLake on its own account: a Connect client cannot
       # read back the bearer sail holds, so the agent mints its own from the
       # same issuer with the same Storage audience.
-      ENTRA_TOKEN_URL: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_TOKEN_URL: "https://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
       # Notebook attribution for the delta-rs path: Rust object_store cannot set
       # request headers, so the agent mints a bearer carrying fabric_job_id /
       # fabric_cell_index as extra claims and the emulator reads them off the
       # validated principal. See internal/onelake/observe.go.
       ENTRA_FORGE_URL: "https://entra-emulator:8443/admin/api/tokens"
-      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
       ENTRA_CLIENT_SECRET: "daemon-app-secret"
       AZURE_STORAGE_ACCOUNT_NAME: "onelake"
       AZURE_STORAGE_ENDPOINT: "https://fabric-emulator:9443/onelake"

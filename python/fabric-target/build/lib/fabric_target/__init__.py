@@ -26,8 +26,8 @@ STORAGE_SCOPE = "https://storage.azure.com/.default"
 VAULT_SCOPE = "https://vault.azure.net/.default"
 
 # entra-emulator's seeded dev defaults — emulator mode only, by construction.
-SEED_TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
-SEED_CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
+SEED_TENANT = "11111111-1111-1111-1111-111111111111"
+SEED_CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"
 SEED_CLIENT_SECRET = "daemon-app-secret"
 
 AccessToken = namedtuple("AccessToken", ["token", "expires_on"])

@@ -52,7 +52,7 @@ HAVE_OM=0
 FABRIC="${FABRIC_URL:-https://localhost:9443}"
 ENTRA="${ENTRA_URL:-https://localhost:8443}"
 OM="${OM_URL:-http://localhost:8585}"
-TENANT="${TENANT_ID:-6f89cf12-978b-4d23-ac18-9ef0c127cf87}"
+TENANT="${TENANT_ID:-11111111-1111-1111-1111-111111111111}"
 RC=0
 
 say() { printf '%s\n' "$*"; }

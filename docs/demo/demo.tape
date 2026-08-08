@@ -39,13 +39,13 @@ Sleep 8s
 Type "rm -rf /tmp/fe-demo-data /tmp/ee-demo.db && mkdir -p /tmp/fe-demo-data" Enter
 Type "TLS_ENABLED=false PORT=18099 ORIGIN_MODE=compat DB_PATH=/tmp/ee-demo.db SEED_ON_START=true entra-emulator >/tmp/ee-demo.log 2>&1 &" Enter
 Type "until curl -sf localhost:18099/health >/dev/null 2>&1; do sleep 0.3; done" Enter
-Type "/tmp/fe-demo -addr 127.0.0.1:19099 -disable-tls -data-dir /tmp/fe-demo-data -entra-issuer http://localhost:18099/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0 >/tmp/fe-demo.log 2>&1 &" Enter
+Type "/tmp/fe-demo -addr 127.0.0.1:19099 -disable-tls -data-dir /tmp/fe-demo-data -entra-issuer http://localhost:18099/11111111-1111-1111-1111-111111111111/v2.0 >/tmp/fe-demo.log 2>&1 &" Enter
 Type "until curl -sf localhost:19099/health >/dev/null 2>&1; do sleep 0.3; done" Enter
 Sleep 2s
 Type "PS1='$ '" Enter
 Type "F=http://localhost:19099" Enter
-Type "T=http://localhost:18099/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token" Enter
-Type "C=00d88624-f0d7-46f6-a641-6232c2608928" Enter
+Type "T=http://localhost:18099/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token" Enter
+Type "C=cccccccc-0000-0000-0000-000000000002" Enter
 Type "SEC=daemon-app-secret" Enter
 Type "clear" Enter
 Show
