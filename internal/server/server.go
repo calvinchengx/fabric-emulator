@@ -19,6 +19,7 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/config"
 	"github.com/calvinchengx/fabric-emulator/internal/entra"
 	"github.com/calvinchengx/fabric-emulator/internal/onelake"
+	"github.com/calvinchengx/fabric-emulator/internal/purview"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/calvinchengx/fabric-emulator/internal/tds"
 )
@@ -35,6 +36,7 @@ type Server struct {
 	Clock   *clock.Clock
 	API     *api.API
 	OneLake *onelake.Service
+	Purview *purview.Service
 	// TDS is the warehouse SQL endpoint (nil when SQLTDSAddr is unset). main
 	// starts its TCP listener; it authenticates FedAuth logins against entra.
 	TDS *tds.Server
@@ -96,6 +98,16 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	olv.Audiences = onelake.StorageAudience
 	ol := onelake.New(st, olv)
 
+	// The Purview Data Map is Apache Atlas v2 on its own audience — the spec's
+	// routes are literally /atlas/v2/… — so it validates a purview.azure.net
+	// token, not a Fabric control-plane one (internal/purview).
+	pvv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)
+	pvv.Audiences = purview.DataMapAudience
+	pv := purview.New(st, pvv)
+	if err := pv.Seed(); err != nil {
+		return nil, err
+	}
+
 	// The Power BI executeQueries endpoint accepts only Power BI-audience tokens.
 	pbiv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)
 	pbiv.Audiences = api.PowerBIAudience
@@ -106,7 +118,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	// observable at the source whoever wrote it (internal/api/triggers.go).
 	st.FileEvents = func(ev store.FileEvent) { a.DispatchFileEvent(ev) }
 
-	s := &Server{Cfg: cfg, Store: st, Clock: ck, API: a, OneLake: ol, mux: http.NewServeMux()}
+	s := &Server{Cfg: cfg, Store: st, Clock: ck, API: a, OneLake: ol, Purview: pv, mux: http.NewServeMux()}
 
 	// The warehouse SQL endpoint terminates FedAuth by validating the client's
 	// TDS-presented token against entra with the Azure SQL audience.
@@ -160,6 +172,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	}
 
 	a.Register(s.mux)
+	pv.Register(s.mux)
 	s.registerControl()
 	s.registerEvents()
 	s.registerPortal()

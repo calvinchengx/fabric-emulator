@@ -72,7 +72,7 @@ endif
 PY ?= $(shell if command -v uv >/dev/null 2>&1; then echo "uv run --frozen --no-sync python"; \
 	else for c in python3 python py; do if "$$c" -c '' >/dev/null 2>&1; then echo "$$c"; break; fi; done; fi)
 
-.PHONY: help doctor up up-lite up-jvm down restart clean status status-spark spark logs ps seed test check lint
+.PHONY: help doctor up up-lite up-jupyter up-jvm down restart clean status status-spark spark logs ps seed test check lint
 
 help: ## Show the available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -86,6 +86,10 @@ up: ## Start the whole stack in the background
 
 up-lite: ## Contract-only pair — no compute sidecars, honest 501s on Spark/SQL
 	docker compose -f docker-compose.yml up -d
+
+up-jupyter: ## Start the stack plus JupyterLab on :8888 (a real notebook editor)
+	docker compose --profile jupyter -f docker-compose.yml -f docker-compose.override.yml up -d
+	@echo "JupyterLab: http://localhost:8888"
 
 up-jvm: ## Swap the default Sail engine for JVM Spark (RDD, streaming sinks, JVM UDFs)
 	docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.spark-jvm.yml up -d
@@ -143,7 +147,10 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_conformance.py
 	@$(PY) scripts/check_arch_services.py
 	@$(PY) scripts/check_docs_sidebar.py
+	@$(PY) scripts/check_workflow_concurrency.py
 	@$(PY) scripts/gen_event_kinds.py --check
+	@$(PY) scripts/check_capture_redaction.py
+	@$(PY) scripts/check_entra_install.py
 
 # Not part of `check`: these need Node and an installed portal, and `check` is
 # deliberately runnable with nothing but Python. CI runs both in the portal-types

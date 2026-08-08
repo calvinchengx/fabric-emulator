@@ -1,7 +1,9 @@
 package api
 
 // OneLake shortcuts: symlinks from an item's managed folder to a OneLake,
-// ADLS Gen2, or Amazon S3 target.
+// ADLS Gen2, Amazon S3 or Dataverse target. The reference documents four more
+// (Google Cloud Storage, S3 compatible, Azure Blob Storage, OneDrive
+// SharePoint); those are still refused rather than stubbed.
 
 import (
 	"encoding/json"
@@ -22,7 +24,9 @@ func (a *API) registerShortcuts(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+base+"/{path}/{name}", a.withAuth(a.deleteShortcut))
 }
 
-// shortcutBody is the wire shape (target is OneLake-only here).
+// shortcutBody is the wire shape. The reference says the target "must specify
+// exactly one of the supported destinations", so each kind is its own optional
+// pointer and presence selects the branch.
 type shortcutBody struct {
 	Path   string `json:"path"`
 	Name   string `json:"name"`
@@ -32,8 +36,6 @@ type shortcutBody struct {
 			ItemID      string `json:"itemId"`
 			Path        string `json:"path"`
 		} `json:"oneLake"`
-		// Any other target kind (adlsGen2, amazonS3, dataverse, …) present →
-		// unsupported.
 		ADLSGen2 *struct {
 			Location     string `json:"location"`
 			Subpath      string `json:"subpath"`
@@ -44,7 +46,15 @@ type shortcutBody struct {
 			Subpath      string `json:"subpath"`
 			ConnectionID string `json:"connectionId"`
 		} `json:"amazonS3"`
-		Dataverse json.RawMessage `json:"dataverse"`
+		// Dataverse is the one documented target with no `location`: the
+		// endpoint is `environmentDomain`, and the data sits at
+		// `deltaLakeFolder` / `tableName` beneath it.
+		Dataverse *struct {
+			ConnectionID      string `json:"connectionId"`
+			DeltaLakeFolder   string `json:"deltaLakeFolder"`
+			EnvironmentDomain string `json:"environmentDomain"`
+			TableName         string `json:"tableName"`
+		} `json:"dataverse"`
 	} `json:"target"`
 }
 
@@ -64,9 +74,34 @@ func (a *API) createShortcut(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "path and name are required.")
 		return
 	}
-	if body.Target.Dataverse != nil {
-		writeErr(w, http.StatusNotImplemented, "ExternalShortcutTargetUnsupported",
-			"Dataverse shortcuts are not supported by the emulator.")
+	if dv := body.Target.Dataverse; dv != nil {
+		// Every field the reference marks on the Dataverse target is required
+		// here, because none of them has a defensible default: the endpoint,
+		// the folder and the table together ARE the location, and a shortcut
+		// missing one of them cannot resolve to anything.
+		u, parseErr := url.Parse(dv.EnvironmentDomain)
+		if parseErr != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			strings.TrimSpace(dv.DeltaLakeFolder) == "" || strings.TrimSpace(dv.TableName) == "" ||
+			dv.ConnectionID == "" {
+			writeErr(w, http.StatusBadRequest, "InvalidRequest",
+				"dataverse targets require an http(s) environmentDomain, deltaLakeFolder, tableName and connectionId.")
+			return
+		}
+		if _, err := a.Store.GetConnection(dv.ConnectionID); err != nil {
+			writeErr(w, http.StatusBadRequest, "ConnectionNotFound", "connectionId does not resolve to a connection.")
+			return
+		}
+		sc := &store.Shortcut{ItemID: it.ID, Path: strings.Trim(body.Path, "/"), Name: body.Name,
+			TargetType:     "Dataverse",
+			TargetLocation: strings.TrimRight(dv.EnvironmentDomain, "/"),
+			TargetPath:     strings.Trim(dv.DeltaLakeFolder, "/"),
+			TargetTable:    strings.Trim(dv.TableName, "/"),
+			ConnectionID:   dv.ConnectionID}
+		if err := a.Store.CreateShortcut(sc); err != nil {
+			writeErr(w, http.StatusConflict, "ShortcutAlreadyExists", "A shortcut with this path and name already exists.")
+			return
+		}
+		writeJSON(w, http.StatusCreated, shortcutDTO(sc))
 		return
 	}
 	if body.Target.ADLSGen2 != nil || body.Target.AmazonS3 != nil {
@@ -186,14 +221,46 @@ func (a *API) deleteShortcut(w http.ResponseWriter, r *http.Request, p *auth.Pri
 
 // shortcutDTO is the response shape (target echoed as oneLake).
 func shortcutDTO(sc *store.Shortcut) map[string]any {
+	// Dataverse echoes its own four fields and NOT location/subpath: it is the
+	// only documented target addressed by environment + folder + table rather
+	// than by a storage URL, so reusing the storage shape would invent fields
+	// the reference does not have and drop two that it does.
+	if sc.TargetType == "Dataverse" {
+		return map[string]any{"path": sc.Path, "name": sc.Name, "target": map[string]any{
+			"type": "Dataverse", "dataverse": map[string]any{
+				"connectionId":      sc.ConnectionID,
+				"deltaLakeFolder":   sc.TargetPath,
+				"environmentDomain": sc.TargetLocation,
+				"tableName":         sc.TargetTable,
+			},
+		}}
+	}
 	if sc.TargetType == "ADLSGen2" || sc.TargetType == "AmazonS3" {
-		key := "adlsGen2"
+		// The wire value is the documented `Type` enum member, which for ADLS
+		// is **AdlsGen2** — not the "ADLSGen2" spelling used for the stored
+		// column and the Go constants. Those stay as they are (changing them
+		// would need a data migration for no gain); only the response is
+		// corrected, and no caller in the tree reads this field.
+		key, typeName := "adlsGen2", "AdlsGen2"
 		if sc.TargetType == "AmazonS3" {
-			key = "amazonS3"
+			key, typeName = "amazonS3", "AmazonS3"
 		}
 		return map[string]any{"path": sc.Path, "name": sc.Name, "target": map[string]any{
-			"type": sc.TargetType, key: map[string]any{"location": sc.TargetLocation, "subpath": "/" + sc.TargetPath, "connectionId": sc.ConnectionID},
+			"type": typeName, key: map[string]any{"location": sc.TargetLocation, "subpath": "/" + sc.TargetPath, "connectionId": sc.ConnectionID},
 		}}
+	}
+	// THE FALL-THROUGH IS GUARDED, because it used to be the silent half of
+	// the same list-vs-list bug the data plane had. An external type with no
+	// branch above lands here and gets echoed as a **OneLake** target with
+	// empty workspaceId/itemId — a well-formed response describing a shortcut
+	// that does not exist, rather than an error anyone would notice. Reads
+	// through it would work (the data plane resolves by stored type), so the
+	// only broken thing is what clients are told, which is the hardest kind to
+	// spot. Asking store — the one place target types are registered — turns
+	// that into a visibly wrong type instead of a plausibly wrong target.
+	if sc.IsExternalTarget() {
+		return map[string]any{"path": sc.Path, "name": sc.Name,
+			"target": map[string]any{"type": sc.TargetType}}
 	}
 	return map[string]any{
 		"path": sc.Path, "name": sc.Name,

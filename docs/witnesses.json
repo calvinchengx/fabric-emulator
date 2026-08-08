@@ -569,14 +569,6 @@
       "py:test_a_per_cell_budget_is_multiplied_by_the_real_cell_count"
     ]
   },
-  "script-sqlserverstoredprocedure-activities": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "**Script** / **SqlServerStoredProcedure** activities",
-    "witnesses": [
-      "ci:warehouse-tds",
-      "go:TestPipelineSQLActivitiesE2E"
-    ]
-  },
   "sensitivity-labels-bulksetlabels-bulkremovelabels": {
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Sensitivity labels** (`bulkSetLabels` / `bulkRemoveLabels`)",
@@ -609,7 +601,13 @@
     "witnesses": [
       "ci:external-s3",
       "ci:azurite-shortcut",
-      "ci:external-shortcuts"
+      "ci:external-shortcuts",
+      "go:TestTheDFSSurfaceRefusesWritesThroughADataverseShortcut",
+      "go:TestDataverseShortcutReadsThroughToTheTarget",
+      "go:TestDataverseShortcutRefusesWrites",
+      "go:TestDataverseShortcutRefusesDeletes",
+      "go:TestDataverseShortcutRoundTripsItsDocumentedFields",
+      "go:TestDataverseShortcutRequiresEveryDocumentedField"
     ]
   },
   "spark-job-definitions": {
@@ -885,6 +883,98 @@
     "witnesses": [
       "go:TestReportDefinitionRoundTripsByteForByte",
       "go:TestTypedDefinitionRouteRefusesAnotherType"
+    ]
+  },
+  "script-sqlserverstoredprocedure-sqlpoolstoredprocedure-activities": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Script** / **SqlServerStoredProcedure** / **SqlPoolStoredProcedure** activities",
+    "witnesses": [
+      "ci:warehouse-tds",
+      "go:TestPipelineSQLActivitiesE2E",
+      "go:TestSqlPoolReferenceResolvesToRealSQL",
+      "go:TestSqlPoolStoredProcedureDispatches",
+      "go:TestSqlPoolStoredProcedureSendsRealSQL",
+      "go:TestSqlPoolMissingReferenceIsHonest"
+    ]
+  },
+  "validation-activity": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Validation** activity",
+    "witnesses": [
+      "go:TestValidationPassesOnDataThatIsThere",
+      "go:TestValidationFailsWhenTheDataNeverArrives",
+      "go:TestValidationHonoursItsPredicates",
+      "go:TestValidationPassesOnAFolderThatIsThere",
+      "go:TestValidationInputSurface",
+      "go:TestValidationWaitRetriesUntilTheDataArrives",
+      "go:TestValidationWaitStopsAtTheDeadline",
+      "go:TestValidationWaitSubscribesBeforeReading",
+      "go:TestValidationWaitClampsTheSleepToTheDeadline"
+    ]
+  },
+  "azure-data-explorer-command-activity-azuredataexplorercommand": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Azure Data Explorer Command** activity (`AzureDataExplorerCommand`)",
+    "witnesses": [
+      "go:TestADXCommandReachesTheRealEngine",
+      "go:TestADXCommandRefusesAQuery",
+      "go:TestADXCommandRefusesTheWrongItemType",
+      "go:TestADXCommandNoEngineIsHonest",
+      "go:TestADXCommandEngineErrorFailsTheActivity",
+      "go:TestADXCommandEngineCannotCreateTheDatabase",
+      "go:TestADXCommandEngineUnreachable",
+      "go:TestADXCommandInputSurface",
+      "go:TestADXCommandHonoursCommandTimeout"
+    ]
+  },
+  "unrunnable-adf-activities": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**HDInsight Hive/Pig/MapReduce/Streaming**, **U-SQL**, **SSIS package** activities",
+    "witnesses": [
+      "go:TestUnrunnableActivitiesDoNotFakeSuccess",
+      "go:TestUnrunnableActivitiesNameTheirCause",
+      "go:TestUnrunnableRefusalsCoverTheDiff",
+      "go:TestTheStubStillAnswersForConnectorLeaves"
+    ]
+  },
+  "materialized-lake-views": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "**Materialized lake views**",
+    "witnesses": [
+      "go:TestMLVRefreshReallyMaterialises",
+      "go:TestMLVGoesStaleWhenASourceMoves",
+      "go:TestMLVRefreshThatWritesNothingFails",
+      "go:TestMLVVersionsAreReadBeforeTheQuery",
+      "go:TestMLVSourceDisappearingIsStale",
+      "go:TestMLVEngineFailureIsRecorded",
+      "go:TestMLVNoEngineIsHonest",
+      "go:TestMLVDefinitionSurface",
+      "go:TestMLVDeleteLeavesTheData",
+      "go:TestMLVRoutesAreMounted",
+      "go:TestMLVViewerCannotDefineOrRefresh",
+      "go:TestMLVWrongItemTypeIsRefused",
+      "go:TestMLVRefreshUnknownView",
+      "go:TestMLVUnknownLakehouse"
+    ]
+  },
+  "servicenow-via-restsource": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**ServiceNow via `RestSource`**",
+    "witnesses": [
+      "ci:rest-servicenow"
+    ]
+  },
+  "purview-data-map-endpoint-datamap-api-atlas-v2": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "Purview Data Map",
+    "witnesses": [
+      "go:TestTheBaseTypeHierarchyIsSeeded",
+      "go:TestAnEntityOfAnUnregisteredTypeIsRefused",
+      "go:TestAnEntityMissingARequiredAttributeIsRefused",
+      "go:TestTheSameQualifiedNameUpdatesRatherThanDuplicating",
+      "go:TestNegativeGUIDsAreReplacedAndReported",
+      "go:TestABatchWithOneBadEntityCommitsNothing",
+      "go:TestEveryRouteRequiresAToken"
     ]
   }
 }

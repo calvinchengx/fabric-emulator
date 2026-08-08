@@ -220,6 +220,34 @@ CREATE TABLE IF NOT EXISTS event_triggers (
 	created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_event_triggers_source ON event_triggers (source_item_id);
+-- Materialized lake views: a named query in a lakehouse that is re-computed
+-- into a real Delta table under Tables/. Fabric defines these with Spark SQL
+-- DDL inside a notebook, and no capture of that syntax exists here, so the
+-- DEFINITION surface is emulator-native and labelled as such in docs/parity.md
+-- — the same stance the event_triggers table above takes. What is faithful is
+-- everything downstream: the query really runs on the engine, the table really
+-- lands in OneLake, and staleness is measured against real Delta versions.
+CREATE TABLE IF NOT EXISTS materialized_lake_views (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	lakehouse_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	query TEXT NOT NULL,
+	-- The tables this view reads, DECLARED rather than parsed out of the SQL.
+	-- Fabric infers them; inferring here would mean parsing dialect-specific
+	-- SQL and silently mis-reporting staleness whenever the parse was wrong,
+	-- which is a worse failure than asking for the list. JSON array.
+	depends_on TEXT NOT NULL DEFAULT '[]',
+	-- The source versions observed at the last successful refresh. Staleness is
+	-- "a dependency has moved since", which is answerable only against what was
+	-- actually read. JSON object of table name -> delta version.
+	source_versions TEXT NOT NULL DEFAULT '{}',
+	created_at INTEGER NOT NULL,
+	last_refreshed_at INTEGER NOT NULL DEFAULT 0,
+	last_refresh_status TEXT NOT NULL DEFAULT '',
+	last_error TEXT NOT NULL DEFAULT '',
+	UNIQUE (lakehouse_id, name)
+);
 CREATE TABLE IF NOT EXISTS pipeline_runs (
 	job_id TEXT PRIMARY KEY REFERENCES job_instances(id) ON DELETE CASCADE,
 	status TEXT NOT NULL,
@@ -357,6 +385,24 @@ CREATE TABLE IF NOT EXISTS domain_role_assignments (
 	role TEXT NOT NULL,
 	PRIMARY KEY (domain_id, principal_id, role)
 );
+CREATE TABLE IF NOT EXISTS purview_typedefs (
+	guid TEXT NOT NULL,
+	name TEXT NOT NULL PRIMARY KEY,   -- Atlas resolves a type by bare name, so
+	category TEXT NOT NULL,           -- the name is unique across ALL categories
+	body TEXT NOT NULL,               -- the definition as sent; Atlas types are open
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS purview_entities (
+	guid TEXT NOT NULL PRIMARY KEY,
+	type_name TEXT NOT NULL,
+	qualified_name TEXT NOT NULL,     -- Atlas's unique attribute, per type
+	status TEXT NOT NULL DEFAULT 'ACTIVE',  -- soft delete: DELETED rows remain
+	body TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL,
+	UNIQUE (type_name, qualified_name)
+);
 CREATE TABLE IF NOT EXISTS shortcuts (
 	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
 	path TEXT NOT NULL,            -- managed folder the shortcut lives in, e.g. Files
@@ -366,6 +412,7 @@ CREATE TABLE IF NOT EXISTS shortcuts (
 	target_path TEXT NOT NULL,
 	target_type TEXT NOT NULL DEFAULT 'OneLake',
 	target_location TEXT NOT NULL DEFAULT '',
+	target_table TEXT NOT NULL DEFAULT '',
 	connection_id TEXT NOT NULL DEFAULT '',
 	created_at INTEGER NOT NULL,
 	PRIMARY KEY (item_id, path, name)
@@ -448,6 +495,7 @@ PRAGMA foreign_keys = ON;
 		`ALTER TABLE shortcuts ADD COLUMN target_type TEXT NOT NULL DEFAULT 'OneLake'`,
 		`ALTER TABLE shortcuts ADD COLUMN target_location TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE shortcuts ADD COLUMN connection_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE shortcuts ADD COLUMN target_table TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE items ADD COLUMN folder_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {

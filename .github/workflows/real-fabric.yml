@@ -16,12 +16,24 @@ name: Real Fabric conformance
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      capture_item_type:
+        description: >-
+          Capture an item definition's SHAPE (types and keys, never values).
+          Typed collection segment, e.g. dataPipelines. Leave blank to skip.
+        required: false
+        default: ''
+      capture_item_name:
+        description: Display name of the item to capture. Required if a type is given.
+        required: false
+        default: ''
   schedule:
     - cron: '17 5 * * 1' # weekly, Monday 05:17 UTC
 
 jobs:
   conformance:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -58,3 +70,29 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: uv run --frozen --group fabric-target python e2e/notebook-run/real_fabric.py
+      # Oracle capture, on demand only. Several activities are blocked on one
+      # thing — nobody has captured the wire `type` and `typeProperties` shape
+      # Fabric actually sends — and this turns that capture into a button.
+      #
+      # IT PRINTS A SHAPE, NOT A DEFINITION, and that is not caution for its own
+      # sake: THIS REPOSITORY IS PUBLIC, so these logs are too. A raw definition
+      # carries workspace and item GUIDs, connection and dataset names, URLs,
+      # paths, SQL and parameter defaults — none of which the emulator needs and
+      # all of which printing here would publish permanently. Keys and `type`
+      # discriminators are what the oracle is made of; everything else is
+      # replaced by its JSON type. See scripts/capture_definition_shape.py.
+      - name: Capture an item definition's shape (workflow_dispatch only)
+        if: steps.gate.outputs.run == 'true' && inputs.capture_item_type != ''
+        env:
+          FABRIC_TEST_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          if [ -z "${{ inputs.capture_item_name }}" ]; then
+            echo "::error::capture_item_name is required when capture_item_type is set"
+            exit 1
+          fi
+          uv run --no-project python scripts/capture_definition_shape.py \
+            --type "${{ inputs.capture_item_type }}" \
+            --name "${{ inputs.capture_item_name }}"

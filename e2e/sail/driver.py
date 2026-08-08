@@ -11,6 +11,7 @@ import json
 import os
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -156,11 +157,56 @@ cdf_probe.collect()
 assert "_change_type" not in cdf_probe.columns, cdf_probe.columns
 print("known divergence confirmed: CDF options are accepted but return a normal snapshot")
 
-# Launch two overwrite commits from separate sessions at the same barrier.
-# The OneLake conditional-create contract exposes the Delta log collision:
-# exactly one writer commits and the other receives a transaction failure.
+# Two overwrite commits from separate sessions, released at one barrier.
+#
+# WHAT THIS ASSERTS, AND WHY IT IS NOT "exactly one commits". The barrier
+# synchronises the START of the two writes, not their overlap. If writer A
+# finishes its commit before writer B reads the table version, B legitimately
+# commits on top of A: two successes, no conflict, and nothing is wrong.
+# Serialisation is a VALID outcome of racing two writers, and an assertion that
+# forbids it fails on a correct server — this suite asserted
+# `outcomes.count("committed") == 1` and went red on exactly that, 1 run in 13.
+#
+# So the assertion is the INVARIANT that holds either way: **each successful
+# commit produces its own new version in the Delta log, and no two writers ever
+# land on the same one.** That is what OneLake's conditional-create (If-None-
+# Match) actually guarantees, and it is what a broken guard would violate — two
+# writers overwriting one version file, losing an update silently. Counting
+# commit files against successful writers catches that; counting rejections
+# only catches the scheduler.
+#
+# This is the repo's own lesson applied where it was still outstanding: when a
+# race lives in a window too small to hit reliably, make the interleaving an
+# input rather than sampling for it — or, where you cannot, assert the property
+# that survives every interleaving instead of the one you hoped to observe.
 conflict_url = "az://sailws/lake.Lakehouse/Tables/concurrent_probe"
 spark.range(1).write.format("delta").mode("overwrite").save(conflict_url)
+storage_token = entra_token("https://storage.azure.com/.default")
+
+
+def delta_log_versions(table):
+    """Version numbers present in a table's _delta_log, read through OneLake.
+
+    Fetches 00000…N.json until one 404s. The emulator serves the Blob surface
+    on the account-prefixed path, the same form the byte-level check below uses.
+    """
+    found = []
+    for version in range(64):
+        url = (f"{FABRIC}/onelake/{ws['id']}/lake.Lakehouse/Tables/{table}"
+               f"/_delta_log/{version:020d}.json")
+        req = urllib.request.Request(url, headers={"Authorization": "Bearer " + storage_token})
+        try:
+            with urllib.request.urlopen(req, timeout=30):
+                found.append(version)
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                break
+            raise
+    return found
+
+
+before = delta_log_versions("concurrent_probe")
+assert before, "the seed commit is missing; the probe below would prove nothing"
 barrier = threading.Barrier(2)
 
 
@@ -178,14 +224,35 @@ def concurrent_overwrite(value):
 
 with ThreadPoolExecutor(max_workers=2) as executor:
     outcomes = list(executor.map(concurrent_overwrite, (100, 200)))
-assert outcomes.count("committed") == 1, outcomes
-assert sum(outcome.startswith("rejected:") for outcome in outcomes) == 1, outcomes
-assert spark.read.format("delta").load(conflict_url).count() == 10
-print(f"concurrent overwrite conflict rejected: {outcomes}")
+committed = outcomes.count("committed")
+rejected = sum(outcome.startswith("rejected:") for outcome in outcomes)
+after = delta_log_versions("concurrent_probe")
+new_versions = [v for v in after if v not in before]
+
+# At least one writer must get through, or the probe proves nothing about
+# conflict handling — it would just be two failures.
+assert committed >= 1, outcomes
+assert committed + rejected == 2, outcomes
+# THE INVARIANT: one new version per successful commit. Fewer means two writers
+# landed on the same version and one update was lost — precisely the failure
+# the conditional PUT exists to prevent. More would mean a commit nobody made.
+assert len(new_versions) == committed, (outcomes, before, after)
+# Contiguous, so a commit did not skip a version and leave a hole a reader
+# would stop at.
+assert after == list(range(len(after))), after
+# The surviving table is one writer's full overwrite, not a blend of both.
+rows = spark.read.format("delta").load(conflict_url).collect()
+assert len(rows) == 10, rows
+assert {row[0] for row in rows} in ({v for v in range(100, 110)}, {v for v in range(200, 210)}), rows
+if rejected:
+    print(f"concurrent overwrite: conflict rejected as expected {outcomes}, "
+          f"+{len(new_versions)} version(s)")
+else:
+    print(f"concurrent overwrite: serialised (both committed, versions {new_versions}) — "
+          "a valid interleaving; the invariant checked is one version per commit")
 
 # The engine's writes are real bytes in OneLake: read the first Delta commit
 # back through the Blob surface ourselves (same account-prefixed path form).
-storage_token = entra_token("https://storage.azure.com/.default")
 req = urllib.request.Request(
     f"{FABRIC}/onelake/{ws['id']}/lake.Lakehouse/Tables/events/_delta_log/"
     "00000000000000000000.json",
@@ -195,5 +262,38 @@ with urllib.request.urlopen(req, timeout=30) as r:
     first_commit = r.read().decode()
 assert '"protocol"' in first_commit and '"metaData"' in first_commit, first_commit[:200]
 print("delta log readable through the Blob surface (protocol + metaData present)")
+
+# The conditional-create contract itself, with the interleaving as an INPUT
+# rather than sampled for.
+#
+# The racing writers above can only observe a rejection when they happen to
+# collide, and they legitimately may not (see that block). This asserts the
+# same guarantee with no race at all: version 0 of the events table exists, so
+# a put-if-absent against that exact path must be refused. It is the rejection
+# half of the concurrency story, held to a deterministic standard, and it is
+# the 409 the racing writers see when they DO collide.
+#
+# TestConcurrentDeltaCommitRace pins the same mechanism at unit level; this
+# pins it end-to-end, through the Blob surface a real client reaches, with the
+# token a real client mints.
+conflict_probe = urllib.request.Request(
+    f"{FABRIC}/onelake/{ws['id']}/lake.Lakehouse/Tables/events/_delta_log/"
+    "00000000000000000000.json",
+    method="PUT",
+    data=b'{"commitInfo":{"operation":"SHOULD NOT LAND"}}',
+    headers={"Authorization": "Bearer " + storage_token, "If-None-Match": "*"},
+)
+try:
+    urllib.request.urlopen(conflict_probe, timeout=30)
+    raise AssertionError("put-if-absent overwrote an existing Delta commit")
+except urllib.error.HTTPError as refused:
+    assert refused.code == 409, refused.code
+print("put-if-absent on an existing commit refused with 409")
+
+# And it refused WITHOUT damaging what was there. A 409 that still replaced the
+# bytes would satisfy the status assertion and lose the commit anyway.
+with urllib.request.urlopen(req, timeout=30) as r:
+    assert r.read().decode() == first_commit, "the refused PUT modified the commit"
+print("the refused PUT left the existing commit byte-identical")
 
 print("PASS: sail e2e")

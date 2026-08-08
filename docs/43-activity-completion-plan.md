@@ -7,10 +7,38 @@ paid for once each: inventing wire shapes nobody captured (the fabricated
 nested columns), and counting a stub as done (the WebHook that silently aliased
 Web). Every phase below names its oracle before its code.
 
-Current state (post-#79): **18 of 34 execute for real**, 1 refuses loudly
-(WebHook), 4 are blocked on wire-name capture, 1 has its engine but no
-activity case (Copy job), and the rest divide into HTTP-real externals,
-park-dependent activities, compute externals, and two decision gates.
+Current state. The line here used to read "18 of 34 execute for real" and went
+stale across three merged phases. It is **not simply re-counted**, because
+Phase 7 below showed the denominator was the wrong frame: 34 was Microsoft's
+documented activity *gallery*, while the wire accepts **41 discriminators** —
+nine of which this plan never listed, and every one of which the dispatch was
+reporting as `Succeeded`. A fraction measured against a product surface cannot
+express "and the ones the surface does not show", which is precisely where the
+defects were.
+
+What is verifiable, stated so anyone can re-derive it rather than trust it:
+
+- **17 leaf activity types execute for real** in `internal/api/pipelines.go`'s
+  dispatch: notebook, invoke-pipeline, Copy, Lookup, GetMetadata, Delete,
+  Script, stored procedure, Web, WebHook, Functions, HDInsight Spark,
+  Databricks notebook, Databricks python, Azure Batch (opt-in), Validation,
+  Data Explorer command. (Several accept more than one wire spelling —
+  `RunNotebook`/`TridentNotebook`/`SynapseNotebook` are one behaviour, as are
+  `SqlServerStoredProcedure`/`SqlPoolStoredProcedure` and `Web`/`WebActivity` —
+  so the *case-label* count is higher than the behaviour count.)
+- **9 control-flow types** are interpreted in `internal/pipeline/activities.go`
+  (SetVariable, AppendVariable, ForEach, IfCondition, Switch, Until, Filter,
+  Wait, Fail), plus the `Inactive` activity *state*.
+- **13 types refuse by name with a cause**: Dataflow Gen2 (3 spellings), the
+  three Azure ML types, the Databricks JAR task, and the six in Phase 7.
+- **7 remain blocked on a wire-name capture** from a real tenant (Phase 0):
+  Refresh SQL Endpoint, Lakehouse maintenance, KQL, Spark Job Definition,
+  Teams, Copy job, Approval.
+
+**To re-derive:** list the `case` labels in the dispatch switch and in
+`activities.go`, and diff them against the `x-ms-discriminator-value` set in
+ADF's published `Pipeline.json`. Anything in neither list falls to the
+dispatch default — see Phase 7 for why that matters.
 
 ## The two rules every phase inherits
 
@@ -30,7 +58,7 @@ park-dependent activities, compute externals, and two decision gates.
 
 | Item | Needs | Unblocks |
 |---|---|---|
-| Wire-name capture | One throwaway pipeline in a real tenant containing Refresh SQL Endpoint, Lakehouse maintenance, KQL, and Spark Job Definition activities; paste the JSON | Phase 2 |
+| Wire-name capture | One throwaway pipeline in a real tenant containing Refresh SQL Endpoint, Lakehouse maintenance, KQL, Spark Job Definition, Teams, Copy job, Approval and Refresh Materialized Lake View activities. **Now a button rather than a chore:** run the `Real Fabric conformance` workflow with `capture_item_type: dataPipelines` and the pipeline's display name, and it prints the SHAPE — every `type` discriminator and every property name, with all values redacted, because this repository's logs are public. See `scripts/capture_definition_shape.py` | Phase 2, and the five other blocked activities |
 | Copy job activity case | #78 to settle; owned by the CopyJob session, or claimed by notice after | The 24th real activity — wiring the existing `copyjob` executor into the `pipelines.go` dispatch |
 
 ## Phase 1 — async pipelines (the prerequisite, doc 37 §4)
@@ -107,10 +135,20 @@ must not be satisfiable by a server that lets anyone in).
 
 ## Phase 6 — Refresh Materialized Lake View (build, L)
 
-Needs a minimal MLV model first: an item holding a defining query, refresh
-re-materialises it into a Delta table through the existing engine path, staleness
-observable. The activity is then Phase-2-shaped on top. Scoped last because it
-is the only item where the *feature* is missing, not the wiring.
+**The model is built.** A view is a named query against a lakehouse; refresh
+runs it on the engine and writes a real Delta table under `Tables/<name>`, and
+staleness is measured against the declared sources' Delta versions. See the
+parity map's *Materialized lake views* row and `internal/api/mlv.go`.
+
+The **definition surface is emulator-native**, on the Reflex-binding precedent:
+Fabric creates these with Spark SQL DDL that no capture here has observed, and
+inventing a syntax is what the oracle rule forbids. When a capture arrives the
+DDL becomes a second front door onto the same model rather than a rewrite.
+
+**The activity itself is still blocked**, and on the same thing as the other
+seven: nobody has captured its wire `type` or `typeProperties`. It is now a
+Phase-2-shaped wrapper over `RefreshMaterializedLakeView` — small, once the
+capture lands.
 
 ## Decision gates — named, not buried
 
@@ -144,3 +182,37 @@ gates resolve toward "keep the refusal": **26 of 34 executing for real, 7
 protocol-terminated against stand-ins with negative controls, Dataflow Gen2
 refusing by name** — and the honest sentence in `parity.md` is that every
 documented activity either does its work observably or names exactly why not.
+
+## Phase 7: the nine the plan never listed
+
+**The activity list this plan was built from was the portal's, and the portal
+is not the wire.** Diffing all 41 discriminators in ADF's published schema
+against what the dispatch switch and the pipeline interpreter actually handle
+found **nine type strings in neither** — and every one of them fell to the
+dispatch default, which returns `{"status":"Succeeded"}`. They had been
+counted as "not in the plan"; they were in fact being reported as done.
+
+The default is right for a **connector leaf** — a ServiceNow source really was
+reached in `dependsOn` order with its inputs resolved, and the emulator says
+so. It is wrong for a **compute activity**, whose whole point is an effect
+later steps consume. That distinction is what splits the nine:
+
+| Type | Outcome | Why |
+|---|---|---|
+| `Validation` | 🟢 real | OneLake paths, real sizes, the virtual clock |
+| `SqlPoolStoredProcedure` | 🟢 real | the Synapse spelling of an activity already implemented |
+| `AzureDataExplorerCommand` | 🟢 real | the Kusto engine behind Eventhouse already runs |
+| `HDInsightHive` / `Pig` / `MapReduce` / `Streaming` | 🔴 refused by name | no Hive/Pig/MapReduce runtime; a main class has no submission path |
+| `DataLakeAnalyticsU-SQL` | 🔴 refused by name | U-SQL is its own language; the service is retired |
+| `ExecuteSSISPackage` | 🔴 refused by name | no integration runtime, and the work is inside the package |
+
+`Validation` is the one worth naming twice. Its entire purpose is to stop a
+pipeline from processing data that has not landed, so a `Validation` that
+always passes is **worse than no `Validation` at all**: the pipeline reads an
+absent file with the guard's blessing.
+
+**The reusable part is the method, not the list.** A plan derived from a
+product surface will miss whatever the wire accepts and the surface does not
+show. Diff the schema's discriminators against the dispatch, and check what
+the default does with the remainder — a permissive default turns every gap
+into a silent success.
