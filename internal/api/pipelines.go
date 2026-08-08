@@ -255,19 +255,10 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		return nil, fmt.Errorf("activity %q: Dataflow Gen2 (Power Query M) is not implemented in the emulator", act.Name)
 
 	case "WebHook":
-		// Deliberately NOT an alias for Web, which it silently was. A real
-		// WebHook activity calls the endpoint with a generated callBackUri and
-		// PARKS until the receiver calls back (or a timeout, default 10m);
-		// branching then depends on the callback's body. Aliasing it to Web
-		// meant a webhook pipeline "worked" locally while never exercising the
-		// half that defines the activity — code paths that park in Fabric
-		// returned instantly here. Refused until pipelines run async (doc 37
-		// item 4 is the prerequisite: an inline job POST cannot park), so the
-		// gap is loud instead of a false green.
-		return nil, fmt.Errorf("activity %q: WebHook callback semantics are not implemented — "+
-			"the emulator's pipelines execute inline and cannot park awaiting a callback "+
-			"(docs/37-runtime-fidelity-gaps.md §4). Use the Web activity for fire-and-return calls",
-			act.Name)
+		// For real now: call with a callBackUri, PARK until the receiver calls
+		// back or the virtual-clock timeout expires. The refusal that stood
+		// here named async pipelines as its prerequisite; they exist.
+		return e.webhookActivity(act, tp, resolve)
 
 	case "AzureFunctionActivity":
 		// A real call to a function endpoint over the same HTTP core as Web;

@@ -18,6 +18,7 @@ type Clock struct {
 	frozen   bool
 	frozenAt int64 // absolute epoch returned while frozen
 	realNow  func() int64
+	changed  chan struct{} // closed on mutation; see Changed
 }
 
 // New returns a clock tracking real time.
@@ -41,6 +42,7 @@ func (c *Clock) SetOffset(seconds int64) {
 	defer c.mu.Unlock()
 	c.offset = seconds
 	c.frozen = false
+	c.notifyChange()
 }
 
 // Advance moves the controlled time forward (or back) by delta seconds,
@@ -50,9 +52,11 @@ func (c *Clock) Advance(seconds int64) {
 	defer c.mu.Unlock()
 	if c.frozen {
 		c.frozenAt += seconds
+		c.notifyChange()
 		return
 	}
 	c.offset += seconds
+	c.notifyChange()
 }
 
 // Freeze pins time at the current controlled value.
@@ -64,6 +68,7 @@ func (c *Clock) Freeze() {
 	}
 	c.frozenAt = c.realNow() + c.offset
 	c.frozen = true
+	c.notifyChange()
 }
 
 // Unfreeze resumes real-time tracking, preserving the frozen point as an
@@ -76,6 +81,7 @@ func (c *Clock) Unfreeze() {
 	}
 	c.offset = c.frozenAt - c.realNow()
 	c.frozen = false
+	c.notifyChange()
 }
 
 // State reports the current offset and frozen status for the control API.
@@ -86,4 +92,27 @@ func (c *Clock) State() (offset int64, frozen bool, now int64) {
 		return c.frozenAt - c.realNow(), true, c.frozenAt
 	}
 	return c.offset, false, c.realNow() + c.offset
+}
+
+// Changed returns a channel that closes on the next mutation (Advance,
+// SetOffset, Freeze, Unfreeze). A parked goroutine whose deadline lives on
+// THIS clock cannot learn about an Advance any other way: virtual time moves
+// without any real time passing, so a real-time timer alone would sleep
+// through it. Callers re-arm by calling Changed again after each wake.
+func (c *Clock) Changed() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.changed == nil {
+		c.changed = make(chan struct{})
+	}
+	return c.changed
+}
+
+// notifyChange closes the current change channel, waking every waiter.
+// Callers hold c.mu.
+func (c *Clock) notifyChange() {
+	if c.changed != nil {
+		close(c.changed)
+		c.changed = nil
+	}
 }

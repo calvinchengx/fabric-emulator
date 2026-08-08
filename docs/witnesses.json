@@ -775,18 +775,6 @@
       "go:TestPipelineDeleteMissingFailsLoudly"
     ]
   },
-  "web-activity-and-webhook-refused": {
-    "claim": "**Web** activity (and **WebHook**, refused)",
-    "section": "Data Factory (`data-factory/`)",
-    "witnesses": [
-      "go:TestWebActivityReallyCalls",
-      "go:TestWebActivityFailsOnNon2xx",
-      "go:TestWebActivityHonoursThePolicyTimeout",
-      "go:TestWebActivityResolvesExpressions",
-      "go:TestWebActivityStubModeSaysItDidNotCall",
-      "go:TestPipelineWebHookRefusesLoudly"
-    ]
-  },
   "copyjob": {
     "section": "Item types present, engine absent",
     "claim": "**`CopyJob`**",
@@ -802,6 +790,21 @@
       "go:TestFunctionActivityCallsForReal",
       "go:TestFunctionActivityWrongKeyFails",
       "go:TestFunctionActivitySchemaRules"
+    ]
+  },
+  "web-and-webhook-activities": {
+    "claim": "**Web** and **WebHook** activities",
+    "section": "Data Factory (`data-factory/`)",
+    "witnesses": [
+      "go:TestWebActivityReallyCalls",
+      "go:TestWebActivityFailsOnNon2xx",
+      "go:TestWebActivityHonoursThePolicyTimeout",
+      "go:TestWebActivityResolvesExpressions",
+      "go:TestWebActivityStubModeSaysItDidNotCall",
+      "go:TestWebHookParksUntilTheCallback",
+      "go:TestWebHookTimesOutOnTheVirtualClock",
+      "go:TestWebHookReportStatusOnCallBack",
+      "go:TestWebHookSchemaRules"
     ]
   }
 }
