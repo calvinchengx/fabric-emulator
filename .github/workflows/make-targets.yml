@@ -107,7 +107,7 @@ jobs:
           # Keep in step with .PHONY in the Makefile — a target nobody expands
           # here is a target nobody notices breaking.
           for t in help doctor up up-lite up-jvm down clean restart status \
-                   status-spark spark seed ps logs check test; do
+                   status-spark spark seed ps logs check lint test; do
             echo "=== make -n $t ==="
             make -n "$t"
           done
