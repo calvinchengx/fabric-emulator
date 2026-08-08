@@ -51,6 +51,34 @@ type webhookCallback struct {
 	body map[string]any
 }
 
+// clockSource is the slice of the clock the park needs — satisfied by
+// *clock.Clock, and by the scripted fake that pins the subscribe-before-read
+// ordering in tests.
+type clockSource interface {
+	Now() int64
+	Changed() <-chan struct{}
+}
+
+// parkUntil blocks until the callback arrives (true) or the virtual deadline
+// passes (false). Extracted so its interleaving can be driven by a scripted
+// clock: the ordering bug it guards against lives in a nanosecond window no
+// integration test can force.
+func parkUntil(clk clockSource, deadline int64, ch <-chan webhookCallback) (webhookCallback, bool) {
+	for {
+		clockChanged := clk.Changed()
+		remaining := deadline - clk.Now()
+		if remaining <= 0 {
+			return webhookCallback{}, false
+		}
+		select {
+		case cb := <-ch:
+			return cb, true
+		case <-clockChanged:
+		case <-time.After(time.Duration(remaining) * time.Second):
+		}
+	}
+}
+
 func (e *pipelineExecutor) webhookActivity(
 	act pipeline.Activity,
 	tp map[string]json.RawMessage,
@@ -154,44 +182,31 @@ func (e *pipelineExecutor) webhookActivity(
 		return nil, err
 	}
 
-	// The park. Deadline on the virtual clock; three wake sources, and the
-	// real-time timer is re-armed from the REMAINING virtual duration each
-	// wake, because an Advance can consume most of it without any real time
-	// passing.
+	// The park — see parkUntil for the wake sources and the
+	// subscribe-before-read ordering it exists to hold.
 	deadline := e.a.Store.Now() + int64(timeout/time.Second)
-	for {
-		remaining := deadline - e.a.Store.Now()
-		if remaining <= 0 {
-			return nil, fmt.Errorf("webhook activity %q: no callback within the timeout — "+
-				"the receiver never called the callBackUri back", act.Name)
-		}
-		clockChanged := e.a.Store.Clock.Changed()
-		select {
-		case cb := <-ch:
-			out := map[string]any{"status": "Succeeded"}
-			for k, v := range cb.body {
-				out[k] = v
+	cb, ok := parkUntil(e.a.Store.Clock, deadline, ch)
+	if !ok {
+		return nil, fmt.Errorf("webhook activity %q: no callback within the timeout — "+
+			"the receiver never called the callBackUri back", act.Name)
+	}
+	out := map[string]any{"status": "Succeeded"}
+	for k, v := range cb.body {
+		out[k] = v
+	}
+	// reportStatusOnCallBack: the schema's words — "statusCode, output and
+	// error in callback request body will be consumed by activity". A reported
+	// statusCode outside 2xx fails the activity with the reported error.
+	if reportStatus {
+		if sc, ok := asInt(cb.body["statusCode"]); ok && (sc < 200 || sc > 299) {
+			msg := fmt.Sprint(cb.body["error"])
+			if msg == "<nil>" || msg == "" {
+				msg = fmt.Sprintf("callback reported statusCode %d", sc)
 			}
-			// reportStatusOnCallBack: the schema's words — "statusCode, output
-			// and error in callback request body will be consumed by activity".
-			// A reported statusCode outside 2xx fails the activity with the
-			// reported error.
-			if reportStatus {
-				if sc, ok := asInt(cb.body["statusCode"]); ok && (sc < 200 || sc > 299) {
-					msg := fmt.Sprint(cb.body["error"])
-					if msg == "<nil>" || msg == "" {
-						msg = fmt.Sprintf("callback reported statusCode %d", sc)
-					}
-					return nil, fmt.Errorf("webhook activity %q: %s", act.Name, msg)
-				}
-			}
-			return out, nil
-		case <-clockChanged:
-			// Re-check the deadline against the moved clock.
-		case <-time.After(time.Duration(remaining) * time.Second):
-			// Real time caught up with the virtual deadline.
+			return nil, fmt.Errorf("webhook activity %q: %s", act.Name, msg)
 		}
 	}
+	return out, nil
 }
 
 // asInt reads a JSON number (float64 after Unmarshal) or int as an int.

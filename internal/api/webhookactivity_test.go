@@ -195,3 +195,66 @@ func TestWebHookSchemaRules(t *testing.T) {
 }
 
 var _ = store.NewID // keep the import honest if helpers move
+
+// scriptedClock forces the interleaving no integration test can: its Now()
+// applies a pending mutation AFTER returning the pre-mutation value, modelling
+// a clock advance that lands exactly between the read and (under the buggy
+// ordering) the subscribe.
+type scriptedClock struct {
+	now      int64
+	pending  int64         // applied by the NEXT Now() call, after it returns
+	changed  chan struct{} // the channel a pre-read subscriber holds
+	fired    bool
+	nowCalls int
+}
+
+func (c *scriptedClock) Now() int64 {
+	c.nowCalls++
+	v := c.now
+	if c.pending != 0 && !c.fired {
+		// The mutation lands "now": time moves and the current change channel
+		// closes — exactly what clock.Clock does under its lock.
+		c.now += c.pending
+		c.fired = true
+		close(c.changed)
+	}
+	return v
+}
+
+func (c *scriptedClock) Changed() <-chan struct{} {
+	if c.fired {
+		// Post-mutation subscribers get a fresh, open channel — the buggy
+		// ordering ends up holding this one and never wakes.
+		return make(chan struct{})
+	}
+	return c.changed
+}
+
+// TestParkUntilSubscribesBeforeReading pins the ordering deterministically.
+// Under subscribe-first, the park holds the channel the mutation closes and
+// wakes immediately; under read-first (the bug fe found), it subscribes after
+// the mutation, holds a channel nobody will close, and sleeps toward the full
+// real-time deadline. The window in the real clock is nanoseconds wide, so a
+// stress loop cannot force it honestly — severing notifyChange proves the
+// mechanism is load-bearing but says nothing about its sequencing, which is
+// why this test exists separately from the mutation check.
+func TestParkUntilSubscribesBeforeReading(t *testing.T) {
+	clk := &scriptedClock{now: 0, pending: 601, changed: make(chan struct{})}
+	ch := make(chan webhookCallback)
+
+	done := make(chan bool, 1)
+	go func() {
+		_, ok := parkUntil(clk, 600, ch)
+		done <- ok
+	}()
+
+	select {
+	case ok := <-done:
+		if ok {
+			t.Fatal("park reported a callback that never happened")
+		}
+		// Expired via the mutation the held channel announced: correct.
+	case <-time.After(2 * time.Second):
+		t.Fatal("park missed the clock mutation — it read the clock before subscribing")
+	}
+}
