@@ -24,6 +24,7 @@ jobs:
   desktop:
     name: Power BI Desktop opens and answers (attempt ${{ matrix.attempt }})
     runs-on: windows-latest
+    timeout-minutes: 25
     continue-on-error: true
     strategy:
       fail-fast: false

@@ -45,6 +45,7 @@ jobs:
   build:
     name: Build Starlight site
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     # A failed CI run must not republish the site: its badge artifact is either
     # absent or from a build that did not pass, and either way the numbers
     # would not describe main. Other triggers carry no workflow_run context and
@@ -100,6 +101,7 @@ jobs:
     name: Deploy to GitHub Pages
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
