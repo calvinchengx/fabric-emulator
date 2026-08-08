@@ -87,6 +87,8 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	fs.StringVar(&cfg.SparkAgentURL, "spark-agent-url", cfg.SparkAgentURL, "Spark statement-executor agent for native Livy sessions (empty = off)")
 	fs.StringVar(&cfg.SQLTDSAddr, "sql-tds-addr", cfg.SQLTDSAddr, "listen address for the warehouse SQL/TDS endpoint (e.g. :1433; empty = off)")
 	fs.IntVar(&cfg.ListPageSize, "list-page-size", cfg.ListPageSize, "page size for list APIs (0 = default 100; small values force clients through the continuation-token loop; negative disables paging)")
+	tenantAdmins := strings.Join(cfg.TenantAdmins, ",")
+	fs.StringVar(&tenantAdmins, "tenant-admins", tenantAdmins, "comma-separated principal ids (oid, or appid for a service principal) that are Fabric administrators for /v1/admin/*; empty means nobody is, so every admin mutation is refused")
 	fs.BoolVar(&cfg.TSQLStrict, "tsql-strict", cfg.TSQLStrict, "refuse T-SQL that real Fabric rejects but SQL Server accepts (recursive CTEs, triggers, enforced constraints; see docs/29)")
 	fs.StringVar(&cfg.WarehouseSQLURL, "warehouse-sql-url", cfg.WarehouseSQLURL, "real SQL Server backend the SQL endpoint relays to (go-mssqldb DSN; empty = stub result)")
 	// A string rather than a bool so the flag reads like the env var it mirrors
@@ -105,6 +107,7 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	cfg.TenantAdmins = config.SplitList(tenantAdmins)
 	cfg.WebActivityStub = strings.EqualFold(webActivity, "stub")
 	if err := cfg.Finish(); err != nil {
 		return err

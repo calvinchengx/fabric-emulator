@@ -93,6 +93,12 @@ type Config struct {
 	// token out there would be the same as having none.
 	TerminalToken string
 
+	// TenantAdmins are the principal ids (oid, or appid for a service
+	// principal) that count as Fabric administrators for /v1/admin/*.
+	// Comma-separated in FABRIC_TENANT_ADMINS. Empty means nobody is one, so
+	// every mutating admin call is refused — see internal/api/tenantadmin.go.
+	TenantAdmins []string
+
 	// SQLTDSAddr, when set (e.g. ":1433"), starts the warehouse SQL endpoint:
 	// a TDS listener that terminates Entra FedAuth and answers T-SQL. Empty
 	// leaves the SQL endpoint off. See docs/16-warehouse-tds.md.
@@ -190,6 +196,7 @@ func FromEnvPartial() *Config {
 		SQLTDSAddr:          os.Getenv("FABRIC_SQL_TDS_ADDR"),
 		TerminalURL:         os.Getenv("FABRIC_TERMINAL_URL"),
 		TerminalToken:       os.Getenv("FABRIC_TERMINAL_TOKEN"),
+		TenantAdmins:        splitList(os.Getenv("FABRIC_TENANT_ADMINS")),
 		WebActivityStub:     strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
 		CustomActivityShell: strings.EqualFold(os.Getenv("FABRIC_CUSTOM_ACTIVITY"), "shell"),
 		WarehouseSQLURL:     os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
@@ -297,4 +304,20 @@ func (c *Config) Build() string {
 		short = short[:7]
 	}
 	return v + "-" + short
+}
+
+// splitList parses a comma-separated env var, trimming spaces and dropping
+// empties, so "a, b," yields two ids rather than three with one blank — a
+// blank id would otherwise match a principal whose ID failed to parse.
+// SplitList is exported for cmd, which parses the same list from a flag.
+func SplitList(s string) []string { return splitList(s) }
+
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

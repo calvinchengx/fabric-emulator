@@ -35,7 +35,7 @@ var adminWorkspaceTypes = map[string]string{
 var adminWorkspaceStates = map[string]string{"active": "Active", "deleted": "Deleted"}
 
 func (a *API) registerAdminWorkspaces(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/admin/workspaces", a.withAuth(a.adminListWorkspaces))
+	mux.HandleFunc("GET /v1/admin/workspaces", a.withTenantRead(a.adminListWorkspaces))
 }
 
 // adminWorkspace is the documented Workspace object. Fields the emulator does

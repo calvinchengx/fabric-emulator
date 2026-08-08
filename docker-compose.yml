@@ -86,6 +86,13 @@ services:
       # volume there); this compose file mounts none, so state is in-memory —
       # override back to empty or the store fails to open /data (no volume).
       FABRIC_DATA_DIR: ""
+      # Who is a Fabric administrator. The binary defaults to NOBODY — an
+      # unconfigured emulator refuses every /v1/admin/* mutation rather than
+      # letting any authenticated principal govern the tenant. That default is
+      # right for a library and wrong for a dev stack you just brought up, so
+      # this compose declares the well-known daemon app entra-emulator seeds.
+      # Matched against the token's appid or oid; comma-separated for more.
+      FABRIC_TENANT_ADMINS: "${FABRIC_TENANT_ADMINS:-cccccccc-0000-0000-0000-000000000002}"
   # The terminal pane's backend: ttyd, a shell over a websocket, for the Flow
   # view's side-by-side terminal (drive the pipeline while you watch it run).
   #

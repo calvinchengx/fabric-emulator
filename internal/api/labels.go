@@ -34,9 +34,9 @@ const (
 )
 
 func (a *API) registerLabels(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/admin/labels", a.withAuth(a.listLabels))
-	mux.HandleFunc("POST /v1/admin/items/bulkSetLabels", a.withAuth(a.bulkSetLabels))
-	mux.HandleFunc("POST /v1/admin/items/bulkRemoveLabels", a.withAuth(a.bulkRemoveLabels))
+	mux.HandleFunc("GET /v1/admin/labels", a.withTenantRead(a.listLabels))
+	mux.HandleFunc("POST /v1/admin/items/bulkSetLabels", a.withTenantAdmin(a.bulkSetLabels))
+	mux.HandleFunc("POST /v1/admin/items/bulkRemoveLabels", a.withTenantAdmin(a.bulkRemoveLabels))
 }
 
 func (a *API) listLabels(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
