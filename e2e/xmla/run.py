@@ -123,6 +123,44 @@ def require_free_port(port, what):
 ANSWER_ROUTING = False
 WORKSPACE = "ws"   # the workspace the probe names in its Data Source
 
+# CANDIDATE ROUTING SHAPES, screened one per request.
+#
+# The first Phase 0 run established that ADOMD.NET CONSUMES the reply — it
+# stopped complaining about the response and started complaining about the
+# CONTENT ("The specified Power BI workspace ('ws') is not found"). So the
+# remaining unknown is narrow: which field does it match the Data Source's
+# workspace name against, and does it expect the list wrapped?
+#
+# The probe opens three powerbi:// connections per run, each making exactly one
+# routing call once answered. That is three shapes per five-minute run instead
+# of one, and every shape is reported by its own connection's error — so this
+# is a SCREEN, not a guess. If one advances, the next run narrows it; if none
+# does, four hypotheses die at once.
+def _shapes(host):
+    cluster = f"https://{host}/"
+    rich = {                       # every plausible spelling, at once
+        "name": WORKSPACE, "workspaceName": WORKSPACE, "displayName": WORKSPACE,
+        "folderName": WORKSPACE, "id": "00000000-0000-0000-0000-000000000001",
+        "objectId": "00000000-0000-0000-0000-000000000001",
+        "capacityObjectId": "00000000-0000-0000-0000-000000000002",
+        "clusterUri": cluster, "fixedClusterUri": cluster, "backendUri": cluster,
+    }
+    return [
+        # 1. BARE ARRAY — is the `value` envelope wrong rather than the fields?
+        ("bare-array", [dict(rich)]),
+        # 2. value ENVELOPE + every field spelling — isolates envelope from field.
+        ("value-envelope-rich", {"@odata.context": f"{cluster}powerbi/databases/v201606/$metadata#workspaces",
+                                 "value": [dict(rich)]}),
+        # 3. PascalCase — .NET deserialisers frequently bind these; if the
+        #    client is case-sensitive this is the difference.
+        ("pascal-case", {"Value": [{"Name": WORKSPACE, "Id": rich["id"],
+                                    "CapacityObjectId": rich["capacityObjectId"],
+                                    "ClusterUri": cluster, "FixedClusterUri": cluster}]}),
+    ]
+
+
+SHAPE_LOG = []   # [(shape name, request path)] — which shape answered which call
+
 REQUESTS = []          # [{method, path, headers: {lower: value}, body}]
 HANDSHAKE_ERRORS = []  # TCP connected, TLS refused — a distinct diagnosis
 LOCK = threading.Lock()
@@ -153,15 +191,12 @@ class Capture(http.server.BaseHTTPRequestHandler):
             # and its NEXT request is captured — which is the entire deliverable
             # of Phase 0. If the client rejects this shape, its exception text
             # is the measurement instead, and just as useful.
-            body = json.dumps({
-                "@odata.context": f"https://{self.headers.get('Host', '')}/powerbi/databases/v201606/$metadata#workspaces",
-                "value": [{
-                    "name": WORKSPACE,
-                    "id": "00000000-0000-0000-0000-000000000001",
-                    "capacityObjectId": "00000000-0000-0000-0000-000000000002",
-                    "clusterUri": f"https://{self.headers.get('Host', '')}/",
-                }],
-            }).encode()
+            shapes = _shapes(self.headers.get("Host", ""))
+            with LOCK:
+                label, payload = shapes[len(SHAPE_LOG) % len(shapes)]
+                SHAPE_LOG.append((label, self.path))
+            print(f"    -> answering with shape {label!r}", flush=True)
+            body = json.dumps(payload).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -419,4 +454,28 @@ else:
           "text below is what the shape lacked:", flush=True)
 print("\n---- phase 0 probe stdout ----", flush=True)
 print(proc2.stdout.strip() or "(empty)", flush=True)
+
+# Attribute each connection's outcome to the shape that answered its routing
+# call. Without this pairing the screen is three unlabelled results and proves
+# nothing about which hypothesis died.
+print("\n---- shape screen ----", flush=True)
+outcomes = [ln for ln in proc2.stdout.splitlines() if ln.startswith("CASE powerbi")]
+if len(SHAPE_LOG) != len(outcomes):
+    print(f"  NOT PAIRED: {len(SHAPE_LOG)} shape(s) served, {len(outcomes)} powerbi "
+          f"case(s) reported — the 1:1 assumption does not hold, so nothing below "
+          f"is attributable.", flush=True)
+for (label, _), line in zip(SHAPE_LOG, outcomes):
+    # DIFFERENT means "the client changed its mind", NOT "this shape is
+    # closer". A shape can differ by failing EARLIER — which is what
+    # bare-array does — so the label states the fact and leaves the direction
+    # to the reader rather than implying progress.
+    verdict = "STILL NOT FOUND" if "is not found" in line else "*** DIFFERENT ***"
+    print(f"  {label:22} {verdict}", flush=True)
+    print(f"  {'':22} {line.strip()}", flush=True)
+print("\nDIFFERENT = the client reacted differently; read the message to see "
+      "whether that is progress or a regression. All STILL NOT FOUND means "
+      "field spelling is not the variable and the next hypothesis must be "
+      "structural. The single-shape run is the CONTROL: all three connection "
+      "types reported identically there, so a difference here is attributable "
+      "to the shape and not to the Data Source form.", flush=True)
 print("\nPASSED: the ADOMD.NET client contract is unchanged.")
