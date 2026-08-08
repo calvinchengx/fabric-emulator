@@ -48,9 +48,12 @@ REWORDED = (
 UNCLASSIFIED = "go: module lookup disabled by GOFLAGS; see https://proxy.golang.org/ for details"
 
 
+class RetryContractError(AssertionError):
+    """Raised instead of exiting, so pytest can drive these assertions too."""
+
+
 def fail(msg):
-    print(f"FAIL: {msg}")
-    sys.exit(1)
+    raise RetryContractError(msg)
 
 
 def check(name, cond):
@@ -165,4 +168,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RetryContractError as e:
+        print(f"check_entra_install: FAIL: {e}")
+        sys.exit(1)

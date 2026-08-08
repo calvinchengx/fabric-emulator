@@ -56,9 +56,12 @@ DEFINITION = {
 }
 
 
+class RedactionError(AssertionError):
+    """Raised instead of exiting, so pytest can drive these assertions too."""
+
+
 def fail(msg):
-    print(f"FAIL: {msg}")
-    sys.exit(1)
+    raise RedactionError(msg)
 
 
 def main():
@@ -106,4 +109,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RedactionError as e:
+        print(f"check_capture_redaction: FAIL: {e}")
+        sys.exit(1)
