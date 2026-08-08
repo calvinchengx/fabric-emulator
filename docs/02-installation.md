@@ -42,7 +42,7 @@ cross-compiles and installs anywhere Go runs.
 
 ```bash
 docker run --rm -p 9443:9443 \
-  -e FABRIC_ENTRA_ISSUER="https://host.docker.internal:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0" \
+  -e FABRIC_ENTRA_ISSUER="https://host.docker.internal:8443/11111111-1111-1111-1111-111111111111/v2.0" \
   -e FABRIC_ENTRA_TLS_INSECURE=true \
   ghcr.io/calvinchengx/fabric-emulator:latest
 ```

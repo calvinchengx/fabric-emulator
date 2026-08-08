@@ -30,7 +30,7 @@ One switch: `FABRIC_TARGET=emulator | real` (default `emulator`).
 |---|---|---|
 | API root | `https://localhost:9443/v1` | `https://api.fabric.microsoft.com/v1` |
 | Token authority | entra-emulator (`https://localhost:8443/{tenant}`) | `https://login.microsoftonline.com/{AZURE_TENANT_ID}` |
-| Credential | seeded daemon SP (`00d88624-…8928` / `daemon-app-secret`) | `AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`, or `DefaultAzureCredential` (az CLI, managed identity, browser) |
+| Credential | seeded daemon SP (`cccccccc-…0002` / `daemon-app-secret`) | `AZURE_CLIENT_ID`/`AZURE_CLIENT_SECRET`, or `DefaultAzureCredential` (az CLI, managed identity, browser) |
 | OneLake | `https://localhost:9443` + Host/`--resolve` (or `az://` via Sail) | `https://onelake.dfs.fabric.microsoft.com` |
 | Key Vault | azure-keyvault-emulator (`https://localhost:8444`) | the user's real vault URI |
 | TLS verify | off (self-signed family certs) | on |
@@ -105,7 +105,7 @@ Per member, "real" resolves as:
   `https://{name}.vault.azure.net`). Vault **names** are the cross-target
   contract, exactly like workspace names; `AzureKeyVaultReference`
   connections carry the same shape on both sides.
-- **Seeded values never leak into real mode.** Tenant `6f89cf12-…`, the
+- **Seeded values never leak into real mode.** Tenant `11111111-…`, the
   daemon SP, and `daemon-app-secret` are emulator-mode defaults only; in real
   mode the resolver requires a **real credential source** — env SP vars *or*
   a live `az login` (the `DefaultAzureCredential` chain probe) — and refuses

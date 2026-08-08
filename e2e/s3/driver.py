@@ -34,8 +34,8 @@ ENTRA = os.environ.get("ENTRA", "http://entra-emulator:8443")
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://seaweedfs:8333")
 ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
 SECRET_KEY = os.environ["S3_SECRET_KEY"]
-TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
-CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
+TENANT = "11111111-1111-1111-1111-111111111111"
+CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"
 
 BUCKET = "lake-exports"
 KEY = "curated/readings.csv"

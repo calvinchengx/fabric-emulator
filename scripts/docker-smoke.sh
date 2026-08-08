@@ -22,7 +22,7 @@ docker build -q -t "$IMG" "$(dirname "$0")/.." >/dev/null
 echo "==> running it with a persistent volume (default config)"
 docker volume create "$VOL" >/dev/null
 CID=$(docker run -d -v "$VOL":/data \
-	-e FABRIC_ENTRA_ISSUER="https://entra.example/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0" \
+	-e FABRIC_ENTRA_ISSUER="https://entra.example/11111111-1111-1111-1111-111111111111/v2.0" \
 	"$IMG")
 
 echo "==> waiting for health (server opened its DB and is serving)"

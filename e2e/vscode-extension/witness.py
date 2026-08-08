@@ -8,7 +8,7 @@ import urllib.request
 
 ENTRA = "http://entra-emulator:8443"
 PBI = "https://api.powerbi.com"
-TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+TENANT = "11111111-1111-1111-1111-111111111111"
 SSL = ssl._create_unverified_context()
 
 
@@ -37,7 +37,7 @@ assert len(contract["routes"]) == 15
 form = urllib.parse.urlencode(
     {
         "grant_type": "client_credentials",
-        "client_id": "00d88624-f0d7-46f6-a641-6232c2608928",
+        "client_id": "cccccccc-0000-0000-0000-000000000002",
         "client_secret": "daemon-app-secret",
         "scope": "https://analysis.windows.net/powerbi/api/.default",
     }
