@@ -5,10 +5,11 @@ was published by the site and linked from no sidebar group, so nothing reached
 it — but the checker itself was executed by no test, which is the state it
 exists to prevent elsewhere.
 
-The interesting part is the PUBLISHED pattern: it mirrors `DOC_RE` in
-website/scripts/sync-docs.mjs, and a mismatch there means the checker guards a
-different set of files than the site actually publishes. That is the drift worth
-pinning.
+The interesting part is which set of files counts as published. That is decided
+by `DOC_RE` in website/scripts/sync-docs.mjs, and the checker used to keep a
+copy of it — a mismatch there meant the checker guarded a different set than the
+site published, silently. The copy is gone; the pattern is derived, and the
+tests below pin the derivation rather than a restatement of it.
 """
 import pathlib
 import sys
@@ -81,15 +82,72 @@ def test_only_site_published_docs_are_required(site, capsys, name, published):
     assert (rc == 1) == published, f"{name}: published={published} but rc={rc}"
 
 
-def test_the_pattern_matches_the_sites_own_regex():
-    # The checker guards the set sync-docs.mjs publishes. If that regex is
-    # edited and this one is not, the check silently guards a different set.
-    mjs = (ROOT / "website" / "scripts" / "sync-docs.mjs").read_text()
-    assert "DOC_RE" in mjs, "sync-docs.mjs no longer defines DOC_RE"
-    for name in ("01-quickstart.md", "parity.md", "engine-matrix.md"):
-        assert c.PUBLISHED.match(name), name
-    for name in ("README.md", "AUDIT.md"):
-        assert not c.PUBLISHED.match(name), name
+# THE COUPLING THIS USED TO PRETEND TO PIN.
+#
+# The checker guards the set sync-docs.mjs publishes. It used to keep its own
+# copy of that regex under a comment saying "Mirrors DOC_RE in …", and the test
+# here asserted `"DOC_RE" in mjs` — that the NAME still appeared in the file —
+# then checked the local copy against a hand-written list of filenames.
+#
+# Both halves passed for the wrong reason. Editing DOC_RE to publish a
+# different set left the name present and the hand-written list matching the
+# stale copy, so the check silently guarded a set the site no longer used. The
+# assertion matched a phrase that co-occurs with the claim, not the claim.
+#
+# The pattern is now DERIVED from the .mjs, so these test the derivation — and
+# the first one cannot pass against a hardcoded copy, which is the point.
+
+def test_the_pattern_is_read_from_the_site_not_copied(tmp_path):
+    # A DIFFERENT DOC_RE must produce a DIFFERENT published set. A copy in
+    # check_docs_sidebar.py would ignore this file and fail here.
+    mjs = tmp_path / "sync-docs.mjs"
+    mjs.write_text("const DOC_RE = /^(chapter-.*|glossary)\\.md$/;\n")
+    pattern = c.published_pattern(mjs)
+    assert pattern.match("chapter-01.md"), "the site's own regex was not used"
+    assert pattern.match("glossary.md")
+    assert not pattern.match("01-quickstart.md"), (
+        "the OLD hardcoded pattern is still in force — the derivation is not wired up")
+
+
+def test_the_real_sites_pattern_publishes_the_documented_set():
+    pattern = c.published_pattern()
+    for name in ("01-quickstart.md", "39-run-multiple.md", "parity.md", "engine-matrix.md"):
+        assert pattern.match(name), name
+    for name in ("README.md", "AUDIT.md", "1-short.md"):
+        assert not pattern.match(name), name
+
+
+def test_a_missing_declaration_fails_loudly(tmp_path):
+    # Falling back to a copied default here would rebuild the exact bug this
+    # change removes: a check guarding a guessed set, silently.
+    mjs = tmp_path / "sync-docs.mjs"
+    mjs.write_text("const OTHER_RE = /^x$/;\n")
+    with pytest.raises(c.PatternUnavailable, match="DOC_RE"):
+        c.published_pattern(mjs)
+
+
+def test_an_absent_file_fails_loudly(tmp_path):
+    with pytest.raises(c.PatternUnavailable, match="cannot read"):
+        c.published_pattern(tmp_path / "nope.mjs")
+
+
+def test_a_regex_python_cannot_compile_fails_loudly(tmp_path):
+    # JS and Python share the subset this pattern uses; if DOC_RE ever leaves
+    # it, that must be a loud translation decision, not a silent mismatch.
+    mjs = tmp_path / "sync-docs.mjs"
+    # JS named groups are `(?<name>…)`; Python spells them `(?P<name>…)` and
+    # rejects the JS form. (Lookbehind would NOT work as a probe here — both
+    # languages accept `(?<=…)`, and the first draft of this test used it and
+    # failed to raise, which is the same "assert the substance" lesson again.)
+    mjs.write_text("const DOC_RE = /^(?<kind>\\d{2})-.*\\.md$/;\n")
+    with pytest.raises(c.PatternUnavailable):
+        c.published_pattern(mjs)
+
+
+def test_main_reports_an_underivable_pattern_instead_of_guessing(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(c, "SYNC_DOCS", tmp_path / "gone.mjs")
+    assert c.main() == 1
+    assert "cannot read" in capsys.readouterr().out
 
 
 # --- refusing to pass vacuously ----------------------------------------------
