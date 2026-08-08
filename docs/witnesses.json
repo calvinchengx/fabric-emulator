@@ -609,7 +609,13 @@
     "witnesses": [
       "ci:external-s3",
       "ci:azurite-shortcut",
-      "ci:external-shortcuts"
+      "ci:external-shortcuts",
+      "go:TestTheDFSSurfaceRefusesWritesThroughADataverseShortcut",
+      "go:TestDataverseShortcutReadsThroughToTheTarget",
+      "go:TestDataverseShortcutRefusesWrites",
+      "go:TestDataverseShortcutRefusesDeletes",
+      "go:TestDataverseShortcutRoundTripsItsDocumentedFields",
+      "go:TestDataverseShortcutRequiresEveryDocumentedField"
     ]
   },
   "spark-job-definitions": {

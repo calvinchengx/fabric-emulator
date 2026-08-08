@@ -124,3 +124,212 @@ func TestExternalShortcutsCRUD(t *testing.T) {
 		t.Fatalf("missing connection = %d %s", w.Code, w.Body.Bytes())
 	}
 }
+
+// A Dataverse target is addressed unlike every other one: no `location`, and
+// four fields that together name the environment, the folder and the table.
+// The response must echo those four back — reusing the storage-shaped
+// location/subpath DTO would invent fields the reference does not have and
+// drop two that it does.
+func TestDataverseShortcutRoundTripsItsDocumentedFields(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "src"}
+	if err := st.CreateItem(src, nil); err != nil {
+		t.Fatal(err)
+	}
+	conn := &store.Connection{DisplayName: "dataverse", CredentialsJSON: `{"credentialType":"Anonymous"}`}
+	if err := st.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	pv := map[string]string{"wid": ws.ID, "iid": src.ID}
+	body := `{"path":"Tables","name":"account","target":{"dataverse":{` +
+		`"environmentDomain":"https://contoso.crm11.dynamics.com",` +
+		`"deltaLakeFolder":"deltalake","tableName":"account",` +
+		`"connectionId":"` + conn.ID + `"}}}`
+
+	w := do(a.createShortcut, admin, "POST", body, pv)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", w.Code, w.Body.Bytes())
+	}
+	var got map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	target, _ := got["target"].(map[string]any)
+	if target == nil || target["type"] != "Dataverse" {
+		t.Fatalf("target = %#v, want type Dataverse", target)
+	}
+	if target["location"] != nil || target["subpath"] != nil {
+		t.Fatalf("target carries storage fields it should not: %#v", target)
+	}
+	dv, _ := target["dataverse"].(map[string]any)
+	for field, want := range map[string]string{
+		"environmentDomain": "https://contoso.crm11.dynamics.com",
+		"deltaLakeFolder":   "deltalake",
+		"tableName":         "account",
+		"connectionId":      conn.ID,
+	} {
+		if dv[field] != want {
+			t.Errorf("dataverse.%s = %v, want %q", field, dv[field], want)
+		}
+	}
+
+	// The GET must reconstruct the same four fields from storage. deltaLakeFolder
+	// and tableName share one path in the store, so a bad split shows up here
+	// and nowhere else.
+	w = do(a.getShortcut, admin, "GET", "", map[string]string{
+		"wid": ws.ID, "iid": src.ID, "path": "Tables", "name": "account"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("get = %d", w.Code)
+	}
+	var reread map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &reread)
+	rdv := reread["target"].(map[string]any)["dataverse"].(map[string]any)
+	if rdv["deltaLakeFolder"] != "deltalake" || rdv["tableName"] != "account" {
+		t.Fatalf("re-read folder/table = %v/%v, want deltalake/account — the two "+
+			"documented fields are not surviving the round trip", rdv["deltaLakeFolder"], rdv["tableName"])
+	}
+}
+
+// None of the four fields has a defensible default: together they ARE the
+// location. A target missing one cannot resolve, so it must be refused at
+// create rather than 502 later at read.
+func TestDataverseShortcutRequiresEveryDocumentedField(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "src"}
+	if err := st.CreateItem(src, nil); err != nil {
+		t.Fatal(err)
+	}
+	conn := &store.Connection{DisplayName: "dataverse", CredentialsJSON: `{"credentialType":"Anonymous"}`}
+	if err := st.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	pv := map[string]string{"wid": ws.ID, "iid": src.ID}
+	full := map[string]string{
+		"environmentDomain": `"https://contoso.crm11.dynamics.com"`,
+		"deltaLakeFolder":   `"deltalake"`,
+		"tableName":         `"account"`,
+		"connectionId":      `"` + conn.ID + `"`,
+	}
+	for omit := range full {
+		fields := ""
+		for k, v := range full {
+			if k == omit {
+				continue
+			}
+			if fields != "" {
+				fields += ","
+			}
+			fields += `"` + k + `":` + v
+		}
+		body := `{"path":"Tables","name":"x","target":{"dataverse":{` + fields + `}}}`
+		w := do(a.createShortcut, admin, "POST", body, pv)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("omitting %s = %d, want 400 — a Dataverse target with no %s "+
+				"cannot address anything", omit, w.Code, omit)
+		}
+	}
+
+	// A non-http(s) environmentDomain is refused for the same reason the other
+	// external targets refuse a bad location: the read path builds a URL from it.
+	bad := `{"path":"Tables","name":"y","target":{"dataverse":{` +
+		`"environmentDomain":"contoso.crm11.dynamics.com","deltaLakeFolder":"d",` +
+		`"tableName":"t","connectionId":"` + conn.ID + `"}}}`
+	if w := do(a.createShortcut, admin, "POST", bad, pv); w.Code != http.StatusBadRequest {
+		t.Errorf("schemeless environmentDomain = %d, want 400", w.Code)
+	}
+
+	// And the connection must resolve, or the shortcut has no credential to
+	// present under Dataverse's delegated authorization model.
+	orphan := `{"path":"Tables","name":"z","target":{"dataverse":{` +
+		`"environmentDomain":"https://contoso.crm11.dynamics.com","deltaLakeFolder":"d",` +
+		`"tableName":"t","connectionId":"11111111-2222-3333-4444-555555555555"}}}`
+	if w := do(a.createShortcut, admin, "POST", orphan, pv); w.Code != http.StatusBadRequest ||
+		errorCode(t, w) != "ConnectionNotFound" {
+		t.Errorf("unresolvable connectionId = %d %s", w.Code, w.Body.Bytes())
+	}
+}
+
+// The documented `Type` enum spells ADLS as **AdlsGen2**. The emulator stores
+// "ADLSGen2" internally (and keeps doing so — renaming the column would be a
+// migration for no gain), but the wire value is a documented enum member and
+// was wrong. Caught while adding Dataverse next to it.
+func TestExternalShortcutTypeUsesTheDocumentedEnumSpelling(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "src"}
+	if err := st.CreateItem(src, nil); err != nil {
+		t.Fatal(err)
+	}
+	conn := &store.Connection{DisplayName: "s", CredentialsJSON: `{"credentialType":"Anonymous"}`}
+	if err := st.CreateConnection(conn); err != nil {
+		t.Fatal(err)
+	}
+	pv := map[string]string{"wid": ws.ID, "iid": src.ID}
+	for kind, wantType := range map[string]string{"adlsGen2": "AdlsGen2", "amazonS3": "AmazonS3"} {
+		body := `{"path":"Files","name":"` + kind + `","target":{"` + kind +
+			`":{"location":"http://storage.test/root","subpath":"/f","connectionId":"` + conn.ID + `"}}}`
+		w := do(a.createShortcut, admin, "POST", body, pv)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("%s create = %d %s", kind, w.Code, w.Body.Bytes())
+		}
+		var got map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		if gotType := got["target"].(map[string]any)["type"]; gotType != wantType {
+			t.Errorf("%s target.type = %v, want %q (the documented Type enum member)", kind, gotType, wantType)
+		}
+	}
+}
+
+// LIST-VS-LIST, over pairs rather than types.
+//
+// store registers which target types are external; shortcutDTO decides which
+// wire shape each one gets. Those are two lists, and the failure when they
+// disagree is silent: a registered external type with no DTO branch is echoed
+// as a **OneLake** target with empty workspaceId/itemId — a well-formed
+// response describing a shortcut that does not exist. Reads still work, so
+// nothing errors; only what clients are told is wrong.
+//
+// The test enumerates store's list rather than restating it. A hand-written
+// second copy would pass exactly when the two drifted, which is the bug.
+func TestEveryRegisteredExternalTypeGetsItsOwnWireShape(t *testing.T) {
+	types := store.ExternalTargetTypes()
+	if len(types) == 0 {
+		t.Fatal("no external target types registered; this test would assert nothing")
+	}
+	for _, typeName := range types {
+		sc := &store.Shortcut{
+			Path: "Files", Name: "x", TargetType: typeName,
+			TargetLocation: "https://target.test", TargetPath: "folder",
+			TargetTable: "account", ConnectionID: "conn-1",
+		}
+		target := shortcutDTO(sc)["target"].(map[string]any)
+		if target["oneLake"] != nil {
+			t.Errorf("%s is registered external but shortcutDTO echoed a oneLake target — "+
+				"clients would be handed a shortcut that does not exist", typeName)
+		}
+		if target["type"] == "OneLake" {
+			t.Errorf("%s echoed target.type = OneLake", typeName)
+		}
+		// AND it must have a real body, not just a type. The runtime guard in
+		// shortcutDTO returns a bare {"type": …} for a registered type with no
+		// branch — which is the right thing to SERVE (it cannot masquerade as
+		// a OneLake target) and the wrong thing to SHIP. Without this
+		// assertion the guard would absorb the very drift the test exists to
+		// catch: registering a type and forgetting its shape would stay green.
+		if len(target) < 2 {
+			t.Errorf("%s is registered external but has no DTO branch — it falls through to "+
+				"the bare {\"type\"} guard, so clients get a target with no fields. "+
+				"Add its documented shape to shortcutDTO.", typeName)
+		}
+		// Every external type carries a connection; if the shape has a body at
+		// all, that body must name it rather than dropping it silently.
+		for key, body := range target {
+			if key == "type" {
+				continue
+			}
+			if m, ok := body.(map[string]any); ok && m["connectionId"] != "conn-1" {
+				t.Errorf("%s: %s.connectionId = %v, want the shortcut's connection", typeName, key, m["connectionId"])
+			}
+		}
+	}
+}

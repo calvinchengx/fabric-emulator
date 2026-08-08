@@ -174,7 +174,7 @@ func (s *Service) resolveRead(itemID, rel, principalID string) (*store.OneLakePa
 	if sc == nil {
 		return nil, &dfsError{"PathNotFound", http.StatusNotFound, "The path does not exist."}
 	}
-	if sc.TargetType == "ADLSGen2" || sc.TargetType == "AmazonS3" {
+	if sc.IsExternalTarget() {
 		return s.resolveExternal(sc, remainder)
 	}
 	role, err := s.Store.RoleOf(sc.TargetWorkspace, principalID)
@@ -198,7 +198,13 @@ func (s *Service) resolveRead(itemID, rel, principalID string) (*store.OneLakePa
 // applied identically however the shortcut is being used — the read path
 // having its own copy is how the S3 signing bug stayed invisible to writes.
 func (s *Service) externalRequest(sc *store.Shortcut, method, remainder string, body []byte) (*http.Request, *dfsError) {
-	target, err := url.Parse(sc.TargetLocation + "/" + joinPath(sc.TargetPath, remainder))
+	// TargetTable sits between the folder and the remainder rather than being
+	// folded into TargetPath at create time, so the DTO can echo Dataverse's
+	// `deltaLakeFolder` and `tableName` back as the two separate fields the
+	// reference documents. It is empty for every other target type, and
+	// joinPath drops empty segments, so this composes identically for them.
+	root := joinPath(sc.TargetPath, sc.TargetTable)
+	target, err := url.Parse(sc.TargetLocation + "/" + joinPath(root, remainder))
 	if err != nil {
 		return nil, &dfsError{"ExternalTargetInvalid", http.StatusBadGateway, err.Error()}
 	}
@@ -267,8 +273,16 @@ func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.
 // Fabric documents S3 shortcuts as read-only — "They don't support write
 // operations regardless of the user's permissions"
 // (onelake/create-s3-shortcut.md) — so a write there must fail rather than be
-// forwarded. ADLS Gen2 carries no such restriction, and the shortcuts doc
-// describes deleting through one deleting in the target account.
+// forwarded. Dataverse carries the identical sentence, word for word
+// (onelake/create-dataverse-shortcut.md, stated twice: in the intro and again
+// under Limitations), and is read-only for the same reason. ADLS Gen2 carries
+// no such restriction, and the shortcuts doc describes deleting through one
+// deleting in the target account.
+//
+// Note this is NOT the negation of Shortcut.IsExternalTarget: a target can be external
+// and still refuse writes, which is exactly the case the two predicates exist
+// to keep apart. Writable is the narrow allow-list; external is the broad one,
+// and it lives in store because the API layer asks it too.
 func externalWritable(sc *store.Shortcut) bool { return sc.TargetType == "ADLSGen2" }
 
 // writeExternal pushes the assembled file to the shortcut target. Called at
@@ -599,8 +613,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// (onelake/onelake-shortcuts.md, "How do shortcuts handle
 		// deletions?"). Deleting the shortcut object itself is a
 		// control-plane operation and does not reach here.
-		if sc, remainder, err := s.Store.ShortcutFor(it.ID, rel); err == nil && sc != nil &&
-			(sc.TargetType == "ADLSGen2" || sc.TargetType == "AmazonS3") {
+		if sc, remainder, err := s.Store.ShortcutFor(it.ID, rel); err == nil && sc != nil && sc.IsExternalTarget() {
 			if derr := s.deleteExternal(sc, remainder); derr != nil {
 				writeDFSErr(w, *derr)
 				return
@@ -650,8 +663,7 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request, itemID, rel stri
 		// Flush is the point the DFS protocol considers the file written, so
 		// that is where the bytes go upstream. Without this the write would
 		// succeed locally and silently never reach the storage account.
-		if sc, remainder, err := s.Store.ShortcutFor(itemID, rel); err == nil && sc != nil &&
-			(sc.TargetType == "ADLSGen2" || sc.TargetType == "AmazonS3") {
+		if sc, remainder, err := s.Store.ShortcutFor(itemID, rel); err == nil && sc != nil && sc.IsExternalTarget() {
 			if derr := s.writeExternal(sc, remainder, pth.Content); derr != nil {
 				// Drop the local buffer: it must not masquerade as target data.
 				_ = s.Store.DeleteOneLakePath(itemID, rel)
