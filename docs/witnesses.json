@@ -135,7 +135,9 @@
     "claim": "Data Pipeline control flow (If / ForEach / Until / Switch / Filter / Fail, expression language, `dependsOn`)",
     "witnesses": [
       "go:TestForEachInnerFailurePropagates",
-      "go:TestPipelineInvokeByName"
+      "go:TestPipelineInvokeByName",
+      "go:TestInactiveActivityNeverExecutes",
+      "go:TestInactiveMarkedFailedSteersBranchesWithoutFailingTheRun"
     ]
   },
   "data-science-ml-models-experiments-mlflow-data-science": {
@@ -678,17 +680,6 @@
       "ci:dbt-fabric"
     ]
   },
-  "web-webhook-activity": {
-    "claim": "**Web / WebHook** activity",
-    "section": "Data Factory (`data-factory/`)",
-    "witnesses": [
-      "go:TestWebActivityReallyCalls",
-      "go:TestWebActivityFailsOnNon2xx",
-      "go:TestWebActivityHonoursThePolicyTimeout",
-      "go:TestWebActivityResolvesExpressions",
-      "go:TestWebActivityStubModeSaysItDidNotCall"
-    ]
-  },
   "workspace-managed-identity-handshake": {
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "Workspace managed identity handshake",
@@ -775,12 +766,42 @@
       "py:test_spark_agent_sql_envelope"
     ]
   },
+  "delete-data-activity": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Delete data** activity",
+    "witnesses": [
+      "go:TestPipelineDeleteFile",
+      "go:TestPipelineDeleteRecursiveVsFlat",
+      "go:TestPipelineDeleteMissingFailsLoudly"
+    ]
+  },
+  "web-activity-and-webhook-refused": {
+    "claim": "**Web** activity (and **WebHook**, refused)",
+    "section": "Data Factory (`data-factory/`)",
+    "witnesses": [
+      "go:TestWebActivityReallyCalls",
+      "go:TestWebActivityFailsOnNon2xx",
+      "go:TestWebActivityHonoursThePolicyTimeout",
+      "go:TestWebActivityResolvesExpressions",
+      "go:TestWebActivityStubModeSaysItDidNotCall",
+      "go:TestPipelineWebHookRefusesLoudly"
+    ]
+  },
   "copyjob": {
     "section": "Item types present, engine absent",
     "claim": "**`CopyJob`**",
     "witnesses": [
       "go:TestCopyJobExecuteReallyCopies",
       "go:TestCopyJobRefusesWhatItCannotHonour"
+    ]
+  },
+  "functions-activity-azurefunctionactivity": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Functions** activity (`AzureFunctionActivity`)",
+    "witnesses": [
+      "go:TestFunctionActivityCallsForReal",
+      "go:TestFunctionActivityWrongKeyFails",
+      "go:TestFunctionActivitySchemaRules"
     ]
   }
 }

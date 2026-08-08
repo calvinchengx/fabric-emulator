@@ -11,6 +11,7 @@ package pipeline
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Terminal activity/pipeline statuses (Fabric's spelling).
@@ -27,6 +28,12 @@ type Activity struct {
 	DependsOn      []Dependency    `json:"dependsOn"`
 	Policy         *Policy         `json:"policy,omitempty"`
 	TypeProperties json.RawMessage `json:"typeProperties"`
+	// State carries Fabric's Deactivate feature (activity-overview.md): an
+	// activity with state "Inactive" must NOT execute. These fields were
+	// previously absent, so a deactivated activity — one a user explicitly
+	// "commented out" in the portal — ran here anyway, side effects included.
+	State            string `json:"state,omitempty"`
+	OnInactiveMarkAs string `json:"onInactiveMarkAs,omitempty"`
 }
 
 // Policy is an activity's execution policy — Fabric's per-activity General
@@ -201,6 +208,30 @@ func (r *run) runActivities(acts []Activity, item value) string {
 				r.record(a, StatusSkipped, nil, "", 0)
 				r.flushActivities()
 				r.outputs[a.Name] = map[string]value{"status": StatusSkipped}
+				continue
+			}
+			if strings.EqualFold(a.State, "Inactive") {
+				// Deactivated (activity-overview.md): "an inactive activity
+				// never actually runs. Instead, it runs a place holder line
+				// item, with the reserved status Inactive", and BRANCHING
+				// follows "Mark activity as". So the run report says Inactive,
+				// while the dependency graph sees the marked status — two
+				// deliberately different answers. No outputs entry either:
+				// Fabric says the activity "won't have an error field, or its
+				// typical output fields", so a downstream reference should
+				// fail to resolve rather than find an invented value. A mark
+				// of Failed steers UponFailure branches but does not fail the
+				// RUN — a placeholder cannot produce an error nobody hit.
+				mark := a.OnInactiveMarkAs
+				switch mark {
+				case StatusFailed, StatusSkipped:
+					// keep as marked
+				default:
+					mark = StatusSucceeded // the UI's default mark
+				}
+				status[a.Name] = mark
+				r.record(a, "Inactive", nil, "", 0)
+				r.flushActivities()
 				continue
 			}
 			st, errMsg := r.runWithPolicy(a, item, hasItem)

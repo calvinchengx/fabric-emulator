@@ -1698,3 +1698,120 @@ func TestPipelineTerminalEventCarriesTheRealVerdict(t *testing.T) {
 		t.Fatalf("terminal events = %d, want exactly 1", terminals)
 	}
 }
+
+// TestPipelineDeleteFile: a Delete activity really removes the file — the
+// storage layer stops serving it, and the count is the activity's product.
+func TestPipelineDeleteFile(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	seedFile(t, st, ws.ID, lh.ID, "Files/tmp/junk.csv", []byte("x\n1\n"))
+
+	content := `{"properties":{"activities":[
+        {"name":"Del","type":"Delete","typeProperties":{
+          "location":{"itemId":"` + lh.ID + `","path":"Files/tmp/junk.csv"}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if got := outputOf(runs, "Del")["filesDeleted"].(float64); got != 1 {
+		t.Fatalf("filesDeleted = %v, want 1", got)
+	}
+	if _, err := st.GetOneLakePath(lh.ID, "Files/tmp/junk.csv"); err == nil {
+		t.Fatal("file still exists after Delete — the activity reported work it did not do")
+	}
+}
+
+// TestPipelineDeleteRecursiveVsFlat: recursive removes the subtree and counts
+// every file; non-recursive on a directory removes only direct-child files and
+// leaves subdirectories standing.
+func TestPipelineDeleteRecursiveVsFlat(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	for _, f := range []string{"Files/d/a.txt", "Files/d/b.txt", "Files/d/sub/c.txt"} {
+		seedFile(t, st, ws.ID, lh.ID, f, []byte("x"))
+	}
+
+	content := `{"properties":{"activities":[
+        {"name":"Flat","type":"Delete","typeProperties":{
+          "location":{"itemId":"` + lh.ID + `","path":"Files/d"}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if got := outputOf(runs, "Flat")["filesDeleted"].(float64); got != 2 {
+		t.Fatalf("flat filesDeleted = %v, want 2 (a.txt, b.txt — not sub/c.txt)", got)
+	}
+	if _, err := st.GetOneLakePath(lh.ID, "Files/d/sub/c.txt"); err != nil {
+		t.Fatal("non-recursive Delete descended into a subdirectory")
+	}
+
+	content2 := `{"properties":{"activities":[
+        {"name":"Rec","type":"Delete","typeProperties":{"recursive":true,
+          "location":{"itemId":"` + lh.ID + `","path":"Files/d"}}}
+      ]}}`
+	pl2 := createPipeline(t, st, ws.ID, content2)
+	_, jid2 := runJob(t, a, ws.ID, pl2.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl2.ID, jid2); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs2 := activityRuns(t, a, ws.ID, pl2.ID, jid2)
+	if got := outputOf(runs2, "Rec")["filesDeleted"].(float64); got != 1 {
+		t.Fatalf("recursive filesDeleted = %v, want 1 (only sub/c.txt remained)", got)
+	}
+	if _, err := st.GetOneLakePath(lh.ID, "Files/d"); err == nil {
+		t.Fatal("directory still exists after recursive Delete")
+	}
+}
+
+// TestPipelineDeleteMissingFailsLoudly: a Delete against a path that does not
+// exist is an error naming the path — a zero-count success against a typo'd
+// path would claim work that never happened. (Held to the loud side; the real
+// oracle is unmeasured, and the comment on deleteActivity says so.)
+func TestPipelineDeleteMissingFailsLoudly(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+
+	content := `{"properties":{"activities":[
+        {"name":"Del","type":"Delete","typeProperties":{
+          "location":{"itemId":"` + lh.ID + `","path":"Files/nope.csv"}}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job status = %s, want Failed", s)
+	}
+}
+
+// TestPipelineWebHookRefusesLoudly: WebHook used to silently alias Web, so a
+// webhook pipeline "worked" locally while its defining half — call back and
+// PARK — never executed. Until pipelines run async it is refused with the
+// reason and the supported alternative, not aliased.
+func TestPipelineWebHookRefusesLoudly(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	content := `{"properties":{"activities":[
+        {"name":"Hook","type":"WebHook","typeProperties":{"url":"http://x/","method":"POST"}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job status = %s, want Failed (loud refusal, not a silent Web alias)", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	for _, r := range runs {
+		if r["activityName"] == "Hook" {
+			if e, _ := r["error"].(string); !strings.Contains(e, "callback") {
+				t.Fatalf("refusal must name the missing callback semantics, got: %q", e)
+			}
+		}
+	}
+}
