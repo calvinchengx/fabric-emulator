@@ -44,6 +44,7 @@ Runs the .NET client in a container (the NuGet package is
 elsewhere). stdlib-only orchestrator.
 """
 
+import fcntl  # POSIX-only, and so is this harness: it runs on ubuntu in CI
 import http.server
 import json
 import os
@@ -59,24 +60,58 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 WORK = os.path.join(tempfile.gettempdir(), "xmla-e2e")
 
 
-def _clear_stale_bind_targets():
-    """Remove cert.pem/key.pem if anything left DIRECTORIES in their place.
+RUN_LOCK = os.path.join(tempfile.gettempdir(), "xmla-e2e.lock")
+_lock_fd = None
 
-    Docker creates a directory when a bind mount's source does not exist, and
-    a directory mounted where the probe expects a file makes
-    `update-ca-certificates` fail with `sed: can't read …` — an error naming
-    neither the cert nor the mount, which cost a run to trace.
 
-    **This is a guard, not a diagnosis.** The main body already rmtree's WORK
-    on every run, so a leftover should not survive into one; how a directory
-    came to be there has not been established. Cleaning it is cheap and the
-    failure mode is opaque, so the guard earns its place either way — but if
-    this fires, the cause is still open.
+def require_sole_run():
+    """Refuse to start while another copy of this harness is running.
+
+    THE BUG THIS CLOSES (it was misdiagnosed twice, so the mechanism is
+    recorded rather than the symptom). This harness owns three FIXED global
+    names: `WORK`, the container name in `FORWARDER`, and `PORT`. Setup is
+    destructive on the first two — it `rmtree`s WORK and `docker rm -f`s the
+    forwarder — so a second invocation does not merely collide with a first,
+    it DISMANTLES it mid-flight:
+
+      * WORK dies -> the probe's cert bind mount is path-based (virtiofs), so
+        deleting the host file makes the file vanish inside the ALREADY RUNNING
+        container. `update-ca-certificates` lists it with `find -L` and then
+        reads it with `sed` (lines 161 and 101 of that script), and in the
+        window between the two it disappears:
+            sed: can't read /usr/local/share/ca-certificates/xmla-e2e.crt
+      * the forwarder dies -> the client's post-token dial to 443 lands on
+        nothing:
+            Connection refused [::ffff:…]:443 (host.docker.internal:443)
+
+    Both appear in captured screen logs, and both read as findings about
+    ADOMD.NET rather than as harness damage — which is what made this expensive.
+
+    `require_free_port` does not cover it: it guards PORT alone, and a run that
+    overrides XMLA_PORT sails past it and still destroys WORK. The lock does
+    cover it, because the exclusive resources are exclusive whatever the port —
+    443 can only be published once.
+
+    An earlier guard here removed DIRECTORIES found at cert.pem, on the theory
+    that Docker had created them by mounting a missing source. That theory is
+    FALSE and was tested: a directory mounted at that path leaves
+    `update-ca-certificates` exiting 0. The directories were a second symptom
+    of this same race (Docker recreating the source another run had deleted),
+    never the cause.
     """
-    for name in ("cert.pem", "key.pem"):
-        path = os.path.join(WORK, name)
-        if os.path.isdir(path):
-            shutil.rmtree(path, ignore_errors=True)
+    global _lock_fd
+    _lock_fd = open(RUN_LOCK, "w")
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        raise SystemExit(
+            "another e2e/xmla run holds the lock, and this harness cannot share "
+            "its work dir, its 443 forwarder or its port.\n"
+            f"  Wait for it to finish, or clear a crashed one: rm {RUN_LOCK}\n"
+            "  Overriding XMLA_PORT does NOT make two runs safe — they still "
+            "share the work dir.")
+    _lock_fd.write(f"{os.getpid()}\n")
+    _lock_fd.flush()
 # 18080 was the ad-hoc choice while this was a one-off; it is already taken by
 # another suite here, and the guard below caught the collision on first run.
 PORT = int(os.environ.get("XMLA_PORT", "18446"))
@@ -596,9 +631,11 @@ def assert_contract(stdout):
 if not shutil.which("docker"):
     skip_or_fail("docker is not on PATH; the ADOMD.NET probe needs the .NET 8 SDK image")
 
+# BEFORE the destructive setup below, not after: the whole point is that a
+# second run must die while it can still do no damage.
+require_sole_run()
 require_free_port(PORT, "TLS capture listener")
 
-_clear_stale_bind_targets()
 shutil.rmtree(WORK, ignore_errors=True)
 os.makedirs(WORK)
 log("issuing a self-signed CA for the container's view of this host")
