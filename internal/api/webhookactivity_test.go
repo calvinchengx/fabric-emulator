@@ -19,6 +19,11 @@ type webhookReceiver struct {
 	uri  atomic.Value // string: the callBackUri from the initial call's body
 	srv  *httptest.Server
 	seen atomic.Int32
+	// onCall runs INSIDE the receiver's handler, before it answers. It exists
+	// to make an interleaving an input instead of something a test hopes for:
+	// whatever it does happens strictly between the activity making its call
+	// and that call returning.
+	onCall func()
 }
 
 func newWebhookReceiver(t *testing.T) *webhookReceiver {
@@ -34,6 +39,9 @@ func newWebhookReceiver(t *testing.T) *webhookReceiver {
 			return
 		}
 		r.uri.Store(uri)
+		if r.onCall != nil {
+			r.onCall()
+		}
 		r.seen.Add(1)
 		_, _ = w.Write([]byte(`{"accepted":true}`))
 	}))
@@ -256,5 +264,47 @@ func TestParkUntilSubscribesBeforeReading(t *testing.T) {
 		// Expired via the mutation the held channel announced: correct.
 	case <-time.After(2 * time.Second):
 		t.Fatal("park missed the clock mutation — it read the clock before subscribing")
+	}
+}
+
+// TestWebHookDeadlineIsFixedBeforeTheCall forces the interleaving that made
+// TestWebHookTimesOutOnTheVirtualClock flaky on a loaded macOS runner, instead
+// of sampling for it.
+//
+// The receiver advances virtual time past the timeout WHILE HOLDING the
+// initial call open. With the deadline computed after that call returned, the
+// advance was absorbed — the deadline was then measured from the already
+// advanced clock, the timeout never fired, and the job sat InProgress until
+// the poll helper gave up. The tell was the duration: a failure taking exactly
+// the helper's five-second budget is a lost timeout, not a slow machine.
+//
+// Sampling could not have caught this reliably: the window is the microseconds
+// between an HTTP response and the next statement, and on an unloaded laptop
+// the test passes 8 times out of 8. Making the advance happen inside the
+// handler closes that gap by construction — it is the same discipline the
+// scripted clock applies to parkUntil's subscribe-before-read ordering.
+func TestWebHookDeadlineIsFixedBeforeTheCall(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	rcv := newWebhookReceiver(t)
+	st.Clock.Freeze()
+	t.Cleanup(st.Clock.Unfreeze)
+
+	// The whole point: the advance lands mid-call, in the window the old
+	// ordering lost it in.
+	rcv.onCall = func() { st.Clock.Advance(601) }
+
+	pl := createPipeline(t, st, ws.ID, webhookPipeline(
+		`"url":"`+rcv.srv.URL+`","method":"POST","timeout":"00:10:00"`))
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job = %s — virtual time moved past the timeout during the call and the "+
+			"park absorbed it, which means the deadline was read after the call rather "+
+			"than fixed with the rest of the park", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if e, _ := runs[0]["error"].(string); !strings.Contains(e, "never called the callBackUri back") {
+		t.Fatalf("error %q does not say what never happened", e)
 	}
 }

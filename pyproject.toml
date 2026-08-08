@@ -184,6 +184,14 @@ omit = [
     "scripts/govern_ingest.py",
     "scripts/spark_check.py",
     "scripts/build_fixture_wheels.py",
+    # An operator tool: it runs only from `workflow_dispatch` against a real
+    # tenant, so its HTTP shell (token, workspace and item resolution,
+    # getDefinition) cannot be exercised here. Its one load-bearing part — the
+    # redaction that keeps a private tenant's contents out of a PUBLIC Actions
+    # log — is NOT unwitnessed: scripts/check_capture_redaction.py asserts it in
+    # `make check`, and python/tests/test_check_capture_redaction.py drives the
+    # same cases plus the two mutations (a leaky redactor, an over-zealous one).
+    "scripts/capture_definition_shape.py",
     "*/tests/*",
 ]
 

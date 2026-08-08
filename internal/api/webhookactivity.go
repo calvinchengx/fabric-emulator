@@ -174,6 +174,22 @@ func (e *pipelineExecutor) webhookActivity(
 	e.a.webhookWaits.Store(token, ch)
 	defer e.a.webhookWaits.Delete(token)
 
+	// THE DEADLINE IS PART OF THE PARK, so it is fixed here rather than after
+	// the call returns. Computed afterwards it read a clock that anything could
+	// have moved in between, and the window was observable: a caller that
+	// advances virtual time the moment the receiver is hit — a test doing
+	// exactly that, or a frozen-clock deployment — had its advance absorbed,
+	// because the deadline was then measured from the ALREADY-ADVANCED now and
+	// the timeout it was supposed to trigger never came. It surfaced as a
+	// macOS-only flake whose duration was exactly the poll helper's five-second
+	// budget: not a slow machine, a lost timeout.
+	//
+	// Fixing it here rather than widening the poll also makes the semantics
+	// defensible: the timeout covers the whole activity, the call included,
+	// which is what "the callback must arrive within this long" means to
+	// someone reading the definition.
+	deadline := e.a.Store.Now() + int64(timeout/time.Second)
+
 	bodyObj["callBackUri"] = fmt.Sprintf(
 		"/v1/workspaces/%s/items/%s/jobs/instances/%s/webhookcallbacks/%s",
 		e.wid, e.chain[0], e.jobID, token)
@@ -184,7 +200,6 @@ func (e *pipelineExecutor) webhookActivity(
 
 	// The park — see parkUntil for the wake sources and the
 	// subscribe-before-read ordering it exists to hold.
-	deadline := e.a.Store.Now() + int64(timeout/time.Second)
 	cb, ok := parkUntil(e.a.Store.Clock, deadline, ch)
 	if !ok {
 		return nil, fmt.Errorf("webhook activity %q: no callback within the timeout — "+

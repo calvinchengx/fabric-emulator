@@ -220,6 +220,34 @@ CREATE TABLE IF NOT EXISTS event_triggers (
 	created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_event_triggers_source ON event_triggers (source_item_id);
+-- Materialized lake views: a named query in a lakehouse that is re-computed
+-- into a real Delta table under Tables/. Fabric defines these with Spark SQL
+-- DDL inside a notebook, and no capture of that syntax exists here, so the
+-- DEFINITION surface is emulator-native and labelled as such in docs/parity.md
+-- — the same stance the event_triggers table above takes. What is faithful is
+-- everything downstream: the query really runs on the engine, the table really
+-- lands in OneLake, and staleness is measured against real Delta versions.
+CREATE TABLE IF NOT EXISTS materialized_lake_views (
+	id TEXT PRIMARY KEY,
+	workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+	lakehouse_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	query TEXT NOT NULL,
+	-- The tables this view reads, DECLARED rather than parsed out of the SQL.
+	-- Fabric infers them; inferring here would mean parsing dialect-specific
+	-- SQL and silently mis-reporting staleness whenever the parse was wrong,
+	-- which is a worse failure than asking for the list. JSON array.
+	depends_on TEXT NOT NULL DEFAULT '[]',
+	-- The source versions observed at the last successful refresh. Staleness is
+	-- "a dependency has moved since", which is answerable only against what was
+	-- actually read. JSON object of table name -> delta version.
+	source_versions TEXT NOT NULL DEFAULT '{}',
+	created_at INTEGER NOT NULL,
+	last_refreshed_at INTEGER NOT NULL DEFAULT 0,
+	last_refresh_status TEXT NOT NULL DEFAULT '',
+	last_error TEXT NOT NULL DEFAULT '',
+	UNIQUE (lakehouse_id, name)
+);
 CREATE TABLE IF NOT EXISTS pipeline_runs (
 	job_id TEXT PRIMARY KEY REFERENCES job_instances(id) ON DELETE CASCADE,
 	status TEXT NOT NULL,
