@@ -24,7 +24,7 @@ services:
       # Force tiny pages so every list exercises the continuation-token loop —
       # the pagination equivalent of the controllable clock (docs/parity.md).
       FABRIC_LIST_PAGE_SIZE: "2"
-      FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/11111111-1111-1111-1111-111111111111/v2.0"
+      FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
       FABRIC_ENTRA_TLS_INSECURE: "true"
     networks:
       default:

@@ -26,7 +26,7 @@ FABRIC = os.environ["FABRIC_URL"]  # https://api.fabric.microsoft.com:9443
 CA = os.environ["REQUESTS_CA_BUNDLE"]  # emulator cert, shared via volume
 # entra-emulator's confidential daemon SP (client-credentials identity). The
 # workspace it creates makes it Admin, so its token passes Livy RBAC.
-DAEMON_CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"
+DAEMON_CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
 # One audience serves both surfaces: it is in the emulator's ControlPlaneAudiences
 # (Fabric REST) and is exactly what dbt's scope
 # `https://analysis.windows.net/powerbi/api/.default` resolves to (Livy).

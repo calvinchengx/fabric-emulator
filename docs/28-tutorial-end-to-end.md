@@ -129,8 +129,8 @@ import json, pathlib, requests, urllib3
 
 urllib3.disable_warnings()  # the family serves self-signed TLS
 
-TENANT = "11111111-1111-1111-1111-111111111111"
-CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"   # seeded daemon SP
+TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"   # seeded daemon SP
 CLIENT_SECRET = "daemon-app-secret"                  # intentionally public dev value
 
 ENTRA = "https://localhost:8443"

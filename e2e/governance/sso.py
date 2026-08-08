@@ -23,8 +23,8 @@ from stack import Stack, log  # noqa: E402 — after the path insert above
 FABRIC_PORT = os.environ.get("GOV_FABRIC_PORT", "9443")
 ENTRA_PORT = os.environ.get("GOV_ENTRA_PORT", "8443")
 OM_PORT = os.environ.get("GOV_OM_PORT", "8585")
-TENANT = "11111111-1111-1111-1111-111111111111"
-CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"
+TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
 # entra-emulator's seeded user (alice@entraemulator.dev) — a *user* token is
 # required: client-credentials tokens carry no email/preferred_username, and
 # that is what OM maps a principal from.

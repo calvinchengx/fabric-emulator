@@ -21,7 +21,7 @@ import urllib.request
 ENTRA = os.environ["ENTRA_URL"]  # http://entra-emulator:8443
 FABRIC_REST = os.environ["FABRIC_REST_URL"]  # http://fabric-emulator:80
 TDS_SERVER = os.environ["TDS_SERVER"]  # fabric-emulator,1433
-DAEMON_CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"
+DAEMON_CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
 REST_AUDIENCE = "https://api.fabric.microsoft.com"
 TDS_AUDIENCE = "https://database.windows.net"  # the FedAuth audience the TDS front validates
 
