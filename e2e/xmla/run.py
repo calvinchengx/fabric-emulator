@@ -137,36 +137,50 @@ WORKSPACE = "ws"   # the workspace the probe names in its Data Source
 # is a SCREEN, not a guess. If one advances, the next run narrows it; if none
 # does, four hypotheses die at once.
 def _shapes(host):
-    """SCREEN 4 — NOT THE BODY. Screens 2 and 3 exhausted body content: every
-    top-level JSON object returned the identical not-found, across envelope
-    present/absent, empty/populated, ten field spellings, PascalCase and
-    nesting. Only the top-level TYPE ever changed anything. So this screen
-    leaves the JSON alone and varies what no body edit can reach.
+    """SCREEN 5 — DERIVED FROM THE ASSEMBLY, not guessed.
 
-    Each shape is (label, status, extra headers, body bytes).
+    Reflecting over Microsoft.AnalysisServices.AdomdClient 19.84.1 gives the
+    contract the routing reply deserialises into:
 
-      A 200 + EMPTY body -> the sharpest discriminator available. If not-found
-                            still appears, the body is not consulted for this
-                            decision AT ALL, and screens 2-3 were varying
-                            something the client never read. If instead a parse
-                            error appears, the body IS read and those shapes
-                            were parsed-but-unmatched.
-      B 307 redirect     -> `PreferClientRouting=true` may mean "tell me where
-                            to go" via a redirect rather than a payload. Points
-                            at this same listener, so following it is visible
-                            as a second captured request.
-      C text/plain       -> does Content-Type gate parsing? Same JSON that
-                            produced not-found under application/json.
+        PbiPremiumAuthenticationHandle+Workspace201606
+            id, name, type, capacitySku, capacityUri     (all [DataMember])
+
+        WorkspaceType201606            = User | Group | Folder
+        WorkspaceCapacitySkuType201606 = Shared | Premium
+        ResolvePbiWorkspaceErrorReason = None | WorkspaceNotFound
+                                       | WorkspaceNotOnPbiPremium
+                                       | WorkspaceNameDuplicated
+
+    Two things follow that no screen could have guessed. **No type in the
+    assembly holds a Workspace201606 collection**, so the payload is a BARE
+    ARRAY of these rather than an enveloped list — every enveloped shape tried
+    so far was answering a question the client never asked. And the earlier
+    screens sent `name` but never `type`, `capacitySku` or `capacityUri`, so
+    the objects deserialised with those null.
+
+    The error enum is the discriminator that makes this screen self-checking:
+    a reply that reaches the workspace but fails its premium check reports
+    WorkspaceNotOnPbiPremium, NOT WorkspaceNotFound. So a change in WHICH
+    error appears is progress even when the connection still fails.
+
+      A bare array, all five members, type=Group, capacitySku=Premium
+      B same, enveloped in {"value": …} — the control that should now FAIL
+        differently if the bare array is right
+      C bare array, type=User (the personal-workspace path, which the resolver
+        carries a dedicated `personalWorkspace` field for)
     """
     cluster = f"https://{host}/"
-    ok_body = json.dumps({
-        "@odata.context": f"{cluster}$metadata#workspaces",
-        "value": [{"name": WORKSPACE, "clusterUri": cluster}],
-    }).encode()
+    def ws(kind, sku="Premium"):
+        return {"id": "00000000-0000-0000-0000-000000000001", "name": WORKSPACE,
+                "type": kind, "capacitySku": sku, "capacityUri": cluster}
+    def j(o):
+        return json.dumps(o).encode()
+
+    ct = {"Content-Type": "application/json; charset=utf-8"}
     return [
-        ("A-200-empty-body", 200, {"Content-Type": "application/json; charset=utf-8"}, b""),
-        ("B-307-redirect", 307, {"Location": f"{cluster}powerbi/databases/v201606/workspaces"}, b""),
-        ("C-text-plain", 200, {"Content-Type": "text/plain; charset=utf-8"}, ok_body),
+        ("A-bare-array-Group-Premium", 200, ct, j([ws("Group")])),
+        ("B-enveloped-control", 200, ct, j({"value": [ws("Group")]})),
+        ("C-bare-array-User", 200, ct, j([ws("User")])),
     ]
 
 
@@ -475,6 +489,16 @@ if beyond:
 elif phase2 == phase1:
     print("UNCHANGED — the sequence is identical to the refused run, so the "
           "doubled routing call is unconditional rather than a 404 fallback.", flush=True)
+elif len(phase2) < len(phase1):
+    # The refusing run shows what rejection costs: every connection re-asks,
+    # once with PreferClientRouting and once without. FEWER calls than that
+    # means the client did not re-ask — it kept the answer. That is acceptance
+    # evidence independent of the error text, which is why it is a separate
+    # verdict rather than folded into "stopped at routing".
+    print(f"CONSUMED — {len(phase1)} routing call(s) when refused, {len(phase2)} "
+          f"when answered. The client stopped re-asking, so the reply was "
+          f"accepted; any failure below is DOWNSTREAM of routing, not the "
+          f"reply's shape:", flush=True)
 else:
     print("STOPPED AT ROUTING — the reply was rejected. The probe's own error "
           "text below is what the shape lacked:", flush=True)
@@ -486,10 +510,23 @@ print(proc2.stdout.strip() or "(empty)", flush=True)
 # nothing about which hypothesis died.
 print("\n---- shape screen ----", flush=True)
 outcomes = [ln for ln in proc2.stdout.splitlines() if ln.startswith("CASE powerbi")]
-if len(SHAPE_LOG) != len(outcomes):
-    print(f"  NOT PAIRED: {len(SHAPE_LOG)} shape(s) served, {len(outcomes)} powerbi "
-          f"case(s) reported — the 1:1 assumption does not hold, so nothing below "
-          f"is attributable.", flush=True)
+served = len(SHAPE_LOG)
+if served < len(outcomes):
+    # FEWER requests than connections is itself a result, not a malfunction:
+    # the client only re-asks when it rejected the last answer. Screen 5 hit
+    # this — one request served three connections — so the screen's
+    # one-shape-per-connection premise holds only while shapes FAIL. Say which
+    # shapes were never served rather than implying they were tried and lost.
+    print(f"  FEWER REQUESTS THAN CONNECTIONS: {served} shape(s) served, "
+          f"{len(outcomes)} powerbi case(s) reported. The client stopped asking, "
+          f"which happens when it ACCEPTED an answer and reused it. Only the "
+          f"first {served} shape(s) below were under test.", flush=True)
+    for label, _, _, _ in _shapes("")[served:]:
+        print(f"  {label:26} NOT SERVED — untested", flush=True)
+elif served > len(outcomes):
+    print(f"  NOT PAIRED: {served} shape(s) served, {len(outcomes)} powerbi case(s) "
+          f"reported — the 1:1 assumption does not hold, so nothing below is "
+          f"attributable.", flush=True)
 for (label, _), line in zip(SHAPE_LOG, outcomes):
     # DIFFERENT means "the client changed its mind", NOT "this shape is
     # closer". A shape can differ by failing EARLIER — which is what

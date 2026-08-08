@@ -206,19 +206,83 @@ harness printed the request log and the operator truncated it** when reading
 the output; re-run capturing full stdout before treating the redirect-follow as
 established.
 
+### The assembly read — DONE: the contract, no longer a guess
+
+Reflecting over `Microsoft.AnalysisServices.AdomdClient` **19.84.1.0** (429
+types, inspected in `mcr.microsoft.com/dotnet/sdk:8.0`) yields the reply's
+declared shape:
+
+```
+PbiPremiumAuthenticationHandle+Workspace201606
+    id · name · type · capacitySku · capacityUri        [DataMember] ×5
+WorkspaceType201606            = User | Group | Folder
+WorkspaceCapacitySkuType201606 = Shared | Premium
+ResolvePbiWorkspaceErrorReason = None | WorkspaceNotFound
+                               | WorkspaceNotOnPbiPremium | WorkspaceNameDuplicated
+```
+
+Two things follow that no screen could have reached:
+
+1. **No type in the assembly holds a `Workspace201606` collection.** The
+   payload is a **bare array**, not an enveloped list — so every enveloped
+   shape in screens 2–4 was answering a question the client never asks.
+   Screen 2's bare array failed for an unrelated reason, which is precisely
+   how it produced a wrong conclusion that survived a round.
+2. **Three of the five members were never sent.** Screens 1–4 sent `name` and
+   `id`; `type`, `capacitySku` and `capacityUri` deserialised null every time.
+   No amount of re-spelling could have helped — the names were already right
+   and the *set* was short.
+
+The error enum is also a free discriminator: a reply that reaches the workspace
+but fails its premium check reports `WorkspaceNotOnPbiPremium`, distinct from
+`WorkspaceNotFound`. Which error appears is therefore progress information, not
+just failure.
+
+### Screen 5 — RUN: routing is answered, and the failure moved downstream
+
+Shape A — bare array, all five members, `type=Group`, `capacitySku=Premium`,
+`capacityUri=https://<host>/`.
+
+**Observed.**
+
+- **One** routing request in the answered run, against **six** in the refusing
+  control (two per connection: with `PreferClientRouting=true`, then without).
+  The retry a rejected reply provokes did not happen.
+- All three `powerbi://` connections reported
+  `IndexOutOfRangeException :: Index was outside the bounds of the array.`
+- Neither error that pinned every earlier screen appeared: no
+  `SerializationException`, no `The specified Power BI workspace ('ws') is not
+  found`.
+- The listener ran `serve_forever` for the whole probe and was not shut down
+  between connections, so the two missing requests are the client's choice and
+  not the harness closing.
+- The probe's `catch` cannot raise this itself — its only indexing is
+  `e.Message.Split('\n')[0]`, and `Split` always yields index 0 — so the throw
+  is inside `AdomdConnection.Open()`.
+
+**Inferred, and flagged as such.** The reply deserialised and the workspace
+matched: both diagnostic errors are gone and the client stopped re-asking.
+Connections 2 and 3 issued no request at all, which fits a process-wide cache —
+consistent with the `WorkspaceResolver.Initialize` / `friendlyNameMap` /
+`personalWorkspace` members the same assembly read turned up, though nothing
+here observes the cache directly. The surviving failure is most plausibly
+`capacityUri` being parsed into a cluster host (the assembly carries
+`ASAzureUtility+PowerBIClusterResolutionResult` with `FixedClusterUri` and
+`DynamicClusterUri`), but that is **untested**.
+
+**Shapes B and C were never served, so they remain untested.** This is a real
+limit of the screen design, now recorded in the harness itself: rotating one
+shape per request only screens three hypotheses *while shapes fail*. The first
+shape the client accepts ends the request stream. A screen is a tool for
+failure; past the first success the harness must vary shapes across runs.
+
 ### Where this leaves the search
 
-Off screens entirely, for now. Reading the `DataMember` names off the ADOMD.NET
-assembly converts the remaining unknown from "which of infinitely many field
-spellings" into "what does this type declare" — the same move that turned
-`e2e/xmla` from speculation into measurement in the first place.
-
-### The next experiment, now one edit and ~5 minutes### The next experiment, now one edit and ~5 minutes
-
-Vary a single field at a time against the same harness and read the error. The
-client's message names the workspace it wanted, so a matching reply advances
-past routing for the first time — and that is the point at which
-`[MS-SSAS-T]`'s real size becomes observable rather than estimated.
+Routing is no longer the frontier. The next unknown is one layer down — what
+the client does with `capacityUri`, and which request it would make against a
+cluster host it could parse. That is again best answered by varying a single
+field against the same harness, with the `IndexOutOfRangeException` as the
+signal to clear.
 
 ### Original framing, kept because the reasoning still holds
 
