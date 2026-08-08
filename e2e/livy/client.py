@@ -161,27 +161,33 @@ def main():
         return {"path": path, "payloadType": "InlineBase64",
                 "payload": base64.b64encode(body.encode()).decode()}
 
-    run("spark.sql('SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3')"
-        ".write.format('delta').mode('overwrite').saveAsTable('sjd_events')")
-
     sjd_cfg = {"executableFile": "main.py", "arguments": ["--increment", "2"],
                "defaultLakehouseArtifactId": lake["id"],
                "defaultLakehouseWorkspaceId": ws["id"]}
+    # spark.range(3) is engine work in the SJD's own session; argv[2] is the
+    # definition's argument the emulator must supply. 3 + 2 = 5 fails if either
+    # half is missing, and needs no table shared across sessions.
     src = ("import sys\n"
-           "print('sjd-result=' + str(spark.table('sjd_events').count() + int(sys.argv[2])))\n")
+           "print('sjd-result=' + str(spark.range(3).count() + int(sys.argv[2])))\n")
     _, created = http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items", {
         "displayName": "aggregate-job", "type": "SparkJobDefinition",
         "definition": {"parts": [part("SparkJobDefinitionV1.json", json.dumps(sjd_cfg)),
                                  part("main.py", src)]}}, token=token)
+    # Item create is a Fabric LRO: 202 with the operation id in the
+    # x-ms-operation-id HEADER, which this suite's http() does not surface (it
+    # returns status + body only, and every other call here needs nothing more).
+    # Rather than widen a helper the whole file depends on, resolve the item by
+    # listing — the same fact, one call later, with no shared-code change.
     sjd_id = created.get("id")
-    if not sjd_id:  # async create returns an operation
-        for _ in range(60):
-            _, op = http("GET", f"{FABRIC}/v1/operations/{created['operationId']}", token=token)
-            if op.get("status") == "Succeeded":
-                _, res = http("GET", f"{FABRIC}/v1/operations/{created['operationId']}/result", token=token)
-                sjd_id = res["id"]
+    for _ in range(60):
+        if sjd_id:
+            break
+        _, items = http("GET", f"{FABRIC}/v1/workspaces/{ws['id']}/items", token=token)
+        for it in items.get("value", []):
+            if it.get("displayName") == "aggregate-job" and it.get("type") == "SparkJobDefinition":
+                sjd_id = it["id"]
                 break
-            time.sleep(1)
+        time.sleep(1)
     assert sjd_id, "Spark job definition item was never created"
 
     http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items/{sjd_id}/jobs/instances?jobType=sparkjob",
@@ -197,10 +203,12 @@ def main():
         if final.get("status") in ("Completed", "Failed"):
             break
         time.sleep(2)
-    assert final.get("status") == "Completed", f"emulator did not run the Spark job: {final}"
     _, sjd_done = http("GET",
                        f"{FABRIC}/v1/workspaces/{ws['id']}/items/{sjd_id}/jobs/instances/{sjd_jid}/sparkJobRun",
                        token=token)
+    assert final.get("status") == "Completed", (
+        f"emulator did not run the Spark job: {final} / engine said: "
+        f"{sjd_done.get('error') or sjd_done.get('output')!r}")
     assert "sjd-result=5" in sjd_done.get("output", ""), sjd_done
     print(f"SJD executed by the emulator: {sjd_done['output'].strip()}", flush=True)
 
