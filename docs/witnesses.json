@@ -806,5 +806,16 @@
       "go:TestWebHookReportStatusOnCallBack",
       "go:TestWebHookSchemaRules"
     ]
+  },
+  "hdinsight-spark-activity-hdinsightspark": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**HDInsight Spark** activity (`HDInsightSpark`)",
+    "witnesses": [
+      "go:TestHDInsightSparkExecutesTheEntryFile",
+      "go:TestHDInsightSparkFailsWhenTheEngineFails",
+      "go:TestHDInsightSparkNoEngineIsHonest",
+      "go:TestHDInsightSparkRefusesByName",
+      "go:TestHDInsightSparkMissingEntryFile"
+    ]
   }
 }
