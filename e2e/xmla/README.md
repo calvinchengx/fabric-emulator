@@ -55,10 +55,11 @@ Microsoft's own ADOMD.NET client
    Recording the requests rather than printing them surfaced something the
    original one-off measurement missed: **each connection makes the call twice**
    — once with `PreferClientRouting=true`, then immediately again without it.
-   That is what the client does when the first call is refused with a 404; this
-   harness has never seen it against a server that answers, so whether the
-   second call is a fallback or unconditional is not established here. Either
-   way, an implementation should expect both forms;
+   That is what the client does when the first call is refused with a 404.
+   **Since Phase 0 the harness HAS seen it against a server that answers, and
+   the doubling is a 404 fallback**: with the routing call answered, only the
+   `PreferClientRouting=true` form is sent, once per connection. An
+   implementation that answers therefore never sees the un-flagged form;
 6. the **`Data Source=https://…/xmla` and bare `host:port` forms remain
    Windows-only** on .NET Core —
 

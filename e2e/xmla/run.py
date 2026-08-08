@@ -45,6 +45,7 @@ elsewhere). stdlib-only orchestrator.
 """
 
 import http.server
+import json
 import os
 import shutil
 import socket
@@ -113,6 +114,15 @@ def require_free_port(port, what):
 # first-call contract would no longer be the one a fresh client performs.
 # ---------------------------------------------------------------------------
 
+# PHASE 0 (docs/32-xmla-plan.md): answering the routing call is a SEPARATE run,
+# never a change to the refusing one. The refusal is what pins the first-call
+# contract — answer it in the same pass and the recorded contract becomes the
+# one a client performs against a server that replies, which is a different
+# fact. So the suite runs the probe TWICE: once refusing (the regression
+# witness), once answering (the measurement).
+ANSWER_ROUTING = False
+WORKSPACE = "ws"   # the workspace the probe names in its Data Source
+
 REQUESTS = []          # [{method, path, headers: {lower: value}, body}]
 HANDSHAKE_ERRORS = []  # TCP connected, TLS refused — a distinct diagnosis
 LOCK = threading.Lock()
@@ -135,6 +145,29 @@ class Capture(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         self._record()
+        if ANSWER_ROUTING and self.path.startswith("/powerbi/databases/v201606/workspaces"):
+            # The routing reply, as a HYPOTHESIS rather than a known contract.
+            # Nobody in this project has seen a real one; what is documented is
+            # only that the client asks. The cluster is pointed back at this
+            # same listener so that a client which follows routing returns here
+            # and its NEXT request is captured — which is the entire deliverable
+            # of Phase 0. If the client rejects this shape, its exception text
+            # is the measurement instead, and just as useful.
+            body = json.dumps({
+                "@odata.context": f"https://{self.headers.get('Host', '')}/powerbi/databases/v201606/$metadata#workspaces",
+                "value": [{
+                    "name": WORKSPACE,
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "capacityObjectId": "00000000-0000-0000-0000-000000000002",
+                    "clusterUri": f"https://{self.headers.get('Host', '')}/",
+                }],
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         self.send_response(404)
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -291,10 +324,11 @@ log(f"TLS capture listener on :{PORT}")
 
 target = f"{CONTAINER_HOST}:{PORT}"
 log(f"running ADOMD.NET against {target} (linux/amd64, {SDK_IMAGE})")
-try:
-    # The project is mounted READ-ONLY and copied inside, so a restore never
-    # writes bin/obj into the repo.
-    proc = subprocess.run([
+def run_probe():
+    """One ADOMD.NET run against the listener. Identical both phases — only the
+    listener's behaviour differs, so any change in what the client does is
+    attributable to the routing reply and to nothing else."""
+    return subprocess.run([
         "docker", "run", "--rm", "--platform", "linux/amd64",
         "--add-host", f"{CONTAINER_HOST}:host-gateway",
         "-v", f"{os.path.join(DIR, 'probe')}:/probe:ro",
@@ -305,11 +339,13 @@ try:
         "sh", "-c",
         "cp -r /probe/. /work/ && update-ca-certificates >/dev/null 2>&1 && dotnet run --nologo",
     ], capture_output=True, text=True, timeout=900)
+
+
+try:
+    proc = run_probe()
 except subprocess.TimeoutExpired:
     srv.shutdown()
     raise SystemExit("FAILED: the ADOMD.NET probe did not finish within 15 minutes")
-
-srv.shutdown()
 
 print("\n---- probe stdout ----", flush=True)
 print(proc.stdout.strip() or "(empty)", flush=True)
@@ -326,6 +362,61 @@ print("\n---- client contract ----", flush=True)
 assert_contract(proc.stdout)
 
 if FAILURES:
+    srv.shutdown()
     raise SystemExit("\nFAILED: the ADOMD.NET client contract changed:\n  - " +
                      "\n  - ".join(FAILURES))
+
+# ---------------------------------------------------------------------------
+# PHASE 0 — answer the routing call and record what the client does next.
+#
+# docs/32-xmla-plan.md: "The deliverable is not the feature. It is measurement."
+# Nothing below is asserted as a contract, because no contract is known: the
+# routing reply here is a HYPOTHESIS about a shape nobody in this project has
+# observed. Three outcomes are all informative and all recorded:
+#
+#   * the client advances     -> its next request is printed; that is the thing
+#                                the roadmap could not price
+#   * the client rejects it   -> its exception names what the shape lacked
+#   * nothing changes         -> the doubled routing call is unconditional
+#                                rather than a 404 fallback, which the README
+#                                flags as unestablished
+#
+# A future phase turns whichever of these happened into an assertion. Today it
+# is a printed observation, so the suite cannot pass by confirming a guess.
+# ---------------------------------------------------------------------------
+phase1 = [(r["method"], r["path"]) for r in REQUESTS]
+
+ANSWER_ROUTING = True
+with LOCK:
+    REQUESTS.clear()
+log("PHASE 0: answering the routing call, recording what follows")
+try:
+    proc2 = run_probe()
+except subprocess.TimeoutExpired:
+    srv.shutdown()
+    raise SystemExit("FAILED: the phase-0 probe did not finish within 15 minutes")
+srv.shutdown()
+
+phase2 = [(r["method"], r["path"]) for r in REQUESTS]
+print(f"\n---- PHASE 0: {len(phase2)} request(s) with routing ANSWERED ----", flush=True)
+for m, path in phase2:
+    print(f"  {m} {path}", flush=True)
+beyond = [x for x in phase2 if not x[1].startswith("/powerbi/databases/v201606/workspaces")]
+print("\n---- PHASE 0 verdict ----", flush=True)
+if beyond:
+    print("ADVANCED — requests past routing, never before observed:", flush=True)
+    for m, path in beyond:
+        print(f"    {m} {path}", flush=True)
+    body = next((r["body"] for r in REQUESTS
+                 if not r["path"].startswith("/powerbi/databases/v201606/workspaces")), "")
+    if body:
+        print(f"    first body (first 400 chars): {body[:400]}", flush=True)
+elif phase2 == phase1:
+    print("UNCHANGED — the sequence is identical to the refused run, so the "
+          "doubled routing call is unconditional rather than a 404 fallback.", flush=True)
+else:
+    print("STOPPED AT ROUTING — the reply was rejected. The probe's own error "
+          "text below is what the shape lacked:", flush=True)
+print("\n---- phase 0 probe stdout ----", flush=True)
+print(proc2.stdout.strip() or "(empty)", flush=True)
 print("\nPASSED: the ADOMD.NET client contract is unchanged.")
