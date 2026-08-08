@@ -1,6 +1,7 @@
 # 44 — Interaction surfaces: how a user touches this emulator, versus real Fabric
 
-**Status: survey and doctrine; the Jupyter gap is closed, the rest ranked.** This maps every way a
+**Status: survey and doctrine; the lakehouse browser and Jupyter gaps are
+closed, the rest ranked.** This maps every way a
 real Fabric user interacts with their workspace onto what this emulator offers
 for the same need — and records *why* the mapping is shaped the way it is, so
 the next "should the portal do X?" discussion starts from a position instead of
@@ -49,7 +50,7 @@ checker) exist precisely because such artifacts rot.
 |---|---|---|
 | Workspace / item browser, CRUD | Portal `Workspaces` view; fabric-cli; the REST surface | ≈ parity for observing and managing |
 | **Notebook editor** (Monaco, cells, run) | Not in the portal, by recorded decision. **`make up-jupyter` ships a real JupyterLab** wired to the family; plus the VS Code extension contract and `.ipynb` + git/fabric-cicd sync | Deliberate: authoring belongs to real tools (docs/14 D3), and the tool is now *shipped* rather than assumed installed |
-| **Lakehouse explorer** (Tables/Files tree, data preview) | Nothing in-portal. Real clients read OneLake directly: DuckDB, delta-rs, azcopy, ADLS SDKs; Spark SQL over Livy | **The largest genuine gap** — a read-only browser is stored-state rendering, on the right side of the line |
+| **Lakehouse explorer** (Tables/Files tree, data preview) | Portal **`Lakehouses`** view: tables, files and a Delta preview, read-only. Plus the real clients reading OneLake directly: DuckDB, delta-rs, azcopy, ADLS SDKs; Spark SQL over Livy | ≈ parity for browsing and preview. Read-only by construction — stored state rendered back, on the right side of the line; authoring stays with the real tools |
 | Warehouse SQL editor | TDS endpoint → SSMS, ADS, `sqlcmd`, dbt; `executeQueries` REST; `portal-terminal` (ttyd) profile | Adequate via real clients; portal `Warehouse` view is config-status only |
 | Monitoring hub (runs, jobs) | Portal `Jobs`, `Operations` | ≈ parity |
 | Lineage view | Portal `Flow` graph | Arguably **ahead** of Fabric — lineage edges are first-class and filmable (flow.gif) |
@@ -79,8 +80,9 @@ via the jobs API.
 
 - **Warehouse**: any TDS client, or `executeQueries`.
 - **Lakehouse**: DuckDB / delta-rs / ADLS SDKs against OneLake; Spark SQL over
-  Livy; OpenMetadata for the catalog view. In-portal: nothing yet (the gap
-  above).
+  Livy; OpenMetadata for the catalog view. In-portal: the **`Lakehouses`** view
+  lists tables and files and previews a table's schema and first-N rows, through
+  the same reader the warehouse preview already used.
 
 ## On testing the VS Code surface
 
@@ -100,9 +102,9 @@ in the repo, so reproducing the capture is the first step.
 
 ## Gaps, ranked
 
-1. **Lakehouse browser in the portal** (S) — Tables/Files tree, Delta schema and
-   first-N rows through the readers the warehouse already uses. Stored-state
-   rendering; right side of the line.
+1. ~~**Lakehouse browser in the portal**~~ ✅ **Done** — the `Lakehouses` view.
+   Tables are derived from OneLake *paths*, not directory rows, because delta-rs
+   writes no directories; the file list is capped and the count is not.
 2. **Read-only notebook view + a run button** (S–M) — renders the stored
    definition, triggers the documented job API. Already promised by docs/14 D3.
 3. ~~**`--profile jupyter` sidecar**~~ ✅ **Done** — see below.
