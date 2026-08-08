@@ -24,7 +24,14 @@ func newAPI(t *testing.T) (*API, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return New(st, nil, 1, 0), st
+	a := New(st, nil, 1, 0)
+	// The suite's `admin` principal is a declared Fabric administrator, so
+	// tests written before the tenant-admin gate still exercise the surfaces
+	// they were written for. Tests ABOUT the gate declare their own membership
+	// (tenantadmin_test.go), and the no-administrators case builds its own API
+	// so this default cannot mask it.
+	a.SetTenantAdmins([]string{"admin-1"})
+	return a, st
 }
 
 var (
