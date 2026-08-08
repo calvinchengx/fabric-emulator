@@ -69,7 +69,11 @@
     "claim": "**Capacity tenant-setting overrides** (`GET /v1/admin/capacities/delegatedTenantSettingOverrides`, `POST …/{capacityId}/delegatedTenantSettingOverrides/{name}/update`)",
     "witnesses": [
       "go:TestCapacityOverridesRoundTrip",
-      "go:TestCapacityOverrideValidation"
+      "go:TestCapacityOverrideValidation",
+      "go:TestEveryAdminRouteIsGatedOnTheRegisteredMux",
+      "go:TestAdminWriteRefusesAServicePrincipalThatIsNotAnAdministrator",
+      "go:TestAdminReadAllowsAdministratorAndServicePrincipal",
+      "go:TestWithNoAdministratorsDeclaredEveryWriteIsRefused"
     ]
   },
   "change-data-feed": {
@@ -256,7 +260,11 @@
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Governance domains** (`/v1/admin/domains`)",
     "witnesses": [
-      "go:TestAdminDomains"
+      "go:TestAdminDomains",
+      "go:TestEveryAdminRouteIsGatedOnTheRegisteredMux",
+      "go:TestAdminWriteRefusesAServicePrincipalThatIsNotAnAdministrator",
+      "go:TestAdminReadAllowsAdministratorAndServicePrincipal",
+      "go:TestWithNoAdministratorsDeclaredEveryWriteIsRefused"
     ]
   },
   "informationschema-sys-introspection": {
@@ -649,7 +657,11 @@
     "claim": "**Tenant-wide item admin** (`GET /v1/admin/items`)",
     "witnesses": [
       "go:TestAdminListItemsSpansWorkspaces",
-      "go:TestAdminListItemsFiltersAndValidation"
+      "go:TestAdminListItemsFiltersAndValidation",
+      "go:TestEveryAdminRouteIsGatedOnTheRegisteredMux",
+      "go:TestAdminWriteRefusesAServicePrincipalThatIsNotAnAdministrator",
+      "go:TestAdminReadAllowsAdministratorAndServicePrincipal",
+      "go:TestWithNoAdministratorsDeclaredEveryWriteIsRefused"
     ]
   },
   "tenant-wide-workspace-admin-get-v1-admin-workspaces": {
@@ -658,7 +670,11 @@
     "witnesses": [
       "go:TestAdminListWorkspacesUsesDocumentedShape",
       "go:TestAdminListWorkspacesFilters",
-      "go:TestAdminListWorkspacesReportsDomain"
+      "go:TestAdminListWorkspacesReportsDomain",
+      "go:TestEveryAdminRouteIsGatedOnTheRegisteredMux",
+      "go:TestAdminWriteRefusesAServicePrincipalThatIsNotAnAdministrator",
+      "go:TestAdminReadAllowsAdministratorAndServicePrincipal",
+      "go:TestWithNoAdministratorsDeclaredEveryWriteIsRefused"
     ]
   },
   "time-travel-dataframe-option-and-sql-version-as-of": {

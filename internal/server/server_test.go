@@ -36,6 +36,12 @@ func newFixture(t *testing.T) *fixture {
 
 	cfg := &config.Config{
 		EntraIssuer: emu.Origin + "/" + emu.TenantID + "/v2.0",
+		// The fixture authenticates as the seeded daemon service principal.
+		// Declaring it a Fabric administrator keeps the admin-surface tests
+		// exercising those surfaces; without it they would all assert the
+		// tenant-admin refusal instead, which tenantadmin_test.go already
+		// covers deliberately. A test that must be refused sets its own.
+		TenantAdmins: []string{entra.DaemonClientID},
 	}
 	if err := cfg.Finish(); err != nil {
 		t.Fatal(err)

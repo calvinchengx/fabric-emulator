@@ -21,18 +21,18 @@ import (
 )
 
 func (a *API) registerAdminDomains(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/admin/domains", a.withAuth(a.listDomains))
-	mux.HandleFunc("POST /v1/admin/domains", a.withAuth(a.createDomain))
-	mux.HandleFunc("GET /v1/admin/domains/{did}", a.withAuth(a.getDomain))
-	mux.HandleFunc("PATCH /v1/admin/domains/{did}", a.withAuth(a.updateDomain))
-	mux.HandleFunc("DELETE /v1/admin/domains/{did}", a.withAuth(a.deleteDomain))
-	mux.HandleFunc("GET /v1/admin/domains/{did}/workspaces", a.withAuth(a.listDomainWorkspaces))
-	mux.HandleFunc("POST /v1/admin/domains/{did}/assignWorkspaces", a.withAuth(a.assignDomainWorkspaces))
-	mux.HandleFunc("POST /v1/admin/domains/{did}/unassignWorkspaces", a.withAuth(a.unassignDomainWorkspaces))
-	mux.HandleFunc("POST /v1/admin/domains/{did}/unassignAllWorkspaces", a.withAuth(a.unassignAllDomainWorkspaces))
-	mux.HandleFunc("GET /v1/admin/domains/{did}/roleAssignments", a.withAuth(a.listDomainRoles))
-	mux.HandleFunc("POST /v1/admin/domains/{did}/roleAssignments/bulkAssign", a.withAuth(a.bulkAssignDomainRole))
-	mux.HandleFunc("POST /v1/admin/domains/{did}/roleAssignments/bulkUnassign", a.withAuth(a.bulkUnassignDomainRole))
+	mux.HandleFunc("GET /v1/admin/domains", a.withTenantRead(a.listDomains))
+	mux.HandleFunc("POST /v1/admin/domains", a.withTenantAdmin(a.createDomain))
+	mux.HandleFunc("GET /v1/admin/domains/{did}", a.withTenantRead(a.getDomain))
+	mux.HandleFunc("PATCH /v1/admin/domains/{did}", a.withTenantAdmin(a.updateDomain))
+	mux.HandleFunc("DELETE /v1/admin/domains/{did}", a.withTenantAdmin(a.deleteDomain))
+	mux.HandleFunc("GET /v1/admin/domains/{did}/workspaces", a.withTenantRead(a.listDomainWorkspaces))
+	mux.HandleFunc("POST /v1/admin/domains/{did}/assignWorkspaces", a.withTenantAdmin(a.assignDomainWorkspaces))
+	mux.HandleFunc("POST /v1/admin/domains/{did}/unassignWorkspaces", a.withTenantAdmin(a.unassignDomainWorkspaces))
+	mux.HandleFunc("POST /v1/admin/domains/{did}/unassignAllWorkspaces", a.withTenantAdmin(a.unassignAllDomainWorkspaces))
+	mux.HandleFunc("GET /v1/admin/domains/{did}/roleAssignments", a.withTenantRead(a.listDomainRoles))
+	mux.HandleFunc("POST /v1/admin/domains/{did}/roleAssignments/bulkAssign", a.withTenantAdmin(a.bulkAssignDomainRole))
+	mux.HandleFunc("POST /v1/admin/domains/{did}/roleAssignments/bulkUnassign", a.withTenantAdmin(a.bulkUnassignDomainRole))
 }
 
 // domainProps builds the operationProperties the domain audit schema

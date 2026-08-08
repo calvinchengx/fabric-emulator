@@ -105,7 +105,11 @@ type API struct {
 	// itself and drive a Spark statement-executor agent (real interactive
 	// sessions without an Apache Livy server). livyNativeState holds its
 	// in-memory session/statement state.
-	livyAgent       *url.URL
+	livyAgent *url.URL
+	// tenantAdmins are the principal ids (oid or appid) the operator declared
+	// Fabric administrators. Configuration rather than inference — see
+	// tenantadmin.go for why a claim must not decide this.
+	tenantAdmins    []string
 	livyNativeState *livyManager
 	// hc holds high-concurrency Livy session-packing state (lazily created).
 	hc *hcManager
@@ -133,6 +137,12 @@ type API struct {
 func New(st *store.Store, v *auth.Validator, retryAfter int, lroDelay int64) *API {
 	return &API{Store: st, Auth: v, RetryAfterSeconds: retryAfter, LRODelaySeconds: lroDelay, lroDelay: -1}
 }
+
+// SetTenantAdmins declares which principals are Fabric administrators. Empty
+// means nobody is: every mutating /v1/admin call is then refused, which is the
+// honest default for an emulator nobody has configured — the alternative
+// (everyone is an admin) is what this gate exists to end.
+func (a *API) SetTenantAdmins(ids []string) { a.tenantAdmins = ids }
 
 // Register mounts the /v1 routes on mux.
 func (a *API) Register(mux *http.ServeMux) {

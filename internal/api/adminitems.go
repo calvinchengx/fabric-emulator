@@ -25,7 +25,7 @@ import (
 )
 
 func (a *API) registerAdminItems(mux *http.ServeMux) {
-	mux.HandleFunc("GET /v1/admin/items", a.withAuth(a.adminListItems))
+	mux.HandleFunc("GET /v1/admin/items", a.withTenantRead(a.adminListItems))
 }
 
 // adminItem is the documented Item object. Fields the emulator does not model

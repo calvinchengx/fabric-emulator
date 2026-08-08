@@ -27,9 +27,9 @@ import (
 
 func (a *API) registerCapacityOverrides(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/capacities/delegatedTenantSettingOverrides",
-		a.withAuth(a.listCapacityOverrides))
+		a.withTenantRead(a.listCapacityOverrides))
 	mux.HandleFunc("POST /v1/admin/capacities/{cid}/delegatedTenantSettingOverrides/{name}/update",
-		a.withAuth(a.putCapacityOverride))
+		a.withTenantAdmin(a.putCapacityOverride))
 }
 
 // capacityOverride is the documented CapacityTenantSettingOverride: a capacity
