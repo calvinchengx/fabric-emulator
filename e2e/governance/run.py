@@ -146,7 +146,12 @@ def main():
     r = s.post(f"{fabric}/v1/workspaces/{ws['id']}/items/{pipeline_id}/jobs/instances",
                params={"jobType": "Pipeline"}, json={}, timeout=30)
     assert r.status_code == 202, (r.status_code, r.text)
-    copy_job = s.get(r.headers["Location"], timeout=15).json()
+    # Async pipelines (doc 37 §4): poll to terminal the way a real client does.
+    for _ in range(120):
+        copy_job = s.get(r.headers["Location"], timeout=15).json()
+        if copy_job["status"] not in ("NotStarted", "InProgress"):
+            break
+        time.sleep(1)
     assert copy_job["status"] == "Completed", copy_job
 
     # Sensitivity labels. Two different labels on two lakehouses, so a bug

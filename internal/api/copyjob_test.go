@@ -64,7 +64,7 @@ func TestCopyJobExecuteReallyCopies(t *testing.T) {
 
 	cj := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, ""))
 	_, jid := runJob(t, a, ws.ID, cj.ID, "jobType=Execute", "{}")
-	if s := jobStatus(t, a, ws.ID, cj.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, cj.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	got, err := st.GetOneLakePath(dst.ID, "Tables/bronze_orders/part-0.parquet")
@@ -101,7 +101,7 @@ func TestCopyJobDispatchesOnBothDocumentedJobTypeSpellings(t *testing.T) {
 	seedFile(t, st, ws.ID, src.ID, "Tables/orders/part-0.parquet", []byte("x"))
 	cj := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, ""))
 	_, jid := runJob(t, a, ws.ID, cj.ID, "jobType=CopyJob", "{}")
-	if s := jobStatus(t, a, ws.ID, cj.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, cj.ID, jid); s != "Completed" {
 		t.Fatalf("jobType=CopyJob status = %s", s)
 	}
 }
@@ -113,7 +113,7 @@ func TestCopyJobEmptyDefinitionCompletesEmpty(t *testing.T) {
 	ws := seedWorkspace(t, st)
 	cj := createCopyJob(t, st, ws.ID, `{"properties":{"jobMode":"Batch"},"activities":[]}`)
 	_, jid := runJob(t, a, ws.ID, cj.ID, "jobType=Execute", "{}")
-	if s := jobStatus(t, a, ws.ID, cj.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, cj.ID, jid); s != "Completed" {
 		t.Fatalf("empty definition status = %s", s)
 	}
 }
@@ -174,7 +174,7 @@ func TestCopyJobRefusesWhatItCannotHonour(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cj := createCopyJob(t, st, ws.ID, tc.def)
 			_, jid := runJob(t, a, ws.ID, cj.ID, "jobType=Execute", "{}")
-			if s := jobStatus(t, a, ws.ID, cj.ID, jid); s != "Failed" {
+			if s := awaitJob(t, a, ws.ID, cj.ID, jid); s != "Failed" {
 				t.Fatalf("status = %s, want Failed", s)
 			}
 			j, err := a.Store.GetJobInstance(cj.ID, jid)
@@ -218,7 +218,7 @@ func TestCopyJobDeltaSourceMakesRealCommits(t *testing.T) {
 	// Overwrite (the default): destination holds exactly the source's rows.
 	cj := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, "Overwrite"))
 	_, jid := runJob(t, a, ws.ID, cj.ID, "jobType=Execute", "{}")
-	if s := jobStatus(t, a, ws.ID, cj.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, cj.ID, jid); s != "Completed" {
 		t.Fatalf("overwrite status = %s", s)
 	}
 	if n := rowsAt("bronze_orders"); n != 2 {
@@ -231,7 +231,7 @@ func TestCopyJobDeltaSourceMakesRealCommits(t *testing.T) {
 	app := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, "Append"))
 	for i, want := range []int{4, 6} {
 		_, jid := runJob(t, a, ws.ID, app.ID, "jobType=Execute", "{}")
-		if s := jobStatus(t, a, ws.ID, app.ID, jid); s != "Completed" {
+		if s := awaitJob(t, a, ws.ID, app.ID, jid); s != "Completed" {
 			t.Fatalf("append run %d status = %s", i, s)
 		}
 		if n := rowsAt("bronze_orders"); n != want {

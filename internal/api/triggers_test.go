@@ -12,6 +12,7 @@ import (
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"time"
 )
 
 type trigFixture struct {
@@ -224,10 +225,26 @@ func TestOneLakeWriteFiresTheTriggeredPipeline(t *testing.T) {
 	if runs[0].InvokeType != store.InvokeEventTriggered {
 		t.Fatalf("invokeType = %q", runs[0].InvokeType)
 	}
-	status, _, err := f.st.GetPipelineRun(runs[0].ID)
-	if err != nil || status != "Succeeded" {
-		t.Fatalf("the triggered pipeline did not run: %s %v", status, err)
+	if status, _ := awaitPipelineRun(t, f.st, runs[0].ID); status != "Succeeded" {
+		t.Fatalf("the triggered pipeline did not run: %s", status)
 	}
+}
+
+// awaitPipelineRun polls for a pipeline run's detail: execution is async
+// (doc 37 §4), so the record appears when the goroutine finishes, not when
+// the trigger dispatches.
+func awaitPipelineRun(t *testing.T, st *store.Store, runID string) (string, string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		status, detail, err := st.GetPipelineRun(runID)
+		if err == nil && status != "" && status != "InProgress" {
+			return status, detail
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pipeline run %s never recorded a terminal status", runID)
+	return "", ""
 }
 
 func TestTriggerFiltersOnEventTypeAndSource(t *testing.T) {
@@ -304,10 +321,7 @@ func TestTriggerEventIsReadableFromTheDefinition(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("runs = %d", len(runs))
 	}
-	status, detail, err := f.st.GetPipelineRun(runs[0].ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	status, detail := awaitPipelineRun(t, f.st, runs[0].ID)
 	if status != "Succeeded" {
 		t.Fatalf("status = %s: %s", status, detail)
 	}
@@ -328,9 +342,9 @@ func TestTriggerEventIsNullForAManualRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, detail, err := f.st.GetPipelineRun(j.ID)
-	if err != nil || status != "Succeeded" {
-		t.Fatalf("a manual run of a trigger-aware pipeline failed: %s %s %v", status, detail, err)
+	status, detail := awaitPipelineRun(t, f.st, j.ID)
+	if status != "Succeeded" {
+		t.Fatalf("a manual run of a trigger-aware pipeline failed: %s %s", status, detail)
 	}
 }
 
