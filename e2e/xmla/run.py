@@ -137,7 +137,52 @@ WORKSPACE = "ws"   # the workspace the probe names in its Data Source
 # is a SCREEN, not a guess. If one advances, the next run narrows it; if none
 # does, four hypotheses die at once.
 def _shapes(host):
-    """SCREEN 5 — DERIVED FROM THE ASSEMBLY, not guessed.
+    """SCREEN 6 — capacityUri, one shape per RUN.
+
+    Screen 5 got the routing reply CONSUMED: one call instead of six, both
+    diagnostic errors gone, and the failure moved downstream to an
+    `IndexOutOfRangeException` thrown inside `AdomdConnection.Open()`. That
+    success broke the screen's own mechanism — the client only re-asks when it
+    rejected the last answer, so an accepted shape ends the request stream and
+    the 2nd and 3rd shapes are never served. A screen is a tool for FAILURE.
+    Past the first success, shapes must vary across runs, one per process, so
+    each gets a cold client with no resolved workspace cached.
+
+    Two questions, answered together in one pass:
+
+    1. WHICH parser throws. The probe now prints the exception's frames, so the
+       method names itself instead of being guessed at one candidate URI per
+       run. This is the same move as reading the assembly: ask the shipped code
+       what it wants rather than screening the space of what it might.
+    2. WHETHER capacityUri is implicated at all. B sends it empty. If the
+       exception is unchanged between A and B, the field is not the variable
+       and the frames from (1) are the only thing worth reading.
+
+      A capacityUri = https://<listener>/  — screen 5's shape, the control that
+        must reproduce the IndexOutOfRangeException for B..D to mean anything
+      B capacityUri = ""                   — is this field implicated at all?
+      C a real-shaped Power BI cluster host (unreachable, deliberately: what is
+        under test is whether it PARSES, which happens before any connect)
+      D authority only, no scheme          — if the parser wants a bare host
+    """
+    cluster = f"https://{host}/"
+    real = "https://wabi-us-north-central-h-primary-redirect.analysis.windows.net/"
+
+    def ws(capacity_uri, kind="Group", sku="Premium"):
+        return {"id": "00000000-0000-0000-0000-000000000001", "name": WORKSPACE,
+                "type": kind, "capacitySku": sku, "capacityUri": capacity_uri}
+
+    ct = {"Content-Type": "application/json; charset=utf-8"}
+    return [
+        ("A-capacityUri-listener", 200, ct, json.dumps([ws(cluster)]).encode()),
+        ("B-capacityUri-empty", 200, ct, json.dumps([ws("")]).encode()),
+        ("C-capacityUri-real-shaped", 200, ct, json.dumps([ws(real)]).encode()),
+        ("D-capacityUri-no-scheme", 200, ct, json.dumps([ws(host)]).encode()),
+    ]
+
+
+def _shapes_screen5(host):
+    """SCREEN 5 — DERIVED FROM THE ASSEMBLY, not guessed. Kept for the record.
 
     Reflecting over Microsoft.AnalysisServices.AdomdClient 19.84.1 gives the
     contract the routing reply deserialises into:
@@ -184,6 +229,7 @@ def _shapes(host):
     ]
 
 
+SHAPE_INDEX = 0  # which shape this probe run serves; the phase-0 loop advances it
 SHAPE_LOG = []   # [(shape name, request path)] — which shape answered which call
 
 REQUESTS = []          # [{method, path, headers: {lower: value}, body}]
@@ -218,7 +264,12 @@ class Capture(http.server.BaseHTTPRequestHandler):
             # is the measurement instead, and just as useful.
             shapes = _shapes(self.headers.get("Host", ""))
             with LOCK:
-                label, status, headers, body = shapes[len(SHAPE_LOG) % len(shapes)]
+                # ONE shape per run, not per request. Rotating per request only
+                # screens while shapes fail: the moment one is accepted the
+                # client stops asking and the rest are never served (screen 5).
+                # SHAPE_INDEX is set by the phase-0 loop, which restarts the
+                # probe per shape so each meets a client with nothing cached.
+                label, status, headers, body = shapes[SHAPE_INDEX]
                 SHAPE_LOG.append((label, self.path))
             print(f"    -> answering {status} with shape {label!r}", flush=True)
             self.send_response(status)
@@ -462,83 +513,85 @@ if FAILURES:
 phase1 = [(r["method"], r["path"]) for r in REQUESTS]
 
 ANSWER_ROUTING = True
-with LOCK:
-    REQUESTS.clear()
-log("PHASE 0: answering the routing call, recording what follows")
-try:
-    proc2 = run_probe()
-except subprocess.TimeoutExpired:
-    srv.shutdown()
-    raise SystemExit("FAILED: the phase-0 probe did not finish within 15 minutes")
+
+# ONE PROBE RUN PER SHAPE. Screen 5 established that an accepted reply is
+# cached for the life of the client process, so a second shape in the same run
+# is never requested. Restarting the probe is what makes each shape meet a
+# cold client — the cost is one container per shape, and the alternative is
+# results that silently describe only the first.
+runs = []   # [(label, [(method, path)], stdout)]
+for SHAPE_INDEX, (label, *_) in enumerate(_shapes("")):
+    with LOCK:
+        REQUESTS.clear()
+        SHAPE_LOG.clear()
+    log(f"PHASE 0 shape {SHAPE_INDEX + 1}/{len(_shapes(''))}: {label}")
+    try:
+        proc2 = run_probe()
+    except subprocess.TimeoutExpired:
+        srv.shutdown()
+        raise SystemExit(f"FAILED: the phase-0 probe for {label} did not finish "
+                         f"within 15 minutes")
+    if not any(ln.startswith("CASE ") for ln in proc2.stdout.splitlines()):
+        # No CASE line at all means the probe never got as far as connecting —
+        # a compile error, a missing package, or the empty-streams failure this
+        # harness has seen before. Abort on the FIRST one: the alternative is
+        # N containers producing N identical non-results.
+        srv.shutdown()
+        raise SystemExit(
+            f"FAILED: the phase-0 probe for {label} reported no CASE line, so it "
+            f"never reached a connection (exit {proc2.returncode}).\n"
+            f"---- stdout ----\n{proc2.stdout.strip() or '(empty)'}\n"
+            f"---- stderr ----\n{proc2.stderr.strip() or '(empty)'}")
+    if not SHAPE_LOG:
+        print(f"  WARNING {label}: served to no request — the client never asked, "
+              f"so this shape was NOT under test.", flush=True)
+    runs.append((label, [(r["method"], r["path"]) for r in REQUESTS], proc2.stdout))
 srv.shutdown()
 
-phase2 = [(r["method"], r["path"]) for r in REQUESTS]
-print(f"\n---- PHASE 0: {len(phase2)} request(s) with routing ANSWERED ----", flush=True)
-for m, path in phase2:
-    print(f"  {m} {path}", flush=True)
-beyond = [x for x in phase2 if not x[1].startswith("/powerbi/databases/v201606/workspaces")]
-print("\n---- PHASE 0 verdict ----", flush=True)
-if beyond:
-    print("ADVANCED — requests past routing, never before observed:", flush=True)
-    for m, path in beyond:
-        print(f"    {m} {path}", flush=True)
-    body = next((r["body"] for r in REQUESTS
-                 if not r["path"].startswith("/powerbi/databases/v201606/workspaces")), "")
-    if body:
-        print(f"    first body (first 400 chars): {body[:400]}", flush=True)
-elif phase2 == phase1:
-    print("UNCHANGED — the sequence is identical to the refused run, so the "
-          "doubled routing call is unconditional rather than a 404 fallback.", flush=True)
-elif len(phase2) < len(phase1):
-    # The refusing run shows what rejection costs: every connection re-asks,
-    # once with PreferClientRouting and once without. FEWER calls than that
-    # means the client did not re-ask — it kept the answer. That is acceptance
-    # evidence independent of the error text, which is why it is a separate
-    # verdict rather than folded into "stopped at routing".
-    print(f"CONSUMED — {len(phase1)} routing call(s) when refused, {len(phase2)} "
-          f"when answered. The client stopped re-asking, so the reply was "
-          f"accepted; any failure below is DOWNSTREAM of routing, not the "
-          f"reply's shape:", flush=True)
-else:
-    print("STOPPED AT ROUTING — the reply was rejected. The probe's own error "
-          "text below is what the shape lacked:", flush=True)
-print("\n---- phase 0 probe stdout ----", flush=True)
-print(proc2.stdout.strip() or "(empty)", flush=True)
+for label, phase2, out in runs:
+    print(f"\n---- PHASE 0 · {label}: {len(phase2)} request(s) ----", flush=True)
+    for m, path in phase2:
+        print(f"  {m} {path}", flush=True)
+    beyond = [x for x in phase2
+              if not x[1].startswith("/powerbi/databases/v201606/workspaces")]
+    if beyond:
+        print("  ADVANCED — requests past routing, never before observed:", flush=True)
+        for m, path in beyond:
+            print(f"    {m} {path}", flush=True)
+    elif phase2 == phase1:
+        print("  UNCHANGED — identical to the refused run, so the doubled routing "
+              "call is unconditional rather than a 404 fallback.", flush=True)
+    elif len(phase2) < len(phase1):
+        # The refusing run shows what rejection costs: every connection re-asks,
+        # once with PreferClientRouting and once without. FEWER calls than that
+        # means the client did not re-ask — it kept the answer. That is
+        # acceptance evidence independent of the error text, which is why it is
+        # a separate verdict rather than folded into "stopped at routing".
+        print(f"  CONSUMED — {len(phase1)} routing call(s) when refused, "
+              f"{len(phase2)} here. The client stopped re-asking, so the reply "
+              f"was accepted and any failure below is DOWNSTREAM of routing.",
+              flush=True)
+    else:
+        print("  STOPPED AT ROUTING — the reply was rejected.", flush=True)
+    # The frames, not just the message. An IndexOutOfRangeException says
+    # "Index was outside the bounds of the array" and names nothing; its stack
+    # names the method, which is what turns the next step from screening
+    # candidate URIs into reading the parser.
+    for ln in out.splitlines():
+        if ln.startswith("CASE powerbi") or ln.lstrip().startswith(
+                ("FRAME powerbi", "THREW powerbi", "INNER powerbi")):
+            print(f"  {ln.strip()}", flush=True)
 
-# Attribute each connection's outcome to the shape that answered its routing
-# call. Without this pairing the screen is three unlabelled results and proves
-# nothing about which hypothesis died.
-print("\n---- shape screen ----", flush=True)
-outcomes = [ln for ln in proc2.stdout.splitlines() if ln.startswith("CASE powerbi")]
-served = len(SHAPE_LOG)
-if served < len(outcomes):
-    # FEWER requests than connections is itself a result, not a malfunction:
-    # the client only re-asks when it rejected the last answer. Screen 5 hit
-    # this — one request served three connections — so the screen's
-    # one-shape-per-connection premise holds only while shapes FAIL. Say which
-    # shapes were never served rather than implying they were tried and lost.
-    print(f"  FEWER REQUESTS THAN CONNECTIONS: {served} shape(s) served, "
-          f"{len(outcomes)} powerbi case(s) reported. The client stopped asking, "
-          f"which happens when it ACCEPTED an answer and reused it. Only the "
-          f"first {served} shape(s) below were under test.", flush=True)
-    for label, _, _, _ in _shapes("")[served:]:
-        print(f"  {label:26} NOT SERVED — untested", flush=True)
-elif served > len(outcomes):
-    print(f"  NOT PAIRED: {served} shape(s) served, {len(outcomes)} powerbi case(s) "
-          f"reported — the 1:1 assumption does not hold, so nothing below is "
-          f"attributable.", flush=True)
-for (label, _), line in zip(SHAPE_LOG, outcomes):
-    # DIFFERENT means "the client changed its mind", NOT "this shape is
-    # closer". A shape can differ by failing EARLIER — which is what
-    # bare-array does — so the label states the fact and leaves the direction
-    # to the reader rather than implying progress.
-    verdict = "STILL NOT FOUND" if "is not found" in line else "*** DIFFERENT ***"
-    print(f"  {label:22} {verdict}", flush=True)
-    print(f"  {'':22} {line.strip()}", flush=True)
-print("\nDIFFERENT = the client reacted differently; read the message to see "
-      "whether that is progress or a regression. All STILL NOT FOUND means "
-      "field spelling is not the variable and the next hypothesis must be "
-      "structural. The single-shape run is the CONTROL: all three connection "
-      "types reported identically there, so a difference here is attributable "
-      "to the shape and not to the Data Source form.", flush=True)
+print("\n---- capacityUri screen ----", flush=True)
+first = {label: next((ln for ln in out.splitlines()
+                      if ln.startswith("CASE powerbi")), "(no powerbi case)")
+         for label, _, out in runs}
+base = first.get("A-capacityUri-listener")
+for label, _, _ in runs:
+    line = first[label]
+    same = "  same as A" if label != "A-capacityUri-listener" and line == base else ""
+    print(f"  {label:26} {line.split('::', 1)[-1].strip()}{same}", flush=True)
+print("\nIf every shape reports what A reports, capacityUri is NOT the variable "
+      "and the frames above are the only thing that narrows it. A shape that "
+      "differs names the format the parser wanted.", flush=True)
 print("\nPASSED: the ADOMD.NET client contract is unchanged.")

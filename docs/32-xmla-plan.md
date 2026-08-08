@@ -276,13 +276,59 @@ shape per request only screens three hypotheses *while shapes fail*. The first
 shape the client accepts ends the request stream. A screen is a tool for
 failure; past the first success the harness must vary shapes across runs.
 
+### Screen 6 — RUN: the frames name the parser, and `capacityUri` is the field
+
+Two changes made this screen possible, both forced by screen 5 succeeding:
+
+- **One probe run per shape.** An accepted reply is cached for the life of the
+  client process, so the 2nd and 3rd shapes of a rotating screen are never
+  requested. The phase-0 loop now restarts the container per shape.
+- **The probe prints the exception's frames.** `IndexOutOfRangeException`'s
+  message names nothing. Its stack names the method. One run collects that;
+  screening candidate URI formats costs one run per guess.
+
+**Observed — the throw moved one frame shallower.** In the refusing control the
+stack ends inside the resolver's HTTP call, with an inner
+`WebException :: (404) Not Found` under
+`ConnectivityHelper.ExecuteJsonBasedHttpRequestImpl(…, DataContractJsonSerializer
+responseSerializer, …)` — which also confirms screen 4's serializer reading from
+a frame rather than from an error string. With an accepted shape,
+`TryResolveWorkspaceWithWorkspaceResolver` is **absent from the stack** and the
+throw is in its caller, `PbiPremiumAuthenticationHandle.TryResolvePbiWorkspace`.
+The resolver returned successfully. That is screen 5's inference re-derived
+from the frames instead of from request counts.
+
+**Observed — the screen.**
+
+| shape | `capacityUri` | outcome |
+| --- | --- | --- |
+| A | `https://<listener>/` | `IndexOutOfRangeException` |
+| B | `""` | `InvalidDataException :: Internal error: the Power BI premium workspace's capacity uri is null or empty!` |
+| C | `https://wabi-…redirect.analysis.windows.net/` | same as A |
+| D | `host.docker.internal:18446`, no scheme | same as A |
+
+B was the built-in discriminator and it fired: the field is read, validated
+non-empty, then parsed, with the client's own text naming it. **`capacityUri`
+is implicated.** C and D rule out the two obvious candidates — not the scheme,
+and not that the host must resemble a real cluster.
+
+**Inferred, and flagged as such.** What A, C and D share is an **empty path**,
+and `TryResolvePbiWorkspace` derives two values nothing in the reply carries —
+`pbiDedicatedRolloutFqdn` and `capacityObjectId` (both `out` in its signature).
+Splitting the URI and indexing absent segments fits every observation, but no
+run has yet varied path depth, so it is untested.
+
 ### Where this leaves the search
 
-Routing is no longer the frontier. The next unknown is one layer down — what
-the client does with `capacityUri`, and which request it would make against a
-cluster host it could parse. That is again best answered by varying a single
-field against the same harness, with the `IndexOutOfRangeException` as the
-signal to clear.
+A **path-segment ladder** — `capacityUri` with 1, 2, 3, 4, 5 segments — to find
+how many the parser indexes. The failure mode dictates the experiment rather
+than a guess at a URL format: `IndexOutOfRange` means indexing past the end, so
+the variable to sweep is length.
+
+`pbiDedicatedRolloutFqdn` is the strategically important one. It is the host
+the client dials after routing, which makes it the hook for steering ADOMD.NET
+back to the emulator — the point at which Phase 0 ends and Phase 1 has a
+client to talk to.
 
 ### Original framing, kept because the reasoning still holds
 
