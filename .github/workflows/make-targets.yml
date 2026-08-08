@@ -33,7 +33,10 @@ on:
 # not. Safe either way — these jobs only build and check, so cancelling one
 # leaves nothing half-done. Kept in step with ci.yml deliberately; the two
 # together are what "main is green" means, and a verdict from one of them is
-# half an answer.
+# half an answer. **That coupling is now ENFORCED** by
+# scripts/check_workflow_concurrency.py (run by `make check`), because this
+# sentence on its own was a defect report with no owner: it named the failure
+# and nothing would have caught the drift.
 #
 # The RELEASE GATE still cannot be cancelled, but by a different mechanism than
 # before. release.yml triggers on a tag push and calls this workflow, so the

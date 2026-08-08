@@ -28,6 +28,9 @@ on:
 # either way. Do NOT copy the PR-side cancellation to a workflow that publishes:
 # docs-site.yml uses `cancel-in-progress: false` because a cancelled deploy put
 # the github-pages environment into `error`.
+# make-targets.yml must group and cancel by the SAME rule (different prefix, or
+# the two would share a group and cancel each other). Enforced by
+# scripts/check_workflow_concurrency.py rather than by whoever edits this next.
 concurrency:
   group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
