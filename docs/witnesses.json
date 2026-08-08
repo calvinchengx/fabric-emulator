@@ -963,5 +963,18 @@
     "witnesses": [
       "ci:rest-servicenow"
     ]
+  },
+  "purview-data-map-endpoint-datamap-api-atlas-v2": {
+    "section": "Identity & security (`security/`, `admin/`)",
+    "claim": "Purview Data Map",
+    "witnesses": [
+      "go:TestTheBaseTypeHierarchyIsSeeded",
+      "go:TestAnEntityOfAnUnregisteredTypeIsRefused",
+      "go:TestAnEntityMissingARequiredAttributeIsRefused",
+      "go:TestTheSameQualifiedNameUpdatesRatherThanDuplicating",
+      "go:TestNegativeGUIDsAreReplacedAndReported",
+      "go:TestABatchWithOneBadEntityCommitsNothing",
+      "go:TestEveryRouteRequiresAToken"
+    ]
   }
 }
