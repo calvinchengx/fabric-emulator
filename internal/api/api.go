@@ -229,6 +229,7 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	a.registerSchedules(mux)
 	a.registerTriggers(mux)
+	a.registerMLV(mux)
 	a.registerTyped(mux)
 	a.registerAdminDomains(mux)
 	a.registerActivityEvents(mux)

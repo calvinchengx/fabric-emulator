@@ -135,10 +135,20 @@ must not be satisfiable by a server that lets anyone in).
 
 ## Phase 6 — Refresh Materialized Lake View (build, L)
 
-Needs a minimal MLV model first: an item holding a defining query, refresh
-re-materialises it into a Delta table through the existing engine path, staleness
-observable. The activity is then Phase-2-shaped on top. Scoped last because it
-is the only item where the *feature* is missing, not the wiring.
+**The model is built.** A view is a named query against a lakehouse; refresh
+runs it on the engine and writes a real Delta table under `Tables/<name>`, and
+staleness is measured against the declared sources' Delta versions. See the
+parity map's *Materialized lake views* row and `internal/api/mlv.go`.
+
+The **definition surface is emulator-native**, on the Reflex-binding precedent:
+Fabric creates these with Spark SQL DDL that no capture here has observed, and
+inventing a syntax is what the oracle rule forbids. When a capture arrives the
+DDL becomes a second front door onto the same model rather than a rewrite.
+
+**The activity itself is still blocked**, and on the same thing as the other
+seven: nobody has captured its wire `type` or `typeProperties`. It is now a
+Phase-2-shaped wrapper over `RefreshMaterializedLakeView` — small, once the
+capture lands.
 
 ## Decision gates — named, not buried
 

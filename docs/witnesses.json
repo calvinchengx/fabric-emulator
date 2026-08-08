@@ -930,5 +930,25 @@
       "go:TestUnrunnableRefusalsCoverTheDiff",
       "go:TestTheStubStillAnswersForConnectorLeaves"
     ]
+  },
+  "materialized-lake-views": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "**Materialized lake views**",
+    "witnesses": [
+      "go:TestMLVRefreshReallyMaterialises",
+      "go:TestMLVGoesStaleWhenASourceMoves",
+      "go:TestMLVRefreshThatWritesNothingFails",
+      "go:TestMLVVersionsAreReadBeforeTheQuery",
+      "go:TestMLVSourceDisappearingIsStale",
+      "go:TestMLVEngineFailureIsRecorded",
+      "go:TestMLVNoEngineIsHonest",
+      "go:TestMLVDefinitionSurface",
+      "go:TestMLVDeleteLeavesTheData",
+      "go:TestMLVRoutesAreMounted",
+      "go:TestMLVViewerCannotDefineOrRefresh",
+      "go:TestMLVWrongItemTypeIsRefused",
+      "go:TestMLVRefreshUnknownView",
+      "go:TestMLVUnknownLakehouse"
+    ]
   }
 }
