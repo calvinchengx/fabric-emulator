@@ -398,17 +398,58 @@ authorization: Bearer <token from the connection string>
 it. `datasetName` is null because the probe's Data Source carries no
 `Initial Catalog`; that is where a database name would appear.
 
+### The token read — DONE: `generateastoken`'s reply is one field
+
+Read off the same assembly (19.84.1.0) rather than screened, because the
+routing read had already shown that beats guessing. `GetMwcToken` returns
+`PbiPremiumAuthenticationHandle+MWCToken`, and the contract is:
+
+```
+MWCToken
+    Token : string        [DataMember] ×1
+```
+
+One member, PascalCase. **The emulator's reply to `generateastoken` is
+`{"Token":"<string>"}`** — and the token is one the emulator mints, so its
+contents are ours to choose.
+
+**A free check on the method.** The same read dumped the *request* contract:
+
+```
+MWCASTokenRequest
+    capacityObjectId · workspaceObjectId · datasetName · applyAuxiliaryPermission
+    auxiliaryPermissionOwner · bypassBuildPermission · intendedUsage
+    sourceCapacityObjectId
+```
+
+That matches screen 8's captured wire body field for field. The declared
+contract and the observed request agree, so the reflection route is confirmed
+against a measurement rather than trusted on its own — which is the check the
+routing read never got.
+
+The read is now a tool rather than an ad-hoc run:
+[`e2e/xmla/contract`](../e2e/xmla/contract/README.md). `run.py [substring]`
+prints any matching `[DataContract]`'s member names. Reach for it *before*
+screening a payload shape: a screen is right when the client's behaviour is
+unknown, wrong when the answer is already written in an assembly on disk.
+
 ### Where this leaves the search
 
 Phase 0's question — "what does the client ask after routing?" — is **answered**.
 The roadmap's largest unknown is now a recorded request with a known body.
 
-Next is `generateastoken`'s RESPONSE contract, and it should be read off the
-assembly rather than screened: `GetMwcToken` deserialises into a declared
-`[DataContract]` exactly as the routing reply did, and reading it once beat
-four screens of guessing last time. "MWC" is the token the client carries into
-the XMLA calls themselves, which is the boundary where Phase 0 ends and
-Phase 1 has a client to talk to.
+~~Next is `generateastoken`'s RESPONSE contract~~ — **done**, see the token
+read above: `{"Token":"<string>"}`. "MWC" is the token the client carries into
+the XMLA calls themselves, so answering this is the boundary where Phase 0 ends
+and Phase 1 has a client to talk to.
+
+**The next unknown is therefore what the client does with a token it accepts.**
+Nothing in this project has seen a request past `generateastoken`, and that is
+the first XMLA/SOAP call — the point where `[MS-SSAS-T]` stops being a paper
+spec and becomes a recorded sequence. The step is small: serve
+`{"Token":"…"}` from the capture stub and record what arrives next. Whether
+`pbiDedicatedRolloutFqdn` can then steer that call at a host of our choosing
+remains untested and is the other half of the same run.
 
 `pbiDedicatedRolloutFqdn` — the other value `TryResolvePbiWorkspace` derives —
 remains the hook for steering the client's later calls at a host of our

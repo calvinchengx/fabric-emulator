@@ -94,3 +94,7 @@ portal/coverage/
 
 # Intermediate frames and video from the flow.gif recording (docs/demo/flow.py).
 docs/demo/.capture/
+
+# .NET build output from the e2e probes (they build in-container).
+bin/
+obj/
