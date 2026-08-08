@@ -1,6 +1,6 @@
 # 44 — Interaction surfaces: how a user touches this emulator, versus real Fabric
 
-**Status: survey and doctrine, with the gaps ranked.** This maps every way a
+**Status: survey and doctrine; the Jupyter gap is closed, the rest ranked.** This maps every way a
 real Fabric user interacts with their workspace onto what this emulator offers
 for the same need — and records *why* the mapping is shaped the way it is, so
 the next "should the portal do X?" discussion starts from a position instead of
@@ -48,7 +48,7 @@ checker) exist precisely because such artifacts rot.
 | Fabric workspace UI surface | Emulator answer today | Parity position |
 |---|---|---|
 | Workspace / item browser, CRUD | Portal `Workspaces` view; fabric-cli; the REST surface | ≈ parity for observing and managing |
-| **Notebook editor** (Monaco, cells, run) | None, by recorded decision — VS Code extension contract + Jupyter/`.ipynb` + git/fabric-cicd sync | Deliberate: authoring belongs to real tools (docs/14 D3) |
+| **Notebook editor** (Monaco, cells, run) | Not in the portal, by recorded decision. **`make up-jupyter` ships a real JupyterLab** wired to the family; plus the VS Code extension contract and `.ipynb` + git/fabric-cicd sync | Deliberate: authoring belongs to real tools (docs/14 D3), and the tool is now *shipped* rather than assumed installed |
 | **Lakehouse explorer** (Tables/Files tree, data preview) | Nothing in-portal. Real clients read OneLake directly: DuckDB, delta-rs, azcopy, ADLS SDKs; Spark SQL over Livy | **The largest genuine gap** — a read-only browser is stored-state rendering, on the right side of the line |
 | Warehouse SQL editor | TDS endpoint → SSMS, ADS, `sqlcmd`, dbt; `executeQueries` REST; `portal-terminal` (ttyd) profile | Adequate via real clients; portal `Warehouse` view is config-status only |
 | Monitoring hub (runs, jobs) | Portal `Jobs`, `Operations` | ≈ parity |
@@ -105,12 +105,34 @@ in the repo, so reproducing the capture is the first step.
    rendering; right side of the line.
 2. **Read-only notebook view + a run button** (S–M) — renders the stored
    definition, triggers the documented job API. Already promised by docs/14 D3.
-3. **`--profile jupyter` sidecar** (S) — ship a real editor instead of building
-   one: JupyterLab preconfigured with the `notebookutils` shim against the
-   stack (Sail's Spark Connect port is already published). Solves first-run
-   onboarding the same way OpenMetadata solves the catalog UI.
+3. ~~**`--profile jupyter` sidecar**~~ ✅ **Done** — see below.
 4. **Capture-diff for the extension contract** (M, after re-establishing the
    capture method).
+
+## Closed: the `jupyter` profile
+
+    make up-jupyter        # then http://localhost:8888
+
+A real JupyterLab, attached rather than rebuilt — the same answer OpenMetadata
+gives for the catalog UI and Airflow gives for orchestration. What makes it a
+*Fabric* notebook rather than a generic one:
+
+- `notebookutils` is on `PYTHONPATH`, importable exactly as in a Fabric
+  notebook, wired through its documented contract
+  (`python/notebookutils/_config.py`). Tenant, client id and secret default to
+  entra-emulator's seeded identity, so only the endpoints are named.
+- `SPARK_REMOTE` points at **Sail** — the same engine a `RunNotebook` job and a
+  Livy session use, so a cell here and a cell in a job execute identically.
+- `pyspark-client` is pinned to the **same 4.1.1 the agent uses**. A kernel on a
+  different client than the engine is precisely the drift this profile exists to
+  avoid, and the pin comment in `pyproject.toml` explains what breaks otherwise.
+- `./notebooks` is a host mount, so what you author survives the container and
+  is the same file `fabric-cicd` publishes and git syncs.
+
+This closes the one place the bring-your-own-UI doctrine was genuinely weak: a
+newcomer running `make up` could not touch a notebook without installing VS Code
+or Jupyter first. It does **not** reverse the doctrine — the editor is still a
+real tool, it is simply now shipped rather than assumed.
 
 What stays out: a portal notebook editor, and real-extension UI automation in
 CI — both for the reasons above.

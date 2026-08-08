@@ -120,6 +120,49 @@ services:
       - "7681"
 
 
+  # ---- Notebooks (optional): real JupyterLab, profile-gated -----------------
+  # A real editor SHIPPED rather than one built into the portal. docs/44 records
+  # the doctrine (authoring belongs to real tools, because a UI we write is not
+  # parity evidence) and the one place it was weak: a newcomer could not touch a
+  # notebook without installing VS Code or Jupyter first. Same answer as
+  # OpenMetadata for the catalog UI — attach the real thing.
+  #
+  #   make up-jupyter        then open http://localhost:8888
+  #
+  # The kernel gets `notebookutils` on PYTHONPATH and Spark Connect to Sail, so
+  # a notebook authored here is the same notebook fabric-cicd publishes and
+  # RunNotebook executes.
+  jupyter:
+    profiles: [jupyter]
+    build:
+      context: .
+      dockerfile: docker/jupyter/Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    ports:
+      - "8888:8888"
+    volumes:
+      # Notebooks live on the host so they survive the container and can be
+      # committed, published by fabric-cicd, or opened in VS Code instead.
+      - ./notebooks:/notebooks
+    environment:
+      # The shim's documented wiring (python/notebookutils/_config.py). Tenant,
+      # client id and secret default to entra-emulator's seeded dev identity, so
+      # only the endpoints need naming.
+      NOTEBOOKUTILS_FABRIC_URL: "http://fabric-emulator"
+      NOTEBOOKUTILS_ENTRA_URL: "http://entra-emulator:8443"
+      NOTEBOOKUTILS_INSECURE: "1"
+      # Spark Connect to the same engine the Livy path uses, so a cell here and
+      # a cell in a RunNotebook job execute identically.
+      SPARK_REMOTE: "sc://sail:50051"
+    # Local dev only, like the rest of this file: no token, no password. This
+    # listens on localhost and is not for anything internet-facing.
+    command: >
+      jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+      --IdentityProvider.token= --ServerApp.password=
+      --ServerApp.root_dir=/notebooks
+
   # ---- Orchestration (optional): real Apache Airflow, profile-gated ---------
   # Fabric's code-first orchestrator IS upstream Apache Airflow, so this is the
   # engine rather than an imitation of it — the same versions Microsoft

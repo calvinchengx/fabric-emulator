@@ -108,6 +108,17 @@ sail-delta = [
 ]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP
 # APIs, and the statement agent is where that code executes.
+# JupyterLab for the `jupyter` compose profile: a REAL notebook editor shipped
+# rather than one built into the portal (docs/44). pyspark-client is pinned to
+# the SAME 4.1.1 the agent uses — a kernel on a different client than the engine
+# is exactly the drift this profile exists to avoid.
+jupyter = [
+    "jupyterlab>=4.2,<5",
+    "pyspark-client==4.1.1",
+    "deltalake>=0.23,<2",
+    "pyarrow>=18,<24",
+    "requests>=2.32,<3",
+]
 spark-connect = ["pyspark-client==4.1.1", "requests>=2.32,<3"]
 dbt-fabric = ["dbt-fabric>=1.9"]
 dbt-fabricspark = ["dbt-fabricspark>=1.9"]
