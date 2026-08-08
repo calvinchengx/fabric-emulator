@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"sort"
 )
 
 // Shortcut is a OneLake symlink: a named entry inside an item's managed
@@ -102,4 +103,49 @@ func (s *Store) ShortcutFor(itemID, relPath string) (*Shortcut, string, error) {
 		}
 	}
 	return nil, "", nil
+}
+
+// externalTargetTypes is the ONE list of shortcut target types that resolve
+// outside OneLake. It lives in store, next to the Shortcut it describes,
+// because two packages were re-deriving the same question by literal.
+//
+// The count matters: this predicate was already extracted once, in
+// internal/onelake, for the narrower "may I write here" question — and the
+// pattern was not followed, so four other sites across two packages kept
+// asking "is this external at all" with an inline `TargetType == "ADLSGen2"
+// || TargetType == "AmazonS3"`. An extracted predicate that its own neighbours
+// ignore is the shape that drifts: the survivors are exactly the sites nobody
+// updates when a type is added.
+//
+// Adding a target type means adding it here, once.
+var externalTargetTypes = map[string]bool{
+	"ADLSGen2":  true,
+	"AmazonS3":  true,
+	"Dataverse": true,
+}
+
+// IsExternalTarget reports whether this shortcut resolves outside OneLake, so
+// its reads, writes and deletes belong to the target rather than to us.
+//
+// Note this is NOT "may I write to it": a target can be external and still be
+// read-only (S3 and Dataverse both are). That question is externalWritable in
+// internal/onelake, deliberately separate and narrower — collapsing the two is
+// what would let a read-only target accept a write.
+func (sc *Shortcut) IsExternalTarget() bool {
+	return sc != nil && externalTargetTypes[sc.TargetType]
+}
+
+// ExternalTargetTypes returns the registered external target types, sorted.
+//
+// Exported so tests in other packages can enumerate list-vs-list agreement
+// over PAIRS rather than restating the list — a second copy written by hand is
+// the bug this whole predicate exists to remove, and a test carrying its own
+// copy would go green precisely when the two lists drifted apart.
+func ExternalTargetTypes() []string {
+	out := make([]string, 0, len(externalTargetTypes))
+	for t := range externalTargetTypes {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
 }

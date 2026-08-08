@@ -174,7 +174,7 @@ func (s *Service) resolveRead(itemID, rel, principalID string) (*store.OneLakePa
 	if sc == nil {
 		return nil, &dfsError{"PathNotFound", http.StatusNotFound, "The path does not exist."}
 	}
-	if externalTarget(sc) {
+	if sc.IsExternalTarget() {
 		return s.resolveExternal(sc, remainder)
 	}
 	role, err := s.Store.RoleOf(sc.TargetWorkspace, principalID)
@@ -268,27 +268,6 @@ func (s *Service) resolveExternal(sc *store.Shortcut, remainder string) (*store.
 	return s.readExternalBody(resp, err, remainder)
 }
 
-// externalTarget reports whether a shortcut resolves outside OneLake, so its
-// reads, writes and deletes belong to the target rather than to us.
-//
-// ONE predicate, deliberately, because the three call sites disagreeing is a
-// silent failure and not a loud one. This began as the literal
-// `TargetType == "ADLSGen2" || TargetType == "AmazonS3"` written out three
-// times — at read, at flush and at delete. A new external type added to the
-// read list and missed on the other two does not error: the flush stores the
-// bytes in the LOCAL path table and returns 200, so the caller is told the
-// write succeeded, nothing ever reaches the target, and a later read through
-// the shortcut serves the local copy back as though it were target data. For
-// a read-only target that inverts the very rule the type exists to enforce.
-// Registering a type in one place makes the half-registered state unwritable.
-func externalTarget(sc *store.Shortcut) bool {
-	switch sc.TargetType {
-	case "ADLSGen2", "AmazonS3", "Dataverse":
-		return true
-	}
-	return false
-}
-
 // externalWritable reports whether writes may be forwarded to this target.
 //
 // Fabric documents S3 shortcuts as read-only — "They don't support write
@@ -300,9 +279,10 @@ func externalTarget(sc *store.Shortcut) bool {
 // no such restriction, and the shortcuts doc describes deleting through one
 // deleting in the target account.
 //
-// Note this is NOT the negation of externalTarget: a target can be external
+// Note this is NOT the negation of Shortcut.IsExternalTarget: a target can be external
 // and still refuse writes, which is exactly the case the two predicates exist
-// to keep apart. Writable is the narrow allow-list; external is the broad one.
+// to keep apart. Writable is the narrow allow-list; external is the broad one,
+// and it lives in store because the API layer asks it too.
 func externalWritable(sc *store.Shortcut) bool { return sc.TargetType == "ADLSGen2" }
 
 // writeExternal pushes the assembled file to the shortcut target. Called at
@@ -633,7 +613,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// (onelake/onelake-shortcuts.md, "How do shortcuts handle
 		// deletions?"). Deleting the shortcut object itself is a
 		// control-plane operation and does not reach here.
-		if sc, remainder, err := s.Store.ShortcutFor(it.ID, rel); err == nil && sc != nil && externalTarget(sc) {
+		if sc, remainder, err := s.Store.ShortcutFor(it.ID, rel); err == nil && sc != nil && sc.IsExternalTarget() {
 			if derr := s.deleteExternal(sc, remainder); derr != nil {
 				writeDFSErr(w, *derr)
 				return
@@ -683,7 +663,7 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request, itemID, rel stri
 		// Flush is the point the DFS protocol considers the file written, so
 		// that is where the bytes go upstream. Without this the write would
 		// succeed locally and silently never reach the storage account.
-		if sc, remainder, err := s.Store.ShortcutFor(itemID, rel); err == nil && sc != nil && externalTarget(sc) {
+		if sc, remainder, err := s.Store.ShortcutFor(itemID, rel); err == nil && sc != nil && sc.IsExternalTarget() {
 			if derr := s.writeExternal(sc, remainder, pth.Content); derr != nil {
 				// Drop the local buffer: it must not masquerade as target data.
 				_ = s.Store.DeleteOneLakePath(itemID, rel)

@@ -183,16 +183,18 @@ func TestDataverseShortcutRefusesDeletes(t *testing.T) {
 // no dispatch — so the route-level half lives in the test below, and neither
 // stands in for the other.
 func TestExternalAndWritableAreDistinctSets(t *testing.T) {
-	for _, typeName := range []string{"ADLSGen2", "AmazonS3", "Dataverse"} {
+	// Driven from store's registry, not a second copy of it — a hand-written
+	// list here would go green exactly when the two drifted apart.
+	for _, typeName := range store.ExternalTargetTypes() {
 		sc := &store.Shortcut{TargetType: typeName}
-		if !externalTarget(sc) {
-			t.Errorf("externalTarget(%s) = false — reads would resolve locally and "+
+		if !sc.IsExternalTarget() {
+			t.Errorf("IsExternalTarget(%s) = false — reads would resolve locally and "+
 				"writes would be buffered here instead of refused or forwarded", typeName)
 		}
 	}
 	// OneLake is internal: it must NOT take the external path, or an in-tenant
 	// shortcut would try to resolve over HTTP against an empty location.
-	if externalTarget(&store.Shortcut{TargetType: "OneLake"}) {
+	if (&store.Shortcut{TargetType: "OneLake"}).IsExternalTarget() {
 		t.Error("externalTarget(OneLake) = true; OneLake targets resolve in-store")
 	}
 	// And writable is a strictly narrower set than external — the two must not

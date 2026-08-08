@@ -249,6 +249,19 @@ func shortcutDTO(sc *store.Shortcut) map[string]any {
 			"type": typeName, key: map[string]any{"location": sc.TargetLocation, "subpath": "/" + sc.TargetPath, "connectionId": sc.ConnectionID},
 		}}
 	}
+	// THE FALL-THROUGH IS GUARDED, because it used to be the silent half of
+	// the same list-vs-list bug the data plane had. An external type with no
+	// branch above lands here and gets echoed as a **OneLake** target with
+	// empty workspaceId/itemId — a well-formed response describing a shortcut
+	// that does not exist, rather than an error anyone would notice. Reads
+	// through it would work (the data plane resolves by stored type), so the
+	// only broken thing is what clients are told, which is the hardest kind to
+	// spot. Asking store — the one place target types are registered — turns
+	// that into a visibly wrong type instead of a plausibly wrong target.
+	if sc.IsExternalTarget() {
+		return map[string]any{"path": sc.Path, "name": sc.Name,
+			"target": map[string]any{"type": sc.TargetType}}
+	}
 	return map[string]any{
 		"path": sc.Path, "name": sc.Name,
 		"target": map[string]any{

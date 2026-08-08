@@ -279,3 +279,57 @@ func TestExternalShortcutTypeUsesTheDocumentedEnumSpelling(t *testing.T) {
 		}
 	}
 }
+
+// LIST-VS-LIST, over pairs rather than types.
+//
+// store registers which target types are external; shortcutDTO decides which
+// wire shape each one gets. Those are two lists, and the failure when they
+// disagree is silent: a registered external type with no DTO branch is echoed
+// as a **OneLake** target with empty workspaceId/itemId — a well-formed
+// response describing a shortcut that does not exist. Reads still work, so
+// nothing errors; only what clients are told is wrong.
+//
+// The test enumerates store's list rather than restating it. A hand-written
+// second copy would pass exactly when the two drifted, which is the bug.
+func TestEveryRegisteredExternalTypeGetsItsOwnWireShape(t *testing.T) {
+	types := store.ExternalTargetTypes()
+	if len(types) == 0 {
+		t.Fatal("no external target types registered; this test would assert nothing")
+	}
+	for _, typeName := range types {
+		sc := &store.Shortcut{
+			Path: "Files", Name: "x", TargetType: typeName,
+			TargetLocation: "https://target.test", TargetPath: "folder",
+			TargetTable: "account", ConnectionID: "conn-1",
+		}
+		target := shortcutDTO(sc)["target"].(map[string]any)
+		if target["oneLake"] != nil {
+			t.Errorf("%s is registered external but shortcutDTO echoed a oneLake target — "+
+				"clients would be handed a shortcut that does not exist", typeName)
+		}
+		if target["type"] == "OneLake" {
+			t.Errorf("%s echoed target.type = OneLake", typeName)
+		}
+		// AND it must have a real body, not just a type. The runtime guard in
+		// shortcutDTO returns a bare {"type": …} for a registered type with no
+		// branch — which is the right thing to SERVE (it cannot masquerade as
+		// a OneLake target) and the wrong thing to SHIP. Without this
+		// assertion the guard would absorb the very drift the test exists to
+		// catch: registering a type and forgetting its shape would stay green.
+		if len(target) < 2 {
+			t.Errorf("%s is registered external but has no DTO branch — it falls through to "+
+				"the bare {\"type\"} guard, so clients get a target with no fields. "+
+				"Add its documented shape to shortcutDTO.", typeName)
+		}
+		// Every external type carries a connection; if the shape has a body at
+		// all, that body must name it rather than dropping it silently.
+		for key, body := range target {
+			if key == "type" {
+				continue
+			}
+			if m, ok := body.(map[string]any); ok && m["connectionId"] != "conn-1" {
+				t.Errorf("%s: %s.connectionId = %v, want the shortcut's connection", typeName, key, m["connectionId"])
+			}
+		}
+	}
+}
