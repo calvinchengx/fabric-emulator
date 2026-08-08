@@ -15,9 +15,23 @@ convention held perfectly by hand until it wasn't.
 
 WHAT COUNTS AS PUBLISHED. website/scripts/sync-docs.mjs decides, via DOC_RE:
 `NN-name.md` chapters plus the two un-numbered living references (parity,
-engine-matrix). That regex is mirrored below rather than re-derived, so a file
-this check considers is exactly a file the site publishes. Anything else in
-docs/ (release notes, subdirectories) is not synced and not required.
+engine-matrix). **That regex is READ FROM sync-docs.mjs, not copied here.**
+
+It used to be copied, under a comment saying "Mirrors DOC_RE in
+website/scripts/sync-docs.mjs" — and a comment telling a future reader to keep
+two things in step is a defect already filed, with no owner and no failing
+test. The test that claimed to pin the coupling asserted only that the STRING
+"DOC_RE" still appeared in the .mjs, then checked the local copy against a
+hand-written list of filenames. Edit DOC_RE to publish a different set and
+everything stayed green: the name was still there, and the hand-written list
+still matched the stale copy. The assertion matched a phrase that co-occurs
+with the claim rather than the claim itself.
+
+Deriving it removes the second list instead of guarding it. The two regexes
+share a syntax for this pattern (character classes, alternation, anchors), so
+the JS source compiles in Python as-is. If it ever stops doing so, this fails
+loudly rather than falling back to a copy — a silent fallback would rebuild
+exactly the bug being removed.
 
 ONE DIRECTION ONLY. Sidebar entries with no docs/ source are legitimate — the
 landing page and the generated parity-history pages are synthesized by
@@ -35,13 +49,51 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 CONFIG = ROOT / "website" / "astro.config.mjs"
 
-# Mirrors DOC_RE in website/scripts/sync-docs.mjs — the set the site publishes.
-PUBLISHED = re.compile(r"^(\d{2}-.*|parity|engine-matrix)\.md$")
+SYNC_DOCS = ROOT / "website" / "scripts" / "sync-docs.mjs"
+
+# `const DOC_RE = /…/;` — the literal, unanchored to any particular body so a
+# future edit to the pattern is picked up rather than rejected.
+_DOC_RE_DECL = re.compile(r"^const\s+DOC_RE\s*=\s*/(?P<body>.+)/(?P<flags>[a-z]*);\s*$", re.M)
+
+
+class PatternUnavailable(RuntimeError):
+    """sync-docs.mjs could not be read, found, or compiled."""
+
+
+def published_pattern(path=None):
+    """Compile the site's own DOC_RE so this check guards exactly its set.
+
+    Raises rather than falling back: guarding a *guessed* set silently is the
+    failure this function exists to remove.
+    """
+    path = path or SYNC_DOCS
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PatternUnavailable(f"cannot read {path}: {exc}") from exc
+    match = _DOC_RE_DECL.search(source)
+    if not match:
+        raise PatternUnavailable(
+            f"{path} no longer declares `const DOC_RE = /…/;` — the published set "
+            "cannot be derived, so this check cannot know what to guard")
+    body = match.group("body")
+    try:
+        return re.compile(body)
+    except re.error as exc:
+        raise PatternUnavailable(
+            f"DOC_RE in {path} does not compile as a Python regex ({exc}); it has "
+            "diverged from the shared subset and must be translated deliberately") from exc
 
 
 def main():
     if not CONFIG.exists():
         print(f"check_docs_sidebar: {CONFIG} not found")
+        return 1
+
+    try:
+        published = published_pattern()
+    except PatternUnavailable as exc:
+        print(f"check_docs_sidebar: {exc}")
         return 1
 
     slugs = set(re.findall(r"slug:\s*'([^']+)'", CONFIG.read_text()))
@@ -50,7 +102,7 @@ def main():
         print("check_docs_sidebar: parsed no slugs from website/astro.config.mjs")
         return 1
 
-    docs = sorted(p.name for p in DOCS.glob("*.md") if PUBLISHED.match(p.name))
+    docs = sorted(p.name for p in DOCS.glob("*.md") if published.match(p.name))
     if not docs:
         print("check_docs_sidebar: parsed no published docs from docs/")
         return 1
