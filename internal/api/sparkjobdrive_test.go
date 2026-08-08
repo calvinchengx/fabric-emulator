@@ -110,14 +110,19 @@ func TestADrivenSparkJobPublishesItsTerminalEvent(t *testing.T) {
 	_, jid := runJob(t, a, ws.ID, item.ID, "jobType=sparkjob", "")
 	waitForJobStatus(t, st, item.ID, jid)
 
-	var terminal string
+	// EXACTLY ONE, and only after the engine answered. The count is the half
+	// that catches the regression TestPipelineJobOutlivesItsPOST documents:
+	// listing a driven type in terminalStatusOf's executesNow publishes a
+	// terminal event at POST — a Completed announced while the main file has
+	// not run, which is the false green this whole path exists to prevent.
+	var terminals []string
 	for _, ev := range drainEvents(t, sub.C) {
 		if ev.JobID == jid && (ev.Status == store.JobCompleted || ev.Status == store.JobFailed) {
-			terminal = ev.Status
+			terminals = append(terminals, ev.Status)
 		}
 	}
-	if terminal != store.JobCompleted {
-		t.Fatalf("no terminal event for a driven Spark job; got %q", terminal)
+	if len(terminals) != 1 || terminals[0] != store.JobCompleted {
+		t.Fatalf("want exactly one Completed terminal event, got %v", terminals)
 	}
 }
 
