@@ -72,7 +72,7 @@ endif
 PY ?= $(shell if command -v uv >/dev/null 2>&1; then echo "uv run --frozen --no-sync python"; \
 	else for c in python3 python py; do if "$$c" -c '' >/dev/null 2>&1; then echo "$$c"; break; fi; done; fi)
 
-.PHONY: help doctor up up-lite up-jvm down restart clean status status-spark spark logs ps seed test check
+.PHONY: help doctor up up-lite up-jvm down restart clean status status-spark spark logs ps seed test check lint
 
 help: ## Show the available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -117,7 +117,26 @@ ps: ## Container states for this project
 logs: ## Tail logs (SVC=<service> to narrow)
 	$(COMPOSE) logs -f --tail 100 $(SVC)
 
-check: ## Repo invariants — the checks that used to exist only in CI
+# The same two commands CI runs as the `ruff + ty` job, in the same order, both
+# configured in pyproject.toml. Local-only because they were CI-only: `make
+# check` covered the invariant scripts and nothing looked at the ~1800
+# statements of agent, shim and script Python until a push.
+#
+# ruff lints .ipynb sources too, which is how a notebook with its imports in the
+# wrong order reached CI as a red X on a green branch.
+#
+# `check` must stay runnable with nothing but Python (see PY above), and ruff
+# arrives through a uv dependency group. So a machine without uv gets a LOUD
+# skip: a quiet one would make "check passed" and "lint never ran" look alike.
+lint: ## ruff + ty over the Python sources — the CI lint job, locally
+	@if command -v uv >/dev/null 2>&1; then \
+	  uv run --frozen --group lint ruff check . && \
+	  uv run --frozen --group lint --group test ty check; \
+	else \
+	  echo "lint SKIPPED: no uv on PATH — CI still runs ruff + ty" >&2; \
+	fi
+
+check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_witnesses.py --strict
 	@$(PY) scripts/check_govern_types.py
 	@$(PY) scripts/check_example_parity.py
