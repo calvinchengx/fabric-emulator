@@ -34,6 +34,18 @@ BROKEN_PIN = (
     "github.com/calvinchengx/entra-emulator@v0.3.0: invalid version: unknown revision v0.3.0"
 )
 COMPILE_ERROR = "cmd/entra-emulator/main.go:12:2: undefined: doesNotExist"
+# The same window, if a future Go release rewords it out of all recognition.
+# It still names a version OTHER than the pin, which is the structural fact the
+# classification rests on rather than the prose.
+REWORDED = (
+    "go: could not complete module graph for github.com/calvinchengx/entra-emulator: "
+    "checksum lookup unavailable for github.com/calvinchengx/entra-emulator@v0.4.7 "
+    "via https://sum.golang.org/"
+)
+# Module resolution failed and named no version at all — nothing for the
+# structural test to work with, which is what a rewording that drops versions
+# would look like.
+UNCLASSIFIED = "go: module lookup disabled by GOFLAGS; see https://proxy.golang.org/ for details"
 
 
 def fail(msg):
@@ -97,17 +109,38 @@ def main():
     check("a broken pin did not raise", error is not None)
     check("the broken-pin error lost go's own message", "unknown revision v0.3.0" in error)
 
-    # 3. A compile error is not a proxy problem. Fail fast.
+    # 3. The SAME window, reworded beyond recognition, is still retried — the
+    #    classification is structural (it names a version other than the pin),
+    #    not a match against Go's prose, which would be a second list
+    #    maintained against someone else's changelog.
+    result, error, calls, _ = with_stubs([(1, REWORDED), (0, "")])
+    check("a reworded propagation failure was not retried", len(calls) == 2)
+    check("the reworded retry did not then succeed", error is None and result)
+
+    # 3b. Module resolution that names NO version cannot be classified either
+    #     way. Not retried — and it says so, so a rewording that drops version
+    #     strings is diagnosable instead of silently disabling the retry.
+    _, error, calls, _ = with_stubs([(1, UNCLASSIFIED)])
+    check("an unclassifiable module failure was retried", len(calls) == 1)
+    check("an unclassifiable module failure was silent about it",
+          error and "has stopped working" in error)
+
+    # 3c. The note must NOT fire on failures that WERE classified, or it is
+    #     noise on every broken pin.
+    _, error, _, _ = with_stubs([(1, BROKEN_PIN)])
+    check("the note fired on a recognised broken pin", "has stopped working" not in error)
+
+    # 4. A compile error is not a proxy problem. Fail fast.
     _, error, calls, _ = with_stubs([(1, COMPILE_ERROR)])
     check("a compile error was retried", len(calls) == 1)
     check("the compile error was swallowed", error and "undefined: doesNotExist" in error)
 
-    # 4. Exhausted retries surface go's output, not just "failed after 3".
+    # 5. Exhausted retries surface go's output, not just "failed after 3".
     _, error, calls, _ = with_stubs([(1, SUMDB_LAG)], attempts=3)
     check("attempts were not exhausted", len(calls) == 3)
     check("the final error lost the diagnosis", error and "sum.golang.org" in error)
 
-    # 5. Already on PATH: no install at all.
+    # 6. Already on PATH: no install at all.
     real_which = ei.shutil.which
     ei.shutil.which = lambda _: "/usr/local/bin/entra-emulator"
     try:
@@ -117,7 +150,7 @@ def main():
     finally:
         ei.shutil.which = real_which
 
-    # 6. The version is DERIVED from go.mod, which is the other half of this
+    # 7. The version is DERIVED from go.mod, which is the other half of this
     #    change — nine copies of a pin maintained by comment are now one read.
     version = ei.module_version(ei.ENTRA_MODULE)
     check("the entra-emulator version did not come from go.mod",

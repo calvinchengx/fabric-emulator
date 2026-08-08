@@ -43,13 +43,16 @@ import time
 ENTRA_MODULE = "github.com/calvinchengx/entra-emulator"
 EXE = ".exe" if os.name == "nt" else ""
 
-# The signatures of "the module proxy or checksum DB is catching up", as opposed
-# to "this pin is wrong". Matched case-insensitively against the failed command's
-# combined output.
+# Any version string the toolchain names in an error, e.g. "…@v0.3.1:".
+_VERSION_IN_ERROR = re.compile(r"@(v\d+\.\d+\.\d+[^\s:,)]*)")
+
+# The hosts that mean "module resolution was involved". Hostnames rather than
+# prose: Go rewords its messages between releases, and a check that depends on
+# its wording is a second list maintained against someone else's changelog.
+_MODULE_INFRA = ("sum.golang.org", "proxy.golang.org")
+
+# Transport failures, which are transient whatever they are talking about.
 _TRANSIENT = (
-    "loading deprecation",
-    "sum.golang.org",
-    "proxy.golang.org",
     "connection reset",
     "i/o timeout",
     "timeout awaiting response",
@@ -89,13 +92,58 @@ def module_version(module, root=None):
 
 
 def _is_transient(output, version):
+    """Is this the "a newer tag is still propagating" window, or a real failure?
+
+    THE PRIMARY TEST IS STRUCTURAL, not textual. The deprecation lookup targets
+    the module's LATEST version, so its failure necessarily names a version
+    OTHER than the one being installed — and that is true whatever words Go
+    wraps around it. Matching the prose instead ("loading deprecation ...")
+    would be a second list maintained against Go's changelog, with nothing to
+    notice if a release reworded it: the retry would silently stop firing and
+    this whole class would come back wearing the toolchain's clothes.
+
+    Do NOT "simplify" this into matching a fixed version string. The other side
+    of the comparison is whatever was tagged minutes ago, which this code cannot
+    know in advance; only the PINNED side is knowable, so the test has to be
+    "some version other than the pin".
+    """
     lowered = output.lower()
-    if not any(sig in lowered for sig in _TRANSIENT):
+    if any(sig in lowered for sig in _TRANSIENT):
+        return True
+    if not any(host in lowered for host in _MODULE_INFRA):
         return False
-    # "unknown revision <the pin>" is a real breakage even though it arrives
-    # through the same machinery. Only a lookup naming a DIFFERENT version is
-    # the window this retry is for.
-    return f"unknown revision {version.lower()}" not in lowered
+    # A failure naming the pin and nothing else is a genuinely broken pin: same
+    # machinery, opposite meaning, and retrying it would bury the diagnosis.
+    others = set(_VERSION_IN_ERROR.findall(lowered)) - {version.lower()}
+    return bool(others)
+
+
+def _unclassified_note(output, version):
+    """The warning for a module-resolution failure this code did not recognise.
+
+    Suggested by the parity session, and it closes the residual hole: if Go
+    changes how these errors read, the retry stops firing and the only symptom
+    is that the old breakage is back. Saying so at the point of failure turns an
+    invisible regression into a diagnosable one, without widening the retry.
+    """
+    lowered = output.lower()
+    if not any(host in lowered for host in _MODULE_INFRA):
+        return ""
+    # A failure that names versions was CLASSIFIED — as the propagation window
+    # if it named another one, as a broken pin if it named only this one. The
+    # note is for the residual case where the structural test had nothing to
+    # work with, which is what a reworded message that stops naming versions
+    # would look like.
+    if _VERSION_IN_ERROR.search(lowered):
+        return ""
+    return (
+        "\nNOTE: this failed during module resolution but did not match the known\n"
+        "propagation window (an error naming a version other than the pinned "
+        + version + ").\n"
+        "Either it is a real failure, or the toolchain reworded these errors and the\n"
+        "retry in e2e/entra_install.py has stopped working. Check which before\n"
+        "assuming the first."
+    )
 
 
 def go_install(exe_name, package, work_dir, version=None, log=print, attempts=3, delay=10,
@@ -128,7 +176,8 @@ def go_install(exe_name, package, work_dir, version=None, log=print, attempts=3,
     # The output is printed rather than swallowed: capture_output means the
     # caller has seen nothing, and the whole point of the narrow retry is that a
     # real failure still reads like one.
-    raise RuntimeError(f"go install {target} failed:\n{last.strip()}")
+    raise RuntimeError(f"go install {target} failed:\n{last.strip()}"
+                       + _unclassified_note(last, version))
 
 
 def ensure_entra_emulator(work_dir, log=print):
