@@ -161,6 +161,58 @@ cheap to overturn — the discriminator was already written down, so screen 3 on
 had to run it. A conclusion published without its discriminator would have been
 built on instead.
 
+### Screen 4 — RUN: the body IS read, and the serializer names itself
+
+Varied status, headers and emptiness; left the JSON alone. **The pairing guard
+fired** — `NOT PAIRED: 4 shape(s) served, 3 powerbi case(s) reported` — so the
+per-shape labels in that run are misaligned and were not read. Recording what
+is *directly observed* and what is *inferred*, separately, because the guard
+exists precisely to stop the second being published as the first.
+
+**Observed.** Two connections returned
+
+```
+SerializationException :: Expecting element 'root' from namespace ''..
+Encountered 'None' with name '', namespace ''.
+```
+
+one returned the familiar not-found, and four responses were served to three
+connections.
+
+**What that error names, and it is the biggest find so far.** "element 'root'
+from namespace ''" is not XML being demanded — it is
+**`DataContractJsonSerializer`**, which deserialises JSON by mapping it onto an
+XML infoset whose root element is literally called `root`. An empty body has no
+root, hence this exact message.
+
+Two consequences:
+
+1. **The body IS consulted.** The worry after screen 3 — that every shape was
+   varying something the client never reads — is answered: an empty body fails
+   *at deserialisation*, so the populated ones were deserialised and then found
+   wanting. Screens 2–3 were measuring a real variable after all.
+2. **The matching rule is a `[DataContract]`, not a guess.** With
+   `DataContractJsonSerializer`, member names come from `[DataMember(Name=…)]`
+   on a concrete type inside the shipped assembly. That is a fact **readable
+   from `Microsoft.AnalysisServices.AdomdClient`** rather than searchable by
+   trial — which makes the next step inspection, not another screen.
+
+**Inferred, and flagged as such.** Shapes rotate per REQUEST, so four requests
+across three connections means one connection made two — consistent with the
+`307` being followed, which would also explain a redirect-following connection
+receiving the next shape's body. That reconstruction fits every observed
+message, but it is arithmetic on a counter, not a captured sequence. **The
+harness printed the request log and the operator truncated it** when reading
+the output; re-run capturing full stdout before treating the redirect-follow as
+established.
+
+### Where this leaves the search
+
+Off screens entirely, for now. Reading the `DataMember` names off the ADOMD.NET
+assembly converts the remaining unknown from "which of infinitely many field
+spellings" into "what does this type declare" — the same move that turned
+`e2e/xmla` from speculation into measurement in the first place.
+
 ### The next experiment, now one edit and ~5 minutes### The next experiment, now one edit and ~5 minutes
 
 Vary a single field at a time against the same harness and read the error. The
