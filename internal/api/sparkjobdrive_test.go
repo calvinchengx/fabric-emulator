@@ -111,10 +111,19 @@ func TestADrivenSparkJobPublishesItsTerminalEvent(t *testing.T) {
 	waitForJobStatus(t, st, item.ID, jid)
 
 	// EXACTLY ONE, and only after the engine answered. The count is the half
-	// that catches the regression TestPipelineJobOutlivesItsPOST documents:
-	// listing a driven type in terminalStatusOf's executesNow publishes a
-	// terminal event at POST — a Completed announced while the main file has
-	// not run, which is the false green this whole path exists to prevent.
+	// that catches the regression TestPipelineJobOutlivesItsPOST documents.
+	//
+	// The MECHANISM this once named is gone: #91 deleted `terminalStatusOf`,
+	// the second switch that re-derived a job's outcome from its item type,
+	// and `startJob` now records what it settled where it settles it. Listing
+	// a driven type in that switch's `executesNow` USED TO publish a terminal
+	// event at POST. The assertion stays because the FAILURE it guards has not
+	// gone anywhere — a Completed announced while the main file has not run is
+	// the false green this whole path exists to prevent, and a future dispatch
+	// change can reintroduce it by a different route.
+	//
+	// Kept as history rather than deleted: an assertion whose reason is
+	// removed with its mechanism is the next reader's unexplained line.
 	var terminals []string
 	for _, ev := range drainEvents(t, sub.C) {
 		if ev.JobID == jid && (ev.Status == store.JobCompleted || ev.Status == store.JobFailed) {
