@@ -137,33 +137,36 @@ WORKSPACE = "ws"   # the workspace the probe names in its Data Source
 # is a SCREEN, not a guess. If one advances, the next run narrows it; if none
 # does, four hypotheses die at once.
 def _shapes(host):
-    """SCREEN 3 — STRUCTURAL. Screen 2 killed field spelling (ten spellings, all
-    not-found) and left three structural hypotheses. Two of these slots also
-    settle the ambiguity screen 2 recorded but could not resolve: whether
-    `ArgumentNullException (Parameter 'value')` named OUR JSON key or a .NET
-    method parameter. A and C attack that from opposite sides — A supplies the
-    key with nothing in it, C supplies a well-formed object with no such key.
+    """SCREEN 4 — NOT THE BODY. Screens 2 and 3 exhausted body content: every
+    top-level JSON object returned the identical not-found, across envelope
+    present/absent, empty/populated, ten field spellings, PascalCase and
+    nesting. Only the top-level TYPE ever changed anything. So this screen
+    leaves the JSON alone and varies what no body edit can reach.
 
-      A `{"value": []}`      -> "not found" means the key IS ours and an empty
-                               list is handled; a null error means it is not.
-      B nested properties    -> is the name carried under a sub-object rather
-                               than on the workspace itself?
-      C no `value` key at all-> reproduces the null error from a different
-                               shape than a bare array, which is the second
-                               data point A cannot provide alone.
+    Each shape is (label, status, extra headers, body bytes).
+
+      A 200 + EMPTY body -> the sharpest discriminator available. If not-found
+                            still appears, the body is not consulted for this
+                            decision AT ALL, and screens 2-3 were varying
+                            something the client never read. If instead a parse
+                            error appears, the body IS read and those shapes
+                            were parsed-but-unmatched.
+      B 307 redirect     -> `PreferClientRouting=true` may mean "tell me where
+                            to go" via a redirect rather than a payload. Points
+                            at this same listener, so following it is visible
+                            as a second captured request.
+      C text/plain       -> does Content-Type gate parsing? Same JSON that
+                            produced not-found under application/json.
     """
     cluster = f"https://{host}/"
+    ok_body = json.dumps({
+        "@odata.context": f"{cluster}$metadata#workspaces",
+        "value": [{"name": WORKSPACE, "clusterUri": cluster}],
+    }).encode()
     return [
-        ("A-empty-value", {"@odata.context": f"{cluster}$metadata#workspaces", "value": []}),
-        ("B-nested-properties", {"value": [{
-            "properties": {"name": WORKSPACE, "displayName": WORKSPACE,
-                           "clusterUri": cluster},
-            "name": WORKSPACE,
-            "workspace": {"name": WORKSPACE, "id": "00000000-0000-0000-0000-000000000001"},
-            "id": "00000000-0000-0000-0000-000000000001",
-        }], "@odata.count": 1}),
-        ("C-no-value-key", {"workspaces": [{"name": WORKSPACE, "clusterUri": cluster}],
-                            "@odata.context": f"{cluster}$metadata#workspaces"}),
+        ("A-200-empty-body", 200, {"Content-Type": "application/json; charset=utf-8"}, b""),
+        ("B-307-redirect", 307, {"Location": f"{cluster}powerbi/databases/v201606/workspaces"}, b""),
+        ("C-text-plain", 200, {"Content-Type": "text/plain; charset=utf-8"}, ok_body),
     ]
 
 
@@ -201,15 +204,16 @@ class Capture(http.server.BaseHTTPRequestHandler):
             # is the measurement instead, and just as useful.
             shapes = _shapes(self.headers.get("Host", ""))
             with LOCK:
-                label, payload = shapes[len(SHAPE_LOG) % len(shapes)]
+                label, status, headers, body = shapes[len(SHAPE_LOG) % len(shapes)]
                 SHAPE_LOG.append((label, self.path))
-            print(f"    -> answering with shape {label!r}", flush=True)
-            body = json.dumps(payload).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
+            print(f"    -> answering {status} with shape {label!r}", flush=True)
+            self.send_response(status)
+            for k, v in headers.items():
+                self.send_header(k, v)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            if body:
+                self.wfile.write(body)
             return
         self.send_response(404)
         self.send_header("Content-Length", "0")
