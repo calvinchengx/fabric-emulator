@@ -1,7 +1,7 @@
 # 44 — Interaction surfaces: how a user touches this emulator, versus real Fabric
 
-**Status: survey and doctrine; the lakehouse browser and Jupyter gaps are
-closed, the rest ranked.** This maps every way a
+**Status: survey and doctrine; the lakehouse browser, notebook view and Jupyter
+gaps are closed, the capture-diff one ranked.** This maps every way a
 real Fabric user interacts with their workspace onto what this emulator offers
 for the same need — and records *why* the mapping is shaped the way it is, so
 the next "should the portal do X?" discussion starts from a position instead of
@@ -49,7 +49,7 @@ checker) exist precisely because such artifacts rot.
 | Fabric workspace UI surface | Emulator answer today | Parity position |
 |---|---|---|
 | Workspace / item browser, CRUD | Portal `Workspaces` view; fabric-cli; the REST surface | ≈ parity for observing and managing |
-| **Notebook editor** (Monaco, cells, run) | Not in the portal, by recorded decision. **`make up-jupyter` ships a real JupyterLab** wired to the family; plus the VS Code extension contract and `.ipynb` + git/fabric-cicd sync | Deliberate: authoring belongs to real tools (docs/14 D3), and the tool is now *shipped* rather than assumed installed |
+| **Notebook editor** (Monaco, cells, run) | No EDITOR in the portal, by recorded decision — but the `Notebooks` view renders the stored definition read-only and starts a `RunNotebook` job. **`make up-jupyter` ships a real JupyterLab** wired to the family; plus the VS Code extension contract and `.ipynb` + git/fabric-cicd sync | Deliberate: authoring belongs to real tools (docs/14 D3), and the tool is now *shipped* rather than assumed installed |
 | **Lakehouse explorer** (Tables/Files tree, data preview) | Portal **`Lakehouses`** view: tables, files and a Delta preview, read-only. Plus the real clients reading OneLake directly: DuckDB, delta-rs, azcopy, ADLS SDKs; Spark SQL over Livy | ≈ parity for browsing and preview. Read-only by construction — stored state rendered back, on the right side of the line; authoring stays with the real tools |
 | Warehouse SQL editor | TDS endpoint → SSMS, ADS, `sqlcmd`, dbt; `executeQueries` REST; `portal-terminal` (ttyd) profile | Adequate via real clients; portal `Warehouse` view is config-status only |
 | Monitoring hub (runs, jobs) | Portal `Jobs`, `Operations` | ≈ parity |
@@ -105,8 +105,11 @@ in the repo, so reproducing the capture is the first step.
 1. ~~**Lakehouse browser in the portal**~~ ✅ **Done** — the `Lakehouses` view.
    Tables are derived from OneLake *paths*, not directory rows, because delta-rs
    writes no directories; the file list is capped and the count is not.
-2. **Read-only notebook view + a run button** (S–M) — renders the stored
-   definition, triggers the documented job API. Already promised by docs/14 D3.
+2. ~~**Read-only notebook view + a run button**~~ ✅ **Done** — the `Notebooks`
+   view. Cells are parsed server-side by `notebook.Parse`, the same call an
+   engine's run makes; Run starts a real `RunNotebook` job through
+   `startJob`, and the view says up front when no engine is attached to pick
+   it up.
 3. ~~**`--profile jupyter` sidecar**~~ ✅ **Done** — see below.
 4. **Capture-diff for the extension contract** (M, after re-establishing the
    capture method).
