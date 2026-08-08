@@ -197,6 +197,13 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 		a.saveSparkJobRun(j.ID, *sjdRun)
 		if j.FailWith != "" {
 			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
+		} else if a.runsNotebooksItself() {
+			// Same reasoning as the notebook branch above: with an agent
+			// configured the emulator IS the pool, and real Fabric runs a
+			// submitted Spark job rather than handing it back. Without one the
+			// job stays open for the external callback — the original contract,
+			// and the only honest thing when there is no engine to run anything.
+			go a.driveSparkJobRun(wid, it.ID, j.ID, *sjdRun)
 		}
 	}
 	if it.Type == "ApacheAirflowJob" && jobType == "Run" {

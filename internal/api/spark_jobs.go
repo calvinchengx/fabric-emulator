@@ -90,14 +90,10 @@ func (a *API) reportSparkJobRun(w http.ResponseWriter, r *http.Request, p *auth.
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "status must be Completed or Failed.")
 		return
 	}
+	// One finalisation path for both engines: an external one reporting here,
+	// and the emulator's own driver (sparkjobdrive.go). Two writers of one
+	// terminal state is how they drift.
+	a.finishSparkJobRun(wid, iid, jid, run, result.Status, result.Output, result.Error)
 	run.Status, run.Output, run.Error = result.Status, result.Output, result.Error
-	blob, _ := json.Marshal(run)
-	_ = a.Store.SetNotebookRun(jid, run.Status, string(blob))
-	fail := ""
-	if run.Status == "Failed" {
-		fail = "SparkJobExecutionFailed"
-	}
-	_ = a.Store.FinalizeJob(iid, jid, fail)
-	a.publishJobOutcome(wid, iid, jid, fail)
 	writeJSON(w, http.StatusOK, run)
 }

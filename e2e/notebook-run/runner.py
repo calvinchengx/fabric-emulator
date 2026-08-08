@@ -370,18 +370,29 @@ _, headers, _ = req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{sjd}/jobs/insta
 sjd_jid = headers["Location"].rstrip("/").rsplit("/", 1)[-1]
 sjd_run = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{sjd}/jobs/instances/{sjd_jid}/sparkJobRun", token=ft)[2]
 assert sjd_run["binding"]["lakehouseId"] == lake["id"] and sjd_run["job"]["mainFile"] == "main.py"
-old_argv = sys.argv
-buf = io.StringIO()
-try:
-    sys.argv = [sjd_run["job"]["mainFile"], *sjd_run["job"]["arguments"]]
-    with redirect_stdout(buf):
-        exec(compile(sjd_run["job"]["source"], "<spark-job>", "exec"), {"spark": spark, "sys": sys})
-finally:
-    sys.argv = old_argv
-assert "sjd-result=5" in buf.getvalue(), buf.getvalue()
-req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{sjd}/jobs/instances/{sjd_jid}/sparkJobRunResult",
-    {"status": "Completed", "output": buf.getvalue()}, token=ft)
-assert req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{sjd}/jobs/instances/{sjd_jid}", token=ft)[2]["status"] == "Completed"
+
+# THE EMULATOR RUNS THE JOB. This suite used to fetch the source above and
+# exec() it in THIS process, then post the result back — which proved the
+# definition parsed and made the suite the engine rather than the witness. Real
+# Fabric runs a submitted Spark job on its own pool, and so does the emulator
+# now (internal/api/sparkjobdrive.go). Nothing below executes anything: it polls
+# the job the emulator is driving.
+#
+# `sjd-result=5` is the assertion that cannot be faked by orchestration: the
+# source is `spark.table('events').count() + int(sys.argv[2])`, so a 5 means the
+# ENGINE read the lakehouse table the emulator bound (3 rows) and the emulator
+# supplied the definition's arguments as argv (2). Either half missing gives a
+# different number or an error.
+sjd_final = {}
+for _attempt in range(60):
+    sjd_final = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{sjd}/jobs/instances/{sjd_jid}", token=ft)[2]
+    if sjd_final.get("status") in ("Completed", "Failed"):
+        break
+    time.sleep(2)
+assert sjd_final.get("status") == "Completed", sjd_final
+sjd_done = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{sjd}/jobs/instances/{sjd_jid}/sparkJobRun", token=ft)[2]
+assert "sjd-result=5" in sjd_done.get("output", ""), sjd_done
+log(f"SJD executed by the emulator on {engine}: {sjd_done['output'].strip()}")
 
 # A JAR-bearing Environment is an explicit JVM requirement. Sail rejects it;
 # the JVM oracle advertises the JVM surface used to load such dependencies.
@@ -395,15 +406,30 @@ _, headers, _ = req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/i
 jar_jid = headers["Location"].rstrip("/").rsplit("/", 1)[-1]
 jar_run = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances/{jar_jid}/sparkJobRun", token=ft)[2]
 assert jar_run["environment"]["jars"] == ["Libraries/probe.jar"], jar_run
+
+# THE EMULATOR DECIDES, having asked the engine. It runs
+# `hasattr(spark, 'sparkContext')` in the session and refuses the job on Sail
+# before any user code runs — the honest answer, since a Connect session's
+# classpath is fixed at engine start and letting the job run would report a code
+# error for a runtime mismatch. This suite no longer posts either verdict; it
+# asserts the emulator reached the right one on the engine it is running against,
+# which is a claim about the emulator rather than about this script.
+jar_final = {}
+for _attempt in range(60):
+    jar_final = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances/{jar_jid}", token=ft)[2]
+    if jar_final.get("status") in ("Completed", "Failed"):
+        break
+    time.sleep(2)
+jar_done = req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances/{jar_jid}/sparkJobRun", token=ft)[2]
 if engine == "sail":
     assert not hasattr(spark, "sparkContext"), "Sail unexpectedly exposed SparkContext"
-    req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances/{jar_jid}/sparkJobRunResult",
-        {"status": "Failed", "error": "JAR libraries require the JVM Spark runtime"}, token=ft)
-    assert req("GET", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances/{jar_jid}", token=ft)[2]["status"] == "Failed"
+    assert jar_final.get("status") == "Failed", jar_final
+    assert "JVM" in jar_done.get("error", ""), jar_done
+    log(f"JAR job refused on Sail by the emulator: {jar_done['error']}")
 else:
     assert spark.sparkContext._jvm is not None, "JVM Spark did not expose _jvm"
-    req("POST", f"{FABRIC}/v1/workspaces/{ws}/items/{jar_sjd}/jobs/instances/{jar_jid}/sparkJobRunResult",
-        {"status": "Completed", "output": "JVM dependency surface available"}, token=ft)
+    assert jar_final.get("status") == "Completed", jar_final
+    log("JAR job accepted on the JVM overlay")
 
 spark.stop()
 log(f"delta table in OneLake: {rows}")

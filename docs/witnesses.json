@@ -605,6 +605,10 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "Spark Job Definitions",
     "witnesses": [
+      "ci:notebook-run",
+      "go:TestSparkJobIsExecutedByTheEmulatorWhenAnAgentIsConfigured",
+      "go:TestADrivenSparkJobPublishesItsTerminalEvent",
+      "go:TestWithoutAnAgentASparkJobWaitsForItsCallback",
       "go:TestParseSparkJobV1AndFailures"
     ]
   },
