@@ -110,7 +110,7 @@ func TestHDInsightSparkNoEngineIsHonest(t *testing.T) {
 func TestHDInsightSparkRefusesByName(t *testing.T) {
 	for _, tc := range []struct{ name, tp, wantErr string }{
 		{"className", `"rootPath":"x/y","entryFilePath":"e.py","className":"com.acme.Main"`,
-			"JVM overlay"},
+			"no path that submits a Java/Scala main class"},
 		{"proxyUser", `"rootPath":"x/y","entryFilePath":"e.py","proxyUser":"analyst"`,
 			"no impersonation model"},
 		{"external linked service", `"rootPath":"x/y","entryFilePath":"e.py","sparkJobLinkedService":{"referenceName":"blob","type":"LinkedServiceReference"}`,

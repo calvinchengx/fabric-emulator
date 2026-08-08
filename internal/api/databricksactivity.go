@@ -20,10 +20,13 @@ import (
 //	DatabricksSparkJar     mainClassName + parameters     + libraries
 //
 // WHY THE JAR VARIANT IS REFUSED AND THE OTHER TWO ARE NOT. A Databricks JAR
-// task names a Java/Scala main class compiled against Spark's own classes; the
-// default engine is Sail (Rust, embedded CPython) and cannot load one — the
-// same cause as parity.md's `spark.jars` row and HDInsight's `className`.
-// Notebook and Python tasks are Python, which the agent runs for real.
+// task names a Java/Scala main class to EXECUTE. The agent's statement endpoint
+// runs Python, and nothing here submits a main class — on Sail or on the JVM
+// overlay. That is a narrower claim than "no JVM": a JAR *library* does attach
+// on the overlay (the Spark-Job-Definition path probes for it with
+// `agentHasJVM`), so the two boundaries must not be described as one, or the
+// rows contradict each other about the same constraint. Notebook and Python
+// tasks are Python, which the agent runs for real.
 //
 // PATH ADDRESSING. Databricks addresses a workspace path (`/Shared/etl`) or
 // DBFS (`dbfs:/jobs/etl.py`); the emulator has neither. Paths resolve to
@@ -64,10 +67,11 @@ func (e *pipelineExecutor) databricksActivity(
 				name = fmt.Sprint(v)
 			}
 		}
-		return nil, fmt.Errorf("databricks activity %q: a Spark JAR task (mainClassName %q) needs a "+
-			"Java/Scala main class on a JVM classpath, and the default engine is Sail (Rust, "+
-			"embedded CPython) — same limit as spark.jars in docs/parity.md. Use a "+
-			"DatabricksSparkPython or DatabricksNotebook task, or the JVM overlay", act.Name, name)
+		return nil, fmt.Errorf("databricks activity %q: a Spark JAR task (mainClassName %q) asks the "+
+			"emulator to EXECUTE a Java/Scala main class, and its Spark agent runs Python "+
+			"statements — there is no submission path for one on either engine. (A JAR library "+
+			"attaches on the JVM overlay; executing a main class is a different capability.) "+
+			"Use a DatabricksSparkPython or DatabricksNotebook task", act.Name, name)
 	default:
 		return nil, fmt.Errorf("databricks activity %q: unknown type %q", act.Name, act.Type)
 	}

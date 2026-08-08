@@ -87,7 +87,7 @@ func TestDatabricksSparkPythonRunsWithArgv(t *testing.T) {
 // place of a named Java main class would be the emulator inventing behaviour.
 func TestDatabricksRefusesByName(t *testing.T) {
 	for _, tc := range []struct{ actType, tp, wantErr string }{
-		{"DatabricksSparkJar", `"mainClassName":"com.acme.Job"`, "JVM overlay"},
+		{"DatabricksSparkJar", `"mainClassName":"com.acme.Job"`, "no submission path for one on either engine"},
 		{"DatabricksNotebook", `"notebookPath":"x/y.py","libraries":[{"pypi":{"package":"requests"}}]`,
 			"bind an Environment item"},
 		{"DatabricksNotebook", `"notebookPath":"dbfs:/Shared/etl.py"`, "invent a mapping"},
