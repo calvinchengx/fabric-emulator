@@ -54,6 +54,29 @@ class Probe {
             } catch (Exception e) {
                 var first = e.Message.Split('\n')[0].Trim();
                 Console.WriteLine($"CASE {label} :: {e.GetType().Name} :: {first}");
+                // The exception carries the name of the method that threw. That
+                // is strictly more than the message says and costs one run to
+                // collect — where screening candidate payloads costs one run
+                // PER GUESS. Screen 5 ended on an IndexOutOfRangeException whose
+                // message ("Index was outside the bounds of the array") names
+                // nothing at all; the stack names the parser.
+                //
+                // Skipped for NotSupportedException: the Windows-only Data
+                // Source forms are settled, and frames for them are noise.
+                if (!(e is NotSupportedException)) {
+                    for (var x = e; x != null; x = x.InnerException) {
+                        if (!ReferenceEquals(x, e))
+                            Console.WriteLine($"  INNER {label} :: {x.GetType().Name} :: " +
+                                $"{x.Message.Split('\n')[0].Trim()}");
+                        if (x.TargetSite != null)
+                            Console.WriteLine($"  THREW {label} :: " +
+                                $"{x.TargetSite.DeclaringType}::{x.TargetSite.Name}");
+                        foreach (var frame in (x.StackTrace ?? "").Split('\n')) {
+                            var f = frame.Trim();
+                            if (f.Length > 0) Console.WriteLine($"  FRAME {label} :: {f}");
+                        }
+                    }
+                }
             }
         }
         return 0;

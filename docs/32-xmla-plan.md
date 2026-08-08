@@ -105,12 +105,315 @@ the workspace name against**. The hypothesis sent `name`, `id`,
 and a suite that asserted it would pass by confirming its own guess. Both
 findings are printed observations; the next iteration turns one into a test.
 
-### The next experiment, now one edit and ~5 minutes
+### Screen 2 — RUN: the envelope is required, the field spelling is not the variable
 
-Vary a single field at a time against the same harness and read the error. The
-client's message names the workspace it wanted, so a matching reply advances
-past routing for the first time — and that is the point at which
-`[MS-SSAS-T]`'s real size becomes observable rather than estimated.
+Three candidate shapes, one per connection, in a single run. The single-shape
+run is the **control**: all three connection types reported identically there,
+so any difference here is attributable to the shape rather than to the Data
+Source form.
+
+| Shape | Client's answer |
+|---|---|
+| bare array (no `value`) | `ArgumentNullException :: Value cannot be null. (Parameter 'value')` |
+| `value` envelope + 10 field spellings | `…workspace ('ws') is not found` |
+| PascalCase (`Value`/`Name`/…) | `…workspace ('ws') is not found` |
+
+**What this appeared to establish — and screen 3 DISPROVED it.** The reading at
+the time was "removing the envelope changes the failure to a null argument, so
+the client requires it," with PascalCase `Value` seeming to confirm a
+case-insensitive envelope. That was one correlation with one data point, and it
+was wrong. Left here rather than deleted because the correction is the finding.
+
+### Screen 3 — RUN: the body is not the variable at all
+
+Designed so two slots would settle screen 2's `value` ambiguity from opposite
+sides. They settled it against screen 2's conclusion.
+
+| Shape | Client's answer |
+|---|---|
+| A `{"value": []}` — key present, list empty | `…workspace ('ws') is not found` |
+| B name nested under `properties`/`workspace` | `…workspace ('ws') is not found` |
+| C `{"workspaces":[…]}` — **no `value` key at all** | `…workspace ('ws') is not found` |
+
+**C is the disproof.** Screen 2's bare array also lacked `value` and produced
+`ArgumentNullException`; C lacks it too and produces the ordinary not-found. Two
+shapes missing the same key, two different answers — so **the missing key was
+never the cause.** The variable in screen 2 was the top-level JSON *type*: an
+array where an object was expected deserialises to null, and the
+`ArgumentNullException` was about that, exactly as the "may name a method
+parameter, not our JSON key" caveat warned.
+
+**What is actually established, after three screens.** Every top-level JSON
+*object* tried so far returns the identical not-found, across: `value` present
+or absent, empty or populated, ten field spellings, PascalCase, and nesting.
+Only changing the top-level type changed anything. **The body's content does not
+determine this outcome.**
+
+That is a stronger negative than any of the individual shapes, and it redirects
+the search off the body entirely. Remaining candidates are things no body edit
+can reach: the response's `Content-Type`, its status code, a header the client
+requires, or a second request it makes and we have not yet answered. The next
+screen should vary one of those and leave the JSON alone.
+
+**Method note worth keeping.** Screen 2's conclusion survived exactly one round.
+It was a single correlation stated with a caveat, and the caveat is what made it
+cheap to overturn — the discriminator was already written down, so screen 3 only
+had to run it. A conclusion published without its discriminator would have been
+built on instead.
+
+### Screen 4 — RUN: the body IS read, and the serializer names itself
+
+Varied status, headers and emptiness; left the JSON alone. **The pairing guard
+fired** — `NOT PAIRED: 4 shape(s) served, 3 powerbi case(s) reported` — so the
+per-shape labels in that run are misaligned and were not read. Recording what
+is *directly observed* and what is *inferred*, separately, because the guard
+exists precisely to stop the second being published as the first.
+
+**Observed.** Two connections returned
+
+```
+SerializationException :: Expecting element 'root' from namespace ''..
+Encountered 'None' with name '', namespace ''.
+```
+
+one returned the familiar not-found, and four responses were served to three
+connections.
+
+**What that error names, and it is the biggest find so far.** "element 'root'
+from namespace ''" is not XML being demanded — it is
+**`DataContractJsonSerializer`**, which deserialises JSON by mapping it onto an
+XML infoset whose root element is literally called `root`. An empty body has no
+root, hence this exact message.
+
+Two consequences:
+
+1. **The body IS consulted.** The worry after screen 3 — that every shape was
+   varying something the client never reads — is answered: an empty body fails
+   *at deserialisation*, so the populated ones were deserialised and then found
+   wanting. Screens 2–3 were measuring a real variable after all.
+2. **The matching rule is a `[DataContract]`, not a guess.** With
+   `DataContractJsonSerializer`, member names come from `[DataMember(Name=…)]`
+   on a concrete type inside the shipped assembly. That is a fact **readable
+   from `Microsoft.AnalysisServices.AdomdClient`** rather than searchable by
+   trial — which makes the next step inspection, not another screen.
+
+**Inferred, and flagged as such.** Shapes rotate per REQUEST, so four requests
+across three connections means one connection made two — consistent with the
+`307` being followed, which would also explain a redirect-following connection
+receiving the next shape's body. That reconstruction fits every observed
+message, but it is arithmetic on a counter, not a captured sequence. **The
+harness printed the request log and the operator truncated it** when reading
+the output; re-run capturing full stdout before treating the redirect-follow as
+established.
+
+### The assembly read — DONE: the contract, no longer a guess
+
+Reflecting over `Microsoft.AnalysisServices.AdomdClient` **19.84.1.0** (429
+types, inspected in `mcr.microsoft.com/dotnet/sdk:8.0`) yields the reply's
+declared shape:
+
+```
+PbiPremiumAuthenticationHandle+Workspace201606
+    id · name · type · capacitySku · capacityUri        [DataMember] ×5
+WorkspaceType201606            = User | Group | Folder
+WorkspaceCapacitySkuType201606 = Shared | Premium
+ResolvePbiWorkspaceErrorReason = None | WorkspaceNotFound
+                               | WorkspaceNotOnPbiPremium | WorkspaceNameDuplicated
+```
+
+Two things follow that no screen could have reached:
+
+1. **No type in the assembly holds a `Workspace201606` collection.** The
+   payload is a **bare array**, not an enveloped list — so every enveloped
+   shape in screens 2–4 was answering a question the client never asks.
+   Screen 2's bare array failed for an unrelated reason, which is precisely
+   how it produced a wrong conclusion that survived a round.
+2. **Three of the five members were never sent.** Screens 1–4 sent `name` and
+   `id`; `type`, `capacitySku` and `capacityUri` deserialised null every time.
+   No amount of re-spelling could have helped — the names were already right
+   and the *set* was short.
+
+The error enum is also a free discriminator: a reply that reaches the workspace
+but fails its premium check reports `WorkspaceNotOnPbiPremium`, distinct from
+`WorkspaceNotFound`. Which error appears is therefore progress information, not
+just failure.
+
+### Screen 5 — RUN: routing is answered, and the failure moved downstream
+
+Shape A — bare array, all five members, `type=Group`, `capacitySku=Premium`,
+`capacityUri=https://<host>/`.
+
+**Observed.**
+
+- **One** routing request in the answered run, against **six** in the refusing
+  control (two per connection: with `PreferClientRouting=true`, then without).
+  The retry a rejected reply provokes did not happen.
+- All three `powerbi://` connections reported
+  `IndexOutOfRangeException :: Index was outside the bounds of the array.`
+- Neither error that pinned every earlier screen appeared: no
+  `SerializationException`, no `The specified Power BI workspace ('ws') is not
+  found`.
+- The listener ran `serve_forever` for the whole probe and was not shut down
+  between connections, so the two missing requests are the client's choice and
+  not the harness closing.
+- The probe's `catch` cannot raise this itself — its only indexing is
+  `e.Message.Split('\n')[0]`, and `Split` always yields index 0 — so the throw
+  is inside `AdomdConnection.Open()`.
+
+**Inferred, and flagged as such.** The reply deserialised and the workspace
+matched: both diagnostic errors are gone and the client stopped re-asking.
+Connections 2 and 3 issued no request at all, which fits a process-wide cache —
+consistent with the `WorkspaceResolver.Initialize` / `friendlyNameMap` /
+`personalWorkspace` members the same assembly read turned up, though nothing
+here observes the cache directly. The surviving failure is most plausibly
+`capacityUri` being parsed into a cluster host (the assembly carries
+`ASAzureUtility+PowerBIClusterResolutionResult` with `FixedClusterUri` and
+`DynamicClusterUri`), but that is **untested**.
+
+**Shapes B and C were never served, so they remain untested.** This is a real
+limit of the screen design, now recorded in the harness itself: rotating one
+shape per request only screens three hypotheses *while shapes fail*. The first
+shape the client accepts ends the request stream. A screen is a tool for
+failure; past the first success the harness must vary shapes across runs.
+
+### Screen 6 — RUN: the frames name the parser, and `capacityUri` is the field
+
+Two changes made this screen possible, both forced by screen 5 succeeding:
+
+- **One probe run per shape.** An accepted reply is cached for the life of the
+  client process, so the 2nd and 3rd shapes of a rotating screen are never
+  requested. The phase-0 loop now restarts the container per shape.
+- **The probe prints the exception's frames.** `IndexOutOfRangeException`'s
+  message names nothing. Its stack names the method. One run collects that;
+  screening candidate URI formats costs one run per guess.
+
+**Observed — the throw moved one frame shallower.** In the refusing control the
+stack ends inside the resolver's HTTP call, with an inner
+`WebException :: (404) Not Found` under
+`ConnectivityHelper.ExecuteJsonBasedHttpRequestImpl(…, DataContractJsonSerializer
+responseSerializer, …)` — which also confirms screen 4's serializer reading from
+a frame rather than from an error string. With an accepted shape,
+`TryResolveWorkspaceWithWorkspaceResolver` is **absent from the stack** and the
+throw is in its caller, `PbiPremiumAuthenticationHandle.TryResolvePbiWorkspace`.
+The resolver returned successfully. That is screen 5's inference re-derived
+from the frames instead of from request counts.
+
+**Observed — the screen.**
+
+| shape | `capacityUri` | outcome |
+| --- | --- | --- |
+| A | `https://<listener>/` | `IndexOutOfRangeException` |
+| B | `""` | `InvalidDataException :: Internal error: the Power BI premium workspace's capacity uri is null or empty!` |
+| C | `https://wabi-…redirect.analysis.windows.net/` | same as A |
+| D | `host.docker.internal:18446`, no scheme | same as A |
+
+B was the built-in discriminator and it fired: the field is read, validated
+non-empty, then parsed, with the client's own text naming it. **`capacityUri`
+is implicated.** C and D rule out the two obvious candidates — not the scheme,
+and not that the host must resemble a real cluster.
+
+**Inferred, and flagged as such.** What A, C and D share is an **empty path**,
+and `TryResolvePbiWorkspace` derives two values nothing in the reply carries —
+`pbiDedicatedRolloutFqdn` and `capacityObjectId` (both `out` in its signature).
+Splitting the URI and indexing absent segments fits every observation, but no
+run has yet varied path depth, so it is untested.
+
+### Screen 7 — RUN: **PHASE 0 IS ANSWERED.** The client advances past routing
+
+A ladder of `capacityUri` path depths, plus a host-label arm. Depth was the
+variable the failure mode pointed at — `IndexOutOfRange` means indexing past
+the end, so the thing to sweep is length, not URL format.
+
+| rung | outcome |
+| --- | --- |
+| `L0` — 0 segments | `IndexOutOfRangeException`, 1 request |
+| `L1`–`L5` — 1 to 5 segments | **ADVANCED**, 7 requests |
+| `H5`, `H7` — 5 and 7 host labels | identical to `L0` |
+
+**One path segment is enough**, and the host-label hypothesis is dead. That arm
+earned its two containers: screen 6's hosts had 3 and 4 dot-separated labels,
+so a parser wanting label 5 would have fitted every observation to that point.
+Retiring a live alternative is worth as much as confirming the leading one.
+
+With a segment present, `TryResolvePbiWorkspace` leaves the stack entirely, the
+`PbiPremiumAuthenticationHandle` **constructs** — `workspaceObjectId` and
+`capacityObjectId` both derived — and the client makes a call nobody in this
+project had ever seen:
+
+```
+GET  /powerbi/databases/v201606/workspaces?PreferClientRouting=true   (once)
+POST /metadata/v201606/generateastoken?PreferClientRouting=true       (per connection)
+POST /metadata/v201606/generateastoken
+```
+
+throwing at `PbiPremiumAuthenticationHandle::GetMwcToken` on the stub's reply.
+Note the **500 is ours** — the capture stub answers every POST with a SOAP
+fault — so that is the harness refusing, not the client failing. Note also that
+routing is resolved ONCE for the process while the token is fetched PER
+CONNECTION: the two have different cache lifetimes.
+
+**A harness regression, and what it cost.** Restructuring the loop for
+per-shape runs narrowed each run's record to `(method, path)`, dropping the
+body print the original had. So the `generateastoken` body — the first sight of
+anything past routing, and the entire point of getting there — was captured and
+discarded, costing a full extra run to recover. The record now keeps whole
+requests and prints headers and body in full, with `authorization` and `cookie`
+reduced to a length.
+
+### Screen 8 — RUN: the token request's contract, and the segment rule
+
+Three rungs with DISTINCT GUIDs per path position, so the value the client
+echoes names the index it read.
+
+| rung | segments offered | `capacityObjectId` sent |
+| --- | --- | --- |
+| `L1` | GUID-1 | `11111111-…-111111111111/` |
+| `L2` | GUID-1, GUID-2 | `11111111-…-111111111111/` |
+| `L5` | GUID-1 … GUID-5 | `11111111-…-111111111111/` |
+
+Always the FIRST segment, at every depth, retaining a TRAILING SLASH.
+
+**Inferred, but from a fingerprint rather than a fit.** That is precisely
+.NET's `Uri.Segments`, which yields `["/", "seg1/", "seg2/", …]` with each
+segment carrying its slash — so `capacityObjectId = new Uri(capacityUri)
+.Segments[1]`. The same rule explains `L0` without adjustment: an empty path
+gives `Segments` length 1, and `Segments[1]` throws `IndexOutOfRangeException`.
+One rule, four observations, no free parameters.
+
+The request the emulator must now answer:
+
+```
+POST /metadata/v201606/generateastoken[?PreferClientRouting=true]
+content-type: application/json        user-agent: ASClient/.NET-Core
+authorization: Bearer <token from the connection string>
+
+{"applyAuxiliaryPermission":false,"auxiliaryPermissionOwner":null,
+ "bypassBuildPermission":false,
+ "capacityObjectId":"<first path segment of capacityUri, trailing slash>",
+ "datasetName":null,"intendedUsage":0,"sourceCapacityObjectId":null,
+ "workspaceObjectId":"<the id sent in Workspace201606>"}
+```
+
+`workspaceObjectId` is echoed from the routing reply, so the emulator controls
+it. `datasetName` is null because the probe's Data Source carries no
+`Initial Catalog`; that is where a database name would appear.
+
+### Where this leaves the search
+
+Phase 0's question — "what does the client ask after routing?" — is **answered**.
+The roadmap's largest unknown is now a recorded request with a known body.
+
+Next is `generateastoken`'s RESPONSE contract, and it should be read off the
+assembly rather than screened: `GetMwcToken` deserialises into a declared
+`[DataContract]` exactly as the routing reply did, and reading it once beat
+four screens of guessing last time. "MWC" is the token the client carries into
+the XMLA calls themselves, which is the boundary where Phase 0 ends and
+Phase 1 has a client to talk to.
+
+`pbiDedicatedRolloutFqdn` — the other value `TryResolvePbiWorkspace` derives —
+remains the hook for steering the client's later calls at a host of our
+choosing. It has not been exercised: every request so far has come back to the
+listener named in the Data Source.
 
 ### Original framing, kept because the reasoning still holds
 
