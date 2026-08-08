@@ -17,18 +17,25 @@ type Shortcut struct {
 	TargetPath      string `json:"-"`
 	TargetType      string `json:"-"`
 	TargetLocation  string `json:"-"`
-	ConnectionID    string `json:"-"`
-	CreatedAt       int64  `json:"-"`
+	// TargetTable is the final path segment for targets that name a table
+	// rather than a folder — today only Dataverse, whose target carries a
+	// `tableName` alongside its `deltaLakeFolder`. Kept separate from
+	// TargetPath so the DTO can echo the two documented fields back exactly
+	// instead of guessing where one ends and the other begins; the read path
+	// simply appends it, so it is empty and inert for every other type.
+	TargetTable  string `json:"-"`
+	ConnectionID string `json:"-"`
+	CreatedAt    int64  `json:"-"`
 }
 
 // CreateShortcut stores a shortcut (unique per item+path+name).
 func (s *Store) CreateShortcut(sc *Shortcut) error {
 	sc.CreatedAt = s.Now()
 	_, err := s.db.Exec(`
-INSERT INTO shortcuts (item_id, path, name, target_workspace, target_item, target_path, target_type, target_location, connection_id, created_at)
-VALUES (?,?,?,?,?,?,?,?,?,?)`,
+INSERT INTO shortcuts (item_id, path, name, target_workspace, target_item, target_path, target_type, target_location, target_table, connection_id, created_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		sc.ItemID, sc.Path, sc.Name, sc.TargetWorkspace, sc.TargetItem, sc.TargetPath,
-		sc.TargetType, sc.TargetLocation, sc.ConnectionID, sc.CreatedAt)
+		sc.TargetType, sc.TargetLocation, sc.TargetTable, sc.ConnectionID, sc.CreatedAt)
 	return err
 }
 
@@ -36,10 +43,10 @@ VALUES (?,?,?,?,?,?,?,?,?,?)`,
 func (s *Store) GetShortcut(itemID, path, name string) (*Shortcut, error) {
 	sc := &Shortcut{}
 	err := s.db.QueryRow(`
-SELECT item_id, path, name, target_workspace, target_item, target_path, target_type, target_location, connection_id, created_at
+SELECT item_id, path, name, target_workspace, target_item, target_path, target_type, target_location, target_table, connection_id, created_at
 FROM shortcuts WHERE item_id = ? AND path = ? AND name = ?`, itemID, path, name).
 		Scan(&sc.ItemID, &sc.Path, &sc.Name, &sc.TargetWorkspace, &sc.TargetItem, &sc.TargetPath,
-			&sc.TargetType, &sc.TargetLocation, &sc.ConnectionID, &sc.CreatedAt)
+			&sc.TargetType, &sc.TargetLocation, &sc.TargetTable, &sc.ConnectionID, &sc.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -49,7 +56,7 @@ FROM shortcuts WHERE item_id = ? AND path = ? AND name = ?`, itemID, path, name)
 // ListShortcuts returns an item's shortcuts.
 func (s *Store) ListShortcuts(itemID string) ([]*Shortcut, error) {
 	rows, err := s.db.Query(`
-SELECT item_id, path, name, target_workspace, target_item, target_path, target_type, target_location, connection_id, created_at
+SELECT item_id, path, name, target_workspace, target_item, target_path, target_type, target_location, target_table, connection_id, created_at
 FROM shortcuts WHERE item_id = ? ORDER BY rowid`, itemID)
 	if err != nil {
 		return nil, err
@@ -59,7 +66,7 @@ FROM shortcuts WHERE item_id = ? ORDER BY rowid`, itemID)
 	for rows.Next() {
 		sc := &Shortcut{}
 		if err := rows.Scan(&sc.ItemID, &sc.Path, &sc.Name, &sc.TargetWorkspace, &sc.TargetItem, &sc.TargetPath,
-			&sc.TargetType, &sc.TargetLocation, &sc.ConnectionID, &sc.CreatedAt); err != nil {
+			&sc.TargetType, &sc.TargetLocation, &sc.TargetTable, &sc.ConnectionID, &sc.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, sc)
