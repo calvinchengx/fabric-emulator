@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ci.yml and make-targets.yml must group and cancel by the same rule.
+"""Workflow invariants nothing else enforces: concurrency coupling, and job timeouts.
 
 WHY THIS EXISTS. Together these two workflows are what "main is green" means —
 a verdict from one of them is half an answer. Their `concurrency:` blocks decide
@@ -33,6 +33,15 @@ maintain and it only reports drift after the fact.
 WHAT IS COMPARED. The `${{ … }}` expression of `group:` (the literal prefix
 before it MUST differ, or the two workflows would share a group and cancel each
 other) and the whole of `cancel-in-progress:`.
+
+SECOND INVARIANT: EVERY JOB DECLARES `timeout-minutes`. GitHub's default is
+**six hours**, so a job without one does not fail when it wedges — it occupies
+a runner until the afternoon and reads as "still pending" to anything watching.
+That is not hypothetical here: a Sail job sat `in_progress` for 78 minutes while
+a merge watcher waited on it, because "running" and "wedged" are the same status
+to `gh pr checks`. The timeouts were added to all 47 jobs in one pass; nothing
+stopped the 48th from arriving without one, which is the same
+maintained-by-attention coupling this file already exists to remove.
 
 Usage:
     check_workflow_concurrency.py     exit non-zero describing any divergence
@@ -92,6 +101,55 @@ def read_concurrency(path):
     return prefix, expr.group(0), cancel.group("value")
 
 
+# A job key: exactly two-space indent, inside the top-level `jobs:` block.
+# Anchored that way because `on:` also carries two-space keys (`push:`,
+# `pull_request:`) — counting those was the first draft's bug, and it inflated
+# 45 jobs to 47 while reporting `push:` as missing a timeout.
+_JOBS_START = re.compile(r"^jobs:\s*$", re.M)
+_JOB_KEY = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
+
+
+def jobs_of(text):
+    """[(job name, its body lines)] for every job in a workflow."""
+    out, in_jobs = [], False
+    for line in text.split("\n"):
+        if _JOBS_START.match(line):
+            in_jobs = True
+            continue
+        if in_jobs and line[:1].strip():  # a new top-level key ends the block
+            break
+        if in_jobs:
+            match = _JOB_KEY.match(line)
+            if match:
+                out.append((match.group(1), []))
+            elif out:
+                out[-1][1].append(line)
+    return out
+
+
+def jobs_missing_timeout(path):
+    """Job names in path that declare no `timeout-minutes`."""
+    text = path.read_text(encoding="utf-8")
+    found = jobs_of(text)
+    if not found:
+        raise ConcurrencyUnreadable(
+            f"{path.name} parsed to zero jobs — a check that inspects nothing "
+            "passes vacuously, which is worse than no check")
+    missing = []
+    for name, body in found:
+        # A job that CALLS a reusable workflow (`uses:` at job level) cannot
+        # carry `timeout-minutes` — GitHub rejects the key there. Its timeout
+        # lives in the called workflow's own jobs, and since this check globs
+        # every workflow in the directory, those jobs ARE covered: coverage is
+        # preserved, not waived. Demanding a key the platform refuses is how a
+        # check gets switched off, which costs more than the check was worth.
+        if any(re.match(r"^    uses:\s", line) for line in body):
+            continue
+        if not any("timeout-minutes:" in line for line in body):
+            missing.append(name)
+    return missing
+
+
 def main():
     try:
         read = {name: read_concurrency(WORKFLOWS / name) for name in COUPLED}
@@ -120,14 +178,30 @@ def main():
             f"both workflows use the concurrency group prefix {prefix_a.strip()!r}; they "
             "would share a group and cancel each other's runs")
 
+    # Every job in every workflow, not only the coupled pair — an untimed job
+    # is a wedged runner wherever it lives.
+    try:
+        for path in sorted((WORKFLOWS).glob("*.yml")):
+            missing = jobs_missing_timeout(path)
+            if missing:
+                problems.append(
+                    f"{path.name}: {len(missing)} job(s) declare no `timeout-minutes`, so they "
+                    f"inherit GitHub's 6-hour default and a wedged run reads as 'still pending':\n    "
+                    + "\n    ".join(missing))
+    except ConcurrencyUnreadable as exc:
+        problems.append(str(exc))
+
     if problems:
         print("check_workflow_concurrency: " + "\n\n".join(problems))
         print(f"\n{a} and {b} together are what \"main is green\" means; a verdict from "
               "one of them is half an answer.")
         return 1
 
+    total = sum(len(jobs_of((WORKFLOWS / p.name).read_text(encoding="utf-8")))
+                for p in sorted(WORKFLOWS.glob("*.yml")))
     print(f"check_workflow_concurrency: {a} and {b} agree "
-          f"(group {expr_a}, cancel-in-progress {cancel_a})")
+          f"(group {expr_a}, cancel-in-progress {cancel_a}); "
+          f"all {total} jobs declare timeout-minutes")
     return 0
 
 
