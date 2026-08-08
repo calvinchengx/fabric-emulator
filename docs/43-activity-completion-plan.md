@@ -58,7 +58,7 @@ dispatch default — see Phase 7 for why that matters.
 
 | Item | Needs | Unblocks |
 |---|---|---|
-| Wire-name capture | One throwaway pipeline in a real tenant containing Refresh SQL Endpoint, Lakehouse maintenance, KQL, and Spark Job Definition activities; paste the JSON | Phase 2 |
+| Wire-name capture | One throwaway pipeline in a real tenant containing Refresh SQL Endpoint, Lakehouse maintenance, KQL, Spark Job Definition, Teams, Copy job, Approval and Refresh Materialized Lake View activities. **Now a button rather than a chore:** run the `Real Fabric conformance` workflow with `capture_item_type: dataPipelines` and the pipeline's display name, and it prints the SHAPE — every `type` discriminator and every property name, with all values redacted, because this repository's logs are public. See `scripts/capture_definition_shape.py` | Phase 2, and the five other blocked activities |
 | Copy job activity case | #78 to settle; owned by the CopyJob session, or claimed by notice after | The 24th real activity — wiring the existing `copyjob` executor into the `pipelines.go` dispatch |
 
 ## Phase 1 — async pipelines (the prerequisite, doc 37 §4)

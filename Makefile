@@ -144,6 +144,7 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_arch_services.py
 	@$(PY) scripts/check_docs_sidebar.py
 	@$(PY) scripts/gen_event_kinds.py --check
+	@$(PY) scripts/test_capture_definition_shape.py
 
 # Not part of `check`: these need Node and an installed portal, and `check` is
 # deliberately runnable with nothing but Python. CI runs both in the portal-types
