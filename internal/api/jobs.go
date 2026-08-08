@@ -152,12 +152,25 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 		return nil, err
 	}
 	a.Store.PublishJobEvent(wid, it.ID, j.ID, jobType, invokeType, store.JobStarted, "")
-	// Announce the outcome for the item types that reach one *now*. A generic
-	// item's status is derived from the clock and never has such a moment, so
-	// nothing further is claimed for it — the stream says only what happened.
+
+	// finalisedNow records the outcome THIS FUNCTION settled, and the deferred
+	// announcement is driven by it alone.
+	//
+	// It replaces a second switch (`terminalStatusOf`) that re-derived the same
+	// answer from the item type, which meant two lists had to agree about every
+	// job type — and when they disagreed the failure was silent: the status
+	// converged, nothing was announced, and every status-polling test still
+	// passed. An Airflow job that could not start reached Failed with no
+	// terminal event on the flow stream for exactly that reason. A variable set
+	// where the outcome is decided cannot drift from the decision.
+	//
+	// Empty means the outcome is NOT known here: a generic item completing on
+	// virtual time, a notebook or Spark job awaiting its engine, a pipeline
+	// whose goroutine will publish its own. The stream says only what happened.
+	finalisedNow := ""
 	defer func() {
-		if terminal := a.terminalStatusOf(it, jobType, j); terminal != "" {
-			a.Store.PublishJobEvent(wid, it.ID, j.ID, jobType, invokeType, terminal, j.FailWith)
+		if finalisedNow != "" {
+			a.Store.PublishJobEvent(wid, it.ID, j.ID, jobType, invokeType, finalisedNow, j.FailWith)
 		}
 	}()
 	// DataPipeline jobs actually execute — now OUTLIVING the request, like
@@ -188,6 +201,7 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 		a.saveNotebookRun(j.ID, *nbRun)
 		if j.FailWith != "" {
 			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
+			finalisedNow = store.JobFailed
 		} else if len(nbRun.Cells) > 0 && a.runsNotebooksItself() {
 			// Nobody else is coming. With a Spark agent configured the emulator
 			// is the pool: it executes the cells and reports the same results an
@@ -202,6 +216,7 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 		a.saveSparkJobRun(j.ID, *sjdRun)
 		if j.FailWith != "" {
 			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
+			finalisedNow = store.JobFailed
 		} else if a.runsNotebooksItself() {
 			// Same reasoning as the notebook branch above: with an agent
 			// configured the emulator IS the pool, and real Fabric runs a
@@ -217,10 +232,14 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 		if dagID == "" {
 			j.FailWith = "AirflowDAGIDRequired"
 			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
+			finalisedNow = store.JobFailed
 		} else if a.Airflow == nil {
 			j.FailWith = "AirflowNotConfigured"
 			_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
+			finalisedNow = store.JobFailed
 		} else {
+			// Started for real: runAirflow finalises and announces it, so
+			// nothing is claimed here.
 			go a.runAirflow(context.Background(), it, j, dagID, conf)
 		}
 	}
@@ -252,36 +271,9 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 	if it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish") {
 		j.FailWith = "DataflowEngineNotImplemented"
 		_ = a.Store.FinalizeJob(it.ID, j.ID, j.FailWith)
+		finalisedNow = store.JobFailed
 	}
 	return j, nil
-}
-
-// terminalStatusOf reports the status a job has already reached by the time
-// startJob returns, or "" when its outcome is still clock-derived (a generic
-// item) or awaiting an engine callback (a notebook, a Spark job, an Airflow
-// DAG — each finalised later, by its own reporting path).
-func (a *API) terminalStatusOf(it *store.Item, jobType string, j *store.JobInstance) string {
-	// DataPipeline left this list when its execution went async (doc 37 §4):
-	// listing it here reported "Completed" at POST time, which after that
-	// change would be the same lie the notebook reconciliation was built to
-	// kill — the goroutine publishes the real outcome via publishJobOutcome.
-	// CopyJob left it too, for the same reason and one more: listing it here
-	// published Completed at POST time, AND left CompleteAt clock-derived, so a
-	// finished copy reported InProgress until virtual time caught up. Both
-	// halves are the same defect — a status that consults the clock instead of
-	// the work. Only Dataflow remains, whose refusal really is instantaneous.
-	executesNow := it.Type == "Dataflow" && (jobType == "Refresh" || jobType == "Publish")
-	if !executesNow {
-		// A notebook or Spark job that failed to even start is terminal now.
-		if j.FailWith != "" && (it.Type == "Notebook" || it.Type == "SparkJobDefinition") {
-			return store.JobFailed
-		}
-		return ""
-	}
-	if j.FailWith != "" {
-		return store.JobFailed
-	}
-	return store.JobCompleted
 }
 
 // publishJobOutcome announces a job's terminal state on the flow stream. Called

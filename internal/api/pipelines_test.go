@@ -1600,9 +1600,9 @@ func TestCopyIntoTableFailsOnAMalformedSourceRatherThanFallingBack(t *testing.T)
 // POST cannot return until the handler responds, and the handler is held until
 // after the POST returns). It also pins the terminal-event contract the
 // CopyJob work proved is quietly breakable: exactly ONE terminal job event,
-// published when the pipeline actually finishes — re-adding DataPipeline to
-// terminalStatusOf's executesNow publishes a premature second one and fails
-// the count below.
+// published when the pipeline actually finishes — setting `finalisedNow` for
+// DataPipeline in startJob publishes a premature second one and fails the
+// count below.
 func TestPipelineJobOutlivesItsPOST(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)

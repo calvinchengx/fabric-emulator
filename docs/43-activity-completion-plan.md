@@ -7,10 +7,38 @@ paid for once each: inventing wire shapes nobody captured (the fabricated
 nested columns), and counting a stub as done (the WebHook that silently aliased
 Web). Every phase below names its oracle before its code.
 
-Current state (post-#79): **18 of 34 execute for real**, 1 refuses loudly
-(WebHook), 4 are blocked on wire-name capture, 1 has its engine but no
-activity case (Copy job), and the rest divide into HTTP-real externals,
-park-dependent activities, compute externals, and two decision gates.
+Current state. The line here used to read "18 of 34 execute for real" and went
+stale across three merged phases. It is **not simply re-counted**, because
+Phase 7 below showed the denominator was the wrong frame: 34 was Microsoft's
+documented activity *gallery*, while the wire accepts **41 discriminators** —
+nine of which this plan never listed, and every one of which the dispatch was
+reporting as `Succeeded`. A fraction measured against a product surface cannot
+express "and the ones the surface does not show", which is precisely where the
+defects were.
+
+What is verifiable, stated so anyone can re-derive it rather than trust it:
+
+- **17 leaf activity types execute for real** in `internal/api/pipelines.go`'s
+  dispatch: notebook, invoke-pipeline, Copy, Lookup, GetMetadata, Delete,
+  Script, stored procedure, Web, WebHook, Functions, HDInsight Spark,
+  Databricks notebook, Databricks python, Azure Batch (opt-in), Validation,
+  Data Explorer command. (Several accept more than one wire spelling —
+  `RunNotebook`/`TridentNotebook`/`SynapseNotebook` are one behaviour, as are
+  `SqlServerStoredProcedure`/`SqlPoolStoredProcedure` and `Web`/`WebActivity` —
+  so the *case-label* count is higher than the behaviour count.)
+- **9 control-flow types** are interpreted in `internal/pipeline/activities.go`
+  (SetVariable, AppendVariable, ForEach, IfCondition, Switch, Until, Filter,
+  Wait, Fail), plus the `Inactive` activity *state*.
+- **13 types refuse by name with a cause**: Dataflow Gen2 (3 spellings), the
+  three Azure ML types, the Databricks JAR task, and the six in Phase 7.
+- **7 remain blocked on a wire-name capture** from a real tenant (Phase 0):
+  Refresh SQL Endpoint, Lakehouse maintenance, KQL, Spark Job Definition,
+  Teams, Copy job, Approval.
+
+**To re-derive:** list the `case` labels in the dispatch switch and in
+`activities.go`, and diff them against the `x-ms-discriminator-value` set in
+ADF's published `Pipeline.json`. Anything in neither list falls to the
+dispatch default — see Phase 7 for why that matters.
 
 ## The two rules every phase inherits
 

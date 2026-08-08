@@ -249,9 +249,11 @@ func TestCopyJobDeltaSourceMakesRealCommits(t *testing.T) {
 // than the contract, so a passing test whose NAME asserts the old behaviour
 // would be a comment stating an invariant the code no longer holds: the exact
 // defect class this file's neighbours were written to catch. Renamed, not
-// deleted, because the site it pins (terminalStatusOf, the quiet second switch)
-// still needs pinning — a mutation restoring CopyJob to executesNow fails the
-// COUNT below with [Completed Completed], and would pass a presence check.
+// deleted, because the site it pins still needs pinning — the quiet second
+// switch it named (terminalStatusOf) is gone, replaced by `finalisedNow`
+// recorded where startJob settles an outcome, and a mutation that sets it for
+// CopyJob fails the COUNT below with [Completed Completed] while passing any
+// presence check.
 func TestCopyJobTerminalEventArrivesExactlyOnceAfterTheCopy(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
