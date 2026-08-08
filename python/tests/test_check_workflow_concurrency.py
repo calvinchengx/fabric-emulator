@@ -29,6 +29,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 """
 
 GOOD_MT = GOOD_CI.replace("name: CI", "name: Make targets").replace("group: ci-", "group: make-targets-")
@@ -135,4 +136,93 @@ def test_a_missing_file_fails(tmp_path, monkeypatch, capsys):
 # --- the control -------------------------------------------------------------
 
 def test_the_real_repo_passes_its_own_check(capsys):
+    assert c.main() == 0, capsys.readouterr().out
+
+
+# --- second invariant: every job declares timeout-minutes --------------------
+#
+# GitHub's default is SIX HOURS, so an untimed job does not fail when it wedges
+# — it holds a runner all afternoon and reads as "still pending" to anything
+# watching. A Sail job did exactly that for 78 minutes while a merge watcher
+# waited on it. The timeouts were added to all 47 jobs in one pass; nothing
+# stopped the 48th arriving without one.
+
+TIMED = """\
+name: CI
+on: [push]
+
+concurrency:
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+"""
+
+
+def test_a_job_without_a_timeout_fails(workflows, capsys):
+    workflows(ci=TIMED.replace("  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n",
+                               "  test:\n    runs-on: ubuntu-latest\n"))
+    assert c.main() == 1
+    out = capsys.readouterr().out
+    assert "timeout-minutes" in out and "test" in out, out
+    assert "6-hour" in out, "the message must say what the default costs"
+
+
+def test_every_job_timed_passes(workflows, capsys):
+    workflows(ci=TIMED, mt=TIMED.replace("group: ci-", "group: make-targets-"))
+    assert c.main() == 0
+    assert "declare timeout-minutes" in capsys.readouterr().out
+
+
+# A job that CALLS a reusable workflow cannot carry timeout-minutes — GitHub
+# rejects the key. Demanding one there is a false positive, and a check that
+# fires on something you cannot fix is a check somebody deletes. Found by
+# running the first draft against the real repo: it flagged release.yml's two
+# `uses:` jobs, which are exactly this case.
+def test_a_reusable_workflow_call_is_exempt(workflows, capsys):
+    workflows(ci=TIMED + """  call:
+    uses: ./.github/workflows/make-targets.yml
+""", mt=TIMED.replace("group: ci-", "group: make-targets-"))
+    assert c.main() == 0, capsys.readouterr().out
+
+
+# ...but the exemption must be narrow: `uses:` on a STEP is not a workflow call,
+# and a job full of actions still needs its own timeout. Widening the rule to
+# "any uses: anywhere" would silently exempt most of the matrix.
+def test_a_step_level_uses_is_not_exempt(workflows, capsys):
+    workflows(ci=TIMED + """  stepped:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+""", mt=TIMED.replace("group: ci-", "group: make-targets-"))
+    assert c.main() == 1
+    assert "stepped" in capsys.readouterr().out
+
+
+# `on:` also carries two-space keys (push:, pull_request:). Counting those as
+# jobs was the first draft's bug — it read 47 jobs where there were 45 and
+# reported `push:` as missing a timeout.
+def test_on_block_keys_are_not_counted_as_jobs(workflows, capsys):
+    workflows(ci="""\
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+""", mt=TIMED.replace("group: ci-", "group: make-targets-"))
     assert c.main() == 0, capsys.readouterr().out
