@@ -841,5 +841,16 @@
       "go:TestCustomActivityNoAgentIsHonest",
       "go:TestCustomActivityStatementErrorFails"
     ]
+  },
+  "azure-ml-activities": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Azure ML** activities (`AzureMLExecutePipeline`, `AzureMLBatchExecution`, `AzureMLUpdateResource`)",
+    "witnesses": [
+      "go:TestAzureMLDoesNotFakeSuccess",
+      "go:TestAzureMLRefusalsNameTheirCause",
+      "go:TestAzureMLRefusalOffersARemedyThatWorks",
+      "go:TestAzureMLRefusalNamesTheRemedy",
+      "go:TestAzureMLStopsDependents"
+    ]
   }
 }

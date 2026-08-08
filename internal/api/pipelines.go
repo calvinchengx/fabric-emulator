@@ -276,6 +276,13 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// what is real and what is refused by name.
 		return e.hdinsightSparkActivity(act, tp, resolve)
 
+	case "AzureMLExecutePipeline", "AzureMLBatchExecution", "AzureMLUpdateResource":
+		// Refused by name, with cause. Unlike its neighbours these name no
+		// artifact to execute — the published pipeline's steps live in an Azure
+		// ML workspace. Before this they fell to the default below and were
+		// reported Succeeded; see azuremlactivity.go.
+		return e.azureMLActivity(act)
+
 	case "AzureFunctionActivity":
 		// A real call to a function endpoint over the same HTTP core as Web;
 		// the function key travels as x-functions-key, which is how ADF
