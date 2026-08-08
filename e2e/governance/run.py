@@ -28,7 +28,7 @@ from stack import Stack, log  # noqa: E402 — after the path insert above
 FABRIC_PORT = os.environ.get("GOV_FABRIC_PORT", "9443")
 ENTRA_PORT = os.environ.get("GOV_ENTRA_PORT", "8443")
 OM_PORT = os.environ.get("GOV_OM_PORT", "8585")
-TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+TENANT = "11111111-1111-1111-1111-111111111111"
 
 stack = Stack("fabricgov-e2e", "build-override.yml")
 
@@ -59,7 +59,7 @@ def main():
         r = requests.post(
             f"{entra}/{TENANT}/oauth2/v2.0/token",
             data={"grant_type": "client_credentials",
-                  "client_id": "00d88624-f0d7-46f6-a641-6232c2608928",
+                  "client_id": "cccccccc-0000-0000-0000-000000000002",
                   "client_secret": "daemon-app-secret", "scope": scope},
             verify=False, timeout=15)
         r.raise_for_status()

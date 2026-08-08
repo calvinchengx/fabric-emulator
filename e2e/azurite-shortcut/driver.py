@@ -36,8 +36,8 @@ from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_b
 FABRIC = os.environ.get("FABRIC", "http://fabric-emulator")
 ENTRA = os.environ.get("ENTRA", "http://entra-emulator:8443")
 AZURITE = os.environ.get("AZURITE", "http://azurite:10000")
-TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
-CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
+TENANT = "11111111-1111-1111-1111-111111111111"
+CLIENT_ID = "cccccccc-0000-0000-0000-000000000002"
 
 # Azurite's well-known development account (documented by Microsoft).
 ACCOUNT = "devstoreaccount1"

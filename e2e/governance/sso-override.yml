@@ -28,12 +28,12 @@ services:
 
   keyvault-emulator:
     environment:
-      KV_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      KV_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
 
   fabric-emulator:
     environment:
-      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
-      FABRIC_ENTRA_JWKS_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/discovery/v2.0/keys"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      FABRIC_ENTRA_JWKS_URL: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/discovery/v2.0/keys"
 
   openmetadata:
     environment:
@@ -41,9 +41,9 @@ services:
       CUSTOM_OIDC_AUTHENTICATION_PROVIDER_NAME: entra-emulator
       # The issuer OM expects in `iss`, and the keys it validates against.
       # OM's own JWKS stays in the list so its internal bot tokens keep working.
-      AUTHENTICATION_AUTHORITY: "${SSO_ENTRA_ISSUER:-http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0}"
-      AUTHENTICATION_PUBLIC_KEYS: '["${SSO_ENTRA_JWKS:-http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/discovery/v2.0/keys}","http://openmetadata:8585/api/v1/system/config/jwks"]'
-      AUTHENTICATION_CLIENT_ID: "${SSO_CLIENT_ID:-00d88624-f0d7-46f6-a641-6232c2608928}"
+      AUTHENTICATION_AUTHORITY: "${SSO_ENTRA_ISSUER:-http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0}"
+      AUTHENTICATION_PUBLIC_KEYS: '["${SSO_ENTRA_JWKS:-http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/discovery/v2.0/keys}","http://openmetadata:8585/api/v1/system/config/jwks"]'
+      AUTHENTICATION_CLIENT_ID: "${SSO_CLIENT_ID:-cccccccc-0000-0000-0000-000000000002}"
       # Entra puts the user's identity in these claims; OM maps the first hit
       # to a principal.
       AUTHENTICATION_JWT_PRINCIPAL_CLAIMS: '[preferred_username,email,sub]'

@@ -7,7 +7,7 @@
 # does exactly that.
 set -euo pipefail
 
-TENANT="${FAB_TENANT_ID:-6f89cf12-978b-4d23-ac18-9ef0c127cf87}"
+TENANT="${FAB_TENANT_ID:-11111111-1111-1111-1111-111111111111}"
 AUTHORITY_HOST=login.microsoftonline.com
 API_HOST=api.fabric.microsoft.com
 # The OneLake DATA plane is a separate hostname, and forgetting it is not a
@@ -45,7 +45,7 @@ export REQUESTS_CA_BUNDLE=/tmp/ca.pem SSL_CERT_FILE=/tmp/ca.pem
 
 export FAB_API_ENDPOINT_FABRIC="$API_HOST"
 export FAB_API_ENDPOINT_ONELAKE="$ONELAKE_HOST"
-export FAB_SPN_CLIENT_ID="${FAB_SPN_CLIENT_ID:-00d88624-f0d7-46f6-a641-6232c2608928}"
+export FAB_SPN_CLIENT_ID="${FAB_SPN_CLIENT_ID:-cccccccc-0000-0000-0000-000000000002}"
 export FAB_SPN_CLIENT_SECRET="${FAB_SPN_CLIENT_SECRET:-daemon-app-secret}"
 export FAB_TENANT_ID="$TENANT"
 
