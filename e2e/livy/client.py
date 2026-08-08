@@ -143,6 +143,67 @@ def main():
     assert back.get("data") == [[3]], f"count-back disagrees — re-execution or loss: {back}"
     print("INSERT envelope -> [[3]], table still 3 (count recovered, not re-run)", flush=True)
 
+    # --- Spark Job Definition, EXECUTED BY THE EMULATOR.
+    #
+    # This suite is where the claim can be witnessed at all: the emulator here
+    # has FABRIC_SPARK_AGENT_URL, so it IS the Spark pool, exactly as Fabric's
+    # is. (e2e/notebook-run deliberately runs with NO agent — its runner plays
+    # the external engine to witness the callback contract, so an
+    # emulator-executes assertion there can never pass.)
+    #
+    # Nothing below executes the job. It publishes a definition, submits the
+    # job, and polls: `sjd-result=5` can only be produced by the emulator
+    # handing the submitted file to the engine with the definition's arguments
+    # as argv — 3 rows from the lakehouse table plus the increment of 2.
+    import base64
+
+    def part(path, body):
+        return {"path": path, "payloadType": "InlineBase64",
+                "payload": base64.b64encode(body.encode()).decode()}
+
+    run("spark.sql('SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 3')"
+        ".write.format('delta').mode('overwrite').saveAsTable('sjd_events')")
+
+    sjd_cfg = {"executableFile": "main.py", "arguments": ["--increment", "2"],
+               "defaultLakehouseArtifactId": lake["id"],
+               "defaultLakehouseWorkspaceId": ws["id"]}
+    src = ("import sys\n"
+           "print('sjd-result=' + str(spark.table('sjd_events').count() + int(sys.argv[2])))\n")
+    _, created = http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items", {
+        "displayName": "aggregate-job", "type": "SparkJobDefinition",
+        "definition": {"parts": [part("SparkJobDefinitionV1.json", json.dumps(sjd_cfg)),
+                                 part("main.py", src)]}}, token=token)
+    sjd_id = created.get("id")
+    if not sjd_id:  # async create returns an operation
+        for _ in range(60):
+            _, op = http("GET", f"{FABRIC}/v1/operations/{created['operationId']}", token=token)
+            if op.get("status") == "Succeeded":
+                _, res = http("GET", f"{FABRIC}/v1/operations/{created['operationId']}/result", token=token)
+                sjd_id = res["id"]
+                break
+            time.sleep(1)
+    assert sjd_id, "Spark job definition item was never created"
+
+    http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items/{sjd_id}/jobs/instances?jobType=sparkjob",
+         token=token)
+    _, jobs = http("GET", f"{FABRIC}/v1/workspaces/{ws['id']}/items/{sjd_id}/jobs/instances", token=token)
+    sjd_jid = jobs["value"][0]["id"]
+
+    final = {}
+    for _ in range(60):
+        _, final = http("GET",
+                        f"{FABRIC}/v1/workspaces/{ws['id']}/items/{sjd_id}/jobs/instances/{sjd_jid}",
+                        token=token)
+        if final.get("status") in ("Completed", "Failed"):
+            break
+        time.sleep(2)
+    assert final.get("status") == "Completed", f"emulator did not run the Spark job: {final}"
+    _, sjd_done = http("GET",
+                       f"{FABRIC}/v1/workspaces/{ws['id']}/items/{sjd_id}/jobs/instances/{sjd_jid}/sparkJobRun",
+                       token=token)
+    assert "sjd-result=5" in sjd_done.get("output", ""), sjd_done
+    print(f"SJD executed by the emulator: {sjd_done['output'].strip()}", flush=True)
+
     # --- Delta maintenance on a OneLake table, through the delta-rs path.
     #
     # Sail's planner has no OPTIMIZE/VACUUM and rejects Change Data Feed reads,

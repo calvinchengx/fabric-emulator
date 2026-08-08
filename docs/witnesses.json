@@ -605,6 +605,7 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "Spark Job Definitions",
     "witnesses": [
+      "ci:livy-native",
       "ci:notebook-run",
       "go:TestSparkJobIsExecutedByTheEmulatorWhenAnAgentIsConfigured",
       "go:TestADrivenSparkJobPublishesItsTerminalEvent",
