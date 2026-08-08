@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/calvinchengx/fabric-emulator/internal/clock"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 )
@@ -279,5 +280,57 @@ func TestCopyJobPublishesItsTerminalEventAtStart(t *testing.T) {
 	_, jid = runJob(t, a, ws.ID, bad.ID, "jobType=Execute", "{}")
 	if got := terminal(jid, drainEvents(t, sub2.C)); got != store.JobFailed {
 		t.Fatalf("no terminal event at start for a refused copy; got %q", got)
+	}
+}
+
+// TestCopyJobStatusReflectsTheCopyNotTheClock: a copy that has DEMONSTRABLY
+// finished must not report InProgress.
+//
+// This is the witness for the async migration, and it exists because the
+// obvious assertions cannot see the change: parked clock, exactly-once
+// terminal, correct verdict — all of those already hold under the synchronous
+// code, so they witness what worked before rather than what changed.
+//
+// The seam is the virtual clock. `StatusAt` derives a job's wire status purely
+// from `now < CompleteAt`, and synchronous dispatch leaves CompleteAt at the
+// clock-derived `Now()+lroDelay`. So with a delay configured, the emulator ran
+// the copy INLINE during the POST — the bytes are at the destination, provably
+// — and then reported InProgress for the next hour of virtual time. Status that
+// contradicts the filesystem is the same class as a notebook reporting
+// Completed with cells outstanding, inverted: there, green with nothing done;
+// here, pending with everything done.
+//
+// Async dispatch fixes it because the goroutine calls FinalizeJob, which sets
+// complete_at = Now() — the status follows the work instead of the clock. The
+// margin is deliberate: a 1-hour delay against awaitJob's 5-second deadline, so
+// this fails on the old behaviour by a factor of 720 rather than by a race.
+func TestCopyJobStatusReflectsTheCopyNotTheClock(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	a := New(st, nil, 1, 3600) // an hour of LRO delay: the clock cannot finish this job
+
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	payload := []byte("orders bytes")
+	seedFile(t, st, ws.ID, src.ID, "Tables/orders/part-0.parquet", payload)
+
+	cj := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, ""))
+	_, jid := runJob(t, a, ws.ID, cj.ID, "jobType=Execute", "{}")
+
+	if s := awaitJob(t, a, ws.ID, cj.ID, jid); s != "Completed" {
+		t.Fatalf("job = %s; a finished copy must not wait on the clock", s)
+	}
+	// And the copy really did happen — otherwise "Completed" would be the
+	// other failure this repo keeps finding.
+	got, err := st.GetOneLakePath(dst.ID, "Tables/bronze_orders/part-0.parquet")
+	if err != nil {
+		t.Fatalf("job reported Completed but the destination is empty: %v", err)
+	}
+	if string(got.Content) != string(payload) {
+		t.Fatalf("destination content = %q", got.Content)
 	}
 }
