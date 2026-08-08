@@ -260,11 +260,28 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// here named async pipelines as its prerequisite; they exist.
 		return e.webhookActivity(act, tp, resolve)
 
+	case "DatabricksNotebook", "DatabricksSparkPython", "DatabricksSparkJar":
+		// Submission terminated locally, Python executed by the agent; the JAR
+		// variant is refused by name (no JVM). See databricksactivity.go.
+		return e.databricksActivity(act, tp, resolve)
+
+	case "Custom":
+		// Azure Batch. OFF BY DEFAULT — a shell command is arbitrary execution,
+		// not another read; see customactivity.go and config.CustomActivityShell.
+		return e.customActivity(act, tp, resolve)
+
 	case "HDInsightSpark":
 		// The submission protocol terminated locally; Sail computes. The Livy
 		// precedent applied to a second protocol — see hdinsightactivity.go for
 		// what is real and what is refused by name.
 		return e.hdinsightSparkActivity(act, tp, resolve)
+
+	case "AzureMLExecutePipeline", "AzureMLBatchExecution", "AzureMLUpdateResource":
+		// Refused by name, with cause. Unlike its neighbours these name no
+		// artifact to execute — the published pipeline's steps live in an Azure
+		// ML workspace. Before this they fell to the default below and were
+		// reported Succeeded; see azuremlactivity.go.
+		return e.azureMLActivity(act)
 
 	case "AzureFunctionActivity":
 		// A real call to a function endpoint over the same HTTP core as Web;

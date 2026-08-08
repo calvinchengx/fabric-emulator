@@ -86,7 +86,19 @@ what exists, refuse what cannot be honoured by name:
 | HDInsight | the activity's Spark-job submission | Sail (JVM overlay for JAR types) | M |
 | Azure Databricks | Jobs API stand-in (runs/submit → poll) | notebook/python via the agent; JAR → JVM overlay or refusal-by-name | L |
 | Azure Batch | task submission | the script in a sandboxed container sidecar | L |
-| Azure ML | job submission | python entry via the agent; anything needing AML infra refused by name | L |
+| Azure ML | ~~job submission~~ **nothing — refused by name** | ~~python entry via the agent~~ **there is no entry point to run** | S |
+
+**The Azure ML row did not survive its oracle, and the correction is recorded
+rather than quietly edited.** This table sketched "python entry via the agent"
+by analogy with the three rows above it. The ADF schema does not support the
+analogy: `AzureMLExecutePipeline` names only `mlPipelineId`, an opaque handle on
+a pipeline **published in an Azure ML workspace**, and neither of the ML Studio
+(classic) activities names a code artifact either. The neighbours run because
+each one points at *a thing to execute* that the emulator can read; this one
+points at steps that live in a service the emulator does not host. So all three
+refuse by name, and the value delivered is that they no longer fall through the
+dispatch default and report `Succeeded` — which is what they did before. See the
+parity map's Azure ML row and `internal/api/azuremlactivity.go`.
 
 Grades here say what they are: 🟢 "Real (protocol terminated, local compute)"
 — the Livy row's wording, which a reader already knows how to trust. Each needs

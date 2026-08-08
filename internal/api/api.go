@@ -84,6 +84,9 @@ type API struct {
 	// parked pipeline dies with the process, and pretending otherwise would be
 	// a durability claim the emulator cannot honour.
 	webhookWaits sync.Map
+	// CustomActivityShell enables the Custom (Azure Batch) activity's shell
+	// execution; false means it refuses by name. See config.CustomActivityShell.
+	CustomActivityShell bool
 	// RetryAfterSeconds is advertised on 202 responses.
 	RetryAfterSeconds int
 	// LRODelaySeconds is virtual seconds an operation stays Running.
