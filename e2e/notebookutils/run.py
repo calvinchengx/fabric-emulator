@@ -21,6 +21,10 @@ import urllib.request
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(DIR))
+
+sys.path.insert(0, os.path.join(REPO, "e2e"))
+from entra_install import ensure_entra_emulator, go_install  # noqa: E402
+
 WORK = os.path.join(tempfile.gettempdir(), "notebookutils-e2e")
 ENTRA_PORT = os.environ.get("ENTRA_PORT", "18443")
 FABRIC_PORT = os.environ.get("FABRIC_PORT", "19080")
@@ -120,22 +124,19 @@ def token(scope):
                  "client_secret": CLIENT_SECRET, "scope": scope}, form=True)["access_token"]
 
 
-def install(exe_name, module):
-    found = shutil.which(exe_name)
-    if found:
-        return found
-    log(f"installing {exe_name}")
-    subprocess.run(["go", "install", module], check=True, env={**os.environ, "GOBIN": WORK})
-    return os.path.join(WORK, exe_name + EXE)
+
 
 
 shutil.rmtree(WORK, ignore_errors=True)
 os.makedirs(os.path.join(WORK, "data"))
 
-# Pinned to the entra-emulator version in go.mod — bump this together with go.mod.
-entra_bin = install("entra-emulator", "github.com/calvinchengx/entra-emulator/cmd/entra-emulator@v0.3.0")
-# azure-keyvault-emulator is not in go.mod; bump this pin manually as needed.
-kv_bin = install("azure-keyvault-emulator", "github.com/calvinchengx/azure-keyvault-emulator/cmd/azure-keyvault-emulator@v0.3.0")
+entra_bin = ensure_entra_emulator(WORK, log=log)
+# azure-keyvault-emulator is NOT in go.mod, so its pin stays explicit — and it
+# goes through the same helper, because it has the identical failure mode: a
+# newer keyvault tag breaks this pinned install until the checksum DB catches up.
+kv_bin = go_install("azure-keyvault-emulator",
+                    "github.com/calvinchengx/azure-keyvault-emulator/cmd/azure-keyvault-emulator",
+                    WORK, version="v0.3.0", log=log)
 
 log("building fabric-emulator")
 fabric_bin = os.path.join(WORK, "fabric-emulator" + EXE)

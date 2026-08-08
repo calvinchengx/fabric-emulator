@@ -24,7 +24,12 @@ import (
 // reference — {workspaceId?, itemId}, optionally nested under "location" (like
 // Copy/Lookup) — and resolves it to a Warehouse/SQLDatabase item id. Unlike
 // resolveLoc, no "path" is required (a database reference, not a file).
-func (e *pipelineExecutor) resolveDatabaseRef(tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error), keys ...string) (itemID string, err error) {
+// The workspace id comes back alongside the item id because a caller that has
+// to CHECK the item's type needs both to fetch it — the Data Explorer command
+// activity next door does, since naming a warehouse where a KQL database
+// belongs must fail by name rather than create an engine database from the
+// wrong GUID.
+func (e *pipelineExecutor) resolveDatabaseRef(tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error), keys ...string) (wsID, itemID string, err error) {
 	for _, k := range keys {
 		raw, ok := tp[k]
 		if !ok {
@@ -55,25 +60,29 @@ func (e *pipelineExecutor) resolveDatabaseRef(tp map[string]json.RawMessage, res
 		}
 		wsRef, err := field("workspaceId")
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		itemRef, err := field("itemId")
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if itemRef == "" {
 			continue
 		}
-		_, id, err := e.resolveItemRef(wsRef, itemRef)
-		return id, err
+		return e.resolveItemRef(wsRef, itemRef)
 	}
-	return "", fmt.Errorf("no database reference (%s)", strings.Join(keys, "/"))
+	return "", "", fmt.Errorf("no database reference (%s)", strings.Join(keys, "/"))
 }
 
 // sqlDB resolves the activity's target database and hands back its connection,
 // erroring loudly (not silently) when no SQL backend is attached.
 func (e *pipelineExecutor) sqlDB(tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error)) (*sql.DB, error) {
-	itemID, err := e.resolveDatabaseRef(tp, resolve, "database", "dataset", "linkedService")
+	// `sqlPool` is the Synapse spelling: in ADF a SqlPoolStoredProcedure names
+	// a dedicated SQL pool where its sibling names a linked service. Both land
+	// on the same scoped mapping — a {workspaceId?, itemId} location — because
+	// the emulator's Warehouse is the item that owns a real SQL Server
+	// database, and a pool reference has no other target here to mean.
+	_, itemID, err := e.resolveDatabaseRef(tp, resolve, "database", "dataset", "linkedService", "sqlPool")
 	if err != nil {
 		return nil, err
 	}
