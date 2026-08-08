@@ -385,6 +385,24 @@ CREATE TABLE IF NOT EXISTS domain_role_assignments (
 	role TEXT NOT NULL,
 	PRIMARY KEY (domain_id, principal_id, role)
 );
+CREATE TABLE IF NOT EXISTS purview_typedefs (
+	guid TEXT NOT NULL,
+	name TEXT NOT NULL PRIMARY KEY,   -- Atlas resolves a type by bare name, so
+	category TEXT NOT NULL,           -- the name is unique across ALL categories
+	body TEXT NOT NULL,               -- the definition as sent; Atlas types are open
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS purview_entities (
+	guid TEXT NOT NULL PRIMARY KEY,
+	type_name TEXT NOT NULL,
+	qualified_name TEXT NOT NULL,     -- Atlas's unique attribute, per type
+	status TEXT NOT NULL DEFAULT 'ACTIVE',  -- soft delete: DELETED rows remain
+	body TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL,
+	UNIQUE (type_name, qualified_name)
+);
 CREATE TABLE IF NOT EXISTS shortcuts (
 	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
 	path TEXT NOT NULL,            -- managed folder the shortcut lives in, e.g. Files
