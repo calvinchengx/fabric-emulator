@@ -7,6 +7,7 @@
   import Identities from './Identities.svelte';
   import Connections from './Connections.svelte';
   import Shortcuts from './Shortcuts.svelte';
+  import Lakehouses from './Lakehouses.svelte';
   import Capacities from './Capacities.svelte';
   import Jobs from './Jobs.svelte';
   import Warehouse from './Warehouse.svelte';
@@ -64,6 +65,7 @@
     ]],
     ['Data plane', [
       ['flow', 'Data flow'],
+      ['lakehouses', 'Lakehouses'],
       ['shortcuts', 'OneLake shortcuts'],
       ['warehouse', 'Warehouse SQL'],
       ['models', 'Semantic models'],
@@ -127,6 +129,7 @@
   {/if}
   <main class:wide={!navOpen}>
     {#if route === 'workspaces'}<Workspaces />
+    {:else if route === 'lakehouses'}<Lakehouses />
     {:else if route === 'connections'}<Connections />
     {:else if route === 'capacities'}<Capacities />
     {:else if route === 'operations'}<Operations />

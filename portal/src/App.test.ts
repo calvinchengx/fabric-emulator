@@ -119,8 +119,19 @@ describe('App', () => {
     // a document-wide query for "Clock" is ambiguous by two.
     const nav = document.querySelector('nav.sidenav')!;
     const others = [...nav.querySelectorAll('a')].filter((a: Element) => a !== active);
-    expect(others).toHaveLength(12);
+    // 13 links, one per view. The count is a guard that the nav did not
+    // silently shrink, so it moves deliberately when a view is added — this
+    // went 12 -> 13 with the Lakehouses browser (docs/44).
+    expect(others).toHaveLength(13);
     for (const a of others) expect(a).not.toHaveClass('active');
+  });
+
+  it('mounts the Lakehouses view at #lakehouses', async () => {
+    // Every route arm needs a visit or the branch is unreachable to the
+    // coverage gate — which is how a view can be wired into the nav and never
+    // once rendered by a test.
+    at('#lakehouses');
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Lakehouses' })).toBeInTheDocument());
   });
 
   it('shows the build beside the badge, so a screenshot says which emulator it was', async () => {
