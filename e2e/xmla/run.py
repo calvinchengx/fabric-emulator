@@ -137,25 +137,33 @@ WORKSPACE = "ws"   # the workspace the probe names in its Data Source
 # is a SCREEN, not a guess. If one advances, the next run narrows it; if none
 # does, four hypotheses die at once.
 def _shapes(host):
+    """SCREEN 3 — STRUCTURAL. Screen 2 killed field spelling (ten spellings, all
+    not-found) and left three structural hypotheses. Two of these slots also
+    settle the ambiguity screen 2 recorded but could not resolve: whether
+    `ArgumentNullException (Parameter 'value')` named OUR JSON key or a .NET
+    method parameter. A and C attack that from opposite sides — A supplies the
+    key with nothing in it, C supplies a well-formed object with no such key.
+
+      A `{"value": []}`      -> "not found" means the key IS ours and an empty
+                               list is handled; a null error means it is not.
+      B nested properties    -> is the name carried under a sub-object rather
+                               than on the workspace itself?
+      C no `value` key at all-> reproduces the null error from a different
+                               shape than a bare array, which is the second
+                               data point A cannot provide alone.
+    """
     cluster = f"https://{host}/"
-    rich = {                       # every plausible spelling, at once
-        "name": WORKSPACE, "workspaceName": WORKSPACE, "displayName": WORKSPACE,
-        "folderName": WORKSPACE, "id": "00000000-0000-0000-0000-000000000001",
-        "objectId": "00000000-0000-0000-0000-000000000001",
-        "capacityObjectId": "00000000-0000-0000-0000-000000000002",
-        "clusterUri": cluster, "fixedClusterUri": cluster, "backendUri": cluster,
-    }
     return [
-        # 1. BARE ARRAY — is the `value` envelope wrong rather than the fields?
-        ("bare-array", [dict(rich)]),
-        # 2. value ENVELOPE + every field spelling — isolates envelope from field.
-        ("value-envelope-rich", {"@odata.context": f"{cluster}powerbi/databases/v201606/$metadata#workspaces",
-                                 "value": [dict(rich)]}),
-        # 3. PascalCase — .NET deserialisers frequently bind these; if the
-        #    client is case-sensitive this is the difference.
-        ("pascal-case", {"Value": [{"Name": WORKSPACE, "Id": rich["id"],
-                                    "CapacityObjectId": rich["capacityObjectId"],
-                                    "ClusterUri": cluster, "FixedClusterUri": cluster}]}),
+        ("A-empty-value", {"@odata.context": f"{cluster}$metadata#workspaces", "value": []}),
+        ("B-nested-properties", {"value": [{
+            "properties": {"name": WORKSPACE, "displayName": WORKSPACE,
+                           "clusterUri": cluster},
+            "name": WORKSPACE,
+            "workspace": {"name": WORKSPACE, "id": "00000000-0000-0000-0000-000000000001"},
+            "id": "00000000-0000-0000-0000-000000000001",
+        }], "@odata.count": 1}),
+        ("C-no-value-key", {"workspaces": [{"name": WORKSPACE, "clusterUri": cluster}],
+                            "@odata.context": f"{cluster}$metadata#workspaces"}),
     ]
 
 
@@ -372,7 +380,14 @@ def run_probe():
         "-e", f"XMLA_TOKEN={TOKEN}",
         "-w", "/work", SDK_IMAGE,
         "sh", "-c",
-        "cp -r /probe/. /work/ && update-ca-certificates >/dev/null 2>&1 && dotnet run --nologo",
+        # Each step announces itself and update-ca-certificates keeps its
+        # stderr. The suppressed version produced a probe that exited 2 with
+        # BOTH streams empty — a failure with no evidence in it, which cost two
+        # runs to not-diagnose. Silencing the one command whose failure would
+        # otherwise be invisible is exactly backwards.
+        "set -e; echo 'STEP copy'; cp -r /probe/. /work/; "
+        "echo 'STEP ca'; update-ca-certificates >/dev/null; "
+        "echo 'STEP dotnet'; dotnet run --nologo",
     ], capture_output=True, text=True, timeout=900)
 
 
@@ -381,6 +396,13 @@ try:
 except subprocess.TimeoutExpired:
     srv.shutdown()
     raise SystemExit("FAILED: the ADOMD.NET probe did not finish within 15 minutes")
+if proc.returncode != 0 and not proc.stdout.strip() and not proc.stderr.strip():
+    # Both streams empty is not a test result, it is a missing measurement.
+    # Say so rather than letting it read as a probe verdict.
+    log(f"probe exited {proc.returncode} with NO output on either stream — "
+        f"the last STEP line above (if any) is where it stopped; no STEP line "
+        f"at all means it never started, which is an environment fault rather "
+        f"than a client contract change")
 
 print("\n---- probe stdout ----", flush=True)
 print(proc.stdout.strip() or "(empty)", flush=True)

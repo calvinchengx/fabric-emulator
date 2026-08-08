@@ -118,32 +118,50 @@ Source form.
 | `value` envelope + 10 field spellings | `…workspace ('ws') is not found` |
 | PascalCase (`Value`/`Name`/…) | `…workspace ('ws') is not found` |
 
-**What this establishes.** Removing the envelope changes the failure from a
-lookup to a *null argument*, so the client requires it — and PascalCase
-`Value` was accepted where a bare array was not, which says the deserialiser
-is case-insensitive on the envelope. With the envelope present the client
-parses, searches, and reports not-found against **ten** spellings at once
-(`name`, `workspaceName`, `displayName`, `folderName`, `id`, `objectId`,
-`capacityObjectId`, `clusterUri`, `fixedClusterUri`, `backendUri`). Field
-spelling is therefore **not** the remaining variable.
+**What this appeared to establish — and screen 3 DISPROVED it.** The reading at
+the time was "removing the envelope changes the failure to a null argument, so
+the client requires it," with PascalCase `Value` seeming to confirm a
+case-insensitive envelope. That was one correlation with one data point, and it
+was wrong. Left here rather than deleted because the correction is the finding.
 
-**What it does NOT establish, stated because the correlation is tempting.**
-`ArgumentNullException (Parameter 'value')` is the standard .NET shape for
-`ArgumentNullException(nameof(value))` and may name a *method parameter*, not
-our JSON key. The correlation is suggestive — the only shape lacking a `value`
-key produced the only null error — but causation is unproven, and the cheap
-discriminator is `{"value": null}` versus `{"value": []}` versus a bare array.
-Nobody should build on the envelope claim without running that.
+### Screen 3 — RUN: the body is not the variable at all
 
-**Where this leaves the next hypothesis: structural, not cosmetic.** The client
-matches the Data Source's workspace name against something that is not any
-plain string field on the workspace object. Candidates worth one run each:
-a nested object (the name under a `properties`/`workspace` sub-object), a
-different top-level key than `value`, or a match against something derived
-rather than carried — in which case no field spelling would ever have worked
-and the ten-spelling result is the evidence for it.
+Designed so two slots would settle screen 2's `value` ambiguity from opposite
+sides. They settled it against screen 2's conclusion.
 
-### The next experiment, now one edit and ~5 minutes
+| Shape | Client's answer |
+|---|---|
+| A `{"value": []}` — key present, list empty | `…workspace ('ws') is not found` |
+| B name nested under `properties`/`workspace` | `…workspace ('ws') is not found` |
+| C `{"workspaces":[…]}` — **no `value` key at all** | `…workspace ('ws') is not found` |
+
+**C is the disproof.** Screen 2's bare array also lacked `value` and produced
+`ArgumentNullException`; C lacks it too and produces the ordinary not-found. Two
+shapes missing the same key, two different answers — so **the missing key was
+never the cause.** The variable in screen 2 was the top-level JSON *type*: an
+array where an object was expected deserialises to null, and the
+`ArgumentNullException` was about that, exactly as the "may name a method
+parameter, not our JSON key" caveat warned.
+
+**What is actually established, after three screens.** Every top-level JSON
+*object* tried so far returns the identical not-found, across: `value` present
+or absent, empty or populated, ten field spellings, PascalCase, and nesting.
+Only changing the top-level type changed anything. **The body's content does not
+determine this outcome.**
+
+That is a stronger negative than any of the individual shapes, and it redirects
+the search off the body entirely. Remaining candidates are things no body edit
+can reach: the response's `Content-Type`, its status code, a header the client
+requires, or a second request it makes and we have not yet answered. The next
+screen should vary one of those and leave the JSON alone.
+
+**Method note worth keeping.** Screen 2's conclusion survived exactly one round.
+It was a single correlation stated with a caveat, and the caveat is what made it
+cheap to overturn — the discriminator was already written down, so screen 3 only
+had to run it. A conclusion published without its discriminator would have been
+built on instead.
+
+### The next experiment, now one edit and ~5 minutes### The next experiment, now one edit and ~5 minutes
 
 Vary a single field at a time against the same harness and read the error. The
 client's message names the workspace it wanted, so a matching reply advances
