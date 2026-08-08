@@ -31,11 +31,13 @@ import (
 //     EXECUTED by the Spark agent, with `arguments` visible to it as `sys.argv`
 //     — the same shape a Spark Job Definition's main file gets, because it is
 //     the same engine and the same statement endpoint.
-//   - `className` is REFUSED BY NAME. A Java/Scala main class needs Spark's own
-//     jars on a JVM classpath; Sail is Rust with an embedded CPython and cannot
-//     take one (parity.md's "Java/Scala UDFs, spark.jars" row, same cause). The
-//     JVM overlay is the answer there, and the error says so rather than
-//     ignoring the field and running nothing.
+//   - `className` is REFUSED BY NAME, on BOTH engines, and the message must not
+//     promise otherwise. A JAR *library* attaches on the JVM overlay — that is
+//     what the Spark-Job-Definition path probes for with `agentHasJVM` — but
+//     EXECUTING a named Java main class is a different thing: the agent's
+//     statement endpoint runs Python, and nothing here submits a main class on
+//     either engine. Saying "use the JVM overlay" would point at a remedy that
+//     does not remedy, which is the overclaim this repo keeps paying for.
 //   - `sparkJobLinkedService` is REFUSED BY NAME when it names an external
 //     store: the emulator models no connections, and silently reading OneLake
 //     while a definition names Azure Blob would be the permissive direction.
@@ -67,9 +69,10 @@ func (e *pipelineExecutor) hdinsightSparkActivity(
 	}
 
 	for _, unsupported := range []struct{ key, why string }{
-		{"className", "a Java/Scala main class needs Spark's own jars on a JVM classpath; " +
-			"the default engine is Sail (Rust, embedded CPython) and cannot load one — " +
-			"use the JVM overlay (docker-compose.spark-jvm.yml)"},
+		{"className", "the emulator's Spark agent executes Python statements and has no " +
+			"path that submits a Java/Scala main class — on either engine. (A JAR " +
+			"LIBRARY does attach on the JVM overlay, which is a different capability: " +
+			"see the Spark Job Definition row.) Use a Python entryFilePath"},
 		{"proxyUser", "the emulator has no impersonation model, and accepting this would " +
 			"certify an authorization behaviour it does not implement"},
 	} {

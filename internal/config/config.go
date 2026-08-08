@@ -116,6 +116,24 @@ type Config struct {
 	// hermetic CI leg that must not reach the network.
 	WebActivityStub bool
 
+	// CustomActivityShell enables the Azure Batch (`Custom`) pipeline activity,
+	// which runs a caller-supplied SHELL COMMAND. Empty/false = the activity
+	// refuses by name and no command is ever executed — the same posture
+	// TerminalURL takes, and for the identical reason: a shell command is not
+	// another read, it is arbitrary execution, so it must be an operator's
+	// deliberate act rather than a default.
+	//
+	// It differs in kind from every other compute activity here. A notebook,
+	// SJD, HDInsight or Databricks task runs PYTHON through the Spark agent —
+	// user code, in the engine's sandbox, which is what those activities mean.
+	// A Custom activity's `command` is a process on whatever host runs the
+	// agent. Enabled, the command is sent to the agent (containerised in the
+	// standard compose deployment) rather than run in the emulator's own
+	// process, so the blast radius is the engine container and not the API.
+	//
+	// FABRIC_CUSTOM_ACTIVITY=shell to enable.
+	CustomActivityShell bool
+
 	// TSQLStrict refuses T-SQL that the SQL Server sidecar accepts but real
 	// Fabric rejects — recursive CTEs, triggers, enforced constraints and the
 	// rest of docs/29-tsql-parity.md's Class B. Off by default because it
@@ -161,28 +179,29 @@ func FromEnv() (*Config, error) {
 // overrides first, then calls Finish.
 func FromEnvPartial() *Config {
 	return &Config{
-		Addr:              envOr("FABRIC_ADDR", ":9443"),
-		DataDir:           os.Getenv("FABRIC_DATA_DIR"),
-		EntraIssuer:       os.Getenv("FABRIC_ENTRA_ISSUER"),
-		EntraJWKSURL:      os.Getenv("FABRIC_ENTRA_JWKS_URL"),
-		EntraTLSInsecure:  boolEnv("FABRIC_ENTRA_TLS_INSECURE"),
-		DisableTLS:        boolEnv("FABRIC_DISABLE_TLS"),
-		SparkLivyURL:      os.Getenv("FABRIC_SPARK_LIVY_URL"),
-		SparkAgentURL:     os.Getenv("FABRIC_SPARK_AGENT_URL"),
-		SQLTDSAddr:        os.Getenv("FABRIC_SQL_TDS_ADDR"),
-		TerminalURL:       os.Getenv("FABRIC_TERMINAL_URL"),
-		TerminalToken:     os.Getenv("FABRIC_TERMINAL_TOKEN"),
-		WebActivityStub:   strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
-		WarehouseSQLURL:   os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
-		TSQLStrict:        boolEnv("FABRIC_TSQL_STRICT"),
-		ListPageSize:      intEnv("FABRIC_LIST_PAGE_SIZE"),
-		AirflowURL:        os.Getenv("FABRIC_AIRFLOW_URL"),
-		AirflowDAGDir:     os.Getenv("FABRIC_AIRFLOW_DAG_DIR"),
-		AirflowUsername:   os.Getenv("FABRIC_AIRFLOW_USERNAME"),
-		AirflowPassword:   os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
-		MLflowURL:         os.Getenv("FABRIC_MLFLOW_URL"),
-		KQLURL:            os.Getenv("FABRIC_KQL_URL"),
-		RetryAfterSeconds: 1,
+		Addr:                envOr("FABRIC_ADDR", ":9443"),
+		DataDir:             os.Getenv("FABRIC_DATA_DIR"),
+		EntraIssuer:         os.Getenv("FABRIC_ENTRA_ISSUER"),
+		EntraJWKSURL:        os.Getenv("FABRIC_ENTRA_JWKS_URL"),
+		EntraTLSInsecure:    boolEnv("FABRIC_ENTRA_TLS_INSECURE"),
+		DisableTLS:          boolEnv("FABRIC_DISABLE_TLS"),
+		SparkLivyURL:        os.Getenv("FABRIC_SPARK_LIVY_URL"),
+		SparkAgentURL:       os.Getenv("FABRIC_SPARK_AGENT_URL"),
+		SQLTDSAddr:          os.Getenv("FABRIC_SQL_TDS_ADDR"),
+		TerminalURL:         os.Getenv("FABRIC_TERMINAL_URL"),
+		TerminalToken:       os.Getenv("FABRIC_TERMINAL_TOKEN"),
+		WebActivityStub:     strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
+		CustomActivityShell: strings.EqualFold(os.Getenv("FABRIC_CUSTOM_ACTIVITY"), "shell"),
+		WarehouseSQLURL:     os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
+		TSQLStrict:          boolEnv("FABRIC_TSQL_STRICT"),
+		ListPageSize:        intEnv("FABRIC_LIST_PAGE_SIZE"),
+		AirflowURL:          os.Getenv("FABRIC_AIRFLOW_URL"),
+		AirflowDAGDir:       os.Getenv("FABRIC_AIRFLOW_DAG_DIR"),
+		AirflowUsername:     os.Getenv("FABRIC_AIRFLOW_USERNAME"),
+		AirflowPassword:     os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
+		MLflowURL:           os.Getenv("FABRIC_MLFLOW_URL"),
+		KQLURL:              os.Getenv("FABRIC_KQL_URL"),
+		RetryAfterSeconds:   1,
 	}
 }
 
