@@ -859,5 +859,13 @@
       "go:TestAzureMLRefusalNamesTheRemedy",
       "go:TestAzureMLStopsDependents"
     ]
+  },
+  "power-bi-report-items": {
+    "section": "Item types present, engine absent",
+    "claim": "Power BI — **Report items**",
+    "witnesses": [
+      "go:TestReportDefinitionRoundTripsByteForByte",
+      "go:TestTypedDefinitionRouteRefusesAnotherType"
+    ]
   }
 }
