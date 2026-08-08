@@ -243,9 +243,13 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// backend is attached; an honest error otherwise.
 		return e.scriptActivity(act, tp, resolve)
 
-	case "SqlServerStoredProcedure":
+	case "SqlServerStoredProcedure", "SqlPoolStoredProcedure":
 		// Calls a real stored procedure on a Warehouse/SQLDatabase item's own
-		// database, same backend as Script.
+		// database, same backend as Script. `SqlPoolStoredProcedure` is the
+		// Synapse-dedicated-pool spelling of the same activity — identical
+		// typeProperties (storedProcedureName + storedProcedureParameters),
+		// differing only in naming its target with a `sqlPool` reference, which
+		// resolveDatabaseRef accepts alongside the other reference keys.
 		return e.storedProcedureActivity(act, tp, resolve)
 
 	case "RefreshDataflow", "ExecuteDataFlow", "ExecutePowerQueryTemplate":
@@ -276,6 +280,18 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// what is real and what is refused by name.
 		return e.hdinsightSparkActivity(act, tp, resolve)
 
+	case "Validation":
+		// Really waits for the data: real OneLake paths, real sizes, and the
+		// virtual clock for the timeout. See validationactivity.go — an
+		// always-passing Validation is worse than none.
+		return e.validationActivity(act, tp, resolve)
+
+	case "AzureDataExplorerCommand":
+		// A real control command on the real Kusto engine behind Eventhouse,
+		// through the same relay helpers the KQL data plane uses. See
+		// adxcommandactivity.go.
+		return e.adxCommandActivity(act, tp, resolve)
+
 	case "AzureMLExecutePipeline", "AzureMLBatchExecution", "AzureMLUpdateResource":
 		// Refused by name, with cause. Unlike its neighbours these name no
 		// artifact to execute — the published pipeline's steps live in an Azure
@@ -293,6 +309,15 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		return e.webActivity(act, tp, resolve)
 
 	default:
+		// Compute activities that name a runtime the emulator does not host are
+		// refused BY NAME before the stub below can claim they ran — six of
+		// them, each with its cause. They lived in this default until the
+		// schema's discriminators were diffed against the dispatch; see
+		// unrunnableactivities.go for the method and the list.
+		if cause, ok := unrunnableActivities[act.Type]; ok {
+			return nil, unrunnableRefusal(act, cause)
+		}
+
 		// External connectors only: a Salesforce or ServiceNow leaf needs a
 		// vendor SDK and credentials the emulator has neither of, so it records
 		// that the orchestration reached the leaf without claiming the effect

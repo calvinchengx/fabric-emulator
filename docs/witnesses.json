@@ -569,14 +569,6 @@
       "py:test_a_per_cell_budget_is_multiplied_by_the_real_cell_count"
     ]
   },
-  "script-sqlserverstoredprocedure-activities": {
-    "section": "Data Factory (`data-factory/`)",
-    "claim": "**Script** / **SqlServerStoredProcedure** activities",
-    "witnesses": [
-      "ci:warehouse-tds",
-      "go:TestPipelineSQLActivitiesE2E"
-    ]
-  },
   "sensitivity-labels-bulksetlabels-bulkremovelabels": {
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Sensitivity labels** (`bulkSetLabels` / `bulkRemoveLabels`)",
@@ -885,6 +877,58 @@
     "witnesses": [
       "go:TestReportDefinitionRoundTripsByteForByte",
       "go:TestTypedDefinitionRouteRefusesAnotherType"
+    ]
+  },
+  "script-sqlserverstoredprocedure-sqlpoolstoredprocedure-activities": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Script** / **SqlServerStoredProcedure** / **SqlPoolStoredProcedure** activities",
+    "witnesses": [
+      "ci:warehouse-tds",
+      "go:TestPipelineSQLActivitiesE2E",
+      "go:TestSqlPoolReferenceResolvesToRealSQL",
+      "go:TestSqlPoolStoredProcedureDispatches",
+      "go:TestSqlPoolStoredProcedureSendsRealSQL",
+      "go:TestSqlPoolMissingReferenceIsHonest"
+    ]
+  },
+  "validation-activity": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Validation** activity",
+    "witnesses": [
+      "go:TestValidationPassesOnDataThatIsThere",
+      "go:TestValidationFailsWhenTheDataNeverArrives",
+      "go:TestValidationHonoursItsPredicates",
+      "go:TestValidationPassesOnAFolderThatIsThere",
+      "go:TestValidationInputSurface",
+      "go:TestValidationWaitRetriesUntilTheDataArrives",
+      "go:TestValidationWaitStopsAtTheDeadline",
+      "go:TestValidationWaitSubscribesBeforeReading",
+      "go:TestValidationWaitClampsTheSleepToTheDeadline"
+    ]
+  },
+  "azure-data-explorer-command-activity-azuredataexplorercommand": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Azure Data Explorer Command** activity (`AzureDataExplorerCommand`)",
+    "witnesses": [
+      "go:TestADXCommandReachesTheRealEngine",
+      "go:TestADXCommandRefusesAQuery",
+      "go:TestADXCommandRefusesTheWrongItemType",
+      "go:TestADXCommandNoEngineIsHonest",
+      "go:TestADXCommandEngineErrorFailsTheActivity",
+      "go:TestADXCommandEngineCannotCreateTheDatabase",
+      "go:TestADXCommandEngineUnreachable",
+      "go:TestADXCommandInputSurface",
+      "go:TestADXCommandHonoursCommandTimeout"
+    ]
+  },
+  "unrunnable-adf-activities": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**HDInsight Hive/Pig/MapReduce/Streaming**, **U-SQL**, **SSIS package** activities",
+    "witnesses": [
+      "go:TestUnrunnableActivitiesDoNotFakeSuccess",
+      "go:TestUnrunnableActivitiesNameTheirCause",
+      "go:TestUnrunnableRefusalsCoverTheDiff",
+      "go:TestTheStubStillAnswersForConnectorLeaves"
     ]
   }
 }

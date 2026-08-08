@@ -144,3 +144,37 @@ gates resolve toward "keep the refusal": **26 of 34 executing for real, 7
 protocol-terminated against stand-ins with negative controls, Dataflow Gen2
 refusing by name** — and the honest sentence in `parity.md` is that every
 documented activity either does its work observably or names exactly why not.
+
+## Phase 7: the nine the plan never listed
+
+**The activity list this plan was built from was the portal's, and the portal
+is not the wire.** Diffing all 41 discriminators in ADF's published schema
+against what the dispatch switch and the pipeline interpreter actually handle
+found **nine type strings in neither** — and every one of them fell to the
+dispatch default, which returns `{"status":"Succeeded"}`. They had been
+counted as "not in the plan"; they were in fact being reported as done.
+
+The default is right for a **connector leaf** — a ServiceNow source really was
+reached in `dependsOn` order with its inputs resolved, and the emulator says
+so. It is wrong for a **compute activity**, whose whole point is an effect
+later steps consume. That distinction is what splits the nine:
+
+| Type | Outcome | Why |
+|---|---|---|
+| `Validation` | 🟢 real | OneLake paths, real sizes, the virtual clock |
+| `SqlPoolStoredProcedure` | 🟢 real | the Synapse spelling of an activity already implemented |
+| `AzureDataExplorerCommand` | 🟢 real | the Kusto engine behind Eventhouse already runs |
+| `HDInsightHive` / `Pig` / `MapReduce` / `Streaming` | 🔴 refused by name | no Hive/Pig/MapReduce runtime; a main class has no submission path |
+| `DataLakeAnalyticsU-SQL` | 🔴 refused by name | U-SQL is its own language; the service is retired |
+| `ExecuteSSISPackage` | 🔴 refused by name | no integration runtime, and the work is inside the package |
+
+`Validation` is the one worth naming twice. Its entire purpose is to stop a
+pipeline from processing data that has not landed, so a `Validation` that
+always passes is **worse than no `Validation` at all**: the pipeline reads an
+absent file with the guard's blessing.
+
+**The reusable part is the method, not the list.** A plan derived from a
+product surface will miss whatever the wire accepts and the surface does not
+show. Diff the schema's discriminators against the dispatch, and check what
+the default does with the remainder — a permissive default turns every gap
+into a silent success.
