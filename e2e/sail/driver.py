@@ -11,6 +11,7 @@ import json
 import os
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -195,5 +196,38 @@ with urllib.request.urlopen(req, timeout=30) as r:
     first_commit = r.read().decode()
 assert '"protocol"' in first_commit and '"metaData"' in first_commit, first_commit[:200]
 print("delta log readable through the Blob surface (protocol + metaData present)")
+
+# The conditional-create contract itself, with the interleaving as an INPUT
+# rather than sampled for.
+#
+# The racing writers above can only observe a rejection when they happen to
+# collide, and they legitimately may not (see that block). This asserts the
+# same guarantee with no race at all: version 0 of the events table exists, so
+# a put-if-absent against that exact path must be refused. It is the rejection
+# half of the concurrency story, held to a deterministic standard, and it is
+# the 409 the racing writers see when they DO collide.
+#
+# TestConcurrentDeltaCommitRace pins the same mechanism at unit level; this
+# pins it end-to-end, through the Blob surface a real client reaches, with the
+# token a real client mints.
+conflict_probe = urllib.request.Request(
+    f"{FABRIC}/onelake/{ws['id']}/lake.Lakehouse/Tables/events/_delta_log/"
+    "00000000000000000000.json",
+    method="PUT",
+    data=b'{"commitInfo":{"operation":"SHOULD NOT LAND"}}',
+    headers={"Authorization": "Bearer " + storage_token, "If-None-Match": "*"},
+)
+try:
+    urllib.request.urlopen(conflict_probe, timeout=30)
+    raise AssertionError("put-if-absent overwrote an existing Delta commit")
+except urllib.error.HTTPError as refused:
+    assert refused.code == 409, refused.code
+print("put-if-absent on an existing commit refused with 409")
+
+# And it refused WITHOUT damaging what was there. A 409 that still replaced the
+# bytes would satisfy the status assertion and lose the commit anyway.
+with urllib.request.urlopen(req, timeout=30) as r:
+    assert r.read().decode() == first_commit, "the refused PUT modified the commit"
+print("the refused PUT left the existing commit byte-identical")
 
 print("PASS: sail e2e")
