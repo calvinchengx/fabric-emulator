@@ -105,6 +105,44 @@ the workspace name against**. The hypothesis sent `name`, `id`,
 and a suite that asserted it would pass by confirming its own guess. Both
 findings are printed observations; the next iteration turns one into a test.
 
+### Screen 2 — RUN: the envelope is required, the field spelling is not the variable
+
+Three candidate shapes, one per connection, in a single run. The single-shape
+run is the **control**: all three connection types reported identically there,
+so any difference here is attributable to the shape rather than to the Data
+Source form.
+
+| Shape | Client's answer |
+|---|---|
+| bare array (no `value`) | `ArgumentNullException :: Value cannot be null. (Parameter 'value')` |
+| `value` envelope + 10 field spellings | `…workspace ('ws') is not found` |
+| PascalCase (`Value`/`Name`/…) | `…workspace ('ws') is not found` |
+
+**What this establishes.** Removing the envelope changes the failure from a
+lookup to a *null argument*, so the client requires it — and PascalCase
+`Value` was accepted where a bare array was not, which says the deserialiser
+is case-insensitive on the envelope. With the envelope present the client
+parses, searches, and reports not-found against **ten** spellings at once
+(`name`, `workspaceName`, `displayName`, `folderName`, `id`, `objectId`,
+`capacityObjectId`, `clusterUri`, `fixedClusterUri`, `backendUri`). Field
+spelling is therefore **not** the remaining variable.
+
+**What it does NOT establish, stated because the correlation is tempting.**
+`ArgumentNullException (Parameter 'value')` is the standard .NET shape for
+`ArgumentNullException(nameof(value))` and may name a *method parameter*, not
+our JSON key. The correlation is suggestive — the only shape lacking a `value`
+key produced the only null error — but causation is unproven, and the cheap
+discriminator is `{"value": null}` versus `{"value": []}` versus a bare array.
+Nobody should build on the envelope claim without running that.
+
+**Where this leaves the next hypothesis: structural, not cosmetic.** The client
+matches the Data Source's workspace name against something that is not any
+plain string field on the workspace object. Candidates worth one run each:
+a nested object (the name under a `properties`/`workspace` sub-object), a
+different top-level key than `value`, or a match against something derived
+rather than carried — in which case no field spelling would ever have worked
+and the ten-spelling result is the evidence for it.
+
 ### The next experiment, now one edit and ~5 minutes
 
 Vary a single field at a time against the same harness and read the error. The
