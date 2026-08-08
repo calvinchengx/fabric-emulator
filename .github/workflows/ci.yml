@@ -679,6 +679,31 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/rest-helix/run.py
 
+  rest-servicenow:
+    name: ServiceNow Table API ingest through the REST connector (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # The complement to rest-helix. Helix proves the connector against a vendor
+      # Fabric has NO connector for; this proves it against the vendor Microsoft's
+      # own REST-connector documentation uses to TEACH pagination — Example 1 of
+      # connector-rest is `api/now/table/incident?sysparm_limit=&sysparm_offset=`
+      # with `"QueryParameters.{offset}": "RANGE:0:10000:1000"`.
+      #
+      # It also covers the half Helix cannot: ServiceNow's records are FLAT under
+      # $.result, so the copy carries no translator.mappings and auto-flattening
+      # must infer the columns. Helix nests under `values` and always needed them.
+      #
+      # Both documented paging routes run in one pipeline (offset RANGE and RFC
+      # 5988 Link headers) because a connector implementing one would otherwise
+      # pass half the claim looking whole. 5 records at page size 2: one page
+      # reports 2, one page short reports 4, only a complete read reports 5.
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/rest-servicenow/run.py
+
   external-shortcuts:
     name: Shortcut target kinds resolve through OneLake (containerized)
     runs-on: ubuntu-latest

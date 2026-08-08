@@ -956,5 +956,12 @@
       "go:TestMLVRefreshUnknownView",
       "go:TestMLVUnknownLakehouse"
     ]
+  },
+  "servicenow-via-restsource": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**ServiceNow via `RestSource`**",
+    "witnesses": [
+      "ci:rest-servicenow"
+    ]
   }
 }
