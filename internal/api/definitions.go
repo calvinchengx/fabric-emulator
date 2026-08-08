@@ -133,6 +133,21 @@ func (a *API) registerTyped(mux *http.ServeMux) {
 			a.withAuth(a.typedDefinition(itemType, a.getDefinition)))
 		mux.HandleFunc("POST /v1/workspaces/{wid}/"+collection+"/{iid}/updateDefinition",
 			a.withAuth(a.typedDefinition(itemType, a.updateDefinition)))
+		// Job-instance READ and CANCEL are documented on the typed collection
+		// too, while SUBMIT is documented on the generic one — Microsoft's Copy
+		// job REST article mixes the two within a single page:
+		//
+		//   POST …/items/{id}/jobs/instances?jobType=Execute      (submit)
+		//   GET  …/copyJobs/{id}/jobs/instances/{jid}             (read)
+		//   POST …/copyJobs/{id}/jobs/instances/{jid}/cancel      (cancel)
+		//
+		// So the mixture is the contract, not an inconsistency to normalise.
+		// Only the generic forms existed here, which is the same omission as
+		// the definition pair above and was found by the same audit.
+		mux.HandleFunc("GET /v1/workspaces/{wid}/"+collection+"/{iid}/jobs/instances/{jid}",
+			a.withAuth(a.typedDefinition(itemType, a.getJobInstance)))
+		mux.HandleFunc("POST /v1/workspaces/{wid}/"+collection+"/{iid}/jobs/instances/{jid}/cancel",
+			a.withAuth(a.typedDefinition(itemType, a.cancelJobInstance)))
 	}
 }
 
