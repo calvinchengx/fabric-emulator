@@ -29,7 +29,7 @@ func TestPipelineLeafPassthrough(t *testing.T) {
         {"name":"Hit","type":"SalesforceSource","typeProperties":{"object":"Account"}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("pass-through leaf = %s, want Completed", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -47,7 +47,7 @@ func TestPipelineNotebookMissingID(t *testing.T) {
         {"name":"RunNb","type":"TridentNotebook","typeProperties":{}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("missing notebookId = %s, want Failed", s)
 	}
 }
@@ -74,7 +74,7 @@ func TestPipelineInvokeRefErrors(t *testing.T) {
 	} {
 		pl := createPipeline(t, st, ws.ID, content)
 		_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-		if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 			t.Errorf("%s = %s, want Failed", name, s)
 		}
 	}
@@ -92,7 +92,7 @@ func TestPipelineInvokeChildDefinitionErrors(t *testing.T) {
         {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipeline":{"referenceName":"`+bad.ID+`"}}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("unparsable child = %s, want Failed", s)
 	}
 
@@ -110,7 +110,7 @@ func TestPipelineInvokeChildDefinitionErrors(t *testing.T) {
         {"name":"Call","type":"ExecutePipeline","typeProperties":{"pipeline":{"referenceName":"`+odd.ID+`"}}}
       ]}}`)
 	_, jid2 := runJob(t, a, ws.ID, pl2.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl2.ID, jid2); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl2.ID, jid2); s != "Completed" {
 		t.Fatalf("sole-part child = %s, want Completed", s)
 	}
 }
@@ -133,7 +133,7 @@ func TestPipelineInvokeWorkspaceByIDAndName(t *testing.T) {
           "pipeline":{"referenceName":"worker","workspaceId":"other-ws"}}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("cross-workspace invoke = %s, want Completed", s)
 	}
 }
@@ -153,7 +153,7 @@ func TestPipelineInvokeWaitOnCompletionExpressions(t *testing.T) {
           "pipeline":{"referenceName":"`+failing.ID+`"},"waitOnCompletion":"@equals(1,2)"}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, fire.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, fire.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, fire.ID, jid); s != "Completed" {
 		t.Fatalf("waitOnCompletion=false expression = %s, want Completed", s)
 	}
 
@@ -162,7 +162,7 @@ func TestPipelineInvokeWaitOnCompletionExpressions(t *testing.T) {
           "pipeline":{"referenceName":"`+failing.ID+`"},"waitOnCompletion":"@nosuchfunc()"}}
       ]}}`)
 	_, jid2 := runJob(t, a, ws.ID, block.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, block.ID, jid2); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, block.ID, jid2); s != "Failed" {
 		t.Fatalf("unresolvable waitOnCompletion = %s, want Failed (blocking default)", s)
 	}
 }
@@ -200,7 +200,7 @@ func TestPipelineCopyLocationEdges(t *testing.T) {
 	} {
 		pl := createPipeline(t, st, ws.ID, content)
 		_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-		if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 			t.Errorf("%s = %s, want Failed", name, s)
 		}
 	}
@@ -213,7 +213,7 @@ func TestPipelineCopyLocationEdges(t *testing.T) {
           "sink":{"location":{"workspaceId":"@null","itemId":"` + dst.ID + `","path":"Files/ok"}}}}]}}`
 	pl := createPipeline(t, st, ws.ID, ok)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("GUID workspace copy = %s, want Completed", s)
 	}
 	if got, err := st.GetOneLakePath(dst.ID, "Files/ok"); err != nil || string(got.Content) != "hi" {
@@ -234,7 +234,7 @@ func TestPipelineCopyLocationEdges(t *testing.T) {
           "sink":{"location":{"itemId":"` + dst.ID + `","path":"Files/dircp"}}}}]}}`
 	pl2 := createPipeline(t, st, ws.ID, dircp)
 	_, jid2 := runJob(t, a, ws.ID, pl2.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl2.ID, jid2); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl2.ID, jid2); s != "Completed" {
 		t.Fatalf("dir copy with dir rows = %s, want Completed", s)
 	}
 	if _, err := st.GetOneLakePath(dst.ID, "Files/dircp/one.txt"); err != nil {

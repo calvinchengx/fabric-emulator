@@ -1,6 +1,7 @@
 # 37 — Runtime fidelity: four documented divergences, and what closing each takes
 
-**Status: divergence 1 is DONE — wire and witness. The other three are stated in
+**Status: divergences 1 (Environments) and 4 (async pipelines) are DONE — wire
+and witness each. The Files-mount and `input_file_name` items remain stated in
 the code and not implemented.** Each is a
 place where the emulator's *runtime* — the thing a notebook actually sees — is
 deliberately an analog of Fabric's rather than the thing itself. They were
@@ -206,7 +207,7 @@ internal column name. **Size: XS.**
 
 ---
 
-## 4. Pipeline jobs execute inline in the job POST
+## 4. ~~Pipeline jobs execute inline in the job POST~~ — DONE
 
 **What Fabric does.** `POST .../jobs/instances` returns `202` with a `Location`
 header; the client polls. Execution outlives the request.
@@ -250,7 +251,18 @@ sites across the Go tests, ~50 of them on pipelines, and each becomes
 whose comment already states the reasoning: submitting a job returns 202 and the
 caller polls, so the test polls too rather than sleeping a guessed interval.
 
-**Size: M**, almost entirely mechanical. Secondary benefit: pipeline runs become
+**Delivered.** `go a.runPipelineWith(...)`, `CompleteAt` parked at MaxInt64
+before create, and DataPipeline left `terminalStatusOf`'s executesNow — the
+goroutine publishes the real outcome via `publishJobOutcome` when the pipeline
+finishes. The churn measured as predicted: 114 `jobStatus()` sites converted to
+`awaitJob()`, minus the negative-assertion sites that legitimately tolerate a
+job staying open. The witness is `TestPipelineJobOutlivesItsPOST`: a Web
+activity held mid-flight by the test proves the 202 returns first, and the
+exactly-once terminal-event count fails if DataPipeline is ever re-added to
+executesNow (measured: that mutation produces 2 events). Before the change the
+same test deadlocks, which is the inline behaviour stated plainly.
+
+**Size was: M**, almost entirely mechanical. Secondary benefit: pipeline runs become
 observable mid-flight on the flow stream
 ([31-flow-observability.md](31-flow-observability.md)), which today emits
 per-activity events no client can read until the POST returns.

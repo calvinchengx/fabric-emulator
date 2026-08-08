@@ -48,7 +48,7 @@ func TestPipelineScriptSQLite(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("job status = %s", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -83,7 +83,7 @@ func TestPipelineScriptMalformedDatabaseRef(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("malformed database ref = %s, want Failed", s)
 	}
 }
@@ -109,7 +109,7 @@ func TestPipelineScriptMissingScripts(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("missing scripts = %s, want Failed", s)
 	}
 }
@@ -137,7 +137,7 @@ func TestPipelineScriptNonQueryError(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("invalid SQL = %s, want Failed", s)
 	}
 }
@@ -164,7 +164,7 @@ func TestPipelineScriptQueryError(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("query against missing table = %s, want Failed", s)
 	}
 }
@@ -193,7 +193,7 @@ func TestPipelineScriptNestedLocationAndBlob(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		t.Fatalf("nested-location script = %s, want Completed", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -231,7 +231,7 @@ func TestPipelineScriptDatabaseRefErrors(t *testing.T) {
           ]}}`
 		pl := createPipeline(t, st, ws.ID, content)
 		_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-		if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 			t.Errorf("%s = %s, want Failed", name, s)
 		}
 	}
@@ -262,7 +262,7 @@ func TestPipelineStoredProcedureParams(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("EXEC against SQLite = %s, want Failed (no stored procedures)", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -293,7 +293,7 @@ func TestPipelineStoredProcedureMissingName(t *testing.T) {
       ]}}`
 	pl := createPipeline(t, st, ws.ID, content)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := jobStatus(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("missing storedProcedureName = %s, want Failed", s)
 	}
 }

@@ -28,6 +28,7 @@ what runs below.
 import base64
 import json
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -171,7 +172,14 @@ if status != 202:
 # rather than verbatim. Fabric's contract is the path; the scheme is this
 # deployment's business.
 location = urllib.parse.urlparse(headers["Location"])
-job = request("GET", FABRIC + location.path + (f"?{location.query}" if location.query else ""), None, fabric)
+# Async pipelines (doc 37 §4): the 202 returns while the pipeline runs, so
+# poll to a terminal state the way a real client does — the activity-run
+# detail exists only once the run finishes.
+for _ in range(120):
+    job = request("GET", FABRIC + location.path + (f"?{location.query}" if location.query else ""), None, fabric)
+    if job.get("status") not in ("NotStarted", "InProgress"):
+        break
+    time.sleep(1)
 status, job_id = job.get("status"), job.get("id")
 
 runs = request("POST",

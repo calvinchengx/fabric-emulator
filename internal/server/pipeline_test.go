@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
@@ -103,8 +104,20 @@ func TestPipelineRunE2E(t *testing.T) {
 	loc := run.Header.Get("Location")
 	jid := loc[strings.LastIndex(loc, "/")+1:]
 
+	// Async (doc 37 §4): the 202 returns while the pipeline executes, so the
+	// test polls exactly as a real client does.
 	var job struct{ Status string }
-	f.mustStatus(f.call("GET", base+"/"+jid, f.token, nil, &job), http.StatusOK, "get job")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mustStatus(f.call("GET", base+"/"+jid, f.token, nil, &job), http.StatusOK, "get job")
+		if job.Status != "InProgress" && job.Status != "NotStarted" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pipeline job never reached a terminal state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if job.Status != "Completed" {
 		t.Fatalf("pipeline job status = %s", job.Status)
 	}
