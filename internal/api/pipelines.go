@@ -260,6 +260,12 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// here named async pipelines as its prerequisite; they exist.
 		return e.webhookActivity(act, tp, resolve)
 
+	case "HDInsightSpark":
+		// The submission protocol terminated locally; Sail computes. The Livy
+		// precedent applied to a second protocol — see hdinsightactivity.go for
+		// what is real and what is refused by name.
+		return e.hdinsightSparkActivity(act, tp, resolve)
+
 	case "AzureFunctionActivity":
 		// A real call to a function endpoint over the same HTTP core as Web;
 		// the function key travels as x-functions-key, which is how ADF
