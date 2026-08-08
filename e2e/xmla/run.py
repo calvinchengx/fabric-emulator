@@ -137,7 +137,98 @@ WORKSPACE = "ws"   # the workspace the probe names in its Data Source
 # is a SCREEN, not a guess. If one advances, the next run narrows it; if none
 # does, four hypotheses die at once.
 def _shapes(host):
-    """SCREEN 6 — capacityUri, one shape per RUN.
+    """SCREEN 8 — recover the generateastoken body, and name the segment read.
+
+    Screen 7 ADVANCED: at one path segment or more, the client accepts the
+    routing reply and POSTs `/metadata/v201606/generateastoken`. That body is
+    the contract of the next call and the first sight of anything past routing
+    — and screen 7 captured it and then failed to print it, because the run
+    record had been narrowed to (method, path). The harness now prints headers
+    and body in full; this run exists to collect what that one threw away.
+
+    It also settles a question screen 7 raised but could not answer. The path
+    segments are DISTINCT GUIDs, so whichever one the client echoes back as
+    `capacityObjectId` names the index it reads:
+
+      L1  one segment    — GUID-1 is the only candidate; the control
+      L2  two segments   — GUID-1 or GUID-2 distinguishes first from last
+      L5  five segments  — confirms against a long path, where an interior
+                           index would otherwise look like "the last one"
+
+    Nothing here sweeps depth again: screen 7 established that >=1 segment
+    advances and 0 does not. Re-running the full ladder would cost five
+    containers to re-derive a settled fact.
+    """
+    seg = [f"{n}" * 8 + f"-{n}{n}{n}{n}-{n}{n}{n}{n}-{n}{n}{n}{n}-" + f"{n}" * 12
+           for n in range(1, 7)]
+
+    def ws(capacity_uri, kind="Group", sku="Premium"):
+        return {"id": "00000000-0000-0000-0000-000000000001", "name": WORKSPACE,
+                "type": kind, "capacitySku": sku, "capacityUri": capacity_uri}
+
+    ct = {"Content-Type": "application/json; charset=utf-8"}
+    out = []
+    for depth in (1, 2, 5):
+        path = "".join(f"/{s}" for s in seg[:depth])
+        out.append((f"L{depth}-path-{depth}-segment", 200, ct,
+                    json.dumps([ws(f"https://{host}{path}/")]).encode()))
+    return out
+
+
+def _shapes_screen7(host):
+    """SCREEN 7 — the path-segment ladder, plus a host-label arm. For the record.
+
+    Screen 6 named the field: an empty `capacityUri` draws the client's own
+    `InvalidDataException :: … capacity uri is null or empty!`, so it is read
+    and validated; a non-empty one throws `IndexOutOfRangeException` inside
+    `PbiPremiumAuthenticationHandle.TryResolvePbiWorkspace`, which derives two
+    values nothing in the reply carries — `pbiDedicatedRolloutFqdn` and
+    `capacityObjectId`.
+
+    IndexOutOfRange means indexing past the end, so the variable to sweep is
+    LENGTH. The failure mode picks the experiment; nothing here guesses at a
+    URL format.
+
+    Two things can be indexed, and screen 6 excluded neither:
+
+      L0..L5  PATH DEPTH. The primary hypothesis — screen 6's A, C and D all
+              had an EMPTY path and all failed identically. Host stays the
+              listener so that a shape which finally parses dials back HERE and
+              its next request is captured, which is the whole deliverable.
+      H5, H7  HOST LABEL COUNT. NOT excluded by screen 6: its two hosts had 3
+              and 4 dot-separated labels, so a parser wanting label 5 would
+              fail on both exactly as observed. Cheap to rule out, and
+              expensive to discover later. These cannot capture a follow-up
+              request — the hosts do not resolve — so they are read for a
+              CHANGE IN ERROR only.
+
+    Every path segment is a distinct GUID. GUID-shaped because `capacityObjectId`
+    is likely one and a malformed value would fail differently, confounding
+    depth with format; DISTINCT so that if the client ever does dial back, the
+    value it carries names which position it read.
+    """
+    seg = [f"{n}" * 8 + f"-{n}{n}{n}{n}-{n}{n}{n}{n}-{n}{n}{n}{n}-" + f"{n}" * 12
+           for n in range(1, 7)]
+
+    def ws(capacity_uri, kind="Group", sku="Premium"):
+        return {"id": "00000000-0000-0000-0000-000000000001", "name": WORKSPACE,
+                "type": kind, "capacitySku": sku, "capacityUri": capacity_uri}
+
+    ct = {"Content-Type": "application/json; charset=utf-8"}
+    out = []
+    for depth in range(6):
+        path = "".join(f"/{s}" for s in seg[:depth])
+        out.append((f"L{depth}-path-{depth}-segment", 200, ct,
+                    json.dumps([ws(f"https://{host}{path}/")]).encode()))
+    for labels in (5, 7):
+        fqdn = ".".join(chr(ord("a") + i) for i in range(labels))
+        out.append((f"H{labels}-host-{labels}-label", 200, ct,
+                    json.dumps([ws(f"https://{fqdn}/")]).encode()))
+    return out
+
+
+def _shapes_screen6(host):
+    """SCREEN 6 — capacityUri, one shape per RUN. Kept for the record.
 
     Screen 5 got the routing reply CONSUMED: one call instead of six, both
     diagnostic errors gone, and the failure moved downstream to an
@@ -545,19 +636,34 @@ for SHAPE_INDEX, (label, *_) in enumerate(_shapes("")):
     if not SHAPE_LOG:
         print(f"  WARNING {label}: served to no request — the client never asked, "
               f"so this shape was NOT under test.", flush=True)
-    runs.append((label, [(r["method"], r["path"]) for r in REQUESTS], proc2.stdout))
+    # Keep the WHOLE request, not just method and path. Screen 7 advanced past
+    # routing for the first time and the new POST's body — the actual contract
+    # of the next call — was captured in memory and then not printed, because
+    # this list had been narrowed to two fields. The body is the deliverable;
+    # the path is only the label on it.
+    with LOCK:
+        runs.append((label, [dict(r) for r in REQUESTS], proc2.stdout))
 srv.shutdown()
 
-for label, phase2, out in runs:
+for label, reqs, out in runs:
+    phase2 = [(r["method"], r["path"]) for r in reqs]
     print(f"\n---- PHASE 0 · {label}: {len(phase2)} request(s) ----", flush=True)
     for m, path in phase2:
         print(f"  {m} {path}", flush=True)
-    beyond = [x for x in phase2
-              if not x[1].startswith("/powerbi/databases/v201606/workspaces")]
+    beyond = [r for r in reqs
+              if not r["path"].startswith("/powerbi/databases/v201606/workspaces")]
     if beyond:
         print("  ADVANCED — requests past routing, never before observed:", flush=True)
-        for m, path in beyond:
-            print(f"    {m} {path}", flush=True)
+        # Body and headers IN FULL. This is the first sight of the call after
+        # routing, and a truncated record of it costs another full run to
+        # recover — which is exactly what happened when only the path was kept.
+        for r in beyond:
+            print(f"    {r['method']} {r['path']}", flush=True)
+            for k, v in sorted(r.get("headers", {}).items()):
+                if k in ("authorization", "cookie"):
+                    v = f"<{len(v)} chars, not logged>"
+                print(f"      {k}: {v}", flush=True)
+            print(f"      BODY: {r.get('body') or '(empty)'}", flush=True)
     elif phase2 == phase1:
         print("  UNCHANGED — identical to the refused run, so the doubled routing "
               "call is unconditional rather than a 404 fallback.", flush=True)
@@ -586,12 +692,17 @@ print("\n---- capacityUri screen ----", flush=True)
 first = {label: next((ln for ln in out.splitlines()
                       if ln.startswith("CASE powerbi")), "(no powerbi case)")
          for label, _, out in runs}
-base = first.get("A-capacityUri-listener")
+# The BASELINE is the first shape, whatever it is called. Naming it in a string
+# is how a screen quietly stops comparing against anything when the shapes are
+# renamed for the next round.
+baseline, _, _ = runs[0]
+base = first[baseline]
 for label, _, _ in runs:
     line = first[label]
-    same = "  same as A" if label != "A-capacityUri-listener" and line == base else ""
+    same = f"  same as {baseline}" if label != baseline and line == base else ""
     print(f"  {label:26} {line.split('::', 1)[-1].strip()}{same}", flush=True)
-print("\nIf every shape reports what A reports, capacityUri is NOT the variable "
-      "and the frames above are the only thing that narrows it. A shape that "
-      "differs names the format the parser wanted.", flush=True)
+print(f"\nEvery shape reporting what {baseline} reports means the swept variable "
+      f"is NOT the one, and the frames above are all that narrows it. A shape "
+      f"that differs names what the parser wanted — and in a LADDER, the rung "
+      f"where the error changes is the index it reaches for.", flush=True)
 print("\nPASSED: the ADOMD.NET client contract is unchanged.")

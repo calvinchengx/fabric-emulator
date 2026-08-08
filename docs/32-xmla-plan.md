@@ -318,17 +318,102 @@ and `TryResolvePbiWorkspace` derives two values nothing in the reply carries —
 Splitting the URI and indexing absent segments fits every observation, but no
 run has yet varied path depth, so it is untested.
 
+### Screen 7 — RUN: **PHASE 0 IS ANSWERED.** The client advances past routing
+
+A ladder of `capacityUri` path depths, plus a host-label arm. Depth was the
+variable the failure mode pointed at — `IndexOutOfRange` means indexing past
+the end, so the thing to sweep is length, not URL format.
+
+| rung | outcome |
+| --- | --- |
+| `L0` — 0 segments | `IndexOutOfRangeException`, 1 request |
+| `L1`–`L5` — 1 to 5 segments | **ADVANCED**, 7 requests |
+| `H5`, `H7` — 5 and 7 host labels | identical to `L0` |
+
+**One path segment is enough**, and the host-label hypothesis is dead. That arm
+earned its two containers: screen 6's hosts had 3 and 4 dot-separated labels,
+so a parser wanting label 5 would have fitted every observation to that point.
+Retiring a live alternative is worth as much as confirming the leading one.
+
+With a segment present, `TryResolvePbiWorkspace` leaves the stack entirely, the
+`PbiPremiumAuthenticationHandle` **constructs** — `workspaceObjectId` and
+`capacityObjectId` both derived — and the client makes a call nobody in this
+project had ever seen:
+
+```
+GET  /powerbi/databases/v201606/workspaces?PreferClientRouting=true   (once)
+POST /metadata/v201606/generateastoken?PreferClientRouting=true       (per connection)
+POST /metadata/v201606/generateastoken
+```
+
+throwing at `PbiPremiumAuthenticationHandle::GetMwcToken` on the stub's reply.
+Note the **500 is ours** — the capture stub answers every POST with a SOAP
+fault — so that is the harness refusing, not the client failing. Note also that
+routing is resolved ONCE for the process while the token is fetched PER
+CONNECTION: the two have different cache lifetimes.
+
+**A harness regression, and what it cost.** Restructuring the loop for
+per-shape runs narrowed each run's record to `(method, path)`, dropping the
+body print the original had. So the `generateastoken` body — the first sight of
+anything past routing, and the entire point of getting there — was captured and
+discarded, costing a full extra run to recover. The record now keeps whole
+requests and prints headers and body in full, with `authorization` and `cookie`
+reduced to a length.
+
+### Screen 8 — RUN: the token request's contract, and the segment rule
+
+Three rungs with DISTINCT GUIDs per path position, so the value the client
+echoes names the index it read.
+
+| rung | segments offered | `capacityObjectId` sent |
+| --- | --- | --- |
+| `L1` | GUID-1 | `11111111-…-111111111111/` |
+| `L2` | GUID-1, GUID-2 | `11111111-…-111111111111/` |
+| `L5` | GUID-1 … GUID-5 | `11111111-…-111111111111/` |
+
+Always the FIRST segment, at every depth, retaining a TRAILING SLASH.
+
+**Inferred, but from a fingerprint rather than a fit.** That is precisely
+.NET's `Uri.Segments`, which yields `["/", "seg1/", "seg2/", …]` with each
+segment carrying its slash — so `capacityObjectId = new Uri(capacityUri)
+.Segments[1]`. The same rule explains `L0` without adjustment: an empty path
+gives `Segments` length 1, and `Segments[1]` throws `IndexOutOfRangeException`.
+One rule, four observations, no free parameters.
+
+The request the emulator must now answer:
+
+```
+POST /metadata/v201606/generateastoken[?PreferClientRouting=true]
+content-type: application/json        user-agent: ASClient/.NET-Core
+authorization: Bearer <token from the connection string>
+
+{"applyAuxiliaryPermission":false,"auxiliaryPermissionOwner":null,
+ "bypassBuildPermission":false,
+ "capacityObjectId":"<first path segment of capacityUri, trailing slash>",
+ "datasetName":null,"intendedUsage":0,"sourceCapacityObjectId":null,
+ "workspaceObjectId":"<the id sent in Workspace201606>"}
+```
+
+`workspaceObjectId` is echoed from the routing reply, so the emulator controls
+it. `datasetName` is null because the probe's Data Source carries no
+`Initial Catalog`; that is where a database name would appear.
+
 ### Where this leaves the search
 
-A **path-segment ladder** — `capacityUri` with 1, 2, 3, 4, 5 segments — to find
-how many the parser indexes. The failure mode dictates the experiment rather
-than a guess at a URL format: `IndexOutOfRange` means indexing past the end, so
-the variable to sweep is length.
+Phase 0's question — "what does the client ask after routing?" — is **answered**.
+The roadmap's largest unknown is now a recorded request with a known body.
 
-`pbiDedicatedRolloutFqdn` is the strategically important one. It is the host
-the client dials after routing, which makes it the hook for steering ADOMD.NET
-back to the emulator — the point at which Phase 0 ends and Phase 1 has a
-client to talk to.
+Next is `generateastoken`'s RESPONSE contract, and it should be read off the
+assembly rather than screened: `GetMwcToken` deserialises into a declared
+`[DataContract]` exactly as the routing reply did, and reading it once beat
+four screens of guessing last time. "MWC" is the token the client carries into
+the XMLA calls themselves, which is the boundary where Phase 0 ends and
+Phase 1 has a client to talk to.
+
+`pbiDedicatedRolloutFqdn` — the other value `TryResolvePbiWorkspace` derives —
+remains the hook for steering the client's later calls at a host of our
+choosing. It has not been exercised: every request so far has come back to the
+listener named in the Data Source.
 
 ### Original framing, kept because the reasoning still holds
 
