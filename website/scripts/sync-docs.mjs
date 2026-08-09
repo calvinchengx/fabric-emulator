@@ -68,8 +68,10 @@ function cleanTitle(h1) {
   return h1.replace(/^\d+[a-z]?\s*[—:-]\s*/i, '').trim();
 }
 
+// Backslashes must be escaped before quotes, or a title ending in one would
+// escape the closing quote and produce unparseable frontmatter.
 function yamlEscape(s) {
-  return '"' + s.replace(/"/g, '\\"') + '"';
+  return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
 // Strip the leading H1 (Starlight renders the frontmatter title) and rewrite
