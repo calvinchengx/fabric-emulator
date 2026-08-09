@@ -3,12 +3,12 @@
     "go:TestMirrorSnapshotsBaseTables": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "go:TestPipelineSQLActivitiesE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "go:TestReflectDecimalColumn": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestRefreshMirroredDatabaseE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestSQLDatabaseMirror": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestWarehouseDeltaReflectionE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "sdk:TestRefreshMirroredDatabaseE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "sdk:TestSQLDatabaseMirror": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "sdk:TestWarehouseDeltaReflectionE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "go:TestWarehouseRouter": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestWarehouseSQLServerRelayE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "sdk:TestWarehouseSQLServerRelayE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "sdk:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "ci:real-fabric": "AZURE_* credentials + FABRIC_TEST_WORKSPACE — needs a real Fabric tenant, so it skips on a fork and on any checkout without the secrets. Satisfied weekly by the `real-fabric` workflow (.github/workflows/real-fabric.yml), which runs the SAME conformance suite the `fabric-target` job runs against the emulator on every push. It is the differential leg: a divergence shows up as a conformance failure there."
   },
   "abfss-onelake-dfs-fabric-microsoft-com-production-paths": {
@@ -219,7 +219,7 @@
     "claim": "**Fabric SQL Database (`database/`)** — OLTP + OneLake mirror",
     "witnesses": [
       "ci:warehouse-tds",
-      "go:TestSQLDatabaseMirror"
+      "sdk:TestSQLDatabaseMirror"
     ]
   },
   "folders": {
@@ -272,7 +272,7 @@
     "claim": "`information_schema` / `sys.*` introspection",
     "witnesses": [
       "ci:warehouse-tds",
-      "go:TestWarehouseSQLServerRelayE2E"
+      "sdk:TestWarehouseSQLServerRelayE2E"
     ]
   },
   "invoke-pipeline-executepipeline": {
@@ -341,7 +341,7 @@
     "claim": "**Lakehouse SQL analytics endpoint — Delta → engine**",
     "witnesses": [
       "ci:warehouse-tds",
-      "go:TestWarehouseDeltaReflectionE2E",
+      "sdk:TestWarehouseDeltaReflectionE2E",
       "ci:medallion"
     ]
   },
@@ -400,7 +400,7 @@
     "claim": "Mirroring — Mirrored Database (`mirroring/`)",
     "witnesses": [
       "ci:warehouse-tds",
-      "go:TestRefreshMirroredDatabaseE2E",
+      "sdk:TestRefreshMirroredDatabaseE2E",
       "go:TestMirrorSnapshotsBaseTables"
     ]
   },
@@ -478,7 +478,7 @@
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "Per-column type fidelity (real SQL types over the wire)",
     "witnesses": [
-      "go:TestResultTypeFidelity",
+      "sdk:TestResultTypeFidelity",
       "go:TestReflectDecimalColumn",
       "go:TestReflectedSQLTypesMatchFabric",
       "go:TestNestedColumnsAreOmittedNotFabricated",
@@ -495,7 +495,7 @@
     "claim": "Per-item isolation (each item = its own SQL Server database)",
     "witnesses": [
       "ci:warehouse-tds",
-      "go:TestWarehouseTwoSurfaces",
+      "sdk:TestWarehouseTwoSurfaces",
       "go:TestWarehouseRouter"
     ]
   },
@@ -533,7 +533,7 @@
     "claim": "RBAC → SQL permissions",
     "witnesses": [
       "ci:warehouse-tds",
-      "go:TestWarehouseTDSEndpointE2E"
+      "sdk:TestWarehouseTDSEndpointE2E"
     ]
   },
   "reference-run-lakehouse-rule": {
@@ -641,7 +641,7 @@
     "claim": "**T-SQL over TDS + Entra FedAuth**",
     "witnesses": [
       "ci:warehouse-tds",
-      "go:TestLogin7FedAuthCapture"
+      "sdk:TestLogin7FedAuthCapture"
     ]
   },
   "tenant-settings-get-v1-admin-tenantsettings": {

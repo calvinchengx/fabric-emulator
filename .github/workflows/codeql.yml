@@ -33,6 +33,10 @@ jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    # This repo requires an explicit timeout on every job (see
+    # scripts/check_workflow_concurrency.py): GitHub's 6-hour default makes a
+    # wedged run read as 'still pending' rather than failing.
+    timeout-minutes: 30
     permissions:
       security-events: write
       packages: read

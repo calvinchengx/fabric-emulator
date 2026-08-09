@@ -31,6 +31,14 @@ on:
 # make-targets.yml must group and cancel by the SAME rule (different prefix, or
 # the two would share a group and cancel each other). Enforced by
 # scripts/check_workflow_concurrency.py rather than by whoever edits this next.
+# Least privilege for every job in this file. Without it each job inherits the
+# repository default, which is write on many repos — 51 CodeQL alerts' worth of
+# ambient authority for workflows that only ever read the checkout. A job that
+# genuinely needs more should declare it at the job level, so the elevation is
+# visible where it is used.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
