@@ -193,7 +193,7 @@ func FromEnv() (*Config, error) {
 func FromEnvPartial() *Config {
 	return &Config{
 		Addr:                envOr("FABRIC_ADDR", ":9443"),
-		DataDir:             os.Getenv("FABRIC_DATA_DIR"),
+		DataDir:             envDefault("FABRIC_DATA_DIR", DefaultDataDir),
 		EntraIssuer:         os.Getenv("FABRIC_ENTRA_ISSUER"),
 		EntraJWKSURL:        os.Getenv("FABRIC_ENTRA_JWKS_URL"),
 		EntraTLSInsecure:    boolEnv("FABRIC_ENTRA_TLS_INSECURE"),
@@ -252,6 +252,23 @@ func DeriveJWKSURL(issuer string) string {
 	base := strings.TrimSuffix(issuer, "/")
 	base = strings.TrimSuffix(base, "/v2.0")
 	return base + "/discovery/v2.0/keys"
+}
+
+// DefaultDataDir is where state lands when FABRIC_DATA_DIR is not set at all.
+// The family persists by default: an emulator that forgets its workspaces and
+// OneLake contents on restart is a surprise.
+const DefaultDataDir = "./data"
+
+// envDefault distinguishes UNSET from SET-EMPTY, which envOr cannot: unset
+// takes the default, while an explicit empty value is honoured as empty. For
+// DataDir that is the difference between persisting and running in memory,
+// and the compose files use the empty form so a throwaway stack leaves no
+// SQLite file in a container layer about to be deleted.
+func envDefault(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return def
 }
 
 func envOr(key, def string) string {
