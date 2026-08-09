@@ -212,3 +212,50 @@ func TestSafeNavigationAndTriggerEvent(t *testing.T) {
 		t.Error("a dangling '?.' did not fail")
 	}
 }
+
+// range()'s count comes from a pipeline definition and `make` reserves the
+// capacity up front. A negative count panics `makeslice`, which evalExpr's
+// recover turns into an error; a huge one does NOT panic — it allocates, and an
+// OOM kill is a fatal that no per-request recover can catch. So the bound is the
+// only thing standing between one malformed definition and the process, exactly
+// as maxMeasureDepth is for a cyclic measure.
+//
+// Asserting the ERROR rather than timing the allocation is deliberate: a test
+// that actually tried 2e9 would either pass by OOMing the runner or pass by
+// having enough RAM, and neither outcome is about the guard.
+func TestRangeRefusesAnUnboundedCount(t *testing.T) {
+	ctx := &evalContext{Variables: map[string]value{}}
+	for _, expr := range []string{
+		"@range(0, -1)",         // makeslice would panic
+		"@range(0, 100001)",     // one past the bound
+		"@range(0, 2000000000)", // the OOM case CodeQL flagged
+		"@range(0)",             // arity: indexing args[1] would panic
+		"@range()",
+	} {
+		if _, err := evalString(expr, ctx); err == nil {
+			t.Errorf("%s: expected an error, got none", expr)
+		}
+	}
+
+	// The bound must not break the function it guards.
+	for _, expr := range []string{"@range(0, 0)", "@range(5, 3)", "@range(0, 100000)"} {
+		if _, err := evalString(expr, ctx); err != nil {
+			t.Errorf("%s: refused a legitimate range: %v", expr, err)
+		}
+	}
+
+	// And the values are still right, not merely non-erroring.
+	v, err := evalString("@range(5, 3)", ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arr, ok := v.([]value)
+	if !ok || len(arr) != 3 {
+		t.Fatalf("range(5,3) = %#v", v)
+	}
+	for i, want := range []float64{5, 6, 7} {
+		if arr[i] != want {
+			t.Errorf("range(5,3)[%d] = %v, want %v", i, arr[i], want)
+		}
+	}
+}

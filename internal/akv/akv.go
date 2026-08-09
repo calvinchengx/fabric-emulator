@@ -100,11 +100,29 @@ func New(insecure bool, client *http.Client, extraHost string) *Client {
 // ResolveSecret GETs {vaultURI}/secrets/{name}?api-version=… with the bearer
 // token and returns the secret value.
 func (c *Client) ResolveSecret(vaultURI, name, bearer string) (string, error) {
-	if _, err := c.checkVaultURI(vaultURI); err != nil {
+	// Build the request from the URL checkVaultURI RETURNED, never from the raw
+	// argument. Validating one representation and then requesting another is how
+	// an allowlist gets bypassed: any input `url.Parse` normalises away (a stray
+	// control character, a second scheme, an alternate host encoding) is checked
+	// in the parsed form and re-introduced by the raw string. They agree today;
+	// nothing enforced that they keep agreeing.
+	base, err := c.checkVaultURI(vaultURI)
+	if err != nil {
 		return "", err
 	}
-	u := strings.TrimSuffix(vaultURI, "/") + "/secrets/" + url.PathEscape(name) + "?api-version=" + APIVersion
-	req, err := http.NewRequest(http.MethodGet, u, nil)
+	// The name is ONE path segment, so it is escaped into one. Setting only
+	// `Path` would not do it: a `/` is legal in a decoded path and `String()`
+	// keeps it, so a name of `../../certificates/evil` would leave /secrets/
+	// entirely and send the vault-audience token to another endpoint on the
+	// same host. Setting `RawPath` alongside is how net/url is told the exact
+	// encoding to emit, and building the URL directly rather than through
+	// `ResolveReference` keeps its dot-segment removal out of it — that
+	// normalisation is what turns `..` into traversal rather than a 404.
+	u := *base
+	u.Path = strings.TrimSuffix(base.Path, "/") + "/secrets/" + name
+	u.RawPath = strings.TrimSuffix(base.EscapedPath(), "/") + "/secrets/" + url.PathEscape(name)
+	u.RawQuery = "api-version=" + APIVersion
+	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {
 		return "", err
 	}

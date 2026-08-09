@@ -150,3 +150,67 @@ func TestVaultURIAllowlist(t *testing.T) {
 		t.Errorf("ResolveSecret sent a token to a foreign host: %v", err)
 	}
 }
+
+// TestASecretNameCannotLeaveTheSecretsPath is the traversal guard.
+//
+// The name is caller-supplied: it arrives in an AKV-reference connection body,
+// alongside the vaultURI the allowlist already constrains. Constraining the
+// HOST is only half the job, because the request carries a vault-audience
+// bearer token and the vault serves more than /secrets — /certificates and
+// /keys sit on the same host behind the same token. A name of
+// `../../certificates/evil` that resolves out of /secrets/ hands that token's
+// reach to whoever wrote the connection body.
+//
+// This is a regression test in the strict sense: escaping the name into ONE
+// segment was already the behaviour, and rebuilding the URL through
+// ResolveReference quietly dropped it, because a `/` inside a decoded Path is
+// a separator and ResolveReference removes dot segments on top.
+func TestASecretNameCannotLeaveTheSecretsPath(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.EscapedPath())
+		_, _ = w.Write([]byte(`{"value":"v"}`))
+	}))
+	defer srv.Close()
+	c := New(false, srv.Client(), hostOf(t, srv.URL))
+
+	for _, name := range []string{
+		"../../certificates/evil",
+		"a/b",
+		"..%2f..%2fkeys/x",
+		"./../keys/x",
+	} {
+		got = nil
+		if _, err := c.ResolveSecret(srv.URL, name, "tok"); err != nil {
+			t.Fatalf("%q: %v", name, err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("%q: %d requests", name, len(got))
+		}
+		// Whatever the name contained, the request must still be for a single
+		// segment under /secrets/.
+		rest, ok := strings.CutPrefix(got[0], "/secrets/")
+		if !ok {
+			t.Fatalf("%q escaped the secrets path: %s", name, got[0])
+		}
+		if strings.Contains(rest, "/") {
+			t.Fatalf("%q became more than one segment: %s", name, got[0])
+		}
+	}
+}
+
+// TestTheRequestedURLComesFromTheValidatedVault keeps the other half of the
+// same line honest: the host actually requested is the one the allowlist
+// approved, not whatever the raw argument said.
+func TestTheRequestedURLComesFromTheValidatedVault(t *testing.T) {
+	srv := fakeVault(t)
+	c := New(false, srv.Client(), hostOf(t, srv.URL))
+	// A trailing slash, which the join must not double.
+	if _, err := c.ResolveSecret(srv.URL+"/", "db-password", "tok"); err != nil {
+		t.Fatalf("trailing slash: %v", err)
+	}
+	// A vault the allowlist rejects is never requested at all.
+	if _, err := c.ResolveSecret("https://evil.example.com", "db-password", "tok"); !errors.Is(err, ErrVaultNotAllowed) {
+		t.Fatalf("allowlist bypass: %v", err)
+	}
+}
