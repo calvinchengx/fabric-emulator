@@ -17,10 +17,20 @@ Witness kinds, deliberately distinguished because they are not equal evidence:
 
   ci:<job>      a CI job driving a real external client (strongest — this is
                 what the rule in doc 24 actually asks for)
+  sdk:<Test>    a Go test in which MICROSOFT'S OWN client does the talking —
+                go-mssqldb speaking real TDS to the warehouse surface. Third
+                party evidence like ci:, but in-process rather than a packaged
+                release over a network, so it ranks below it.
   go:<Test>     a Go test: real HTTP, real signed JWTs, real RBAC, but our own
                 client rather than a third party's
   boundary:...  the claim is scoped by a documented limitation, with the reason
   TODO          not yet identified — the point of --strict
+
+sdk: is a Go kind, and every rule that says "go" below means the Go FAMILY,
+go: and sdk: alike. This matters most at the gate check: gates on Go tests are
+DETECTED by scanning the test body, never merely asserted, and moving a test to
+sdk: must not quietly buy it the weaker asserted-gate treatment. Five of the
+warehouse witnesses are declared gates, so this was not hypothetical.
 
 A witness whose NAME exists is not a witness that RAN. That gap cost real time
 twice: `TestWarehouseSQLServerRelayE2E` skips without `WAREHOUSE_MSSQL_DSN`, so
@@ -223,7 +233,7 @@ def main() -> int:
     # witness -> reason, for the gated witnesses actually credited to a claim.
     gated_used: dict[str, str] = {}
     ungated_by_key: dict[str, int] = {}
-    kinds = {"ci": 0, "go": 0, "py": 0, "boundary": 0}
+    kinds = {"ci": 0, "sdk": 0, "go": 0, "py": 0, "boundary": 0}
     # Which claims lean on each witness — a witness covering many claims is
     # where bundling hides.
     shared: dict[str, list[str]] = {}
@@ -243,13 +253,13 @@ def main() -> int:
             shared.setdefault(witness, []).append(feature)
             if kind == "ci" and name not in jobs:
                 dangling.append(f"{key} → {witness} (no such CI job)")
-            elif kind == "go" and name not in tests:
+            elif kind in ("go", "sdk") and name not in tests:
                 dangling.append(f"{key} → {witness} (no such Go test)")
             elif kind == "py" and name not in py_tests:
                 dangling.append(f"{key} → {witness} (no such Python test)")
-            if kind == "go" and name in gated_tests:
+            if kind in ("go", "sdk") and name in gated_tests:
                 gated_used[witness] = gated_tests[name]
-            elif kind != "go" and witness in declared_gates:
+            elif kind not in ("go", "sdk") and witness in declared_gates:
                 # A gate this script cannot DETECT, only accept: a CI job that
                 # skips on absent secrets is invisible to the Go body scan, and
                 # `ci:real-fabric` — the differential leg against a real tenant —
@@ -284,6 +294,7 @@ def main() -> int:
 
     print(f"supported capability claims: {len(claims)}")
     print(f"  witnessed by a real external client (ci:) : {kinds.get('ci', 0)}")
+    print(f"  witnessed by Microsoft's own clients (sdk:): {kinds.get('sdk', 0)}")
     print(f"  witnessed by our own Go tests (go:)       : {kinds.get('go', 0)}")
     print(f"  witnessed by our own Python tests (py:)   : {kinds.get('py', 0)}")
     print(f"  scoped by a documented boundary           : {kinds.get('boundary', 0)}")
