@@ -33,7 +33,7 @@ services:
       retries: 20
 
   keyvault-emulator:
-    image: ghcr.io/calvinchengx/azure-keyvault-emulator:${KEYVAULT_EMULATOR_VERSION:-0.5.0}
+    image: ghcr.io/calvinchengx/azure-keyvault-emulator:${KEYVAULT_EMULATOR_VERSION:-0.6.0}
     depends_on:
       entra-emulator:
         condition: service_healthy
