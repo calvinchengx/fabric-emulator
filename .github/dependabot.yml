@@ -31,6 +31,23 @@ updates:
         patterns: ['astro', '@astrojs/*', 'sharp']
       portal:
         patterns: ['svelte', '@sveltejs/*', 'vite']
+    ignore:
+      # TypeScript 7 is the native (Go) compiler, and svelte-check 4.x REFUSES
+      # it outright: "TypeScript 7 support currently requires both TypeScript 7
+      # and TypeScript 6 installed in your project, and requires using the
+      # --tsgo or --tsgo-experimental-api flag" (#129 failed on exactly that).
+      #
+      # Taking it would mean carrying two TypeScript installs behind an npm
+      # alias and running the portal's type check through an experimental API —
+      # and that check is not cosmetic here: `svelte-check + a new kind must not
+      # compile` is the invariant that makes an unhandled SSE event kind a build
+      # failure rather than a silently blank panel. An experimental compiler
+      # path is the wrong place for the thing that guards a whole contract.
+      #
+      # Majors only: 6.x patches still arrive. Drop this once svelte-check
+      # supports TS 7 without the dual install.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
 
   # Python: uv-managed, one lockfile at the root covering the dependency
   # groups. Dependabot reads pyproject.toml + uv.lock together.
