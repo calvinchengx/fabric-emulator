@@ -1,5 +1,6 @@
 # fabric-emulator
 
+[![version](https://img.shields.io/github/v/release/calvinchengx/fabric-emulator?label=version)](https://github.com/calvinchengx/fabric-emulator/releases/latest)
 [![CI](https://github.com/calvinchengx/fabric-emulator/actions/workflows/ci.yml/badge.svg)](https://github.com/calvinchengx/fabric-emulator/actions/workflows/ci.yml)
 [![Docs](https://github.com/calvinchengx/fabric-emulator/actions/workflows/docs-site.yml/badge.svg)](https://calvinchengx.github.io/fabric-emulator/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
