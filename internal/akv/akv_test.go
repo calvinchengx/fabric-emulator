@@ -1,8 +1,10 @@
 package akv
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -32,7 +34,7 @@ func fakeVault(t *testing.T) *httptest.Server {
 
 func TestResolveSecret(t *testing.T) {
 	srv := fakeVault(t)
-	c := New(false, srv.Client())
+	c := New(false, srv.Client(), hostOf(t, srv.URL))
 
 	v, err := c.ResolveSecret(srv.URL+"/", "db-password", "tok")
 	if err != nil || v != "hunter2" {
@@ -42,7 +44,7 @@ func TestResolveSecret(t *testing.T) {
 		t.Fatalf("missing secret err = %v", err)
 	}
 	// Unreachable vault; default client construction.
-	dead := New(false, nil)
+	dead := New(false, nil, "127.0.0.1:1")
 	if _, err := dead.ResolveSecret("http://127.0.0.1:1", "s", "t"); err == nil {
 		t.Fatal("unreachable vault accepted")
 	}
@@ -51,7 +53,7 @@ func TestResolveSecret(t *testing.T) {
 		_, _ = w.Write([]byte("not json"))
 	}))
 	defer junk.Close()
-	cj := New(false, junk.Client())
+	cj := New(false, junk.Client(), hostOf(t, junk.URL))
 	if _, err := cj.ResolveSecret(junk.URL, "s", "t"); err == nil {
 		t.Fatal("garbage vault JSON accepted")
 	}
@@ -75,12 +77,76 @@ func TestAnOversizedVaultResponseIsRefused(t *testing.T) {
 	}))
 	defer vault.Close()
 
-	_, err := New(true, vault.Client()).ResolveSecret(vault.URL, "s", "bearer")
+	_, err := New(true, vault.Client(), hostOf(t, vault.URL)).ResolveSecret(vault.URL, "s", "bearer")
 	if err == nil {
 		t.Fatal("an oversized vault response was accepted")
 	}
 	if strings.Contains(err.Error(), "bad JSON") {
 		t.Fatalf("reported as malformed JSON rather than oversized: %v — the "+
 			"caller is told the wrong thing about the vault", err)
+	}
+}
+
+// hostOf is a test server's host:port, which the allowlist must be told to
+// accept — real code accepts only Azure's vault domains plus one such host.
+func hostOf(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse %q: %v", raw, err)
+	}
+	return u.Host
+}
+
+// TestVaultURIAllowlist: ResolveSecret sends a vault-audience bearer token to
+// whatever host it is given, so the host is the security boundary. These are
+// the cases that must never reach the network.
+func TestVaultURIAllowlist(t *testing.T) {
+	c := New(false, nil, "keyvault-emulator:8444")
+
+	allowed := []string{
+		"https://contoso.vault.azure.net",
+		"https://contoso.vault.azure.net/", // trailing slash
+		"https://CONTOSO.VAULT.AZURE.NET",  // case
+		"https://contoso.vault.azure.cn",   // sovereign clouds
+		"https://contoso.vault.usgovcloudapi.net",
+		"https://contoso.managedhsm.azure.net",
+		"https://keyvault-emulator:8444", // the configured host
+		"http://keyvault-emulator:8444",  // ...may be plain HTTP
+	}
+	for _, uri := range allowed {
+		if _, err := c.checkVaultURI(uri); err != nil {
+			t.Errorf("checkVaultURI(%q) refused a real vault: %v", uri, err)
+		}
+	}
+
+	refused := map[string]string{
+		"http://contoso.vault.azure.net":           "cleartext to a real vault",
+		"https://evil.example.com":                 "a foreign host",
+		"https://169.254.169.254/metadata":         "cloud instance metadata (SSRF)",
+		"http://127.0.0.1:9443/v1/workspaces":      "the emulator's own API",
+		"https://contoso.vault.azure.net.evil.com": "suffix smuggled into a longer host",
+		"https://vault.azure.net":                  "the bare suffix, no vault label",
+		"https://contoso.vault.azure.net@evil.com": "userinfo disguising the real host",
+		"https://keyvault-emulator:9999":           "right host, wrong port",
+		"file:///etc/passwd":                       "not even http",
+		"":                                         "empty",
+		"://nonsense":                              "unparseable",
+	}
+	for uri, why := range refused {
+		if _, err := c.checkVaultURI(uri); err == nil {
+			t.Errorf("checkVaultURI(%q) allowed %s", uri, why)
+		}
+	}
+
+	// With no configured host, only Azure's domains are reachable.
+	bare := New(false, nil, "")
+	if _, err := bare.checkVaultURI("http://keyvault-emulator:8444"); err == nil {
+		t.Error("an unconfigured client accepted the emulator vault")
+	}
+
+	// And the check runs before any request: a refused URI never dials.
+	if _, err := c.ResolveSecret("https://evil.example.com", "s", "token"); !errors.Is(err, ErrVaultNotAllowed) {
+		t.Errorf("ResolveSecret sent a token to a foreign host: %v", err)
 	}
 }

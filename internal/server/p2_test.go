@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -163,7 +164,9 @@ func TestAKVReferenceConnectionViaWorkspaceIdentity(t *testing.T) {
 		_, _ = w.Write([]byte(`{"value":"s3cret"}`))
 	}))
 	defer vault.Close()
-	f.srv.API.AKV = akv.New(false, vault.Client())
+	// The allowlist accepts Azure's vault domains plus one configured host;
+	// here that is the test server's.
+	f.srv.API.AKV = akv.New(false, vault.Client(), mustHost(t, vault.URL))
 
 	body := map[string]any{
 		"displayName": "akv-conn",
@@ -222,4 +225,14 @@ func TestLivyPassthroughE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.mustStatus(f.call("GET", base+"sessions", f.token, nil, nil), http.StatusNotImplemented, "no backend")
+}
+
+// mustHost is the host:port of a test server URL, for akv's vault allowlist.
+func mustHost(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse %q: %v", raw, err)
+	}
+	return u.Host
 }
