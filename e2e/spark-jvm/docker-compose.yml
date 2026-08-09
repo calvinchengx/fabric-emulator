@@ -2,7 +2,7 @@
 # Delta 3.2). This is deliberately separate from the default Sail compose.
 services:
   entra-emulator:
-    image: ghcr.io/calvinchengx/entra-emulator:latest
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.4.0}
     environment:
       ORIGIN_MODE: compat
       TLS_ENABLED: "false"
@@ -25,7 +25,7 @@ services:
       FABRIC_ADDR: ":80"
       FABRIC_DATA_DIR: ""
       FABRIC_DISABLE_TLS: "true"
-      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
     networks:
       default:
         aliases:

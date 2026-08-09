@@ -19,9 +19,9 @@ openssl s_client -connect "$FABRIC" -servername api.fabric.microsoft.com   </dev
 export REQUESTS_CA_BUNDLE=/tmp/ca.pem SSL_CERT_FILE=/tmp/ca.pem
 
 export FAB_API_ENDPOINT_FABRIC=api.fabric.microsoft.com
-export FAB_SPN_CLIENT_ID=cccccccc-0000-0000-0000-000000000002
+export FAB_SPN_CLIENT_ID=00d88624-f0d7-46f6-a641-6232c2608928
 export FAB_SPN_CLIENT_SECRET=daemon-app-secret
-export FAB_TENANT_ID=11111111-1111-1111-1111-111111111111
+export FAB_TENANT_ID=6f89cf12-978b-4d23-ac18-9ef0c127cf87
 fab config set encryption_fallback_enabled true >/dev/null 2>&1   # headless: no keyring
 fab config set check_cli_version_updates false >/dev/null 2>&1
 
