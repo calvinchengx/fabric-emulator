@@ -20,7 +20,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.4.2",
     "@vitest/coverage-v8": "^4.1.10",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "svelte": "^5.0.0",
     "svelte-check": "^4.7.4",
     "tailwindcss": "^4.3.3",
