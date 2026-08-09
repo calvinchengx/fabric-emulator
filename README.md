@@ -3,6 +3,7 @@
 [![version](https://img.shields.io/github/v/release/calvinchengx/fabric-emulator?label=version)](https://github.com/calvinchengx/fabric-emulator/releases/latest)
 [![CI](https://github.com/calvinchengx/fabric-emulator/actions/workflows/ci.yml/badge.svg)](https://github.com/calvinchengx/fabric-emulator/actions/workflows/ci.yml)
 [![Docs](https://github.com/calvinchengx/fabric-emulator/actions/workflows/docs-site.yml/badge.svg)](https://calvinchengx.github.io/fabric-emulator/)
+[![CodeQL](https://github.com/calvinchengx/fabric-emulator/actions/workflows/codeql.yml/badge.svg)](https://github.com/calvinchengx/fabric-emulator/actions/workflows/codeql.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 [![go coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fcalvinchengx.github.io%2Ffabric-emulator%2Fcoverage-go.json)](https://calvinchengx.github.io/fabric-emulator/10-testing/)
