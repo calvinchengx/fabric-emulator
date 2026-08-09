@@ -113,17 +113,22 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 		return err
 	}
 
-	srv, err := server.New(cfg, nil)
-	if err != nil {
-		return err
-	}
-	defer srv.Close()
-
+	// BEFORE server.New, which opens the SQLite file inside this directory.
+	// SQLite does not create missing parents, so with the directory absent the
+	// open fails with "unable to open database file (14)" and the process exits
+	// before it ever listens. Every caller then sees only a health check that
+	// never came up, which is the symptom furthest from the cause.
 	if cfg.DataDir != "" {
 		if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 			return err
 		}
 	}
+
+	srv, err := server.New(cfg, nil)
+	if err != nil {
+		return err
+	}
+	defer srv.Close()
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
