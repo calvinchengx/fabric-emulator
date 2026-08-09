@@ -152,7 +152,25 @@ func callFunc(name string, args []value, ctx *evalContext) (value, error) {
 	case "createArray":
 		return append([]value{}, args...), nil
 	case "range":
+		if err := arity(name, args, 2); err != nil {
+			return nil, err
+		}
 		start, count := int(toNumber(args[0])), int(toNumber(args[1]))
+		// The count is attacker-controlled: it comes from a pipeline definition,
+		// and `make` reserves the capacity immediately. A negative count panics
+		// `makeslice` (evalExpr's recover turns that into an error, so it is
+		// merely rude), but a huge one does NOT panic — it allocates, and an OOM
+		// kill is a FATAL that no per-request recover can catch. Same shape as
+		// internal/semanticmodel's maxMeasureDepth: bound it here or one
+		// malformed definition takes the process down with every other in-flight
+		// request.
+		//
+		// 100k is far past any real pipeline (range feeds ForEach, which Fabric
+		// itself caps well below this) and small enough to be harmless.
+		if count < 0 || count > maxRangeCount {
+			return nil, fmt.Errorf("range expects a count between 0 and %d, got %d",
+				maxRangeCount, count)
+		}
 		out := make([]value, 0, count)
 		for i := 0; i < count; i++ {
 			out = append(out, float64(start+i))
@@ -173,6 +191,10 @@ func callFunc(name string, args []value, ctx *evalContext) (value, error) {
 	}
 	return nil, fmt.Errorf("unsupported function %q", name)
 }
+
+// maxRangeCount bounds range()'s allocation. See the comment at its call site:
+// an unbounded count is an OOM, and an OOM is not recoverable.
+const maxRangeCount = 100_000
 
 func arity(name string, args []value, n int) error {
 	if len(args) != n {

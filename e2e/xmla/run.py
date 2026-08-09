@@ -605,6 +605,11 @@ log("issuing a self-signed CA for the container's view of this host")
 make_cert(WORK)
 
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+# PROTOCOL_TLS_SERVER negotiates the best version BOTH sides accept, which still
+# leaves TLS 1.0/1.1 on the table if the client offers nothing better. ADOMD.NET
+# does far better than that, so pinning the floor costs this listener nothing and
+# stops the suite modelling a downgrade nobody wants.
+ctx.minimum_version = ssl.TLSVersion.TLSv1_2
 ctx.load_cert_chain(os.path.join(WORK, "cert.pem"), os.path.join(WORK, "key.pem"))
 srv = TLSServer(("0.0.0.0", PORT), Capture)
 srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
