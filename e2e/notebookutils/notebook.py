@@ -47,8 +47,11 @@ assert "greeting.txt" in listing and "copy.txt" in listing, listing
 
 # --- credentials.getSecret: brokered read from Key Vault ---------------------
 secret = credentials.getSecret("db-vault", "db-password")
-print(f"credentials.getSecret: {secret!r}", flush=True)
-assert secret == "s3cr3t-value", secret
+# The ASSERT is the witness, not the print. Echoing the value proved nothing the
+# comparison does not, and it put a secret in a public CI log — a fixture one
+# here, but this file is what a reader copies when they wire up their own vault.
+assert secret == "s3cr3t-value", f"unexpected secret, {len(secret)} chars"
+print(f"credentials.getSecret: matched the expected value ({len(secret)} chars)", flush=True)
 
 # --- notebook.run: schedule a child notebook through the control plane -------
 # `run` returns the child's EXIT VALUE, per Fabric's reference — not the job
