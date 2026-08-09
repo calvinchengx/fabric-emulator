@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -41,6 +42,16 @@ type Store struct {
 func Open(dataDir string, ck *clock.Clock) (*Store, error) {
 	dsn := ":memory:"
 	if dataDir != "" {
+		// "Creating if needed" has to include the DIRECTORY, not just the file.
+		// SQLite will not make one, and its failure says only "unable to open
+		// database file (14)" — no path, no mention of a directory, on the one
+		// error a first run is most likely to hit. This mattered the moment
+		// DataDir stopped defaulting to in-memory: `fabric-emulator` in any
+		// directory without a ./data now opens the store before anything else
+		// has had a chance to create it.
+		if err := os.MkdirAll(dataDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create data dir %q: %w", dataDir, err)
+		}
 		dsn = filepath.Join(dataDir, "fabric-emulator.db")
 	}
 	db, err := sql.Open("sqlite", dsn)
