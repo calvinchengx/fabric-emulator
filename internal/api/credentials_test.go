@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -198,8 +199,10 @@ func TestAzureKeyVaultReferenceCredential(t *testing.T) {
 
 	// Resolution: WI token minted from entra, secret fetched from the vault.
 	a.Entra = wiEntra(t, false)
-	a.AKV = akv.New(false, nil)
 	vault := vaultFor(t, "db-password", "wi-vault-token")
+	// akv only sends a token to Azure's vault domains or one configured host;
+	// in tests that host is the stub vault's.
+	a.AKV = akv.New(false, nil, mustHost(t, vault))
 	w := do(a.createConnection, admin, "POST", body(vault, "db-password"), nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("akv ref = %d %s", w.Code, w.Body.Bytes())
@@ -215,4 +218,14 @@ func TestAzureKeyVaultReferenceCredential(t *testing.T) {
 	if w := do(a.createConnection, admin, "POST", body(vault, "db-password"), nil); w.Code != http.StatusBadGateway {
 		t.Fatalf("mint failure = %d", w.Code)
 	}
+}
+
+// mustHost is the host:port of a stub vault URL, for akv's vault allowlist.
+func mustHost(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse %q: %v", raw, err)
+	}
+	return u.Host
 }

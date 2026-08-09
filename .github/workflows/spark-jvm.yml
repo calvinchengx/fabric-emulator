@@ -5,6 +5,14 @@ on:
   schedule:
     - cron: '41 4 * * 2' # weekly, Tuesday 04:41 UTC
 
+# Least privilege for every job in this file. Without it each job inherits the
+# repository default, which is write on many repos — 51 CodeQL alerts' worth of
+# ambient authority for workflows that only ever read the checkout. A job that
+# genuinely needs more should declare it at the job level, so the elevation is
+# visible where it is used.
+permissions:
+  contents: read
+
 jobs:
   spark-jvm:
     name: Fabric Runtime 1.3-aligned Spark 3.5 compatibility

@@ -27,6 +27,13 @@ type Config struct {
 	// EntraJWKSURL is where signing keys are fetched. Derived from
 	// EntraIssuer when unset ({issuer minus /v2.0}/discovery/v2.0/keys).
 	EntraJWKSURL string
+	// AKVVaultHost is the one non-Azure host:port an AzureKeyVaultReference
+	// may resolve against — the family's keyvault-emulator, e.g.
+	// "keyvault-emulator:8444". Azure's own *.vault.azure.net (and the
+	// sovereign suffixes) are always allowed; everything else is refused,
+	// because ResolveSecret sends a vault-audience bearer token to that host.
+	AKVVaultHost string
+
 	// EntraTLSInsecure skips TLS verification when fetching JWKS — for the
 	// compose network where entra-emulator serves a self-signed cert.
 	EntraTLSInsecure bool
@@ -190,6 +197,7 @@ func FromEnvPartial() *Config {
 		EntraIssuer:         os.Getenv("FABRIC_ENTRA_ISSUER"),
 		EntraJWKSURL:        os.Getenv("FABRIC_ENTRA_JWKS_URL"),
 		EntraTLSInsecure:    boolEnv("FABRIC_ENTRA_TLS_INSECURE"),
+		AKVVaultHost:        os.Getenv("FABRIC_AKV_VAULT_HOST"),
 		DisableTLS:          boolEnv("FABRIC_DISABLE_TLS"),
 		SparkLivyURL:        os.Getenv("FABRIC_SPARK_LIVY_URL"),
 		SparkAgentURL:       os.Getenv("FABRIC_SPARK_AGENT_URL"),
