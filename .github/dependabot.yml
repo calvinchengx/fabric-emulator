@@ -31,6 +31,24 @@ updates:
         patterns: ['astro', '@astrojs/*', 'sharp']
       portal:
         patterns: ['svelte', '@sveltejs/*', 'vite']
+    ignore:
+      # TypeScript 7 is held back by svelte-check, not by us. Its version gate
+      # (bin/ts-version-check.js, still there in the current 4.7.5) throws on
+      # any major above 6 and tells you to install BOTH majors side by side
+      # under an npm alias and pass --tsgo, an experimental API. So the portal's
+      # type gate does not merely fail to type-check under TypeScript 7, it
+      # refuses to start, and every such bump arrives already red (#129).
+      #
+      # Held rather than worked around: the alternative is running the portal's
+      # only type gate through an experimental code path, which buys nothing
+      # here. Astro pulls TypeScript 7 transitively for the docs site and that
+      # is fine, because nothing points svelte-check at it.
+      #
+      # LIFT THIS when svelte-check accepts TypeScript 7 on the default path.
+      # The tell is its peerDependencies range, `^5.0.0 || ^6.0.0` today,
+      # growing a 7. Minor and patch updates keep flowing meanwhile.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
 
   # Python: uv-managed, one lockfile at the root covering the dependency
   # groups. Dependabot reads pyproject.toml + uv.lock together.
