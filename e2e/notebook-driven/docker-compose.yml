@@ -38,7 +38,7 @@ services:
       FABRIC_ADDR: ":80"
       FABRIC_DATA_DIR: "" # in-memory; the e2e needs no persistence
       FABRIC_DISABLE_TLS: "true"
-      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/v2.0"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
       # THE WHOLE CONFIGURATION. One variable turns a stack that can only park
       # notebook jobs into one that runs them.
       FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
@@ -61,8 +61,8 @@ services:
       fabric-emulator:
         condition: service_healthy
     environment:
-      ENTRA_TOKEN_URL: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
-      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
       ENTRA_CLIENT_SECRET: "daemon-app-secret"
       AZURE_STORAGE_ACCOUNT_NAME: "onelake"
       AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
@@ -81,8 +81,8 @@ services:
         condition: service_started
     environment:
       SPARK_REMOTE: "sc://sail:50051"
-      ENTRA_TOKEN_URL: "http://entra-emulator:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token"
-      ENTRA_CLIENT_ID: "cccccccc-0000-0000-0000-000000000002"
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
       ENTRA_CLIENT_SECRET: "daemon-app-secret"
       AZURE_STORAGE_ACCOUNT_NAME: "onelake"
       AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"

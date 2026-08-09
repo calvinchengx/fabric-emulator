@@ -21,8 +21,8 @@ import urllib.request
 
 FABRIC = os.environ.get("FABRIC_URL", "https://localhost:9443").rstrip("/")
 ENTRA = os.environ.get("ENTRA_URL", "https://localhost:8443").rstrip("/")
-TENANT = os.environ.get("FABRIC_TENANT", "11111111-1111-1111-1111-111111111111")
-CLIENT_ID = os.environ.get("FABRIC_CLIENT_ID", "cccccccc-0000-0000-0000-000000000002")
+TENANT = os.environ.get("FABRIC_TENANT", "6f89cf12-978b-4d23-ac18-9ef0c127cf87")
+CLIENT_ID = os.environ.get("FABRIC_CLIENT_ID", "00d88624-f0d7-46f6-a641-6232c2608928")
 CLIENT_SECRET = os.environ.get("FABRIC_CLIENT_SECRET", "daemon-app-secret")
 
 ctx = ssl.create_default_context()  # family self-signed TLS

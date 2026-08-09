@@ -115,7 +115,7 @@ then
 
 ```bash
 go run ./cmd/fabric-emulator \
-  -entra-issuer "https://localhost:8443/11111111-1111-1111-1111-111111111111/v2.0" \
+  -entra-issuer "https://localhost:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0" \
   -entra-tls-insecure
 ```
 
@@ -125,9 +125,9 @@ entra-emulator seeds a confidential **daemon** app. Client credentials against
 the Fabric resource:
 
 ```bash
-TOKEN=$(curl -sk https://localhost:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token \
+TOKEN=$(curl -sk https://localhost:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token \
   -d grant_type=client_credentials \
-  -d client_id=cccccccc-0000-0000-0000-000000000002 \
+  -d client_id=00d88624-f0d7-46f6-a641-6232c2608928 \
   -d client_secret=daemon-app-secret \
   -d scope=https://api.fabric.microsoft.com/.default | jq -r .access_token)
 ```
@@ -183,9 +183,9 @@ The data plane wants a **Storage**-audience token and is Host-routed at
 see [TLS & hosts](05-tls-and-hosts.md)):
 
 ```bash
-STOKEN=$(curl -sk https://localhost:8443/11111111-1111-1111-1111-111111111111/oauth2/v2.0/token \
+STOKEN=$(curl -sk https://localhost:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token \
   -d grant_type=client_credentials \
-  -d client_id=cccccccc-0000-0000-0000-000000000002 \
+  -d client_id=00d88624-f0d7-46f6-a641-6232c2608928 \
   -d client_secret=daemon-app-secret \
   -d scope=https://storage.azure.com/.default | jq -r .access_token)
 
