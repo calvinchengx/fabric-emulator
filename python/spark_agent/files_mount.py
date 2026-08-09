@@ -34,6 +34,30 @@ MOUNT_ROOT = "/lakehouse/default/Files"
 _state = {"lakehouse": None}
 
 
+
+def _under_mount(rel: str):
+    """MOUNT_ROOT/rel, or None if that would land outside MOUNT_ROOT.
+
+    `rel` comes from a remote listing, so it is untrusted input: a lakehouse
+    entry named `../../etc/whatever` would otherwise have os.path.join happily
+    walk out of the mount and the writer overwrite a file on the container
+    disk. Real Fabric's FUSE mount cannot be escaped this way; neither should
+    this mirror of it.
+
+    Resolved with realpath so a symlink already inside the mount cannot be used
+    as the escape either, and compared with commonpath rather than a string
+    prefix — `/lakehouse/default/Files-evil` starts with the root as a string
+    while being a different directory.
+    """
+    root = os.path.realpath(MOUNT_ROOT)
+    local = os.path.realpath(os.path.join(root, rel))
+    try:
+        if os.path.commonpath([root, local]) != root:
+            return None
+    except ValueError:  # different drives on Windows
+        return None
+    return local
+
 def sync(workspace: str, lakehouse: str) -> dict:
     """Mirror abfss://{workspace}/{lakehouse}/Files into MOUNT_ROOT.
 
@@ -73,7 +97,12 @@ def sync(workspace: str, lakehouse: str) -> dict:
             return  # no Files/ yet: the normal state of a fresh lakehouse
         for e in entries:
             rel = e.path.split("/Files/", 1)[-1] if "/Files/" in e.path else e.name
-            local = os.path.join(MOUNT_ROOT, rel)
+            local = _under_mount(rel)
+            if local is None:
+                failed += 1
+                print(f"files_mount: refusing {e.path}: escapes the mount root",
+                      flush=True)
+                continue
             if e.isDir:
                 os.makedirs(local, exist_ok=True)
                 walk(posixpath.join(prefix, e.name))
