@@ -7,6 +7,9 @@ services:
   entra-emulator:
     image: ghcr.io/calvinchengx/entra-emulator:latest
     environment:
+      # entra >=v0.4.0 seeds a different tenant by default; pin the one
+      # this suite's issuer URLs name, or discovery 404s.
+      TENANT_ID: "11111111-1111-1111-1111-111111111111"
       ORIGIN_MODE: compat
       TLS_ENABLED: "false"
       PORT: "8443"

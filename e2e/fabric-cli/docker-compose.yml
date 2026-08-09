@@ -7,6 +7,9 @@ services:
     image: ghcr.io/calvinchengx/entra-emulator:latest
     user: "0:0"                       # bind privileged :443 (authority has no port)
     environment:
+      # entra >=v0.4.0 seeds a different tenant by default; pin the one
+      # this suite's issuer URLs name, or discovery 404s.
+      TENANT_ID: "11111111-1111-1111-1111-111111111111"
       PUBLIC_ORIGIN: "https://login.microsoftonline.com"
       LOCAL_DOMAINS: "login.microsoftonline.com"
       PORT: "443"
