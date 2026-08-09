@@ -2,6 +2,8 @@ package store
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
@@ -107,10 +109,24 @@ func TestOpenPersistsAcrossReopen(t *testing.T) {
 }
 
 func TestOpenBadDir(t *testing.T) {
-	// A dataDir that is actually a file cannot host the database.
-	dir := t.TempDir() + "/nope/deeper"
-	if _, err := Open(dir, clock.New()); err == nil {
-		t.Skip("driver created intermediate path; acceptable")
+	// A dataDir UNDER A REGULAR FILE, which is what this test always meant to
+	// cover and what it can now state directly. It used to pass a merely
+	// missing nested path and skip if the driver made one, because whether
+	// that succeeded was the driver's business; since Open creates the
+	// directory itself, missing is the SUPPORTED case (TestOpenCreatesTheDataDir)
+	// and a file in the way is the real failure.
+	//
+	// The skip also leaked: on the branch where Open succeeded it returned a
+	// live Store nobody closed, and Windows will not delete an open file, so
+	// t.TempDir's cleanup failed the test from the outside.
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(filepath.Join(file, "data"), clock.New())
+	if err == nil {
+		s.Close()
+		t.Fatal("Open accepted a data dir underneath a regular file")
 	}
 }
 
