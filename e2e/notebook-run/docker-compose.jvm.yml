@@ -2,7 +2,7 @@
 # optional Apache Spark 3.5 / Delta 3.2 Fabric Runtime 1.3 oracle.
 services:
   entra-emulator:
-    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.4.0}
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.4.1}
     environment:
       ORIGIN_MODE: compat
       TLS_ENABLED: "false"
