@@ -10,7 +10,6 @@ either its dataflow does not recognise the sanitiser, or containment leaks
 somewhere the unit tests do not reach. This test is what tells those apart.
 """
 
-import os
 import sys
 import types
 from pathlib import Path

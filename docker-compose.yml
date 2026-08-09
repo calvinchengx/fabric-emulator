@@ -79,6 +79,11 @@ services:
       # Must equal the iss entra advertises (see PUBLIC_ORIGIN above).
       # 11111111-… is entra-emulator's default seeded tenant.
       FABRIC_ENTRA_ISSUER: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      # AzureKeyVaultReference resolves only against this host and Azure's own
+      # *.vault.azure.net. It is a security boundary, not a convenience:
+      # resolving sends a vault-audience bearer token to the host the
+      # connection names, so an unlisted one would be a token leak.
+      FABRIC_AKV_VAULT_HOST: "keyvault-emulator:8444"
       FABRIC_ENTRA_JWKS_URL: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/discovery/v2.0/keys"
       # Trust entra-emulator's self-signed cert on the internal network.
       FABRIC_ENTRA_TLS_INSECURE: "true"

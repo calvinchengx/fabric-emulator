@@ -99,6 +99,11 @@ services:
     environment:
       FABRIC_DATA_DIR: "" # in-memory
       FABRIC_ENTRA_ISSUER: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      # AzureKeyVaultReference resolves only against this host and Azure's own
+      # *.vault.azure.net. It is a security boundary, not a convenience:
+      # resolving sends a vault-audience bearer token to the host the
+      # connection names, so an unlisted one would be a token leak.
+      FABRIC_AKV_VAULT_HOST: "keyvault-emulator:8444"
       FABRIC_ENTRA_JWKS_URL: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/discovery/v2.0/keys"
       FABRIC_ENTRA_TLS_INSECURE: "true"
       # The TDS warehouse surface, relaying to the SQL Server sidecar. Generous
