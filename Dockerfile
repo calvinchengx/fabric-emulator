@@ -12,7 +12,7 @@
 #
 # TARGETOS/TARGETARCH are supplied automatically by BuildKit. They are empty
 # under the legacy builder, where empty GOOS/GOARCH correctly mean "host".
-FROM --platform=$BUILDPLATFORM golang:1.25 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26 AS build
 ARG VERSION=dev
 # The image is what serves the portal, so it carries the same identity the
 # released binaries do. Empty is honest for a local `docker build`.
