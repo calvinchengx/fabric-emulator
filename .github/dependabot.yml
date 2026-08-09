@@ -1,0 +1,60 @@
+version: 2
+
+# The family's largest dependency surface, so the grouping matters more here
+# than elsewhere: ungrouped, this repo would open a dozen PRs a week and the
+# real signal would drown.
+updates:
+  # Go: the emulator itself. The Azure SDKs move together, so one grouped PR
+  # keeps the witness suites upgrading as a compatible set.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      azure-sdk:
+        patterns: ['github.com/Azure/azure-sdk-for-go/*', 'github.com/AzureAD/*']
+      go:
+        patterns: ['*']
+
+  # pnpm workspace: root + portal + website share one root lockfile, so a
+  # single entry at / covers all three package.json files.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Starlight peers a specific Astro major, so they must move as a pair —
+      # majors included, or a fix landing only in the next Astro major is stuck.
+      docs-site:
+        patterns: ['astro', '@astrojs/*', 'sharp']
+      portal:
+        patterns: ['svelte', '@sveltejs/*', 'vite']
+
+  # Python: uv-managed, one lockfile at the root covering the dependency
+  # groups. Dependabot reads pyproject.toml + uv.lock together.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      python:
+        patterns: ['*']
+
+  # The published image's base layers.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ['*']
