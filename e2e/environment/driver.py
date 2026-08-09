@@ -27,8 +27,8 @@ import urllib.request
 
 ENTRA = "http://entra-emulator:8443"
 FABRIC = "http://fabric-emulator"
-TENANT = "11111111-1111-1111-1111-111111111111"
-CLIENT = "cccccccc-0000-0000-0000-000000000002"
+TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+CLIENT = "00d88624-f0d7-46f6-a641-6232c2608928"
 SECRET = "daemon-app-secret"
 
 # Small, pure-Python, no dependencies, and certainly not in the agent image.

@@ -5,10 +5,10 @@ go 1.25.11
 toolchain go1.25.12
 
 require (
-	github.com/calvinchengx/entra-emulator v0.3.0
+	github.com/calvinchengx/entra-emulator v0.4.0
 	github.com/microsoft/go-mssqldb v1.10.0
 	github.com/parquet-go/parquet-go v0.30.1
-	modernc.org/sqlite v1.54.0
+	modernc.org/sqlite v1.55.0
 )
 
 require (

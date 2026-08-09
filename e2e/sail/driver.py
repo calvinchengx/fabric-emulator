@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 FABRIC = os.environ["FABRIC"]
 ENTRA = os.environ["ENTRA"]
-TENANT = "11111111-1111-1111-1111-111111111111"
+TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
 
 
 def post_json(url, body, token=None):
@@ -33,7 +33,7 @@ def post_json(url, body, token=None):
 def entra_token(scope):
     form = urllib.parse.urlencode({
         "grant_type": "client_credentials",
-        "client_id": "cccccccc-0000-0000-0000-000000000002",
+        "client_id": "00d88624-f0d7-46f6-a641-6232c2608928",
         "client_secret": "daemon-app-secret",
         "scope": scope,
     }).encode()
