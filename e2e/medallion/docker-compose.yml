@@ -20,7 +20,7 @@
 # client on the host, the documented path is the tested path.
 services:
   entra-emulator:
-    image: ghcr.io/calvinchengx/entra-emulator:latest
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.4.0}
     ports:
       - "8443:8443" # login / graph / discovery (JWKS)
     environment:
@@ -33,7 +33,7 @@ services:
       retries: 20
 
   keyvault-emulator:
-    image: ghcr.io/calvinchengx/azure-keyvault-emulator:latest
+    image: ghcr.io/calvinchengx/azure-keyvault-emulator:${KEYVAULT_EMULATOR_VERSION:-0.4.0}
     depends_on:
       entra-emulator:
         condition: service_healthy

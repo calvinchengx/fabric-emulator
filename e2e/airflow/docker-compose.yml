@@ -13,7 +13,7 @@ services:
       retries: 10
 
   entra-emulator:
-    image: ghcr.io/calvinchengx/entra-emulator:latest
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.4.0}
     environment:
       ORIGIN_MODE: compat
       TLS_ENABLED: "false"
