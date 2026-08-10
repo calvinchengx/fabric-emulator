@@ -10,6 +10,13 @@ on:
                          # (05:17), because both publish host port 443 and only
                          # one can hold it at a time.
 
+# The GITHUB_TOKEN's default scope is whatever the repo grants, which is more
+# than a read-only suite needs. Every other workflow here declares this; this
+# one was modelled on xmla.yml and missed the block, which CodeQL caught as
+# `actions/missing-workflow-permissions`.
+permissions:
+  contents: read
+
 jobs:
   sempy:
     name: SemPy's wire contract on Linux
