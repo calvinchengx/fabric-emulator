@@ -576,6 +576,12 @@ print("\n---- driver ----", flush=True)
 for ln in out:
     print("  " + ln, flush=True)
 
+rows = dict(
+    (m.group(1), int(m.group(2)))
+    for m in (re.match(r"RESULT (\S+) :: OK :: \w+ :: rows=(-?\d+)", ln)
+              for ln in out) if m)
+rowtext = "\n".join(ln for ln in out if ln.startswith("ROW "))
+
 results = dict(
     (m.group(1), m.group(2))
     for m in (re.match(r"RESULT (\S+) :: (\S+)", ln) for ln in out) if m)
@@ -616,6 +622,21 @@ CHECKS = [
     # Discover elements, not SQL. An earlier version of this check said "as an
     # Execute", which is true on the verb and misleading about the grammar —
     # and it misled another session's design before being caught.
+    # CONTENT, not just a type. Every one of these returned a DataFrame long
+    # before it returned a CORRECT one, and an empty frame reads as success.
+    ("the full metadata surface returns DataFrames",
+     all(results.get(f) == "OK" for f in
+         ("list_measures", "list_tables", "list_columns",
+          "list_partitions", "list_relationships"))),
+    ("list_measures carries the measure, joined to its table, with its DAX",
+     rows.get("list_measures", 0) > 0
+     and "SUM(Sales[Amount])" in rowtext and "Total" in rowtext),
+    ("list_columns resolves the column and its ColumnType enum",
+     rows.get("list_columns", 0) > 0 and "Amount" in rowtext
+     and "Data" in rowtext),
+    ("list_tables returns the seeded table", rows.get("list_tables", 0) > 0),
+    ("an unseeded rowset is empty rather than wrong",
+     rows.get("list_relationships", -1) == 0),
     ("TMSCHEMA arrives as a Batch of Discover inside one Execute",
      "TMSCHEMA" in bodies
      and any("<Batch" in r["body"] and "TMSCHEMA" in r["body"]

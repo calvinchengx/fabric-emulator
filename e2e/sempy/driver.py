@@ -109,7 +109,19 @@ CASES = [
 for name, fn in CASES:
     try:
         r = fn()
-        print(f"###RESULT {name} :: OK :: {type(r).__name__}", flush=True)
+        # CONTENT, not just a type. A DataFrame with zero rows reads as success
+        # and proves nothing — the failure mode this whole suite exists to avoid.
+        n = len(r) if hasattr(r, "__len__") else -1
+        cells = ""
+        try:
+            if n:
+                cells = " | ".join(str(v)[:24] for v in r.iloc[0].tolist()[:4])
+        except Exception:
+            cells = "(unreadable)"
+        print(f"###RESULT {name} :: OK :: {type(r).__name__} :: rows={n}",
+              flush=True)
+        if cells:
+            print(f"###ROW {name} :: {cells}", flush=True)
     except Exception as e:
         first = str(e).splitlines()[0][:150] if str(e).strip() else "(no message)"
         print(f"###RESULT {name} :: {type(e).__name__} :: {first}", flush=True)
