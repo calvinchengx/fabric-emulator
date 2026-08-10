@@ -1,4 +1,4 @@
-# 46 — What must not be in data-engineering code
+# 47 — What must not be in data-engineering code
 
 **The rule.** The code is identical across emulator, DEV, QAT and PROD. Every
 value that differs between them is resolved *outside* the code, by one
