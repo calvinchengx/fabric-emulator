@@ -143,9 +143,31 @@ session, so it measured only the FIRST XMLA call per function.
 | 2x | `Discover` — `DISCOVER_XML_METADATA` |
 
 So the metadata surface is **BOTH mechanisms in sequence**, not a choice between
-them: an ASSL `Discover` first, then `$SYSTEM.TMSCHEMA_*` DMV queries. The DMV
-leg arrives as an **`Execute`**, not a `Discover`, so it shares the rowset path
-`EVALUATE` already needs.
+them: an ASSL `Discover` first, then TMSCHEMA.
+
+**TMSCHEMA itself arrives TWO WAYS, and the SOAP verb hides the difference.**
+Both are `Execute`; the payload grammar is not the same:
+
+| issuer | payload |
+|---|---|
+| **TOM** (`list_measures`, `list_tables`) | `Execute` > `Command` > `<Batch>` of **~35** `<Discover RequestType=TMSCHEMA_*>`, restricted by `<DatabaseName>`. No SQL. |
+| **sempy's Python** (`list_columns`, `list_partitions`, `list_relationships`, `list_hierarchies`) | SQL `SELECT [ID] AS [...] FROM $SYSTEM.TMSCHEMA_*` sent through `evaluate_dax` |
+
+An earlier version of this section said only "the DMV leg arrives as an
+`Execute`... so it shares the rowset path". True on the verb, and it misled a
+second session into scoping a SQL parser as if that covered TOM as well.
+Deleted rather than annotated.
+
+TOM's batch asks for the whole catalogue in one round trip: `TMSCHEMA_MODEL`,
+`_DATA_SOURCES`, `_TABLES`, `_COLUMNS`, `_PARTITIONS`, `_RELATIONSHIPS`,
+`_MEASURES`, `_HIERARCHIES`, `_LEVELS`, `_KPIS`, `_CULTURES`, `_PERSPECTIVES`,
+`_ROLES`, `_CALCULATION_GROUPS`, `_REFRESH_POLICIES` and twenty more. The
+`*_STORAGES` DMVs are **absent** from it — they appear only in sempy's Python
+SELECTs, which is consistent with backing `extended=True` paths.
+
+**Unmeasured:** whether TOM REQUIRES all ~35 answered or tolerates empty rowsets
+for the ones a model does not use. That decides whether a five-rowset
+implementation suffices, and it is one cheap run away.
 
 **This is why the earlier bound was written rather than the clean version.** A
 "zero TMSCHEMA" headline would have scoped the work to one ASSL serialiser and
