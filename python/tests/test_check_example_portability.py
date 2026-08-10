@@ -32,6 +32,7 @@ def _tree(tmp_path, files, resolver="from fabric_target import target\n"):
     cep.EXAMPLES = tmp_path / "examples"
     problems = []
     cep.check_no_pinned_target(problems)
+    cep.check_no_emulator_only_leaks(problems)
     cep.check_resolver_uses_the_contract(problems)
     cep.check_definition_parts(problems)
     return problems
@@ -101,3 +102,28 @@ def test_a_fabric_surface_endpoint_IS_a_violation(tmp_path):
     for port in ("9443", "8443", "8444"):
         problems = _tree(tmp_path, {"demo/step.py": f'API = "https://localhost:{port}"\n'})
         assert any(port in p for p in problems), (port, problems)
+
+
+def test_a_tls_bypass_outside_the_resolver_is_caught(tmp_path):
+    """Real Fabric serves real certificates. A bypass in a step ships to
+    production invisibly — the emulator would go on passing."""
+    for body in ('r = S.get(url, verify=False)\n',
+                 'opts["azure_allow_invalid_certificates"] = "true"\n'):
+        problems = _tree(tmp_path, {"demo/step.py": body})
+        assert any("TLS" in p for p in problems), (body, problems)
+
+
+def test_an_emulator_only_control_lever_is_caught(tmp_path):
+    """The clock, fault injection and the event stream have no real counterpart.
+    Using one unguarded is the clearest possible pin to the emulator."""
+    problems = _tree(tmp_path, {
+        "demo/step.py": 'S.post(f"{API}/_emulator/clock", json={"advance": 60})\n'})
+    assert any("emulator-only control endpoint" in p for p in problems), problems
+
+
+def test_the_resolver_may_still_hold_local_reality(tmp_path):
+    """The bypass belongs somewhere — in the resolver, behind the target."""
+    problems = _tree(
+        tmp_path, {},
+        resolver='from fabric_target import target\nS.verify = False\n')
+    assert problems == [], problems

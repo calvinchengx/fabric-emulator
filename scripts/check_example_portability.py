@@ -118,6 +118,36 @@ def check_no_pinned_target(problems):
                 f"cannot follow FABRIC_TARGET; resolve it through {RESOLVER}.")
 
 
+# A TLS bypass and an emulator-only control endpoint are the other two ways an
+# example silently pins itself. Both were absent when this gate was written —
+# absent by luck, since nothing checked. contoso-data-platform's equivalent
+# already covers the TLS half, so matching it keeps the two repos honest about
+# the same thing.
+TLS_BYPASS = re.compile(r"verify\s*=\s*False|allow_invalid_certificates|azure_allow_http")
+EMULATOR_CONTROL = re.compile(r"_emulator/(clock|faults|events)")
+
+
+def check_no_emulator_only_leaks(problems):
+    """A TLS bypass or a control-plane lever outside the resolver is a pin."""
+    for f in python_files(EXAMPLES):
+        if rel(f) == RESOLVER:
+            continue  # the resolver is where local reality is allowed to exist
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            if TLS_BYPASS.search(line):
+                problems.append(
+                    f"{rel(f)}:{i} bypasses TLS verification. Real Fabric serves real "
+                    f"certificates; a bypass here ships to production invisibly. Put it "
+                    f"in {RESOLVER}, behind the target.")
+            if EMULATOR_CONTROL.search(line):
+                problems.append(
+                    f"{rel(f)}:{i} calls an emulator-only control endpoint "
+                    f"({EMULATOR_CONTROL.search(line).group(0)}). Real Fabric has no such "
+                    f"lever — guard it with the target's emulator_only()/clock capability, "
+                    f"as contoso-data-platform's platform/schedule.py does.")
+
+
 def check_resolver_uses_the_contract(problems):
     """The resolver must consume `fabric-target`, not restate it."""
     f = ROOT / RESOLVER
@@ -157,6 +187,7 @@ def check_definition_parts(problems):
 def main():
     problems = []
     check_no_pinned_target(problems)
+    check_no_emulator_only_leaks(problems)
     check_resolver_uses_the_contract(problems)
     check_definition_parts(problems)
 
