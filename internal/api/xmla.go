@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"encoding/xml"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
+	"github.com/calvinchengx/fabric-emulator/internal/httpx"
 	"github.com/calvinchengx/fabric-emulator/internal/semanticmodel"
 	"github.com/calvinchengx/fabric-emulator/internal/xmla"
 )
@@ -104,7 +104,13 @@ func (a *API) xmlaDatabaseName(w http.ResponseWriter, r *http.Request, p *auth.P
 	var req struct {
 		DatasetName string `json:"datasetName"`
 	}
-	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+	raw, ok := httpx.ReadBounded(r.Body, 1<<20)
+	if !ok {
+		writeErr(w, http.StatusRequestEntityTooLarge, "RequestTooLarge",
+			"The request body is too large.")
+		return
+	}
+	_ = json.Unmarshal(raw, &req)
 	name := req.DatasetName
 	if name == "" {
 		name = "model"
@@ -135,9 +141,14 @@ func (a *API) xmlaClusterResolve(w http.ResponseWriter, r *http.Request, p *auth
 
 // xmlaEndpoint serves the XMLA conversation itself.
 func (a *API) xmlaEndpoint(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "BadRequest", "unreadable body")
+	// ReadBounded, not a bare LimitReader: a LimitReader DISCARDS the excess and
+	// reports success, so an oversized envelope would be parsed as a fragment —
+	// a truncated Batch would silently answer fewer rowsets than were asked for,
+	// which is exactly the count mismatch that breaks table naming.
+	body, ok := httpx.ReadBounded(r.Body, 8<<20)
+	if !ok {
+		writeErr(w, http.StatusRequestEntityTooLarge, "RequestTooLarge",
+			"The XMLA request body is too large.")
 		return
 	}
 	text := string(body)
