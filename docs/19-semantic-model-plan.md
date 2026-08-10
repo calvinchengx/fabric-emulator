@@ -9,22 +9,32 @@ Turn Power BI from 🔴 (item management only) into a real query engine: the
 against its documentation, which sent two sessions the wrong way in *opposite*
 directions before anyone grepped the package:
 
-- `evaluate_dax` / `evaluate_measure` **default to REST and call
-  `executeQueries`** (`_flat.py:954` `use_xmla: bool = False`; the branch at
-  `_flat.py:1017` falls through to `ConnectionMode.REST`;
-  `_client/_pbi_rest_api.py:274` builds
-  `v1.0/myorg/datasets/{id}/executeQueries`). XMLA is escalated to only on
-  `use_xmla=True`, a readwrite connection, or `num_rows > 30000`. **So this
-  engine already serves SemPy's DAX path.**
-- `list_tables` / `list_columns` / `list_measures` / `list_partitions` /
-  `list_relationships` go over **XMLA** `$SYSTEM.TMSCHEMA_*` (11 call sites).
-  That metadata surface is the real SemPy gap, and it needs the transport in
-  [32-xmla-plan.md](32-xmla-plan.md).
-- `INFO.*` appears **nowhere** in the wheel (0 hits) — a plan to implement it
-  over `executeQueries` would have moved SemPy not one inch.
+Established with `inspect.signature` / `inspect.getsourcelines`, because reading
+line ranges got this wrong three times (below):
 
-Recorded at this precision because both looser versions were held confidently
-and both were wrong: documentation about a transport is not a transport.
+- **`evaluate_dax` (`_flat.py:1036`) is XMLA, unconditionally.** It takes no
+  `use_xmla` parameter at all, and its body is a bare
+  `return DatasetXmlaClient(...).evaluate_dax(...)` — no REST branch. This is
+  the function that runs arbitrary DAX, so **`executeQueries` does not serve
+  it.**
+- **`evaluate_measure` (`_flat.py:945`) defaults to REST `executeQueries`** —
+  it *does* take `use_xmla: bool = False`, and escalates to XMLA only on
+  `use_xmla=True`, a readwrite connection, or `num_rows > 30000`
+  (`_client/_pbi_rest_api.py:274` builds the `executeQueries` path). This
+  engine serves that path today.
+- `list_columns` / `list_hierarchies` / `list_partitions` /
+  `list_relationships` use **XMLA `$SYSTEM.TMSCHEMA_*`**; `list_measures` and
+  `list_tables` instead read **TOM** (`Microsoft.AnalysisServices.Tabular`)
+  objects. Two mechanisms, not one.
+- `INFO.*` appears **nowhere** in the wheel (0 hits) — implementing it over
+  `executeQueries` would have moved SemPy not one inch.
+
+**Why the precision:** this single fact flipped three times across three
+sessions, each reversal held confidently and argued from evidence. The first
+two were read out of documentation; the third came from citing `_flat.py:954`
+without establishing which `def` encloses it — it is inside `evaluate_measure`,
+not `evaluate_dax`. **Verify the proposition, not the citation:** a line can be
+exactly where someone says and still belong to another function.
 
 Grounded in the golden references pinned first:
 [18-semantic-model-references.md](18-semantic-model-references.md),
