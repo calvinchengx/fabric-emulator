@@ -10,10 +10,16 @@ Grounded in the golden references pinned first:
 executeQueries OpenAPI), and [e2e/semantic-model](../e2e/semantic-model/) (the
 golden model + hand-computed DAX oracle).
 
-**Why executeQueries, not XMLA:** SemPy speaks XMLA via native ADOMD.NET, which
-can't be pointed at a Go server and has no CI-runnable oracle. executeQueries is
-HTTP+JSON with a vendored OpenAPI *and* a live oracle. XMLA/SemPy stays
-deferred-with-cause. See doc 16.
+**Why executeQueries was built first:** it is HTTP+JSON with a vendored OpenAPI
+*and* a live oracle, so it was the cheapest real query surface to stand up.
+
+That is the *only* claim this plan makes for it. It does **not** rest on XMLA
+being infeasible: [`e2e/xmla`](../e2e/xmla/) measures Microsoft's own ADOMD.NET
+running on Linux (.NET 8, in a container), connecting to a host we name via
+`powerbi://<host>:<port>`, trusting a self-signed CA, and taking a bearer from
+the connection string. XMLA is deferred on **cost, not feasibility** — see
+[32-xmla-plan.md](32-xmla-plan.md) for the measured position and
+[18-semantic-model-references.md](18-semantic-model-references.md) for the specs.
 
 ## Phases
 
@@ -86,7 +92,9 @@ Critical path to green: **A → C → D → E**. F is the tutorial's actual subj
       Swagger `PROVENANCE.md` "Used by".
 
 ## Honesty boundaries (documented, never faked)
-- executeQueries REST, **not** XMLA/SemPy (native ADOMD.NET, no CI oracle).
+- executeQueries REST is what *this* plan built; XMLA/SemPy is deferred on
+  **cost, not feasibility** (`e2e/xmla` measured ADOMD.NET as Linux-capable and
+  endpoint-overridable — see [32-xmla-plan.md](32-xmla-plan.md)).
 - DAX **subset**, not full DAX — oracle is captured golden fixtures.
 - Imported `data.json` and Direct Lake entity partitions are supported; other
   partition modes and advanced Delta features remain outside this DAX subset.
