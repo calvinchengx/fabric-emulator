@@ -84,19 +84,21 @@ func (r Rowset) DiscoverResponse() []byte { return r.envelope("DiscoverResponse"
 // function rather than two that would drift — the client rejects each
 // differently ("not a rowset" vs "unrecognizable"), which is exactly the kind
 // of divergence a copy would hide.
-func (r Rowset) envelope(responseElement string) []byte {
+// RootFragment is the <root> element alone, for a BATCH response where many
+// rowsets share one envelope. Same bytes the single-rowset path emits inside
+// its envelope, so the two cannot drift.
+func (r Rowset) RootFragment() []byte { return r.rootElement() }
+
+// rootElement is ONE <root> rowset: the name attribute, the inline XSD the
+// client reads before any row, and the rows. Shared by the single-rowset
+// envelope and by a batch, so the two cannot drift — the schema and the naming
+// are exactly the parts a copy would get subtly wrong.
+func (r Rowset) rootElement() []byte {
 	var b strings.Builder
-	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` +
-		`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">` +
-		`<soap:Body>` +
-		`<` + responseElement + ` xmlns="urn:schemas-microsoft-com:xml-analysis">` +
-		`<return>` +
-		`<root` + rootName(r.Name) + ` xmlns="urn:schemas-microsoft-com:xml-analysis:rowset" ` +
+	b.WriteString(`<root` + rootName(r.Name) + ` xmlns="urn:schemas-microsoft-com:xml-analysis:rowset" ` +
 		`xmlns:xsd="http://www.w3.org/2001/XMLSchema" ` +
 		`xmlns:sql="urn:schemas-microsoft-com:xml-sql" ` +
 		`xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">`)
-
-	// The schema the client reads before any row.
 	b.WriteString(`<xsd:schema targetNamespace="urn:schemas-microsoft-com:xml-analysis:rowset" ` +
 		`xmlns:xsd="http://www.w3.org/2001/XMLSchema" ` +
 		`xmlns:sql="urn:schemas-microsoft-com:xml-sql" ` +
@@ -113,9 +115,8 @@ func (r Rowset) envelope(responseElement string) []byte {
 			`" type="` + r.xsdType(i) + `" minOccurs="0"/>`)
 	}
 	b.WriteString(`</xsd:sequence></xsd:complexType></xsd:schema>`)
-
-	// Rows. A cell absent from a short row is omitted rather than emitted
-	// empty: minOccurs="0" makes absence legal, and "" is a value.
+	// A cell absent from a short row is omitted rather than emitted empty:
+	// minOccurs="0" makes absence legal, and "" is a value.
 	for _, row := range r.Rows {
 		b.WriteString(`<row>`)
 		for i, c := range r.Columns {
@@ -127,8 +128,20 @@ func (r Rowset) envelope(responseElement string) []byte {
 		}
 		b.WriteString(`</row>`)
 	}
+	b.WriteString(`</root>`)
+	return []byte(b.String())
+}
 
-	b.WriteString(`</root></return></` + responseElement + `></soap:Body></soap:Envelope>`)
+func (r Rowset) envelope(responseElement string) []byte {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` +
+		`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">` +
+		`<soap:Body>` +
+		`<` + responseElement + ` xmlns="urn:schemas-microsoft-com:xml-analysis">` +
+		`<return>`)
+	b.Write(r.rootElement())
+	b.WriteString(`</return></` + responseElement + `>` +
+		`</soap:Body></soap:Envelope>`)
 	return append([]byte(b.String()), payloadComplete)
 }
 

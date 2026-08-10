@@ -241,6 +241,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerLivy(mux)
 	a.registerShortcuts(mux)
 	a.registerExecuteQueries(mux)
+	a.registerXMLA(mux)
 	a.registerDatasets(mux)
 	a.registerRefreshes(mux)
 	a.registerDatasources(mux)
