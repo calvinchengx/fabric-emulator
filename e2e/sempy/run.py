@@ -269,24 +269,28 @@ def _row(cols, overrides):
     return [overrides.get(c, _DEFAULT[_xsd_type(c)]) for c in cols]
 
 
+# OBJECT IDs ARE GLOBAL across the model, not per-rowset: reusing 1 gives
+# `TomInternalException ... Details: Duplicate object ID 1, first in
+# 'Tabular.Model', another one in ...`. Parent FKs must point at the parent's
+# global id, so the Column/Measure/Partition rows carry TableID = the Table's.
 POPULATED = {
     "TMSCHEMA_MODEL": (["ID"] + _MODEL,
                        [_row(["ID"] + _MODEL,
                              {"ID": "1", "Name": "Model", "Culture": "en-US"})]),
     "TMSCHEMA_TABLES": (["ID", "ModelID"] + _TABLE,
                         [_row(["ID", "ModelID"] + _TABLE,
-                              {"ID": "1", "ModelID": "1", "Name": "Sales"})]),
+                              {"ID": "2", "ModelID": "1", "Name": "Sales"})]),
     "TMSCHEMA_COLUMNS": (["ID", "TableID"] + _COLUMN,
                          [_row(["ID", "TableID"] + _COLUMN,
-                               {"ID": "1", "TableID": "1",
+                               {"ID": "3", "TableID": "2",
                                 "ExplicitName": "Amount"})]),
     "TMSCHEMA_MEASURES": (["ID", "TableID"] + _MEASURE,
                           [_row(["ID", "TableID"] + _MEASURE,
-                                {"ID": "1", "TableID": "1", "Name": "Total",
+                                {"ID": "4", "TableID": "2", "Name": "Total",
                                  "Expression": "SUM(Sales[Amount])"})]),
     "TMSCHEMA_PARTITIONS": (["ID", "TableID"] + _PARTITION,
                             [_row(["ID", "TableID"] + _PARTITION,
-                                  {"ID": "1", "TableID": "1", "Name": "p1"})]),
+                                  {"ID": "5", "TableID": "2", "Name": "p1"})]),
 }
 # `AmoDataAdapter.AdjustTableNames` renames the DataSet's tables from
 # `XmlaDataReader.RowsetNames`, and each entry is literally
