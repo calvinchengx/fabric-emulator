@@ -77,14 +77,97 @@ Two findings worth more than the gates themselves:
   `UriFormatException`. A bare hostname cannot fail to parse, so the string was
   never reaching the parser: the reply CONTRACT was wrong, not its shape.
 
+## The query path, measured 2026-08-10
+
+**A real ADOMD.NET client now round-trips end to end against a stub.** Past
+`Open()`, the probe issues a DAX query and a schema `Discover`, and both are
+accepted:
+
+    PROBE powerbi-userid/dax    :: OK
+    PROBE powerbi-userid/schema :: OK     SCHEMA rows=1
+
+What the client sends, captured off the wire:
+
+| Envelope | Contract when refused |
+|---|---|
+| `Execute` + `<Statement/>` empty | session open; `ExecuteResponse`, empty root |
+| `Execute` + `EVALUATE ROW("x",1)` | `not a rowset` — `XmlaDataReader..ctor` |
+| `Discover` + `MDSCHEMA_MEASURES` | `unrecognizable` — `SoapFormatter.ReadDiscoverResponse` |
+
+**The inline XSD is the whole trick.** ADOMD.NET reads the schema to learn the
+row shape BEFORE it reads a row, which is why an empty root came back as
+"unrecognizable" rather than "empty": the reader never found the element it
+expects. `Execute` and `Discover` take the SAME
+`urn:schemas-microsoft-com:xml-analysis:rowset` payload under a different
+wrapper element, so the harness factors one builder rather than two.
+
+This half was built from `[MS-SSAS]`, not from the decompiler — the documented
+surface, per the boundary above. That rule is now load-bearing rather than
+aspirational.
+
+## What SemPy actually needs, measured against the installed wheel
+
+The demand question, settled by reading the package rather than the docs. Two
+sessions had previously reached OPPOSITE conclusions, both from Microsoft Learn.
+
+| sempy call | Transport | This emulator |
+|---|---|---|
+| `evaluate_dax`, `evaluate_measure` | REST `executeQueries` **by default** | already 🟢 |
+| `list_measures`, `list_tables`, `list_partitions`, `list_columns`, `list_relationships` | XMLA, via `$SYSTEM.TMSCHEMA_*` DMVs | **the gap** |
+| `INFO.*` | never called | no sempy case |
+
+    sempy/fabric/_flat.py:954      use_xmla: bool = False
+    sempy/fabric/_flat.py:1017     if use_xmla: XMLA else: ... REST
+    sempy/fabric/_client/_pbi_rest_api.py:274
+        path = f"v1.0/myorg/datasets/{dataset_id}/executeQueries"
+
+XMLA is escalated to only on `use_xmla=True`, a readwrite connection, or
+`num_rows > 30000`. sempy also ships `Microsoft.AnalysisServices.AdomdClient.dll`
+— the same assembly `e2e/xmla` drives, so the oracle and the consumer are the
+same client.
+
+**Consequences, and they narrow the work:**
+
+1. The sempy gap is the **DMV metadata surface**, not DAX evaluation. That is
+   much narrower than "implement `[MS-SSAS-T]`".
+2. The next rowset to build is `$SYSTEM.TMSCHEMA_*`, NOT the `MDSCHEMA_*` this
+   harness probed first. `MDSCHEMA_*` proved the shape; `TMSCHEMA_*` is the
+   demand.
+3. An `INFO.*`-over-`executeQueries` plan was proposed and dropped: `INFO.*` may
+   still be worth building for DAX Studio and Desktop, but NOT as a sempy path.
+4. `StaticFabricContext(pbi_shared_host=…)` redirects sempy standalone and
+   yields the exact `powerbi://host:port/v1.0/myorg/ws` form this harness proves
+   works — the most credible third-party witness lead for a 🟢 row.
+
+**Method note worth keeping.** Both sessions read Learn's `use_xmla=False` and
+drew opposite conclusions; one grep of the installed wheel settled it.
+Documentation about a transport is not a transport.
+
 ## What is NOT settled
 
-Query traffic. The probe stops at `Open()`, so no client has yet been asked to
-run DAX or a `Discover`, and **`xmla-rs:rowset` serialisation plus the `Discover`
-metadata subset are what the estimate is actually for.**
+Not reachability any more, and not the wire shape: a real client completes
+connect, query and metadata against a stub. What is unmeasured is everything
+between a SHAPE and an IMPLEMENTATION:
 
-**Connect is measured. Query is not.** The `L` in `docs/24` stands, and should
-not move on the strength of a handshake.
+- **Rows that mean something.** The harness returns one hardcoded row. Serving
+  `$SYSTEM.TMSCHEMA_*` from `internal/semanticmodel` is the actual work, and
+  none of it is done.
+- **The TOM surface.** `semantic-link-labs` reads tables and measures through
+  the Tabular Object Model (`connect_semantic_model()`, `tom.model.Tables`), not
+  through plain `Discover`. TOM is a metadata/TMSL surface on top of XMLA and was
+  NOT in the original sizing — it is an increase, found by measurement.
+- **The LRO continuation protocol.** The trailing byte can be `1`, meaning
+  reconnect and resume. Long-running queries need it; nothing here implements it.
+- **Type fidelity.** Every column the harness emits is `xsd:string`. Real DAX
+  results carry numerics, dates and nulls, and the client's type mapping is
+  unexercised.
+- **Errors.** Only success paths have been driven. What a client does with a
+  SOAP fault mid-rowset is unknown.
+
+**Connect and the wire shape are measured. The implementation is not.** The `L`
+in `docs/24` stands. It has been *redistributed* rather than reduced: the
+transport turned out cheap and undocumented, the DMV/TOM surface turned out to
+be the cost, and DAX evaluation turned out to be already served over REST.
 
 ## Method, and its boundary
 
@@ -117,7 +200,6 @@ implementation, and that claim is load-bearing for every parity grade. So:
   `RadarSoft/xmla-client`; reaching for the decompiler there would be choosing
   the riskier source over the safer one for no gain.
 
-## What already exists to build on
 ## What already exists to build on
 
 | Asset | Why it matters |
