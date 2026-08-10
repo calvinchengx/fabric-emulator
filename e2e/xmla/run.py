@@ -1016,8 +1016,15 @@ for label, reqs, out in runs:
     # names the method, which is what turns the next step from screening
     # candidate URIs into reading the parser.
     for ln in out.splitlines():
-        if ln.startswith("CASE powerbi") or ln.lstrip().startswith(
-                ("FRAME powerbi", "THREW powerbi", "INNER powerbi")):
+        # PROBE/SCHEMA/PTHREW are the post-Open surfaces (DAX query, Discover).
+        # They were added to the probe and this filter was not widened, so a run
+        # that produced them printed NOTHING and read as "the probe is silent" —
+        # a dropped measurement rendered as an absent one. Widen deliberately:
+        # a filter is an assertion about what matters, and it goes stale the
+        # moment the thing it filters grows.
+        if ln.startswith(("CASE powerbi", "PROBE ", "SCHEMA ")) or \
+                ln.lstrip().startswith(
+                ("FRAME powerbi", "THREW powerbi", "INNER powerbi", "PTHREW ")):
             print(f"  {ln.strip()}", flush=True)
 
 print("\n---- capacityUri screen ----", flush=True)
