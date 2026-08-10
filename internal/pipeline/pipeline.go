@@ -57,13 +57,44 @@ type paramDef struct {
 	DefaultValue value  `json:"defaultValue"`
 }
 
+// LibraryVariableRef is one entry of a pipeline's `libraryVariables` block —
+// a reference to a variable in a workspace Variable Library.
+//
+// The MAP KEY is the reference's alias, and the alias — not VariableName — is
+// what `@pipeline().libraryVariables.<alias>` resolves against. The designer
+// defaults the alias to `<libraryName>_<variableName>` but lets the author
+// rename it, so the key must be used as given and never reconstructed by
+// concatenation.
+//
+// Both fields bind BY NAME. No workspace or item GUID appears here, which is
+// what makes a pipeline that consumes library variables portable across
+// emulator/dev/test/prod unchanged: it resolves against whichever library of
+// that name the target workspace holds.
+//
+// Type is in the PIPELINE type vocabulary, not the library's. Fabric's own
+// integration doc maps them: "Boolean as Bool type, Datetime as String type,
+// Guid as String type, Integer as Int type" — and Number is not supported in
+// pipelines at all.
+type LibraryVariableRef struct {
+	Type         string `json:"type"`
+	VariableName string `json:"variableName"`
+	LibraryName  string `json:"libraryName"`
+}
+
 // Pipeline is the parsed definition (the pipeline-content.json payload).
 type Pipeline struct {
 	Properties struct {
-		Activities []Activity          `json:"activities"`
-		Parameters map[string]paramDef `json:"parameters"`
-		Variables  map[string]paramDef `json:"variables"`
+		Activities       []Activity                    `json:"activities"`
+		Parameters       map[string]paramDef           `json:"parameters"`
+		Variables        map[string]paramDef           `json:"variables"`
+		LibraryVariables map[string]LibraryVariableRef `json:"libraryVariables"`
 	} `json:"properties"`
+}
+
+// LibraryVariableRefs returns the pipeline's library-variable declarations, so
+// a caller can resolve them against the workspace before the run starts.
+func (p *Pipeline) LibraryVariableRefs() map[string]LibraryVariableRef {
+	return p.Properties.LibraryVariables
 }
 
 // ActivityRun is the recorded outcome of one activity (Fabric's activity-run
@@ -111,6 +142,7 @@ type run struct {
 	variables map[string]value
 	outputs   map[string]value // activity name -> {"output":..,"status":..}
 	trigger   map[string]value // @pipeline().TriggerEvent, nil when started by hand
+	libVars   map[string]value // @pipeline().libraryVariables, keyed by alias
 	runs      []ActivityRun
 }
 
@@ -127,6 +159,12 @@ type Options struct {
 	// documented way to read it is the safe-navigating
 	// `@pipeline()?.TriggerEvent?.FileName`.
 	TriggerEvent map[string]value
+	// LibraryVariables are the pipeline's `libraryVariables` declarations
+	// already resolved to values, keyed by ALIAS (the declaration's map key).
+	// Resolution needs the workspace's Variable Library items, which the
+	// interpreter deliberately cannot reach — it is handed the answers, the
+	// same way leaf activities are delegated to an Executor.
+	LibraryVariables map[string]value
 }
 
 // Run executes the pipeline with the given runtime parameters (overriding
@@ -143,6 +181,7 @@ func (p *Pipeline) RunWith(params map[string]value, exec Executor, opts Options)
 		variables:  map[string]value{},
 		outputs:    map[string]value{},
 		trigger:    opts.TriggerEvent,
+		libVars:    opts.LibraryVariables,
 		onActivity: opts.OnActivity,
 	}
 	for name, def := range p.Properties.Parameters {
@@ -172,12 +211,13 @@ func (p *Pipeline) RunWith(params map[string]value, exec Executor, opts Options)
 // ForEach item.
 func (r *run) ctx(item value, hasItem bool) *evalContext {
 	return &evalContext{
-		Parameters: r.params,
-		Variables:  r.variables,
-		Activities: r.outputs,
-		Trigger:    r.trigger,
-		Item:       item,
-		HasItem:    hasItem,
+		Parameters:       r.params,
+		Variables:        r.variables,
+		Activities:       r.outputs,
+		Trigger:          r.trigger,
+		LibraryVariables: r.libVars,
+		Item:             item,
+		HasItem:          hasItem,
 	}
 }
 

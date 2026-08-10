@@ -26,8 +26,12 @@ type evalContext struct {
 	Variables  map[string]value
 	Activities map[string]value // name -> {"output": ..., "status": ...}
 	Trigger    map[string]value // @pipeline().TriggerEvent; nil unless event-started
-	Item       value            // @item() inside ForEach
-	HasItem    bool
+	// LibraryVariables is @pipeline().libraryVariables, keyed by the alias the
+	// definition's `libraryVariables` block declares. Resolved by the caller
+	// from the workspace's Variable Library items before the run starts.
+	LibraryVariables map[string]value
+	Item             value // @item() inside ForEach
+	HasItem          bool
 }
 
 // evalString resolves a definition string: whole-value '@expr', interpolated

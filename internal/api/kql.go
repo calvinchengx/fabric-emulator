@@ -422,6 +422,17 @@ func (a *API) itemView(r *http.Request, it *store.Item) any {
 
 func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]any {
 	switch it.Type {
+	case "VariableLibrary":
+		// `activeValueSetName` is the one property the REST reference defines
+		// for this type, and it is the whole environment switch: the same
+		// definition resolves differently per workspace according to it.
+		// Absent until set, rather than reported as "", because a blank name
+		// would read as "a value set called nothing is active".
+		props, err := a.Store.ItemProperties(it.ID)
+		if err != nil || props[propActiveValueSet] == "" {
+			return nil
+		}
+		return map[string]any{propActiveValueSet: props[propActiveValueSet]}
 	case "Warehouse":
 		// See warehouse_endpoint.go. Nil rather than an empty string when no SQL
 		// endpoint is running: a property that is present but blank reads as "the
