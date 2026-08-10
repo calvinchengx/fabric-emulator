@@ -603,6 +603,19 @@ class Capture(http.server.BaseHTTPRequestHandler):
                  '<return><root xmlns="urn:schemas-microsoft-com:xml-analysis:empty"/>'
                  '</return></ExecuteResponse>'
                  '</soap:Body></soap:Envelope>').encode()
+            # TRAILING PROTOCOL BYTE, and it is not optional.
+            # `HttpStream+PaasInfraController+PaasInfraXmlaOperation
+            # .ReadResponsePayloadImpl` reads the payload and then switches on
+            # the LAST byte of the stream:
+            #     0       -> response complete
+            #     1       -> continuation; reconnect under the LRO protocol
+            #     default -> throw UnknownServerResponseFormat,
+            #                ConnectionExceptionCause.TransportProtocolError
+            # A bare SOAP body ends with '>' (0x3E), which is `default`, so a
+            # perfectly well-formed envelope is rejected as "unrecognizable".
+            # The client announces this on the way in with
+            # `x-ms-accepts-continuations: 1`. Append 0x00 for "that is all".
+            b += b"\x00"
             print(f"    -> answering 200 XMLA session {XMLA_SESSION}", flush=True)
             self.send_response(200)
             self.send_header("Content-Type", "text/xml; charset=utf-8")
@@ -611,12 +624,22 @@ class Capture(http.server.BaseHTTPRequestHandler):
             # 'x-ms-xmlacaps-negotiation-flags' header is missing from the HTTP
             # response!` in `HttpStream+PaasInfraController.ProcessWebResponse`,
             # BEFORE reading the body — so a perfectly good SOAP envelope is
-            # discarded on a missing header. Echo what the client offered
-            # (0,0,0,1,0): this is a capability NEGOTIATION, so a server picks a
-            # subset rather than inventing flags.
-            self.send_header("x-ms-xmlacaps-negotiation-flags",
-                             self.headers.get("x-ms-xmlacaps-negotiation-flags",
-                                              "0,0,0,1,0"))
+            # discarded on a missing header.
+            #
+            # SELECT NOTHING (0,0,0,0,0) rather than echoing the client's offer.
+            # Echoing `0,0,0,1,0` was tried and the frames say why it fails:
+            # after parsing our XML, `XmlaReader.ReadEndElement` asked for MORE
+            # bytes through `CompressedStream.Read` ->
+            # `PaasInfraXmlaOperation.ReadResponsePayloadImpl`, which threw
+            # `UnknownServerResponseFormat`. That is a FRAMING layer, not a
+            # malformed body: the assembly's `ReadCompressedPacket` reads an
+            # 8-byte packet header, so a flag we accepted put the client into a
+            # framed read that plain XML does not satisfy.
+            #
+            # "A server picks a subset" is not "a server echoes the offer" —
+            # echoing accepts EVERY capability offered, including the ones we
+            # have not implemented. A capture stub selects the empty subset.
+            self.send_header("x-ms-xmlacaps-negotiation-flags", "0,0,0,0,0")
             self.send_header("Content-Length", str(len(b)))
             self.end_headers()
             self.wfile.write(b)
