@@ -279,6 +279,93 @@ class Target:
             f"({len(r.json().get('value', []))} visible)")
 
 
+def notebook_env(t=None):
+    """The NOTEBOOKUTILS_* runtime context for a target, as (name, value) pairs.
+
+    Real Fabric injects a notebook's runtime context — workspace, endpoints,
+    identity — into the kernel. The shim cannot inject into an arbitrary kernel,
+    so it reads that context from the environment (python/notebookutils/_config.py).
+    Which means SOMETHING has to put it there, and if every caller writes its own
+    set, the shim and the resolver can disagree about which entra a token comes
+    from while both look right. This is the one definition: `python -m
+    fabric_target env` prints it for a shell, `apply_notebook_env` applies it
+    in-process, and both are this function.
+
+    Real mode emits NO credential: `credentials.getToken` falls through to
+    DefaultAzureCredential, which is what lets the same notebook run under
+    `az login`, a managed identity, or inside real Fabric.
+    """
+    t = t or target()
+    e = [("FABRIC_TARGET", t.name)]
+    if t.is_emulator:
+        e += [
+            ("NOTEBOOKUTILS_FABRIC_URL", t.api_root.removesuffix("/v1")),
+            ("NOTEBOOKUTILS_ONELAKE_URL", t.onelake_url),
+            ("NOTEBOOKUTILS_ENTRA_URL", t.entra_url),
+            ("NOTEBOOKUTILS_TENANT", t.tenant),
+            ("NOTEBOOKUTILS_CLIENT_ID",
+             _env_any(("FABRIC_CLIENT_ID", "AZURE_CLIENT_ID"), SEED_CLIENT_ID)),
+            ("NOTEBOOKUTILS_CLIENT_SECRET",
+             _env_any(("FABRIC_CLIENT_SECRET", "AZURE_CLIENT_SECRET"),
+                      SEED_CLIENT_SECRET)),
+            ("NOTEBOOKUTILS_VAULT_URL", t.vault_url),
+            ("NOTEBOOKUTILS_INSECURE", "1"),
+        ]
+    else:
+        e += [
+            ("NOTEBOOKUTILS_FABRIC_URL", "https://api.fabric.microsoft.com"),
+            ("NOTEBOOKUTILS_ONELAKE_URL", t.onelake_url),
+            ("NOTEBOOKUTILS_ENTRA_URL", t.entra_url),
+            ("NOTEBOOKUTILS_TENANT", t.tenant),
+            ("NOTEBOOKUTILS_INSECURE", "0"),
+            # az-login-friendly auth hints for env-driven tools:
+            ("AZCOPY_AUTO_LOGIN_TYPE", "AZCLI"),
+        ]
+        if t.vault_url:
+            e.append(("NOTEBOOKUTILS_VAULT_URL", t.vault_url))
+    return e
+
+
+def apply_notebook_env(t=None, override=False):
+    """Put `notebook_env` into os.environ, so notebookutils in THIS process
+    resolves against the same target the caller resolved.
+
+    Without this, a script that uses both the control plane and
+    `notebookutils.credentials.getSecret` gets its Fabric calls from the target
+    and its notebook tokens from the shim's own defaults — two answers to one
+    question, agreeing only by luck.
+
+    An explicit NOTEBOOKUTILS_* already in the environment WINS by default:
+    `eval "$(python -m fabric_target env ...)"` and a compose file are both
+    deliberate, and silently overwriting them would make the toggle unpredictable
+    for the case it exists to serve. Returns what it set.
+    """
+    applied = {}
+    for k, v in notebook_env(t):
+        if v is None:
+            continue
+        if override or not os.environ.get(k):
+            os.environ[k] = v
+            applied[k] = v
+    if applied:
+        _config_reset()
+    return applied
+
+
+def _config_reset():
+    """Drop notebookutils' cached runtime profile, if the shim is importable.
+
+    _config caches Config on first use; applying the environment after something
+    already called getSecret would otherwise have no effect. Absent shim is fine
+    — fabric-target does not depend on it.
+    """
+    try:
+        from notebookutils._config import reset
+    except ImportError:
+        return
+    reset()
+
+
 _cached = None
 
 

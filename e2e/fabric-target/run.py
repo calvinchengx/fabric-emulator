@@ -127,6 +127,30 @@ try:
         [sys.executable, "-m", "pytest", "-m", "target", "-q",
          os.path.join(REPO, "python", "fabric-target", "conformance")],
         check=True, env={**env, "FABRIC_WORKSPACE": "target-e2e"})
+
+    # T3: A USER'S OWN EXAMPLE through the toggle, not just the contract.
+    #
+    # The conformance suite proves `fabric-target` resolves correctly. It does
+    # not prove that the code a reader copies goes through it — and for a long
+    # while it did not: the four medallion examples hardcoded the seeded
+    # principal and localhost defaults, so `docs/21`'s toggle never reached
+    # them and nothing noticed, because the emulator went on passing.
+    #
+    # provision.py is the right step to run here: it touches only the control
+    # plane (workspace, lakehouse, warehouse, workspace identity), so it needs
+    # no Spark, SQL Server or vault sidecar, while still exercising the whole
+    # resolver path — target() -> credential -> session -> item create.
+    #
+    # The real leg is the SAME step with FABRIC_TARGET=real, in
+    # .github/workflows/real-fabric.yml, secret-gated. That is what makes "one
+    # flag" a measurement rather than a design intention.
+    example = os.path.join(REPO, "examples", "medallion-pyspark")
+    log("running examples/medallion-pyspark/provision.py under FABRIC_TARGET=emulator")
+    subprocess.run(
+        ["uv", "run", "--frozen", "python", "provision.py"],
+        check=True, cwd=example,
+        env={**env, "WORKSPACE_NAME": "target-e2e-example",
+             "PIPELINE_STATE": os.path.join(WORK, "example-state.json")})
     log("PASS")
 finally:
     for p in procs:

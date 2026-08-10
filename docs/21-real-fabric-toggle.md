@@ -22,6 +22,12 @@ So the toggle is not an emulation feature; it is **one resolver** that turns a
 target name into a coherent set of endpoints + credentials, plus guardrails
 for the places the two worlds genuinely differ.
 
+Where your artifacts persist — definition parts, the `{name}.{type}/` +
+`.platform` source format, and the hard line that OneLake data is never in Git —
+is [docs/46](46-artifact-persistence.md). This document resolves *where to talk*;
+that one says *what you are storing*, and both have to hold for a run to be
+portable.
+
 ## The contract
 
 One switch: `FABRIC_TARGET=emulator | real` (default `emulator`).

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/platform/platformProperties.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "bronze-orders",
+    "description": "Reads the semi-structured POS feed from landing and writes Delta to the lakehouse."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "6b1f0d2a-7c3e-4a58-9d61-0f2e4b8c1a37"
+  }
+}

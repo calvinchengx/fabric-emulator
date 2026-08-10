@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/platform/platformProperties.json",
+  "metadata": {
+    "type": "DataPipeline",
+    "displayName": "erp-reference-ingest",
+    "description": "Three Parquet Copy activities: ERP changes, FX rates, product hierarchy."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "9d2c6f41-8ab0-4d17-b3e5-72c8149af6b2"
+  }
+}

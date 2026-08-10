@@ -17,11 +17,17 @@ import time
 
 import source_system as src
 import web_store as web
-from common import SQL_AUD, TDS_SERVER, load, log, tds_connect, token
+from common import SQL_AUD, load, log, sql_endpoint, tds_connect, token
 
 st = load()
 sql_tok = token(SQL_AUD)
 PROJECT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gold_star")
+
+# Server, database and encrypt all come from the resolver: on real Fabric the
+# address is per-workspace and only the API knows it, so a pinned host is
+# emulator-only by construction (docs/46-artifact-persistence.md).
+wh = sql_endpoint(st["warehouse"])
+lake_db = sql_endpoint(st["lakehouse"]).database
 
 with open(os.path.join(PROJECT, "profiles.yml"), "w") as f:
     f.write(f"""contoso_gold_star:
@@ -30,18 +36,18 @@ with open(os.path.join(PROJECT, "profiles.yml"), "w") as f:
     dev:
       type: fabric
       driver: "ODBC Driver 18 for SQL Server"
-      server: "{TDS_SERVER}"
-      database: "{st['warehouse']}"
+      server: "{wh.server}"
+      database: "{wh.database}"
       schema: "dbo"
       authentication: "ActiveDirectoryAccessToken"
       access_token: "{sql_tok}"
       access_token_expires_on: 0
-      encrypt: false
+      encrypt: {'true' if wh.encrypt else 'false'}
       trust_cert: true
       threads: 1
 """)
 
-env = {**os.environ, "DBT_PROFILES_DIR": PROJECT, "LAKEHOUSE_ID": st["lakehouse"]}
+env = {**os.environ, "DBT_PROFILES_DIR": PROJECT, "LAKEHOUSE_ID": lake_db}
 t0 = time.time()
 rc = subprocess.run(["dbt", "--no-partial-parse", "build"], cwd=PROJECT, env=env).returncode
 build_secs = time.time() - t0

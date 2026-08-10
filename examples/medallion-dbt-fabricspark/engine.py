@@ -15,7 +15,18 @@ import io
 import time
 from contextlib import redirect_stdout
 
-from common import FABRIC, SPARK_REMOTE, S, fabric_headers, load, log
+from common import FABRIC, SPARK_REMOTE, S, fabric_headers, load, log, skip_on_real
+
+# Real Fabric HAS a Spark pool, so there is nothing for this step to do there.
+# Its notebook activity runs on the workspace's starter pool (or a custom pool
+# selected through an Environment) and reports its own outcome; the emulator has
+# no pool, which is exactly why it parses the notebook, records a Pending run,
+# and waits for an engine to execute the cells and report back. The step is
+# scaffolding for the missing half of the target, not part of the pipeline.
+skip_on_real(
+    "the notebook engine",
+    "Fabric runs the queued notebook on its own Spark pool and reports the run "
+    "itself, so there is no external engine to attach")
 
 st = load()
 jid, nb = st["orders_job"], st["orders_notebook"]

@@ -431,6 +431,31 @@ func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]an
 			return map[string]any{"connectionString": cs}
 		}
 		return nil
+	case "Lakehouse":
+		// The SQL analytics endpoint: the read-only T-SQL surface over the
+		// lakehouse's Delta tables. It is the same TDS listener a Warehouse
+		// uses — the emulator routes by item and makes a Lakehouse read-only
+		// (internal/server/warehouse.go) — but it is a DIFFERENT property, and
+		// real Fabric names it differently, so it is reported under the name
+		// real Fabric reports it under.
+		//
+		// `id` IS DELIBERATELY ABSENT. On real Fabric the analytics endpoint is
+		// its own SQLEndpoint item with its own GUID; the emulator has no such
+		// item and routes the endpoint by the lakehouse id. Reporting the
+		// lakehouse id under that name would invite a consumer to use it as a
+		// database name, which works here and fails on real Fabric. Leaving it
+		// out fails the other way round: locally, loudly, before it ships.
+		if cs := a.warehouseConnectionString(r); cs != "" {
+			return map[string]any{"sqlEndpointProperties": map[string]any{
+				"connectionString": cs,
+				// The emulator provisions the endpoint on first connect, so it
+				// is never pending from the caller's point of view. Real Fabric
+				// can answer InProgress, which a client must handle: hence a
+				// status field at all rather than an implied one.
+				"provisioningStatus": "Success",
+			}}
+		}
+		return nil
 	case "Eventhouse":
 		base := kustoBaseURI(r, it.WorkspaceID, it.ID)
 		ids := []string{}

@@ -78,6 +78,26 @@ jobs:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: uv run --frozen --group fabric-target python e2e/notebook-run/real_fabric.py
+      # THE EXAMPLE'S OWN CODE against real Fabric — the other half of T3 in
+      # e2e/fabric-target/run.py, which runs this same step with
+      # FABRIC_TARGET=emulator. Until both legs existed, "the same code runs
+      # against real Fabric" was true of the conformance suite and unproven of
+      # anything a reader would actually copy: the four medallion examples
+      # hardcoded the seeded principal, so the toggle never reached them.
+      #
+      # provision.py only touches the control plane, so it needs no Spark, SQL
+      # Server or vault — the whole resolver path with none of the sidecars.
+      - name: An example's own provisioning against real Fabric
+        if: steps.gate.outputs.run == 'true'
+        working-directory: examples/medallion-pyspark
+        env:
+          FABRIC_TARGET: real
+          FABRIC_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
+          WORKSPACE_NAME: ${{ secrets.FABRIC_TEST_WORKSPACE }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: uv run --frozen python provision.py
       # Oracle capture, on demand only. Several activities are blocked on one
       # thing — nobody has captured the wire `type` and `typeProperties` shape
       # Fabric actually sends — and this turns that capture into a button.

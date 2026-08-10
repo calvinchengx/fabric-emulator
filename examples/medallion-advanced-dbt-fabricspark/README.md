@@ -46,6 +46,14 @@ The silver assertions are the **same oracle**, not a relaxed one — the same
 PySpark example asserts against. Two engines asked for the same transform must
 produce the same answer, or comparing them measures nothing.
 
+## Where your items live: `definitions/`
+
+Unchanged from the sibling, and worth reading there:
+[`../medallion-pyspark#where-your-items-live-definitions`](../medallion-pyspark/README.md#where-your-items-live-definitions).
+Bronze deploys from committed files in Fabric's own source format —
+`{display name}.{public facing type}/` with `.platform` — which is the layout
+Fabric's Git integration writes. Only **silver** differs in this example.
+
 ## The dbt project
 
 ```

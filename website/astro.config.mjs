@@ -90,6 +90,7 @@ export default defineConfig({
             { slug: '19-semantic-model-plan' },
             { slug: '20-lakesail-engine' },
             { slug: '21-real-fabric-toggle' },
+            { slug: '46-artifact-persistence' },
             { slug: '22-openmetadata' },
             { slug: '23-deployment-pipelines' },
             { slug: '24-parity-completion' },

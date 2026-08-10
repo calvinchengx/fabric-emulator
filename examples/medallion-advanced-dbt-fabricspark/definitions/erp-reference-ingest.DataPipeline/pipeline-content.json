@@ -1,0 +1,123 @@
+{
+  "properties": {
+    "activities": [
+      {
+        "name": "IngestErpChanges",
+        "type": "Copy",
+        "typeProperties": {
+          "source": {
+            "type": "ParquetSource",
+            "rootFolder": "Files",
+            "folderPath": "{{ERP_DIR}}",
+            "fileName": "changes.parquet",
+            "datasetSettings": {
+              "linkedService": {
+                "properties": {
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "{{WORKSPACE_ID}}",
+                    "artifactId": "{{LAKEHOUSE_ID}}"
+                  }
+                }
+              }
+            }
+          },
+          "sink": {
+            "type": "LakehouseTableSink",
+            "tableActionOption": "Overwrite",
+            "table": "bronze_erp_changes",
+            "datasetSettings": {
+              "linkedService": {
+                "properties": {
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "{{WORKSPACE_ID}}",
+                    "artifactId": "{{LAKEHOUSE_ID}}"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "IngestFxRates",
+        "type": "Copy",
+        "typeProperties": {
+          "source": {
+            "type": "ParquetSource",
+            "rootFolder": "Files",
+            "folderPath": "{{REF_DIR}}",
+            "fileName": "fx_rates.parquet",
+            "datasetSettings": {
+              "linkedService": {
+                "properties": {
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "{{WORKSPACE_ID}}",
+                    "artifactId": "{{LAKEHOUSE_ID}}"
+                  }
+                }
+              }
+            }
+          },
+          "sink": {
+            "type": "LakehouseTableSink",
+            "tableActionOption": "Overwrite",
+            "table": "bronze_fx_rates",
+            "datasetSettings": {
+              "linkedService": {
+                "properties": {
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "{{WORKSPACE_ID}}",
+                    "artifactId": "{{LAKEHOUSE_ID}}"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "IngestProductHierarchy",
+        "type": "Copy",
+        "typeProperties": {
+          "source": {
+            "type": "ParquetSource",
+            "rootFolder": "Files",
+            "folderPath": "{{REF_DIR}}",
+            "fileName": "product_hierarchy.parquet",
+            "datasetSettings": {
+              "linkedService": {
+                "properties": {
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "{{WORKSPACE_ID}}",
+                    "artifactId": "{{LAKEHOUSE_ID}}"
+                  }
+                }
+              }
+            }
+          },
+          "sink": {
+            "type": "LakehouseTableSink",
+            "tableActionOption": "Overwrite",
+            "table": "bronze_product_hierarchy",
+            "datasetSettings": {
+              "linkedService": {
+                "properties": {
+                  "type": "Lakehouse",
+                  "typeProperties": {
+                    "workspaceId": "{{WORKSPACE_ID}}",
+                    "artifactId": "{{LAKEHOUSE_ID}}"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

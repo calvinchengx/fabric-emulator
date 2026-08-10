@@ -23,6 +23,13 @@ test = [
     # because a developer machine usually has pyyaml lying around and CI does
     # not — which is exactly how it passed locally and broke on the runner.
     "pyyaml>=6,<7",
+    # test_example_sql_endpoint.py imports the EXAMPLES' resolver
+    # (examples/contoso-fixtures/common.py) to test the SQL-endpoint discovery
+    # its real branch takes, which no local e2e can reach. That module imports
+    # requests, and the same trap as pyyaml above caught this one: it passed in a
+    # developer .venv carrying requests from another group and failed in a clean
+    # environment. Verified with UV_PROJECT_ENVIRONMENT pointed at an empty dir.
+    "requests>=2.32,<3",
 ]
 lint = [
     "ruff>=0.14,<0.16",

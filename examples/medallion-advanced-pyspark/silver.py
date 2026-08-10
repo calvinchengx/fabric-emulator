@@ -19,7 +19,23 @@ needs would be the wrong place to do it: silver is the conformed customer-360,
 and the star's dimensions are a projection of it, not the other way round.
 """
 import source_system as src
-from common import SPARK_REMOTE, load, log, report_lineage
+from common import SPARK_REMOTE, load, log, only_the_emulator_can, report_lineage
+
+# Spark Connect is the emulator's stand-in for a Fabric pool, and it is where the
+# portability line falls. Real Fabric does not expose a Spark endpoint to dial
+# from outside: its compute runs the notebook. So this transform is portable only
+# once it LIVES in a notebook definition, which is a rewrite of where the code
+# sits rather than of what it does.
+only_the_emulator_can(
+    "driving Spark directly over Spark Connect",
+    because="real Fabric exposes no Spark Connect endpoint. Its Spark runs inside "
+            "the service, on the workspace's starter pool or a custom pool chosen "
+            "through an Environment",
+    instead="move this transform into a Notebook definition under definitions/ and "
+            "submit it with run_job(notebook_id, 'RunNotebook'), which both targets "
+            "accept; the Livy API "
+            "(/v1/workspaces/{ws}/lakehouses/{lh}/livyapi/versions/2023-12-01/sessions) "
+            "is the other route on real Fabric")
 
 st = load()
 assert SPARK_REMOTE, "SPARK_REMOTE is empty — no Spark engine is attached"
