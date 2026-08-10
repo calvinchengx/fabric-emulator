@@ -88,9 +88,13 @@ func TestColumnsAndRelationships(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Store(4) + Time(3) + Sales(5) = 12 columns in the golden model.
-	if len(cols.Rows) != 12 {
-		t.Errorf("columns = %d, want 12", len(cols.Rows))
+	// Counted from the model: the golden fixture is shared and grows.
+	wantCols := 0
+	for _, tb := range m.Tables {
+		wantCols += len(tb.Columns)
+	}
+	if len(cols.Rows) != wantCols {
+		t.Errorf("columns = %d, want %d (every column in the model)", len(cols.Rows), wantCols)
 	}
 	// Column IDs must be unique across the whole model, not per table.
 	seen := map[string]bool{}
@@ -104,8 +108,8 @@ func TestColumnsAndRelationships(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rels.Rows) != 2 {
-		t.Errorf("relationships = %d, want 2", len(rels.Rows))
+	if len(rels.Rows) != len(m.Relationships) {
+		t.Errorf("relationships = %d, want %d", len(rels.Rows), len(m.Relationships))
 	}
 }
 
@@ -189,8 +193,12 @@ func TestStorageRowsetsAreDerivedExactly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cs.Rows) != 12 {
-		t.Fatalf("column storages = %d, want 12", len(cs.Rows))
+	wantCS := 0
+	for _, tb := range m.Tables {
+		wantCS += len(tb.Columns)
+	}
+	if len(cs.Rows) != wantCS {
+		t.Fatalf("column storages = %d, want %d (one per column)", len(cs.Rows), wantCS)
 	}
 	// Store[Territory] is the 4th column: West, East, Central, West -> 3 distinct.
 	if cs.Rows[3][1] != "3" {
