@@ -15,7 +15,6 @@ would ever issue it.
 import base64
 import json
 import os
-import time
 import traceback
 
 os.environ.setdefault("PYTHONNET_RUNTIME", "coreclr")
@@ -23,7 +22,6 @@ os.environ.setdefault("PYTHONNET_RUNTIME", "coreclr")
 HOST = os.environ["SEMPY_HOST"]
 WS = os.environ["SEMPY_WORKSPACE"]
 DATASET = os.environ["SEMPY_DATASET"]
-MARKER = os.environ["SEMPY_MARKER"]
 
 from fabric.analytics.environment.context import (          # noqa: E402
     StaticFabricContext, fabric_default_context_override)
@@ -37,36 +35,26 @@ from fabric.analytics.environment.credentials import (      # noqa: E402
     SetFabricAnalyticsDefaultTokenCredentialsGlobally)
 
 
-def _mint_jwt():
-    """A DECODABLE token. Every segment must be valid base64url.
+def _token():
+    """The bearer, minted by entra-emulator and handed in by the harness.
 
-    Three separate failures hide behind one message here, and all three report
-    `ArgumentException: The token has expired` for a token that never expired:
+    An earlier version of this driver hand-rolled a JWT because it was talking
+    to a stub. Against the EMULATOR the credential has to be real: the emulator
+    validates the issuer, so a self-signed token would prove only that our stub
+    accepted our own token.
 
-      1. an opaque string is not a JWT at all;
-      2. `alg: none` makes PyJWT raise `DecodeError`;
-      3. a SIGNATURE segment that is not valid base64url (a 21-char marker is
-         `len % 4 == 1`, undecodable at any padding) raises
-         `DecodeError: Invalid crypto padding`.
-
-    sempy catches DecodeError into `exp = 0` (`get_token_expiry_raw_timestamp`),
-    so a token that cannot be READ is indistinguishable from one that is stale.
-    Nothing verifies the signature; it only has to decode.
+    The shape still matters even when the value is real: every segment must be
+    valid base64url or sempy's `get_token_expiry_raw_timestamp` catches the
+    DecodeError into `exp = 0` and reports a live token as expired.
     """
-    def b64(d):
-        return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
-
-    exp = int(time.time()) + 3600
-    head = b64({"alg": "HS256", "typ": "JWT"})
-    body = b64({"aud": "https://analysis.windows.net/powerbi/api",
-                "iss": "https://sts.windows.net/emulator/",
-                "exp": exp, "nbf": int(time.time()) - 60,
-                "upn": "e2e@emulator", "marker": MARKER})
-    sig = base64.urlsafe_b64encode(b"emulator-not-verified").rstrip(b"=").decode()
-    return f"{head}.{body}.{sig}", exp
+    tok = os.environ["SEMPY_TOKEN"]
+    payload = tok.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    exp = int(json.loads(base64.urlsafe_b64decode(payload))["exp"])
+    return tok, exp
 
 
-TOKEN, TOKEN_EXP = _mint_jwt()
+TOKEN, TOKEN_EXP = _token()
 
 
 class FakeCredential:
@@ -90,15 +78,20 @@ from sempy.fabric._utils import get_token_seconds_remaining  # noqa: E402
 _t = get_access_token().token
 _payload = _t.split(".")[1]
 _payload += "=" * (-len(_payload) % 4)
-_mine = json.loads(base64.urlsafe_b64decode(_payload)).get("marker") == MARKER
-print(f"###AUTH mine={_mine} seconds_left={get_token_seconds_remaining(_t)}", flush=True)
+_claims = json.loads(base64.urlsafe_b64decode(_payload))
+_mine = _claims.get("aud", "").startswith("https://analysis.windows.net/powerbi")
+print(f"###AUTH mine={_mine} iss={_claims.get('iss', '')[:40]} "
+      f"seconds_left={get_token_seconds_remaining(_t)}", flush=True)
 
 import sempy.fabric as fx                                   # noqa: E402
 
 CASES = [
     ("list_workspaces",    lambda: fx.list_workspaces()),
     ("list_datasets",      lambda: fx.list_datasets(workspace=WS)),
-    ("evaluate_dax",       lambda: fx.evaluate_dax(DATASET, "EVALUATE {1}", workspace=WS)),
+    # A query the SEEDED MODEL supports. `EVALUATE {1}` is a table constructor
+    # and tests the DAX grammar, not the transport — and a transport witness
+    # that fails on unsupported DAX reports the wrong thing.
+    ("evaluate_dax",       lambda: fx.evaluate_dax(DATASET, "EVALUATE 'Store'", workspace=WS)),
     ("list_measures",      lambda: fx.list_measures(DATASET, workspace=WS)),
     ("list_tables",        lambda: fx.list_tables(DATASET, workspace=WS)),
     ("list_columns",       lambda: fx.list_columns(DATASET, workspace=WS)),

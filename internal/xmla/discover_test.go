@@ -61,13 +61,24 @@ func TestDiscoverModelledTypes(t *testing.T) {
 	if len(meas.Rows) != want {
 		t.Fatalf("measures = %d, want %d (every measure in the model)", len(meas.Rows), want)
 	}
+	// BY COLUMN NAME, not by index. This asserted r[2]/r[3] and broke when the
+	// projection gained the columns TOM actually requires — a green-to-red on a
+	// correct change, because the test encoded the layout rather than the fact.
+	cell := func(row []string, col string) string {
+		for i, c := range meas.Columns {
+			if c == col && i < len(row) {
+				return row[i]
+			}
+		}
+		return ""
+	}
 	var ratio []string
 	for _, r := range meas.Rows {
-		if r[2] == "Total Units Ratio" {
+		if cell(r, "Name") == "Total Units Ratio" {
 			ratio = r
 		}
 	}
-	if ratio == nil || !strings.Contains(ratio[3], "DIVIDE") {
+	if ratio == nil || !strings.Contains(cell(ratio, "Expression"), "DIVIDE") {
 		t.Fatalf("Total Units Ratio row = %v, want its DIVIDE expression", ratio)
 	}
 	parses(t, meas.ExecuteResponse())
@@ -83,9 +94,24 @@ func TestDiscoverModelledTypes(t *testing.T) {
 		t.Fatalf("Discover %d rows vs SELECT %d — the two grammars disagree about tables",
 			len(viaDiscover.Rows), len(viaSelect.Rows))
 	}
+	// Compare the columns the SELECT actually PROJECTED, by name. Discover
+	// carries every scalar property TOM requires, so the two rowsets are not the
+	// same width — but they must agree on any column both contain, because they
+	// are two grammars over ONE object. Comparing by index asserted a layout
+	// rather than that agreement.
+	at := func(rs Rowset, row int, col string) string {
+		for i, c := range rs.Columns {
+			if c == col && i < len(rs.Rows[row]) {
+				return rs.Rows[row][i]
+			}
+		}
+		return "<missing>"
+	}
 	for i := range viaSelect.Rows {
-		if viaDiscover.Rows[i][0] != viaSelect.Rows[i][0] || viaDiscover.Rows[i][1] != viaSelect.Rows[i][1] {
-			t.Errorf("row %d differs: Discover %v vs SELECT %v", i, viaDiscover.Rows[i], viaSelect.Rows[i])
+		for _, c := range []string{"ID", "Name"} {
+			if got, want := at(viaDiscover, i, c), at(viaSelect, i, c); got != want {
+				t.Errorf("row %d %s differs: Discover %q vs SELECT %q", i, c, got, want)
+			}
 		}
 	}
 }

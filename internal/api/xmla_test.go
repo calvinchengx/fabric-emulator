@@ -80,8 +80,8 @@ func TestAsslRootFollowsTheRestrictionAndCarriesCompatibilityLevel(t *testing.T)
 	// wrong root is reported as "Unexpected root 'Server' ... when trying to
 	// read '...Database'". CompatibilityLevel lives in nsCompat (not the 2003
 	// engine namespace, not .../200/200) and <Model> is XmlIgnore on the type.
-	srv := asslDocument(false, "m")
-	db := asslDocument(true, "m")
+	srv := asslDocument(false, "m", "m")
+	db := asslDocument(true, "m", "m")
 	if !strings.HasPrefix(srv, "<Server") {
 		t.Fatalf("server-scoped ASSL must be rooted at <Server>: %.30s", srv)
 	}

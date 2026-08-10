@@ -50,8 +50,13 @@ func TestSempyTablesQuery(t *testing.T) {
 	if len(rs.Rows) != 3 {
 		t.Fatalf("rows = %d, want 3 (Store, Time, Sales)", len(rs.Rows))
 	}
-	if rs.Rows[0][0] != "1" || rs.Rows[0][1] != "Store" {
-		t.Errorf("first row = %v, want [1 Store]", rs.Rows[0])
+	// Ids live in a MODEL-WIDE space, not a per-rowset one: TOM assembles a
+	// single object graph from every rowset and refuses duplicates
+	// (`Duplicate object ID 1, first in 'Tabular.Model' ...`). Tables are based
+	// at 1000, so the first table is 1001. What matters is that the SELECT and
+	// Discover grammars agree, which TestDiscoverModelledTypes asserts.
+	if rs.Rows[0][0] != objID("TMSCHEMA_TABLES", 0) || rs.Rows[0][1] != "Store" {
+		t.Errorf("first row = %v, want [%s Store]", rs.Rows[0], objID("TMSCHEMA_TABLES", 0))
 	}
 	parses(t, rs.ExecuteResponse())
 }

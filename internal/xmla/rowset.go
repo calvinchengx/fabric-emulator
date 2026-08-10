@@ -49,6 +49,14 @@ type Rowset struct {
 	Columns []string
 	Types   []string
 	Rows    [][]string
+	// RawCells emits cell values WITHOUT XML escaping, for the one payload that
+	// is itself a document: DISCOVER_XML_METADATA carries an ASSL <Server> or
+	// <Database> inside its METADATA column, and the client deserialises that
+	// content as XML. Escaped, it arrives as text and the client reports
+	// `Unexpected root '' (namespace '')` — a message about the ROOT for a
+	// defect in ESCAPING. Off by default: every other rowset carries data, not
+	// markup, and must stay escaped.
+	RawCells bool
 }
 
 // xsdType is the declared type for column i: explicit if given, else string.
@@ -124,7 +132,11 @@ func (r Rowset) rootElement() []byte {
 				break
 			}
 			n := EncodeName(c)
-			b.WriteString(`<` + n + `>` + escape(row[i]) + `</` + n + `>`)
+			cell := escape(row[i])
+			if r.RawCells {
+				cell = row[i]
+			}
+			b.WriteString(`<` + n + `>` + cell + `</` + n + `>`)
 		}
 		b.WriteString(`</row>`)
 	}
