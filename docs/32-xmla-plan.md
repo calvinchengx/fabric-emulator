@@ -114,8 +114,76 @@ sessions had previously reached OPPOSITE conclusions, both from Microsoft Learn.
 |---|---|---|
 | `evaluate_dax` | **XMLA, always** — no `use_xmla` parameter exists; the body calls `get_dataset_client(mode=ConnectionMode.XMLA)` unconditionally | **the gap** |
 | `evaluate_measure`, `read_table` | REST `executeQueries` (`use_xmla: bool = False`) | already 🟢 |
-| `list_measures`, `list_tables`, `list_partitions`, `list_columns`, `list_relationships` | XMLA, via `$SYSTEM.TMSCHEMA_*` DMVs | **the gap** |
+| `list_measures`, `list_tables` | XMLA, via **TOM** (`Microsoft.AnalysisServices.Tabular`) — NOT TMSCHEMA | **the gap** |
+| `list_partitions`, `list_columns`, `list_relationships`, `list_hierarchies` | XMLA; `$SYSTEM.TMSCHEMA_*` appears in their modules | **the gap**, but see the wire evidence below |
 | `INFO.*` | never called | no sempy case |
+
+### What REAL sempy puts on the wire (measured 2026-08-10)
+
+Everything above is read from sempy's source. This section is different: a
+driver runs **real sempy 0.14.2 in a container** against a capture listener, so
+these are bytes, not readings. 36 requests captured, 21 of them XMLA.
+
+| count | call |
+|---|---|
+| 14x | `Execute` — session handshake (`BeginSession`, empty `<Statement/>`) |
+| 6x | `Discover` — **`RequestType=DISCOVER_XML_METADATA`**, `Restrictions: ObjectExpansion=ExpandObject` |
+| 1x | `Execute` — `<Statement>EVALUATE {1}</Statement>` (`evaluate_dax`) |
+
+**`TMSCHEMA` and `MDSCHEMA` appear ZERO times**, before or after a successful
+`Discover`. So the metadata surface sempy exercises is ONE
+`DISCOVER_XML_METADATA` response, not five rowsets.
+
+**Bounded, deliberately:** the `list_*` calls in that run ended at
+`ResponseFormatException` on a stubbed session, so this measures the FIRST XMLA
+call each function makes. Whether TMSCHEMA queries follow a fully answered
+`Discover` is still unmeasured, and the modules named in the table above do
+contain those strings. Do not scope the metadata half off this section alone.
+
+`ObjectExpansion=ExpandObject` is **not** full expansion. Per `bi-shared-docs`
+`assl-objects-and-object-characteristics.md`: `ExpandObject` returns the object
+with its MINOR contained objects expanded, and contained MAJOR objects as
+name/ID/timestamp stubs. Full expansion is `ExpandFull`. So the reply is a
+projection at a named level, not the whole model.
+
+### Gates a real client demands, each named by the client itself
+
+Every one cost a run to find and none is guessable. In order:
+
+1. **JWT signature segment must be valid base64url.** A raw marker string
+   (`len % 4 == 1`) cannot decode at any padding; PyJWT raises
+   `DecodeError: Invalid crypto padding`, sempy catches it into `exp = 0`, and
+   it surfaces as **"The token has expired"** for a token that never expired.
+2. **Routing reply is a BARE ARRAY**, not `{"value": [...]}`. An envelope fails
+   as `ConnectionException: The specified Power BI workspace (...) is not found`.
+3. **`capacitySku` is the enum value `Premium`**, not an SKU name. `"P1"` gives
+   `ArgumentException: Requested value 'P1' was not found`.
+4. **`capacityUri` needs >= 1 path segment.** A bare origin gives
+   `IndexOutOfRangeException`.
+5. **`POST /powerbi/databases/v201606/workspaces/{ws}/getDatabaseName`** with
+   `{"datasetName": "...", "workspaceType": 1}`. **Discovered only by driving a
+   real client** — a hand-written probe connects with a database name it already
+   knows, so this call is invisible to it.
+6. **The client dials `:443`** regardless of the port in the Data Source; the
+   endpoint address is derived.
+7. **Trailing `0x00`** after the SOAP body (`0` complete, `1` LRO continuation).
+8. **`Discover` needs the inline XSD** — the schema is read before the rows.
+9. **`DISCOVER_XML_METADATA`'s payload is ASSL**, embedded as XML rather than
+   escaped, and its ROOT depends on the restriction list:
+   `<DatabaseID>` absent -> `<Server>`; present -> `<Database>`. The wrong one
+   gives `XmlSerializationException: Unexpected root 'Server' ... when trying to
+   read 'Microsoft.AnalysisServices.Tabular.Database'`.
+
+With 1-9 answered by a stub, `list_workspaces` and `list_datasets` both return
+DataFrames from real sempy.
+
+**Still open:** the ASSL `<Database>` shape itself. `CompatibilityLevel` is
+rejected both unqualified and in `ddl200_200`, so this is element ordering or an
+attribute, and `XmlSerializer` is sequence-sensitive. **Read it off
+`Microsoft.AnalysisServices.Tabular.dll`, which sempy ships** — reflection over
+declared serialisation attributes, technique 2 of the boundary above. Three
+guesses at the shape produced three different rejections; the assembly declares
+it.
 
     sempy/fabric/_flat.py:947      def evaluate_measure(          <- 954's owner
     sempy/fabric/_flat.py:954          use_xmla: bool = False
