@@ -233,6 +233,93 @@ func (s *Store) SetEntityStatus(guid, status string) error {
 
 // ListEntitiesByGUIDs returns the entities for the given GUIDs, skipping any
 // that do not exist — the bulk read is a lookup, not an assertion.
+// ListEntitiesBySuperType returns every ACTIVE entity whose type is `name` or
+// descends from it, resolved through the supertype chain.
+//
+// Lineage needs this because it is DERIVED rather than stored: Atlas computes
+// it by walking `Process` entities' inputs/outputs, and a real model subclasses
+// Process (`CopyJob`, `Notebook`, …) rather than instantiating it directly. A
+// query for type_name = 'Process' would therefore find the base type only, and
+// return empty lineage for every model anyone actually builds — a wrong answer
+// that looks like "no lineage yet" rather than like a bug.
+//
+// DELETED entities are excluded: Atlas soft-deletes, and a deleted process no
+// longer connects the assets it used to join.
+func (s *Store) ListEntitiesBySuperType(name string) ([]*AtlasEntityRow, error) {
+	names, err := s.typeAndDescendants(name)
+	if err != nil {
+		return nil, err
+	}
+	out := []*AtlasEntityRow{}
+	for _, tn := range names {
+		rows, err := s.db.Query(`
+SELECT guid, type_name, qualified_name, status, body, created_at, updated_at
+FROM purview_entities WHERE type_name = ? AND status != 'DELETED'`, tn)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			e := &AtlasEntityRow{}
+			var body string
+			if err := rows.Scan(&e.GUID, &e.TypeName, &e.QualifiedName, &e.Status,
+				&body, &e.CreateAt, &e.UpdateAt); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			e.Body = json.RawMessage(body)
+			out = append(out, e)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// typeAndDescendants is `name` plus every entity type reaching it through
+// superTypes. Bounded by the number of registered types, and visited-guarded,
+// so a cyclic registration cannot spin here even though the registration path
+// should refuse one.
+func (s *Store) typeAndDescendants(name string) ([]string, error) {
+	defs, err := s.ListTypeDefs("ENTITY")
+	if err != nil {
+		return nil, err
+	}
+	parents := map[string][]string{}
+	for _, d := range defs {
+		var body struct {
+			SuperTypes []string `json:"superTypes"`
+		}
+		_ = json.Unmarshal(d.Body, &body)
+		parents[d.Name] = body.SuperTypes
+	}
+	var descends func(string, map[string]bool) bool
+	descends = func(t string, seen map[string]bool) bool {
+		if t == name {
+			return true
+		}
+		if seen[t] {
+			return false
+		}
+		seen[t] = true
+		for _, p := range parents[t] {
+			if descends(p, seen) {
+				return true
+			}
+		}
+		return false
+	}
+	out := []string{}
+	for _, d := range defs {
+		if descends(d.Name, map[string]bool{}) {
+			out = append(out, d.Name)
+		}
+	}
+	return out, nil
+}
+
 func (s *Store) ListEntitiesByGUIDs(guids []string) ([]*AtlasEntityRow, error) {
 	out := make([]*AtlasEntityRow, 0, len(guids))
 	for _, g := range guids {

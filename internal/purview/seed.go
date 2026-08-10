@@ -76,6 +76,22 @@ var baseTypes = []struct {
 		"typeVersion": "1.0",
 		"serviceType": "atlas_core",
 		"superTypes":  []string{"Asset"},
+		// inputs/outputs are not decoration: Atlas lineage is DERIVED by walking
+		// them, so without these two attributes there is nothing for
+		// /lineage/{guid} to compute from and every asset would report itself
+		// as isolated. Real Atlas declares both as array<DataSet>.
+		"attributeDefs": []map[string]any{
+			{
+				"name": "inputs", "typeName": "array<DataSet>",
+				"isOptional": true, "cardinality": "SET",
+				"isUnique": false, "isIndexable": false,
+			},
+			{
+				"name": "outputs", "typeName": "array<DataSet>",
+				"isOptional": true, "cardinality": "SET",
+				"isUnique": false, "isIndexable": false,
+			},
+		},
 	}},
 }
 
