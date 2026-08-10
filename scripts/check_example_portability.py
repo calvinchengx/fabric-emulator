@@ -106,7 +106,15 @@ def python_files(root):
 
 
 def rel(p):
-    return str(p.relative_to(ROOT))
+    """Repo-relative path with FORWARD SLASHES on every OS.
+
+    `str(Path)` gives `examples\\contoso-fixtures\\common.py` on Windows, which
+    never equals RESOLVER — so the resolver lost its own exemption and the gate
+    reported the resolver's legitimate localhost default, TLS bypass and clock
+    docstring as four violations. Green on macOS and Linux, red on Windows only,
+    and the failure blamed the one file allowed to hold those things.
+    """
+    return p.relative_to(ROOT).as_posix()
 
 
 def check_no_pinned_target(problems):

@@ -33,9 +33,104 @@ def _tree(tmp_path, files, resolver="from fabric_target import target\n"):
     problems = []
     cep.check_no_pinned_target(problems)
     cep.check_no_emulator_only_leaks(problems)
+    cep.check_definition_folders(problems)
     cep.check_resolver_uses_the_contract(problems)
     cep.check_definition_parts(problems)
     return problems
+
+
+def _definitions(tmp_path, folders):
+    """Build examples/demo/definitions/<folder>/<file> from {folder: {name: body}}."""
+    (tmp_path / "examples" / "contoso-fixtures").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "examples" / "contoso-fixtures" / "common.py").write_text(
+        "from fabric_target import target\n")
+    for folder, files in folders.items():
+        d = tmp_path / "examples" / "demo" / "definitions" / folder
+        d.mkdir(parents=True, exist_ok=True)
+        for name, body in files.items():
+            (d / name).write_text(body)
+    cep.ROOT = tmp_path
+    cep.EXAMPLES = tmp_path / "examples"
+    problems = []
+    cep.check_definition_folders(problems)
+    return problems
+
+
+# --- the definitions/ layout rule ------------------------------------------
+# These four had NO test, which is the state this file's docstring calls a longer
+# sentence rather than a gate: every one of them is a shape real Fabric's Git
+# integration would not produce and the emulator would accept anyway.
+
+def test_a_definition_folder_must_carry_platform(tmp_path):
+    """`.platform` holds the logicalId that survives renames. A folder without
+    one deploys fine against the emulator, which stores whatever parts it is
+    given, and is not what Git integration writes."""
+    problems = _definitions(tmp_path, {"bronze.Notebook": {"notebook-content.py": "x = 1\n"}})
+    assert any(".platform" in p for p in problems), problems
+
+
+def test_a_definition_folder_must_be_named_name_dot_type(tmp_path):
+    problems = _definitions(tmp_path, {"bronze_notebook": {".platform": "{}"}})
+    assert any("<display name>.<Type>" in p for p in problems), problems
+
+
+def test_a_platform_with_no_definition_file_is_caught(tmp_path):
+    """An item folder that is only metadata deploys an item with no content."""
+    problems = _definitions(tmp_path, {"bronze.Notebook": {".platform": "{}"}})
+    assert any("no definition file" in p for p in problems), problems
+
+
+def test_an_empty_definitions_directory_is_caught(tmp_path):
+    """An examples/*/definitions that holds nothing reads as "this example has
+    on-disk definitions" to anyone skimming, and deploys nothing."""
+    (tmp_path / "examples" / "demo" / "definitions").mkdir(parents=True)
+    (tmp_path / "examples" / "contoso-fixtures").mkdir(parents=True)
+    (tmp_path / "examples" / "contoso-fixtures" / "common.py").write_text(
+        "from fabric_target import target\n")
+    cep.ROOT, cep.EXAMPLES = tmp_path, tmp_path / "examples"
+    problems = []
+    cep.check_definition_folders(problems)
+    assert any("no item folders" in p for p in problems), problems
+
+
+def test_the_real_source_format_layout_is_accepted(tmp_path):
+    problems = _definitions(tmp_path, {
+        "bronze-orders.Notebook": {".platform": "{}", "notebook-content.py": "x = 1\n"},
+        "bronze-ingest.DataPipeline": {".platform": "{}", "pipeline-content.json": "{}"},
+    })
+    assert problems == [], problems
+
+
+# --- the exit status, which is what CI actually reads -----------------------
+
+def test_main_exits_zero_on_a_clean_tree(tmp_path, capsys):
+    _definitions(tmp_path, {
+        "bronze.Notebook": {".platform": "{}", "notebook-content.py": "x = 1\n"}})
+    (tmp_path / "examples" / "demo" / "README.md").write_text("# demo\n")
+    assert cep.main() == 0
+    assert "every example resolves its target" in capsys.readouterr().out
+
+
+def test_main_exits_nonzero_and_names_every_violation(tmp_path, capsys):
+    """A gate that finds problems and exits 0 is worse than no gate: CI goes
+    green and the output looks like a report."""
+    _tree(tmp_path, {"demo/step.py": 'SECRET = "daemon-app-secret"\n'})
+    assert cep.main() == 1
+    out = capsys.readouterr().out
+    assert "would not survive FABRIC_TARGET=real" in out
+    assert "seeded credential" in out
+
+
+def test_paths_are_compared_with_forward_slashes(tmp_path):
+    """The resolver's exemption is a STRING comparison against
+    "examples/contoso-fixtures/common.py". `str(Path)` yields backslashes on
+    Windows, so the exemption silently stopped matching there and the gate
+    reported the resolver's own legitimate localhost default, TLS bypass and
+    clock docstring as violations — green on Linux and macOS, red on Windows,
+    blaming the one file allowed to hold them. This fails on the platform where
+    that bug exists, which is the only place it can be observed."""
+    cep.ROOT = tmp_path
+    assert cep.rel(tmp_path / "examples" / "contoso-fixtures" / "common.py") == cep.RESOLVER
 
 
 def test_a_step_hardcoding_the_seeded_secret_is_caught(tmp_path):
