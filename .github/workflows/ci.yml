@@ -848,6 +848,31 @@ jobs:
       # blobs, and the DFS surface sees the same file — the ADLS SDK oracle.
       - run: uv run --frozen --group adls-sdk python e2e/adls-sdk/run.py
 
+  purview-datamap:
+    name: pyapacheatlas witnesses the Purview Data Map
+    # Single OS deliberately. This asserts a WIRE CONTRACT against a pure-python
+    # client, so a three-OS matrix would re-run the same HTTP conversation for
+    # no additional evidence — unlike the SDK suites, where platform-specific
+    # native code is part of what is under test.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      # `pyapacheatlas` is an off-the-shelf Apache Atlas v2 client, and the
+      # Purview Data Map IS Atlas v2 — so this is a third-party witness rather
+      # than a client shaped like our implementation, which is what
+      # docs/parity.md requires before a row may be graded green.
+      - run: uv run --frozen --group purview-datamap python e2e/purview-datamap/run.py
+
   azcopy:
     name: Real azcopy transfers through OneLake
     runs-on: ubuntu-latest

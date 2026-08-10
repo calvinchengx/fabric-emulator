@@ -35,6 +35,12 @@ adls-sdk = [
     "azure-storage-blob>=12.24,<13",
     "pyarrow>=18,<24",
 ]
+# The third-party witness for the Purview Data Map row. pyapacheatlas speaks
+# Apache Atlas v2, which is what the Data Map IS — so this is a real client
+# rather than a client shaped like our implementation.
+purview-datamap = [
+    "pyapacheatlas>=0.16,<1",
+]
 delta-rs = [
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",
