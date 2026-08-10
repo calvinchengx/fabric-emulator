@@ -253,7 +253,15 @@ _DEFAULT = {"xsd:dateTime": "2026-08-10T00:00:00", "xsd:boolean": "false",
 
 
 def _xsd_type(col):
-    if col == "ID" or col.endswith("ID") or col == "Version":
+    if col == "Version":
+        # `xsd:long`, NOT unsignedLong. `DdlUtil.GetVersionFromDataTable` does
+        # `Utils.Verify(obj is long)` on row 0 — an ASSERTION, so an
+        # unsignedLong parses fine, fails the type test, and surfaces as
+        # `TomInternalException: An internal error has occured` with no field
+        # named. The only error in this investigation that did not name itself,
+        # and it was one xsd type.
+        return "xsd:long"
+    if col == "ID" or col.endswith("ID"):
         return "xsd:unsignedLong"
     return _XSD[_CLR.get(col, "String")]
 
