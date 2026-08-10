@@ -1,8 +1,11 @@
 package api
 
 import (
+	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
 // These pin the SHAPES a real client refuses, each measured in e2e/sempy. Every
@@ -44,13 +47,34 @@ func TestClusterResolveReturnsABareFqdnUnderTheReadContract(t *testing.T) {
 	}
 }
 
-func TestGetDatabaseNameEchoesTheDatasetTheClientAskedFor(t *testing.T) {
-	// Only a REAL client issues this: a probe connects with a name it knows.
-	a, _ := newAPI(t)
+func TestGetDatabaseNameResolvesRatherThanEchoes(t *testing.T) {
+	// RESOLVE, never echo. Returning the caller's own string reflects
+	// user-controlled input into the response (CodeQL `go/reflected-xss`) AND
+	// answers the wrong question: this endpoint MAPS a dataset name onto the
+	// database backing it, so parroting would "succeed" for a dataset that does
+	// not exist and the client would open a connection to nothing.
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	it := &store.Item{WorkspaceID: ws.ID, Type: "SemanticModel", DisplayName: "RetailAnalysis"}
+	if err := st.CreateItem(it, nil); err != nil {
+		t.Fatal(err)
+	}
+
 	w := do(a.xmlaDatabaseName, admin, "POST",
-		`{"datasetName":"sales","workspaceType":1}`, nil)
-	if !strings.Contains(w.Body.String(), `"databaseName":"sales"`) {
-		t.Fatalf("got %s", w.Body.String())
+		`{"datasetName":"RetailAnalysis","workspaceType":1}`, nil)
+	if !strings.Contains(w.Body.String(), `"databaseName":"RetailAnalysis"`) {
+		t.Fatalf("a known dataset must resolve: %s", w.Body.String())
+	}
+
+	// The reflection case: an unknown name must NOT come back in the response.
+	probe := "<script>alert(1)</script>"
+	w = do(a.xmlaDatabaseName, admin, "POST",
+		`{"datasetName":"`+probe+`","workspaceType":1}`, nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown dataset = %d, want 404", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "script") {
+		t.Fatalf("the response reflected caller-supplied input: %s", w.Body.String())
 	}
 }
 

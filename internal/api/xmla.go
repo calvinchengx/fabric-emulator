@@ -232,9 +232,28 @@ func (a *API) xmlaDatabaseName(w http.ResponseWriter, r *http.Request, p *auth.P
 		return
 	}
 	_ = json.Unmarshal(raw, &req)
-	name := req.DatasetName
+	// RESOLVE, never echo. Returning the caller's own string reflects
+	// user-controlled input into the response — CodeQL flags it as
+	// `go/reflected-xss`, and it is also simply the wrong answer: this endpoint
+	// exists to MAP a dataset name onto the database that backs it, so parroting
+	// the request would "succeed" for a dataset that does not exist and the
+	// client would then open a connection to nothing.
+	name := ""
+	for _, ws := range a.xmlaVisibleWorkspaces(p) {
+		items, err := a.Store.ListItems(ws.ID, "SemanticModel")
+		if err != nil {
+			continue
+		}
+		for _, it := range items {
+			if strings.EqualFold(it.DisplayName, req.DatasetName) {
+				name = it.DisplayName // the STORED name, not the supplied one
+			}
+		}
+	}
 	if name == "" {
-		name = "model"
+		writeErr(w, http.StatusNotFound, "DatasetNotFound",
+			"No semantic model with that name is visible to this principal.")
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"databaseName": name})
 }
@@ -505,6 +524,16 @@ func (a *API) xmlaDatabaseIdentity(r *http.Request, p *auth.Principal) (name, id
 		return it.DisplayName, id
 	}
 	return id, id
+}
+
+// xmlaVisibleWorkspaces wraps the shared helper with a nil-principal guard: the
+// unauthenticated clusterResolve path has no principal, and a nil deref there
+// would be a crash on the one route that is deliberately open.
+func (a *API) xmlaVisibleWorkspaces(p *auth.Principal) []*store.Workspace {
+	if p == nil {
+		return nil
+	}
+	return a.visibleWorkspaces(p)
 }
 
 // xmlaItem is the SemanticModel item this connection is bound to.
