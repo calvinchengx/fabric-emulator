@@ -520,14 +520,15 @@
       "go:TestExecuteQueriesDirectLakeReadsCurrentDelta"
     ]
   },
-  "power-bi-sempy-over-xmla": {
+  "power-bi-sempy-semantic-link-labs-over-xmla": {
     "section": "Item types present, engine absent",
-    "claim": "Power BI — **SemPy over XMLA**",
+    "claim": "Power BI — **SemPy / semantic-link-labs over XMLA**",
     "witnesses": [
       "ci:sempy",
       "go:TestTheHandshakeCarriesTheCapsHeaderSessionAndTrailingByte",
       "go:TestEveryDiscoverRowsetCarriesAVersionColumnTypedLong",
-      "go:TestEveryRowsetIsNamedOnTheRootElement"
+      "go:TestEveryRowsetIsNamedOnTheRootElement",
+      "go:TestFromDAXDeclaresColumnTypes"
     ]
   },
   "queryactivityruns-detail": {

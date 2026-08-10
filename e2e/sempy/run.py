@@ -20,6 +20,13 @@ What it establishes, none of it inferred:
   4. The TOM metadata path works: one Execute carrying a <Batch> of ~35
      <Discover RequestType=TMSCHEMA_*>, answered from the published model.
   5. The DataFrames carry the SEEDED MODEL'S content — not merely a frame.
+  6. `semantic-link-labs` reads the SAME model through the Tabular Object Model,
+     a different reader on the same surface rather than a rerun of sempy's. It
+     needs this repo's `notebookutils` shim, mounted from python/ so it cannot
+     drift from what the repo ships; without it labs fails in
+     `resolve_workspace_name` before XMLA is reached.
+  7. DAX result columns are TYPED, so the DataFrame's dtypes are numeric rather
+     than string. dtypes come from the inline schema, never from the cell text.
 
 The credential is minted by entra-emulator, because the emulator validates the
 issuer: a self-signed token would prove only that our own stub accepted our own
@@ -291,11 +298,31 @@ try:
     proc = subprocess.run([
         "docker", "run", "--rm", "--platform", "linux/amd64",
         "--add-host", f"{CLIENT_HOST}:host-gateway",
+        # entra is not behind the 443 forwarder, so the shim reaches it by the
+        # gateway name and its own port.
+        "--add-host", "host.docker.internal:host-gateway",
         "-v", f"{os.path.join(DIR, 'driver.py')}:/driver.py:ro",
         "-v", f"{cert}:/usr/local/share/ca-certificates/fabric-emulator.crt:ro",
+        # `notebookutils` is MOUNTED from python/, not baked into the image, so
+        # the witness always drives the shim this repo ships rather than a copy
+        # that can drift from it. semantic-link-labs imports it for every REST
+        # call it makes (`_helper_functions._base_api`), and without it labs
+        # fails at `resolve_workspace_name` before XMLA is ever reached.
+        "-v", f"{os.path.join(REPO, 'python', 'notebookutils')}:/shim/notebookutils:ro",
         "-e", f"SEMPY_HOST=https://{CLIENT_HOST}/",
         "-e", f"SEMPY_WORKSPACE={ws}", "-e", "SEMPY_DATASET=RetailAnalysis",
         "-e", f"SEMPY_TOKEN={pbi}",
+        "-e", "PYTHONPATH=/shim",
+        "-e", "FABRIC_TARGET=emulator",
+        "-e", f"NOTEBOOKUTILS_FABRIC_URL=https://{CLIENT_HOST}",
+        "-e", f"NOTEBOOKUTILS_ENTRA_URL=https://host.docker.internal:{ENTRA_PORT}",
+        "-e", f"NOTEBOOKUTILS_TENANT={TENANT}",
+        "-e", f"NOTEBOOKUTILS_CLIENT_ID={CLIENT_ID}",
+        "-e", f"NOTEBOOKUTILS_CLIENT_SECRET={CLIENT_SECRET}",
+        "-e", f"NOTEBOOKUTILS_WORKSPACE_ID={ws}",
+        # entra's certificate is not the one mounted above, and the shim's own
+        # documented escape hatch for local certs is this flag.
+        "-e", "NOTEBOOKUTILS_INSECURE=1",
         "sempy-e2e:local", "sh", "-c",
         "update-ca-certificates >/dev/null 2>&1; "
         "REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt "
@@ -323,6 +350,23 @@ for ln in out:
                 rows[name] = int(p[5:])
 rowtext = "\n".join(ln for ln in out if ln.startswith("ROW "))
 
+labs = {}
+for ln in out:
+    if ln.startswith("LABSRESULT "):
+        parts = ln.split(" :: ")
+        labs[parts[0].split(" ", 1)[1]] = " :: ".join(parts[1:])
+dtypes = next((ln.split(" :: ", 1)[1] for ln in out if ln.startswith("DTYPES ")), "")
+
+
+def labs_counts_nonzero(key):
+    """OK plus a non-empty model. A TOM Database that materialises with every
+    collection empty raises nothing and reads as a model with nothing in it,
+    which is the failure this suite exists to catch."""
+    v = labs.get(key, "")
+    if not v.startswith("OK"):
+        return False
+    return all(f"'{k}': 0" not in v for k in ("tables", "measures", "columns"))
+
 CHECKS = [
     ("the entra-minted token is what sempy resolves",
      any(ln.startswith("AUTH mine=True") for ln in out)),
@@ -341,6 +385,23 @@ CHECKS = [
      rows.get("list_measures", 0) > 0),
     ("list_columns carries the seeded model's columns",
      rows.get("list_columns", 0) > 0),
+    # A DIFFERENT READER on the same surface. labs goes through the Tabular
+    # Object Model, so it exercises the <Discover> batch and the object graph
+    # TOM builds from it, where sempy's list_* project DMV rowsets.
+    ("semantic-link-labs materialises the model through TOM",
+     labs_counts_nonzero("labs_tom_connect")),
+    ("labs reads the SEEDED model's table names, not an empty Database",
+     all(t in labs.get("labs_tom_table_names", "") for t in
+         ("Sales", "Store", "Time"))),
+    # dtypes come from the rowset's inline schema. All-string here means a
+    # caller doing arithmetic on a measure gets string concatenation.
+    # Every column of `Sales` is int64 in the seeded model, so a correct schema
+    # leaves NO column as string. Asserting "int64 appears" would pass on a
+    # frame that was mostly still string.
+    # Compared case-insensitively: pandas reports its nullable integer dtype as
+    # `Int64`, and matching the lowercase spelling failed a passing surface.
+    ("evaluate_dax columns carry their declared types, not string",
+     "int64" in dtypes.lower() and "=string" not in dtypes),
 ]
 
 print("\n---- witness ----", flush=True)
@@ -350,4 +411,4 @@ for n, ok in CHECKS:
 if failed:
     dump_logs()
     raise SystemExit(f"FAILED: {len(failed)} check(s):\n  " + "\n  ".join(failed))
-print("\nPASSED: Microsoft's SemPy drives the emulator's XMLA surface.")
+print("\nPASSED: SemPy and semantic-link-labs drive the emulator's XMLA surface.")

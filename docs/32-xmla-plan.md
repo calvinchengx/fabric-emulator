@@ -270,29 +270,50 @@ Documentation about a transport is not a transport.
 
 ## What is NOT settled
 
-Not reachability any more, and not the wire shape: a real client completes
-connect, query and metadata against a stub. What is unmeasured is everything
-between a SHAPE and an IMPLEMENTATION:
+Reachability and the wire shape were settled first, then the implementation.
+This section is rewritten rather than annotated, because a plan doc that still
+lists finished work as open misprices the next increment.
 
-- **Rows that mean something.** The harness returns one hardcoded row. Serving
-  `$SYSTEM.TMSCHEMA_*` from `internal/semanticmodel` is the actual work, and
-  none of it is done.
-- **The TOM surface.** `semantic-link-labs` reads tables and measures through
-  the Tabular Object Model (`connect_semantic_model()`, `tom.model.Tables`), not
-  through plain `Discover`. TOM is a metadata/TMSL surface on top of XMLA and was
-  NOT in the original sizing — it is an increase, found by measurement.
+**Settled since, each by a client rather than by reading:**
+
+- **Rows that mean something.** `$SYSTEM.TMSCHEMA_*` and the `Discover` batch
+  are served from `internal/semanticmodel`. Real sempy reads 3 tables, 6
+  measures, 12 columns and 3 partitions off the seeded model in CI.
+- **The TOM surface.** TOM materialises a Database from the ~35 element
+  `<Discover>` batch. `semantic-link-labs` 0.17.0 reads that same model through
+  `connect_semantic_model(readonly=True)` and gets the same counts, which is a
+  second reader on the surface rather than a second run of the first.
+- **What labs needed was NOT XMLA.** Measured 2026-08-10: labs failed at
+  `resolve_workspace_name` with `ModuleNotFoundError: No module named
+  notebookutils`, before reaching XMLA at all. It calls
+  `notebookutils.credentials.getToken("pbi")` for every REST call it makes
+  (`_helper_functions._base_api`). Wiring this repo's own shim from `python/`
+  into the harness was the whole fix. The risk note below predicted "XMLA alone
+  does not deliver labs, it also wants the Power BI REST surface"; measurement
+  narrowed that to the notebook runtime shim specifically.
+- **Type fidelity for DAX results.** Columns were all declared `xsd:string`,
+  and dtypes come from the inline schema rather than the cell text, so sempy
+  handed back string columns for a model declaring int64 and arithmetic on a
+  measure concatenated. `FromDAX` now declares a type per column, inferred from
+  the values because this evaluator has no DAX type system. Asserted end to end
+  by the dtypes check in `e2e/sempy`.
+
+**Still open, and deliberately not claimed:**
+
+- **TMSL writes.** `<Alter>` / `<Create>` / `<Refresh>`, which is what
+  `connect_semantic_model(readonly=False)` and Direct Lake migration need. The
+  read path does not foreclose it and does not deliver it.
+- **MDX.** No client in this repo has issued any.
 - **The LRO continuation protocol.** The trailing byte can be `1`, meaning
-  reconnect and resume. Long-running queries need it; nothing here implements it.
-- **Type fidelity.** Every column the harness emits is `xsd:string`. Real DAX
-  results carry numerics, dates and nulls, and the client's type mapping is
-  unexercised.
+  reconnect and resume. Long-running queries need it; nothing here implements
+  it.
 - **Errors.** Only success paths have been driven. What a client does with a
-  SOAP fault mid-rowset is unknown.
+  SOAP fault mid-rowset is still unknown.
 
-**Connect and the wire shape are measured. The implementation is not.** The `L`
-in `docs/24` stands. It has been *redistributed* rather than reduced: the
-transport turned out cheap and undocumented, the DMV/TOM surface turned out to
-be the cost, and DAX evaluation turned out to be already served over REST.
+**The `L` in `docs/24` has been re-priced to `S`**, with the reasoning kept
+there rather than the number quietly swapped. It was right about the shape and
+wrong about the multiplier: the DMV/TOM surface was indeed the cost, but each
+gate cost one measured thing rather than a design.
 
 ## Method, and its boundary
 

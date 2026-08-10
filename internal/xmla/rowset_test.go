@@ -221,3 +221,87 @@ func TestEncodeNameAstral(t *testing.T) {
 	rs := Rowset{Columns: []string{"a\U0001F600b"}, Rows: [][]string{{"v"}}}
 	parses(t, rs.ExecuteResponse())
 }
+
+// A DAX result declares its columns' types, because a client reads dtypes from
+// the inline schema and never from the cell text.
+//
+// MEASURED: before this, sempy handed back every column as `string` for a table
+// whose model declares int64, so arithmetic on a measure concatenated.
+func TestFromDAXDeclaresColumnTypes(t *testing.T) {
+	res := &semanticmodel.Result{
+		Columns: []string{"n", "big", "frac", "name", "flag", "empty", "mixed"},
+		Rows: []map[string]any{
+			{"n": 1.0, "big": 2.0, "frac": 2.5, "name": "a", "flag": true,
+				"empty": nil, "mixed": 1.0},
+			{"n": 3.0, "big": 4.5, "frac": 0.5, "name": "b", "flag": false,
+				"empty": nil, "mixed": "two"},
+		},
+	}
+	rs := FromDAX(res)
+	want := map[string]string{
+		"n":     "xsd:long",   // every value integral
+		"big":   "xsd:double", // one non-integral widens rather than untypes
+		"frac":  "xsd:double", // never integral
+		"name":  "xsd:string",
+		"flag":  "xsd:boolean",
+		"empty": "xsd:string", // all null: nothing to infer from
+		"mixed": "xsd:string", // genuinely mixed kinds
+	}
+	for i, c := range rs.Columns {
+		if got := rs.xsdType(i); got != want[c] {
+			t.Errorf("column %q typed %q, want %q", c, got, want[c])
+		}
+	}
+	// The declared type must reach the wire, not just the struct.
+	payload := string(rs.ExecuteResponse())
+	if !strings.Contains(payload, `type="xsd:long"`) ||
+		!strings.Contains(payload, `type="xsd:boolean"`) {
+		t.Error("declared types did not reach the inline schema")
+	}
+}
+
+// The declared type has to agree with the bytes: `cell` renders 2.0 as "2", so
+// an all-integral column declared double would be a schema the values fail.
+func TestFromDAXTypesAgreeWithTheRenderedCells(t *testing.T) {
+	res := &semanticmodel.Result{
+		Columns: []string{"v"},
+		Rows:    []map[string]any{{"v": 2.0}, {"v": 3.0}},
+	}
+	rs := FromDAX(res)
+	if rs.xsdType(0) != "xsd:long" {
+		t.Fatalf("declared %q for integral values", rs.xsdType(0))
+	}
+	for _, row := range rs.Rows {
+		if strings.Contains(row[0], ".") {
+			t.Errorf("cell %q has a fraction under an xsd:long column", row[0])
+		}
+	}
+}
+
+// A value kind the evaluator does not currently produce must still be DECLARED
+// consistently with what `cell` renders for it.
+//
+// The evaluator emits nil/string/bool/float64 today, so this arm is defensive.
+// It is tested rather than left unexercised because the failure it prevents is
+// silent: a column declared numeric whose cells render blank is a schema the
+// values do not satisfy, and the client reports a conversion error far from
+// the cause.
+func TestFromDAXTypesAnUnknownValueKindAsString(t *testing.T) {
+	res := &semanticmodel.Result{
+		Columns: []string{"odd", "absent"},
+		Rows:    []map[string]any{{"odd": []int{1, 2}}},
+	}
+	rs := FromDAX(res)
+	if got := rs.xsdType(0); got != "xsd:string" {
+		t.Errorf("unknown kind declared %q, want xsd:string", got)
+	}
+	// A column named in Columns but missing from every row carries no evidence.
+	if got := rs.xsdType(1); got != "xsd:string" {
+		t.Errorf("absent column declared %q, want xsd:string", got)
+	}
+	if rs.Rows[0][0] != "" {
+		t.Errorf("unknown kind rendered %q; the declared type says string and "+
+			"the renderer must not disagree", rs.Rows[0][0])
+	}
+	parses(t, rs.ExecuteResponse())
+}

@@ -1,4 +1,4 @@
-name: SemPy client compatibility
+name: SemPy and semantic-link-labs client compatibility
 
 # Weekly, like e2e/xmla and for the same reason: the thing under test is a
 # THIRD-PARTY client's wire contract, which changes when Microsoft ships a new
@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   sempy:
-    name: SemPy's wire contract on Linux
+    name: SemPy and semantic-link-labs on Linux
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:

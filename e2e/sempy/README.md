@@ -1,4 +1,4 @@
-# e2e/sempy — Microsoft's SemPy, driven against a listener we control
+# e2e/sempy — Microsoft's SemPy and semantic-link-labs, against the emulator
 
 `e2e/xmla` drives a hand-written ADOMD.NET program. This drives **`sempy`**, the
 library Fabric notebooks and `semantic-link-labs` actually use.
@@ -31,8 +31,20 @@ sources; every correction came from running a client.
 `Microsoft.Fabric.SemanticLink.XmlaTools` will not load, so the driver runs in a
 `linux/amd64` container. The first run builds the image; later runs reuse it.
 
+## Two clients, deliberately
+
+`sempy` projects DMV rowsets; `semantic-link-labs` goes through the Tabular
+Object Model. They read the same model by different mechanisms, so labs passing
+is not a second run of the sempy result.
+
+labs additionally needs this repo's `notebookutils` shim, mounted from
+`python/` rather than baked into the image so it cannot drift from what the repo
+ships. That requirement was measured, not assumed: without it labs raises
+`ModuleNotFoundError: No module named 'notebookutils'` inside
+`resolve_workspace_name`, before any XMLA call is made.
+
 ## What it does NOT establish
 
-What the `TMSCHEMA_*` rowsets must CONTAIN. The stub answers the `Discover` and
-stops at the first DMV query — that is the `internal/semanticmodel` half, and
-another session's claim.
+The write path. TMSL `<Alter>`/`<Create>`, MDX and the LRO continuation byte are
+not implemented, so `connect_semantic_model(readonly=False)` is out of scope
+here and the row in `docs/parity.md` says so.

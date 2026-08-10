@@ -99,7 +99,7 @@ CASES = [
     ("list_partitions",    lambda: fx.list_partitions(DATASET, workspace=WS)),
 ]
 
-for name, fn in CASES:
+def run(name, fn):
     try:
         r = fn()
         # CONTENT, not just a type. A DataFrame with zero rows reads as success
@@ -120,5 +120,71 @@ for name, fn in CASES:
         print(f"###RESULT {name} :: {type(e).__name__} :: {first}", flush=True)
         tb = traceback.extract_tb(e.__traceback__)
         for fr in tb[-2:]:
+            print(f"###FRAME {name} :: {os.path.basename(fr.filename)}:{fr.lineno} "
+                  f"{fr.name}", flush=True)
+
+
+for name, fn in CASES:
+    run(name, fn)
+
+# DTYPES. A DataFrame's dtypes come from the rowset's inline SCHEMA, not from
+# the cell text, so this reports whether the emulator declared its columns or
+# let them all default to xsd:string. `object` everywhere means a caller doing
+# arithmetic on a measure gets string concatenation.
+try:
+    df = fx.evaluate_dax(DATASET, "EVALUATE 'Sales'", workspace=WS)
+    print("###DTYPES evaluate_dax :: "
+          + ", ".join(f"{c}={df.dtypes[c]}" for c in df.columns), flush=True)
+except Exception as e:
+    print(f"###DTYPES evaluate_dax :: {type(e).__name__} :: "
+          f"{str(e).splitlines()[0][:120]}", flush=True)
+
+# ---------------------------------------------------------------------------
+# semantic-link-labs. A DIFFERENT READER, which is why it is here and not
+# assumed to work because sempy does: labs goes through the Tabular Object
+# Model (`connect_semantic_model`), so it reads the `<Discover>` batch and
+# builds a Database object graph, where sempy's `list_*` project DMV rowsets.
+# The two exercise different halves of the same surface.
+import sempy_labs                                           # noqa: E402
+from sempy_labs.tom import connect_semantic_model            # noqa: E402
+
+print(f"###LABS version={getattr(sempy_labs, '__version__', 'unknown')}",
+      flush=True)
+
+
+def tom_counts():
+    """Enumerate the model through TOM, not through DMV projections.
+
+    Counts are reported per collection because a Database that materialises
+    with every collection EMPTY is the failure this suite exists to catch: it
+    raises nothing, and reads as a model that happens to have nothing in it.
+    """
+    with connect_semantic_model(dataset=DATASET, workspace=WS,
+                                readonly=True) as tom:
+        return {
+            "tables": sum(1 for _ in tom.model.Tables),
+            "measures": sum(1 for t in tom.model.Tables for _ in t.Measures),
+            "columns": sum(1 for t in tom.model.Tables for _ in t.Columns),
+            "partitions": sum(1 for t in tom.model.Tables for _ in t.Partitions),
+            "relationships": sum(1 for _ in tom.model.Relationships),
+        }
+
+
+def tom_names():
+    with connect_semantic_model(dataset=DATASET, workspace=WS,
+                                readonly=True) as tom:
+        return sorted(t.Name for t in tom.model.Tables)
+
+
+for name, fn in [
+    ("labs_tom_connect", tom_counts),
+    ("labs_tom_table_names", tom_names),
+]:
+    try:
+        print(f"###LABSRESULT {name} :: OK :: {fn()}", flush=True)
+    except Exception as e:
+        first = str(e).splitlines()[0][:200] if str(e).strip() else "(no message)"
+        print(f"###LABSRESULT {name} :: {type(e).__name__} :: {first}", flush=True)
+        for fr in traceback.extract_tb(e.__traceback__)[-4:]:
             print(f"###FRAME {name} :: {os.path.basename(fr.filename)}:{fr.lineno} "
                   f"{fr.name}", flush=True)
