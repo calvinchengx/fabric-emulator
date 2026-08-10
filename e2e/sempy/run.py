@@ -215,8 +215,50 @@ _PARTITION = ["Name", "Description", "State", "Mode", "DataView",
               "RetainDataTillForceCalculate", "Type"]
 
 
+
+# XSD TYPE PER COLUMN, from each TOM property's CLR type. Declaring everything
+# `xsd:string` gets the NAMES accepted and then fails as
+# `InvalidCastException: Unable to cast System.String to System.UInt64` — the
+# rowset's inline schema is a type contract, not just a column list.
+# IDs and foreign keys are UInt64; enums cross the wire as their integer value.
+_CLR = {
+    "ModifiedTime": "DateTime", "StructureModifiedTime": "DateTime",
+    "RefreshedTime": "DateTime",
+    "DefaultMode": "enum", "DefaultDataView": "enum", "State": "enum",
+    "Alignment": "enum", "SummarizeBy": "enum", "Type": "enum",
+    "EncodingHint": "enum", "DataType": "enum", "Mode": "enum",
+    "DataView": "enum", "SourceType": "enum", "ObjectType": "enum",
+    "DefaultPowerBIDataSourceVersion": "enum",
+    "DataSourceVariablesOverrideBehavior": "enum",
+    "ForceUniqueNames": "Boolean", "DiscourageImplicitMeasures": "Boolean",
+    "DiscourageReportMeasures": "Boolean", "DiscourageCompositeModels": "Boolean",
+    "IsHidden": "Boolean", "ShowAsVariationsOnly": "Boolean",
+    "IsPrivate": "Boolean", "ExcludeFromModelRefresh": "Boolean",
+    "SystemManaged": "Boolean", "ExcludeFromAutomaticAggregations": "Boolean",
+    "IsUnique": "Boolean", "IsKey": "Boolean", "IsNullable": "Boolean",
+    "IsDefaultLabel": "Boolean", "IsDefaultImage": "Boolean",
+    "IsAvailableInMDX": "Boolean", "KeepUniqueRows": "Boolean",
+    "IsDataTypeInferred": "Boolean", "IsSimpleMeasure": "Boolean",
+    "RetainDataTillForceCalculate": "Boolean", "IsRemoved": "Boolean",
+    "DataSourceDefaultMaxConnections": "Int32", "DisableAutoExists": "Int32",
+    "MaxParallelismPerRefresh": "Int32", "MaxParallelismPerQuery": "Int32",
+    "AlternateSourcePrecedence": "Int32", "TableDetailPosition": "Int32",
+    "DisplayOrdinal": "Int32",
+}
+_XSD = {"DateTime": "xsd:dateTime", "Boolean": "xsd:boolean",
+        "Int32": "xsd:int", "enum": "xsd:int", "UInt64": "xsd:unsignedLong",
+        "String": "xsd:string"}
+_DEFAULT = {"xsd:dateTime": "2026-08-10T00:00:00", "xsd:boolean": "false",
+            "xsd:int": "0", "xsd:unsignedLong": "0", "xsd:string": ""}
+
+
+def _xsd_type(col):
+    if col == "ID" or col.endswith("ID"):
+        return "xsd:unsignedLong"
+    return _XSD[_CLR.get(col, "String")]
+
 def _row(cols, overrides):
-    return [overrides.get(c, "") for c in cols]
+    return [overrides.get(c, _DEFAULT[_xsd_type(c)]) for c in cols]
 
 
 POPULATED = {
@@ -261,7 +303,8 @@ def _root(request_type):
     name = ROOT_NAMES.get(request_type,
                           request_type.replace("TMSCHEMA_", "").title())
     xsd = "".join(
-        f'<xsd:element sql:field="{c}" name="{c}" type="xsd:string" minOccurs="0"/>'
+        f'<xsd:element sql:field="{c}" name="{c}" type="{_xsd_type(c)}" '
+        'minOccurs="0"/>'
         for c in cols)
     body = "".join("<row>" + "".join(f"<{c}>{v}</{c}>" for c, v in zip(cols, r))
                    + "</row>" for r in rows)
