@@ -163,6 +163,53 @@ def load():
 # into cells and records a Pending run, then an ENGINE executes those cells and
 # reports back. That split is why these helpers exist.
 
+DEFINITIONS = pathlib.Path(os.environ.get("DEFINITIONS", HERE / "definitions"))
+
+
+def create_item_from_definition(folder, display_name=None, **substitutions):
+    """Create an item from an on-disk definition folder in Fabric's SOURCE FORMAT.
+
+    `definitions/<display name>.<Type>/` holding the item's definition files plus
+    `.platform` is exactly what Fabric's Git integration writes and what
+    `fabric-cicd` deploys, so what is committed here is what a real repository
+    committed (docs/46-artifact-persistence.md). The alternative — building the
+    body in a Python string — models the API and not the artefact, and teaches a
+    layout no CI/CD tool would recognise.
+
+    WHY THERE IS A SUBSTITUTION STEP. A definition names the workspace, lakehouse
+    and upstream items it reads by GUID, and those do not exist until provisioning
+    has run. So the committed files carry `{{TOKENS}}` and the deploy substitutes
+    them. That is not a local workaround: Microsoft's own fabric-cicd ships a
+    `find_replace` parameter file for the same reason, because one definition has
+    to land in dev, test and prod with different ids.
+
+    The item TYPE comes from the folder name, as it does in Git, so a definition
+    cannot be deployed as the wrong type by a typo at the call site.
+    """
+    folder_path = DEFINITIONS / folder
+    assert folder_path.is_dir(), f"no definition folder {folder_path}"
+    name, _, item_type = folder.rpartition(".")
+    assert name and item_type, (
+        f"definition folder {folder!r} must be named '<display name>.<Type>', "
+        f"the layout Fabric's Git integration uses")
+
+    parts = {}
+    for path in sorted(folder_path.rglob("*")):
+        if not path.is_file():
+            continue
+        text = path.read_text()
+        for token, value in substitutions.items():
+            text = text.replace("{{" + token + "}}", str(value))
+        # A surviving placeholder would deploy cleanly and fail much later as a
+        # Spark error about a workspace literally named {{WORKSPACE_ID}}.
+        assert "{{" not in text, (
+            f"unsubstituted placeholder in {path.relative_to(folder_path)}: "
+            f"{text[text.index('{{'):][:40]!r}")
+        parts[str(path.relative_to(folder_path)).replace(os.sep, "/")] = text
+
+    return create_item(display_name or name, item_type, parts)
+
+
 def create_item(display_name, item_type, parts):
     """Create an item with a definition, resolving the LRO if the create is async."""
     import base64

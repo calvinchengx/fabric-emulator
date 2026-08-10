@@ -11,41 +11,23 @@ events with their capture sequence, still out of order where the connector
 delivered them that way. Turning that into a dimension with history is 24's
 job, and 24 has to do it from what actually arrived.
 """
-import json
 
 import erp_system as erp
 import reference_data as ref
-from common import activity_runs, create_item, load, log, run_job, save
+from common import activity_runs, create_item_from_definition, load, log, run_job, save
 
 st = load()
 lake, ws = st["lakehouse"], st["workspace"]
 erp_dir = f"landing/contoso_erp/{st['erp_landing_date']}"
 ref_dir = f"landing/reference/{st['erp_landing_date']}"
 
-lakehouse = {"linkedService": {"properties": {
-    "type": "Lakehouse",
-    "typeProperties": {"workspaceId": ws, "artifactId": lake}}}}
-
-
-def copy_activity(name, folder, filename, table):
-    """A Copy whose source is Parquet rather than delimited text."""
-    return {"name": name, "type": "Copy", "typeProperties": {
-        "source": {"type": "ParquetSource", "rootFolder": "Files",
-                   "folderPath": folder, "fileName": filename,
-                   "datasetSettings": lakehouse},
-        "sink": {"type": "LakehouseTableSink", "tableActionOption": "Overwrite",
-                 "table": table, "datasetSettings": lakehouse}}}
-
-
-definition = {"properties": {"activities": [
-    copy_activity("IngestErpChanges", erp_dir, "changes.parquet", "bronze_erp_changes"),
-    copy_activity("IngestFxRates", ref_dir, "fx_rates.parquet", "bronze_fx_rates"),
-    copy_activity("IngestProductHierarchy", ref_dir, "product_hierarchy.parquet",
-                  "bronze_product_hierarchy"),
-]}}
-
-pl = create_item("erp-reference-ingest", "DataPipeline",
-                 {"pipeline-content.json": json.dumps(definition)})
+# Deployed from `definitions/erp-reference-ingest.DataPipeline/` in Fabric's own
+# source format (docs/46-artifact-persistence.md). Three Parquet Copy activities
+# rather than one delimited-text one; the folder paths are placeholders because
+# they carry the landing date, which is state, not source.
+pl = create_item_from_definition(
+    "erp-reference-ingest.DataPipeline",
+    WORKSPACE_ID=ws, LAKEHOUSE_ID=lake, ERP_DIR=erp_dir, REF_DIR=ref_dir)
 jid, status = run_job(pl, "Pipeline")
 assert status == "Completed", f"erp/reference pipeline: {status}"
 

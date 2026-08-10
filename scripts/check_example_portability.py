@@ -148,6 +148,37 @@ def check_no_emulator_only_leaks(problems):
                     f"as contoso-data-platform's platform/schedule.py does.")
 
 
+def check_definition_folders(problems):
+    """Any `definitions/` directory must hold Fabric's source format.
+
+    The layout is the artefact: `<display name>.<Type>/` with the definition
+    files AND `.platform`. A folder missing `.platform` deploys fine here — the
+    emulator stores whatever parts it is given — and is not what Fabric's Git
+    integration produces, so the example would be teaching a shape no CI/CD tool
+    round-trips. That asymmetry is the whole reason this is checked rather than
+    described.
+    """
+    for defs in sorted(EXAMPLES.glob("*/definitions")):
+        if not defs.is_dir():
+            continue
+        folders = [d for d in sorted(defs.iterdir()) if d.is_dir()]
+        if not folders:
+            problems.append(f"{rel(defs)} exists but holds no item folders.")
+        for d in folders:
+            name, _, item_type = d.name.rpartition(".")
+            if not name or not item_type:
+                problems.append(
+                    f"{rel(d)} is not named '<display name>.<Type>' — that is the "
+                    f"layout Fabric's Git integration writes (docs/46).")
+                continue
+            if not (d / ".platform").is_file():
+                problems.append(
+                    f"{rel(d)} has no .platform. Every item carries one; it holds the "
+                    f"logicalId that survives renames (docs/46).")
+            if not any(f.is_file() and f.name != ".platform" for f in d.iterdir()):
+                problems.append(f"{rel(d)} has a .platform and no definition file.")
+
+
 def check_resolver_uses_the_contract(problems):
     """The resolver must consume `fabric-target`, not restate it."""
     f = ROOT / RESOLVER
@@ -188,6 +219,7 @@ def main():
     problems = []
     check_no_pinned_target(problems)
     check_no_emulator_only_leaks(problems)
+    check_definition_folders(problems)
     check_resolver_uses_the_contract(problems)
     check_definition_parts(problems)
 

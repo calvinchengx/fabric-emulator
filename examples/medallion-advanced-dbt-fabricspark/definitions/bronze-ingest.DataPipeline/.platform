@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/platform/platformProperties.json",
+  "metadata": {
+    "type": "DataPipeline",
+    "displayName": "bronze-ingest",
+    "description": "One pipeline, two activities: a Copy for the structured feed and a notebook for the semi-structured one."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "c4a9e77b-31d8-4e02-8f16-5b7a2c9d0e44"
+  }
+}

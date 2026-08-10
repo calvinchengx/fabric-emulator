@@ -19,56 +19,34 @@ that terminal state, exactly as a Fabric pipeline does. `engine.py` still shows
 the other half of the contract — the `notebookRunResult` callback an external
 engine uses.
 """
-import json
 
 import source_system as src
-from common import activity_runs, create_item, load, log, run_job, save
+from common import activity_runs, create_item_from_definition, load, log, run_job, save
 
 st = load()
 lake, ws = st["lakehouse"], st["workspace"]
 landing_dir = f"landing/contoso_pos/{st['landing_date']}"
 
-# The notebook a Fabric author would write for the semi-structured feed: read
-# landing with Spark, write Delta straight to OneLake.
-NOTEBOOK = f'''# Fabric notebook source
+# The items are deployed from `definitions/`, which holds them in Fabric's own
+# SOURCE FORMAT — `<display name>.<Type>/` with the definition files and
+# `.platform`, exactly what Git integration writes and fabric-cicd deploys
+# (docs/46-artifact-persistence.md). The committed files carry {{TOKENS}} because
+# a definition names the workspace and lakehouse it reads by GUID and those do
+# not exist until provision.py has run; substituting at deploy is what
+# fabric-cicd's own find_replace parameter file is for.
+nb = create_item_from_definition(
+    "bronze-orders.Notebook",
+    WORKSPACE_ID=ws, LAKEHOUSE_ID=lake,
+    LANDING_DIR=landing_dir, LANDING_DATE=st["landing_date"])
 
-# CELL ********************
-
-from pyspark.sql.functions import lit
-
-# ABFS addresses OneLake by its full account host, exactly as a Fabric
-# notebook does: abfs://<workspace>@onelake.dfs.fabric.microsoft.com/<item>/...
-landing = "abfs://{ws}@onelake.dfs.fabric.microsoft.com/{lake}/Files/{landing_dir}/orders.jsonl"
-bronze = "abfs://{ws}@onelake.dfs.fabric.microsoft.com/{lake}/Tables/bronze_orders"
-
-orders = spark.read.json(landing).withColumn("_landing_date", lit("{st['landing_date']}"))
-orders.write.format("delta").mode("overwrite").save(bronze)
-print("bronze_orders rows:", orders.count())
-'''
-
-nb = create_item("bronze-orders", "Notebook", {"notebook-content.py": NOTEBOOK})
-
-# One pipeline, two activities — the shape a real medallion ingest takes.
-# Built as a dict and serialised, not string-templated: a pipeline definition is
-# nested JSON, and hand-escaping braces is how you get PipelineDefinitionInvalid.
-lakehouse = {"linkedService": {"properties": {
-    "type": "Lakehouse",
-    "typeProperties": {"workspaceId": ws, "artifactId": lake}}}}
-
-definition = {"properties": {"activities": [
-    {"name": "IngestCustomers", "type": "Copy", "typeProperties": {
-        "source": {"type": "DelimitedTextSource", "rootFolder": "Files",
-                   "folderPath": landing_dir, "fileName": "customers.csv",
-                   "datasetSettings": lakehouse},
-        "sink": {"type": "LakehouseTableSink", "tableActionOption": "Overwrite",
-                 "table": "bronze_customers",
-                 "datasetSettings": lakehouse}}},
-    {"name": "IngestOrders", "type": "TridentNotebook", "typeProperties": {
-        "notebookId": nb}},
-]}}
-
-pl = create_item("bronze-ingest", "DataPipeline",
-                 {"pipeline-content.json": json.dumps(definition)})
+# The same, for the pipeline: one Copy activity for the structured feed and a
+# TridentNotebook activity for the semi-structured one. NOTEBOOK_ID is a
+# placeholder because the notebook above only just acquired its id — the ordinary
+# case in a real deployment, where items reference each other by GUID.
+pl = create_item_from_definition(
+    "bronze-ingest.DataPipeline",
+    WORKSPACE_ID=ws, LAKEHOUSE_ID=lake,
+    LANDING_DIR=landing_dir, NOTEBOOK_ID=nb)
 jid, status = run_job(pl, "Pipeline")
 assert status == "Completed", f"bronze pipeline: {status}"
 
