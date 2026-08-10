@@ -300,6 +300,13 @@ def _root(request_type):
     # column-less root that Fill skips silently breaks the naming for ALL
     # 35 — and the failure surfaces as "Tables['Model'] is null".
     cols, rows = POPULATED.get(request_type, (["ID", "Name"], []))
+    # EVERY TMSCHEMA rowset carries a `Version` column — the client refuses one
+    # without it: `ResponseFormatException: The rowset is missing a Version
+    # column`. It is the metadata version TOM tracks state with, which is why
+    # its absence reads as a malformed ROWSET rather than a missing field.
+    if "Version" not in cols:
+        cols = list(cols) + ["Version"]
+        rows = [list(r) + ["1"] for r in rows]
     name = ROOT_NAMES.get(request_type,
                           request_type.replace("TMSCHEMA_", "").title())
     xsd = "".join(
