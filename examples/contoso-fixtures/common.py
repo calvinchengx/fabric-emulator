@@ -50,17 +50,28 @@ FABRIC = _T.api_root[: -len("/v1")] if _T.api_root.endswith("/v1") else _T.api_r
 # vault; under `real` it is None unless FABRIC_VAULT_URL/AZURE_KEY_VAULT_URL is
 # set, and `or "https://localhost:8444"` would have pointed a PRODUCTION run at
 # the emulator's vault — silently, since the resolver is exempt from the gate's
-# localhost rule. Every medallion example stores a source credential in Key Vault
-# (step 2), so a missing vault under real is always a misconfiguration: refuse
-# here, where the cause is legible, rather than at a 404 later.
-if _T.is_real and not _T.vault_url:
-    raise SystemExit(
-        "FABRIC_TARGET=real needs a vault: set FABRIC_VAULT_URL (or "
-        "AZURE_KEY_VAULT_URL) to your Key Vault URI. These examples store the "
-        "source API key there and resolve it through an AKV reference, exactly "
-        "as they do locally.")
+# localhost rule. So it is None, and require_vault() refuses AT THE POINT OF USE.
 KV = _T.vault_url
 TENANT = _T.tenant
+
+
+def require_vault():
+    """The vault URI, refused under `real` when nothing configured one.
+
+    WHY NOT AT IMPORT. It was, and that was wrong: this module is imported by
+    every step, so a vault nobody in that step touches blocked steps that only
+    need the control plane. `provision.py` — the one step the real-Fabric CI leg
+    runs, and the first thing anyone points at a fresh tenant — died on a missing
+    Key Vault before making a single call. A prerequisite belongs where it is
+    needed, or the toggle is narrower than it claims.
+    """
+    if not KV:
+        raise SystemExit(
+            "FABRIC_TARGET=real needs a vault for this step: set FABRIC_VAULT_URL "
+            "(or AZURE_KEY_VAULT_URL) to your Key Vault URI. The step stores the "
+            "source API key there and reads it back the way a notebook does. "
+            "Steps that only touch the control plane (provision.py) need none.")
+    return KV
 
 # Local policy, not target policy (see the module docstring). UNSET means
 # "ask the API", which is the portable path — see sql_endpoint(). It stays

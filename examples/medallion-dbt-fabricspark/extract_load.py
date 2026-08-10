@@ -17,10 +17,21 @@ import datetime
 
 import notebookutils
 import source_system as src
-from common import FABRIC, KV, STORAGE_AUD, VAULT_AUD, S, ensure_app, load, log, save, token
+from common import (
+    FABRIC,
+    STORAGE_AUD,
+    VAULT_AUD,
+    S,
+    ensure_app,
+    load,
+    log,
+    require_vault,
+    save,
+    token,
+)
 
 ensure_app(VAULT_AUD, "Azure Key Vault")  # a real tenant already issues it
-api_key = notebookutils.credentials.getSecret(KV, "contoso-pos-api-key")
+api_key = notebookutils.credentials.getSecret(require_vault(), "contoso-pos-api-key")
 
 # The vendor refuses a wrong key — prove the gate is real, not decorative.
 try:
