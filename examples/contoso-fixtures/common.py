@@ -206,8 +206,9 @@ def tables_uri():
 
 # An item's SQL endpoint, as the API reports it. The collection segment is the
 # typed route Fabric documents the property on — the generic /items/{id} answers
-# the generic record there, so reading the address off it works here and returns
-# nothing against real Fabric (internal/api/kql.go).
+# the generic record there, so reading the address off it can work against a
+# development stack and return nothing on real Fabric
+# (docs/46-artifact-persistence.md).
 _SQL_COLLECTION = {"Warehouse": "warehouses", "SQLDatabase": "sqlDatabases",
                    "Lakehouse": "lakehouses"}
 SqlTarget = collections.namedtuple("SqlTarget", "server database encrypt")
@@ -238,11 +239,11 @@ def sql_endpoint(item_id):
       Lakehouse                -> properties.sqlEndpointProperties.connectionString
                                   (its read-only SQL analytics endpoint)
 
-    The DATABASE NAME differs by target and that is real, not an emulator
-    shortcut. Fabric addresses a database by DISPLAY NAME and encodes the
-    workspace in the server name; the emulator serves one host for every
-    workspace, so it addresses by item id (internal/server/warehouse.go accepts
-    both). Resolving it here is what keeps the branch out of the steps.
+    The DATABASE NAME differs by target and that is real, not a local shortcut.
+    Fabric addresses a database by DISPLAY NAME and encodes the workspace in the
+    server name; a development stack serves one host for every workspace, so
+    there it is addressed by item id — both spellings are accepted locally.
+    Resolving it here is what keeps the branch out of the steps.
 
     Cached per item: the callers are retry loops waiting for a database to come
     online, and an endpoint does not move between attempts.
