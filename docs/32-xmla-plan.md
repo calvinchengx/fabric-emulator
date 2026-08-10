@@ -130,15 +130,26 @@ these are bytes, not readings. 36 requests captured, 21 of them XMLA.
 | 6x | `Discover` — **`RequestType=DISCOVER_XML_METADATA`**, `Restrictions: ObjectExpansion=ExpandObject` |
 | 1x | `Execute` — `<Statement>EVALUATE {1}</Statement>` (`evaluate_dax`) |
 
-**`TMSCHEMA` and `MDSCHEMA` appear ZERO times**, before or after a successful
-`Discover`. So the metadata surface sempy exercises is ONE
-`DISCOVER_XML_METADATA` response, not five rowsets.
+That run showed **zero `TMSCHEMA`** — but it was bounded, and the bound
+mattered. Every `list_*` call ended at `ResponseFormatException` on a stubbed
+session, so it measured only the FIRST XMLA call per function.
 
-**Bounded, deliberately:** the `list_*` calls in that run ended at
-`ResponseFormatException` on a stubbed session, so this measures the FIRST XMLA
-call each function makes. Whether TMSCHEMA queries follow a fully answered
-`Discover` is still unmeasured, and the modules named in the table above do
-contain those strings. Do not scope the metadata half off this section alone.
+**Once the `Discover` is actually ANSWERED, TMSCHEMA appears:**
+
+| count | call |
+|---|---|
+| 5x | `Execute` — **`TMSCHEMA_MODEL`** (a DMV query in a `<Statement>`) |
+| 4x | `Execute` — session handshake |
+| 2x | `Discover` — `DISCOVER_XML_METADATA` |
+
+So the metadata surface is **BOTH mechanisms in sequence**, not a choice between
+them: an ASSL `Discover` first, then `$SYSTEM.TMSCHEMA_*` DMV queries. The DMV
+leg arrives as an **`Execute`**, not a `Discover`, so it shares the rowset path
+`EVALUATE` already needs.
+
+**This is why the earlier bound was written rather than the clean version.** A
+"zero TMSCHEMA" headline would have scoped the work to one ASSL serialiser and
+found the DMV requirement after building it.
 
 `ObjectExpansion=ExpandObject` is **not** full expansion. Per `bi-shared-docs`
 `assl-objects-and-object-characteristics.md`: `ExpandObject` returns the object
@@ -177,13 +188,22 @@ Every one cost a run to find and none is guessable. In order:
 With 1-9 answered by a stub, `list_workspaces` and `list_datasets` both return
 DataFrames from real sempy.
 
-**Still open:** the ASSL `<Database>` shape itself. `CompatibilityLevel` is
-rejected both unqualified and in `ddl200_200`, so this is element ordering or an
-attribute, and `XmlSerializer` is sequence-sensitive. **Read it off
-`Microsoft.AnalysisServices.Tabular.dll`, which sempy ships** — reflection over
-declared serialisation attributes, technique 2 of the boundary above. Three
-guesses at the shape produced three different rejections; the assembly declares
-it.
+**The ASSL `<Database>` contract, read off `Microsoft.AnalysisServices.Tabular.dll`:**
+
+    Database.CompatibilityLevel   XmlElement ns=.../analysisservices/2010/engine/200
+    Database.Model                XmlIgnore  -> must NOT appear in the ASSL
+
+`CompatibilityLevel` is namespace-qualified to `2010/engine/200` — not the
+`2003/engine` base, and not `200/200`. `Model` is ignored on this path
+entirely; the tabular model does not travel in the ASSL.
+
+**Method note.** Three guesses at that shape produced three different
+rejections. Reflecting on the shipped assembly answered each question in one
+call. Technique 2 of the boundary above should have been the FIRST move, not the
+fourth.
+
+**Still open:** answering the `TMSCHEMA_*` DMV queries, which is the
+`internal/semanticmodel` half.
 
     sempy/fabric/_flat.py:947      def evaluate_measure(          <- 954's owner
     sempy/fabric/_flat.py:954          use_xmla: bool = False
