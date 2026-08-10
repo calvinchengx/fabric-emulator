@@ -34,10 +34,23 @@ What it asserts, all of it measured off the wire:
   6. The `https://<host>/xmla` and bare `host:port` Data Source forms remain
      Windows-only on .NET Core, so a Linux oracle must use `powerbi://`.
 
-What it does NOT establish: the client never reaches XMLA/SOAP — it is still in
-workspace *routing* when the capture stub refuses it. So this says nothing about
-how much of [MS-SSAS-T] a useful implementation needs, and the `L` sizing in
-docs/24 is unchanged. Feasibility is measured here; cost is not.
+  7. It REACHES XMLA. Answering `/webapi/clusterResolve` with the contract the
+     assembly declares (`NameResolutionResult.clusterFQDN`) takes the client
+     past routing, and it then POSTs `text/xml` to `/webapi/xmla`. The first
+     envelope is a SOAP `Execute` carrying `BeginSession mustUnderstand="1"`,
+     `Version Sequence="922"`, an EMPTY `<Statement/>` and a `PropertyList`
+     (LocaleIdentifier, DbpropMsmd{Activity,CurrentActivity,Request}ID). So
+     opening a connection is a session handshake, not a query.
+
+What it does NOT establish: what the client asks AFTER the session opens. This
+harness refuses the first envelope, so the traffic past connect is unread, and
+that is where the remaining cost of [MS-SSAS-T] lives. Connect is measured;
+query is not.
+
+(Until 2026-08-10 this docstring said the client "never reaches XMLA/SOAP" and
+that docs/24's `L` was unchanged. Both were true when written and are now false.
+Reworded rather than annotated: a superseded claim left readable beside its
+correction is what the next reader greps.)
 
 Runs the .NET client in a container (the NuGet package is
 `...retail.amd64`, hence `--platform linux/amd64` — native on CI, QEMU
