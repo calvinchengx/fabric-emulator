@@ -248,8 +248,22 @@ _CLR = {
 _XSD = {"DateTime": "xsd:dateTime", "Boolean": "xsd:boolean",
         "Int32": "xsd:int", "enum": "xsd:int", "UInt64": "xsd:unsignedLong",
         "String": "xsd:string"}
+# ENUM VALUES ARE NOT FREE: 0 is not a member of several of these, and the
+# client says so — `The value '0' is unexpected for type 'ColumnType'`. Values
+# read off the assembly: ColumnType.Data=1, ObjectState.Ready=1,
+# DataType.String=2, AggregateFunction.Default=1, Alignment.Default=1,
+# PartitionSourceType.M=4. ModeType.Import and DataViewType.Full ARE 0, so a
+# blanket "use 1" would be wrong the other way.
+_ENUM_DEFAULT = {
+    "Type": "1", "State": "1", "DataType": "2", "SummarizeBy": "1",
+    "Alignment": "1", "SourceType": "4", "Mode": "0", "DataView": "0",
+    "ObjectType": "1", "EncodingHint": "0", "DefaultMode": "0",
+    "DefaultDataView": "0", "DefaultPowerBIDataSourceVersion": "0",
+    "DataSourceVariablesOverrideBehavior": "0",
+}
 _DEFAULT = {"xsd:dateTime": "2026-08-10T00:00:00", "xsd:boolean": "false",
-            "xsd:int": "0", "xsd:unsignedLong": "0", "xsd:string": ""}
+            "xsd:int": "0", "xsd:long": "1", "xsd:unsignedLong": "0",
+            "xsd:string": ""}
 
 
 def _xsd_type(col):
@@ -266,7 +280,8 @@ def _xsd_type(col):
     return _XSD[_CLR.get(col, "String")]
 
 def _row(cols, overrides):
-    return [overrides.get(c, _DEFAULT[_xsd_type(c)]) for c in cols]
+    return [overrides.get(c, _ENUM_DEFAULT.get(c, _DEFAULT[_xsd_type(c)]))
+            for c in cols]
 
 
 # OBJECT IDs ARE GLOBAL across the model, not per-rowset: reusing 1 gives
