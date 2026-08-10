@@ -77,6 +77,10 @@ PAIRS = [
             # The comparison lives with the dbt half and reads the pyspark
             # half's summary; only one copy can own it.
             "compare.py": "dbt-fabricspark only: reads both silver summaries",
+            # The pyspark half's silver IS a notebook definition submitted as a
+            # job; the dbt half's silver is a dbt project run over Livy. That is
+            # the axis these two examples exist to compare.
+            "definitions/silver.Notebook": "PySpark only: silver as a Notebook definition",
         },
         # `compare` is a real extra step, not a drifted one. Named here so the
         # sequence check still compares everything else in order.

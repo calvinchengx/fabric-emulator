@@ -234,7 +234,11 @@ Then, with a Key Vault, the next three steps in order: `secret.py`,
 | `extract_load.py` | `notebookutils.credentials.getSecret`, then ~170 MB into `Files/landing` | the brokered path, unchanged from local |
 | `bronze.py` | deploys the Notebook and DataPipeline definitions, runs the pipeline | the notebook activity executes on the workspace's **starter pool**; its body is already portable (`spark`, `abfs://<ws>@onelake.dfs.fabric.microsoft.com/...`) |
 | `engine.py` | **skips** | Fabric ran the notebook itself |
-| `silver.py` | **refuses** | no Spark Connect endpoint exists; move the transform into a Notebook definition to go further |
+| `silver.py` | deploys `silver.Notebook`, submits `RunNotebook`, verifies the Delta tables with delta-rs | the transform runs on the **starter pool**; this file never touches Spark |
+| `reflect.py` | queries the lakehouse SQL analytics endpoint | address discovered from `sqlEndpointProperties` |
+| `gold.py`, `dq_gate.py` | dbt-fabric builds the star in the warehouse | address discovered from `properties.connectionString` |
+| `semantic_model.py` | publishes and queries the model over `executeQueries` | — |
+| `lineage.py` | **skips** | the flow graph is the emulator's own record; Purview is Fabric's answer and a different integration |
 
 Three facts that decide whether this works, all Microsoft's rather than ours:
 
