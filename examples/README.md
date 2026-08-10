@@ -114,10 +114,12 @@ example asserts that.
 **Compute and SQL addresses are discovered, never configured.** The SQL endpoint
 of a warehouse or a lakehouse is assigned per item by the service, so every step
 asks for it (`common.sql_endpoint()`) instead of naming a host; the enforcement
-gate fails a step that names one. Spark is the honest limit: Fabric exposes no
-Spark endpoint to dial, so `silver.py` refuses under `real` and names the two
-real routes (submit the notebook item, or the Livy API), while `engine.py` skips
-because Fabric runs the queued notebook on its own pool. That whole story,
+gate fails a step that names one. Spark is submitted, never dialled: Fabric
+exposes no Spark endpoint, so the silver transform lives in
+`definitions/silver.Notebook/` and `silver.py` submits it as a `RunNotebook` job
+— the emulator's agent runs it locally, a Fabric pool runs it on a tenant, and
+the file itself touches no Spark. `engine.py` skips under `real` because Fabric
+runs the queued notebook on its own pool. That whole story,
 including starter versus custom pools and the analytics-endpoint sync lag, is in
 [docs/46](../docs/46-artifact-persistence.md).
 

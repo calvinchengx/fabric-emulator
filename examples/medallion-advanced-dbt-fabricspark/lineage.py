@@ -9,7 +9,16 @@ Two mechanisms produce these edges, and the graph keeps them distinguishable:
 Neither is inferred from user code. That is the whole point: an edge here is
 either something the emulator did, or something an engine witnessed doing.
 """
-from common import lineage_edges, load, log
+from common import lineage_edges, load, log, skip_on_real
+
+# The flow graph is the EMULATOR's, and deliberately so: it records only what it
+# did itself or what an engine witnessed doing, never an inference from user code.
+# Real Fabric publishes no such API — its lineage story is Purview, a different
+# model reached a different way — so there is nothing here to point at a tenant.
+skip_on_real(
+    "the lineage assertion",
+    "the flow graph is the emulator's own record of what moved; real Fabric has "
+    "no equivalent endpoint, and Purview is a different integration")
 
 st = load()
 edges = lineage_edges()

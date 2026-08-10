@@ -12,6 +12,11 @@ name: Real Fabric conformance
 #   FABRIC_TEST_WORKSPACE
 #     — display name of a DEDICATED throwaway workspace (the suite creates
 #       and deletes its own items inside it; nothing else is touched)
+#   FABRIC_CAPACITY_ID (only for the example-provisioning step, which creates a
+#     workspace) — a Fabric F-SKU capacity id. NOT a trial capacity: only the
+#     account that started a trial can assign a workspace to it, so a service
+#     principal cannot. Run the trial path from a developer machine with
+#     `az login` instead (docs/46-artifact-persistence.md).
 
 on:
   workflow_call:
@@ -97,6 +102,12 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          # A workspace created with no capacity accepts the create and then
+          # rejects every item in it, so the resolver refuses without this rather
+          # than failing one call later. Note a TRIAL capacity cannot be assigned
+          # by a service principal — only by the account that started the trial —
+          # so this secret must name a real Fabric (F SKU) capacity for CI.
+          FABRIC_CAPACITY_ID: ${{ secrets.FABRIC_CAPACITY_ID }}
         run: uv run --frozen python provision.py
       # Oracle capture, on demand only. Several activities are blocked on one
       # thing — nobody has captured the wire `type` and `typeProperties` shape

@@ -204,6 +204,53 @@ The toggle must make these differences *loud*, not paper over them:
    startup probe (`GET /workspaces` + the scoped workspace) fails fast with
    a "grant your SP access" message instead of 403s mid-run.
 
+## Running an example against a real tenant, step by step
+
+What a person actually types, and what happens at each boundary. The example is
+not edited: everything below is environment.
+
+```bash
+az login                                   # as YOURSELF for a trial (see below)
+```
+
+```bash
+curl -s -H "Authorization: Bearer $(az account get-access-token \
+  --resource https://api.fabric.microsoft.com -o tsv --query accessToken)" \
+  https://api.fabric.microsoft.com/v1/capacities
+```
+
+```bash
+cd examples/medallion-pyspark && FABRIC_TARGET=real FABRIC_WORKSPACE=contoso-analytics FABRIC_CAPACITY_ID=<capacity-guid> uv run --frozen python provision.py
+```
+
+Then, with a Key Vault, the next three steps in order: `secret.py`,
+`extract_load.py`, `bronze.py` — adding
+`FABRIC_VAULT_URL=https://<vault>.vault.azure.net`.
+
+| Step | Real Fabric | Note |
+|---|---|---|
+| `provision.py` | workspace + lakehouse + warehouse + workspace identity | needs `FABRIC_CAPACITY_ID`; the resolver refuses without it rather than creating a capacity-less workspace whose every item then fails |
+| `secret.py` | secret in your vault + an AKV-reference connection | the workspace identity needs *get* on the vault |
+| `extract_load.py` | `notebookutils.credentials.getSecret`, then ~170 MB into `Files/landing` | the brokered path, unchanged from local |
+| `bronze.py` | deploys the Notebook and DataPipeline definitions, runs the pipeline | the notebook activity executes on the workspace's **starter pool**; its body is already portable (`spark`, `abfs://<ws>@onelake.dfs.fabric.microsoft.com/...`) |
+| `engine.py` | **skips** | Fabric ran the notebook itself |
+| `silver.py` | deploys `silver.Notebook`, submits `RunNotebook`, verifies the Delta tables with delta-rs | the transform runs on the **starter pool**; this file never touches Spark |
+| `reflect.py` | queries the lakehouse SQL analytics endpoint | address discovered from `sqlEndpointProperties` |
+| `gold.py`, `dq_gate.py` | dbt-fabric builds the star in the warehouse | address discovered from `properties.connectionString` |
+| `semantic_model.py` | publishes and queries the model over `executeQueries` | — |
+| `lineage.py` | **skips** | the flow graph is the emulator's own record; Purview is Fabric's answer and a different integration |
+
+Three facts that decide whether this works, all Microsoft's rather than ours:
+
+- **A trial capacity can only be assigned by the account that started the
+  trial.** A service principal cannot, so use `az login` as that user. CI uses an
+  F-SKU capacity for the same step.
+- **A workspace with no capacity** is created successfully and then rejects every
+  Fabric item in it. That is why the resolver refuses instead.
+- **Workspace identity** can be created in any workspace except *My workspace*,
+  so a trial is fine; trusted access to firewalled storage additionally needs an
+  F SKU.
+
 ## Verification — the same tests, both targets
 
 A pytest marker ties it together:

@@ -4,7 +4,6 @@ a vault-audience workspace-identity token."""
 import source_system as src
 from common import (
                     FABRIC,
-                    KV,
                     KV_INTERNAL,
                     VAULT_AUD,
                     S,
@@ -12,11 +11,13 @@ from common import (
                     fabric_headers,
                     load,
                     log,
+                    require_vault,
                     save,
                     token,
 )
 
 ensure_app(VAULT_AUD, "Azure Key Vault")
+KV = require_vault()  # this step is the one that needs it
 vt = token(VAULT_AUD)
 
 r = S.put(f"{KV}/secrets/contoso-pos-api-key?api-version=7.4",

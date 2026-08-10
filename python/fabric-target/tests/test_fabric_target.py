@@ -224,3 +224,63 @@ def test_notebook_env_and_the_emitter_cannot_drift(monkeypatch, capsys):
             k, _, v = line[len("export "):].partition("=")
             printed[k] = v.strip("'")
     assert printed == dict(fabric_target.notebook_env(Target("emulator")))
+
+
+# --- workspace creation needs a capacity on real Fabric ----------------------
+# The emulator has none, so portable code cannot name one. The session completes
+# the request per target, exactly as it already does for the bearer token.
+
+def _real(monkeypatch, **env):
+    monkeypatch.setenv("FABRIC_WORKSPACE", "ws")
+    monkeypatch.setattr(fabric_target, "_az_logged_in", lambda: True)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    return Target("real")
+
+
+def test_a_real_workspace_create_carries_the_configured_capacity(monkeypatch):
+    t = _real(monkeypatch, FABRIC_CAPACITY_ID="cap-1")
+    kw = {"json": {"displayName": "contoso-analytics"}}
+    t._complete_workspace_create("POST", t.api_root + "/workspaces", kw)
+    assert kw["json"]["capacityId"] == "cap-1"
+
+
+def test_a_caller_supplied_capacity_is_never_overwritten(monkeypatch):
+    t = _real(monkeypatch, FABRIC_CAPACITY_ID="cap-1")
+    kw = {"json": {"displayName": "w", "capacityId": "mine"}}
+    t._complete_workspace_create("POST", t.api_root + "/workspaces", kw)
+    assert kw["json"]["capacityId"] == "mine"
+
+
+def test_a_real_workspace_create_without_a_capacity_is_refused(monkeypatch):
+    """A capacity-less workspace is created happily and then rejects every item
+    in it, so the failure lands one call away from its cause."""
+    t = _real(monkeypatch)
+    with pytest.raises(TargetError, match="FABRIC_CAPACITY_ID"):
+        t._complete_workspace_create("POST", t.api_root + "/workspaces", {"json": {"displayName": "w"}})
+
+
+def test_assign_to_capacity_is_left_alone(monkeypatch):
+    """A different call that happens to live under /workspaces. Injecting a body
+    field into it would corrupt a request that was already correct."""
+    t = _real(monkeypatch, FABRIC_CAPACITY_ID="cap-1")
+    kw = {"json": {"capacityId": "other"}}
+    t._complete_workspace_create("POST", t.api_root + "/workspaces/abc/assignToCapacity", kw)
+    assert kw["json"] == {"capacityId": "other"}
+    # And an item create under a workspace is not a workspace create.
+    kw = {"json": {"displayName": "lake"}}
+    t._complete_workspace_create("POST", t.api_root + "/workspaces/abc/lakehouses", kw)
+    assert "capacityId" not in kw["json"]
+
+
+def test_the_emulator_never_needs_a_capacity():
+    t = Target("emulator")
+    assert t.capacity_id is None
+    kw = {"json": {"displayName": "contoso-analytics"}}
+    t._complete_workspace_create("POST", t.api_root + "/workspaces", kw)
+    assert "capacityId" not in kw["json"]
+
+
+def test_a_get_is_not_a_create(monkeypatch):
+    t = _real(monkeypatch)
+    t._complete_workspace_create("GET", t.api_root + "/workspaces", {})  # must not raise

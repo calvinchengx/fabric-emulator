@@ -26,7 +26,7 @@ STEPS = [
     ("extract_load", "extract from Contoso POS into Files/landing"),
     ("bronze", "a real DataPipeline: a Copy activity plus a Notebook activity"),
     ("engine", "Spark executes the queued notebook run and reports lineage"),
-    ("silver", "PySpark: dedupe, conform, quarantine"),
+    ("silver", "silver as a Notebook job, on whichever Spark the target has"),
     ("reflect", "reflect silver into the lakehouse SQL endpoint"),
     ("gold", "dbt-fabric builds the star in the WAREHOUSE, with DQ tests"),
     ("dq_gate", "verify the DQ gate rejects bad data"),

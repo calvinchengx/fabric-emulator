@@ -128,6 +128,9 @@ class Target:
             self.onelake_url = fabric  # Host-routed / account-prefixed locally
             self.vault_url = _env_any(("VAULT_EMULATOR_URL", "AZURE_KEY_VAULT_URL"),
                                       "https://localhost:8444").rstrip("/")
+            # No capacity concept locally: compute is whatever sidecar is
+            # attached, and there is nothing to bill or to assign a workspace to.
+            self.capacity_id = None
             self.tls_verify = False
             self.workspace_scope = _env("FABRIC_WORKSPACE")  # optional locally
         else:
@@ -139,6 +142,13 @@ class Target:
             # SDKs' own samples use, so accept it too rather than making a
             # consumer set the same URL twice.
             self.vault_url = _env_any(("FABRIC_VAULT_URL", "AZURE_KEY_VAULT_URL"))
+            # The capacity a newly created workspace is assigned to. Only needed
+            # when something creates a workspace; resolving an existing one by
+            # name never touches it. A trial capacity is a valid value, with one
+            # caveat that is Microsoft's, not ours: only the account that started
+            # the trial can assign a workspace to it, so a service principal
+            # cannot — use az login as that user.
+            self.capacity_id = _env_any(("FABRIC_CAPACITY_ID", "AZURE_FABRIC_CAPACITY_ID"))
             self.tls_verify = True
             # Real mode is always workspace-scoped: nothing may enumerate a tenant.
             self.workspace_scope = _env("FABRIC_WORKSPACE")
@@ -202,6 +212,43 @@ class Target:
         if self.is_real:
             raise TargetError(f"{feature}: emulator-only — this does not exist on real Fabric")
 
+    def _complete_workspace_create(self, method, url, kw):
+        """Add `capacityId` to a real-Fabric workspace create, or refuse.
+
+        WHY THE SESSION DOES THIS. On real Fabric a workspace with no capacity
+        accepts the create and then rejects every Fabric item in it, so
+        `POST /workspaces {"displayName": ...}` returns 201 and the next call
+        fails with a message about the item rather than the capacity. The
+        emulator has no capacity concept at all, which is why portable code does
+        not name one — and why completing the request per target belongs here,
+        next to the bearer token the session already adds for the same reason.
+
+        Nothing is injected when the caller supplied a capacityId, when the
+        target is the emulator, or when the URL is anything other than the
+        workspaces COLLECTION (`/workspaces/{id}/assignToCapacity` is a
+        different call and must pass through untouched).
+
+        Refusing when no capacity is configured is the actionable half: the
+        alternative is a 201 followed by a confusing failure one call later.
+        """
+        if not self.is_real or method.upper() != "POST":
+            return
+        if urllib.parse.urlsplit(url).path.rstrip("/") != urllib.parse.urlsplit(
+                self.api_root + "/workspaces").path:
+            return
+        body = kw.get("json")
+        if not isinstance(body, dict) or body.get("capacityId"):
+            return
+        if not self.capacity_id:
+            raise TargetError(
+                "creating a workspace on real Fabric needs a capacity: set "
+                "FABRIC_CAPACITY_ID to a Fabric or trial capacity id (GET "
+                "/v1/capacities lists them). Without one the workspace is created "
+                "with no capacity and every lakehouse, warehouse and notebook in "
+                "it is then rejected — a failure one call away from its cause. "
+                "The emulator has no capacity, so nothing is needed there.")
+        body["capacityId"] = self.capacity_id
+
     def _guard_destructive(self, method, url):
         if self.is_real and method.upper() == "DELETE" \
                 and _env("FABRIC_TARGET_ALLOW_DESTRUCTIVE") not in ("1", "true", "yes"):
@@ -238,6 +285,7 @@ class Target:
                 headers = kw.setdefault("headers", {})
                 headers.setdefault(
                     "Authorization", "Bearer " + t.credential.get_token(FABRIC_SCOPE).token)
+                t._complete_workspace_create(method, url, kw)
                 resp = super().request(method, url, **kw)
                 if resp.status_code == 429:  # real Fabric throttles; honor it once
                     time.sleep(min(float(resp.headers.get("Retry-After", "1")), 60))

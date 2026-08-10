@@ -121,9 +121,12 @@ The consequence for this repo: the emulator has no pool, so it parses a notebook
 into cells, records a `Pending` run, and waits for an engine (Sail over Spark
 Connect) to execute them and report back. That engine is scaffolding for the
 missing half of the target. A step that drives Spark Connect **directly** is
-emulator-only by construction, which is why `silver.py` and `star_silver.py`
-refuse under `real` and name the two submission routes above, while `engine.py`
-skips: Fabric runs the queued notebook itself.
+emulator-only by construction. That is why `silver.py` no longer does it: its
+transform lives in `definitions/silver.Notebook/` and is submitted with
+`run_job(nb, "RunNotebook")`, so the emulator's agent executes it locally and a
+Fabric pool executes the same cells on a tenant. `engine.py` skips under `real`
+(Fabric runs the queued notebook itself), and `star_silver.py` in the advanced
+examples still refuses, because that transform has not been moved yet.
 
 ### SQL: the address is per-item and only the API knows it
 
