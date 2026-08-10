@@ -531,6 +531,14 @@
       "go:TestFromDAXDeclaresColumnTypes"
     ]
   },
+  "purview-data-map-endpoint-datamap-api-atlas-v2-split-out-of-the-old-single-purview-scanning-classification-row-because-its-three-parts-have-different-ceilings-this-one-is-reachable-and-moving-scanning-is-reachable-in-family-and-the-built-in-classifiers-can-never-move-one-made-them-look-equally-stuck-and-became-actively-wrong-the-moment-this-landed": {
+    "section": "Governance & catalog",
+    "claim": "Purview Data Map (type system + entities)",
+    "witnesses": [
+      "ci:purview-datamap",
+      "go:TestTheBaseTypeHierarchyIsSeeded"
+    ]
+  },
   "queryactivityruns-detail": {
     "section": "Data Factory (`data-factory/`)",
     "claim": "`queryactivityruns` detail",
