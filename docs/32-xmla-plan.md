@@ -112,14 +112,27 @@ sessions had previously reached OPPOSITE conclusions, both from Microsoft Learn.
 
 | sempy call | Transport | This emulator |
 |---|---|---|
-| `evaluate_dax`, `evaluate_measure` | REST `executeQueries` **by default** | already 🟢 |
+| `evaluate_dax` | **XMLA, always** — no `use_xmla` parameter exists; the body calls `get_dataset_client(mode=ConnectionMode.XMLA)` unconditionally | **the gap** |
+| `evaluate_measure`, `read_table` | REST `executeQueries` (`use_xmla: bool = False`) | already 🟢 |
 | `list_measures`, `list_tables`, `list_partitions`, `list_columns`, `list_relationships` | XMLA, via `$SYSTEM.TMSCHEMA_*` DMVs | **the gap** |
 | `INFO.*` | never called | no sempy case |
 
-    sempy/fabric/_flat.py:954      use_xmla: bool = False
-    sempy/fabric/_flat.py:1017     if use_xmla: XMLA else: ... REST
+    sempy/fabric/_flat.py:947      def evaluate_measure(          <- 954's owner
+    sempy/fabric/_flat.py:954          use_xmla: bool = False
+    sempy/fabric/_flat.py:1038     def evaluate_dax(...)          <- no use_xmla
+                                       get_dataset_client(mode=ConnectionMode.XMLA)
     sempy/fabric/_client/_pbi_rest_api.py:274
         path = f"v1.0/myorg/datasets/{dataset_id}/executeQueries"
+
+**Three sessions got this wrong before it was executed**, and the same way each
+time. `_flat.py:954` was cited as `evaluate_dax`'s default; it is
+`evaluate_measure`'s. Each reader confirmed the LINE EXISTED and had the quoted
+text, and none checked which `def` it sat inside — **the citation was verified,
+the proposition was not.** What settled it was running the thing:
+`evaluate_dax(..., use_xmla=True)` raises
+`TypeError: unexpected keyword argument 'use_xmla'`, and a parameter that does
+not exist cannot have a default. Prefer executing a claim about behaviour over
+reading any number of sources about it.
 
 XMLA is escalated to only on `use_xmla=True`, a readwrite connection, or
 `num_rows > 30000`. sempy also ships `Microsoft.AnalysisServices.AdomdClient.dll`
@@ -128,8 +141,10 @@ same client.
 
 **Consequences, and they narrow the work:**
 
-1. The sempy gap is the **DMV metadata surface**, not DAX evaluation. That is
-   much narrower than "implement `[MS-SSAS-T]`".
+1. The sempy gap is the **DMV metadata surface plus `evaluate_dax`**. Narrower
+   than "implement `[MS-SSAS-T]`", but larger than the DMV-only version this
+   document carried for one revision — and it points at exactly the `Execute`
+   rowset this harness now serves.
 2. The next rowset to build is `$SYSTEM.TMSCHEMA_*`, NOT the `MDSCHEMA_*` this
    harness probed first. `MDSCHEMA_*` proved the shape; `TMSCHEMA_*` is the
    demand.
