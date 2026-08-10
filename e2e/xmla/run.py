@@ -444,6 +444,68 @@ HANDSHAKE_ERRORS = []  # TCP connected, TLS refused — a distinct diagnosis
 LOCK = threading.Lock()
 
 
+# The MDSCHEMA_MEASURES columns this stub returns. A real server returns ~30;
+# these are enough for the client to build a row, and keeping the set small
+# makes it obvious this is a SHAPE probe rather than an implementation.
+_MEASURE_COLS = ["CATALOG_NAME", "CUBE_NAME", "MEASURE_NAME",
+                 "MEASURE_UNIQUE_NAME", "MEASURE_CAPTION", "EXPRESSION"]
+
+
+def _rowset_envelope(response_element, cols, values):
+    """One `xml-analysis:rowset` payload, wrapped for Execute OR Discover.
+
+    The INLINE XSD is not decoration: ADOMD.NET reads the schema to learn the
+    row shape BEFORE it reads a row, which is why an empty root came back as
+    "unrecognizable" rather than "empty" — the reader never found the element
+    it expects.
+
+    Execute and Discover take the SAME rowset under a different wrapper, so
+    this is factored rather than duplicated; the client refuses each
+    differently ("not a rowset" from `XmlaDataReader..ctor`, "unrecognizable"
+    from `SoapFormatter.ReadDiscoverResponse`) and two copies would drift.
+
+    Built from [MS-SSAS] `xmla-rs:rowset`, the DOCUMENTED surface, per the
+    boundary in docs/32: the decompiler is for undocumented transport glue.
+    """
+    xsd = "".join(
+        f'<xsd:element sql:field="{c}" name="{c}" type="xsd:string" '
+        f'minOccurs="0"/>' for c in cols)
+    row = "".join(f"<{c}>{v}</{c}>" for c, v in zip(cols, values))
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+        '<soap:Body>'
+        f'<{response_element} xmlns="urn:schemas-microsoft-com:xml-analysis">'
+        '<return>'
+        '<root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset" '
+        'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        'xmlns:sql="urn:schemas-microsoft-com:xml-sql" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+        '<xsd:schema targetNamespace="urn:schemas-microsoft-com:xml-analysis:rowset" '
+        'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        'xmlns:sql="urn:schemas-microsoft-com:xml-sql" '
+        'elementFormDefault="qualified">'
+        '<xsd:element name="root">'
+        '<xsd:complexType><xsd:sequence>'
+        '<xsd:element name="row" type="row" minOccurs="0" maxOccurs="unbounded"/>'
+        '</xsd:sequence></xsd:complexType></xsd:element>'
+        '<xsd:complexType name="row"><xsd:sequence>'
+        + xsd +
+        '</xsd:sequence></xsd:complexType>'
+        '</xsd:schema>'
+        f'<row>{row}</row>'
+        '</root></return>'
+        f'</{response_element}>'
+        '</soap:Body></soap:Envelope>').encode() + b"\x00"
+
+
+def _discover_response(request_type):
+    """A DiscoverResponse rowset for a Discover RequestType."""
+    cols = _MEASURE_COLS if request_type == "MDSCHEMA_MEASURES" else ["NAME"]
+    return _rowset_envelope("DiscoverResponse", cols,
+                            [f"emulator-{c.lower()}" for c in cols])
+
+
 class Capture(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -477,6 +539,17 @@ class Capture(http.server.BaseHTTPRequestHandler):
             return b"".join(chunks)
         n = int(self.headers.get("Content-Length", 0) or 0)
         return self.rfile.read(n) if n else b""
+
+    def _xmla_reply(self, b):
+        """Every XMLA reply needs the caps header AND the trailing byte, which
+        `_rowset_envelope` already appends. Three call sites, one place to get
+        the headers right."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/xml; charset=utf-8")
+        self.send_header("x-ms-xmlacaps-negotiation-flags", "0,0,0,0,0")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
 
     def _record(self):
         body = self._read_body()
@@ -616,6 +689,24 @@ class Capture(http.server.BaseHTTPRequestHandler):
             # The client announces this on the way in with
             # `x-ms-accepts-continuations: 1`. Append 0x00 for "that is all".
             b += b"\x00"
+            # THREE contracts arrive on this one path, and the client names
+            # each when refused. Dispatch on the envelope, not the URL.
+            with LOCK:
+                sent = REQUESTS[-1]["body"] if REQUESTS else ""
+            if "<Discover" in sent:
+                rt = (sent.split("<RequestType>", 1)[1].split("<", 1)[0]
+                      if "<RequestType>" in sent else "")
+                b = _discover_response(rt)
+                print(f"    -> answering 200 DiscoverResponse [{rt}]", flush=True)
+                self._xmla_reply(b)
+                return
+            if "<Statement>" in sent and "<Statement />" not in sent:
+                stmt = sent.split("<Statement>", 1)[1].split("</Statement>", 1)[0]
+                b = _rowset_envelope("ExecuteResponse", ["x"], ["1"])
+                print(f"    -> answering 200 Execute rowset for {stmt[:40]!r}",
+                      flush=True)
+                self._xmla_reply(b)
+                return
             print(f"    -> answering 200 XMLA session {XMLA_SESSION}", flush=True)
             self.send_response(200)
             self.send_header("Content-Type", "text/xml; charset=utf-8")
