@@ -179,14 +179,64 @@ def assl(database_scoped):
 # TOM asks for the whole TMSCHEMA catalogue in ONE Execute whose Command is a
 # <Batch> of ~35 <Discover> elements. The response is a `multipleresults`
 # envelope holding one <root> per request, IN ORDER.
+# Columns are the SCALAR properties of each TOM type, read off
+# Microsoft.AnalysisServices.Tabular.dll. TOM reads them from the rowset BY
+# NAME and says which one is missing — `ArgumentException: Column 'Culture'
+# does not belong to table Model` — so the type's own property list is the
+# column contract. `ID` and the parent FK are added because the rowsets are
+# relational where the objects are nested.
+_MODEL = ["Name", "Description", "StorageLocation", "DefaultMode",
+          "DefaultDataView", "Culture", "Collation", "ModifiedTime",
+          "StructureModifiedTime", "DefaultPowerBIDataSourceVersion",
+          "ForceUniqueNames", "DiscourageImplicitMeasures",
+          "DiscourageReportMeasures", "DataSourceVariablesOverrideBehavior",
+          "DataSourceDefaultMaxConnections", "SourceQueryCulture",
+          "DiscourageCompositeModels", "DisableAutoExists",
+          "MaxParallelismPerRefresh", "MaxParallelismPerQuery"]
+_TABLE = ["Name", "DataCategory", "Description", "IsHidden", "ModifiedTime",
+          "StructureModifiedTime", "ShowAsVariationsOnly", "IsPrivate",
+          "AlternateSourcePrecedence", "ExcludeFromModelRefresh", "LineageTag",
+          "SourceLineageTag", "SystemManaged",
+          "ExcludeFromAutomaticAggregations"]
+_COLUMN = ["ExplicitName", "SourceColumn", "DataCategory", "Description",
+           "IsHidden", "State", "IsUnique", "IsKey", "IsNullable", "Alignment",
+           "TableDetailPosition", "IsDefaultLabel", "IsDefaultImage",
+           "SummarizeBy", "Type", "FormatString", "IsAvailableInMDX",
+           "ModifiedTime", "StructureModifiedTime", "RefreshedTime",
+           "KeepUniqueRows", "DisplayOrdinal", "ErrorMessage",
+           "SourceProviderType", "DisplayFolder", "EncodingHint", "LineageTag",
+           "SourceLineageTag", "ExplicitDataType", "IsDataTypeInferred"]
+_MEASURE = ["Name", "Description", "DataType", "Expression", "FormatString",
+            "IsHidden", "State", "ModifiedTime", "StructureModifiedTime",
+            "IsSimpleMeasure", "ErrorMessage", "DisplayFolder", "DataCategory",
+            "LineageTag", "SourceLineageTag"]
+_PARTITION = ["Name", "Description", "State", "Mode", "DataView",
+              "ModifiedTime", "RefreshedTime", "ErrorMessage",
+              "RetainDataTillForceCalculate", "Type"]
+
+
+def _row(cols, overrides):
+    return [overrides.get(c, "") for c in cols]
+
+
 POPULATED = {
-    "TMSCHEMA_MODEL":         (["ID", "Name"], [["1", "Model"]]),
-    "TMSCHEMA_TABLES":        (["ID", "ModelID", "Name"], [["1", "1", "Sales"]]),
-    "TMSCHEMA_COLUMNS":       (["ID", "TableID", "ExplicitName", "Name"],
-                               [["1", "1", "Amount", "Amount"]]),
-    "TMSCHEMA_MEASURES":      (["ID", "TableID", "Name", "Expression"],
-                               [["1", "1", "Total", "SUM(Sales[Amount])"]]),
-    "TMSCHEMA_PARTITIONS":    (["ID", "TableID", "Name"], [["1", "1", "p1"]]),
+    "TMSCHEMA_MODEL": (["ID"] + _MODEL,
+                       [_row(["ID"] + _MODEL,
+                             {"ID": "1", "Name": "Model", "Culture": "en-US"})]),
+    "TMSCHEMA_TABLES": (["ID", "ModelID"] + _TABLE,
+                        [_row(["ID", "ModelID"] + _TABLE,
+                              {"ID": "1", "ModelID": "1", "Name": "Sales"})]),
+    "TMSCHEMA_COLUMNS": (["ID", "TableID"] + _COLUMN,
+                         [_row(["ID", "TableID"] + _COLUMN,
+                               {"ID": "1", "TableID": "1",
+                                "ExplicitName": "Amount"})]),
+    "TMSCHEMA_MEASURES": (["ID", "TableID"] + _MEASURE,
+                          [_row(["ID", "TableID"] + _MEASURE,
+                                {"ID": "1", "TableID": "1", "Name": "Total",
+                                 "Expression": "SUM(Sales[Amount])"})]),
+    "TMSCHEMA_PARTITIONS": (["ID", "TableID"] + _PARTITION,
+                            [_row(["ID", "TableID"] + _PARTITION,
+                                  {"ID": "1", "TableID": "1", "Name": "p1"})]),
 }
 # `AmoDataAdapter.AdjustTableNames` renames the DataSet's tables from
 # `XmlaDataReader.RowsetNames`, and each entry is literally
