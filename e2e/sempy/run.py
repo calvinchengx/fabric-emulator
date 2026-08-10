@@ -393,6 +393,14 @@ CHECKS = [
     ("labs reads the SEEDED model's table names, not an empty Database",
      all(t in labs.get("labs_tom_table_names", "") for t in
          ("Sales", "Store", "Time"))),
+    # THE WRITE, asserted on the RECONNECT rather than on the absence of an
+    # exception. Measured: with the batch parsed and thrown away, TOM still
+    # reported SaveChanges as successful and this probe still returned OK — it
+    # is only the measure list, read back over a fresh connection, that can
+    # tell a persisted write from a discarded one.
+    ("semantic-link-labs writes a measure that SURVIVES a reconnect",
+     labs.get("labs_tom_write", "").startswith("OK")
+     and "ProbeMeasure" in labs.get("labs_tom_write", "")),
     # dtypes come from the rowset's inline schema. All-string here means a
     # caller doing arithmetic on a measure gets string concatenation.
     # Every column of `Sales` is int64 in the seeded model, so a correct schema

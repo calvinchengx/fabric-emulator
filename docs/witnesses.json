@@ -528,7 +528,9 @@
       "go:TestTheHandshakeCarriesTheCapsHeaderSessionAndTrailingByte",
       "go:TestEveryDiscoverRowsetCarriesAVersionColumnTypedLong",
       "go:TestEveryRowsetIsNamedOnTheRootElement",
-      "go:TestFromDAXDeclaresColumnTypes"
+      "go:TestFromDAXDeclaresColumnTypes",
+      "go:TestParseWriteBatchReadsTheCapturedShape",
+      "go:TestApplyWriteAddsTheMeasureToTheNamedTable"
     ]
   },
   "queryactivityruns-detail": {
