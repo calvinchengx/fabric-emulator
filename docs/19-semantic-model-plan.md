@@ -5,14 +5,26 @@ Turn Power BI from 🔴 (item management only) into a real query engine: the
 **Great Expectations can validate semantic-model data** against the emulator
 ([e2e/great-expectations](../e2e/great-expectations/)).
 
-**Not SemPy, and this plan never reaches it.** `sempy.evaluate_dax` goes over
-**XMLA**, not `executeQueries` — measured from sempy 0.14.2's own source, which
-ships `Microsoft.AnalysisServices.AdomdClient.dll` and reaches model metadata
-through `$SYSTEM.TMSCHEMA_*` DMVs. So the *Great Expectations* half of the
-tutorial runs here; the *SemPy* half needs the XMLA transport in
-[32-xmla-plan.md](32-xmla-plan.md). The row this plan earned is real, but no
-amount of `executeQueries` work leads to SemPy — recorded because the opposite
-inference was drawn from it once.
+**What this reaches in SemPy, measured against the sempy 0.14.2 wheel** — not
+against its documentation, which sent two sessions the wrong way in *opposite*
+directions before anyone grepped the package:
+
+- `evaluate_dax` / `evaluate_measure` **default to REST and call
+  `executeQueries`** (`_flat.py:954` `use_xmla: bool = False`; the branch at
+  `_flat.py:1017` falls through to `ConnectionMode.REST`;
+  `_client/_pbi_rest_api.py:274` builds
+  `v1.0/myorg/datasets/{id}/executeQueries`). XMLA is escalated to only on
+  `use_xmla=True`, a readwrite connection, or `num_rows > 30000`. **So this
+  engine already serves SemPy's DAX path.**
+- `list_tables` / `list_columns` / `list_measures` / `list_partitions` /
+  `list_relationships` go over **XMLA** `$SYSTEM.TMSCHEMA_*` (11 call sites).
+  That metadata surface is the real SemPy gap, and it needs the transport in
+  [32-xmla-plan.md](32-xmla-plan.md).
+- `INFO.*` appears **nowhere** in the wheel (0 hits) — a plan to implement it
+  over `executeQueries` would have moved SemPy not one inch.
+
+Recorded at this precision because both looser versions were held confidently
+and both were wrong: documentation about a transport is not a transport.
 
 Grounded in the golden references pinned first:
 [18-semantic-model-references.md](18-semantic-model-references.md),
