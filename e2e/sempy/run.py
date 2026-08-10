@@ -21,9 +21,15 @@ WHAT IT ASSERTS, all measured off the wire:
   3. `evaluate_dax` is XMLA and sends `Execute` with the DAX in a `<Statement>`.
      It never touches `executeQueries`.
   4. The metadata path is TWO mechanisms IN SEQUENCE: `Discover`
-     `DISCOVER_XML_METADATA` (`ObjectExpansion=ExpandObject`), then `Execute` of
-     `$SYSTEM.TMSCHEMA_*` DMV queries. The DMV leg is an Execute, not a
-     Discover, so it shares the rowset path `EVALUATE` needs.
+     `DISCOVER_XML_METADATA` (`ObjectExpansion=ExpandObject`), then TMSCHEMA.
+     TMSCHEMA itself arrives TWO WAYS and they are easy to conflate:
+       * TOM (`list_measures`, `list_tables`) sends an `Execute` whose Command
+         is a `<Batch>` of ~35 `<Discover RequestType=TMSCHEMA_*>` elements,
+         restricted by `<DatabaseName>`. No SQL anywhere.
+       * sempy's own Python (`list_columns`, `list_partitions`,
+         `list_relationships`, `list_hierarchies`) sends SQL
+         `SELECT ... FROM $SYSTEM.TMSCHEMA_*` through `evaluate_dax`.
+     The SOAP verb is `Execute` in both cases; the GRAMMAR differs.
   5. Nine transport gates, each named by the client's own error. They are
      asserted individually below so that a regression names the gate that broke
      rather than "sempy failed".
@@ -391,9 +397,19 @@ CHECKS = [
     ("both Discover scopes appear (server-level and DatabaseID-scoped)",
      any("<DatabaseID>" not in r["body"] for r in verbs("Discover"))
      and any("<DatabaseID>" in r["body"] for r in verbs("Discover"))),
-    ("TMSCHEMA follows a SUCCESSFUL Discover, as an Execute",
+    # NAMED PRECISELY: the SOAP verb is Execute, but the payload is a BATCH of
+    # Discover elements, not SQL. An earlier version of this check said "as an
+    # Execute", which is true on the verb and misleading about the grammar —
+    # and it misled another session's design before being caught.
+    ("TMSCHEMA arrives as a Batch of Discover inside one Execute",
      "TMSCHEMA" in bodies
-     and any("TMSCHEMA" in r["body"] and "<Execute" in r["body"] for r in xmla)),
+     and any("<Batch" in r["body"] and "TMSCHEMA" in r["body"]
+             and "<Discover" in r["body"] for r in xmla)),
+    ("TOM batches the whole TMSCHEMA catalogue in one round trip",
+     max((len(re.findall(r"<RequestType>TMSCHEMA_", r["body"])) for r in xmla),
+         default=0) >= 30),
+    ("the TMSCHEMA batch is restricted by DatabaseName",
+     any("<Batch" in r["body"] and "<DatabaseName>" in r["body"] for r in xmla)),
 ]
 
 print("\n---- contract ----", flush=True)
