@@ -520,6 +520,16 @@
       "go:TestExecuteQueriesDirectLakeReadsCurrentDelta"
     ]
   },
+  "power-bi-sempy-over-xmla": {
+    "section": "Item types present, engine absent",
+    "claim": "Power BI — **SemPy over XMLA**",
+    "witnesses": [
+      "ci:sempy",
+      "go:TestTheHandshakeCarriesTheCapsHeaderSessionAndTrailingByte",
+      "go:TestEveryDiscoverRowsetCarriesAVersionColumnTypedLong",
+      "go:TestEveryRowsetIsNamedOnTheRootElement"
+    ]
+  },
   "queryactivityruns-detail": {
     "section": "Data Factory (`data-factory/`)",
     "claim": "`queryactivityruns` detail",
