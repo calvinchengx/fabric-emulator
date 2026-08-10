@@ -230,6 +230,11 @@ _CLR = {
     "DataView": "enum", "SourceType": "enum", "ObjectType": "enum",
     "DefaultPowerBIDataSourceVersion": "enum",
     "DataSourceVariablesOverrideBehavior": "enum",
+    # `ExplicitDataType` is the ENUM on Column (`DataType` is derived from
+    # it). Typed as a string it arrives empty and `Enum.Parse("")` throws
+    # `Must specify valid information for parsing` — an argument error with
+    # no column named, which the stack trace resolves in one read.
+    "ExplicitDataType": "enum",
     "ForceUniqueNames": "Boolean", "DiscourageImplicitMeasures": "Boolean",
     "DiscourageReportMeasures": "Boolean", "DiscourageCompositeModels": "Boolean",
     "IsHidden": "Boolean", "ShowAsVariationsOnly": "Boolean",
@@ -260,6 +265,7 @@ _ENUM_DEFAULT = {
     "ObjectType": "1", "EncodingHint": "0", "DefaultMode": "0",
     "DefaultDataView": "0", "DefaultPowerBIDataSourceVersion": "0",
     "DataSourceVariablesOverrideBehavior": "0",
+    "ExplicitDataType": "2",
 }
 _DEFAULT = {"xsd:dateTime": "2026-08-10T00:00:00", "xsd:boolean": "false",
             "xsd:int": "0", "xsd:long": "1", "xsd:unsignedLong": "0",
