@@ -37,9 +37,10 @@ ENTRA = os.environ["ENTRA_BASE"]
 TENANT = os.environ.get("TENANT", "6f89cf12-978b-4d23-ac18-9ef0c127cf87")
 CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
 CLIENT_SECRET = "daemon-app-secret"
-# The spec's OAuth2 flow names this scope; the issued token's audience is the
-# resource without the `.default` suffix, which is what the emulator validates.
-SCOPE = "https://purview.azure.net/.default"
+# The spec's OAuth2 flow names `https://purview.azure.net/.default`; the issued
+# token's AUDIENCE is the resource without the scope suffix, and that is what
+# internal/purview validates (`DataMapAudience`).
+AUDIENCE = "https://purview.azure.net"
 
 _CTX = ssl.create_default_context()
 _CTX.check_hostname = False
@@ -56,15 +57,27 @@ def check(ok, what, detail=""):
 
 
 def entra_token():
-    form = urllib.parse.urlencode({
-        "grant_type": "client_credentials",
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "scope": SCOPE,
-    }).encode()
-    req = urllib.request.Request(f"{ENTRA}/{TENANT}/oauth2/v2.0/token", data=form)
+    """Mint a Data Map-audience token via entra-emulator's ADMIN endpoint.
+
+    NOT the client_credentials flow, and the reason is a measured one: the
+    seeded directory has no service principal for `https://purview.azure.net`,
+    so that flow answers
+
+        AADSTS500011: The resource principal was not found in the tenant.
+
+    which is a truthful Entra error about a directory that does not contain the
+    resource, NOT a defect in the Data Map. `e2e/adls-sdk` already takes this
+    same admin path for the Storage audience, so this follows the established
+    pattern rather than inventing one. If entra-emulator ever seeds a Purview
+    resource principal, the client_credentials flow becomes available and is the
+    more faithful choice.
+    """
+    body = json.dumps({"clientId": CLIENT_ID, "audience": AUDIENCE}).encode()
+    req = urllib.request.Request(f"{ENTRA}/admin/api/tokens", data=body,
+                                 headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, context=_CTX) as r:
-        return json.loads(r.read())["access_token"]
+        t = json.loads(r.read() or b"{}")
+    return t.get("access_token") or t["token"]
 
 
 class EmulatorAuth(AtlasAuthBase):
@@ -96,7 +109,11 @@ def main():
           "the token carries the Data Map audience", f"aud={aud!r}")
 
     client = AtlasClient(
-        endpoint_url=f"{FABRIC}/datamap/api",
+        # MUST already end in /atlas/v2: pyapacheatlas appends "/entity/..."
+        # and "/types/..." directly (core/client.py:98, :107). Getting this
+        # wrong yields a non-JSON body and a JSONDecodeError from deep inside
+        # the client, which says nothing about the path being the cause.
+        endpoint_url=f"{FABRIC}/datamap/api/atlas/v2",
         authentication=EmulatorAuth(token),
         requests_args={"verify": False},
     )

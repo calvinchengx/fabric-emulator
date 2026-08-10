@@ -1247,6 +1247,15 @@ wheels = [
 ]
 
 [[package]]
+name = "et-xmlfile"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz", hash = "sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54", size = 17234, upload-time = "2024-10-25T17:25:40.039Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl", hash = "sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", size = 18059, upload-time = "2024-10-25T17:25:39.051Z" },
+]
+
+[[package]]
 name = "executing"
 version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1354,6 +1363,9 @@ lint = [
 mlflow = [
     { name = "mlflow" },
 ]
+purview-datamap = [
+    { name = "pyapacheatlas" },
+]
 rti = [
     { name = "azure-kusto-data" },
     { name = "requests" },
@@ -1450,6 +1462,7 @@ lint = [
     { name = "ty", specifier = ">=0.0.1a14" },
 ]
 mlflow = [{ name = "mlflow", specifier = ">=3.1,<4" }]
+purview-datamap = [{ name = "pyapacheatlas", specifier = ">=0.16,<1" }]
 rti = [
     { name = "azure-kusto-data", specifier = ">=5,<6" },
     { name = "requests", specifier = ">=2.32,<3" },
@@ -3236,6 +3249,18 @@ wheels = [
 ]
 
 [[package]]
+name = "openpyxl"
+version = "3.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "et-xmlfile" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464, upload-time = "2024-06-28T14:03:44.161Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl", hash = "sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", size = 250910, upload-time = "2024-06-28T14:03:41.161Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.44.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3661,6 +3686,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cd/05/0a34433a064256a578f1783a10da6df098ceaa4a57bbeaa96a6c0352786b/pure_eval-0.2.3.tar.gz", hash = "sha256:5f4e983f40564c576c7c8635ae88db5956bb2229d7e9237d03b3c0b0190eaf42", size = 19752, upload-time = "2024-07-21T12:58:21.801Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/37/efad0257dc6e593a18957422533ff0f87ede7c9c6ea010a2177d738fb82f/pure_eval-0.2.3-py3-none-any.whl", hash = "sha256:1db8e35b67b3d218d818ae653e27f06c3aa420901fa7b081ca98cbedc874e0d0", size = 11842, upload-time = "2024-07-21T12:58:20.04Z" },
+]
+
+[[package]]
+name = "pyapacheatlas"
+version = "0.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "openpyxl" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/24/7b/7f10106aaebd8497981d85a8774970e14320c2888dc4e071971b106fb7e9/pyapacheatlas-0.16.0.tar.gz", hash = "sha256:26990f5d757ce487553f32d0c2355d96032a54fa940763b81c6f961eb81754d4", size = 65264, upload-time = "2023-12-23T15:58:37.081Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/80/1f/4c83a5939c9218aa84e024424bff96120e44a8111a99cf5a90f095fa3dee/pyapacheatlas-0.16.0-py3-none-any.whl", hash = "sha256:7294f4ca46b117b60da326fb188ac18cffb1939aa20094cba79fbd55d8aede4e", size = 77211, upload-time = "2023-12-23T15:58:34.158Z" },
 ]
 
 [[package]]
