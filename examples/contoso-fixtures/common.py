@@ -38,7 +38,20 @@ _T = target()
 # cannot quietly authenticate as a dev daemon against production.
 ENTRA = _T.entra_url
 FABRIC = _T.api_root[: -len("/v1")] if _T.api_root.endswith("/v1") else _T.api_root
-KV = _T.vault_url or "https://localhost:8444"
+# NO FALLBACK. Under `emulator` fabric-target already defaults this to the local
+# vault; under `real` it is None unless FABRIC_VAULT_URL/AZURE_KEY_VAULT_URL is
+# set, and `or "https://localhost:8444"` would have pointed a PRODUCTION run at
+# the emulator's vault — silently, since the resolver is exempt from the gate's
+# localhost rule. Every medallion example stores a source credential in Key Vault
+# (step 2), so a missing vault under real is always a misconfiguration: refuse
+# here, where the cause is legible, rather than at a 404 later.
+if _T.is_real and not _T.vault_url:
+    raise SystemExit(
+        "FABRIC_TARGET=real needs a vault: set FABRIC_VAULT_URL (or "
+        "AZURE_KEY_VAULT_URL) to your Key Vault URI. These examples store the "
+        "source API key there and resolve it through an AKV reference, exactly "
+        "as they do locally.")
+KV = _T.vault_url
 TENANT = _T.tenant
 
 # Local policy, not target policy (see the module docstring).
@@ -88,13 +101,27 @@ def log(msg):
 def ensure_app(app_id_uri, name):
     """Register a non-default audience in entra (409 = already there).
 
-    EMULATOR ONLY, and refused rather than silently skipped under `real`: this
-    POSTs entra-emulator's admin API, which has no counterpart in Entra ID. A
-    real tenant's app registrations are an administrator's act, not a pipeline
-    step, so a run that reaches here against real Fabric is misconfigured and
-    should say so at the call rather than fail later somewhere stranger.
+    SKIPPED under `real`, not refused — and the distinction matters.
+
+    This is emulator-only SETUP, not an emulator-only FEATURE. It POSTs
+    entra-emulator's admin API to make an audience issuable; in a real tenant the
+    audiences these examples ask for (storage, vault, SQL, Power BI) are Microsoft
+    first-party resources that already exist, so the POSTCONDITION is already
+    true and there is nothing to do. Refusing here would turn "no setup needed"
+    into "this step cannot run", which is what it did at first — and it blocked
+    four of the eleven steps from ever being portable.
+
+    Contrast `_emulator/clock`: advancing time is a CAPABILITY with no real
+    counterpart, so a caller that needs it is asking for something production
+    cannot give. That one must refuse (see contoso-data-platform's
+    platform/schedule.py, which asserts clock_is_controllable).
+
+    The rule: if the target already satisfies the postcondition, skip; if the
+    target cannot satisfy it at all, refuse.
     """
-    _T.emulator_only("entra-emulator admin app registration (ensure_app)")
+    if _T.is_real:
+        log(f"skipping ensure_app({app_id_uri}) — a real tenant already issues it")
+        return
     r = _RAW.post(f"{ENTRA}/admin/api/apps",
                json={"displayName": name, "appIdUri": app_id_uri, "isConfidential": False})
     assert r.status_code in (200, 201, 409), f"seed {app_id_uri}: {r.status_code} {r.text}"
