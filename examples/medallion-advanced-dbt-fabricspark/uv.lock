@@ -467,11 +467,15 @@ name = "contoso-fixtures"
 version = "0.1.0"
 source = { editable = "../contoso-fixtures" }
 dependencies = [
+    { name = "fabric-target" },
     { name = "requests" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "requests", specifier = ">=2.32,<3" }]
+requires-dist = [
+    { name = "fabric-target", editable = "../../python/fabric-target" },
+    { name = "requests", specifier = ">=2.32,<3" },
+]
 
 [[package]]
 name = "contoso-fixtures-advanced"
@@ -821,6 +825,18 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
+
+[[package]]
+name = "fabric-target"
+version = "0.1.0"
+source = { editable = "../../python/fabric-target" }
+
+[package.metadata]
+requires-dist = [
+    { name = "azure-identity", marker = "extra == 'real'", specifier = ">=1.17" },
+    { name = "requests", marker = "extra == 'sessions'", specifier = ">=2.31" },
+]
+provides-extras = ["real", "sessions"]
 
 [[package]]
 name = "fastjsonschema"

@@ -31,9 +31,10 @@ import os
 
 import requests
 import yaml
-from common import FABRIC, S, fabric_headers, load, log
+from common import FABRIC, OM_URL, S, fabric_headers, load, log
 
-OM = os.environ.get("OM_URL", "http://localhost:8585")
+# Local policy, resolved centrally — see common.OM_URL.
+OM = OM_URL
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONTRACTS = os.path.join(HERE, "contracts")
 

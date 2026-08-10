@@ -18,6 +18,10 @@ description = "Shared source-system fixture and emulator plumbing for the medall
 requires-python = ">=3.12"
 dependencies = [
     "requests>=2.32,<3",
+    # The target contract, consumed rather than restated. Published from the
+    # emulator's release workflow; `make fixtures` installs it alongside these
+    # generators. See docs/21-real-fabric-toggle.md and the common.py docstring.
+    "fabric-target",
 ]
 
 # Flat modules, not a package namespace: the examples are tutorial code, and
@@ -29,3 +33,6 @@ py-modules = ["common", "source_system"]
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv.sources]
+fabric-target = { path = "../../python/fabric-target", editable = true }

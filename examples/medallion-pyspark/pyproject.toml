@@ -29,3 +29,6 @@ package = false
 
 [tool.uv.sources]
 contoso-fixtures = { path = "../contoso-fixtures", editable = true }
+# The target contract, resolved from the repo rather than PyPI so an example run
+# from a checkout uses the same code the emulator publishes.
+fabric-target = { path = "../../python/fabric-target", editable = true }

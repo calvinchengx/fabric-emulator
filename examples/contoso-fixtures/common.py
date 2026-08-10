@@ -1,12 +1,25 @@
-"""Endpoints, tokens, and shared state for the medallion example.
+"""Endpoints, tokens, and shared state for the medallion examples.
 
-Every hop authenticates against entra-emulator with the seeded daemon service
-principal — the same trust relationships as production Azure.
+**The target is resolved here and nowhere else.** `FABRIC_TARGET=emulator|real`
+(default `emulator`) picks the whole coherent set — API root, token authority,
+credential, OneLake, vault, TLS — through the published `fabric-target`
+contract. No step branches on which target is active; they hold display NAMES
+and receive endpoints, because ids can never match across targets
+(docs/21-real-fabric-toggle.md).
 
-Endpoints default to the local developer stack (`docker compose up`, self-signed
-TLS on localhost) and are overridable by environment variable, so the same code
-runs unchanged inside a container against compose service names. That is how
-`e2e/medallion` drives this example in CI.
+This file is the CONSUMER half. It does not restate the contract: contoso-data-platform
+did that while `fabric-target` was unpublished and the restatement drifted into
+requiring a client secret, which broke `az login`, managed identity, and running
+inside a Fabric notebook. A contract you copy is a contract you get wrong.
+
+What stays local policy, because it is genuinely this example's choice rather
+than the toggle's: who plays the Spark pool (`SPARK_REMOTE`), the TDS endpoint,
+and which address the *emulator* must use to reach the vault it resolves
+server-side (`KV_INTERNAL`).
+
+Artifacts are persisted the way real Fabric persists them — definition parts
+with Fabric's own paths (`notebook-content.py`, `pipeline-content.json`). See
+docs/46-artifact-persistence.md.
 """
 import json
 import os
@@ -14,30 +27,29 @@ import pathlib
 
 import requests
 import urllib3
+from fabric_target import target
 
 urllib3.disable_warnings()  # the family serves self-signed TLS
 
-TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
-CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"  # seeded daemon SP
-CLIENT_SECRET = "daemon-app-secret"  # intentionally public dev value
+_T = target()
 
-ENTRA = os.environ.get("ENTRA_URL", "https://localhost:8443")
-KV = os.environ.get("KV_URL", "https://localhost:8444")
-FABRIC = os.environ.get("FABRIC_REST_URL", "https://localhost:9443")
+# Resolved per target, never hardcoded. In real mode `fabric-target` refuses the
+# emulator's seeded principal BY VALUE, so a shell left over from a local run
+# cannot quietly authenticate as a dev daemon against production.
+ENTRA = _T.entra_url
+FABRIC = _T.api_root[: -len("/v1")] if _T.api_root.endswith("/v1") else _T.api_root
+KV = _T.vault_url or "https://localhost:8444"
+TENANT = _T.tenant
+
+# Local policy, not target policy (see the module docstring).
 TDS_SERVER = os.environ.get("TDS_SERVER", "localhost,1433")
-# Fabric resolves an AKV reference server-side, so the vault URI it stores must
-# be reachable from the *emulator*, which is not always where you are. Running
-# these steps on your machine against `docker compose up`, `localhost:8444` is
-# the vault as *you* reach it — the emulator container cannot follow it back
-# out. So the default is the compose service name, which is correct whether the
-# step runs on the host or in a container alongside it. Override for any other
-# topology (the CI harness points it at plain HTTP; a bare-metal vault at your
-# own address).
 KV_INTERNAL = os.environ.get("KV_INTERNAL_URL", "https://keyvault-emulator:8444")
-
-# The Spark engine engine.py drives the queued notebook run onto. Default is
-# Sail as `docker compose up` publishes it; the CI harness uses the service name.
 SPARK_REMOTE = os.environ.get("SPARK_REMOTE", "sc://localhost:50051")
+# OpenMetadata, the governance sidecar the advanced examples catalog into. Local
+# policy for the same reason: it is a companion service, not a Fabric surface, so
+# the toggle has nothing to say about it. Real Fabric's counterpart is Purview,
+# which is a different integration rather than a different endpoint.
+OM_URL = os.environ.get("OM_URL", "http://localhost:8585")
 
 FABRIC_AUD = "https://api.fabric.microsoft.com"
 STORAGE_AUD = "https://storage.azure.com"
@@ -45,8 +57,15 @@ SQL_AUD = "https://database.windows.net"
 VAULT_AUD = "https://vault.azure.net"
 PBI_AUD = "https://analysis.windows.net/powerbi/api"
 
-S = requests.Session()
-S.verify = False
+S = _T.session()
+
+# entra-emulator's own endpoints (the admin API, the token endpoint) must NOT
+# carry a Fabric bearer: `S` injects one on every request, which is correct for
+# the control plane and meaningless to the authority issuing the token. So the
+# few calls that talk to the issuer use a plain session with the target's TLS
+# mode, not the authenticated one.
+_RAW = requests.Session()
+_RAW.verify = _T.tls_verify
 
 # Anchored on the CALLING example's directory, not on this file's. This module
 # is shared by both medallion examples, so `HERE` would resolve to the fixture
@@ -67,18 +86,25 @@ def log(msg):
 
 
 def ensure_app(app_id_uri, name):
-    """Register a non-default audience in entra (409 = already there)."""
-    r = S.post(f"{ENTRA}/admin/api/apps",
+    """Register a non-default audience in entra (409 = already there).
+
+    EMULATOR ONLY, and refused rather than silently skipped under `real`: this
+    POSTs entra-emulator's admin API, which has no counterpart in Entra ID. A
+    real tenant's app registrations are an administrator's act, not a pipeline
+    step, so a run that reaches here against real Fabric is misconfigured and
+    should say so at the call rather than fail later somewhere stranger.
+    """
+    _T.emulator_only("entra-emulator admin app registration (ensure_app)")
+    r = _RAW.post(f"{ENTRA}/admin/api/apps",
                json={"displayName": name, "appIdUri": app_id_uri, "isConfidential": False})
     assert r.status_code in (200, 201, 409), f"seed {app_id_uri}: {r.status_code} {r.text}"
 
 
 def token(audience):
-    r = S.post(f"{ENTRA}/{TENANT}/oauth2/v2.0/token", data={
-        "grant_type": "client_credentials", "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET, "scope": audience + "/.default"})
-    r.raise_for_status()
-    return r.json()["access_token"]
+    """A bearer for `audience`, from whichever credential the target resolved:
+    the seeded daemon locally, DefaultAzureCredential (env SP, managed identity,
+    or a developer's `az login`) under real."""
+    return _T.credential.get_token(audience + "/.default").token
 
 
 def fabric_headers():
@@ -90,9 +116,9 @@ def storage_options():
     opts = {
         "azure_storage_account_name": "onelake",
         "azure_storage_token": token(STORAGE_AUD),
-        "azure_endpoint": f"{FABRIC}/onelake",
+        "azure_endpoint": f"{_T.onelake_url}/onelake",
     }
-    if FABRIC.startswith("http://"):
+    if _T.onelake_url.startswith("http://"):
         opts["azure_allow_http"] = "true"
     else:
         opts["azure_allow_invalid_certificates"] = "true"
