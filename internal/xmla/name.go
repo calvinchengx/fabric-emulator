@@ -2,6 +2,7 @@ package xmla
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -62,4 +63,60 @@ func isNameStart(r rune) bool {
 // isNameChar reports whether r may appear after the first character.
 func isNameChar(r rune) bool {
 	return isNameStart(r) || unicode.IsDigit(r) || r == '-' || r == '.' || r == 0xB7
+}
+
+// DecodeName inverts EncodeName.
+//
+// Needed on the WRITE path: TOM sends field names back in the same _xHHHH_ form
+// this package emits, so a name that had to be escaped on the way out would
+// never match an object on the way in. Encoding is total and unambiguous
+// (EncodeName escapes every literal underscore), so this is exact rather than
+// best-effort.
+//
+// Anything that is not a well-formed escape is returned verbatim: a name the
+// encoder never produced is a name we should not silently rewrite.
+func DecodeName(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		r, width := decodeEscape(s, i)
+		if width == 0 {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		b.WriteRune(r)
+		i += width
+	}
+	return b.String()
+}
+
+// decodeEscape reads one _xHHHH_ (or surrogate pair) at i, returning the rune
+// and the bytes consumed, or width 0 when there is no escape there.
+func decodeEscape(s string, i int) (rune, int) {
+	hi, ok := hexEscapeAt(s, i)
+	if !ok {
+		return 0, 0
+	}
+	if hi >= 0xD800 && hi <= 0xDBFF {
+		if lo, ok := hexEscapeAt(s, i+7); ok && lo >= 0xDC00 && lo <= 0xDFFF {
+			return 0x10000 + (hi-0xD800)<<10 + (lo - 0xDC00), 14
+		}
+	}
+	return hi, 7
+}
+
+func hexEscapeAt(s string, i int) (rune, bool) {
+	if i+7 > len(s) || s[i] != '_' || (s[i+1] != 'x' && s[i+1] != 'X') || s[i+6] != '_' {
+		return 0, false
+	}
+	// bitSize 16, not 32: an escape is FOUR hex digits, so the value it can
+	// carry is 16 bits, and that is the UCS-2 unit writeEscape emits (which is
+	// why an astral rune leaves here as a surrogate pair). Written as 32 the
+	// bound was still real but lived in the length check above, where neither a
+	// reader nor CodeQL could see it (go/incorrect-integer-conversion).
+	v, err := strconv.ParseUint(s[i+2:i+6], 16, 16)
+	if err != nil {
+		return 0, false
+	}
+	return rune(v), true
 }

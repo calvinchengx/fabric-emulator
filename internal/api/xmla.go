@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"net/http"
@@ -307,6 +308,9 @@ func (a *API) xmlaEndpoint(w http.ResponseWriter, r *http.Request, p *auth.Princ
 		a.xmlaBatch(w, r, p, types)
 	case len(types) == 1:
 		a.xmlaDiscover(w, r, p, types[0][1], text)
+	case strings.Contains(text, "<Batch") &&
+		(strings.Contains(text, "<Create") || strings.Contains(text, "<Alter")):
+		a.xmlaWrite(w, r, p, text)
 	case strings.Contains(text, "<Statement>"):
 		a.xmlaExecute(w, r, p, text)
 	default:
@@ -348,6 +352,68 @@ func (a *API) xmlaBatch(w http.ResponseWriter, r *http.Request, p *auth.Principa
 	}
 	b.WriteString(`</results></return></ExecuteResponse></soap:Body></soap:Envelope>`)
 	writeXMLA(w, append([]byte(b.String()), 0x00))
+}
+
+// xmlaWrite answers TOM's SaveChanges: an Execute whose Command is a
+// <Batch Transaction="true"> of <Create>/<Alter> elements in the 2014/engine
+// namespace.
+//
+// MEASURED 2026-08-10, and it is NOT what docs/32 planned for. TOM does not
+// send TMSL JSON. It sends a ROW-BASED DELTA in exactly the rowset shape this
+// server EMITS for Discover: per object type an inline xs:schema followed by
+// <row> elements carrying only the changed fields, keyed by the object ids we
+// handed out.
+func (a *API) xmlaWrite(w http.ResponseWriter, r *http.Request, p *auth.Principal,
+	text string) {
+	id, err := a.xmlaItemID(r, p)
+	if err != nil {
+		writeXMLA(w, soapFault(err.Error()))
+		return
+	}
+	bim, err := a.definitionPartExact(id, "model.bim")
+	if err != nil {
+		// TMDL-serialised models are read fine and written not at all. Saying so
+		// beats accepting the batch and dropping it: TOM reports SaveChanges as
+		// successful whenever the server answers.
+		writeXMLA(w, soapFault("this semantic model has no model.bim part, so "+
+			"XMLA writes are not supported for it"))
+		return
+	}
+	cmds, err := xmla.ParseWriteBatch(text)
+	if err != nil {
+		writeXMLA(w, soapFault(err.Error()))
+		return
+	}
+	updated, err := xmla.ApplyWrite(bim, cmds)
+	if err != nil {
+		writeXMLA(w, soapFault(err.Error()))
+		return
+	}
+	if err := a.replaceDefinitionPart(id, "model.bim", updated); err != nil {
+		writeXMLA(w, soapFault(err.Error()))
+		return
+	}
+	writeXMLA(w, writeAck(len(cmds)))
+}
+
+// writeAck is the response TOM accepts for a write batch.
+//
+// MEASURED: the empty root `sessionEnvelope` sends for a bare command is
+// REFUSED here — `ResponseFormatException: The result set returned by the
+// server is not a rowset` — so a write is answered with the multipleresults
+// container and one rowset per command, exactly as the Discover batch is.
+func writeAck(n int) []byte {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` +
+		`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">` +
+		`<soap:Body><ExecuteResponse xmlns="urn:schemas-microsoft-com:xml-analysis">` +
+		`<return><results xmlns="` + nsMultipleResults + `">`)
+	for i := 0; i < n; i++ {
+		rs := xmla.Rowset{Columns: []string{"ID"}}
+		b.Write(rs.RootFragment())
+	}
+	b.WriteString(`</results></return></ExecuteResponse></soap:Body></soap:Envelope>`)
+	return append([]byte(b.String()), 0x00)
 }
 
 // xmlaDiscover answers a standalone Discover. DISCOVER_XML_METADATA carries an
@@ -591,4 +657,25 @@ func xmlEscape(s string) string {
 	var b strings.Builder
 	_ = xml.EscapeText(&b, []byte(s))
 	return b.String()
+}
+
+// replaceDefinitionPart rewrites ONE part of an item's definition, leaving the
+// others byte-identical.
+//
+// Not SetDefinition with a fresh slice: a semantic model's definition also
+// carries data.json and .platform, and replacing the whole definition to change
+// the model would drop the table data the DAX evaluator reads.
+func (a *API) replaceDefinitionPart(itemID, path string, payload []byte) error {
+	parts, err := a.Store.GetDefinition(itemID)
+	if err != nil {
+		return err
+	}
+	encoded := base64.StdEncoding.EncodeToString(payload)
+	for i := range parts {
+		if parts[i].Path == path {
+			parts[i].Payload = encoded
+			return a.Store.SetDefinition(itemID, parts)
+		}
+	}
+	return fmt.Errorf("no %s in definition", path)
 }

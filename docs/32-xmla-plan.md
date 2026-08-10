@@ -300,9 +300,21 @@ lists finished work as open misprices the next increment.
 
 **Still open, and deliberately not claimed:**
 
-- **TMSL writes.** `<Alter>` / `<Create>` / `<Refresh>`, which is what
-  `connect_semantic_model(readonly=False)` and Direct Lake migration need. The
-  read path does not foreclose it and does not deliver it.
+- **Structural writes.** The write path is measured and partly implemented,
+  and the protocol is NOT what this plan assumed. TOM sends no TMSL JSON. It
+  sends a `<Batch Transaction="true">` of `<Create>`/`<Alter>` in the
+  2014/engine namespace, each carrying ROW DELTAS in the same rowset shape this
+  server emits for Discover, keyed by the object ids it handed out. Measured
+  2026-08-10 by capturing what labs put on the wire.
+  Two gates fell with it. The response to a write batch must be the
+  multipleresults container with one rowset per command: the empty root that
+  answers a bare command is refused with `ResponseFormatException: The result
+  set returned by the server is not a rowset`. And a write that is parsed and
+  discarded still reports SUCCESS at the client, so only a reconnect can tell
+  a persisted write from a dropped one.
+  Implemented: measures, plus lineage tags and annotations on existing objects.
+  NOT implemented: new tables, columns, relationships or partitions, `<Refresh>`,
+  and Direct Lake migration. Anything unrepresentable is refused by name.
 - **MDX.** No client in this repo has issued any.
 - **The LRO continuation protocol.** The trailing byte can be `1`, meaning
   reconnect and resume. Long-running queries need it; nothing here implements

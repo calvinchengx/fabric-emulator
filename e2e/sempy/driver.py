@@ -176,9 +176,25 @@ def tom_names():
         return sorted(t.Name for t in tom.model.Tables)
 
 
+def tom_write():
+    """readonly=False. TOMWrapper.close() calls model.SaveChanges(), which is
+    where TOM emits its write command; nothing before that touches the server
+    differently, so a write probe that never exits the context proves nothing."""
+    with connect_semantic_model(dataset=DATASET, workspace=WS,
+                                readonly=False) as tom:
+        tom.add_measure(table_name="Sales", measure_name="ProbeMeasure",
+                        expression="SUM(Sales[Units])")
+    # Reconnect: an in-memory object graph that accepted the add proves only
+    # that the CLIENT accepted it. The server round-trip is the claim.
+    with connect_semantic_model(dataset=DATASET, workspace=WS,
+                                readonly=True) as tom:
+        return sorted(m.Name for t in tom.model.Tables for m in t.Measures)
+
+
 for name, fn in [
     ("labs_tom_connect", tom_counts),
     ("labs_tom_table_names", tom_names),
+    ("labs_tom_write", tom_write),
 ]:
     try:
         print(f"###LABSRESULT {name} :: OK :: {fn()}", flush=True)
