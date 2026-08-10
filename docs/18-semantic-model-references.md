@@ -34,10 +34,18 @@ Livy proxy). Two of these four layers cannot support that:
   rediscovery.
 
   So "can't be pointed at a hand-rolled Go server" is false, and a CI oracle
-  exists. What stands is the SIZE: the client never reaches XMLA/SOAP — it is
-  still routing when the stub refuses it — so how much of [MS-SSAS-T]
-  a useful implementation needs is still unmeasured, and `docs/24`'s `L` is
-  unchanged. **Deferred on cost, not on feasibility.**
+  exists. **It now reaches XMLA/SOAP as well** (2026-08-10): answering
+  `clusterResolve` with `NameResolutionResult.clusterFQDN` — the contract read
+  off the assembly, not screened — takes the client past routing, and it POSTs
+  a SOAP `Execute` carrying `BeginSession mustUnderstand="1"` and an empty
+  `<Statement/>`. Opening a connection is a session handshake, not a query.
+
+  What stands is still the SIZE, for a narrower reason than before. Connect has
+  cost one thing per gate (one reply field, one `ExecuteResponse`, one echoed
+  `x-ms-xmlacaps-negotiation-flags`), but the client has not yet been asked to
+  run a query, so nothing about **rowset serialisation** — the real work — is
+  measured. `docs/24`'s `L` is unchanged, and should not move on the strength of
+  a handshake. **Deferred on cost, not on feasibility.**
 - **DAX** — correctness is defined by a live engine (Power BI / SSAS / AS),
   none of which is pure-Go or CI-runnable. Its golden reference can only be
   **captured `(DAX query → rows)` fixtures**, recorded once from a real engine
