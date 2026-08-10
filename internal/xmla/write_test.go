@@ -291,6 +291,10 @@ func TestDecodeNameInvertsEncodeName(t *testing.T) {
 	for _, s := range []string{
 		"TotalUnits", "Time[FiscalYear]", "[TotalUnits]", "Order Details",
 		"2024", "a_b", "😀", "Ünïcodé",
+		// Astral IN CONTEXT, not alone: the surrogate pair has to recombine
+		// with text on both sides of it, and a decoder that mishandled the
+		// second half would still pass on the bare case.
+		"a\U0001F600b", "\U0010FFFF!",
 	} {
 		if got := DecodeName(EncodeName(s)); got != s {
 			t.Errorf("DecodeName(EncodeName(%q)) = %q", s, got)

@@ -109,7 +109,12 @@ func hexEscapeAt(s string, i int) (rune, bool) {
 	if i+7 > len(s) || s[i] != '_' || (s[i+1] != 'x' && s[i+1] != 'X') || s[i+6] != '_' {
 		return 0, false
 	}
-	v, err := strconv.ParseUint(s[i+2:i+6], 16, 32)
+	// bitSize 16, not 32: an escape is FOUR hex digits, so the value it can
+	// carry is 16 bits, and that is the UCS-2 unit writeEscape emits (which is
+	// why an astral rune leaves here as a surrogate pair). Written as 32 the
+	// bound was still real but lived in the length check above, where neither a
+	// reader nor CodeQL could see it (go/incorrect-integer-conversion).
+	v, err := strconv.ParseUint(s[i+2:i+6], 16, 16)
 	if err != nil {
 		return 0, false
 	}
