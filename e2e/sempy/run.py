@@ -175,6 +175,79 @@ def assl(database_scoped):
             "</Server>")
 
 
+
+# TOM asks for the whole TMSCHEMA catalogue in ONE Execute whose Command is a
+# <Batch> of ~35 <Discover> elements. The response is a `multipleresults`
+# envelope holding one <root> per request, IN ORDER.
+POPULATED = {
+    "TMSCHEMA_MODEL":         (["ID", "Name"], [["1", "Model"]]),
+    "TMSCHEMA_TABLES":        (["ID", "ModelID", "Name"], [["1", "1", "Sales"]]),
+    "TMSCHEMA_COLUMNS":       (["ID", "TableID", "ExplicitName", "Name"],
+                               [["1", "1", "Amount", "Amount"]]),
+    "TMSCHEMA_MEASURES":      (["ID", "TableID", "Name", "Expression"],
+                               [["1", "1", "Total", "SUM(Sales[Amount])"]]),
+    "TMSCHEMA_PARTITIONS":    (["ID", "TableID", "Name"], [["1", "1", "p1"]]),
+}
+# `AmoDataAdapter.AdjustTableNames` renames the DataSet's tables from
+# `XmlaDataReader.RowsetNames`, and each entry is literally
+# `xmlReader.GetAttribute("name")` on <root>. Omit the attribute and every name
+# is null, nothing is renamed, and `DdlUtil.ObtainModelTable`'s
+# `dataSet.Tables["Model"]` is null — reported as "failed to discover the state
+# of the model", a message about the MODEL for a defect in ROOT NAMING.
+ROOT_NAMES = {
+    "TMSCHEMA_MODEL": "Model", "TMSCHEMA_TABLES": "Table",
+    "TMSCHEMA_COLUMNS": "Column", "TMSCHEMA_MEASURES": "Measure",
+    "TMSCHEMA_PARTITIONS": "Partition", "TMSCHEMA_RELATIONSHIPS": "Relationship",
+    "TMSCHEMA_HIERARCHIES": "Hierarchy",
+}
+
+
+def _root(request_type):
+    # EVERY rowset must yield a DataTable: `AdjustTableNames` bails out
+    # entirely if `RowsetNames.Count != dataSet.Tables.Count`, so a
+    # column-less root that Fill skips silently breaks the naming for ALL
+    # 35 — and the failure surfaces as "Tables['Model'] is null".
+    cols, rows = POPULATED.get(request_type, (["ID", "Name"], []))
+    name = ROOT_NAMES.get(request_type,
+                          request_type.replace("TMSCHEMA_", "").title())
+    xsd = "".join(
+        f'<xsd:element sql:field="{c}" name="{c}" type="xsd:string" minOccurs="0"/>'
+        for c in cols)
+    body = "".join("<row>" + "".join(f"<{c}>{v}</{c}>" for c, v in zip(cols, r))
+                   + "</row>" for r in rows)
+    return (
+        f'<root name="{name}" xmlns="urn:schemas-microsoft-com:xml-analysis:rowset" '
+        'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        'xmlns:sql="urn:schemas-microsoft-com:xml-sql">'
+        '<xsd:schema targetNamespace="urn:schemas-microsoft-com:xml-analysis:rowset" '
+        'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        'xmlns:sql="urn:schemas-microsoft-com:xml-sql" elementFormDefault="qualified">'
+        '<xsd:element name="root"><xsd:complexType><xsd:sequence>'
+        '<xsd:element name="row" type="row" minOccurs="0" maxOccurs="unbounded"/>'
+        '</xsd:sequence></xsd:complexType></xsd:element>'
+        '<xsd:complexType name="row"><xsd:sequence>' + xsd +
+        '</xsd:sequence></xsd:complexType></xsd:schema>' + body + '</root>')
+
+
+def batch_response(request_types):
+    """One <root> per <Discover>, in request order.
+
+    The container namespace is NOT a suffix on the xml-analysis URN family;
+    bi-shared-docs `results-element-xmla.md` gives a different scheme entirely.
+    A wrong one is refused at the envelope before anything inside is read.
+    """
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+        '<soap:Body>'
+        '<ExecuteResponse xmlns="urn:schemas-microsoft-com:xml-analysis">'
+        '<return><results xmlns="http://schemas.microsoft.com/analysisservices'
+        '/2003/xmla-multipleresults">'
+        + "".join(_root(rt) for rt in request_types) +
+        '</results></return></ExecuteResponse>'
+        '</soap:Body></soap:Envelope>').encode() + b"\x00"
+
+
 class Capture(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -256,6 +329,15 @@ class Capture(http.server.BaseHTTPRequestHandler):
                 {"results": [{"tables": [{"rows": [{"[Value]": 1}]}]}]}).encode())
         if "/webapi/xmla" in p or p.endswith("/xmla"):
             caps = {"x-ms-xmlacaps-negotiation-flags": "0,0,0,0,0"}
+            # ORDER MATTERS: a batched Execute CONTAINS <Discover> children, so
+            # a broad `"<Discover" in text` check shadows it entirely.
+            rts = re.findall(r"<RequestType>(TMSCHEMA_\w+)</RequestType>", text)
+            if rts and "<Batch" in text:
+                pop = sum(1 for t in rts if t in POPULATED)
+                print(f"    -> batch of {len(rts)}: {pop} populated, "
+                      f"{len(rts) - pop} empty", flush=True)
+                return self._send(200, batch_response(rts),
+                                  "text/xml; charset=utf-8", caps)
             if "<Discover" in text:
                 dbid = re.search(r"<DatabaseID>([^<]*)</DatabaseID>", text)
                 return self._send(200, rowset("DiscoverResponse", ["METADATA"],
