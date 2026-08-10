@@ -253,7 +253,7 @@ _DEFAULT = {"xsd:dateTime": "2026-08-10T00:00:00", "xsd:boolean": "false",
 
 
 def _xsd_type(col):
-    if col == "ID" or col.endswith("ID"):
+    if col == "ID" or col.endswith("ID") or col == "Version":
         return "xsd:unsignedLong"
     return _XSD[_CLR.get(col, "String")]
 
