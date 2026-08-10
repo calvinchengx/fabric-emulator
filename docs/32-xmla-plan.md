@@ -45,14 +45,79 @@ Six facts about Microsoft's own ADOMD.NET client, every one read off the wire by
 CI oracle." Both were false. A claim that expensive when wrong is now a check
 rather than a memory, which is why `e2e/xmla` is a suite and not a note.
 
+## The connect path, measured 2026-08-10
+
+`AdomdConnection.Open()` now **succeeds** against a hand-written stub, for all
+three `powerbi://` connection-string forms. Four gates stood between routing and
+an open session, and each cost exactly one thing:
+
+| Gate | What it needed | How it was found |
+|---|---|---|
+| Cluster resolution | `NameResolutionResult.clusterFQDN`, a BARE FQDN (the port is inherited from the Data Source) | reflection, then decompile |
+| Session open | a SOAP `ExecuteResponse` plus a `Session` header carrying the id | XMLA reference |
+| Response processing | the `x-ms-xmlacaps-negotiation-flags` header ON THE RESPONSE | the client's own error text |
+| Transport framing | a trailing `0x00` byte after the envelope | decompile |
+
+The first XMLA envelope the client sends is an `Execute` carrying
+`BeginSession mustUnderstand="1"`, `Version Sequence="922"`, an EMPTY
+`<Statement/>` and a `PropertyList`. **Opening a connection is a session
+handshake, not a query.**
+
+Two findings worth more than the gates themselves:
+
+- **The trailing byte is a protocol, not padding.**
+  `PaasInfraXmlaOperation.ReadResponsePayloadImpl` switches on the last byte of
+  the response: `0` = complete, `1` = **continuation, reconnect under the LRO
+  protocol**, anything else = `TransportProtocolError`. So long-running queries
+  have a resume mechanism that any real implementation must support. That is a
+  cost item nobody had counted, and building from the spec would have found it
+  late.
+- **Three shapes failing identically eliminated a variable rather than choosing
+  one.** Screen 12 swept three cluster-URI forms and all three failed with
+  `UriFormatException`. A bare hostname cannot fail to parse, so the string was
+  never reaching the parser: the reply CONTRACT was wrong, not its shape.
+
 ## What is NOT settled
 
-The client never reaches XMLA/SOAP in the oracle. It is still in workspace
-**routing** when the capture stub refuses it, so nothing here says how much of
-`[MS-SSAS-T]` a useful implementation needs.
+Query traffic. The probe stops at `Open()`, so no client has yet been asked to
+run DAX or a `Discover`, and **`xmla-rs:rowset` serialisation plus the `Discover`
+metadata subset are what the estimate is actually for.**
 
-**Feasibility is measured. Cost is not.** The `L` in `docs/24` stands.
+**Connect is measured. Query is not.** The `L` in `docs/24` stands, and should
+not move on the strength of a handshake.
 
+## Method, and its boundary
+
+Three techniques are in use here and they are NOT equivalent. Calvin's call,
+2026-08-10, is that all three stay available, with decompilation as a diagnostic
+of last resort:
+
+1. **Wire capture** — what the client sends. Always preferred.
+2. **Reflection** over the shipped assembly's `[DataContract]` / `[DataMember]`
+   names. Public type metadata of a redistributable, closer to reading a header
+   file than reading source. This is what `e2e/xmla/contract/` does, and it is
+   the only one of the three with committed tooling.
+3. **Decompilation** of method bodies, when capture and the published references
+   both come up empty.
+
+**The boundary, and why it exists.** This repo claims to be a CLEAN-ROOM
+implementation, and that claim is load-bearing for every parity grade. So:
+
+- **No decompiled source is ever committed**, in any form, including quoted in
+  comments or docs. Verify with
+  `git log --all --diff-filter=A --name-only | grep -iE "ilspy|decompil"` —
+  it must stay empty.
+- **What may be recorded is a PROTOCOL FACT**, phrased as a statement about the
+  wire ("the response must end with `0x00`"), never as an implementation.
+- **Decompile only after capture and the references have failed.** Both
+  decompiler findings above are ones no published reference contains, because
+  they are Power BI PaaS transport glue rather than XMLA.
+- **Prefer references for the documented surface.** Rowsets and `Discover` are
+  specified in `[MS-SSAS]` and implemented by third-party clients such as
+  `RadarSoft/xmla-client`; reaching for the decompiler there would be choosing
+  the riskier source over the safer one for no gain.
+
+## What already exists to build on
 ## What already exists to build on
 
 | Asset | Why it matters |
