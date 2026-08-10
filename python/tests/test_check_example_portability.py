@@ -48,6 +48,15 @@ def test_a_step_hardcoding_a_localhost_endpoint_is_caught(tmp_path):
     assert any("localhost:9443" in p for p in problems), problems
 
 
+def test_a_step_naming_the_sql_endpoint_is_caught(tmp_path):
+    """The SQL address has no URL scheme, so the localhost rule above cannot see
+    it — and on real Fabric it is per-item and assigned by the service, which
+    makes a named host the same opt-out as a named control plane."""
+    for body in ('SERVER = "localhost,1433"\n', 'cs = "localhost:1433"\n'):
+        problems = _tree(tmp_path, {"demo/gold.py": body})
+        assert any("SQL endpoint" in p for p in problems), (body, problems)
+
+
 def test_a_resolver_that_restates_the_contract_is_caught(tmp_path):
     problems = _tree(tmp_path, {}, resolver='TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"\n')
     assert any("does not import fabric_target" in p for p in problems), problems

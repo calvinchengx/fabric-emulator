@@ -22,6 +22,11 @@ dependencies = [
     # emulator's release workflow; `make fixtures` installs it alongside these
     # generators. See docs/21-real-fabric-toggle.md and the common.py docstring.
     "fabric-target",
+    # The notebook surface itself. Real Fabric preinstalls `notebookutils` in
+    # the runtime; outside it, this shim IS that runtime, so a step can fetch a
+    # secret the way a notebook does (credentials.getSecret) instead of the way
+    # a service client does. Same code either way, which is the point.
+    "fabric-emulator-notebookutils",
 ]
 
 # Flat modules, not a package namespace: the examples are tutorial code, and
@@ -36,3 +41,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv.sources]
 fabric-target = { path = "../../python/fabric-target", editable = true }
+fabric-emulator-notebookutils = { path = "../../python", editable = true }

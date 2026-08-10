@@ -12,7 +12,7 @@ import subprocess
 import time
 
 import source_system as src
-from common import GOLD_PROJECT, SQL_AUD, TDS_SERVER, load, log, tds_connect, token
+from common import GOLD_PROJECT, SQL_AUD, load, log, sql_endpoint, tds_connect, token
 
 st = load()
 sql_tok = token(SQL_AUD)
@@ -30,8 +30,11 @@ for _ in range(40):
 else:
     raise SystemExit(f"warehouse warmup failed: {last}")
 
-# The token is pre-minted, so dbt never runs MSAL. encrypt=false matches the TDS
-# front, which terminates FedAuth without TLS.
+# The token is pre-minted, so dbt never runs MSAL. Server, database and encrypt
+# all come from the resolver: on real Fabric the address is per-workspace and only
+# the API knows it, so a pinned host is emulator-only by construction (docs/46).
+wh = sql_endpoint(st["warehouse"])
+lake_db = sql_endpoint(st["lakehouse"]).database
 with open(os.path.join(GOLD_PROJECT, "profiles.yml"), "w") as f:
     f.write(f"""contoso_gold:
   target: dev
@@ -39,18 +42,18 @@ with open(os.path.join(GOLD_PROJECT, "profiles.yml"), "w") as f:
     dev:
       type: fabric
       driver: "ODBC Driver 18 for SQL Server"
-      server: "{TDS_SERVER}"
-      database: "{st['warehouse']}"
+      server: "{wh.server}"
+      database: "{wh.database}"
       schema: "dbo"
       authentication: "ActiveDirectoryAccessToken"
       access_token: "{sql_tok}"
       access_token_expires_on: 0
-      encrypt: false
+      encrypt: {'true' if wh.encrypt else 'false'}
       trust_cert: true
       threads: 1
 """)
 
-env = {**os.environ, "DBT_PROFILES_DIR": GOLD_PROJECT, "LAKEHOUSE_ID": st["lakehouse"]}
+env = {**os.environ, "DBT_PROFILES_DIR": GOLD_PROJECT, "LAKEHOUSE_ID": lake_db}
 t0 = time.time()
 rc = subprocess.run(["dbt", "--no-partial-parse", "build"], cwd=GOLD_PROJECT, env=env).returncode
 build_secs = time.time() - t0

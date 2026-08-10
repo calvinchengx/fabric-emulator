@@ -467,12 +467,14 @@ name = "contoso-fixtures"
 version = "0.1.0"
 source = { editable = "../contoso-fixtures" }
 dependencies = [
+    { name = "fabric-emulator-notebookutils" },
     { name = "fabric-target" },
     { name = "requests" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "fabric-emulator-notebookutils", editable = "../../python" },
     { name = "fabric-target", editable = "../../python/fabric-target" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
@@ -825,6 +827,11 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
+
+[[package]]
+name = "fabric-emulator-notebookutils"
+version = "0.1.0"
+source = { editable = "../../python" }
 
 [[package]]
 name = "fabric-target"

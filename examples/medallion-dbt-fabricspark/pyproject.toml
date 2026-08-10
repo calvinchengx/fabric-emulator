@@ -31,3 +31,6 @@ contoso-fixtures = { path = "../contoso-fixtures", editable = true }
 # The target contract, resolved from the repo rather than PyPI so an example run
 # from a checkout uses the same code the emulator publishes.
 fabric-target = { path = "../../python/fabric-target", editable = true }
+# The notebookutils shim, from the same checkout: contoso-fixtures depends on it
+# so a step can read a secret the way a Fabric notebook does.
+fabric-emulator-notebookutils = { path = "../../python", editable = true }

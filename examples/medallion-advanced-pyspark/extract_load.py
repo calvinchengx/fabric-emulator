@@ -1,15 +1,26 @@
-"""Fetch the API key from Key Vault (as notebookutils.credentials.getSecret
-does), pull the vendor export, and land it verbatim in OneLake."""
+"""Fetch the API key from Key Vault as a Fabric notebook does, pull the vendor
+export, and land it verbatim in OneLake.
+
+`notebookutils.credentials.getSecret` is the BROKERED path, and it is the one a
+notebook has: inside Fabric the workspace identity mints a vault-audience token
+and the secret never appears in the notebook, a parameter, or a pipeline
+definition. Calling Key Vault's REST API with a token minted here reaches the
+same secret and teaches the wrong lesson, because that code cannot move into a
+notebook unchanged. The shim makes this exact call work outside Fabric too
+(python/notebookutils/credentials.py): entra-emulator under `emulator`,
+DefaultAzureCredential under `real`.
+
+The vault is passed as a URI, which is also the real signature — Fabric accepts
+either a vault name or its URI, and only the URI can name the emulator's vault.
+"""
 import datetime
 
+import notebookutils
 import source_system as src
 from common import FABRIC, KV, STORAGE_AUD, VAULT_AUD, S, ensure_app, load, log, save, token
 
-vt = token(VAULT_AUD)
-r = S.get(f"{KV}/secrets/contoso-pos-api-key?api-version=7.4",
-          headers={"Authorization": "Bearer " + vt})
-r.raise_for_status()
-api_key = r.json()["value"]
+ensure_app(VAULT_AUD, "Azure Key Vault")  # a real tenant already issues it
+api_key = notebookutils.credentials.getSecret(KV, "contoso-pos-api-key")
 
 # The vendor refuses a wrong key — prove the gate is real, not decorative.
 try:

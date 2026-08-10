@@ -31,7 +31,18 @@ import os
 
 import requests
 import yaml
-from common import FABRIC, OM_URL, S, fabric_headers, load, log
+from common import FABRIC, OM_URL, S, fabric_headers, load, log, skip_on_real
+
+# OpenMetadata is a companion service, not a Fabric surface, and the lineage this
+# step reads is the emulator's own recorded flow graph. Fabric's counterpart is
+# Purview: a different integration with a different model, not the same call to a
+# different host. Skipping rather than refusing because the catalog is optional
+# here by design (see the module docstring) and the medallion is complete without it.
+skip_on_real(
+    "the OpenMetadata catalog step",
+    "OpenMetadata has no Fabric endpoint to resolve to, and the lineage it "
+    "publishes comes from the emulator's flow graph. Purview is the real "
+    "counterpart, and a different integration")
 
 # Local policy, resolved centrally — see common.OM_URL.
 OM = OM_URL

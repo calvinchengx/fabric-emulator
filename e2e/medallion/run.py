@@ -42,7 +42,10 @@ ENDPOINTS = {
     "ENTRA_URL": "https://localhost:8443",
     "KV_URL": "https://localhost:8444",
     "FABRIC_REST_URL": "https://localhost:9443",
-    "TDS_SERVER": "localhost,1433",
+    # TDS_SERVER is deliberately NOT set: unset means the example discovers the
+    # SQL address from the item's own properties, which is the only form that can
+    # work against real Fabric. Setting it here would leave that path unexercised
+    # by every CI run while looking covered.
     "SPARK_REMOTE": "sc://localhost:50051",
     "KV_INTERNAL_URL": "https://keyvault-emulator:8444",
 }
@@ -93,10 +96,18 @@ def run(example=EXAMPLE, label="medallion", profiles=()):
             #
             # Run inside the example's project so it borrows that example's
             # state and token helpers — the same route the tutorial documents.
+            # The probe gets TDS_SERVER explicitly, and the EXAMPLE does not. It
+            # is harness tooling rather than tutorial code: it dials the SQL
+            # endpoint to check a type mapping, with no state.json of its own to
+            # discover an item from. The example must discover its address (the
+            # only form that works on real Fabric); the probe would gain nothing
+            # from it and would only make this suite unable to prove the
+            # discovery path is exercised.
             rc = subprocess.run(
                 ["uv", "run", "--project", example, "python",
                  os.path.join(REPO, "e2e", "type-map", "probe.py")],
-                cwd=example, env={**os.environ, **ENDPOINTS}).returncode
+                cwd=example,
+                env={**os.environ, **ENDPOINTS, "TDS_SERVER": "localhost,1433"}).returncode
             if rc != 0:
                 print("\n==== type-map probe FAILED ====", file=sys.stderr)
         if rc != 0:

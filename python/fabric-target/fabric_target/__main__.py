@@ -12,38 +12,7 @@ user already controls.
 import shlex
 import sys
 
-from . import SEED_CLIENT_ID, SEED_CLIENT_SECRET, Target, TargetError, _env, _env_any
-
-
-def _lines(t):
-    e = [("FABRIC_TARGET", t.name)]
-    if t.is_emulator:
-        e += [
-            ("NOTEBOOKUTILS_FABRIC_URL", t.api_root.removesuffix("/v1")),
-            ("NOTEBOOKUTILS_ONELAKE_URL", t.onelake_url),
-            ("NOTEBOOKUTILS_ENTRA_URL", t.entra_url),
-            ("NOTEBOOKUTILS_TENANT", t.tenant),
-            ("NOTEBOOKUTILS_CLIENT_ID",
-             _env_any(("FABRIC_CLIENT_ID", "AZURE_CLIENT_ID"), SEED_CLIENT_ID)),
-            ("NOTEBOOKUTILS_CLIENT_SECRET",
-             _env_any(("FABRIC_CLIENT_SECRET", "AZURE_CLIENT_SECRET"),
-                      SEED_CLIENT_SECRET)),
-            ("NOTEBOOKUTILS_VAULT_URL", t.vault_url),
-            ("NOTEBOOKUTILS_INSECURE", "1"),
-        ]
-    else:
-        e += [
-            ("NOTEBOOKUTILS_FABRIC_URL", "https://api.fabric.microsoft.com"),
-            ("NOTEBOOKUTILS_ONELAKE_URL", t.onelake_url),
-            ("NOTEBOOKUTILS_ENTRA_URL", t.entra_url),
-            ("NOTEBOOKUTILS_TENANT", t.tenant),
-            ("NOTEBOOKUTILS_INSECURE", "0"),
-            # az-login-friendly auth hints for env-driven tools:
-            ("AZCOPY_AUTO_LOGIN_TYPE", "AZCLI"),
-        ]
-        if t.vault_url:
-            e.append(("NOTEBOOKUTILS_VAULT_URL", t.vault_url))
-    return e
+from . import Target, TargetError, _env, notebook_env
 
 
 def main(argv):
@@ -56,7 +25,7 @@ def main(argv):
         return 1
 
     if cmd == "env":
-        for k, v in _lines(t):
+        for k, v in notebook_env(t):
             print(f"export {k}={shlex.quote(v)}")
         # Unexported on purpose (comments are eval-safe):
         print(f"# fabric_target: profile '{t.name}' — api {t.api_root}")

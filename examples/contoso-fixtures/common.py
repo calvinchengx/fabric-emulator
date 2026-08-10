@@ -21,17 +21,25 @@ Artifacts are persisted the way real Fabric persists them — definition parts
 with Fabric's own paths (`notebook-content.py`, `pipeline-content.json`). See
 docs/46-artifact-persistence.md.
 """
+import collections
 import json
 import os
 import pathlib
 
 import requests
 import urllib3
-from fabric_target import target
+from fabric_target import apply_notebook_env, target
 
 urllib3.disable_warnings()  # the family serves self-signed TLS
 
 _T = target()
+
+# The notebook runtime context, from the SAME resolved target. Steps that use
+# `notebookutils` (the brokered path a Fabric notebook actually takes) would
+# otherwise read the shim's own defaults — a different entra port, TLS
+# verification on against the family's self-signed certs — and disagree with the
+# control-plane calls in the same process. Anything already exported wins.
+apply_notebook_env(_T)
 
 # Resolved per target, never hardcoded. In real mode `fabric-target` refuses the
 # emulator's seeded principal BY VALUE, so a shell left over from a local run
@@ -54,8 +62,13 @@ if _T.is_real and not _T.vault_url:
 KV = _T.vault_url
 TENANT = _T.tenant
 
-# Local policy, not target policy (see the module docstring).
-TDS_SERVER = os.environ.get("TDS_SERVER", "localhost,1433")
+# Local policy, not target policy (see the module docstring). UNSET means
+# "ask the API", which is the portable path — see sql_endpoint(). It stays
+# overridable because the emulator advertises the port it LISTENS on, not the
+# port Docker published it to, so an isolated stack with a remapped port
+# (`11533:1433`) is the one case discovery gets wrong. Fabric has no such
+# distinction, which is why this is an override and not a parameter.
+TDS_SERVER = os.environ.get("TDS_SERVER")
 KV_INTERNAL = os.environ.get("KV_INTERNAL_URL", "https://keyvault-emulator:8444")
 SPARK_REMOTE = os.environ.get("SPARK_REMOTE", "sc://localhost:50051")
 # OpenMetadata, the governance sidecar the advanced examples catalog into. Local
@@ -127,6 +140,40 @@ def ensure_app(app_id_uri, name):
     assert r.status_code in (200, 201, 409), f"seed {app_id_uri}: {r.status_code} {r.text}"
 
 
+def skip_on_real(step, because):
+    """Exit 0 under `real`: there is nothing for this step to do there.
+
+    The step-level form of ensure_app's skip, and it covers two cases that share
+    one answer. Either real Fabric reaches the postcondition itself (it runs the
+    notebook on its own pool, so the local engine has no job), or the step drives
+    a companion service that Fabric simply has no endpoint for (OpenMetadata;
+    Purview is a different integration, not a different URL). Both times the work
+    the pipeline needs is not missing, so failing would be a lie — it exits
+    successfully and says why.
+
+    Contrast only_the_emulator_can, for a step whose OUTPUT the pipeline does
+    need and cannot get.
+    """
+    if _T.is_real:
+        log(f"skipping {step}: {because}")
+        raise SystemExit(0)
+
+
+def only_the_emulator_can(step, because, instead):
+    """Refuse under `real`, naming the mechanism real Fabric uses instead.
+
+    For a step that depends on a CAPABILITY the emulator adds for local
+    development and real Fabric does not expose. The refusal is the honest
+    answer, and `instead` is what makes it actionable rather than a dead end:
+    the portable form exists, it is just a different shape.
+    """
+    if _T.is_real:
+        raise SystemExit(
+            f"{step} cannot run against real Fabric.\n"
+            f"  why:     {because}\n"
+            f"  instead: {instead}")
+
+
 def token(audience):
     """A bearer for `audience`, from whichever credential the target resolved:
     the seeded daemon locally, DefaultAzureCredential (env SP, managed identity,
@@ -157,20 +204,108 @@ def tables_uri():
     return f"az://{st['workspace']}/{st['lakehouse']}/Tables"
 
 
-def tds_connect(database, token_value=None, timeout=60):
-    """FedAuth over TDS: the pre-minted Azure-SQL token rides in
-    SQL_COPT_SS_ACCESS_TOKEN (1256) — the exact injection dbt-fabric performs, so
-    the ODBC driver never runs MSAL. Encrypt=no because the TDS front terminates
-    FedAuth without TLS (it advertises ENCRYPT_NOT_SUP)."""
+# An item's SQL endpoint, as the API reports it. The collection segment is the
+# typed route Fabric documents the property on — the generic /items/{id} answers
+# the generic record there, so reading the address off it works here and returns
+# nothing against real Fabric (internal/api/kql.go).
+_SQL_COLLECTION = {"Warehouse": "warehouses", "SQLDatabase": "sqlDatabases",
+                   "Lakehouse": "lakehouses"}
+SqlTarget = collections.namedtuple("SqlTarget", "server database encrypt")
+_SQL_CACHE = {}
+
+
+def _odbc_server(connection_string):
+    """`host:port` (what the emulator advertises) -> `host,port` (what the SQL
+    Server ODBC driver wants). A real Fabric connection string is a bare FQDN on
+    the default port and passes through untouched; an IPv6 literal keeps its
+    brackets, so only a trailing numeric port is rewritten."""
+    host, sep, port = connection_string.rpartition(":")
+    if sep and port.isdigit():
+        return f"{host},{port}"
+    return connection_string
+
+
+def sql_endpoint(item_id):
+    """Where to dial for `item_id`'s SQL endpoint, and as what database.
+
+    THIS IS THE PORTABLE FORM, and the reason is not convenience. On real Fabric
+    the SQL address is per-workspace and assigned by the service: nothing outside
+    it can know the host, so any example that hardcodes one is emulator-only by
+    construction, however carefully everything else is resolved. Both targets
+    answer the same documented question instead:
+
+      Warehouse / SQL database -> properties.connectionString
+      Lakehouse                -> properties.sqlEndpointProperties.connectionString
+                                  (its read-only SQL analytics endpoint)
+
+    The DATABASE NAME differs by target and that is real, not an emulator
+    shortcut. Fabric addresses a database by DISPLAY NAME and encodes the
+    workspace in the server name; the emulator serves one host for every
+    workspace, so it addresses by item id (internal/server/warehouse.go accepts
+    both). Resolving it here is what keeps the branch out of the steps.
+
+    Cached per item: the callers are retry loops waiting for a database to come
+    online, and an endpoint does not move between attempts.
+    """
+    if item_id in _SQL_CACHE:
+        return _SQL_CACHE[item_id]
+    st = load()
+    H = fabric_headers()
+    base = f"{FABRIC}/v1/workspaces/{st['workspace']}"
+    r = S.get(f"{base}/items/{item_id}", headers=H)
+    r.raise_for_status()
+    item = r.json()
+    collection = _SQL_COLLECTION.get(item["type"])
+    assert collection, f"item {item['displayName']!r} is a {item['type']}, which has no SQL endpoint"
+
+    server = TDS_SERVER
+    if not server:
+        r = S.get(f"{base}/{collection}/{item_id}", headers=H)
+        r.raise_for_status()
+        props = r.json().get("properties") or {}
+        if item["type"] == "Lakehouse":
+            ep = props.get("sqlEndpointProperties") or {}
+            # Real Fabric provisions the analytics endpoint asynchronously, so a
+            # status that is not Success is a wait-or-fail, not a missing feature.
+            # Saying which beats a connection timeout that names nothing. Only
+            # when the property is THERE, though: absent means this build serves
+            # no SQL at all, which the no-endpoint branch below explains better.
+            if ep:
+                assert ep.get("provisioningStatus") == "Success", (
+                    f"the SQL analytics endpoint of {item['displayName']!r} is "
+                    f"{ep['provisioningStatus']}; it cannot be queried yet")
+            server = ep.get("connectionString")
+        else:
+            server = props.get("connectionString")
+        assert server, (
+            f"{item['type']} {item['displayName']!r} advertises no SQL endpoint. "
+            f"Locally that means the stack runs without its SQL sidecar; set "
+            f"TDS_SERVER to override.")
+        server = _odbc_server(server)
+
+    _SQL_CACHE[item_id] = SqlTarget(
+        server=server,
+        database=item["displayName"] if _T.is_real else item_id,
+        # Real Fabric's endpoint requires TLS. The emulator's TDS front
+        # terminates FedAuth without it (it advertises ENCRYPT_NOT_SUP).
+        encrypt=_T.is_real)
+    return _SQL_CACHE[item_id]
+
+
+def tds_connect(item_id, token_value=None, timeout=60):
+    """FedAuth over TDS to an item's SQL endpoint: the pre-minted Azure-SQL token
+    rides in SQL_COPT_SS_ACCESS_TOKEN (1256) — the exact injection dbt-fabric
+    performs, so the ODBC driver never runs MSAL."""
     import struct
 
     import pyodbc
 
+    t = sql_endpoint(item_id)
     enc = (token_value or token(SQL_AUD)).encode("utf-16-le")
     return pyodbc.connect(
         "DRIVER={ODBC Driver 18 for SQL Server};"
-        f"SERVER={TDS_SERVER};Database={database};"
-        "Encrypt=no;TrustServerCertificate=yes",
+        f"SERVER={t.server};Database={t.database};"
+        f"Encrypt={'yes' if t.encrypt else 'no'};TrustServerCertificate=yes",
         attrs_before={1256: struct.pack("<i", len(enc)) + enc}, timeout=timeout)
 
 

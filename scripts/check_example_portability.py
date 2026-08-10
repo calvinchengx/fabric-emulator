@@ -49,6 +49,14 @@ SEEDS = (
 # contoso-data-platform's own equivalent check draws the line in the same place.
 LOCALHOST = re.compile(r"https?://localhost:(9443|8443|8444)\b")
 
+# The SQL endpoint is the same problem without a scheme, so the pattern above
+# cannot see it. On real Fabric the address is per-item and assigned by the
+# service (`properties.connectionString`, or `sqlEndpointProperties.connectionString`
+# for a lakehouse's analytics endpoint), so a step naming a host has opted out of
+# the toggle no matter how carefully it resolves everything else. Ask
+# common.sql_endpoint() — see docs/46-artifact-persistence.md.
+SQL_HOST = re.compile(r"localhost[,:]1433\b")
+
 # Fabric's own definition part paths. Extend deliberately, with a doc reference:
 # a path that is not here is either a typo or a contract this repo has not read.
 KNOWN_PARTS = {
@@ -116,6 +124,12 @@ def check_no_pinned_target(problems):
             problems.append(
                 f"{rel(f)} hardcodes {m.group(0)}. An example that names an endpoint "
                 f"cannot follow FABRIC_TARGET; resolve it through {RESOLVER}.")
+        for m in SQL_HOST.finditer(text):
+            problems.append(
+                f"{rel(f)} hardcodes the SQL endpoint {m.group(0)}. On real Fabric "
+                f"that address is per-item and only the API knows it — ask "
+                f"{RESOLVER}'s sql_endpoint(), which discovers it on both targets "
+                f"(docs/46-artifact-persistence.md).")
 
 
 # A TLS bypass and an emulator-only control endpoint are the other two ways an

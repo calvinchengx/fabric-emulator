@@ -237,7 +237,7 @@ at compose service names over plain HTTP:
 | `ENTRA_URL` | `https://localhost:8443` |
 | `KV_URL` | `https://localhost:8444` |
 | `FABRIC_REST_URL` | `https://localhost:9443` |
-| `TDS_SERVER` | `localhost,1433` |
+| `TDS_SERVER` | *unset* — the SQL address is **discovered** from the item (`properties.connectionString`, or `sqlEndpointProperties.connectionString` for the lakehouse endpoint), which is the only form that also works on real Fabric. Set it only for a stack whose SQL port is remapped, since the emulator advertises the port it listens on |
 | `KV_INTERNAL_URL` | `https://keyvault-emulator:8444` — the vault URI **Fabric** resolves, so it must be reachable from the emulator, not from you. That is why it is a service name and not `localhost` even when you run these steps on your machine |
 | `SPARK_REMOTE` | `sc://localhost:50051` — the Spark engine `engine.py` drives the notebook run onto (Sail, as the root compose publishes it) |
 | `PIPELINE_STATE` | `./state.json` |

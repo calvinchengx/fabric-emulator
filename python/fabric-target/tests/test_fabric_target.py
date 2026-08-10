@@ -169,3 +169,58 @@ def test_env_emitter_real_never_leaks_seeds(monkeypatch, capsys):
 def test_show_runs(capsys):
     assert main(["prog", "show"]) == 0
     assert "api_root" in capsys.readouterr().out
+
+
+# --- the notebook runtime context -------------------------------------------
+# `python -m fabric_target env` and apply_notebook_env are ONE definition
+# (notebook_env), because two would let the shim and the resolver disagree about
+# which entra a token comes from while both look right.
+
+def test_apply_notebook_env_wires_the_shim_for_this_process(monkeypatch):
+    monkeypatch.setenv("FABRIC_EMULATOR_URL", "https://localhost:19443")
+    monkeypatch.setenv("ENTRA_EMULATOR_URL", "https://localhost:18443")
+    applied = fabric_target.apply_notebook_env(Target("emulator"))
+    assert os.environ["NOTEBOOKUTILS_FABRIC_URL"] == "https://localhost:19443"
+    assert os.environ["NOTEBOOKUTILS_ENTRA_URL"] == "https://localhost:18443"
+    # Self-signed family certs: without this, getSecret fails TLS verification
+    # against the emulator's vault and the failure names the certificate, not
+    # the missing wiring.
+    assert os.environ["NOTEBOOKUTILS_INSECURE"] == "1"
+    assert os.environ["NOTEBOOKUTILS_VAULT_URL"] == "https://localhost:8444"
+    assert applied["FABRIC_TARGET"] == "emulator"
+
+
+def test_apply_notebook_env_does_not_overwrite_a_deliberate_value(monkeypatch):
+    """`eval "$(python -m fabric_target env ...)"` and a compose file are both
+    deliberate. Silently overwriting them makes the toggle unpredictable for the
+    case it exists to serve."""
+    monkeypatch.setenv("NOTEBOOKUTILS_VAULT_URL", "https://mine.vault.azure.net")
+    fabric_target.apply_notebook_env(Target("emulator"))
+    assert os.environ["NOTEBOOKUTILS_VAULT_URL"] == "https://mine.vault.azure.net"
+    fabric_target.apply_notebook_env(Target("emulator"), override=True)
+    assert os.environ["NOTEBOOKUTILS_VAULT_URL"] == "https://localhost:8444"
+
+
+def test_notebook_env_real_carries_no_credential(monkeypatch):
+    """A notebook has no client secret to give. Real mode emits none, so
+    credentials.getToken falls through to DefaultAzureCredential."""
+    monkeypatch.setenv("FABRIC_WORKSPACE", "ws")
+    monkeypatch.setattr(fabric_target, "_az_logged_in", lambda: True)
+    env = dict(fabric_target.notebook_env(Target("real")))
+    assert "NOTEBOOKUTILS_CLIENT_SECRET" not in env
+    assert "NOTEBOOKUTILS_CLIENT_ID" not in env
+    assert env["NOTEBOOKUTILS_INSECURE"] == "0"
+    assert env["NOTEBOOKUTILS_ENTRA_URL"] == "https://login.microsoftonline.com"
+
+
+def test_notebook_env_and_the_emitter_cannot_drift(monkeypatch, capsys):
+    """The emitter prints exactly what apply_notebook_env applies. Asserted
+    rather than assumed: they were two copies of this list until they were one."""
+    monkeypatch.setenv("FABRIC_EMULATOR_URL", "https://localhost:19443")
+    assert main(["prog", "env", "emulator"]) == 0
+    printed = {}
+    for line in capsys.readouterr().out.splitlines():
+        if line.startswith("export "):
+            k, _, v = line[len("export "):].partition("=")
+            printed[k] = v.strip("'")
+    assert printed == dict(fabric_target.notebook_env(Target("emulator")))
