@@ -1,0 +1,28 @@
+name: SemPy client compatibility
+
+# Weekly, like e2e/xmla and for the same reason: the thing under test is a
+# THIRD-PARTY client's wire contract, which changes when Microsoft ships a new
+# `semantic-link-sempy`, not when this repo changes.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '43 5 * * 3' # weekly, Wednesday 05:43 UTC — after the xmla suite
+                         # (05:17), because both publish host port 443 and only
+                         # one can hold it at a time.
+
+jobs:
+  sempy:
+    name: SemPy's wire contract on Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+      # SEMPY_REQUIRE turns the local-convenience skips (no docker, no openssl,
+      # no 443) into failures. A suite that reports success because it never ran
+      # is the failure this repo keeps producing — see docs/10, entry eight.
+      - run: uv run --frozen --no-sync python e2e/sempy/run.py
+        env:
+          SEMPY_REQUIRE: "1"
