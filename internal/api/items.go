@@ -130,10 +130,32 @@ func (a *API) updateItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 	var body struct {
 		DisplayName *string `json:"displayName"`
 		Description *string `json:"description"`
+		Properties  *struct {
+			ActiveValueSetName *string `json:"activeValueSetName"`
+		} `json:"properties"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "Malformed JSON body.")
 		return
+	}
+	if body.Properties != nil && body.Properties.ActiveValueSetName != nil {
+		if it.Type != "VariableLibrary" {
+			writeErr(w, http.StatusBadRequest, "InvalidRequest",
+				"activeValueSetName is only valid on a VariableLibrary.")
+			return
+		}
+		// Deliberately NOT validated against the definition's value sets. The
+		// library's default values are themselves a value set and have no
+		// file under valueSets/, so a name that matches no file is the
+		// ordinary "the default set is active" case, not an error. Rejecting
+		// unknown names here would make every library without alternative
+		// sets unsettable.
+		if err := a.Store.SetItemProperties(it.ID, map[string]string{
+			propActiveValueSet: *body.Properties.ActiveValueSetName,
+		}); err != nil {
+			writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+			return
+		}
 	}
 	if body.DisplayName != nil && *body.DisplayName != it.DisplayName {
 		if taken, err := a.Store.ItemNameTaken(wid, *body.DisplayName, it.Type, it.ID); err != nil {
@@ -161,7 +183,10 @@ func (a *API) updateItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 	a.audit(p, &store.ActivityEvent{Operation: store.OpUpdateArtifact,
 		WorkspaceID: it.WorkspaceID, ArtifactID: it.ID, ArtifactName: it.DisplayName,
 		Properties: map[string]any{"ArtifactKind": it.Type}})
-	writeJSON(w, http.StatusOK, it)
+	// itemView rather than the bare item: the REST reference's own update
+	// sample echoes `properties` back, and a caller that just set
+	// activeValueSetName has no other way to confirm it took.
+	writeJSON(w, http.StatusOK, a.itemView(r, it))
 }
 
 func (a *API) deleteItem(w http.ResponseWriter, r *http.Request, p *auth.Principal) {

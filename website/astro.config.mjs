@@ -113,6 +113,7 @@ export default defineConfig({
             { slug: '44-interaction-surfaces' },
             { slug: '45-powerbi-reverse-engineering' },
             { slug: '47-environment-abstraction' },
+            { slug: '48-variable-libraries' },
             { slug: 'engine-matrix' },
           ],
         },

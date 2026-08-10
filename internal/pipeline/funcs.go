@@ -14,6 +14,13 @@ func callFunc(name string, args []value, ctx *evalContext) (value, error) {
 	// --- system objects ---
 	case "pipeline":
 		obj := map[string]value{"parameters": asMap(ctx.Parameters), "globalParameters": map[string]value{}}
+		// Always present, even with no declarations — real Fabric's own
+		// failure for an undeclared reference is "property 'bronzePath'
+		// doesn't exist, available properties are ''", which is a member
+		// lookup against an EMPTY object, not a missing one. Measured against
+		// a live tenant. So an undeclared alias must fail on the member, not
+		// on `libraryVariables` itself.
+		obj["libraryVariables"] = asMap(ctx.LibraryVariables)
 		// Only present when an event trigger started this run — which is why
 		// Fabric's own samples reach it through safe navigation,
 		// `@pipeline()?.TriggerEvent?.FileName`.

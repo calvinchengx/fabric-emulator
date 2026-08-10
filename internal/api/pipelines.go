@@ -887,9 +887,23 @@ func (a *API) runPipelineWith(wid string, it *store.Item, jobID string, params, 
 		a.savePipelineRun(jobID, pipeline.StatusFailed, nil)
 		return "PipelineDefinitionInvalid"
 	}
+	// Resolve the pipeline's library-variable declarations against the
+	// workspace BEFORE the run, so an unresolvable reference fails the run up
+	// front instead of at whichever activity happens to read it first.
+	libVars, err := a.resolveLibraryVariables(wid, p.LibraryVariableRefs())
+	if err != nil {
+		a.savePipelineRun(jobID, pipeline.StatusFailed, nil)
+		// Its own code, not PipelineDefinitionInvalid: the definition parsed
+		// fine and the fix is in the WORKSPACE (a missing library, a renamed
+		// variable), which is exactly the deploy-time mistake this feature is
+		// meant to catch. Reporting it as malformed JSON would send the reader
+		// to the wrong file.
+		return "PipelineLibraryVariableUnresolved"
+	}
 	res := p.RunWith(params, &pipelineExecutor{a: a, wid: wid, jobID: jobID, chain: []string{it.ID}},
 		pipeline.Options{
-			TriggerEvent: trigger,
+			TriggerEvent:     trigger,
+			LibraryVariables: libVars,
 			// Each activity is announced as it settles, so a watcher sees a
 			// failure at the moment it happens rather than reconstructing it
 			// from the run afterwards.

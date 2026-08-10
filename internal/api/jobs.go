@@ -37,6 +37,11 @@ func jobFailureMessage(code string) string {
 			"useRootDefaultLakehouse=True in the arguments to bypass this check."
 	case "ComputeBindingInvalid":
 		return "The notebook's compute binding does not resolve to an existing item."
+	case "PipelineLibraryVariableUnresolved":
+		return "A library variable the pipeline declares could not be resolved. " +
+			"Check that the workspace has a Variable Library with the name in the " +
+			"pipeline's libraryVariables block, and that it still declares the " +
+			"referenced variable."
 	case "CopyJobCDCNotImplemented":
 		return "This Copy job's jobMode is CDC, which needs change tracking on a " +
 			"source the emulator cannot reach. Use jobMode Batch, or run against " +
