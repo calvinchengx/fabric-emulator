@@ -1,8 +1,18 @@
-# 17 — Semantic-model / DAX engine plan
+# 19 — Semantic-model / DAX engine plan
 
 Turn Power BI from 🔴 (item management only) into a real query engine: the
-`executeQueries` REST contract backed by a bounded, real DAX evaluator, so the
-SemPy + Great Expectations tutorial's *methodology* runs against the emulator.
+`executeQueries` REST contract backed by a bounded, real DAX evaluator, so
+**Great Expectations can validate semantic-model data** against the emulator
+([e2e/great-expectations](../e2e/great-expectations/)).
+
+**Not SemPy, and this plan never reaches it.** `sempy.evaluate_dax` goes over
+**XMLA**, not `executeQueries` — measured from sempy 0.14.2's own source, which
+ships `Microsoft.AnalysisServices.AdomdClient.dll` and reaches model metadata
+through `$SYSTEM.TMSCHEMA_*` DMVs. So the *Great Expectations* half of the
+tutorial runs here; the *SemPy* half needs the XMLA transport in
+[32-xmla-plan.md](32-xmla-plan.md). The row this plan earned is real, but no
+amount of `executeQueries` work leads to SemPy — recorded because the opposite
+inference was drawn from it once.
 
 Grounded in the golden references pinned first:
 [18-semantic-model-references.md](18-semantic-model-references.md),

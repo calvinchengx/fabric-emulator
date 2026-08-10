@@ -1,4 +1,4 @@
-# 16 — Semantic-model golden references & DAX-oracle strategy
+# 18 — Semantic-model golden references & DAX-oracle strategy
 
 Before any semantic-model / DAX work, this pins the **golden references** we'd
 build and validate against, and — the crux — records *where an executable
