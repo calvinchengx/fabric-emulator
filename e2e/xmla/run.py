@@ -34,10 +34,23 @@ What it asserts, all of it measured off the wire:
   6. The `https://<host>/xmla` and bare `host:port` Data Source forms remain
      Windows-only on .NET Core, so a Linux oracle must use `powerbi://`.
 
-What it does NOT establish: the client never reaches XMLA/SOAP — it is still in
-workspace *routing* when the capture stub refuses it. So this says nothing about
-how much of [MS-SSAS-T] a useful implementation needs, and the `L` sizing in
-docs/24 is unchanged. Feasibility is measured here; cost is not.
+  7. It REACHES XMLA. Answering `/webapi/clusterResolve` with the contract the
+     assembly declares (`NameResolutionResult.clusterFQDN`) takes the client
+     past routing, and it then POSTs `text/xml` to `/webapi/xmla`. The first
+     envelope is a SOAP `Execute` carrying `BeginSession mustUnderstand="1"`,
+     `Version Sequence="922"`, an EMPTY `<Statement/>` and a `PropertyList`
+     (LocaleIdentifier, DbpropMsmd{Activity,CurrentActivity,Request}ID). So
+     opening a connection is a session handshake, not a query.
+
+What it does NOT establish: what the client asks AFTER the session opens. This
+harness refuses the first envelope, so the traffic past connect is unread, and
+that is where the remaining cost of [MS-SSAS-T] lives. Connect is measured;
+query is not.
+
+(Until 2026-08-10 this docstring said the client "never reaches XMLA/SOAP" and
+that docs/24's `L` was unchanged. Both were true when written and are now false.
+Reworded rather than annotated: a superseded claim left readable beside its
+correction is what the next reader greps.)
 
 Runs the .NET client in a container (the NuGet package is
 `...retail.amd64`, hence `--platform linux/amd64` — native on CI, QEMU
@@ -403,11 +416,20 @@ SHAPE_INDEX = 0  # which shape this probe run serves; the phase-0 loop advances 
 # shape is pinned to the known-good L1 so the cluster form is the only thing
 # that varies.
 def _cluster_forms(host, port):
-    return [
-        ("full-url", f"https://{host}:{port}"),
-        ("host-port", f"{host}:{port}"),
-        ("host-only", f"{host}"),
-    ]
+    """SCREEN 12 IS CLOSED — one entry, and the sweep is deliberately gone.
+
+    It used to return three URI shapes (`https://host:port`, `host:port`,
+    `host`). All three failed identically with `UriFormatException: The hostname
+    could not be parsed`, and since a bare hostname CANNOT fail to parse, that
+    result eliminated the variable rather than choosing a winner: the string was
+    never reaching the parser.
+
+    The cause was the reply CONTRACT, not the shape — see the clusterResolve
+    handler. Re-adding shapes here would screen a variable already measured to
+    be the wrong one, and three containers reporting one answer reads as
+    corroboration rather than as one observation repeated.
+    """
+    return [("clusterFQDN", host)]
 
 
 CLUSTER_INDEX = 0
@@ -421,9 +443,39 @@ LOCK = threading.Lock()
 class Capture(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def _record(self):
+    def _read_body(self):
+        """Read the body under EITHER framing, because XMLA uses the other one.
+
+        Content-Length alone was enough for every JSON call in the routing and
+        token legs, and it silently stops being enough at exactly the request
+        this project spent phase 0 trying to reach: the first XMLA envelope
+        arrives as `content-type: text/xml` with `transfer-encoding: chunked`
+        and NO Content-Length, so `int(...or 0)` yields 0 and the body records
+        as empty.
+
+        That is the dangerous polarity — the capture prints `BODY: (empty)`,
+        which reads as "the client sent nothing" when it in fact sent the one
+        payload we care about. An absent measurement rendered as a negative
+        observation. Decode the chunks instead.
+        """
+        if "chunked" in (self.headers.get("Transfer-Encoding", "") or "").lower():
+            chunks = []
+            while True:
+                line = self.rfile.readline().strip()
+                if not line:
+                    continue
+                size = int(line.split(b";")[0], 16)
+                if size == 0:
+                    self.rfile.readline()   # the trailing CRLF after the 0 chunk
+                    break
+                chunks.append(self.rfile.read(size))
+                self.rfile.readline()       # the CRLF terminating this chunk
+            return b"".join(chunks)
         n = int(self.headers.get("Content-Length", 0) or 0)
-        body = self.rfile.read(n) if n else b""
+        return self.rfile.read(n) if n else b""
+
+    def _record(self):
+        body = self._read_body()
         with LOCK:
             REQUESTS.append({
                 "method": self.command,
@@ -472,13 +524,38 @@ class Capture(http.server.BaseHTTPRequestHandler):
             # honours them, its next request is the first XMLA/SOAP envelope
             # this project has seen; if it still dials 443, the cluster reply
             # is not what steers it and that is equally worth knowing.
-            label, target = _cluster_forms(CONTAINER_HOST, PORT)[CLUSTER_INDEX]
+            # READ FROM THE ASSEMBLY, not screened. Screen 12 swept three URI
+            # SHAPES and all three failed identically with
+            # `UriFormatException: The hostname could not be parsed` — including
+            # a bare hostname, which cannot fail to parse. That ruled the shape
+            # out and said the string never reached the parser.
+            #
+            # Decompiling `ASAzureUtility.ResolvePaaSConnectionEndpointDetail`
+            # says why, and it is not a shape problem at all — it is the WRONG
+            # CONTRACT. The reply is deserialised as `NameResolutionResult`
+            # (members `clusterFQDN`, `coreServerName`, `tenantId`) and consumed
+            # as:
+            #
+            #     info = new AsPaasEndpointInfo(new UriBuilder(dataSourceUri) {
+            #         Host = nameResolutionResult.ClusterFqdn
+            #     }.Uri, ...)
+            #
+            # We had been answering with `PowerBIClusterResolutionResult`
+            # (`FixedClusterUri`/`DynamicClusterUri`) — a real contract on the
+            # same class, but the one `ResolvePowerBICluster` uses on a DIFFERENT
+            # path. So `clusterFQDN` was absent, `Host` was null, and
+            # `UriBuilder.Uri` threw. Two plausible contracts, one code path:
+            # the type name matched the topic and not the caller.
+            #
+            # `Host =` also fixes the VALUE: a bare FQDN, no scheme and no port.
+            # The port is not ours to send — it is inherited from dataSourceUri.
+            target = CONTAINER_HOST
             b = json.dumps({
-                "FixedClusterUri": target, "DynamicClusterUri": target,
-                "NewTenantId": None, "RuleDescription": "emulator",
-                "TTLSeconds": 3600,
+                "clusterFQDN": target,
+                "coreServerName": WORKSPACE,
+                "tenantId": "00000000-0000-0000-0000-000000000001",
             }).encode()
-            print(f"    -> answering 200 clusterResolve [{label}] -> {target}", flush=True)
+            print(f"    -> answering 200 clusterResolve [clusterFQDN] -> {target}", flush=True)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(b)))
@@ -794,7 +871,7 @@ for CLUSTER_INDEX, (label, _target) in enumerate(_cluster_forms(CONTAINER_HOST, 
     with LOCK:
         REQUESTS.clear()
         SHAPE_LOG.clear()
-    log(f"SCREEN 12 cluster form {CLUSTER_INDEX + 1}/3: {label}")
+    log(f"cluster reply: {label} (screen 12 closed — contract read, not screened)")
     try:
         proc2 = run_probe()
     except subprocess.TimeoutExpired:
@@ -883,8 +960,12 @@ for label, _, _ in runs:
     line = first[label]
     same = f"  same as {baseline}" if label != baseline and line == base else ""
     print(f"  {label:26} {line.split('::', 1)[-1].strip()}{same}", flush=True)
-print(f"\nEvery shape reporting what {baseline} reports means the swept variable "
-      f"is NOT the one, and the frames above are all that narrows it. A shape "
-      f"that differs names what the parser wanted — and in a LADDER, the rung "
-      f"where the error changes is the index it reaches for.", flush=True)
+# This used to close by interpreting a THREE-shape sweep ("every shape
+# reporting the same thing means the swept variable is not the one"). That text
+# is deleted rather than reworded: the sweep is gone, it was answered, and a
+# sentence describing a comparison that no longer happens is read as live by
+# whoever greps next. Screen 12's actual result is recorded at `_cluster_forms`
+# and at the clusterResolve handler, where the code it explains lives.
+if len(runs) > 1:
+    print(f"\n{len(runs)} shapes ran; compare them above.", flush=True)
 print("\nPASSED: the ADOMD.NET client contract is unchanged.")
