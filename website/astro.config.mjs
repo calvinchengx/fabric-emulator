@@ -110,6 +110,7 @@ export default defineConfig({
             { slug: '42-sail-fidelity-plan' },
             { slug: '43-activity-completion-plan' },
             { slug: '44-interaction-surfaces' },
+            { slug: '45-powerbi-reverse-engineering' },
             { slug: 'engine-matrix' },
           ],
         },
