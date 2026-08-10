@@ -26,12 +26,54 @@ import (
 )
 
 // Rowset is a tabular result headed for the wire: ordered column names and rows
-// of already-stringified cells. Every XMLA value crosses as xsd:string here —
-// the client re-types from the schema it is given, and a single string column
-// type keeps the emitted XSD honest about what we actually send.
+// of already-stringified cells.
+//
+// THE INLINE SCHEMA IS A TYPE CONTRACT, not decoration. An earlier version of
+// this comment said "every XMLA value crosses as xsd:string ... which keeps the
+// emitted XSD honest about what we actually send". That was wrong, and it was
+// measured wrong against real sempy: the client re-types FROM the schema and
+// casts, so a string-typed ID fails as
+//
+//	InvalidCastException: Unable to cast object of type 'System.String'
+//	to type 'System.UInt64'
+//
+// Types is optional and parallel to Columns; an empty entry means xsd:string,
+// which keeps every existing caller correct.
 type Rowset struct {
+	// Name is emitted as <root name="...">. TOM's AmoDataAdapter renames the
+	// DataSet's tables from these, one per rowset, and
+	// AdjustTableNames BAILS OUT ENTIRELY if the count of names does not match
+	// the count of tables — so an unnamed or absent rowset silently breaks
+	// naming for every OTHER rowset in the same batch.
+	Name    string
 	Columns []string
+	Types   []string
 	Rows    [][]string
+	// RawCells emits cell values WITHOUT XML escaping, for the one payload that
+	// is itself a document: DISCOVER_XML_METADATA carries an ASSL <Server> or
+	// <Database> inside its METADATA column, and the client deserialises that
+	// content as XML. Escaped, it arrives as text and the client reports
+	// `Unexpected root '' (namespace '')` — a message about the ROOT for a
+	// defect in ESCAPING. Off by default: every other rowset carries data, not
+	// markup, and must stay escaped.
+	RawCells bool
+}
+
+// xsdType is the declared type for column i: explicit if given, else string.
+func (r Rowset) xsdType(i int) string {
+	if i < len(r.Types) && r.Types[i] != "" {
+		return r.Types[i]
+	}
+	return "xsd:string"
+}
+
+// rootName renders the name attribute, omitting it entirely when unset so that
+// callers with a single unnamed rowset emit exactly what they did before.
+func rootName(n string) string {
+	if n == "" {
+		return ""
+	}
+	return ` name="` + escape(n) + `"`
 }
 
 // Trailing byte the client's payload reader switches on (0 = complete).
@@ -50,19 +92,21 @@ func (r Rowset) DiscoverResponse() []byte { return r.envelope("DiscoverResponse"
 // function rather than two that would drift — the client rejects each
 // differently ("not a rowset" vs "unrecognizable"), which is exactly the kind
 // of divergence a copy would hide.
-func (r Rowset) envelope(responseElement string) []byte {
+// RootFragment is the <root> element alone, for a BATCH response where many
+// rowsets share one envelope. Same bytes the single-rowset path emits inside
+// its envelope, so the two cannot drift.
+func (r Rowset) RootFragment() []byte { return r.rootElement() }
+
+// rootElement is ONE <root> rowset: the name attribute, the inline XSD the
+// client reads before any row, and the rows. Shared by the single-rowset
+// envelope and by a batch, so the two cannot drift — the schema and the naming
+// are exactly the parts a copy would get subtly wrong.
+func (r Rowset) rootElement() []byte {
 	var b strings.Builder
-	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` +
-		`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">` +
-		`<soap:Body>` +
-		`<` + responseElement + ` xmlns="urn:schemas-microsoft-com:xml-analysis">` +
-		`<return>` +
-		`<root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset" ` +
+	b.WriteString(`<root` + rootName(r.Name) + ` xmlns="urn:schemas-microsoft-com:xml-analysis:rowset" ` +
 		`xmlns:xsd="http://www.w3.org/2001/XMLSchema" ` +
 		`xmlns:sql="urn:schemas-microsoft-com:xml-sql" ` +
 		`xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">`)
-
-	// The schema the client reads before any row.
 	b.WriteString(`<xsd:schema targetNamespace="urn:schemas-microsoft-com:xml-analysis:rowset" ` +
 		`xmlns:xsd="http://www.w3.org/2001/XMLSchema" ` +
 		`xmlns:sql="urn:schemas-microsoft-com:xml-sql" ` +
@@ -72,16 +116,15 @@ func (r Rowset) envelope(responseElement string) []byte {
 		`<xsd:element name="row" type="row" minOccurs="0" maxOccurs="unbounded"/>` +
 		`</xsd:sequence></xsd:complexType></xsd:element>` +
 		`<xsd:complexType name="row"><xsd:sequence>`)
-	for _, c := range r.Columns {
+	for i, c := range r.Columns {
 		// sql:field carries the true name; name= must be a legal XML name, so
 		// it is the encoded form (see EncodeName).
 		b.WriteString(`<xsd:element sql:field="` + escape(c) + `" name="` + EncodeName(c) +
-			`" type="xsd:string" minOccurs="0"/>`)
+			`" type="` + r.xsdType(i) + `" minOccurs="0"/>`)
 	}
 	b.WriteString(`</xsd:sequence></xsd:complexType></xsd:schema>`)
-
-	// Rows. A cell absent from a short row is omitted rather than emitted
-	// empty: minOccurs="0" makes absence legal, and "" is a value.
+	// A cell absent from a short row is omitted rather than emitted empty:
+	// minOccurs="0" makes absence legal, and "" is a value.
 	for _, row := range r.Rows {
 		b.WriteString(`<row>`)
 		for i, c := range r.Columns {
@@ -89,12 +132,28 @@ func (r Rowset) envelope(responseElement string) []byte {
 				break
 			}
 			n := EncodeName(c)
-			b.WriteString(`<` + n + `>` + escape(row[i]) + `</` + n + `>`)
+			cell := escape(row[i])
+			if r.RawCells {
+				cell = row[i]
+			}
+			b.WriteString(`<` + n + `>` + cell + `</` + n + `>`)
 		}
 		b.WriteString(`</row>`)
 	}
+	b.WriteString(`</root>`)
+	return []byte(b.String())
+}
 
-	b.WriteString(`</root></return></` + responseElement + `></soap:Body></soap:Envelope>`)
+func (r Rowset) envelope(responseElement string) []byte {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="utf-8"?>` +
+		`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">` +
+		`<soap:Body>` +
+		`<` + responseElement + ` xmlns="urn:schemas-microsoft-com:xml-analysis">` +
+		`<return>`)
+	b.Write(r.rootElement())
+	b.WriteString(`</return></` + responseElement + `>` +
+		`</soap:Body></soap:Envelope>`)
 	return append([]byte(b.String()), payloadComplete)
 }
 

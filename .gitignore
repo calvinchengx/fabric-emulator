@@ -98,3 +98,9 @@ docs/demo/.capture/
 # .NET build output from the e2e probes (they build in-container).
 bin/
 obj/
+
+# The compiled binary, when someone builds into the repo root rather than a
+# temp dir. A `git add -A` sweeps up 30 MB of Mach-O otherwise, and it is the
+# kind of thing that lands unnoticed because nothing fails.
+/fabric-emulator
+/fabric-emulator.exe

@@ -37,6 +37,15 @@ func IsDMV(statement string) bool { return dmvStatement.MatchString(statement) }
 // so returning the source name would silently break its merges).
 type projection struct{ source, out string }
 
+// dmvIdent is what may become an XML element name in the response.
+//
+// dmvProjection's `\w+` groups already exclude the markup characters, but that
+// is an implied invariant three regexes away from the writer. This states it at
+// the boundary it protects: a selected name that is not a plain identifier is
+// rejected before it can reach the rowset, and loosening the parser cannot
+// silently loosen the writer.
+var dmvIdent = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // DMV parses and answers a `$SYSTEM.TMSCHEMA_*` query against the model and its
 // data. Data is required because the storage rowsets are *derived* from the
 // rows we hold — record counts and distinct-value counts are exact, not
@@ -53,6 +62,9 @@ func DMV(model *semanticmodel.Model, data semanticmodel.Data, statement string) 
 		out := p[1]
 		if p[2] != "" {
 			out = p[2]
+		}
+		if !dmvIdent.MatchString(out) {
+			return Rowset{}, fmt.Errorf("%s: %q is not a usable column name", name, out)
 		}
 		cols = append(cols, projection{source: p[1], out: out})
 	}
@@ -96,7 +108,8 @@ func dmvRows(model *semanticmodel.Model, data semanticmodel.Data, name string) (
 	switch name {
 	case "TMSCHEMA_TABLES":
 		for i, t := range model.Tables {
-			rows = append(rows, map[string]string{"ID": id(i), "Name": t.Name})
+			rows = append(rows, map[string]string{"ID": objID("TMSCHEMA_TABLES", i),
+				"ModelID": objID("TMSCHEMA_MODEL", 0), "Name": t.Name})
 		}
 
 	case "TMSCHEMA_COLUMNS":
@@ -105,7 +118,7 @@ func dmvRows(model *semanticmodel.Model, data semanticmodel.Data, name string) (
 			for _, c := range t.Columns {
 				n++
 				rows = append(rows, map[string]string{
-					"ID": id(n - 1), "TableID": id(ti),
+					"ID": objID("TMSCHEMA_COLUMNS", n-1), "TableID": objID("TMSCHEMA_TABLES", ti),
 					"ExplicitName": c.Name, "Name": c.Name,
 				})
 			}
@@ -117,13 +130,14 @@ func dmvRows(model *semanticmodel.Model, data semanticmodel.Data, name string) (
 		// partition would be a fiction the storage cannot back.
 		for ti, t := range model.Tables {
 			rows = append(rows, map[string]string{
-				"ID": id(ti), "TableID": id(ti), "Name": t.Name + "-Partition",
+				"ID":      objID("TMSCHEMA_PARTITIONS", ti),
+				"TableID": objID("TMSCHEMA_TABLES", ti), "Name": t.Name + "-Partition",
 			})
 		}
 
 	case "TMSCHEMA_RELATIONSHIPS":
 		for i, r := range model.Relationships {
-			rows = append(rows, map[string]string{"ID": id(i), "Name": r.Name})
+			rows = append(rows, map[string]string{"ID": objID("TMSCHEMA_RELATIONSHIPS", i), "Name": r.Name})
 		}
 
 	case "TMSCHEMA_HIERARCHIES":
@@ -142,7 +156,8 @@ func dmvRows(model *semanticmodel.Model, data semanticmodel.Data, name string) (
 		// One storage per partition, and one partition per table (above), so
 		// the ids line up by construction.
 		for ti := range model.Tables {
-			rows = append(rows, map[string]string{"ID": id(ti), "PartitionID": id(ti)})
+			rows = append(rows, map[string]string{"ID": objID("TMSCHEMA_PARTITION_STORAGES", ti),
+				"PartitionID": objID("TMSCHEMA_PARTITIONS", ti)})
 		}
 
 	case "TMSCHEMA_SEGMENT_MAP_STORAGES":
@@ -212,3 +227,11 @@ func distinctValues(data semanticmodel.Data, table, column string) int {
 }
 
 func id(i int) string { return strconv.Itoa(i + 1) }
+
+// objID places an object's id in a MODEL-WIDE space. TOM assembles one object
+// graph from every rowset, so per-rowset counters collide:
+// `Duplicate object ID 1, first in 'Tabular.Model', another one in ...`.
+// It lives here, in the shared row source, so the Discover and SQL-SELECT
+// grammars cannot disagree about the same object's id — two lists answering one
+// question is the defect this repo has a rule about.
+func objID(kind string, i int) string { return strconv.Itoa(idBase[kind] + i + 1) }
