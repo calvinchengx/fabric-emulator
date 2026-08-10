@@ -63,6 +63,14 @@ uv sync --frozen && uv run python pipeline.py
 Running this example alone is fine — `compare.py` skips with a nudge rather than
 failing. See the caveat about that skip below.
 
+## Where your items live: `definitions/`
+
+Unchanged from the sibling, and worth reading there:
+[`../medallion-pyspark#where-your-items-live-definitions`](../medallion-pyspark/README.md#where-your-items-live-definitions).
+Bronze deploys from committed files in Fabric's own source format —
+`{display name}.{public facing type}/` with `.platform` — which is the layout
+Fabric's Git integration writes. Only **silver** differs in this example.
+
 ## The comparison
 
 `compare.py` reads the `silver_summary.json` each example writes and reports

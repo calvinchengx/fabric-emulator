@@ -143,6 +143,69 @@ uv run python pipeline.py     # the basic pipeline, then 20+
 the basic track cannot drift out from under the advanced one.
 [`e2e/medallion-advanced`](../../e2e/medallion-advanced/) runs it in CI.
 
+## Where your items live: `definitions/`
+
+The notebook and the pipelines are **not** built as strings in Python. They are
+committed files, in the layout Microsoft Fabric itself uses:
+
+```
+definitions/
+  bronze-orders.Notebook/
+    .platform                 ← item metadata: type, display name, logicalId
+    notebook-content.py       ← the notebook, as Fabric stores it
+  bronze-ingest.DataPipeline/
+    .platform
+    pipeline-content.json     ← the activities
+```
+
+**This is the same layout Fabric's Git integration writes.** Connect a real
+workspace to Azure DevOps or GitHub and Fabric produces exactly this: one
+directory per item named `{display name}.{public facing type}`, holding the
+item's definition files plus a `.platform`. So the directory above is what your
+repository looks like in production — not an emulator convention you would have
+to unlearn.
+
+Three things follow from that, and they are the point of the example:
+
+**The filenames are Fabric's.** `notebook-content.py` for a Notebook,
+`pipeline-content.json` for a DataPipeline. These become the `path` values in
+the definition parts that `updateDefinition` accepts. Invent a filename and the
+emulator will store it happily — it keeps parts verbatim by design — while real
+Fabric refuses. Copy these names.
+
+**`.platform` carries the identity.** Its `logicalId` is the cross-workspace
+identifier that ties this item to its source-control representation and survives
+renames and moves. It is how one branch can deploy to dev, test and prod and have
+Fabric recognise the same item in each. Do not edit it.
+
+**`{{TOKENS}}` are how ids travel.** A pipeline names the workspace and lakehouse
+it reads by GUID, and those GUIDs differ in every workspace:
+
+```json
+"typeProperties": {"workspaceId": "{{WORKSPACE_ID}}", "artifactId": "{{LAKEHOUSE_ID}}"}
+```
+
+So the committed file is a template and the deploy substitutes. That is not a
+local shortcut — Microsoft's own [`fabric-cicd`](https://learn.microsoft.com/en-us/fabric/cicd/tutorial-fabric-cicd-azure-devops)
+ships a `find_replace` parameter file for the same reason. `bronze.py` deploys
+with one call:
+
+```python
+nb = create_item_from_definition(
+    "bronze-orders.Notebook",
+    WORKSPACE_ID=ws, LAKEHOUSE_ID=lake,
+    LANDING_DIR=landing_dir, LANDING_DATE=st["landing_date"])
+```
+
+The item **type comes from the folder name**, as it does in Git, and any
+placeholder left unsubstituted is an error at deploy rather than a Spark failure
+ten minutes later about a workspace literally named `{{WORKSPACE_ID}}`.
+
+What is *not* in `definitions/` is your data. Definitions are versioned; the
+Delta tables they write live in OneLake and are never in Git, and no deployment
+overwrites them. [docs/46](../../docs/46-artifact-persistence.md) is the full
+contract, with links to Microsoft's documentation for each claim.
+
 ## Files
 
 - `common.py` — endpoints, tokens for all five audiences, the TDS connector, state
@@ -159,6 +222,8 @@ the basic track cannot drift out from under the advanced one.
 - `contracts/` — ODCS v3.1.0 data contracts over the layers; see
   [docs/30](../../docs/30-odcs-data-contracts.md)
 - `gold/` — the dbt project (models, sources, schema tests, singular tests)
+- `definitions/` — your items in Fabric's own source format, one directory
+  per item; see the section above
 - `state.json` — written by `provision.py`, read by everything after it
 
 ## Configuration

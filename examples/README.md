@@ -52,13 +52,48 @@ cd ~/mine && uv sync && uv run python pipeline.py`. And its dependencies
 (pandas, dbt, pyodbc, …) never enter the emulator's own dependency graph, which
 stays about building and testing the emulator.
 
-**Examples do not share helper modules.** Each one carries its own `common.py`
-even where that duplicates another. Copy-paste independence is the property that
-makes an example useful; DRY across examples would trade it away for nothing a
-reader benefits from.
+**The four medallion examples share one fixture package, and only that.** They
+import `contoso-fixtures` for the seeded source-system generators and the target
+resolver (`common.py`). That is a deliberate exception to copy-paste
+independence, for a reason specific to these four: the comparison between them
+asserts they produce *identical* silver, and two copies of a seeded generator
+that drifted by a single RNG draw would compare two different datasets while both
+still passed their own assertions. One generator makes that failure impossible
+rather than merely unlikely. Everything else — every line of pipeline code, the
+`pyproject.toml`, the lockfile, `definitions/` — each example owns.
+
+**The target is resolved in exactly one file.** `contoso-fixtures/common.py`
+turns `FABRIC_TARGET=emulator|real` into endpoints and a credential, through the
+published `fabric-target` package. No step branches on which target is active;
+they hold display *names* and receive resolved values, because item ids can never
+match across targets. See [docs/21](../docs/21-real-fabric-toggle.md).
 
 **Every example is executable end to end and asserts its own results.** An
 example that merely *looks* right is a liability — these fail loudly instead.
+
+## Your items are files, in Fabric's layout
+
+Each example keeps its Notebook and DataPipeline definitions on disk, one
+directory per item:
+
+```
+definitions/
+  bronze-orders.Notebook/     .platform  notebook-content.py
+  bronze-ingest.DataPipeline/ .platform  pipeline-content.json
+```
+
+`{display name}.{public facing type}` with the definition files plus
+`.platform` is exactly what Fabric's Git integration writes when you connect a
+real workspace to Azure DevOps or GitHub — so what an example commits is what
+your repository holds in production, and the filenames (`notebook-content.py`,
+`pipeline-content.json`) are the ones `updateDefinition` accepts. Ids that differ
+per workspace are `{{TOKENS}}` substituted at deploy, the way Microsoft's
+`fabric-cicd` uses a `find_replace` parameter file.
+
+Definitions are versioned. The Delta tables they write live in OneLake and are
+never in Git, and no deployment overwrites them.
+[docs/46](../docs/46-artifact-persistence.md) is the contract, with a Microsoft
+documentation link behind each claim.
 
 ## Where the fidelity proof lives — and it is not here
 
