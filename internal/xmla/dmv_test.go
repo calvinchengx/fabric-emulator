@@ -261,3 +261,23 @@ func TestPartitionStoragesChain(t *testing.T) {
 	}
 	parses(t, ps.ExecuteResponse())
 }
+
+// The selected name becomes an XML element name, so it must be an identifier.
+// Rejected at the parse boundary rather than trusted to the writer's escaping.
+func TestDMVRefusesNonIdentifierColumnNames(t *testing.T) {
+	m, d := goldenModel(t), goldenData(t)
+	// The SOURCE name being unknown is already an error, so the alias is what
+	// isolates this guard: a valid source renamed to something unusable.
+	stmt := `SELECT [Name] AS [1st] FROM $SYSTEM.TMSCHEMA_TABLES`
+	if _, err := DMV(m, d, stmt); err == nil {
+		t.Errorf("%s: expected a refusal, got a rowset", stmt)
+	}
+	// And an ordinary alias still works, so the guard is not just "reject".
+	rs, err := DMV(m, d, `SELECT [Name] AS [SemPyTableName] FROM $SYSTEM.TMSCHEMA_TABLES`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Columns[0] != "SemPyTableName" {
+		t.Errorf("alias = %q, want SemPyTableName", rs.Columns[0])
+	}
+}

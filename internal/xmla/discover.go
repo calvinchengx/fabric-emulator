@@ -186,20 +186,68 @@ func xsdTypeFor(col string) string {
 // tomObjectName is the <root name="..."> TOM expects, which is the singular
 // object name rather than the request type. `DdlUtil.ObtainModelTable` looks up
 // `dataSet.Tables["Model"]` by that name.
+//
+// TOTAL over the union of `discoverColumns` and `tomBatchRequestTypes`, asserted
+// by TestEveryBatchTypeHasATOMObjectName. Totality is the point: the name used to
+// be derived from the request string when the map missed, which put caller-
+// supplied text in the response body (CodeQL go/reflected-xss) and hid the
+// unmeasured names inside a string transform.
+//
+// The seven marked `measured` are read off Microsoft.AnalysisServices.Tabular.dll.
+// The rest are the previous derivation's output, FROZEN VERBATIM so this change
+// moves no bytes on the wire — they are NOT measured, and their oddities
+// (`Datasources`, not `DataSources`) are that derivation's artifacts, not TOM's
+// names. They are only ever the name of a zero-row rowset, which is why nothing
+// has yet forced them to be right. Correct them when something measures them.
 var tomObjectName = map[string]string{
-	"TMSCHEMA_MODEL":         "Model",
-	"TMSCHEMA_TABLES":        "Table",
-	"TMSCHEMA_COLUMNS":       "Column",
-	"TMSCHEMA_PARTITIONS":    "Partition",
-	"TMSCHEMA_RELATIONSHIPS": "Relationship",
-	"TMSCHEMA_MEASURES":      "Measure",
-	"TMSCHEMA_EXPRESSIONS":   "Expression",
+	"TMSCHEMA_MODEL":                     "Model",        // measured
+	"TMSCHEMA_TABLES":                    "Table",        // measured
+	"TMSCHEMA_COLUMNS":                   "Column",       // measured
+	"TMSCHEMA_PARTITIONS":                "Partition",    // measured
+	"TMSCHEMA_RELATIONSHIPS":             "Relationship", // measured
+	"TMSCHEMA_MEASURES":                  "Measure",      // measured
+	"TMSCHEMA_EXPRESSIONS":               "Expression",   // measured
+	"TMSCHEMA_DATA_SOURCES":              "Datasources",
+	"TMSCHEMA_ATTRIBUTE_HIERARCHIES":     "Attributehierarchies",
+	"TMSCHEMA_HIERARCHIES":               "Hierarchies",
+	"TMSCHEMA_LEVELS":                    "Levels",
+	"TMSCHEMA_ANNOTATIONS":               "Annotations",
+	"TMSCHEMA_KPIS":                      "Kpis",
+	"TMSCHEMA_CULTURES":                  "Cultures",
+	"TMSCHEMA_OBJECT_TRANSLATIONS":       "Objecttranslations",
+	"TMSCHEMA_LINGUISTIC_METADATA":       "Linguisticmetadata",
+	"TMSCHEMA_PERSPECTIVES":              "Perspectives",
+	"TMSCHEMA_PERSPECTIVE_TABLES":        "Perspectivetables",
+	"TMSCHEMA_PERSPECTIVE_COLUMNS":       "Perspectivecolumns",
+	"TMSCHEMA_PERSPECTIVE_HIERARCHIES":   "Perspectivehierarchies",
+	"TMSCHEMA_PERSPECTIVE_MEASURES":      "Perspectivemeasures",
+	"TMSCHEMA_ROLES":                     "Roles",
+	"TMSCHEMA_ROLE_MEMBERSHIPS":          "Rolememberships",
+	"TMSCHEMA_TABLE_PERMISSIONS":         "Tablepermissions",
+	"TMSCHEMA_VARIATIONS":                "Variations",
+	"TMSCHEMA_EXTENDED_PROPERTIES":       "Extendedproperties",
+	"TMSCHEMA_COLUMN_PERMISSIONS":        "Columnpermissions",
+	"TMSCHEMA_DETAIL_ROWS_DEFINITIONS":   "Detailrowsdefinitions",
+	"TMSCHEMA_CALCULATION_GROUPS":        "Calculationgroups",
+	"TMSCHEMA_CALCULATION_ITEMS":         "Calculationitems",
+	"TMSCHEMA_ALTERNATE_OF_DEFINITIONS":  "Alternateofdefinitions",
+	"TMSCHEMA_REFRESH_POLICIES":          "Refreshpolicies",
+	"TMSCHEMA_FORMAT_STRING_DEFINITIONS": "Formatstringdefinitions",
+	"TMSCHEMA_QUERY_GROUPS":              "Querygroups",
+	"TMSCHEMA_CHANGED_PROPERTIES":        "Changedproperties",
 }
 
 // withContract stamps the wire requirements onto a rowset: the Version column,
 // a type per column, and the <root> name. Applied to EVERY rowset, modelled or
 // not, because the client's checks do not distinguish them.
-func withContract(rs Rowset, requestType string) Rowset {
+// A request type with no entry is an ERROR rather than a derived or blank name:
+// an unnamed rowset is the plausible-blank failure this package refuses
+// elsewhere, and deriving one would put the caller's bytes in the response.
+func withContract(rs Rowset, requestType string) (Rowset, error) {
+	name, ok := tomObjectName[requestType]
+	if !ok {
+		return Rowset{}, fmt.Errorf("no TOM object name for %q", requestType)
+	}
 	rs.Columns = append(append([]string(nil), rs.Columns...), versionColumn)
 	for i := range rs.Rows {
 		rs.Rows[i] = append(append([]string(nil), rs.Rows[i]...), "1")
@@ -208,13 +256,8 @@ func withContract(rs Rowset, requestType string) Rowset {
 	for i, c := range rs.Columns {
 		rs.Types[i] = xsdTypeFor(c)
 	}
-	if n, ok := tomObjectName[requestType]; ok {
-		rs.Name = n
-	} else {
-		rs.Name = strings.ReplaceAll(strings.Title(strings.ToLower( //nolint:staticcheck
-			strings.TrimPrefix(requestType, "TMSCHEMA_"))), "_", "")
-	}
-	return rs
+	rs.Name = name
+	return rs, nil
 }
 
 // DiscoverRowset answers one `<Discover RequestType=TMSCHEMA_*>` from the model.
@@ -246,7 +289,7 @@ func DiscoverRowset(model *semanticmodel.Model, data semanticmodel.Data, request
 			// objects — but NOT empty of columns. A column-less rowset yields
 			// no DataTable, and that breaks naming for every other rowset in
 			// the batch (see minimalColumns).
-			return withContract(Rowset{Columns: minimalColumns}, name), nil
+			return withContract(Rowset{Columns: minimalColumns}, name)
 		}
 		return Rowset{}, fmt.Errorf("unknown TMSCHEMA request type %q", name)
 	}
@@ -278,7 +321,7 @@ func DiscoverRowset(model *semanticmodel.Model, data semanticmodel.Data, request
 		}
 		rs.Rows = append(rs.Rows, out)
 	}
-	return withContract(rs, name), nil
+	return withContract(rs, name)
 }
 
 func inTOMBatch(name string) bool {

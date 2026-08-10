@@ -199,3 +199,37 @@ func TestDiscoverPropagatesProjectionErrors(t *testing.T) {
 		t.Error("empty Discover rowset must still carry its schema")
 	}
 }
+
+// Every type reachable through DiscoverRowset must have a TOM object name.
+//
+// This is what lets `withContract` refuse rather than derive one from the
+// request string. If it ever fails, the fix is a measured entry in
+// tomObjectName, never a fallback that echoes the caller.
+func TestEveryBatchTypeHasATOMObjectName(t *testing.T) {
+	for _, rt := range TOMBatchRequestTypes() {
+		if tomObjectName[rt] == "" {
+			t.Errorf("%s is in TOM's batch but has no <root name>", rt)
+		}
+	}
+	for rt := range discoverColumns {
+		if tomObjectName[rt] == "" {
+			t.Errorf("%s is modelled but has no <root name>", rt)
+		}
+	}
+}
+
+// The <root name> is table-driven, so nothing the caller sends can appear in it.
+func TestRootNameComesFromTheTableNotTheRequest(t *testing.T) {
+	m, d := goldenModel(t), goldenData(t)
+	rs, err := DiscoverRowset(m, d, "  tmschema_tables  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Name != "Table" {
+		t.Errorf("root name = %q, want the singular TOM name %q", rs.Name, "Table")
+	}
+	// A type outside both tables is refused, not named.
+	if _, err := DiscoverRowset(m, d, `TMSCHEMA_<script>`); err == nil {
+		t.Error("an unknown request type must be an error, not a named rowset")
+	}
+}

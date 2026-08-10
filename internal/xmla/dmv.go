@@ -37,6 +37,15 @@ func IsDMV(statement string) bool { return dmvStatement.MatchString(statement) }
 // so returning the source name would silently break its merges).
 type projection struct{ source, out string }
 
+// dmvIdent is what may become an XML element name in the response.
+//
+// dmvProjection's `\w+` groups already exclude the markup characters, but that
+// is an implied invariant three regexes away from the writer. This states it at
+// the boundary it protects: a selected name that is not a plain identifier is
+// rejected before it can reach the rowset, and loosening the parser cannot
+// silently loosen the writer.
+var dmvIdent = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // DMV parses and answers a `$SYSTEM.TMSCHEMA_*` query against the model and its
 // data. Data is required because the storage rowsets are *derived* from the
 // rows we hold — record counts and distinct-value counts are exact, not
@@ -53,6 +62,9 @@ func DMV(model *semanticmodel.Model, data semanticmodel.Data, statement string) 
 		out := p[1]
 		if p[2] != "" {
 			out = p[2]
+		}
+		if !dmvIdent.MatchString(out) {
+			return Rowset{}, fmt.Errorf("%s: %q is not a usable column name", name, out)
 		}
 		cols = append(cols, projection{source: p[1], out: out})
 	}
