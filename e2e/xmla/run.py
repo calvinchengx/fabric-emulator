@@ -207,6 +207,10 @@ ANSWER_TOKEN = False
 # which cluster to use, so a URI naming our host AND PORT should bring the XMLA
 # call back to the listener instead of to :443.
 ANSWER_CLUSTER = False
+# Screen 13: answer the XMLA session handshake itself. Off until the phase
+# that wants it, so earlier phases still record a client that is refused.
+ANSWER_XMLA = False
+XMLA_SESSION = "emulator-session-1"
 WORKSPACE = "ws"   # the workspace the probe names in its Data Source
 
 # CANDIDATE ROUTING SHAPES, screened one per request.
@@ -574,6 +578,49 @@ class Capture(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b)
             return
+        if ANSWER_XMLA and self.path.startswith("/webapi/xmla"):
+            # SCREEN 13: answer the session handshake and read what follows.
+            #
+            # The captured first envelope is an `Execute` with an EMPTY
+            # `<Statement/>` and `BeginSession mustUnderstand="1"` — a session
+            # open, not a query. XMLA's documented reply to that is an
+            # `ExecuteResponse` with an empty root, plus a `Session` header
+            # carrying the id the client must echo on every later request.
+            #
+            # `mustUnderstand="1"` is the reason a fault here ends the
+            # conversation: the client cannot proceed without the header being
+            # honoured, so refusing it is indistinguishable from a server that
+            # does not speak XMLA at all. Answering it is what turns "connect is
+            # measured" into "the traffic past connect is measured", which is
+            # where the rest of [MS-SSAS-T]'s cost lives.
+            b = ('<?xml version="1.0" encoding="utf-8"?>'
+                 '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+                 '<soap:Header>'
+                 f'<Session xmlns="urn:schemas-microsoft-com:xml-analysis" '
+                 f'SessionId="{XMLA_SESSION}"/>'
+                 '</soap:Header><soap:Body>'
+                 '<ExecuteResponse xmlns="urn:schemas-microsoft-com:xml-analysis">'
+                 '<return><root xmlns="urn:schemas-microsoft-com:xml-analysis:empty"/>'
+                 '</return></ExecuteResponse>'
+                 '</soap:Body></soap:Envelope>').encode()
+            print(f"    -> answering 200 XMLA session {XMLA_SESSION}", flush=True)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/xml; charset=utf-8")
+            # REQUIRED ON THE RESPONSE, not just sent on the request. Without it
+            # the client raises `InvalidDataException: The
+            # 'x-ms-xmlacaps-negotiation-flags' header is missing from the HTTP
+            # response!` in `HttpStream+PaasInfraController.ProcessWebResponse`,
+            # BEFORE reading the body — so a perfectly good SOAP envelope is
+            # discarded on a missing header. Echo what the client offered
+            # (0,0,0,1,0): this is a capability NEGOTIATION, so a server picks a
+            # subset rather than inventing flags.
+            self.send_header("x-ms-xmlacaps-negotiation-flags",
+                             self.headers.get("x-ms-xmlacaps-negotiation-flags",
+                                              "0,0,0,1,0"))
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+            return
         b = (b'<?xml version="1.0"?><soap:Envelope '
              b'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>'
              b'<soap:Fault><faultcode>capture</faultcode>'
@@ -859,6 +906,9 @@ ANSWER_ROUTING = True
 # recording nobody in this project has ever had.
 ANSWER_TOKEN = True
 ANSWER_CLUSTER = True
+# Screen 13: and answer the session handshake, so the request AFTER connect
+# is recorded rather than refused.
+ANSWER_XMLA = True
 
 # ONE PROBE RUN PER SHAPE. Screen 5 established that an accepted reply is
 # cached for the life of the client process, so a second shape in the same run
