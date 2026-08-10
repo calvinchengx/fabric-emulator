@@ -50,6 +50,27 @@ class Probe {
                 using var c = new AdomdConnection(cs);
                 c.Open();
                 Console.WriteLine($"CASE {label} :: OPENED");
+                // PAST Open() — the whole point of getting the connection up.
+                // Until the client is ASKED for query traffic it sends none, so
+                // the envelopes that price the rowset serialiser never appear
+                // and the `L` in docs/24 stays an estimate. Each probe below is
+                // wrapped separately: the first one to fail must not hide the
+                // others, because they exercise DIFFERENT surfaces (DAX query
+                // vs schema Discover) and we want both answers from one run.
+                RunProbe($"{label}/dax", () => {
+                    using var cmd = c.CreateCommand();
+                    cmd.CommandText = "EVALUATE ROW(\"x\", 1)";
+                    using var r = cmd.ExecuteReader();
+                    while (r.Read()) { }
+                });
+                // Discover, the metadata half. sempy's list_tables/list_measures
+                // and semantic-link-labs' TOM both live here, and per the
+                // measured API defaults they use XMLA rather than REST — so
+                // this is the surface the SemPy demand actually needs.
+                RunProbe($"{label}/schema", () => {
+                    var ds = c.GetSchemaDataSet("MDSCHEMA_MEASURES", null);
+                    Console.WriteLine($"SCHEMA {label} :: rows={ds.Tables[0].Rows.Count}");
+                });
                 c.Close();
             } catch (Exception e) {
                 var first = e.Message.Split('\n')[0].Trim();
@@ -80,5 +101,25 @@ class Probe {
             }
         }
         return 0;
+    }
+
+    // Run one post-Open probe and REPORT rather than throw. A probe that killed
+    // the run would let the first failure hide every later surface, and these
+    // exercise different ones (DAX query vs schema Discover). Prints the
+    // throwing method for the same reason the connect path does: the method
+    // name is strictly more than the message says, and it costs no extra run.
+    static void RunProbe(string label, Action body) {
+        try {
+            body();
+            Console.WriteLine($"PROBE {label} :: OK");
+        } catch (Exception e) {
+            Console.WriteLine($"PROBE {label} :: {e.GetType().Name} :: "
+                              + e.Message.Split('\n')[0].Trim());
+            for (var x = e; x != null; x = x.InnerException) {
+                if (x.TargetSite != null)
+                    Console.WriteLine($"  PTHREW {label} :: "
+                                      + $"{x.TargetSite.DeclaringType}::{x.TargetSite.Name}");
+            }
+        }
     }
 }

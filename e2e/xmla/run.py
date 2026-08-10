@@ -207,6 +207,10 @@ ANSWER_TOKEN = False
 # which cluster to use, so a URI naming our host AND PORT should bring the XMLA
 # call back to the listener instead of to :443.
 ANSWER_CLUSTER = False
+# Screen 13: answer the XMLA session handshake itself. Off until the phase
+# that wants it, so earlier phases still record a client that is refused.
+ANSWER_XMLA = False
+XMLA_SESSION = "emulator-session-1"
 WORKSPACE = "ws"   # the workspace the probe names in its Data Source
 
 # CANDIDATE ROUTING SHAPES, screened one per request.
@@ -440,6 +444,68 @@ HANDSHAKE_ERRORS = []  # TCP connected, TLS refused — a distinct diagnosis
 LOCK = threading.Lock()
 
 
+# The MDSCHEMA_MEASURES columns this stub returns. A real server returns ~30;
+# these are enough for the client to build a row, and keeping the set small
+# makes it obvious this is a SHAPE probe rather than an implementation.
+_MEASURE_COLS = ["CATALOG_NAME", "CUBE_NAME", "MEASURE_NAME",
+                 "MEASURE_UNIQUE_NAME", "MEASURE_CAPTION", "EXPRESSION"]
+
+
+def _rowset_envelope(response_element, cols, values):
+    """One `xml-analysis:rowset` payload, wrapped for Execute OR Discover.
+
+    The INLINE XSD is not decoration: ADOMD.NET reads the schema to learn the
+    row shape BEFORE it reads a row, which is why an empty root came back as
+    "unrecognizable" rather than "empty" — the reader never found the element
+    it expects.
+
+    Execute and Discover take the SAME rowset under a different wrapper, so
+    this is factored rather than duplicated; the client refuses each
+    differently ("not a rowset" from `XmlaDataReader..ctor`, "unrecognizable"
+    from `SoapFormatter.ReadDiscoverResponse`) and two copies would drift.
+
+    Built from [MS-SSAS] `xmla-rs:rowset`, the DOCUMENTED surface, per the
+    boundary in docs/32: the decompiler is for undocumented transport glue.
+    """
+    xsd = "".join(
+        f'<xsd:element sql:field="{c}" name="{c}" type="xsd:string" '
+        f'minOccurs="0"/>' for c in cols)
+    row = "".join(f"<{c}>{v}</{c}>" for c, v in zip(cols, values))
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+        '<soap:Body>'
+        f'<{response_element} xmlns="urn:schemas-microsoft-com:xml-analysis">'
+        '<return>'
+        '<root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset" '
+        'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        'xmlns:sql="urn:schemas-microsoft-com:xml-sql" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+        '<xsd:schema targetNamespace="urn:schemas-microsoft-com:xml-analysis:rowset" '
+        'xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        'xmlns:sql="urn:schemas-microsoft-com:xml-sql" '
+        'elementFormDefault="qualified">'
+        '<xsd:element name="root">'
+        '<xsd:complexType><xsd:sequence>'
+        '<xsd:element name="row" type="row" minOccurs="0" maxOccurs="unbounded"/>'
+        '</xsd:sequence></xsd:complexType></xsd:element>'
+        '<xsd:complexType name="row"><xsd:sequence>'
+        + xsd +
+        '</xsd:sequence></xsd:complexType>'
+        '</xsd:schema>'
+        f'<row>{row}</row>'
+        '</root></return>'
+        f'</{response_element}>'
+        '</soap:Body></soap:Envelope>').encode() + b"\x00"
+
+
+def _discover_response(request_type):
+    """A DiscoverResponse rowset for a Discover RequestType."""
+    cols = _MEASURE_COLS if request_type == "MDSCHEMA_MEASURES" else ["NAME"]
+    return _rowset_envelope("DiscoverResponse", cols,
+                            [f"emulator-{c.lower()}" for c in cols])
+
+
 class Capture(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -473,6 +539,17 @@ class Capture(http.server.BaseHTTPRequestHandler):
             return b"".join(chunks)
         n = int(self.headers.get("Content-Length", 0) or 0)
         return self.rfile.read(n) if n else b""
+
+    def _xmla_reply(self, b):
+        """Every XMLA reply needs the caps header AND the trailing byte, which
+        `_rowset_envelope` already appends. Three call sites, one place to get
+        the headers right."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/xml; charset=utf-8")
+        self.send_header("x-ms-xmlacaps-negotiation-flags", "0,0,0,0,0")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
 
     def _record(self):
         body = self._read_body()
@@ -570,6 +647,90 @@ class Capture(http.server.BaseHTTPRequestHandler):
             print("    -> answering 200 with the MWCToken contract", flush=True)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+            return
+        if ANSWER_XMLA and self.path.startswith("/webapi/xmla"):
+            # SCREEN 13: answer the session handshake and read what follows.
+            #
+            # The captured first envelope is an `Execute` with an EMPTY
+            # `<Statement/>` and `BeginSession mustUnderstand="1"` — a session
+            # open, not a query. XMLA's documented reply to that is an
+            # `ExecuteResponse` with an empty root, plus a `Session` header
+            # carrying the id the client must echo on every later request.
+            #
+            # `mustUnderstand="1"` is the reason a fault here ends the
+            # conversation: the client cannot proceed without the header being
+            # honoured, so refusing it is indistinguishable from a server that
+            # does not speak XMLA at all. Answering it is what turns "connect is
+            # measured" into "the traffic past connect is measured", which is
+            # where the rest of [MS-SSAS-T]'s cost lives.
+            b = ('<?xml version="1.0" encoding="utf-8"?>'
+                 '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+                 '<soap:Header>'
+                 f'<Session xmlns="urn:schemas-microsoft-com:xml-analysis" '
+                 f'SessionId="{XMLA_SESSION}"/>'
+                 '</soap:Header><soap:Body>'
+                 '<ExecuteResponse xmlns="urn:schemas-microsoft-com:xml-analysis">'
+                 '<return><root xmlns="urn:schemas-microsoft-com:xml-analysis:empty"/>'
+                 '</return></ExecuteResponse>'
+                 '</soap:Body></soap:Envelope>').encode()
+            # TRAILING PROTOCOL BYTE, and it is not optional.
+            # `HttpStream+PaasInfraController+PaasInfraXmlaOperation
+            # .ReadResponsePayloadImpl` reads the payload and then switches on
+            # the LAST byte of the stream:
+            #     0       -> response complete
+            #     1       -> continuation; reconnect under the LRO protocol
+            #     default -> throw UnknownServerResponseFormat,
+            #                ConnectionExceptionCause.TransportProtocolError
+            # A bare SOAP body ends with '>' (0x3E), which is `default`, so a
+            # perfectly well-formed envelope is rejected as "unrecognizable".
+            # The client announces this on the way in with
+            # `x-ms-accepts-continuations: 1`. Append 0x00 for "that is all".
+            b += b"\x00"
+            # THREE contracts arrive on this one path, and the client names
+            # each when refused. Dispatch on the envelope, not the URL.
+            with LOCK:
+                sent = REQUESTS[-1]["body"] if REQUESTS else ""
+            if "<Discover" in sent:
+                rt = (sent.split("<RequestType>", 1)[1].split("<", 1)[0]
+                      if "<RequestType>" in sent else "")
+                b = _discover_response(rt)
+                print(f"    -> answering 200 DiscoverResponse [{rt}]", flush=True)
+                self._xmla_reply(b)
+                return
+            if "<Statement>" in sent and "<Statement />" not in sent:
+                stmt = sent.split("<Statement>", 1)[1].split("</Statement>", 1)[0]
+                b = _rowset_envelope("ExecuteResponse", ["x"], ["1"])
+                print(f"    -> answering 200 Execute rowset for {stmt[:40]!r}",
+                      flush=True)
+                self._xmla_reply(b)
+                return
+            print(f"    -> answering 200 XMLA session {XMLA_SESSION}", flush=True)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/xml; charset=utf-8")
+            # REQUIRED ON THE RESPONSE, not just sent on the request. Without it
+            # the client raises `InvalidDataException: The
+            # 'x-ms-xmlacaps-negotiation-flags' header is missing from the HTTP
+            # response!` in `HttpStream+PaasInfraController.ProcessWebResponse`,
+            # BEFORE reading the body — so a perfectly good SOAP envelope is
+            # discarded on a missing header.
+            #
+            # SELECT NOTHING (0,0,0,0,0) rather than echoing the client's offer.
+            # Echoing `0,0,0,1,0` was tried and the frames say why it fails:
+            # after parsing our XML, `XmlaReader.ReadEndElement` asked for MORE
+            # bytes through `CompressedStream.Read` ->
+            # `PaasInfraXmlaOperation.ReadResponsePayloadImpl`, which threw
+            # `UnknownServerResponseFormat`. That is a FRAMING layer, not a
+            # malformed body: the assembly's `ReadCompressedPacket` reads an
+            # 8-byte packet header, so a flag we accepted put the client into a
+            # framed read that plain XML does not satisfy.
+            #
+            # "A server picks a subset" is not "a server echoes the offer" —
+            # echoing accepts EVERY capability offered, including the ones we
+            # have not implemented. A capture stub selects the empty subset.
+            self.send_header("x-ms-xmlacaps-negotiation-flags", "0,0,0,0,0")
             self.send_header("Content-Length", str(len(b)))
             self.end_headers()
             self.wfile.write(b)
@@ -859,6 +1020,9 @@ ANSWER_ROUTING = True
 # recording nobody in this project has ever had.
 ANSWER_TOKEN = True
 ANSWER_CLUSTER = True
+# Screen 13: and answer the session handshake, so the request AFTER connect
+# is recorded rather than refused.
+ANSWER_XMLA = True
 
 # ONE PROBE RUN PER SHAPE. Screen 5 established that an accepted reply is
 # cached for the life of the client process, so a second shape in the same run
@@ -943,8 +1107,15 @@ for label, reqs, out in runs:
     # names the method, which is what turns the next step from screening
     # candidate URIs into reading the parser.
     for ln in out.splitlines():
-        if ln.startswith("CASE powerbi") or ln.lstrip().startswith(
-                ("FRAME powerbi", "THREW powerbi", "INNER powerbi")):
+        # PROBE/SCHEMA/PTHREW are the post-Open surfaces (DAX query, Discover).
+        # They were added to the probe and this filter was not widened, so a run
+        # that produced them printed NOTHING and read as "the probe is silent" —
+        # a dropped measurement rendered as an absent one. Widen deliberately:
+        # a filter is an assertion about what matters, and it goes stale the
+        # moment the thing it filters grows.
+        if ln.startswith(("CASE powerbi", "PROBE ", "SCHEMA ")) or \
+                ln.lstrip().startswith(
+                ("FRAME powerbi", "THREW powerbi", "INNER powerbi", "PTHREW ")):
             print(f"  {ln.strip()}", flush=True)
 
 print("\n---- capacityUri screen ----", flush=True)
