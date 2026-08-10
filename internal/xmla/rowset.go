@@ -26,12 +26,46 @@ import (
 )
 
 // Rowset is a tabular result headed for the wire: ordered column names and rows
-// of already-stringified cells. Every XMLA value crosses as xsd:string here —
-// the client re-types from the schema it is given, and a single string column
-// type keeps the emitted XSD honest about what we actually send.
+// of already-stringified cells.
+//
+// THE INLINE SCHEMA IS A TYPE CONTRACT, not decoration. An earlier version of
+// this comment said "every XMLA value crosses as xsd:string ... which keeps the
+// emitted XSD honest about what we actually send". That was wrong, and it was
+// measured wrong against real sempy: the client re-types FROM the schema and
+// casts, so a string-typed ID fails as
+//
+//	InvalidCastException: Unable to cast object of type 'System.String'
+//	to type 'System.UInt64'
+//
+// Types is optional and parallel to Columns; an empty entry means xsd:string,
+// which keeps every existing caller correct.
 type Rowset struct {
+	// Name is emitted as <root name="...">. TOM's AmoDataAdapter renames the
+	// DataSet's tables from these, one per rowset, and
+	// AdjustTableNames BAILS OUT ENTIRELY if the count of names does not match
+	// the count of tables — so an unnamed or absent rowset silently breaks
+	// naming for every OTHER rowset in the same batch.
+	Name    string
 	Columns []string
+	Types   []string
 	Rows    [][]string
+}
+
+// xsdType is the declared type for column i: explicit if given, else string.
+func (r Rowset) xsdType(i int) string {
+	if i < len(r.Types) && r.Types[i] != "" {
+		return r.Types[i]
+	}
+	return "xsd:string"
+}
+
+// rootName renders the name attribute, omitting it entirely when unset so that
+// callers with a single unnamed rowset emit exactly what they did before.
+func rootName(n string) string {
+	if n == "" {
+		return ""
+	}
+	return ` name="` + escape(n) + `"`
 }
 
 // Trailing byte the client's payload reader switches on (0 = complete).
@@ -57,7 +91,7 @@ func (r Rowset) envelope(responseElement string) []byte {
 		`<soap:Body>` +
 		`<` + responseElement + ` xmlns="urn:schemas-microsoft-com:xml-analysis">` +
 		`<return>` +
-		`<root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset" ` +
+		`<root` + rootName(r.Name) + ` xmlns="urn:schemas-microsoft-com:xml-analysis:rowset" ` +
 		`xmlns:xsd="http://www.w3.org/2001/XMLSchema" ` +
 		`xmlns:sql="urn:schemas-microsoft-com:xml-sql" ` +
 		`xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">`)
@@ -72,11 +106,11 @@ func (r Rowset) envelope(responseElement string) []byte {
 		`<xsd:element name="row" type="row" minOccurs="0" maxOccurs="unbounded"/>` +
 		`</xsd:sequence></xsd:complexType></xsd:element>` +
 		`<xsd:complexType name="row"><xsd:sequence>`)
-	for _, c := range r.Columns {
+	for i, c := range r.Columns {
 		// sql:field carries the true name; name= must be a legal XML name, so
 		// it is the encoded form (see EncodeName).
 		b.WriteString(`<xsd:element sql:field="` + escape(c) + `" name="` + EncodeName(c) +
-			`" type="xsd:string" minOccurs="0"/>`)
+			`" type="` + r.xsdType(i) + `" minOccurs="0"/>`)
 	}
 	b.WriteString(`</xsd:sequence></xsd:complexType></xsd:schema>`)
 

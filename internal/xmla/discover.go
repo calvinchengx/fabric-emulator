@@ -62,6 +62,69 @@ var discoverColumns = map[string][]string{
 	"TMSCHEMA_EXPRESSIONS":   {"ID", "Name", "Expression"},
 }
 
+// versionColumn is on EVERY TMSCHEMA rowset. Without it the client refuses the
+// rowset outright — `ResponseFormatException: The rowset is missing a Version
+// column` — and it must be typed xsd:LONG, not unsignedLong:
+// `DdlUtil.GetVersionFromDataTable` does `Utils.Verify(obj is long)`, an
+// ASSERTION, so an unsignedLong parses cleanly, fails the type test, and
+// surfaces as a bare `TomInternalException: An internal error has occured` with
+// nothing named at all.
+const versionColumn = "Version"
+
+// minimalColumns is what a type we do NOT model still has to send. Measured
+// against real sempy: an empty rowset whose schema declares NO columns produces
+// no DataTable, `AmoDataAdapter.AdjustTableNames` bails out on the count
+// mismatch, and NOTHING gets named — so one column-less rowset breaks table
+// naming for all ~35 and `Tables["Model"]` comes back null. Empty is not free.
+var minimalColumns = []string{"ID", "Name"}
+
+// xsdTypeFor is the declared type per column. The schema is the CAST contract:
+// ids are unsignedLong, Version is long, everything else crosses as a string.
+func xsdTypeFor(col string) string {
+	switch {
+	case col == versionColumn:
+		return "xsd:long"
+	case col == "ID" || strings.HasSuffix(col, "ID"):
+		return "xsd:unsignedLong"
+	default:
+		return "xsd:string"
+	}
+}
+
+// tomObjectName is the <root name="..."> TOM expects, which is the singular
+// object name rather than the request type. `DdlUtil.ObtainModelTable` looks up
+// `dataSet.Tables["Model"]` by that name.
+var tomObjectName = map[string]string{
+	"TMSCHEMA_MODEL":         "Model",
+	"TMSCHEMA_TABLES":        "Table",
+	"TMSCHEMA_COLUMNS":       "Column",
+	"TMSCHEMA_PARTITIONS":    "Partition",
+	"TMSCHEMA_RELATIONSHIPS": "Relationship",
+	"TMSCHEMA_MEASURES":      "Measure",
+	"TMSCHEMA_EXPRESSIONS":   "Expression",
+}
+
+// withContract stamps the wire requirements onto a rowset: the Version column,
+// a type per column, and the <root> name. Applied to EVERY rowset, modelled or
+// not, because the client's checks do not distinguish them.
+func withContract(rs Rowset, requestType string) Rowset {
+	rs.Columns = append(append([]string(nil), rs.Columns...), versionColumn)
+	for i := range rs.Rows {
+		rs.Rows[i] = append(append([]string(nil), rs.Rows[i]...), "1")
+	}
+	rs.Types = make([]string, len(rs.Columns))
+	for i, c := range rs.Columns {
+		rs.Types[i] = xsdTypeFor(c)
+	}
+	if n, ok := tomObjectName[requestType]; ok {
+		rs.Name = n
+	} else {
+		rs.Name = strings.ReplaceAll(strings.Title(strings.ToLower( //nolint:staticcheck
+			strings.TrimPrefix(requestType, "TMSCHEMA_"))), "_", "")
+	}
+	return rs
+}
+
 // DiscoverRowset answers one `<Discover RequestType=TMSCHEMA_*>` from the model.
 //
 // Three outcomes, deliberately distinct:
@@ -71,11 +134,10 @@ var discoverColumns = map[string][]string{
 //   - anything else        → error, so an unrecognised type is never mistaken
 //     for "this model has none of those"
 //
-// UNMEASURED, and the reason this returns an empty rowset rather than pretending
-// otherwise: whether TOM accepts an empty rowset whose schema declares no
-// columns. If it does not, the open question becomes "what are the columns of
-// the 28 types we do not model", which is materially more expensive. e2e/xmla
-// is running exactly that experiment.
+// MEASURED 2026-08-10 against real sempy (e2e/sempy): TOM does NOT accept a
+// rowset whose schema declares no columns, so an unmodelled type still sends a
+// minimal typed column list with zero rows. The earlier note here recorded this
+// as unmeasured and is deleted rather than annotated.
 func DiscoverRowset(model *semanticmodel.Model, data semanticmodel.Data, requestType string) (Rowset, error) {
 	name := strings.ToUpper(strings.TrimSpace(requestType))
 	if !strings.HasPrefix(name, "TMSCHEMA_") {
@@ -88,8 +150,11 @@ func DiscoverRowset(model *semanticmodel.Model, data semanticmodel.Data, request
 	cols, modelled := discoverColumns[name]
 	if !modelled {
 		if inTOMBatch(name) {
-			// Truthfully empty: the model defines none of these objects.
-			return Rowset{}, nil
+			// Truthfully EMPTY OF ROWS — the model defines none of these
+			// objects — but NOT empty of columns. A column-less rowset yields
+			// no DataTable, and that breaks naming for every other rowset in
+			// the batch (see minimalColumns).
+			return withContract(Rowset{Columns: minimalColumns}, name), nil
 		}
 		return Rowset{}, fmt.Errorf("unknown TMSCHEMA request type %q", name)
 	}
@@ -106,7 +171,7 @@ func DiscoverRowset(model *semanticmodel.Model, data semanticmodel.Data, request
 		}
 		rs.Rows = append(rs.Rows, out)
 	}
-	return rs, nil
+	return withContract(rs, name), nil
 }
 
 func inTOMBatch(name string) bool {
