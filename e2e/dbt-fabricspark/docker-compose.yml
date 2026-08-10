@@ -11,7 +11,7 @@
 # via the emu-data volume for REQUESTS_CA_BUNDLE.
 services:
   entra-emulator:
-    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.4.1}
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.6.0}
     environment:
       ORIGIN_MODE: compat
       TLS_ENABLED: "false"
