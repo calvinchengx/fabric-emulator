@@ -177,6 +177,113 @@ func TestParseReportsMalformedJSON(t *testing.T) {
 	}
 }
 
+// capturedTenantDefinition is the definition of `emuProbeVarLib` as a real
+// tenant returned it from getDefinition on 2026-08-11, transcribed verbatim
+// apart from shortened GUIDs. Nothing here is idealised: `note` really is
+// emitted as "" rather than omitted, the library's type for a reference really
+// is "ItemReference" (the PIPELINE declaration for the same variable says
+// "Object"), and valueSetsOrder really does omit the active set. See
+// docs/48-variable-libraries.md.
+func capturedTenantDefinition() map[string][]byte {
+	return map[string][]byte{
+		"variables.json": []byte(`{
+			"$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/variables/1.0.0/schema.json",
+			"variables": [
+				{"name": "bronzePath", "note": "env-invariant relative path", "type": "String", "value": "Files/bronze"},
+				{"name": "runId", "note": "", "type": "Guid", "value": "11111111-2222-3333-4444-555555555555"},
+				{"name": "silverNotebook", "note": "", "type": "ItemReference",
+				 "value": {"itemId": "3f33c8a7-46bb-421b-8d24-dd1ddcba3953",
+				           "workspaceId": "fd6cc69d-8250-4829-8e2a-7b3165fdf6af"}}
+			]
+		}`),
+		"settings.json": []byte(`{
+			"$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/settings/1.0.0/schema.json",
+			"valueSetsOrder": ["qat"]
+		}`),
+		"valueSets/qat.json": []byte(`{
+			"$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/valueSet/1.0.0/schema.json",
+			"name": "qat",
+			"variableOverrides": [{"name": "bronzePath", "value": "Files/bronze-qat"}]
+		}`),
+		".platform": []byte(`{"metadata":{"type":"VariableLibrary","displayName":"emuProbeVarLib"}}`),
+	}
+}
+
+// THE decisive case for the fallback rule. The tenant reports
+// activeValueSetName = "Default value set" — a name with no file under
+// valueSets/ AND absent from valueSetsOrder. That is the out-of-the-box state
+// of every Variable Library, so treating "active set matches no file" as an
+// error would fail every library in its default configuration.
+func TestActiveDefaultValueSetNameResolvesToDefaults(t *testing.T) {
+	lib, err := Parse(capturedTenantDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := lib.Resolve("Default value set")
+	if got["bronzePath"].Value != "Files/bronze" {
+		t.Errorf("bronzePath = %v, want the default; the out-of-the-box active set must not fail",
+			got["bronzePath"].Value)
+	}
+	if len(got) != 3 {
+		t.Errorf("resolved %d variables, want 3", len(got))
+	}
+	// And .platform must not be mistaken for a value set.
+	if _, ok := lib.ValueSets[".platform"]; ok {
+		t.Error(".platform parsed as a value set")
+	}
+	if len(lib.ValueSets) != 1 {
+		t.Errorf("value sets = %v, want just qat", lib.ValueSets)
+	}
+}
+
+// An ItemReference value is an object, and it survives resolution intact so
+// that @pipeline().libraryVariables.<alias>.itemId reaches it.
+func TestItemReferenceValueRoundTrips(t *testing.T) {
+	lib, err := Parse(capturedTenantDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := lib.Lookup("Default value set", "silverNotebook")
+	if !ok {
+		t.Fatal("silverNotebook missing")
+	}
+	if v.Type != "ItemReference" {
+		t.Errorf("library type = %q, want ItemReference (the PIPELINE side says Object)", v.Type)
+	}
+	obj, ok := v.Value.(map[string]any)
+	if !ok {
+		t.Fatalf("value = %#v, want an object", v.Value)
+	}
+	if obj["itemId"] != "3f33c8a7-46bb-421b-8d24-dd1ddcba3953" {
+		t.Errorf("itemId = %v", obj["itemId"])
+	}
+	if obj["workspaceId"] != "fd6cc69d-8250-4829-8e2a-7b3165fdf6af" {
+		t.Errorf("workspaceId = %v", obj["workspaceId"])
+	}
+}
+
+// The qat set overrides bronzePath and NOTHING else, even though the library
+// editor displays a value for every variable in the qat column — those cells
+// show the defaults rather than overriding them. So resolution is a merge, and
+// the non-overridden variables keep their defaults including the object one.
+func TestCapturedValueSetIsAPartialOverride(t *testing.T) {
+	lib, err := Parse(capturedTenantDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := lib.Resolve("qat")
+	if got["bronzePath"].Value != "Files/bronze-qat" {
+		t.Errorf("bronzePath = %v, want the qat override", got["bronzePath"].Value)
+	}
+	if got["runId"].Value != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("runId = %v, want the default to survive", got["runId"].Value)
+	}
+	obj, ok := got["silverNotebook"].Value.(map[string]any)
+	if !ok || obj["itemId"] != "3f33c8a7-46bb-421b-8d24-dd1ddcba3953" {
+		t.Errorf("silverNotebook = %#v, want the default object to survive", got["silverNotebook"].Value)
+	}
+}
+
 func TestLookup(t *testing.T) {
 	lib, err := Parse(fixture())
 	if err != nil {
