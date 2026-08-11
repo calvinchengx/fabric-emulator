@@ -240,7 +240,37 @@ Then, with a Key Vault, the next three steps in order: `secret.py`,
 | `semantic_model.py` | publishes and queries the model over `executeQueries` | — |
 | `lineage.py` | **skips** | the flow graph is the emulator's own record; Purview is Fabric's answer and a different integration |
 
-Three facts that decide whether this works, all Microsoft's rather than ours:
+**Verified against a real trial on 2026-08-11**, and every one of these was a
+code-reading until then:
+
+```
+==> provisioned workspace=f2c82a4e-… lakehouse=450d5027-… warehouse=c6c4ba99-…
+lakehouse  server=<opaque>-<opaque>.datawarehouse.fabric.microsoft.com
+           database='lake' encrypt=True endpoint_id=803c8e33-…
+warehouse  same server, database='dw' encrypt=True endpoint_id=None
+```
+
+Four things that only a real run could establish:
+
+1. **`FABRIC_CAPACITY_ID` works**: the workspace came up with the trial capacity
+   assigned, from an unmodified example.
+2. **A Warehouse create is ASYNCHRONOUS on real Fabric** — 202 with an operation
+   and no body, where the emulator answers 201 with the item. `provision.py` read
+   `None["id"]` and failed three calls after the assumption that caused it. Every
+   create now resolves an operation when one is offered (`post_and_wait`).
+3. **`AZURE_TENANT_ID` did not reach the `az` CLI credential.**
+   `DefaultAzureCredential` takes tenant hints for the browser, VS Code,
+   shared-cache and workload-identity links and has none for the CLI, so a
+   developer whose `az` default tenant differs from the configured one got tokens
+   for the wrong tenant — and Fabric answered `UserNotLicensed`, which reads as a
+   licensing problem rather than a tenant one. Fixed in `fabric_target`.
+4. **The lakehouse's `sqlEndpointProperties.id` is a DIFFERENT GUID from the
+   lakehouse** (`803c8e33…` vs `450d5027…`), and a Warehouse has none. That
+   confirms the emulator is right to omit the field rather than report the
+   lakehouse id: code using it as an endpoint id would work locally and address
+   the wrong thing on a tenant.
+
+Three more facts that decide whether this works, all Microsoft's rather than ours:
 
 - **A trial capacity can only be assigned by the account that started the
   trial.** A service principal cannot, so use `az login` as that user. CI uses an

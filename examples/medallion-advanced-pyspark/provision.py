@@ -1,16 +1,19 @@
 """Provision the workspace, lakehouse, warehouse, and workspace identity."""
-from common import FABRIC, WORKSPACE_NAME, S, fabric_headers, log, save
+from common import FABRIC, WORKSPACE_NAME, S, fabric_headers, log, post_and_wait, save
 
 H = fabric_headers()
 
 
 def create(url, body):
-    """Fail loudly with the emulator's error, not a KeyError three lines later.
+    """Fail loudly with the target's error, not a KeyError three lines later.
     Display names are unique per workspace, so a second run on a dirty stack
-    lands here — see Cleanup in the tutorial."""
-    r = S.post(url, headers=H, json=body)
-    assert r.status_code in (200, 201, 202), f"{url} -> {r.status_code} {r.text}"
-    return r.json()
+    lands here — see Cleanup in the tutorial.
+
+    `post_and_wait` because real Fabric creates a Warehouse ASYNCHRONOUSLY: 202
+    with an operation and no body, where a development stack answers 201 with the
+    item. Reading `.json()["id"]` off that 202 is a TypeError on a tenant and
+    nothing locally — found by running this against a real trial."""
+    return post_and_wait(url, body)
 
 
 ws = create(f"{FABRIC}/v1/workspaces", {"displayName": WORKSPACE_NAME})

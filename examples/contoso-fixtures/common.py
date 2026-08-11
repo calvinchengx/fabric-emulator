@@ -425,6 +425,43 @@ def create_item_from_definition(folder, display_name=None, **substitutions):
     return create_item(display_name or name, item_type, parts)
 
 
+def post_and_wait(url, body):
+    """POST a create and return the created object, resolving a 202 if there is one.
+
+    FOUND BY RUNNING IT ON A REAL TENANT, which is the only way this class of bug
+    surfaces. Real Fabric creates a **Warehouse asynchronously**: it answers 202
+    with an operation id and NO body, where the emulator answers 201 with the item.
+    `provision.py` assumed the 201 and did `None["id"]` against a trial — after
+    the workspace and lakehouse had already been created, so the failure was three
+    calls away from the assumption that caused it.
+
+    Every Fabric create can be async; which ones ARE is a service decision that
+    can change. So this resolves the operation whenever one is offered rather than
+    per item type, which is also what fabric-cicd does.
+    """
+    import time
+
+    H = fabric_headers()
+    r = S.post(url, headers=H, json=body)
+    assert r.status_code in (200, 201, 202), f"{url} -> {r.status_code} {r.text}"
+    if r.status_code != 202:
+        return r.json()
+    op = r.headers.get("x-ms-operation-id") \
+        or r.headers["Location"].rstrip("/").rsplit("/", 1)[-1]
+    for _ in range(150):
+        got = S.get(f"{FABRIC}/v1/operations/{op}", headers=H)
+        status = (got.json() or {}).get("status")
+        if status in ("Succeeded", "Failed"):
+            break
+        # Honour the service's own pacing when it states one: real creates take
+        # real seconds, and polling faster than asked earns a 429.
+        time.sleep(min(float(got.headers.get("Retry-After", "2")), 20))
+    else:
+        raise SystemExit(f"{url}: operation {op} never reached a terminal state")
+    assert status == "Succeeded", f"{url}: operation {op} {status}"
+    return S.get(f"{FABRIC}/v1/operations/{op}/result", headers=H).json()
+
+
 def create_item(display_name, item_type, parts):
     """Create an item with a definition, resolving the LRO if the create is async."""
     import base64
