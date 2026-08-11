@@ -166,11 +166,23 @@ Both look like `<opaque>-<opaque>.datawarehouse.fabric.microsoft.com` on port
 - **The analytics endpoint lags the lakehouse.** Metadata sync is normally under
   a minute but is not instant, so a table Spark just wrote can be briefly absent
   from T-SQL. `POST /v1/workspaces/{ws}/sqlEndpoints/{sqlEndpointId}/refreshMetadata`
-  forces the sync rather than waiting for the background one. **The emulator does
-  not implement that endpoint**, and does not report the endpoint's `id` either —
-  it has no separate `SQLEndpoint` item and reflects on connect, so there is
-  nothing to sync. Code that needs the refresh must be written against real
-  Fabric, and will 404 locally.
+  forces the sync rather than waiting for the background one. **The emulator
+  implements this**, and the endpoint is a real `SQLEndpoint` item with its own id,
+  because that is what a tenant has — measured 2026-08-11: one lakehouse plus one
+  warehouse left three items in a real workspace, the third being
+  `SQLEndpoint  803c8e33-…  lake`, whose id is exactly what
+  `sqlEndpointProperties.id` reports. The tenant answers a plain `200` with
+  `{"value": []}` (a per-table report, empty for a lakehouse with no tables) —
+  no LRO — and so does the emulator.
+
+  This reverses an earlier decision on purpose. The emulator used to OMIT
+  `sqlEndpointProperties.id`, reasoning that it had no such item and that
+  reporting the lakehouse's own id would invite using it as a database name:
+  green locally, wrong on a tenant. That was right for the information available;
+  the measurement made it obsolete. The honest fix was not to withhold the field
+  but to HAVE the item, so the id is a different GUID here exactly as it is there.
+  `common.sync_sql_endpoint()` consequently takes the same branch on both
+  targets, so the code path a tenant uses is exercised by every local run.
 
 `examples/contoso-fixtures/common.py:sql_endpoint()` is the portable form:
 discover the address, use the item id locally and the display name on real

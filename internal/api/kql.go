@@ -460,14 +460,24 @@ func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]an
 		// database name, which works here and fails on real Fabric. Leaving it
 		// out fails the other way round: locally, loudly, before it ships.
 		if cs := a.warehouseConnectionString(r); cs != "" {
-			return map[string]any{"sqlEndpointProperties": map[string]any{
+			ep := map[string]any{
 				"connectionString": cs,
 				// The emulator provisions the endpoint on first connect, so it
 				// is never pending from the caller's point of view. Real Fabric
 				// can answer InProgress, which a client must handle: hence a
 				// status field at all rather than an implied one.
 				"provisioningStatus": "Success",
-			}}
+			}
+			// The endpoint's OWN id, which is what refreshMetadata is addressed
+			// by. Absent until the emulator had a SQLEndpoint item to name —
+			// see sqlendpoint.go for why withholding it was right then and wrong
+			// now. Still conditional: a lakehouse created before this existed has
+			// no endpoint item, and inventing one here would report an id that
+			// answers nothing.
+			if id := a.sqlEndpointItemFor(it); id != "" {
+				ep["id"] = id
+			}
+			return map[string]any{"sqlEndpointProperties": ep}
 		}
 		return nil
 	case "Eventhouse":
@@ -526,6 +536,12 @@ func (a *API) applyCreationPayload(it *store.Item, payload map[string]any) {
 		return v
 	}
 	switch it.Type {
+	case "Lakehouse":
+		// Real Fabric gives every lakehouse a SQLEndpoint ITEM carrying its
+		// display name and its own id (internal/api/sqlendpoint.go, measured).
+		// Creating it here is what lets sqlEndpointProperties.id be a different
+		// GUID from the lakehouse, exactly as it is on a tenant.
+		a.ensureSQLEndpointItem(it)
 	case "Warehouse":
 		// Fabric offers exactly two collations and defaults to the case-SENSITIVE
 		// one. Recording the default explicitly rather than leaving the property
