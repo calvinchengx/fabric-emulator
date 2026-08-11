@@ -102,11 +102,11 @@ touches; every claim below is CI-verified against the emulator:
 | Delta write/read/append, SQL over temp views | ✅ | e2e |
 | Time travel (`option("versionAsOf", n)`) | ✅ (SQL `VERSION AS OF` is a Sail gap) | e2e probe |
 | `MERGE INTO` | ✅ **with a registered table target** (`CREATE TABLE … USING delta LOCATION`); a path-based ``delta.`az://…` `` target does not resolve (reads do) | e2e probe |
-| `sc` / RDD API / `spark._jvm` | ❌ Spark Connect has no SparkContext. The Livy agent binds `sc` to a guide-rail stub whose every use raises a pointer to this doc — a clear error instead of a bare `NameError`. **Fidelity inversion vs real Fabric**: notebooks using `sc.parallelize` work in production but not here. | agent stub |
+| `sc` / RDD API / `spark._jvm` | ❌ **on Sail** — Spark Connect has no SparkContext, on any engine. The Livy agent binds `sc` to a guide-rail stub whose every use raises a pointer to this doc — a clear error instead of a bare `NameError`. **Fidelity inversion vs real Fabric**: notebooks using `sc.parallelize` work in production but not on the default engine. **Restored by the JVM overlay** (`docker-compose.spark-jvm.yml`, one extra `-f` flag): `sc.parallelize(…).map(…).sum()` is CI-verified there. Measured usage of this whole surface is logging plus one smoke idiom — see [50-rdd-usage-capture.md](50-rdd-usage-capture.md) | agent stub / JVM overlay |
 | `createDataFrame(local_rows)` | ✅ works — the agents/runners set `spark.conf.set("spark.sql.session.localRelationSizeLimit", <int>)` at session start, overriding the `'3GB'` string pyspark 4.2 chokes on; without that mitigation, use SQL `VALUES` or a 3.5 client | e2e (notebook fixture runs unmodified) |
 | DML row-count results (`INSERT`/`MERGE` envelopes) | ⚠️ DataFusion reports counts as `uint64`, which Arrow conversion to Spark clients rejects — the statement HAS executed; the Livy SQL agent absorbs this specific error as an empty result | dbt e2e finding |
-| Structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs | ❌ absent in Sail v0.6.6 | executable negative probes |
-| CDF options, `spark.jars` | ⚠️ accepted but inert: CDF returns a normal snapshot without `_change_type`; JAR config is stored but there is no JVM classloader | executable divergence probes |
+| Structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs | ❌ absent in Sail v0.6.6 (`OPTIMIZE`/`VACUUM` are intercepted and run through delta-rs, so those two work on the default stack). **Streaming and Java/Scala UDFs are restored by the JVM overlay** | executable negative probes |
+| CDF options, `spark.jars` | ⚠️ accepted but inert on Sail: CDF returns a normal snapshot without `_change_type`; JAR config is stored but there is no JVM classloader. **Both real on the JVM overlay** | executable divergence probes |
 
 ## Known gaps to design around (Sail v0.6.6)
 

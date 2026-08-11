@@ -115,6 +115,7 @@ export default defineConfig({
             { slug: '47-environment-abstraction' },
             { slug: '48-variable-libraries' },
             { slug: '49-async-outcome-audit' },
+            { slug: '50-rdd-usage-capture' },
             { slug: 'engine-matrix' },
           ],
         },
