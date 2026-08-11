@@ -73,14 +73,15 @@ class FakeService:
 
 @pytest.fixture
 def service(monkeypatch):
-    def install(**kw):
+    def install(is_real=False, **kw):
         svc = FakeService(**kw)
         monkeypatch.setattr(notebook, "request", svc.request)
         monkeypatch.setattr(notebook.credentials, "getToken", lambda _a: "tok")
         monkeypatch.setattr(notebook, "config",
                             lambda: type("C", (), {"fabric_url": "https://x",
                                                    "workspace_id": WS,
-                                                   "lakehouse_id": "lake-1"})())
+                                                   "lakehouse_id": "lake-1",
+                                                   "is_real": is_real})())
         monkeypatch.setattr(notebook.time, "sleep", lambda _s: None)
         return svc
     return install
@@ -141,9 +142,62 @@ def test_a_notebook_polls_until_it_reaches_a_terminal_state(service):
 
 
 def test_an_unreadable_run_detail_does_not_fail_a_completed_run(service):
-    # A notebook with no cells has nothing to report and still completed;
-    # turning that into an error would fail runs that worked.
+    # A run whose detail cannot be read still completed; turning that into an
+    # error would fail runs that worked.
     service(detail_raises=True)
+    assert notebook.run("nb") is None
+
+
+def test_the_real_target_says_WHY_the_exit_value_is_missing(service, recwarn):
+    """`None` is honest but silent, and silence is the harm.
+
+    A caller who reads the value gets a falsy answer with no account of itself,
+    so they debug their notebook — which is working — instead of learning that a
+    REST-submitted run cannot carry an exit value at all. The message has to
+    name a pattern that DOES work, because "not supported" with no alternative
+    is a dead end.
+
+    A warning and not a raise: plenty of orchestration submits notebooks and
+    never reads the return value, and failing those runs to report a limitation
+    they are not hitting would be worse than the problem.
+    """
+    service(is_real=True, detail_raises=True)
+    assert notebook.run("nb") is None
+
+    msgs = [str(w.message) for w in recwarn if issubclass(w.category, RuntimeWarning)]
+    assert msgs, "the real target reported no exit value and said nothing about it"
+    text = msgs[0]
+    assert "REST" in text, text
+    assert "Delta table" in text, "the message names no working alternative"
+    assert "inside a Fabric notebook" in text.lower() or "INSIDE a Fabric notebook" in text, text
+    assert "retry" in text, "a reader will try a retry unless told it cannot help"
+
+
+def test_the_emulator_does_not_explain_away_a_transient(service, recwarn):
+    """Against the emulator the endpoint EXISTS, so failing to read it is a
+    transient worth surfacing on its own terms — not a target limitation. A
+    warning here would train people to ignore a real symptom."""
+    service(is_real=False, detail_raises=True)
+    assert notebook.run("nb") is None
+    assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)], \
+        "the emulator blamed a target limitation for a transient read failure"
+
+
+def test_an_unavailable_exit_value_is_none_not_empty_string(service):
+    """`None` (could not be obtained) and `""` (exited with no value) are
+    DIFFERENT FACTS, and this used to return `""` for both.
+
+    Real Fabric has no run-detail endpoint — measured 2026-08-11, it answers
+    `404 EntityNotFound` — so on a tenant EVERY run took the second branch and
+    looked like a notebook that had deliberately exited empty. A caller reading
+    `""` concludes the notebook ran and returned nothing; the truth was that
+    the value was unobtainable. `or ""` / `or 0` fallbacks behave identically
+    either way, so nothing that ignored the distinction breaks.
+    """
+    service(detail_raises=True)
+    assert notebook.run("nb") is None
+
+    service(exit_value="", cells=1)
     assert notebook.run("nb") == ""
 
 
@@ -166,7 +220,8 @@ def test_no_arguments_and_no_lakehouse_sends_no_body(service, monkeypatch):
     monkeypatch.setattr(notebook, "config",
                         lambda: type("C", (), {"fabric_url": "https://x",
                                                "workspace_id": WS,
-                                               "lakehouse_id": ""})())
+                                               "lakehouse_id": "",
+                                               "is_real": False})())
     notebook.run("nb")
     assert next(b for _m, u, b in svc.calls if "jobType=RunNotebook" in u) is None
 
@@ -250,11 +305,26 @@ def test_the_cell_count_floors_at_one_so_the_budget_is_never_zero(service, monke
         notebook._run_detail("nb", per_cell_seconds=30)
 
 
-def test_an_unreadable_detail_still_yields_a_usable_budget(service, monkeypatch):
+def test_an_unknowable_cell_count_uses_the_whole_notebook_ceiling(service, monkeypatch):
+    """NOT `per_cell x 1`, which is what this asserted before.
+
+    A cell count that cannot be read is unknown, not one. Returning 1 gave a
+    twelve-cell notebook a one-cell deadline on real Fabric — where the detail
+    endpoint does not exist, so EVERY run took that path — and produced a
+    spurious timeout for a notebook that was working. The same notebook passed
+    against the emulator with the full budget: emulator-green, tenant-broken.
+    """
     service(detail_raises=True, poll_statuses=["Running"] * 50)
     never_finishes(monkeypatch)
-    with pytest.raises(notebook.NotebookError, match=r"did not finish within 30s"):
+    with pytest.raises(notebook.NotebookError,
+                       match=rf"did not finish within {notebook._TIMEOUT_WITHOUT_CELL_COUNT}s"):
         notebook._run_detail("nb", per_cell_seconds=30)
+
+
+def test_the_ceiling_is_longer_than_any_per_cell_budget_would_give(service):
+    """The ceiling must not be shorter than the multiplied budget it replaces,
+    or the fix reintroduces the bug for large notebooks."""
+    assert notebook._TIMEOUT_WITHOUT_CELL_COUNT > notebook._DEFAULT_TIMEOUT_PER_CELL * 12
 
 
 def test_run_detail_reports_the_exit_value_status_and_cell_count(service):

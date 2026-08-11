@@ -322,3 +322,101 @@ def test_the_emulator_credential_is_not_wrapped():
     credential already mints against the tenant it was constructed with."""
     t = Target("emulator")
     assert not isinstance(t.credential, fabric_target._TenantScoped)
+
+
+# --- a refused connection is retried -----------------------------------------
+#
+# MEASURED against real Fabric 2026-08-11: 1 request in 25, polling at 0.3s,
+# came back `[Errno 61] Connection refused`. This session already honoured
+# `Retry-After` on a 429 — a RESPONSE, so the service had answered — but had
+# nothing for a connection that was never established. One refusal raised
+# straight out of `requests` and killed the caller. It surfaced as
+# `test_item_lifecycle_with_lro` failing on the real leg.
+
+class _Resp:
+    def __init__(self, status=200, headers=None):
+        self.status_code = status
+        self.headers = headers or {}
+
+
+def _session_over(outcomes, monkeypatch):
+    """A target session whose underlying send replays `outcomes` in order."""
+    import fabric_target as ft
+    import requests
+    monkeypatch.setenv("FABRIC_TARGET", "emulator")
+    monkeypatch.setattr(ft.time, "sleep", lambda _s: None)
+    calls = []
+
+    def fake(self, method, url, **kw):
+        calls.append((method, url))
+        outcome = outcomes[min(len(calls) - 1, len(outcomes) - 1)]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(requests.Session, "request", fake)
+    t = ft.target(fresh=True)
+    # Stub the credential: minting would dial the local entra emulator, and the
+    # thing under test is the retry, not the token.
+    t._credential = type("C", (), {
+        "get_token": lambda self, *a, **k: ft.AccessToken("tok", 9e9)})()
+    return t.session(), calls
+
+
+def test_a_refused_connection_is_retried(monkeypatch):
+    import requests
+    s, calls = _session_over(
+        [requests.exceptions.ConnectionError("refused"), _Resp()], monkeypatch)
+    assert s.get("/workspaces").status_code == 200
+    assert len(calls) == 2, "the refused attempt was not retried"
+
+
+def test_a_refused_connection_is_retried_for_a_post_too(monkeypatch):
+    """Safe: a refused connection carried no bytes, so the service cannot have
+    created anything for it to duplicate."""
+    import requests
+    s, calls = _session_over(
+        [requests.exceptions.ConnectionError("refused"), _Resp()], monkeypatch)
+    assert s.post("/workspaces", json={"displayName": "x"}).status_code == 200
+    assert len(calls) == 2
+
+
+def test_it_gives_up_rather_than_retrying_a_dead_endpoint_forever(monkeypatch):
+    import fabric_target as ft
+    import requests
+    s, calls = _session_over(
+        [requests.exceptions.ConnectionError("refused")], monkeypatch)
+    with pytest.raises(requests.exceptions.ConnectionError):
+        s.get("/workspaces")
+    assert len(calls) == ft._CONNECT_ATTEMPTS
+
+
+def test_an_http_error_response_is_not_retried(monkeypatch):
+    """A 500 arrives after the request landed; retrying a POST could duplicate
+    the work. Only a refused CONNECTION is safe."""
+    s, calls = _session_over([_Resp(500), _Resp()], monkeypatch)
+    assert s.post("/workspaces", json={}).status_code == 500
+    assert len(calls) == 1
+
+
+def test_a_successful_call_does_not_repeat(monkeypatch):
+    s, calls = _session_over([_Resp()], monkeypatch)
+    assert s.get("/workspaces").status_code == 200
+    assert len(calls) == 1
+
+
+def test_a_read_timeout_is_not_retried(monkeypatch):
+    """The gap a mutant found: the 500 test above uses a RESPONSE, and requests
+    does not raise on 500 — so `except Exception` survived it while retrying
+    everything.
+
+    A ReadTimeout is the case that matters: it arrives after the request reached
+    the service, so a retried POST could submit the same job twice. Note
+    ConnectTimeout is deliberately NOT here — it subclasses ConnectionError
+    because the connection was never established, which is safe to retry.
+    """
+    import requests
+    s, calls = _session_over([requests.exceptions.ReadTimeout("slow"), _Resp()], monkeypatch)
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        s.post("/workspaces", json={})
+    assert len(calls) == 1, "a read timeout was retried; a POST could duplicate work"

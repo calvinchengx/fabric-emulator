@@ -22,8 +22,14 @@ import urllib.request
 from collections import namedtuple
 
 FABRIC_SCOPE = "https://api.fabric.microsoft.com/.default"
+
 STORAGE_SCOPE = "https://storage.azure.com/.default"
 VAULT_SCOPE = "https://vault.azure.net/.default"
+# A refused connection is retried; see _send_with_connect_retry. Small, because
+# the observed rate was ~1 in 25 and the point is to survive a blip, not to sit
+# out an outage.
+_CONNECT_ATTEMPTS = 4
+_CONNECT_BACKOFF = 0.5
 
 # entra-emulator's seeded dev defaults — emulator mode only, by construction.
 SEED_TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
@@ -358,11 +364,35 @@ class Target:
                 headers.setdefault(
                     "Authorization", "Bearer " + t.credential.get_token(FABRIC_SCOPE).token)
                 t._complete_workspace_create(method, url, kw)
-                resp = super().request(method, url, **kw)
+                resp = _send_with_connect_retry(super().request, method, url, **kw)
                 if resp.status_code == 429:  # real Fabric throttles; honor it once
                     time.sleep(min(float(resp.headers.get("Retry-After", "1")), 60))
-                    resp = super().request(method, url, **kw)
+                    resp = _send_with_connect_retry(super().request, method, url, **kw)
                 return resp
+
+        def _send_with_connect_retry(send, method, url, **kw):
+            """Retry a request whose CONNECTION was refused.
+
+            MEASURED against real Fabric on 2026-08-11: 1 request in 25, polling
+            at 0.3s, came back `[Errno 61] Connection refused`. This session
+            already honoured `Retry-After` on a 429 — a response, which means the
+            service answered — but had nothing for a connection that was never
+            established, so a single refusal raised straight out of `requests`
+            and killed the caller.
+
+            Safe for ANY method, including POST: a refused connection carried no
+            bytes, so the service cannot have acted on it. Everything else is
+            left alone, because a failure after the request landed could mean the
+            work was done and a retry would duplicate it.
+            """
+            for attempt in range(_CONNECT_ATTEMPTS):
+                try:
+                    return send(method, url, **kw)
+                except requests.exceptions.ConnectionError:
+                    if attempt == _CONNECT_ATTEMPTS - 1:
+                        raise
+                    time.sleep(_CONNECT_BACKOFF * (2 ** attempt))
+            raise AssertionError("unreachable")  # pragma: no cover
 
         return _Session()
 
