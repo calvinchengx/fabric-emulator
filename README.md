@@ -71,6 +71,19 @@ second — and validates every incoming token against entra-emulator's JWKS,
 
 ![a real Entra token, a workspace, a lakehouse, and a file written to and read back from OneLake — against two local binaries](docs/demo/demo.gif)
 
+### The rest of the family
+
+`fabric-emulator` is a **consumer** of three siblings rather than a peer of them:
+`entra-emulator` issues and signs every token it validates,
+`azure-keyvault-emulator` resolves the secret behind a vault-backed connection
+credential, and `arm-emulator` serves the ARM surface a capacity assignment
+touches. `azure-apim-emulator` completes the set.
+
+To run them together, see [**azure-emulators**](https://github.com/calvinchengx/azure-emulators): a composition-only repo
+holding the family `docker-compose.yml`, the shared issuer wiring, and the
+pinned image versions the members are tested against — which is where a
+consumer should take its versions from rather than pinning each by hand.
+
 ## Why
 
 - **Test Fabric CI/CD with no capacity.** `fabric-cicd`, git integration, and
