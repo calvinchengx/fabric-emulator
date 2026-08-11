@@ -193,6 +193,31 @@ target_workspace_id, target_item_id, target_path, producer, source_kind, created
 	return e, err
 }
 
+// PublishWarehouseTable announces a T-SQL write the TDS front saw accepted.
+//
+// WHY THIS EXISTS. A `table` event is what lights a node in the flow view, and
+// the only other emitter is a Delta commit in OneLake. A warehouse is not
+// written that way — dbt issues T-SQL over TDS into the engine — so a gold
+// layer appeared in the graph, correctly connected by ProducerWarehouse edges,
+// and stayed grey for the whole run. To a viewer, grey means nothing happened
+// here; the most important step of a medallion looked like the one step that
+// never ran.
+//
+// NO VERSION, deliberately. `Version` is a Delta commit number and a warehouse
+// has none; the field stays nil rather than inventing a plausible integer.
+//
+// NO ATTRIBUTION either, for the reason that type documents: attribution is
+// never inferred. The TDS front knows a statement was accepted, not which job
+// or activity issued it, so the field stays empty rather than guessing. The
+// statement KIND travels in ActivityName — `CTAS`, `INSERT` — which is what the
+// lineage edge for the same write already records.
+func (s *Store) PublishWarehouseTable(workspaceID, itemID, table, activity string) {
+	s.publish(Event{
+		Kind: KindTable, WorkspaceID: workspaceID, ItemID: itemID,
+		Table: table, ActivityName: activity,
+	})
+}
+
 // PublishQuery reports a read of a semantic model — the Power BI end of a
 // flow. It is an event and not an edge on purpose: a query moves no data into
 // anything, and lineage_edges records movement.
