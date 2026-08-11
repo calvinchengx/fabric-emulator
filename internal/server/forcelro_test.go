@@ -230,3 +230,77 @@ func TestCreateItemSynchronousByDefault(t *testing.T) {
 		t.Fatal("201 body carried no id")
 	}
 }
+
+// The THIRD documented dual-outcome surface: Git Initialize Connection lists
+// 200 and 202 and says "This API supports long running operations". The
+// emulator answered 200 unconditionally.
+//
+// Its LRO has a real result body (InitializeGitConnectionResponse), unlike
+// commitToGit/updateFromGit which have none — so this also covers the case
+// where the async answer must carry back the same object the sync one did.
+func TestGitInitializeConnectionAsLongRunningOperation(t *testing.T) {
+	f := newFixture(t)
+
+	var ws struct{ ID string }
+	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "git-lro-ws"}, &ws)
+
+	var conn struct{ ID string }
+	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{
+		"displayName":       "github-pat-lro",
+		"connectivityType":  "ShareableCloud",
+		"connectionDetails": map[string]string{"type": "GitHubSourceControl"},
+	}, &conn), http.StatusCreated, "create connection")
+
+	provider := map[string]string{
+		"gitProviderType": "GitHub", "ownerName": "calvin", "repositoryName": "demo",
+		"branchName": "main", "directoryName": "/",
+	}
+	f.mustStatus(f.call("POST", "/v1/workspaces/"+ws.ID+"/git/connect", f.token, map[string]any{
+		"gitProviderDetails": provider,
+		"myGitCredentials":   map[string]string{"source": "ConfiguredConnection", "connectionId": conn.ID},
+	}, nil), http.StatusOK, "git connect")
+
+	// Content in the workspace, virgin remote → CommitToGit is the answer the
+	// sync path gives, so it is what the async result must give too.
+	f.call("POST", "/v1/workspaces/"+ws.ID+"/items", f.token, map[string]any{
+		"displayName": "nb", "type": "Notebook",
+		"definition": map[string]any{"parts": []map[string]string{
+			{"path": ".platform", "payload": "e30=", "payloadType": "InlineBase64"},
+		}},
+	}, nil)
+
+	f.srv.API.ForceLRO = true
+
+	resp := f.call("POST", "/v1/workspaces/"+ws.ID+"/git/initializeConnection", f.token, nil, nil)
+	f.mustStatus(resp, http.StatusAccepted, "initializeConnection (LRO)")
+	opID := resp.Header.Get("x-ms-operation-id")
+	if opID == "" || resp.Header.Get("Location") == "" || resp.Header.Get("Retry-After") == "" {
+		t.Fatal("202 is missing documented headers")
+	}
+
+	opPath := "/v1/operations/" + opID
+	var op struct{ Status string }
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		f.mustStatus(f.call("GET", opPath, f.token, nil, &op), http.StatusOK, "poll operation")
+		if op.Status != "NotStarted" && op.Status != "Running" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("operation never reached a terminal state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if op.Status != "Succeeded" {
+		t.Fatalf("operation status = %s", op.Status)
+	}
+
+	var init struct {
+		RequiredAction   string
+		RemoteCommitHash string
+	}
+	f.mustStatus(f.call("GET", opPath+"/result", f.token, nil, &init), http.StatusOK, "operation result")
+	if init.RequiredAction != "CommitToGit" || init.RemoteCommitHash != "" {
+		t.Fatalf("async result = %+v, want the same object the 200 path returns", init)
+	}
+}

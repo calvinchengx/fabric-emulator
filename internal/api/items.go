@@ -281,6 +281,14 @@ func (a *API) getOperationResult(w http.ResponseWriter, r *http.Request, p *auth
 			return
 		}
 		writeJSON(w, http.StatusOK, definitionResponse(parts))
+	case "InitializeGitConnection":
+		body, err := a.gitInitializeState(op.ResultRef)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "WorkspaceNotConnectedToGit",
+				"The workspace is no longer connected to git.")
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
 	case "Deploy":
 		// "For 24 hours after the deployment is completed, the extended
 		// deployment information is available in the Get Operation Result

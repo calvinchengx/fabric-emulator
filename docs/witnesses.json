@@ -1004,6 +1004,7 @@
     "witnesses": [
       "go:TestGetDefinitionAsLongRunningOperation",
       "go:TestCreateItemAsLongRunningOperation",
+      "go:TestGitInitializeConnectionAsLongRunningOperation",
       "go:TestGetDefinitionSynchronousByDefault",
       "go:TestCreateItemSynchronousByDefault"
     ]

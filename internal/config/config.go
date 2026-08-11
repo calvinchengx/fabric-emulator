@@ -141,6 +141,17 @@ type Config struct {
 	//     was supplied, and Create Warehouse "does not support create a
 	//     warehouse with definition" — so the one type measured as async was
 	//     the one type guaranteed to be synchronous here.
+	//   git/initializeConnection — reference documents 200 and 202 and says it
+	//     supports LRO; the emulator answered 200 unconditionally. Its async
+	//     result carries a real body, unlike commitToGit/updateFromGit.
+	//
+	// SCOPE, stated so nobody reads more into the name than is there: these
+	// three are the surfaces AUDITED against the reference, not a proof that
+	// no fourth exists. Already-async surfaces (updateDefinition, commitToGit,
+	// updateFromGit, assign/unassignToCapacity, provision/deprovision
+	// identity, deploy, job instances) were confirmed async and needed
+	// nothing. Two documented LROs are NOT implemented at all and so are out of
+	// scope here rather than fixed: Load Table and sqlEndpoints refreshMetadata.
 	//
 	// Off by default: the synchronous answers are equally legal and are what
 	// most calls see. The point is that the other half is reachable at all.

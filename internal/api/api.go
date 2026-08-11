@@ -41,7 +41,8 @@ type API struct {
 	Airflow AirflowRuntime
 	// ForceLRO makes every API documenting both a synchronous and an
 	// asynchronous outcome answer the asynchronous one — getDefinition (200 vs
-	// 202) and createItem (201 vs 202). Real Fabric does both in each case and
+	// 202), createItem (201 vs 202) and git/initializeConnection (200 vs 202).
+	// Real Fabric does both in each case and
 	// a real tenant was measured taking the async branch of both, so a client
 	// that only ever meets the synchronous answer here has an untested path a
 	// tenant will take. See config.ForceLRO for why it is off by default.
