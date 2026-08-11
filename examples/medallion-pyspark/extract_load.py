@@ -18,7 +18,7 @@ import datetime
 import notebookutils
 import source_system as src
 from common import (
-    FABRIC,
+    ONELAKE_BLOB,
     STORAGE_AUD,
     VAULT_AUD,
     S,
@@ -47,7 +47,7 @@ today = datetime.date.today().isoformat()
 
 for name, blob in src.export(api_key).items():
     path = f"Files/landing/contoso_pos/{today}/{name}"
-    r = S.put(f"{FABRIC}/onelake/{st['workspace']}/{st['lakehouse']}/{path}",
+    r = S.put(f"{ONELAKE_BLOB}/{st['workspace']}/{st['lakehouse']}/{path}",
               data=blob, headers={"Authorization": "Bearer " + st_tok,
                                   "x-ms-blob-type": "BlockBlob"})
     assert r.status_code in (200, 201), f"land {path}: {r.status_code} {r.text}"

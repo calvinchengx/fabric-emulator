@@ -7,9 +7,13 @@
         "typeProperties": {
           "source": {
             "type": "DelimitedTextSource",
-            "rootFolder": "Files",
-            "folderPath": "landing",
-            "fileName": "customers.csv",
+            "storeSettings": {
+              "type": "LakehouseReadSettings",
+              "recursive": true
+            },
+            "formatSettings": {
+              "type": "DelimitedTextReadSettings"
+            },
             "datasetSettings": {
               "linkedService": {
                 "properties": {
@@ -19,13 +23,27 @@
                     "artifactId": "{{LAKEHOUSE_ID}}"
                   }
                 }
-              }
+              },
+              "typeProperties": {
+                "location": {
+                  "type": "LakehouseLocation",
+                  "rootFolder": "Files",
+                  "folderPath": "landing",
+                  "fileName": "customers.csv"
+                },
+                "columnDelimiter": ",",
+                "escapeChar": "\\",
+                "firstRowAsHeader": true,
+                "quoteChar": "\""
+              },
+              "type": "DelimitedText",
+              "annotations": [],
+              "schema": []
             }
           },
           "sink": {
             "type": "LakehouseTableSink",
             "tableActionOption": "Overwrite",
-            "table": "bronze_customers",
             "datasetSettings": {
               "linkedService": {
                 "properties": {
@@ -35,7 +53,14 @@
                     "artifactId": "{{LAKEHOUSE_ID}}"
                   }
                 }
-              }
+              },
+              "typeProperties": {
+                "table": "bronze_customers",
+                "rootFolder": "Tables"
+              },
+              "type": "LakehouseTable",
+              "annotations": [],
+              "schema": []
             }
           }
         }
