@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	entra "github.com/calvinchengx/entra-emulator/emulator"
 	"github.com/calvinchengx/fabric-emulator/internal/akv"
 )
 
@@ -139,7 +140,7 @@ func TestWorkspaceIdentityCascadeDelete(t *testing.T) {
 	}
 }
 
-func TestAKVReferenceConnectionViaWorkspaceIdentity(t *testing.T) {
+func TestVaultSecretResolvedThroughAServicePrincipalConnection(t *testing.T) {
 	f := newFixture(t)
 
 	// Provision a real workspace identity.
@@ -181,10 +182,17 @@ func TestAKVReferenceConnectionViaWorkspaceIdentity(t *testing.T) {
 				{"dataType": "Text", "name": "accountName", "value": "contoso-kv"},
 			},
 		},
+		// ServicePrincipal, because a real tenant's connector table lists only
+		// OAuth2 and ServicePrincipal for AzureKeyVault — and OAuth2 needs
+		// interactive consent, so it is the only one a script can complete.
+		// This used to send WorkspaceIdentity, which the emulator required and
+		// Fabric refuses with UnsupportedCredentialType.
 		"credentialDetails": map[string]any{
-			"skipTestConnection": true,
 			"credentials": map[string]string{
-				"credentialType": "WorkspaceIdentity", "workspaceId": ws.ID,
+				"credentialType":           "ServicePrincipal",
+				"tenantId":                 entra.TenantID,
+				"servicePrincipalClientId": entra.DaemonClientID,
+				"servicePrincipalSecret":   entra.DaemonSecret,
 			},
 		},
 	}, &kv), http.StatusCreated, "vault connection")

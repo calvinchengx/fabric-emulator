@@ -135,8 +135,12 @@ func TestTheExemptionsAreStillTheOnesWeApproved(t *testing.T) {
 	want := map[string]int{
 		// Drains the body to Discard so the connection can be reused.
 		"internal/onelake/onelake.go": 1,
-		// Clips a rejected-credentials body purely to quote in an error.
-		"internal/entra/client.go": 1,
+		// Clips a rejected-credentials body purely to quote in an error. TWO of
+		// them now: ValidateClientCredentials answers "are these real" and
+		// MintServicePrincipalToken returns the token itself, and both clip the
+		// FAILURE body only. Neither stores nor serves what it reads — the
+		// success path of the second decodes through a bounded reader.
+		"internal/entra/client.go": 2,
 	}
 	got := map[string]int{}
 	for _, f := range found {

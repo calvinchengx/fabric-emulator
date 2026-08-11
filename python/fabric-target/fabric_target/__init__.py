@@ -248,6 +248,35 @@ class Target:
                                     else inner)
         return self._credential
 
+    @property
+    def service_principal(self):
+        """`(tenant, client_id, client_secret)` when this target authenticates
+        as a service principal, else `None`.
+
+        WHY A CALLER NEEDS THE TRIPLE AND NOT JUST `credential`. Some Fabric
+        surfaces take a service principal's credentials as *data* rather than
+        using them to authenticate the call. Creating an `AzureKeyVault`
+        connection is the one that forced this: its
+        `supportedCredentialTypes` are `OAuth2` and `ServicePrincipal` and
+        nothing else, so the connection body has to CARRY a client id and
+        secret. A `TokenCredential` cannot be turned back into one.
+
+        `None` under real mode unless the SP env vars are set — a developer's
+        `az login` has no secret to hand on, and that is the honest answer
+        rather than an empty string that fails later and further away.
+        """
+        if self.is_emulator:
+            return (self.tenant,
+                    _env_any(("FABRIC_CLIENT_ID", "AZURE_CLIENT_ID"), SEED_CLIENT_ID),
+                    _env_any(("FABRIC_CLIENT_SECRET", "AZURE_CLIENT_SECRET"),
+                             SEED_CLIENT_SECRET))
+        tenant = _env_any(("FABRIC_TENANT", "AZURE_TENANT_ID"), "")
+        client = _env_any(("FABRIC_CLIENT_ID", "AZURE_CLIENT_ID"), "")
+        secret = _env_any(("FABRIC_CLIENT_SECRET", "AZURE_CLIENT_SECRET"), "")
+        if tenant and client and secret:
+            return (tenant, client, secret)
+        return None
+
     # -- guards ------------------------------------------------------------
     def emulator_only(self, feature):
         """Declare a spot that has no real-Fabric counterpart (clock control,

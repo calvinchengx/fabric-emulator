@@ -137,6 +137,44 @@ func (c *Client) ValidateClientCredentials(tenantID, clientID, secret string) er
 	return nil
 }
 
+// MintServicePrincipalToken exchanges a service principal's own credentials for
+// an app-only token at the given scope.
+//
+// ValidateClientCredentials performs the same exchange but discards the token
+// and hardcodes the Fabric scope, because it only ever answered "are these
+// credentials real". Resolving a Key Vault secret through a connection needs
+// the token itself, at the vault audience — which is the credential a tenant
+// actually accepts for an AzureKeyVault connection.
+func (c *Client) MintServicePrincipalToken(tenantID, clientID, secret, scope string) (string, error) {
+	form := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {clientID},
+		"client_secret": {secret},
+		"scope":         {scope},
+	}
+	resp, err := c.http.PostForm(c.base+"/"+url.PathEscape(tenantID)+"/oauth2/v2.0/token", form)
+	if err != nil {
+		return "", fmt.Errorf("entra unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// bounded-read-exempt: quoted into an error message only.
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("service principal credentials rejected (status %d): %s",
+			resp.StatusCode, raw)
+	}
+	var out struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return "", fmt.Errorf("entra returned bad JSON: %w", err)
+	}
+	if out.AccessToken == "" {
+		return "", fmt.Errorf("entra returned no access_token")
+	}
+	return out.AccessToken, nil
+}
+
 // MintWorkspaceIdentityToken asks entra to mint an app-only token for a
 // workspace identity, for the given resource audience (the platform holds
 // the credential — the caller supplies only the identity id). Used to
