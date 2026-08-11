@@ -4,9 +4,7 @@ Power BI executeQueries wire — the readiness check for Power BI clients.
 In real Fabric the rows would arrive by Direct Lake; the emulator seeds them as
 a `data.json` definition part, exported here straight from warehouse gold.
 """
-import base64
 import json
-import time
 
 import source_system as src
 from common import (
@@ -14,6 +12,7 @@ from common import (
     FABRIC_AUD,
     PBI_AUD,
     S,
+    create_item,
     ensure_app,
     fabric_headers,
     load,
@@ -91,26 +90,11 @@ model = {
 }
 
 
-def part(path, obj):
-    return {"path": path, "payloadType": "InlineBase64",
-            "payload": base64.b64encode(json.dumps(obj).encode()).decode()}
-
-
-r = S.post(f"{FABRIC}/v1/workspaces/{st['workspace']}/items", headers=H, json={
-    "displayName": "ContosoRevenue", "type": "SemanticModel",
-    "definition": {"parts": [part("model.bim", model)]}})
-assert r.status_code in (201, 202), f"publish model: {r.status_code} {r.text}"
-if r.status_code == 201:
-    dataset = r.json()["id"]
-else:
-    op = r.headers["x-ms-operation-id"]
-    for _ in range(60):
-        status = S.get(f"{FABRIC}/v1/operations/{op}", headers=H).json()["status"]
-        if status in ("Succeeded", "Failed"):
-            break
-        time.sleep(1)
-    assert status == "Succeeded", f"publish operation {status}"
-    dataset = S.get(f"{FABRIC}/v1/operations/{op}/result", headers=H).json()["id"]
+# One resolver for the 202, and it lives in common.py. This script used to carry
+# its own copy: a hard-indexed `x-ms-operation-id` and a flat one-second poll. A
+# SemanticModel create always carries a definition, so it takes the async branch
+# every run, against a service that states its own pace in `Retry-After`.
+dataset = create_item("ContosoRevenue", "SemanticModel", {"model.bim": json.dumps(model)})
 save(dataset=dataset)
 
 # --- query it exactly as a Power BI REST client (or SemPy) would --------------

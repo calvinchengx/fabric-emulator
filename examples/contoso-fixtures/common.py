@@ -454,7 +454,7 @@ def create_item_from_definition(folder, display_name=None, **substitutions):
     return create_item(display_name or name, item_type, parts)
 
 
-def post_and_wait(url, body):
+def post_and_wait(url, body, what=None):
     """POST a create and return the created object, resolving a 202 if there is one.
 
     FOUND BY RUNNING IT ON A REAL TENANT, which is the only way this class of bug
@@ -467,12 +467,21 @@ def post_and_wait(url, body):
     Every Fabric create can be async; which ones ARE is a service decision that
     can change. So this resolves the operation whenever one is offered rather than
     per item type, which is also what fabric-cicd does.
+
+    WHY THE POLL IS PACED BY THE SERVICE. Measured against a real Fabric trial on
+    2026-08-11: a Warehouse create answered `Retry-After: 20` and completed in 13
+    seconds. So the header is a floor the service ASKS for, not an estimate of how
+    long the work takes. That is the answer to the obvious objection, that
+    honouring it makes the examples slower than they need to be: true, and not an
+    argument, because the service asked. The cap is a ceiling on the wait, not a
+    target, and it exists so a service that asks for an hour cannot hang a run.
     """
     import time
 
     H = fabric_headers()
+    what = what or url
     r = S.post(url, headers=H, json=body)
-    assert r.status_code in (200, 201, 202), f"{url} -> {r.status_code} {r.text}"
+    assert r.status_code in (200, 201, 202), f"{what}: {r.status_code} {r.text}"
     if r.status_code != 202:
         return r.json()
     op = r.headers.get("x-ms-operation-id") \
@@ -486,34 +495,38 @@ def post_and_wait(url, body):
         # real seconds, and polling faster than asked earns a 429.
         time.sleep(min(float(got.headers.get("Retry-After", "2")), 20))
     else:
-        raise SystemExit(f"{url}: operation {op} never reached a terminal state")
-    assert status == "Succeeded", f"{url}: operation {op} {status}"
+        raise SystemExit(f"{what}: operation {op} never reached a terminal state")
+    assert status == "Succeeded", f"{what}: operation {op} {status}"
     return S.get(f"{FABRIC}/v1/operations/{op}/result", headers=H).json()
 
 
 def create_item(display_name, item_type, parts):
-    """Create an item with a definition, resolving the LRO if the create is async."""
-    import base64
-    import time
+    """Create an item with a definition, resolving the LRO if the create is async.
 
-    H = fabric_headers()
+    The 202 is resolved by `post_and_wait` rather than here. This function used to
+    carry its own copy of that logic, and the copy was the older, worse one: it
+    indexed `x-ms-operation-id` without falling back to the `Location` tail, and
+    it slept a flat second instead of honouring `Retry-After`.
+
+    Note which half was actually biting. A definition-bearing create has always
+    been an LRO in the emulator, and this function always sends a definition, so
+    every example run took the async path and polled once a second at a service
+    that had just stated a pace in its own header. Not a latent defect awaiting a
+    real tenant, a live one, quiet because polling too fast only shows up as load
+    until something answers 429.
+
+    One protocol, one resolver. A second implementation of the same wait is not a
+    convenience, it is a second thing to keep correct.
+    """
+    import base64
+
     st = load()
     body = {"displayName": display_name, "type": item_type, "definition": {"parts": [
         {"path": p, "payloadType": "InlineBase64",
          "payload": base64.b64encode(c.encode() if isinstance(c, str) else c).decode()}
         for p, c in parts.items()]}}
-    r = S.post(f"{FABRIC}/v1/workspaces/{st['workspace']}/items", headers=H, json=body)
-    assert r.status_code in (201, 202), f"create {item_type}: {r.status_code} {r.text}"
-    if r.status_code == 201:
-        return r.json()["id"]
-    op = r.headers["x-ms-operation-id"]
-    for _ in range(60):
-        status = S.get(f"{FABRIC}/v1/operations/{op}", headers=H).json()["status"]
-        if status in ("Succeeded", "Failed"):
-            break
-        time.sleep(1)
-    assert status == "Succeeded", f"create {item_type}: operation {status}"
-    return S.get(f"{FABRIC}/v1/operations/{op}/result", headers=H).json()["id"]
+    return post_and_wait(f"{FABRIC}/v1/workspaces/{st['workspace']}/items", body,
+                         what=f"create {item_type}")["id"]
 
 
 def run_job(item_id, job_type, body=None):
