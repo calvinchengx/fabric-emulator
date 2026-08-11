@@ -32,7 +32,9 @@ def http(method, url, body=None, token=None, form=False):
     if token:
         headers["Authorization"] = "Bearer " + token
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
-    with urllib.request.urlopen(req) as r:
+    # Timed, like every other wait in this suite: an untimed urlopen is the one
+    # way a bounded poll loop still hangs for a whole CI job (see e2e/sail).
+    with urllib.request.urlopen(req, timeout=60) as r:
         raw = r.read()
         return r.status, (json.loads(raw) if raw else {})
 
@@ -321,7 +323,7 @@ def main():
         f"{FABRIC}/{ws['id']}/{lake['id']}/Files/batch.py", data=script, method="PUT",
         headers={"Host": "onelake.blob.fabric.microsoft.com", "Authorization": "Bearer " + storage_token,
                  "x-ms-blob-type": "BlockBlob"})
-    with urllib.request.urlopen(put) as r:
+    with urllib.request.urlopen(put, timeout=60) as r:
         assert r.status in (200, 201), r.status
 
     _, b = http("POST", f"{base}/batches", {"file": f"{ws['id']}/{lake['id']}/Files/batch.py"}, token=token)

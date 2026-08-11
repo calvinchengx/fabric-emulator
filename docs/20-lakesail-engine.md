@@ -113,6 +113,18 @@ touches; every claim below is CI-verified against the emulator:
 - **Concurrent overwrite conflicts are rejected** at the Delta-log commit
   boundary: the executable two-session probe observes one successful writer
   and one transaction failure through OneLake's conditional create contract.
+  The loser fails **fast, not eventually** — worth stating because a hung
+  `sail` job was once read as an unbounded commit retry, and it is not one.
+  Sail commits under `for attempt_number in 1..=total_retries`
+  (`crates/sail-delta-lake/src/transaction/mod.rs`, v0.6.6), and an overwrite
+  is neither a table creation nor a blind append, so its
+  `effective_max_retries` is **0**: one attempt, then `MaxCommitAttempts`.
+  Measured at 50 ms from conflict to both sessions closed. The emulator's half
+  of that contract is Azure's own code — a Put Blob carrying `If-None-Match: *`
+  against an existing commit answers **409 `BlobAlreadyExists`**
+  (`internal/onelake/blob.go`), which object_store maps to `AlreadyExists` and
+  does not retry, 409 being a client error outside its retry policy. Terminal
+  on both sides.
 - **No streaming** (`readStream`/`writeStream` absent), `cache()`/`persist()`
   are no-ops, no Java/Scala UDFs (Python/Pandas/Arrow UDFs all work), some
   catalog calls missing (`cacheTable`, `refreshTable`, …).
@@ -121,6 +133,59 @@ touches; every claim below is CI-verified against the emulator:
   SP's Storage token covers everything the e2es do.
 - Session timeout defaults to 900s — our composes set
   `SAIL_SPARK__SESSION_TIMEOUT_SECS=3600`.
+
+## The 24-minute hang, and why one is legible now
+
+The `sail` job once produced no output for 24 of its 25 minutes and was
+reported as **CANCELLED**. That is worse than a failure: a cancelled check
+reads as infrastructure noise, so it was rerun rather than investigated, the
+rerun went green, and nothing was learned.
+
+**The cause was in the client, not in Delta, Sail or the emulator.** The
+concurrent-writer probe stops its two extra Spark Connect sessions, and
+`SparkSession.stop()` calls `client.close()`, whose first act is
+`ExecutePlanResponseReattachableIterator.shutdown()` — which is **process-wide,
+not per session**. It takes a class-level lock, hands the class-level release
+thread pool to `ThreadPoolExecutor.shutdown()` (`wait=True` by default), and
+holds the lock until the pool drains. Every new query in the process builds one
+of those iterators, and its `__init__` takes that same class lock. So one worker
+thread's `stop()` blocks the main session's next query — which is precisely
+where the CI log falls silent — for as long as the outstanding `ReleaseExecute`
+RPCs take to retry, an interval pyspark's own retry policy is documented to let
+run "at least 10 minutes". A **losing** writer is the case that leaves one
+outstanding, because its execution ends in an error that submits `_release_all`
+just as the session is torn down: hence intermittent, and hence only on the run
+where the race actually collided.
+
+Measured, not inferred: driving the shipped pyspark classes with no server at
+all, one thread inside `shutdown()` blocks another thread's
+`_get_or_create_release_thread_pool()` for the full drain. `e2e/sail/driver.py`
+now calls `session.client.release_session()` instead — the same `ReleaseSession`
+RPC, so Sail still logs the removal, and no shared state is touched.
+
+Two things had to be untangled before that was findable, and they are worth
+keeping regardless. Three guards, in the order they fire:
+
+1. **The driver prints as it happens.** It did not before. Python
+   block-buffers stdout to a pipe, so in the run that *passed* all twenty of
+   the driver's lines carry one timestamp, flushed at exit — meaning a killed
+   run prints nothing at all, and its silence locates nothing.
+   `PYTHONUNBUFFERED=1` in `docker/python-runtime/Dockerfile` fixes this for
+   every driver built on that image, not just this one.
+2. **A stuck step ends the run and names itself.** Every Spark Connect call is
+   a gRPC round trip with no deadline, so nothing in the driver is bounded on
+   its own. `e2e/sail/driver.py` names each step, heartbeats every 30 s, and
+   after `SAIL_E2E_STEP_BUDGET` (180 s; steps take under a second in practice)
+   prints what it was waiting on, dumps **every thread's** stack, and exits 1.
+   Set the budget to a fraction of a second to watch it fire — a watchdog that
+   cannot be made to fire is not evidence of anything, and the first draft of
+   this one could not be.
+3. **A stack that hangs before the driver can speak** — a stalled build, a Sail
+   that never listens — hits `SAIL_E2E_BUDGET` (900 s) in `e2e/sail/run.py`,
+   which then dumps the driver, sail and emulator logs.
+
+All three exist so the job **fails**, inside its budget, with the failing step
+named. None of them changes what the suite asserts.
 
 ## Running it (user-facing)
 

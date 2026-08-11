@@ -30,7 +30,9 @@ def _req(method, url, body=None, token=None, form=False):
     if token:
         headers["Authorization"] = "Bearer " + token
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req) as r:
+    # Timed, like every other wait in this suite: an untimed urlopen is the one
+    # way a bounded poll loop still hangs for a whole CI job (see e2e/sail).
+    with urllib.request.urlopen(req, timeout=60) as r:
         raw = r.read()
         return json.loads(raw) if raw else {}
 

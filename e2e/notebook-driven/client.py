@@ -75,7 +75,9 @@ def req(method, url, body=None, token=None, form=False):
     if token:
         headers["Authorization"] = "Bearer " + token
     r = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(r) as resp:
+    # Timed, like every other wait in this suite: an untimed urlopen is the one
+    # way a bounded poll loop still hangs for a whole CI job (see e2e/sail).
+    with urllib.request.urlopen(r, timeout=60) as resp:
         raw = resp.read()
         return resp.status, resp.headers, (json.loads(raw) if raw else {})
 
@@ -225,7 +227,7 @@ assert any(n.endswith(".parquet") for n in names), f"no Parquet under {TABLE_DIR
 
 r = urllib.request.Request(f"http://{ACCT}/{ws}/{urllib.parse.quote(commits[0])}",
                            headers={"Authorization": "Bearer " + sft})
-with urllib.request.urlopen(r) as resp:
+with urllib.request.urlopen(r, timeout=60) as resp:
     commit = resp.read().decode()
 # The log is the table's own account of what was written; a stray .parquet on
 # disk is not part of the table.
