@@ -93,6 +93,20 @@ func (w *warehouseLineage) recordEdges(database string, f tsql.Flow) {
 	if !ok {
 		return
 	}
+	// ANNOUNCE THE WRITE, once per statement rather than once per source.
+	//
+	// The edges below give the graph its shape; this is what makes the node
+	// light. Without it a warehouse table sat grey through an entire run while
+	// every lakehouse table around it lit up — not because nothing was written,
+	// but because the only other emitter of a `table` event is a Delta commit
+	// in OneLake, and a warehouse is written over TDS instead. Grey therefore
+	// meant two different things, and a viewer had no way to tell "nothing
+	// happened here" from "this path is not instrumented".
+	//
+	// Before the loop: a table rebuilt from three sources is one write, and
+	// publishing per edge would report it three times. A statement with no
+	// resolvable sources (INSERT ... VALUES) is still a write, and still says so.
+	w.st.PublishWarehouseTable(target.workspaceID, target.itemID, target.path, activityNameFor(f.Kind))
 	for _, src := range w.sources(database, f.Sources) {
 		if src == target {
 			continue // a table rebuilt from itself is not a movement worth drawing
@@ -173,6 +187,17 @@ func (w *warehouseLineage) rename(database string, f tsql.Flow) {
 	if err := w.st.RenameLineagePath(from.itemID, from.path, to.path); err != nil {
 		log.Printf("lineage: renaming %s to %s: %v", from.path, to.path, err)
 	}
+	// THE RENAME IS WHEN THE VISIBLE TABLE APPEARS, so it announces itself too.
+	//
+	// dbt-fabric builds into `<model>__dbt_temp` and swaps: the CTAS above
+	// announced a write, but under a name the graph does not draw, because the
+	// edges were moved onto the real name by exactly this call. Publishing only
+	// on the CTAS lit nothing — measured against a real dbt build, where all
+	// nine gold tables emitted events named `..._dbt_temp` while every node a
+	// viewer can see stayed grey. The temp event stays: that write did happen,
+	// and inventing a rule about which names are scaffolding would be guessing
+	// at one tool's convention.
+	w.st.PublishWarehouseTable(to.workspaceID, to.itemID, to.path, activityNameFor(f.Kind))
 }
 
 // drop retires the edges into a dropped object: a table that no longer exists
