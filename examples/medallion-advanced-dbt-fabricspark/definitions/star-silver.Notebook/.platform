@@ -1,0 +1,12 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/platform/platformProperties.json",
+  "metadata": {
+    "type": "Notebook",
+    "displayName": "star-silver",
+    "description": "Materialise the identity resolution: the crosswalk, the conformed dimension, the web fact grain, and the input metrics."
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "8d4a1c67-2b95-4f03-ae18-56c7092fb3d1"
+  }
+}
