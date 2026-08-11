@@ -98,3 +98,66 @@ func (a *API) resolveLibraryVariables(wid string, refs map[string]pipeline.Libra
 	}
 	return out, nil
 }
+
+// definitionRejection reports the error code and message a real tenant answers
+// when a definition is structurally fine but semantically wrong, or "" to
+// accept.
+//
+// MEASURED 2026-08-11. Creating a VariableLibrary on a trial tenant, two
+// separate rejections came back that the emulator had no opinion about:
+//
+//	InvalidVariableType
+//	  The variable type 'TotallyMadeUpType' is not supported.
+//
+//	InvalidContent (issue: InvalidValueOrTypeMismatch)
+//	  Item content cannot be used (ReferencedEntityNotFoundOrAccessDenied)
+//	  — a ConnectionReference naming a connection id that does not exist.
+//
+// Both are the direction that ships: the emulator accepted either payload
+// silently, so a library written against it deploys and fails. The second one
+// matters more than it looks, because a ConnectionReference's value is a GUID
+// (docs/48) — promoting a library between workspaces carries an id that must
+// exist on the far side, and nothing local said so.
+func (a *API) definitionRejection(itemType string, parts []store.DefinitionPart) (string, string) {
+	if itemType != "VariableLibrary" || len(parts) == 0 {
+		return "", ""
+	}
+	files := make(map[string][]byte, len(parts))
+	for _, p := range parts {
+		raw, err := base64.StdEncoding.DecodeString(p.Payload)
+		if err != nil {
+			// Not this check's business: an undecodable part is caught where
+			// definitions are read, and reporting it as a variable-type problem
+			// would send the reader to the wrong file.
+			return "", ""
+		}
+		files[p.Path] = raw
+	}
+	lib, err := varlib.Parse(files)
+	if err != nil {
+		return "", ""
+	}
+	if err := lib.ValidateTypes(); err != nil {
+		return "InvalidVariableType", capitalise(err.Error()) + "."
+	}
+	for _, v := range lib.Variables {
+		if v.Type != "ConnectionReference" {
+			continue
+		}
+		val, _ := v.Value.(map[string]any)
+		id, _ := val["connectionId"].(string)
+		if _, err := a.Store.GetConnection(id); err != nil {
+			return "InvalidContent",
+				"Item content cannot be used (ReferencedEntityNotFoundOrAccessDenied)."
+		}
+	}
+	return "", ""
+}
+
+// capitalise upper-cases the first letter, so a Go error reads as a sentence.
+func capitalise(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}

@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -38,6 +39,36 @@ type Variable struct {
 	Type  string `json:"type"`
 	Note  string `json:"note,omitempty"`
 	Value any    `json:"value"`
+}
+
+// VariableTypes is the set a real tenant accepts, MEASURED 2026-08-11 by
+// creating a VariableLibrary carrying one variable of each candidate type plus
+// one deliberate nonsense type. The tenant named the nonsense one and nothing
+// else:
+//
+//	InvalidVariableType: The variable type 'TotallyMadeUpType' is not supported.
+//
+// That rejection is what makes the acceptances mean something. Without a
+// negative control the create could have been ignoring `type` entirely, and a
+// round-trip would only have echoed our own guesses back — the emulator did
+// exactly that until this list existed.
+//
+// `Number` is accepted by the LIBRARY even though the pipeline integration
+// article says pipelines cannot consume it; the two vocabularies are separate
+// (docs/48), so this is the library's list and not the pipeline's.
+var VariableTypes = []string{
+	"String", "Integer", "Number", "Boolean", "DateTime", "Guid",
+	"ItemReference", "ConnectionReference",
+}
+
+// ValidateTypes reports the first unsupported variable type, tenant-style.
+func (l *Library) ValidateTypes() error {
+	for _, v := range l.Variables {
+		if !slices.Contains(VariableTypes, v.Type) {
+			return fmt.Errorf("the variable type %q is not supported", v.Type)
+		}
+	}
+	return nil
 }
 
 // override is one entry of a value set's variableOverrides.

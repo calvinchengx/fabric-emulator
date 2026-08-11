@@ -165,12 +165,68 @@ The library's own type list, read off the New-variable dropdown (2026-08-10):
 |---|---|---|---|
 | `String` | Basic | `String` | captured |
 | `Guid` | Basic | `String` | **captured** |
-| `DateTime` | Basic | `String` | article |
-| `Integer` | Basic | `Int` | article |
-| `Boolean` | Basic | `Bool` | article |
-| `Number` | Basic | *(unsupported in pipelines)* | article |
+| `DateTime` | Basic | `String` | **captured** |
+| `Integer` | Basic | `Int` | **captured** |
+| `Boolean` | Basic | `Bool` | **captured** |
+| `Number` | Basic | *(unsupported in pipelines)* | **captured** |
 | `Item reference` (preview) | Other | **`Object`** | **captured** |
-| `Connection reference` (preview) | Other | `Object`, presumed | not captured |
+| `Connection reference` (preview) | Other | `Object`, presumed | **value captured**, pipeline `type` still not |
+
+### The library's type list, captured with a control (2026-08-11)
+
+The remaining rows above were filled by creating one library carrying a variable
+of each candidate type **plus one deliberate nonsense type**, and reading the
+failed operation:
+
+```
+InvalidVariableType: The variable type 'TotallyMadeUpType' is not supported.
+```
+
+The control is the load-bearing part. Sending only plausible types and watching
+them succeed proves nothing — a create that ignores `type` accepts those too,
+and `getDefinition` would echo our own guesses back as if the tenant had
+confirmed them. The published schema cannot settle it either: it constrains
+`type` to `^[A-Za-z][A-Za-z0-9]{0,63}$` and declares `value: true` (any JSON).
+
+Stored values, read back with `getDefinition`:
+
+```json
+{"name": "aDateTime",  "note": "", "type": "DateTime",  "value": "2026-08-11T00:00:00Z"},
+{"name": "anInteger",  "note": "", "type": "Integer",   "value": 42},
+{"name": "aBoolean",   "note": "", "type": "Boolean",   "value": true},
+{"name": "aNumber",    "note": "", "type": "Number",    "value": 1.5},
+{"name": "aConnection","note": "", "type": "ConnectionReference",
+ "value": {"connectionId": "7feee8f6-0545-4647-a24f-c6f98693aea5"}}
+```
+
+`Integer` and `Boolean` are stored as JSON number and JSON bool, not strings —
+so a resolver passing values through unchanged is right for these as it is for
+`Guid`. `Number` is accepted by the **library** even though pipelines cannot
+consume it; the two vocabularies are separate, and this is the library's list.
+
+### A connection reference is a GUID, and it is checked
+
+`ConnectionReference`'s value is `{"connectionId": "<guid>"}`, and the tenant
+**verifies the connection resolves** at definition-write time. A made-up id is
+refused:
+
+```
+InvalidContent (issue: InvalidValueOrTypeMismatch)
+Item content cannot be used (ReferencedEntityNotFoundOrAccessDenied)
+```
+
+This does **not** contradict [Binding is by name, with no GUID
+anywhere](#binding-is-by-name-with-no-guid-anywhere) — that result is about the
+*pipeline's reference to the library*, which remains `libraryName` +
+`variableName`. What this adds is the other half of 47's split: the reference is
+environment-invariant, and here is a **value** that is environment-bound as
+hard as a value can be. A library carrying a connection reference cannot be
+promoted between workspaces unchanged; the id must exist on the far side, or a
+value set must override it per environment.
+
+`ItemReference` behaves the same way — its value is `{itemId, workspaceId}`.
+The pattern is that Fabric's *reference-typed values* are GUID pairs while its
+*bindings* are names.
 
 Two of these are worth calling out because a reasonable person would guess them
 wrong:
