@@ -894,10 +894,23 @@ assert r.status_code in (201, 202), r.text
 dataset = None
 if r.status_code == 201:
     dataset = r.json()["id"]
-else:  # LRO: poll, then fetch the result
-    op = r.headers["x-ms-operation-id"]
-    while S.get(f"{FABRIC}/v1/operations/{op}", headers=H).json()["status"] not in ("Succeeded", "Failed"):
-        time.sleep(1)
+else:  # LRO: poll on the service's terms, then fetch the result
+    # x-ms-operation-id is documented on the 202, and Location carries the same
+    # id in its tail. Prefer the header, fall back to the URL: a client that
+    # hard-indexes one header raises KeyError the day a service sends only the
+    # other, and the failure looks nothing like its cause.
+    op = (r.headers.get("x-ms-operation-id")
+          or r.headers["Location"].rstrip("/").rsplit("/", 1)[-1])
+    while True:
+        got = S.get(f"{FABRIC}/v1/operations/{op}", headers=H)
+        if got.json()["status"] in ("Succeeded", "Failed"):
+            break
+        # SLEEP FOR AS LONG AS THE SERVICE ASKED. Retry-After is on the 202 and
+        # on every poll; Fabric's own sample returns 20. A flat sleep(1) polls a
+        # real tenant ~20x more often than requested, on an API family whose
+        # reference documents 429 Too Many Requests — and the emulator will not
+        # complain, because its clock finishes operations promptly either way.
+        time.sleep(min(float(got.headers.get("Retry-After", "2")), 20))
     dataset = S.get(f"{FABRIC}/v1/operations/{op}/result", headers=H).json()["id"]
 save(dataset=dataset)
 
