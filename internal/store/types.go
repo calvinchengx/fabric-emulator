@@ -93,6 +93,48 @@ type Operation struct {
 	FailWith   string // non-empty forces Failed with this errorCode
 }
 
+// PercentCompleteAt derives operation progress from the SAME clock the status
+// comes from, so the two can never disagree.
+//
+// Fabric documents `percentComplete` as an integer 0-100 on every operation
+// state, and the emulator returned none. A client rendering progress therefore
+// saw nothing locally and a real number on a tenant — the shape of divergence
+// that only shows up in production.
+//
+// It is COMPUTED, not faked: the emulator knows when the operation was created
+// and when its clock completes it, so the fraction between them is a real
+// answer rather than a plausible-looking constant. A terminal operation is 100
+// whether it succeeded or failed — the work stopped progressing either way, and
+// the status field is what says which.
+func (o Operation) PercentCompleteAt(now int64) int {
+	if now >= o.CompleteAt {
+		return 100
+	}
+	span := o.CompleteAt - o.CreatedAt
+	if span <= 0 {
+		return 0
+	}
+	done := int((now - o.CreatedAt) * 100 / span)
+	if done < 0 {
+		return 0
+	}
+	if done > 100 {
+		return 100
+	}
+	return done
+}
+
+// LastUpdatedAt is when this operation's state last CHANGED, which for a
+// clock-derived operation is its completion once complete, and its creation
+// before that. Reporting `now` instead would make every poll look like a fresh
+// update and defeat the field's purpose.
+func (o Operation) LastUpdatedAt(now int64) int64 {
+	if now >= o.CompleteAt {
+		return o.CompleteAt
+	}
+	return o.CreatedAt
+}
+
 // StatusAt derives the wire status at the given clock time.
 func (o Operation) StatusAt(now int64) string {
 	if now < o.CompleteAt {

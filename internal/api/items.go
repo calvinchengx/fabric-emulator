@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
@@ -226,7 +228,18 @@ func (a *API) deleteItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 type operationBody struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
-	Error  *struct {
+	// The three fields Fabric's OperationState documents and this emulator did
+	// not send. A client rendering progress, or logging when an operation
+	// started, saw nothing locally and real values on a tenant — a divergence
+	// that only surfaces in production, which is the worst place to find one.
+	//
+	// `id` above is NOT in the documented shape. It is kept because removing a
+	// field clients here may already read would be a gratuitous break, and an
+	// extra field is harmless where a missing one is not.
+	CreatedTimeUtc     string `json:"createdTimeUtc"`
+	LastUpdatedTimeUtc string `json:"lastUpdatedTimeUtc"`
+	PercentComplete    int    `json:"percentComplete"`
+	Error              *struct {
 		ErrorCode string `json:"errorCode"`
 		Message   string `json:"message"`
 	} `json:"error,omitempty"`
@@ -238,16 +251,34 @@ func (a *API) getOperation(w http.ResponseWriter, r *http.Request, p *auth.Princ
 		writeErr(w, http.StatusNotFound, "OperationNotFound", "No such operation.")
 		return
 	}
-	body := operationBody{ID: op.ID, Status: op.StatusAt(a.Store.Now())}
+	now := a.Store.Now()
+	body := operationBody{
+		ID:                 op.ID,
+		Status:             op.StatusAt(now),
+		CreatedTimeUtc:     time.Unix(op.CreatedAt, 0).UTC().Format(time.RFC3339),
+		LastUpdatedTimeUtc: time.Unix(op.LastUpdatedAt(now), 0).UTC().Format(time.RFC3339),
+		PercentComplete:    op.PercentCompleteAt(now),
+	}
 	if body.Status == store.OpFailed {
 		body.Error = &struct {
 			ErrorCode string `json:"errorCode"`
 			Message   string `json:"message"`
 		}{ErrorCode: op.FailWith, Message: "The operation failed."}
 	}
-	if body.Status == store.OpSucceeded && op.ResultRef != "" {
-		loc := "https://" + r.Host + "/v1/operations/" + op.ID + "/result"
-		w.Header().Set("Location", loc)
+	// The polling headers, per the documented samples. `x-ms-operation-id` is on
+	// every poll; `Location` MOVES — it names the state URL while the operation
+	// runs and the RESULT URL once it succeeds, which is how a client following
+	// Location alone reaches the result without constructing a URL. Retry-After
+	// appears only while there is still something to wait for; the completed
+	// sample carries none, and sending one would tell a finished client to sleep.
+	w.Header().Set("x-ms-operation-id", op.ID)
+	base := "https://" + r.Host + "/v1/operations/" + op.ID
+	switch {
+	case body.Status == store.OpSucceeded && op.ResultRef != "":
+		w.Header().Set("Location", base+"/result")
+	case body.Status == store.OpNotStarted || body.Status == store.OpRunning:
+		w.Header().Set("Location", base)
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", a.RetryAfterSeconds))
 	}
 	writeJSON(w, http.StatusOK, body)
 }
