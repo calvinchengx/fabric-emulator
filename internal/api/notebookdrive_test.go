@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	osexec "os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -169,7 +173,7 @@ func TestEmulatorDrivesNotebookWhenAnAgentIsConfigured(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("statements = %q", got)
 	}
-	if !strings.Contains(got[0], "def notebook_exit") {
+	if !strings.Contains(got[0], "def _notebook_exit") {
 		t.Fatalf("prelude was not installed first: %q", got[0])
 	}
 	if got[1] != "x = spark.range(3)" || got[2] != "SELECT 1" {
@@ -530,4 +534,82 @@ func TestEveryStatementCarriesTheCellIdentity(t *testing.T) {
 				"the I/O to the wrong cell, which reads as real lineage", i, *s.cellIndex, i)
 		}
 	}
+}
+
+// The prelude must bind Fabric's TWO documented spellings and NOT the bare name
+// (#192). This is the regression test for a defect with no local symptom: a name
+// the emulator adds cannot fail here, so only an assertion about the prelude's
+// text can hold the line.
+func TestPreludeBindsOnlyFabricsOwnExitSpellings(t *testing.T) {
+	for _, want := range []string{
+		"notebookutils.notebook.exit = _notebook_exit",
+		"mssparkutils.notebook.exit = _notebook_exit",
+	} {
+		if !strings.Contains(notebookPrelude, want) {
+			t.Errorf("the prelude does not bind %q; both Fabric spellings must resolve", want)
+		}
+	}
+
+	// The bare name must appear ONLY as the underscore-prefixed helper.
+	//
+	// A WORD-BOUNDARY match, not a substring one. The first version of this loop
+	// skipped any line containing `_notebook_exit` — which made
+	// `notebook_exit = _notebook_exit` invisible, since that line contains both.
+	// It passed the mutation that re-injects the name. A toothless check written
+	// inside the check meant to prevent toothless checks; caught only because the
+	// mutant was run. See [[assertions-one-level-off]].
+	for _, line := range strings.Split(notebookPrelude, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		if bareNotebookExit.MatchString(line) {
+			t.Errorf("the prelude binds the bare notebook_exit again: %q\n"+
+				"It is not a Fabric global. A name the emulator adds has no local "+
+				"symptom; it fails on a tenant, at whatever line uses it.", line)
+		}
+	}
+}
+
+// bareNotebookExit matches `notebook_exit` as a whole identifier — not preceded
+// by `_` or `.`, so `_notebook_exit` and `notebook.exit` do not match.
+var bareNotebookExit = regexp.MustCompile(`(^|[^._\w])notebook_exit\b`)
+
+// Every notebook this repo SHIPS must use a spelling real Fabric defines.
+// Examples are copy-paste surface: a tutorial propagates further than a library,
+// so a non-portable exit in one of these strands whoever copies it.
+func TestNoShippedNotebookUsesTheBareExit(t *testing.T) {
+	roots := []string{"../../examples", "../../e2e"}
+	checked := 0
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || filepath.Base(path) != "notebook-content.py" {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			checked++
+			for i, line := range strings.Split(string(b), "\n") {
+				code := strings.TrimSpace(line)
+				if strings.HasPrefix(code, "#") {
+					continue
+				}
+				if bareNotebookExit.MatchString(code) {
+					t.Errorf("%s:%d uses the bare notebook_exit, which real Fabric does not "+
+						"define: %q\nUse mssparkutils.notebook.exit or "+
+						"notebookutils.notebook.exit.", path, i+1, code)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walking %s: %v", root, err)
+		}
+	}
+	// A sweep that walked nothing reports success. See [[assertions-one-level-off]].
+	if checked == 0 {
+		t.Fatal("no notebook definitions were checked; the walk found nothing to assert on")
+	}
+	t.Logf("checked %d shipped notebook definitions", checked)
 }

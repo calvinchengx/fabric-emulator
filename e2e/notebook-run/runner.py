@@ -63,7 +63,7 @@ print("wrote", df.count(), "rows")
 
 # CELL ********************
 total = spark.table("events").count()
-notebook_exit(str(total))
+mssparkutils.notebook.exit(str(total))
 '''
 
 
@@ -231,11 +231,32 @@ class _Exit(Exception):
         self.value = value
 
 
-def notebook_exit(value=""):
+def _notebook_exit(value=""):
     raise _Exit(value)
 
 
-ns = {"spark": spark, "notebook_exit": notebook_exit, "__name__": "__nb__"}
+# This runner is a SECOND engine implementation, standing in for a Spark pool the
+# way internal/api/notebookdrive.go's prelude does. The two must inject the same
+# names or a notebook that runs under one fails under the other — two shapes on
+# one surface, which is the defect class this repo keeps finding.
+#
+# So only the dotted Fabric spellings are bound. The bare `notebook_exit` used to
+# be, in both engines, and it is not a Fabric global (#192).
+class _NotebookNamespace(object):
+    pass
+
+
+_nb_ns = _NotebookNamespace()
+_nb_ns.exit = _notebook_exit
+_utils_ns = _NotebookNamespace()
+_utils_ns.notebook = _nb_ns
+
+ns = {
+    "spark": spark,
+    "notebookutils": _utils_ns,
+    "mssparkutils": _utils_ns,
+    "__name__": "__nb__",
+}
 results, exit_value, overall = [], "", "Completed"
 for c in cells:
     buf = io.StringIO()

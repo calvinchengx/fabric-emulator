@@ -31,8 +31,15 @@ CLIENT_SECRET = "daemon-app-secret"
 ACCT = "onelake.dfs.fabric.microsoft.com"
 
 # A notebook that writes, reads back through SQL, and exits with a value.
-# `notebook_exit` is the Fabric contract: the run stops there and the value
-# reaches the caller through the job.
+# `mssparkutils.notebook.exit` IS the Fabric contract: the run stops there and
+# the value reaches the caller through the job.
+#
+# This comment used to name the bare `notebook_exit`, which was never a Fabric
+# global — the emulator's prelude injected it (#192) and this file said so in
+# writing. docs/12 calls this harness "the path a consumer with no clone can
+# walk", so it is the copy-paste template for exactly the people the injected
+# name would strand on a tenant. A false claim in a template propagates further
+# than the same claim in a library.
 NOTEBOOK_BODY = '''# Fabric notebook source
 
 # CELL ********************
@@ -56,10 +63,10 @@ print("wrote", df.count(), "rows")
 # real notebook to return a JSON summary found it immediately, so the fixture
 # now returns the shape real notebooks return.
 import json as _json
-notebook_exit(_json.dumps({"rows": spark.table("events").count(), "table": "events"}))
+mssparkutils.notebook.exit(_json.dumps({"rows": spark.table("events").count(), "table": "events"}))
 
 # CELL ********************
-raise AssertionError("a cell after notebook_exit must never run")
+raise AssertionError("a cell after the notebook exit must never run")
 '''
 
 
@@ -168,7 +175,7 @@ assert exit_value == {"rows": 4, "table": "events"}, run["exitValue"]
 assert [c["language"] for c in cells] == ["python", "sql", "python", "python"], cells
 for c in cells[:3]:
     assert c["status"] == "Succeeded", c
-# The cell after notebook_exit must be untouched. If it had run it would have
+# The cell after the exit must be untouched. If it had run it would have
 # raised, so a Completed job is not on its own proof that it did not.
 assert cells[3]["status"] == "Pending", f"execution continued past the exit: {cells[3]}"
 

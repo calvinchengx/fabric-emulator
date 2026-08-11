@@ -41,7 +41,7 @@ import (
 // (run_code matches the exception by type name); the driver then reads it back
 // without parsing a traceback. The stash must NOT happen here: this prelude
 // runs once per session, and each run re-points the one shared notebookutils
-// module's `exit` at its own copy of notebook_exit. Under concurrent notebook
+// module's `exit` at its own copy of _notebook_exit. Under concurrent notebook
 // runs, whichever session ran its prelude LAST owns that copy, so a
 // `global __nb_exit__` write in it lands in that session's namespace, not the
 // caller's. Observed as SUCCESS exits recorded Failed; the dual (a real
@@ -58,20 +58,36 @@ import (
 // that exists only when an absent package happens to be installed is the same
 // class of defect as a check that cannot fail: it looks like support and
 // provides none.
+//
+// THE BARE NAME `notebook_exit` IS DELIBERATELY NOT BOUND (#192). It used to be,
+// and it is not a Fabric global — only the two dotted spellings are. A name the
+// emulator LACKS fails locally, immediately, with a stack trace on the offending
+// line. A name the emulator ADDS has no local symptom at all: every notebook
+// written here can pick it up, nothing in a green run says otherwise, and the
+// failure waits for a tenant. contoso-data-platform's silver notebook ended with
+// a bare `notebook_exit(...)` and would have died at its LAST line, after
+// reading, conforming, quarantining and writing every table — the work done, the
+// tables there, and the run failed for a reason unrelated to the data.
+//
+// The helper is now `_notebook_exit`, matching the underscore convention the
+// rest of this prelude's machinery already uses. Removing the bare name is a
+// BEHAVIOUR CHANGE and is in the v0.22.0 notes: anyone who wrote it against a
+// released emulator breaks on upgrade, which is the argument FOR doing it —
+// they are broken on Fabric today and have no way to find out here.
 const notebookPrelude = `
 class _NotebookExit(Exception):
     pass
 
 __nb_exit__ = None
 
-def notebook_exit(value=""):
+def _notebook_exit(value=""):
     raise _NotebookExit(str(value))
 
 class _NotebookNamespace(object):
     pass
 
 _nb_ns = _NotebookNamespace()
-_nb_ns.exit = notebook_exit
+_nb_ns.exit = _notebook_exit
 _utils_ns = _NotebookNamespace()
 _utils_ns.notebook = _nb_ns
 
@@ -80,13 +96,13 @@ _utils_ns.notebook = _nb_ns
 # they do not — which is here — the names still resolve.
 try:
     import notebookutils
-    notebookutils.notebook.exit = notebook_exit
+    notebookutils.notebook.exit = _notebook_exit
 except Exception:
     notebookutils = _utils_ns
 
 try:
     import mssparkutils
-    mssparkutils.notebook.exit = notebook_exit
+    mssparkutils.notebook.exit = _notebook_exit
 except Exception:
     mssparkutils = _utils_ns
 `
