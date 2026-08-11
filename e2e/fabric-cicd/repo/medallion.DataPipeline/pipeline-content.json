@@ -1,0 +1,44 @@
+{
+  "properties": {
+    "description": "Fails unless the library variable resolves to the expected value, so a green run is evidence rather than absence of error.",
+    "parameters": {
+      "expected": { "type": "String", "defaultValue": "Files/bronze" }
+    },
+    "libraryVariables": {
+      "envLib_bronzePath": {
+        "type": "String",
+        "variableName": "bronzePath",
+        "libraryName": "envLib"
+      }
+    },
+    "activities": [
+      {
+        "name": "Check",
+        "type": "IfCondition",
+        "dependsOn": [],
+        "typeProperties": {
+          "expression": {
+            "value": "@equals(pipeline().libraryVariables.envLib_bronzePath, pipeline().parameters.expected)",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            { "name": "Matched", "type": "Wait", "typeProperties": { "waitTimeInSeconds": 0 } }
+          ],
+          "ifFalseActivities": [
+            {
+              "name": "Mismatch",
+              "type": "Fail",
+              "typeProperties": {
+                "message": {
+                  "value": "@concat('resolved to ', pipeline().libraryVariables.envLib_bronzePath)",
+                  "type": "Expression"
+                },
+                "errorCode": "LibraryVariableMismatch"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
