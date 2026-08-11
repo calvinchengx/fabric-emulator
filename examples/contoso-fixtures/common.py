@@ -438,6 +438,14 @@ def post_and_wait(url, body, what=None):
     Every Fabric create can be async; which ones ARE is a service decision that
     can change. So this resolves the operation whenever one is offered rather than
     per item type, which is also what fabric-cicd does.
+
+    WHY THE POLL IS PACED BY THE SERVICE. Measured against a real Fabric trial on
+    2026-08-11: a Warehouse create answered `Retry-After: 20` and completed in 13
+    seconds. So the header is a floor the service ASKS for, not an estimate of how
+    long the work takes. That is the answer to the obvious objection, that
+    honouring it makes the examples slower than they need to be: true, and not an
+    argument, because the service asked. The cap is a ceiling on the wait, not a
+    target, and it exists so a service that asks for an hour cannot hang a run.
     """
     import time
 
