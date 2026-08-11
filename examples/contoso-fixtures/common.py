@@ -474,7 +474,19 @@ def report_lineage(step, moves):
     groups the code actually computes.
 
     Each read/write is an (item_id, path) pair, e.g. (lakehouse, "Tables/x").
+
+    SKIPPED under `real`, because there is nothing to tell. The flow graph is the
+    emulator's own record of what moved through it; real Fabric publishes no
+    endpoint that accepts a claim like this, and Purview — its answer to the same
+    question — is a different integration with a different model, not this call to
+    a different host. Skipping rather than refusing for the reason lineage.py
+    gives: the step's real work is the transform, and a graph the target does not
+    keep is not a result the pipeline needs.
     """
+    if _T.is_real:
+        log(f"skipping the {step} lineage report: the flow graph is the emulator's "
+            f"own record of what moved, and Purview is Fabric's counterpart")
+        return
     st = load()
     body = {"step": step, "moves": [
         {"reads": [{"itemId": i, "path": p} for i, p in reads],

@@ -93,6 +93,9 @@ PAIRS = [
         "only_in": {
             "check_wh.py": "PySpark only: warehouse probe",
             "compare.py": "dbt-fabricspark only: reads both halves' summaries",
+            # Same axis as the simple pair: this half's silver is a Notebook
+            # definition submitted as a job, the other half's is a dbt project.
+            "definitions/silver.Notebook": "PySpark only: silver as a Notebook definition",
         },
         "extra_steps_in_b": ["compare"],
     },
