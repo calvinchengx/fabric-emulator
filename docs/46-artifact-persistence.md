@@ -124,9 +124,24 @@ missing half of the target. A step that drives Spark Connect **directly** is
 emulator-only by construction. That is why `silver.py` no longer does it: its
 transform lives in `definitions/silver.Notebook/` and is submitted with
 `run_job(nb, "RunNotebook")`, so the emulator's agent executes it locally and a
-Fabric pool executes the same cells on a tenant. `engine.py` skips under `real`
-(Fabric runs the queued notebook itself), and `star_silver.py` in the advanced
-examples still refuses, because that transform has not been moved yet.
+Fabric pool executes the same cells on a tenant. `star_silver.py` in the advanced examples
+moved the same way, and needed one thing more: its assertions depend on
+quantities that exist only inside the transform (how many keys were too ambiguous
+to match on, the ERP and web input totals), and a notebook has no way to return
+those — real Fabric exposes no exit value for a REST-submitted run. So the
+notebook writes them as a one-row Delta table, `silver_resolution_metrics`, which
+is portable by construction and inspectable afterwards. `engine.py` skips under
+`real`, because Fabric runs the queued notebook itself.
+
+**What is still emulator-only, stated rather than left to be discovered:** a
+semantic model's rows. `semantic_model.py` and `tmdl_pbip.py` publish a `data.json`
+part — the emulator's inline row snapshot. Real Fabric has no such part; a model's
+data comes from a partition, either Direct Lake over OneLake Delta or an import
+partition whose M expression reads `Sql.Database(<connectionString>, …)`. The
+emulator evaluates Direct Lake and inline data, not `Sql.Database` import, and the
+warehouse's gold tables are not Delta in OneLake locally — so converting needs
+emulator work first, and `scripts/check_example_portability.py` prints the debt on
+every run instead of hiding it in a whitelist.
 
 ### SQL: the address is per-item and only the API knows it
 
