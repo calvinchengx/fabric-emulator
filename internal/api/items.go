@@ -79,6 +79,10 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 	if body.Definition != nil {
 		parts = body.Definition.Parts
 	}
+	if code, msg := a.definitionRejection(body.Type, parts); msg != "" {
+		writeErr(w, http.StatusBadRequest, code, msg)
+		return
+	}
 	if err := a.Store.CreateItem(it, parts); err != nil {
 		// The pre-check above catches the ordinary case; this is the
 		// concurrent-create race the DB constraint closes.
