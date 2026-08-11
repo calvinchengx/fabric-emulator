@@ -162,3 +162,30 @@ func (a *API) refreshSQLEndpointMetadata(w http.ResponseWriter, r *http.Request,
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"value": report})
 }
+
+// oneLakePaths builds a lakehouse's `oneLakeTablesPath` / `oneLakeFilesPath`.
+//
+// Real Fabric returns absolute `https://onelake.dfs.fabric.microsoft.com/{ws}/{item}/…`
+// URLs (measured 2026-08-11). The emulator serves OneLake on its own origin, so
+// the host comes from the caller's request for the same reason the SQL address
+// does: a container on the compose network and a laptop reach it by different
+// names, and one configured hostname would be wrong for one of them.
+func (a *API) oneLakePaths(r *http.Request, it *store.Item) map[string]any {
+	base := oneLakeBaseURI(r) + "/" + it.WorkspaceID + "/" + it.ID
+	return map[string]any{
+		"oneLakeTablesPath": base + "/Tables",
+		"oneLakeFilesPath":  base + "/Files",
+	}
+}
+
+// oneLakeBaseURI is the DFS origin the caller reached this emulator on.
+func oneLakeBaseURI(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	}
+	return scheme + "://" + r.Host + "/onelake"
+}

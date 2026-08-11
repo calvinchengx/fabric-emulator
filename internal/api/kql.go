@@ -440,12 +440,34 @@ func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]an
 		// warehouse has no address", which is a different claim from "this build
 		// serves no SQL". The collation is reported either way, because it is a
 		// property of the warehouse rather than of the endpoint serving it.
-		props := map[string]any{"collationType": a.warehouseCollation(it.ID)}
+		props := map[string]any{
+			"collationType": a.warehouseCollation(it.ID),
+			// MEASURED on a tenant: a Warehouse reports `creationMode` too.
+			// "New" is the only mode these examples exercise; restore-from-backup
+			// is not modelled, so reporting anything else would be a claim.
+			"creationMode": "New",
+		}
 		if cs := a.warehouseConnectionString(r); cs != "" {
 			props["connectionString"] = cs
+			// The SAME address under a second name, which a tenant returns and
+			// this did not. A client reading `connectionInfo` — and the field
+			// exists precisely because some do — got nothing here.
+			props["connectionInfo"] = cs
 		}
 		return props
 	case "Lakehouse":
+		// The OneLake paths, which a tenant reports and this did not. MEASURED
+		// 2026-08-11 on a real lakehouse:
+		//
+		//	oneLakeTablesPath  https://onelake.dfs.fabric.microsoft.com/{ws}/{item}/Tables
+		//	oneLakeFilesPath   .../Files
+		//
+		// The documented way to find where a lakehouse's data lives is to read
+		// these; returning nothing is the emulator-strict direction rather than
+		// the dangerous one, but it is exactly what makes someone hardcode a path
+		// instead — and a hardcoded OneLake path does not survive the toggle.
+		// Derived from the caller's own request like every other address here, so
+		// it is reachable from wherever the caller stands.
 		// The SQL analytics endpoint: the read-only T-SQL surface over the
 		// lakehouse's Delta tables. It is the same TDS listener a Warehouse
 		// uses — the emulator routes by item and makes a Lakehouse read-only
@@ -477,9 +499,13 @@ func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]an
 			if id := a.sqlEndpointItemFor(it); id != "" {
 				ep["id"] = id
 			}
-			return map[string]any{"sqlEndpointProperties": ep}
+			props := a.oneLakePaths(r, it)
+			props["sqlEndpointProperties"] = ep
+			return props
 		}
-		return nil
+		// Still reported without a SQL endpoint: OneLake is where the data is,
+		// whether or not anything serves T-SQL over it.
+		return a.oneLakePaths(r, it)
 	case "Eventhouse":
 		base := kustoBaseURI(r, it.WorkspaceID, it.ID)
 		ids := []string{}

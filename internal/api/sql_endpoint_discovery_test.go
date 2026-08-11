@@ -67,14 +67,19 @@ func TestLakehouseAdvertisesItsSQLAnalyticsEndpoint(t *testing.T) {
 	if ep["provisioningStatus"] != "Success" {
 		t.Errorf("provisioningStatus = %v, want Success", ep["provisioningStatus"])
 	}
-	// See kql.go: on real Fabric the analytics endpoint is a separate SQLEndpoint
-	// item with its own GUID. Reporting the lakehouse id under that name would
-	// invite a consumer to use it as a database name, which works here and fails
-	// on real Fabric. Absent fails the other way round: locally, before it ships.
+	// No `id` HERE, and for a reason that is no longer the old one — the comment
+	// this replaces claimed "the emulator has no SQLEndpoint item", which stopped
+	// being true when it gained one (internal/api/sqlendpoint.go, measured against
+	// a tenant). What this case actually covers is a lakehouse with NO endpoint
+	// item: seeded straight into the store without applyCreationPayload, as a
+	// lakehouse created before that existed would be. Reporting an id then would
+	// name something that answers nothing.
+	//
+	// The live assertion is TestTheReportedEndpointIDIsTheItemsOwn: with the item
+	// present the id IS reported, and differs from the lakehouse's.
 	if _, present := ep["id"]; present {
-		t.Errorf("sqlEndpointProperties.id is present (%v): the emulator has no "+
-			"SQLEndpoint item, so any value here would be a different id than real "+
-			"Fabric's", ep["id"])
+		t.Errorf("reported an endpoint id (%v) for a lakehouse with no "+
+			"SQLEndpoint item — it would address nothing", ep["id"])
 	}
 	// Two surfaces, two property names. A lakehouse never carries the Warehouse
 	// one (TestOnlyAWarehouseGetsAConnectionString covers the generic route).
@@ -104,8 +109,15 @@ func TestLakehouseEndpointIsDialableFromWhereverTheCallerIs(t *testing.T) {
 	}
 }
 
-// The contract-only stack (no sqlserver sidecar) is supported: say nothing rather
-// than advertise an endpoint that is not listening.
+// The contract-only stack (no sqlserver sidecar) is supported: say nothing about
+// an ENDPOINT that is not listening.
+//
+// Narrowed once the lakehouse gained OneLake paths: this asserted "no properties
+// at all", which was only ever a proxy for "no endpoint" because
+// sqlEndpointProperties was the sole property. The two claims are separate now —
+// OneLake is where the data is whether or not anything serves T-SQL over it —
+// and conflating them would make the honest addition of a path look like a
+// regression.
 func TestLakehouseSaysNothingWithoutASQLEndpoint(t *testing.T) {
 	a, st := newAPI(t)
 	a.SQLEndpointPort = "" // FABRIC_SQL_TDS_ADDR unset
@@ -113,7 +125,8 @@ func TestLakehouseSaysNothingWithoutASQLEndpoint(t *testing.T) {
 	lake := seedItem(t, st, ws.ID, "Lakehouse", "lake")
 
 	_, body := typedItemBody(t, a, "localhost:9443", ws.ID, lake.ID, "Lakehouse")
-	if props, ok := body["properties"]; ok {
-		t.Fatalf("a lakehouse with no SQL endpoint advertised properties: %v", props)
+	props, _ := body["properties"].(map[string]any)
+	if ep, present := props["sqlEndpointProperties"]; present {
+		t.Fatalf("advertised a SQL endpoint that is not listening: %v", ep)
 	}
 }

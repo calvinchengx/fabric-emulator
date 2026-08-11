@@ -165,3 +165,64 @@ func TestRefreshMetadataRequiresContributor(t *testing.T) {
 	}
 	_ = store.RoleViewer
 }
+
+// The properties a tenant reports and the emulator did not, measured 2026-08-11.
+// Each is the emulator-strict direction (absent here, present there), which is
+// the safe direction — but an absent `oneLakeTablesPath` is exactly what makes
+// someone hardcode a OneLake path instead, and a hardcoded path does not survive
+// the toggle.
+func TestALakehouseReportsItsOneLakePaths(t *testing.T) {
+	a, st := newAPI(t)
+	a.SQLEndpointPort = "1433"
+	ws := seedWorkspace(t, st)
+	lake := seedItem(t, st, ws.ID, "Lakehouse", "lake")
+	a.applyCreationPayload(lake, nil)
+
+	_, body := typedItemBody(t, a, "localhost:9443", ws.ID, lake.ID, "Lakehouse")
+	props, _ := body["properties"].(map[string]any)
+	want := "http://localhost:9443/onelake/" + ws.ID + "/" + lake.ID
+	if props["oneLakeTablesPath"] != want+"/Tables" {
+		t.Errorf("oneLakeTablesPath = %v, want %q", props["oneLakeTablesPath"], want+"/Tables")
+	}
+	if props["oneLakeFilesPath"] != want+"/Files" {
+		t.Errorf("oneLakeFilesPath = %v, want %q", props["oneLakeFilesPath"], want+"/Files")
+	}
+}
+
+// OneLake is where the data is whether or not anything serves T-SQL over it, so
+// the paths survive a stack with no SQL sidecar.
+func TestOneLakePathsSurviveNoSQLEndpoint(t *testing.T) {
+	a, st := newAPI(t)
+	a.SQLEndpointPort = "" // contract-only stack
+	ws := seedWorkspace(t, st)
+	lake := seedItem(t, st, ws.ID, "Lakehouse", "lake")
+	a.applyCreationPayload(lake, nil)
+
+	_, body := typedItemBody(t, a, "localhost:9443", ws.ID, lake.ID, "Lakehouse")
+	props, _ := body["properties"].(map[string]any)
+	if props["oneLakeTablesPath"] == nil {
+		t.Fatalf("no OneLake paths without a SQL endpoint: %v", props)
+	}
+	if _, present := props["sqlEndpointProperties"]; present {
+		t.Error("advertised a SQL endpoint that is not listening")
+	}
+}
+
+func TestAWarehouseReportsConnectionInfoAndCreationMode(t *testing.T) {
+	a, st := newAPI(t)
+	a.SQLEndpointPort = "1433"
+	ws := seedWorkspace(t, st)
+	wh := seedItem(t, st, ws.ID, "Warehouse", "dw")
+
+	_, body := typedItemBody(t, a, "localhost:9443", ws.ID, wh.ID, "Warehouse")
+	props, _ := body["properties"].(map[string]any)
+	// A tenant returns the same address under both names; a client reading
+	// `connectionInfo` got nothing here.
+	if props["connectionInfo"] != props["connectionString"] {
+		t.Errorf("connectionInfo %v != connectionString %v",
+			props["connectionInfo"], props["connectionString"])
+	}
+	if props["creationMode"] != "New" {
+		t.Errorf("creationMode = %v, want New", props["creationMode"])
+	}
+}
