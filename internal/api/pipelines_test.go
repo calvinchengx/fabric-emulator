@@ -1273,6 +1273,70 @@ func TestCopyFilesRootFolderAddressing(t *testing.T) {
 	}
 }
 
+// TestCopyTenantDatasetShapeLandsWhereItSays: the FULL dataset model real Fabric
+// requires — `datasetSettings.type` with `typeProperties.location` and the
+// format properties beside it — addresses the same bytes as the shapes above.
+//
+// MEASURED, 2026-08-11. A tenant rejects the abbreviated source the emulator was
+// happy with:
+//
+//	ErrorCode=InvalidParameter, HybridDeliveryException
+//	The value of the property 'formatProperties' is invalid:
+//	'Value cannot be null. Parameter name: formatProperties'
+//
+// So the examples have to carry the full shape, and the emulator has to run it.
+//
+// WHY THIS ASSERTS THE PATH AND NOT THE STATUS. The first version of this case
+// passed on `Completed` while the bytes went to `Tables/[]/bronze_customers`:
+// flattening the scopes brought `datasetSettings.schema` into reach of the
+// `schema` lookup, and in Fabric's dataset model that key is a COLUMN LIST, not
+// a namespace. fmt.Sprint rendered the empty array as `[]` and it became a path
+// segment. Nothing failed — the activity reported Succeeded, the job Completed,
+// and the table simply was not where anyone would look for it. A status
+// assertion cannot see that; a path assertion is the whole test.
+func TestCopyTenantDatasetShapeLandsWhereItSays(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	payload := []byte("id,name\n1,ada\n")
+	seedFile(t, st, ws.ID, lh.ID, "Files/landing/customers.csv", payload)
+
+	ls := `"linkedService":{"properties":{"type":"Lakehouse",
+      "typeProperties":{"workspaceId":"` + ws.ID + `","artifactId":"` + lh.ID + `"}}}`
+	content := `{"properties":{"activities":[
+      {"name":"IngestCustomers","type":"Copy","typeProperties":{
+        "source":{"type":"DelimitedTextSource",
+          "storeSettings":{"type":"LakehouseReadSettings","recursive":true},
+          "formatSettings":{"type":"DelimitedTextReadSettings"},
+          "datasetSettings":{"type":"DelimitedText","annotations":[],"schema":[],
+            "typeProperties":{
+              "location":{"type":"LakehouseLocation","fileName":"customers.csv",
+                "folderPath":"landing"},
+              "columnDelimiter":",","escapeChar":"\\","firstRowAsHeader":true,
+              "quoteChar":"\""},
+            ` + ls + `}},
+        "sink":{"type":"LakehouseTableSink","tableActionOption":"Overwrite",
+          "datasetSettings":{"type":"LakehouseTable","annotations":[],"schema":[],
+            "typeProperties":{"table":"bronze_customers"},
+            ` + ls + `}}
+      }}]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	lineage := runs[0]["output"].(map[string]any)["lineage"].(map[string]any)
+	if lineage["targetPath"] != "Tables/bronze_customers" {
+		t.Errorf("targetPath = %v, want Tables/bronze_customers — an empty "+
+			"column list became a namespace", lineage["targetPath"])
+	}
+	if lineage["sourcePath"] != "Files/landing/customers.csv" {
+		t.Errorf("sourcePath = %v, want Files/landing/customers.csv",
+			lineage["sourcePath"])
+	}
+}
+
 // TestCopyRejectsUnsupportedLoudly: the emulator must refuse what it cannot
 // honour by name, never accept the payload and quietly do something else.
 func TestCopyRejectsUnsupportedLoudly(t *testing.T) {

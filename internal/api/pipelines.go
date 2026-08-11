@@ -718,6 +718,18 @@ func (e *pipelineExecutor) resolveLoc(side string, raw json.RawMessage, resolve 
 		if err != nil || v == nil {
 			return "", err
 		}
+		// Only a SCALAR addresses anything. Fabric's dataset model reuses names
+		// this lookup wants for things that are not names: `datasetSettings.schema`
+		// is a COLUMN LIST, not a namespace, and `annotations`/`structure` are
+		// arrays too. Flattening the scopes puts them in reach, and fmt.Sprint
+		// would happily render `[]` — which is how a tenant-shaped Copy landed its
+		// bytes at `Tables/[]/bronze_customers` and still reported Succeeded.
+		// A composite here means "this key does not mean what the caller thinks",
+		// so it reads as absent rather than as the string "[]".
+		switch v.(type) {
+		case []any, map[string]any:
+			return "", nil
+		}
 		return fmt.Sprint(v), nil
 	}
 
