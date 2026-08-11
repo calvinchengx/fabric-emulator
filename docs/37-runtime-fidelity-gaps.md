@@ -200,6 +200,22 @@ thing not to do: an emulator that leaks bookkeeping into user data creates
 exactly the parity drift it exists to prevent. Tagging only file reads is what
 bounds the leak.
 
+**This paragraph had the right list and drew the line in the wrong place, and
+that cost two sessions several hours.** Bounding *which* frames carry the tag
+says nothing about whether the tag is visible on the frames that do. It was:
+every file read showed one extra column on all four surfaces named above, in
+v0.20.0, v0.21.0 and v0.22.0. A consumer's landing-to-bronze step counted
+`len(df.columns)` and got one more than its own vendor export had, while the
+table it wrote was correct — so nothing downstream disagreed and the number had
+no name attached to it.
+
+Fixed (#203) by hiding the tag at every surface a user can observe it through
+rather than only at `write`. `select`/`selectExpr` are the exception and must
+stay that way: that is where `input_file_name()` is used, and it resolves to the
+tag, so hiding unconditionally there would trade one silent defect for another.
+The rule the fix encodes: **the tag is visible to a select that references it,
+and to nothing else.**
+
 **The proportionate change is the error message**, not the behaviour: raise
 something that names the shim and explains that provenance was requested on a
 frame that never came from a file, instead of a bare `AnalysisException` on an

@@ -139,20 +139,106 @@ def install(spark) -> bool:
 
     F.input_file_name = _input_file_name
 
-    # Strip the tag from anything persisted: real Fabric tables have no such
-    # column, and an emulator that leaks bookkeeping into user data is creating
-    # exactly the parity drift it exists to prevent. `input_file_name()` copies
-    # the value into the user's own column before the write sees the frame.
+    # --- keeping the tag invisible ------------------------------------------
+    #
+    # Stripping it at write covers persisted data. It does NOT cover the schema
+    # a notebook can see, and that gap was a real defect: a landing-to-bronze
+    # step counted `len(df.columns)` and got one more column than its own vendor
+    # export had, on every file read in the shipped stack. The written table was
+    # correct, which is what made it confusing to chase.
+    #
+    # So the tag is hidden from every surface a user can observe it through,
+    # not just from writes. `df.columns`, `printSchema`, `SELECT *` and
+    # `toPandas` are named in docs/37 as the leak this module must not create —
+    # tagging only file reads narrows WHICH frames are affected, it does not
+    # make the leak acceptable on those frames.
+    #
+    # One helper, applied at each surface, so adding a surface is one line and
+    # missing one is visible in this list rather than hidden in a method body.
+    original_columns = _ConnectDataFrame.columns
+
+    def _raw_columns(df):
+        """Columns INCLUDING the tag — the shim's own view."""
+        return original_columns.fget(df)
+
+    def _visible(df):
+        """The frame as the user should see it: no bookkeeping column."""
+        try:
+            if _TAG in _raw_columns(df):
+                return df.drop(_TAG)
+        except Exception:
+            pass
+        return df
+
+    # Properties first: schema-shaped surfaces.
+    for _name in ("columns", "schema", "dtypes"):
+        _original_prop = getattr(_ConnectDataFrame, _name)
+
+        def _make(prop):
+            @property
+            def hidden(self):
+                return prop.fget(_visible(self))
+
+            return hidden
+
+        setattr(_ConnectDataFrame, _name, _make(_original_prop))
+
+    # Then the methods that render or materialise rows. `select`/`selectExpr`
+    # are here for `*`: star expansion happens on the server against the plan
+    # it is given, so the tag has to be gone before the request leaves.
+    for _name in (
+        "printSchema",
+        "show",
+        "collect",
+        "take",
+        "head",
+        "first",
+        "toPandas",
+        "toLocalIterator",
+        "createOrReplaceTempView",
+        "createTempView",
+        "createOrReplaceGlobalTempView",
+    ):
+        if not hasattr(_ConnectDataFrame, _name):
+            continue
+        _original_method = getattr(_ConnectDataFrame, _name)
+
+        def _make_method(method):
+            def hidden(self, *args, **kwargs):
+                return method(_visible(self), *args, **kwargs)
+
+            return hidden
+
+        setattr(_ConnectDataFrame, _name, _make_method(_original_method))
+
+    # `select` and `selectExpr` cannot hide unconditionally: this is where
+    # `input_file_name()` is USED, and it resolves to the tag. Hiding it here
+    # would break the one thing the module exists to provide. So the tag stays
+    # visible to a select that references it, and is hidden from every other
+    # select — which is what makes `SELECT *` safe without making provenance
+    # impossible.
+    for _name in ("select", "selectExpr"):
+        if not hasattr(_ConnectDataFrame, _name):
+            continue
+        _original_select = getattr(_ConnectDataFrame, _name)
+
+        def _make_select(method):
+            def hidden(self, *args, **kwargs):
+                wants_tag = any(_TAG in str(a) for a in args)
+                return method(self if wants_tag else _visible(self), *args, **kwargs)
+
+            return hidden
+
+        setattr(_ConnectDataFrame, _name, _make_select(_original_select))
+
+    # Writes keep their own strip: `_visible` would do it, but the write path
+    # is a property returning a writer rather than a frame, so it stays
+    # explicit rather than being folded into the loop above.
     original_write = _ConnectDataFrame.write
 
     @property
     def write(self):
-        try:
-            if _TAG in self.columns:
-                return original_write.fget(self.drop(_TAG))
-        except Exception:
-            pass
-        return original_write.fget(self)
+        return original_write.fget(_visible(self))
 
     _ConnectDataFrame.write = write
 
