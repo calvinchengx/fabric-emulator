@@ -210,6 +210,15 @@ func Adapt(sql string) (out string, changed bool, err error) {
 // compose: CTAS first — it produces an ordinary query — then nested-CTE
 // flattening over the result.
 func adaptStatement(sql string) (out string, changed bool, err error) {
+	// Refusals first: a statement Fabric would reject must not be rewritten into
+	// one it would accept. Rewriting first and checking after would let the
+	// adapter launder a restriction — the emulator would run something the tenant
+	// never would, which is the failure this whole file exists to avoid.
+	if toks, terr := Tokenize(sql); terr == nil {
+		if rerr := checkCreateTableRestrictions(toks); rerr != nil {
+			return sql, false, rerr
+		}
+	}
 	out, changed, err = RewriteCTAS(sql)
 	if err != nil {
 		return sql, false, err

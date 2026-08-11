@@ -570,3 +570,40 @@ unless the variable is set (a nil `TraceFunc` costs one nil check per message).
 [nested]: https://learn.microsoft.com/en-us/sql/t-sql/queries/nested-common-table-expression?view=fabric&preserve-view=true
 [ident]: https://learn.microsoft.com/en-us/fabric/data-warehouse/identity
 [i318]: https://github.com/microsoft/dbt-fabric/issues/318
+
+## Measured against a real tenant, 2026-08-11
+
+Everything above was derived from what dbt-fabric emits and what SQL Server
+accepts. These are the divergences a real Fabric Warehouse produced when the same
+statements were sent to it, and they all point the dangerous way: **SQL Server
+accepts more than Fabric does**, so a model built here could fail there.
+
+| Statement | Real Fabric | Vanilla SQL Server | Now |
+|---|---|---|---|
+| `information_schema.tables` (lowercase) | `Invalid object name` | 12 rows | refused, because per-item databases are created `COLLATE Latin1_General_100_BIN2_UTF8` |
+| `INT IDENTITY(1,1)` | "Identity column must be of data type BIGINT" | accepted | refused by name (`internal/tsql/createtable.go`) |
+| `PRIMARY KEY` in `CREATE TABLE` | "not supported in the CREATE TABLE statement" | accepted | refused by name |
+| `PRIMARY KEY … NOT ENFORCED` inline | same refusal | accepted | refused by name |
+| CTAS · `SELECT INTO` · nested CTE · `varchar(max)` · `MERGE` · `#temp` · `sys.tables` | all accepted | accepted | unchanged |
+
+**The collation is the one that mattered.** A Fabric Warehouse reports
+`Latin1_General_100_BIN2_UTF8` — documented by Microsoft as "The default -
+case-sensitive (CS) collation" — while `CREATE DATABASE [x]` on the emulator's
+SQL Server inherited `SQL_Latin1_General_CP1_CI_AS`, case-INsensitive. So every
+identifier casing mistake passed locally and failed on a tenant, and no amount of
+reading the code would show it. Per-item databases now carry Fabric's collation,
+and `collationType` is honoured from a Warehouse's `creationPayload` and reported
+on `GET /warehouses/{id}` (both values Fabric offers).
+
+Verified after the change: `e2e/medallion` 11/11, with **dbt-fabric's gold build
+green against a case-sensitive warehouse** — the adapter emits correctly-cased
+SQL, which is unsurprising once you notice Fabric has always been case-sensitive.
+Measured in the container: both per-item databases report
+`Latin1_General_100_BIN2_UTF8`, `INFORMATION_SCHEMA.TABLES` returns 6 and
+`information_schema.tables` is now an invalid object name — the tenant's answer,
+locally.
+
+**The two dialect adaptations are not portability debt.** Real Fabric accepts
+CTAS natively *and* `SELECT INTO`, and accepts the nested CTE dbt-fabric wraps
+every test body in. T6 and T8 exist because the emulator's backend is vanilla SQL
+Server, not because Fabric is short of anything.

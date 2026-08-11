@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/tds"
 )
 
 func TestSQLPortOf(t *testing.T) {
@@ -103,8 +104,18 @@ func TestWarehouseReportsNoConnectionStringWithoutASQLEndpoint(t *testing.T) {
 	}
 
 	body := getItemBody(t, a, "localhost:9443", ws.ID, wh.ID)
-	if props, ok := body["properties"]; ok {
-		t.Fatalf("a warehouse with no SQL endpoint advertised properties: %v", props)
+	props, _ := body["properties"].(map[string]any)
+	if cs, present := props["connectionString"]; present {
+		t.Fatalf("a warehouse with no SQL endpoint advertised an address: %v", cs)
+	}
+	// It DOES still report its collation, and that is not a weakening of the
+	// assertion above: the collation is a property of the warehouse, not of the
+	// endpoint serving it, and real Fabric reports it either way. Asserting it
+	// here keeps the two claims separate — "no address" must not quietly become
+	// "no properties", which is what this test said before there was a second one.
+	if props["collationType"] != tds.CollationCaseSensitive {
+		t.Errorf("collationType = %v, want Fabric's default %q",
+			props["collationType"], tds.CollationCaseSensitive)
 	}
 }
 

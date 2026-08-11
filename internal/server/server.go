@@ -149,6 +149,15 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 				return nil, err
 			}
 			s.TDS.Backend = be
+			// A Warehouse's own collationType decides how its database is created.
+			// The backend cannot read the store (import direction), so it asks.
+			be.CollationOf = func(database string) string {
+				props, err := st.ItemProperties(database)
+				if err != nil {
+					return ""
+				}
+				return props[store.PropCollationType]
+			}
 			// Route each connection by item type (Lakehouse = read-only analytics
 			// endpoint, Warehouse = read-write), each into its own database, with
 			// workspace RBAC enforced for the token's principal.

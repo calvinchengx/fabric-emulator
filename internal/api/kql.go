@@ -36,6 +36,7 @@ import (
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/tds"
 )
 
 // KustoAudience is the Entra resource a Kusto/Eventhouse token carries —
@@ -437,11 +438,13 @@ func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]an
 		// See warehouse_endpoint.go. Nil rather than an empty string when no SQL
 		// endpoint is running: a property that is present but blank reads as "the
 		// warehouse has no address", which is a different claim from "this build
-		// serves no SQL".
+		// serves no SQL". The collation is reported either way, because it is a
+		// property of the warehouse rather than of the endpoint serving it.
+		props := map[string]any{"collationType": a.warehouseCollation(it.ID)}
 		if cs := a.warehouseConnectionString(r); cs != "" {
-			return map[string]any{"connectionString": cs}
+			props["connectionString"] = cs
 		}
-		return nil
+		return props
 	case "Lakehouse":
 		// The SQL analytics endpoint: the read-only T-SQL surface over the
 		// lakehouse's Delta tables. It is the same TDS listener a Warehouse
@@ -523,6 +526,19 @@ func (a *API) applyCreationPayload(it *store.Item, payload map[string]any) {
 		return v
 	}
 	switch it.Type {
+	case "Warehouse":
+		// Fabric offers exactly two collations and defaults to the case-SENSITIVE
+		// one. Recording the default explicitly rather than leaving the property
+		// absent is deliberate: `collationType` is a documented part of a
+		// Warehouse's properties, and a consumer that reads it to decide how to
+		// quote identifiers must get an answer here too. An unrecognised value is
+		// ignored rather than stored, so the report and the database's actual
+		// COLLATE clause cannot disagree (internal/tds/collation.go).
+		collation := tds.CollationCaseSensitive
+		if c := str("collationType"); tds.ValidCollation(c) {
+			collation = c
+		}
+		_ = a.Store.SetItemProperties(it.ID, map[string]string{store.PropCollationType: collation})
 	case "KQLDatabase":
 		props := map[string]string{propDatabaseType: "ReadWrite"}
 		for _, key := range []string{propParentEventhouse, propDatabaseType, propStoragePeriod} {

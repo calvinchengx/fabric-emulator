@@ -136,6 +136,16 @@ func (s *Store) SetDefinition(itemID string, parts []DefinitionPart) error {
 	return err
 }
 
+// PropCollationType is the Warehouse property naming its database collation.
+//
+// It lives in `store` rather than `api` because two packages need the same
+// string: the API stores it from `creationPayload`, and the server hands the TDS
+// backend a lookup so `CREATE DATABASE` gets the right COLLATE clause. A literal
+// duplicated across that boundary is a silent divergence waiting for a typo —
+// the database would be created with Fabric's default while the API reported
+// what the caller asked for.
+const PropCollationType = "collationType"
+
 // SetItemProperties upserts typed properties on an item — the values Fabric
 // returns under an item's "properties" object (a KQLDatabase's
 // parentEventhouseItemId, for instance). Empty values delete the key so a
