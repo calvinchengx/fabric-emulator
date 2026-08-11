@@ -80,23 +80,81 @@ print(f"workspace: {ws_id}")
 ws = FabricWorkspace(
     workspace_id=ws_id,
     repository_directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "repo"),
-    item_type_in_scope=["Notebook"],
+    item_type_in_scope=["Notebook", "VariableLibrary", "DataPipeline"],
     token_credential=cred,
 )
 publish_all_items(ws)
 
-# Verify through the plain REST surface: item exists, definition round-trips.
+# Verify through the plain REST surface: items exist, definitions round-trip.
 r = requests.get(f"{FABRIC}/v1/workspaces/{ws_id}/items", headers=auth)
-items = r.json()["value"]
-assert len(items) == 1 and items[0]["type"] == "Notebook" and items[0]["displayName"] == "hello", items
-r = requests.post(f"{FABRIC}/v1/workspaces/{ws_id}/items/{items[0]['id']}/getDefinition", headers=auth)
-paths = sorted(p["path"] for p in r.json()["definition"]["parts"])
-print(f"published definition parts: {paths}")
+items = {i["displayName"]: i for i in r.json()["value"]}
+assert set(items) == {"hello", "envLib", "medallion"}, items
+assert items["hello"]["type"] == "Notebook", items["hello"]
+assert items["envLib"]["type"] == "VariableLibrary", items["envLib"]
+assert items["medallion"]["type"] == "DataPipeline", items["medallion"]
+
+
+def parts_of(item_id):
+    resp = requests.post(f"{FABRIC}/v1/workspaces/{ws_id}/items/{item_id}/getDefinition", headers=auth)
+    resp.raise_for_status()
+    return sorted(p["path"] for p in resp.json()["definition"]["parts"])
+
+
+paths = parts_of(items["hello"]["id"])
+print(f"published notebook parts: {paths}")
 assert ".platform" in paths and "notebook-content.py" in paths, paths
+
+# The Variable Library round-trips as its own multi-file definition, INCLUDING
+# the nested valueSets/ directory — a part path with a directory in it, which
+# is the shape a flat definition model would silently flatten or drop.
+paths = parts_of(items["envLib"]["id"])
+print(f"published variable library parts: {paths}")
+assert "variables.json" in paths, paths
+assert "settings.json" in paths, paths
+assert "valueSets/qat.json" in paths, paths
+
+# --- the witness: a library variable RESOLVES in a published pipeline --------
+#
+# The pipeline compares the resolved value against a run parameter and FAILS
+# when they differ, so a completed run is evidence the value was right rather
+# than evidence nothing errored. Both items were published by Microsoft's own
+# client from a git-shaped repository; nothing below hand-builds a definition.
+def run_pipeline(expected):
+    base = f"{FABRIC}/v1/workspaces/{ws_id}/items/{items['medallion']['id']}/jobs/instances"
+    resp = requests.post(f"{base}?jobType=Pipeline", headers=auth,
+                         json={"executionData": {"parameters": {"expected": expected}}})
+    assert resp.status_code == 202, (resp.status_code, resp.text)
+    jid = resp.headers["Location"].rsplit("/", 1)[-1]
+    deadline = time.time() + 60
+    while True:
+        got = requests.get(f"{base}/{jid}", headers=auth).json()
+        if got.get("status") not in ("NotStarted", "InProgress"):
+            return got.get("status")
+        assert time.time() < deadline, f"pipeline job never finished: {got}"
+        time.sleep(0.2)
+
+
+status = run_pipeline("Files/bronze")
+print(f"default value set -> {status}")
+assert status == "Completed", f"the library variable did not resolve to Files/bronze ({status})"
+
+# The witness can fail. Without this the green above proves nothing.
+status = run_pipeline("Files/somewhere-else")
+assert status != "Completed", "the pipeline passed against a value the library never declared"
+print("negative arm -> Failed, as it must")
+
+# THE ENVIRONMENT SWITCH, through the same published definitions: activate the
+# other value set and the SAME pipeline resolves the other value.
+resp = requests.patch(f"{FABRIC}/v1/workspaces/{ws_id}/variableLibraries/{items['envLib']['id']}",
+                      headers=auth, json={"properties": {"activeValueSetName": "qat"}})
+assert resp.status_code == 200, (resp.status_code, resp.text)
+status = run_pipeline("Files/bronze-qat")
+print(f"qat value set -> {status}")
+assert status == "Completed", f"the qat override did not take effect ({status})"
 
 # Publish is idempotent: a second run updates rather than duplicates.
 publish_all_items(ws)
 r = requests.get(f"{FABRIC}/v1/workspaces/{ws_id}/items", headers=auth)
-assert len(r.json()["value"]) == 1, r.json()
+assert len(r.json()["value"]) == 3, r.json()
 
 print("FABRIC-CICD E2E: PASS")

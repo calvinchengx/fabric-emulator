@@ -1,0 +1,7 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/valueSet/1.0.0/schema.json",
+  "name": "qat",
+  "variableOverrides": [
+    { "name": "bronzePath", "value": "Files/bronze-qat" }
+  ]
+}

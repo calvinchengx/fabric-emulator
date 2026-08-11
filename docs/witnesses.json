@@ -1008,5 +1008,13 @@
       "go:TestGetDefinitionSynchronousByDefault",
       "go:TestCreateItemSynchronousByDefault"
     ]
+  },
+  "variable-library-consumed-by-a-data-pipeline-libraryvariables-pipeline-libraryvariables-alias": {
+    "section": "CI/CD (`cicd/`)",
+    "claim": "**Variable Library consumed by a Data Pipeline** (`libraryVariables`, `@pipeline().libraryVariables.<alias>`)",
+    "witnesses": [
+      "ci:fabric-cicd",
+      "go:TestVariableLibraryResolutionE2E"
+    ]
   }
 }
