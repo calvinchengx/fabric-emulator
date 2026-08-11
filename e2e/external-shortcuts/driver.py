@@ -43,7 +43,8 @@ fabric_token = token("https://api.fabric.microsoft.com/.default")
 storage_token = token("https://storage.azure.com/.default")
 ws = request("POST", f"{FABRIC}/v1/workspaces", {"displayName": "external-ws"}, fabric_token)
 lake = request("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "lake"}, fabric_token)
-# ONE CONNECTION PER TARGET KIND, because a Fabric connection is TYPED. This
+# ONE CONNECTION PER TARGET KIND, WITH ITS OWN CREDENTIAL, because a Fabric
+# connection is TYPED and the type constrains both halves. This
 # used to be a single "anonymous-object-store" reused for both shortcuts, which
 # no tenant would accept: the creation method and its parameters differ per
 # connector (`AzureDataLakeStorage` takes server+path, `AmazonS3.Storage` takes
@@ -54,17 +55,22 @@ targets = [
     ("adlsGen2", "adls", "http://external-store:8080/adls", "/container/folder", b"from-adls-gen2",
      {"type": "AzureDataLakeStorage", "creationMethod": "AzureDataLakeStorage",
       "parameters": [{"dataType": "Text", "name": "server", "value": "external-store"},
-                     {"dataType": "Text", "name": "path", "value": "/adls"}]}),
+                     {"dataType": "Text", "name": "path", "value": "/adls"}]},
+     # Key, not SharedAccessSignature: a SAS REPLACES the request query string
+     # (internal/onelake), which rewrites the fixture's path. Key sends a
+     # header the fixture ignores, and the tenant lists both for this connector.
+     {"credentialType": "Key", "key": "fixture-key"}),
     ("amazonS3", "s3", "http://external-store:8080/s3", "/bucket/prefix", b"from-amazon-s3",
      {"type": "AmazonS3", "creationMethod": "AmazonS3.Storage",
       "parameters": [{"dataType": "Text", "name": "url", "value": "http://external-store:8080/s3"},
-                     {"dataType": "Text", "name": "roleArn", "value": ""}]}),
+                     {"dataType": "Text", "name": "roleArn", "value": ""}]},
+     {"credentialType": "Basic", "username": "fixture", "password": "fixture"}),
 ]
-for kind, name, location, subpath, expected, details in targets:
+for kind, name, location, subpath, expected, details, credential in targets:
     connection = request("POST", f"{FABRIC}/v1/connections", {
-        "displayName": f"anonymous-{name}", "connectivityType": "ShareableCloud",
+        "displayName": f"external-{name}", "connectivityType": "ShareableCloud",
         "connectionDetails": details,
-        "credentialDetails": {"credentials": {"credentialType": "Anonymous"}},
+        "credentialDetails": {"credentials": credential},
     }, fabric_token)
     request("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items/{lake['id']}/shortcuts", {
         "path": "Files", "name": name,
