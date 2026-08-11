@@ -93,6 +93,48 @@ type Operation struct {
 	FailWith   string // non-empty forces Failed with this errorCode
 }
 
+// PercentCompleteAt reports progress the way a tenant does, which is NOT a
+// progress bar. nil means "no figure", i.e. a JSON null.
+//
+// MEASURED against real Fabric on 2026-08-11 by local_0cdd48fd, twice: a
+// Warehouse create that succeeded, and a SemanticModel create that failed
+// asynchronously. percentComplete is `100` ON SUCCESS AND NULL EVERYWHERE ELSE
+// — running, and failed. It never takes an intermediate value.
+//
+// The failed case was my inference and it was WRONG. I argued 100 because the
+// work stopped progressing either way and `status` is the field that says
+// which. The tenant does not do that, and the reason it does not is the better
+// argument: a client branching on `percentComplete == 100` would read a failure
+// as a completion. A sound-sounding inference in the fabricated-success
+// direction is exactly the kind this repo keeps having to undo.
+//
+// The first version of this function interpolated between CreatedAt and
+// CompleteAt and returned figures like 47. Every one of those is a number real
+// Fabric does not send, and the comment defending it — "COMPUTED, not faked" —
+// was answering the wrong question: the value was honestly derived from this
+// emulator's clock and still wrong, because the tenant does not publish that
+// quantity at all. A client rendering a bar would animate smoothly here and sit
+// at null against Fabric, and its null-handling branch would never once execute
+// locally. That is the emulator-green/tenant-broken direction.
+func (o Operation) PercentCompleteAt(now int64) *int {
+	if o.StatusAt(now) != OpSucceeded {
+		return nil
+	}
+	done := 100
+	return &done
+}
+
+// LastUpdatedAt is when this operation's state last CHANGED, which for a
+// clock-derived operation is its completion once complete, and its creation
+// before that. Reporting `now` instead would make every poll look like a fresh
+// update and defeat the field's purpose.
+func (o Operation) LastUpdatedAt(now int64) int64 {
+	if now >= o.CompleteAt {
+		return o.CompleteAt
+	}
+	return o.CreatedAt
+}
+
 // StatusAt derives the wire status at the given clock time.
 func (o Operation) StatusAt(now int64) string {
 	if now < o.CompleteAt {

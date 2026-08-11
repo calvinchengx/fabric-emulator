@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
@@ -222,14 +224,76 @@ func (a *API) deleteItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 
 // ---- operations ----
 
+// fabricOperationTime renders a timestamp the way a tenant does: ISO 8601 with
+// up to 7 fractional digits, TRAILING ZEROS TRIMMED, and NO `Z`.
+//
+// MEASURED against a real tenant on 2026-08-11 by local_0cdd48fd, and it is NOT
+// what the schema suggests — `string (date-time)` reads as RFC3339, which is
+// what this emulator sent first. A strict parser that accepts
+// `2026-08-11T07:23:41Z` rejects `2026-08-11T07:49:13.5612398`, so it passes
+// here and fails there.
+//
+// The width VARIES: `…07:49:13.5612398` is 7 digits and `…08:00:43.654668` is
+// 6, from the same tenant minutes apart. Go's `9`s trim; its `0`s pad.
+//
+// The 6-digit sample is the WITNESS for trimming, and it settles the rule
+// without appealing to any documentation about .NET: a fixed-width emitter
+// would have written `.6546680` for that instant. Only trimming produces six
+// digits. That matters because a fixed `.0000000` emitter passes a test
+// asserting exactly 7 while a tenant sending 6 fails it — code and test wrong
+// together, green together.
+//
+// Our clock is second-granular, so every digit trims and we emit no fractional
+// part at all. That is the HONEST rendering of the precision we actually have,
+// rather than seven fabricated zeros claiming sub-second resolution we do not
+// carry. ONE STEP OF THIS IS STILL INFERENCE and is marked as such: the samples
+// witness trimming inside a non-zero fraction, not the whole-second case where
+// the decimal point itself disappears. That follows from the same rule, and a
+// tenant timestamp landing on an exact second would witness it directly.
+const fabricOperationTime = "2006-01-02T15:04:05.9999999"
+
 // operationBody is the poll response.
 type operationBody struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
-	Error  *struct {
-		ErrorCode string `json:"errorCode"`
-		Message   string `json:"message"`
-	} `json:"error,omitempty"`
+	// The three fields Fabric's OperationState documents and this emulator did
+	// not send. A client rendering progress, or logging when an operation
+	// started, saw nothing locally and real values on a tenant — a divergence
+	// that only surfaces in production, which is the worst place to find one.
+	//
+	// `id` above is NOT in the documented shape. It is kept because removing a
+	// field clients here may already read would be a gratuitous break, and an
+	// extra field is harmless where a missing one is not.
+	CreatedTimeUtc     string `json:"createdTimeUtc"`
+	LastUpdatedTimeUtc string `json:"lastUpdatedTimeUtc"`
+	// A POINTER so it can be null, which is what a tenant sends while the
+	// operation runs. No omitempty: the key is always present, only its value
+	// varies. See Operation.PercentCompleteAt.
+	PercentComplete *int `json:"percentComplete"`
+	// NOT omitempty. A tenant sends `"error": null` on every non-failed poll,
+	// and a client doing `body["error"]` tells a null apart from a missing key
+	// the hard way.
+	Error *operationError `json:"error"`
+	// Undocumented in the reference and present on EVERY tenant response —
+	// Running, Succeeded and Failed — null in all three samples. So the keys are
+	// measured and their semantics are not: emitting null is what the evidence
+	// supports, and inventing a value would be the fabrication this whole PR is
+	// about. A client reading `resultContentType` to decide how to parse the
+	// result at least finds the key.
+	BlobInfoID        *string `json:"blobInfoId"`
+	ResultContentType *string `json:"resultContentType"`
+}
+
+// operationError is the operation's own error shape, which is NARROWER than the
+// documented ErrorResponse: measured on a failed SemanticModel create, it
+// carries errorCode, message and isRetriable, with no moreDetails,
+// relatedResource or requestId.
+type operationError struct {
+	ErrorCode string `json:"errorCode"`
+	Message   string `json:"message"`
+	// Measured present and false. A client deciding whether to retry has
+	// nothing to read locally without it.
+	IsRetriable bool `json:"isRetriable"`
 }
 
 func (a *API) getOperation(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
@@ -238,16 +302,31 @@ func (a *API) getOperation(w http.ResponseWriter, r *http.Request, p *auth.Princ
 		writeErr(w, http.StatusNotFound, "OperationNotFound", "No such operation.")
 		return
 	}
-	body := operationBody{ID: op.ID, Status: op.StatusAt(a.Store.Now())}
-	if body.Status == store.OpFailed {
-		body.Error = &struct {
-			ErrorCode string `json:"errorCode"`
-			Message   string `json:"message"`
-		}{ErrorCode: op.FailWith, Message: "The operation failed."}
+	now := a.Store.Now()
+	body := operationBody{
+		ID:                 op.ID,
+		Status:             op.StatusAt(now),
+		CreatedTimeUtc:     time.Unix(op.CreatedAt, 0).UTC().Format(fabricOperationTime),
+		LastUpdatedTimeUtc: time.Unix(op.LastUpdatedAt(now), 0).UTC().Format(fabricOperationTime),
+		PercentComplete:    op.PercentCompleteAt(now),
 	}
-	if body.Status == store.OpSucceeded && op.ResultRef != "" {
-		loc := "https://" + r.Host + "/v1/operations/" + op.ID + "/result"
-		w.Header().Set("Location", loc)
+	if body.Status == store.OpFailed {
+		body.Error = &operationError{ErrorCode: op.FailWith, Message: "The operation failed."}
+	}
+	// The polling headers, per the documented samples. `x-ms-operation-id` is on
+	// every poll; `Location` MOVES — it names the state URL while the operation
+	// runs and the RESULT URL once it succeeds, which is how a client following
+	// Location alone reaches the result without constructing a URL. Retry-After
+	// appears only while there is still something to wait for; the completed
+	// sample carries none, and sending one would tell a finished client to sleep.
+	w.Header().Set("x-ms-operation-id", op.ID)
+	base := "https://" + r.Host + "/v1/operations/" + op.ID
+	switch {
+	case body.Status == store.OpSucceeded && op.ResultRef != "":
+		w.Header().Set("Location", base+"/result")
+	case body.Status == store.OpNotStarted || body.Status == store.OpRunning:
+		w.Header().Set("Location", base)
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", a.RetryAfterSeconds))
 	}
 	writeJSON(w, http.StatusOK, body)
 }
