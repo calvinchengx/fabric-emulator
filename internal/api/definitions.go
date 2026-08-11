@@ -38,7 +38,7 @@ func (a *API) getDefinition(w http.ResponseWriter, r *http.Request, p *auth.Prin
 	// answers 202, so this exists to make a client PROVE it handles the async
 	// half — the 200 path alone lets a client read the 202 body, get `null`,
 	// and report an empty definition instead of an error.
-	if a.DefinitionLRO {
+	if a.ForceLRO {
 		a.startOperation(w, r, "GetItemDefinition", it.ID)
 		return
 	}

@@ -97,7 +97,14 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 	a.audit(p, &store.ActivityEvent{Operation: store.OpCreateArtifact,
 		WorkspaceID: it.WorkspaceID, ArtifactID: it.ID, ArtifactName: it.DisplayName,
 		Properties: map[string]any{"ArtifactKind": it.Type}})
-	if body.Definition == nil {
+	// A definition-bearing create has always been an LRO here. ForceLRO makes
+	// the OTHER kind async too, which is the case a real tenant was measured
+	// taking: Create Warehouse documents 201 and 202 and answered 202, and it
+	// "does not support create a warehouse with definition" — so the item type
+	// observed to be asynchronous is precisely the one that could never reach
+	// the branch below. A client that indexes the 201 body gets `None["id"]`
+	// against a tenant, which is how this was found.
+	if body.Definition == nil && !a.ForceLRO {
 		writeJSON(w, http.StatusCreated, a.itemView(r, it))
 		return
 	}
@@ -274,6 +281,14 @@ func (a *API) getOperationResult(w http.ResponseWriter, r *http.Request, p *auth
 			return
 		}
 		writeJSON(w, http.StatusOK, definitionResponse(parts))
+	case "InitializeGitConnection":
+		body, err := a.gitInitializeState(op.ResultRef)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "WorkspaceNotConnectedToGit",
+				"The workspace is no longer connected to git.")
+			return
+		}
+		writeJSON(w, http.StatusOK, body)
 	case "Deploy":
 		// "For 24 hours after the deployment is completed, the extended
 		// deployment information is available in the Get Operation Result

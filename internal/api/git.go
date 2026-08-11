@@ -123,11 +123,50 @@ func (a *API) gitInitializeConnection(w http.ResponseWriter, r *http.Request, p 
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	// The third documented dual-outcome surface: Initialize Connection lists
+	// 200 and 202 and says "This API supports long running operations". Under
+	// ForceLRO the answer is the 202, and the body below is recomputed at
+	// result time from the workspace — which is what "initialize in progress"
+	// means, and avoids freezing a snapshot the caller would read as current.
+	if a.ForceLRO {
+		a.startOperation(w, r, "InitializeGitConnection", wid)
+		return
+	}
+	writeJSON(w, http.StatusOK, gitInitializeResult(action, g.SyncedCommit, head))
+}
+
+// gitInitializeResult is the documented InitializeGitConnectionResponse.
+func gitInitializeResult(action, workspaceHead, remoteHead string) map[string]any {
+	return map[string]any{
 		"requiredAction":   action,
-		"workspaceHead":    g.SyncedCommit,
-		"remoteCommitHash": head,
-	})
+		"workspaceHead":    workspaceHead,
+		"remoteCommitHash": remoteHead,
+	}
+}
+
+// gitInitializeState recomputes the initialize response for a workspace, for
+// the LRO result route.
+func (a *API) gitInitializeState(wid string) (map[string]any, error) {
+	g, err := a.Store.GetGitConnection(wid)
+	if err != nil {
+		return nil, err
+	}
+	head, err := a.Store.GetRemoteHead(g.RemoteKey, g.Branch)
+	if err != nil {
+		return nil, err
+	}
+	items, err := a.Store.ListItems(wid, "")
+	if err != nil {
+		return nil, err
+	}
+	action := "None"
+	switch {
+	case head != "":
+		action = "UpdateFromGit"
+	case len(items) > 0:
+		action = "CommitToGit"
+	}
+	return gitInitializeResult(action, g.SyncedCommit, head), nil
 }
 
 // gitStatus diffs the workspace against the remote branch by type+name.

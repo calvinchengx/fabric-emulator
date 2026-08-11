@@ -202,13 +202,19 @@ func TestTerminalTokenIsGeneratedOnlyWhenATerminalExists(t *testing.T) {
 	})
 }
 
-func TestDefinitionLROFromEnv(t *testing.T) {
-	t.Setenv("FABRIC_DEFINITION_LRO", "true")
-	if !FromEnvPartial().DefinitionLRO {
-		t.Fatal("FABRIC_DEFINITION_LRO=true did not enable the async getDefinition path")
+func TestForceLROFromEnv(t *testing.T) {
+	t.Setenv("FABRIC_FORCE_LRO", "true")
+	if !FromEnvPartial().ForceLRO {
+		t.Fatal("FABRIC_FORCE_LRO=true did not enable the async outcomes")
 	}
-	t.Setenv("FABRIC_DEFINITION_LRO", "")
-	if FromEnvPartial().DefinitionLRO {
-		t.Fatal("the 202 path must be opt-in: 200 is equally legal and is what most calls see")
+	t.Setenv("FABRIC_FORCE_LRO", "")
+	if FromEnvPartial().ForceLRO {
+		t.Fatal("the async outcomes must be opt-in: the sync ones are equally legal")
+	}
+	// The older, narrower name still works, so an existing compose file or CI
+	// leg does not silently lose the async path when this was generalised.
+	t.Setenv("FABRIC_DEFINITION_LRO", "true")
+	if !FromEnvPartial().ForceLRO {
+		t.Fatal("FABRIC_DEFINITION_LRO no longer enables the async path")
 	}
 }

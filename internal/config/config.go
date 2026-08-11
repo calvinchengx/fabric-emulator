@@ -122,19 +122,40 @@ type Config struct {
 	// pagination before real data grows into it. Negative disables paging.
 	ListPageSize int
 
-	// DefinitionLRO makes getDefinition answer 202 + operation instead of 200
-	// with the body — FABRIC_DEFINITION_LRO=1. Same purpose as a small
-	// ListPageSize: it forces every client through a path real Fabric WILL
-	// take, before a real tenant is the thing that finds out.
+	// ForceLRO makes every API that documents BOTH a synchronous and an
+	// asynchronous outcome answer the ASYNCHRONOUS one — FABRIC_FORCE_LRO=1.
+	// Same purpose as a small ListPageSize: force every client through a path
+	// real Fabric WILL take, before a real tenant is the thing that finds out.
 	//
-	// The reference documents both outcomes for this API ("This API supports
-	// long running operations"), and a real tenant answered 202 for a
-	// VariableLibrary getDefinition — a client that reads the 202 body gets
-	// `null` and reports an empty definition rather than an error, which is the
-	// quiet kind of wrong. The emulator only ever answered 200, so nothing here
-	// exercised the other half. Off by default because 200 is equally legal and
-	// is what most calls see; on for a CI leg that must prove the 202 path.
-	DefinitionLRO bool
+	// This began as FABRIC_DEFINITION_LRO for getDefinition alone, and that
+	// name still works. It was generalised on measuring a SECOND instance the
+	// same morning, which makes it a class rather than a case:
+	//
+	//   getDefinition — reference documents 200 and 202; a real tenant answered
+	//     202. A client reading the 202 body gets `null` and reports an EMPTY
+	//     definition rather than an error.
+	//   createItem — reference documents 201 and 202 ("This API supports long
+	//     running operations"); a real tenant answered 202 for a Warehouse
+	//     create, and a client indexing the body got `None["id"]`. The emulator
+	//     could NEVER produce that shape: it went async only when a definition
+	//     was supplied, and Create Warehouse "does not support create a
+	//     warehouse with definition" — so the one type measured as async was
+	//     the one type guaranteed to be synchronous here.
+	//   git/initializeConnection — reference documents 200 and 202 and says it
+	//     supports LRO; the emulator answered 200 unconditionally. Its async
+	//     result carries a real body, unlike commitToGit/updateFromGit.
+	//
+	// SCOPE, stated so nobody reads more into the name than is there: these
+	// three are the surfaces AUDITED against the reference, not a proof that
+	// no fourth exists. Already-async surfaces (updateDefinition, commitToGit,
+	// updateFromGit, assign/unassignToCapacity, provision/deprovision
+	// identity, deploy, job instances) were confirmed async and needed
+	// nothing. Two documented LROs are NOT implemented at all and so are out of
+	// scope here rather than fixed: Load Table and sqlEndpoints refreshMetadata.
+	//
+	// Off by default: the synchronous answers are equally legal and are what
+	// most calls see. The point is that the other half is reachable at all.
+	ForceLRO bool
 
 	// WebActivityStub makes pipeline Web activities record success WITHOUT
 	// calling anything — FABRIC_WEB_ACTIVITY=stub. Off by default: a Web
@@ -206,20 +227,23 @@ func FromEnv() (*Config, error) {
 // overrides first, then calls Finish.
 func FromEnvPartial() *Config {
 	return &Config{
-		Addr:                envOr("FABRIC_ADDR", ":9443"),
-		DataDir:             envDefault("FABRIC_DATA_DIR", DefaultDataDir),
-		EntraIssuer:         os.Getenv("FABRIC_ENTRA_ISSUER"),
-		EntraJWKSURL:        os.Getenv("FABRIC_ENTRA_JWKS_URL"),
-		EntraTLSInsecure:    boolEnv("FABRIC_ENTRA_TLS_INSECURE"),
-		AKVVaultHost:        os.Getenv("FABRIC_AKV_VAULT_HOST"),
-		DisableTLS:          boolEnv("FABRIC_DISABLE_TLS"),
-		SparkLivyURL:        os.Getenv("FABRIC_SPARK_LIVY_URL"),
-		SparkAgentURL:       os.Getenv("FABRIC_SPARK_AGENT_URL"),
-		SQLTDSAddr:          os.Getenv("FABRIC_SQL_TDS_ADDR"),
-		TerminalURL:         os.Getenv("FABRIC_TERMINAL_URL"),
-		TerminalToken:       os.Getenv("FABRIC_TERMINAL_TOKEN"),
-		TenantAdmins:        splitList(os.Getenv("FABRIC_TENANT_ADMINS")),
-		DefinitionLRO:       boolEnv("FABRIC_DEFINITION_LRO"),
+		Addr:             envOr("FABRIC_ADDR", ":9443"),
+		DataDir:          envDefault("FABRIC_DATA_DIR", DefaultDataDir),
+		EntraIssuer:      os.Getenv("FABRIC_ENTRA_ISSUER"),
+		EntraJWKSURL:     os.Getenv("FABRIC_ENTRA_JWKS_URL"),
+		EntraTLSInsecure: boolEnv("FABRIC_ENTRA_TLS_INSECURE"),
+		AKVVaultHost:     os.Getenv("FABRIC_AKV_VAULT_HOST"),
+		DisableTLS:       boolEnv("FABRIC_DISABLE_TLS"),
+		SparkLivyURL:     os.Getenv("FABRIC_SPARK_LIVY_URL"),
+		SparkAgentURL:    os.Getenv("FABRIC_SPARK_AGENT_URL"),
+		SQLTDSAddr:       os.Getenv("FABRIC_SQL_TDS_ADDR"),
+		TerminalURL:      os.Getenv("FABRIC_TERMINAL_URL"),
+		TerminalToken:    os.Getenv("FABRIC_TERMINAL_TOKEN"),
+		TenantAdmins:     splitList(os.Getenv("FABRIC_TENANT_ADMINS")),
+		// FABRIC_DEFINITION_LRO is the older, narrower name this shipped under
+		// and is still honoured, so a compose file or CI leg that already sets
+		// it keeps working rather than silently losing the async path.
+		ForceLRO:            boolEnv("FABRIC_FORCE_LRO") || boolEnv("FABRIC_DEFINITION_LRO"),
 		WebActivityStub:     strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
 		CustomActivityShell: strings.EqualFold(os.Getenv("FABRIC_CUSTOM_ACTIVITY"), "shell"),
 		WarehouseSQLURL:     os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
