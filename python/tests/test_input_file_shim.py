@@ -89,6 +89,43 @@ class FakeDFBase:
         return type(self)([str(a) for a in args])
 
 
+def _stub_pyspark(monkeypatch, frame_cls):
+    """Put the pyspark surface this module imports into sys.modules."""
+    functions = types.ModuleType("pyspark.sql.functions")
+    functions.lit = lambda v: f"lit({v})"
+    functions.col = lambda c: c
+    functions.coalesce = lambda *a: f"coalesce({','.join(str(x) for x in a)})"
+    # Real pyspark HAS this attribute — the probe's job is to find out whether
+    # the ENGINE resolves it, not whether the client library declares it. A stub
+    # without it makes every engine look like one that lacks the function.
+    functions.input_file_name = lambda: "input_file_name()"
+    sql_mod = types.ModuleType("pyspark.sql")
+    sql_mod.functions = functions
+    root_mod = types.ModuleType("pyspark")
+    root_mod.sql = sql_mod
+    connect_mod = types.ModuleType("pyspark.sql.connect.dataframe")
+    connect_mod.DataFrame = frame_cls
+    for name, mod in (
+        ("pyspark", root_mod),
+        ("pyspark.sql", sql_mod),
+        ("pyspark.sql.functions", functions),
+        ("pyspark.sql.connect", types.ModuleType("pyspark.sql.connect")),
+        ("pyspark.sql.connect.dataframe", connect_mod),
+    ):
+        monkeypatch.setitem(sys.modules, name, mod)
+
+
+@pytest.fixture
+def stubs(monkeypatch):
+    """Only the import stubs — nothing in the module itself is replaced.
+
+    The helpers below ARE the code under test, so a fixture that monkeypatched
+    them would leave the test asserting against its own lambda.
+    """
+    _stub_pyspark(monkeypatch, type("FakeDF", (FakeDFBase,), {}))
+    return input_file_mod
+
+
 @pytest.fixture
 def patched(monkeypatch):
     """Install the shim's DataFrame patches against FakeDF.
@@ -106,24 +143,7 @@ def patched(monkeypatch):
     # tests passed locally only because a development venv happened to carry
     # `pyspark-client`. A test that depends on an ambient package tests the
     # machine it runs on.
-    functions = types.ModuleType("pyspark.sql.functions")
-    functions.lit = lambda v: f"lit({v})"
-    functions.col = lambda c: c
-    functions.coalesce = lambda *a: f"coalesce({','.join(str(x) for x in a)})"
-    sql_mod = types.ModuleType("pyspark.sql")
-    sql_mod.functions = functions
-    root_mod = types.ModuleType("pyspark")
-    root_mod.sql = sql_mod
-    connect_mod = types.ModuleType("pyspark.sql.connect.dataframe")
-    connect_mod.DataFrame = FakeDF
-    for name, mod in (
-        ("pyspark", root_mod),
-        ("pyspark.sql", sql_mod),
-        ("pyspark.sql.functions", functions),
-        ("pyspark.sql.connect", types.ModuleType("pyspark.sql.connect")),
-        ("pyspark.sql.connect.dataframe", connect_mod),
-    ):
-        monkeypatch.setitem(sys.modules, name, mod)
+    _stub_pyspark(monkeypatch, FakeDF)
 
     class FakeReader:
         def csv(self, path, *a, **k):
@@ -197,3 +217,85 @@ def test_an_untagged_frame_is_untouched(patched):
     assert plain.columns == ["a", "b"]
     assert plain.collect() == [("a", "b")]
     assert plain.write == "writer(a,b)"
+
+
+def test_the_engine_probe_answers_both_ways(stubs):
+    # `install()` is a no-op on an engine that already has the function — that
+    # is what keeps the JVM overlay's real implementation from being shadowed
+    # by an approximation, so both answers matter.
+    input_file = stubs
+
+    class Has:
+        def range(self, _n):
+            return self
+
+        def select(self, *_a):
+            return self
+
+        def collect(self):
+            return [1]
+
+    class Lacks:
+        def range(self, _n):
+            raise RuntimeError("function: input_file_name")
+
+    assert input_file.engine_has_input_file_name(Has()) is True
+    assert input_file.engine_has_input_file_name(Lacks()) is False
+
+
+def test_listing_files_behind_a_local_path(stubs, tmp_path):
+    # The lister is what turns one glob read into a read per file, which is how
+    # each row can carry the file it truly came from. Order is asserted because
+    # the per-file union is positional: an unstable order would silently
+    # misalign rows against their paths.
+    input_file = stubs
+    for name in ("part-0003.csv", "part-0001.csv", "part-0002.csv"):
+        (tmp_path / name).write_text("id\n1\n")
+    (tmp_path / "notes.txt").write_text("ignore me")
+
+    got = input_file._list_files(str(tmp_path / "*.csv"))
+    assert [p.rsplit("/", 1)[-1] for p in got] == [
+        "part-0001.csv",
+        "part-0002.csv",
+        "part-0003.csv",
+    ]
+
+
+def test_a_glob_in_a_directory_segment_is_refused(stubs):
+    # Expanding a directory glob would need a listing per candidate directory,
+    # so the module keeps the plain glob read instead and the tag degrades to
+    # the glob string: coarse, but honest. An empty list is what signals that.
+    assert stubs._list_files("/landing/*/customers/part-0001.csv") == []
+
+
+def test_a_single_file_read_carries_its_own_path(patched, monkeypatch):
+    # The tagging path itself: one file in, one tagged frame out, and the tag
+    # holds THAT file rather than the glob it was asked for.
+    input_file, FakeDF = patched
+    tagged_with = {}
+
+    class Reader:
+        def csv(self, path, *a, **k):
+            return FakeDF(["id", "name"])
+
+    monkeypatch.setattr(input_file, "_list_files", lambda _p: ["/landing/part-0007.csv"])
+
+    class Spark:
+        read = Reader()
+
+    # Re-install against this reader so the wrapper is the one under test.
+    original_with_column = FakeDF.withColumn if hasattr(FakeDF, "withColumn") else None
+
+    def withColumn(self, name, value):  # noqa: N802 - PySpark's spelling
+        tagged_with[name] = value
+        return type(self)([*self._cols, name])
+
+    FakeDF.withColumn = withColumn
+    monkeypatch.setattr(input_file, "engine_has_input_file_name", lambda _s: False)
+    input_file.install(Spark())
+
+    out = Spark.read.csv("/landing/*.csv")
+    assert TAG in out._cols, "a file read must carry the tag for provenance to resolve"
+    assert "part-0007.csv" in str(tagged_with[TAG]), "the tag must name the file, not the glob"
+    if original_with_column is None:
+        del FakeDF.withColumn
