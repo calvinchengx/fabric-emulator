@@ -183,8 +183,7 @@ func TestNewRefusalsExplainThemselves(t *testing.T) {
 	resolve := func(raw json.RawMessage) (any, error) { return nil, nil }
 	for _, typ := range []string{
 		"Teams", "MicrosoftTeams", "Office365Email", "Email",
-		"DataLakeAnalyticsScope", "SparkJobDefinition", "InvokeCopyJob",
-		"PBISemanticModelRefresh",
+		"DataLakeAnalyticsScope", "PBISemanticModelRefresh",
 	} {
 		act := pipeline.Activity{Name: "notify", Type: typ, TypeProperties: json.RawMessage(`{}`)}
 		_, err := e.Execute(act, resolve)
@@ -200,13 +199,9 @@ func TestNewRefusalsExplainThemselves(t *testing.T) {
 			t.Errorf("%s: refusal does not tell the reader how to skip the step: %s", typ, msg)
 		}
 	}
-	// The two that are wiring-not-boundary must say so, or a reader will file
-	// them as permanently unsupported.
-	for _, typ := range []string{"SparkJobDefinition", "InvokeCopyJob"} {
-		act := pipeline.Activity{Name: "x", Type: typ, TypeProperties: json.RawMessage(`{}`)}
-		_, err := e.Execute(act, resolve)
-		if err == nil || !strings.Contains(err.Error(), "THE EMULATOR CAN DO THIS") {
-			t.Errorf("%s should state that the capability exists: %v", typ, err)
-		}
-	}
+	// SparkJobDefinition and InvokeCopyJob used to be here, refused with a
+	// cause stating the capability existed and only the wiring was missing.
+	// They now RUN, so they are asserted in TestItemJobActivitiesRun instead —
+	// and a refusal for either would fail that test, which is the point of
+	// having written the temporary one this way.
 }

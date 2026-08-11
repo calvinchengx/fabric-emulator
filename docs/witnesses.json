@@ -1016,5 +1016,14 @@
       "ci:fabric-cicd",
       "go:TestVariableLibraryResolutionE2E"
     ]
+  },
+  "spark-job-definition-and-invoke-copy-job-activities-sparkjobdefinition-invokecopyjob": {
+    "section": "Data Factory (`data-factory/`)",
+    "claim": "**Spark Job Definition** and **Invoke copy job** activities (`SparkJobDefinition`, `InvokeCopyJob`)",
+    "witnesses": [
+      "go:TestInvokeCopyJobActivityReallyCopies",
+      "go:TestSparkJobDefinitionActivityRunsOnTheAgent",
+      "go:TestSparkJobDefinitionActivityWithoutAnEngineDoesNotClaimSuccess"
+    ]
   }
 }

@@ -280,6 +280,17 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// what is real and what is refused by name.
 		return e.hdinsightSparkActivity(act, tp, resolve)
 
+	case "SparkJobDefinition":
+		// Runs the referenced Spark Job Definition item and gates the pipeline
+		// on its outcome. Refused by name in #180 with a cause saying the
+		// capability existed and only the wiring was missing; this is it.
+		return e.sparkJobDefinitionActivity(act, tp, resolve)
+
+	case "InvokeCopyJob":
+		// Runs the referenced Copy job item — real bytes on its OneLake legs,
+		// through the same executor a direct Copy job run uses.
+		return e.invokeCopyJobActivity(act, tp, resolve)
+
 	case "AzureHDInsight":
 		// Fabric collapses ADF's five HDInsight discriminators into ONE type
 		// whose table entry reads "Runs various programs (Hive, Pig, MapReduce,

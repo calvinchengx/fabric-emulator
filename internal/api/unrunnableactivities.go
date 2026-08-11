@@ -106,27 +106,6 @@ var unrunnableActivities = map[string]string{
 		"own discriminator, and it is refused for the same reason — the effect is delivery to " +
 		"somewhere the emulator cannot reach",
 
-	// These two are DIFFERENT in kind from every other entry, and the difference
-	// is stated so nobody reads them as permanent: the emulator ALREADY RUNS
-	// both item types through the jobs API (`sparkjob` for a Spark Job
-	// Definition, `Execute` for a Copy job). What is missing is only the
-	// activity-side wiring — resolve the referenced item, submit the job,
-	// gate the activity on its outcome.
-	//
-	// They are refused rather than left in the default because a refusal is
-	// honest and reversible while a fabricated success is neither: today the
-	// activity claims a Spark job ran. Refusing is strictly better and strictly
-	// worse than running them, which is the next increment.
-	"SparkJobDefinition": "runs a Spark Job Definition item. THE EMULATOR CAN DO THIS — the " +
-		"item type executes through the jobs API (jobType `sparkjob`) — but the pipeline " +
-		"activity is not yet wired to submit that job, so it is refused rather than reported " +
-		"as having run. Wiring it is the next increment, not a boundary",
-
-	"InvokeCopyJob": "invokes a Copy job item. THE EMULATOR CAN DO THIS — a Copy job executes " +
-		"through the jobs API (jobType `Execute`) and really moves bytes on its OneLake legs — " +
-		"but the pipeline activity is not yet wired to submit that job. Refused rather than " +
-		"reported as having run; wiring it is the next increment, not a boundary",
-
 	"PBISemanticModelRefresh": "refreshes a Power BI semantic model. The emulator stores and " +
 		"evaluates models but does not implement the refresh pipeline that reloads a model's " +
 		"data from its sources, so a success here would claim the model now holds data it " +
