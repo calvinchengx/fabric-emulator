@@ -65,16 +65,6 @@ KNOWN_DIVERGENCES = {
                "session; the emulator gives each child its own session, so "
                "sibling temp views are not shared.",
     },
-    "exit-value-needs-run-detail": {
-        "parity_row": "`runMultiple` — exit values over REST",
-        "why": "The exit value is read from `…/jobs/instances/{jid}/notebookRun`, "
-               "which is the EMULATOR's endpoint — real Fabric answers it 404 "
-               "EntityNotFound (measured 2026-08-11). So a REST-submitted run "
-               "reports `\"\"` here and `None` (unobtainable) there. This is the "
-               "emulator being a SUPERSET, the same class as the injected "
-               "`notebook_exit`, and the reason contoso-data-platform returns "
-               "metrics through a one-row Delta table instead.",
-    },
 }
 
 
@@ -105,11 +95,21 @@ def _skip_if_capacity_refused(got):
 def expected_exit_value(t):
     """What a child that never calls exit() reports, per target.
 
-    A literal per target rather than one shared literal, because the difference
-    is real and DECLARED above. Collapsing them would have hidden it — which is
-    exactly what the client did until 2026-08-11: it returned `""` on both, so
-    every run on real Fabric looked like a notebook that had deliberately
-    exited empty.
+    NOT a divergence, and deliberately absent from KNOWN_DIVERGENCES above —
+    that list is for choices the EMULATOR makes, and this is not one.
+
+    `notebookutils.notebook.run()` returning the child's exit value IS Fabric's
+    documented contract (parity: "`notebookutils.notebook.run` — exit values",
+    graded 🟢). The emulator implements it correctly. What falls short is THIS
+    SHIM on the real target: in Fabric you call `run()` inside a kernel that has
+    an in-process channel to the child's exit value, while the shim calls it
+    from outside over REST — and Fabric's REST job surface has no run-detail
+    endpoint to read it from.
+
+    So the emulator is the side matching Fabric here, and "fixing" the
+    difference by making the emulator report None would move it AWAY from the
+    documented contract. Recording it as an emulator divergence would have filed
+    a defect against the one component behaving properly.
     """
     return None if t.is_real else ""
 
@@ -304,5 +304,4 @@ def test_the_divergence_list_is_not_a_dumping_ground():
     next real divergence would be muted by adding a line. Growing this set is a
     decision that belongs in docs/39, so it fails here until it is made there.
     """
-    assert set(KNOWN_DIVERGENCES) == {
-        "sequential-by-default", "isolated-child-sessions", "exit-value-needs-run-detail"}
+    assert set(KNOWN_DIVERGENCES) == {"sequential-by-default", "isolated-child-sessions"}

@@ -448,6 +448,13 @@
       "ci:real-fabric"
     ]
   },
+  "notebookutils-notebook-run-exit-values-over-rest": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "**`notebookutils.notebook.run` — exit values OVER REST**",
+    "witnesses": [
+      "py:test_notebook_run"
+    ]
+  },
   "notebookutils-notebook-runmultiple-dag-structure-and-ordering": {
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "`notebookutils.notebook.runMultiple` — DAG structure and ordering",

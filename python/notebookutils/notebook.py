@@ -13,6 +13,7 @@ A notebook with no executable cells still completes immediately, because there
 is nothing to wait for.
 """
 import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 from . import credentials
@@ -173,6 +174,41 @@ def _read_run_detail(base, token):
         return None
 
 
+def _warn_exit_value_unavailable():
+    """Say WHY the exit value is missing, once, where it happens.
+
+    Silence is the actual harm here. `None` is honest but a caller who never
+    reads it learns nothing, and a caller who does gets a falsy value with no
+    account of itself — so they debug their notebook, which is working, instead
+    of learning that this path cannot carry an exit value at all.
+
+    A warning rather than a raise, deliberately: plenty of orchestration submits
+    notebooks and never looks at the return value, and failing those runs to
+    report a limitation they are not hitting would be the cure being worse.
+    The message names the pattern that does work, because "not supported" with
+    no alternative is a dead end.
+
+    Only on the real target. Against the emulator the endpoint exists, so a
+    failure to read it is a transient worth surfacing on its own terms rather
+    than a target limitation to explain away.
+    """
+    if not config().is_real:
+        return
+    warnings.warn(
+        "This notebook run completed, but its exit value could not be "
+        "retrieved and is reported as None.\n"
+        "Real Fabric's REST job surface has no run-detail endpoint, so a run "
+        "SUBMITTED OVER REST cannot carry an exit value back. This is not a "
+        "failure of the notebook, and it is not something a retry will fix.\n"
+        "Two things do work: call notebookutils.notebook.run() from INSIDE a "
+        "Fabric notebook, where the runtime does return the child's exit value; "
+        "or have the child write its result to a one-row Delta table and read "
+        "that table, which is what the medallion examples do.",
+        RuntimeWarning,
+        stacklevel=4,
+    )
+
+
 def _cell_count(base, token):
     """How many cells this run will execute, or None when that is unknowable.
 
@@ -209,6 +245,7 @@ def _finish(base, token, status):
     """
     detail = _read_run_detail(base, token)
     if detail is None:
+        _warn_exit_value_unavailable()
         return None, status, 0
     return detail.get("exitValue") or "", status, len(detail.get("cells") or [])
 

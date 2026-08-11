@@ -73,14 +73,15 @@ class FakeService:
 
 @pytest.fixture
 def service(monkeypatch):
-    def install(**kw):
+    def install(is_real=False, **kw):
         svc = FakeService(**kw)
         monkeypatch.setattr(notebook, "request", svc.request)
         monkeypatch.setattr(notebook.credentials, "getToken", lambda _a: "tok")
         monkeypatch.setattr(notebook, "config",
                             lambda: type("C", (), {"fabric_url": "https://x",
                                                    "workspace_id": WS,
-                                                   "lakehouse_id": "lake-1"})())
+                                                   "lakehouse_id": "lake-1",
+                                                   "is_real": is_real})())
         monkeypatch.setattr(notebook.time, "sleep", lambda _s: None)
         return svc
     return install
@@ -147,6 +148,41 @@ def test_an_unreadable_run_detail_does_not_fail_a_completed_run(service):
     assert notebook.run("nb") is None
 
 
+def test_the_real_target_says_WHY_the_exit_value_is_missing(service, recwarn):
+    """`None` is honest but silent, and silence is the harm.
+
+    A caller who reads the value gets a falsy answer with no account of itself,
+    so they debug their notebook — which is working — instead of learning that a
+    REST-submitted run cannot carry an exit value at all. The message has to
+    name a pattern that DOES work, because "not supported" with no alternative
+    is a dead end.
+
+    A warning and not a raise: plenty of orchestration submits notebooks and
+    never reads the return value, and failing those runs to report a limitation
+    they are not hitting would be worse than the problem.
+    """
+    service(is_real=True, detail_raises=True)
+    assert notebook.run("nb") is None
+
+    msgs = [str(w.message) for w in recwarn if issubclass(w.category, RuntimeWarning)]
+    assert msgs, "the real target reported no exit value and said nothing about it"
+    text = msgs[0]
+    assert "REST" in text, text
+    assert "Delta table" in text, "the message names no working alternative"
+    assert "inside a Fabric notebook" in text.lower() or "INSIDE a Fabric notebook" in text, text
+    assert "retry" in text, "a reader will try a retry unless told it cannot help"
+
+
+def test_the_emulator_does_not_explain_away_a_transient(service, recwarn):
+    """Against the emulator the endpoint EXISTS, so failing to read it is a
+    transient worth surfacing on its own terms — not a target limitation. A
+    warning here would train people to ignore a real symptom."""
+    service(is_real=False, detail_raises=True)
+    assert notebook.run("nb") is None
+    assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)], \
+        "the emulator blamed a target limitation for a transient read failure"
+
+
 def test_an_unavailable_exit_value_is_none_not_empty_string(service):
     """`None` (could not be obtained) and `""` (exited with no value) are
     DIFFERENT FACTS, and this used to return `""` for both.
@@ -184,7 +220,8 @@ def test_no_arguments_and_no_lakehouse_sends_no_body(service, monkeypatch):
     monkeypatch.setattr(notebook, "config",
                         lambda: type("C", (), {"fabric_url": "https://x",
                                                "workspace_id": WS,
-                                               "lakehouse_id": ""})())
+                                               "lakehouse_id": "",
+                                               "is_real": False})())
     notebook.run("nb")
     assert next(b for _m, u, b in svc.calls if "jobType=RunNotebook" in u) is None
 
