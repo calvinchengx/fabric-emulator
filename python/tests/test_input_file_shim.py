@@ -16,6 +16,7 @@ checked is which frame each surface delegates to, and that is a property of the
 patching, not of Spark.
 """
 
+import os
 import sys
 import types
 from pathlib import Path
@@ -254,7 +255,9 @@ def test_listing_files_behind_a_local_path(stubs, tmp_path):
     (tmp_path / "notes.txt").write_text("ignore me")
 
     got = input_file._list_files(str(tmp_path / "*.csv"))
-    assert [p.rsplit("/", 1)[-1] for p in got] == [
+    # os.path.basename, not a "/" split: glob returns the platform's own
+    # separator, and CI runs this on Windows too.
+    assert [os.path.basename(p) for p in got] == [
         "part-0001.csv",
         "part-0002.csv",
         "part-0003.csv",
