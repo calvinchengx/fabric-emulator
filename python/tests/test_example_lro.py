@@ -195,6 +195,28 @@ def test_a_failed_operation_is_not_reported_as_success(monkeypatch, tmp_path):
         common.post_and_wait("https://f/v1/workspaces/ws-1/items", {})
 
 
+def test_no_example_carries_its_own_operation_loop():
+    """The structural half of "one resolver".
+
+    Delegation fixed `create_item`, and there were FOUR more copies of the same
+    loop in the per-example `semantic_model.py` scripts, which are what people
+    actually open. A behavioural test cannot see them: each copy is correct in
+    its own way, publishes fine against the emulator, and simply polls too fast.
+    So this asserts the shape instead. `common.py` is the one file allowed to
+    resolve an operation; anywhere else, it is a copy that will drift.
+    """
+    offenders = []
+    for path in (REPO / "examples").rglob("*.py"):
+        if path.name == "common.py":
+            continue
+        text = path.read_text()
+        if '"x-ms-operation-id"' in text and "/operations/" in text:
+            offenders.append(str(path.relative_to(REPO)))
+    assert not offenders, (
+        "these resolve an LRO themselves instead of calling common.post_and_wait "
+        f"or common.create_item: {offenders}")
+
+
 def test_synchronous_create_is_unchanged(monkeypatch, tmp_path):
     """The 201 path. `create_item` always sends a definition so the emulator never
     answers it this way, but Fabric documents 201 for a create and a definitionless
