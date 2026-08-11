@@ -195,7 +195,7 @@ def main():
         # Match each built wheel back to the spec that declares its extras, by
         # the DIST name — see PACKAGES.
         specs = []
-        for src, dist, spec in PACKAGES:
+        for _src, dist, spec in PACKAGES:
             stem = dist + "-"
             match = [w for w in wheels if w.name.startswith(stem)]
             if len(match) != 1:
