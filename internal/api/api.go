@@ -39,6 +39,12 @@ type API struct {
 	// Airflow runs ApacheAirflowJob DAGs on an attached upstream Airflow
 	// instance. Nil preserves an honest AirflowNotConfigured failure.
 	Airflow AirflowRuntime
+	// DefinitionLRO makes getDefinition answer 202 + operation rather than 200
+	// with the body. Real Fabric does both — the reference documents 200 and
+	// 202 for this API, and a real tenant answered 202 — so a client that only
+	// ever meets the 200 here has an untested path that a tenant will take.
+	// See config.DefinitionLRO for why it is off by default.
+	DefinitionLRO bool
 	// WebActivityStub records a Web activity as Succeeded WITHOUT calling
 	// anything — what the emulator used to do unconditionally. Off by default,
 	// because a fabricated success is the dangerous version: a pipeline

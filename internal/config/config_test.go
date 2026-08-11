@@ -201,3 +201,14 @@ func TestTerminalTokenIsGeneratedOnlyWhenATerminalExists(t *testing.T) {
 		}
 	})
 }
+
+func TestDefinitionLROFromEnv(t *testing.T) {
+	t.Setenv("FABRIC_DEFINITION_LRO", "true")
+	if !FromEnvPartial().DefinitionLRO {
+		t.Fatal("FABRIC_DEFINITION_LRO=true did not enable the async getDefinition path")
+	}
+	t.Setenv("FABRIC_DEFINITION_LRO", "")
+	if FromEnvPartial().DefinitionLRO {
+		t.Fatal("the 202 path must be opt-in: 200 is equally legal and is what most calls see")
+	}
+}

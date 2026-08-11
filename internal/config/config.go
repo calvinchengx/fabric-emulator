@@ -122,6 +122,20 @@ type Config struct {
 	// pagination before real data grows into it. Negative disables paging.
 	ListPageSize int
 
+	// DefinitionLRO makes getDefinition answer 202 + operation instead of 200
+	// with the body — FABRIC_DEFINITION_LRO=1. Same purpose as a small
+	// ListPageSize: it forces every client through a path real Fabric WILL
+	// take, before a real tenant is the thing that finds out.
+	//
+	// The reference documents both outcomes for this API ("This API supports
+	// long running operations"), and a real tenant answered 202 for a
+	// VariableLibrary getDefinition — a client that reads the 202 body gets
+	// `null` and reports an empty definition rather than an error, which is the
+	// quiet kind of wrong. The emulator only ever answered 200, so nothing here
+	// exercised the other half. Off by default because 200 is equally legal and
+	// is what most calls see; on for a CI leg that must prove the 202 path.
+	DefinitionLRO bool
+
 	// WebActivityStub makes pipeline Web activities record success WITHOUT
 	// calling anything — FABRIC_WEB_ACTIVITY=stub. Off by default: a Web
 	// activity that fabricates a response is a false pass, and a pipeline
@@ -205,6 +219,7 @@ func FromEnvPartial() *Config {
 		TerminalURL:         os.Getenv("FABRIC_TERMINAL_URL"),
 		TerminalToken:       os.Getenv("FABRIC_TERMINAL_TOKEN"),
 		TenantAdmins:        splitList(os.Getenv("FABRIC_TENANT_ADMINS")),
+		DefinitionLRO:       boolEnv("FABRIC_DEFINITION_LRO"),
 		WebActivityStub:     strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
 		CustomActivityShell: strings.EqualFold(os.Getenv("FABRIC_CUSTOM_ACTIVITY"), "shell"),
 		WarehouseSQLURL:     os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),

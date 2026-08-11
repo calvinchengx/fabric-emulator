@@ -263,6 +263,17 @@ func (a *API) getOperationResult(w http.ResponseWriter, r *http.Request, p *auth
 			return
 		}
 		writeJSON(w, http.StatusOK, it)
+	case "GetItemDefinition":
+		// The definition is read at RESULT time, not at request time, so the
+		// operation carries the item id rather than a snapshot. That matches
+		// the surface's own contract — the result is fetched after the
+		// operation succeeds — and avoids a stale copy sitting in the store.
+		parts, err := a.Store.GetDefinition(op.ResultRef)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, "ItemNotFound", "The operation result is gone.")
+			return
+		}
+		writeJSON(w, http.StatusOK, definitionResponse(parts))
 	case "Deploy":
 		// "For 24 hours after the deployment is completed, the extended
 		// deployment information is available in the Get Operation Result
