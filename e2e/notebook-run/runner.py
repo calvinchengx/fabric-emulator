@@ -242,7 +242,7 @@ def _notebook_exit(value=""):
 #
 # So only the dotted Fabric spellings are bound. The bare `notebook_exit` used to
 # be, in both engines, and it is not a Fabric global (#192).
-class _NotebookNamespace(object):
+class _NotebookNamespace:
     pass
 
 
