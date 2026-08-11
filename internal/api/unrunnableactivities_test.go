@@ -124,11 +124,10 @@ func TestUnrunnableRefusalsCoverTheDiff(t *testing.T) {
 
 		"PBISemanticModelRefresh": true,
 
-		// TEMPORARY, and different in kind from every other entry: the emulator
-		// already RUNS both item types through the jobs API, and only the
-		// activity-side wiring is missing. When that lands these two must be
-		// REMOVED from the map, and this test is what will demand it.
-		"SparkJobDefinition": true, "InvokeCopyJob": true,
+		// SparkJobDefinition and InvokeCopyJob WERE here, marked temporary
+		// because the emulator already ran both item types and only the
+		// activity wiring was missing. That wiring landed, so they are gone
+		// from the map — which is exactly what this test was written to force.
 	}
 	for name := range want {
 		if _, ok := unrunnableActivities[name]; !ok {
