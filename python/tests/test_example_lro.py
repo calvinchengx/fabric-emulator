@@ -1,0 +1,199 @@
+"""The examples' long-running-operation resolution, against shapes only real Fabric sends.
+
+WHY THIS IS TESTED HERE. The 202 branch of `post_and_wait` is unreachable from
+the local e2e: the emulator answers item creates 201 with the item, so every
+example run exercises the synchronous path and nothing else. That is precisely
+the wrong way round, because the async path is the one real Fabric takes for a
+Warehouse, and it took a run against a real trial to discover that `provision.py`
+was doing `None["id"]` against it.
+
+`create_item` used to carry a SECOND copy of this wait, and the copy was the
+older one: it indexed `x-ms-operation-id` with no fallback and slept a flat
+second. Both copies agreed against the emulator, for the same reason nothing
+here is reachable from e2e. These tests pin the two behaviours that copy lacked,
+so a future divergence fails in CI rather than on a tenant.
+
+Per Microsoft's LRO reference, a 202 carries `Location`; `x-ms-operation-id` is
+a convenience, not a guarantee. Anything that requires it is asserting a promise
+the service did not make.
+"""
+import importlib
+import os
+import pathlib
+import sys
+
+import pytest
+
+REPO = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "python" / "fabric-target"))
+sys.path.insert(0, str(REPO / "examples" / "contoso-fixtures"))
+
+import fabric_target  # noqa: E402
+
+
+class FakeResponse:
+    def __init__(self, payload, status_code=200, headers=None):
+        self._payload = payload
+        self.status_code = status_code
+        self.headers = headers or {}
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        pass
+
+
+class LROSession:
+    """A create that answers 202, then an operation that runs before it succeeds.
+
+    `pending` controls how many polls report Running, so a test can assert the
+    waiter actually waited rather than reading a terminal status first time.
+    """
+
+    def __init__(self, accept_headers, pending=1, result=None, retry_after=None):
+        self.accept_headers = accept_headers
+        self.pending = pending
+        self.result = result or {"id": "created-1"}
+        self.retry_after = retry_after
+        self.polls = 0
+
+    def post(self, url, **_):
+        return FakeResponse(None, status_code=202, headers=self.accept_headers)
+
+    def get(self, url, **_):
+        if url.endswith("/result"):
+            return FakeResponse(self.result)
+        self.polls += 1
+        status = "Running" if self.polls <= self.pending else "Succeeded"
+        headers = {"Retry-After": self.retry_after} if self.retry_after else {}
+        return FakeResponse({"status": status}, headers=headers)
+
+
+def load_common(monkeypatch, tmp_path):
+    for k in ("FABRIC_TARGET", "FABRIC_WORKSPACE", "TDS_SERVER", "AZURE_CLIENT_SECRET",
+              "AZURE_CLIENT_ID", "AZURE_TENANT_ID", "FABRIC_VAULT_URL",
+              "AZURE_KEY_VAULT_URL", "PIPELINE_STATE"):
+        monkeypatch.delenv(k, raising=False)
+    for k in [k for k in os.environ if k.startswith("NOTEBOOKUTILS_")]:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("FABRIC_TARGET", "emulator")
+    monkeypatch.setenv("PIPELINE_STATE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(fabric_target, "_az_logged_in", lambda: True)
+    fabric_target._cached = None
+    sys.modules.pop("common", None)
+    common = importlib.import_module("common")
+    (tmp_path / "state.json").write_text('{"workspace": "ws-1"}')
+    monkeypatch.setattr(common, "fabric_headers", lambda: {})
+    return common
+
+
+def no_sleeping(monkeypatch, common):
+    """Record what the waiter asked to sleep, without spending it."""
+    slept = []
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))
+    return slept
+
+
+LOCATION_ONLY = {"Location": "https://api.fabric.microsoft.com/v1/operations/op-42/"}
+BOTH = {"Location": "https://api.fabric.microsoft.com/v1/operations/op-42",
+        "x-ms-operation-id": "op-42"}
+
+
+def test_202_without_the_convenience_header_still_resolves(monkeypatch, tmp_path):
+    """The regression that mattered: Fabric guarantees `Location`, not
+    `x-ms-operation-id`. A resolver that indexes the header raises KeyError on a
+    response the service was entitled to send."""
+    common = load_common(monkeypatch, tmp_path)
+    no_sleeping(monkeypatch, common)
+    session = LROSession(LOCATION_ONLY)
+    monkeypatch.setattr(common, "S", session)
+
+    got = common.post_and_wait("https://f/v1/workspaces/ws-1/items", {"displayName": "x"})
+
+    assert got == {"id": "created-1"}
+    assert session.polls > 1, "returned before the operation reached a terminal state"
+
+
+def test_create_item_resolves_the_same_202(monkeypatch, tmp_path):
+    """create_item must not have its own opinion about this. It carried a copy
+    that lacked the fallback, and the copy was invisible because the emulator
+    answers 201."""
+    common = load_common(monkeypatch, tmp_path)
+    no_sleeping(monkeypatch, common)
+    monkeypatch.setattr(common, "S", LROSession(LOCATION_ONLY))
+
+    assert common.create_item("gold", "Warehouse", {"x.txt": "hi"}) == "created-1"
+
+
+def test_retry_after_is_honoured(monkeypatch, tmp_path):
+    """Polling faster than the service asked earns a 429. The flat one-second
+    sleep the old copy used ignores the header entirely."""
+    common = load_common(monkeypatch, tmp_path)
+    slept = no_sleeping(monkeypatch, common)
+    monkeypatch.setattr(common, "S", LROSession(LOCATION_ONLY, pending=2, retry_after="7"))
+
+    common.post_and_wait("https://f/v1/workspaces/ws-1/items", {})
+
+    assert slept and all(s == 7 for s in slept), slept
+
+
+def test_retry_after_is_capped(monkeypatch, tmp_path):
+    """A service that asks for an hour should not hang the example for one."""
+    common = load_common(monkeypatch, tmp_path)
+    slept = no_sleeping(monkeypatch, common)
+    monkeypatch.setattr(common, "S", LROSession(LOCATION_ONLY, pending=2, retry_after="3600"))
+
+    common.post_and_wait("https://f/v1/workspaces/ws-1/items", {})
+
+    assert slept and all(s == 20 for s in slept), slept
+
+
+def test_operation_id_header_is_preferred_when_present(monkeypatch, tmp_path):
+    """The fallback is a fallback. When Fabric does send the id, use it rather
+    than parsing a URL."""
+    common = load_common(monkeypatch, tmp_path)
+    no_sleeping(monkeypatch, common)
+    asked = []
+
+    class Recording(LROSession):
+        def get(self, url, **kw):
+            asked.append(url)
+            return super().get(url, **kw)
+
+    monkeypatch.setattr(common, "S", Recording(BOTH))
+    common.post_and_wait("https://f/v1/workspaces/ws-1/items", {})
+
+    assert all("/operations/op-42" in u for u in asked), asked
+
+
+def test_a_failed_operation_is_not_reported_as_success(monkeypatch, tmp_path):
+    """A terminal Failed must surface. The whole class of bug this file guards
+    is a wait that returns something plausible when the service said no."""
+    common = load_common(monkeypatch, tmp_path)
+    no_sleeping(monkeypatch, common)
+
+    class Failing(LROSession):
+        def get(self, url, **_):
+            if url.endswith("/result"):
+                return FakeResponse({"id": "should-not-be-read"})
+            return FakeResponse({"status": "Failed"})
+
+    monkeypatch.setattr(common, "S", Failing(LOCATION_ONLY))
+    with pytest.raises(AssertionError, match="Failed"):
+        common.post_and_wait("https://f/v1/workspaces/ws-1/items", {})
+
+
+def test_synchronous_create_is_unchanged(monkeypatch, tmp_path):
+    """The emulator's path. It is the only one e2e covers, so it is the one most
+    likely to be broken by a change aimed at the other."""
+    common = load_common(monkeypatch, tmp_path)
+
+    class Sync:
+        def post(self, url, **_):
+            return FakeResponse({"id": "sync-1"}, status_code=201)
+
+    monkeypatch.setattr(common, "S", Sync())
+    assert common.create_item("bronze", "Lakehouse", {"x.txt": "hi"}) == "sync-1"
