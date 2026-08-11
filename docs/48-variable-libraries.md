@@ -1,9 +1,10 @@
-# 48 — Variable Libraries in pipelines
+# 48 — Variable Libraries and their consumers
 
 [47 — what must not be in data-engineering code](47-environment-abstraction.md)
 says every value that differs between environments must be resolved *outside*
 the artifact. A Variable Library is **Fabric's own answer to that rule**, and
-this doc is about consuming one from a Data Pipeline.
+this doc is about consuming one — from a Data Pipeline, from a notebook, and
+what blocks the remaining consumers.
 
 The shape of the answer matters: a pipeline does not embed the value and does
 not embed a pointer to a workspace either. It embeds a *name*, and the
@@ -266,9 +267,10 @@ name instead of alias, and ignoring value-set overrides each turn it red.
   an alias at save time or escapes it is unknown.
 * **`Int`, `Bool` and `DateTime` declarations.** Taken from the article's
   mapping table, not observed. `String`, `Guid` and `Object` are captured.
-* **Consumers other than pipelines and notebooks.** Shortcuts, Dataflow Gen2,
-  Copy job and user data functions also consume libraries and are not
-  implemented.
+* **Consumers other than pipelines, notebooks and user data functions.** See
+  [the reachable ceiling of each](#the-other-consumers-and-what-blocks-them)
+  below — three of them are blocked upstream rather than merely unbuilt, and
+  the distinction decides whether effort would produce anything.
 
 ## The notebook consumer
 
@@ -339,3 +341,80 @@ The portal is the alternative and needs no token: a Data Pipeline's
 equivalent in the Variable Library editor, and that editor's own network calls
 are invisible to a tab-level listener because the workload runs in a
 cross-origin iframe — so for a *library*, the REST route above is the only way.
+
+## The other consumers, and what blocks them
+
+Fabric lists six consumers of a variable library. Two are implemented here and
+witnessed; one more is implemented as far as it can be. **The remaining three
+are blocked upstream, not merely unbuilt** — that distinction matters, because
+"not implemented" invites someone to go and implement it, and for these there
+is nothing to implement against.
+
+Recorded with citations so nobody re-derives it.
+
+| Consumer | Status | Ceiling |
+|---|---|---|
+| **Data pipeline** | Implemented, witnessed by `fabric-cicd` | — |
+| **Notebook** (NotebookUtils) | Implemented | — |
+| **User data function** | Client shape implemented; **no runtime** | 🟡 body testable, item not executable |
+| **Shortcut** | Not implementable | 🔴 no REST surface exists |
+| **Copy job** | Not implementable usefully | 🔴 parameterises what this emulator refuses |
+| **Dataflow Gen2** | Not implementable | 🔴 no engine to attach |
+
+### User data functions — the one with a published API
+
+The programming model documents it in full: a `@udf.connection` for the library
+item, an argument typed `fn.FabricVariablesClient`, then `getVariables()` and
+either `variables["name"]` or `variables.get("name")`.
+
+`notebookutils.variableLibrary.FabricVariablesClient` matches that shape, so a
+function body ports with one import line. **It deliberately does not shadow
+`fabric.functions`**: `fabric-user-data-functions` is a real installable PyPI
+package, and providing a module of that name would override something a user
+may have installed. `notebookutils` is a different case — Microsoft ships that
+as an import-only stub outside the Fabric runtime, which is why this repo makes
+it work.
+
+What this does NOT give you: the emulator has **no user-data-function runtime**
+(`UserDataFunction` is a registered item type and nothing more), so a function's
+*body* is testable against a real library while the *item* still does not
+execute.
+
+### Shortcuts — Fabric itself has no API for it
+
+> *"Currently, variable libraries are the supported option for assigning
+> shortcut variables across environments. Other assignment methods, **including
+> REST API assignment, aren't supported**."*
+> — [Assign variables to shortcuts][shortcut-doc]
+
+Assignment is UI-only. There is no request a client could send, no JSON to
+capture from a definition, and therefore nothing for a REST emulator to
+implement. This is not a gap in the emulator; it is the shape of the feature
+today. It becomes implementable the moment Fabric ships an API for it.
+
+### Copy job — it parameterises the one thing this emulator refuses
+
+The Copy job integration is **connection parameterisation**: the source and
+destination *connection IDs* come from the library, so each stage injects its
+own. The article's own framing is "externalizing connection values", and the
+linking is done in the Copy job UI with no JSON published.
+
+The emulator runs Copy jobs, but only their **OneLake legs** — external sources
+and destinations are refused by name (`CopyJobExternalSourceNotSupported` /
+`…DestinationNotSupported`, see `docs/parity.md`). A connection id is exactly
+what those refusals are about. So even with a captured shape, the parameter
+would select between connections the emulator declines to use, and a witness
+could not assert anything an external connector isn't already blocking.
+
+Reachable ceiling: it moves when external connections do, not before.
+
+### Dataflow Gen2 — no engine exists to attach
+
+Dataflow refresh, publish and in-pipeline execution already fail with
+`DataflowEngineNotImplemented`, because no open Power Query M engine exists to
+attach ([parity.md](parity.md)). A library variable feeding a dataflow would be
+resolved into something that cannot run.
+
+This is the same ceiling the row already records, not a new one.
+
+[shortcut-doc]: https://learn.microsoft.com/en-us/fabric/onelake/assign-variables-to-shortcuts

@@ -263,3 +263,63 @@ def test_operation_that_never_completes_times_out(monkeypatch):
     with pytest.raises(vl.VariableLibraryError) as e:
         vl.getLibrary("envLib")
     assert "did not complete" in str(e.value)
+
+
+# --- the user-data-function shape --------------------------------------------
+#
+# UDF is the ONLY remaining variable-library consumer with a published API, so
+# unlike the pipeline capture these assertions follow Microsoft's own sample:
+# `varLib.getVariables()` then `variables.get("ENV")` / `variables["ENV"]`.
+
+
+def test_udf_variables_client_reads_both_documented_ways(http):
+    http()
+    client = vl.FabricVariablesClient("envLib")
+    variables = client.getVariables()
+    assert variables["bronzePath"] == "Files/bronze"
+    assert variables.get("batchSize") == 100
+    assert "envLib" in repr(client)
+
+
+def test_udf_get_returns_default_rather_than_raising(http):
+    """The documented sample calls `variables.get("ENV")` and BRANCHES on the
+    value, so an unknown name must come back None rather than raise. Bracket
+    access still raises, as a mapping should."""
+    http()
+    variables = vl.FabricVariablesClient("envLib").getVariables()
+    assert variables.get("nope") is None
+    assert variables.get("nope", "fallback") == "fallback"
+    with pytest.raises(vl.VariableLibraryError):
+        _ = variables["nope"]
+
+
+def test_udf_variables_resolve_under_the_active_value_set(http):
+    """The point of the whole surface: the same function body yields a
+    different value per environment, with no code change."""
+    http(active="qat")
+    variables = vl.FabricVariablesClient("envLib").getVariables()
+    assert variables["bronzePath"] == "Files/bronze-qat"
+    assert variables["batchSize"] == 100  # not overridden by qat
+
+
+def test_udf_variables_mapping_helpers(http):
+    http()
+    variables = vl.FabricVariablesClient("envLib").getVariables()
+    assert "bronzePath" in variables
+    assert sorted(variables) == ["batchSize", "bronzePath", "debugEnabled"]
+    assert variables.asDict()["batchSize"] == 100
+    assert "bronzePath" in repr(variables)
+
+
+def test_udf_client_does_not_shadow_microsofts_package():
+    """`fabric-user-data-functions` is a real installable package, so providing
+    a module named `fabric.functions` would override something a user may have
+    installed. notebookutils is different — Microsoft ships that as an
+    import-only stub outside the Fabric runtime."""
+    import importlib.util
+    assert importlib.util.find_spec("notebookutils.variableLibrary") is not None
+    # Nothing in this repo provides `fabric.functions`.
+    import pathlib
+    root = pathlib.Path(vl.__file__).resolve().parents[1]
+    assert not (root / "fabric" / "functions.py").exists()
+    assert not (root / "fabric" / "functions").exists()
