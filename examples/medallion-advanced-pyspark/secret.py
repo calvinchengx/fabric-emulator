@@ -17,6 +17,7 @@ from common import (
                     fabric_headers,
                     load,
                     log,
+                    require_service_principal,
                     require_vault,
                     save,
                     token,
@@ -37,6 +38,8 @@ assert r.status_code in (200, 201), f"put secret: {r.status_code} {r.text}"
 log(f"secret stored: {r.json()['id']}")
 
 st = load()
+sp_tenant, sp_client, sp_secret = require_service_principal(
+    "binding the vault to Fabric")
 
 # 1. The vault itself, as a connection. `accountName` is the vault's name;
 #    Fabric composes https://{accountName}.vault.azure.net from it, and the
@@ -49,9 +52,16 @@ r = S.post(f"{FABRIC}/v1/connections", headers=fabric_headers(), json={
         "creationMethod": "AzureKeyVault.Actions",
         "parameters": [{"dataType": "Text", "name": "accountName",
                         "value": KV_ACCOUNT}]},
+    # ServicePrincipal, because the tenant's own supportedConnectionTypes lists
+    # OAuth2 and ServicePrincipal for AzureKeyVault and nothing else — and
+    # OAuth2 needs interactive consent, so it is the only one a script can use.
+    # This sent WorkspaceIdentity until 2026-08-11 and was refused on a tenant
+    # with `UnsupportedCredentialType`, having passed locally every time.
     "credentialDetails": {"credentials": {
-        "credentialType": "WorkspaceIdentity",
-        "workspaceId": st["workspace"]}}})
+        "credentialType": "ServicePrincipal",
+        "tenantId": sp_tenant,
+        "servicePrincipalClientId": sp_client,
+        "servicePrincipalSecret": sp_secret}}})
 assert r.status_code == 201, f"vault connection: {r.status_code} {r.text}"
 vault_conn = r.json()["id"]
 

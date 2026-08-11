@@ -44,6 +44,49 @@ var credentialTypes = []string{
 	"WorkspaceIdentity",
 }
 
+// connectionCredentialTypes is which credential types a given connection type
+// accepts, from the tenant's own
+// `GET /v1/connections/supportedConnectionTypes?showAllCreationMethods=true`
+// (321 types; only the ones this repo exercises are listed here).
+//
+// A type absent from this map is UNCONSTRAINED, deliberately: shipping a
+// partial table as if it were complete would refuse working payloads for
+// connectors nobody has measured. The entries present are measured, and the
+// silence elsewhere is honest rather than permissive-by-accident.
+//
+// WHY THIS EXISTS AT ALL. The first version of the vault-reference support
+// required the AzureKeyVault connection to carry `WorkspaceIdentity` — which is
+// the one credential this table shows Fabric does NOT accept for it:
+//
+//	400 UnsupportedCredentialType
+//	The CredentialType input is not supported for this API
+//
+// The measurement was in hand when that code was written and only part of the
+// line was read. So the emulator enforced the opposite of the contract, and a
+// green local run said nothing.
+var connectionCredentialTypes = map[string][]string{
+	"AzureKeyVault":        {"OAuth2", "ServicePrincipal"},
+	"Web":                  {"Anonymous", "Basic", "OAuth2", "ServicePrincipal"},
+	"WebForPipeline":       {"OAuth2", "Basic", "Anonymous", "Key", "ServicePrincipal"},
+	"AzureDataLakeStorage": {"Key", "OAuth2", "SharedAccessSignature", "ServicePrincipal", "WorkspaceIdentity"},
+	"AmazonS3":             {"Basic", "OAuth2", "ServicePrincipal"},
+	"AzureBlobs":           {"Anonymous", "Key", "OAuth2", "SharedAccessSignature", "ServicePrincipal", "WorkspaceIdentity"},
+}
+
+// validateCredentialForConnection refuses a credential the connector does not
+// take, with the tenant's own error text.
+func validateCredentialForConnection(connType, credType string) string {
+	allowed, known := connectionCredentialTypes[connType]
+	if !known || credType == "" {
+		return ""
+	}
+	if slices.ContainsFunc(allowed, func(a string) bool { return strings.EqualFold(a, credType) }) {
+		return ""
+	}
+	return fmt.Sprintf("The CredentialType input is not supported for this API. "+
+		"Connection type %q accepts: %s.", connType, strings.Join(allowed, ", "))
+}
+
 // vaultRefFields maps each credential field that may carry a
 // KeyVaultSecretReference to the credentialType that owns it. A reference on
 // any other field is a different credential's, and naming which one is the
@@ -138,31 +181,61 @@ func (a *API) testVaultReference(ref *keyVaultSecretReference) string {
 			"(set skipTestConnection to bypass)."
 	}
 	// The vault connection's OWN credentials authenticate to the vault — that
-	// is the whole point of routing through a connection. The emulator can mint
-	// for a workspace identity, which is what its keyvault-emulator grants; a
-	// tenant would use the connection's OAuth2 or ServicePrincipal credential
-	// instead, and either way the caller never sends vault credentials here.
+	// is the whole point of routing through a connection, and which credential
+	// is admissible is the connector's business, not ours: AzureKeyVault takes
+	// OAuth2 or ServicePrincipal and nothing else.
 	var vaultCred connectionCredentials
 	if vaultConn.CredentialsJSON != "" {
 		_ = json.Unmarshal([]byte(vaultConn.CredentialsJSON), &vaultCred)
 	}
-	if vaultCred.WorkspaceID == "" {
-		return fmt.Sprintf("connection %s must carry WorkspaceIdentity "+
-			"credentials for this emulator to resolve secrets through it.",
-			ref.ConnectionID)
-	}
-	wi, err := a.Store.GetWorkspaceIdentity(vaultCred.WorkspaceID)
-	if err != nil {
-		return "the vault connection's workspace has no provisioned identity."
-	}
-	bearer, err := a.Entra.MintWorkspaceIdentityToken(wi.IdentityID, "https://vault.azure.net")
-	if err != nil {
-		return err.Error()
+	bearer, msg := a.vaultBearer(vaultCred)
+	if msg != "" {
+		return msg
 	}
 	if _, err := a.AKV.ResolveSecret(a.AKV.VaultURI(account), ref.SecretName, bearer); err != nil {
 		return err.Error()
 	}
 	return ""
+}
+
+// vaultBearer mints the vault-audience token the vault connection's own
+// credential entitles it to, or explains why it cannot.
+//
+// ServicePrincipal is the path a real tenant supports and the only one that is
+// automatable: OAuth2 needs interactive consent, which no example can perform.
+// WorkspaceIdentity is accepted ONLY as a local convenience for stacks with no
+// service principal to hand, and it is named as such — a tenant refuses it for
+// this connector, so anything relying on it here is emulator-only.
+func (a *API) vaultBearer(cred connectionCredentials) (string, string) {
+	if a.Entra == nil || a.AKV == nil {
+		return "", "no Entra/vault endpoint is configured to resolve the reference " +
+			"(set skipTestConnection to bypass)."
+	}
+	switch cred.CredentialType {
+	case "ServicePrincipal":
+		bearer, err := a.Entra.MintServicePrincipalToken(
+			cred.TenantID, cred.ServicePrincipalClientID, cred.ServicePrincipalSecret,
+			"https://vault.azure.net/.default")
+		if err != nil {
+			return "", err.Error()
+		}
+		return bearer, ""
+	case "WorkspaceIdentity":
+		wi, err := a.Store.GetWorkspaceIdentity(cred.WorkspaceID)
+		if err != nil {
+			return "", "the vault connection's workspace has no provisioned identity."
+		}
+		bearer, err := a.Entra.MintWorkspaceIdentityToken(wi.IdentityID, "https://vault.azure.net")
+		if err != nil {
+			return "", err.Error()
+		}
+		return bearer, ""
+	default:
+		return "", fmt.Sprintf("the vault connection carries %q credentials; "+
+			"resolving a secret needs ServicePrincipal (OAuth2 requires "+
+			"interactive consent and cannot be completed by a script).",
+			cred.CredentialType)
+	}
 }
 
 // connectionParameter reads one `{dataType, name, value}` entry by name.

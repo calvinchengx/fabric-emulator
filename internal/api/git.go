@@ -532,7 +532,8 @@ func (a *API) createConnection(w http.ResponseWriter, r *http.Request, p *auth.P
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "displayName is required.")
 		return
 	}
-	if _, msg := validateConnectionDetails(body.ConnectionDetails); msg != "" {
+	details, msg := validateConnectionDetails(body.ConnectionDetails)
+	if msg != "" {
 		writeErr(w, http.StatusBadRequest, "InvalidConnectionDetails", msg)
 		return
 	}
@@ -542,6 +543,13 @@ func (a *API) createConnection(w http.ResponseWriter, r *http.Request, p *auth.P
 	if cd := body.CredentialDetails; cd != nil {
 		if msg := validCredential(cd.Credentials); msg != "" {
 			writeErr(w, http.StatusBadRequest, "InvalidCredentials", msg)
+			return
+		}
+		// Only once the type is a REAL one: "AzureKeyVaultReference is not a
+		// credentialType" is a more useful answer than "this connector does not
+		// accept AzureKeyVaultReference", which implies another one might.
+		if msg := validateCredentialForConnection(details.Type, cd.Credentials.CredentialType); msg != "" {
+			writeErr(w, http.StatusBadRequest, "UnsupportedCredentialType", msg)
 			return
 		}
 		switch cd.Credentials.CredentialType {

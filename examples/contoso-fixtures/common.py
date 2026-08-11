@@ -53,6 +53,13 @@ FABRIC = _T.api_root[: -len("/v1")] if _T.api_root.endswith("/v1") else _T.api_r
 # localhost rule. So it is None, and require_vault() refuses AT THE POINT OF USE.
 KV = _T.vault_url
 TENANT = _T.tenant
+# The service principal as DATA, for the one surface that needs it that way.
+# `None` under real when the operator authenticated with `az login` — there is
+# no secret to hand on, and that is a legitimate resolved value rather than a
+# failure. It is refused at the point of use (require_service_principal), never
+# at import: a credential nobody in the running step needs must not block the
+# other ten, which is the mistake require_vault exists to record.
+SERVICE_PRINCIPAL = _T.service_principal
 
 
 def require_vault():
@@ -72,6 +79,42 @@ def require_vault():
             "source API key there and reads it back the way a notebook does. "
             "Steps that only touch the control plane (provision.py) need none.")
     return KV
+
+
+def require_service_principal(step):
+    """The `(tenant, client_id, secret)` triple, refused where none resolved.
+
+    MEASURED 2026-08-11 against the `odeoncg.ai` trial tenant, via
+    `GET /v1/connections/supportedConnectionTypes?showAllCreationMethods=true`:
+    an `AzureKeyVault` connection reported
+    `"supportedCredentialTypes": ["OAuth2", "ServicePrincipal"]` and nothing
+    else. OAuth2 needs an interactive consent flow, which no script can perform
+    — so binding a vault to Fabric non-interactively requires the service
+    principal's credentials *as data* in the connection body, and a
+    `TokenCredential` cannot be turned back into one.
+
+    THIS IS A REAL BOUNDARY as of that reading, not a shape we can fix. Every
+    other divergence found against the trial was our payload being wrong; this
+    one is the service requiring credentials-as-data that a developer's
+    `az login` does not carry.
+
+    THE DATE IS LOAD-BEARING, because this is the strongest claim in the file and
+    it rests on one reading of a list Microsoft controls. If `WorkspaceIdentity`
+    is added to that connector, the paragraph above becomes false — and without
+    a date nothing here would say when it was ever true. Re-read the connector
+    table before repeating the claim; do not inherit it.
+    """
+    if SERVICE_PRINCIPAL is None:
+        raise SystemExit(
+            f"{step} needs a service principal under FABRIC_TARGET=real.\n"
+            "  why:     an AzureKeyVault connection accepts only OAuth2 or "
+            "ServicePrincipal (the tenant's own supportedConnectionTypes), and "
+            "OAuth2 requires interactive consent.\n"
+            "  instead: set AZURE_TENANT_ID, AZURE_CLIENT_ID and "
+            "AZURE_CLIENT_SECRET for a principal with access to the vault. An "
+            "`az login` alone cannot complete this step — it holds no secret to "
+            "put in the connection body.")
+    return SERVICE_PRINCIPAL
 
 # Local policy, not target policy (see the module docstring). UNSET means
 # "ask the API", which is the portable path — see sql_endpoint(). It stays

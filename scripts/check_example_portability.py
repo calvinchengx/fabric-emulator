@@ -240,6 +240,30 @@ def check_resolver_uses_the_contract(problems):
             f"{RESOLVER} still hardcodes the seeded secret; the resolver should take it "
             f"from fabric_target so real mode can refuse it by value.")
 
+    # AND NOWHERE ELSE. The check above says the resolver DOES import
+    # fabric_target; nothing said no one else may, so a step could resolve the
+    # target a second way and this gate stayed silent — while printing "target
+    # resolved in common.py", which asserts the property it had not checked.
+    #
+    # Measured 2026-08-11: adding `import fabric_target` to a step file left the
+    # gate green. A false all-clear, and the most misleading kind, because the
+    # summary line reads as confirmation.
+    #
+    # This matters beyond tidiness. A second resolution site is how a step
+    # acquires its own idea of the target, and the failure is invisible locally
+    # because both sites agree under `emulator` — they only diverge on a tenant,
+    # where one of them is reading env the other refuses by value.
+    for f in python_files(EXAMPLES):
+        if f == ROOT / RESOLVER:
+            continue
+        if re.search(r"^\s*(import\s+fabric_target|from\s+fabric_target\b)",
+                     f.read_text(), re.M):
+            problems.append(
+                f"{rel(f)} imports fabric_target directly. The target resolves in "
+                f"{RESOLVER} and nowhere else — import what you need from there, or "
+                f"add it to the resolver. Two resolution sites agree under emulator "
+                f"and diverge on a tenant.")
+
 
 def known_part(path):
     return path in KNOWN_PARTS or any(s.match(path) for s in PART_SHAPES)

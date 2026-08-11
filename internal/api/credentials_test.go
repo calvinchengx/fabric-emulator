@@ -116,7 +116,10 @@ func TestServicePrincipalProbe(t *testing.T) {
 func TestWorkspaceIdentityCredential(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
-	body := `{"displayName":"wi","connectionDetails":{"type":"WebForPipeline","creationMethod":"WebForPipeline.Contents","parameters":[{"dataType":"Text","name":"baseUrl","value":"https://x.example"}]},"credentialDetails":{"credentials":{"credentialType":"WorkspaceIdentity","workspaceId":"` + ws.ID + `"}}}`
+	// AzureDataLakeStorage, not WebForPipeline: the tenant's connector table
+	// does not list WorkspaceIdentity for the Web connectors, so the old
+	// fixture asserted a pair Fabric refuses.
+	body := `{"displayName":"wi","connectionDetails":{"type":"AzureDataLakeStorage","creationMethod":"AzureDataLakeStorage","parameters":[{"dataType":"Text","name":"server","value":"x"},{"dataType":"Text","name":"path","value":"/"}]},"credentialDetails":{"credentials":{"credentialType":"WorkspaceIdentity","workspaceId":"` + ws.ID + `"}}}`
 
 	// No provisioned identity → 400.
 	if w := do(a.createConnection, admin, "POST", body, nil); w.Code != http.StatusBadRequest {
@@ -141,6 +144,21 @@ func wiEntra(t *testing.T, failMint bool) *entra.Client {
 		}
 		if r.URL.Query().Get("resource") != "https://vault.azure.net" {
 			t.Errorf("mint resource = %q", r.URL.Query().Get("resource"))
+		}
+		_, _ = w.Write([]byte(`{"access_token":"wi-vault-token"}`))
+	})
+	// The SERVICE PRINCIPAL exchange, which is the credential a tenant actually
+	// accepts for an AzureKeyVault connection (WorkspaceIdentity above is an
+	// emulator-only convenience). Both mint a vault-audience token; only this
+	// one is reachable on real Fabric without interactive consent.
+	mux.HandleFunc("POST /{tenant}/oauth2/v2.0/token", func(w http.ResponseWriter, r *http.Request) {
+		if failMint {
+			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+			return
+		}
+		_ = r.ParseForm()
+		if got := r.PostFormValue("scope"); got != "https://vault.azure.net/.default" {
+			t.Errorf("sp token scope = %q", got)
 		}
 		_, _ = w.Write([]byte(`{"access_token":"wi-vault-token"}`))
 	})
@@ -195,7 +213,8 @@ func TestKeyCredentialResolvedFromKeyVault(t *testing.T) {
 			`"creationMethod":"AzureKeyVault.Actions","parameters":[` +
 			`{"dataType":"Text","name":"accountName","value":"` + account + `"}]},` +
 			`"credentialDetails":{"skipTestConnection":true,"credentials":` +
-			`{"credentialType":"WorkspaceIdentity","workspaceId":"` + ws.ID + `"}}}`
+			`{"credentialType":"ServicePrincipal","tenantId":"t",` +
+			`"servicePrincipalClientId":"c","servicePrincipalSecret":"s"}}}`
 	}
 	keyRef := func(connID, secret string) string {
 		return `{"displayName":"pos","connectionDetails":{"type":"WebForPipeline",` +
