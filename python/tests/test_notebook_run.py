@@ -141,9 +141,27 @@ def test_a_notebook_polls_until_it_reaches_a_terminal_state(service):
 
 
 def test_an_unreadable_run_detail_does_not_fail_a_completed_run(service):
-    # A notebook with no cells has nothing to report and still completed;
-    # turning that into an error would fail runs that worked.
+    # A run whose detail cannot be read still completed; turning that into an
+    # error would fail runs that worked.
     service(detail_raises=True)
+    assert notebook.run("nb") is None
+
+
+def test_an_unavailable_exit_value_is_none_not_empty_string(service):
+    """`None` (could not be obtained) and `""` (exited with no value) are
+    DIFFERENT FACTS, and this used to return `""` for both.
+
+    Real Fabric has no run-detail endpoint — measured 2026-08-11, it answers
+    `404 EntityNotFound` — so on a tenant EVERY run took the second branch and
+    looked like a notebook that had deliberately exited empty. A caller reading
+    `""` concludes the notebook ran and returned nothing; the truth was that
+    the value was unobtainable. `or ""` / `or 0` fallbacks behave identically
+    either way, so nothing that ignored the distinction breaks.
+    """
+    service(detail_raises=True)
+    assert notebook.run("nb") is None
+
+    service(exit_value="", cells=1)
     assert notebook.run("nb") == ""
 
 
@@ -250,11 +268,26 @@ def test_the_cell_count_floors_at_one_so_the_budget_is_never_zero(service, monke
         notebook._run_detail("nb", per_cell_seconds=30)
 
 
-def test_an_unreadable_detail_still_yields_a_usable_budget(service, monkeypatch):
+def test_an_unknowable_cell_count_uses_the_whole_notebook_ceiling(service, monkeypatch):
+    """NOT `per_cell x 1`, which is what this asserted before.
+
+    A cell count that cannot be read is unknown, not one. Returning 1 gave a
+    twelve-cell notebook a one-cell deadline on real Fabric — where the detail
+    endpoint does not exist, so EVERY run took that path — and produced a
+    spurious timeout for a notebook that was working. The same notebook passed
+    against the emulator with the full budget: emulator-green, tenant-broken.
+    """
     service(detail_raises=True, poll_statuses=["Running"] * 50)
     never_finishes(monkeypatch)
-    with pytest.raises(notebook.NotebookError, match=r"did not finish within 30s"):
+    with pytest.raises(notebook.NotebookError,
+                       match=rf"did not finish within {notebook._TIMEOUT_WITHOUT_CELL_COUNT}s"):
         notebook._run_detail("nb", per_cell_seconds=30)
+
+
+def test_the_ceiling_is_longer_than_any_per_cell_budget_would_give(service):
+    """The ceiling must not be shorter than the multiplied budget it replaces,
+    or the fix reintroduces the bug for large notebooks."""
+    assert notebook._TIMEOUT_WITHOUT_CELL_COUNT > notebook._DEFAULT_TIMEOUT_PER_CELL * 12
 
 
 def test_run_detail_reports_the_exit_value_status_and_cell_count(service):

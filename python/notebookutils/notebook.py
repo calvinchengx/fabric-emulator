@@ -24,6 +24,14 @@ _TERMINAL = {"Completed", "Failed", "Cancelled", "Deduped"}
 
 # Fabric's documented defaults (notebookutils-notebook-run).
 _DEFAULT_TIMEOUT_PER_CELL = 90
+
+# The whole-notebook ceiling used when the cell count cannot be read — which is
+# every run on real Fabric, whose job-instance surface has no run-detail
+# endpoint. Deliberately GENEROUS: the two failure modes are not symmetric. Too
+# short invents a timeout for a notebook that was working, which is a false
+# failure someone has to debug; too long only delays reporting a notebook that
+# had genuinely hung, which the caller's own deadline can cut short anyway.
+_TIMEOUT_WITHOUT_CELL_COUNT = 1800
 _DEFAULT_DAG_TIMEOUT = 43200  # 12 hours
 
 
@@ -103,7 +111,12 @@ def _run_detail(path, timeout_seconds=None, per_cell_seconds=None, arguments=Non
     jid = loc.rstrip("/").rsplit("/", 1)[-1]
     base = f"{config().fabric_url}/v1/workspaces/{ws}/items/{iid}/jobs/instances/{jid}"
     if timeout_seconds is None:
-        timeout_seconds = (per_cell_seconds or _DEFAULT_TIMEOUT_PER_CELL) * _cell_count(base, token)
+        cells = _cell_count(base, token)
+        timeout_seconds = (
+            (per_cell_seconds or _DEFAULT_TIMEOUT_PER_CELL) * cells
+            if cells is not None
+            else _TIMEOUT_WITHOUT_CELL_COUNT
+        )
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         job = request("GET", base, token=token)
@@ -145,34 +158,58 @@ def _execution_data(arguments):
     return {"executionData": exec_data} if exec_data else None
 
 
-def _cell_count(base, token):
-    """How many cells this run will execute; at least 1.
+def _read_run_detail(base, token):
+    """The run detail, or None when this target does not serve one.
 
-    Readable as soon as the job exists, because creating it parses the
-    notebook's definition into the run record. A floor of 1 keeps a notebook
-    with no executable cells — or a detail that cannot be read — from being
-    handed a zero-second deadline, which would fail instantly.
+    `…/jobs/instances/{jid}/notebookRun` is the EMULATOR's endpoint, paired with
+    the `notebookRunResult` callback an engine posts to. MEASURED 2026-08-11:
+    real Fabric answers it `404 EntityNotFound`. So every caller here has to
+    work without it, and — more importantly — has to be able to TELL that it is
+    working without it, rather than reading absence as an answer.
     """
     try:
-        detail = request("GET", f"{base}/notebookRun", token=token)
+        return request("GET", f"{base}/notebookRun", token=token)
     except Exception:  # noqa: BLE001 — an unreadable detail must not fail the run
-        return 1
+        return None
+
+
+def _cell_count(base, token):
+    """How many cells this run will execute, or None when that is unknowable.
+
+    NOT a number when the answer is unknown. The previous version returned 1,
+    which reads as "a one-cell notebook" and is indistinguishable from the
+    truth — and on real Fabric, where the detail endpoint does not exist, it
+    was returned for EVERY run. A twelve-cell notebook then got a one-cell
+    deadline and failed with a spurious timeout, while the same notebook passed
+    against the emulator with the full budget. A fabricated 1 is the smallest
+    possible lie and it produced the largest possible error.
+    """
+    detail = _read_run_detail(base, token)
+    if detail is None:
+        return None
     return max(len(detail.get("cells") or []), 1)
 
 
 def _finish(base, token, status):
     """Read the run detail a terminal job left behind.
 
-    The exit value has always been recorded — the engine posts it, the service
-    stores it, and `…/notebookRun` serves it. Nothing asked for it, which is
-    why `run` could only report a status. A run detail that cannot be read is
-    not fatal: a notebook with no cells has nothing to report and still
-    completed.
+    Returns `(exitValue, status, cellCount)` where **exitValue is None when this
+    target cannot report one at all**, and `""` when it reported that the
+    notebook exited without a value. Those are different facts and the previous
+    version collapsed them: it returned `""` for both, so on real Fabric — where
+    the detail endpoint does not exist — every run looked like a notebook that
+    had deliberately exited empty.
+
+    That is the dangerous direction. A caller reading `""` concludes the
+    notebook ran and returned nothing; the truth was that the value could not be
+    obtained. Returning None makes the caller's `or ""`/`or 0` fallbacks behave
+    exactly as before while leaving the distinction available to anyone who
+    checks — and it is why contoso-data-platform returns metrics through a
+    one-row Delta table rather than an exit value.
     """
-    try:
-        detail = request("GET", f"{base}/notebookRun", token=token)
-    except Exception:  # noqa: BLE001 — an unreadable detail must not fail a completed run
-        return "", status, 0
+    detail = _read_run_detail(base, token)
+    if detail is None:
+        return None, status, 0
     return detail.get("exitValue") or "", status, len(detail.get("cells") or [])
 
 

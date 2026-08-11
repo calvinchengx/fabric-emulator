@@ -65,7 +65,53 @@ KNOWN_DIVERGENCES = {
                "session; the emulator gives each child its own session, so "
                "sibling temp views are not shared.",
     },
+    "exit-value-needs-run-detail": {
+        "parity_row": "`runMultiple` — exit values over REST",
+        "why": "The exit value is read from `…/jobs/instances/{jid}/notebookRun`, "
+               "which is the EMULATOR's endpoint — real Fabric answers it 404 "
+               "EntityNotFound (measured 2026-08-11). So a REST-submitted run "
+               "reports `\"\"` here and `None` (unobtainable) there. This is the "
+               "emulator being a SUPERSET, the same class as the injected "
+               "`notebook_exit`, and the reason contoso-data-platform returns "
+               "metrics through a one-row Delta table instead.",
+    },
 }
+
+
+def _skip_if_capacity_refused(got):
+    """SKIP — visibly — when the capacity could not give a child a Spark session.
+
+    MEASURED 2026-08-11 on a trial (FTL4): the DAG's second activity failed with
+    `TooManyRequestsForCapacity — Failed to create Livy session`. That is the
+    environment refusing, not a divergence, and asserting through it would file
+    a parity bug against a capacity limit.
+
+    It also corrects an assumption in this file: the children are markdown-only
+    because "a notebook with executable cells needs an engine", which is true of
+    the EMULATOR. Real Fabric allocates a Livy session for every run regardless,
+    so the real leg needs capacity headroom the emulator leg never asks for.
+
+    A pytest skip is the right shape here, and deliberately not the shape the
+    real-Fabric workflow used for its missing secrets: this reports SKIPPED,
+    which reads as "not proven". That workflow reported the whole job as
+    `success` while running nothing, and went unnoticed for two scheduled runs.
+    """
+    for name, result in got.items():
+        if result.get("failed") and "TooManyRequestsForCapacity" in str(result.get("why", "")):
+            pytest.skip(f"capacity refused a Spark session for {name!r}: "
+                        "this leg needs headroom for one session per activity")
+
+
+def expected_exit_value(t):
+    """What a child that never calls exit() reports, per target.
+
+    A literal per target rather than one shared literal, because the difference
+    is real and DECLARED above. Collapsing them would have hidden it — which is
+    exactly what the client did until 2026-08-11: it returned `""` on both, so
+    every run on real Fabric looked like a notebook that had deliberately
+    exited empty.
+    """
+    return None if t.is_real else ""
 
 
 def project(results):
@@ -79,6 +125,11 @@ def project(results):
         name: {
             "exitVal": r.get("exitVal"),
             "failed": r.get("exception") is not None,
+            # NOT compared — the assertions read the two keys above. Carried so
+            # an environment-refused run can be told from a divergence; error
+            # text can never match across targets, which is why it is excluded
+            # from the comparison rather than from the dict.
+            "why": str(r.get("exception") or ""),
         }
         for name, r in sorted(results.items())
     }
@@ -192,12 +243,16 @@ def test_the_dag_projection_matches_the_recorded_baseline(t, ws, children, shim)
     removed — and it fails loudly on whichever leg stops matching.
     """
     got = run_dag(t, ws, children)
+    _skip_if_capacity_refused(got)
     assert set(got) == {"first", "second"}, got
-    # Neither child calls exit(), and the documented answer for that is "" on
-    # both targets — not None, which is what a caller doing `int(v or 0)`
-    # would trip over.
-    assert got["first"] == {"exitVal": "", "failed": False}, got
-    assert got["second"] == {"exitVal": "", "failed": False}, got
+    # Neither child calls exit(). The answer is `""` on the emulator and `None`
+    # on real Fabric, which has no run-detail endpoint to read it from — a
+    # DECLARED divergence, not a bug. Both are falsy, so a caller doing
+    # `int(v or 0)` behaves identically either way.
+    want = expected_exit_value(t)
+    for name in ("first", "second"):
+        stable = {k: got[name][k] for k in ("exitVal", "failed")}
+        assert stable == {"exitVal": want, "failed": False}, got
 
 
 def test_a_dependent_of_a_failure_does_not_run_on_either_target(t, ws, children, shim):
@@ -249,4 +304,5 @@ def test_the_divergence_list_is_not_a_dumping_ground():
     next real divergence would be muted by adding a line. Growing this set is a
     decision that belongs in docs/39, so it fails here until it is made there.
     """
-    assert set(KNOWN_DIVERGENCES) == {"sequential-by-default", "isolated-child-sessions"}
+    assert set(KNOWN_DIVERGENCES) == {
+        "sequential-by-default", "isolated-child-sessions", "exit-value-needs-run-detail"}
