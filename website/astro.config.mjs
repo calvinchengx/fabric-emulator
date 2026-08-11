@@ -114,6 +114,7 @@ export default defineConfig({
             { slug: '45-powerbi-reverse-engineering' },
             { slug: '47-environment-abstraction' },
             { slug: '48-variable-libraries' },
+            { slug: '49-async-outcome-audit' },
             { slug: 'engine-matrix' },
           ],
         },
