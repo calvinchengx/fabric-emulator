@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 	"time"
 
@@ -48,20 +49,37 @@ func TestOperationStateCarriesEveryDocumentedField(t *testing.T) {
 			t.Errorf("%s is missing — the documented OperationState carries it", field)
 		}
 	}
-	// Times are RFC3339, which is what `string (date-time)` means and what a
-	// client will try to parse.
+	// NOT RFC3339, though `string (date-time)` reads that way and this test
+	// asserted it first. A tenant sends .NET round-trip: 7 fractional digits,
+	// no `Z`.
+	//
+	// The pattern is written out LITERALLY rather than built from
+	// fabricOperationTime. Parsing with the same constant the handler formats
+	// with is self-referential — it passes for any layout the two share, which
+	// is every layout. Asked the wrong way it proves nothing; this asks whether
+	// the bytes match what a tenant sent. See [[assertions-one-level-off]].
+	shape := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}$`)
 	for _, field := range []string{"createdTimeUtc", "lastUpdatedTimeUtc"} {
 		s, _ := body[field].(string)
-		if _, err := time.Parse(time.RFC3339, s); err != nil {
-			t.Errorf("%s = %q is not RFC3339: %v", field, s, err)
+		if !shape.MatchString(s) {
+			t.Errorf("%s = %q, want the measured tenant shape 2026-08-11T07:23:41.3765432 "+
+				"(7 fractional digits, no trailing Z)", field, s)
+		}
+		if _, err := time.Parse(fabricOperationTime, s); err != nil {
+			t.Errorf("%s = %q does not round-trip through the handler's own layout: %v", field, s, err)
 		}
 	}
 }
 
-// percentComplete must be DERIVED from the same clock the status is, or the two
-// disagree — "Succeeded" at 40%, or "Running" at 100%, both of which a progress
-// UI would render as a stuck or lying bar.
-func TestPercentCompleteAgreesWithStatus(t *testing.T) {
+// percentComplete is null while running and 100 once terminal, and NEVER an
+// intermediate value — measured on a real tenant, not inferred from the schema.
+//
+// This test previously asserted only `< 100` while running, which an
+// interpolated 47 satisfies. The assertion was one level off the property that
+// mattered: it checked that progress and status did not contradict each other,
+// when the real question was whether the emulator emits a quantity Fabric
+// publishes at all. See [[assertions-one-level-off]].
+func TestPercentCompleteIsNullUntilTerminalNeverIntermediate(t *testing.T) {
 	a, st := newAPI(t)
 	now := st.Now()
 
@@ -78,23 +96,60 @@ func TestPercentCompleteAgreesWithStatus(t *testing.T) {
 	if b["status"] == "Succeeded" {
 		t.Fatal("the probe completed too early to test the running case")
 	}
-	if pc := b["percentComplete"].(float64); pc >= 100 {
-		t.Errorf("a running operation reports %v%% — status and progress disagree", pc)
+	// The KEY must be present and its VALUE null. A missing key and a null are
+	// different wires, and a client doing `body["percentComplete"]` in Python
+	// tells them apart the hard way.
+	pc, ok := b["percentComplete"]
+	if !ok {
+		t.Error("running: percentComplete key is absent; a tenant sends the key with a null value")
+	}
+	if pc != nil {
+		t.Errorf("running: percentComplete = %v, want null — a tenant publishes no intermediate figure", pc)
 	}
 
 	_, b = pollOperation(t, a, done.ID)
-	if b["status"] != "Succeeded" || b["percentComplete"].(float64) != 100 {
-		t.Errorf("succeeded operation = %v at %v%%, want Succeeded at 100", b["status"], b["percentComplete"])
+	if b["status"] != "Succeeded" || b["percentComplete"] != float64(100) {
+		t.Errorf("succeeded operation = %v at %v, want Succeeded at 100", b["status"], b["percentComplete"])
 	}
 
-	// A failed operation stopped progressing too. The status says which
-	// outcome; percentComplete says only that it is no longer moving.
+	// A failed operation stopped progressing too. This half is NOT measured —
+	// only the succeeded case is — so it is asserted as the choice made, and
+	// changing it needs a tenant reading rather than an argument.
 	_, b = pollOperation(t, a, failed.ID)
-	if b["status"] != "Failed" || b["percentComplete"].(float64) != 100 {
-		t.Errorf("failed operation = %v at %v%%, want Failed at 100", b["status"], b["percentComplete"])
+	if b["status"] != "Failed" || b["percentComplete"] != float64(100) {
+		t.Errorf("failed operation = %v at %v, want Failed at 100", b["status"], b["percentComplete"])
 	}
 	if b["error"] == nil {
 		t.Error("a failed operation carries no error object")
+	}
+}
+
+// The interpolation this replaced would pass every assertion above except this
+// one: it is the test that pins the ABSENCE of intermediate values, by polling
+// across the whole span rather than at one instant.
+func TestPercentCompleteNeverTakesAnIntermediateValue(t *testing.T) {
+	a, st := newAPI(t)
+	st.Clock.Freeze()
+	op := &store.Operation{Kind: "AuditProbe", CompleteAt: st.Now() + 10}
+	if err := st.CreateOperation(op); err != nil {
+		t.Fatal(err)
+	}
+
+	for tick := int64(0); tick <= 10; tick++ {
+		_, b := pollOperation(t, a, op.ID)
+		switch pc := b["percentComplete"].(type) {
+		case nil:
+			if b["status"] == "Succeeded" {
+				t.Errorf("t+%ds: Succeeded with a null percentComplete", tick)
+			}
+		case float64:
+			if pc != 100 {
+				t.Errorf("t+%ds: percentComplete = %v — Fabric emits only null or 100", tick, pc)
+			}
+		default:
+			t.Errorf("t+%ds: percentComplete = %T(%v), want null or a number", tick, pc, pc)
+		}
+		st.Clock.Advance(1)
 	}
 }
 

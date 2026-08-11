@@ -224,6 +224,19 @@ func (a *API) deleteItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 
 // ---- operations ----
 
+// fabricOperationTime is .NET's round-trip format on a Kind=Unspecified
+// DateTime: 7 fractional digits and NO trailing `Z`.
+//
+// MEASURED against a real tenant on 2026-08-11, and it is NOT what the schema
+// suggests — `string (date-time)` reads as RFC3339, which is what this emulator
+// sent first. A client with a strict parser that accepts `2026-08-11T07:23:41Z`
+// rejects `2026-08-11T07:23:41.3765432`, so it would pass here and fail there.
+//
+// The emulator's clock is second-granular, so the fraction is always seven
+// zeros. That is the right kind of inaccuracy: the SHAPE a client parses is
+// exact and only the precision it carries is coarser.
+const fabricOperationTime = "2006-01-02T15:04:05.0000000"
+
 // operationBody is the poll response.
 type operationBody struct {
 	ID     string `json:"id"`
@@ -238,7 +251,10 @@ type operationBody struct {
 	// extra field is harmless where a missing one is not.
 	CreatedTimeUtc     string `json:"createdTimeUtc"`
 	LastUpdatedTimeUtc string `json:"lastUpdatedTimeUtc"`
-	PercentComplete    int    `json:"percentComplete"`
+	// A POINTER so it can be null, which is what a tenant sends while the
+	// operation runs. No omitempty: the key is always present, only its value
+	// varies. See Operation.PercentCompleteAt.
+	PercentComplete *int `json:"percentComplete"`
 	Error              *struct {
 		ErrorCode string `json:"errorCode"`
 		Message   string `json:"message"`
@@ -255,8 +271,8 @@ func (a *API) getOperation(w http.ResponseWriter, r *http.Request, p *auth.Princ
 	body := operationBody{
 		ID:                 op.ID,
 		Status:             op.StatusAt(now),
-		CreatedTimeUtc:     time.Unix(op.CreatedAt, 0).UTC().Format(time.RFC3339),
-		LastUpdatedTimeUtc: time.Unix(op.LastUpdatedAt(now), 0).UTC().Format(time.RFC3339),
+		CreatedTimeUtc:     time.Unix(op.CreatedAt, 0).UTC().Format(fabricOperationTime),
+		LastUpdatedTimeUtc: time.Unix(op.LastUpdatedAt(now), 0).UTC().Format(fabricOperationTime),
 		PercentComplete:    op.PercentCompleteAt(now),
 	}
 	if body.Status == store.OpFailed {

@@ -93,35 +93,30 @@ type Operation struct {
 	FailWith   string // non-empty forces Failed with this errorCode
 }
 
-// PercentCompleteAt derives operation progress from the SAME clock the status
-// comes from, so the two can never disagree.
+// PercentCompleteAt reports progress the way a tenant does, which is NOT a
+// progress bar. nil means "no figure", i.e. a JSON null.
 //
-// Fabric documents `percentComplete` as an integer 0-100 on every operation
-// state, and the emulator returned none. A client rendering progress therefore
-// saw nothing locally and a real number on a tenant — the shape of divergence
-// that only shows up in production.
+// MEASURED against real Fabric on 2026-08-11 (Warehouse create, by
+// local_0cdd48fd): percentComplete is `null` for the whole time the operation
+// runs and `100` once it has succeeded. It never takes an intermediate value.
 //
-// It is COMPUTED, not faked: the emulator knows when the operation was created
-// and when its clock completes it, so the fraction between them is a real
-// answer rather than a plausible-looking constant. A terminal operation is 100
-// whether it succeeded or failed — the work stopped progressing either way, and
-// the status field is what says which.
-func (o Operation) PercentCompleteAt(now int64) int {
-	if now >= o.CompleteAt {
-		return 100
+// The first version of this function interpolated between CreatedAt and
+// CompleteAt and returned figures like 47. Every one of those is a number real
+// Fabric does not send, and the comment defending it — "COMPUTED, not faked" —
+// was answering the wrong question: the value was honestly derived from this
+// emulator's clock and still wrong, because the tenant does not publish that
+// quantity at all. A client rendering a bar would animate smoothly here and sit
+// at null against Fabric, and its null-handling branch would never once execute
+// locally. That is the emulator-green/tenant-broken direction.
+func (o Operation) PercentCompleteAt(now int64) *int {
+	if now < o.CompleteAt {
+		return nil
 	}
-	span := o.CompleteAt - o.CreatedAt
-	if span <= 0 {
-		return 0
-	}
-	done := int((now - o.CreatedAt) * 100 / span)
-	if done < 0 {
-		return 0
-	}
-	if done > 100 {
-		return 100
-	}
-	return done
+	// 100-on-success is the measured half. A FAILED operation was not measured;
+	// 100 is the smaller inference — it stopped progressing, and `status` is the
+	// field that says which way — than inventing a separate figure for it.
+	done := 100
+	return &done
 }
 
 // LastUpdatedAt is when this operation's state last CHANGED, which for a
