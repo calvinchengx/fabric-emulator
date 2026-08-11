@@ -26,6 +26,12 @@ COPY python/ ./python/
 RUN uv sync --frozen --no-install-project --group sail-delta
 
 ENV PATH="/app/.venv/bin:${PATH}"
+# Same reason as docker/python-runtime, and set here too because the two images
+# are required to share one preamble (python/tests/test_spark_agent_packaging.py):
+# this agent also writes its progress to a pipe, where python block-buffers
+# stdout, so a run killed mid-flight prints nothing and its silence locates
+# nothing.
+ENV PYTHONUNBUFFERED=1
 
 # Runnable with no command and no mount — the whole repair. Everything the
 # agent still needs is environment (SPARK_REMOTE, the Entra and storage
