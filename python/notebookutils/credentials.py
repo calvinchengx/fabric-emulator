@@ -37,8 +37,20 @@ _real_credential = None
 
 
 def _real_token(scope):
-    """Real mode: mint through azure-identity, so `az login` just works."""
+    """Real mode: mint through azure-identity, so `az login` just works.
+
+    THE CONFIGURED TENANT MUST REACH THE az CLI PATH, and it did not.
+    `DefaultAzureCredential` takes tenant hints for the browser, VS Code,
+    shared-cache and workload-identity links and has NONE for the CLI — so a
+    developer whose `az` default tenant differs from NOTEBOOKUTILS_TENANT got
+    tokens for the wrong tenant from the credential source this shim documents as
+    the default. `getSecret` then fails with a vault or licensing error that names
+    nothing about tenants.
+    """
     global _real_credential
+    tenant = config().tenant
+    if tenant == "organizations":
+        tenant = None  # nothing configured; let the chain decide
     if _real_credential is None:
         try:
             from azure.identity import DefaultAzureCredential
@@ -48,7 +60,10 @@ def _real_token(scope):
                 "(`uv add azure-identity`), then `az login` or AZURE_* "
                 "credentials in the environment."
             ) from e
-        _real_credential = DefaultAzureCredential()
+        _real_credential = DefaultAzureCredential(
+            additionally_allowed_tenants=[tenant] if tenant else None)
+    if tenant:
+        return _real_credential.get_token(scope, tenant_id=tenant).token
     return _real_credential.get_token(scope).token
 
 
