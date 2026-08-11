@@ -245,10 +245,9 @@ func TestGitInitializeConnectionAsLongRunningOperation(t *testing.T) {
 	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "git-lro-ws"}, &ws)
 
 	var conn struct{ ID string }
-	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{
-		"displayName":       "github-pat-lro",
+	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{"displayName": "github-pat-lro",
 		"connectivityType":  "ShareableCloud",
-		"connectionDetails": map[string]string{"type": "GitHubSourceControl"},
+		"connectionDetails": map[string]any{"type": "GitHubSourceControl", "creationMethod": "GitHubSourceControl.Contents", "parameters": []map[string]any{{"dataType": "Text", "name": "url", "value": "https://github.com/calvin/demo"}}},
 	}, &conn), http.StatusCreated, "create connection")
 
 	provider := map[string]string{

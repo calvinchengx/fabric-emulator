@@ -29,7 +29,7 @@ type API struct {
 	// Entra drives workspace-identity provisioning in entra-emulator (nil
 	// disables the identity endpoints with a 503).
 	Entra *entra.Client
-	// AKV resolves AzureKeyVaultReference connection credentials against a
+	// AKV resolves a credential's KeyVaultSecretReference against a
 	// Key Vault data plane (azure-keyvault-emulator in the family compose).
 	AKV *akv.Client
 	// MirrorItem snapshots a Fabric SQL Database's SQL tables to OneLake Delta

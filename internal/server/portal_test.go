@@ -161,10 +161,9 @@ func TestPortalConnections(t *testing.T) {
 		t.Fatalf("expected no connections, got %d", len(empty.Value))
 	}
 
-	resp := f.call("POST", "/v1/connections", f.token, map[string]any{
-		"displayName":       "sql-basic",
+	resp := f.call("POST", "/v1/connections", f.token, map[string]any{"displayName": "sql-basic",
 		"connectivityType":  "ShareableCloud",
-		"connectionDetails": map[string]any{"type": "SQL", "path": "srv;db"},
+		"connectionDetails": map[string]any{"type": "SQL", "creationMethod": "Sql", "parameters": []map[string]any{{"dataType": "Text", "name": "server", "value": "srv"}, {"dataType": "Text", "name": "database", "value": "db"}}},
 		"credentialDetails": map[string]any{
 			"connectionEncryption": "NotEncrypted",
 			"credentials":          map[string]any{"credentialType": "Basic", "username": "sa", "password": "hunter2"},

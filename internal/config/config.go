@@ -27,7 +27,7 @@ type Config struct {
 	// EntraJWKSURL is where signing keys are fetched. Derived from
 	// EntraIssuer when unset ({issuer minus /v2.0}/discovery/v2.0/keys).
 	EntraJWKSURL string
-	// AKVVaultHost is the one non-Azure host:port an AzureKeyVaultReference
+	// AKVVaultHost is the one non-Azure host:port a vault secret reference
 	// may resolve against — the family's keyvault-emulator, e.g.
 	// "keyvault-emulator:8444". Azure's own *.vault.azure.net (and the
 	// sovereign suffixes) are always allowed; everything else is refused,

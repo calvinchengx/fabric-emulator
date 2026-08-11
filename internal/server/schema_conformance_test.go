@@ -161,7 +161,7 @@ func TestConnectionCredentialsRejectUndocumentedFields(t *testing.T) {
 	// The documented CredentialType members (create-connection reference).
 	// Anything outside this set must not be accepted as a credential type.
 	for _, undocumented := range []string{"AccessKey", "S3AccessKey", "AwsKey"} {
-		resp := f.call("POST", "/v1/connections", f.token, map[string]any{
+		resp := f.call("POST", "/v1/connections", f.token, map[string]any{"connectionDetails": map[string]any{"type": "WebForPipeline", "creationMethod": "WebForPipeline.Contents", "parameters": []map[string]any{{"dataType": "Text", "name": "baseUrl", "value": "https://x.example"}}},
 			"displayName":      "cred-" + undocumented,
 			"connectivityType": "ShareableCloud",
 			"credentialDetails": map[string]any{"credentials": map[string]any{
@@ -180,7 +180,7 @@ func TestConnectionCredentialsRejectUndocumentedFields(t *testing.T) {
 
 	// And the documented two-secret carrier still works: Fabric's S3 connector
 	// collects an Access Key Id and a Secret Access Key, which travel as Basic.
-	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{
+	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{"connectionDetails": map[string]any{"type": "WebForPipeline", "creationMethod": "WebForPipeline.Contents", "parameters": []map[string]any{{"dataType": "Text", "name": "baseUrl", "value": "https://x.example"}}},
 		"displayName":      "cred-basic",
 		"connectivityType": "ShareableCloud",
 		"credentialDetails": map[string]any{"credentials": map[string]any{
@@ -211,7 +211,7 @@ func TestConnectionPayloadMatchesDocumentedSchema(t *testing.T) {
 	const source = "rest/api/fabric/core/connections/list-connections"
 	f := newFixture(t)
 
-	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{
+	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{"connectionDetails": map[string]any{"type": "WebForPipeline", "creationMethod": "WebForPipeline.Contents", "parameters": []map[string]any{{"dataType": "Text", "name": "baseUrl", "value": "https://x.example"}}},
 		"displayName":      "schema-conn",
 		"connectivityType": "ShareableCloud",
 		"credentialDetails": map[string]any{
@@ -312,7 +312,7 @@ func TestShortcutPayloadMatchesDocumentedSchema(t *testing.T) {
 	f.call("POST", "/v1/workspaces/"+ws.ID+"/lakehouses", f.token,
 		map[string]any{"displayName": "lh"}, &lake)
 	var conn struct{ ID string }
-	f.call("POST", "/v1/connections", f.token, map[string]any{
+	f.call("POST", "/v1/connections", f.token, map[string]any{"connectionDetails": map[string]any{"type": "WebForPipeline", "creationMethod": "WebForPipeline.Contents", "parameters": []map[string]any{{"dataType": "Text", "name": "baseUrl", "value": "https://x.example"}}},
 		"displayName": "sc-conn", "connectivityType": "ShareableCloud",
 		"credentialDetails": map[string]any{
 			"credentials": map[string]any{"credentialType": "Anonymous"}},

@@ -63,8 +63,9 @@ entra's JWKS with the vault audience (`https://vault.azure.net`), exactly as the
 control plane and the OneLake data plane do. Key Vault didn't change the
 identity model — it's the clearest *instance* of it.
 
-An `AzureKeyVaultReference` connection resolves its secret with the workspace
-identity — no user, no stored credential:
+A vault-backed credential (`keyReference` and its siblings) resolves its secret
+with the workspace identity of the **AzureKeyVault connection it points at** —
+no user, no stored credential:
 
 ```mermaid
 sequenceDiagram
@@ -73,7 +74,7 @@ sequenceDiagram
     participant E as entra-emulator (STS)
     participant K as azure-keyvault-emulator
     Note over C,F: workspace identity already provisioned (the loop above)
-    C->>F: use an AzureKeyVaultReference connection<br/>(or a job/notebook needing the secret)
+    C->>F: create/use a connection whose credential carries a<br/>keyReference (or a job/notebook needing the secret)
     F->>E: GET /fabric/workspaceidentities/{id}/token (aud = https://vault.azure.net)
     E-->>F: vault-audience token for the workspace identity
     F->>K: GET {vaultUri}/secrets/{name}  (Bearer)
@@ -86,9 +87,9 @@ sequenceDiagram
 It is the same mint as the loop above (`GET …/workspaceidentities/{id}/token`),
 only with the vault audience. Two consumers ride this trust edge:
 
-- **fabric-emulator** — resolving `AzureKeyVaultReference` connection
-  credentials with the workspace-identity token (`internal/akv`; the connection
-  must reference a provisioned identity).
+- **fabric-emulator** — resolving a `KeyVaultSecretReference` with the
+  workspace-identity token (`internal/akv`; the referenced AzureKeyVault
+  connection must carry a provisioned identity).
 - **notebook code** — `notebookutils.credentials.getSecret(vault, name)` in the
   Python shim, using the notebook's own vault-audience token.
 

@@ -138,6 +138,9 @@ lakehouse = fabric_post(f"/v1/workspaces/{ws['id']}/lakehouses", {"displayName":
 conn = fabric_post("/v1/connections", {
     "displayName": "seaweedfs-s3",
     "connectivityType": "ShareableCloud",
+    "connectionDetails": {"type": "AmazonS3",
+                          "creationMethod": "AmazonS3.Storage",
+                          "parameters": [{"dataType": "Text", "name": "url", "value": "http://external-store:8080/s3"}, {"dataType": "Text", "name": "roleArn", "value": ""}]},
     "credentialDetails": {"credentials": {
         "credentialType": "Basic",
         "username": ACCESS_KEY,
@@ -174,6 +177,9 @@ print(f"OneLake read-through returned the real S3 object ({len(onelake.content)}
 bad = fabric_post("/v1/connections", {
     "displayName": "seaweedfs-s3-wrong",
     "connectivityType": "ShareableCloud",
+    "connectionDetails": {"type": "AmazonS3",
+                          "creationMethod": "AmazonS3.Storage",
+                          "parameters": [{"dataType": "Text", "name": "url", "value": "http://external-store:8080/s3"}, {"dataType": "Text", "name": "roleArn", "value": ""}]},
     "credentialDetails": {"credentials": {
         "credentialType": "Basic",
         "username": ACCESS_KEY,

@@ -433,41 +433,80 @@ type connectionCredentials struct {
 	ServicePrincipalSecret   string `json:"servicePrincipalSecret,omitempty"`
 	Key                      string `json:"key,omitempty"`
 	Token                    string `json:"token,omitempty"`
-	WorkspaceID              string `json:"workspaceId,omitempty"` // WorkspaceIdentity + AzureKeyVaultReference kinds
-	VaultURI                 string `json:"vaultUri,omitempty"`    // AzureKeyVaultReference kind
-	SecretName               string `json:"secretName,omitempty"`  // AzureKeyVaultReference kind
+	WorkspaceID              string `json:"workspaceId,omitempty"` // WorkspaceIdentity kind
+
+	// Vault-backed forms. Each is the "…Reference" twin of the inline field
+	// above it, and Fabric forbids sending both: see connectioncontract.go.
+	KeyReference                    *keyVaultSecretReference `json:"keyReference,omitempty"`
+	PasswordReference               *keyVaultSecretReference `json:"passwordReference,omitempty"`
+	TokenReference                  *keyVaultSecretReference `json:"tokenReference,omitempty"`
+	ServicePrincipalSecretReference *keyVaultSecretReference `json:"servicePrincipalSecretReference,omitempty"`
 }
 
-// validCredential enforces the per-type required fields.
+// vaultRef returns the secret reference this credential carries, and the field
+// it arrived on, or nil.
+func (c connectionCredentials) vaultRef() (*keyVaultSecretReference, string) {
+	for _, r := range []struct {
+		ref   *keyVaultSecretReference
+		field string
+	}{
+		{c.KeyReference, "keyReference"},
+		{c.PasswordReference, "passwordReference"},
+		{c.TokenReference, "tokenReference"},
+		{c.ServicePrincipalSecretReference, "servicePrincipalSecretReference"},
+	} {
+		if r.ref != nil {
+			return r.ref, r.field
+		}
+	}
+	return nil, ""
+}
+
+// validCredential enforces the per-type required fields. A field and its
+// reference twin are alternatives: "Use key or keyReference. You can't use both
+// at the same time."
 func validCredential(c connectionCredentials) string {
+	if msg := validateCredentialType(c.CredentialType); msg != "" {
+		return msg
+	}
+	ref, field := c.vaultRef()
+	if ref != nil {
+		if owner := vaultRefFields[field]; owner != c.CredentialType {
+			return fmt.Sprintf("%s belongs to credentialType %q, not %q.",
+				field, owner, c.CredentialType)
+		}
+		if ref.ConnectionID == "" || ref.SecretName == "" {
+			return field + " requires connectionId and secretName."
+		}
+	}
 	switch c.CredentialType {
 	case "Basic":
-		if c.Username == "" || c.Password == "" {
-			return "Basic credentials require username and password."
+		if c.Username == "" {
+			return "Basic credentials require username."
+		}
+		if (c.Password == "") == (c.PasswordReference == nil) {
+			return "Basic credentials require exactly one of password or passwordReference."
 		}
 	case "ServicePrincipal":
-		if c.TenantID == "" || c.ServicePrincipalClientID == "" || c.ServicePrincipalSecret == "" {
-			return "ServicePrincipal credentials require tenantId, servicePrincipalClientId, and servicePrincipalSecret."
+		if c.TenantID == "" || c.ServicePrincipalClientID == "" {
+			return "ServicePrincipal credentials require tenantId and servicePrincipalClientId."
+		}
+		if (c.ServicePrincipalSecret == "") == (c.ServicePrincipalSecretReference == nil) {
+			return "ServicePrincipal credentials require exactly one of " +
+				"servicePrincipalSecret or servicePrincipalSecretReference."
 		}
 	case "WorkspaceIdentity":
 		if c.WorkspaceID == "" {
 			return "WorkspaceIdentity credentials require workspaceId."
 		}
-	case "AzureKeyVaultReference":
-		if c.WorkspaceID == "" || c.VaultURI == "" || c.SecretName == "" {
-			return "AzureKeyVaultReference credentials require workspaceId, vaultUri, and secretName."
-		}
 	case "Key":
-		if c.Key == "" {
-			return "Key credentials require key."
+		if (c.Key == "") == (c.KeyReference == nil) {
+			return "Key credentials require exactly one of key or keyReference."
 		}
 	case "SharedAccessSignature":
-		if c.Token == "" {
-			return "SharedAccessSignature credentials require token."
+		if (c.Token == "") == (c.TokenReference == nil) {
+			return "SharedAccessSignature credentials require exactly one of token or tokenReference."
 		}
-	case "Anonymous":
-	default:
-		return "Unknown credentialType " + c.CredentialType + "."
 	}
 	return ""
 }
@@ -491,6 +530,10 @@ func (a *API) createConnection(w http.ResponseWriter, r *http.Request, p *auth.P
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.DisplayName == "" {
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "displayName is required.")
+		return
+	}
+	if _, msg := validateConnectionDetails(body.ConnectionDetails); msg != "" {
+		writeErr(w, http.StatusBadRequest, "InvalidConnectionDetails", msg)
 		return
 	}
 	c := &store.Connection{
@@ -522,30 +565,17 @@ func (a *API) createConnection(w http.ResponseWriter, r *http.Request, p *auth.P
 					"The workspace has no provisioned identity; provision one before using WorkspaceIdentity credentials.")
 				return
 			}
-		case "AzureKeyVaultReference":
-			// Credential-by-reference: the workspace identity authenticates
-			// to the vault; only the pointer is stored, never the secret.
-			wi, err := a.Store.GetWorkspaceIdentity(cd.Credentials.WorkspaceID)
-			if err != nil {
-				writeErr(w, http.StatusBadRequest, "WorkspaceIdentityNotFound",
-					"AzureKeyVaultReference resolves via the workspace identity; provision one first.")
+		}
+		// Credential-by-reference, on whichever field carries it. The pointer is
+		// stored, never the secret — and the vault is reached through the
+		// CONNECTION the reference names, which is the part the invented
+		// AzureKeyVaultReference shape got wrong: it carried a vaultUri, so
+		// nothing had to exist for it to look valid.
+		if ref, field := cd.Credentials.vaultRef(); ref != nil && !cd.SkipTestConnection {
+			if msg := a.testVaultReference(ref); msg != "" {
+				writeErr(w, http.StatusBadRequest, "TestConnectionFailed",
+					field+": "+msg)
 				return
-			}
-			if !cd.SkipTestConnection {
-				if a.Entra == nil || a.AKV == nil {
-					writeErr(w, http.StatusServiceUnavailable, "IdentityProviderNotConfigured",
-						"No Entra/vault endpoint is configured to test the reference (set skipTestConnection to bypass).")
-					return
-				}
-				bearer, err := a.Entra.MintWorkspaceIdentityToken(wi.IdentityID, "https://vault.azure.net")
-				if err != nil {
-					writeErr(w, http.StatusBadGateway, "WorkspaceIdentityTokenFailed", err.Error())
-					return
-				}
-				if _, err := a.AKV.ResolveSecret(cd.Credentials.VaultURI, cd.Credentials.SecretName, bearer); err != nil {
-					writeErr(w, http.StatusBadRequest, "TestConnectionFailed", err.Error())
-					return
-				}
 			}
 		}
 		secret, err := json.Marshal(cd.Credentials)

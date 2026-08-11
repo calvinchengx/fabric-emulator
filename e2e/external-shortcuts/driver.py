@@ -43,16 +43,29 @@ fabric_token = token("https://api.fabric.microsoft.com/.default")
 storage_token = token("https://storage.azure.com/.default")
 ws = request("POST", f"{FABRIC}/v1/workspaces", {"displayName": "external-ws"}, fabric_token)
 lake = request("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "lake"}, fabric_token)
-connection = request("POST", f"{FABRIC}/v1/connections", {
-    "displayName": "anonymous-object-store", "connectivityType": "ShareableCloud",
-    "credentialDetails": {"credentials": {"credentialType": "Anonymous"}},
-}, fabric_token)
-
+# ONE CONNECTION PER TARGET KIND, because a Fabric connection is TYPED. This
+# used to be a single "anonymous-object-store" reused for both shortcuts, which
+# no tenant would accept: the creation method and its parameters differ per
+# connector (`AzureDataLakeStorage` takes server+path, `AmazonS3.Storage` takes
+# url+roleArn), so a connection cannot be kind-agnostic. Types and parameter
+# names below are from a real tenant's
+# GET /v1/connections/supportedConnectionTypes, 2026-08-11.
 targets = [
-    ("adlsGen2", "adls", "http://external-store:8080/adls", "/container/folder", b"from-adls-gen2"),
-    ("amazonS3", "s3", "http://external-store:8080/s3", "/bucket/prefix", b"from-amazon-s3"),
+    ("adlsGen2", "adls", "http://external-store:8080/adls", "/container/folder", b"from-adls-gen2",
+     {"type": "AzureDataLakeStorage", "creationMethod": "AzureDataLakeStorage",
+      "parameters": [{"dataType": "Text", "name": "server", "value": "external-store"},
+                     {"dataType": "Text", "name": "path", "value": "/adls"}]}),
+    ("amazonS3", "s3", "http://external-store:8080/s3", "/bucket/prefix", b"from-amazon-s3",
+     {"type": "AmazonS3", "creationMethod": "AmazonS3.Storage",
+      "parameters": [{"dataType": "Text", "name": "url", "value": "http://external-store:8080/s3"},
+                     {"dataType": "Text", "name": "roleArn", "value": ""}]}),
 ]
-for kind, name, location, subpath, expected in targets:
+for kind, name, location, subpath, expected, details in targets:
+    connection = request("POST", f"{FABRIC}/v1/connections", {
+        "displayName": f"anonymous-{name}", "connectivityType": "ShareableCloud",
+        "connectionDetails": details,
+        "credentialDetails": {"credentials": {"credentialType": "Anonymous"}},
+    }, fabric_token)
     request("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/items/{lake['id']}/shortcuts", {
         "path": "Files", "name": name,
         "target": {kind: {"location": location, "subpath": subpath,

@@ -166,27 +166,54 @@ func TestAKVReferenceConnectionViaWorkspaceIdentity(t *testing.T) {
 	defer vault.Close()
 	// The allowlist accepts Azure's vault domains plus one configured host;
 	// here that is the test server's.
-	f.srv.API.AKV = akv.New(false, vault.Client(), mustHost(t, vault.URL))
+	// The full URL, not just host:port: composing a vault address from an
+	// accountName has to know the scheme, and this stub serves plain HTTP.
+	f.srv.API.AKV = akv.New(false, vault.Client(), vault.URL)
+
+	// The vault is itself a connection — that is the hop the old shape skipped
+	// by naming a vaultUri, and the reason this now takes two creates.
+	var kv struct{ ID string }
+	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{
+		"displayName": "kv-conn",
+		"connectionDetails": map[string]any{
+			"type": "AzureKeyVault", "creationMethod": "AzureKeyVault.Actions",
+			"parameters": []map[string]any{
+				{"dataType": "Text", "name": "accountName", "value": "contoso-kv"},
+			},
+		},
+		"credentialDetails": map[string]any{
+			"skipTestConnection": true,
+			"credentials": map[string]string{
+				"credentialType": "WorkspaceIdentity", "workspaceId": ws.ID,
+			},
+		},
+	}, &kv), http.StatusCreated, "vault connection")
 
 	body := map[string]any{
 		"displayName": "akv-conn",
+		"connectionDetails": map[string]any{
+			"type": "WebForPipeline", "creationMethod": "WebForPipeline.Contents",
+			"parameters": []map[string]any{
+				{"dataType": "Text", "name": "baseUrl", "value": "https://pos.example"},
+			},
+		},
 		"credentialDetails": map[string]any{
-			"credentials": map[string]string{
-				"credentialType": "AzureKeyVaultReference",
-				"workspaceId":    ws.ID,
-				"vaultUri":       vault.URL,
-				"secretName":     "db-password",
+			"credentials": map[string]any{
+				"credentialType": "Key",
+				"keyReference": map[string]string{
+					"connectionId": kv.ID, "secretName": "db-password",
+				},
 			},
 		},
 	}
 	resp := f.call("POST", "/v1/connections", f.token, body, nil)
-	f.mustStatus(resp, http.StatusCreated, "akv-reference connection")
+	f.mustStatus(resp, http.StatusCreated, "key-reference connection")
 	raw, _ := io.ReadAll(resp.Body)
 	if strings.Contains(string(raw), "s3cret") {
 		t.Fatalf("resolved secret echoed: %s", raw)
 	}
 	// A missing secret fails the reference at create.
-	body["credentialDetails"].(map[string]any)["credentials"].(map[string]string)["secretName"] = "nope"
+	body["credentialDetails"].(map[string]any)["credentials"].(map[string]any)["keyReference"].(map[string]string)["secretName"] = "nope"
 	f.mustStatus(f.call("POST", "/v1/connections", f.token, body, nil),
 		http.StatusBadRequest, "missing secret reference")
 }

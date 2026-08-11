@@ -107,9 +107,16 @@ works outside Fabric because this repo ships a working `notebookutils`
 would reach the same secret and teach a shape that cannot move into a notebook.
 
 `secret.py` covers the other half: the secret is stored in the vault and bound to
-Fabric as an **AzureKeyVaultReference** connection, which Fabric resolves
-server-side — so the connection's read shape never contains the value, and the
-example asserts that.
+Fabric as a **`Key` credential whose `keyReference` points into it**, which
+Fabric resolves server-side — so the connection's read shape never contains the
+value, and the example asserts that.
+
+That takes **two** connections, which is Fabric's design and not ceremony. A
+`KeyVaultSecretReference` is `{connectionId, secretName}`: it names a *connection
+to the vault*, never a vault URL. So the vault becomes a connection of its own
+(`type: AzureKeyVault`, parameter `accountName`) holding the credential that
+reaches it, and the data connection holds only a pointer. The shape that names a
+`vaultUri` needs nothing to exist and is not one real Fabric accepts.
 
 **Compute and SQL addresses are discovered, never configured.** The SQL endpoint
 of a warehouse or a lakehouse is assigned per item by the service, so every step

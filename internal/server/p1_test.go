@@ -89,10 +89,9 @@ func TestGitRoundTrip(t *testing.T) {
 	}, nil)
 	f.mustStatus(resp, http.StatusBadRequest, "bogus connectionId")
 	var conn struct{ ID string }
-	resp = f.call("POST", "/v1/connections", f.token, map[string]any{
-		"displayName":       "github-pat",
+	resp = f.call("POST", "/v1/connections", f.token, map[string]any{"displayName": "github-pat",
 		"connectivityType":  "ShareableCloud",
-		"connectionDetails": map[string]string{"type": "GitHubSourceControl"},
+		"connectionDetails": map[string]any{"type": "GitHubSourceControl", "creationMethod": "GitHubSourceControl.Contents", "parameters": []map[string]any{{"dataType": "Text", "name": "url", "value": "https://github.com/calvin/demo"}}},
 	}, &conn)
 	f.mustStatus(resp, http.StatusCreated, "create connection")
 	var conns struct{ Value []struct{ ID string } }
@@ -269,7 +268,7 @@ func TestGitRBAC(t *testing.T) {
 	var ws struct{ ID string }
 	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "gated"}, &ws)
 	var conn struct{ ID string }
-	f.call("POST", "/v1/connections", f.token, map[string]any{"displayName": "c"}, &conn)
+	f.call("POST", "/v1/connections", f.token, map[string]any{"connectionDetails": map[string]any{"type": "WebForPipeline", "creationMethod": "WebForPipeline.Contents", "parameters": []map[string]any{{"dataType": "Text", "name": "baseUrl", "value": "https://x.example"}}}, "displayName": "c"}, &conn)
 	provider := map[string]any{"gitProviderType": "GitHub", "ownerName": "o", "repositoryName": "r",
 		"branchName": "main", "directoryName": "/"}
 	creds := map[string]string{"source": "ConfiguredConnection", "connectionId": conn.ID}
@@ -297,6 +296,12 @@ func TestServicePrincipalConnectionProbe(t *testing.T) {
 	sp := func(clientID, secret string) map[string]any {
 		return map[string]any{
 			"displayName": "sp-conn",
+			"connectionDetails": map[string]any{
+				"type": "WebForPipeline", "creationMethod": "WebForPipeline.Contents",
+				"parameters": []map[string]any{
+					{"dataType": "Text", "name": "baseUrl", "value": "https://x.example"},
+				},
+			},
 			"credentialDetails": map[string]any{
 				"credentials": map[string]string{
 					"credentialType":           "ServicePrincipal",

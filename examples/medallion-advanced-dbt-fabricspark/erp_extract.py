@@ -1,7 +1,7 @@
 """A3 — bring the third source in: Contoso ERP, plus the reference feeds.
 
 Third system, third credential: its own Key Vault secret and its own
-AKV-reference connection, for the same reason Contoso Web got one in 20.
+key-reference connection, for the same reason Contoso Web got one in 20.
 
 What is new here is the SHAPE of what lands. POS sends CSV and JSON Lines; Web
 sends nested JSON. The ERP connector lands **Parquet** — which is what a CDC
@@ -15,7 +15,6 @@ import reference_data as ref
 from common import (
     FABRIC,
     KV,
-    KV_INTERNAL,
     STORAGE_AUD,
     VAULT_AUD,
     S,
@@ -49,15 +48,17 @@ for label, mod, path in [
     r = S.post(f"{FABRIC}/v1/connections", headers=fabric_headers(), json={
         "displayName": label,
         "connectivityType": "ShareableCloud",
-        "connectionDetails": {"type": "RestApi", "path": path},
+        "connectionDetails": {
+            "type": "WebForPipeline",
+            "creationMethod": "WebForPipeline.Contents",
+            "parameters": [{"dataType": "Text", "name": "baseUrl", "value": path}]},
         "credentialDetails": {"credentials": {
-            "credentialType": "AzureKeyVaultReference",
-            "workspaceId": st["workspace"],
-            "vaultUri": KV_INTERNAL,
-            "secretName": f"{label}-api-key"}}})
-    assert r.status_code == 201, f"AKV connection {label}: {r.status_code} {r.text}"
+            "credentialType": "Key",
+            "keyReference": {"connectionId": st["vault_connection"],
+                             "secretName": f"{label}-api-key"}}}})
+    assert r.status_code == 201, f"key-reference connection {label}: {r.status_code} {r.text}"
     conns[label] = r.json()["id"]
-    log(f"AKV-reference connection {conns[label]} for {label}")
+    log(f"key-reference connection {conns[label]} for {label}")
 
     # The vendor's gate is real, not decorative — same check the other two get.
     try:

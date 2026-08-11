@@ -57,7 +57,7 @@ func TestWriteThroughADLSShortcutReachesTarget(t *testing.T) {
 	f.call("POST", "/v1/workspaces/"+ws.ID+"/lakehouses", f.token,
 		map[string]any{"displayName": "lh"}, &lake)
 	var conn struct{ ID string }
-	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{
+	f.mustStatus(f.call("POST", "/v1/connections", f.token, map[string]any{"connectionDetails": map[string]any{"type": "WebForPipeline", "creationMethod": "WebForPipeline.Contents", "parameters": []map[string]any{{"dataType": "Text", "name": "baseUrl", "value": "https://x.example"}}},
 		"displayName":      "ext",
 		"connectivityType": "ShareableCloud",
 		"credentialDetails": map[string]any{
@@ -143,7 +143,7 @@ func TestWriteThroughS3ShortcutIsRefused(t *testing.T) {
 	f.call("POST", "/v1/workspaces/"+ws.ID+"/lakehouses", f.token,
 		map[string]any{"displayName": "lh"}, &lake)
 	var conn struct{ ID string }
-	f.call("POST", "/v1/connections", f.token, map[string]any{
+	f.call("POST", "/v1/connections", f.token, map[string]any{"connectionDetails": map[string]any{"type": "WebForPipeline", "creationMethod": "WebForPipeline.Contents", "parameters": []map[string]any{{"dataType": "Text", "name": "baseUrl", "value": "https://x.example"}}},
 		"displayName":      "s3conn",
 		"connectivityType": "ShareableCloud",
 		"credentialDetails": map[string]any{
