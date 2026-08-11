@@ -33,17 +33,32 @@ func (a *API) getDefinition(w http.ResponseWriter, r *http.Request, p *auth.Prin
 		writeErr(w, http.StatusNotFound, "ItemNotFound", "The item is not available.")
 		return
 	}
+	// The documented alternative outcome: 202 + an operation whose /result
+	// carries the definition. Both are legal for this API and a real tenant
+	// answers 202, so this exists to make a client PROVE it handles the async
+	// half — the 200 path alone lets a client read the 202 body, get `null`,
+	// and report an empty definition instead of an error.
+	if a.DefinitionLRO {
+		a.startOperation(w, r, "GetItemDefinition", it.ID)
+		return
+	}
 	parts, err := a.Store.GetDefinition(it.ID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, definitionResponse(parts))
+}
+
+// definitionResponse wraps parts in the documented envelope, normalising a nil
+// part list to [] so a client always sees the array it parses.
+func definitionResponse(parts []store.DefinitionPart) definitionEnvelope {
 	var env definitionEnvelope
 	env.Definition.Parts = parts
 	if env.Definition.Parts == nil {
 		env.Definition.Parts = []store.DefinitionPart{}
 	}
-	writeJSON(w, http.StatusOK, env)
+	return env
 }
 
 // updateDefinition replaces the parts and reports through the LRO engine

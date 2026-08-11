@@ -78,6 +78,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 		}
 		a.Airflow = client
 	}
+	a.DefinitionLRO = cfg.DefinitionLRO
 	a.WebActivityStub = cfg.WebActivityStub
 	a.CustomActivityShell = cfg.CustomActivityShell
 	if err := a.SetMLflowBackend(cfg.MLflowURL); err != nil {

@@ -997,5 +997,13 @@
       "go:TestABatchWithOneBadEntityCommitsNothing",
       "go:TestEveryRouteRequiresAToken"
     ]
+  },
+  "getdefinition-as-an-lro-fabricdefinitionlro": {
+    "section": "Platform / fundamentals",
+    "claim": "**`getDefinition` as an LRO** (`FABRIC_DEFINITION_LRO`)",
+    "witnesses": [
+      "go:TestGetDefinitionAsLongRunningOperation",
+      "go:TestGetDefinitionSynchronousByDefault"
+    ]
   }
 }
