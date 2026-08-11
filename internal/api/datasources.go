@@ -113,7 +113,7 @@ func (a *API) modelDatasources(m *semanticmodel.Model) ([]datasource, error) {
 		wsID, lakeID := wsRef, lakeRef
 		if ws, err := a.resolveDirectLakeWorkspace(wsRef); err == nil {
 			wsID = ws.ID
-			if lake, err := a.resolveDirectLakeLakehouse(ws.ID, lakeRef); err == nil {
+			if lake, err := a.resolveDirectLakeSource(ws.ID, lakeRef); err == nil {
 				lakeID = lake.ID
 			}
 		}

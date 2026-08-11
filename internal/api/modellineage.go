@@ -91,7 +91,7 @@ func (a *API) directLakeSource(m *semanticmodel.Model, table *semanticmodel.Tabl
 	if err != nil {
 		return modelSource{}, false
 	}
-	lake, err := a.resolveDirectLakeLakehouse(ws.ID, lakeRef)
+	lake, err := a.resolveDirectLakeSource(ws.ID, lakeRef)
 	if err != nil {
 		return modelSource{}, false
 	}

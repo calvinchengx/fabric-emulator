@@ -77,6 +77,11 @@ type API struct {
 	// SQL backend is set; nil → the pipeline Script/StoredProcedure activities
 	// fail loudly (no SQL engine attached).
 	SQLDB func(ctx context.Context, itemID string) (*sql.DB, error)
+	// LakehouseDB returns the SQL Server connection backing a Lakehouse's SQL
+	// ANALYTICS endpoint, preparing its database first. Distinct from SQLDB,
+	// which refuses a Lakehouse on purpose (see lakehouseDBFor). nil → the
+	// refreshMetadata route answers an honest 501.
+	LakehouseDB func(ctx context.Context, itemID string) (*sql.DB, error)
 	// refreshes is per-dataset refresh history for the Power BI refresh
 	// endpoints. In memory on purpose — see refreshes.go.
 	refreshes refreshLog
@@ -168,6 +173,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/workspaces/{wid}/items", a.withAuth(a.listItems))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items", a.withAuth(a.createItem))
 	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.getItem))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/sqlEndpoints/{epid}/refreshMetadata",
+		a.withAuth(a.refreshSQLEndpointMetadata))
 	mux.HandleFunc("PATCH /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.updateItem))
 	mux.HandleFunc("DELETE /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.deleteItem))
 

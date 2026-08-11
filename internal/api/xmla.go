@@ -544,7 +544,7 @@ func (a *API) xmlaModel(r *http.Request, p *auth.Principal) (*semanticmodel.Mode
 	if err != nil {
 		return nil, nil, err
 	}
-	return a.loadSemanticModel(id, p)
+	return a.loadSemanticModel(r.Context(), id, p)
 }
 
 // xmlaItemID finds the SemanticModel item backing this connection.

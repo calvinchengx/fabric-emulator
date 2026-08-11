@@ -164,3 +164,50 @@ def test_emulator_token_still_uses_client_credentials(monkeypatch):
     assert "/oauth2/v2.0/token" in captured["url"]
     assert "grant_type=client_credentials" in captured["body"]
     assert _config.SEED_CLIENT_ID in captured["body"]
+
+
+# --- the configured tenant must reach the az CLI path ------------------------
+# The same bug fabric_target had, in the sibling package: DefaultAzureCredential
+# has no tenant hint for the CLI, so NOTEBOOKUTILS_TENANT was ignored and tokens
+# came from az's DEFAULT tenant. Found while a real trial sat in one tenant and
+# `az` was logged into another — getSecret would have failed naming a vault, not
+# a tenant.
+
+class _RecordingCred:
+    def __init__(self):
+        self.kwargs = None
+
+    def get_token(self, *scopes, **kw):
+        self.kwargs = kw
+
+        class _T:
+            token = "tok"
+        return _T()
+
+
+def test_real_tokens_carry_the_configured_tenant(monkeypatch):
+    from notebookutils import _config, credentials
+
+    monkeypatch.setenv("FABRIC_TARGET", "real")
+    monkeypatch.setenv("NOTEBOOKUTILS_TENANT", "0ce8e0d2-1e14-4aab-a1f2-2d3c61e75e3c")
+    _config.reset()
+    rec = _RecordingCred()
+    monkeypatch.setattr(credentials, "_real_credential", rec)
+    credentials.getToken("keyvault")
+    assert rec.kwargs.get("tenant_id") == "0ce8e0d2-1e14-4aab-a1f2-2d3c61e75e3c"
+    _config.reset()
+
+
+def test_no_configured_tenant_leaves_the_chain_alone(monkeypatch):
+    """"organizations" is the unset sentinel; pinning to it would be wrong."""
+    from notebookutils import _config, credentials
+
+    monkeypatch.setenv("FABRIC_TARGET", "real")
+    monkeypatch.delenv("NOTEBOOKUTILS_TENANT", raising=False)
+    monkeypatch.delenv("AZURE_TENANT_ID", raising=False)
+    _config.reset()
+    rec = _RecordingCred()
+    monkeypatch.setattr(credentials, "_real_credential", rec)
+    credentials.getToken("keyvault")
+    assert "tenant_id" not in (rec.kwargs or {})
+    _config.reset()

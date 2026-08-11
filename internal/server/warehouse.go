@@ -172,3 +172,26 @@ func resolveWorkspace(st *store.Store, ref string) (*store.Workspace, error) {
 	}
 	return st.GetWorkspaceByName(ref)
 }
+
+// lakehouseDBFor builds the hook the SQL-analytics-endpoint refresh uses: a
+// Lakehouse's own SQL Server database, prepared if it does not exist.
+//
+// Separate from sqlDBFor, which refuses a Lakehouse ON PURPOSE — it serves the
+// pipeline Script/StoredProcedure activities, and letting those write into a
+// lakehouse's reflected database would invent a write path Fabric's read-only
+// analytics endpoint does not have. Same backend, different permission.
+func lakehouseDBFor(be warehouseBackend, st *store.Store) func(ctx context.Context, itemID string) (*sql.DB, error) {
+	return func(ctx context.Context, itemID string) (*sql.DB, error) {
+		it, err := st.GetItemByID(itemID)
+		if err != nil {
+			return nil, fmt.Errorf("item %q not found", itemID)
+		}
+		if it.Type != "Lakehouse" {
+			return nil, fmt.Errorf("item %q (type %s) has no SQL analytics endpoint", itemID, it.Type)
+		}
+		if err := be.EnsureDatabase(ctx, itemID); err != nil {
+			return nil, fmt.Errorf("preparing database: %w", err)
+		}
+		return be.DB(itemID), nil
+	}
+}

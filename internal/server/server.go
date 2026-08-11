@@ -175,6 +175,9 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 			// A Fabric SQL Database mirrors its SQL tables to OneLake Delta; wire the
 			// control-plane refresh hook to the same per-item backend.
 			a.MirrorItem = mirrorItem(be, st)
+			// The lever a client uses to force the analytics endpoint to catch up
+			// with Delta (refreshMetadata); without it the endpoint 501s honestly.
+			a.LakehouseDB = lakehouseDBFor(be, st)
 			// The pipeline Script/StoredProcedure activities run real T-SQL against a
 			// Warehouse/SQLDatabase item's own database, on the same backend.
 			a.SQLDB = sqlDBFor(be, st)

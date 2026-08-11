@@ -133,15 +133,40 @@ notebook writes them as a one-row Delta table, `silver_resolution_metrics`, whic
 is portable by construction and inspectable afterwards. `engine.py` skips under
 `real`, because Fabric runs the queued notebook itself.
 
-**What is still emulator-only, stated rather than left to be discovered:** a
-semantic model's rows. `semantic_model.py` and `tmdl_pbip.py` publish a `data.json`
-part — the emulator's inline row snapshot. Real Fabric has no such part; a model's
-data comes from a partition, either Direct Lake over OneLake Delta or an import
-partition whose M expression reads `Sql.Database(<connectionString>, …)`. The
-emulator evaluates Direct Lake and inline data, not `Sql.Database` import, and the
-warehouse's gold tables are not Delta in OneLake locally — so converting needs
-emulator work first, and `scripts/check_example_portability.py` prints the debt on
-every run instead of hiding it in a whitelist.
+**A semantic model reads gold itself, and that closed the last gap.** The examples
+used to ship the model's rows inside the definition as a `data.json` part — the
+emulator's own inline snapshot, which real Fabric has no concept of. So the one
+artifact a BI consumer actually reads was the one thing that could not be deployed
+to a tenant.
+
+They now publish a **Direct Lake** model: a shared expression naming the item's
+OneLake location, and an `entity` partition per table. Real Fabric supports Direct
+Lake over a warehouse because a warehouse persists to OneLake as Delta; the
+emulator reads the equivalent rows from the SQL Server database it serves. That is
+a BACKEND difference, not a contract one — the definition is byte-identical on both
+targets, ids aside.
+
+Two things worth copying from how this went:
+
+- `onelake.dfs.fabric.microsoft.com` is written **literally** in the expression, not
+  resolved per target. It is Fabric's one OneLake host, the same on every tenant,
+  and the emulator parses the workspace/item out of it rather than fetching it — so
+  the expression text does not vary at all. The notebook definitions address
+  OneLake the same way (`abfs://{ws}@onelake.dfs.fabric.microsoft.com/…`).
+- `compatibilityLevel` must be **1604** or higher for Direct Lake, and the emulator
+  enforces that rather than reading the partition anyway. The conversion failed on
+  it first try, which is the check earning its keep.
+
+A side effect worth having: the flow graph now carries `DirectLake` edges
+(`Tables/dbo/fct_daily_revenue -> Tables/Revenue`), so the hop from gold to the BI
+layer is recorded. With rows shipped inside the definition there was no edge to
+record and the graph simply stopped at gold.
+
+The local `.pbip` project still writes an imported row snapshot beside the model,
+now named `imported-rows.json` rather than `data.json`. That file is **not** a
+definition part and never reaches `updateDefinition`: Power BI Desktop opens the
+project offline with no emulator to reach, so the rows have to be on disk. Naming
+it for what it is keeps it out of the part-path contract.
 
 ### SQL: the address is per-item and only the API knows it
 
@@ -166,11 +191,23 @@ Both look like `<opaque>-<opaque>.datawarehouse.fabric.microsoft.com` on port
 - **The analytics endpoint lags the lakehouse.** Metadata sync is normally under
   a minute but is not instant, so a table Spark just wrote can be briefly absent
   from T-SQL. `POST /v1/workspaces/{ws}/sqlEndpoints/{sqlEndpointId}/refreshMetadata`
-  forces the sync rather than waiting for the background one. **The emulator does
-  not implement that endpoint**, and does not report the endpoint's `id` either —
-  it has no separate `SQLEndpoint` item and reflects on connect, so there is
-  nothing to sync. Code that needs the refresh must be written against real
-  Fabric, and will 404 locally.
+  forces the sync rather than waiting for the background one. **The emulator
+  implements this**, and the endpoint is a real `SQLEndpoint` item with its own id,
+  because that is what a tenant has — measured 2026-08-11: one lakehouse plus one
+  warehouse left three items in a real workspace, the third being
+  `SQLEndpoint  803c8e33-…  lake`, whose id is exactly what
+  `sqlEndpointProperties.id` reports. The tenant answers a plain `200` with
+  `{"value": []}` (a per-table report, empty for a lakehouse with no tables) —
+  no LRO — and so does the emulator.
+
+  This reverses an earlier decision on purpose. The emulator used to OMIT
+  `sqlEndpointProperties.id`, reasoning that it had no such item and that
+  reporting the lakehouse's own id would invite using it as a database name:
+  green locally, wrong on a tenant. That was right for the information available;
+  the measurement made it obsolete. The honest fix was not to withhold the field
+  but to HAVE the item, so the id is a different GUID here exactly as it is there.
+  `common.sync_sql_endpoint()` consequently takes the same branch on both
+  targets, so the code path a tenant uses is exercised by every local run.
 
 `examples/contoso-fixtures/common.py:sql_endpoint()` is the portable form:
 discover the address, use the item id locally and the display name on real
