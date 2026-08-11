@@ -45,15 +45,26 @@ settings.json           value-set ordering (presentation only)
 valueSets/<name>.json   one alternative set, overriding a subset
 ```
 
+Captured verbatim from the live tenant via `getDefinition` (see
+[Reading a definition](#reading-a-definition-from-a-tenant) for how):
+
 ```json
 // variables.json
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/variableLibrary/definition/variables/1.0.0/schema.json",
   "variables": [
-    {"name": "bronzePath", "type": "String", "value": "Files/bronze", "note": "env-invariant relative path"}
+    {"name": "bronzePath", "note": "env-invariant relative path", "type": "String", "value": "Files/bronze"},
+    {"name": "runId", "note": "", "type": "Guid", "value": "11111111-2222-3333-4444-555555555555"},
+    {"name": "silverNotebook", "note": "", "type": "ItemReference",
+     "value": {"itemId": "3f33c8a7-…", "workspaceId": "fd6cc69d-…"}}
   ]
 }
 ```
+
+Note `note` is emitted as `""` rather than omitted, and that the library's type
+for a reference is **`ItemReference`** — the *pipeline* declaration for the same
+variable says `Object`. Two vocabularies, and each side must be read on its own
+terms.
 
 ```json
 // valueSets/prod.json
@@ -198,26 +209,40 @@ than failing at whichever activity happens to read it first, and rather than
 resolving to blank. Blank is the dangerous outcome: a bronze path that silently
 becomes `""` writes to the wrong place and succeeds while doing it.
 
-### Falling back to the defaults, and why it is not a guess
+### Falling back to the defaults is REQUIRED, not lenient
 
 An **unknown** active-set name resolves to the defaults instead of failing.
 
-This was written as the one deliberate guess in the feature. **It is no longer
-a guess.** The library editor shows the defaults column as a first-class value
-set titled **"Default value set"**, carrying the **Active** badge, sitting
-beside the alternative sets — and it has no file under `valueSets/`, because
-only *alternative* sets get one. So "the active set has no file" is the
-ordinary, expected state of any library, not an error and not only a typo.
+This was first written as the single deliberate guess in the feature, then
+downgraded to an observation. It is neither. **It is a correctness
+requirement**, and the tenant says so directly:
 
-Failing on an unmatched name would therefore break every library whose default
-set is active, which is the default configuration. Falling back returns the
-value the author actually wrote. The behaviour is unchanged; what changed is
-that it now rests on an observation instead of an argument.
+```
+GET /v1/workspaces/{ws}/variableLibraries/{id}
+  "properties": { "activeValueSetName": "Default value set" }
 
-The residual unknown is narrow and worth stating: whether `activeValueSetName`
-is literally `"Default value set"` when that set is active, or empty. Both land
-on the defaults here, so resolution is correct either way, and the emulator
-does not depend on knowing which.
+settings.json  ->  { "valueSetsOrder": ["qat"] }
+parts          ->  variables.json, settings.json, valueSets/qat.json, .platform
+```
+
+`activeValueSetName` is literally **`"Default value set"`** — a name with **no
+file under `valueSets/`** and **absent from `valueSetsOrder`**. That is the
+out-of-the-box state of every Variable Library.
+
+So an implementation that treats "active set matches no file" as an error would
+fail **every library in its default configuration**. The rule is not tolerance
+for a typo; it is the only behaviour that works. Recording the reasoning's
+history here on purpose: it went guess → observation → requirement, and only
+the last one is load-bearing.
+
+### A value set overrides a SUBSET, even when the UI suggests otherwise
+
+`valueSets/qat.json` overrides `bronzePath` **and nothing else**, though the
+library editor displays a value for every variable in the `qat` column. Those
+other cells are the defaults being *shown*, not overridden — setting the item
+reference in the default set made it appear under `qat` too, and no override
+was written. Resolution is therefore a merge over the defaults, and reading the
+UI as "a value set is a full second copy" would be wrong.
 
 ## Evidence
 
@@ -234,16 +259,9 @@ name instead of alias, and ignoring value-set overrides each turn it red.
 
 ## Not captured, and therefore not implemented
 
-* **The VALUE shape of a reference-typed variable.** The pipeline-side
-  declaration is captured (`"type": "Object"`), and the resolver passes an
-  object through unchanged, so a correctly-shaped value would flow. But what
-  `variables.json` actually stores for an item reference — and therefore which
-  sub-properties `@pipeline().libraryVariables.<alias>.<x>` yields — was NOT
-  captured: the library editor has no JSON view, and reading the definition
-  needs a REST token for the tenant. The article says the sub-properties are
-  things like connection id, item id and item workspace. **Nothing here claims
-  reference-typed variables work end to end**, and the emulator does not
-  synthesise those sub-properties.
+* **Connection-reference variables.** Only `ItemReference` was captured. Its
+  value is `{"itemId", "workspaceId"}` and it now round-trips; a connection's
+  value is presumably a connection id, but presumably is not captured.
 * **Alias characters illegal in a property path.** Whether Fabric rejects such
   an alias at save time or escapes it is unknown.
 * **`Int`, `Bool` and `DateTime` declarations.** Taken from the article's
@@ -251,3 +269,26 @@ name instead of alias, and ignoring value-set overrides each turn it red.
 * **Consumers other than pipelines.** Notebooks (via NotebookUtils), shortcuts,
   Dataflow Gen2, Copy job and user data functions all consume libraries. This
   doc and this implementation cover pipelines only.
+
+## Reading a definition from a tenant
+
+Worth writing down because it cost two sessions a detour. `getDefinition`
+answers **401 `UserNotLicensed`** when the token is minted for the wrong
+tenant. That reads like a licensing problem and is not one — it is `az`
+defaulting to the signed-in user's *home* tenant. Name the tenant explicitly:
+
+```bash
+az account get-access-token --tenant <fabric-tenant-id> \
+  --resource https://api.fabric.microsoft.com --query accessToken -o tsv
+```
+
+Then note the call is a **202 plus a long-running operation**, not a 200: poll
+the `Location` header until `Succeeded`, then fetch `<operation>/result`. A
+client that reads the 202 body gets `null`, which is how this first looked like
+an empty definition rather than an async one.
+
+The portal is the alternative and needs no token: a Data Pipeline's
+**View → Edit JSON code** is the authoritative definition JSON. There is no
+equivalent in the Variable Library editor, and that editor's own network calls
+are invisible to a tab-level listener because the workload runs in a
+cross-origin iframe — so for a *library*, the REST route above is the only way.
