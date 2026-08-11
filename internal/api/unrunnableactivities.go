@@ -27,8 +27,24 @@ import (
 // is the deliverable; running an approximation and calling it the real thing
 // would be the failure.
 //
-// ORACLE for every entry: ADF's published schema, its discriminator and the
-// required fields quoted in each cause.
+// ORACLE, and this line was WRONG in a way that cost twelve fabricated
+// successes. It used to read "ADF's published schema" full stop, and the
+// dispatch was diffed against exactly that. ADF's schema is the oracle for the
+// ADF discriminators below and for the fields quoted in each cause — it is NOT
+// the oracle for what Fabric sends. Fabric renames several types and merges
+// five HDInsight ones into a single AzureHDInsight, so twelve of its names
+// matched nothing here and fell to the dispatch default.
+//
+// Fabric's own list is the DataPipelineActivityTypes table, transcribed in
+// fabricactivitytypes.go and walked by a test. Add to BOTH when adding a type:
+// the ADF name for compatibility, the Fabric name because that is what arrives.
+// dataLakeAnalyticsCause is shared by ADF's DataLakeAnalyticsU-SQL and
+// Fabric's DataLakeAnalyticsScope — the same activity under two names.
+const dataLakeAnalyticsCause = "runs a U-SQL/Scope script on Azure Data Lake Analytics. U-SQL is a " +
+	"language of its own (SQL with inline C#), the emulator hosts no Data Lake Analytics " +
+	"account, and AZURE HAS RETIRED THE SERVICE — so there is nothing to call and " +
+	"nothing left to be faithful to"
+
 var unrunnableActivities = map[string]string{
 	"HDInsightHive": "runs a HiveQL script (scriptPath in a storage linked service) on an " +
 		"HDInsight cluster. The Spark agent executes Python statements and routes SQL to " +
@@ -52,16 +68,69 @@ var unrunnableActivities = map[string]string{
 		"behind FABRIC_CUSTOM_ACTIVITY — that gate covers a command the caller wrote, not a " +
 		"MapReduce runtime the emulator would have to supply around it",
 
-	"DataLakeAnalyticsU-SQL": "runs a U-SQL script on Azure Data Lake Analytics. U-SQL is a " +
-		"language of its own (SQL with inline C#), the emulator hosts no Data Lake Analytics " +
-		"account, and AZURE HAS RETIRED THE SERVICE — so there is nothing to call and " +
-		"nothing left to be faithful to",
+	"DataLakeAnalyticsU-SQL": dataLakeAnalyticsCause,
 
 	"ExecuteSSISPackage": "runs an SSIS package on an Azure-SSIS integration runtime, named " +
 		"by packageLocation and reached through connectVia. The emulator hosts no " +
 		"integration runtime and does not interpret the SSIS package format; a package's " +
 		"work is defined inside the package, so there is nothing here to read and nothing " +
 		"to run it with",
+
+	// --- Fabric's own names, added after diffing its DataPipelineActivityTypes
+	// table rather than ADF's schema. Every one of these was reporting
+	// Succeeded having done nothing.
+
+	// Fabric's spelling of the ADF DataLakeAnalyticsU-SQL activity above. The
+	// SAME cause is reused rather than restated: two texts for one refusal
+	// drift, and the second copy is the one nobody updates.
+	"DataLakeAnalyticsScope": dataLakeAnalyticsCause,
+
+	// The four notification types. They are grouped because the objection is
+	// identical and worth stating once: each one's whole purpose is a SIDE
+	// EFFECT LEAVING THE MACHINE. There is no local approximation of "a message
+	// arrived in a channel", and a pipeline that branches on a notification
+	// having been sent is exactly the case a fabricated success misleads.
+	"Teams": "posts a message to a Teams channel or chat. The emulator has no Teams tenant " +
+		"and no Graph credentials, and the activity's only observable effect is off-machine — " +
+		"there is nothing local that could stand in for a message having been delivered",
+
+	"MicrosoftTeams": "posts a message to Microsoft Teams. Fabric documents this alongside " +
+		"`Teams` as a separate discriminator, so both are refused: an author who picked either " +
+		"spelling gets the same honest answer rather than one of them silently succeeding",
+
+	"Office365Email": "sends an email through Office 365. The emulator has no mailbox, no " +
+		"SMTP path and no Graph credentials; delivery is the entire point of the activity and " +
+		"none of it can happen here",
+
+	"Email": "sends an email notification. Fabric lists this beside `Office365Email` as its " +
+		"own discriminator, and it is refused for the same reason — the effect is delivery to " +
+		"somewhere the emulator cannot reach",
+
+	// These two are DIFFERENT in kind from every other entry, and the difference
+	// is stated so nobody reads them as permanent: the emulator ALREADY RUNS
+	// both item types through the jobs API (`sparkjob` for a Spark Job
+	// Definition, `Execute` for a Copy job). What is missing is only the
+	// activity-side wiring — resolve the referenced item, submit the job,
+	// gate the activity on its outcome.
+	//
+	// They are refused rather than left in the default because a refusal is
+	// honest and reversible while a fabricated success is neither: today the
+	// activity claims a Spark job ran. Refusing is strictly better and strictly
+	// worse than running them, which is the next increment.
+	"SparkJobDefinition": "runs a Spark Job Definition item. THE EMULATOR CAN DO THIS — the " +
+		"item type executes through the jobs API (jobType `sparkjob`) — but the pipeline " +
+		"activity is not yet wired to submit that job, so it is refused rather than reported " +
+		"as having run. Wiring it is the next increment, not a boundary",
+
+	"InvokeCopyJob": "invokes a Copy job item. THE EMULATOR CAN DO THIS — a Copy job executes " +
+		"through the jobs API (jobType `Execute`) and really moves bytes on its OneLake legs — " +
+		"but the pipeline activity is not yet wired to submit that job. Refused rather than " +
+		"reported as having run; wiring it is the next increment, not a boundary",
+
+	"PBISemanticModelRefresh": "refreshes a Power BI semantic model. The emulator stores and " +
+		"evaluates models but does not implement the refresh pipeline that reloads a model's " +
+		"data from its sources, so a success here would claim the model now holds data it " +
+		"does not",
 }
 
 // unrunnableRefusal is the shared message. The tail is the same for all six on

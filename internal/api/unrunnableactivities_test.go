@@ -108,8 +108,27 @@ func TestTheStubStillAnswersForConnectorLeaves(t *testing.T) {
 // activity — it would fall to the stub again with no test failing.
 func TestUnrunnableRefusalsCoverTheDiff(t *testing.T) {
 	want := map[string]bool{
+		// From ADF's discriminators, the original diff.
 		"HDInsightHive": true, "HDInsightPig": true, "HDInsightMapReduce": true,
 		"HDInsightStreaming": true, "DataLakeAnalyticsU-SQL": true, "ExecuteSSISPackage": true,
+
+		// From FABRIC's DataPipelineActivityTypes table — a second diff against
+		// a different document, because the first one used ADF's schema and
+		// Fabric renames several types. Each of these was reaching the stub and
+		// being reported Succeeded having run nothing.
+		"DataLakeAnalyticsScope": true, // Fabric's name for DataLakeAnalyticsU-SQL
+
+		// Notification activities: the effect is delivery off-machine, so there
+		// is no local approximation of "the message arrived".
+		"Teams": true, "MicrosoftTeams": true, "Office365Email": true, "Email": true,
+
+		"PBISemanticModelRefresh": true,
+
+		// TEMPORARY, and different in kind from every other entry: the emulator
+		// already RUNS both item types through the jobs API, and only the
+		// activity-side wiring is missing. When that lands these two must be
+		// REMOVED from the map, and this test is what will demand it.
+		"SparkJobDefinition": true, "InvokeCopyJob": true,
 	}
 	for name := range want {
 		if _, ok := unrunnableActivities[name]; !ok {

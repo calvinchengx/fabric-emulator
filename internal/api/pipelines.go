@@ -252,7 +252,7 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// resolveDatabaseRef accepts alongside the other reference keys.
 		return e.storedProcedureActivity(act, tp, resolve)
 
-	case "RefreshDataflow", "ExecuteDataFlow", "ExecutePowerQueryTemplate":
+	case "RefreshDataflow", "RefreshDataFlow", "ExecuteDataFlow", "ExecutePowerQueryTemplate":
 		// Dataflow Gen2 is the proprietary Power Query M engine — honestly
 		// unimplemented (mirrors the Livy/Airflow stance), so the activity
 		// fails loudly rather than pretending.
@@ -280,13 +280,24 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// what is real and what is refused by name.
 		return e.hdinsightSparkActivity(act, tp, resolve)
 
+	case "AzureHDInsight":
+		// Fabric collapses ADF's five HDInsight discriminators into ONE type
+		// whose table entry reads "Runs various programs (Hive, Pig, MapReduce,
+		// Streaming, Spark)". So this is NOT a rename and must not be aliased
+		// by name: the program lives in typeProperties, and routing a Hive
+		// script into the Spark agent would compute different semantics and
+		// report them as Hive — precisely what unrunnableactivities.go exists
+		// to prevent. Dispatch on the program, and refuse the four this
+		// emulator cannot run under their own names.
+		return e.azureHDInsightActivity(act, tp, resolve)
+
 	case "Validation":
 		// Really waits for the data: real OneLake paths, real sizes, and the
 		// virtual clock for the timeout. See validationactivity.go — an
 		// always-passing Validation is worse than none.
 		return e.validationActivity(act, tp, resolve)
 
-	case "AzureDataExplorerCommand":
+	case "AzureDataExplorerCommand", "KustoQueryLanguage":
 		// A real control command on the real Kusto engine behind Eventhouse,
 		// through the same relay helpers the KQL data plane uses. See
 		// adxcommandactivity.go.
@@ -299,7 +310,7 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// reported Succeeded; see azuremlactivity.go.
 		return e.azureMLActivity(act)
 
-	case "AzureFunctionActivity":
+	case "AzureFunctionActivity", "AzureFunction":
 		// A real call to a function endpoint over the same HTTP core as Web;
 		// the function key travels as x-functions-key, which is how ADF
 		// authenticates the call.
