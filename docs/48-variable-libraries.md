@@ -147,6 +147,42 @@ type, Guid as `String` type, Integer as `Int` type"*, and Number is not
 supported in pipelines at all. The library remains authoritative for the value;
 the declaration's `type` is a restatement.
 
+The library's own type list, read off the New-variable dropdown (2026-08-10):
+
+| Library type | Group | Pipeline `type` | How known |
+|---|---|---|---|
+| `String` | Basic | `String` | captured |
+| `Guid` | Basic | `String` | **captured** |
+| `DateTime` | Basic | `String` | article |
+| `Integer` | Basic | `Int` | article |
+| `Boolean` | Basic | `Bool` | article |
+| `Number` | Basic | *(unsupported in pipelines)* | article |
+| `Item reference` (preview) | Other | **`Object`** | **captured** |
+| `Connection reference` (preview) | Other | `Object`, presumed | not captured |
+
+Two of these are worth calling out because a reasonable person would guess them
+wrong:
+
+**A `Guid` variable declares `"type": "String"`.** Captured from
+`emuProbeVarLib_runId`. The library value is a JSON string, so the value needs
+no conversion — the resolver passing it through unchanged is correct, and this
+is the evidence for that rather than an assumption.
+
+**An `Item reference` variable declares `"type": "Object"`.** The pipeline's
+Library-variables grid *displays* `ItemReference`, but the saved JSON says
+`Object`:
+
+```json
+"emuProbeVarLib_silverNotebook": {
+  "type": "Object",
+  "variableName": "silverNotebook",
+  "libraryName": "emuProbeVarLib"
+}
+```
+
+The UI label and the wire name differ, so the grid is not a safe source for
+this field. Note also that both reference types are marked **(preview)**.
+
 ## How the emulator resolves
 
 `internal/varlib` parses a definition and merges the active value set over the
@@ -162,16 +198,26 @@ than failing at whichever activity happens to read it first, and rather than
 resolving to blank. Blank is the dangerous outcome: a bronze path that silently
 becomes `""` writes to the wrong place and succeeds while doing it.
 
-### One deliberate leniency
+### Falling back to the defaults, and why it is not a guess
 
-An **unknown** active-set name resolves to the defaults instead of failing. The
-library's own default values are themselves a value set, and that set has no
-file under `valueSets/` — only *alternative* sets get one. So a name matching
-no file is the ordinary "the default set is active" case, and it is
-indistinguishable from a typo without a captured answer from real Fabric.
-Erring towards the defaults returns a value the author actually wrote; erring
-towards failure would break every library that has no alternative sets. This is
-the one guess in the feature and it is recorded here rather than buried.
+An **unknown** active-set name resolves to the defaults instead of failing.
+
+This was written as the one deliberate guess in the feature. **It is no longer
+a guess.** The library editor shows the defaults column as a first-class value
+set titled **"Default value set"**, carrying the **Active** badge, sitting
+beside the alternative sets — and it has no file under `valueSets/`, because
+only *alternative* sets get one. So "the active set has no file" is the
+ordinary, expected state of any library, not an error and not only a typo.
+
+Failing on an unmatched name would therefore break every library whose default
+set is active, which is the default configuration. Falling back returns the
+value the author actually wrote. The behaviour is unchanged; what changed is
+that it now rests on an observation instead of an argument.
+
+The residual unknown is narrow and worth stating: whether `activeValueSetName`
+is literally `"Default value set"` when that set is active, or empty. Both land
+on the defaults here, so resolution is correct either way, and the emulator
+does not depend on knowing which.
 
 ## Evidence
 
@@ -188,16 +234,20 @@ name instead of alias, and ignoring value-set overrides each turn it red.
 
 ## Not captured, and therefore not implemented
 
-* **Item- and connection-reference variable types.** The integration article
-  notes these expose sub-properties through a further `.` (connection id, item
-  id, item workspace). Only scalar types were captured; the resolver passes an
-  object through unchanged, so a captured shape would slot in, but nothing here
-  claims they work.
+* **The VALUE shape of a reference-typed variable.** The pipeline-side
+  declaration is captured (`"type": "Object"`), and the resolver passes an
+  object through unchanged, so a correctly-shaped value would flow. But what
+  `variables.json` actually stores for an item reference — and therefore which
+  sub-properties `@pipeline().libraryVariables.<alias>.<x>` yields — was NOT
+  captured: the library editor has no JSON view, and reading the definition
+  needs a REST token for the tenant. The article says the sub-properties are
+  things like connection id, item id and item workspace. **Nothing here claims
+  reference-typed variables work end to end**, and the emulator does not
+  synthesise those sub-properties.
 * **Alias characters illegal in a property path.** Whether Fabric rejects such
   an alias at save time or escapes it is unknown.
-* **The `Guid`-typed declaration.** Only a `String` binding was captured. The
-  article says Guid surfaces as `String` in pipelines, which makes the expected
-  shape predictable but not observed.
+* **`Int`, `Bool` and `DateTime` declarations.** Taken from the article's
+  mapping table, not observed. `String`, `Guid` and `Object` are captured.
 * **Consumers other than pipelines.** Notebooks (via NotebookUtils), shortcuts,
   Dataflow Gen2, Copy job and user data functions all consume libraries. This
   doc and this implementation cover pipelines only.
