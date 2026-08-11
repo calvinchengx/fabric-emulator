@@ -234,15 +234,22 @@ func (a *API) deleteItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 // here and fails there.
 //
 // The width VARIES: `…07:49:13.5612398` is 7 digits and `…08:00:43.654668` is
-// 6, from the same tenant minutes apart. So this is System.Text.Json's trimming
-// rule, not .NET's fixed-width round-trip "O" — a distinction that matters,
-// because a fixed `.0000000` emitter passes a test asserting exactly 7 digits
-// while a tenant sending 6 fails it. Go's `9`s trim; its `0`s pad.
+// 6, from the same tenant minutes apart. Go's `9`s trim; its `0`s pad.
 //
-// Our clock is second-granular, so every zero trims and we emit no fractional
+// The 6-digit sample is the WITNESS for trimming, and it settles the rule
+// without appealing to any documentation about .NET: a fixed-width emitter
+// would have written `.6546680` for that instant. Only trimming produces six
+// digits. That matters because a fixed `.0000000` emitter passes a test
+// asserting exactly 7 while a tenant sending 6 fails it — code and test wrong
+// together, green together.
+//
+// Our clock is second-granular, so every digit trims and we emit no fractional
 // part at all. That is the HONEST rendering of the precision we actually have,
-// and it is a shape the tenant genuinely produces on a whole second — rather
-// than seven fabricated zeros that claim sub-second resolution we do not carry.
+// rather than seven fabricated zeros claiming sub-second resolution we do not
+// carry. ONE STEP OF THIS IS STILL INFERENCE and is marked as such: the samples
+// witness trimming inside a non-zero fraction, not the whole-second case where
+// the decimal point itself disappears. That follows from the same rule, and a
+// tenant timestamp landing on an exact second would witness it directly.
 const fabricOperationTime = "2006-01-02T15:04:05.9999999"
 
 // operationBody is the poll response.
