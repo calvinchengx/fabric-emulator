@@ -113,6 +113,55 @@ func TestParseLibraryVariableDeclarations(t *testing.T) {
 	}
 }
 
+// The declaration's `type` is the PIPELINE vocabulary, and two of its values
+// are counter-intuitive enough to pin. Both captured from a live tenant
+// 2026-08-10, from the saved JSON rather than the designer's grid — the grid
+// DISPLAYS "ItemReference" for the third one while the wire says "Object", so
+// the label and the wire name genuinely differ. See docs/48-variable-libraries.md.
+func TestLibraryVariableDeclaredTypesAsCaptured(t *testing.T) {
+	def := []byte(`{"properties":{"activities":[],"libraryVariables":{
+		"emuProbeVarLib_bronzePath":{"type":"String","variableName":"bronzePath","libraryName":"emuProbeVarLib"},
+		"emuProbeVarLib_runId":{"type":"String","variableName":"runId","libraryName":"emuProbeVarLib"},
+		"emuProbeVarLib_silverNotebook":{"type":"Object","variableName":"silverNotebook","libraryName":"emuProbeVarLib"}
+	}}}`)
+	p, err := Parse(def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := p.LibraryVariableRefs()
+	for alias, want := range map[string]string{
+		"emuProbeVarLib_bronzePath":     "String", // library String
+		"emuProbeVarLib_runId":          "String", // library Guid, NOT "Guid"
+		"emuProbeVarLib_silverNotebook": "Object", // library Item reference, NOT "ItemReference"
+	} {
+		if got := refs[alias].Type; got != want {
+			t.Errorf("%s type = %q, want %q", alias, got, want)
+		}
+	}
+}
+
+// A reference-typed variable resolves to an object, and its sub-properties are
+// reachable through further member access. The emulator does not synthesise
+// those sub-properties — whatever the library holds is what the expression
+// sees — so this pins the plumbing, NOT any claim about what real Fabric
+// stores for an item reference, which is not captured.
+func TestLibraryVariableObjectValuePassesThrough(t *testing.T) {
+	ctx := &evalContext{LibraryVariables: map[string]value{
+		"envLib_silverNotebook": map[string]value{"itemId": "abc-123", "workspaceId": "ws-9"},
+	}}
+	got, err := evalString("@pipeline().libraryVariables.envLib_silverNotebook.itemId", ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "abc-123" {
+		t.Errorf("= %v, want abc-123", got)
+	}
+	// A sub-property the library does not carry must fail rather than blank.
+	if _, err := evalString("@pipeline().libraryVariables.envLib_silverNotebook.nope", ctx); err == nil {
+		t.Error("a missing sub-property resolved instead of failing")
+	}
+}
+
 func TestPipelineWithoutLibraryVariablesHasNoRefs(t *testing.T) {
 	p, err := Parse([]byte(`{"properties":{"activities":[]}}`))
 	if err != nil {
