@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 // CreateItem inserts an item, optionally with definition parts (stored
@@ -98,11 +99,68 @@ func (s *Store) UpdateItem(it *Item) error {
 
 // DeleteItem removes an item (definition cascades).
 func (s *Store) DeleteItem(workspaceID, id string) error {
+	// Read the name BEFORE the row goes, so the reservation can be recorded.
+	// A tenant holds a deleted display name for a while (see
+	// NameReservedUntil); nothing can reconstruct it afterwards.
+	var itemType, name string
+	_ = s.db.QueryRow(`SELECT type, display_name FROM items WHERE workspace_id = ? AND id = ?`,
+		workspaceID, id).Scan(&itemType, &name)
 	res, err := s.db.Exec(`DELETE FROM items WHERE workspace_id = ? AND id = ?`, workspaceID, id)
 	if err != nil {
 		return err
 	}
-	return oneRow(res)
+	if err := oneRow(res); err != nil {
+		return err
+	}
+	if name != "" {
+		_, _ = s.db.Exec(
+			`INSERT OR REPLACE INTO deleted_item_names (workspace_id, item_type, display_name, deleted_at)
+			 VALUES (?,?,?,?)`, workspaceID, itemType, name, s.Now())
+	}
+	return nil
+}
+
+// NameReservedUntil reports when a recently deleted display name becomes free
+// again, or the zero time if it is free now.
+//
+// MEASURED on a tenant 2026-08-11: create a Notebook, delete it, recreate with
+// the same name immediately →
+//
+//	409 ItemDisplayNameNotAvailableYet
+//	"Requested 'emuNameProbe' is not available yet and is expected to become
+//	 available in the upcoming minutes."
+//	isRetriable: true
+//
+// TWO THINGS THE MESSAGE GETS WRONG ABOUT ITSELF, both worth encoding rather
+// than the prose. It says "upcoming minutes"; the name was free again on the
+// retry **20 seconds** later. And `isRetriable: true` is the part a client
+// must act on — this is a wait, not a naming conflict, and the two carry the
+// same HTTP status.
+//
+// Off unless a window is configured, for ForceLRO's reason: instant reuse is
+// what a local create/delete loop wants, and the point is that the other
+// behaviour is reachable at all before a tenant is the thing that finds out.
+func (s *Store) NameReservedUntil(workspaceID, itemType, name string, window time.Duration) time.Time {
+	if window <= 0 {
+		return time.Time{}
+	}
+	var deletedAt int64
+	err := s.db.QueryRow(
+		`SELECT deleted_at FROM deleted_item_names
+		 WHERE workspace_id = ? AND item_type = ? AND display_name = ? COLLATE NOCASE`,
+		workspaceID, itemType, name).Scan(&deletedAt)
+	if err != nil {
+		return time.Time{}
+	}
+	// SECONDS, not milliseconds: Clock.Now() is epoch seconds (internal/clock).
+	// Reading it as millis makes elapsed time appear 1000x smaller, so a
+	// configured 30s window holds the name for over eight hours — and both
+	// sides of the comparison are scaled identically, so nothing looks wrong.
+	free := time.Unix(deletedAt, 0).Add(window)
+	if !free.After(time.Unix(s.Now(), 0)) {
+		return time.Time{}
+	}
+	return free
 }
 
 // GetDefinition returns an item's stored definition parts (nil when the item

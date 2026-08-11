@@ -114,6 +114,18 @@ CREATE TABLE IF NOT EXISTS item_definitions (
 	item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
 	parts_json TEXT NOT NULL
 );
+-- A deleted display name is held for a while on a real tenant before it can be
+-- reused (409 ItemDisplayNameNotAvailableYet). Kept per workspace+type+name
+-- with the deletion time, so the reservation window is a policy the caller
+-- chooses rather than a constant baked in here. NOT an FK to items: the whole
+-- point is that the row outlives the item.
+CREATE TABLE IF NOT EXISTS deleted_item_names (
+	workspace_id TEXT NOT NULL,
+	item_type TEXT NOT NULL,
+	display_name TEXT NOT NULL,
+	deleted_at INTEGER NOT NULL,
+	PRIMARY KEY (workspace_id, item_type, display_name)
+);
 CREATE TABLE IF NOT EXISTS operations (
 	id TEXT PRIMARY KEY,
 	kind TEXT NOT NULL,
