@@ -469,11 +469,14 @@ def create_item(display_name, item_type, parts):
     The 202 is resolved by `post_and_wait` rather than here. This function used to
     carry its own copy of that logic, and the copy was the older, worse one: it
     indexed `x-ms-operation-id` without falling back to the `Location` tail, and
-    it slept a flat second instead of honouring `Retry-After`. Against the
-    emulator both behave identically, because item creates come back 201 and the
-    operation branch never runs — so the divergence was invisible exactly where
-    it was cheap to find, and would have surfaced against a real tenant as a
-    KeyError on a header Fabric is not obliged to send.
+    it slept a flat second instead of honouring `Retry-After`.
+
+    Note which half was actually biting. A definition-bearing create has always
+    been an LRO in the emulator, and this function always sends a definition, so
+    every example run took the async path and polled once a second at a service
+    that had just stated a pace in its own header. Not a latent defect awaiting a
+    real tenant, a live one, quiet because polling too fast only shows up as load
+    until something answers 429.
 
     One protocol, one resolver. A second implementation of the same wait is not a
     convenience, it is a second thing to keep correct.

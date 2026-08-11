@@ -1,21 +1,30 @@
-"""The examples' long-running-operation resolution, against shapes only real Fabric sends.
+"""The examples' long-running-operation resolution, against the 202 shapes both targets send.
 
-WHY THIS IS TESTED HERE. The 202 branch of `post_and_wait` is unreachable from
-the local e2e: the emulator answers item creates 201 with the item, so every
-example run exercises the synchronous path and nothing else. That is precisely
-the wrong way round, because the async path is the one real Fabric takes for a
-Warehouse, and it took a run against a real trial to discover that `provision.py`
-was doing `None["id"]` against it.
+WHY THIS IS TESTED HERE. `create_item` used to carry a SECOND copy of
+`post_and_wait`'s 202 handling, and the copy was the older one: it indexed
+`x-ms-operation-id` with no fallback and slept a flat second regardless of what
+the service asked for. These tests pin the two behaviours that copy lacked.
 
-`create_item` used to carry a SECOND copy of this wait, and the copy was the
-older one: it indexed `x-ms-operation-id` with no fallback and slept a flat
-second. Both copies agreed against the emulator, for the same reason nothing
-here is reachable from e2e. These tests pin the two behaviours that copy lacked,
-so a future divergence fails in CI rather than on a tenant.
+The two halves fail differently, and it is worth being exact about which is live:
 
-Per Microsoft's LRO reference, a 202 carries `Location`; `x-ms-operation-id` is
-a convenience, not a guarantee. Anything that requires it is asserting a promise
-the service did not make.
+  * **`Retry-After`, live on BOTH targets.** The emulator sets the header on
+    its 202 (`internal/api/api.go`), and a definition-bearing create has ALWAYS
+    been an LRO here (`internal/api/items.go`, the `body.Definition == nil`
+    branch). `create_item` always sends a definition, so every example run takes
+    the async path and the old copy polled once a second against a service that
+    had stated a pace. Against a real tenant, whose documented sample answers
+    `Retry-After: 20`, that is polling ~20x more often than asked on an API
+    family that documents `429 Too Many Requests`.
+
+  * **The missing-header `KeyError`, latent.** Fabric documents all three
+    headers on the INITIATING 202, and the emulator sets them, so the hard index
+    finds its key today on both targets. It is fragility rather than a live
+    break: a resolver that requires a convenience header is asserting a promise
+    the reference makes for the initiating call only, and `Location` is the part
+    actually guaranteed.
+
+Tested without an emulator because the failure is in how the CLIENT reads a
+response shape, so a stub pins it precisely and CI needs no stack.
 """
 import importlib
 import os
@@ -119,8 +128,8 @@ def test_202_without_the_convenience_header_still_resolves(monkeypatch, tmp_path
 
 def test_create_item_resolves_the_same_202(monkeypatch, tmp_path):
     """create_item must not have its own opinion about this. It carried a copy
-    that lacked the fallback, and the copy was invisible because the emulator
-    answers 201."""
+    that lacked the fallback, and a second implementation of one protocol is the
+    defect: matching them by hand only resets the clock on the next divergence."""
     common = load_common(monkeypatch, tmp_path)
     no_sleeping(monkeypatch, common)
     monkeypatch.setattr(common, "S", LROSession(LOCATION_ONLY))
@@ -187,8 +196,9 @@ def test_a_failed_operation_is_not_reported_as_success(monkeypatch, tmp_path):
 
 
 def test_synchronous_create_is_unchanged(monkeypatch, tmp_path):
-    """The emulator's path. It is the only one e2e covers, so it is the one most
-    likely to be broken by a change aimed at the other."""
+    """The 201 path. `create_item` always sends a definition so the emulator never
+    answers it this way, but Fabric documents 201 for a create and a definitionless
+    caller would take it, so it must survive a change aimed at the other branch."""
     common = load_common(monkeypatch, tmp_path)
 
     class Sync:
