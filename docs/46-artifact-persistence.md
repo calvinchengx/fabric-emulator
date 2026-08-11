@@ -133,15 +133,40 @@ notebook writes them as a one-row Delta table, `silver_resolution_metrics`, whic
 is portable by construction and inspectable afterwards. `engine.py` skips under
 `real`, because Fabric runs the queued notebook itself.
 
-**What is still emulator-only, stated rather than left to be discovered:** a
-semantic model's rows. `semantic_model.py` and `tmdl_pbip.py` publish a `data.json`
-part — the emulator's inline row snapshot. Real Fabric has no such part; a model's
-data comes from a partition, either Direct Lake over OneLake Delta or an import
-partition whose M expression reads `Sql.Database(<connectionString>, …)`. The
-emulator evaluates Direct Lake and inline data, not `Sql.Database` import, and the
-warehouse's gold tables are not Delta in OneLake locally — so converting needs
-emulator work first, and `scripts/check_example_portability.py` prints the debt on
-every run instead of hiding it in a whitelist.
+**A semantic model reads gold itself, and that closed the last gap.** The examples
+used to ship the model's rows inside the definition as a `data.json` part — the
+emulator's own inline snapshot, which real Fabric has no concept of. So the one
+artifact a BI consumer actually reads was the one thing that could not be deployed
+to a tenant.
+
+They now publish a **Direct Lake** model: a shared expression naming the item's
+OneLake location, and an `entity` partition per table. Real Fabric supports Direct
+Lake over a warehouse because a warehouse persists to OneLake as Delta; the
+emulator reads the equivalent rows from the SQL Server database it serves. That is
+a BACKEND difference, not a contract one — the definition is byte-identical on both
+targets, ids aside.
+
+Two things worth copying from how this went:
+
+- `onelake.dfs.fabric.microsoft.com` is written **literally** in the expression, not
+  resolved per target. It is Fabric's one OneLake host, the same on every tenant,
+  and the emulator parses the workspace/item out of it rather than fetching it — so
+  the expression text does not vary at all. The notebook definitions address
+  OneLake the same way (`abfs://{ws}@onelake.dfs.fabric.microsoft.com/…`).
+- `compatibilityLevel` must be **1604** or higher for Direct Lake, and the emulator
+  enforces that rather than reading the partition anyway. The conversion failed on
+  it first try, which is the check earning its keep.
+
+A side effect worth having: the flow graph now carries `DirectLake` edges
+(`Tables/dbo/fct_daily_revenue -> Tables/Revenue`), so the hop from gold to the BI
+layer is recorded. With rows shipped inside the definition there was no edge to
+record and the graph simply stopped at gold.
+
+The local `.pbip` project still writes an imported row snapshot beside the model,
+now named `imported-rows.json` rather than `data.json`. That file is **not** a
+definition part and never reaches `updateDefinition`: Power BI Desktop opens the
+project offline with no emulator to reach, so the rows have to be on disk. Naming
+it for what it is keeps it out of the part-path contract.
 
 ### SQL: the address is per-item and only the API knows it
 

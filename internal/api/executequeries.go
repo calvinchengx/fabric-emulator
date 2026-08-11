@@ -13,6 +13,7 @@ package api
 // data.json definition parts feed the bounded DAX evaluator (internal/semanticmodel).
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -76,7 +77,7 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		return
 	}
 
-	model, data, err := a.loadSemanticModel(it.ID, p)
+	model, data, err := a.loadSemanticModel(r.Context(), it.ID, p)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "InvalidDataset", err.Error())
 		return
@@ -124,7 +125,7 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 // `.pbip` project on disk contains). TMSL wins when both are present — it is
 // the older, fully-covered path, so a definition carrying both is not a place
 // to start guessing.
-func (a *API) loadSemanticModel(itemID string, p *auth.Principal) (*semanticmodel.Model, semanticmodel.Data, error) {
+func (a *API) loadSemanticModel(ctx context.Context, itemID string, p *auth.Principal) (*semanticmodel.Model, semanticmodel.Data, error) {
 	m, err := a.parseModelDefinition(itemID)
 	if err != nil {
 		return nil, nil, err
@@ -135,7 +136,7 @@ func (a *API) loadSemanticModel(itemID string, p *auth.Principal) (*semanticmode
 			data = d
 		}
 	}
-	if err := a.loadDirectLakeData(m, data, p); err != nil {
+	if err := a.loadDirectLakeData(ctx, m, data, p); err != nil {
 		return nil, nil, err
 	}
 	return m, data, nil

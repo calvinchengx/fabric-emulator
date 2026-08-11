@@ -57,22 +57,29 @@ assert fact and dim, (len(fact), len(dim))
 # Tabs, not spaces: TMDL is indentation-structured and Power BI writes tabs.
 MODEL_TMDL = """model ContosoRevenueTMDL
 \tculture: en-US
-\tcompatibilityLevel: 1550
+\tcompatibilityLevel: 1604
 """
 
 CUSTOMER_TMDL = """table Customer
 
 \tcolumn CustomerId
 \t\tdataType: string
-\t\tsourceColumn: CustomerId
+\t\tsourceColumn: customer_id
 
 \tcolumn Name
 \t\tdataType: string
-\t\tsourceColumn: Name
+\t\tsourceColumn: name
 
 \tcolumn Country
 \t\tdataType: string
-\t\tsourceColumn: Country
+\t\tsourceColumn: country
+
+\tpartition Customer = entity
+\t\tmode: directLake
+\t\tsource
+\t\t\tentityName: dim_customer
+\t\t\tschemaName: dbo
+\t\t\texpressionSource: GoldWarehouse
 """
 
 # The measures carry their DAX verbatim, including one written across several
@@ -82,11 +89,11 @@ REVENUE_TMDL = """table Revenue
 
 \tcolumn OrderDate
 \t\tdataType: string
-\t\tsourceColumn: OrderDate
+\t\tsourceColumn: order_date
 
 \tcolumn Country
 \t\tdataType: string
-\t\tsourceColumn: Country
+\t\tsourceColumn: country
 
 \tcolumn Orders
 \t\tdataType: int64
@@ -107,6 +114,13 @@ REVENUE_TMDL = """table Revenue
 
 \tmeasure 'Revenue per Unit' =
 \t\t\tDIVIDE([Total Revenue], [Total Units])
+
+\tpartition Revenue = entity
+\t\tmode: directLake
+\t\tsource
+\t\t\tentityName: fct_daily_revenue
+\t\t\tschemaName: dbo
+\t\t\texpressionSource: GoldWarehouse
 """
 
 RELATIONSHIPS_TMDL = """relationship Revenue_Customer
@@ -114,15 +128,35 @@ RELATIONSHIPS_TMDL = """relationship Revenue_Customer
 \ttoColumn: Customer.Country
 """
 
+# The shared expression every Direct Lake partition points at. Fabric keeps it in
+# its own TMDL file, and the emulator's parser reads `expression Name = <M>` from
+# any of them.
+EXPRESSIONS_TMDL = f"""expression GoldWarehouse = let Source = AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/{st['workspace']}/{st['warehouse']}", [HierarchicalNavigation=true]) in Source
+\tkind: m
+"""
+
 parts_src = {
     "definition/model.tmdl": MODEL_TMDL,
+    "definition/expressions.tmdl": EXPRESSIONS_TMDL,
     "definition/tables/Customer.tmdl": CUSTOMER_TMDL,
     "definition/tables/Revenue.tmdl": REVENUE_TMDL,
     "definition/relationships.tmdl": RELATIONSHIPS_TMDL,
-    # Rows ride in the same data.json the TMSL path uses: TMDL serialises the
-    # MODEL, not its data, exactly as it does in a real .pbip.
-    "data.json": json.dumps({"Customer": dim, "Revenue": fact}),
 }
+
+# NOT a definition part, and that distinction is the whole point of it being down
+# here rather than in the dict above.
+#
+# TMDL serialises the MODEL, not its data — exactly as a real .pbip does — and the
+# published item now carries a DIRECT LAKE partition, so the emulator and a tenant
+# both read gold from the warehouse rather than from anything shipped inside the
+# definition. `data.json` used to sit in `parts_src` for that job, which made the
+# published item unportable: real Fabric has no such part.
+#
+# The local copy stays, because it serves a different purpose: Power BI Desktop
+# opens this project OFFLINE, with no emulator to reach, so the rows have to be
+# beside the model on disk. A file in a local .pbip directory is not a Fabric
+# definition part and never reaches updateDefinition.
+LOCAL_IMPORTED_ROWS = json.dumps({"Customer": dim, "Revenue": fact})
 
 
 def part(path, text):
@@ -195,8 +229,9 @@ for rel, text in parts_src.items():
     "artifacts": [{"report": {"path": "ContosoRevenue.Report"}}],
     "settings": {"enableAutoRecovery": True}}, indent=2))
 
-# The rows, beside the model, so the project is self-contained offline.
-(model_dir / "data.json").write_text(parts_src["data.json"])
+# The rows, beside the model, so the project is self-contained offline. Named for
+# what it is: an imported snapshot for Desktop, not a part of the published item.
+(model_dir / "imported-rows.json").write_text(LOCAL_IMPORTED_ROWS)
 
 log(f"wrote .pbip project to {OUT.relative_to(pathlib.Path.cwd()) if OUT.is_relative_to(pathlib.Path.cwd()) else OUT}")
 log("Power BI Desktop opens ContosoRevenue.pbip locally with this data IMPORTED — "
