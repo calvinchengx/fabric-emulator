@@ -164,17 +164,23 @@ def test_emulator_addresses_the_item_by_id_over_plain_tds(monkeypatch, tmp_path)
     assert t.encrypt is False
 
 
-def test_tds_server_overrides_discovery_without_asking_the_api(monkeypatch, tmp_path):
+def test_tds_server_overrides_the_address_but_not_the_endpoint_id(monkeypatch, tmp_path):
     """The emulator advertises the port it LISTENS on, not the port Docker
     published it to, so a remapped isolated stack is the one case discovery gets
-    wrong. Fabric has no such distinction, which is why this is an override."""
-    lake = {"displayName": "contoso_lake", "type": "Lakehouse", "id": "lh-1"}
+    wrong. Fabric has no such distinction, which is why this is an override — of
+    the ADDRESS only. The endpoint id is a different fact and sync_sql_endpoint
+    needs it, so the typed route is still asked."""
+    lake = {"displayName": "contoso_lake", "type": "Lakehouse", "id": "lh-1",
+            "properties": {"sqlEndpointProperties": {
+                "connectionString": "localhost:1433", "provisioningStatus": "Success"}}}
     common = load_common(monkeypatch, tmp_path, "emulator", TDS_SERVER="localhost,11533")
     monkeypatch.setattr(common, "fabric_headers", lambda: {})
-    session = FakeSession({"/items/lh-1": lake})  # the typed route is NOT stubbed
+    session = FakeSession({"/items/lh-1": lake, "/lakehouses/lh-1": lake})
     monkeypatch.setattr(common, "S", session)
-    assert common.sql_endpoint("lh-1").server == "localhost,11533"
-    assert not any("lakehouses" in u for u in session.asked)
+    t = common.sql_endpoint("lh-1")
+    assert t.server == "localhost,11533"
+    assert t.endpoint_id is None  # the emulator has no SQLEndpoint item
+    assert any("lakehouses" in u for u in session.asked)
 
 
 def test_an_item_with_no_sql_endpoint_says_so(monkeypatch, tmp_path):
@@ -241,3 +247,54 @@ def test_the_notebook_runtime_is_wired_from_the_resolved_target(monkeypatch, tmp
     load_common(monkeypatch, tmp_path, "emulator", ENTRA_EMULATOR_URL="https://localhost:18443")
     assert os.environ["NOTEBOOKUTILS_ENTRA_URL"] == "https://localhost:18443"
     assert os.environ["NOTEBOOKUTILS_INSECURE"] == "1"
+
+
+# --- keeping the SQL endpoint in step with Delta -----------------------------
+# Two mechanisms, one for each target, and the emulator's absence of an endpoint
+# ID is the signal for which. dq_gate.py used to open a throwaway connection with
+# the comment "re-reflect whatever silver now holds" — true locally, a silent
+# no-op on real Fabric, where the endpoint syncs on its own schedule and the gate
+# would then pass on data it never rebuilt.
+
+def test_the_emulator_syncs_by_connecting(monkeypatch, tmp_path):
+    lake = {"displayName": "contoso_lake", "type": "Lakehouse", "id": "lh-1",
+            "properties": {"sqlEndpointProperties": {
+                "connectionString": "localhost:1433", "provisioningStatus": "Success"}}}
+    common = load_common(monkeypatch, tmp_path, "emulator")
+    monkeypatch.setattr(common, "fabric_headers", lambda: {})
+    session = FakeSession({"/items/lh-1": lake, "/lakehouses/lh-1": lake})
+    monkeypatch.setattr(common, "S", session)
+
+    class FakeConn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    connected = []
+    monkeypatch.setattr(common, "tds_connect", lambda i: connected.append(i) or FakeConn())
+    common.sync_sql_endpoint("lh-1")
+    assert connected == ["lh-1"]
+    assert not any("refreshMetadata" in u for u in session.asked)
+
+
+def test_real_syncs_with_refreshmetadata_on_the_endpoint_id(monkeypatch, tmp_path):
+    """Addressed by the SQLEndpoint item's own id, which is why that id being
+    reported at all is what selects this branch."""
+    lake = {**LAKEHOUSE_REAL}
+    common = load_common(monkeypatch, tmp_path, "real",
+                         FABRIC_WORKSPACE="ws", FABRIC_VAULT_URL="https://kv.vault.azure.net")
+    monkeypatch.setattr(common, "fabric_headers", lambda: {})
+    session = FakeSession({"/items/lh-1": lake, "/lakehouses/lh-1": lake})
+    posted = []
+
+    def post(url, **kw):
+        posted.append(url)
+        return FakeResponse({})
+
+    session.post = post
+    monkeypatch.setattr(common, "S", session)
+    monkeypatch.setattr(common._T, "poll_lro", lambda r, **k: r)
+    monkeypatch.setattr(common, "tds_connect", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("real mode must not sync by connecting")))
+    common.sync_sql_endpoint("lh-1")
+    assert posted and posted[0].endswith(
+        "/workspaces/ws-1/sqlEndpoints/37dc8a41-dea9-465d-b528-3e95043b2356/refreshMetadata"), posted

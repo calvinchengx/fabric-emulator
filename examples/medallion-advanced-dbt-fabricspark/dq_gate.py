@@ -8,7 +8,7 @@ import os
 import subprocess
 
 import pandas as pd
-from common import GOLD_PROJECT, load, log, storage_options, tables_uri, tds_connect
+from common import GOLD_PROJECT, load, log, storage_options, sync_sql_endpoint, tables_uri
 from deltalake import DeltaTable, write_deltalake
 
 st = load()
@@ -18,8 +18,12 @@ env = {**os.environ, "DBT_PROFILES_DIR": GOLD_PROJECT, "LAKEHOUSE_ID": st["lakeh
 
 
 def rebuild():
-    with tds_connect(st["lakehouse"]):  # re-reflect whatever silver now holds
-        pass
+    # Make the SQL endpoint see what silver now holds. NOT a throwaway connection:
+    # connect-to-reflect is the emulator's behaviour, and on real Fabric the
+    # analytics endpoint syncs on its own schedule — so a connection would return
+    # STALE rows and this gate would pass on data it never rebuilt. The resolver
+    # picks the mechanism the target actually has (docs/46).
+    sync_sql_endpoint(st["lakehouse"])
     return subprocess.run(["dbt", "--no-partial-parse", "build"], cwd=GOLD_PROJECT, env=env).returncode
 
 

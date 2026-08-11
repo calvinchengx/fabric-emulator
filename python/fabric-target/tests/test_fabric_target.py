@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fabric_target
-from fabric_target import Target, TargetError, target
+from fabric_target import AccessToken, Target, TargetError, target
 from fabric_target.__main__ import main
 
 
@@ -284,3 +284,41 @@ def test_the_emulator_never_needs_a_capacity():
 def test_a_get_is_not_a_create(monkeypatch):
     t = _real(monkeypatch)
     t._complete_workspace_create("GET", t.api_root + "/workspaces", {})  # must not raise
+
+
+# --- the configured tenant must reach the az CLI path ------------------------
+# MEASURED, not argued: against a real trial, `az account get-access-token
+# --tenant <id>` listed the capacity while this credential could not see it, and
+# Fabric answered UserNotLicensed — which reads as a licensing problem rather than
+# a tenant one. DefaultAzureCredential takes tenant hints for the browser, VS
+# Code, shared-cache and workload-identity links, and has none for the CLI.
+
+class _RecordingCredential:
+    def __init__(self):
+        self.calls = []
+
+    def get_token(self, *scopes, **kw):
+        self.calls.append((scopes, kw))
+        return AccessToken("t", 0)
+
+
+def test_real_tokens_are_minted_for_the_configured_tenant(monkeypatch):
+    inner = _RecordingCredential()
+    scoped = fabric_target._TenantScoped(inner, "0ce8e0d2-1e14-4aab-a1f2-2d3c61e75e3c")
+    scoped.get_token("https://api.fabric.microsoft.com/.default")
+    assert inner.calls[0][1]["tenant_id"] == "0ce8e0d2-1e14-4aab-a1f2-2d3c61e75e3c"
+
+
+def test_a_caller_with_its_own_tenant_still_wins():
+    """Per-call intent is more specific than a configured default."""
+    inner = _RecordingCredential()
+    scoped = fabric_target._TenantScoped(inner, "configured")
+    scoped.get_token("scope/.default", tenant_id="explicit")
+    assert inner.calls[0][1]["tenant_id"] == "explicit"
+
+
+def test_the_emulator_credential_is_not_wrapped():
+    """Only real mode has a tenant the CLI might disagree with; the emulator's
+    credential already mints against the tenant it was constructed with."""
+    t = Target("emulator")
+    assert not isinstance(t.credential, fabric_target._TenantScoped)

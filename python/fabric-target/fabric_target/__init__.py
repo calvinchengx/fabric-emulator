@@ -110,6 +110,29 @@ def _az_logged_in():
         return False
 
 
+class _TenantScoped:
+    """A TokenCredential that mints for ONE tenant, whatever the CLI's default is.
+
+    Thin on purpose: it forwards `tenant_id` and nothing else, so the underlying
+    chain keeps deciding WHICH credential answers. A caller that passes its own
+    tenant_id still wins, because a per-call intent is more specific than a
+    configured default.
+    """
+
+    def __init__(self, inner, tenant):
+        self._inner, self._tenant = inner, tenant
+
+    def get_token(self, *scopes, **kw):
+        kw.setdefault("tenant_id", self._tenant)
+        return self._inner.get_token(*scopes, **kw)
+
+    def get_token_info(self, *scopes, **kw):
+        # Newer azure-core clients prefer this; forwarding keeps the wrapper from
+        # silently downgrading a caller to the older shape.
+        kw.setdefault("tenant_id", self._tenant)
+        return self._inner.get_token_info(*scopes, **kw)
+
+
 class Target:
     def __init__(self, name):
         if name not in ("emulator", "real"):
@@ -202,7 +225,27 @@ class Target:
                     raise TargetError(
                         "real mode needs azure-identity: uv add 'fabric-target[real]'"
                     ) from e
-                self._credential = DefaultAzureCredential()
+                # AZURE_TENANT_ID MUST REACH THE az CLI PATH.
+                #
+                # DefaultAzureCredential does not forward it there: it accepts
+                # tenant hints for the browser, VS Code, shared-cache and
+                # workload-identity links and has no azure_cli_tenant_id. So a
+                # developer whose `az` default tenant is not the tenant they
+                # configured got tokens for the WRONG tenant, from the credential
+                # source docs/21 documents as the default — and Fabric answered
+                # `UserNotLicensed`, which reads as a licensing problem rather
+                # than a tenant one. Measured against a real trial: the capacity
+                # was listable with `az account get-access-token --tenant <id>`
+                # and invisible to this credential at the same moment.
+                #
+                # Baked in rather than passed per call, because callers hold the
+                # credential and call get_token(scope) themselves — notebookutils
+                # and the examples both do.
+                inner = DefaultAzureCredential(
+                    additionally_allowed_tenants=[self.tenant] if self.tenant else None)
+                self._credential = (_TenantScoped(inner, self.tenant)
+                                    if self.tenant and self.tenant != "organizations"
+                                    else inner)
         return self._credential
 
     # -- guards ------------------------------------------------------------
