@@ -82,8 +82,12 @@ func TestGetDefinitionSynchronousByDefault(t *testing.T) {
 // Opted in: the documented async outcome, end to end.
 func TestGetDefinitionAsLongRunningOperation(t *testing.T) {
 	f := newFixture(t)
-	f.srv.API.DefinitionLRO = true
+	// Seed with the flag OFF, then enable it. With ForceLRO on, item creation
+	// is itself a 202 — correct, and covered by its own test below — so
+	// seeding under the flag would put the create path in the way of the
+	// getDefinition assertion this test is about.
 	ws, pl := seedPipelineWithDefinition(t, f, "defn-lro-ws")
+	f.srv.API.ForceLRO = true
 
 	resp := f.call("POST", "/v1/workspaces/"+ws+"/items/"+pl+"/getDefinition", f.token, nil, nil)
 	f.mustStatus(resp, http.StatusAccepted, "getDefinition (LRO)")
@@ -137,10 +141,10 @@ func TestGetDefinitionAsLongRunningOperation(t *testing.T) {
 // races straight to /result must be refused rather than handed a partial.
 func TestGetDefinitionResultRefusedBeforeSuccess(t *testing.T) {
 	f := newFixture(t)
-	f.srv.API.DefinitionLRO = true
+	ws, pl := seedPipelineWithDefinition(t, f, "defn-lro-early-ws")
+	f.srv.API.ForceLRO = true
 	// A delay long enough that the operation is still running when asked.
 	f.srv.API.SetFaults(-1, -1, 60)
-	ws, pl := seedPipelineWithDefinition(t, f, "defn-lro-early-ws")
 
 	resp := f.call("POST", "/v1/workspaces/"+ws+"/items/"+pl+"/getDefinition", f.token, nil, nil)
 	f.mustStatus(resp, http.StatusAccepted, "getDefinition (LRO)")
@@ -148,4 +152,81 @@ func TestGetDefinitionResultRefusedBeforeSuccess(t *testing.T) {
 
 	f.mustStatus(f.call("GET", "/v1/operations/"+opID+"/result", f.token, nil, nil),
 		http.StatusBadRequest, "result before success")
+}
+
+// createItem has TWO documented outcomes too, and this is the sharper case.
+// Create Warehouse documents 201 and 202, says "This API supports long running
+// operations", AND says "This API does not support create a warehouse with
+// definition" — while the emulator went async only for a definition-bearing
+// create. So the one item type measured asynchronous on a real tenant was the
+// one type guaranteed synchronous here, and a client indexing the 201 body got
+// `None["id"]` against a tenant. Measured 2026-08-11 by local_87220308 running
+// examples/medallion-pyspark/provision.py against the real trial capacity.
+func TestCreateItemAsLongRunningOperation(t *testing.T) {
+	f := newFixture(t)
+	f.srv.API.ForceLRO = true
+
+	var ws struct{ ID string }
+	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "create-lro-ws"}, &ws)
+
+	// No definition — a Warehouse cannot have one, which is the whole point.
+	resp := f.call("POST", "/v1/workspaces/"+ws.ID+"/items", f.token,
+		map[string]string{"displayName": "dw", "type": "Warehouse"}, nil)
+	f.mustStatus(resp, http.StatusAccepted, "create Warehouse (LRO)")
+
+	opID := resp.Header.Get("x-ms-operation-id")
+	if opID == "" || resp.Header.Get("Location") == "" || resp.Header.Get("Retry-After") == "" {
+		t.Fatalf("202 is missing documented headers: op=%q loc=%q retry=%q",
+			opID, resp.Header.Get("Location"), resp.Header.Get("Retry-After"))
+	}
+
+	opPath := "/v1/operations/" + opID
+	var op struct{ Status string }
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		f.mustStatus(f.call("GET", opPath, f.token, nil, &op), http.StatusOK, "poll operation")
+		if op.Status != "NotStarted" && op.Status != "Running" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("operation never reached a terminal state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if op.Status != "Succeeded" {
+		t.Fatalf("operation status = %s", op.Status)
+	}
+
+	// The result is the created item — the thing the client wanted from the
+	// body it could not read.
+	var it struct {
+		ID, DisplayName, Type string
+	}
+	f.mustStatus(f.call("GET", opPath+"/result", f.token, nil, &it), http.StatusOK, "operation result")
+	if it.ID == "" || it.DisplayName != "dw" || it.Type != "Warehouse" {
+		t.Fatalf("result = %+v", it)
+	}
+	// And it really exists, not just as an operation payload.
+	var got struct{ ID string }
+	f.mustStatus(f.call("GET", "/v1/workspaces/"+ws.ID+"/items/"+it.ID, f.token, nil, &got),
+		http.StatusOK, "get the created item")
+	if got.ID != it.ID {
+		t.Errorf("item id = %q, want %q", got.ID, it.ID)
+	}
+}
+
+// Default stays synchronous: 201 with the body, which is equally legal and is
+// what most calls see. Flipping the default would be a breaking change dressed
+// as fidelity.
+func TestCreateItemSynchronousByDefault(t *testing.T) {
+	f := newFixture(t)
+	var ws struct{ ID string }
+	f.call("POST", "/v1/workspaces", f.token, map[string]string{"displayName": "create-sync-ws"}, &ws)
+	var it struct{ ID, Type string }
+	resp := f.call("POST", "/v1/workspaces/"+ws.ID+"/items", f.token,
+		map[string]string{"displayName": "dw2", "type": "Warehouse"}, &it)
+	f.mustStatus(resp, http.StatusCreated, "create Warehouse")
+	if it.ID == "" {
+		t.Fatal("201 body carried no id")
+	}
 }

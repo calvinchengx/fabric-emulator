@@ -998,12 +998,14 @@
       "go:TestEveryRouteRequiresAToken"
     ]
   },
-  "getdefinition-as-an-lro-fabricdefinitionlro": {
+  "asynchronous-outcomes-forced-fabricforcelro": {
     "section": "Platform / fundamentals",
-    "claim": "**`getDefinition` as an LRO** (`FABRIC_DEFINITION_LRO`)",
+    "claim": "**Asynchronous outcomes forced** (`FABRIC_FORCE_LRO`)",
     "witnesses": [
       "go:TestGetDefinitionAsLongRunningOperation",
-      "go:TestGetDefinitionSynchronousByDefault"
+      "go:TestCreateItemAsLongRunningOperation",
+      "go:TestGetDefinitionSynchronousByDefault",
+      "go:TestCreateItemSynchronousByDefault"
     ]
   }
 }
