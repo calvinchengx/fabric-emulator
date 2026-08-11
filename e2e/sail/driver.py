@@ -7,8 +7,10 @@ Data plane: Sail executes the plans; its object_store speaks the az:// +
 endpoint-override recipe to the emulator's Blob surface, including the
 If-None-Match conditional PUT every Delta commit needs.
 """
+import faulthandler
 import json
 import os
+import sys
 import threading
 import time
 import urllib.error
@@ -19,6 +21,70 @@ from concurrent.futures import ThreadPoolExecutor
 FABRIC = os.environ["FABRIC"]
 ENTRA = os.environ["ENTRA"]
 TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+
+# --- hang budget ------------------------------------------------------------
+#
+# This suite hung once for its CI job's entire 25-minute budget and was reported
+# as CANCELLED. That is worse than a failure: a cancelled check reads as
+# infrastructure noise, so it gets rerun rather than investigated — which is
+# what happened, and the rerun went green.
+#
+# Two things have to be true for the next hang to be legible, and neither was.
+# Progress must be visible AS IT HAPPENS: python block-buffers stdout to a pipe,
+# so in the run that PASSED all twenty prints below carry a single timestamp,
+# flushed at exit — a killed run prints nothing, and the silence locates
+# nothing. `PYTHONUNBUFFERED=1` in docker/python-runtime/Dockerfile fixes that
+# for every driver on that image. And a stuck step must end the run itself,
+# naming what it was waiting on, well inside the job's budget: every Spark
+# Connect call below is a gRPC round trip with no deadline, so nothing here is
+# bounded on its own.
+#
+# Steps take well under a second in practice, including on a cold CI runner, so
+# the budget is loose enough to never fire on slowness alone.
+STEP_BUDGET = float(os.environ.get("SAIL_E2E_STEP_BUDGET", "180"))
+HEARTBEAT = 30.0
+
+_progress = threading.Lock()
+_step = "startup"
+_step_began = time.monotonic()
+
+
+def step(name):
+    """Name the operation now in flight, and restart its budget."""
+    global _step, _step_began
+    with _progress:
+        _step, _step_began = name, time.monotonic()
+    print(f"--> {name}", flush=True)
+
+
+def _watchdog():
+    next_beat = HEARTBEAT
+    while True:
+        time.sleep(1.0)
+        with _progress:
+            name, elapsed = _step, time.monotonic() - _step_began
+        # The budget is checked BEFORE the heartbeat gate, and not after it: a
+        # `continue` for "nothing to report yet" also skipped the budget, so any
+        # budget under one heartbeat was unreachable and the guard passed a run
+        # it was set to kill. A watchdog that cannot be made to fire is not
+        # evidence of anything.
+        if elapsed > STEP_BUDGET:
+            print(f"\nHUNG: {elapsed:.0f}s with no progress, waiting on: {name}",
+                  flush=True)
+            # Every thread, so a stuck concurrent writer is as visible as a
+            # stuck main thread. gRPC drops the GIL while it waits, so this
+            # thread still runs when the others are blocked on the wire.
+            faulthandler.dump_traceback()
+            sys.stderr.flush()
+            os._exit(1)
+        if elapsed < next_beat:  # a new step started; re-arm the heartbeat
+            next_beat = HEARTBEAT
+            continue
+        print(f"    still {name} ({elapsed:.0f}s)", flush=True)
+        next_beat = elapsed + HEARTBEAT
+
+
+threading.Thread(target=_watchdog, daemon=True).start()
 
 
 def post_json(url, body, token=None):
@@ -43,6 +109,7 @@ def entra_token(scope):
 
 
 # --- control plane: a workspace and a lakehouse to write into ---
+step("control plane: mint token, create workspace + lakehouse")
 fabric_token = entra_token("https://api.fabric.microsoft.com/.default")
 ws = post_json(f"{FABRIC}/v1/workspaces", {"displayName": "sailws"}, fabric_token)
 post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "lake"}, fabric_token)
@@ -51,6 +118,7 @@ print(f"workspace: {ws['id']}")
 # --- data plane: PySpark over Spark Connect to Sail ---
 from pyspark.sql import SparkSession  # noqa: E402
 
+step("connect to sail over Spark Connect")
 for attempt in range(30):  # sail may still be starting
     try:
         spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
@@ -68,6 +136,7 @@ url = "az://sailws/lake.Lakehouse/Tables/events"
 # asks the server for spark.sql.session.localRelationSizeLimit and chokes on
 # Sail 0.6.6's "3GB" string. VALUES keeps everything server-side (and is the
 # better engine witness anyway).
+step("delta write (overwrite, 3 rows)")
 df = spark.sql(
     "SELECT * FROM VALUES (1,'signup','eu'), (2,'purchase','us'), (3,'signup','us')"
     " AS t(id, kind, region)"
@@ -75,6 +144,7 @@ df = spark.sql(
 df.write.format("delta").mode("overwrite").save(url)
 print("delta write OK")
 
+step("sql over delta")
 back = spark.read.format("delta").load(url)
 back.createOrReplaceTempView("events")
 rows = spark.sql("SELECT kind, COUNT(*) AS n FROM events GROUP BY kind ORDER BY kind").collect()
@@ -83,6 +153,7 @@ assert got == {"purchase": 1, "signup": 2}, got
 print(f"sql over delta OK: {got}")
 
 # Append — a second Delta commit exercises the conditional-PUT log protocol.
+step("delta append")
 spark.sql("SELECT * FROM VALUES (4,'purchase','eu') AS t(id, kind, region)") \
     .write.format("delta").mode("append").save(url)
 n = spark.read.format("delta").load(url).count()
@@ -93,6 +164,7 @@ print("delta append OK (4 rows)")
 
 # Time travel by version. (The SQL `VERSION AS OF` form also works — see
 # docs/engine-matrix.md; an earlier comment here called it a Sail gap.)
+step("time travel (versionAsOf 0)")
 v0 = spark.read.format("delta").option("versionAsOf", 0).load(url).count()
 assert v0 == 3, v0
 print("time travel OK (versionAsOf 0 -> 3 rows)")
@@ -100,6 +172,7 @@ print("time travel OK (versionAsOf 0 -> 3 rows)")
 # MERGE INTO (copy-on-write): update one row, insert another. Finding: Sail
 # resolves path-based delta.`az://…` for READS but not as a MERGE target —
 # the target must be a catalog table, so register the location first.
+step("MERGE INTO (copy-on-write, via registered table)")
 spark.sql(f"CREATE TABLE events_t USING delta LOCATION '{url}'")
 spark.sql("""
     MERGE INTO events_t AS t
@@ -116,6 +189,7 @@ print("MERGE INTO OK (update + insert, via registered table)")
 # notebooks use). Sail parses container@account.dfs.fabric.microsoft.com and
 # the endpoint override redirects the requests to the emulator — if this
 # holds, no abfss->az shim is needed anywhere.
+step("abfss:// (Fabric Hadoop URL form)")
 abfss = "abfss://sailws@onelake.dfs.fabric.microsoft.com/lake.Lakehouse/Tables/abfss_probe"
 spark.sql("SELECT * FROM VALUES (1,'x') AS t(id, v)") \
     .write.format("delta").mode("overwrite").save(abfss)
@@ -125,6 +199,7 @@ print("abfss:// (Fabric Hadoop form) OK — no shim needed")
 # --- executable compatibility boundary -------------------------------------
 
 def expect_unavailable(name, operation):
+    step(f"compatibility probe: {name}")
     try:
         operation()
     except Exception as error:
@@ -151,6 +226,7 @@ def start_stream():
 expect_unavailable("Structured Streaming execution", start_stream)
 expect_unavailable("OPTIMIZE", lambda: spark.sql("OPTIMIZE events_t").collect())
 expect_unavailable("VACUUM", lambda: spark.sql("VACUUM events_t RETAIN 168 HOURS").collect())
+step("compatibility probe: change data feed")
 cdf_probe = (spark.read.format("delta").option("readChangeFeed", "true")
              .option("startingVersion", 0).load(url))
 cdf_probe.collect()
@@ -179,7 +255,16 @@ print("known divergence confirmed: CDF options are accepted but return a normal 
 # race lives in a window too small to hit reliably, make the interleaving an
 # input rather than sampling for it — or, where you cannot, assert the property
 # that survives every interleaving instead of the one you hoped to observe.
+#
+# The retry side of this is Sail's, and it is bounded: sail-delta-lake 0.6.6
+# commits under `for attempt_number in 1..=total_retries`
+# (crates/sail-delta-lake/src/transaction/mod.rs), and an overwrite is neither a
+# creation nor a blind append, so its `effective_max_retries` is 0 — one
+# attempt, then `MaxCommitAttempts`. The loser fails in milliseconds. Nothing
+# here can spin; what it can do is block, since every call below is a gRPC round
+# trip with no deadline, which is what `step()` exists to bound.
 conflict_url = "az://sailws/lake.Lakehouse/Tables/concurrent_probe"
+step("seed the concurrent-writer table")
 spark.range(1).write.format("delta").mode("overwrite").save(conflict_url)
 storage_token = entra_token("https://storage.azure.com/.default")
 
@@ -205,6 +290,7 @@ def delta_log_versions(table):
     return found
 
 
+step("read _delta_log versions before the race")
 before = delta_log_versions("concurrent_probe")
 assert before, "the seed commit is missing; the probe below would prove nothing"
 barrier = threading.Barrier(2)
@@ -219,11 +305,43 @@ def concurrent_overwrite(value):
     except Exception as error:
         return f"rejected:{type(error).__name__}"
     finally:
-        session.stop()
+        # Release the session on the SERVER, and deliberately NOT session.stop().
+        #
+        # This is what hung the job. stop() calls client.close(), whose first act
+        # is ExecutePlanResponseReattachableIterator.shutdown() — and that is
+        # PROCESS-WIDE, not per session. It takes a CLASS-level lock, hands the
+        # CLASS-level release thread pool to ThreadPoolExecutor.shutdown()
+        # (wait=True by default), and holds the lock until the pool drains. Every
+        # new query in this process builds one of those iterators, and its
+        # __init__ takes the same class lock — so one worker's stop() blocks the
+        # MAIN session's next query for as long as the drain takes.
+        #
+        # What is draining is outstanding ReleaseExecute RPCs under the Connect
+        # retry policy, whose own comment says the retry count is chosen "so that
+        # the maximum tolerated wait is guaranteed to be at least 10 minutes"
+        # (pyspark/sql/connect/client/retries.py, DefaultPolicy). A losing writer
+        # is exactly the case that leaves one outstanding: its execution ends in
+        # an error, which submits _release_all right as the session is torn down.
+        # That is the intermittency, and the CI log is its shape — both sessions
+        # released, then 24 minutes of nothing, because no request ever reached
+        # Sail again.
+        #
+        # release_session() sends the same ReleaseSession RPC (so Sail still logs
+        # the removal) and touches no shared state. It can still retry on its own
+        # thread; the step watchdog above bounds that. Best-effort like the
+        # stop() it replaces — this is teardown, and a failure here must not be
+        # mistaken for the race's verdict — but said out loud, not swallowed.
+        try:
+            session.client.release_session()
+        except Exception as teardown_error:  # noqa: BLE001
+            print(f"note: releasing the writer session failed: {teardown_error!r}",
+                  flush=True)
 
 
+step("race two overwrite writers on one Delta version")
 with ThreadPoolExecutor(max_workers=2) as executor:
     outcomes = list(executor.map(concurrent_overwrite, (100, 200)))
+step("read _delta_log versions after the race")
 committed = outcomes.count("committed")
 rejected = sum(outcome.startswith("rejected:") for outcome in outcomes)
 after = delta_log_versions("concurrent_probe")
@@ -241,6 +359,7 @@ assert len(new_versions) == committed, (outcomes, before, after)
 # would stop at.
 assert after == list(range(len(after))), after
 # The surviving table is one writer's full overwrite, not a blend of both.
+step("read back the table the race left behind")
 rows = spark.read.format("delta").load(conflict_url).collect()
 assert len(rows) == 10, rows
 assert {row[0] for row in rows} in ({v for v in range(100, 110)}, {v for v in range(200, 210)}), rows
@@ -253,6 +372,7 @@ else:
 
 # The engine's writes are real bytes in OneLake: read the first Delta commit
 # back through the Blob surface ourselves (same account-prefixed path form).
+step("read the delta log through the Blob surface")
 req = urllib.request.Request(
     f"{FABRIC}/onelake/{ws['id']}/lake.Lakehouse/Tables/events/_delta_log/"
     "00000000000000000000.json",
@@ -276,6 +396,7 @@ print("delta log readable through the Blob surface (protocol + metaData present)
 # TestConcurrentDeltaCommitRace pins the same mechanism at unit level; this
 # pins it end-to-end, through the Blob surface a real client reaches, with the
 # token a real client mints.
+step("put-if-absent against an existing commit (expect 409)")
 conflict_probe = urllib.request.Request(
     f"{FABRIC}/onelake/{ws['id']}/lake.Lakehouse/Tables/events/_delta_log/"
     "00000000000000000000.json",
