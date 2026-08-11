@@ -53,10 +53,26 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 # are exercised here rather than discovered downstream: `fabric-target` is
 # stdlib-only at its core and lazily imports azure-identity and requests, which
 # means a missing extra fails at the first real call instead of at install.
+#
+# The DIST name is explicit rather than derived from the directory, because one
+# package's directory does not carry its name: `python/` builds
+# `fabric-emulator-notebookutils`. Deriving it worked only while every directory
+# happened to match, and it is the wheel name that has to be matched back to a
+# spec.
 PACKAGES = [
-    (ROOT / "examples" / "contoso-fixtures", "{whl}"),
-    (ROOT / "examples" / "contoso-fixtures-advanced", "{whl}"),
-    (ROOT / "python" / "fabric-target", "{whl}[real,sessions]"),
+    (ROOT / "examples" / "contoso-fixtures", "contoso_fixtures", "{whl}"),
+    (ROOT / "examples" / "contoso-fixtures-advanced", "contoso_fixtures_advanced",
+     "{whl}"),
+    (ROOT / "python" / "fabric-target", "fabric_target", "{whl}[real,sessions]"),
+    # THE SHIM, and why it must ship rather than being a path dependency.
+    # `contoso-fixtures` declares `fabric-emulator-notebookutils` as a plain
+    # requirement — its `[tool.uv.sources]` path entry is a uv-local convenience
+    # that does not survive into wheel metadata, the same trap
+    # contoso-fixtures-advanced already documents below. It resolves from an
+    # index only if it is IN the set being installed, and it is on no index. Its
+    # absence failed the v0.21.0 release: `No solution found … Because
+    # fabric-emulator-notebookutils was not found`.
+    (ROOT / "python", "fabric_emulator_notebookutils", "{whl}"),
 ]
 OUT = ROOT / "dist" / "fixtures"
 
@@ -107,6 +123,14 @@ except fabric_target.TargetError as err:
 else:
     raise AssertionError("real mode accepted the seeded credential")
 print("smoke ok: fabric_target emulator+real profiles resolve")
+
+# THE SHIM ships too, and from the wheel. A notebook step calls
+# notebookutils.credentials.getSecret, so a consumer that installs the set and
+# cannot import this has no portable secret path at all.
+import notebookutils
+assert "site-packages" in notebookutils.__file__, notebookutils.__file__
+assert hasattr(notebookutils, "credentials"), dir(notebookutils)
+print("smoke ok: notebookutils imports from the wheel")
 """
 
 
@@ -136,7 +160,7 @@ def main():
         build = tmp / "build"
         build.mkdir()
 
-        for src, _spec in PACKAGES:
+        for src, _dist, _spec in PACKAGES:
             name = src.name
             dst = build / name
             shutil.copytree(src, dst,
@@ -168,15 +192,14 @@ def main():
         venv = tmp / "venv"
         run(["uv", "venv", str(venv)])
         env = {**os.environ, "VIRTUAL_ENV": str(venv)}
-        # Match each built wheel back to the spec that declares its extras. The
-        # wheel name normalises `-` to `_`, which is why this is not a lookup by
-        # directory name.
+        # Match each built wheel back to the spec that declares its extras, by
+        # the DIST name — see PACKAGES.
         specs = []
-        for src, spec in PACKAGES:
-            stem = src.name.replace("-", "_") + "-"
+        for src, dist, spec in PACKAGES:
+            stem = dist + "-"
             match = [w for w in wheels if w.name.startswith(stem)]
             if len(match) != 1:
-                sys.exit(f"{src.name}: expected 1 wheel, matched {len(match)}")
+                sys.exit(f"{dist}: expected 1 wheel, matched {len(match)}")
             specs.append(spec.format(whl=match[0]))
         run(["uv", "pip", "install", *specs], env=env)
         # Windows puts the interpreter in Scripts\, POSIX in bin/. This script

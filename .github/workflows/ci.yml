@@ -449,6 +449,28 @@ jobs:
       # bug — a pair silently diverged twice already and every leg stayed
       # green, because each leg runs ONE half and nothing compares them.
       - run: python scripts/check_example_parity.py
+  fixture-wheels:
+    name: The published wheels build and install as a set
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      # WHY THIS RUNS ON EVERY PR and not only at release time. This script was
+      # invoked from release.yml alone, so a dependency added to an example broke
+      # a job nothing exercised until a tag was pushed — and that is exactly how
+      # v0.21.0 shipped with no wheels: `contoso-fixtures` gained
+      # `fabric-emulator-notebookutils`, whose uv path source does not survive
+      # into wheel metadata, and resolution failed in the release's own smoke
+      # install. A check that only runs on tags cannot fail the change that
+      # breaks it.
+      #
+      # The version is a placeholder: the script refuses to default one, and
+      # what is under test is that the set builds and resolves, not the number.
+      - run: python scripts/build_fixture_wheels.py 0.0.0
   portal:
     name: Portal builds from source
     runs-on: ubuntu-latest
