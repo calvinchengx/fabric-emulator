@@ -17,6 +17,7 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/entra"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"time"
 )
 
 // API bundles the dependencies of the /v1 surface.
@@ -47,6 +48,10 @@ type API struct {
 	// that only ever meets the synchronous answer here has an untested path a
 	// tenant will take. See config.ForceLRO for why it is off by default.
 	ForceLRO bool
+
+	// NameReservation holds a deleted display name before it can be reused.
+	// Zero frees it immediately (see config.NameReservation).
+	NameReservation time.Duration
 	// WebActivityStub records a Web activity as Succeeded WITHOUT calling
 	// anything — what the emulator used to do unconditionally. Off by default,
 	// because a fabricated success is the dangerous version: a pipeline
@@ -277,6 +282,11 @@ type fabricError struct {
 	ErrorCode string `json:"errorCode"`
 	Message   string `json:"message"`
 	RequestID string `json:"requestId"`
+	// IsRetriable is omitted unless the surface has been MEASURED to send it.
+	// ErrorResponse documents the field, but emitting `false` everywhere would
+	// assert something about surfaces nobody has checked — and a client reading
+	// an unmeasured `false` would stop retrying something Fabric says to retry.
+	IsRetriable *bool `json:"isRetriable,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -293,6 +303,15 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 	// real-time-intelligence/map/tutorial-create-real-time-map-python.md).
 	w.Header().Set("x-ms-public-api-error-code", code)
 	writeJSON(w, status, fabricError{ErrorCode: code, Message: msg, RequestID: store.NewID()})
+}
+
+// writeRetriableErr is writeErr for a refusal a tenant marks `isRetriable`.
+// Used only where that flag has been observed on a real tenant.
+func writeRetriableErr(w http.ResponseWriter, status int, code, msg string) {
+	w.Header().Set("x-ms-public-api-error-code", code)
+	retriable := true
+	writeJSON(w, status, fabricError{
+		ErrorCode: code, Message: msg, RequestID: store.NewID(), IsRetriable: &retriable})
 }
 
 // ---- auth + RBAC plumbing ----

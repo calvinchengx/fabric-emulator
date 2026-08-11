@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config is the resolved emulator configuration.
@@ -157,6 +158,22 @@ type Config struct {
 	// most calls see. The point is that the other half is reachable at all.
 	ForceLRO bool
 
+	// NameReservation holds a DELETED item's display name for this long before
+	// it can be reused — FABRIC_NAME_RESERVATION=30s. Zero (the default) frees
+	// the name immediately.
+	//
+	// Measured on a tenant 2026-08-11: delete a Notebook and recreate it under
+	// the same name and Fabric answers `409 ItemDisplayNameNotAvailableYet`,
+	// `isRetriable: true`, with the name free again ~20s later. The emulator
+	// freed it instantly, so a provision/teardown/re-provision loop passed here
+	// forever and failed on a real deploy — the permissive direction.
+	//
+	// A DURATION rather than a bool, because the tenant's own message
+	// ("the upcoming minutes") disagreed with its own behaviour (~20 seconds).
+	// Nothing observed licenses a constant, so the window is the operator's to
+	// choose and the emulator states no opinion about how long Fabric waits.
+	NameReservation time.Duration
+
 	// WebActivityStub makes pipeline Web activities record success WITHOUT
 	// calling anything — FABRIC_WEB_ACTIVITY=stub. Off by default: a Web
 	// activity that fabricates a response is a false pass, and a pipeline
@@ -244,6 +261,7 @@ func FromEnvPartial() *Config {
 		// and is still honoured, so a compose file or CI leg that already sets
 		// it keeps working rather than silently losing the async path.
 		ForceLRO:            boolEnv("FABRIC_FORCE_LRO") || boolEnv("FABRIC_DEFINITION_LRO"),
+		NameReservation:     durationEnv("FABRIC_NAME_RESERVATION"),
 		WebActivityStub:     strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
 		CustomActivityShell: strings.EqualFold(os.Getenv("FABRIC_CUSTOM_ACTIVITY"), "shell"),
 		WarehouseSQLURL:     os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
@@ -315,6 +333,18 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// durationEnv reads a Go duration ("30s", "2m"), zero when unset or
+// unparseable. A bad value reads as OFF rather than as a default window: a
+// silent fallback to some non-zero duration would make every create/delete
+// loop mysteriously fail on a typo.
+func durationEnv(key string) time.Duration {
+	d, err := time.ParseDuration(os.Getenv(key))
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 func boolEnv(key string) bool {

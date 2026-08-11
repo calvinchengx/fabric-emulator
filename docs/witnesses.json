@@ -1025,5 +1025,14 @@
       "go:TestSparkJobDefinitionActivityRunsOnTheAgent",
       "go:TestSparkJobDefinitionActivityWithoutAnEngineDoesNotClaimSuccess"
     ]
+  },
+  "deleted-display-names-held-fabricnamereservation": {
+    "section": "Platform / fundamentals",
+    "claim": "**Deleted display names held** (`FABRIC_NAME_RESERVATION`)",
+    "witnesses": [
+      "go:TestDeletedNameIsRefusedAsRetriableWithinTheWindow",
+      "go:TestDeletedNameIsHeldOnlyWhenAWindowIsConfigured",
+      "go:TestTheReservationExpires"
+    ]
   }
 }

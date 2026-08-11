@@ -73,6 +73,17 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 			"An item of this type with this display name already exists in the workspace.")
 		return
 	}
+	// A name freed by a DELETE is not free yet on a tenant. Same 409 as above
+	// and a different errorCode, which is the whole point: one is a conflict
+	// with something that exists and the other is a wait. `isRetriable: true`
+	// is what a client should branch on, and a client that treats both as
+	// fatal gives up on the one that would have succeeded seconds later.
+	if free := a.Store.NameReservedUntil(wid, body.Type, body.DisplayName, a.NameReservation); !free.IsZero() {
+		writeRetriableErr(w, http.StatusConflict, "ItemDisplayNameNotAvailableYet",
+			fmt.Sprintf("Requested '%s' is not available yet and is expected to become "+
+				"available in the upcoming minutes.", body.DisplayName))
+		return
+	}
 	it := &store.Item{WorkspaceID: wid, Type: body.Type, DisplayName: body.DisplayName,
 		Description: body.Description, FolderID: strings.TrimSpace(body.FolderID)}
 	var parts []store.DefinitionPart
