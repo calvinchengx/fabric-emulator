@@ -58,6 +58,12 @@ type sqlServerBackend struct {
 	base  *msdsn.Config // base config for per-database pools (nil in tests)
 	mu    sync.Mutex
 	pools map[string]*sql.DB
+	// CollationOf returns the collation an item's database must be created
+	// with — the Warehouse `collationType` the caller declared, or "" for
+	// Fabric's default. A function rather than a value because the answer is
+	// per item and lives in the store, which this package must not import.
+	// Nil means every database gets Fabric's default (see collation.go).
+	CollationOf func(database string) string
 }
 
 // NewSQLServerBackend opens a pooled connection to a SQL Server DSN, e.g.
@@ -110,8 +116,11 @@ func (b *sqlServerBackend) EnsureDatabase(ctx context.Context, database string) 
 	if !safeDBName(database) {
 		return fmt.Errorf("unsafe database name %q", database)
 	}
+	// COLLATE is not optional here: without it the database inherits the
+	// server's case-INSENSITIVE collation while Fabric's is case-sensitive, so
+	// a casing mistake passes locally and fails on a tenant (collation.go).
 	_, err := b.db.ExecContext(ctx,
-		"IF DB_ID('"+database+"') IS NULL CREATE DATABASE ["+database+"]")
+		"IF DB_ID('"+database+"') IS NULL CREATE DATABASE ["+database+"] COLLATE "+b.collationFor(database))
 	return err
 }
 

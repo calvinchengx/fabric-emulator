@@ -31,6 +31,9 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/tds"
 )
 
 // warehouseConnectionString returns the host:port a SQL client should dial to
@@ -69,4 +72,18 @@ func SQLPortOf(addr string) string {
 		return addr
 	}
 	return ""
+}
+
+// warehouseCollation reports the collation a warehouse's database was created
+// with, defaulting to Fabric's own default when nothing was declared. Never
+// blank: a consumer reading this to decide how to quote an identifier needs an
+// answer, and "absent" would make case-sensitivity look like a local quirk
+// rather than the documented default it is.
+func (a *API) warehouseCollation(itemID string) string {
+	if props, err := a.Store.ItemProperties(itemID); err == nil {
+		if c := props[store.PropCollationType]; tds.ValidCollation(c) {
+			return c
+		}
+	}
+	return tds.CollationCaseSensitive
 }
