@@ -7,11 +7,17 @@ read-only, refreshed on every connect.
 import time
 
 import source_system as src
-from common import SQL_AUD, ensure_app, load, log, tds_connect, token
+from common import SQL_AUD, ensure_app, load, log, sync_sql_endpoint, tds_connect, token
 
 st = load()
 ensure_app(SQL_AUD, "Azure SQL")
 sql_tok = token(SQL_AUD)
+
+# Ask the endpoint to catch up with the Delta silver just wrote. Locally that is
+# the connect itself; on real Fabric it is refreshMetadata, because the endpoint
+# syncs asynchronously and a query can otherwise read a table that is not there
+# yet — or worse, an older version of one that is (docs/46).
+sync_sql_endpoint(st["lakehouse"])
 
 # The first connect makes the emulator create and start the per-item database on
 # the sidecar, which can be slow — retry until it is online.

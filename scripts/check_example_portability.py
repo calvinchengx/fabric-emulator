@@ -71,9 +71,31 @@ KNOWN_PARTS = {
     "definition/model.tmdl",
     "definition/expressions.tmdl",
     "model.bim",
-    "data.json",  # the emulator's own import-data part, documented in doc 46
     "Spark.json",
     "SparkJobDefinitionV1.json",
+}
+
+# Part paths ONLY THE EMULATOR ACCEPTS, declared with what real Fabric needs
+# instead. These are reported on every run rather than hidden, because the entry
+# that used to live in KNOWN_PARTS above read:
+#
+#     "data.json",  # the emulator's own import-data part, documented in doc 46
+#
+# and doc 46 documented no such thing. A gate whose one job is "every definition
+# part is a path Fabric accepts" carried a silent exemption for the one path
+# Fabric rejects, justified by a citation that did not exist — so it reported
+# green over the least portable line in the examples. Listing them here keeps the
+# exemption true, visible, and countable; the count is what makes it a debt
+# rather than a decision.
+EMULATOR_ONLY_PARTS = {
+    "data.json": (
+        "the emulator's inline row snapshot for a semantic model (see "
+        "internal/api/datasets.go: \"rows are an inline data.json snapshot with "
+        "nothing behind them\"). Real Fabric has no such part: a model's data "
+        "comes from a partition — Direct Lake over OneLake Delta, or an import "
+        "partition whose M expression reads Sql.Database(<connectionString>, …). "
+        "Converting needs one of those to exist on BOTH targets; the emulator "
+        "evaluates Direct Lake today and inline data, not Sql.Database import"),
 }
 
 # A part path may also be a TMDL table file or a PBIP subpath, which are
@@ -223,27 +245,57 @@ def known_part(path):
     return path in KNOWN_PARTS or any(s.match(path) for s in PART_SHAPES)
 
 
-def check_definition_parts(problems):
-    """Every definition part path must be one Fabric actually accepts."""
+def check_emulator_only_parts(divergences):
+    """Find every USE of a declared emulator-only part path.
+
+    A SUBSTRING search, not the structural patterns below, and that is the point.
+    Those patterns recognise two shapes — a `"path": …, "payloadType": …` object
+    and `create_item(name, type, {"<path>": …})` — and semantic_model.py uses a
+    third: a local `part("data.json", data)` helper. So the whitelist that
+    exempted `data.json` was never even reached; the gate was silent about it for
+    a second, independent reason. For a fixed list this small, matching the
+    literal anywhere in an example is both sufficient and impossible to evade by
+    reshaping the call.
+    """
+    for f in python_files(EXAMPLES):
+        text = f.read_text()
+        for path, why in EMULATOR_ONLY_PARTS.items():
+            if f'"{path}"' in text or f"'{path}'" in text:
+                divergences.append((rel(f), path, why))
+
+
+def check_definition_parts(problems, divergences=None):
+    """Every definition part path must be one Fabric actually accepts.
+
+    A path in EMULATOR_ONLY_PARTS is recorded as a DIVERGENCE rather than a
+    violation: it is a declared debt with a stated reason, and the run says so out
+    loud every time instead of a comment saying so once.
+    """
     for f in python_files(EXAMPLES):
         text = f.read_text()
         for pat in (PART_KEY, PART_DICT):
             for m in pat.finditer(text):
                 path = m.group(1)
+                if path in EMULATOR_ONLY_PARTS:
+                    if divergences is not None:
+                        divergences.append((rel(f), path, EMULATOR_ONLY_PARTS[path]))
+                    continue
                 if not known_part(path):
                     problems.append(
                         f"{rel(f)} writes a definition part {path!r}, which is not a "
                         f"Fabric source-format path. See docs/46-artifact-persistence.md; "
-                        f"add it to KNOWN_PARTS only with a reference to the contract.")
+                        f"add it to KNOWN_PARTS only with a reference to the contract, or "
+                        f"to EMULATOR_ONLY_PARTS with what real Fabric needs instead.")
 
 
 def main():
-    problems = []
+    problems, divergences = [], []
     check_no_pinned_target(problems)
     check_no_emulator_only_leaks(problems)
     check_definition_folders(problems)
     check_resolver_uses_the_contract(problems)
-    check_definition_parts(problems)
+    check_definition_parts(problems, divergences)
+    check_emulator_only_parts(divergences)
 
     examples = sorted(d.name for d in EXAMPLES.iterdir()
                       if d.is_dir() and (d / "README.md").exists())
@@ -258,6 +310,15 @@ def main():
         return 1
     print("every example resolves its target through the contract, and every "
           "definition part uses a Fabric source-format path")
+    if divergences:
+        # Printed on every green run on purpose. This is the one thing the
+        # examples still do that real Fabric would reject, and a debt nobody
+        # reads is a debt nobody pays.
+        print(f"\nDECLARED emulator-only definition parts ({len(divergences)} use(s)) — "
+              f"these do NOT survive FABRIC_TARGET=real:")
+        for where, path, why in divergences:
+            print(f"  {where} writes {path!r}")
+            print(f"      {why}")
     return 0
 
 

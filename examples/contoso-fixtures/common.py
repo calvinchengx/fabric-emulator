@@ -222,7 +222,7 @@ def tables_uri():
 # (docs/46-artifact-persistence.md).
 _SQL_COLLECTION = {"Warehouse": "warehouses", "SQLDatabase": "sqlDatabases",
                    "Lakehouse": "lakehouses"}
-SqlTarget = collections.namedtuple("SqlTarget", "server database encrypt")
+SqlTarget = collections.namedtuple("SqlTarget", "server database encrypt endpoint_id")
 _SQL_CACHE = {}
 
 
@@ -270,38 +270,79 @@ def sql_endpoint(item_id):
     collection = _SQL_COLLECTION.get(item["type"])
     assert collection, f"item {item['displayName']!r} is a {item['type']}, which has no SQL endpoint"
 
-    server = TDS_SERVER
-    if not server:
-        r = S.get(f"{base}/{collection}/{item_id}", headers=H)
-        r.raise_for_status()
-        props = r.json().get("properties") or {}
-        if item["type"] == "Lakehouse":
-            ep = props.get("sqlEndpointProperties") or {}
-            # Real Fabric provisions the analytics endpoint asynchronously, so a
-            # status that is not Success is a wait-or-fail, not a missing feature.
-            # Saying which beats a connection timeout that names nothing. Only
-            # when the property is THERE, though: absent means this build serves
-            # no SQL at all, which the no-endpoint branch below explains better.
-            if ep:
-                assert ep.get("provisioningStatus") == "Success", (
-                    f"the SQL analytics endpoint of {item['displayName']!r} is "
-                    f"{ep['provisioningStatus']}; it cannot be queried yet")
-            server = ep.get("connectionString")
-        else:
-            server = props.get("connectionString")
-        assert server, (
-            f"{item['type']} {item['displayName']!r} advertises no SQL endpoint. "
-            f"Locally that means the stack runs without its SQL sidecar; set "
-            f"TDS_SERVER to override.")
-        server = _odbc_server(server)
+    # The typed route is asked even when TDS_SERVER overrides the address: the
+    # endpoint id is a different fact from the host, and sync_sql_endpoint needs it.
+    server, endpoint_id = TDS_SERVER, None
+    r = S.get(f"{base}/{collection}/{item_id}", headers=H)
+    r.raise_for_status()
+    props = r.json().get("properties") or {}
+    if item["type"] == "Lakehouse":
+        ep = props.get("sqlEndpointProperties") or {}
+        # Real Fabric's analytics endpoint is a SQLEndpoint item with its own
+        # id, which is what refreshMetadata is addressed by. The emulator has
+        # no such item and reflects on connect, so it reports no id and
+        # sync_sql_endpoint takes the other branch.
+        endpoint_id = ep.get("id")
+        # Real Fabric provisions the analytics endpoint asynchronously, so a
+        # status that is not Success is a wait-or-fail, not a missing feature.
+        # Saying which beats a connection timeout that names nothing. Only
+        # when the property is THERE, though: absent means this build serves
+        # no SQL at all, which the no-endpoint branch below explains better.
+        if ep:
+            assert ep.get("provisioningStatus") == "Success", (
+                f"the SQL analytics endpoint of {item['displayName']!r} is "
+                f"{ep['provisioningStatus']}; it cannot be queried yet")
+        server = server or ep.get("connectionString")
+    else:
+        server = server or props.get("connectionString")
+    assert server, (
+        f"{item['type']} {item['displayName']!r} advertises no SQL endpoint. "
+        f"Locally that means the stack runs without its SQL sidecar; set "
+        f"TDS_SERVER to override.")
+    server = _odbc_server(server)
 
     _SQL_CACHE[item_id] = SqlTarget(
         server=server,
+        endpoint_id=endpoint_id,
         database=item["displayName"] if _T.is_real else item_id,
         # Real Fabric's endpoint requires TLS. The emulator's TDS front
         # terminates FedAuth without it (it advertises ENCRYPT_NOT_SUP).
         encrypt=_T.is_real)
     return _SQL_CACHE[item_id]
+
+
+def sync_sql_endpoint(item_id):
+    """Make a lakehouse's SQL analytics endpoint see the CURRENT Delta state.
+
+    THE MECHANISM DIFFERS BY TARGET, AND THAT IS THE WHOLE REASON THIS EXISTS.
+
+    The emulator reflects on connect: opening a session makes it read each
+    `Tables/<t>` Delta and rebuild the SQL view, so "connect" and "sync" are the
+    same act. Steps relied on that — `dq_gate.py` opened a throwaway connection
+    with the comment "re-reflect whatever silver now holds" — and on real Fabric
+    that is a NO-OP with a plausible shape: the analytics endpoint syncs on its
+    own schedule, normally under a minute, so a table Spark just wrote can be
+    briefly absent and the step reads stale data instead of failing. A silent
+    wrong answer, which is the worst kind.
+
+    Real Fabric's explicit lever is
+    `POST /v1/workspaces/{ws}/sqlEndpoints/{sqlEndpointId}/refreshMetadata`, and
+    it is addressed by the ENDPOINT's id — a separate SQLEndpoint item, which the
+    emulator does not have and does not report. So the absence of that id is
+    exactly the signal that the connect-to-reflect path is the right one here.
+    """
+    t = sql_endpoint(item_id)
+    if not t.endpoint_id:
+        with tds_connect(item_id):  # connecting IS the sync locally
+            pass
+        return
+    st = load()
+    r = S.post(f"{FABRIC}/v1/workspaces/{st['workspace']}/sqlEndpoints/"
+               f"{t.endpoint_id}/refreshMetadata", headers=fabric_headers(), json={})
+    # 200 with a per-table report, or a 202 whose operation must be followed.
+    assert r.status_code in (200, 202), f"refreshMetadata: {r.status_code} {r.text}"
+    _T.poll_lro(r)
+    log(f"SQL analytics endpoint {t.endpoint_id} metadata refreshed")
 
 
 def tds_connect(item_id, token_value=None, timeout=60):
