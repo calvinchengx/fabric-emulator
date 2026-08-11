@@ -96,9 +96,17 @@ type Operation struct {
 // PercentCompleteAt reports progress the way a tenant does, which is NOT a
 // progress bar. nil means "no figure", i.e. a JSON null.
 //
-// MEASURED against real Fabric on 2026-08-11 (Warehouse create, by
-// local_0cdd48fd): percentComplete is `null` for the whole time the operation
-// runs and `100` once it has succeeded. It never takes an intermediate value.
+// MEASURED against real Fabric on 2026-08-11 by local_0cdd48fd, twice: a
+// Warehouse create that succeeded, and a SemanticModel create that failed
+// asynchronously. percentComplete is `100` ON SUCCESS AND NULL EVERYWHERE ELSE
+// — running, and failed. It never takes an intermediate value.
+//
+// The failed case was my inference and it was WRONG. I argued 100 because the
+// work stopped progressing either way and `status` is the field that says
+// which. The tenant does not do that, and the reason it does not is the better
+// argument: a client branching on `percentComplete == 100` would read a failure
+// as a completion. A sound-sounding inference in the fabricated-success
+// direction is exactly the kind this repo keeps having to undo.
 //
 // The first version of this function interpolated between CreatedAt and
 // CompleteAt and returned figures like 47. Every one of those is a number real
@@ -109,12 +117,9 @@ type Operation struct {
 // at null against Fabric, and its null-handling branch would never once execute
 // locally. That is the emulator-green/tenant-broken direction.
 func (o Operation) PercentCompleteAt(now int64) *int {
-	if now < o.CompleteAt {
+	if o.StatusAt(now) != OpSucceeded {
 		return nil
 	}
-	// 100-on-success is the measured half. A FAILED operation was not measured;
-	// 100 is the smaller inference — it stopped progressing, and `status` is the
-	// field that says which way — than inventing a separate figure for it.
 	done := 100
 	return &done
 }
