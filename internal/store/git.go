@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 )
 
 // CredentialDetails is the read shape of a connection's credential
@@ -27,6 +29,51 @@ type Connection struct {
 	// CredentialsJSON holds the secret material (write-only; json:"-").
 	CredentialsJSON string `json:"-"`
 	CreatedAt       int64  `json:"-"`
+}
+
+// MarshalJSON renders the connection in Fabric's READ shape.
+//
+// Details are stored as the caller sent them — `{type, creationMethod,
+// parameters}` — because that is what the vault-reference lookup needs. But the
+// documented response is ListConnectionDetails: `{type, path}` and nothing
+// else. Echoing the request back is what the emulator used to do, and the
+// repo's own schema-conformance gate caught it the moment creationMethod became
+// required: a client reading `parameters` off a response would be writing
+// against a field real Fabric never sends.
+func (c Connection) MarshalJSON() ([]byte, error) {
+	type wire Connection // shed this method, keep the tags
+	out := wire(c)
+	if len(c.Details) > 0 {
+		var d struct {
+			Type       string `json:"type"`
+			Parameters []struct {
+				Name  string `json:"name"`
+				Value any    `json:"value"`
+			} `json:"parameters"`
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(c.Details, &d) == nil {
+			// Fabric joins the creation parameters with ';' — the documented
+			// SQL example renders {server, database} as "contoso…net;sales".
+			if d.Path == "" {
+				parts := make([]string, 0, len(d.Parameters))
+				for _, p := range d.Parameters {
+					if p.Value != nil {
+						parts = append(parts, fmt.Sprint(p.Value))
+					}
+				}
+				d.Path = strings.Join(parts, ";")
+			}
+			read := map[string]string{"type": d.Type}
+			if d.Path != "" {
+				read["path"] = d.Path
+			}
+			if raw, err := json.Marshal(read); err == nil {
+				out.Details = raw
+			}
+		}
+	}
+	return json.Marshal(out)
 }
 
 // CreateConnection stores a connection.

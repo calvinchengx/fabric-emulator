@@ -367,10 +367,17 @@ workspace listing) is added as demand warrants.
 
 ### Connection credentials
 
-Connections carry `credentialDetails` with a `credentialType`
-(`copy-job-rest-api-capabilities.md` shows the wire shape), validated per type:
-`Basic`, `ServicePrincipal`, `WorkspaceIdentity`, `AzureKeyVaultReference`,
-`Key`, `SharedAccessSignature`, `Anonymous`.
+`connectionDetails` on **create** is `{type, creationMethod, parameters[]}`, and
+all three are required — `path` belongs to the *read* shape and is composed from
+the parameters. Creation methods and their parameter names come from
+`GET /v1/connections/supportedConnectionTypes` (321 types on a measured tenant;
+`WebForPipeline.Contents` takes `baseUrl`, `AzureKeyVault.Actions` takes
+`accountName`, `Sql` takes `server` and `database`).
+
+Connections carry `credentialDetails` with a `credentialType`, validated per
+type. The enum is Fabric's own: `Anonymous`, `Basic`, `Key`, `KeyPair`,
+`OAuth2`, `ServicePrincipal`, `SharedAccessSignature`, `Windows`,
+`WindowsWithoutImpersonation`, `WorkspaceIdentity`.
 
 - **Write-only secrets.** Credential material (`password`, `secret`, keys) is
   accepted on create/update and **never echoed back** — reads return
@@ -383,10 +390,22 @@ Connections carry `credentialDetails` with a `credentialType`
   (`workspace-identity-authenticate.md` — "no need to manage keys, secrets,
   and certificates"); valid only when the owning workspace has a provisioned
   identity. Deprovisioning breaks the connection, as documented.
-- **`AzureKeyVaultReference`**: credential-by-reference — the connection stores a
-  pointer to an Azure Key Vault secret, resolved at use with a vault-audience
-  workspace-identity token (Fabric's Azure Key Vault references feature,
-  offline).
+- **Vault-backed credentials** are the reference twin of an inline field, never a
+  credentialType of their own: `keyReference` (Key), `passwordReference` (Basic),
+  `tokenReference` (SharedAccessSignature) and
+  `servicePrincipalSecretReference` (ServicePrincipal). Each is a
+  `KeyVaultSecretReference` — `{connectionId, secretName, version}` — and
+  `connectionId` names a **connection of type `AzureKeyVault`**, whose own
+  credentials reach the vault. A field and its reference are alternatives;
+  sending both is refused. The emulator resolves at create (Fabric's "test
+  connection") with a vault-audience token, and stores only the pointer.
+
+  > **This replaced an invented shape in v0.22.0.** The emulator used to accept
+  > `credentialType: "AzureKeyVaultReference"` carrying a `vaultUri`. Measured
+  > against a real tenant on 2026-08-11, no such credentialType exists — and
+  > because a `vaultUri` requires nothing to exist, the old form looked valid
+  > while addressing nothing. It is now rejected by name, with a message naming
+  > the replacement.
 - Identity material itself (app registrations, SP secrets) stays in
   entra-emulator — connections *reference* principals, never own them.
 

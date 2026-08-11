@@ -109,8 +109,9 @@ Per member, "real" resolves as:
   either chain. The resolver supplies only the **vault URL** per target
   (`https://localhost:8444` and its default vault vs
   `https://{name}.vault.azure.net`). Vault **names** are the cross-target
-  contract, exactly like workspace names; `AzureKeyVaultReference`
-  connections carry the same shape on both sides.
+  contract, exactly like workspace names. A connection references the vault
+  by **account name**, not URL, so that shape is identical on both sides
+  while the URL each target composes differs.
 - **Seeded values never leak into real mode.** Tenant `11111111-…`, the
   daemon SP, and `daemon-app-secret` are emulator-mode defaults only; in real
   mode the resolver requires a **real credential source** — env SP vars *or*

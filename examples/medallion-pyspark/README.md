@@ -1,7 +1,7 @@
 # Example: end-to-end medallion
 
 A complete analytics loop against the emulator family — Entra tokens, a Key
-Vault secret behind an `AzureKeyVaultReference` connection, extraction into
+Vault secret referenced by a `Key` credential (`keyReference`), extraction into
 **landing**, **bronze → silver** in OneLake Delta, **silver → gold with dbt**
 in the Warehouse, and a **semantic model** queried over the Power BI
 `executeQueries` wire.
@@ -94,7 +94,7 @@ would have taken.
 | Script | What it does |
 |---|---|
 | `provision.py` | workspace + lakehouse + warehouse + workspace identity |
-| `secret.py` | secret into Key Vault; AKV-reference connection (asserts the secret never reads back) |
+| `secret.py` | secret into Key Vault; a vault connection + a Key credential referencing it (asserts the secret never reads back) |
 | `extract_load.py` | pull from the vendor API, land it verbatim under `Files/landing/` |
 | `bronze.py` | a real **DataPipeline**: a Copy activity the emulator executes, plus a Notebook activity |
 | `engine.py` | **Spark (Sail)** executes the parsed cells and reports the run + its read/write set |
@@ -128,7 +128,7 @@ reaches a Web account only by travelling through POS.
 
 | Script | What it does |
 |---|---|
-| `web_extract.py` | second source: Contoso Web gets its own Key Vault secret and AKV-reference connection; nested JSON lands verbatim |
+| `web_extract.py` | second source: Contoso Web gets its own Key Vault secret, referenced through the same vault connection; nested JSON lands verbatim |
 | `web_bronze.py` | flatten orders → line rows; pin the **designed overlap** with the POS customer set |
 | `erp_extract.py` | third source + the reference publisher: two more secrets, two more AKV connections; **Parquet** lands verbatim |
 | `erp_bronze.py` | three Copy activities reading a **columnar** source — the emulator's `ParquetSource` path, where 03 exercised its delimited-text one |

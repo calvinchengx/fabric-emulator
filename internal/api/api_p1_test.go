@@ -253,7 +253,7 @@ func TestP1StorageFailure500s(t *testing.T) {
 	if w := do(a.listConnections, admin, "GET", "", nil); w.Code != http.StatusInternalServerError {
 		t.Fatalf("listConnections = %d", w.Code)
 	}
-	if w := do(a.createConnection, admin, "POST", `{"displayName":"c"}`, nil); w.Code != http.StatusInternalServerError {
+	if w := do(a.createConnection, admin, "POST", `{"displayName":"c","connectionDetails":{"type":"WebForPipeline","creationMethod":"WebForPipeline.Contents","parameters":[{"dataType":"Text","name":"baseUrl","value":"https://x.example"}]}}`, nil); w.Code != http.StatusInternalServerError {
 		t.Fatalf("createConnection = %d", w.Code)
 	}
 
@@ -276,7 +276,7 @@ func TestFolderHandlers(t *testing.T) {
 		t.Fatalf("empty folders = %d %q", w.Code, w.Body.String())
 	}
 	// Viewer cannot create; malformed bodies rejected.
-	if w := do(a.createFolder, viewer, "POST", `{"displayName":"f"}`, wid); w.Code != http.StatusForbidden {
+	if w := do(a.createFolder, viewer, "POST", `{"displayName":"f","connectionDetails":{"type":"WebForPipeline","creationMethod":"WebForPipeline.Contents","parameters":[{"dataType":"Text","name":"baseUrl","value":"https://x.example"}]}}`, wid); w.Code != http.StatusForbidden {
 		t.Fatalf("viewer create folder = %d", w.Code)
 	}
 	for _, body := range []string{`{`, `{}`} {
@@ -285,16 +285,16 @@ func TestFolderHandlers(t *testing.T) {
 		}
 	}
 	// Create, nest, duplicate → 409.
-	w := do(a.createFolder, admin, "POST", `{"displayName":"Notebook"}`, wid)
+	w := do(a.createFolder, admin, "POST", `{"displayName":"Notebook","connectionDetails":{"type":"WebForPipeline","creationMethod":"WebForPipeline.Contents","parameters":[{"dataType":"Text","name":"baseUrl","value":"https://x.example"}]}}`, wid)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create folder = %d %s", w.Code, w.Body.Bytes())
 	}
 	var f struct{ ID string }
 	_ = json.Unmarshal(w.Body.Bytes(), &f)
-	if w := do(a.createFolder, admin, "POST", `{"displayName":"Processing","parentFolderId":"`+f.ID+`"}`, wid); w.Code != http.StatusCreated {
+	if w := do(a.createFolder, admin, "POST", `{"displayName":"Processing","connectionDetails":{"type":"WebForPipeline","creationMethod":"WebForPipeline.Contents","parameters":[{"dataType":"Text","name":"baseUrl","value":"https://x.example"}]},"parentFolderId":"`+f.ID+`"}`, wid); w.Code != http.StatusCreated {
 		t.Fatalf("nested folder = %d", w.Code)
 	}
-	if w := do(a.createFolder, admin, "POST", `{"displayName":"Notebook"}`, wid); w.Code != http.StatusConflict {
+	if w := do(a.createFolder, admin, "POST", `{"displayName":"Notebook","connectionDetails":{"type":"WebForPipeline","creationMethod":"WebForPipeline.Contents","parameters":[{"dataType":"Text","name":"baseUrl","value":"https://x.example"}]}}`, wid); w.Code != http.StatusConflict {
 		t.Fatalf("duplicate folder = %d", w.Code)
 	}
 	var list struct {

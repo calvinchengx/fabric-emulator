@@ -1,6 +1,6 @@
 """A1 — bring the second source in: Contoso Web.
 
-Its API key gets its own Key Vault secret and its own AKV-reference connection,
+Its API key gets its own Key Vault secret and its own key-reference connection,
 because two source systems do not share a credential. Then the export lands
 verbatim under its own path, exactly as the POS export does in 02.
 
@@ -13,7 +13,6 @@ import web_store as web
 from common import (
     FABRIC,
     KV,
-    KV_INTERNAL,
     STORAGE_AUD,
     VAULT_AUD,
     S,
@@ -36,13 +35,16 @@ st = load()
 r = S.post(f"{FABRIC}/v1/connections", headers=fabric_headers(), json={
     "displayName": "contoso-web",
     "connectivityType": "ShareableCloud",
-    "connectionDetails": {"type": "RestApi", "path": "https://web.contoso.example/api/v1/export"},
+    "connectionDetails": {
+        "type": "WebForPipeline",
+        "creationMethod": "WebForPipeline.Contents",
+        "parameters": [{"dataType": "Text", "name": "baseUrl",
+                        "value": "https://web.contoso.example/api/v1/export"}]},
     "credentialDetails": {"credentials": {
-        "credentialType": "AzureKeyVaultReference",
-        "workspaceId": st["workspace"],
-        "vaultUri": KV_INTERNAL,
-        "secretName": "contoso-web-api-key"}}})
-assert r.status_code == 201, f"AKV connection: {r.status_code} {r.text}"
+        "credentialType": "Key",
+        "keyReference": {"connectionId": st["vault_connection"],
+                         "secretName": "contoso-web-api-key"}}}})
+assert r.status_code == 201, f"key-reference connection: {r.status_code} {r.text}"
 web_conn = r.json()["id"]
 
 # Two sources, two secrets — check the second one does not leak either. The
@@ -51,7 +53,7 @@ web_conn = r.json()["id"]
 listed = S.get(f"{FABRIC}/v1/connections", headers=fabric_headers())
 listed.raise_for_status()
 assert web.API_KEY not in listed.text, "connection listing leaked the web secret"
-log(f"AKV-reference connection {web_conn} for contoso-web")
+log(f"key-reference connection {web_conn} for contoso-web")
 
 # Fetch the key back the way a notebook would, and prove the vendor's gate is
 # real rather than decorative.

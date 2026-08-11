@@ -233,8 +233,8 @@ azure-keyvault-emulator, never in code or config. Two consumers read it:
 
 - **your extraction script**, with a vault-audience token — the same brokered
   read `notebookutils.credentials.getSecret` performs;
-- **Fabric itself**, via an `AzureKeyVaultReference` connection resolved with
-  the workspace identity.
+- **Fabric itself**, via a connection whose `Key` credential *references* the
+  vault, resolved with the workspace identity.
 
 ```python
 # secret.py
@@ -250,20 +250,41 @@ r = S.put(f"{KV}/secrets/contoso-pos-api-key?api-version=7.4",
 r.raise_for_status()
 print("secret stored:", r.json()["id"])
 
-# The Fabric-side binding: an AKV-reference connection. Note the vaultUri is
-# the emulator's in-network name — Fabric resolves the secret server-side, so
-# the URI must be reachable from the fabric container, not from your host.
+# The Fabric-side binding, in TWO connections — which is Fabric's design, not
+# ceremony. A KeyVaultSecretReference is {connectionId, secretName}: it names a
+# CONNECTION to the vault, never a vault URL. So the vault is a connection of
+# its own, holding the credential that reaches it.
 st = load()
 ft = token(FABRIC_AUD)
-r = S.post(f"{FABRIC}/v1/connections", headers={"Authorization": "Bearer " + ft}, json={
+H = {"Authorization": "Bearer " + ft}
+
+r = S.post(f"{FABRIC}/v1/connections", headers=H, json={
+    "displayName": "contoso-kv",
+    "connectivityType": "ShareableCloud",
+    "connectionDetails": {
+        "type": "AzureKeyVault",
+        "creationMethod": "AzureKeyVault.Actions",
+        "parameters": [{"dataType": "Text", "name": "accountName",
+                        "value": "keyvault-emulator"}]},
+    "credentialDetails": {"credentials": {
+        "credentialType": "WorkspaceIdentity",
+        "workspaceId": st["workspace"]}}})
+r.raise_for_status()
+vault_conn = r.json()["id"]
+
+# The data connection carries only a POINTER into that vault.
+r = S.post(f"{FABRIC}/v1/connections", headers=H, json={
     "displayName": "contoso-pos",
     "connectivityType": "ShareableCloud",
-    "connectionDetails": {"type": "RestApi", "path": "https://pos.contoso.example/v2/export"},
+    "connectionDetails": {
+        "type": "WebForPipeline",
+        "creationMethod": "WebForPipeline.Contents",
+        "parameters": [{"dataType": "Text", "name": "baseUrl",
+                        "value": "https://pos.contoso.example/v2/export"}]},
     "credentialDetails": {"credentials": {
-        "credentialType": "AzureKeyVaultReference",
-        "workspaceId": st["workspace"],
-        "vaultUri": "https://keyvault-emulator:8444",
-        "secretName": "contoso-pos-api-key"}}})
+        "credentialType": "Key",
+        "keyReference": {"connectionId": vault_conn,
+                         "secretName": "contoso-pos-api-key"}}}})
 r.raise_for_status()
 print("connection:", r.json()["id"])
 ```
@@ -272,8 +293,10 @@ Creating the connection exercises the full handshake: fabric asks entra for a
 **vault-audience workspace-identity token**, presents it to Key Vault, and
 fetches the secret — the probe fails honestly if any link is missing. List
 `GET /v1/connections` afterwards (or open the portal's **Connections** view):
-you get `credentialType: AzureKeyVaultReference` and never the secret value —
-credential material is write-only, as in real Fabric.
+you get `credentialType: Key` and never the secret value — credential material
+is write-only, as in real Fabric. The read shape is `{type, path}` too:
+`creationMethod` and `parameters` are request-only, so anything a client reads
+back is what a tenant would send back.
 
 ## 4. Extract → landing
 

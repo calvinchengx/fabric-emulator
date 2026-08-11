@@ -65,7 +65,7 @@ local emulator. Nothing is stubbed where it counts:
 - **dbt-fabric** building a Warehouse over actual TDS, against a real SQL Server
   — including Fabric's `CREATE TABLE … AS SELECT`, which the emulator rewrites
   on the wire (see [docs/29](../../docs/29-tsql-parity.md))
-- **Key Vault** secrets fetched through an `AzureKeyVaultReference` connection,
+- **Key Vault** secrets fetched through a `keyReference` into a vault connection,
   resolved by the workspace identity
 - **DataPipelines** whose Copy and Notebook activities the emulator really
   executes

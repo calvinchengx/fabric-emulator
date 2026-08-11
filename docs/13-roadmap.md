@@ -362,11 +362,14 @@ proxy would be a separate sibling.
       77–100% from its own tests; 91.6% total plain / 93.5% cross-package
       (CI floor 90%).
 - [x] **Connection credentials**: `credentialDetails.credentialType`
-      (Basic / ServicePrincipal / WorkspaceIdentity / Key / SAS / Anonymous)
+      (Fabric's ten: Anonymous / Basic / Key / KeyPair / OAuth2 /
+      ServicePrincipal / SharedAccessSignature / Windows /
+      WindowsWithoutImpersonation / WorkspaceIdentity)
       with write-only secrets, SP validation against entra at create
       (`skipTestConnection` bypass), and the WorkspaceIdentity kind gated on a
       provisioned identity.
-- [x] **AKV-reference connections**: `AzureKeyVaultReference` credential
+- [x] **Vault-backed credentials**: a `KeyVaultSecretReference` on
+      `keyReference`/`passwordReference`/`tokenReference`/`servicePrincipalSecretReference`
       resolves the secret via the workspace identity's vault-audience token
       against [azure-keyvault-emulator](https://github.com/calvinchengx/azure-keyvault-emulator)
       — `workspace identity → entra token → vault secret → connection`, offline

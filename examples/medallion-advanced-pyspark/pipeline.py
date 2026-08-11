@@ -22,7 +22,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 # The single-source pipeline, unchanged from the simple example.
 BASIC = [
     ("provision", "workspace, lakehouse, warehouse, workspace identity"),
-    ("secret", "source API key into Key Vault + an AKV-reference connection"),
+    ("secret", "source API key into Key Vault + a vault-backed Key connection"),
     ("extract_load", "extract from Contoso POS into Files/landing"),
     ("bronze", "a real DataPipeline: a Copy activity plus a Notebook activity"),
     ("engine", "Spark executes the queued notebook run and reports lineage"),

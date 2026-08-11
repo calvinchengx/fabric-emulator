@@ -25,6 +25,10 @@ type Client struct {
 	// extraHost is one additional host:port accepted besides Azure's vault
 	// suffixes — the family's own keyvault-emulator. Empty accepts none.
 	extraHost string
+	// extraScheme is how to DIAL extraHost when composing a URI from an
+	// accountName. The allowlist deliberately accepts that host on either
+	// scheme; this records which one it was configured with.
+	extraScheme string
 }
 
 // AzureVaultSuffixes are the Key Vault data-plane domains across Azure's
@@ -94,7 +98,34 @@ func New(insecure bool, client *http.Client, extraHost string) *Client {
 		}
 		client = &http.Client{Transport: tr}
 	}
-	return &Client{http: client, extraHost: extraHost}
+	// extraHost is host:port, but callers may pass a full URL (a stub vault's
+	// address, or a deployment naming its scheme explicitly). Split it: the
+	// allowlist compares hosts, VaultURI needs the scheme.
+	scheme := "https"
+	if i := strings.Index(extraHost, "://"); i >= 0 {
+		scheme, extraHost = extraHost[:i], extraHost[i+3:]
+	}
+	return &Client{http: client, extraHost: extraHost, extraScheme: scheme}
+}
+
+// VaultURI turns an AzureKeyVault connection's `accountName` parameter into the
+// address to dial.
+//
+// Real Fabric composes `https://{accountName}.vault.azure.net`, and that is what
+// this returns unless the emulator was started with its own vault host — in
+// which case every account resolves there, because a local stack has exactly one
+// vault and no DNS to give it an Azure name. Substituting the HOST while keeping
+// the request shape is the same move the SQL endpoint and OneLake addresses
+// make: what a client must SEND stays identical, only where it lands differs.
+func (c *Client) VaultURI(accountName string) string {
+	if c.extraHost != "" {
+		// checkVaultURI lets the configured host through on EITHER scheme,
+		// because a local vault may legitimately be plain HTTP. So the scheme
+		// cannot be assumed here either: it is whatever the host was configured
+		// with, defaulting to https like every real vault.
+		return c.extraScheme + "://" + c.extraHost
+	}
+	return "https://" + accountName + ".vault.azure.net"
 }
 
 // ResolveSecret GETs {vaultURI}/secrets/{name}?api-version=… with the bearer

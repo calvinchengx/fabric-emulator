@@ -186,7 +186,8 @@ a result. The principle is *never fake compute*, not *no compute*. See
   call for workspace identities — the shipped identity handshake). No shared process.
 - Depends on azure-keyvault-emulator **only over HTTP** too, and only as an
   outbound client: `internal/akv` GETs `{vaultURI}/secrets/{name}` with a
-  vault-audience bearer when an `AzureKeyVaultReference` connection is used. The
+  vault-audience bearer when a credential's `keyReference` (or sibling) is
+  resolved. The
   secret value is returned to the caller and **never persisted** in the
   emulator's database — only the `{vaultUri, secretName}` pointer is — which is
   the property that makes credential-by-reference worth having.

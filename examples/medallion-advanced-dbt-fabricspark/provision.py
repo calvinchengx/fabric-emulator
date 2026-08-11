@@ -21,7 +21,7 @@ lh = create(f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "la
 wh = create(f"{FABRIC}/v1/workspaces/{ws['id']}/warehouses", {"displayName": "dw"})
 
 # The workspace identity is what fetches the Key Vault secret on Fabric's side
-# when the AKV-reference connection resolves.
+# when the vault-backed Key credential resolves.
 r = S.post(f"{FABRIC}/v1/workspaces/{ws['id']}/provisionIdentity", headers=H)
 assert r.status_code in (200, 202), f"provisionIdentity: {r.status_code} {r.text}"
 
