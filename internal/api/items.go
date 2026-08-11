@@ -79,8 +79,16 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 	// is what a client should branch on, and a client that treats both as
 	// fatal gives up on the one that would have succeeded seconds later.
 	if free := a.Store.NameReservedUntil(wid, body.Type, body.DisplayName, a.NameReservation); !free.IsZero() {
+		// %q, where the tenant's own message uses single quotes. A deliberate
+		// one-character divergence: interpolating a caller-chosen display name
+		// between quotes is `go/unsafe-quoting`, and while nothing is injectable
+		// HERE (encoding/json escapes the value on the way out), a client that
+		// parses the name back out of the message is fooled by a name containing
+		// a quote. This PR's own argument is that `isRetriable` is the field to
+		// branch on, not the prose — so the prose is the cheap thing to make
+		// unambiguous, and %q escapes rather than truncates.
 		writeRetriableErr(w, http.StatusConflict, "ItemDisplayNameNotAvailableYet",
-			fmt.Sprintf("Requested '%s' is not available yet and is expected to become "+
+			fmt.Sprintf("Requested %q is not available yet and is expected to become "+
 				"available in the upcoming minutes.", body.DisplayName))
 		return
 	}

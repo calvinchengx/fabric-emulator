@@ -17,6 +17,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,5 +134,46 @@ func TestTheReservationExpires(t *testing.T) {
 	if w := do(a.createItem, admin, "POST",
 		`{"displayName":"expiring","type":"Notebook"}`, map[string]string{"wid": ws.ID}); w.Code >= 300 {
 		t.Errorf("create after expiry = %d %s", w.Code, w.Body.Bytes())
+	}
+}
+
+// A display name containing a quote must not be able to forge the message's
+// own structure. The tenant's wording wraps the name in quotes, so anything
+// interpolated there is inside a quoted context — and a client that parses the
+// name back out of the prose is the thing being protected.
+func TestAQuotedDisplayNameCannotForgeTheMessage(t *testing.T) {
+	a, st := newAPI(t)
+	a.NameReservation = time.Hour
+	ws := seedWorkspace(t, st)
+	evil := `it's "quoted" and \ escaped`
+	it := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: evil}
+	if err := st.CreateItem(it, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteItem(ws.ID, it.ID); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"displayName": evil, "type": "Notebook"})
+	w := do(a.createItem, admin, "POST", string(body), map[string]string{"wid": ws.ID})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("reserved name = %d %s", w.Code, w.Body.Bytes())
+	}
+	// The response is still well-formed JSON carrying the real fields — the
+	// property that matters, and the one a hand-built payload would break.
+	var got struct {
+		ErrorCode   string `json:"errorCode"`
+		Message     string `json:"message"`
+		IsRetriable *bool  `json:"isRetriable"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("response is not valid JSON: %v — %s", err, w.Body.Bytes())
+	}
+	if got.ErrorCode != "ItemDisplayNameNotAvailableYet" || got.IsRetriable == nil || !*got.IsRetriable {
+		t.Errorf("fields lost: %+v", got)
+	}
+	// And the name appears escaped rather than raw, so the quotes in it cannot
+	// close the ones the message opened.
+	if !strings.Contains(got.Message, `\"quoted\"`) {
+		t.Errorf("name not escaped in message: %q", got.Message)
 	}
 }
