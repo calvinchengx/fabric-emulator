@@ -266,9 +266,56 @@ name instead of alias, and ignoring value-set overrides each turn it red.
   an alias at save time or escapes it is unknown.
 * **`Int`, `Bool` and `DateTime` declarations.** Taken from the article's
   mapping table, not observed. `String`, `Guid` and `Object` are captured.
-* **Consumers other than pipelines.** Notebooks (via NotebookUtils), shortcuts,
-  Dataflow Gen2, Copy job and user data functions all consume libraries. This
-  doc and this implementation cover pipelines only.
+* **Consumers other than pipelines and notebooks.** Shortcuts, Dataflow Gen2,
+  Copy job and user data functions also consume libraries and are not
+  implemented.
+
+## The notebook consumer
+
+`notebookutils.variableLibrary` is the other half of the same mechanism, and
+unlike the pipeline surface **Microsoft publishes this API in full** — so the
+shim follows the reference rather than a capture:
+
+```python
+lib = notebookutils.variableLibrary.getLibrary("envLib")
+lib.bronzePath            # property access
+lib.getVariable("bronzePath")
+lib["bronzePath"]
+
+notebookutils.variableLibrary.get("$(/**/envLib/bronzePath)")
+```
+
+It resolves the same way the pipeline side does — the active value set merged
+over the declared defaults — and is built entirely on the public item APIs
+(list, `getDefinition`, and the item's `activeValueSetName`), so it needs no
+emulator-specific route and the same code path works against real Fabric.
+
+### Two documented rules that are easy to soften, and are not
+
+**The `/**/` prefix is required.** A reference without it is refused rather
+than quietly accepted, because accepting a shorter form would let a notebook
+work here and fail in Fabric — the exact asymmetry this repo exists to remove.
+
+**Names are CASE-SENSITIVE here, and that DIFFERS from pipelines.** The
+notebook reference says *"Variable and library names are case-sensitive. Use
+exact name matching"*, while the pipeline article says the library name is
+*not* case sensitive. Same library, two consumers, two matching rules. Both are
+implemented as documented, so a name that resolves in a pipeline can
+legitimately fail in a notebook. Making them agree would be tidier and wrong.
+
+### It follows the 202
+
+`getDefinition` has two documented outcomes and a real tenant answers 202, so
+the shim polls the operation rather than reading the 202 body — which would
+yield `null` and present as an **empty library** instead of an error. With
+`FABRIC_FORCE_LRO` the emulator produces that shape too, so this path is
+exercised locally rather than trusted.
+
+### Not covered by the shim
+
+Cross-workspace access (unsupported by the API itself, so there is no
+`workspaceId` argument), writes (libraries are read-only from notebooks), and
+the Scala and R bindings.
 
 ## Reading a definition from a tenant
 
