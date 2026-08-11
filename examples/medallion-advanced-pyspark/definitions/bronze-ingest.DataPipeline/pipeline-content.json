@@ -35,7 +35,12 @@
                     "artifactId": "{{LAKEHOUSE_ID}}"
                   }
                 }
-              }
+              },
+              "typeProperties": {
+                "rootFolder": "Tables",
+                "table": "bronze_customers"
+              },
+              "type": "LakehouseTable"
             }
           }
         }
@@ -44,7 +49,8 @@
         "name": "IngestOrders",
         "type": "TridentNotebook",
         "typeProperties": {
-          "notebookId": "{{NOTEBOOK_ID}}"
+          "notebookId": "{{NOTEBOOK_ID}}",
+          "workspaceId": "{{WORKSPACE_ID}}"
         }
       }
     ]

@@ -88,6 +88,33 @@ SPARK_REMOTE = os.environ.get("SPARK_REMOTE", "sc://localhost:50051")
 # which is a different integration rather than a different endpoint.
 OM_URL = os.environ.get("OM_URL", "http://localhost:8585")
 
+# The RUNTIME OneLake address — where bytes are actually PUT and read.
+#
+# NOT the same thing as the OneLake host written into a DEFINITION, and the two
+# looking alike is the trap. A Direct Lake expression names
+# `onelake.dfs.fabric.microsoft.com` literally on both targets, because the
+# emulator parses ids out of it and never fetches it. An HTTP PUT has to go to an
+# address that answers.
+#
+# The emulator serves the DFS surface under a `/onelake` path prefix on its own
+# origin; real OneLake is a separate host with no prefix. extract_load.py built
+# this as `{control-plane}/onelake/...`, which is the emulator's shape spelled out
+# — so it 404'd on a tenant. Measured 2026-08-11, after the step had passed
+# locally hundreds of times.
+ONELAKE = _T.onelake_url + ("/onelake" if _T.is_emulator else "")
+
+# ...and OneLake serves TWO protocols on TWO hosts, which is the second half of
+# the same trap. `onelake.dfs.…` speaks ADLS Gen2 (create/append/flush) and
+# `onelake.blob.…` speaks the Blob API (a single PUT with `x-ms-blob-type`).
+# Sending a blob-shaped PUT to the DFS host earns
+# `IncorrectEndpointError: Operation not supported on the specified endpoint` —
+# measured, one iteration after the 404 above. The emulator serves both shapes on
+# one surface, so nothing local distinguishes them.
+#
+# delta-rs wants the DFS endpoint (ONELAKE); a raw upload wants this one.
+ONELAKE_BLOB = (ONELAKE if _T.is_emulator
+                else _T.onelake_url.replace("//onelake.dfs.", "//onelake.blob."))
+
 FABRIC_AUD = "https://api.fabric.microsoft.com"
 STORAGE_AUD = "https://storage.azure.com"
 SQL_AUD = "https://database.windows.net"
@@ -201,7 +228,9 @@ def storage_options():
     opts = {
         "azure_storage_account_name": "onelake",
         "azure_storage_token": token(STORAGE_AUD),
-        "azure_endpoint": f"{_T.onelake_url}/onelake",
+        # ONELAKE, not a hand-built suffix: the `/onelake` prefix is the
+        # emulator's routing and must not reach a tenant.
+        "azure_endpoint": ONELAKE,
     }
     if _T.onelake_url.startswith("http://"):
         opts["azure_allow_http"] = "true"
