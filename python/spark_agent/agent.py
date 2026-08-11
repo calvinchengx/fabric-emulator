@@ -156,6 +156,7 @@ def _install_custom_wheels():
 _install_custom_wheels()
 
 import catalog  # noqa: E402 — after the engine is up; see catalog.py for why it is split out
+import rddfacade  # noqa: E402 — same split: importable with no session, and unit-tested
 import sqlrun  # noqa: E402 — same split, same reason: importable without a session
 
 # The Environment item this process has installed, if any: id -> the request that
@@ -228,20 +229,6 @@ session_isolated = {}  # Livy session id -> did it get a private SparkSession
 catalog_claims = catalog.Claims()  # only consulted when isolation is unavailable
 
 
-class _NoSparkContext:
-    """Guide-rail for the Sail engine: real Fabric notebooks see `sc`, but
-    Spark Connect has no SparkContext/RDD API. Any use fails with a pointer
-    instead of a bare NameError/AttributeError (docs/20-lakesail-engine.md)."""
-
-    def __getattr__(self, name):
-        raise NotImplementedError(
-            f"sc.{name}: the RDD/SparkContext API is not available on the "
-            "emulator's Sail (Spark Connect) engine — use the DataFrame/SQL "
-            "API instead. See docs/20-lakesail-engine.md."
-        )
-
-    def __repr__(self):
-        return "<sc unavailable: Spark Connect engine (Sail) — DataFrame/SQL only>"
 
 
 def _notebookutils():
@@ -279,10 +266,15 @@ def ns(session):
         session_isolated[session] = isolated
         namespaces[session] = {"spark": session_spark}
         try:
-            # JVM sessions only — Spark Connect (Sail) has no sparkContext.
+            # A JVM session has the real thing; never shadow it.
             namespaces[session]["sc"] = session_spark.sparkContext
         except Exception:
-            namespaces[session]["sc"] = _NoSparkContext()
+            # Spark Connect (Sail) exposes no SparkContext on any engine. Bind
+            # the measured-usage facade instead of refusing outright, and bind
+            # it BOTH ways real Fabric offers it: the bare `sc` global and
+            # `spark.sparkContext`, which is the spelling Microsoft's own
+            # samples use. See rddfacade.py and docs/50-rdd-usage-capture.md.
+            namespaces[session]["sc"] = rddfacade.attach(session_spark)
         # Real Fabric notebooks get `notebookutils`/`mssparkutils` as globals and
         # as importable modules; mirror both so notebook code runs unchanged.
         nbu = _notebookutils()
