@@ -141,6 +141,9 @@ lakehouse = fabric_post(f"/v1/workspaces/{ws['id']}/lakehouses", {"displayName":
 conn = fabric_post("/v1/connections", {
     "displayName": "azurite-adls",
     "connectivityType": "ShareableCloud",
+    "connectionDetails": {"type": "AzureDataLakeStorage",
+                          "creationMethod": "AzureDataLakeStorage",
+                          "parameters": [{"dataType": "Text", "name": "server", "value": "external-store"}, {"dataType": "Text", "name": "path", "value": "/"}]},
     "credentialDetails": {"credentials": {
         "credentialType": "SharedAccessSignature",
         "token": sas,
@@ -173,6 +176,9 @@ tampered = sas.replace("sig=", "sig=00")
 bad = fabric_post("/v1/connections", {
     "displayName": "azurite-adls-bad",
     "connectivityType": "ShareableCloud",
+    "connectionDetails": {"type": "AzureDataLakeStorage",
+                          "creationMethod": "AzureDataLakeStorage",
+                          "parameters": [{"dataType": "Text", "name": "server", "value": "external-store"}, {"dataType": "Text", "name": "path", "value": "/"}]},
     "credentialDetails": {"credentials": {
         "credentialType": "SharedAccessSignature",
         "token": tampered,
@@ -208,6 +214,9 @@ write_sas = generate_blob_sas(
 write_conn = fabric_post("/v1/connections", {
     "displayName": "azurite-adls-rw",
     "connectivityType": "ShareableCloud",
+    "connectionDetails": {"type": "AzureDataLakeStorage",
+                          "creationMethod": "AzureDataLakeStorage",
+                          "parameters": [{"dataType": "Text", "name": "server", "value": "external-store"}, {"dataType": "Text", "name": "path", "value": "/"}]},
     "credentialDetails": {"credentials": {
         "credentialType": "SharedAccessSignature", "token": write_sas,
     }},
@@ -297,6 +306,9 @@ dv_sas = generate_blob_sas(
 dv_conn = fabric_post("/v1/connections", {
     "displayName": "dataverse-env",
     "connectivityType": "ShareableCloud",
+    "connectionDetails": {"type": "AzureDataLakeStorage",
+                          "creationMethod": "AzureDataLakeStorage",
+                          "parameters": [{"dataType": "Text", "name": "server", "value": "external-store"}, {"dataType": "Text", "name": "path", "value": "/"}]},
     "credentialDetails": {"credentials": {
         "credentialType": "SharedAccessSignature", "token": dv_sas,
     }},
@@ -370,6 +382,9 @@ print(f"delete through the Dataverse shortcut correctly refused: HTTP {dv_del.st
 dv_bad = fabric_post("/v1/connections", {
     "displayName": "dataverse-env-bad",
     "connectivityType": "ShareableCloud",
+    "connectionDetails": {"type": "AzureDataLakeStorage",
+                          "creationMethod": "AzureDataLakeStorage",
+                          "parameters": [{"dataType": "Text", "name": "server", "value": "external-store"}, {"dataType": "Text", "name": "path", "value": "/"}]},
     "credentialDetails": {"credentials": {
         "credentialType": "SharedAccessSignature", "token": dv_sas.replace("sig=", "sig=00"),
     }},
