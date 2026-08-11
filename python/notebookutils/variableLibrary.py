@@ -232,3 +232,73 @@ def get(variableReference):
         )
     library, variable = segs
     return getLibrary(library).getVariable(variable)
+
+
+class FabricVariablesClient:
+    """The shape a **user data function** receives for a variable-library
+    connection, per the `fabric-user-data-functions` programming model:
+
+        @udf.connection(argName="varLib", alias="<My Variable Library Alias>")
+        @udf.function()
+        def get_storage_path(dataset: str, varLib: fn.FabricVariablesClient) -> str:
+            variables = varLib.getVariables()
+            env = variables.get("ENV")
+
+    `getVariables()` returns a mapping supporting both documented reads,
+    `variables["ENV"]` and `variables.get("ENV")`.
+
+    **This deliberately does NOT shadow `fabric.functions`.** Microsoft ships
+    `fabric-user-data-functions` as a real, installable PyPI package, so
+    providing a module of that name would override a package a user may have
+    installed — a different situation from `notebookutils`, which Microsoft
+    ships as an import-only stub outside the Fabric runtime and which this repo
+    therefore makes work. The shape is matched so a function body ports with one
+    import line; the namespace is not hijacked.
+
+    The emulator has **no user-data-function runtime**, so this makes a
+    function's BODY testable against a real library; it does not make the item
+    type execute. `docs/48-variable-libraries.md` says which is which.
+    """
+
+    def __init__(self, variableLibraryName):
+        self._name = variableLibraryName
+
+    def getVariables(self):  # noqa: N802 - the documented spelling
+        """Every variable in the library, resolved under the active value set."""
+        return _Variables(getLibrary(self._name))
+
+    def __repr__(self):
+        return f"FabricVariablesClient({self._name!r})"
+
+
+class _Variables:
+    """A read-only mapping over a resolved library.
+
+    `.get()` returns None for an unknown name rather than raising, because that
+    is what the documented sample relies on — it calls `variables.get("ENV")`
+    and branches on the value. Bracket access raises, as a mapping should.
+    """
+
+    def __init__(self, library):
+        self._library = library
+
+    def __getitem__(self, name):
+        return self._library.getVariable(name)
+
+    def get(self, name, default=None):
+        try:
+            return self._library.getVariable(name)
+        except VariableLibraryError:
+            return default
+
+    def __contains__(self, name):
+        return name in self._library
+
+    def __iter__(self):
+        return iter(self._library)
+
+    def asDict(self):  # noqa: N802 - matches the surface's camelCase
+        return self._library.asDict()
+
+    def __repr__(self):
+        return f"Variables({sorted(self._library)})"
