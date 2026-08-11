@@ -100,9 +100,30 @@ def patched(monkeypatch):
     input_file = input_file_mod
     FakeDF = type("FakeDF", (FakeDFBase,), {})
 
+    # STUB THE WHOLE PYSPARK SURFACE THIS MODULE IMPORTS, rather than relying on
+    # pyspark being installed. It is not installed in CI — the agent's imports
+    # are why `unresolved-import` is ignored for the type checker — and these
+    # tests passed locally only because a development venv happened to carry
+    # `pyspark-client`. A test that depends on an ambient package tests the
+    # machine it runs on.
+    functions = types.ModuleType("pyspark.sql.functions")
+    functions.lit = lambda v: f"lit({v})"
+    functions.col = lambda c: c
+    functions.coalesce = lambda *a: f"coalesce({','.join(str(x) for x in a)})"
+    sql_mod = types.ModuleType("pyspark.sql")
+    sql_mod.functions = functions
+    root_mod = types.ModuleType("pyspark")
+    root_mod.sql = sql_mod
     connect_mod = types.ModuleType("pyspark.sql.connect.dataframe")
     connect_mod.DataFrame = FakeDF
-    monkeypatch.setitem(sys.modules, "pyspark.sql.connect.dataframe", connect_mod)
+    for name, mod in (
+        ("pyspark", root_mod),
+        ("pyspark.sql", sql_mod),
+        ("pyspark.sql.functions", functions),
+        ("pyspark.sql.connect", types.ModuleType("pyspark.sql.connect")),
+        ("pyspark.sql.connect.dataframe", connect_mod),
+    ):
+        monkeypatch.setitem(sys.modules, name, mod)
 
     class FakeReader:
         def csv(self, path, *a, **k):

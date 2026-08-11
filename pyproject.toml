@@ -200,9 +200,13 @@ markers = [
 source = ["scripts", "python/spark_agent", "python/notebookutils", "docker/sail"]
 omit = [
     # Run inside the Spark image, witnessed by e2e/notebook-run and e2e/sail.
+    #
+    # `input_file.py` used to be here and came OFF when it acquired tests. It is
+    # not process glue whose behaviour is only visible end to end: it is a
+    # semantic shim that decides what a notebook SEES, and it shipped a defect
+    # in three releases that no gate could have caught while it was omitted.
     "python/spark_agent/agent.py",
     "python/spark_agent/files_mount.py",
-    "python/spark_agent/input_file.py",
     # CI harnesses and release tooling: containerized or one-shot, and each
     # already named as the witness for the claim it proves.
     "scripts/govern_ingest.py",
