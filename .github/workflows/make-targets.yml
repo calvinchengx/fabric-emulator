@@ -74,7 +74,17 @@ jobs:
       # package manager already present on the runner.
       - name: Install GNU Make (Windows only)
         if: runner.os == 'Windows'
-        run: choco install make --no-progress -y
+        shell: pwsh
+        run: |
+          choco install make --no-progress -y
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          # The community feed's search index 404s this package while the nupkg
+          # is still there (2026-08-14). Fetch by version and install from disk.
+          $dir = Join-Path $env:RUNNER_TEMP 'choco-make'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $nupkg = Join-Path $dir 'make.4.4.1.nupkg'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://community.chocolatey.org/api/v2/package/make/4.4.1' -OutFile $nupkg
+          choco install make --source $dir --no-progress -y
 
       # Deliberately the runner's DEFAULT shell — PowerShell on Windows. This is
       # the one step that reproduces how a Windows user actually invokes make,
