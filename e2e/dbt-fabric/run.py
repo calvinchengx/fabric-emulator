@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """e2e: Microsoft's real dbt-fabric adapter drives a dbt project through the
-emulator's TDS warehouse surface via the Microsoft ODBC Driver 18, authenticated
-by entra-emulator. Brings the stack up and asserts dbt debug -> seed -> run ->
+emulator's TDS warehouse surface via mssql-python, authenticated by
+entra-emulator. Brings the stack up and asserts dbt debug -> seed -> run ->
 test all pass (--exit-code-from dbt). Linux weight class (SQL Server container)."""
 import os
 import subprocess

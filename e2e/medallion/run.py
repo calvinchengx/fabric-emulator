@@ -14,8 +14,9 @@ as an adaptation.
 
   python3 e2e/medallion/run.py
 
-Needs the Microsoft ODBC Driver 18 on the host, because dbt-fabric and pyodbc do
-(macOS: `brew install msodbcsql18`; CI installs it on the runner). Linux weight
+Needs the Microsoft ODBC Driver 18 on the host for pyodbc warmup (`common.tds_connect`),
+and libltdl7 + krb5 for dbt-fabric 1.11's mssql-python driver (macOS:
+`brew install msodbcsql18`; CI installs both on the runner). Linux weight
 class regardless — the SQL Server container is amd64-only.
 """
 import os
