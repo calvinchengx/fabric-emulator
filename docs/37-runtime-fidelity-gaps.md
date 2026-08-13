@@ -1,8 +1,8 @@
 # 37 — Runtime fidelity: four documented divergences, and what closing each takes
 
-**Status: divergences 1 (Environments) and 4 (async pipelines) are DONE — wire
-and witness each. The Files-mount and `input_file_name` items remain stated in
-the code and not implemented.** Each is a
+**Status: divergences 1 (Environments), 2a/2b/2c (Files mount), and 4 (async
+pipelines) are DONE — wire and witness each. The remaining `input_file_name`
+items stay stated in the code.** Each is a
 place where the emulator's *runtime* — the thing a notebook actually sees — is
 deliberately an analog of Fabric's rather than the thing itself. They were
 written down at the moment they were created, which is why this document can
@@ -109,46 +109,41 @@ shipped at 🟡 with unit tests, and the grade moved only when the e2e existed.
 
 ---
 
-## 2. The Files mount: one-way, sync-at-bind, one mount point
+## 2. The Files mount: two-way at statement boundaries, one mount point
 
 **What Fabric does.** FUSE-mounts the notebook's default lakehouse at
 `/lakehouse/default`, live and read-write, per session.
 
 **What the emulator does.** `python/spark_agent/files_mount.py` mirrors the
 bound lakehouse's `Files/` tree to `/lakehouse/default/Files` over the OneLake
-DFS API at bind time, skipping files whose local copy matches by size. Its
-docstring states three divergences, and they are not equally hard.
+DFS API at bind time, skipping files whose local copy matches by size. The
+Livy agent then calls `refresh()` before every statement and `flush()` after
+it (and on `/close`).
 
-### 2a. Write-back — **S**
+### 2a. Write-back — **DONE**
 
-A notebook write to `/lakehouse/default/Files` lands on container disk and never
-reaches OneLake. `notebookutils.fs.put` already exists
-(`python/notebookutils/fs.py`), so the missing piece is a flush: at statement
-end, walk `MOUNT_ROOT` for files whose mtime beats the last sync and `put` them
-back. Notebook code in this repo writes through `abfss://` paths, which is why
-the read direction was the one that blocked, and why this stayed open.
+A notebook write to `/lakehouse/default/Files` is `put` back to OneLake at
+statement end, through `notebookutils.fs.put`. Files whose size and mtime match
+the last snapshot are skipped. Deletes are not propagated — a local unlink is
+restored on the next pull — which is stated rather than hidden.
 
-### 2b. Live sync — **S**
+### 2b. Live sync — **DONE, as "fresh at every statement"**
 
-Files uploaded to OneLake after a session bound appear at the next bind, not
-immediately. Re-walking at statement boundaries closes the gap that actually
-bites, and the existing size-skip makes a re-sync cheap. This is not true FUSE
-liveness and should not claim to be; it is "fresh at every statement", which is
-a bound a consumer can reason about.
+Files uploaded to OneLake after a session bound appear at the next statement,
+not immediately. This is not true FUSE liveness and does not claim to be; it is
+a bound a consumer can reason about. Re-binding the same lakehouse flushes
+first so in-flight local writes are not clobbered by the pull.
 
-### 2c. One mount point, last bind wins — **L, and not worth it yet**
+### 2c. One mount point — **DONE (refuse, do not switch)**
 
 `/lakehouse/default` is a single filesystem path in a single agent container.
-Sessions bound to *different* lakehouses share it. No symlink scheme fixes a
-global path shared by concurrent sessions; the real fix is one agent container
-per session — a pool — which touches the whole compute model.
+Sessions bound to *different* lakehouses share it. A second bind of a different
+lakehouse is refused with a reason naming both lakehouses and docs/37; the
+first session's files stay. Re-binding the **same** lakehouse is a re-pull.
 
-**Change the behaviour instead of the architecture.** Today a switching bind
-logs loudly and proceeds, which still corrupts the reads of whichever session
-bound first. **Refuse the second bind** with an error naming both lakehouses.
-That converts silent data corruption into an explicit failure at bind time, for
-the same reason the notebook-job reconciliation exists: silence is the outcome
-that reads as success. **Size: XS**, and it makes 2a and 2b safe to build.
+No symlink scheme fixes a global path shared by concurrent sessions; the real
+fix is one agent container per session — a pool — which touches the whole
+compute model and stays deferred as 2c′.
 
 ---
 
@@ -324,11 +319,11 @@ lacks. That is the sequence this rule exists to force.
 
 | # | Capability | Size | Why this position |
 |---|---|---|---|
-| 2c | Refuse a conflicting lakehouse bind | XS | Makes 2a/2b safe; turns corruption into an error |
+| ~~2c~~ ✅ | ~~Refuse a conflicting lakehouse bind~~ | XS | Done: second bind of a different lakehouse is refused; first mount intact |
 | 3b | Diagnostic error for a non-file frame | XS | Behaviour stays; the message stops being cryptic |
 | ~~—~~ ✅ | ~~Correct the Environments parity row and witness~~ | XS | Done: 🟡, reworded, witness removed. Regrade to 🟢 only with an e2e |
 | ~~1~~ ✅ | ~~Environment items reach the session~~ | S | Done in #67: wire + `e2e/environment` proof with negative control; row 🟢 |
-| 2a/2b | Mount write-back and per-statement refresh | S | Both unblocked by 2c |
+| ~~2a/2b~~ ✅ | ~~Mount write-back and per-statement refresh~~ | S | Done: flush + pull at every statement; deletes not propagated |
 | 4 | Pipelines async | M | Mechanical, but ~50 test sites |
 | 3a | `input_file_name()` in SQL | M | The only item with genuine research risk |
 | 2c′ | Agent-per-session pool | L | Deferred; revisit only if concurrent multi-lakehouse sessions become real |

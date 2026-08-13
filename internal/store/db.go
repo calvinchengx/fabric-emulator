@@ -322,6 +322,8 @@ CREATE TABLE IF NOT EXISTS capacities (
 	sku TEXT NOT NULL,
 	region TEXT NOT NULL,
 	state TEXT NOT NULL,
+	source TEXT NOT NULL DEFAULT 'seed',
+	arm_id TEXT NOT NULL DEFAULT '',
 	max_concurrent_jobs INTEGER NOT NULL DEFAULT 999
 );
 -- Typed item properties the Fabric REST reference exposes under an item's
@@ -525,6 +527,8 @@ PRAGMA foreign_keys = ON;
 		`ALTER TABLE items ADD COLUMN folder_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE job_instances ADD COLUMN queued INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE job_instances ADD COLUMN execution_data TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE capacities ADD COLUMN source TEXT NOT NULL DEFAULT 'seed'`,
+		`ALTER TABLE capacities ADD COLUMN arm_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE capacities ADD COLUMN max_concurrent_jobs INTEGER NOT NULL DEFAULT 999`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {

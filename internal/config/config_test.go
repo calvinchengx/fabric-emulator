@@ -102,6 +102,24 @@ func TestTSQLStrictFromEnv(t *testing.T) {
 	}
 }
 
+func TestARMURLFromEnv(t *testing.T) {
+	t.Setenv("FABRIC_ARM_URL", "https://arm-emulator:8445")
+	t.Setenv("FABRIC_ARM_POLL_SECONDS", "2")
+	got := FromEnvPartial()
+	if got.ARMURL != "https://arm-emulator:8445" {
+		t.Fatalf("ARMURL = %q", got.ARMURL)
+	}
+	if got.ARMPollSeconds != 2 {
+		t.Fatalf("ARMPollSeconds = %d; want 2", got.ARMPollSeconds)
+	}
+	t.Setenv("FABRIC_ARM_URL", "")
+	t.Setenv("FABRIC_ARM_POLL_SECONDS", "")
+	got = FromEnvPartial()
+	if got.ARMURL != "" || got.ARMPollSeconds != 0 {
+		t.Fatalf("unset ARM = %q / %d; want empty / 0", got.ARMURL, got.ARMPollSeconds)
+	}
+}
+
 func TestListPageSizeFromEnv(t *testing.T) {
 	t.Setenv("FABRIC_LIST_PAGE_SIZE", "2")
 	if got := FromEnvPartial().ListPageSize; got != 2 {

@@ -200,7 +200,7 @@ func TestWorkspaceIdentityStore(t *testing.T) {
 func TestCapacitySeed(t *testing.T) {
 	s := newTestStore(t)
 	c, err := s.GetCapacity(DefaultCapacityID)
-	if err != nil || c.DisplayName != "Emulator Capacity" || c.State != "Active" {
+	if err != nil || c.DisplayName != "Emulator Capacity" || c.State != "Active" || c.Source != CapacitySourceSeed {
 		t.Fatalf("seeded capacity = %+v, %v", c, err)
 	}
 	if c.MaxConcurrentJobs != DefaultMaxConcurrentJobs {
@@ -212,6 +212,41 @@ func TestCapacitySeed(t *testing.T) {
 	list, err := s.ListCapacities()
 	if err != nil || len(list) != 1 {
 		t.Fatalf("capacities = %d, %v", len(list), err)
+	}
+
+	arm := &Capacity{
+		ID: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", DisplayName: "from-arm",
+		SKU: "F2", Region: "westeurope", State: "Active", Source: CapacitySourceARM, ARMID: "/subscriptions/s/capacities/fromarm",
+	}
+	if err := s.PutCapacity(arm); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetCapacity(arm.ID)
+	if err != nil || got.SKU != "F2" || got.Source != CapacitySourceARM || got.ARMID != arm.ARMID {
+		t.Fatalf("put ARM capacity = %+v, %v", got, err)
+	}
+	// Empty source defaults to seed on upsert.
+	if err := s.PutCapacity(&Capacity{ID: "eeeeeeee-1111-4111-8111-eeeeeeeeeeee", DisplayName: "local", SKU: "F4", Region: "local", State: "Active"}); err != nil {
+		t.Fatal(err)
+	}
+	local, _ := s.GetCapacity("eeeeeeee-1111-4111-8111-eeeeeeeeeeee")
+	if local.Source != CapacitySourceSeed {
+		t.Fatalf("empty source = %q; want seed", local.Source)
+	}
+	if err := s.DeleteCapacity(arm.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetCapacity(arm.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted ARM capacity still present: %v", err)
+	}
+	if err := s.DeleteCapacity(DefaultCapacityID); err != nil {
+		t.Fatalf("deleting the seed: %v", err)
+	}
+	if _, err := s.GetCapacity(DefaultCapacityID); err != nil {
+		t.Fatal("seeded default was deleted")
+	}
+	if err := s.DeleteCapacity("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete missing = %v", err)
 	}
 }
 

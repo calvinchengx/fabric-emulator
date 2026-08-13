@@ -226,6 +226,13 @@ type Config struct {
 	// routes answering an honest 501. See docs/25-rti-kusto.md.
 	KQLURL string
 
+	// ARMURL is arm-emulator's origin. When set, Microsoft.Fabric/capacities
+	// created over ARM appear on GET /v1/capacities. Empty keeps the seeded
+	// local capacity only — standalone fabric-cicd still works.
+	ARMURL string
+	// ARMPollSeconds is how often the ARM capacities feed is refreshed.
+	ARMPollSeconds int
+
 	// Version and Commit are stamped at build time — `-ldflags -X main.version`
 	// and `-X main.commit`, set by GoReleaser for the binaries and by a build
 	// arg for the image. Empty in a plain `go build`, which is honest: a source
@@ -273,6 +280,8 @@ func FromEnvPartial() *Config {
 		AirflowPassword:     os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
 		MLflowURL:           os.Getenv("FABRIC_MLFLOW_URL"),
 		KQLURL:              os.Getenv("FABRIC_KQL_URL"),
+		ARMURL:              os.Getenv("FABRIC_ARM_URL"),
+		ARMPollSeconds:      intEnv("FABRIC_ARM_POLL_SECONDS"),
 		RetryAfterSeconds:   1,
 	}
 }
