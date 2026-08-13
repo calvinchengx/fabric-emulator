@@ -69,12 +69,36 @@ jobs:
           go-version: '1.25'
 
       # macOS ships GNU Make 3.81 with the Xcode CLT and Linux ships it as
-      # standard; only Windows needs one installed. This is the same
-      # `ezwinports.make` story docs/26-platform-setup.md tells users, via the
-      # package manager already present on the runner.
+      # standard; only Windows needs one installed. Users get the same binary
+      # via `winget install ezwinports.make` (docs/26). CI must not ask
+      # Chocolatey's community *index* for a package named `make`: that search
+      # has returned "package not found" while the nupkg was still on the
+      # feed, which failed this job before any Makefile ran. The versioned
+      # nupkg URL is the ezwinports 4.4.1 zip Chocolatey already vendors —
+      # pin the bytes, not the name.
       - name: Install GNU Make (Windows only)
         if: runner.os == 'Windows'
-        run: choco install make --no-progress -y
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '4.4.1'
+          $sha256 = '8b2dec73ed4c84163c4a4f9bfe658553b1e3d1fdfa8930d2aa438e030ff21f9d'
+          $url = "https://community.chocolatey.org/api/v2/package/make/$version"
+          $nupkg = Join-Path $env:RUNNER_TEMP "make.$version.nupkg"
+          $dest = Join-Path $env:RUNNER_TEMP "ezwinports-make"
+          curl.exe -fsSL --retry 5 --retry-delay 2 -o $nupkg $url
+          $got = (Get-FileHash -Path $nupkg -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $sha256) {
+            throw "make nupkg checksum mismatch: got $got want $sha256"
+          }
+          $zip = Join-Path $env:RUNNER_TEMP "make.$version.zip"
+          Copy-Item $nupkg $zip
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          $bin = Join-Path $dest 'tools\install\bin'
+          if (-not (Test-Path (Join-Path $bin 'make.exe'))) {
+            throw "make.exe missing from nupkg at $bin"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
 
       # Deliberately the runner's DEFAULT shell — PowerShell on Windows. This is
       # the one step that reproduces how a Windows user actually invokes make,
