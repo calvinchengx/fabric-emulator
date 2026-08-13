@@ -71,20 +71,25 @@ second — and validates every incoming token against entra-emulator's JWKS,
 
 ![a real Entra token, a workspace, a lakehouse, and a file written to and read back from OneLake — against two local binaries](docs/demo/demo.gif)
 
-### The rest of the family
-
-`fabric-emulator` is a **consumer** of three siblings rather than a peer of them:
-`entra-emulator` issues and signs every token it validates,
-`azure-keyvault-emulator` resolves the secret behind a vault-backed connection
-credential, and `arm-emulator` serves the ARM surface a capacity assignment
-touches. `azure-apim-emulator` completes the set.
-
-To run them together, see [**azure-emulators**](https://github.com/calvinchengx/azure-emulators): a composition-only repo
-holding the family `docker-compose.yml`, the shared issuer wiring, and the
-pinned image versions the members are tested against — which is where a
-consumer should take its versions from rather than pinning each by hand.
-
 ## Why
+
+Delivering a data product, source system to landing to medallion to a served
+analytics layer, needs three inputs: the source systems' metadata (schema,
+semantics), the business goal the stakeholder actually needs answered, and
+sample or synthetic data (often derivable from the metadata alone). Proving that
+delivery against real Fabric has meant a paid tenant, slow round trips, and
+state that is expensive to reset between attempts.
+
+**The same pipeline runs unmodified against `fabric-emulator` and against real
+Fabric, one environment variable apart:** see `FABRIC_TARGET` in
+[docs/21](docs/21-real-fabric-toggle.md) and the four
+[medallion examples](examples/). An AI coding agent, Claude, Codex, Grok,
+whichever you use, iterates offline against the emulator at the speed it
+actually works, then proves the result against a real tenant with no code
+changes. What used to take a data engineering team months of tenant-bound
+trial and error becomes a day, or a week, driven end to end by the agent.
+
+Concretely, that also unlocks:
 
 - **Test Fabric CI/CD with no capacity.** `fabric-cicd`, git integration, and
   deployment pipelines drive item `getDefinition`/`updateDefinition` and
@@ -95,6 +100,11 @@ consumer should take its versions from rather than pinning each by hand.
 - **Deterministic long-running operations.** Every Fabric mutation is async
   (`202` → poll `/v1/operations/{id}`). The emulator's clock control makes an LRO
   complete instantly or pins it in `Running` — impossible against real Fabric.
+
+See [`contoso-data-platform`](https://github.com/calvinchengx/contoso-data-platform)
+for what this looks like end to end: four real vendor sources, a full medallion,
+a semantic model serving Power BI, all catalogued in OpenMetadata, running
+against a published release of this emulator.
 
 ## Status
 
@@ -267,6 +277,20 @@ uv run --frozen --group governance python e2e/governance/run.py
 
 The Docker Python runtimes build from the same locked groups. Add a dependency
 with `uv add --group <group> <package>` and commit both files.
+
+## Emulator family
+
+`fabric-emulator` is a **consumer** of its siblings rather than a peer of them:
+`entra-emulator` issues and signs every token it validates, and
+`azure-keyvault-emulator` resolves the secret behind a vault-backed connection
+credential. `arm-emulator` is a planned consumer, not a current one: nothing
+here calls it yet, though a Fabric capacity assignment is the natural surface
+to wire up once that lands. `azure-apim-emulator` completes the set.
+
+To run them together, see [**azure-emulators**](https://github.com/calvinchengx/azure-emulators): a composition-only repo
+holding the family `docker-compose.yml`, the shared issuer wiring, and the
+pinned image versions the members are tested against, which is where a
+consumer should take its versions from rather than pinning each by hand.
 
 ## License
 
