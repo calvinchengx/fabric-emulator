@@ -10,29 +10,34 @@ vanished on every container recreate.
 The control plane now posts /mount when it binds a session to a lakehouse, and
 this module mirrors that lakehouse's Files/ tree to the local mount point via
 the OneLake DFS API (the same route notebookutils.fs uses, agent's own token).
+The Livy agent then calls refresh() at every statement boundary so the mount
+stays a two-way, per-statement analog of the FUSE mount rather than a bind-time
+snapshot.
 
 DIVERGENCES FROM REAL FABRIC, stated rather than hidden:
-  - One-way, read only. A notebook WRITE to /lakehouse/default/Files lands on
-    the container disk and does not propagate back to OneLake; on Fabric it
-    would. Notebook code in this codebase writes through abfss paths, which is
-    why the read direction is the one that was blocking.
-  - Sync-at-bind, not live. Files uploaded to OneLake after the session bound
-    appear at the next bind, not immediately.
-  - One mount point, last bind wins. Sessions bound to DIFFERENT lakehouses
-    share /lakehouse/default; concurrent runs with different bindings would
-    fight over it, so a bind that switches the mounted lakehouse logs loudly.
-
-Files are skipped when the local copy already matches by size, so re-binding a
-session (every notebook run) costs one listing plus only the changed bytes.
+  - Fresh at every statement, not live FUSE. A write to the mount lands in
+    OneLake at statement end; a file uploaded to OneLake appears at the next
+    statement, not mid-cell.
+  - Deletes are not propagated. A local unlink is restored on the next pull.
+  - One mount point. Sessions bound to DIFFERENT lakehouses share
+    /lakehouse/default; a second bind of a different lakehouse is refused
+    (docs/37 §2c) rather than silently replacing the first session's files.
 """
 from __future__ import annotations
 
 import os
 import posixpath
+from typing import TypedDict
+
+
+class _MountState(TypedDict):
+    workspace: str | None
+    lakehouse: str | None
+    seen: dict[str, tuple[int, float]]
+
 
 MOUNT_ROOT = "/lakehouse/default/Files"
-_state = {"lakehouse": None}
-
+_state: _MountState = {"workspace": None, "lakehouse": None, "seen": {}}
 
 
 def _under_mount(rel: str):
@@ -54,17 +59,12 @@ def _under_mount(rel: str):
     try:
         if os.path.commonpath([root, local]) != root:
             return None
-    except ValueError:  # different drives on Windows
+    except ValueError:  # pragma: no cover - different drives on Windows
         return None
     return local
 
-def sync(workspace: str, lakehouse: str) -> dict:
-    """Mirror abfss://{workspace}/{lakehouse}/Files into MOUNT_ROOT.
 
-    Returns a summary dict for the control plane's log. Failures are reported,
-    not raised: a missing Files/ area is the normal state of a fresh lakehouse
-    and must not fail session creation.
-    """
+def _import_fs():
     # The notebookutils package ships under /app/python, which reaches sys.path
     # when a SESSION initialises (agent._notebookutils). /mount arrives at
     # session BIND, before any statement, so on a fresh agent that path is not
@@ -77,16 +77,61 @@ def sync(workspace: str, lakehouse: str) -> dict:
         sys.path.insert(0, pkg_root)
     try:
         from notebookutils import fs
+        return fs
     except ImportError:  # pragma: no cover - image without the package
-        return {"mounted": False, "error": "notebookutils unavailable"}
+        return None
 
-    if _state["lakehouse"] not in (None, lakehouse):
-        print(f"files_mount: /lakehouse/default switching from lakehouse "
-              f"{_state['lakehouse']} to {lakehouse}; concurrent sessions bound "
-              f"to different lakehouses share this one mount point", flush=True)
-    _state["lakehouse"] = lakehouse
 
+def _files_uri(workspace: str, lakehouse: str, rel: str = "") -> str:
     base = f"abfss://{workspace}@onelake.dfs.fabric.microsoft.com/{lakehouse}/Files"
+    if not rel or rel in (".", os.curdir):
+        return base
+    return f"{base}/{rel.replace(os.sep, '/')}"
+
+
+def _snapshot() -> dict:
+    """relposix -> (size, mtime) for regular files currently under the mount."""
+    seen = {}
+    root = os.path.realpath(MOUNT_ROOT)
+    if not os.path.isdir(root):
+        return seen
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        # A symlink dir is an escape hatch; do not walk into it.
+        dirnames[:] = [d for d in dirnames
+                       if not os.path.islink(os.path.join(dirpath, d))]
+        for name in filenames:
+            local = os.path.join(dirpath, name)
+            if os.path.islink(local) or not os.path.isfile(local):
+                continue
+            resolved = os.path.realpath(local)
+            try:
+                if os.path.commonpath([root, resolved]) != root:
+                    continue
+            except ValueError:  # pragma: no cover - different drives on Windows
+                continue
+            rel = os.path.relpath(resolved, root).replace(os.sep, "/")
+            seen[rel] = (os.path.getsize(local), os.path.getmtime(local))
+    return seen
+
+
+def _conflict(requested: str) -> dict:
+    current = _state["lakehouse"]
+    return {
+        "mounted": False,
+        "current": current,
+        "requested": requested,
+        "error": (
+            f"this agent already has lakehouse {current} mounted and cannot "
+            f"isolate {requested} — Fabric gives each session its own "
+            f"container and the emulator runs one process (docs/37). Bind "
+            f"the same lakehouse, or run the sessions against separate agents."
+        ),
+    }
+
+
+def _pull(fs, workspace: str, lakehouse: str) -> dict:
+    """OneLake -> local. Size-matched files are kept; the rest are copied."""
+    base = _files_uri(workspace, lakehouse)
     copied = kept = failed = 0
 
     def walk(prefix: str):
@@ -124,8 +169,101 @@ def sync(workspace: str, lakehouse: str) -> dict:
 
     os.makedirs(MOUNT_ROOT, exist_ok=True)
     walk(base)
-    summary = {"mounted": True, "lakehouse": lakehouse,
-               "copied": copied, "kept": kept, "failed": failed}
+    return {"copied": copied, "kept": kept, "failed": failed}
+
+
+def flush() -> dict:
+    """Local -> OneLake for files that changed since the last pull/flush.
+
+    No-op when nothing is mounted. Failures are counted, not raised: a single
+    bad put must not fail the statement that produced the file.
+    """
+    workspace, lakehouse = _state["workspace"], _state["lakehouse"]
+    if not workspace or not lakehouse:
+        return {"flushed": 0, "flush_failed": 0}
+    fs = _import_fs()
+    if fs is None:
+        return {"flushed": 0, "flush_failed": 0, "error": "notebookutils unavailable"}
+    return _flush(fs, workspace, lakehouse)
+
+
+def _flush(fs, workspace: str, lakehouse: str) -> dict:
+    flushed = failed = 0
+    current = _snapshot()
+    for rel, stamp in current.items():
+        if _state["seen"].get(rel) == stamp:
+            continue
+        local = _under_mount(rel)
+        if local is None:
+            failed += 1
+            print(f"files_mount: refusing flush of {rel}: escapes the mount root",
+                  flush=True)
+            continue
+        try:
+            with open(local, "rb") as f:
+                data = f.read()
+            fs.put(_files_uri(workspace, lakehouse, rel), data, overwrite=True)
+            flushed += 1
+        except Exception as exc:  # noqa: BLE001 - one bad file must not kill the flush
+            failed += 1
+            print(f"files_mount: flush {rel}: {exc}", flush=True)
+    _state["seen"] = _snapshot()
+    if flushed or failed:
+        print(f"files_mount: flush {lakehouse} "
+              f"(flushed={flushed} failed={failed})", flush=True)
+    return {"flushed": flushed, "flush_failed": failed}
+
+
+def refresh() -> dict:
+    """Statement boundary: write local changes back, then pull OneLake.
+
+    This is "fresh at every statement", not live FUSE. No-op until /mount has
+    bound a lakehouse.
+    """
+    workspace, lakehouse = _state["workspace"], _state["lakehouse"]
+    if not workspace or not lakehouse:
+        return {"refreshed": False}
+    fs = _import_fs()
+    if fs is None:
+        return {"refreshed": False, "error": "notebookutils unavailable"}
+    out = _flush(fs, workspace, lakehouse)
+    pulled = _pull(fs, workspace, lakehouse)
+    _state["seen"] = _snapshot()
+    return {"refreshed": True, "lakehouse": lakehouse, **out, **pulled}
+
+
+def sync(workspace: str, lakehouse: str) -> dict:
+    """Mirror abfss://{workspace}/{lakehouse}/Files into MOUNT_ROOT.
+
+    Returns a summary dict for the control plane's log. Failures are reported,
+    not raised: a missing Files/ area is the normal state of a fresh lakehouse
+    and must not fail session creation.
+
+    A second bind of a *different* lakehouse is refused and leaves the first
+    mount untouched. Re-binding the same lakehouse flushes then re-pulls.
+    """
+    fs = _import_fs()
+    if fs is None:
+        return {"mounted": False, "error": "notebookutils unavailable"}
+
+    if _state["lakehouse"] not in (None, lakehouse):
+        refused = _conflict(lakehouse)
+        print(f"files_mount: {refused['error']}", flush=True)
+        return refused
+
+    if _state["lakehouse"] == lakehouse:
+        # Re-bind of the same lakehouse (every notebook run): flush first so
+        # in-flight local writes are not clobbered by the pull.
+        flushed = _flush(fs, workspace, lakehouse)
+    else:
+        flushed = {"flushed": 0, "flush_failed": 0}
+
+    _state["workspace"] = workspace
+    _state["lakehouse"] = lakehouse
+    pulled = _pull(fs, workspace, lakehouse)
+    _state["seen"] = _snapshot()
+    summary = {"mounted": True, "lakehouse": lakehouse, **pulled, **flushed}
     print(f"files_mount: {lakehouse} -> {MOUNT_ROOT} "
-          f"(copied={copied} kept={kept} failed={failed})", flush=True)
+          f"(copied={pulled['copied']} kept={pulled['kept']} "
+          f"failed={pulled['failed']})", flush=True)
     return summary
