@@ -520,6 +520,8 @@ PRAGMA foreign_keys = ON;
 		`ALTER TABLE shortcuts ADD COLUMN connection_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE shortcuts ADD COLUMN target_table TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE items ADD COLUMN folder_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE capacities ADD COLUMN source TEXT NOT NULL DEFAULT 'seed'`,
+		`ALTER TABLE capacities ADD COLUMN arm_id TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return err

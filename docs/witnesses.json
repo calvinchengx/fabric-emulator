@@ -18,6 +18,15 @@
       "ci:sail"
     ]
   },
+  "arm-created-capacities-fabricarmurl": {
+    "section": "Platform / fundamentals",
+    "claim": "**ARM-created capacities** (`FABRIC_ARM_URL`)",
+    "witnesses": [
+      "go:TestARMCapacitiesAppearOnList",
+      "go:TestARMCapacitiesFeedFailureDoesNotBlockBoot",
+      "go:TestARMCapacitiesRefresh"
+    ]
+  },
   "activity-level-lineage": {
     "section": "Data Factory (`data-factory/`)",
     "claim": "Activity-level lineage",

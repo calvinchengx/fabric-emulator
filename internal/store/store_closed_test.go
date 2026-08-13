@@ -214,6 +214,12 @@ func TestClosedDBCapacityErrors(t *testing.T) {
 	if _, err := s.ListCapacities(); err == nil {
 		t.Error("ListCapacities on closed DB succeeded")
 	}
+	if err := s.PutCapacity(&Capacity{ID: "x", DisplayName: "x", SKU: "F2", Region: "local", State: "Active"}); err == nil {
+		t.Error("PutCapacity on closed DB succeeded")
+	}
+	if err := s.DeleteCapacity("x"); err == nil {
+		t.Error("DeleteCapacity on closed DB succeeded")
+	}
 }
 
 func TestClosedDBShortcutErrors(t *testing.T) {

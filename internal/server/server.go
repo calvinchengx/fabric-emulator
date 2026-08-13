@@ -45,6 +45,7 @@ type Server struct {
 	// not wait out a full interval (see events.go for why it must wait at all).
 	EventKeepalive time.Duration
 	mux            *http.ServeMux
+	armStop        chan struct{}
 }
 
 // New wires the emulator. jwksClient overrides the JWKS-fetching HTTP client
@@ -191,6 +192,15 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	s.registerEvents()
 	s.registerPortal()
 	s.registerTerminal()
+	if cfg.ARMURL != "" {
+		src := api.NewARMCapacities(st, cfg.ARMURL, cfg.EntraTLSInsecure, jwksClient,
+			time.Duration(cfg.ARMPollSeconds)*time.Second)
+		if err := src.Refresh(); err != nil {
+			log.Printf("arm capacities feed: initial refresh: %v", err)
+		}
+		s.armStop = make(chan struct{})
+		go src.Run(s.armStop)
+	}
 	return s, nil
 }
 
@@ -219,7 +229,13 @@ func (s *Server) Handler() http.Handler {
 }
 
 // Close releases resources.
-func (s *Server) Close() error { return s.Store.Close() }
+func (s *Server) Close() error {
+	if s.armStop != nil {
+		close(s.armStop)
+		s.armStop = nil
+	}
+	return s.Store.Close()
+}
 
 // registerControl mounts /health and the /_emulator control surface.
 func (s *Server) registerControl() {

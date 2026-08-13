@@ -18,7 +18,9 @@ The minimum that lets someone test **SP → Fabric client-credentials** automati
       is now designed in [07-control-plane-api.md](07-control-plane-api.md)
       (`## Capacities`) — seeded default capacity, auto-assign on create,
       assign/unassign LROs — validated as needed by fabric-cicd's
-      capacityId check.)
+      capacityId check. **ARM consume** is opt-in `FABRIC_ARM_URL`: ARM-created
+      `Microsoft.Fabric/capacities` appear on `GET /v1/capacities`; standalone
+      seed is unchanged.)
 - [x] Generic items CRUD (create-with-definition → 202 LRO).
 - [x] RBAC: role assignments CRUD + enforcement (Admin/Member/Contributor/Viewer;
       creator becomes Admin; Member grants ≤ Member).

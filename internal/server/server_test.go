@@ -20,6 +20,7 @@ import (
 	entra "github.com/calvinchengx/entra-emulator/emulator"
 	"github.com/calvinchengx/fabric-emulator/internal/config"
 	"github.com/calvinchengx/fabric-emulator/internal/server"
+	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
 type fixture struct {
@@ -389,4 +390,102 @@ func TestHealthAndClockEndpoints(t *testing.T) {
 	if ck.Offset != 100 || ck.Frozen {
 		t.Fatalf("clock = %+v", ck)
 	}
+}
+
+func TestARMCapacitiesAppearOnList(t *testing.T) {
+	const armID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/_family/capacities" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"generated": 1,
+			"capacities": []map[string]any{{
+				"id": armID, "armId": "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Fabric/capacities/fromarm",
+				"name": "fromarm", "sku": "F8", "region": "westeurope", "state": "Active",
+			}},
+		})
+	}))
+	t.Cleanup(feed.Close)
+
+	f := newFixtureWithARM(t, feed.URL)
+	var list struct {
+		Value []struct{ ID, DisplayName, SKU string }
+	}
+	f.mustStatus(f.call("GET", "/v1/capacities", f.token, nil, &list), http.StatusOK, "list")
+	ids := map[string]string{}
+	for _, c := range list.Value {
+		ids[c.ID] = c.SKU
+	}
+	if ids[store.DefaultCapacityID] != "F64" {
+		t.Fatalf("seed missing from %+v", list.Value)
+	}
+	if ids[armID] != "F8" {
+		t.Fatalf("ARM capacity missing from %+v", list.Value)
+	}
+
+	var ws struct{ ID, CapacityID string }
+	f.mustStatus(f.call("POST", "/v1/workspaces", f.token, map[string]string{
+		"displayName": "on-arm", "capacityId": armID,
+	}, &ws), http.StatusCreated, "create workspace")
+	if ws.CapacityID != armID {
+		t.Fatalf("workspace capacity = %q; want ARM id", ws.CapacityID)
+	}
+}
+
+func TestARMCapacitiesFeedFailureDoesNotBlockBoot(t *testing.T) {
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusInternalServerError)
+	}))
+	t.Cleanup(feed.Close)
+	f := newFixtureWithARM(t, feed.URL)
+	var list struct {
+		Value []struct{ ID string }
+	}
+	f.mustStatus(f.call("GET", "/v1/capacities", f.token, nil, &list), http.StatusOK, "list")
+	if len(list.Value) != 1 || list.Value[0].ID != store.DefaultCapacityID {
+		t.Fatalf("standalone seed lost after a failed ARM feed: %+v", list.Value)
+	}
+}
+
+func newFixtureWithARM(t *testing.T, armURL string) *fixture {
+	t.Helper()
+	emu := entra.StartT(t)
+	cfg := &config.Config{
+		EntraIssuer:  emu.Origin + "/" + emu.TenantID + "/v2.0",
+		TenantAdmins: []string{entra.DaemonClientID},
+		ARMURL:       armURL,
+	}
+	if err := cfg.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := server.New(cfg, emu.HTTPClient())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.EventKeepalive = 100 * time.Millisecond
+	t.Cleanup(func() { srv.Close() })
+	fabric := httptest.NewServer(srv.Handler())
+	t.Cleanup(fabric.Close)
+
+	form := url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {entra.DaemonClientID},
+		"client_secret": {entra.DaemonSecret},
+		"scope":         {"https://api.fabric.microsoft.com/.default"},
+	}
+	resp, err := emu.HTTPClient().PostForm(emu.Authority()+"/oauth2/v2.0/token", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil || tok.AccessToken == "" {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("client credentials failed (%d): %v %s", resp.StatusCode, err, body)
+	}
+	return &fixture{t: t, emu: emu, srv: srv, fabric: fabric, token: tok.AccessToken}
 }
