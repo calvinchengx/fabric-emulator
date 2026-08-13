@@ -52,6 +52,15 @@ the token flow is one-way: **entra ISSUES; fabric and keyvault only VALIDATE**,
 each against entra-emulator's JWKS, exactly as the real products validate
 against Entra. Neither validator can mint a token.
 
+**Opt-in ARM capacities.** A Fabric capacity in Azure is an ARM resource
+(`Microsoft.Fabric/capacities`), owned by
+[arm-emulator](https://github.com/calvinchengx/arm-emulator). When
+`FABRIC_ARM_URL` is set, this process polls `GET /_family/capacities` (the same
+localhost family channel the Key Vault sibling uses for authorization) and
+ARM-created capacities appear on `GET /v1/capacities` under the Fabric REST GUID
+ARM assigned at create. Empty keeps the seeded default. This is not a compose
+default until a released arm-emulator image serves that provider.
+
 ```mermaid
 flowchart LR
     Client["Client / SDK (SP or user)"]

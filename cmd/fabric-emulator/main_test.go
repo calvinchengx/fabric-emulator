@@ -46,7 +46,8 @@ func serve(t *testing.T, args ...string) string {
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{"FABRIC_ADDR", "FABRIC_DATA_DIR", "FABRIC_ENTRA_ISSUER",
-		"FABRIC_ENTRA_JWKS_URL", "FABRIC_ENTRA_TLS_INSECURE", "FABRIC_DISABLE_TLS"} {
+		"FABRIC_ENTRA_JWKS_URL", "FABRIC_ENTRA_TLS_INSECURE", "FABRIC_DISABLE_TLS",
+		"FABRIC_ARM_URL", "FABRIC_ARM_POLL_SECONDS"} {
 		t.Setenv(k, "")
 	}
 }

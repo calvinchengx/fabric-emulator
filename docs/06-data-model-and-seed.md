@@ -9,7 +9,7 @@ with it — matching the control plane's documented cascade semantics.
 ## Tables
 
 ```
-capacities          (id, displayName, sku, region, state)
+capacities          (id, displayName, sku, region, state, source, arm_id)
 workspaces          (id, displayName, description, capacityId, createdAt)
 role_assignments    (id, workspace_id ⤳, principal_id, principal_type, role)
 items               (id, workspace_id ⤳, type, displayName, description, createdAt)
@@ -59,7 +59,9 @@ Deterministic, idempotent, and minimal — one row:
 | Shape | `{ displayName: "Emulator Capacity", sku: "F64", region: "local", state: "Active" }` |
 
 Every workspace created without an explicit `capacityId` is auto-assigned to
-it (tools like `fabric-cicd` refuse capacity-less workspaces). Everything else
+it (tools like `fabric-cicd` refuse capacity-less workspaces). When
+`FABRIC_ARM_URL` is set, additional rows with `source=arm` are upserted from
+arm-emulator's capacities feed; the seed is never deleted. Everything else
 — workspaces, items, principals — starts empty: tokens from entra-emulator's
 seeded apps work immediately, and the first authenticated caller to create a
 workspace becomes its Admin.

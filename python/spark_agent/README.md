@@ -30,7 +30,8 @@ Under `python/` the image carries the code by construction, and
 
 | | |
 |---|---|
-| `agent.py` | the HTTP server and REPL — `/health`, `/statements`, `/close` |
+| `agent.py` | the HTTP server and REPL — `/health`, `/statements`, `/close`; refreshes the Files mount around each statement |
+| `files_mount.py` | `/lakehouse/default/Files` — pull at bind, write-back + pull at every statement, refuse a second lakehouse |
 | `delta_ops.py` | `OPTIMIZE` / `VACUUM` / CDF, routed through delta-rs |
 | `storage.py` | the env → `object_store` credential mapping delta-rs needs |
 

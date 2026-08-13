@@ -122,10 +122,11 @@ child notebooks at once. On Fabric each gets its own container.
 
 **Where the emulator stands.** One long-lived agent with many session namespaces,
 so everything process-global leaks across runs: the prelude's exit-value global
-(fixed), the single `/lakehouse/default` mount point, `/opt/wheels` installs, and
-`runtime.context` from item 1. Three of those four remain open and are scoped in
-[37-runtime-fidelity-gaps.md](37-runtime-fidelity-gaps.md), which groups them for
-this reason.
+(fixed), `/opt/wheels` installs (Environments now refuse a second bind), and
+`runtime.context` from item 1. The Files mount is two-way at statement
+boundaries and refuses a second lakehouse rather than switching; the single
+`/lakehouse/default` path remains, which is 2c′ in
+[37-runtime-fidelity-gaps.md](37-runtime-fidelity-gaps.md).
 
 **The rule.** Every piece of agent state is session-scoped unless it is proven
 shared. The shared-agent model is a legitimate emulator choice; letting it leak

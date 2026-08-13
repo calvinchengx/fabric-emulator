@@ -80,15 +80,17 @@ change fails CI until this matrix is deliberately reclassified.
 
 ## Queued (designed, not yet wired)
 
-Nothing queued — every designed real-client suite is wired above. New
-milestones (e.g. non-OneLake external storage for shortcuts) will land here as
-they're scoped.
+The ARM capacities consume chain (`e2e/arm-capacities/run.py`) is runnable
+locally against a sibling arm-emulator checkout. It is not a CI job until a
+released arm-emulator image serves `Microsoft.Fabric/capacities` — the Go tests
+above are the in-tree witness.
 
 ## Running locally
 
 ```bash
 go test ./...  # everything in-process, no network
 uv run --frozen --group fabric-cicd python e2e/fabric-cicd/run.py
+python3 e2e/arm-capacities/run.py   # sibling arm-emulator; not in CI until that provider is released
 uv run --frozen --no-sync python e2e/vscode-extension/run.py
 uv run --frozen --no-sync python e2e/airflow/run.py
 python3 e2e/data-science-loop/run.py
