@@ -50,11 +50,15 @@ func newFakeAgent(t *testing.T, a *API) *fakeAgent {
 		}
 		body, _ := io.ReadAll(r.Body)
 		var req struct {
-			Session   string `json:"session"`
-			Code      string `json:"code"`
-			Kind      string `json:"kind"`
-			JobID     string `json:"jobId"`
-			CellIndex *int   `json:"cellIndex"`
+			Session       string `json:"session"`
+			Code          string `json:"code"`
+			Kind          string `json:"kind"`
+			JobID         string `json:"jobId"`
+			CellIndex     *int   `json:"cellIndex"`
+			WorkspaceID   string `json:"workspaceId"`
+			LakehouseID   string `json:"lakehouseId"`
+			NotebookID    string `json:"notebookId"`
+			IsForPipeline bool   `json:"isForPipeline"`
 		}
 		_ = json.Unmarshal(body, &req)
 
@@ -76,7 +80,10 @@ func newFakeAgent(t *testing.T, a *API) *fakeAgent {
 			}
 			f.got = append(f.got, req.Code)
 			f.posts = append(f.posts, fakeStatement{
-				code: req.Code, jobID: req.JobID, cellIndex: req.CellIndex})
+				code: req.Code, jobID: req.JobID, cellIndex: req.CellIndex,
+				workspaceID: req.WorkspaceID, lakehouseID: req.LakehouseID,
+				notebookID: req.NotebookID, isForPipeline: req.IsForPipeline,
+			})
 			if f.reply != nil {
 				if out := f.reply(req.Code); out != nil {
 					writeJSON(w, 200, out)
@@ -98,9 +105,13 @@ func newFakeAgent(t *testing.T, a *API) *fakeAgent {
 // fakeStatement is one /statements request: the code, and the cell identity
 // carried with it.
 type fakeStatement struct {
-	code      string
-	jobID     string
-	cellIndex *int
+	code          string
+	jobID         string
+	cellIndex     *int
+	workspaceID   string
+	lakehouseID   string
+	notebookID    string
+	isForPipeline bool
 }
 
 func (f *fakeAgent) sent() []fakeStatement {
@@ -532,6 +543,35 @@ func TestEveryStatementCarriesTheCellIdentity(t *testing.T) {
 		if *s.cellIndex != i {
 			t.Errorf("cell %d cellIndex = %d; want %d — a wrong index attributes "+
 				"the I/O to the wrong cell, which reads as real lineage", i, *s.cellIndex, i)
+		}
+	}
+}
+
+func TestEveryStatementCarriesTheNotebookIdentity(t *testing.T) {
+	// docs/38 §1: a framework probes env.getWorkspaceId() / runtime.context
+	// before it does any work. Those used to read process env, so two notebooks
+	// in one agent saw whichever identity the operator set out of band — or
+	// nothing. The running notebook's workspace and item must travel with every
+	// statement, including the prelude, so the agent can bind them before any
+	// cell runs.
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	nb := createNotebook(t, st, ws.ID, sampleNotebook)
+	agent := newFakeAgent(t, a)
+
+	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
+	if s := awaitJob(t, a, ws.ID, nb.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	for i, s := range agent.sent() {
+		if s.workspaceID != ws.ID {
+			t.Errorf("statement %d workspaceId = %q; want %q", i, s.workspaceID, ws.ID)
+		}
+		if s.notebookID != nb.ID {
+			t.Errorf("statement %d notebookId = %q; want %q", i, s.notebookID, nb.ID)
+		}
+		if s.isForPipeline {
+			t.Errorf("statement %d isForPipeline; a Manual RunNotebook is not a pipeline activity", i)
 		}
 	}
 }
