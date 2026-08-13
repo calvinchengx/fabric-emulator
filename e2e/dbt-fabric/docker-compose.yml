@@ -1,10 +1,10 @@
 # e2e: Microsoft's real dbt-fabric adapter runs a dbt project (debug -> seed ->
-# run -> test) against fabric-emulator's TDS warehouse surface, via the
-# **Microsoft ODBC Driver 18** — an independent TDS implementation from
-# go-mssqldb. This is the driver-diversity witness for the TDS front: the
-# FedAuth/prelogin handshake proven against a second, real client.
+# run -> test) against fabric-emulator's TDS warehouse surface, via
+# **mssql-python** (1.11+). That is a different TDS stack from go-mssqldb and
+# from the pyodbc + system ODBC Driver 18 path still used by medallion warmup
+# and e2e/type-map.
 #
-#   dbt-fabric (pyodbc + ODBC Driver 18) → fabric-emulator (TDS + FedAuth) → SQL Server sidecar
+#   dbt-fabric (mssql-python) → fabric-emulator (TDS + FedAuth) → SQL Server sidecar
 #          ↑ Azure-SQL FedAuth token minted by entra-emulator
 #
 # Plain HTTP for the emulator's REST (used only to provision the workspace +
