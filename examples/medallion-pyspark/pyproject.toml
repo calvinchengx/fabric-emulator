@@ -14,7 +14,7 @@ description = "Medallion: PySpark to silver, dbt-fabric to a Warehouse gold"
 requires-python = ">=3.12"
 dependencies = [
     "contoso-fixtures",
-    "dbt-fabric>=1.9",
+    "dbt-fabric>=1.11",
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",
     "pyodbc>=5.2,<6",

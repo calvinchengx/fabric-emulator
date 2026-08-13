@@ -40,6 +40,12 @@ test` all pass (`--exit-code-from dbt`) in a Linux container stack.
   `sql_agent.py`, which runs `spark.sql(code)` and returns
   `data["application/json"] = {schema, data}`. Delta extensions are on so dbt's
   default `USING delta` tables build.
+- **1.13 auto-OPTIMIZE.** After a table materialization the adapter issues
+  `OPTIMIZE`. Sail's planner has no such command, and this SQL agent does not
+  install the Livy agent's delta-rs interceptor, so the statement fails. The
+  adapter treats that as a warning and the model still succeeds — which is what
+  this e2e observed. Compaction of dbt-built tables on Sail is a follow-up, not
+  claimed here.
 - **TLS.** dbt requires an HTTPS endpoint, so the emulator serves TLS on `:9443`
   here; its self-signed cert (SAN `api.fabric.microsoft.com`) is shared to the
   dbt container via the `emu-data` volume for `REQUESTS_CA_BUNDLE`.
