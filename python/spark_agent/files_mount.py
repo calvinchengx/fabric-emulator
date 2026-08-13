@@ -27,9 +27,17 @@ from __future__ import annotations
 
 import os
 import posixpath
+from typing import TypedDict
+
+
+class _MountState(TypedDict):
+    workspace: str | None
+    lakehouse: str | None
+    seen: dict[str, tuple[int, float]]
+
 
 MOUNT_ROOT = "/lakehouse/default/Files"
-_state = {"workspace": None, "lakehouse": None, "seen": {}}
+_state: _MountState = {"workspace": None, "lakehouse": None, "seen": {}}
 
 
 def _under_mount(rel: str):

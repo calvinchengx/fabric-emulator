@@ -259,10 +259,10 @@ def test_a_failed_put_is_counted_not_raised(mount, monkeypatch):
     install_tree(monkeypatch, tree)
     files_mount.sync("ws", "lh")
 
-    def boom(*_a, **_k):
+    def boom(self, path, content, overwrite=True):
         raise RuntimeError("nope")
 
-    tree.put = boom
+    monkeypatch.setattr(FakeFS, "put", boom)
     (mount / "new.txt").write_bytes(b"local")
     out = files_mount.flush()
     assert out["flushed"] == 0
