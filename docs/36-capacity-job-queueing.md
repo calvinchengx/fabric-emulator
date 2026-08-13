@@ -1,9 +1,12 @@
 # 36 — Capacity job queueing: the gap, and why a broker is the wrong answer
 
-**Status: not implemented, and deliberately not built yet.** The emulator has no
-job concurrency model at all — no admission control, no queue, no throttling,
-and no `429`/`430` anywhere in `internal/`. Real Fabric has all of it, and this
-document scopes what closing that would mean.
+**Status: implemented.** Capacity has a concurrent-job ceiling (default 999,
+overridable so a test can set it to 1). Manual submits against a full capacity
+are `430 CapacityNotAvailable` with `Retry-After`. Background jobs (scheduled,
+event-triggered) enter `Queued` and are admitted FIFO when a slot frees, on
+the same clock/list levers that fire schedules. Same-item jobs are not
+serialised — two runs of one notebook both occupy slots when capacity allows,
+which is the Delta collision Fabric allows.
 
 It exists because the question arrived in the shape of an answer — *"do we need
 a built-in queue, NATS for example?"* — after a scheduled notebook run collided
@@ -39,19 +42,20 @@ admitted, and they would still have collided.
 
 ## The real gap
 
-Fabric bounds work by **capacity**, not by item:
+Fabric bounds work by **capacity**, not by item. Bursting over a window is
+still out of scope; the rest of this table is now the contract:
 
 | Behaviour | Fabric | Emulator |
 |---|---|---|
-| Background jobs queue when a capacity is saturated | ✅ | ❌ nothing |
-| Interactive requests are throttled / rejected | ✅ `429`, `430` | ❌ nothing |
-| A job reports that it is queued rather than running | ✅ | ❌ no such state |
+| Background jobs queue when a capacity is saturated | ✅ | ✅ FIFO `Queued`, drained on the clock and on list |
+| Interactive requests are throttled / rejected | ✅ `429`, `430` | ✅ `430 CapacityNotAvailable` + `Retry-After` |
+| A job reports that it is queued rather than running | ✅ | ✅ `status: Queued` |
 | Bursting and smoothing over a window | ✅ | ❌ |
 
 A consumer writing code that must survive a busy capacity — retry on `430`,
-tolerate a job sitting queued for minutes, back off — **cannot exercise any of
-that here.** Every job is admitted instantly and forever. That is a real
-fidelity gap and it is the interesting half of the question.
+tolerate a job sitting queued for minutes, back off — can exercise the first
+three here. Every job used to be admitted instantly and forever; that was the
+fidelity gap, and it is the interesting half of the question.
 
 ## Why not NATS, or any broker
 

@@ -203,7 +203,9 @@ CREATE TABLE IF NOT EXISTS job_instances (
 	created_at INTEGER NOT NULL,
 	complete_at INTEGER NOT NULL,
 	cancelled INTEGER NOT NULL DEFAULT 0,
-	fail_with TEXT NOT NULL DEFAULT ''
+	fail_with TEXT NOT NULL DEFAULT '',
+	queued INTEGER NOT NULL DEFAULT 0,
+	execution_data TEXT NOT NULL DEFAULT ''
 );
 -- Fabric's native per-item Job Scheduler (POST …/jobs/{jobType}/schedules).
 -- The ScheduleConfig union is stored as the JSON the caller sent, validated on
@@ -319,7 +321,10 @@ CREATE TABLE IF NOT EXISTS capacities (
 	display_name TEXT NOT NULL,
 	sku TEXT NOT NULL,
 	region TEXT NOT NULL,
-	state TEXT NOT NULL
+	state TEXT NOT NULL,
+	source TEXT NOT NULL DEFAULT 'seed',
+	arm_id TEXT NOT NULL DEFAULT '',
+	max_concurrent_jobs INTEGER NOT NULL DEFAULT 999
 );
 -- Typed item properties the Fabric REST reference exposes under an item's
 -- "properties" object but that are not part of the generic item record — e.g.
@@ -520,8 +525,11 @@ PRAGMA foreign_keys = ON;
 		`ALTER TABLE shortcuts ADD COLUMN connection_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE shortcuts ADD COLUMN target_table TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE items ADD COLUMN folder_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE job_instances ADD COLUMN queued INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE job_instances ADD COLUMN execution_data TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE capacities ADD COLUMN source TEXT NOT NULL DEFAULT 'seed'`,
 		`ALTER TABLE capacities ADD COLUMN arm_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE capacities ADD COLUMN max_concurrent_jobs INTEGER NOT NULL DEFAULT 999`,
 	} {
 		if _, err := s.db.Exec(alter); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return err
