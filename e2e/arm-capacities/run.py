@@ -152,7 +152,7 @@ try:
     with open(ca, "w") as f:
         f.write("\n".join(pems))
 
-    log("running azure-mgmt-fabric → GET /v1/capacities")
+    log("running azure-mgmt-fabric -> GET /v1/capacities")
     driver = os.path.join(DIR, "driver.py")
     # Resolve wheels against the ambient trust store. The emulator CA bundle
     # trusts the siblings and nothing else, which is right for the client and
