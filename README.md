@@ -283,9 +283,12 @@ with `uv add --group <group> <package>` and commit both files.
 `fabric-emulator` is a **consumer** of its siblings rather than a peer of them:
 `entra-emulator` issues and signs every token it validates, and
 `azure-keyvault-emulator` resolves the secret behind a vault-backed connection
-credential. `arm-emulator` is a planned consumer, not a current one: nothing
-here calls it yet, though a Fabric capacity assignment is the natural surface
-to wire up once that lands. `azure-apim-emulator` completes the set.
+credential. `arm-emulator` is an **opt-in** consumer: set `FABRIC_ARM_URL` and
+capacities created over `Microsoft.Fabric/capacities` appear on
+`GET /v1/capacities`. Empty (the compose default) keeps the seeded local
+capacity, so fabric-cicd still works without ARM. Do not wire ARM into compose
+until a released arm-emulator image serves that provider.
+`azure-apim-emulator` completes the set.
 
 To run them together, see [**azure-emulators**](https://github.com/calvinchengx/azure-emulators): a composition-only repo
 holding the family `docker-compose.yml`, the shared issuer wiring, and the

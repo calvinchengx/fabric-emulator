@@ -300,6 +300,13 @@ ignore = [
 "examples/**" = ["B007", "B904", "B905", "E402", "E741", "RUF005", "RUF015", "RUF059", "SIM115", "RUF001"]
 "docker/**" = ["B007", "SIM115", "RUF005"]
 
+[tool.ty.src]
+# PEP 723 uv-script drivers carry their own dependency block and are run with
+# `uv run --script`. Checking them against the lint/test venv reports
+# unresolved imports for packages that exist only in that block (this PR:
+# azure-mgmt-fabric). CI witnesses them by running the harness, not by ty.
+exclude-scripts = true
+
 [tool.ty.environment]
 root = ["scripts", "python"]
 
@@ -324,9 +331,14 @@ invalid-method-override = "ignore"
 # which is a stronger check than inference over code the checker cannot import.
 # Monkeypatching socket.getaddrinfo to pin a host, for instance, is the point of
 # the harness and can never match the stdlib signature.
+# Overrides replace the global rule table rather than merging with it, so the
+# unresolved-* ignores from [tool.ty.rules] are restated here.
 include = ["e2e/**", "examples/**"]
 
 [tool.ty.overrides.rules]
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
+unresolved-reference = "ignore"
 invalid-argument-type = "ignore"
 unsupported-operator = "ignore"
 not-subscriptable = "ignore"
