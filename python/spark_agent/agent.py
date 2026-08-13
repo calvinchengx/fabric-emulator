@@ -416,15 +416,6 @@ class Handler(BaseHTTPRequestHandler):
 
                 def cell_context(*_a, **_k):
                     return cell_context_stub()
-<<<<<<< HEAD
-            with cell_context(req.get("jobId"), req.get("cellIndex")):
-                session = req.get("session", "default")
-                with runtime_scope(session, req):
-                    if (req.get("kind") or "").lower() == "sql":
-                        self._send(200, sqlrun.run_sql(req.get("code", ""), ns(session)))
-                    else:
-                        self._send(200, run_code(req.get("code", ""), ns(session)))
-=======
             # docs/37 §2a/2b: the Files mount is fresh at every statement, not
             # a bind-time snapshot. Refresh (flush then pull) before the cell
             # so it sees OneLake uploads; flush after so its writes land even
@@ -438,12 +429,12 @@ class Handler(BaseHTTPRequestHandler):
                       + traceback.format_exc(), flush=True)
             try:
                 with cell_context(req.get("jobId"), req.get("cellIndex")):
-                    if (req.get("kind") or "").lower() == "sql":
-                        result = sqlrun.run_sql(req.get("code", ""),
-                                                ns(req.get("session", "default")))
-                    else:
-                        result = run_code(req.get("code", ""),
-                                          ns(req.get("session", "default")))
+                    session = req.get("session", "default")
+                    with runtime_scope(session, req):
+                        if (req.get("kind") or "").lower() == "sql":
+                            result = sqlrun.run_sql(req.get("code", ""), ns(session))
+                        else:
+                            result = run_code(req.get("code", ""), ns(session))
             finally:
                 try:
                     import files_mount
@@ -452,7 +443,6 @@ class Handler(BaseHTTPRequestHandler):
                     print("files_mount: flush after statement failed:\n"
                           + traceback.format_exc(), flush=True)
             self._send(200, result)
->>>>>>> origin/main
         elif self.path == "/register":
             self._send(200, register_tables(req.get("session", "default"),
                                             req.get("schema", ""),
