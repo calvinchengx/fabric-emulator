@@ -113,7 +113,7 @@ def main():
     print("-- 5. ARM row gone, seed remains")
 
     resources.resource_groups.begin_delete(RG).result()
-    print("\nARM-CAPACITIES E2E: PASS — azure-mgmt-fabric create → GET /v1/capacities")
+    print("\nARM-CAPACITIES E2E: PASS - azure-mgmt-fabric create -> GET /v1/capacities")
 
 
 if __name__ == "__main__":
