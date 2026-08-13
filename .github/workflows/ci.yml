@@ -1100,16 +1100,16 @@ jobs:
       - run: uv run --frozen --no-sync python e2e/dbt-fabricspark/run.py
 
   dbt-fabric:
-    name: Microsoft's dbt-fabric drives the TDS warehouse via ODBC Driver 18 (containerized)
+    name: Microsoft's dbt-fabric drives the TDS warehouse via mssql-python (containerized)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      # Microsoft's real dbt-fabric adapter runs a dbt project (debug -> seed ->
-      # run -> test) against the emulator's TDS warehouse surface through the
-      # Microsoft ODBC Driver 18 + FedAuth (token minted by entra-emulator),
-      # byte-spliced to a real SQL Server sidecar. The second, independent TDS
-      # driver witness (go-mssqldb is the first). Linux-only (SQL Server image).
+      # Microsoft's real dbt-fabric adapter (1.11+) runs a dbt project (debug ->
+      # seed -> run -> test) against the emulator's TDS warehouse surface through
+      # mssql-python + FedAuth (token minted by entra-emulator), byte-spliced to
+      # a real SQL Server sidecar. A third TDS driver witness (go-mssqldb and
+      # pyodbc/ODBC 18 remain covered elsewhere). Linux-only (SQL Server image).
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.32"
@@ -1168,7 +1168,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - name: Microsoft ODBC Driver 18 (dbt-fabric + pyodbc)
+      - name: Microsoft ODBC Driver 18 (pyodbc warmup) and mssql-python libs
         run: |
           # gpg is run as the normal user, NOT under sudo: `sudo gpg --dearmor`
           # tries to open /dev/tty, which a runner does not have, and dies with
@@ -1181,7 +1181,11 @@ jobs:
           echo "deb [signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
             | sudo tee /etc/apt/sources.list.d/mssql-release.list
           sudo apt-get update
-          sudo ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc
+          # msodbcsql18: medallion warmup still uses pyodbc (common.tds_connect).
+          # libltdl7 + krb5: dbt-fabric 1.11 talks TDS through mssql-python, which
+          # will not load its bundled driver without them.
+          sudo ACCEPT_EULA=Y apt-get install -y --no-install-recommends \
+            msodbcsql18 unixodbc libltdl7 libkrb5-3 libgssapi-krb5-2
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.32"

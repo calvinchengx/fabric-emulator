@@ -253,13 +253,14 @@ contract holds better than any assertion we could write ourselves.
 | `notebookutils` | Notebook utility shim | 🟢 `e2e/notebookutils` |
 | `go-mssqldb` | Warehouse/Lakehouse **TDS + FedAuth** | 🟢 `internal/server`, `internal/tds` |
 | **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy HC sessions | 🟢 `e2e/dbt-fabricspark` — debug→seed→run→test on Sail |
-| **`dbt-fabric`** (Microsoft) | Warehouse **TDS via ODBC Driver 18** | 🟢 `e2e/dbt-fabric` — debug→seed→run→test through the TDS splice |
+| **`dbt-fabric`** (Microsoft) | Warehouse **TDS via mssql-python** (1.11+) | 🟢 `e2e/dbt-fabric` — debug→seed→run→test through the TDS splice |
 | **`azure-kusto-data`** (Microsoft) + raw Kusto REST, over **`kustainer`** (Microsoft's own KQL engine) | Eventhouse / KQL Database: `/v1/rest/mgmt`, `/v1/rest/query`, `/v2/rest/query` on the published `queryServiceUri` — create table, ingest, query values back, per-database isolation | 🟠 `e2e/rti` — witness of record is CI (amd64). The engine needs AVX2, which Rosetta does not provide, so the default Docker setup on Apple silicon cannot run it; a QEMU x86-64 VM with `--cpu-type max` can, and does ([25-rti-kusto.md](25-rti-kusto.md)) |
 
-The TDS surface now has **two independent driver witnesses**: `go-mssqldb` and
-the Microsoft **ODBC Driver 18** (via `dbt-fabric`). That second driver mattered —
-it exposed a real gap: `go-mssqldb` tolerated a synthesized FedAuth login, but
-ODBC Driver 18 took a compatibility path (prepared-statement RPCs +
+The TDS surface now has **three independent driver witnesses**: `go-mssqldb`,
+Microsoft **ODBC Driver 18** (pyodbc, still used by medallion warmup and
+`e2e/type-map`), and **mssql-python** (via `dbt-fabric` 1.11+). The second
+driver mattered historically — `go-mssqldb` tolerated a synthesized FedAuth
+login, but ODBC Driver 18 took a compatibility path (prepared-statement RPCs +
 `sp_reset_connection` under mandatory connection pooling) that desynced against a
 re-encoding relay. The fix was to **byte-splice** the post-login session straight
 to the real SQL Server (so it emits every token itself), which is exactly the

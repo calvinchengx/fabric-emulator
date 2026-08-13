@@ -119,9 +119,9 @@ are shipped and CI-verified on Linux, macOS, and Windows.
 - **Real compute (attached by default):** real **Spark** over a native Livy agent
   (interactive + high-concurrency sessions, notebook cell execution, Delta via
   ABFS); real **T-SQL over TDS** with Entra **FedAuth** terminated and the
-  session byte-spliced to a **SQL Server** sidecar — driven by both `go-mssqldb`
-  and Microsoft **ODBC Driver 18** (Microsoft's real `dbt-fabric` adapter passes
-  end-to-end); **DuckDB** SQL over lakehouse Delta; and a pure-Go **pipeline**
+  session byte-spliced to a **SQL Server** sidecar — driven by `go-mssqldb`,
+  Microsoft **ODBC Driver 18**, and Microsoft **mssql-python** (the real
+  `dbt-fabric` 1.11 adapter passes end-to-end); **DuckDB** SQL over lakehouse Delta; and a pure-Go **pipeline**
   interpreter with real leaf activities. Real clients (delta-rs, the Azure Blob
   SDK, azcopy, PySpark, dbt) drive it in CI as borrowed oracles.
 - **Four orchestration surfaces, the ones real Fabric offers.** *Data pipelines*
