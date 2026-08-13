@@ -204,3 +204,218 @@ func TestQueuedJobsAdmitOldestFirst(t *testing.T) {
 		t.Fatalf("newer job status = %s; want still Queued", gotNewer.StatusAt(st.Now()))
 	}
 }
+
+func occupyThenQueue(t *testing.T, a *API, st *store.Store, it *store.Item, jobType, invoke string, exec map[string]any) *store.JobInstance {
+	t.Helper()
+	if err := st.SetCapacityMaxConcurrentJobs(store.DefaultCapacityID, 1); err != nil {
+		t.Fatal(err)
+	}
+	holder := seedJobItem(t, st, &store.Workspace{ID: it.WorkspaceID})
+	if w := postJob(a, admin, it.WorkspaceID, holder.ID, "DefaultJob"); w.Code != http.StatusAccepted {
+		t.Fatalf("holder = %d %s", w.Code, w.Body.Bytes())
+	}
+	queued, err := a.startJob(it.WorkspaceID, it, jobType, invoke, exec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued.StatusAt(st.Now()) != store.JobQueued {
+		t.Fatalf("status = %s; want Queued", queued.StatusAt(st.Now()))
+	}
+	st.Clock.Advance(a.LRODelaySeconds)
+	if n := a.DrainCapacityQueues(); n != 1 {
+		t.Fatalf("admitted %d; want 1", n)
+	}
+	return queued
+}
+
+func TestQueuedEngineJobsDispatchWhenAdmitted(t *testing.T) {
+	// dispatchExisting is the post-admit half of startJob. A Queued field that
+	// never re-enters the engine is decoration (docs/36).
+	t.Run("pipeline", func(t *testing.T) {
+		a, st := newAPI(t)
+		a.LRODelaySeconds = 60
+		ws := seedCapacityWorkspace(t, st)
+		pl := &store.Item{WorkspaceID: ws.ID, Type: "DataPipeline", DisplayName: "empty-pl"}
+		if err := st.CreateItem(pl, nil); err != nil {
+			t.Fatal(err)
+		}
+		j := occupyThenQueue(t, a, st, pl, "Pipeline", store.InvokeScheduled, nil)
+		if s := awaitJob(t, a, ws.ID, pl.ID, j.ID); s != "Failed" {
+			t.Fatalf("pipeline after admit = %s; want Failed (no definition)", s)
+		}
+	})
+	t.Run("notebook", func(t *testing.T) {
+		a, st := newAPI(t)
+		a.LRODelaySeconds = 60
+		ws := seedCapacityWorkspace(t, st)
+		nb := createNotebook(t, st, ws.ID, sampleNotebook)
+		j := occupyThenQueue(t, a, st, nb, "RunNotebook", store.InvokeScheduled, nil)
+		got, err := st.GetJobInstance(nb.ID, j.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Queued {
+			t.Fatal("notebook still queued after drain")
+		}
+		if got.StatusAt(st.Now()) != store.JobInProgress {
+			t.Fatalf("notebook status = %s; want InProgress (no agent)", got.StatusAt(st.Now()))
+		}
+	})
+	t.Run("sparkjob", func(t *testing.T) {
+		a, st := newAPI(t)
+		a.LRODelaySeconds = 60
+		ws := seedCapacityWorkspace(t, st)
+		lake := seedLakehouse(t, st, ws.ID, "sjd-lake")
+		it := &store.Item{WorkspaceID: ws.ID, Type: "SparkJobDefinition", DisplayName: "sjd"}
+		config := `{"executableFile":"main.py","defaultLakehouseArtifactId":"` +
+			lake.ID + `","defaultLakehouseWorkspaceId":"` + ws.ID + `"}`
+		if err := st.CreateItem(it, []store.DefinitionPart{
+			sparkPart("SparkJobDefinitionV1.json", config),
+			sparkPart("main.py", "print('done')"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+		j := occupyThenQueue(t, a, st, it, "sparkjob", store.InvokeScheduled, nil)
+		got, err := st.GetJobInstance(it.ID, j.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Queued || got.StatusAt(st.Now()) != store.JobInProgress {
+			t.Fatalf("sparkjob queued=%v status=%s", got.Queued, got.StatusAt(st.Now()))
+		}
+	})
+	t.Run("airflow no dag", func(t *testing.T) {
+		a, st := newAPI(t)
+		a.LRODelaySeconds = 60
+		ws := seedCapacityWorkspace(t, st)
+		it := &store.Item{WorkspaceID: ws.ID, Type: "ApacheAirflowJob", DisplayName: "air"}
+		if err := st.CreateItem(it, nil); err != nil {
+			t.Fatal(err)
+		}
+		j := occupyThenQueue(t, a, st, it, "Run", store.InvokeScheduled, nil)
+		if s := awaitJob(t, a, ws.ID, it.ID, j.ID); s != "Failed" {
+			t.Fatalf("airflow = %s; want Failed", s)
+		}
+	})
+	t.Run("airflow no runtime", func(t *testing.T) {
+		a, st := newAPI(t)
+		a.LRODelaySeconds = 60
+		ws := seedCapacityWorkspace(t, st)
+		it := &store.Item{WorkspaceID: ws.ID, Type: "ApacheAirflowJob", DisplayName: "air-dag"}
+		if err := st.CreateItem(it, nil); err != nil {
+			t.Fatal(err)
+		}
+		j := occupyThenQueue(t, a, st, it, "Run", store.InvokeScheduled, map[string]any{"dagId": "x"})
+		if s := awaitJob(t, a, ws.ID, it.ID, j.ID); s != "Failed" {
+			t.Fatalf("airflow = %s; want Failed", s)
+		}
+	})
+	t.Run("copyjob", func(t *testing.T) {
+		a, st := newAPI(t)
+		a.LRODelaySeconds = 60
+		ws := seedCapacityWorkspace(t, st)
+		src := seedLakehouse(t, st, ws.ID, "cj-src")
+		dst := seedLakehouse(t, st, ws.ID, "cj-dst")
+		cj := createCopyJob(t, st, ws.ID, lakehouseBatchDef(ws.ID, src.ID, dst.ID, ""))
+		j := occupyThenQueue(t, a, st, cj, "Execute", store.InvokeScheduled, nil)
+		if s := awaitJob(t, a, ws.ID, cj.ID, j.ID); s != "Completed" && s != "Failed" {
+			t.Fatalf("copyjob = %s", s)
+		}
+	})
+}
+
+func TestDrainLeavesQueuedJobsWhenCapacityIsStillFull(t *testing.T) {
+	a, st := newAPI(t)
+	a.LRODelaySeconds = 60
+	if err := st.SetCapacityMaxConcurrentJobs(store.DefaultCapacityID, 1); err != nil {
+		t.Fatal(err)
+	}
+	ws := seedCapacityWorkspace(t, st)
+	it := seedJobItem(t, st, ws)
+	if w := postJob(a, admin, ws.ID, it.ID, "DefaultJob"); w.Code != http.StatusAccepted {
+		t.Fatalf("holder = %d", w.Code)
+	}
+	waiting := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "waiting"}
+	if err := st.CreateItem(waiting, nil); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := a.startJob(ws.ID, waiting, "DefaultJob", store.InvokeScheduled, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := a.DrainCapacityQueues(); n != 0 {
+		t.Fatalf("admitted %d while holder still running; want 0", n)
+	}
+	got, err := st.GetJobInstance(waiting.ID, queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StatusAt(st.Now()) != store.JobQueued {
+		t.Fatalf("status = %s; want still Queued", got.StatusAt(st.Now()))
+	}
+}
+
+func TestCapacityCeilingZeroIsUnlimited(t *testing.T) {
+	a, st := newAPI(t)
+	a.LRODelaySeconds = 60
+	if err := st.SetCapacityMaxConcurrentJobs(store.DefaultCapacityID, 0); err != nil {
+		t.Fatal(err)
+	}
+	ws := seedCapacityWorkspace(t, st)
+	it := seedJobItem(t, st, ws)
+	if w := postJob(a, admin, ws.ID, it.ID, "DefaultJob"); w.Code != http.StatusAccepted {
+		t.Fatalf("first = %d", w.Code)
+	}
+	if w := postJob(a, admin, ws.ID, it.ID, "DefaultJob"); w.Code != http.StatusAccepted {
+		t.Fatalf("second = %d; a ceiling of 0 is unlimited", w.Code)
+	}
+}
+
+func TestWorkspaceWithoutCapacityDoesNotThrottle(t *testing.T) {
+	a, st := newAPI(t)
+	a.LRODelaySeconds = 60
+	if err := st.SetCapacityMaxConcurrentJobs(store.DefaultCapacityID, 1); err != nil {
+		t.Fatal(err)
+	}
+	ws := seedWorkspace(t, st) // no CapacityID
+	it := seedJobItem(t, st, ws)
+	if w := postJob(a, admin, ws.ID, it.ID, "DefaultJob"); w.Code != http.StatusAccepted {
+		t.Fatalf("first = %d", w.Code)
+	}
+	if w := postJob(a, admin, ws.ID, it.ID, "DefaultJob"); w.Code != http.StatusAccepted {
+		t.Fatalf("second = %d; a workspace with no capacity is unlimited", w.Code)
+	}
+}
+
+func TestListJobInstancesAdmitsQueuedWork(t *testing.T) {
+	a, st := newAPI(t)
+	a.LRODelaySeconds = 60
+	if err := st.SetCapacityMaxConcurrentJobs(store.DefaultCapacityID, 1); err != nil {
+		t.Fatal(err)
+	}
+	ws := seedCapacityWorkspace(t, st)
+	holder := seedJobItem(t, st, ws)
+	waiting := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "listed"}
+	if err := st.CreateItem(waiting, nil); err != nil {
+		t.Fatal(err)
+	}
+	if w := postJob(a, admin, ws.ID, holder.ID, "DefaultJob"); w.Code != http.StatusAccepted {
+		t.Fatalf("holder = %d", w.Code)
+	}
+	queued, err := a.startJob(ws.ID, waiting, "DefaultJob", store.InvokeScheduled, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Clock.Advance(60)
+	w := do(a.listJobInstances, admin, "GET", "", map[string]string{"wid": ws.ID, "iid": waiting.ID})
+	if w.Code != http.StatusOK {
+		t.Fatalf("list = %d %s", w.Code, w.Body.Bytes())
+	}
+	got, err := st.GetJobInstance(waiting.ID, queued.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StatusAt(st.Now()) == store.JobQueued {
+		t.Fatal("listing did not drain the queue")
+	}
+}
