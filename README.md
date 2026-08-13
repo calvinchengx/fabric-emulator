@@ -83,8 +83,8 @@ state that is expensive to reset between attempts.
 **The same pipeline runs unmodified against `fabric-emulator` and against real
 Fabric, one environment variable apart:** see `FABRIC_TARGET` in
 [docs/21](docs/21-real-fabric-toggle.md) and the four
-[medallion examples](examples/). An AI coding agent, Claude, Codex, Grok,
-whichever you use, iterates offline against the emulator at the speed it
+[medallion examples](examples/). An AI coding agent, Claude, Codex, Grok, Kimi
+K3, whichever you use, iterates offline against the emulator at the speed it
 actually works, then proves the result against a real tenant with no code
 changes. What used to take a data engineering team months of tenant-bound
 trial and error becomes a day, or a week, driven end to end by the agent.
