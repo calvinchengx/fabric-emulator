@@ -137,6 +137,9 @@ type API struct {
 	// twice. Separate from the fault mutex: an evaluation can execute a whole
 	// pipeline, and must not block unrelated requests for that long.
 	tickMu sync.Mutex
+	// admitMu serialises capacity admission (count active + create/queue) so
+	// two concurrent submits cannot both see a free slot when max is 1.
+	admitMu sync.Mutex
 
 	// firing breaks event-trigger cycles — see internal/api/triggers.go.
 	firing firingSet

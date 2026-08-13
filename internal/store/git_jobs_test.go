@@ -203,6 +203,9 @@ func TestCapacitySeed(t *testing.T) {
 	if err != nil || c.DisplayName != "Emulator Capacity" || c.State != "Active" {
 		t.Fatalf("seeded capacity = %+v, %v", c, err)
 	}
+	if c.MaxConcurrentJobs != DefaultMaxConcurrentJobs {
+		t.Fatalf("maxConcurrentJobs = %d; want default %d", c.MaxConcurrentJobs, DefaultMaxConcurrentJobs)
+	}
 	if _, err := s.GetCapacity("missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing capacity err = %v", err)
 	}

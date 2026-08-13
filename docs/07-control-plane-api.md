@@ -26,10 +26,14 @@ unless marked *sync*.
 ## Capacities (the model behind assignToCapacity)
 
 Wire shapes are REST-reference-only (`/rest/api/fabric/core/capacities`;
-fabric-docs covers capacity portal-side). The emulator does not model SKUs,
-billing, or throttling — a capacity is an **assignable object**, nothing more.
-It exists because real tooling checks it: fabric-cicd refuses to publish into
-a workspace whose `capacityId` is empty.
+fabric-docs covers capacity portal-side). The emulator does not model SKUs or
+billing. It does model **concurrent-job admission** ([36-capacity-job-queueing.md](36-capacity-job-queueing.md)):
+each capacity has a ceiling (default 999, overridable so a test can set it to 1).
+Manual submits against a full capacity are `430 CapacityNotAvailable` with
+`Retry-After`; scheduled and event-triggered jobs enter `Queued` and are
+admitted FIFO when a slot frees. Same-item jobs are not serialised. A capacity
+is otherwise an **assignable object** — it exists because real tooling checks
+it: fabric-cicd refuses to publish into a workspace whose `capacityId` is empty.
 
 | Method + path | Notes |
 |---|---|
@@ -135,7 +139,9 @@ git wrote. This is what makes `fabric-cicd` and deployment pipelines testable.
 | `POST /workspaces/{id}/lineage` | emulator extension: an engine reports its own read/write set for work with no job to hang it on — an interactive Spark session or a plain script. Body is a `step` name plus `moves`, each a real reads→writes group (a flat reads × writes cross product would invent derivations that never happened). Recorded as `producer: Reported` — a claim by the caller, distinct from what the emulator observed itself ([31-flow-observability.md](31-flow-observability.md)) |
 
 Jobs transition `NotStarted → InProgress → Completed/Failed` on the controllable
-clock, and — for the two executing job types — actually do work at trigger:
+clock (`Queued` while waiting for a capacity slot), and — for the executing job
+types — actually do work at trigger. A Manual POST against a saturated capacity
+is `430 CapacityNotAvailable` rather than a job instance.
 
 - **DataPipeline** jobs run the pipeline interpreter now: the definition's
   control flow executes and the **activity runs are recorded** (queryable via
@@ -193,7 +199,8 @@ schedules are evaluated **on demand**, at every moment a caller could observe
 the result:
 
 - `POST /_emulator/clock` — the deterministic lever. The response reports
-  `scheduledJobsStarted`, and `{"advance": 0}` is a plain "tick now".
+  `scheduledJobsStarted` and `queuedJobsAdmitted`, and `{"advance": 0}` is a
+  plain "tick now".
 - listing an item's job instances, or its schedules;
 - creating or updating a schedule — which is what makes the documented *"if the
   start time is in the past, it will trigger a job instantly"* true, with no
