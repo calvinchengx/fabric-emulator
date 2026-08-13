@@ -57,6 +57,7 @@ engines against the running emulator.
 | **S3 shortcut, SigV4 enforced** | Amazon's own `boto3` + a real SeaweedFS S3 server | depth where the row above gives breadth: SeaweedFS runs with an identity config, so an `AmazonS3` shortcut only resolves if the emulator **signs the upstream request itself**. boto3 puts the object, an unsigned GET must be refused (without which the read-through would demonstrate nothing), the OneLake ADLS surface returns the bytes byte-for-byte, and a second shortcut carrying a deliberately wrong secret key must be refused — a pass cannot mean the signature went unchecked | `e2e/s3/run.py` (CI `external-s3`, Linux, containerized) |
 | **ADLS Gen2 shortcut on Azurite** | Microsoft's own Azurite + `azure-storage-blob` | the same depth for the other kind, against Microsoft's storage emulator instead of a hand-written stub: unauthenticated GET refused, read-through returns the blob under a real SAS, a tampered `sig=` refused, then create/append/flush **through the shortcut** producing bytes the SDK reads back straight from Azurite — the target, not the emulator — and a delete that removes them there too. Azurite implements Blob and not DFS, so the write protocol's DFS-specific semantics are deliberately not claimed | `e2e/azurite-shortcut/run.py` (CI `azurite-shortcut`, Linux, containerized) |
 | **Warehouse TDS** | real `go-mssqldb` + real SQL Server 2022 | entra-token connect, then DDL + DML + a GROUP BY relayed through the TDS endpoint — **one of two** independent TDS driver witnesses (the other: Microsoft ODBC Driver 18 via `dbt-fabric` above); plus the SQL Database → OneLake Delta mirror, the pipeline Script/SqlServerStoredProcedure activities over real HTTP + jobs, and an external-source MirroredDatabase mirror (seeded on a database reached independently of the emulator's own per-item routing) | CI `warehouse-tds` (Linux) |
+| **ARM capacities consume** | Microsoft's `azure-mgmt-fabric` 1.1.0b1 | a capacity created on arm-emulator (`Microsoft.Fabric/capacities`) appears on Fabric `GET /v1/capacities` under the Fabric REST GUID ARM assigned at create; the seeded default stays. Sibling checkout if present, otherwise `go install` of the pinned arm-emulator release | `e2e/arm-capacities/run.py` (CI `arm-capacities`, 3-OS) |
 
 Plus: coverage floor 90% (cross-package; currently ~90%), `go vet`, a
 distroless container smoke (`docker-smoke`), the portal build + headless
@@ -80,17 +81,16 @@ change fails CI until this matrix is deliberately reclassified.
 
 ## Queued (designed, not yet wired)
 
-The ARM capacities consume chain (`e2e/arm-capacities/run.py`) is runnable
-locally against a sibling arm-emulator checkout. It is not a CI job until a
-released arm-emulator image serves `Microsoft.Fabric/capacities` — the Go tests
-above are the in-tree witness.
+Nothing queued — every designed real-client suite is wired above. New
+milestones (e.g. non-OneLake external storage for shortcuts) will land here as
+they're scoped.
 
 ## Running locally
 
 ```bash
 go test ./...  # everything in-process, no network
 uv run --frozen --group fabric-cicd python e2e/fabric-cicd/run.py
-python3 e2e/arm-capacities/run.py   # sibling arm-emulator; not in CI until that provider is released
+python3 e2e/arm-capacities/run.py   # sibling arm-emulator, or go install of the pinned release
 uv run --frozen --no-sync python e2e/vscode-extension/run.py
 uv run --frozen --no-sync python e2e/airflow/run.py
 python3 e2e/data-science-loop/run.py

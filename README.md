@@ -286,8 +286,9 @@ with `uv add --group <group> <package>` and commit both files.
 credential. `arm-emulator` is an **opt-in** consumer: set `FABRIC_ARM_URL` and
 capacities created over `Microsoft.Fabric/capacities` appear on
 `GET /v1/capacities`. Empty (the compose default) keeps the seeded local
-capacity, so fabric-cicd still works without ARM. Do not wire ARM into compose
-until a released arm-emulator image serves that provider.
+capacity, so fabric-cicd still works without ARM. The family compose in
+[azure-emulators](https://github.com/calvinchengx/azure-emulators) is where
+`FABRIC_ARM_URL` is pinned against released images.
 `azure-apim-emulator` completes the set.
 
 To run them together, see [**azure-emulators**](https://github.com/calvinchengx/azure-emulators): a composition-only repo

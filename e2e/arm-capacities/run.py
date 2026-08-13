@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Chain e2e: azure-mgmt-fabric creates a capacity on sibling arm-emulator;
+"""Chain e2e: azure-mgmt-fabric creates a capacity on arm-emulator;
 fabric-emulator's opt-in ARM feed makes that capacity appear on GET /v1/capacities.
 
-Requires a sibling arm-emulator checkout that serves Microsoft.Fabric/capacities
-(the GHCR image does not, until that provider is released). Override the path
-with ARM_EMULATOR_REPO.
-
-A missing sibling is a FAILURE, not a skip.
+A sibling arm-emulator checkout wins so the family can be developed together;
+otherwise the pinned release is `go install`ed. Override the path with
+ARM_EMULATOR_REPO. A missing sibling is no longer a failure — CI has no
+checkout, and the pin is the witness that the released pair works together.
 """
 
 import os
@@ -22,7 +21,7 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(DIR))
 
 sys.path.insert(0, os.path.join(REPO, "e2e"))
-from entra_install import ensure_entra_emulator  # noqa: E402
+from entra_install import ensure_entra_emulator, go_install  # noqa: E402
 
 WORK = os.path.join(tempfile.gettempdir(), "fabric-arm-capacities-e2e")
 ENTRA_PORT = os.environ.get("ENTRA_PORT", "18543")
@@ -31,6 +30,9 @@ FABRIC_PORT = os.environ.get("FABRIC_PORT", "19543")
 TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
 SUB = "6082bfda-63d0-46f4-8272-ae9195139feb"
 EXE = ".exe" if os.name == "nt" else ""
+ARM_MODULE = "github.com/calvinchengx/arm-emulator"
+# azure-emulators' pins gate looks for this default. Bump it with the family BOM.
+ARM_VERSION = os.environ.get("ARM_VERSION", "v0.4.0")
 
 
 def log(msg):
@@ -70,17 +72,22 @@ def sibling_arm_repo():
     return os.path.abspath(os.path.join(REPO, "..", "arm-emulator"))
 
 
+def ensure_arm_emulator(work_dir, log=print):
+    """Sibling checkout if present; otherwise the pinned arm-emulator release."""
+    sibling = sibling_arm_repo()
+    if os.path.isfile(os.path.join(sibling, "go.mod")):
+        log(f"building arm-emulator from {sibling}")
+        arm_bin = os.path.join(work_dir, "arm-emulator" + EXE)
+        subprocess.run(["go", "build", "-C", sibling, "-o", arm_bin, "./cmd/arm-emulator"],
+                       check=True, env={**os.environ, "GOTOOLCHAIN": "auto"})
+        return arm_bin
+    return go_install("arm-emulator", ARM_MODULE + "/cmd/arm-emulator", work_dir,
+                      version=ARM_VERSION, log=log)
+
+
 shutil.rmtree(WORK, ignore_errors=True)
 os.makedirs(os.path.join(WORK, "fabric-data"))
 os.makedirs(os.path.join(WORK, "armdata"))
-
-arm_repo = sibling_arm_repo()
-if not os.path.isfile(os.path.join(arm_repo, "go.mod")):
-    raise SystemExit(
-        f"arm-emulator checkout not found at {arm_repo}.\n"
-        f"  This harness builds the sibling so it can exercise Microsoft.Fabric/capacities,\n"
-        f"  which is not in a released arm-emulator image yet.\n"
-        f"  Clone it next to this repo, or set ARM_EMULATOR_REPO.")
 
 entra_bin = ensure_entra_emulator(WORK, log=log)
 
@@ -89,10 +96,7 @@ fabric_bin = os.path.join(WORK, "fabric-emulator" + EXE)
 subprocess.run(["go", "build", "-C", REPO, "-o", fabric_bin, "./cmd/fabric-emulator"],
                check=True, env={**os.environ, "GOTOOLCHAIN": "auto"})
 
-log(f"building arm-emulator from {arm_repo}")
-arm_bin = os.path.join(WORK, "arm-emulator" + EXE)
-subprocess.run(["go", "build", "-C", arm_repo, "-o", arm_bin, "./cmd/arm-emulator"],
-               check=True, env={**os.environ, "GOTOOLCHAIN": "auto"})
+arm_bin = ensure_arm_emulator(WORK, log=log)
 
 procs = []
 logfiles = {}
