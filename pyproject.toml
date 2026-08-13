@@ -205,8 +205,9 @@ omit = [
     # not process glue whose behaviour is only visible end to end: it is a
     # semantic shim that decides what a notebook SEES, and it shipped a defect
     # in three releases that no gate could have caught while it was omitted.
+    # `files_mount.py` left for the same reason: write-back and the conflicting
+    # bind are the notebook's filesystem, not HTTP glue.
     "python/spark_agent/agent.py",
-    "python/spark_agent/files_mount.py",
     # CI harnesses and release tooling: containerized or one-shot, and each
     # already named as the witness for the claim it proves.
     "scripts/govern_ingest.py",
