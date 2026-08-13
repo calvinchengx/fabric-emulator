@@ -32,7 +32,7 @@ SUB = "6082bfda-63d0-46f4-8272-ae9195139feb"
 EXE = ".exe" if os.name == "nt" else ""
 ARM_MODULE = "github.com/calvinchengx/arm-emulator"
 # azure-emulators' pins gate looks for this default. Bump it with the family BOM.
-ARM_VERSION = os.environ.get("ARM_VERSION", "v0.4.0")
+ARM_VERSION = os.environ.get("ARM_VERSION", "v0.4.1")
 if hasattr(sys.stdout, "reconfigure"):
     # windows-latest's cp1252 cannot encode an arrow; a log line must not
     # crash a run that already did the work.

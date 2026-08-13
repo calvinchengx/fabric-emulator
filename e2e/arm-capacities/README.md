@@ -6,7 +6,7 @@ GUID on `GET /v1/capacities`.
 
 A sibling `../arm-emulator` checkout is used when present (family development).
 Otherwise the harness `go install`s the pinned release (`ARM_VERSION`, default
-`v0.4.0`). CI has no sibling, so the pin is the witness.
+`v0.4.1`). CI has no sibling, so the pin is the witness.
 
 ```bash
 python3 e2e/arm-capacities/run.py
