@@ -25,21 +25,26 @@ Two engines, one notebook snippet:
   schema, and runs `foreachBatch` in this process. One micro-batch, announced,
   no checkpoint — the same class of wrap as CDF / JSON `multiLine`.
 
-Native `format("kafka")` with `kafka.bootstrap.servers` + `subscribe` is
-honoured on Sail too: the agent consumes the topic (kafka-python) and
-`createDataFrame`s the Kafka-schema rows into Sail. Subsequent
-`select`/`filter`/SQL run on the engine. One micro-batch, announced, no
-checkpoint — the same class of wrap as CDF / JSON `multiLine`. JVM keeps
-the jar (this module does not rewrite native options on a classic session).
+Native `format("kafka")` with `kafka.bootstrap.servers` plus
+`subscribe` / `subscribePattern` / `assign` is honoured on Sail too: the
+agent consumes the topic (kafka-python) and `createDataFrame`s the
+Kafka-schema rows into Sail. JSON offsets, `includeHeaders`, SASL PLAIN,
+and PEM SSL are honoured; `write`/`writeStream.format("kafka")` produces
+from collected rows. Subsequent `select`/`filter`/SQL run on the engine.
+One micro-batch, announced, no checkpoint — the same class of wrap as
+CDF / JSON `multiLine`. JVM keeps the jar (this module does not rewrite
+native options on a classic session). GSSAPI and JKS/P12 fail loud.
 
 `stream_sinks.py` still does not intercept a kafka *sink* or `foreachBatch`
-on an engine stream. Mapping Kafka onto `rate` stays forbidden.
+on an engine stream — kafka I/O on Sail is this module. Mapping Kafka
+onto `rate` stays forbidden.
 """
 from __future__ import annotations
 
 import base64
 import json
 import os
+import re
 import ssl
 import sys
 import time
@@ -64,6 +69,7 @@ NATIVE_ANNOUNCE = (
     "[kafka] OSS format(kafka) via driver consume "
     "(LocalRelation → Sail, one micro-batch)"
 )
+SINK_ANNOUNCE = "[kafka] OSS format(kafka) sink via driver produce (one micro-batch)"
 FOREACH_ANNOUNCE = "[eventstream] foreachBatch in the agent (Sail cannot pickle UDFs)"
 NATIVE_OPTION_KEYS = (
     "kafka.bootstrap.servers",
@@ -240,46 +246,264 @@ def should_consume_native(fmt, options) -> bool:
 
 
 def consume_plain_kafka(options, poll=None):
-    """Pull Kafka records for OSS bootstrap + subscribe. Never rate rows."""
+    """Pull Kafka records for OSS bootstrap + subscribe/pattern/assign."""
+    spec = kafka_source_spec(options)
+    return (poll or _kafka_poll)(spec)
+
+
+def _truthy(value) -> bool:
+    return str(value or "").strip().lower() in ("true", "1", "yes")
+
+
+def _parse_offset_option(raw, name):
+    """Spark: 'earliest' / 'latest' / JSON {topic:{partition:offset}}.
+
+    -1 is latest, -2 is earliest. Returns a str or {topic: {part: int}}.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if text in ("earliest", "latest"):
+        return text
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise KafkaSourceError(
+            f"{name} {text!r} is not earliest, latest, or JSON"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise KafkaSourceError(f"{name} JSON must be an object, got {text!r}")
+    out = {}
+    for topic, parts in parsed.items():
+        if not isinstance(parts, dict):
+            raise KafkaSourceError(f"{name} for {topic!r} must be {{partition: offset}}")
+        out[str(topic)] = {int(p): int(off) for p, off in parts.items()}
+    return out
+
+
+def parse_jaas_plain(config) -> tuple[str, str]:
+    """Pull username/password out of a Kafka PLAIN JAAS string."""
+    text = config or ""
+    user = re.search(r'username\s*=\s*"([^"]*)"', text)
+    password = re.search(r'password\s*=\s*"([^"]*)"', text)
+    if not user or not password:
+        raise KafkaSourceError(
+            "kafka.sasl.jaas.config must set username= and password= for PLAIN"
+        )
+    return user.group(1), password.group(1)
+
+
+def kafka_client_kwargs(options) -> dict:
+    """kafka-python kwargs from Spark's kafka.* client options."""
+    proto = (_opt(options, ("kafka.security.protocol",)) or "PLAINTEXT").upper()
+    allowed = ("PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL")
+    if proto not in allowed:
+        raise KafkaSourceError(
+            f"kafka.security.protocol={proto!r} is not in this wrap ({', '.join(allowed)})"
+        )
+    kwargs = {}
+    if proto != "PLAINTEXT":
+        kwargs["security_protocol"] = proto
+    if proto.startswith("SASL_"):
+        mech = (_opt(options, ("kafka.sasl.mechanism",)) or "PLAIN").upper()
+        if mech != "PLAIN":
+            raise KafkaSourceError(
+                f"kafka.sasl.mechanism={mech!r} is not in this wrap (PLAIN only)"
+            )
+        kwargs["sasl_mechanism"] = "PLAIN"
+        user = _opt(options, ("kafka.sasl.username",))
+        password = _opt(options, ("kafka.sasl.password",))
+        jaas = _opt(options, ("kafka.sasl.jaas.config",))
+        if jaas:
+            user, password = parse_jaas_plain(jaas)
+        if not user or not password:
+            raise KafkaSourceError(
+                "SASL PLAIN needs kafka.sasl.jaas.config or "
+                "kafka.sasl.username + kafka.sasl.password"
+            )
+        kwargs["sasl_plain_username"] = user
+        kwargs["sasl_plain_password"] = password
+    if proto in ("SSL", "SASL_SSL"):
+        cafile = _opt(options, ("kafka.ssl.cafile", "kafka.ssl.truststore.location"))
+        if not cafile:
+            raise KafkaSourceError(
+                "SSL needs a PEM CA file in kafka.ssl.truststore.location "
+                "(JKS truststores are not in this wrap)"
+            )
+        if cafile.lower().endswith((".jks", ".p12", ".pfx")):
+            raise KafkaSourceError(
+                f"{cafile} is a Java truststore; this wrap needs a PEM CA file"
+            )
+        kwargs["ssl_cafile"] = cafile
+        cert = _opt(options, ("kafka.ssl.keystore.location", "kafka.ssl.certfile"))
+        key = _opt(options, ("kafka.ssl.key.location", "kafka.ssl.keyfile"))
+        if cert:
+            kwargs["ssl_certfile"] = cert
+        if key:
+            kwargs["ssl_keyfile"] = key
+    return kwargs
+
+
+def kafka_source_spec(options) -> dict:
+    """Normalise OSS Kafka source options into one consume request."""
     options = {str(k): v for k, v in (options or {}).items()}
-    if _opt(options, ("subscribePattern", "subscribepattern")):
-        raise KafkaSourceError(
-            "subscribePattern is not in this wrap (use subscribe)"
-        )
-    if _opt(options, ("assign",)):
-        raise KafkaSourceError("assign is not in this wrap (use subscribe)")
-    proto = _opt(options, ("kafka.security.protocol",))
-    if proto and proto.upper() not in ("PLAINTEXT",):
-        raise KafkaSourceError(
-            f"kafka.security.protocol={proto!r} is not in this wrap (PLAINTEXT only)"
-        )
-    headers = _opt(options, ("includeHeaders", "includeheaders"))
-    if headers and str(headers).strip().lower() in ("true", "1", "yes"):
-        raise KafkaSourceError("includeHeaders is not in this wrap")
     bootstrap, topics = native_subscribe(options)
+    pattern = _opt(options, ("subscribePattern", "subscribepattern"))
+    assign_raw = _opt(options, ("assign",))
+    if sum(bool(x) for x in (topics, pattern, assign_raw)) > 1:
+        raise KafkaSourceError(
+            "Do not use more than one of: subscribe, subscribePattern, assign"
+        )
+    assigned = None
+    if assign_raw:
+        try:
+            parsed = json.loads(assign_raw)
+        except json.JSONDecodeError as exc:
+            raise KafkaSourceError(f"assign is not JSON: {assign_raw!r}") from exc
+        if not isinstance(parsed, dict):
+            raise KafkaSourceError(
+                f"assign JSON must be {{topic: [partitions]}}, got {assign_raw!r}"
+            )
+        assigned = {
+            str(topic): [int(p) for p in (parts or [])]
+            for topic, parts in parsed.items()
+        }
     if not bootstrap:
         raise KafkaSourceError("option 'kafka.bootstrap.servers' is required")
-    if not topics:
+    if not topics and not pattern and not assigned:
         raise KafkaSourceError(
-            "option 'subscribe' is required "
-            "(subscribePattern / assign are not in this wrap)"
+            "one of subscribe, subscribePattern, assign is required"
         )
-    starting = _opt(options, ("startingOffsets", "startingoffsets")) or "earliest"
-    if starting not in ("earliest", "latest"):
-        raise KafkaSourceError(
-            f"startingOffsets {starting!r} is not in this wrap (use earliest or latest)"
-        )
-    timeout = int(
-        _opt(options, ("kafkaConsumer.pollTimeoutMs",
-                       "kafkaconsumer.polltimeoutms")) or 8000
+    starting = _parse_offset_option(
+        _opt(options, ("startingOffsets", "startingoffsets")) or "earliest",
+        "startingOffsets",
     )
-    max_records = int(
-        _opt(options, ("maxOffsetsPerTrigger", "maxoffsetspertrigger")) or 10000
+    ending = _parse_offset_option(
+        _opt(options, ("endingOffsets", "endingoffsets")),
+        "endingOffsets",
     )
-    return (poll or _kafka_poll)(bootstrap, topics, starting, timeout, max_records)
+    if ending == "earliest":
+        raise KafkaSourceError("endingOffsets cannot be earliest")
+    return {
+        "bootstrap": bootstrap,
+        "topics": topics,
+        "pattern": pattern,
+        "assign": assigned,
+        "starting": starting or "earliest",
+        "ending": ending,
+        "timeout_ms": int(
+            _opt(options, ("kafkaConsumer.pollTimeoutMs",
+                           "kafkaconsumer.polltimeoutms")) or 8000
+        ),
+        "max_records": int(
+            _opt(options, ("maxOffsetsPerTrigger", "maxoffsetspertrigger")) or 10000
+        ),
+        "include_headers": _truthy(_opt(options, ("includeHeaders", "includeheaders"))),
+        "client": kafka_client_kwargs(options),
+    }
 
 
-def _kafka_poll(bootstrap, topics, starting, timeout_ms, max_records):
+def _resolve_topics(consumer, spec):
+    if spec.get("assign"):
+        return list(spec["assign"])
+    if spec.get("topics"):
+        return list(spec["topics"])
+    pattern = spec.get("pattern") or ""
+    try:
+        rx = re.compile(pattern)
+    except re.error as exc:
+        raise KafkaSourceError(f"subscribePattern is not a regex: {pattern!r}") from exc
+    deadline = time.monotonic() + max(int(spec["timeout_ms"]), 1) / 1000.0
+    matched = []
+    while time.monotonic() < deadline:
+        matched = [t for t in (consumer.topics() or []) if rx.search(t)]
+        if matched:
+            return matched
+        time.sleep(0.2)
+    raise KafkaSourceError(
+        f"subscribePattern {pattern!r} matched no topics at {spec['bootstrap']}"
+    )
+
+
+def _partitions_for(consumer, TopicPartition, spec, topics):
+    if spec.get("assign"):
+        return [
+            TopicPartition(topic, p)
+            for topic, parts in spec["assign"].items()
+            for p in parts
+        ]
+    tps = []
+    deadline = time.monotonic() + max(int(spec["timeout_ms"]), 1) / 1000.0
+    missing = list(topics)
+    while missing and time.monotonic() < deadline:
+        still = []
+        for topic in missing:
+            parts = consumer.partitions_for_topic(topic)
+            if not parts:
+                still.append(topic)
+                continue
+            tps.extend(TopicPartition(topic, p) for p in sorted(parts))
+        missing = still
+        if missing:
+            time.sleep(0.2)
+    if missing:
+        raise KafkaSourceError(
+            f"kafka topic metadata not found for {missing} at {spec['bootstrap']}"
+        )
+    return tps
+
+
+def _offset_for(table, tp, sentinel):
+    if not isinstance(table, dict):
+        return sentinel
+    parts = table.get(tp.topic) or {}
+    if tp.partition in parts:
+        return int(parts[tp.partition])
+    if str(tp.partition) in parts:
+        return int(parts[str(tp.partition)])
+    return sentinel
+
+
+def _seek_start(consumer, tps, starting):
+    if starting == "latest":
+        consumer.seek_to_end(*tps)
+        return
+    if starting == "earliest" or starting is None:
+        consumer.seek_to_beginning(*tps)
+        return
+    begin = consumer.beginning_offsets(tps)
+    end = consumer.end_offsets(tps)
+    for tp in tps:
+        off = _offset_for(starting, tp, -2)
+        if off == -2:
+            consumer.seek(tp, begin[tp])
+        elif off == -1:
+            consumer.seek(tp, end[tp])
+        else:
+            consumer.seek(tp, off)
+
+
+def _past_end(ending, tp, offset) -> bool:
+    if ending is None or ending == "latest":
+        return False
+    stop = _offset_for(ending, tp, None)
+    if stop is None or stop < 0:
+        return False
+    return int(offset) >= int(stop)
+
+
+def _msg_headers(msg) -> list[tuple]:
+    raw = getattr(msg, "headers", None) or []
+    out = []
+    for item in raw:
+        if isinstance(item, (tuple, list)) and len(item) >= 2:
+            out.append((str(item[0]), item[1]))
+        elif isinstance(item, dict):
+            out.append((str(item.get("key") or ""), item.get("value")))
+    return out
+
+
+def _kafka_poll(spec):
     """kafka-python consumer → list of Kafka-shaped dicts (bytes intact)."""
     try:
         from kafka import KafkaConsumer, TopicPartition
@@ -287,43 +511,34 @@ def _kafka_poll(bootstrap, topics, starting, timeout_ms, max_records):
         raise KafkaSourceError(
             "OSS format('kafka') on Sail needs kafka-python in the spark-agent image"
         ) from exc
-    servers = [s.strip() for s in bootstrap.split(",") if s.strip()]
+    servers = [s.strip() for s in spec["bootstrap"].split(",") if s.strip()]
+    timeout_ms = int(spec["timeout_ms"])
     consumer = KafkaConsumer(
         bootstrap_servers=servers,
         enable_auto_commit=False,
         consumer_timeout_ms=timeout_ms,
-        request_timeout_ms=max(int(timeout_ms) + 5000, 15000),
-        api_version_auto_timeout_ms=min(int(timeout_ms), 10000),
+        request_timeout_ms=max(timeout_ms + 5000, 15000),
+        api_version_auto_timeout_ms=min(timeout_ms, 10000),
+        **(spec.get("client") or {}),
     )
     try:
-        tps = []
-        deadline = time.monotonic() + max(int(timeout_ms), 1) / 1000.0
-        missing = list(topics)
-        while missing and time.monotonic() < deadline:
-            still = []
-            for topic in missing:
-                parts = consumer.partitions_for_topic(topic)
-                if not parts:
-                    still.append(topic)
-                    continue
-                tps.extend(TopicPartition(topic, p) for p in sorted(parts))
-            missing = still
-            if missing:
-                time.sleep(0.2)
-        if missing:
-            raise KafkaSourceError(
-                f"kafka topic metadata not found for {missing} at {bootstrap}"
-            )
+        topics = _resolve_topics(consumer, spec)
+        tps = _partitions_for(consumer, TopicPartition, spec, topics)
         if not tps:
             return []
         consumer.assign(tps)
-        if starting == "latest":
+        starting = spec.get("starting") or "earliest"
+        if starting == "latest" and spec.get("ending") in (None, "latest"):
             consumer.seek_to_end(*tps)
             return []
-        consumer.seek_to_beginning(*tps)
+        _seek_start(consumer, tps, starting)
         rows = []
+        dummy = TopicPartition
         for msg in consumer:
-            rows.append({
+            tp = dummy(msg.topic, msg.partition)
+            if _past_end(spec.get("ending"), tp, msg.offset):
+                continue
+            rec = {
                 "key": msg.key,
                 "value": msg.value,
                 "topic": msg.topic,
@@ -331,8 +546,11 @@ def _kafka_poll(bootstrap, topics, starting, timeout_ms, max_records):
                 "offset": msg.offset,
                 "timestamp": msg.timestamp,
                 "timestampType": int(getattr(msg, "timestamp_type", 0) or 0),
-            })
-            if len(rows) >= int(max_records):
+            }
+            if spec.get("include_headers"):
+                rec["headers"] = _msg_headers(msg)
+            rows.append(rec)
+            if len(rows) >= int(spec["max_records"]):
                 break
         return rows
     finally:
@@ -354,7 +572,8 @@ def connect_kafka_df(spark, fmt, options):
     if should_consume_native(fmt, options):
         recs = consume_plain_kafka(options)
         print(NATIVE_ANNOUNCE, file=sys.stderr, flush=True)
-        return materialize_kafka_df(spark, recs)
+        headers = _truthy(_opt(options, ("includeHeaders", "includeheaders")))
+        return materialize_kafka_df(spark, recs, include_headers=headers)
     return None
 
 
@@ -394,12 +613,12 @@ def _as_timestamp(value):
     return ts
 
 
-def records_to_rows(records) -> list[tuple]:
+def records_to_rows(records, include_headers=False) -> list[tuple]:
     """Tuples matching Spark's kafka source schema (never rate)."""
     rows = []
     for rec in records or []:
         rec = rec or {}
-        rows.append((
+        row = (
             _as_bytes(rec.get("key")),
             _as_bytes(rec.get("value")),
             rec.get("topic") or "",
@@ -407,11 +626,20 @@ def records_to_rows(records) -> list[tuple]:
             int(rec.get("offset") or 0),
             _as_timestamp(rec.get("timestamp")),
             int(rec.get("timestampType") or 0),
-        ))
+        )
+        if include_headers:
+            headers = []
+            for item in rec.get("headers") or []:
+                if isinstance(item, (tuple, list)) and len(item) >= 2:
+                    headers.append((str(item[0]), _as_bytes(item[1])))
+                elif isinstance(item, dict):
+                    headers.append((str(item.get("key") or ""), _as_bytes(item.get("value"))))
+            row = (*row, headers)
+        rows.append(row)
     return rows
 
 
-def kafka_schema():
+def kafka_schema(include_headers=False):
     from pyspark.sql.types import (
         BinaryType,
         IntegerType,
@@ -421,7 +649,7 @@ def kafka_schema():
         StructType,
         TimestampType,
     )
-    return StructType([
+    fields = [
         StructField("key", BinaryType(), True),
         StructField("value", BinaryType(), True),
         StructField("topic", StringType(), False),
@@ -429,14 +657,124 @@ def kafka_schema():
         StructField("offset", LongType(), False),
         StructField("timestamp", TimestampType(), True),
         StructField("timestampType", IntegerType(), False),
-    ])
+    ]
+    if include_headers:
+        from pyspark.sql.types import ArrayType
+        fields.append(StructField(
+            "headers",
+            ArrayType(StructType([
+                StructField("key", StringType(), False),
+                StructField("value", BinaryType(), True),
+            ])),
+            True,
+        ))
+    return StructType(fields)
 
 
-def materialize_kafka_df(spark, records):
+def materialize_kafka_df(spark, records, include_headers=False):
     """LocalRelation with Kafka columns. `.explain()` is not a streaming plan."""
-    df = spark.createDataFrame(records_to_rows(records), kafka_schema())
+    df = spark.createDataFrame(
+        records_to_rows(records, include_headers=include_headers),
+        kafka_schema(include_headers=include_headers),
+    )
     df._emu_eventstream = True
     return df
+
+
+def should_produce(fmt, options) -> bool:
+    if (fmt or "").strip().lower() != "kafka":
+        return False
+    return bool(_opt(options, ("kafka.bootstrap.servers",)))
+
+
+def produce_plain_kafka(records, options, send=None):
+    """Produce Kafka records from a collected DataFrame. Never a rate sink."""
+    options = {str(k): v for k, v in (options or {}).items()}
+    bootstrap = _opt(options, ("kafka.bootstrap.servers",))
+    if not bootstrap:
+        raise KafkaSourceError("option 'kafka.bootstrap.servers' is required")
+    topic = _opt(options, ("topic",))
+    return (send or _kafka_send)(
+        bootstrap, topic, records, kafka_client_kwargs(options),
+    )
+
+
+def _row_dict(row) -> dict:
+    if hasattr(row, "asDict"):
+        return row.asDict(recursive=True)
+    if isinstance(row, dict):
+        return dict(row)
+    return dict(row)
+
+
+def collect_kafka_sink_rows(df) -> list[dict]:
+    if df is None:
+        raise KafkaSourceError("kafka sink has no DataFrame to produce")
+    return [_row_dict(r) for r in df.collect()]
+
+
+def _kafka_send(bootstrap, default_topic, records, client):
+    try:
+        from kafka import KafkaProducer
+    except ImportError as exc:
+        raise KafkaSourceError(
+            "OSS format('kafka') sink on Sail needs kafka-python in the spark-agent image"
+        ) from exc
+    producer = KafkaProducer(
+        bootstrap_servers=[s.strip() for s in bootstrap.split(",") if s.strip()],
+        acks="all",
+        **(client or {}),
+    )
+    n = 0
+    try:
+        for rec in records or []:
+            rec = rec or {}
+            topic = rec.get("topic") or default_topic
+            if not topic:
+                raise KafkaSourceError(
+                    "kafka sink needs option topic or a topic column"
+                )
+            headers = rec.get("headers") or []
+            kw = {}
+            if headers:
+                packed = []
+                for item in headers:
+                    if isinstance(item, (tuple, list)) and len(item) >= 2:
+                        packed.append((str(item[0]), _as_bytes(item[1])))
+                    elif isinstance(item, dict):
+                        packed.append((
+                            str(item.get("key") or ""),
+                            _as_bytes(item.get("value")),
+                        ))
+                if packed:
+                    kw["headers"] = packed
+            producer.send(
+                str(topic),
+                value=_as_bytes(rec.get("value")),
+                key=_as_bytes(rec.get("key")),
+                **kw,
+            )
+            n += 1
+        producer.flush()
+    finally:
+        producer.close()
+    return n
+
+
+def _writer_fmt_opts(writer, format=None, options=None):
+    proto = getattr(writer, "_write_proto", None)
+    proto_opts = {}
+    proto_fmt = None
+    if proto is not None:
+        proto_fmt = getattr(proto, "format", None)
+        proto_opts = dict(getattr(proto, "options", None) or {})
+    held = {
+        **dict(getattr(writer, "_options", None) or {}),
+        **proto_opts,
+        **{str(k): v for k, v in (options or {}).items()},
+    }
+    fmt = format or proto_fmt or getattr(writer, "_format", None)
+    return fmt, held
 
 
 def should_run_local_foreach(stream_df, writer) -> bool:
@@ -533,7 +871,7 @@ def _install_connect(spark):
         return True
     try:
         from pyspark.sql.connect.dataframe import DataFrame as ConnectDF
-        from pyspark.sql.connect.readwriter import DataFrameReader
+        from pyspark.sql.connect.readwriter import DataFrameReader, DataFrameWriter
         from pyspark.sql.connect.streaming.readwriter import (
             DataStreamReader,
             DataStreamWriter,
@@ -547,6 +885,7 @@ def _install_connect(spark):
 
     orig_load = DataStreamReader.load
     orig_batch_load = DataFrameReader.load
+    orig_save = DataFrameWriter.save
     orig_foreach = DataStreamWriter.foreachBatch
     orig_start = DataStreamWriter.start
     orig_ws = ConnectDF.writeStream
@@ -573,6 +912,18 @@ def _install_connect(spark):
             return df
         return orig_batch_load(self, path=path, format=format, schema=schema, **kwargs)
 
+    def save(self, path=None, format=None, mode=None, partitionBy=None, **options):
+        fmt, held = _writer_fmt_opts(self, format, options)
+        if should_produce(fmt, held):
+            df = getattr(self, "_df", None)
+            print(SINK_ANNOUNCE, file=sys.stderr, flush=True)
+            produce_plain_kafka(collect_kafka_sink_rows(df), held)
+            return None
+        return orig_save(
+            self, path=path, format=format, mode=mode,
+            partitionBy=partitionBy, **options,
+        )
+
     def foreachBatch(self, func):  # noqa: N802 — Spark's name
         self._emu_foreach_batch = func
         stream_df = getattr(self, "_emu_stream_df", None)
@@ -592,6 +943,11 @@ def _install_connect(spark):
             print(FOREACH_ANNOUNCE, file=sys.stderr, flush=True)
             self._emu_foreach_batch(stream_df, 0)
             return OneShotStreamingQuery(name=queryName)
+        fmt, held = _writer_fmt_opts(self, format, options)
+        if should_produce(fmt, held):
+            print(SINK_ANNOUNCE, file=sys.stderr, flush=True)
+            produce_plain_kafka(collect_kafka_sink_rows(stream_df), held)
+            return OneShotStreamingQuery(name=queryName)
         return orig_start(
             self, path=path, format=format, outputMode=outputMode,
             partitionBy=partitionBy, queryName=queryName, **options,
@@ -599,6 +955,7 @@ def _install_connect(spark):
 
     DataStreamReader.load = load
     DataFrameReader.load = batch_load
+    DataFrameWriter.save = save
     DataStreamWriter.foreachBatch = foreachBatch
     DataStreamWriter.start = start
     ConnectDF.writeStream = property(writeStream)

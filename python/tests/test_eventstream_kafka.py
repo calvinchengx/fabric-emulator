@@ -1,5 +1,6 @@
 """Eventstream kafka wrap rewrites Fabric options to OSS Kafka, never to rate."""
 import base64
+import email.message
 import io
 import json
 import sys
@@ -52,7 +53,8 @@ def test_resolve_unknown_id_fails_loud(monkeypatch):
             "errorCode": "EventstreamSourceNotFound",
             "message": "The Eventstream datasource id is not available.",
         }).encode()
-        raise HTTPError(req.full_url, 404, "Not Found", hdrs={}, fp=io.BytesIO(body))
+        raise HTTPError(req.full_url, 404, "Not Found",
+                        hdrs=email.message.Message(), fp=io.BytesIO(body))
 
     monkeypatch.setattr(ek.urllib.request, "urlopen", boom)
     with pytest.raises(ek.EventstreamError, match=r"not available|404"):
@@ -67,7 +69,8 @@ def test_consume_unknown_id_fails_loud(monkeypatch):
             "errorCode": "ItemNotFound",
             "message": "The Eventstream item is not available.",
         }).encode()
-        raise HTTPError(req.full_url, 404, "Not Found", hdrs={}, fp=io.BytesIO(body))
+        raise HTTPError(req.full_url, 404, "Not Found",
+                        hdrs=email.message.Message(), fp=io.BytesIO(body))
 
     monkeypatch.setattr(ek.urllib.request, "urlopen", boom)
     with pytest.raises(ek.EventstreamError, match=r"not available|404"):
@@ -232,8 +235,8 @@ def test_http_error_body_need_not_be_json(monkeypatch):
     monkeypatch.setattr(ek, "_fabric_token", lambda env=None: "tok")
 
     def boom(req, timeout=60, context=None):
-        raise HTTPError(req.full_url, 502, "Bad Gateway", hdrs={},
-                        fp=io.BytesIO(b"not-json"))
+        raise HTTPError(req.full_url, 502, "Bad Gateway",
+                        hdrs=email.message.Message(), fp=io.BytesIO(b"not-json"))
 
     monkeypatch.setattr(ek.urllib.request, "urlopen", boom)
     with pytest.raises(ek.EventstreamError, match=r"not-json|502"):
@@ -299,47 +302,89 @@ def test_native_kafka_is_not_an_eventstream_rewrite():
     }) is False
 
 
-def test_consume_plain_kafka_fails_loud_on_unsupported_options():
+def test_consume_plain_kafka_fails_loud_on_incomplete_or_conflicting_options():
     with pytest.raises(ek.KafkaSourceError, match="bootstrap"):
         ek.consume_plain_kafka({"subscribe": "t"})
     with pytest.raises(ek.KafkaSourceError, match="subscribe"):
         ek.consume_plain_kafka({"kafka.bootstrap.servers": "k:9092"})
-    with pytest.raises(ek.KafkaSourceError, match="subscribePattern"):
+    with pytest.raises(ek.KafkaSourceError, match="more than one"):
         ek.consume_plain_kafka({
             "kafka.bootstrap.servers": "k:9092",
+            "subscribe": "t",
             "subscribePattern": "clicks-.*",
         })
-    with pytest.raises(ek.KafkaSourceError, match="assign"):
-        ek.consume_plain_kafka({
-            "kafka.bootstrap.servers": "k:9092",
-            "assign": '{"t":[0]}',
-        })
-    with pytest.raises(ek.KafkaSourceError, match="PLAINTEXT"):
+    with pytest.raises(ek.KafkaSourceError, match=r"GSSAPI|PLAIN only"):
         ek.consume_plain_kafka({
             "kafka.bootstrap.servers": "k:9092",
             "subscribe": "t",
             "kafka.security.protocol": "SASL_SSL",
+            "kafka.sasl.mechanism": "GSSAPI",
         })
-    with pytest.raises(ek.KafkaSourceError, match="includeHeaders"):
+    with pytest.raises(ek.KafkaSourceError, match=r"PEM|truststore"):
         ek.consume_plain_kafka({
             "kafka.bootstrap.servers": "k:9092",
             "subscribe": "t",
-            "includeHeaders": "true",
+            "kafka.security.protocol": "SSL",
+            "kafka.ssl.truststore.location": "trust.jks",
         })
-    with pytest.raises(ek.KafkaSourceError, match="startingOffsets"):
-        ek.consume_plain_kafka({
+    with pytest.raises(ek.KafkaSourceError, match="earliest"):
+        ek.kafka_source_spec({
             "kafka.bootstrap.servers": "k:9092",
             "subscribe": "t",
-            "startingOffsets": '{"t":{"0":0}}',
+            "endingOffsets": "earliest",
         })
+
+
+def test_kafka_source_spec_subscribe_pattern_assign_and_json_offsets():
+    spec = ek.kafka_source_spec({
+        "kafka.bootstrap.servers": "k:9092",
+        "subscribePattern": "clicks-.*",
+        "startingOffsets": '{"clicks-a":{"0":12}}',
+        "endingOffsets": "latest",
+        "includeHeaders": "true",
+    })
+    assert spec["pattern"] == "clicks-.*"
+    assert spec["topics"] == []
+    assert spec["starting"] == {"clicks-a": {0: 12}}
+    assert spec["ending"] == "latest"
+    assert spec["include_headers"] is True
+
+    assigned = ek.kafka_source_spec({
+        "kafka.bootstrap.servers": "k:9092",
+        "assign": '{"t":[0,1]}',
+        "startingOffsets": "earliest",
+    })
+    assert assigned["assign"] == {"t": [0, 1]}
+    assert assigned["topics"] == []
+
+
+def test_sasl_plain_from_jaas_and_username():
+    jaas = (
+        'org.apache.kafka.common.security.plain.PlainLoginModule required '
+        'username="alice" password="s3cret";'
+    )
+    kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SASL_PLAINTEXT",
+        "kafka.sasl.jaas.config": jaas,
+    })
+    assert kw["sasl_plain_username"] == "alice"
+    assert kw["sasl_plain_password"] == "s3cret"
+    kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SASL_SSL",
+        "kafka.sasl.username": "bob",
+        "kafka.sasl.password": "pw",
+        "kafka.ssl.truststore.location": "/tmp/ca.pem",
+    })
+    assert kw["ssl_cafile"] == "/tmp/ca.pem"
+    assert kw["sasl_plain_username"] == "bob"
 
 
 def test_consume_plain_kafka_passes_bytes_through_poll():
     seen = {}
 
-    def poll(bootstrap, topics, starting, timeout_ms, max_records):
-        seen["args"] = (bootstrap, topics, starting, timeout_ms, max_records)
-        return [{"key": b"k", "value": b"hello", "topic": topics[0]}]
+    def poll(spec):
+        seen["spec"] = spec
+        return [{"key": b"k", "value": b"hello", "topic": spec["topics"][0]}]
 
     recs = ek.consume_plain_kafka({
         "kafka.bootstrap.servers": "kafka:9092",
@@ -348,12 +393,44 @@ def test_consume_plain_kafka_passes_bytes_through_poll():
         "maxOffsetsPerTrigger": "7",
         "kafkaConsumer.pollTimeoutMs": "1234",
     }, poll=poll)
-    assert seen["args"] == ("kafka:9092", ["plain", "other"], "earliest", 1234, 7)
+    assert seen["spec"]["bootstrap"] == "kafka:9092"
+    assert seen["spec"]["topics"] == ["plain", "other"]
+    assert seen["spec"]["starting"] == "earliest"
+    assert seen["spec"]["timeout_ms"] == 1234
+    assert seen["spec"]["max_records"] == 7
     assert recs[0]["value"] == b"hello"
     rows = ek.records_to_rows(recs)
     assert rows[0][0] == b"k"
     assert rows[0][1] == b"hello"
     assert rows[0][2] == "plain"
+
+
+def test_records_to_rows_include_headers():
+    rows = ek.records_to_rows([{
+        "key": b"k", "value": b"v", "topic": "t",
+        "headers": [("h", b"1")],
+    }], include_headers=True)
+    assert rows[0][-1] == [("h", b"1")]
+
+
+def test_produce_plain_kafka_sends_key_value_topic():
+    sent = []
+
+    def send(bootstrap, topic, records, client):
+        sent.append((bootstrap, topic, records, client))
+        return len(records)
+
+    n = ek.produce_plain_kafka(
+        [{"key": b"k", "value": b"v", "topic": "t"}],
+        {"kafka.bootstrap.servers": "k:9092", "topic": "fallback"},
+        send=send,
+    )
+    assert n == 1
+    assert sent[0][0] == "k:9092"
+    assert sent[0][1] == "fallback"
+    assert sent[0][2][0]["value"] == b"v"
+    with pytest.raises(ek.KafkaSourceError, match="bootstrap"):
+        ek.produce_plain_kafka([{}], {"topic": "t"})
 
 
 def test_kafka_poll_maps_consumer_bytes(monkeypatch):
@@ -398,12 +475,464 @@ def test_kafka_poll_maps_consumer_bytes(monkeypatch):
     kafka_mod.KafkaConsumer = Consumer
     kafka_mod.TopicPartition = TP
     monkeypatch.setitem(sys.modules, "kafka", kafka_mod)
-    rows = ek._kafka_poll("k:9092", ["t"], "earliest", 500, 10)
+    spec = {
+        "bootstrap": "k:9092",
+        "topics": ["t"],
+        "pattern": "",
+        "assign": None,
+        "starting": "earliest",
+        "ending": None,
+        "timeout_ms": 500,
+        "max_records": 10,
+        "include_headers": False,
+        "client": {},
+    }
+    rows = ek._kafka_poll(spec)
     assert rows[0]["value"] == b"hello-engine-matrix"
     assert assigned["seek"] == "beginning" and assigned["closed"] is True
-    rows = ek._kafka_poll("k:9092", ["t"], "latest", 500, 10)
+    spec["starting"] = "latest"
+    spec["ending"] = "latest"
+    rows = ek._kafka_poll(spec)
     assert rows == []
     assert assigned["seek"] == "end"
+
+
+def _poll_spec(**overrides):
+    spec = {
+        "bootstrap": "k:9092",
+        "topics": ["t"],
+        "pattern": "",
+        "assign": None,
+        "starting": "earliest",
+        "ending": None,
+        "timeout_ms": 50,
+        "max_records": 10,
+        "include_headers": False,
+        "client": {},
+    }
+    spec.update(overrides)
+    return spec
+
+
+def _install_fake_kafka(monkeypatch, *, messages=None, topics=None,
+                        partitions=None, begin=None, end=None):
+    """kafka-python stand-in for poll + produce unit tests."""
+    state = {
+        "init": {},
+        "assigned": None,
+        "seeks": [],
+        "closed": False,
+        "sent": [],
+        "flushed": False,
+        "producer_init": {},
+    }
+
+    class Msg:
+        def __init__(self, **kw):
+            self.key = kw.get("key")
+            self.value = kw.get("value", b"v")
+            self.topic = kw.get("topic", "t")
+            self.partition = kw.get("partition", 0)
+            self.offset = kw.get("offset", 0)
+            self.timestamp = kw.get("timestamp", 0)
+            self.timestamp_type = kw.get("timestamp_type", 0)
+            self.headers = kw.get("headers")
+
+    class TP:
+        def __init__(self, topic, p):
+            self.topic, self.partition = topic, p
+
+        def __hash__(self):
+            return hash((self.topic, self.partition))
+
+        def __eq__(self, other):
+            return self.topic == other.topic and self.partition == other.partition
+
+    class Consumer:
+        def __init__(self, **kw):
+            state["init"] = kw
+
+        def topics(self):
+            return list(topics or [])
+
+        def partitions_for_topic(self, topic):
+            if partitions is None:
+                return {0}
+            return partitions.get(topic)
+
+        def assign(self, tps):
+            state["assigned"] = tps
+
+        def seek_to_beginning(self, *tps):
+            state["seeks"].append(("beginning", tps))
+
+        def seek_to_end(self, *tps):
+            state["seeks"].append(("end", tps))
+
+        def beginning_offsets(self, tps):
+            table = begin or {}
+            return {tp: table.get((tp.topic, tp.partition), 0) for tp in tps}
+
+        def end_offsets(self, tps):
+            table = end or {}
+            return {tp: table.get((tp.topic, tp.partition), 10) for tp in tps}
+
+        def seek(self, tp, off):
+            state["seeks"].append(("seek", tp.topic, tp.partition, off))
+
+        def __iter__(self):
+            out = []
+            for m in messages or []:
+                out.append(m if isinstance(m, Msg) else Msg(**m))
+            return iter(out)
+
+        def close(self):
+            state["closed"] = True
+
+    class Producer:
+        def __init__(self, **kw):
+            state["producer_init"] = kw
+
+        def send(self, topic, value=None, key=None, **kw):
+            state["sent"].append({"topic": topic, "value": value, "key": key, **kw})
+
+        def flush(self):
+            state["flushed"] = True
+
+        def close(self):
+            state["closed"] = True
+
+    kafka_mod = types.ModuleType("kafka")
+    kafka_mod.KafkaConsumer = Consumer
+    kafka_mod.KafkaProducer = Producer
+    kafka_mod.TopicPartition = TP
+    monkeypatch.setitem(sys.modules, "kafka", kafka_mod)
+    return state, Msg, TP
+
+
+def test_parse_offset_option_json_sentinels_and_errors():
+    assert ek._parse_offset_option("", "startingOffsets") is None
+    assert ek._parse_offset_option("earliest", "startingOffsets") == "earliest"
+    assert ek._parse_offset_option("latest", "endingOffsets") == "latest"
+    parsed = ek._parse_offset_option('{"t":{"0":-2,"1":-1,"2":9}}', "startingOffsets")
+    assert parsed == {"t": {0: -2, 1: -1, 2: 9}}
+    with pytest.raises(ek.KafkaSourceError, match="not earliest"):
+        ek._parse_offset_option("{", "startingOffsets")
+    with pytest.raises(ek.KafkaSourceError, match="must be an object"):
+        ek._parse_offset_option("[1]", "startingOffsets")
+    with pytest.raises(ek.KafkaSourceError, match="partition"):
+        ek._parse_offset_option('{"t":[0]}', "startingOffsets")
+
+
+def test_kafka_source_spec_rejects_bad_assign_and_offset_json():
+    with pytest.raises(ek.KafkaSourceError, match="not JSON"):
+        ek.kafka_source_spec({
+            "kafka.bootstrap.servers": "k:9092", "assign": "{",
+        })
+    with pytest.raises(ek.KafkaSourceError, match="topic"):
+        ek.kafka_source_spec({
+            "kafka.bootstrap.servers": "k:9092", "assign": "[0]",
+        })
+    with pytest.raises(ek.KafkaSourceError, match="more than one"):
+        ek.kafka_source_spec({
+            "kafka.bootstrap.servers": "k:9092",
+            "subscribePattern": "t-.*",
+            "assign": '{"t":[0]}',
+        })
+    spec = ek.kafka_source_spec({
+        "kafka.bootstrap.servers": "k:9092",
+        "subscribe": "t",
+    })
+    assert spec["timeout_ms"] == 8000
+    assert spec["max_records"] == 10000
+    assert spec["starting"] == "earliest"
+    assert spec["ending"] is None
+    assert spec["client"] == {}
+
+
+def test_kafka_client_kwargs_plaintext_ssl_and_fail_loud():
+    assert ek.kafka_client_kwargs({}) == {}
+    assert ek.kafka_client_kwargs({"kafka.security.protocol": "PLAINTEXT"}) == {}
+    with pytest.raises(ek.KafkaSourceError, match="not in this wrap"):
+        ek.kafka_client_kwargs({"kafka.security.protocol": "SASL_KERBEROS"})
+    with pytest.raises(ek.KafkaSourceError, match=r"jaas.config or"):
+        ek.kafka_client_kwargs({"kafka.security.protocol": "SASL_PLAINTEXT"})
+    with pytest.raises(ek.KafkaSourceError, match="PEM CA"):
+        ek.kafka_client_kwargs({"kafka.security.protocol": "SSL"})
+    with pytest.raises(ek.KafkaSourceError, match="Java truststore"):
+        ek.kafka_client_kwargs({
+            "kafka.security.protocol": "SSL",
+            "kafka.ssl.truststore.location": "ca.p12",
+        })
+    with pytest.raises(ek.KafkaSourceError, match="Java truststore"):
+        ek.kafka_client_kwargs({
+            "kafka.security.protocol": "SSL",
+            "kafka.ssl.truststore.location": "ca.pfx",
+        })
+    kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SSL",
+        "kafka.ssl.truststore.location": "/tmp/ca.pem",
+        "kafka.ssl.keystore.location": "/tmp/client.pem",
+        "kafka.ssl.key.location": "/tmp/client.key",
+    })
+    assert kw == {
+        "security_protocol": "SSL",
+        "ssl_cafile": "/tmp/ca.pem",
+        "ssl_certfile": "/tmp/client.pem",
+        "ssl_keyfile": "/tmp/client.key",
+    }
+    jaas = (
+        'org.apache.kafka.common.security.plain.PlainLoginModule required '
+        'username="from-jaas" password="p";'
+    )
+    kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SASL_PLAINTEXT",
+        "kafka.sasl.username": "ignored",
+        "kafka.sasl.password": "ignored",
+        "kafka.sasl.jaas.config": jaas,
+    })
+    assert kw["sasl_plain_username"] == "from-jaas"
+
+
+def test_parse_jaas_plain_requires_both_fields():
+    with pytest.raises(ek.KafkaSourceError, match="username="):
+        ek.parse_jaas_plain('username="only"')
+    with pytest.raises(ek.KafkaSourceError, match="username="):
+        ek.parse_jaas_plain("")
+
+
+def test_should_produce_and_collect_sink_rows():
+    assert ek.should_produce("kafka", {"kafka.bootstrap.servers": "k:9092"}) is True
+    assert ek.should_produce("kafka", {}) is False
+    assert ek.should_produce("delta", {"kafka.bootstrap.servers": "k:9092"}) is False
+    with pytest.raises(ek.KafkaSourceError, match="no DataFrame"):
+        ek.collect_kafka_sink_rows(None)
+
+    class Row:
+        def asDict(self, recursive=True):
+            return {"value": b"from-row"}
+
+    df = types.SimpleNamespace(collect=lambda: [Row(), {"value": b"from-dict"}])
+    assert ek.collect_kafka_sink_rows(df) == [
+        {"value": b"from-row"}, {"value": b"from-dict"},
+    ]
+    assert ek._row_dict([("value", b"x")]) == {"value": b"x"}
+
+    proto = types.SimpleNamespace(format="kafka", options={"topic": "from-proto"})
+    writer = types.SimpleNamespace(
+        _write_proto=proto, _options={"a": "1"}, _format="parquet",
+    )
+    fmt, held = ek._writer_fmt_opts(writer, options={"b": "2"})
+    assert fmt == "kafka"
+    assert held["topic"] == "from-proto"
+    assert held["a"] == "1" and held["b"] == "2"
+
+
+def test_kafka_helpers_resolve_seek_headers_and_end():
+    class C:
+        def topics(self):
+            return ["clicks-a", "other"]
+
+        def partitions_for_topic(self, topic):
+            return None if topic == "missing" else {0, 1}
+
+    class TP:
+        def __init__(self, topic, p):
+            self.topic, self.partition = topic, p
+
+    assert ek._resolve_topics(C(), {"assign": {"t": [0]}}) == ["t"]
+    assert ek._resolve_topics(C(), {"topics": ["a", "b"]}) == ["a", "b"]
+    assert ek._resolve_topics(C(), {
+        "pattern": "clicks-.*", "timeout_ms": 50, "bootstrap": "k",
+    }) == ["clicks-a"]
+    with pytest.raises(ek.KafkaSourceError, match="not a regex"):
+        ek._resolve_topics(C(), {
+            "pattern": "[", "timeout_ms": 1, "bootstrap": "k",
+        })
+    with pytest.raises(ek.KafkaSourceError, match="matched no topics"):
+        ek._resolve_topics(C(), {
+            "pattern": "zzz", "timeout_ms": 1, "bootstrap": "k:9092",
+        })
+    tps = ek._partitions_for(C(), TP, {"assign": {"t": [0, 2]}}, [])
+    assert [(tp.topic, tp.partition) for tp in tps] == [("t", 0), ("t", 2)]
+    tps = ek._partitions_for(C(), TP, {"timeout_ms": 50, "bootstrap": "k"}, ["ok"])
+    assert [(tp.topic, tp.partition) for tp in tps] == [("ok", 0), ("ok", 1)]
+    with pytest.raises(ek.KafkaSourceError, match="metadata not found"):
+        ek._partitions_for(
+            C(), TP, {"timeout_ms": 1, "bootstrap": "k:9092"}, ["missing"],
+        )
+
+    tp = TP("t", 0)
+    assert ek._offset_for("latest", tp, 9) == 9
+    assert ek._offset_for({"t": {0: 4}}, tp, -2) == 4
+    assert ek._offset_for({"t": {"0": 5}}, tp, -2) == 5
+    assert ek._offset_for({"t": {1: 1}}, tp, -2) == -2
+
+    class Seeker:
+        def __init__(self):
+            self.ops = []
+
+        def seek_to_end(self, *tps):
+            self.ops.append(("end", tps))
+
+        def seek_to_beginning(self, *tps):
+            self.ops.append(("begin", tps))
+
+        def beginning_offsets(self, tps):
+            return {tps[0]: 0}
+
+        def end_offsets(self, tps):
+            return {tps[0]: 99}
+
+        def seek(self, tp, off):
+            self.ops.append(("seek", off))
+
+    s = Seeker()
+    ek._seek_start(s, [tp], "latest")
+    ek._seek_start(s, [tp], "earliest")
+    ek._seek_start(s, [tp], None)
+    ek._seek_start(s, [tp], {"t": {0: -2}})
+    ek._seek_start(s, [tp], {"t": {0: -1}})
+    ek._seek_start(s, [tp], {"t": {0: 7}})
+    assert s.ops[0][0] == "end"
+    assert s.ops[1][0] == "begin" and s.ops[2][0] == "begin"
+    assert ("seek", 0) in s.ops and ("seek", 99) in s.ops and ("seek", 7) in s.ops
+
+    assert ek._past_end(None, tp, 0) is False
+    assert ek._past_end("latest", tp, 0) is False
+    assert ek._past_end({"t": {0: -1}}, tp, 9) is False
+    assert ek._past_end({"t": {0: 5}}, tp, 4) is False
+    assert ek._past_end({"t": {0: 5}}, tp, 5) is True
+
+    assert ek._msg_headers(types.SimpleNamespace(headers=None)) == []
+    assert ek._msg_headers(types.SimpleNamespace(headers=[
+        ("h", b"1"), {"key": "k", "value": b"2"}, "skip",
+    ])) == [("h", b"1"), ("k", b"2")]
+
+
+def test_kafka_poll_assign_pattern_json_offsets_headers(monkeypatch):
+    state, _, _ = _install_fake_kafka(
+        monkeypatch,
+        messages=[{
+            "topic": "clicks-a", "value": b"a", "offset": 4,
+            "headers": [("h", b"1")],
+        }, {
+            "topic": "clicks-a", "value": b"b", "offset": 5,
+        }],
+        topics=["clicks-a"],
+        begin={("clicks-a", 0): 0},
+        end={("clicks-a", 0): 9},
+    )
+    rows = ek._kafka_poll(_poll_spec(
+        topics=[],
+        pattern="clicks-.*",
+        starting={"clicks-a": {0: 4}},
+        ending={"clicks-a": {0: 5}},
+        include_headers=True,
+        client={"sasl_mechanism": "PLAIN"},
+    ))
+    assert state["init"]["sasl_mechanism"] == "PLAIN"
+    assert state["closed"] is True
+    assert [r["value"] for r in rows] == [b"a"]
+    assert rows[0]["headers"] == [("h", b"1")]
+    assert ("seek", "clicks-a", 0, 4) in state["seeks"]
+
+    state, _, _ = _install_fake_kafka(
+        monkeypatch, messages=[{"value": b"x", "topic": "t", "partition": 1}],
+    )
+    rows = ek._kafka_poll(_poll_spec(topics=[], assign={"t": [1]}))
+    assert len(state["assigned"]) == 1
+    assert state["assigned"][0].partition == 1
+    assert rows[0]["value"] == b"x"
+
+
+def test_kafka_poll_caps_records_empty_assign_and_import_error(monkeypatch):
+    state, _, _ = _install_fake_kafka(
+        monkeypatch,
+        messages=[{"value": b"1"}, {"value": b"2"}, {"value": b"3"}],
+    )
+    rows = ek._kafka_poll(_poll_spec(max_records=2))
+    assert [r["value"] for r in rows] == [b"1", b"2"]
+
+    state, _, _ = _install_fake_kafka(monkeypatch, messages=[{"value": b"x"}])
+    assert ek._kafka_poll(_poll_spec(topics=[], assign={"t": []})) == []
+    assert state["closed"] is True
+
+    monkeypatch.setitem(sys.modules, "kafka", None)
+    with pytest.raises(ek.KafkaSourceError, match="kafka-python"):
+        ek._kafka_poll(_poll_spec())
+
+
+def test_kafka_send_produces_headers_and_requires_topic(monkeypatch):
+    state, _, _ = _install_fake_kafka(monkeypatch)
+    n = ek._kafka_send("k:9092, k2:9092", "fallback", [
+        {"key": b"k", "value": b"v", "headers": [("h", b"1")]},
+        {"value": b"w", "topic": "other", "headers": [{"key": "x", "value": b"y"}]},
+    ], {"security_protocol": "SSL"})
+    assert n == 2
+    assert state["producer_init"]["bootstrap_servers"] == ["k:9092", "k2:9092"]
+    assert state["producer_init"]["security_protocol"] == "SSL"
+    assert state["sent"][0]["topic"] == "fallback"
+    assert state["sent"][0]["headers"] == [("h", b"1")]
+    assert state["sent"][1]["topic"] == "other"
+    assert state["flushed"] and state["closed"]
+    with pytest.raises(ek.KafkaSourceError, match="topic column"):
+        ek._kafka_send("k:9092", "", [{"value": b"v"}], {})
+    monkeypatch.setitem(sys.modules, "kafka", None)
+    with pytest.raises(ek.KafkaSourceError, match="kafka-python"):
+        ek._kafka_send("k:9092", "t", [{"value": b"v"}], {})
+
+
+def test_records_to_rows_header_dicts():
+    rows = ek.records_to_rows([{
+        "value": b"v", "topic": "t",
+        "headers": [{"key": "h", "value": "YQ=="}, ("z", b"2")],
+    }], include_headers=True)
+    assert rows[0][-1] == [("h", b"a"), ("z", b"2")]
+
+
+def test_connect_kafka_df_eventstream_and_headers(monkeypatch, capsys):
+    monkeypatch.setattr(
+        ek, "consume_events",
+        lambda *a, **k: [{"value": b"es", "topic": "item.ds"}],
+    )
+    monkeypatch.setattr(
+        ek, "consume_plain_kafka",
+        lambda opts: [{"value": b"n", "topic": "t", "headers": [("h", b"1")]}],
+    )
+    monkeypatch.setattr(ek, "kafka_schema", lambda include_headers=False: include_headers)
+    created = []
+
+    class Spark:
+        def createDataFrame(self, rows, schema):
+            created.append((rows, schema))
+            return types.SimpleNamespace(rows=rows, schema=schema)
+
+    spark = Spark()
+    df = ek.connect_kafka_df(spark, "kafka", {
+        "eventstream.itemid": "a", "eventstream.datasourceid": "b",
+    })
+    assert df._emu_eventstream is True
+    assert created[0][1] is False
+    assert "emulator consume" in capsys.readouterr().err
+    with pytest.raises(ek.EventstreamError, match="both eventstream"):
+        ek.connect_kafka_df(spark, "kafka", {"eventstream.itemid": "only"})
+    df = ek.connect_kafka_df(spark, "kafka", {
+        "kafka.bootstrap.servers": "k:9092",
+        "subscribe": "t",
+        "includeHeaders": "true",
+    })
+    assert created[-1][1] is True
+    assert created[-1][0][0][-1] == [("h", b"1")]
+
+
+def test_should_consume_native_assign_and_pattern():
+    assert ek.should_consume_native("kafka", {
+        "kafka.bootstrap.servers": "k:9092", "assign": '{"t":[0]}',
+    }) is True
+    assert ek.should_consume_native("kafka", {
+        "subscribePattern": "t-.*",
+    }) is True
 
 
 def test_connect_kafka_df_native_uses_the_spark_session(monkeypatch, capsys):
@@ -412,7 +941,7 @@ def test_connect_kafka_df_native_uses_the_spark_session(monkeypatch, capsys):
         ek, "consume_plain_kafka",
         lambda opts: [{"key": b"k", "value": b"payload", "topic": "t"}],
     )
-    monkeypatch.setattr(ek, "kafka_schema", lambda: "kafka-schema")
+    monkeypatch.setattr(ek, "kafka_schema", lambda include_headers=False: "kafka-schema")
     created = []
 
     class Spark:
@@ -456,6 +985,7 @@ def test_kafka_schema_is_kafka_not_rate(monkeypatch):
     types_mod.TimestampType = lambda: "timestamp"
     types_mod.StructField = Field
     types_mod.StructType = Struct
+    types_mod.ArrayType = lambda inner: ("array", inner)
     monkeypatch.setitem(sys.modules, "pyspark", types.ModuleType("pyspark"))
     monkeypatch.setitem(sys.modules, "pyspark.sql", types.ModuleType("pyspark.sql"))
     monkeypatch.setitem(sys.modules, "pyspark.sql.types", types_mod)
@@ -464,10 +994,12 @@ def test_kafka_schema_is_kafka_not_rate(monkeypatch):
     assert names == ["key", "value", "topic", "partition", "offset",
                      "timestamp", "timestampType"]
     assert "rate" not in names
+    headed = ek.kafka_schema(include_headers=True)
+    assert [f.name for f in headed.fields][-1] == "headers"
 
 
 def test_materialize_marks_the_dataframe(monkeypatch):
-    monkeypatch.setattr(ek, "kafka_schema", lambda: "schema")
+    monkeypatch.setattr(ek, "kafka_schema", lambda include_headers=False: "schema")
 
     class Spark:
         def createDataFrame(self, rows, schema):
@@ -586,6 +1118,16 @@ def test_connect_install_runs_foreach_locally(monkeypatch, reset_install, capsys
             engine["start"] += 1
             return "engine-query"
 
+    class DataFrameWriter:
+        def __init__(self):
+            self._format = None
+            self._options = {}
+            self._df = None
+
+        def save(self, path=None, format=None, mode=None, partitionBy=None, **options):
+            engine["save"] = engine.get("save", 0) + 1
+            return "saved"
+
     class ConnectDF:
         def __init__(self, marked=False):
             self._emu_eventstream = marked
@@ -599,6 +1141,7 @@ def test_connect_install_runs_foreach_locally(monkeypatch, reset_install, capsys
     streaming.DataStreamWriter = DataStreamWriter
     rw = types.ModuleType("pyspark.sql.connect.readwriter")
     rw.DataFrameReader = DataFrameReader
+    rw.DataFrameWriter = DataFrameWriter
     dfmod = types.ModuleType("pyspark.sql.connect.dataframe")
     dfmod.DataFrame = ConnectDF
     monkeypatch.setitem(sys.modules, "pyspark", types.ModuleType("pyspark"))
@@ -612,7 +1155,10 @@ def test_connect_install_runs_foreach_locally(monkeypatch, reset_install, capsys
 
     marked = types.SimpleNamespace(_emu_eventstream=True)
     monkeypatch.setattr(ek, "consume_events", lambda *a, **k: [{"topic": "t"}])
-    monkeypatch.setattr(ek, "materialize_kafka_df", lambda spark, recs: marked)
+    monkeypatch.setattr(
+        ek, "materialize_kafka_df",
+        lambda spark, recs, include_headers=False: marked,
+    )
 
     spark = types.SimpleNamespace(read=DataFrameReader())
     assert ek.install(spark) is True
@@ -681,6 +1227,33 @@ def test_connect_install_runs_foreach_locally(monkeypatch, reset_install, capsys
     b._options = {"kafka.bootstrap.servers": "k:9092", "subscribe": "plain"}
     assert b.load() is marked
     assert engine.get("batch", 0) == 0
+    plain_batch = DataFrameReader()
+    plain_batch.format("parquet")
+    assert plain_batch.load() == "engine-batch"
+    assert engine["batch"] == 1
+
+    sent = []
+    monkeypatch.setattr(ek, "produce_plain_kafka", lambda recs, opts: sent.append((recs, opts)))
+    monkeypatch.setattr(ek, "collect_kafka_sink_rows", lambda df: [{"value": b"out"}])
+    sink = DataFrameWriter()
+    sink._format = "kafka"
+    sink._options = {"kafka.bootstrap.servers": "k:9092", "topic": "out"}
+    sink._df = marked
+    assert sink.save() is None
+    assert sent and sent[0][0] == [{"value": b"out"}]
+    assert engine.get("save", 0) == 0
+    other_sink = DataFrameWriter()
+    other_sink._format = "delta"
+    assert other_sink.save() == "saved"
+    assert engine["save"] == 1
+
+    wkafka = DataStreamWriter()
+    wkafka._emu_stream_df = marked
+    wkafka._format = "kafka"
+    wkafka._options = {"kafka.bootstrap.servers": "k:9092", "topic": "out"}
+    qk = wkafka.start()
+    assert qk.isActive is False
+    assert engine["start"] == 1
 
 
 def test_connect_install_skips_non_connect_reader(monkeypatch, reset_install):
@@ -694,6 +1267,7 @@ def test_connect_install_skips_non_connect_reader(monkeypatch, reset_install):
     streaming.DataStreamWriter = type("DataStreamWriter", (), {})
     rw = types.ModuleType("pyspark.sql.connect.readwriter")
     rw.DataFrameReader = DataFrameReader
+    rw.DataFrameWriter = type("DataFrameWriter", (), {})
     dfmod = types.ModuleType("pyspark.sql.connect.dataframe")
     dfmod.DataFrame = type("DataFrame", (), {})
     monkeypatch.setitem(sys.modules, "pyspark", types.ModuleType("pyspark"))
@@ -711,3 +1285,17 @@ def test_connect_install_skips_non_connect_reader(monkeypatch, reset_install):
     spark = types.SimpleNamespace(read=object())
     assert ek._install_connect(spark) is False
     assert ek.install(spark) is False
+
+
+def test_install_swallows_import_errors(monkeypatch, reset_install):
+    monkeypatch.delenv("SPARK_REMOTE", raising=False)
+
+    def boom_classic():
+        raise ImportError("no classic pyspark")
+
+    def boom_connect(spark=None):
+        raise ImportError("no connect pyspark")
+
+    monkeypatch.setattr(ek, "_install_classic", boom_classic)
+    monkeypatch.setattr(ek, "_install_connect", boom_connect)
+    assert ek.install() is False

@@ -254,7 +254,10 @@
       "py:test_connect_install_runs_foreach_locally",
       "py:test_native_kafka_is_not_an_eventstream_rewrite",
       "py:test_consume_plain_kafka_passes_bytes_through_poll",
-      "py:test_connect_kafka_df_native_uses_the_spark_session"
+      "py:test_connect_kafka_df_native_uses_the_spark_session",
+      "py:test_kafka_source_spec_subscribe_pattern_assign_and_json_offsets",
+      "py:test_sasl_plain_from_jaas_and_username",
+      "py:test_produce_plain_kafka_sends_key_value_topic"
     ]
   },
   "fabric-cicd-tool-publishing": {
@@ -652,7 +655,10 @@
       "py:test_probe_shaped_delta_and_parquet_both_land_rate_rows",
       "py:test_patch_intercepts_delta_and_parquet_start_and_skips_the_engine",
       "py:test_consume_plain_kafka_passes_bytes_through_poll",
-      "py:test_connect_kafka_df_native_uses_the_spark_session"
+      "py:test_connect_kafka_df_native_uses_the_spark_session",
+      "py:test_kafka_source_spec_subscribe_pattern_assign_and_json_offsets",
+      "py:test_sasl_plain_from_jaas_and_username",
+      "py:test_produce_plain_kafka_sends_key_value_topic"
     ]
   },
   "reference-run-lakehouse-rule": {
