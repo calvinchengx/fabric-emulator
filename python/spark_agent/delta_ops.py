@@ -834,6 +834,13 @@ def install(spark, storage_options=None):
     json_multiline.install(spark)
     import stream_sinks
     stream_sinks.install(spark)
+    # OSS format("kafka") + Eventstream on Sail: same seam as this module —
+    # the sail-delta matrix column installs *this* function, not agent.py.
+    try:
+        import eventstream_kafka
+        eventstream_kafka.install(spark)
+    except ImportError:
+        pass
     return original_sql
 
 

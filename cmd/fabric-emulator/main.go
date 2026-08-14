@@ -104,6 +104,7 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	fs.StringVar(&cfg.AirflowPassword, "airflow-password", cfg.AirflowPassword, "Airflow basic-auth password")
 	fs.StringVar(&cfg.MLflowURL, "mlflow-url", cfg.MLflowURL, "MLflow tracking/model-registry server URL (empty = off)")
 	fs.StringVar(&cfg.KQLURL, "kql-url", cfg.KQLURL, "real Kusto engine the Eventhouse/KQL Database surface relays to (e.g. http://kustainer:8080; empty = 501)")
+	fs.StringVar(&cfg.KafkaBootstrap, "kafka-bootstrap", cfg.KafkaBootstrap, "Apache Kafka broker host:port the Eventstream surface provisions topics on (e.g. kafka:9092; empty = 501)")
 	fs.StringVar(&cfg.ARMURL, "arm-url", cfg.ARMURL, "arm-emulator origin; when set, ARM-created Fabric capacities appear on GET /v1/capacities")
 	fs.IntVar(&cfg.ARMPollSeconds, "arm-poll-seconds", cfg.ARMPollSeconds, "how often to refresh the ARM capacities feed (0 = 5s)")
 	if err := fs.Parse(args); err != nil {

@@ -72,6 +72,11 @@ type API struct {
 	KQLURL  *url.URL
 	KQLHTTP *http.Client
 	KQLAuth *auth.Validator
+	// KafkaBootstrap is an attached Apache Kafka broker (host:port) backing
+	// Eventstream execution. Empty → Spark resolution, consume, and Custom
+	// produce 501. Kafka is the client; tests substitute a fake.
+	KafkaBootstrap string
+	Kafka          KafkaBroker
 	// kqlDatabases remembers which engine-side databases have been created,
 	// guarded by kqlMu — separate from the fault mutex below so a slow engine
 	// call never blocks an unrelated request.
@@ -279,6 +284,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerAirflow(mux)
 	a.registerMLflow(mux)
 	a.registerKQL(mux)
+	a.registerEventstream(mux)
 	a.registerCatalog(mux)
 	a.registerMCP(mux)
 

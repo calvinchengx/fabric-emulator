@@ -1,0 +1,146 @@
+# Eventstream exec witness: Apache Kafka KRaft behind Fabric's notebook API
+# (`readStream.format("kafka")` + eventstream.itemid / eventstream.datasourceid).
+#
+# The notebook snippet never sees bootstrap servers. JVM rewrites IDs to the
+# OSS Kafka source; Sail consumes through the emulator (LocalRelation + local
+# foreachBatch). Same job.py either way. Profiles: `jvm` or `sail`.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.7.0}
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  kafka:
+    image: apache/kafka:3.9.1@sha256:4ceccc577f03f51f6af8dbfda55194d0d892f4fa7913ffbded567ce3895622ed
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: ""
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      FABRIC_KAFKA_BOOTSTRAP: "kafka:9092"
+    networks:
+      default:
+        aliases:
+          - api.fabric.microsoft.com
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  spark-jvm:
+    profiles: [jvm]
+    build:
+      context: ../..
+      dockerfile: docker/spark-runtime/Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      FABRIC_API_URL: "http://api.fabric.microsoft.com"
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      ENTRA_FABRIC_SCOPE: "https://api.fabric.microsoft.com/.default"
+    volumes:
+      - ./job.py:/opt/spark/work-dir/job.py:ro
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - local[2]
+      - /opt/spark/work-dir/job.py
+
+  # Sail (default engine): same notebook snippet, consume via the emulator,
+  # LocalRelation + foreachBatch in-process. Never `rate`.
+  sail:
+    profiles: [sail]
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket; socket.create_connection(('127.0.0.1', 50051), 2).close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  spark:
+    profiles: [sail]
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+      sail:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./job.py:/job.py:ro
+      - ../../python/spark_agent:/opt/spark_agent:ro
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+      FABRIC_API_URL: "http://api.fabric.microsoft.com"
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      ENTRA_FABRIC_SCOPE: "https://api.fabric.microsoft.com/.default"
+    command: python /job.py

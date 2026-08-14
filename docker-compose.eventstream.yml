@@ -1,0 +1,24 @@
+# Eventstream overlay: point the emulator's Eventstream surface at the
+# profile-gated `kafka` service in docker-compose.yml (Apache Kafka KRaft).
+#
+#   docker compose --profile eventstream \
+#     -f docker-compose.yml -f docker-compose.override.yml \
+#     -f docker-compose.eventstream.yml up
+#
+# Two opt-ins on purpose, and they do different jobs:
+#   --profile eventstream              starts (and only then pulls) the broker
+#   -f docker-compose.eventstream.yml  hands the emulator its bootstrap
+# Skip the overlay and Spark's eventstream.* lookup answers an honest 501
+# instead of relaying to a host that isn't there. Works on Sail (default) and
+# on the JVM overlay (`-f docker-compose.spark-jvm.yml` as well). Native
+# `format("kafka")` + bootstrap/subscribe on Sail is a driver consume into
+# Sail (Kafka schema); the JVM overlay keeps spark-sql-kafka.
+#
+# See docs/51-eventstream-kafka.md.
+services:
+  fabric-emulator:
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      FABRIC_KAFKA_BOOTSTRAP: "kafka:9092"
