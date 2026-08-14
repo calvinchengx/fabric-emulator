@@ -1,7 +1,5 @@
 """Apache Spark 3.5 / Delta 3.2 compatibility witness for Fabric Runtime 1.3."""
 import json
-import pathlib
-import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -85,7 +83,11 @@ assert spark.sparkContext.parallelize([1, 2, 3]).sum() == 6
 # tests prove the facade matches the contract, and this proves the contract
 # matches Spark. Without this, the expected values would be a claim about
 # whoever wrote the facade.
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "python" / "spark_agent"))
+# Mounted beside this file by docker-compose.yml, so spark-submit's own script
+# directory resolves it. The previous version computed a HOST path
+# (`parents[2]/python/spark_agent`) that does not exist inside the container,
+# so this import raised ModuleNotFoundError and the whole oracle never ran —
+# discovered only by dispatching the weekly workflow by hand.
 import rdd_contract  # noqa: E402
 
 for _label, _snippet, _expected in rdd_contract.CASES:
@@ -93,6 +95,16 @@ for _label, _snippet, _expected in rdd_contract.CASES:
     assert _got == _expected, f"{_label}: real Spark gave {_got!r}, contract says {_expected!r}"
 for _label, _snippet in rdd_contract.VOID_CASES:
     assert eval(_snippet, {"sc": spark.sparkContext}) is None, _label  # noqa: S307
+# And what Spark REFUSES, because a contract that only lists what works cannot
+# catch the facade being MORE PERMISSIVE than the tenant — which is exactly the
+# defect this half found on its first real run.
+for _label, _snippet in rdd_contract.REFUSED_CASES:
+    try:
+        eval(_snippet, {"sc": spark.sparkContext})  # noqa: S307
+    except Exception:  # noqa: BLE001 — any refusal is the contract; the type is Spark's
+        pass
+    else:
+        raise AssertionError(f"{_label}: real Spark ACCEPTED what the contract says it refuses")
 print(f"sc-facade contract vs real Spark: {len(rdd_contract.CASES)} cases PASS", flush=True)
 assert spark._jvm.java.lang.Class.forName("com.calvinchengx.fabricemu.EntraTokenProvider") is not None
 print("SparkContext/RDD + JVM/JAR bridge: PASS", flush=True)

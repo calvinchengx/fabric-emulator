@@ -46,6 +46,11 @@ services:
         condition: service_healthy
     volumes:
       - ./job.py:/opt/spark/work-dir/job.py:ro
+      # The sc-facade contract, beside job.py so `import rdd_contract` resolves
+      # from spark-submit's own script directory. Mounted rather than copied:
+      # ONE definition is the entire point — the facade's unit tests and this
+      # job must assert the same list, or each is only checking its author.
+      - ../../python/spark_agent/rdd_contract.py:/opt/spark/work-dir/rdd_contract.py:ro
     command:
       - /opt/spark/bin/spark-submit
       - --master

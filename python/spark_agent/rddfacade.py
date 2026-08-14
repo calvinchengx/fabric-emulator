@@ -79,10 +79,24 @@ class LocalRDD:
         """
         if self._session is None:
             raise _refuse("rdd.toDF()", " No Spark session is attached.")
-        rows = [x if isinstance(x, (tuple, list)) else (x,) for x in self._data]
+        # Scalars are REFUSED, exactly as PySpark refuses them. An earlier
+        # version wrapped them into one-tuples and succeeded, which the JVM
+        # oracle caught: real Spark raises CANNOT_INFER_SCHEMA_FOR_TYPE. The
+        # `sc.parallelize(Seq(1,2,3,4)).toDF()` idiom in Microsoft's docs is
+        # SCALA, where implicits supply the encoder; accepting it here made the
+        # emulator more permissive than the tenant, which is the direction that
+        # ships broken code.
+        bad = next((x for x in self._data if not isinstance(x, (tuple, list, dict))), None)
+        if bad is not None:
+            raise TypeError(
+                f"[CANNOT_INFER_SCHEMA_FOR_TYPE] Can not infer schema for type: "
+                f"`{type(bad).__name__}`. Real PySpark refuses this too — "
+                f"`toDF()` needs a row shape. Use "
+                f"`sc.parallelize([(1,), (2,)]).toDF()`, or pass a schema."
+            )
         if schema is not None:
-            return self._session.createDataFrame(rows, schema)
-        return self._session.createDataFrame(rows, ["_1"])
+            return self._session.createDataFrame(list(self._data), schema)
+        return self._session.createDataFrame(list(self._data))
 
     # -- everything else ------------------------------------------------------
     def __getattr__(self, name):

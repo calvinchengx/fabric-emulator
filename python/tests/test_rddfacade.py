@@ -69,6 +69,7 @@ def test_the_contract_is_not_empty():
     """A parametrized suite over an empty list passes while testing nothing."""
     assert len(rdd_contract.CASES) >= 5
     assert rdd_contract.VOID_CASES
+    assert rdd_contract.REFUSED_CASES, "no refusal is pinned, so over-permissiveness is unchecked"
 
 
 # --- setLogLevel really does something ---------------------------------------
@@ -148,14 +149,41 @@ def test_the_refusal_explains_it_is_a_protocol_limit_not_a_sail_gap(sc):
 
 # --- toDF, the shape Microsoft's smoke idiom needs ---------------------------
 
-def test_todf_wraps_scalars_because_createdataframe_needs_rows():
+def test_todf_refuses_scalars_exactly_as_pyspark_does():
+    """This test asserted the OPPOSITE and was wrong, which the JVM oracle
+    caught the first time it ran.
+
+    The facade wrapped bare scalars into one-tuples and returned a DataFrame.
+    Real PySpark raises CANNOT_INFER_SCHEMA_FOR_TYPE. The idiom that inspired
+    it — `sc.parallelize(Seq(1,2,3,4)).toDF()` in Microsoft's diagnostic-emitter
+    docs — is SCALA, where implicits supply the encoder, and transcribing it
+    into a Python contract made the emulator accept what a tenant rejects.
+    """
+    sc = rddfacade.SparkContextFacade(_FakeSession())
+    with pytest.raises(TypeError) as e:
+        sc.parallelize([1, 2, 3]).toDF()
+    msg = str(e.value)
+    assert "CANNOT_INFER_SCHEMA_FOR_TYPE" in msg, "does not name Spark's own error"
+    assert "(1,)" in msg, "the refusal shows no working form"
+
+
+@pytest.mark.parametrize("label,snippet",
+                         rdd_contract.REFUSED_CASES, ids=[c[0] for c in rdd_contract.REFUSED_CASES])
+def test_the_refused_contract_cases_are_refused(label, snippet):
+    """Same list the JVM oracle asserts real Spark refuses."""
+    sc = rddfacade.SparkContextFacade(_FakeSession())
+    with pytest.raises((TypeError, NotImplementedError)):
+        eval(snippet, {"sc": sc})  # noqa: S307
+
+
+def test_todf_accepts_the_row_shape_pyspark_accepts():
     session = _FakeSession()
     sc = rddfacade.SparkContextFacade(session)
-    sc.parallelize([1, 2, 3]).toDF()
+    sc.parallelize([(1,), (2,)]).toDF()
     assert session.created is not None
     rows, schema = session.created
-    assert rows == [(1,), (2,), (3,)], "scalars were not wrapped into row shape"
-    assert schema == ["_1"]
+    assert rows == [(1,), (2,)]
+    assert schema is None, "no schema should be invented when none was given"
 
 
 def test_todf_passes_an_explicit_schema_through():
