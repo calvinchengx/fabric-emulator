@@ -74,6 +74,17 @@ A structured streaming query is a long-lived object owned by the engine. There
 is no seam to put delta-rs behind. This is genuine Sail engine work, upstream or
 in the overlay.
 
+The remaining candidate was wrapping durable sinks as `foreachBatch` plus a
+batch Delta/parquet write (Sail already does those as batch). Measured
+2026-08-14 on the `sail-delta` engine-matrix profile:
+`writeStream.foreachBatch(fn).start()` fails immediately with
+`IllegalArgumentException: missing argument: Python UDF output type`, under
+both `trigger(once=True)` and `trigger(processingTime=…)`. The callback never
+ran, so no batch write was attempted. That wrap is out of scope until Sail
+accepts a Python foreachBatch sink. Inventing `rate` rows in delta-rs, or
+mapping Eventstream `format("kafka")` options onto `rate`, would paint the
+cells green for the wrong schema and the wrong path.
+
 ### 3. Interceptable — bounded, path-scoped, session-free SQL
 
 `OPTIMIZE`, `VACUUM`, named-source and subquery `MERGE`, LOCATION-bearing CTAS,
@@ -178,7 +189,7 @@ Today that column is **20 / 25**. Five stay red. They are not one backlog.
 | `MERGE INTO delta.\`path\`` | **Done** | Same change; path URI is taken from the statement |
 | Change Data Feed | **Done** | Writer + reader wrapped, announced, materialised |
 | `read.json(multiLine=True)` | **Done** | Named option wrapped, announced, materialised |
-| Streaming sinks (memory / parquet / delta) | **No** | Long-lived query inside the engine; no statement boundary |
+| Streaming sinks (memory / parquet / delta) | **No** | Long-lived query inside the engine; `foreachBatch` fails at `start()` (`Python UDF output type`) |
 | `sc` / `_jvm` | **No** | Spark Connect protocol. The Livy RDD facade is a measured subset, and the matrix probe does not install it — painting that cell green would measure the facade, not Spark |
 | Java/Scala UDFs / `spark.jars` | **No** | Need Spark's JVM classloader. Overlay only |
 

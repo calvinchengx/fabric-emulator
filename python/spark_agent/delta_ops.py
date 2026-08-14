@@ -7,6 +7,9 @@ Those are the gaps `docs/engine-matrix.md` measures. They share a property the
 streaming gaps do not: each is a **bounded statement that starts and finishes
 against a table path**, carrying no Spark session state. That makes them
 interceptable — a streaming query, which lives inside the engine, is not.
+`writeStream.foreachBatch` is not a way around that: Sail Connect rejects
+`start()` with `missing argument: Python UDF output type` (measured 2026-08-14
+on the `sail-delta` profile), so the callback never runs.
 
 So the agent recognises exactly these statements and runs them through
 **delta-rs** (`deltalake`), a real Delta Lake implementation, against the same

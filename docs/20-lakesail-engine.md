@@ -297,9 +297,12 @@ downgrade.
 These are bounded operations that start and finish against a path, carrying
 no Spark session state — so they can be lifted out and run elsewhere.
 A streaming query is a long-running computation *inside* the engine; there is
-no statement boundary to intercept. That gap needs an upstream Sail fix, which
-is why [engine-matrix.md](engine-matrix.md) still lists the streaming sinks as
-Sail's real remaining gaps.
+no statement boundary to intercept. `foreachBatch` is not a workaround: Sail
+rejects `writeStream.foreachBatch(fn).start()` with
+`missing argument: Python UDF output type` (measured 2026-08-14, `sail-delta`
+profile), so the callback never runs. That gap needs an upstream Sail fix,
+which is why [engine-matrix.md](engine-matrix.md) still lists the streaming
+sinks as Sail's real remaining gaps.
 
 The matrix has three columns. Bare Sail stays ❌ for `OPTIMIZE`/`VACUUM` —
 Sail genuinely does not implement them. The **middle column** is what the Livy
