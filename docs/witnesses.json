@@ -257,6 +257,8 @@
       "py:test_connect_kafka_df_native_uses_the_spark_session",
       "py:test_kafka_source_spec_subscribe_pattern_assign_and_json_offsets",
       "py:test_sasl_plain_from_jaas_and_username",
+      "py:test_gssapi_from_jaas_sets_keytab_and_service",
+      "py:test_jks_and_pkcs12_truststores_become_pem",
       "py:test_produce_plain_kafka_sends_key_value_topic"
     ]
   },
@@ -658,6 +660,8 @@
       "py:test_connect_kafka_df_native_uses_the_spark_session",
       "py:test_kafka_source_spec_subscribe_pattern_assign_and_json_offsets",
       "py:test_sasl_plain_from_jaas_and_username",
+      "py:test_gssapi_from_jaas_sets_keytab_and_service",
+      "py:test_jks_and_pkcs12_truststores_become_pem",
       "py:test_produce_plain_kafka_sends_key_value_topic"
     ]
   },

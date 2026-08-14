@@ -85,8 +85,9 @@ POST …/eventstreams  -->  mint datasourceId + CreateTopics
      `kafka.bootstrap.servers` plus `subscribe` / `subscribePattern` /
      `assign` is the same wrap without the Fabric IDs: driver consume →
      Kafka-schema LocalRelation on Sail. JSON offsets, `includeHeaders`,
-     SASL PLAIN, and PEM SSL are honoured; a kafka *sink* produces from
-     the driver. JVM native kafka still uses the jar.
+     SASL PLAIN, GSSAPI, PEM SSL, and JKS/P12 truststores are honoured; a
+     kafka *sink* produces from the driver. JVM native kafka still uses the
+     jar.
 
 GET the item to read `properties.streams[0].id` — that is the
 `eventstream.datasourceid` the notebook snippet needs.
@@ -132,10 +133,11 @@ row count. A wrong item id must fail. `rate` must not appear.
 - **Sail `format("kafka")`** is a driver consume/produce into a
   Kafka-schema LocalRelation (bytes on Sail). `subscribe` /
   `subscribePattern` / `assign`, JSON `startingOffsets`/`endingOffsets`,
-  `includeHeaders`, SASL PLAIN, and PEM SSL are honoured. A kafka *sink*
-  (`write`/`writeStream.format("kafka")`) produces from the driver.
-  GSSAPI and JKS/P12 truststores fail loud. Checkpointed streaming
-  (`isStreaming`, resume from checkpoint) stays on the JVM overlay.
+  `includeHeaders`, SASL PLAIN, GSSAPI (JAAS `keyTab` → `KRB5_CLIENT_KTNAME`),
+  PEM SSL, and JKS/P12 truststores (converted to PEM for kafka-python) are
+  honoured. A kafka *sink* (`write`/`writeStream.format("kafka")`) produces
+  from the driver. Checkpointed streaming (`isStreaming`, resume from
+  checkpoint) stays on the JVM overlay.
 - On Sail the result is materialised (`.explain()` is a LocalRelation; one
   micro-batch; `isStreaming` is false). Checkpointed streaming is the JVM
   overlay.

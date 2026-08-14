@@ -29,11 +29,12 @@ Native `format("kafka")` with `kafka.bootstrap.servers` plus
 `subscribe` / `subscribePattern` / `assign` is honoured on Sail too: the
 agent consumes the topic (kafka-python) and `createDataFrame`s the
 Kafka-schema rows into Sail. JSON offsets, `includeHeaders`, SASL PLAIN,
-and PEM SSL are honoured; `write`/`writeStream.format("kafka")` produces
-from collected rows. Subsequent `select`/`filter`/SQL run on the engine.
-One micro-batch, announced, no checkpoint — the same class of wrap as
-CDF / JSON `multiLine`. JVM keeps the jar (this module does not rewrite
-native options on a classic session). GSSAPI and JKS/P12 fail loud.
+GSSAPI (JAAS keytab → `KRB5_CLIENT_KTNAME`), PEM SSL, and JKS/P12
+truststores (converted to PEM) are honoured; `write`/`writeStream.format("kafka")`
+produces from collected rows. Subsequent `select`/`filter`/SQL run on the
+engine. One micro-batch, announced, no checkpoint — the same class of wrap
+as CDF / JSON `multiLine`. JVM keeps the jar (this module does not rewrite
+native options on a classic session).
 
 `stream_sinks.py` still does not intercept a kafka *sink* or `foreachBatch`
 on an engine stream — kafka I/O on Sail is this module. Mapping Kafka
@@ -47,11 +48,13 @@ import os
 import re
 import ssl
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime
+from pathlib import Path
 
 
 class EventstreamError(RuntimeError):
@@ -77,6 +80,8 @@ NATIVE_OPTION_KEYS = (
     "subscribepattern",
     "assign",
 )
+_JAVA_STORE_EXT = (".jks", ".p12", ".pfx")
+_ssl_temps: list[str] = []
 
 _classic_installed = False
 _connect_installed = False
@@ -293,6 +298,212 @@ def parse_jaas_plain(config) -> tuple[str, str]:
     return user.group(1), password.group(1)
 
 
+def _jaas_field(text, *names) -> str:
+    for name in names:
+        quoted = re.search(rf'{name}\s*=\s*"([^"]*)"', text, re.I)
+        if quoted:
+            return quoted.group(1)
+        bare = re.search(rf'{name}\s*=\s*([^;\s]+)', text, re.I)
+        if bare:
+            return bare.group(1).strip()
+    return ""
+
+
+def parse_jaas_gssapi(config) -> dict:
+    """Pull principal / keyTab out of a Krb5LoginModule JAAS string."""
+    text = config or ""
+    return {
+        "principal": _jaas_field(text, "principal"),
+        "keyTab": _jaas_field(text, "keyTab", "keytab"),
+        "useKeyTab": _jaas_field(text, "useKeyTab").lower() in ("true", "yes", "1"),
+        "useTicketCache": _jaas_field(text, "useTicketCache").lower()
+        in ("true", "yes", "1"),
+    }
+
+
+def _sasl_mechanism(options) -> str:
+    jaas = _opt(options, ("kafka.sasl.jaas.config",))
+    mech = (_opt(options, ("kafka.sasl.mechanism",)) or "").upper()
+    if mech:
+        return mech
+    if jaas and re.search(r"Krb5LoginModule", jaas, re.I):
+        return "GSSAPI"
+    return "PLAIN"
+
+
+def _write_pem_temp(suffix, payload: bytes) -> str:
+    fd, path = tempfile.mkstemp(prefix="emu-kafka-", suffix=suffix)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(payload)
+    os.chmod(path, 0o600)
+    _ssl_temps.append(path)
+    return path
+
+
+def _certs_to_pem(ders) -> bytes:
+    chunks = []
+    for der in ders:
+        b64 = base64.encodebytes(der).decode("ascii")
+        chunks.append(
+            "-----BEGIN CERTIFICATE-----\n" + b64 + "-----END CERTIFICATE-----\n"
+        )
+    return "".join(chunks).encode()
+
+
+def _is_java_store(path, store_type="") -> bool:
+    typ = (store_type or "").strip().upper()
+    if typ in ("JKS", "PKCS12"):
+        return True
+    if typ in ("PEM", "PEM_CERTIFICATE"):
+        return False
+    return Path(path).suffix.lower() in _JAVA_STORE_EXT
+
+
+def _load_jks(path, password):
+    try:
+        import jks
+    except ImportError as exc:
+        raise KafkaSourceError(
+            "JKS truststores need pyjks in the spark-agent image"
+        ) from exc
+    try:
+        return jks.KeyStore.load(path, password if password is not None else "")
+    except Exception as exc:
+        raise KafkaSourceError(
+            f"could not open JKS {path}: {exc} "
+            "(set kafka.ssl.truststore.password / kafka.ssl.keystore.password)"
+        ) from exc
+
+
+def _jks_cert_ders(ks) -> list[bytes]:
+    ders = []
+    for entry in (getattr(ks, "certs", None) or {}).values():
+        ders.append(entry.cert)
+    for pk in (getattr(ks, "private_keys", None) or {}).values():
+        for cert in pk.cert_chain or []:
+            ders.append(cert[1] if isinstance(cert, (tuple, list)) else cert)
+    return ders
+
+
+def _jks_ca_pem(path, password) -> bytes:
+    ders = _jks_cert_ders(_load_jks(path, password))
+    if not ders:
+        raise KafkaSourceError(f"JKS {path} contains no certificates")
+    return _certs_to_pem(ders)
+
+
+def _der_key_to_pem(key_der: bytes) -> bytes:
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+        load_der_private_key,
+    )
+    key = load_der_private_key(key_der, password=None)
+    return key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())
+
+
+def _jks_client_pems(path, password) -> tuple[bytes, bytes]:
+    ks = _load_jks(path, password)
+    pkeys = getattr(ks, "private_keys", None) or {}
+    if not pkeys:
+        raise KafkaSourceError(f"JKS keystore {path} has no private key")
+    pk = next(iter(pkeys.values()))
+    cert_ders = [
+        cert[1] if isinstance(cert, (tuple, list)) else cert
+        for cert in (pk.cert_chain or [])
+    ]
+    if not cert_ders:
+        raise KafkaSourceError(f"JKS keystore {path} has no certificate chain")
+    return _certs_to_pem(cert_ders), _der_key_to_pem(pk.pkey)
+
+
+def _load_p12(path, password):
+    try:
+        from cryptography.hazmat.primitives.serialization import pkcs12
+    except ImportError as exc:
+        raise KafkaSourceError(
+            "PKCS12 truststores need cryptography in the spark-agent image"
+        ) from exc
+    data = Path(path).read_bytes()
+    pwd = password.encode() if password else None
+    try:
+        return pkcs12.load_key_and_certificates(data, pwd)
+    except Exception as exc:
+        raise KafkaSourceError(
+            f"could not open PKCS12 {path}: {exc} "
+            "(set kafka.ssl.truststore.password / kafka.ssl.keystore.password)"
+        ) from exc
+
+
+def _p12_ca_pem(path, password) -> bytes:
+    from cryptography.hazmat.primitives.serialization import Encoding
+    _key, cert, extra = _load_p12(path, password)
+    ders = []
+    if cert is not None:
+        ders.append(cert.public_bytes(Encoding.DER))
+    for item in extra or []:
+        ders.append(item.public_bytes(Encoding.DER))
+    if not ders:
+        raise KafkaSourceError(f"PKCS12 {path} contains no certificates")
+    return _certs_to_pem(ders)
+
+
+def _p12_client_pems(path, password) -> tuple[bytes, bytes]:
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+    )
+    key, cert, extra = _load_p12(path, password)
+    if key is None or cert is None:
+        raise KafkaSourceError(f"PKCS12 keystore {path} needs a private key and cert")
+    key_pem = key.private_bytes(
+        Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption(),
+    )
+    certs = [cert, *(extra or [])]
+    cert_pem = b"".join(c.public_bytes(Encoding.PEM) for c in certs)
+    return cert_pem, key_pem
+
+
+def _store_kind(path, store_type="") -> str:
+    typ = (store_type or "").strip().upper()
+    if typ in ("JKS", "PKCS12"):
+        return typ
+    ext = Path(path).suffix.lower()
+    if ext == ".jks":
+        return "JKS"
+    if ext in (".p12", ".pfx"):
+        return "PKCS12"
+    return "PEM"
+
+
+def _materialize_ca(path, password, store_type="") -> str:
+    kind = _store_kind(path, store_type)
+    if kind == "JKS":
+        return _write_pem_temp(".ca.pem", _jks_ca_pem(path, password))
+    if kind == "PKCS12":
+        return _write_pem_temp(".ca.pem", _p12_ca_pem(path, password))
+    return path
+
+
+def _materialize_client(path, password, store_type="") -> tuple[str, str]:
+    kind = _store_kind(path, store_type)
+    if kind == "JKS":
+        cert_pem, key_pem = _jks_client_pems(path, password)
+        return (
+            _write_pem_temp(".cert.pem", cert_pem),
+            _write_pem_temp(".key.pem", key_pem),
+        )
+    if kind == "PKCS12":
+        cert_pem, key_pem = _p12_client_pems(path, password)
+        return (
+            _write_pem_temp(".cert.pem", cert_pem),
+            _write_pem_temp(".key.pem", key_pem),
+        )
+    return path, ""
+
+
 def kafka_client_kwargs(options) -> dict:
     """kafka-python kwargs from Spark's kafka.* client options."""
     proto = (_opt(options, ("kafka.security.protocol",)) or "PLAINTEXT").upper()
@@ -305,42 +516,67 @@ def kafka_client_kwargs(options) -> dict:
     if proto != "PLAINTEXT":
         kwargs["security_protocol"] = proto
     if proto.startswith("SASL_"):
-        mech = (_opt(options, ("kafka.sasl.mechanism",)) or "PLAIN").upper()
-        if mech != "PLAIN":
+        mech = _sasl_mechanism(options)
+        if mech not in ("PLAIN", "GSSAPI"):
             raise KafkaSourceError(
-                f"kafka.sasl.mechanism={mech!r} is not in this wrap (PLAIN only)"
+                f"kafka.sasl.mechanism={mech!r} is not in this wrap (PLAIN or GSSAPI)"
             )
-        kwargs["sasl_mechanism"] = "PLAIN"
-        user = _opt(options, ("kafka.sasl.username",))
-        password = _opt(options, ("kafka.sasl.password",))
+        kwargs["sasl_mechanism"] = mech
         jaas = _opt(options, ("kafka.sasl.jaas.config",))
-        if jaas:
-            user, password = parse_jaas_plain(jaas)
-        if not user or not password:
-            raise KafkaSourceError(
-                "SASL PLAIN needs kafka.sasl.jaas.config or "
-                "kafka.sasl.username + kafka.sasl.password"
+        if mech == "GSSAPI":
+            kwargs["sasl_kerberos_service_name"] = (
+                _opt(options, ("kafka.sasl.kerberos.service.name",)) or "kafka"
             )
-        kwargs["sasl_plain_username"] = user
-        kwargs["sasl_plain_password"] = password
+            gss = parse_jaas_gssapi(jaas) if jaas else {}
+            if gss.get("keyTab"):
+                os.environ["KRB5_CLIENT_KTNAME"] = gss["keyTab"]
+            if gss.get("principal"):
+                kwargs["sasl_kerberos_name"] = gss["principal"]
+        else:
+            user = _opt(options, ("kafka.sasl.username",))
+            password = _opt(options, ("kafka.sasl.password",))
+            if jaas:
+                user, password = parse_jaas_plain(jaas)
+            if not user or not password:
+                raise KafkaSourceError(
+                    "SASL PLAIN needs kafka.sasl.jaas.config or "
+                    "kafka.sasl.username + kafka.sasl.password"
+                )
+            kwargs["sasl_plain_username"] = user
+            kwargs["sasl_plain_password"] = password
     if proto in ("SSL", "SASL_SSL"):
         cafile = _opt(options, ("kafka.ssl.cafile", "kafka.ssl.truststore.location"))
         if not cafile:
             raise KafkaSourceError(
-                "SSL needs a PEM CA file in kafka.ssl.truststore.location "
-                "(JKS truststores are not in this wrap)"
+                "SSL needs kafka.ssl.truststore.location "
+                "(PEM CA, JKS, or PKCS12)"
             )
-        if cafile.lower().endswith((".jks", ".p12", ".pfx")):
-            raise KafkaSourceError(
-                f"{cafile} is a Java truststore; this wrap needs a PEM CA file"
-            )
-        kwargs["ssl_cafile"] = cafile
+        if not Path(cafile).is_file() and _is_java_store(
+            cafile, _opt(options, ("kafka.ssl.truststore.type",)),
+        ):
+            raise KafkaSourceError(f"SSL truststore not found: {cafile}")
+        kwargs["ssl_cafile"] = _materialize_ca(
+            cafile,
+            _opt(options, ("kafka.ssl.truststore.password",)),
+            _opt(options, ("kafka.ssl.truststore.type",)),
+        )
         cert = _opt(options, ("kafka.ssl.keystore.location", "kafka.ssl.certfile"))
         key = _opt(options, ("kafka.ssl.key.location", "kafka.ssl.keyfile"))
-        if cert:
-            kwargs["ssl_certfile"] = cert
-        if key:
-            kwargs["ssl_keyfile"] = key
+        if cert and _is_java_store(cert, _opt(options, ("kafka.ssl.keystore.type",))):
+            if not Path(cert).is_file():
+                raise KafkaSourceError(f"SSL keystore not found: {cert}")
+            cert_pem, key_pem = _materialize_client(
+                cert,
+                _opt(options, ("kafka.ssl.keystore.password", "kafka.ssl.key.password")),
+                _opt(options, ("kafka.ssl.keystore.type",)),
+            )
+            kwargs["ssl_certfile"] = cert_pem
+            kwargs["ssl_keyfile"] = key_pem
+        else:
+            if cert:
+                kwargs["ssl_certfile"] = cert
+            if key:
+                kwargs["ssl_keyfile"] = key
     return kwargs
 
 

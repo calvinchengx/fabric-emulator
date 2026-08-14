@@ -131,8 +131,8 @@ touches; every claim below is CI-verified against the emulator:
   is wrapped, announced, and batch-written from a Sail `collect`. Console stays
   on the engine. Native `format("kafka")` consumes or produces on the
   driver and `createDataFrame`s Kafka-schema rows into Sail
-  (`subscribe` / `subscribePattern` / `assign`, SASL PLAIN, PEM SSL;
-  [51-eventstream-kafka.md](51-eventstream-kafka.md)). The Fabric
+  (`subscribe` / `subscribePattern` / `assign`, SASL PLAIN, GSSAPI, PEM SSL,
+  JKS/P12; [51-eventstream-kafka.md](51-eventstream-kafka.md)). The Fabric
   Eventstream notebook API (`eventstream.itemid` / `datasourceid` +
   `foreachBatch`) is consumed through the emulator and run in the agent.
   `cache()`/`persist()` are no-ops, no Java/Scala UDFs (Python/Pandas/Arrow

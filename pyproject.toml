@@ -38,6 +38,8 @@ test = [
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",
     "pandas>=2,<3",
+    "pyjks>=20,<22",
+    "cryptography>=42,<49",
 ]
 lint = [
     "ruff>=0.14,<0.16",
@@ -135,6 +137,11 @@ sail-delta = [
     # OSS format("kafka") on Sail: the agent consumes and createDataFrames
     # Kafka-schema rows into the engine. JVM keeps spark-sql-kafka.
     "kafka-python>=2.0.2,<3",
+    # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
+    "pyjks>=20,<22",
+    "cryptography>=42,<49",
+    # GSSAPI handshake: kafka-python imports this at connect time.
+    "gssapi>=1.8,<2",
 ]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP
 # APIs, and the statement agent is where that code executes.
@@ -153,6 +160,11 @@ spark-connect = [
     "pyspark-client==4.1.1",
     "requests>=2.32,<3",
     "kafka-python>=2.0.2,<3",
+    # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
+    "pyjks>=20,<22",
+    "cryptography>=42,<49",
+    # GSSAPI handshake: kafka-python imports this at connect time.
+    "gssapi>=1.8,<2",
 ]
 dbt-fabric = ["dbt-fabric>=1.11"]
 dbt-fabricspark = ["dbt-fabricspark>=1.13"]

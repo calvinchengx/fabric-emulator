@@ -4,6 +4,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 ARG UV_GROUP
 WORKDIR /app
 
+# kafka-python GSSAPI has no manylinux wheel; compile against MIT krb5.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      gcc libkrb5-dev libkrb5-3 libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml uv.lock ./
 COPY python/ ./python/
 RUN uv sync --frozen --no-install-project --group "${UV_GROUP}"

@@ -3,9 +3,10 @@ import base64
 import email.message
 import io
 import json
+import os
 import sys
 import types
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -313,19 +314,19 @@ def test_consume_plain_kafka_fails_loud_on_incomplete_or_conflicting_options():
             "subscribe": "t",
             "subscribePattern": "clicks-.*",
         })
-    with pytest.raises(ek.KafkaSourceError, match=r"GSSAPI|PLAIN only"):
+    with pytest.raises(ek.KafkaSourceError, match=r"PLAIN or GSSAPI"):
         ek.consume_plain_kafka({
             "kafka.bootstrap.servers": "k:9092",
             "subscribe": "t",
             "kafka.security.protocol": "SASL_SSL",
-            "kafka.sasl.mechanism": "GSSAPI",
+            "kafka.sasl.mechanism": "SCRAM-SHA-256",
         })
-    with pytest.raises(ek.KafkaSourceError, match=r"PEM|truststore"):
+    with pytest.raises(ek.KafkaSourceError, match="truststore not found"):
         ek.consume_plain_kafka({
             "kafka.bootstrap.servers": "k:9092",
             "subscribe": "t",
             "kafka.security.protocol": "SSL",
-            "kafka.ssl.truststore.location": "trust.jks",
+            "kafka.ssl.truststore.location": "missing.jks",
         })
     with pytest.raises(ek.KafkaSourceError, match="earliest"):
         ek.kafka_source_spec({
@@ -377,6 +378,241 @@ def test_sasl_plain_from_jaas_and_username():
     })
     assert kw["ssl_cafile"] == "/tmp/ca.pem"
     assert kw["sasl_plain_username"] == "bob"
+
+
+def _self_signed_cert():
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "emu-kafka-ca")])
+    now = datetime.now(UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(1)
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    return key, cert
+
+
+def test_gssapi_from_jaas_sets_keytab_and_service(monkeypatch):
+    monkeypatch.delenv("KRB5_CLIENT_KTNAME", raising=False)
+    jaas = (
+        'com.sun.security.auth.module.Krb5LoginModule required '
+        'useKeyTab=true storeKey=true '
+        'keyTab="/var/keytabs/kafka.keytab" '
+        'principal="alice@EXAMPLE.COM";'
+    )
+    kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SASL_PLAINTEXT",
+        "kafka.sasl.mechanism": "GSSAPI",
+        "kafka.sasl.jaas.config": jaas,
+        "kafka.sasl.kerberos.service.name": "kafka",
+    })
+    assert kw["sasl_mechanism"] == "GSSAPI"
+    assert kw["sasl_kerberos_service_name"] == "kafka"
+    assert kw["sasl_kerberos_name"] == "alice@EXAMPLE.COM"
+    assert os.environ["KRB5_CLIENT_KTNAME"] == "/var/keytabs/kafka.keytab"
+    inferred = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SASL_PLAINTEXT",
+        "kafka.sasl.jaas.config": jaas,
+    })
+    assert inferred["sasl_mechanism"] == "GSSAPI"
+    ticket = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SASL_PLAINTEXT",
+        "kafka.sasl.mechanism": "GSSAPI",
+    })
+    assert ticket["sasl_mechanism"] == "GSSAPI"
+    assert ticket["sasl_kerberos_service_name"] == "kafka"
+
+
+def test_jks_and_pkcs12_truststores_become_pem(tmp_path):
+    import jks
+    from cryptography.hazmat.primitives.serialization import (
+        BestAvailableEncryption,
+        Encoding,
+        pkcs12,
+    )
+
+    _key, cert = _self_signed_cert()
+    der = cert.public_bytes(Encoding.DER)
+    jks_path = tmp_path / "trust.jks"
+    entry = jks.TrustedCertEntry.new("ca", der)
+    jks_path.write_bytes(jks.KeyStore.new("jks", [entry]).saves("changeit"))
+    kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SSL",
+        "kafka.ssl.truststore.location": str(jks_path),
+        "kafka.ssl.truststore.password": "changeit",
+    })
+    ca = Path(kw["ssl_cafile"]).read_text()
+    assert "BEGIN CERTIFICATE" in ca
+
+    p12_path = tmp_path / "trust.p12"
+    p12_path.write_bytes(pkcs12.serialize_key_and_certificates(
+        b"ca", None, cert, None, BestAvailableEncryption(b"secret"),
+    ))
+    kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SSL",
+        "kafka.ssl.truststore.location": str(p12_path),
+        "kafka.ssl.truststore.password": "secret",
+    })
+    assert "BEGIN CERTIFICATE" in Path(kw["ssl_cafile"]).read_text()
+
+    pfx_path = tmp_path / "trust.pfx"
+    pfx_path.write_bytes(p12_path.read_bytes())
+    kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SSL",
+        "kafka.ssl.truststore.location": str(pfx_path),
+        "kafka.ssl.truststore.password": "secret",
+        "kafka.ssl.truststore.type": "PKCS12",
+    })
+    assert Path(kw["ssl_cafile"]).read_text().count("BEGIN CERTIFICATE") >= 1
+
+
+def test_jks_keystore_becomes_client_pem(tmp_path):
+    import jks
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+
+    key, cert = _self_signed_cert()
+    key_der = key.private_bytes(Encoding.DER, PrivateFormat.PKCS8, NoEncryption())
+    cert_der = cert.public_bytes(Encoding.DER)
+    dumped = jks.PrivateKeyEntry.new("client", [cert_der], key_der)
+    store = tmp_path / "client.jks"
+    store.write_bytes(jks.KeyStore.new("jks", [dumped]).saves("changeit"))
+    ca = tmp_path / "ca.pem"
+    ca.write_text("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
+    kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SSL",
+        "kafka.ssl.truststore.location": str(ca),
+        "kafka.ssl.keystore.location": str(store),
+        "kafka.ssl.keystore.password": "changeit",
+    })
+    assert "BEGIN CERTIFICATE" in Path(kw["ssl_certfile"]).read_text()
+    assert "BEGIN" in Path(kw["ssl_keyfile"]).read_text() and "PRIVATE KEY" in Path(kw["ssl_keyfile"]).read_text()
+    # Same bytes as a truststore: CA material comes from the private-key chain.
+    ca_from_key = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SSL",
+        "kafka.ssl.truststore.location": str(store),
+        "kafka.ssl.truststore.password": "changeit",
+        "kafka.ssl.truststore.type": "JKS",
+    })
+    assert "BEGIN CERTIFICATE" in Path(ca_from_key["ssl_cafile"]).read_text()
+
+
+def test_pkcs12_keystore_becomes_client_pem(tmp_path):
+    from cryptography.hazmat.primitives.serialization import (
+        BestAvailableEncryption,
+        pkcs12,
+    )
+
+    key, cert = _self_signed_cert()
+    extra_key, extra = _self_signed_cert()
+    del extra_key
+    store = tmp_path / "client.p12"
+    store.write_bytes(pkcs12.serialize_key_and_certificates(
+        b"client", key, cert, [extra], BestAvailableEncryption(b"secret"),
+    ))
+    ca = tmp_path / "ca.pem"
+    ca.write_text("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
+    kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SSL",
+        "kafka.ssl.truststore.location": str(ca),
+        "kafka.ssl.keystore.location": str(store),
+        "kafka.ssl.keystore.password": "secret",
+    })
+    assert Path(kw["ssl_certfile"]).read_text().count("BEGIN CERTIFICATE") >= 2
+    assert "PRIVATE KEY" in Path(kw["ssl_keyfile"]).read_text()
+    as_ca = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SSL",
+        "kafka.ssl.truststore.location": str(store),
+        "kafka.ssl.truststore.password": "secret",
+    })
+    assert Path(as_ca["ssl_cafile"]).read_text().count("BEGIN CERTIFICATE") >= 2
+
+    bag = tmp_path / "trust-extra.p12"
+    bag.write_bytes(pkcs12.serialize_key_and_certificates(
+        b"ca", None, cert, [extra], BestAvailableEncryption(b"secret"),
+    ))
+    ca_kw = ek.kafka_client_kwargs({
+        "kafka.security.protocol": "SSL",
+        "kafka.ssl.truststore.location": str(bag),
+        "kafka.ssl.truststore.password": "secret",
+    })
+    assert Path(ca_kw["ssl_cafile"]).read_text().count("BEGIN CERTIFICATE") >= 2
+
+
+def test_java_store_types_and_missing_keystore(tmp_path):
+    ca = tmp_path / "ca.pem"
+    ca.write_text("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
+    assert ek._is_java_store("x.pem", "JKS") is True
+    assert ek._is_java_store("x.pem", "PEM") is False
+    assert ek._is_java_store("x.jks", "") is True
+    pem, key = ek._materialize_client(str(ca), "")
+    assert pem == str(ca) and key == ""
+    with pytest.raises(ek.KafkaSourceError, match="keystore not found"):
+        ek.kafka_client_kwargs({
+            "kafka.security.protocol": "SSL",
+            "kafka.ssl.truststore.location": str(ca),
+            "kafka.ssl.keystore.location": str(tmp_path / "missing.jks"),
+        })
+
+
+def test_jks_needs_pyjks(monkeypatch):
+    monkeypatch.setitem(sys.modules, "jks", None)
+    with pytest.raises(ek.KafkaSourceError, match="pyjks"):
+        ek._load_jks("x.jks", "pw")
+
+
+def test_pkcs12_needs_cryptography(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cryptography.hazmat.primitives.serialization", None)
+    with pytest.raises(ek.KafkaSourceError, match="cryptography"):
+        ek._load_p12("x.p12", "pw")
+
+
+def test_jks_and_pkcs12_fail_loud_on_bad_or_empty_stores(tmp_path, monkeypatch):
+    junk = tmp_path / "bad.jks"
+    junk.write_bytes(b"not-a-keystore")
+    with pytest.raises(ek.KafkaSourceError, match="could not open JKS"):
+        ek._load_jks(str(junk), "pw")
+    p12 = tmp_path / "bad.p12"
+    p12.write_bytes(b"not-pkcs12")
+    with pytest.raises(ek.KafkaSourceError, match="could not open PKCS12"):
+        ek._load_p12(str(p12), "pw")
+
+    monkeypatch.setattr(
+        ek, "_load_jks",
+        lambda *a, **k: types.SimpleNamespace(certs={}, private_keys={}),
+    )
+    with pytest.raises(ek.KafkaSourceError, match="contains no certificates"):
+        ek._jks_ca_pem("empty.jks", "")
+    with pytest.raises(ek.KafkaSourceError, match="no private key"):
+        ek._jks_client_pems("empty.jks", "")
+    pk = types.SimpleNamespace(cert_chain=[], pkey=b"x")
+    monkeypatch.setattr(
+        ek, "_load_jks",
+        lambda *a, **k: types.SimpleNamespace(private_keys={"k": pk}),
+    )
+    with pytest.raises(ek.KafkaSourceError, match="no certificate chain"):
+        ek._jks_client_pems("nochains.jks", "")
+
+    chain = types.SimpleNamespace(cert_chain=[b"raw", (b"type", b"tup")])
+    ders = ek._jks_cert_ders(types.SimpleNamespace(
+        certs=None, private_keys={"k": chain},
+    ))
+    assert ders == [b"raw", b"tup"]
+
+    monkeypatch.setattr(ek, "_load_p12", lambda *a, **k: (None, None, None))
+    with pytest.raises(ek.KafkaSourceError, match="contains no certificates"):
+        ek._p12_ca_pem("empty.p12", "")
+    with pytest.raises(ek.KafkaSourceError, match="private key and cert"):
+        ek._p12_client_pems("empty.p12", "")
 
 
 def test_consume_plain_kafka_passes_bytes_through_poll():
@@ -657,18 +893,8 @@ def test_kafka_client_kwargs_plaintext_ssl_and_fail_loud():
         ek.kafka_client_kwargs({"kafka.security.protocol": "SASL_KERBEROS"})
     with pytest.raises(ek.KafkaSourceError, match=r"jaas.config or"):
         ek.kafka_client_kwargs({"kafka.security.protocol": "SASL_PLAINTEXT"})
-    with pytest.raises(ek.KafkaSourceError, match="PEM CA"):
+    with pytest.raises(ek.KafkaSourceError, match=r"PEM CA|truststore"):
         ek.kafka_client_kwargs({"kafka.security.protocol": "SSL"})
-    with pytest.raises(ek.KafkaSourceError, match="Java truststore"):
-        ek.kafka_client_kwargs({
-            "kafka.security.protocol": "SSL",
-            "kafka.ssl.truststore.location": "ca.p12",
-        })
-    with pytest.raises(ek.KafkaSourceError, match="Java truststore"):
-        ek.kafka_client_kwargs({
-            "kafka.security.protocol": "SSL",
-            "kafka.ssl.truststore.location": "ca.pfx",
-        })
     kw = ek.kafka_client_kwargs({
         "kafka.security.protocol": "SSL",
         "kafka.ssl.truststore.location": "/tmp/ca.pem",

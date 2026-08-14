@@ -176,7 +176,7 @@ overlay. It does not change Sail's default for a CREATE with no LOCATION.
 | `sc` / `_jvm` / Java/Scala UDFs (bucket 1) | **Never** on Spark Connect |
 | CDF notebook API (§3b) | **Yes**, materialised LocalRelation, announced |
 | JSON `multiLine` (§3c) | **Yes**, materialised LocalRelation, announced |
-| OSS `format("kafka")` source and sink | **Yes**, driver consume/produce → Kafka-schema LocalRelation on Sail (`subscribe` / `subscribePattern` / `assign`, SASL PLAIN, PEM SSL). Checkpointed streaming is the overlay |
+| OSS `format("kafka")` source and sink | **Yes**, driver consume/produce → Kafka-schema LocalRelation on Sail (`subscribe` / `subscribePattern` / `assign`, SASL PLAIN, GSSAPI, PEM SSL, JKS/P12). Checkpointed streaming is the overlay |
 
 That is the answer to "100% if possible": no. The JVM overlay stays as the
 documented route for the irreducible set. `make up-jvm` swaps the engine; the

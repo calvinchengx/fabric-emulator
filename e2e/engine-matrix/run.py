@@ -398,10 +398,10 @@ def render() -> str:
         "STRING)` therefore runs on the engine. Announced; one micro-batch;",
         "`.explain()` is a LocalRelation. Not `rate`. The same wrap honours",
         "`subscribePattern`, `assign`, JSON `startingOffsets`/`endingOffsets`,",
-        "`includeHeaders`, SASL PLAIN, PEM SSL, and a kafka *sink*",
-        "(`write`/`writeStream.format(\"kafka\")`) — unit-tested, not this probe.",
-        "Bare Sail has no kafka source. JVM uses `spark-sql-kafka`. Checkpointed",
-        "streaming stays on the overlay. GSSAPI and JKS/P12 truststores fail loud.",
+        "`includeHeaders`, SASL PLAIN, GSSAPI, PEM SSL, JKS/P12 truststores, and",
+        "a kafka *sink* (`write`/`writeStream.format(\"kafka\")`) — unit-tested,",
+        "not this probe. Bare Sail has no kafka source. JVM uses `spark-sql-kafka`.",
+        "Checkpointed streaming stays on the overlay.",
         "",
     ]
     return "\n".join(lines)
