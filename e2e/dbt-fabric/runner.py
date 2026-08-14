@@ -2,13 +2,13 @@
 """In-container driver: provision a workspace + warehouse in fabric-emulator,
 mint tokens from entra-emulator, template profiles.yml, then run Microsoft's
 real dbt-fabric adapter through debug -> seed -> run -> test against the
-emulator's TDS warehouse surface via the Microsoft ODBC Driver 18.
+emulator's TDS warehouse surface via mssql-python.
 
 Two token audiences are needed: the Fabric REST provisioning calls take a
 control-plane token (`api.fabric.microsoft.com`); the TDS connection takes an
 Azure-SQL token (`database.windows.net`) — the FedAuth audience the emulator's
 TDS front validates. dbt-fabric's `ActiveDirectoryAccessToken` mode injects that
-pre-minted token straight into pyodbc's access-token attribute, so the ODBC
+pre-minted token into mssql-python's SQL_COPT_SS_ACCESS_TOKEN attribute, so the
 driver performs FedAuth without ever running MSAL (no authority redirect).
 """
 import json
@@ -46,30 +46,35 @@ def http(method, url, token=None, body=None):
 
 
 def warmup(database, tds_token):
-    """Prove the ODBC Driver 18 -> emulator TDS -> SQL Server relay end to end
-    with a bare SELECT 1, retrying while the per-item database is created and
-    brought online. Uses the same access-token injection dbt does."""
+    """Prove mssql-python -> emulator TDS -> SQL Server relay end to end with a
+    bare SELECT 1, retrying while the per-item database is created and brought
+    online. Uses the same access-token injection dbt-fabric 1.11 does."""
     import struct
     import time
 
-    import pyodbc
+    import mssql_python
 
     # SQL_COPT_SS_ACCESS_TOKEN (1256): 4-byte length + UTF-16-LE token (JWT is
     # ASCII, so utf-16-le matches dbt's byte-interleave).
     enc = tds_token.encode("utf-16-le")
     attrs = {1256: struct.pack("<i", len(enc)) + enc}
-    base = (
-        "DRIVER={ODBC Driver 18 for SQL Server};"
-        f"SERVER={TDS_SERVER};Database={database};"
-        "Encrypt=no;TrustServerCertificate=yes"
+    # dbt-fabric 1.11 no longer puts DRIVER= in the string; mssql-python
+    # bundles its own driver. Encrypt=No matches the TDS front advertising
+    # ENCRYPT_NOT_SUP (terminates FedAuth without TLS).
+    conn_str = (
+        f"Server={TDS_SERVER};Database={database};"
+        "Encrypt=No;TrustServerCertificate=Yes"
     )
     last = None
     for i in range(40):
         try:
-            with pyodbc.connect(base, attrs_before=attrs, timeout=15) as c:
-                if c.cursor().execute("SELECT 1").fetchone()[0] == 1:
-                    log(f"warmup OK: ODBC Driver 18 -> TDS -> SQL Server SELECT 1 (attempt {i + 1})")
+            handle = mssql_python.connect(conn_str, attrs_before=attrs, timeout=15)
+            try:
+                if handle.cursor().execute("SELECT 1").fetchone()[0] == 1:
+                    log(f"warmup OK: mssql-python -> TDS -> SQL Server SELECT 1 (attempt {i + 1})")
                     break
+            finally:
+                handle.close()
         except Exception as e:  # noqa: BLE001 — transient while the DB comes online
             last = e
             time.sleep(3)
@@ -102,13 +107,14 @@ def main():
     whid = wh["id"]
     log(f"workspace={wsid} warehouse={whid}")
 
-    # 2) Mint the Azure-SQL (FedAuth) token dbt injects into the ODBC driver.
+    # 2) Mint the Azure-SQL (FedAuth) token dbt injects into mssql-python.
     tds_token = mint(TDS_AUDIENCE)
 
     # 3) Template profiles.yml. ActiveDirectoryAccessToken => the token rides in
-    #    pyodbc attrs_before, no MSAL. encrypt=false: the TDS front advertises
+    #    attrs_before, no MSAL. encrypt=false: the TDS front advertises
     #    ENCRYPT_NOT_SUP (terminates FedAuth without TLS), matching go-mssqldb's
-    #    encrypt=disable path.
+    #    encrypt=disable path. `driver` is kept because the adapter still
+    #    accepts it; 1.11 does not put DRIVER= on the wire.
     profile = f"""dbt_fabric_e2e:
   target: dev
   outputs:
@@ -131,12 +137,12 @@ def main():
 
     # 3b) Warm up the connection: the first connect makes the emulator create +
     #     start the per-item database on the sidecar, which can be slow. Prove
-    #     the ODBC Driver 18 -> TDS -> SQL Server relay works for a bare SELECT 1
-    #     (retrying while the database comes online) so dbt then runs against a
-    #     warm database.
+    #     mssql-python -> TDS -> SQL Server works for a bare SELECT 1 (retrying
+    #     while the database comes online) so dbt then runs against a warm
+    #     database.
     warmup(whid, tds_token)
 
-    # 4) Drive the real dbt through the emulator's TDS front + ODBC Driver 18.
+    # 4) Drive the real dbt through the emulator's TDS front + mssql-python.
     env = {**os.environ, "DBT_PROFILES_DIR": PROJECT}
     for cmd in (["dbt", "--no-partial-parse", "debug"], ["dbt", "--no-partial-parse", "seed", "--full-refresh"], ["dbt", "--no-partial-parse", "run"], ["dbt", "--no-partial-parse", "test"]):
         log(" ".join(cmd))

@@ -29,16 +29,15 @@ func (s *Store) ListJobInstances(limit int) ([]*JobInstance, error) {
 		limit = 100
 	}
 	rows, err := s.db.Query(
-		`SELECT id, item_id, job_type, invoke_type, created_at, complete_at, cancelled, fail_with
-		 FROM job_instances ORDER BY created_at DESC, id LIMIT ?`, limit)
+		`SELECT `+jobCols+` FROM job_instances ORDER BY created_at DESC, id LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []*JobInstance
 	for rows.Next() {
-		j := &JobInstance{}
-		if err := rows.Scan(&j.ID, &j.ItemID, &j.JobType, &j.InvokeType, &j.CreatedAt, &j.CompleteAt, &j.Cancelled, &j.FailWith); err != nil {
+		j, err := scanJob(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, j)

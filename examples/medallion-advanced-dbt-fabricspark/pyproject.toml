@@ -18,8 +18,8 @@ dependencies = [
     # The web store and the ERP change log. Depends on contoso-fixtures for the
     # POS generator rather than restating it.
     "contoso-fixtures-advanced",
-    "dbt-fabric>=1.9",
-    "dbt-fabricspark>=1.9",
+    "dbt-fabric>=1.11",
+    "dbt-fabricspark>=1.13",
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",
     "pyodbc>=5.2,<6",
