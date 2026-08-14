@@ -117,6 +117,7 @@ class _ArmStub(BaseHTTPRequestHandler):
 def start_arm_stub(cert: Path, key: Path) -> ThreadingHTTPServer:
     srv = ThreadingHTTPServer(("127.0.0.1", 0), _ArmStub)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(cert, key)
     srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -184,9 +185,7 @@ def az_rest(method: str, url: str, body=None, resource: str = FABRIC_AUD,
     cmd = ["az", "rest", "--method", method, "--uri", url,
            "--resource", resource, "-o", "json"]
     if body is not None:
-        tmp = Path(tempfile.mkdtemp(prefix="az-rest-body.")) / "body.json"
-        tmp.write_text(json.dumps(body), encoding="utf-8")
-        cmd.extend(["--body", f"@{tmp}"])
+        cmd.extend(["--body", json.dumps(body)])
     print(f"    $ az rest -m {method} {url}", flush=True)
     r = subprocess.run(cmd, env=AZ_ENV, capture_output=True, text=True)
     if r.returncode != 0:
