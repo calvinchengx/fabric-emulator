@@ -162,7 +162,7 @@ def patch_json_reader(reader_cls, spark):
             multiLine=kwargs.get("multiLine"),
             options=opts,
             schema=schema,
-        ):
+        ) and isinstance(path, str):
             return read_json_multiline(spark, path)
         return orig(self, path, *args, **kwargs)
 

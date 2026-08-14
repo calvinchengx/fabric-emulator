@@ -215,6 +215,7 @@ def test_storage_options_may_be_a_callable_read_at_statement_time():
 def fake_deltalake(monkeypatch):
     mod = types.ModuleType("deltalake")
     mod.DeltaTable = FakeDeltaTable
+    mod.write_deltalake = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "deltalake", mod)
     return mod
 
@@ -281,6 +282,9 @@ class FakeDeltaTable:
         self.merge_call = {"source": source, "predicate": predicate,
                            "source_alias": source_alias, "target_alias": target_alias}
         return self.merger
+
+    def metadata(self):
+        return types.SimpleNamespace(configuration=getattr(self, "configuration", {}))
 
 
 def test_optimize_reports_the_compaction(fake_deltalake):
@@ -886,3 +890,131 @@ def test_a_failed_create_table_is_not_remembered():
     with pytest.raises(RuntimeError, match="catalog refused"):
         spark.sql("CREATE TABLE d_reg USING delta LOCATION '/tmp/t'")
     assert d.known_location("d_reg") is None
+
+
+def _fake_pyspark_connect(monkeypatch, Reader, Writer, ConnectDF):
+    rw = types.ModuleType("pyspark.sql.connect.readwriter")
+    rw.DataFrameReader = Reader
+    rw.DataFrameWriter = Writer
+    dfmod = types.ModuleType("pyspark.sql.connect.dataframe")
+    dfmod.DataFrame = ConnectDF
+    monkeypatch.setitem(sys.modules, "pyspark", types.ModuleType("pyspark"))
+    monkeypatch.setitem(sys.modules, "pyspark.sql", types.ModuleType("pyspark.sql"))
+    monkeypatch.setitem(sys.modules, "pyspark.sql.connect", types.ModuleType("pyspark.sql.connect"))
+    monkeypatch.setitem(sys.modules, "pyspark.sql.connect.readwriter", rw)
+    monkeypatch.setitem(sys.modules, "pyspark.sql.connect.dataframe", dfmod)
+
+
+def test_cdf_notebook_api_wraps_load_and_save(monkeypatch, fake_deltalake, capsys):
+    """The Connect reader/writer wrap is what the matrix probe actually calls."""
+    written = []
+    fake_deltalake.write_deltalake = (
+        lambda path, table, **kw: written.append((path, table, kw)))
+
+    class DataFrameReader:
+        def format(self, fmt):
+            self._format = fmt
+            return self
+
+        def load(self, path=None, format=None, schema=None, **options):
+            return "engine-load"
+
+    class DataFrameWriter:
+        def __init__(self):
+            self._write = types.SimpleNamespace(
+                source="delta",
+                options={"delta.enableChangeDataFeed": "true"},
+                mode="overwrite",
+            )
+            self._df = types.SimpleNamespace()
+            self._spark = None
+
+        def format(self, fmt):
+            self._write.source = fmt
+            return self
+
+        def mode(self, m):
+            self._write.mode = m
+            return self
+
+        def save(self, path=None, format=None, mode=None, partitionBy=None, **options):
+            return "engine-save"
+
+    class ConnectDF:
+        def __init__(self, df, spark):
+            self._df, self._spark = df, spark
+
+        def toArrow(self):  # noqa: N802 — pyspark's name
+            return "arrow"
+
+    _fake_pyspark_connect(monkeypatch, DataFrameReader, DataFrameWriter, ConnectDF)
+    spark = FakeSpark()
+    spark.read = DataFrameReader()
+    d._install_cdf_dataframe_api(spark, storage_options={})
+
+    feeds = []
+    monkeypatch.setattr(d, "read_change_feed",
+                        lambda *a, **k: feeds.append((a, k)) or "feed")
+    out = spark.read.load("/tmp/t", format="delta", readChangeFeed="true",
+                          startingVersion=0)
+    assert out == "feed" and feeds
+    assert "Change Data Feed read" in capsys.readouterr().err
+
+    DataFrameWriter().save("/tmp/t")
+    assert written and written[0][0] == "/tmp/t"
+    assert written[0][2]["configuration"] == {"delta.enableChangeDataFeed": "true"}
+    assert "Delta write with Change Data Feed" in capsys.readouterr().err
+
+    # Parquet, and a partitioned Delta write, stay on the engine.
+    parquet = DataFrameWriter()
+    parquet._write.source = "parquet"
+    assert parquet.save("/tmp/p") == "engine-save"
+    assert spark.read.load("/tmp/t", format="parquet") == "engine-load"
+
+
+def test_cdf_notebook_api_wrap_is_idempotent(monkeypatch):
+    class DataFrameReader:
+        def load(self, *a, **k):
+            return "engine"
+
+    class DataFrameWriter:
+        def save(self, *a, **k):
+            return "engine"
+
+    _fake_pyspark_connect(monkeypatch, DataFrameReader, DataFrameWriter, lambda *a, **k: None)
+    spark = FakeSpark()
+    spark.read = DataFrameReader()
+    d._install_cdf_dataframe_api(spark, {})
+    first = DataFrameReader.load
+    d._install_cdf_dataframe_api(spark, {})
+    assert DataFrameReader.load is first
+
+
+def test_write_cdf_table_enables_the_feature_only_when_asked(fake_deltalake):
+    seen = []
+    fake_deltalake.write_deltalake = lambda path, table, **kw: seen.append(kw)
+    df = types.SimpleNamespace(toArrow=lambda: "arrow")
+    d.write_cdf_table(df, "/tmp/t", mode="append", enable=False, storage_options={})
+    assert "configuration" not in seen[0]
+    d.write_cdf_table(df, "/tmp/t", mode=None, enable=True, storage_options={})
+    assert seen[1]["mode"] == "overwrite"
+    assert seen[1]["configuration"] == {"delta.enableChangeDataFeed": "true"}
+
+
+def test_table_has_cdf_reads_the_log_property(fake_deltalake):
+    class CDFTable(FakeDeltaTable):
+        def metadata(self):
+            return types.SimpleNamespace(
+                configuration={"delta.enableChangeDataFeed": "true"})
+
+    fake_deltalake.DeltaTable = CDFTable
+    assert d.table_has_cdf("/tmp/t", {}) is True
+
+
+def test_table_has_cdf_is_false_when_the_log_cannot_open(fake_deltalake, monkeypatch):
+    class Boom:
+        def __init__(self, *a, **k):
+            raise RuntimeError("no table")
+
+    fake_deltalake.DeltaTable = Boom
+    assert d.table_has_cdf("/tmp/missing", {}) is False

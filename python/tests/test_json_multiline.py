@@ -20,6 +20,8 @@ PROBE_BODY = '[\n  {"id": 1},\n  {"id": 2}\n]'
 
 
 class FakeSpark:
+    read: object
+
     def __init__(self):
         self.frames = []
         self.read = types.SimpleNamespace()
@@ -175,14 +177,14 @@ def test_patch_intercepts_option_multiline(tmp_path):
     p.write_text(json.dumps([{"id": 1}, {"id": 2}]))
 
     class Reader:
-        _options = {"multiLine": "true"}
-
         def json(self, path=None, *args, **kwargs):
             raise AssertionError("engine must not see option multiLine")
 
     spark = FakeSpark()
     jm.patch_json_reader(Reader, spark)
-    assert Reader().json(str(p)) == "DF2"
+    reader = Reader()
+    reader._options = {"multiLine": "true"}
+    assert reader.json(str(p)) == "DF2"
 
 
 def test_patch_leaves_plain_json_and_multiline_false_on_the_engine(tmp_path):
@@ -218,6 +220,100 @@ def test_patch_leaves_a_schema_call_on_the_engine(tmp_path):
 def test_install_is_a_noop_without_a_connect_reader():
     spark = FakeSpark()
     assert jm.install(spark) is False
+
+
+def test_a_missing_path_is_no_json_records(tmp_path):
+    with pytest.raises(jm.JsonMultilineError, match="no JSON"):
+        jm.records_from_path(str(tmp_path / "does-not-exist"))
+
+
+def test_an_empty_file_in_the_directory_is_skipped(tmp_path):
+    d = tmp_path / "t"
+    d.mkdir()
+    (d / "part-empty").write_text("  \n")
+    (d / "part-00000").write_text('{"id": 1}')
+    assert jm.records_from_path(str(d)) == [{"id": 1}]
+
+
+def test_a_json_scalar_is_refused(tmp_path):
+    p = tmp_path / "n.json"
+    p.write_text("1")
+    with pytest.raises(jm.JsonMultilineError, match="object or array"):
+        jm.records_from_path(str(p))
+
+
+def test_abfss_ls_failure_treats_the_path_as_a_file(monkeypatch):
+    body = {"abfss://ws@host/t.json": '[{"id": 1}]'}
+
+    def ls(_path):
+        raise FileNotFoundError("not a directory")
+
+    fake_fs = types.SimpleNamespace(
+        ls=ls,
+        head=lambda p, maxBytes=None: body[p],
+    )
+    monkeypatch.setitem(sys.modules, "notebookutils", types.SimpleNamespace(fs=fake_fs))
+    monkeypatch.setitem(sys.modules, "notebookutils.fs", fake_fs)
+    assert jm.records_from_path("abfss://ws@host/t.json") == [{"id": 1}]
+
+
+def test_abfss_read_falls_back_when_head_is_absent(monkeypatch):
+    fake_fs = types.SimpleNamespace(
+        ls=lambda p: (_ for _ in ()).throw(RuntimeError("file")),
+        read=lambda p: b'{"id": 3}',
+    )
+    monkeypatch.setitem(sys.modules, "notebookutils", types.SimpleNamespace(fs=fake_fs))
+    monkeypatch.setitem(sys.modules, "notebookutils.fs", fake_fs)
+    assert jm.records_from_path("abfs://ws@host/one.json") == [{"id": 3}]
+
+
+def test_patch_is_idempotent(tmp_path):
+    p = tmp_path / "a.json"
+    p.write_text('{"id": 1}')
+
+    class Reader:
+        def json(self, path=None, *args, **kwargs):
+            return "engine"
+
+    spark = FakeSpark()
+    jm.patch_json_reader(Reader, spark)
+    first = Reader.json
+    jm.patch_json_reader(Reader, spark)
+    assert Reader.json is first
+
+
+def test_patch_treats_positional_schema_as_the_engine(tmp_path):
+    p = tmp_path / "a.json"
+    p.write_text(PROBE_BODY)
+
+    class Reader:
+        def json(self, path=None, *args, **kwargs):
+            return ("engine", args)
+
+    spark = FakeSpark()
+    jm.patch_json_reader(Reader, spark)
+    assert Reader().json(str(p), "id INT", multiLine=True) == ("engine", ("id INT",))
+    assert spark.frames == []
+
+
+def test_install_patches_a_connect_reader(monkeypatch, tmp_path):
+    class DataFrameReader:
+        def json(self, path=None, *args, **kwargs):
+            return "engine"
+
+    rw = types.ModuleType("pyspark.sql.connect.readwriter")
+    rw.DataFrameReader = DataFrameReader
+    monkeypatch.setitem(sys.modules, "pyspark", types.ModuleType("pyspark"))
+    monkeypatch.setitem(sys.modules, "pyspark.sql", types.ModuleType("pyspark.sql"))
+    monkeypatch.setitem(sys.modules, "pyspark.sql.connect", types.ModuleType("pyspark.sql.connect"))
+    monkeypatch.setitem(sys.modules, "pyspark.sql.connect.readwriter", rw)
+
+    p = tmp_path / "a.json"
+    p.write_text('[{"id": 1}, {"id": 2}]')
+    spark = FakeSpark()
+    spark.read = DataFrameReader()
+    assert jm.install(spark) is True
+    assert spark.read.json(str(p), multiLine=True) == "DF2"
 
 
 def test_delta_ops_install_installs_json_multiline(monkeypatch):
