@@ -33,6 +33,15 @@ Config comes from the same env vars the rest of the stack already uses
 With none of these set, `options()` returns `{}` and delta-rs falls back to its
 own env handling — which is what makes local-path tables keep working.
 """
+
+# Lazy annotations, so PEP 604 unions below stay strings. This module is
+# Connect-only today (agent.py imports it only when SPARK_REMOTE is set),
+# but it lives in spark_agent/, which the JVM overlay mounts into an image
+# running Python 3.8 — where `str | None` is evaluated at import and
+# raises TypeError. One rule for the whole directory beats a precise one
+# that drifts the moment an import moves.
+from __future__ import annotations
+
 import json
 import os
 import ssl
