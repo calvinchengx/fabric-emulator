@@ -9,6 +9,7 @@ import types
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import parse_qs
 
 import pytest
 
@@ -193,7 +194,8 @@ def test_fabric_token_uses_fabric_audience(monkeypatch):
         "ENTRA_CLIENT_SECRET": "s",
     })
     assert token == "tok"
-    assert "api.fabric.microsoft.com" in seen["body"]
+    fields = parse_qs(seen["body"])
+    assert fields["scope"] == ["https://api.fabric.microsoft.com/.default"]
 
 
 def test_fabric_token_requires_entra_url():
