@@ -22,7 +22,7 @@ import json
 import os
 import sys
 import traceback
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from pyspark.sql import SparkSession
@@ -226,6 +226,10 @@ def apply_environment(req):
 
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 session_isolated = {}  # Livy session id -> did it get a private SparkSession
+# Per-session notebook identity (docs/38 §1). /mount and /statements remember
+# it; each statement binds it into notebookutils.runtime so two notebooks in
+# one agent cannot read each other's workspace.
+session_context = {}
 catalog_claims = catalog.Claims()  # only consulted when isolation is unavailable
 
 
@@ -284,6 +288,43 @@ def ns(session):
             if mssparkutils is not None:
                 namespaces[session]["mssparkutils"] = mssparkutils
     return namespaces[session]
+
+
+def remember_context(session, req):
+    """Merge identity fields from a /mount or /statements body into this session."""
+    cur = session_context.setdefault(session, {})
+    mapping = (
+        ("currentWorkspaceId", "workspaceId"),
+        ("defaultLakehouseId", "lakehouseId"),
+        ("currentNotebookId", "notebookId"),
+        ("currentJobId", "jobId"),
+    )
+    for dest, src in mapping:
+        if req.get(src):
+            cur[dest] = req[src]
+    # /mount uses the lakehouse-bind names, not the statement ones.
+    if req.get("workspace"):
+        cur["currentWorkspaceId"] = req["workspace"]
+    if req.get("lakehouse"):
+        cur["defaultLakehouseId"] = req["lakehouse"]
+    if "isForPipeline" in req:
+        cur["isForPipeline"] = bool(req["isForPipeline"])
+
+
+@contextmanager
+def runtime_scope(session, req):
+    remember_context(session, req)
+    nbu = ns(session).get("notebookutils")
+    bind = getattr(getattr(nbu, "runtime", None), "bind", None)
+    unbind = getattr(getattr(nbu, "runtime", None), "unbind", None)
+    if not bind or not unbind:
+        yield
+        return
+    token = bind(session_context.get(session) or {})
+    try:
+        yield
+    finally:
+        unbind(token)
 
 
 def run_code(code, g):
@@ -388,12 +429,12 @@ class Handler(BaseHTTPRequestHandler):
                       + traceback.format_exc(), flush=True)
             try:
                 with cell_context(req.get("jobId"), req.get("cellIndex")):
-                    if (req.get("kind") or "").lower() == "sql":
-                        result = sqlrun.run_sql(req.get("code", ""),
-                                                ns(req.get("session", "default")))
-                    else:
-                        result = run_code(req.get("code", ""),
-                                          ns(req.get("session", "default")))
+                    session = req.get("session", "default")
+                    with runtime_scope(session, req):
+                        if (req.get("kind") or "").lower() == "sql":
+                            result = sqlrun.run_sql(req.get("code", ""), ns(session))
+                        else:
+                            result = run_code(req.get("code", ""), ns(session))
             finally:
                 try:
                     import files_mount
@@ -410,6 +451,7 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/mount":
             # Mirror the bound lakehouse's Files/ at /lakehouse/default/Files,
             # the mount a real Fabric runtime provides (files_mount.py).
+            remember_context(req.get("session", "default"), req)
             try:
                 import files_mount
                 self._send(200, files_mount.sync(req.get("workspace", ""),
@@ -427,6 +469,7 @@ class Handler(BaseHTTPRequestHandler):
                 print("files_mount: flush on close failed:\n"
                       + traceback.format_exc(), flush=True)
             namespaces.pop(req.get("session", ""), None)
+            session_context.pop(req.get("session", ""), None)
             self._send(200, {"closed": True})
         else:
             self._send(404, {"error": "not found"})

@@ -119,7 +119,32 @@ except Exception:
 // second spelling would report a session that never existed.
 func notebookSessionID(jid string) string { return "notebook-" + jid }
 
-func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map[string]any) {
+// notebookStatement is every /statements body a notebook run sends. Workspace
+// and lakehouse travel with the code so the agent can bind runtime.context to
+// THIS notebook (docs/38 §1) — the env fallback is process-global and is what
+// a framework that probes mssparkutils.env.getWorkspaceId() first used to miss.
+func notebookStatement(session, code, kind, wid, iid, jid string, run notebookRun, forPipeline bool, cellIndex *int) map[string]any {
+	m := map[string]any{
+		"session": session, "code": code,
+		"workspaceId": wid, "notebookId": iid,
+		"isForPipeline": forPipeline,
+	}
+	if kind != "" {
+		m["kind"] = kind
+	}
+	if jid != "" {
+		m["jobId"] = jid
+	}
+	if cellIndex != nil {
+		m["cellIndex"] = *cellIndex
+	}
+	if run.Binding.LakehouseID != "" {
+		m["lakehouseId"] = run.Binding.LakehouseID
+	}
+	return m
+}
+
+func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map[string]any, forPipeline bool) {
 	session := notebookSessionID(jid)
 
 	// A goroutine that dies silently is why a notebook can leave every cell
@@ -158,9 +183,9 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 	}
 
 	body := notebookResultBody{Status: "Completed"}
-	if _, err := a.agentPost("/statements", map[string]any{
-		"session": session, "code": notebookPrelude,
-	}); err != nil {
+	if _, err := a.agentPost("/statements", notebookStatement(
+		session, notebookPrelude, "", wid, iid, "", run, forPipeline, nil,
+	)); err != nil {
 		finalised = true
 		a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("the Spark agent is unreachable: %v", err))
 		return
@@ -214,10 +239,10 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 		// NOT sufficient for Spark's own writes: a `df.write` executes inside
 		// Sail, whose storage token enters it through startup env and cannot
 		// vary per cell (docker/sail/launcher.py). Those stay unattributed.
-		out, err := a.agentPost("/statements", map[string]any{
-			"session": session, "code": cell.Source, "kind": kind,
-			"jobId": jid, "cellIndex": cell.Index,
-		})
+		idx := cell.Index
+		out, err := a.agentPost("/statements", notebookStatement(
+			session, cell.Source, kind, wid, iid, jid, run, forPipeline, &idx,
+		))
 		if err != nil {
 			finalised = true
 			a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("cell %d: %v", cell.Index, err))
@@ -227,10 +252,9 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 		// "The execution engine adds a new cell beneath the parameters cell":
 		// beneath THAT cell, not beneath the first one.
 		if i == injectAfter && paramCode != "" {
-			if _, perr := a.agentPost("/statements", map[string]any{
-				"session": session, "code": paramCode, "kind": "python",
-				"jobId": jid, "cellIndex": cell.Index,
-			}); perr != nil {
+			if _, perr := a.agentPost("/statements", notebookStatement(
+				session, paramCode, "python", wid, iid, jid, run, forPipeline, &idx,
+			)); perr != nil {
 				finalised = true
 				a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("applying run parameters: %v", perr))
 				return
@@ -298,9 +322,9 @@ try:
 except Exception:
     pass
 `, name, tables, name)
-	if _, err := a.agentPost("/statements", map[string]any{
-		"session": session, "code": code,
-	}); err != nil {
+	if _, err := a.agentPost("/statements", notebookStatement(
+		session, code, "", b.WorkspaceID, "", "", notebookRun{Binding: b}, false, nil,
+	)); err != nil {
 		log.Printf("notebook: binding default lakehouse %s: %v", name, err)
 	}
 }
@@ -323,10 +347,11 @@ func (a *API) notebookExitValue(session string) (string, bool) {
 	// json.dumps of a {exited, value} pair is unambiguous for any content, and
 	// carries the did-it-exit bit that an empty string cannot: notebookutils'
 	// exit() takes no argument, so "" is a legitimate exit value.
-	out, err := a.agentPost("/statements", map[string]any{
-		"session": session,
-		"code":    `import json as _j; print(_j.dumps({"exited": __nb_exit__ is not None, "value": __nb_exit__}))`,
-	})
+	out, err := a.agentPost("/statements", notebookStatement(
+		session,
+		`import json as _j; print(_j.dumps({"exited": __nb_exit__ is not None, "value": __nb_exit__}))`,
+		"", "", "", "", notebookRun{}, false, nil,
+	))
 	if err != nil {
 		return "", false
 	}

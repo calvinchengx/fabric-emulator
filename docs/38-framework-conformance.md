@@ -39,24 +39,26 @@ in by probing in order: `mssparkutils.env.getWorkspaceId()`, then
 Every published Fabric framework has some version of this chain. Satisfying only
 the last link means a framework that never reaches it fails on its first call.
 
-**Where the emulator stands.** Two structural gaps, both open:
+**Where the emulator stands.** `/mount` already sent workspace and lakehouse
+ids at bind (the Files mount needs them). `runtime.context` ignored that and
+was built **at module import** from `NOTEBOOKUTILS_WORKSPACE_ID` /
+`NOTEBOOKUTILS_LAKEHOUSE_ID`, so it was process-global: not per-run, and in a
+shared agent not even per-session. A statement request carried `session`,
+`code` and `kind` — identity for lineage (`jobId`/`cellIndex`) but not the
+notebook's workspace.
 
-- The control plane **never sends workspace or lakehouse to the agent**. A
-  statement request carries `session`, `code` and `kind`
-  (`internal/api/notebookdrive.go`); only `/mount` carries identity.
-- `notebookutils.runtime.context` is built **at module import** from
-  `NOTEBOOKUTILS_WORKSPACE_ID` / `NOTEBOOKUTILS_LAKEHOUSE_ID`
-  (`python/notebookutils/runtime.py`, `python/notebookutils/_config.py`), so it
-  is process-global: not per-run, and in a shared agent not even per-session.
+**The fix (landed for RunNotebook).** Every notebook `/statements` body now
+carries `workspaceId` / `lakehouseId` / `notebookId` / `isForPipeline`. The
+agent remembers them per session (including from `/mount`) and binds
+`notebookutils.runtime.context` around the statement via a `ContextVar`, so
+two concurrent notebooks cannot see each other's workspace.
+`mssparkutils.env.getWorkspaceId()` reads that same context. The environment
+remains the fallback for a kernel that has no agent. Fabric's context also
+carries capacity; that field is still absent.
 
-**The fix.** Thread per-run identity from Go into the session namespace, so
-`runtime.context` is session state rather than process environment. Fabric's
-context carries more than two fields — notebook id, job id, `isForPipeline`,
-capacity — and a framework may read any of them.
-
-**This is the highest-value single item in this document**, because context
-resolution is the first thing a framework does. Today the only thing that makes
-it work is setting environment variables out of band, which no real product does.
+**This was the highest-value single item in this document**, because context
+resolution is the first thing a framework does. Setting environment variables
+out of band is no longer the only path that works.
 
 ### 2. The API shape is the contract, independent of behaviour
 

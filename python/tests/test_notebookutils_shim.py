@@ -20,7 +20,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from notebookutils import credentials, fs, lakehouse, runtime  # noqa: E402
+from notebookutils import credentials, env, fs, lakehouse, runtime  # noqa: E402
 
 WS = "11111111-1111-1111-1111-111111111111"
 LH = "22222222-2222-2222-2222-222222222222"
@@ -239,10 +239,6 @@ def test_get_secret_with_ls_is_an_alias(http, monkeypatch):
 # --- runtime context ----------------------------------------------------------
 
 def test_runtime_context_supports_both_access_styles():
-    # `runtime.context` is built at IMPORT time from the environment, so it
-    # cannot be re-pointed by a fixture — what is testable, and what actually
-    # varies between notebooks in the wild, is that both spellings work:
-    # `context["currentWorkspaceId"]` and `context.currentWorkspaceId`.
     ctx = runtime._Context({"currentWorkspaceId": WS, "defaultLakehouseId": LH})
     assert ctx["currentWorkspaceId"] == ctx.currentWorkspaceId == WS
     assert ctx.defaultLakehouseId == LH
@@ -259,3 +255,50 @@ def test_runtime_context_raises_attributeerror_for_an_unknown_key():
 
 def test_the_real_runtime_context_carries_the_documented_keys():
     assert set(runtime.context) >= {"currentWorkspaceId", "defaultLakehouseId", "isForPipeline"}
+
+
+def test_runtime_context_bind_is_the_running_notebook_not_the_process():
+    # docs/38 §1: a framework that reads runtime.context (or env.getWorkspaceId)
+    # must see the notebook that is running, not NOTEBOOKUTILS_* set out of band.
+    token = runtime.bind({
+        "currentWorkspaceId": WS,
+        "defaultLakehouseId": LH,
+        "currentNotebookId": "nb-1",
+        "isForPipeline": True,
+    })
+    try:
+        assert runtime.context.currentWorkspaceId == WS
+        assert runtime.context["defaultLakehouseId"] == LH
+        assert runtime.context["isForPipeline"] is True
+        assert env.getWorkspaceId() == WS
+        assert env.getLakehouseId() == LH
+    finally:
+        runtime.unbind(token)
+    assert runtime.context.get("currentWorkspaceId") != WS
+
+
+def test_runtime_context_bind_isolates_concurrent_statements():
+    import concurrent.futures
+    import time
+
+    seen = {}
+
+    def other():
+        token = runtime.bind({"currentWorkspaceId": "other-ws"})
+        try:
+            time.sleep(0.05)
+            seen["other"] = runtime.context["currentWorkspaceId"]
+        finally:
+            runtime.unbind(token)
+
+    token = runtime.bind({"currentWorkspaceId": WS})
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(other)
+            time.sleep(0.01)
+            seen["this"] = runtime.context["currentWorkspaceId"]
+            fut.result()
+    finally:
+        runtime.unbind(token)
+
+    assert seen == {"this": WS, "other": "other-ws"}

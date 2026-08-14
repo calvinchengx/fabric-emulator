@@ -236,7 +236,7 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 			// stays open for a callback, which is the original contract and the
 			// only honest thing to do when there is no engine to run anything.
 			nbParams, _ := exec["parameters"].(map[string]any)
-			go a.driveNotebookRun(wid, it.ID, j.ID, *nbRun, nbParams)
+			go a.driveNotebookRun(wid, it.ID, j.ID, *nbRun, nbParams, false)
 		}
 	}
 	if sjdRun != nil {
@@ -413,7 +413,7 @@ func (a *API) dispatchExisting(wid string, it *store.Item, j *store.JobInstance)
 			a.Store.PublishJobEvent(wid, it.ID, j.ID, j.JobType, j.InvokeType, store.JobFailed, code)
 		} else if len(nbRun.Cells) > 0 && a.runsNotebooksItself() {
 			nbParams, _ := exec["parameters"].(map[string]any)
-			go a.driveNotebookRun(wid, it.ID, j.ID, nbRun, nbParams)
+			go a.driveNotebookRun(wid, it.ID, j.ID, nbRun, nbParams, false)
 		}
 		return
 	}
