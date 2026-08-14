@@ -107,6 +107,17 @@ func TestPayloadsMatchDocumentedSchemas(t *testing.T) {
 				"tags", "defaultIdentity",
 			},
 		},
+		{
+			name:     "catalog search",
+			source:   "rest/api/fabric/core/catalog/search",
+			method:   "POST",
+			path:     "/v1/catalog/search",
+			body:     map[string]any{"search": "schema"},
+			status:   http.StatusOK,
+			envelope: "value",
+			required: []string{"id", "type", "catalogEntryType", "displayName", "hierarchy"},
+			optional: []string{"description"},
+		},
 	}
 
 	for _, tc := range cases {

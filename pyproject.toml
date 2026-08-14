@@ -48,6 +48,12 @@ adls-sdk = [
 purview-datamap = [
     "pyapacheatlas>=0.16,<1",
 ]
+# Official Python MCP SDK — the unmodified Streamable HTTP client that
+# witnesses Fabric Core MCP Server (POST /v1/mcp/core). Pinned below v2: v2
+# renamed streamablehttp_client and dropped the headers= kwarg.
+mcp = [
+    "mcp>=1.12,<2",
+]
 delta-rs = [
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",

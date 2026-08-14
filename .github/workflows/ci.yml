@@ -919,6 +919,31 @@ jobs:
       # docs/parity.md requires before a row may be graded green.
       - run: uv run --frozen --group purview-datamap python e2e/purview-datamap/run.py
 
+  mcp-core:
+    name: Python mcp SDK witnesses Fabric Core MCP
+    # Single OS deliberately. This asserts a WIRE CONTRACT against a pure-python
+    # client, so a three-OS matrix would re-run the same HTTP conversation for
+    # no additional evidence — unlike the SDK suites, where platform-specific
+    # native code is part of what is under test.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      # The official `mcp` package is the Streamable HTTP client VS Code and
+      # other hosts speak. Driving POST /v1/mcp/core with it — not a client
+      # shaped like our JSON-RPC — is what docs/parity.md requires before the
+      # Core MCP row may be graded green.
+      - run: uv run --frozen --group mcp python e2e/mcp-core/run.py
+
   azcopy:
     name: Real azcopy transfers through OneLake
     runs-on: ubuntu-latest
@@ -1071,6 +1096,23 @@ jobs:
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/fabric-cli/run.py
+
+  az-rest:
+    name: Azure CLI az rest drives Fabric REST + Power BI activityevents (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # Microsoft's own `az` CLI — the same packaged client entra already
+      # uses as a stranger — logs in through entra-emulator and drives Fabric
+      # REST plus the Power BI admin activity log. Bound only to already-green
+      # rows a real stranger can hit (admin, folders, RBAC, capacities,
+      # schedules, report definitions, provisionIdentity, name reservation).
+      # Pipeline engines, races, and emulator-only headers stay go:.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/az-rest/run.py
 
   fab-driven:
     name: The fab-driven example — fab imports definitions, RUNS them, and the bytes are checked

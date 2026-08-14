@@ -463,3 +463,53 @@ func (a *API) moveItem(w http.ResponseWriter, r *http.Request, p *auth.Principal
 	it.FolderID = target
 	writeJSON(w, http.StatusOK, it)
 }
+
+// bulkMoveItems reparents many items in one request.
+//
+//	POST /v1/workspaces/{wid}/items/bulkMove  {"items":[...], "targetFolderId": "<guid>"}
+//
+// Documented limit is 50. Missing items or a missing target folder fail the
+// whole call; nothing is moved in that case because every id is resolved
+// before the first write.
+func (a *API) bulkMoveItems(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	wid := r.PathValue("wid")
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleContributor); !ok {
+		return
+	}
+	var body struct {
+		Items          []string `json:"items"`
+		TargetFolderID string   `json:"targetFolderId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Items) == 0 {
+		writeErr(w, http.StatusBadRequest, "InvalidRequest", "items is required.")
+		return
+	}
+	if len(body.Items) > 50 {
+		writeErr(w, http.StatusBadRequest, "InvalidRequest", "A single request cannot contain more than 50 items.")
+		return
+	}
+	target := strings.TrimSpace(body.TargetFolderID)
+	if target != "" {
+		if _, err := a.Store.GetFolder(wid, target); err != nil {
+			writeErr(w, http.StatusNotFound, "FolderNotFound", "target folder not found in this workspace")
+			return
+		}
+	}
+	moved := make([]*store.Item, 0, len(body.Items))
+	for _, id := range body.Items {
+		it, err := a.Store.GetItem(wid, id)
+		if err != nil || it == nil {
+			writeErr(w, http.StatusNotFound, "ItemNotFound", "item not found")
+			return
+		}
+		moved = append(moved, it)
+	}
+	for _, it := range moved {
+		if err := a.Store.MoveItem(wid, it.ID, target); err != nil {
+			writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+			return
+		}
+		it.FolderID = target
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"value": moved})
+}

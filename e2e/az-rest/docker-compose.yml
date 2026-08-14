@@ -1,0 +1,40 @@
+# Microsoft's Azure CLI (`az rest`) drives the emulator. az login's MSAL
+# refuses a non-HTTPS authority and DROPS a non-443 port, so entra-emulator
+# IS login.microsoftonline.com on :443 and fabric is api.fabric.microsoft.com
+# — the same alias trick as e2e/fabric-cli and e2e/deployment-pipelines.
+#
+# FABRIC_TENANT_ADMINS names the seeded daemon app so admin WRITES (domains,
+# labels, tenant-setting updates) are legal: a service principal may read
+# /v1/admin/* and may not change it unless it is also a declared administrator.
+# FABRIC_NAME_RESERVATION is on so a delete-then-recreate is the 409 a real
+# tenant returns, which is the claim this job binds.
+services:
+  entra:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.6.0}
+    user: "0:0"
+    environment:
+      PUBLIC_ORIGIN: "https://login.microsoftonline.com"
+      LOCAL_DOMAINS: "login.microsoftonline.com"
+      PORT: "443"
+      TLS_ENABLED: "true"
+    networks:
+      default:
+        aliases: ["login.microsoftonline.com"]
+
+  fabric:
+    build: { context: ../.., dockerfile: Dockerfile }
+    user: "0:0"
+    environment:
+      FABRIC_ADDR: ":443"
+      FABRIC_DATA_DIR: "/data"
+      FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      FABRIC_ENTRA_TLS_INSECURE: "true"
+      FABRIC_TENANT_ADMINS: "00d88624-f0d7-46f6-a641-6232c2608928"
+      FABRIC_NAME_RESERVATION: "1h"
+    networks:
+      default:
+        aliases: ["api.fabric.microsoft.com"]
+
+  client:
+    build: { context: ., dockerfile: Dockerfile }
+    depends_on: [entra, fabric]

@@ -199,6 +199,23 @@ func (a *API) createRoleAssignment(w http.ResponseWriter, r *http.Request, p *au
 	writeJSON(w, http.StatusCreated, ra)
 }
 
+func (a *API) getRoleAssignment(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
+	wid := r.PathValue("wid")
+	if _, _, ok := a.requireRole(w, wid, p, store.RoleMember); !ok {
+		return
+	}
+	ra, err := a.Store.GetRoleAssignment(wid, r.PathValue("raid"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "RoleAssignmentNotFound", "No such role assignment.")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, ra)
+}
+
 func (a *API) updateRoleAssignment(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
 	if _, _, ok := a.requireRole(w, wid, p, store.RoleAdmin); !ok {

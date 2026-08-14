@@ -175,6 +175,7 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /v1/workspaces/{wid}/roleAssignments", a.withAuth(a.listRoleAssignments))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/roleAssignments", a.withAuth(a.createRoleAssignment))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/roleAssignments/{raid}", a.withAuth(a.getRoleAssignment))
 	mux.HandleFunc("PATCH /v1/workspaces/{wid}/roleAssignments/{raid}", a.withAuth(a.updateRoleAssignment))
 	mux.HandleFunc("DELETE /v1/workspaces/{wid}/roleAssignments/{raid}", a.withAuth(a.deleteRoleAssignment))
 
@@ -186,6 +187,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.updateItem))
 	mux.HandleFunc("DELETE /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.deleteItem))
 
+	mux.HandleFunc("POST /v1/workspaces/{wid}/items/bulkMove", a.withAuth(a.bulkMoveItems))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/move", a.withAuth(a.moveItem))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/getDefinition", a.withAuth(a.getDefinition))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/updateDefinition", a.withAuth(a.updateDefinition))
@@ -221,6 +223,10 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /v1/workspaces/{wid}/folders", a.withAuth(a.listFolders))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/folders", a.withAuth(a.createFolder))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/folders/{fid}", a.withAuth(a.getFolder))
+	mux.HandleFunc("PATCH /v1/workspaces/{wid}/folders/{fid}", a.withAuth(a.updateFolder))
+	mux.HandleFunc("DELETE /v1/workspaces/{wid}/folders/{fid}", a.withAuth(a.deleteFolder))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/folders/{fid}/move", a.withAuth(a.moveFolder))
 
 	mux.HandleFunc("GET /v1/capacities", a.withAuth(a.listCapacities))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/assignToCapacity", a.withAuth(a.assignToCapacity))
@@ -273,6 +279,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerAirflow(mux)
 	a.registerMLflow(mux)
 	a.registerKQL(mux)
+	a.registerCatalog(mux)
+	a.registerMCP(mux)
 
 	mux.HandleFunc("GET /v1/operations/{oid}", a.withAuth(a.getOperation))
 	mux.HandleFunc("GET /v1/operations/{oid}/result", a.withAuth(a.getOperationResult))
