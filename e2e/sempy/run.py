@@ -210,8 +210,24 @@ entra_bin = os.path.join(WORK, "entra-emulator" + EXE)
 
 try:
     log(f"starting entra on :{ENTRA_PORT}, fabric on :{FABRIC_PORT} (TLS ON)")
+    # HOST=0.0.0.0 is LOAD-BEARING and was the whole reason this suite had never
+    # passed. entra-emulator defaults to `localhost`, and the sempy container
+    # reaches it as `host.docker.internal:<port>` — the host-gateway address,
+    # not loopback — so every token mint was refused with Errno 111 before XMLA
+    # was ever reached.
+    #
+    # It affects semantic-link-labs ONLY, which is why the failure looked
+    # selective: `sempy` is handed a pre-minted SEMPY_TOKEN and never calls
+    # entra, while labs routes every REST call through this repo's notebookutils
+    # shim, which mints its own. Nine sempy checks passed and all three labs
+    # checks failed, on a suite whose parity row claims "two independent
+    # Microsoft clients".
+    #
+    # The issuer stays `localhost` on purpose: it is the string fabric validates
+    # tokens against, not an address anything dials.
     start("entra", [entra_bin], {**os.environ, "ORIGIN_MODE": "compat",
-          "PORT": ENTRA_PORT, "DB_PATH": os.path.join(WORK, "entra.sqlite"),
+          "PORT": ENTRA_PORT, "HOST": "0.0.0.0",
+          "DB_PATH": os.path.join(WORK, "entra.sqlite"),
           "TLS_CERT_DIR": os.path.join(WORK, "entra-tls")})
     # TLS stays ON: the client will not speak plain HTTP to an XMLA endpoint,
     # and the emulator's own cert already carries api.fabric.microsoft.com.
