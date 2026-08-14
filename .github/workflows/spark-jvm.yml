@@ -23,6 +23,11 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.32"
+      - uses: actions/cache@v6
+        with:
+          path: docker/spark-runtime/jars
+          key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
+      - run: scripts/fetch_spark_jars.sh
       - run: uv run --frozen --no-sync python e2e/spark-jvm/run.py
 
   notebook-jvm:
@@ -34,4 +39,25 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.32"
+      - uses: actions/cache@v6
+        with:
+          path: docker/spark-runtime/jars
+          key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
+      - run: scripts/fetch_spark_jars.sh
       - run: uv run --frozen --no-sync python e2e/notebook-run/run-jvm.py
+
+  eventstream:
+    name: Eventstream notebook API on JVM Spark + Kafka
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      - uses: actions/cache@v6
+        with:
+          path: docker/spark-runtime/jars
+          key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
+      - run: scripts/fetch_spark_jars.sh
+      - run: uv run --frozen --no-sync python e2e/eventstream/run.py

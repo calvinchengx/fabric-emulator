@@ -199,6 +199,60 @@ def streaming_sink_console(spark):
     assert active, "console sink started but was not active"
 
 
+def _seed_kafka(spark, bootstrap, topic):
+    """Put one Kafka-schema record on `topic` so the read probe is not vacuous.
+
+    sail-delta has kafka-python (the wrap's client). JVM has spark-sql-kafka
+    and writes with the jar. Bare Sail never sets KAFKA_BOOTSTRAP, so this
+    is not called there — the probe fails on the missing source, not on a
+    missing broker.
+    """
+    try:
+        from kafka import KafkaProducer
+    except ImportError:
+        (spark.createDataFrame([("hello-engine-matrix",)], ["v"])
+         .selectExpr("CAST(v AS BINARY) as value")
+         .write.format("kafka")
+         .option("kafka.bootstrap.servers", bootstrap)
+         .option("topic", topic)
+         .save())
+        return
+    producer = KafkaProducer(
+        bootstrap_servers=[s.strip() for s in bootstrap.split(",") if s.strip()],
+        acks="all",
+    )
+    try:
+        producer.send(topic, b"hello-engine-matrix").get(timeout=15)
+        producer.flush()
+    finally:
+        producer.close()
+
+
+def streaming_read_kafka(spark):
+    """OSS format('kafka') + bootstrap/subscribe. Kafka schema, never rate.
+
+    Batch read so JVM native spark-sql-kafka and the Sail wrap can both
+    collect(). CAST(value AS STRING) runs on the engine — that is the bytes
+    reaching Sail, not a mapping onto `rate`.
+    """
+    bootstrap = os.environ.get("KAFKA_BOOTSTRAP", "")
+    topic = os.environ.get("KAFKA_TOPIC", "engine-matrix-kafka")
+    if bootstrap:
+        _seed_kafka(spark, bootstrap, topic)
+    df = (spark.read.format("kafka")
+          .option("kafka.bootstrap.servers", bootstrap or "kafka:9092")
+          .option("subscribe", topic)
+          .option("startingOffsets", "earliest")
+          .option("endingOffsets", "latest")
+          .load())
+    names = {f.name for f in df.schema.fields}
+    assert {"key", "value", "topic", "partition", "offset"} <= names, names
+    assert "rate" not in str(df.schema).lower()
+    rows = df.selectExpr("CAST(value AS STRING) as v").collect()
+    assert len(rows) > 0, "kafka source returned no rows"
+    assert any("hello-engine-matrix" in (r.v or "") for r in rows), [r.v for r in rows]
+
+
 def streaming_sink_memory(spark):
     """The memory sink IS observable: it registers a queryable table."""
     name = "probe_mem"
@@ -469,6 +523,7 @@ PROBES = [
     ("delta.vacuum", "`VACUUM`", delta_vacuum),
     ("delta.cdf", "Change Data Feed (must not be inert) ᵇ", delta_change_data_feed),
     ("streaming.read_rate", "`readStream` (rate source) — schema only ᶜ", streaming_read_rate),
+    ("streaming.read_kafka", "`format(\"kafka\")` + bootstrap/subscribe (rows on the engine) ʲ", streaming_read_kafka),
     ("streaming.sink_console", "Streaming sink — console — liveness only ᶜ", streaming_sink_console),
     ("streaming.sink_memory", "Streaming sink — memory (rows readable)", streaming_sink_memory),
     ("streaming.sink_parquet", "Streaming sink — parquet (rows readable)", streaming_sink_parquet),

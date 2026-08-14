@@ -95,6 +95,9 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	if err := a.SetKQLBackend(cfg.KQLURL); err != nil {
 		return nil, err
 	}
+	if err := a.SetKafkaBootstrap(cfg.KafkaBootstrap); err != nil {
+		return nil, err
+	}
 
 	// OneLake accepts only Storage-audience tokens, over the same JWKS.
 	olv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)

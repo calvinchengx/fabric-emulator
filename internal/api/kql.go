@@ -408,7 +408,7 @@ func kustoBaseURI(r *http.Request, wid, eventhouseID string) string {
 }
 
 // itemView returns the item, wrapped with its typed properties when its type
-// has any (Eventhouse / KQLDatabase today).
+// has any (Eventhouse / KQLDatabase / Eventstream today).
 func (a *API) itemView(r *http.Request, it *store.Item) any {
 	props := a.typedItemProperties(r, it)
 	var label *sensitivityLabel
@@ -506,6 +506,8 @@ func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]an
 		// Still reported without a SQL endpoint: OneLake is where the data is,
 		// whether or not anything serves T-SQL over it.
 		return a.oneLakePaths(r, it)
+	case "Eventstream":
+		return a.eventstreamProperties(it)
 	case "Eventhouse":
 		base := kustoBaseURI(r, it.WorkspaceID, it.ID)
 		ids := []string{}
@@ -589,6 +591,8 @@ func (a *API) applyCreationPayload(it *store.Item, payload map[string]any) {
 			}
 		}
 		_ = a.Store.SetItemProperties(it.ID, props)
+	case "Eventstream":
+		a.provisionEventstream(it)
 	case "Eventhouse":
 		child := &store.Item{WorkspaceID: it.WorkspaceID, Type: "KQLDatabase", DisplayName: it.DisplayName}
 		if err := a.Store.CreateItem(child, nil); err != nil {

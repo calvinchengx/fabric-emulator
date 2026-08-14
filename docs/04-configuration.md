@@ -52,6 +52,7 @@ or opt out with `docker compose -f docker-compose.yml up`.
 | `FABRIC_AIRFLOW_USERNAME` | `-airflow-username` | *(empty)* | Optional Airflow REST basic-auth username. |
 | `FABRIC_AIRFLOW_PASSWORD` | `-airflow-password` | *(empty)* | Optional Airflow REST basic-auth password. |
 | `FABRIC_MLFLOW_URL` | `-mlflow-url` | *(empty)* | Real MLflow tracking/model-registry server base URL. Enables the workspace-scoped MLflow proxy and typed experiment/model synchronization. |
+| `FABRIC_KAFKA_BOOTSTRAP` | `-kafka-bootstrap` | *(empty)* | Apache Kafka broker `host:port` behind Eventstream items. Empty → item create still works (mgmt) and Spark / Custom-source execution 501s. See [51-eventstream-kafka.md](51-eventstream-kafka.md). |
 
 ## Subcommands
 

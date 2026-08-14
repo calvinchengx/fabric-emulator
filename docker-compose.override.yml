@@ -83,6 +83,9 @@ services:
       ENTRA_FORGE_URL: "https://entra-emulator:8443/admin/api/tokens"
       ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
       ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      # Eventstream adapter: mint a Fabric-audience token and resolve / consume.
+      FABRIC_API_URL: "https://fabric-emulator:9443"
+      ENTRA_FABRIC_SCOPE: "https://api.fabric.microsoft.com/.default"
       AZURE_STORAGE_ACCOUNT_NAME: "onelake"
       AZURE_STORAGE_ENDPOINT: "https://fabric-emulator:9443/onelake"
       AZURE_ALLOW_INVALID_CERTIFICATES: "true" # emulator's self-signed TLS

@@ -29,8 +29,11 @@ services:
         condition: service_healthy
     environment:
       SPARK_REMOTE: !reset null # classic JVM session, not a Connect client
+      # Eventstream adapter: mint a Fabric-audience token and resolve item IDs.
+      FABRIC_API_URL: "https://fabric-emulator:9443"
+      ENTRA_FABRIC_SCOPE: "https://api.fabric.microsoft.com/.default"
     volumes: !override
-      - ./python/spark_agent/agent.py:/opt/spark/work-dir/agent.py:ro
+      - ./python/spark_agent:/opt/spark/work-dir:ro
     command: !override
       - /opt/spark/bin/spark-submit
       - --master

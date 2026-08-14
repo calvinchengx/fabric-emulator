@@ -514,6 +514,17 @@ def test_delta_ops_install_installs_stream_sinks(monkeypatch):
     assert seen == [spark]
 
 
+def test_delta_ops_install_installs_eventstream_kafka(monkeypatch):
+    import delta_ops as d
+    import eventstream_kafka as ek
+
+    seen = []
+    monkeypatch.setattr(ek, "install", lambda s: seen.append(s) or True)
+    spark = types.SimpleNamespace(sql=lambda q: q, read=None)
+    d.install(spark, storage_options={})
+    assert seen == [spark]
+
+
 def test_pulled_query_stop_is_the_only_thing_that_clears_isactive():
     q = ss.PulledStreamingQuery(name="probe_mem")
     assert q.name == "probe_mem" and q.isActive

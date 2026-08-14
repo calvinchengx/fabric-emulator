@@ -192,6 +192,7 @@ identities), so it could equally point at a real Entra tenant.
 | `docker compose up` | both emulators **plus real engines** — a Spark agent and a SQL Server sidecar, via the auto-loaded [override](docker-compose.override.yml). Livy sessions, notebook cells and the T-SQL/TDS warehouse run for real |
 | `docker compose -f docker-compose.yml up` | the lite, contract-only pair — honest `501`s on the engine surfaces |
 | `--profile rti` | Microsoft's own KQL engine behind Eventhouse / KQL Database ([docs/25](docs/25-rti-kusto.md)) |
+| `--profile eventstream` | Apache Kafka KRaft behind Eventstream items — needs `-f docker-compose.eventstream.yml` ([docs/51](docs/51-eventstream-kafka.md)). Works on Sail (default) and the JVM overlay |
 | `--profile governance` | OpenMetadata over the same state your pipelines write ([docs/22](docs/22-openmetadata.md)) |
 | `--profile terminal` | a shell in the Flow view beside the graph — needs `-f docker-compose.terminal.yml` too ([docs/31](docs/31-flow-observability.md#the-terminal-pane)) |
 | `-f docker-compose.spark-jvm.yml` | **swaps** Sail for JVM Spark, buying the RDD API, structured streaming, `OPTIMIZE`/`VACUUM` and Java/Scala UDFs at the cost of image size ([docs/20](docs/20-lakesail-engine.md)) |

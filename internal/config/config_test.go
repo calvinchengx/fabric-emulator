@@ -43,6 +43,7 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("FABRIC_AIRFLOW_PASSWORD", "secret")
 	t.Setenv("FABRIC_MLFLOW_URL", "http://mlflow:5000")
 	t.Setenv("FABRIC_KQL_URL", "http://kustainer:8080")
+	t.Setenv("FABRIC_KAFKA_BOOTSTRAP", "kafka:9092")
 	c, err := FromEnv()
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +60,9 @@ func TestFromEnv(t *testing.T) {
 	if c.KQLURL != "http://kustainer:8080" {
 		t.Fatalf("FromEnv misread the Kusto engine env: %+v", c)
 	}
+	if c.KafkaBootstrap != "kafka:9092" {
+		t.Fatalf("FromEnv misread the Kafka broker env: %+v", c)
+	}
 }
 
 // TestKQLURLDefaultsOff: no FABRIC_KQL_URL means no engine, which the server
@@ -72,6 +76,18 @@ func TestKQLURLDefaultsOff(t *testing.T) {
 	}
 	if c.KQLURL != "" {
 		t.Fatalf("KQLURL = %q, want empty", c.KQLURL)
+	}
+}
+
+func TestKafkaBootstrapDefaultsOff(t *testing.T) {
+	t.Setenv("FABRIC_ENTRA_ISSUER", "https://e:1/t/v2.0")
+	t.Setenv("FABRIC_KAFKA_BOOTSTRAP", "")
+	c, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.KafkaBootstrap != "" {
+		t.Fatalf("KafkaBootstrap = %q, want empty", c.KafkaBootstrap)
 	}
 }
 

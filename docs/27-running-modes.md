@@ -104,10 +104,12 @@ Note this *swaps* rather than adds: the `sail` service is gone and the statement
 agent becomes a classic in-process Spark session.
 
 **Reach for it when your test touches** the RDD/`SparkContext` API, a
-**checkpointed** streaming query (kafka / Eventstream / `foreachBatch`),
-Java/Scala UDFs, `spark.jars`, or a CDF-enabled table you need Spark itself
-to author. Durable streaming *sinks* (delta/parquet/memory) land one
-announced micro-batch on the default Livy path. The ❌ rows that stay red
+**checkpointed** streaming query (`foreachBatch` on an engine stream, or
+resume from `checkpointLocation`), Java/Scala UDFs, `spark.jars`, or a
+CDF-enabled table you need Spark itself to author. Durable streaming *sinks*
+(delta/parquet/memory), OSS `format("kafka")` on Sail, and the Fabric
+Eventstream notebook API land one announced micro-batch on the default Livy
+path. The ❌ rows that stay red
 are in [the engine matrix](engine-matrix.md), which measures both engines
 with the same probes rather than asserting.
 
@@ -136,6 +138,7 @@ them again if you still want them.
 | `governance` | OpenMetadata + Postgres + OpenSearch | catalog, glossary, lineage over the state your pipelines wrote ([22](22-openmetadata.md)) | ~2.8 GB |
 | `airflow` | `apache/airflow` scheduler + webserver | `ApacheAirflowJob` items run on genuine Airflow ([14](14-real-compute.md#e1)) | ~1.1 GB |
 | `rti` | `kustainer` | Microsoft's own KQL engine behind Eventhouse ([25](25-rti-kusto.md)) | 4 GB (its own `mem_limit`) |
+| `eventstream` | `kafka` (`apache/kafka` KRaft) | Fabric Eventstream notebook API on Sail (default) and the JVM overlay ([51](51-eventstream-kafka.md)) | ~400 MB |
 | `terminal` | `ttyd` | a shell in the Flow view, beside the graph ([31](31-flow-observability.md#the-terminal-pane)) | negligible |
 
 ```bash
@@ -146,6 +149,24 @@ make up PROFILE="--profile governance --profile airflow --profile rti"
 `--profile rti` needs **amd64 with AVX2**. Microsoft documents ARM as
 unsupported and Rosetta does not supply AVX2 — on Apple silicon it needs an
 x86-64 VM with a QEMU CPU type that provides it.
+
+### The eventstream profile needs two things
+
+The profile starts Kafka; a second file tells the emulator where it is. Both,
+or Spark resolution 501s. Works on Sail (the default `docker compose up`
+engine) without the JVM overlay:
+
+```bash
+docker compose --profile eventstream \
+  -f docker-compose.yml -f docker-compose.override.yml \
+  -f docker-compose.eventstream.yml \
+  up -d
+```
+
+Add `-f docker-compose.spark-jvm.yml` when you want the native OSS Kafka
+source instead of the Sail LocalRelation wrap.
+
+See [51-eventstream-kafka.md](51-eventstream-kafka.md).
 
 ### The terminal profile needs two things
 
