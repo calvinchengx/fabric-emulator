@@ -11,7 +11,7 @@ repo's paths).
 
 ## Why
 
-- **The JVM is our heaviest dependency.** The `apache/spark:3.5.3` stack costs
+- **The JVM is our heaviest dependency.** The `apache/spark:3.5.5` stack costs
   gigabyte images, tens-of-seconds startup, ABFS driver jars, and a custom
   Java `EntraTokenProvider` — all for engines whose *client code* is plain
   PySpark. Sail is one Rust binary in a `python:slim` image; sessions start in
@@ -74,7 +74,7 @@ pyspark client ──sc:// (Spark Connect, h2c gRPC :50051)──▶ sail server
 | **S2** ✅ | `e2e/notebook-run`: `runner.py` connects via `SPARK_REMOTE`; the JVM image build is gone. The notebook fixture (incl. `createDataFrame`) runs **unmodified**. | 1 suite |
 | **S3** ✅ | `e2e/spark` (A2) reborn on Sail: same job, same production-shaped `abfs://` URLs (endpoint override routes them). `EntraTokenProvider.java` + the JVM Dockerfile deleted. | last one |
 | **S4** ✅ | user-facing compose: the auto-loaded `docker-compose.override.yml` **and** the explicit `docker-compose.compute.yml` both run Sail + the statement agent — `RunNotebook`, Livy sessions, and dbt work out of the box with no JVM. Docs + quickstart updated. | — |
-| **S5** ✅ | restore an opt-in Apache Spark 3.5.3 + Delta 3.2 JVM oracle (`e2e/spark-jvm`) and run the representative notebook on both engines. Sail remains the default; JVM and real-Fabric qualification run on slower CI cadences. | compatibility only |
+| **S5** ✅ | restore an opt-in Apache Spark 3.5.5 + Delta 3.2 JVM oracle (`e2e/spark-jvm`) and run the representative notebook on both engines. Sail remains the default; JVM and real-Fabric qualification run on slower CI cadences. | compatibility only |
 
 ## What “parity” means
 
@@ -83,7 +83,7 @@ Compute claims are split into three evidence tiers:
 | Tier | Engine | What a pass establishes |
 |---|---|---|
 | Default | Sail 0.6.6 + PySpark Connect 4.2 | Spark Connect DataFrame/SQL behavior, native Delta behavior, OneLake paths, auth, Livy and notebook integration |
-| JVM oracle | Apache Spark 3.5.3 + Delta 3.2 | Fabric Runtime 1.3-aligned Spark Core/JVM behavior and Hadoop ABFS compatibility; scheduled/manual, not part of the default stack |
+| JVM oracle | Apache Spark 3.5.5 + Delta 3.2 + Java 11 | Fabric Runtime 1.3-aligned Spark Core/JVM behavior and Hadoop ABFS compatibility; scheduled/manual, not part of the default stack |
 | Release oracle | real Microsoft Fabric | representative notebook and API conformance in the managed production runtime; secret-gated and run before releases |
 
 Passing the Sail tier does not establish compatibility for SparkContext/RDD,

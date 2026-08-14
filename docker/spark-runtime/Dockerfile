@@ -1,6 +1,8 @@
-# Apache Spark 3.5 + Delta 3.2 matches Microsoft Fabric Runtime 1.3's public
-# engine baseline. This image is an optional compatibility oracle; Sail stays
-# the lightweight default engine used by docker compose.
+# Apache Spark 3.5.5 + Delta 3.2 + Java 11 + Scala 2.12 matches Microsoft
+# Fabric Runtime 1.3's public engine baseline. The short `apache/spark:3.5.5`
+# tag is Java 17; Fabric is Java 11, so the java11 variant is the pin, not the
+# floating short tag. This image is an optional compatibility oracle; Sail
+# stays the lightweight default engine used by docker compose.
 
 # ---------------------------------------------------------------- build stage
 #
@@ -18,7 +20,7 @@
 #
 # Copying a JDK from the Temurin image instead has no package manager in it to
 # disagree with anything, and the compiler never reaches the runtime image.
-FROM apache/spark:3.5.3 AS build
+FROM apache/spark:3.5.5-scala2.12-java11-python3-ubuntu AS build
 USER root
 COPY --from=eclipse-temurin:11-jdk /opt/java/openjdk /opt/jdk
 
@@ -62,7 +64,7 @@ RUN /opt/jdk/bin/javac -cp "/opt/spark/jars/*" -d /tmp/classes \
     && rm -rf /tmp/src /tmp/classes
 
 # --------------------------------------------------------------- runtime stage
-FROM apache/spark:3.5.3
+FROM apache/spark:3.5.5-scala2.12-java11-python3-ubuntu
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 USER root
 # The jars, including the compiled token provider. No compiler, no apt, no

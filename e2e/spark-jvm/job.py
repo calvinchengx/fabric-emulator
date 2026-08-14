@@ -1,4 +1,4 @@
-"""Apache Spark 3.5 / Delta 3.2 compatibility witness for Fabric Runtime 1.3."""
+"""Apache Spark 3.5.5 / Delta 3.2 compatibility witness for Fabric Runtime 1.3."""
 import json
 import pathlib
 import sys

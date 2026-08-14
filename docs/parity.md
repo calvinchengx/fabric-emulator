@@ -117,8 +117,8 @@ The engine behind the agent is [Sail](20-lakesail-engine.md) (Rust
 Spark-Connect, no JVM). Every row is **probed in CI** (`e2e/sail`), not
 inferred — the fidelity deltas a Fabric notebook author actually hits.
 
-A Spark 3.5 JVM image (`docker/spark-runtime`, Fabric Runtime 1.3's engine
-baseline) exists as a **CI compatibility oracle** (`e2e/spark-jvm`), and the
+A Spark 3.5.5 JVM image (`docker/spark-runtime`, Fabric Runtime 1.3's engine
+baseline: Spark 3.5.5 + Delta 3.2 + Java 11 + Scala 2.12) exists as a **CI compatibility oracle** (`e2e/spark-jvm`), and the
 statement agent still has its classic-session path. It is also exposed as a
 **user-facing overlay** — `docker compose -f docker-compose.yml -f
 docker-compose.override.yml -f docker-compose.spark-jvm.yml up` swaps the

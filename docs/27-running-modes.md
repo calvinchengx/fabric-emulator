@@ -93,7 +93,7 @@ docker compose -f docker-compose.yml up -d    # what the target runs
 
 ## 4. JVM overlay — `make up-jvm`
 
-Swaps the default Sail engine for **JVM Spark 3.5** — the same engine real
+Swaps the default Sail engine for **JVM Spark 3.5.5** (Java 11, Delta 3.2) — the same engine real
 Fabric Runtime 1.3 uses, so it is the higher-fidelity option.
 
 ```bash
