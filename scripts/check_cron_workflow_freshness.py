@@ -179,11 +179,16 @@ def _last_run(stem: str):
 
 
 def main() -> int:
-    in_ci = os.environ.get("GITHUB_ACTIONS") == "true"
+    # STRICT is opt-in, and granted only where the API is reachable. `make
+    # check` runs this in jobs that hold no GH_TOKEN — they are not lying about
+    # freshness, they simply cannot see it, and failing them would make the
+    # check noise. The one job that CAN see it sets FRESHNESS_STRICT=1, so a
+    # permissions regression there still fails loudly instead of skipping.
+    strict = os.environ.get("FRESHNESS_STRICT") == "1"
     if not shutil.which("gh"):
-        if in_ci:
-            print("FAIL: the GitHub CLI is unavailable IN CI, so run history "
-                  "cannot be read and this check would verify nothing.")
+        if strict:
+            print("FAIL: FRESHNESS_STRICT is set but the GitHub CLI is not on "
+                  "PATH, so this check would verify nothing.")
             return 1
         print("check_cron_workflow_freshness: SKIPPED — the GitHub CLI is not on PATH")
         return 0
@@ -191,9 +196,13 @@ def main() -> int:
     shallow = _is_shallow()
     slug = _repo_slug() if shallow else ""
     if shallow and not slug:
-        print("FAIL: shallow clone and the repository slug is unreadable, so the")
-        print("      last-changed date cannot be determined for any workflow.")
-        return 1
+        msg = ("shallow clone and the repository slug is unreadable, so "
+               "last-changed dates cannot be determined")
+        if strict:
+            print(f"FAIL: {msg}.")
+            return 1
+        print(f"check_cron_workflow_freshness: SKIPPED — {msg}")
+        return 0
     head = _head_sha() if shallow else ""
     if shallow:
         print(f"shallow clone — last-changed dates from {slug}@{head[:7] or '?'} via the API")
@@ -226,7 +235,7 @@ def main() -> int:
     print(f"cron/dispatch-only workflows: {len(cron_only)} — {', '.join(cron_only)}")
     if unknown:
         print(f"  no run history readable: {', '.join(unknown)}")
-        if in_ci:
+        if strict:
             # Silence here is the failure mode: unreadable history means every
             # workflow looks fresh. Most likely cause is the job losing
             # `actions: read`.
