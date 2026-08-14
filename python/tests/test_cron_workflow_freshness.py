@@ -191,7 +191,7 @@ def test_the_api_call_is_pinned_to_a_sha(run, monkeypatch):
     run.api = "2020-01-01T00:00:00Z"
     monkeypatch.setenv("GITHUB_SHA", "deadbeef")
     cwf.main()
-    api = [a for a in run.calls if a[:2] == ["gh", "api"]][0]
+    api = next(a for a in run.calls if a[:2] == ["gh", "api"])
     assert "sha=deadbeef" in api, f"not pinned: {api}"
     # and the arguments must be well formed — a splice bug once produced
     # `-f -f sha=S path=P`, which failed every lookup silently.
