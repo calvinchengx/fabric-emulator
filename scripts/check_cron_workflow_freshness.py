@@ -160,6 +160,14 @@ def _last_run(stem: str):
          "--json", "createdAt,conclusion"],
         cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
+        # Say WHY. Swallowing this is what made the first CI failure a guessing
+        # game: "unreadable" is a symptom, and the stderr underneath it is the
+        # diagnosis.
+        why = (r.stderr or "").strip().replace("\n", " ")[:200]
+        if why:
+            print(f"    {stem}: gh run list failed — {why}")
+        elif not r.stdout.strip():
+            print(f"    {stem}: gh run list returned nothing (no runs?)")
         return None
     runs = json.loads(r.stdout)
     if not runs:
