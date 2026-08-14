@@ -95,6 +95,16 @@ for _label, _snippet, _expected in rdd_contract.CASES:
     assert _got == _expected, f"{_label}: real Spark gave {_got!r}, contract says {_expected!r}"
 for _label, _snippet in rdd_contract.VOID_CASES:
     assert eval(_snippet, {"sc": spark.sparkContext}) is None, _label  # noqa: S307
+# And what Spark REFUSES, because a contract that only lists what works cannot
+# catch the facade being MORE PERMISSIVE than the tenant — which is exactly the
+# defect this half found on its first real run.
+for _label, _snippet in rdd_contract.REFUSED_CASES:
+    try:
+        eval(_snippet, {"sc": spark.sparkContext})  # noqa: S307
+    except Exception:  # noqa: BLE001 — any refusal is the contract; the type is Spark's
+        pass
+    else:
+        raise AssertionError(f"{_label}: real Spark ACCEPTED what the contract says it refuses")
 print(f"sc-facade contract vs real Spark: {len(rdd_contract.CASES)} cases PASS", flush=True)
 assert spark._jvm.java.lang.Class.forName("com.calvinchengx.fabricemu.EntraTokenProvider") is not None
 print("SparkContext/RDD + JVM/JAR bridge: PASS", flush=True)

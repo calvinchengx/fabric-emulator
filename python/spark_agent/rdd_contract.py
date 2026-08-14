@@ -25,9 +25,22 @@ CASES = [
     ("parallelize.collect", "sc.parallelize([3, 1, 2]).collect()", [3, 1, 2]),
     ("parallelize.filter.collect", "sc.parallelize([1, 2, 3, 4]).filter(lambda x: x % 2 == 0).collect()", [2, 4]),
     ("parallelize.map.collect", "sc.parallelize([1, 2]).map(lambda x: x + 10).collect()", [11, 12]),
-    # The exact shape of Microsoft's diagnostic-emitter smoke idiom:
-    # `sc.parallelize(Seq(1,2,3,4)).toDF().count()`.
-    ("parallelize.toDF.count", "sc.parallelize([1, 2, 3, 4]).toDF().count()", 4),
+    # Microsoft's diagnostic-emitter idiom is `sc.parallelize(Seq(1,2,3,4)).toDF()`
+    # — SCALA, where implicits supply the encoder. PySpark has no equivalent and
+    # REFUSES an RDD of bare scalars (see REFUSED_CASES). So the reachable form
+    # is a row shape, which is what a Python notebook must write anyway.
+    ("parallelize.toDF.count", "sc.parallelize([(1,), (2,), (3,), (4,)]).toDF().count()", 4),
+]
+
+# Cases real PySpark REFUSES, which the facade must refuse too.
+#
+# This list exists because the JVM oracle caught the facade being MORE PERMISSIVE
+# than Spark: it wrapped bare scalars into one-tuples and returned a DataFrame,
+# where PySpark raises CANNOT_INFER_SCHEMA_FOR_TYPE. Accepting what a tenant
+# rejects is the emulator-green/tenant-broken direction, and it came from
+# transcribing a Scala snippet into a Python contract.
+REFUSED_CASES = [
+    ("parallelize.toDF.scalars", "sc.parallelize([1, 2, 3, 4]).toDF()"),
 ]
 
 # Returns None on both a real SparkContext and the facade; asserted separately
