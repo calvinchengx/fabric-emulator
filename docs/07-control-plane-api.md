@@ -83,6 +83,7 @@ code branches on that header.
 | Method + path | Notes |
 |---|---|
 | `GET /workspaces/{id}/roleAssignments` | list *sync* |
+| `GET /workspaces/{id}/roleAssignments/{raId}` | get one *sync* |
 | `POST /workspaces/{id}/roleAssignments` | `{ principal:{id,type}, role }` |
 | `PATCH /workspaces/{id}/roleAssignments/{raId}` | change role |
 | `DELETE /workspaces/{id}/roleAssignments/{raId}` | revoke |
@@ -111,6 +112,8 @@ role yields Fabric-shaped `401`/`403`.
 | `GET /workspaces/{id}/items/{itemId}` | get *sync* |
 | `PATCH /workspaces/{id}/items/{itemId}` | rename / describe |
 | `DELETE /workspaces/{id}/items/{itemId}` | delete |
+| `POST /workspaces/{id}/items/{itemId}/move` | `{ targetFolderId }` — empty is the workspace root *sync* |
+| `POST /workspaces/{id}/items/bulkMove` | `{ items[], targetFolderId? }` — at most 50; all-or-nothing *sync* |
 | `POST /workspaces/{id}/items/{itemId}/getDefinition` | returns `{ definition:{ parts:[…] } }` |
 | `POST /workspaces/{id}/items/{itemId}/updateDefinition` | replaces parts |
 
@@ -328,9 +331,37 @@ real GitHub/AzDO needed for the happy path (a real provider can be wired later).
 |---|---|
 | `GET  /workspaces/{id}/folders` | list *sync* |
 | `POST /workspaces/{id}/folders` | create `{ displayName, parentFolderId? }` → 201 *sync* |
+| `GET  /workspaces/{id}/folders/{folderId}` | get *sync* |
+| `PATCH /workspaces/{id}/folders/{folderId}` | `{ displayName }` *sync* |
+| `DELETE /workspaces/{id}/folders/{folderId}` | empty folders only; otherwise `FolderNotEmpty` *sync* |
+| `POST /workspaces/{id}/folders/{folderId}/move` | `{ targetFolderId }` — empty is the workspace root; a cycle is `InfiniteFolderHierarchyLoop` *sync* |
 
 Folders organize items within a workspace (nesting via `parentFolderId`); the
 folder tree is a plain metadata store.
+
+## Catalog Search
+
+| Method + path | Notes |
+|---|---|
+| `POST /catalog/search` | `{ search, filter?, pageSize?, continuationToken? }` — items in workspaces the caller can see; Dashboard and Dataflow excluded *sync* |
+
+`search` matches item display name, description, and workspace display name.
+`filter` is `Type eq`/`ne` with `or`/`and` and parentheses, as the REST
+reference documents. Results are `ItemCatalogEntry` objects
+(`catalogEntryType: FabricItem`). This is metadata discovery only — it does
+not grant data-plane access.
+
+## Fabric Core MCP Server
+
+| Method + path | Notes |
+|---|---|
+| `POST /mcp/core` | Streamable HTTP JSON-RPC (initialize, ping, tools/list, tools/call). Bearer is the same Fabric control-plane token as the REST surface. Tools wrap the handlers above, so RBAC and LRO are not a second implementation. `Mcp-Session-Id` is issued on initialize |
+| `GET  /mcp/core` | 405 — no SSE stream |
+| `DELETE /mcp/core` | end session → 204 |
+
+Does not execute notebooks or write lakehouse tables (Microsoft's published
+limitation). Distinct from the local `Fabric.Mcp.Server` VS Code package and
+from pbix-mcp.
 
 ## Livy / Spark data plane
 

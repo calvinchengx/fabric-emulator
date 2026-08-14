@@ -317,6 +317,60 @@ func TestFolderStorageFailure(t *testing.T) {
 	}
 }
 
+func TestFolderMutationStorageFailures(t *testing.T) {
+	a, st, dir := newDiskAPI(t)
+	ws := seedWorkspace(t, st)
+	f := &store.Folder{WorkspaceID: ws.ID, DisplayName: "f"}
+	if err := st.CreateFolder(f); err != nil {
+		t.Fatal(err)
+	}
+	fid := map[string]string{"wid": ws.ID, "fid": f.ID}
+	exec(t, dir, `CREATE TRIGGER no_folder_upd BEFORE UPDATE ON folders BEGIN SELECT RAISE(ABORT, 'boom'); END`)
+	if w := do(a.updateFolder, admin, "PATCH", `{"displayName":"g"}`, fid); w.Code != http.StatusInternalServerError {
+		t.Fatalf("updateFolder blocked = %d", w.Code)
+	}
+	if w := do(a.moveFolder, admin, "POST", `{}`, fid); w.Code != http.StatusInternalServerError {
+		t.Fatalf("moveFolder blocked = %d", w.Code)
+	}
+	exec(t, dir, `CREATE TRIGGER no_folder_del BEFORE DELETE ON folders BEGIN SELECT RAISE(ABORT, 'boom'); END`)
+	if w := do(a.deleteFolder, admin, "DELETE", "", fid); w.Code != http.StatusInternalServerError {
+		t.Fatalf("deleteFolder blocked = %d", w.Code)
+	}
+	dropTable(t, dir, "folders")
+	if w := do(a.getFolder, admin, "GET", "", fid); w.Code != http.StatusInternalServerError {
+		t.Fatalf("getFolder dropped = %d", w.Code)
+	}
+	if w := do(a.updateFolder, admin, "PATCH", `{"displayName":"g"}`, fid); w.Code != http.StatusInternalServerError {
+		t.Fatalf("updateFolder dropped = %d", w.Code)
+	}
+}
+
+func TestCatalogSearchStorageFailure(t *testing.T) {
+	a, st, dir := newDiskAPI(t)
+	seedWorkspace(t, st)
+	dropTable(t, dir, "items")
+	if w := do(a.searchCatalog, admin, "POST", `{"search":"x"}`, nil); w.Code != http.StatusInternalServerError {
+		t.Fatalf("search with no items = %d", w.Code)
+	}
+	dropTable(t, dir, "workspaces")
+	if w := do(a.searchCatalog, admin, "POST", `{"search":"x"}`, nil); w.Code != http.StatusInternalServerError {
+		t.Fatalf("search with no workspaces = %d", w.Code)
+	}
+}
+
+func TestBulkMoveStorageFailure(t *testing.T) {
+	a, st, dir := newDiskAPI(t)
+	ws := seedWorkspace(t, st)
+	it := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "n"}
+	if err := st.CreateItem(it, nil); err != nil {
+		t.Fatal(err)
+	}
+	exec(t, dir, `CREATE TRIGGER no_item_move BEFORE UPDATE ON items BEGIN SELECT RAISE(ABORT, 'boom'); END`)
+	if w := do(a.bulkMoveItems, admin, "POST", `{"items":["`+it.ID+`"]}`, map[string]string{"wid": ws.ID}); w.Code != http.StatusInternalServerError {
+		t.Fatalf("bulkMove blocked = %d", w.Code)
+	}
+}
+
 // TestGitUpdateFromGitCreatesItemsTheWorkspaceDoesNotHave.
 //
 // TestGitUpdateFromGitMirrors covers UPDATE (nb v1→v2) and DELETE (a stale

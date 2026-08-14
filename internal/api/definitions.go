@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -293,9 +294,19 @@ func (a *API) createFolder(w http.ResponseWriter, r *http.Request, p *auth.Princ
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "displayName is required.")
 		return
 	}
+	if body.ParentFolderID != "" {
+		if _, err := a.Store.GetFolder(wid, body.ParentFolderID); err != nil {
+			writeErr(w, http.StatusNotFound, "FolderNotFound", "parent folder not found in this workspace")
+			return
+		}
+	}
 	f := &store.Folder{WorkspaceID: wid, DisplayName: body.DisplayName, ParentFolderID: body.ParentFolderID}
 	if err := a.Store.CreateFolder(f); err != nil {
-		writeErr(w, http.StatusConflict, "FolderAlreadyExists", "A folder with this name already exists here.")
+		if errors.Is(err, store.ErrNameConflict) {
+			writeErr(w, http.StatusConflict, "FolderAlreadyExists", "A folder with this name already exists here.")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, f)

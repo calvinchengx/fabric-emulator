@@ -40,6 +40,7 @@
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Activity log / audit** (`GET /v1.0/myorg/admin/activityevents`)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestActivityEventsRecordsRealOperations",
       "go:TestActivityEventsUsesDocumentedDomainVocabulary",
       "go:TestActivityEventsPagination"
@@ -71,6 +72,7 @@
     "section": "Platform / fundamentals",
     "claim": "Capacities (list, assign / unassign)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestCapacities"
     ]
   },
@@ -78,12 +80,25 @@
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Capacity tenant-setting overrides** (`GET /v1/admin/capacities/delegatedTenantSettingOverrides`, `POST \u2026/{capacityId}/delegatedTenantSettingOverrides/{name}/update`)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestCapacityOverridesRoundTrip",
       "go:TestCapacityOverrideValidation",
       "go:TestEveryAdminRouteIsGatedOnTheRegisteredMux",
       "go:TestAdminWriteRefusesAServicePrincipalThatIsNotAnAdministrator",
       "go:TestAdminReadAllowsAdministratorAndServicePrincipal",
       "go:TestWithNoAdministratorsDeclaredEveryWriteIsRefused"
+    ]
+  },
+  "catalog-search-post-v1-catalog-search": {
+    "section": "Platform / fundamentals",
+    "claim": "**Catalog Search** (`POST /v1/catalog/search`)",
+    "witnesses": [
+      "ci:mcp-core",
+      "go:TestCatalogSearchFindsAcrossWorkspaces",
+      "go:TestCatalogSearchFilterAndPaging",
+      "go:TestCatalogSearchExcludesDataflow",
+      "go:TestTypeFilterAllows",
+      "go:TestPayloadsMatchDocumentedSchemas"
     ]
   },
   "change-data-feed": {
@@ -224,6 +239,18 @@
       "ci:fabric-cicd"
     ]
   },
+  "fabric-core-mcp-server-post-v1-mcp-core": {
+    "section": "Platform / fundamentals",
+    "claim": "**Fabric Core MCP Server** (`POST /v1/mcp/core`)",
+    "witnesses": [
+      "ci:mcp-core",
+      "go:TestMCPInitializeAndToolList",
+      "go:TestMCPListAndCreateWorkspace",
+      "go:TestMCPSearchCatalogAndRBAC",
+      "go:TestMCPToolRoundTrip",
+      "go:TestMCPCreateItemAndFolder"
+    ]
+  },
   "fabric-sql-database-database-oltp-onelake-mirror": {
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "**Fabric SQL Database (`database/`)** \u2014 OLTP + OneLake mirror",
@@ -236,7 +263,10 @@
     "section": "Platform / fundamentals",
     "claim": "Folders",
     "witnesses": [
-      "go:TestFolderHandlers"
+      "ci:az-rest",
+      "ci:mcp-core",
+      "go:TestFolderHandlers",
+      "go:TestFolderGetUpdateDeleteMove"
     ]
   },
   "foreach-sequential-parallel-issequential-batchcount": {
@@ -270,6 +300,7 @@
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Governance domains** (`/v1/admin/domains`)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestAdminDomains",
       "go:TestEveryAdminRouteIsGatedOnTheRegisteredMux",
       "go:TestAdminWriteRefusesAServicePrincipalThatIsNotAnAdministrator",
@@ -309,6 +340,7 @@
     "section": "Platform / fundamentals",
     "claim": "**Item Job Scheduler** (`\u2026/items/{id}/jobs/{jobType}/schedules`)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestJobSchedulerAPIEndToEnd",
       "go:TestScheduleWithPastStartTriggersInstantly",
       "go:TestScheduleLimitAndValidationOverHTTP",
@@ -366,6 +398,7 @@
     "section": "Platform / fundamentals",
     "claim": "**List Item Job Instances** (`GET \u2026/jobs/instances`)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestListItemJobInstances",
       "go:TestJobSchedulerAPIEndToEnd"
     ]
@@ -562,6 +595,7 @@
     "section": "Data Factory (`data-factory/`)",
     "claim": "`queryactivityruns` detail",
     "witnesses": [
+      "ci:az-rest",
       "go:TestQueryActivityRunsAuthAndEdges",
       "go:TestQueryActivityRunsMissing"
     ]
@@ -587,6 +621,7 @@
     "section": "Platform / fundamentals",
     "claim": "Role assignments / workspace RBAC",
     "witnesses": [
+      "ci:az-rest",
       "go:TestListWorkspacesAndRoleAssignments",
       "go:TestItemUpdateAndRoleAssignmentLifecycle",
       "go:TestRoleAssignmentHandlerErrors"
@@ -611,6 +646,7 @@
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Sensitivity labels** (`bulkSetLabels` / `bulkRemoveLabels`)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestBulkLabelsApplyReplaceAndRemove",
       "go:TestBulkLabelsPartialFailureAndValidation",
       "go:TestLabelChangesAuditWithDocumentedSchema"
@@ -686,6 +722,7 @@
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Tenant settings** (`GET /v1/admin/tenantsettings`)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestTenantSettingsList",
       "go:TestTenantSettingsUpdate",
       "go:TestTenantSettingsOmitsEmptyOptionalFields"
@@ -695,6 +732,7 @@
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Tenant-wide item admin** (`GET /v1/admin/items`)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestAdminListItemsSpansWorkspaces",
       "go:TestAdminListItemsFiltersAndValidation",
       "go:TestEveryAdminRouteIsGatedOnTheRegisteredMux",
@@ -707,6 +745,7 @@
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "**Tenant-wide workspace admin** (`GET /v1/admin/workspaces`)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestAdminListWorkspacesUsesDocumentedShape",
       "go:TestAdminListWorkspacesFilters",
       "go:TestAdminListWorkspacesReportsDomain",
@@ -744,6 +783,7 @@
     "section": "Identity & security (`security/`, `admin/`)",
     "claim": "Workspace managed identity handshake",
     "witnesses": [
+      "ci:az-rest",
       "go:TestIdentityLifecycleWithoutEntra",
       "go:TestVaultSecretResolvedThroughAServicePrincipalConnection"
     ]
@@ -919,6 +959,7 @@
     "section": "Item types present, engine absent",
     "claim": "Power BI \u2014 **Report items**",
     "witnesses": [
+      "ci:az-rest",
       "go:TestReportDefinitionRoundTripsByteForByte",
       "go:TestTypedDefinitionRouteRefusesAnotherType"
     ]
@@ -1047,6 +1088,7 @@
     "section": "Platform / fundamentals",
     "claim": "**Deleted display names held** (`FABRIC_NAME_RESERVATION`)",
     "witnesses": [
+      "ci:az-rest",
       "go:TestDeletedNameIsRefusedAsRetriableWithinTheWindow",
       "go:TestDeletedNameIsHeldOnlyWhenAWindowIsConfigured",
       "go:TestTheReservationExpires"

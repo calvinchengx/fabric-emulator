@@ -183,6 +183,18 @@ func TestClosedDBFolderErrors(t *testing.T) {
 	if _, err := s.ListFolders("w"); err == nil {
 		t.Error("ListFolders on closed DB succeeded")
 	}
+	if _, err := s.GetFolder("w", "f"); err == nil {
+		t.Error("GetFolder on closed DB succeeded")
+	}
+	if err := s.UpdateFolder(&Folder{ID: "f", WorkspaceID: "w", DisplayName: "x"}); err == nil {
+		t.Error("UpdateFolder on closed DB succeeded")
+	}
+	if err := s.DeleteFolder("w", "f"); err == nil {
+		t.Error("DeleteFolder on closed DB succeeded")
+	}
+	if err := s.MoveFolder("w", "f", ""); err == nil {
+		t.Error("MoveFolder on closed DB succeeded")
+	}
 }
 
 func TestClosedDBIdentityErrors(t *testing.T) {

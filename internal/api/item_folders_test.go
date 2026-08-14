@@ -125,3 +125,165 @@ func TestMoveItemErrors(t *testing.T) {
 		t.Errorf("viewer move = %d, want 403", w.Code)
 	}
 }
+
+func TestFolderGetUpdateDeleteMove(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	parent := &store.Folder{WorkspaceID: ws.ID, DisplayName: "parent"}
+	if err := st.CreateFolder(parent); err != nil {
+		t.Fatal(err)
+	}
+	child := &store.Folder{WorkspaceID: ws.ID, DisplayName: "child", ParentFolderID: parent.ID}
+	if err := st.CreateFolder(child); err != nil {
+		t.Fatal(err)
+	}
+
+	w := do(a.getFolder, viewer, "GET", "", map[string]string{"wid": ws.ID, "fid": child.ID})
+	if w.Code != 200 {
+		t.Fatalf("get = %d %s", w.Code, w.Body.Bytes())
+	}
+	w = do(a.updateFolder, admin, "PATCH", `{"displayName":"renamed"}`, map[string]string{"wid": ws.ID, "fid": child.ID})
+	if w.Code != 200 {
+		t.Fatalf("rename = %d %s", w.Code, w.Body.Bytes())
+	}
+	w = do(a.moveFolder, admin, "POST", `{"targetFolderId":""}`, map[string]string{"wid": ws.ID, "fid": child.ID})
+	if w.Code != 200 {
+		t.Fatalf("move = %d %s", w.Code, w.Body.Bytes())
+	}
+	if w := do(a.moveFolder, admin, "POST", `{"targetFolderId":"`+child.ID+`"}`,
+		map[string]string{"wid": ws.ID, "fid": child.ID}); w.Code != 400 {
+		t.Fatalf("cycle = %d", w.Code)
+	}
+	if w := do(a.deleteFolder, admin, "DELETE", "", map[string]string{"wid": ws.ID, "fid": parent.ID}); w.Code != 200 {
+		t.Fatalf("delete empty parent = %d %s", w.Code, w.Body.Bytes())
+	}
+	it := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "nb", FolderID: child.ID}
+	if err := st.CreateItem(it, nil); err != nil {
+		t.Fatal(err)
+	}
+	if w := do(a.deleteFolder, admin, "DELETE", "", map[string]string{"wid": ws.ID, "fid": child.ID}); w.Code != 400 || errorCode(t, w) != "FolderNotEmpty" {
+		t.Fatalf("delete nonempty = %d %s", w.Code, w.Body.Bytes())
+	}
+	if w := do(a.getFolder, admin, "GET", "", map[string]string{"wid": ws.ID, "fid": "missing"}); w.Code != 404 {
+		t.Fatalf("missing get = %d", w.Code)
+	}
+}
+
+func TestFolderHandlerErrors(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	left := &store.Folder{WorkspaceID: ws.ID, DisplayName: "left"}
+	right := &store.Folder{WorkspaceID: ws.ID, DisplayName: "right"}
+	for _, f := range []*store.Folder{left, right} {
+		if err := st.CreateFolder(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fid := map[string]string{"wid": ws.ID, "fid": left.ID}
+
+	if w := do(a.getFolder, nobody, "GET", "", fid); w.Code != 403 {
+		t.Fatalf("ungranted get = %d", w.Code)
+	}
+	if w := do(a.updateFolder, viewer, "PATCH", `{"displayName":"x"}`, fid); w.Code != 403 {
+		t.Fatalf("viewer update = %d", w.Code)
+	}
+	if w := do(a.updateFolder, admin, "PATCH", `{"displayName":"x"}`, map[string]string{"wid": ws.ID, "fid": "missing"}); w.Code != 404 {
+		t.Fatalf("update missing = %d", w.Code)
+	}
+	if w := do(a.updateFolder, admin, "PATCH", `{}`, fid); w.Code != 400 {
+		t.Fatalf("update empty = %d", w.Code)
+	}
+	if w := do(a.updateFolder, admin, "PATCH", `{`, fid); w.Code != 400 {
+		t.Fatalf("update malformed = %d", w.Code)
+	}
+	if w := do(a.updateFolder, admin, "PATCH", `{"displayName":"right"}`, fid); w.Code != 409 {
+		t.Fatalf("rename conflict = %d %s", w.Code, w.Body.Bytes())
+	}
+	if w := do(a.deleteFolder, viewer, "DELETE", "", fid); w.Code != 403 {
+		t.Fatalf("viewer delete = %d", w.Code)
+	}
+	if w := do(a.deleteFolder, admin, "DELETE", "", map[string]string{"wid": ws.ID, "fid": "missing"}); w.Code != 404 {
+		t.Fatalf("delete missing = %d", w.Code)
+	}
+	if w := do(a.moveFolder, viewer, "POST", `{}`, fid); w.Code != 403 {
+		t.Fatalf("viewer move = %d", w.Code)
+	}
+	if w := do(a.moveFolder, admin, "POST", `{`, fid); w.Code != 400 {
+		t.Fatalf("move malformed = %d", w.Code)
+	}
+	if w := do(a.moveFolder, admin, "POST", `{"targetFolderId":"missing"}`, fid); w.Code != 404 {
+		t.Fatalf("move missing target = %d", w.Code)
+	}
+	if w := do(a.moveFolder, admin, "POST", `{}`, map[string]string{"wid": ws.ID, "fid": "missing"}); w.Code != 404 {
+		t.Fatalf("move missing source = %d", w.Code)
+	}
+	if w := do(a.moveFolder, admin, "POST", "", fid); w.Code != 200 {
+		t.Fatalf("empty-body move to root = %d", w.Code)
+	}
+	if w := do(a.createFolder, admin, "POST", `{"displayName":"x","parentFolderId":"missing"}`, map[string]string{"wid": ws.ID}); w.Code != 404 {
+		t.Fatalf("create under missing parent = %d", w.Code)
+	}
+
+	otherParent := &store.Folder{WorkspaceID: ws.ID, DisplayName: "other"}
+	if err := st.CreateFolder(otherParent); err != nil {
+		t.Fatal(err)
+	}
+	clash := &store.Folder{WorkspaceID: ws.ID, DisplayName: "left", ParentFolderID: otherParent.ID}
+	if err := st.CreateFolder(clash); err != nil {
+		t.Fatal(err)
+	}
+	if w := do(a.moveFolder, admin, "POST", `{"targetFolderId":"`+otherParent.ID+`"}`, fid); w.Code != 409 {
+		t.Fatalf("move name clash = %d %s", w.Code, w.Body.Bytes())
+	}
+}
+
+func TestBulkMoveItems(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	dst := &store.Folder{WorkspaceID: ws.ID, DisplayName: "dst"}
+	if err := st.CreateFolder(dst); err != nil {
+		t.Fatal(err)
+	}
+	a1 := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "a"}
+	a2 := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "b"}
+	for _, it := range []*store.Item{a1, a2} {
+		if err := st.CreateItem(it, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := `{"targetFolderId":"` + dst.ID + `","items":["` + a1.ID + `","` + a2.ID + `"]}`
+	w := do(a.bulkMoveItems, admin, "POST", body, map[string]string{"wid": ws.ID})
+	if w.Code != 200 {
+		t.Fatalf("bulk = %d %s", w.Code, w.Body.Bytes())
+	}
+	got, _ := st.GetItem(ws.ID, a1.ID)
+	if got.FolderID != dst.ID {
+		t.Fatalf("folder = %q", got.FolderID)
+	}
+	if w := do(a.bulkMoveItems, admin, "POST", `{"items":[]}`, map[string]string{"wid": ws.ID}); w.Code != 400 {
+		t.Fatalf("empty = %d", w.Code)
+	}
+	if w := do(a.bulkMoveItems, admin, "POST", `{"items":["missing"]}`, map[string]string{"wid": ws.ID}); w.Code != 404 {
+		t.Fatalf("missing item = %d", w.Code)
+	}
+	if w := do(a.bulkMoveItems, viewer, "POST", body, map[string]string{"wid": ws.ID}); w.Code != 403 {
+		t.Fatalf("viewer = %d", w.Code)
+	}
+	if w := do(a.bulkMoveItems, admin, "POST", `{`, map[string]string{"wid": ws.ID}); w.Code != 400 {
+		t.Fatalf("malformed = %d", w.Code)
+	}
+	if w := do(a.bulkMoveItems, admin, "POST", `{"items":["`+a1.ID+`"],"targetFolderId":"missing"}`, map[string]string{"wid": ws.ID}); w.Code != 404 {
+		t.Fatalf("missing folder = %d", w.Code)
+	}
+	ids := make([]string, 51)
+	for i := range ids {
+		ids[i] = `"x"`
+	}
+	over := `{"items":[` + strings.Join(ids, ",") + `]}`
+	if w := do(a.bulkMoveItems, admin, "POST", over, map[string]string{"wid": ws.ID}); w.Code != 400 {
+		t.Fatalf("over 50 = %d", w.Code)
+	}
+	if w := do(a.bulkMoveItems, admin, "POST", `{"items":["`+a1.ID+`"]}`, map[string]string{"wid": ws.ID}); w.Code != 200 {
+		t.Fatalf("move to root = %d %s", w.Code, w.Body.Bytes())
+	}
+}

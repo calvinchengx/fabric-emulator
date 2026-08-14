@@ -161,6 +161,12 @@ func TestRoleAssignmentHandlerErrors(t *testing.T) {
 	if w := do(a.updateRoleAssignment, viewer, "PATCH", `{"role":"Member"}`, raid); w.Code != http.StatusForbidden {
 		t.Fatalf("viewer patch ra = %d", w.Code)
 	}
+	if w := do(a.getRoleAssignment, viewer, "GET", "", raid); w.Code != http.StatusForbidden {
+		t.Fatalf("viewer get ra = %d", w.Code)
+	}
+	if w := do(a.getRoleAssignment, admin, "GET", "", raid); w.Code != http.StatusNotFound {
+		t.Fatalf("get missing ra = %d", w.Code)
+	}
 }
 
 func TestItemHandlerErrors(t *testing.T) {
