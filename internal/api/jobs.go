@@ -413,7 +413,7 @@ func (a *API) dispatchExisting(wid string, it *store.Item, j *store.JobInstance)
 			a.Store.PublishJobEvent(wid, it.ID, j.ID, j.JobType, j.InvokeType, store.JobFailed, code)
 		} else if len(nbRun.Cells) > 0 && a.runsNotebooksItself() {
 			nbParams, _ := exec["parameters"].(map[string]any)
-			go a.driveNotebookRun(wid, it.ID, j.ID, nbRun, nbParams)
+			go a.driveNotebookRun(wid, it.ID, j.ID, nbRun, nbParams, false)
 		}
 		return
 	}
