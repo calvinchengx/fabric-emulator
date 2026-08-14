@@ -19,6 +19,17 @@
 #     and without the overlay the Kusto routes stay an honest 501.
 #     See docs/25-rti-kusto.md.
 #
+#   docker compose --profile eventstream \
+#     -f docker-compose.yml -f docker-compose.override.yml \
+#     -f docker-compose.eventstream.yml up
+#     …adds an Apache Kafka KRaft broker (:9092) behind Eventstream items, so
+#     `readStream.format("kafka")` with `eventstream.itemid` /
+#     `eventstream.datasourceid` (the Fabric notebook API) reads a real topic
+#     on Sail (default) and on the JVM overlay. Two opt-ins, same as rti: the
+#     profile starts the broker; the overlay hands the emulator
+#     FABRIC_KAFKA_BOOTSTRAP. Skip the overlay and unknown-ID / no-broker
+#     lookups fail loudly (no silent `rate` stream). See docs/51-eventstream-kafka.md.
+#
 #   docker compose --profile governance up
 #     …adds OpenMetadata (:8585) — data governance/catalog over the same
 #     state your pipelines write. Optional by profile: without the flag the
@@ -256,6 +267,44 @@ services:
       timeout: 5s
       retries: 60
       start_period: 30s
+
+  # Apache Kafka (KRaft, single-node) behind Eventstream items. Apache License
+  # 2.0 — not Redpanda (BSL). Profile-gated so `docker compose up` never starts
+  # or pulls it. The overlay (docker-compose.eventstream.yml) is what points
+  # the emulator at it (FABRIC_KAFKA_BOOTSTRAP); without the overlay, Eventstream
+  # item create still works (mgmt) and Spark resolution 501s. See docs/51.
+  kafka:
+    profiles: [eventstream]
+    # Index digest (multi-arch: linux/amd64 + linux/arm64). Unlike kustainer this
+    # runs natively on Apple silicon. Refresh with
+    #   docker buildx imagetools inspect apache/kafka:3.9.1
+    image: apache/kafka:3.9.1@sha256:4ceccc577f03f51f6af8dbfda55194d0d892f4fa7913ffbded567ce3895622ed
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
 
   # ---- Governance (optional): OpenMetadata, profile-gated -------------------
   # Mirrors OpenMetadata's own quickstart compose (docker-compose-postgres.yml

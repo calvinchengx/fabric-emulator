@@ -8,6 +8,7 @@ require (
 	github.com/calvinchengx/entra-emulator v0.4.1
 	github.com/microsoft/go-mssqldb v1.10.0
 	github.com/parquet-go/parquet-go v0.30.1
+	github.com/segmentio/kafka-go v0.4.49
 	modernc.org/sqlite v1.56.0
 )
 

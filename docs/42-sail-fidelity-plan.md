@@ -48,8 +48,10 @@ The matrix is generated and its footnotes matter.
   `writeStream.format("delta"|"parquet"|"memory").start()`, pulls one
   micro-batch via `limit(n).collect()` (Sail returns real `rate` rows to the
   Connect client), and batch-writes. Announced; no checkpoint. Bare Sail
-  still cannot land those sinks. `foreachBatch`, kafka, and Eventstream
-  options fall through.
+  still cannot land those sinks. Native kafka and `foreachBatch` on an engine
+  stream fall through. The Fabric Eventstream notebook API is a named wrap
+  (`eventstream_kafka.py`: emulator consume, Kafka schema, local
+  `foreachBatch`) — never `rate`, and not a matrix cell.
 
 ## The taxonomy
 
@@ -77,8 +79,9 @@ checkpoint is engine work.
 What *is* interceptable is the **notebook sink API** for one bounded pull.
 A streaming `rate` plan executed as a query returns rows to the Connect
 client (`limit(n).collect()`, measured 2026-08-14). §3d wraps `start()` for
-delta / parquet / memory on that fact. Console, kafka, Eventstream options,
-and foreachBatch stay on the engine.
+delta / parquet / memory on that fact. Console, native kafka, and
+`foreachBatch` on an engine stream stay on the engine. Eventstream's
+notebook API is a separate named wrap (`eventstream_kafka.py`).
 
 ### 3. Interceptable — bounded, path-scoped, session-free SQL
 
@@ -141,9 +144,12 @@ Announced on stderr. The query object is a stand-in: `isActive` until
 `stop()`, no checkpoint, one micro-batch even if the caller omitted
 `trigger(once=True)`.
 
-`console`, `kafka`, Eventstream `eventstream.*` options, `foreachBatch` /
-`foreach`, and `outputMode("complete"|"update")` fall through. Inventing
-`rate` rows, or mapping Eventstream kafka onto `rate`, stays forbidden.
+`console`, a kafka *sink*, Eventstream `eventstream.*` options on this
+module, `foreachBatch` / `foreach`, and `outputMode("complete"|"update")`
+fall through **this** module. Inventing `rate` rows, or mapping Kafka onto
+`rate`, stays forbidden. OSS `format("kafka")` + bootstrap/subscribe and
+the Fabric Eventstream notebook API live in `eventstream_kafka.py`
+(driver or emulator consume, Kafka schema, LocalRelation on Sail).
 
 Witnesses: `py:test_probe_shaped_delta_and_parquet_both_land_rate_rows`,
 `py:test_patch_intercepts_delta_and_parquet_start_and_skips_the_engine`,
@@ -168,6 +174,7 @@ overlay. It does not change Sail's default for a CREATE with no LOCATION.
 | `sc` / `_jvm` / Java/Scala UDFs (bucket 1) | **Never** on Spark Connect |
 | CDF notebook API (§3b) | **Yes**, materialised LocalRelation, announced |
 | JSON `multiLine` (§3c) | **Yes**, materialised LocalRelation, announced |
+| OSS `format("kafka")` + bootstrap/subscribe | **Yes**, driver consume → Kafka-schema LocalRelation on Sail |
 
 That is the answer to "100% if possible": no. The JVM overlay stays as the
 documented route for the irreducible set. `make up-jvm` swaps the engine; the
@@ -209,7 +216,7 @@ Today that column is **23 / 25**. Two stay red.
 | `sc` / `_jvm` | **No** | Spark Connect protocol. The Livy RDD facade is a measured subset, and the matrix probe does not install it — painting that cell green would measure the facade, not Spark |
 | Java/Scala UDFs / `spark.jars` | **No** | Need Spark's JVM classloader. Overlay only |
 
-Ceiling on this table: **23 / 25**. The last two (`sc` + `_jvm`) are why the JVM overlay exists for the Connect protocol gap. Continuous checkpointed streaming, kafka / Eventstream, and `foreachBatch` are still engine or overlay work.
+Ceiling on this table: **23 / 25**. The last two (`sc` + `_jvm`) are why the JVM overlay exists for the Connect protocol gap. Continuous checkpointed streaming, native kafka, and `foreachBatch` on an engine stream are still engine or overlay work. The Fabric Eventstream notebook API is `eventstream_kafka.py`, not a matrix cell.
 
 The rule does not change: a shim that guesses is worse than the gap. Each step
 below is a shape the statement (or the DataFrame options) named, executed the
@@ -260,7 +267,7 @@ Plain `json()`, `multiLine=False`, a list of paths, and a schema fall through.
 
 Witnesses: `py:test_probe_shaped_delta_and_parquet_both_land_rate_rows`,
 `py:test_patch_intercepts_delta_and_parquet_start_and_skips_the_engine`
-(console / kafka / Eventstream / foreachBatch fall through),
+(console / kafka / foreachBatch on an engine stream fall through),
 `ci:engine-matrix` after a `sail-delta` regen.
 
 ### Do not do
@@ -268,8 +275,9 @@ Witnesses: `py:test_probe_shaped_delta_and_parquet_both_land_rate_rows`,
 - **Map Eventstream `format("kafka")` onto `rate`, or invent `rate` rows in
   delta-rs.** The collect wrap pulls Sail's own source; guessing a source
   paints the cell green for the wrong schema.
-- **Treat `foreachBatch` as a Livy callback.** It pickles to the server and
-  Sail rejects `start()`.
+- **Treat `foreachBatch` as a Livy callback** for arbitrary streams. It
+  pickles to the server and Sail rejects `start()`. Eventstream's wrap runs
+  the callback locally for that named source only.
 - **Install the RDD facade into the sail-delta probe** to turn `sc` / `_jvm`
   green. The middle column is "delta-rs interception", not "full Livy agent".
   The facade is documented in [20-lakesail-engine.md](20-lakesail-engine.md)
@@ -290,5 +298,5 @@ Witnesses: `py:test_probe_shaped_delta_and_parquet_both_land_rate_rows`,
 
 ## Next
 
-1. **`sc` / `_jvm`, Java/Scala UDFs, checkpointed streaming, Eventstream** —
+1. **`sc` / `_jvm`, Java/Scala UDFs, checkpointed streaming** —
    not this seam. The ceiling on the generated table is 23/25.

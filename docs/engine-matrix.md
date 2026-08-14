@@ -26,7 +26,7 @@ error, kept verbatim because the message is the actionable part. Three
 distinct things hide behind ❌, and the footnotes say which is which:
 
 1. **A real gap** — the engine cannot do it (`sc` / `_jvm` on Connect;
-   checkpointed / kafka streaming on Sail).
+   checkpointed streaming on Sail; bare Sail has no kafka source).
 2. **A protocol limit** — Spark Connect itself forbids it (`sc`, `_jvm`),
    so no upstream fix exists for *any* Connect client, Sail or Apache's.
 3. **A harness artefact** — the probe's environment, not the engine.
@@ -68,7 +68,7 @@ neither.
 
 **Sail is the default, and should stay the default.** This table only
 measures capability; it says nothing about the axis Sail was chosen for.
-Measured on the same 25 probes:
+Measured on the same 26 probes:
 
 | | Sail | Spark JVM |
 |---|---|---|
@@ -90,10 +90,12 @@ sees no difference except speed.
 
 **Reach for the JVM overlay when your test touches** Java/Scala UDFs /
 `spark.jars`, the RDD/`_jvm` surface, or a **checkpointed** streaming
-query (kafka / Eventstream / `foreachBatch`). Those are the ❌ rows that
+query (`foreachBatch` on an engine stream). Those are the ❌ rows that
 stay red in the middle column. Durable streaming *sinks* (delta /
 parquet / memory) land one announced micro-batch there — not a Fabric-
-shaped checkpointed query. `OPTIMIZE`/`VACUUM`, LOCATION-bearing
+shaped checkpointed query. OSS `format("kafka")` + bootstrap/subscribe
+is the same class of wrap (driver consume → Sail LocalRelation).
+`OPTIMIZE`/`VACUUM`, LOCATION-bearing
 `CREATE TABLE`, MERGE, DESCRIBE, Change Data Feed, JSON `multiLine`,
 and those sinks are closed on the Livy path.
 One flag:
@@ -120,6 +122,7 @@ buy capabilities most tests never touch.
 | `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ✅ | ✅ |
 | Change Data Feed (must not be inert) ᵇ | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ | ✅ |
 | `readStream` (rate source) — schema only ᶜ | ✅ | ✅ | ✅ |
+| `format("kafka")` + bootstrap/subscribe (rows on the engine) ʲ | ❌ `No table format found for: kafka` | ✅ | ✅ |
 | Streaming sink — console — liveness only ᶜ | ✅ | ✅ | ✅ |
 | Streaming sink — memory (rows readable) | ❌ `No table format found for: memory` | ✅ | ✅ |
 | Streaming sink — parquet (rows readable) | ❌ `cannot write streaming data to listing table` | ✅ | ✅ |
@@ -136,7 +139,7 @@ buy capabilities most tests never touch.
 | `read.text(wholetext=True)` — one row per file (must not be inert) ʰ | ✅ | ✅ | ✅ |
 | `read.json(multiLine=True)` over a JSON-array file ʰ | ❌ `Json error: Not valid JSON: EOF while parsing a list at line 1 column 1` | ✅ | ✅ |
 
-**3 of 25 capabilities differ between the engines.**
+**3 of 26 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the
 candidate list for upstream Sail contributions.
 
@@ -167,8 +170,9 @@ plan is collected as a bounded query (`limit(n).collect()`, measured
 2026-08-14) and the rows are batch-written (or registered as a temp
 view). Announced on stderr. There is no checkpoint; a continuous query
 lands one micro-batch. Bare Sail still fails with `DeltaWriteNode` /
-`listing table` / `No table format found for: memory`. `foreachBatch`,
-kafka, and Eventstream options fall through. Native checkpointed
+`listing table` / `No table format found for: memory`. `foreachBatch`
+on an engine stream, and a kafka *sink*, fall through. Native
+`format("kafka")` + bootstrap/subscribe is ʲ. Native checkpointed
 streaming is the JVM overlay.
 
 ᵇ The CDF row on the **middle column** intercepts both halves of the
@@ -313,3 +317,12 @@ keeping the data path distributed. That has its own trap: `from_json`
 returns NULL on a schema mismatch rather than raising, and the row count
 comes from the array's length rather than its contents, so every
 count-based assertion still passes while every column is empty.
+
+ʲ OSS `spark.read.format("kafka")` with `kafka.bootstrap.servers` +
+`subscribe`. The **middle column** consumes on the driver (kafka-python)
+and `createDataFrame`s the Kafka schema (`key`/`value`/`topic`/
+`partition`/`offset`) into Sail; `CAST(value AS STRING)` therefore runs
+on the engine. Announced; one micro-batch; `.explain()` is a
+LocalRelation. Not `rate`. Bare Sail has no kafka source. JVM uses
+`spark-sql-kafka`. Checkpointed streaming and a kafka *sink* stay on
+the overlay. `subscribePattern` / `assign` / SASL fail loud.

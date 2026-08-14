@@ -30,6 +30,34 @@ services:
     # Spark Connect channel, so a short wait is enough.
     command: ["sh", "-c", "sleep 8 && python /probes.py"]
 
+  kafka:
+    profiles: [sail-delta, jvm]
+    image: apache/kafka:3.9.1@sha256:4ceccc577f03f51f6af8dbfda55194d0d892f4fa7913ffbded567ce3895622ed
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 15s
+
   # Same Sail server, but with the emulator's delta-rs interception installed —
   # i.e. what a user actually gets through the Livy agent.
   sail-delta:
@@ -47,7 +75,11 @@ services:
       context: ../..
       dockerfile: docker/python-runtime/Dockerfile
       args: { UV_GROUP: sail-delta }
-    depends_on: [sail-delta]
+    depends_on:
+      sail-delta:
+        condition: service_started
+      kafka:
+        condition: service_healthy
     volumes:
       - ./probes.py:/probes.py:ro
       - ../../python/spark_agent:/livy:ro
@@ -62,6 +94,8 @@ services:
       SPARK_REMOTE: "sc://sail-delta:50051"
       DELTA_OPS: "1"
       PROBE_DIR: /tmp/probe
+      KAFKA_BOOTSTRAP: "kafka:9092"
+      KAFKA_TOPIC: "engine-matrix-kafka"
     command: ["sh", "-c", "sleep 8 && python /probes.py"]
 
   jvm-probe:
@@ -69,12 +103,17 @@ services:
     build:
       context: ../..
       dockerfile: docker/spark-runtime/Dockerfile
+    depends_on:
+      kafka:
+        condition: service_healthy
     volumes:
       - ./probes.py:/opt/spark/work-dir/probes.py:ro
       - ./out:/out
     environment:
       ENGINE: jvm
       PROBE_DIR: /tmp/probe
+      KAFKA_BOOTSTRAP: "kafka:9092"
+      KAFKA_TOPIC: "engine-matrix-kafka"
     # No SPARK_REMOTE: a classic in-process session, which is what gives the
     # JVM surface (sc, _jvm) its meaning.
     command:

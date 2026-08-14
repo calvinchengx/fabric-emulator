@@ -1384,12 +1384,14 @@ sail = [
 ]
 sail-delta = [
     { name = "deltalake" },
+    { name = "kafka-python" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pyspark-client" },
     { name = "requests" },
 ]
 spark-connect = [
+    { name = "kafka-python" },
     { name = "pyspark-client" },
     { name = "requests" },
 ]
@@ -1487,12 +1489,14 @@ sail = [
 ]
 sail-delta = [
     { name = "deltalake", specifier = ">=0.23,<2" },
+    { name = "kafka-python", specifier = ">=2.0.2,<3" },
     { name = "pandas", specifier = ">=2,<3" },
     { name = "pyarrow", specifier = ">=18,<24" },
     { name = "pyspark-client", specifier = "==4.1.1" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 spark-connect = [
+    { name = "kafka-python", specifier = ">=2.0.2,<3" },
     { name = "pyspark-client", specifier = "==4.1.1" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
@@ -2530,6 +2534,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/26/2d/ef58fed122b268c69c0aa099da20bc67657cdfb2e222688d5731bd5b971d/jupyterlab_widgets-3.0.16.tar.gz", hash = "sha256:423da05071d55cf27a9e602216d35a3a65a3e41cdf9c5d3b643b814ce38c19e0", size = 897423, upload-time = "2025-11-01T21:11:29.724Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/b5/36c712098e6191d1b4e349304ef73a8d06aed77e56ceaac8c0a306c7bda1/jupyterlab_widgets-3.0.16-py3-none-any.whl", hash = "sha256:45fa36d9c6422cf2559198e4db481aa243c7a32d9926b500781c830c80f7ecf8", size = 914926, upload-time = "2025-11-01T21:11:28.008Z" },
+]
+
+[[package]]
+name = "kafka-python"
+version = "2.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/7e/9eb4363e5018b71edf77de3d2fbd687f1e3a55d43101138a5b7f2ca56d97/kafka_python-2.3.2.tar.gz", hash = "sha256:2d2469bcabc2551be7eaf7fb512e1241484d358800f2665b90e7e24fea84259d", size = 357589, upload-time = "2026-06-03T22:46:49.022Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4f/db/cfe23cfacc9aabeef59e349aa6c2738d195df1d56ccf8c31362abdd68ddb/kafka_python-2.3.2-py2.py3-none-any.whl", hash = "sha256:e8a5e6f2c4ce13a8041669337038d5125e0e09e6d6f0911902ae5939e5b9595e", size = 326623, upload-time = "2026-06-03T22:46:47.417Z" },
 ]
 
 [[package]]

@@ -95,6 +95,7 @@ export default defineConfig({
             { slug: '23-deployment-pipelines' },
             { slug: '24-parity-completion' },
             { slug: '25-rti-kusto' },
+            { slug: '51-eventstream-kafka' },
             { slug: '29-tsql-parity' },
             { slug: '30-odcs-data-contracts' },
             { slug: '31-flow-observability' },

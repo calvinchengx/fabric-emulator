@@ -60,6 +60,12 @@
     "status": "pass"
   },
   {
+    "id": "streaming.read_kafka",
+    "description": "`format(\"kafka\")` + bootstrap/subscribe (rows on the engine) \u02b2",
+    "engine": "sail-delta",
+    "status": "pass"
+  },
+  {
     "id": "streaming.sink_console",
     "description": "Streaming sink \u2014 console \u2014 liveness only \u1d9c",
     "engine": "sail-delta",

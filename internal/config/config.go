@@ -226,6 +226,13 @@ type Config struct {
 	// routes answering an honest 501. See docs/25-rti-kusto.md.
 	KQLURL string
 
+	// KafkaBootstrap, when set, is an Apache Kafka broker (host:port) that
+	// Eventstream items provision topics on and that the JVM Spark adapter
+	// subscribes to. Empty leaves Eventstream create as management-only and
+	// Spark / Custom-source execution answering an honest 501.
+	// See docs/51-eventstream-kafka.md.
+	KafkaBootstrap string
+
 	// ARMURL is arm-emulator's origin. When set, Microsoft.Fabric/capacities
 	// created over ARM appear on GET /v1/capacities. Empty keeps the seeded
 	// local capacity only — standalone fabric-cicd still works.
@@ -280,6 +287,7 @@ func FromEnvPartial() *Config {
 		AirflowPassword:     os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
 		MLflowURL:           os.Getenv("FABRIC_MLFLOW_URL"),
 		KQLURL:              os.Getenv("FABRIC_KQL_URL"),
+		KafkaBootstrap:      os.Getenv("FABRIC_KAFKA_BOOTSTRAP"),
 		ARMURL:              os.Getenv("FABRIC_ARM_URL"),
 		ARMPollSeconds:      intEnv("FABRIC_ARM_POLL_SECONDS"),
 		RetryAfterSeconds:   1,

@@ -70,6 +70,9 @@ USER root
 # The jars, including the compiled token provider. No compiler, no apt, no
 # network — the runtime image is the base plus a directory.
 COPY --from=build /opt/spark/jars /opt/spark/jars
+# Livy agent modules (eventstream_kafka.py and siblings). Bind-mounted in
+# docker-compose.spark-jvm.yml for local iteration; baked here for the published tag.
+COPY python/spark_agent/*.py /opt/spark/work-dir/
 USER spark
 
 # The python a notebook actually needs. The runtime is Spark plus jars, which is

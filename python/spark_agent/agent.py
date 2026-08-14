@@ -82,6 +82,29 @@ def _install_delta_ops():
 _install_delta_ops()
 
 
+def _install_eventstream_kafka():
+    """Fabric Eventstream notebook API and OSS format("kafka") on both engines.
+
+    JVM: rewrite eventstream.* to the OSS Kafka source; native kafka uses the
+    jar. Sail: consume (emulator HTTP or kafka-python) and createDataFrame
+    the Kafka-schema rows into Sail. foreachBatch runs here — Sail has no
+    Kafka source and rejects the pickle. Never mapped onto `rate`.
+    """
+    try:
+        import eventstream_kafka
+    except ImportError:  # pragma: no cover - runtime without the agent module
+        return
+    try:
+        if eventstream_kafka.install(spark):
+            kind = "Connect" if os.environ.get("SPARK_REMOTE") else "JVM"
+            print(f"agent: eventstream kafka adapter installed ({kind})")
+    except Exception as exc:  # noqa: BLE001 — a broken wrap must not kill the agent
+        print(f"agent: eventstream kafka adapter NOT installed: {exc}")
+
+
+_install_eventstream_kafka()
+
+
 def _install_input_file_name():
     """Reconstruct `input_file_name()` on engines that lack it (Sail does).
 

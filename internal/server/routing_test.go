@@ -102,6 +102,12 @@ func TestNewRejectsBadEngineURLs(t *testing.T) {
 	}
 
 	cfg = testConfig(t)
+	cfg.KafkaBootstrap = "://bad"
+	if _, err := server.New(cfg, nil); err == nil {
+		t.Error("New with a bad KafkaBootstrap succeeded")
+	}
+
+	cfg = testConfig(t)
 	cfg.MLflowURL = "://bad"
 	if _, err := server.New(cfg, nil); err == nil {
 		t.Error("New with a bad MLflowURL succeeded")

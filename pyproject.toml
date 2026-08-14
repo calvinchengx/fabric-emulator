@@ -132,6 +132,9 @@ sail-delta = [
     "pandas>=2,<3",
     "pyarrow>=18,<24",
     "requests>=2.32,<3",
+    # OSS format("kafka") on Sail: the agent consumes and createDataFrames
+    # Kafka-schema rows into the engine. JVM keeps spark-sql-kafka.
+    "kafka-python>=2.0.2,<3",
 ]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP
 # APIs, and the statement agent is where that code executes.
@@ -146,7 +149,11 @@ jupyter = [
     "pyarrow>=18,<24",
     "requests>=2.32,<3",
 ]
-spark-connect = ["pyspark-client==4.1.1", "requests>=2.32,<3"]
+spark-connect = [
+    "pyspark-client==4.1.1",
+    "requests>=2.32,<3",
+    "kafka-python>=2.0.2,<3",
+]
 dbt-fabric = ["dbt-fabric>=1.11"]
 dbt-fabricspark = ["dbt-fabricspark>=1.13"]
 dbt-duckdb = [

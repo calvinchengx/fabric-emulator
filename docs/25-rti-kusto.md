@@ -140,9 +140,11 @@ cached. CI remains the witness of record.
 
 ## Boundaries (deliberate, not backlog)
 
-- **Eventstream** stays 🔴. The engine is a query/ingest engine; a streaming
-  ingestion pipeline is a different service, and the Kusto emulator explicitly
-  has no streaming ingestion.
+- **Eventhouse streaming ingest / Eventstream→Kusto destination** stays 🔴.
+  The engine is a query/ingest engine; a streaming ingestion pipeline is a
+  different service, and the Kusto emulator explicitly has no streaming
+  ingestion. Eventstream *exec* (Kafka + Fabric Spark options) is a separate
+  slice: [51-eventstream-kafka.md](51-eventstream-kafka.md).
 - **Queued ingestion / the `ingest-` endpoint and `Kusto.Ingest` SDKs**:
   unsupported by the engine. `ingestionServiceUri` therefore points at the
   engine, and direct ingestion commands are the supported path.

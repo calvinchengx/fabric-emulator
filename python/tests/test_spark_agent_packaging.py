@@ -165,7 +165,7 @@ def test_the_release_builds_the_agent_from_its_own_dockerfile():
     assert agent[0]["dockerfile"] == "docker/spark-agent/Dockerfile"
 
 
-@pytest.mark.parametrize("module", ["agent.py", "delta_ops.py", "storage.py", "catalog.py"])
+@pytest.mark.parametrize("module", ["agent.py", "delta_ops.py", "storage.py", "catalog.py", "eventstream_kafka.py"])
 def test_the_agent_sources_live_under_python(module: str):
     """`python/` is what the image copies, so location IS packaging here.
 
