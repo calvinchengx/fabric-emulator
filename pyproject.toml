@@ -30,6 +30,14 @@ test = [
     # developer .venv carrying requests from another group and failed in a clean
     # environment. Verified with UV_PROJECT_ENVIRONMENT pointed at an empty dir.
     "requests>=2.32,<3",
+    # The MERGE/CDF/DESCRIBE tests that write a real `_delta_log` used to skip
+    # on the notebookutils CI job (`--group test` alone). Skipping them meant
+    # CI never ran the proof those cells claim, and the coverage floor hid the
+    # gap the moment the Connect wraps landed. Same pins as the `delta-rs`
+    # group; pandas is what `read_change_feed` materialises through.
+    "deltalake>=0.23,<2",
+    "pyarrow>=18,<24",
+    "pandas>=2,<3",
 ]
 lint = [
     "ruff>=0.14,<0.16",

@@ -105,7 +105,9 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "Change Data Feed",
     "witnesses": [
-      "ci:livy-native"
+      "ci:livy-native",
+      "ci:engine-matrix",
+      "py:test_probe_shaped_cdf_write_and_read_carry_change_type"
     ]
   },
   "class-b-strict-mode-tsql-strict": {
@@ -435,7 +437,9 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "`MERGE INTO`",
     "witnesses": [
-      "ci:sail"
+      "ci:sail",
+      "ci:engine-matrix",
+      "py:test_probe_shaped_merge_upserts_a_real_delta_log"
     ]
   },
   "mirroring-mirrored-database-mirroring": {
@@ -606,6 +610,15 @@
     "witnesses": [
       "ci:warehouse-tds",
       "sdk:TestWarehouseTDSEndpointE2E"
+    ]
+  },
+  "read-json-multiline-true": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`read.json(multiLine=True)`",
+    "witnesses": [
+      "ci:engine-matrix",
+      "py:test_probe_shaped_spark_text_dir_yields_two_objects",
+      "py:test_patch_intercepts_keyword_multiline_and_skips_the_engine"
     ]
   },
   "reference-run-lakehouse-rule": {

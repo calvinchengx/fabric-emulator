@@ -47,11 +47,59 @@ def test_update_only_and_insert_only_match():
     assert up == "merge" and ins == "merge"
 
 
+PROBE_SHAPED = """
+MERGE INTO m_reg AS t
+USING (SELECT * FROM VALUES (1, 'b') AS s(id, v)) AS s
+ON t.id = s.id
+WHEN MATCHED THEN UPDATE SET t.v = s.v
+WHEN NOT MATCHED THEN INSERT *
+"""
+
+PATH_PROBE_SHAPED = """
+MERGE INTO delta.`/tmp/probe/t_merge_path` AS t
+USING (SELECT * FROM VALUES (1, 'b') AS s(id, v)) AS s
+ON t.id = s.id
+WHEN MATCHED THEN UPDATE SET t.v = s.v
+WHEN NOT MATCHED THEN INSERT *
+"""
+
+
+def test_engine_matrix_probe_shape_matches():
+    # The generated MERGE rows use this exact shape. Named-source INSERT (cols)
+    # VALUES was already ours; these two holes are why the middle column stayed
+    # red after the medallion matcher landed.
+    kind, p = delta_ops.match(PROBE_SHAPED)
+    assert kind == "merge"
+    assert p["target"] == "m_reg"
+    assert p["source"] is None
+    assert "SELECT" in p["source_query"].upper()
+    assert "VALUES" in p["source_query"].upper()
+    assert p["istar"] == "*"
+    assert p["icols"] is None
+    assert p["talias"] == "t" and p["salias"] == "s"
+    assert "t.v = s.v" in p["sets"]
+
+
+def test_path_target_with_subquery_and_insert_star_matches():
+    kind, p = delta_ops.match(PATH_PROBE_SHAPED)
+    assert kind == "merge"
+    assert p["target"] == "delta.`/tmp/probe/t_merge_path`"
+    assert p["istar"] == "*"
+    assert "SELECT" in p["source_query"].upper()
+
+
+def test_insert_star_with_a_named_source_matches():
+    kind, p = delta_ops.match(
+        "MERGE INTO tgt t USING src s ON t.k = s.k "
+        "WHEN NOT MATCHED THEN INSERT *")
+    assert kind == "merge"
+    assert p["source"] == "src"
+    assert p["istar"] == "*"
+    assert p["sets"] is None
+
+
 def test_unbounded_shapes_fall_through_to_the_engine():
-    # subquery source, DELETE clause, or no recognisable branch: not ours.
-    assert delta_ops.match(
-        "MERGE INTO tgt t USING (SELECT 1 k) s ON t.k = s.k "
-        "WHEN MATCHED THEN UPDATE SET t.v = s.v") is None
+    # DELETE, or no recognisable branch: not ours. Subquery source is in scope.
     assert delta_ops.match(
         "MERGE INTO tgt t USING src s ON t.k = s.k "
         "WHEN MATCHED THEN DELETE") is None

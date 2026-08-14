@@ -1,11 +1,12 @@
 """Delta maintenance operations Sail does not implement, executed by delta-rs.
 
 Sail's SQL planner has no `OPTIMIZE`/`VACUUM` (it answers `found OPTIMIZE at
-0:8 expected something else`) and rejects Change Data Feed reads. Those are the
-gaps `docs/engine-matrix.md` measures. They share a property the streaming gaps
-do not: each is a **bounded statement that starts and finishes against a table
-path**, carrying no Spark session state. That makes them interceptable —
-a streaming query, which lives inside the engine, is not.
+0:8 expected something else`). Change Data Feed write cannot enable the table
+feature, and the unintercepted `readChangeFeed` option is accepted but inert.
+Those are the gaps `docs/engine-matrix.md` measures. They share a property the
+streaming gaps do not: each is a **bounded statement that starts and finishes
+against a table path**, carrying no Spark session state. That makes them
+interceptable — a streaming query, which lives inside the engine, is not.
 
 So the agent recognises exactly these statements and runs them through
 **delta-rs** (`deltalake`), a real Delta Lake implementation, against the same
@@ -98,6 +99,37 @@ def known_location(name):
     tail = key.rsplit(".", 1)[-1]
     return _LOCATIONS.get(tail)
 
+
+# CREATE [OR REPLACE] TABLE [IF NOT EXISTS] name USING delta LOCATION 'path'
+#
+# Not an interception: Sail (and the JVM) execute this themselves. We record
+# the LOCATION the statement named so a later DESCRIBE / OPTIMIZE of that name
+# can find the table without asking Sail for DESCRIBE DETAIL, which it does
+# not implement. Recording a path the user wrote is not a guess; USING parquet
+# is left alone.
+_CREATE_DELTA_LOCATION = re.compile(
+    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"(?P<target>[\w.`]+)\s+"
+    r"USING\s+delta\s+"
+    r"LOCATION\s+'(?P<location>[^']+)'",
+    re.IGNORECASE | re.DOTALL)
+
+
+def remember_stated_delta_location(sql: str) -> None:
+    """If `sql` is CREATE TABLE … USING delta LOCATION, record that pair."""
+    if not isinstance(sql, str):
+        return
+    m = _CREATE_DELTA_LOCATION.match(sql)
+    if not m:
+        return
+    target = m.group("target").replace("`", "")
+    loc = m.group("location")
+    if "." in target:
+        schema, tbl = target.rsplit(".", 1)
+        remember(tbl, loc, schema)
+    else:
+        remember(target, loc)
+
 # `OPTIMIZE delta.`path``, `OPTIMIZE tbl`, optionally with a WHERE predicate or
 # ZORDER clause. The predicate/zorder are captured so they can be *refused*
 # rather than silently ignored — quietly dropping a WHERE would compact more
@@ -132,22 +164,31 @@ _CTAS = re.compile(
 # The bounded MERGE shape an upsert notebook writes, which is the shape a
 # medallion silver layer produces:
 #
-#   MERGE INTO <target> [AS] t USING <source-name> [AS] s ON <cond>
+#   MERGE INTO <target> [AS] t
+#   USING <source-name | (SELECT …)> [AS] s ON <cond>
 #   [WHEN MATCHED [AND <cond>] THEN UPDATE SET <assignments>]
-#   [WHEN NOT MATCHED THEN INSERT (<cols>) VALUES (<vals>)]
+#   [WHEN NOT MATCHED THEN INSERT * | INSERT (<cols>) VALUES (<vals>)]
 #
 # Sail parses MERGE but its plan resolver fails on any Delta TARGET holding a
 # date or timestamp column ("attribute #N is missing from the schema"),
 # reproduced minimally and unchanged in pysail 0.7.0 — which makes every
-# audit-columned table unmergeable, i.e. practically all of them. The source
-# must be a bare view/table NAME: a subquery source does not match and falls
-# through to the engine, honest failure included.
+# audit-columned table unmergeable, i.e. practically all of them.
+#
+# The SELECT in a subquery source runs on the ENGINE (arbitrary SQL is its
+# job); only the upsert is redirected through delta-rs. That is the same split
+# CTAS already uses. WHEN MATCHED THEN DELETE and anything else this grammar
+# does not parse still fall through.
 _MERGE = re.compile(
     r"^\s*MERGE\s+INTO\s+(?P<target>delta\.`[^`]+`|[\w.`]+)(?:\s+AS)?\s+(?P<talias>\w+)\s+"
-    r"USING\s+(?P<source>[\w.]+)(?:\s+AS)?\s+(?P<salias>\w+)\s+"
+    r"USING\s+(?:"
+    r"\((?P<source_query>SELECT\b.+)\)"
+    r"|(?P<source>[\w.]+)"
+    r")(?:\s+AS)?\s+(?P<salias>\w+)\s+"
     r"ON\s+(?P<on>.+?)\s+"
     r"(?:WHEN\s+MATCHED(?:\s+AND\s+(?P<mcond>.+?))?\s+THEN\s+UPDATE\s+SET\s+(?P<sets>.+?)\s*)?"
-    r"(?:WHEN\s+NOT\s+MATCHED\s+THEN\s+INSERT\s*\((?P<icols>[^)]+)\)\s*VALUES\s*\((?P<ivals>[^)]+)\)\s*)?"
+    r"(?:WHEN\s+NOT\s+MATCHED\s+THEN\s+INSERT\s*"
+    r"(?:(?P<istar>\*)|\((?P<icols>[^)]+)\)\s*VALUES\s*\((?P<ivals>[^)]+)\))"
+    r"\s*)?"
     r";?\s*$",
     re.IGNORECASE | re.DOTALL)
 
@@ -202,7 +243,7 @@ def match(sql: str):
         params = m.groupdict()
         # A MERGE with neither branch parsed is one this grammar did not really
         # understand (DELETE clauses, subquery source, ...): fall through.
-        if params.get("sets") or params.get("icols"):
+        if params.get("sets") or params.get("icols") or params.get("istar"):
             return "merge", params
     m = _DESCRIBE_DETAIL.match(text)
     if m:
@@ -403,15 +444,19 @@ def execute_merge(spark, params, resolve, storage_options=None):
     the same table, so the observable outcome is real; the executor differs,
     which is this module's standing, documented divergence.
 
-    The source is materialised from the session (`spark.table` -> Arrow):
-    delta-rs cannot see Spark temp views, and Arrow preserves the date and
-    timestamp types whose presence is the whole reason we are here.
+    The source is materialised from the session: a named table/view via
+    `spark.table` -> Arrow, a subquery via `spark.sql` -> Arrow. delta-rs
+    cannot see Spark temp views, and Arrow preserves the date and timestamp
+    types whose presence is the whole reason we are here.
     """
     from deltalake import DeltaTable
 
     talias, salias = params["talias"], params["salias"]
-    uri = _table_uri(params["target"].replace("`", ""), resolve)
-    source = spark.table(params["source"]).toArrow()
+    uri = _table_uri(params["target"], resolve)
+    if params.get("source_query"):
+        source = spark.sql(params["source_query"].strip()).toArrow()
+    else:
+        source = spark.table(params["source"]).toArrow()
 
     merger = DeltaTable(uri, storage_options=_resolve_options(storage_options)).merge(
         source=source,
@@ -430,7 +475,9 @@ def execute_merge(spark, params, resolve, storage_options=None):
             updates=updates,
             predicate=_dequote(params["mcond"]) if params.get("mcond") else None,
         )
-    if params.get("icols"):
+    if params.get("istar"):
+        merger = merger.when_not_matched_insert_all()
+    elif params.get("icols"):
         cols = [_plain_column(c, talias) for c in _split_top(params["icols"])]
         vals = [_dequote(v) for v in _split_top(params["ivals"])]
         if len(cols) != len(vals):
@@ -543,10 +590,16 @@ def describe_detail(spark, params, resolve, storage_options=None):
         list(md.partition_columns or []),
         dict(md.configuration or {}),
     )]
-    return spark.createDataFrame(rows, [
-        "format", "id", "name", "description", "location",
-        "version", "numFiles", "partitionColumns", "properties",
-    ])
+    # A list of column names makes Spark Connect infer types from the Python
+    # values. Empty partitionColumns / properties then raise
+    # CANNOT_DETERMINE_TYPE — which is how the engine-matrix DESCRIBE DETAIL
+    # probe failed after LOCATION recording started intercepting it. DDL names
+    # the nested types so inference is not asked.
+    return spark.createDataFrame(rows, (
+        "format STRING, id STRING, name STRING, description STRING, "
+        "location STRING, version LONG, numFiles LONG, "
+        "partitionColumns ARRAY<STRING>, properties MAP<STRING,STRING>"
+    ))
 
 
 def describe_table(spark, params, resolve, storage_options=None):
@@ -571,14 +624,83 @@ def describe_table(spark, params, resolve, storage_options=None):
     return spark.createDataFrame(rows, ["col_name", "data_type", "comment"])
 
 
+def _opt_truthy(value) -> bool:
+    """Spark option values arrive as strings. `true`/`1`/`yes` enable."""
+    if value is None:
+        return False
+    return str(value).strip().lower() in ("true", "1", "yes")
+
+
+def _option(options, *names):
+    """Look up a Spark option by any of its spellings, case-insensitive."""
+    lower = {str(k).lower(): v for k, v in (options or {}).items()}
+    for name in names:
+        if name.lower() in lower:
+            return lower[name.lower()]
+    return None
+
+
+def table_has_cdf(uri, storage_options=None) -> bool:
+    """True when the Delta log at `uri` has Change Data Feed enabled."""
+    try:
+        from deltalake import DeltaTable
+
+        cfg = DeltaTable(
+            uri, storage_options=_resolve_options(storage_options)
+        ).metadata().configuration or {}
+        return _opt_truthy(_option(cfg, "delta.enableChangeDataFeed"))
+    except Exception:
+        return False
+
+
+def cdf_write_should_intercept(source, path, options, partition_by, storage_options=None) -> bool:
+    """Intercept a Delta save that asked for CDF, or that targets a CDF table.
+
+    The second write in the engine-matrix probe is a plain append: the option
+    is not repeated. Reading the log is not a guess — we wrote that property.
+    partitionBy is left to the engine: silently dropping it would change layout.
+    """
+    if (source or "").lower() != "delta" or not isinstance(path, str) or partition_by:
+        return False
+    if _opt_truthy(_option(options, "delta.enableChangeDataFeed")):
+        return True
+    return table_has_cdf(path, storage_options)
+
+
+def write_cdf_table(df, path, mode="overwrite", enable=False, storage_options=None):
+    """Write `df` through delta-rs, optionally enabling Change Data Feed."""
+    from deltalake import write_deltalake
+
+    data = df.toArrow()
+    opts = _resolve_options(storage_options)
+    # Two calls rather than **kwargs: deltalake types `mode` as a Literal, and
+    # a string pulled out of a dict does not match either overload.
+    if (mode or "").lower() == "append":
+        if enable:
+            write_deltalake(
+                path, data, mode="append", storage_options=opts,
+                configuration={"delta.enableChangeDataFeed": "true"})
+        else:
+            write_deltalake(path, data, mode="append", storage_options=opts)
+        return
+    if enable:
+        write_deltalake(
+            path, data, mode="overwrite", storage_options=opts,
+            configuration={"delta.enableChangeDataFeed": "true"})
+    else:
+        write_deltalake(path, data, mode="overwrite", storage_options=opts)
+
+
 def read_change_feed(spark, uri, starting_version=0, ending_version=None,
                      storage_options=None):
     """Change Data Feed read, returned as a Spark DataFrame.
 
-    Sail rejects `option("readChangeFeed", "true")` outright, so this is exposed
-    as a helper rather than by intercepting the DataFrameReader: silently
-    rewriting a user's `spark.read` chain would hide which engine answered.
-    Call it explicitly and the source of the data is obvious.
+    Sail's unintercepted `option("readChangeFeed", "true")` is accepted and
+    inert: it returns a normal snapshot with no `_change_type` (`e2e/sail`,
+    which does not install this module). On the Livy path, `install()` wraps
+    the DataFrame reader and writer so the notebook API is honest, and
+    announces that the result is materialised via `createDataFrame`.
+    The helper remains for callers who want to name the source explicitly.
 
     The rows come from delta-rs and are handed back through `createDataFrame`,
     so the result is a normal Spark DataFrame — but note it is *materialised*,
@@ -593,12 +715,20 @@ def read_change_feed(spark, uri, starting_version=0, ending_version=None,
     # deltalake 1.x returns an arro3 table, not a pyarrow one — it has no
     # .to_pandas(). Both sides speak the Arrow PyCapsule interface, so pa.table
     # converts without a copy through Python.
-    frame = pa.table(reader.read_all()).to_pandas()
-    if frame.empty:
+    frame = pa.table(reader.read_all())
+    if frame.num_rows == 0:
         raise DeltaOpError(
             "change feed is empty — enable it on the table first "
             "(delta.enableChangeDataFeed) and write at least one version")
-    return spark.createDataFrame(frame)
+    # Spark Connect's createDataFrame rejects uint64 (the same DataFusion
+    # width that DML counts hit). delta-rs types commit version as unsigned.
+    cols = {}
+    for name in frame.column_names:
+        col = frame.column(name)
+        if pa.types.is_unsigned_integer(col.type):
+            col = col.cast(pa.int64())
+        cols[name] = col
+    return spark.createDataFrame(pa.table(cols).to_pandas())
 
 
 def install(spark, storage_options=None):
@@ -629,10 +759,10 @@ def install(spark, storage_options=None):
     def resolve(name):
         """Find where a named table lives: what we recorded, else ask the engine.
 
-        The recorded answer is preferred because the emulator wrote it. The
-        engine fallback stays for tables this process did not register — a user
-        CREATE TABLE in a notebook cell, or the engine-matrix probes, which
-        register their own tables and never call remember().
+        The recorded answer is preferred because the emulator wrote it. CREATE
+        TABLE … USING delta LOCATION is recorded as it passes through (the
+        statement named the path). The engine fallback stays for names this
+        process never saw.
 
         The fallback is LOUD on purpose. Everything that went wrong around this
         code went wrong quietly: a DESCRIBE returning zero rows with no error, a
@@ -662,7 +792,9 @@ def install(spark, storage_options=None):
     def sql(query, *args, **kwargs):
         matched = match(query) if isinstance(query, str) else None
         if matched is None:
-            return original_sql(query, *args, **kwargs)
+            result = original_sql(query, *args, **kwargs)
+            remember_stated_delta_location(query)
+            return result
         kind, params = matched
         # These two answer with real rows rather than a result line, so they
         # return directly instead of going through the message path below.
@@ -686,4 +818,78 @@ def install(spark, storage_options=None):
 
     spark.sql = sql
     spark.delta_change_feed = change_feed
+    _install_cdf_dataframe_api(spark, storage_options)
+    # JSON multiLine is not Delta, but the sail-delta probe (and the Livy
+    # agent) install *this* module as the emulator column. One install() is
+    # the seam; the parser lives in json_multiline so it can be tested without
+    # a Spark session.
+    import json_multiline
+    json_multiline.install(spark)
     return original_sql
+
+
+def _install_cdf_dataframe_api(spark, storage_options):
+    """Wrap Connect `spark.read` / `DataFrame.write` for the CDF notebook API.
+
+    No-op on a FakeSpark (unit tests) and when pyspark Connect is absent.
+    Gated by being inside `install()`, which the agent only calls on
+    SPARK_REMOTE. Announces on stderr so the executor is not silent.
+    """
+    try:
+        from pyspark.sql.connect.dataframe import DataFrame as ConnectDF
+        from pyspark.sql.connect.readwriter import DataFrameReader, DataFrameWriter
+    except ImportError:
+        return
+    reader = getattr(spark, "read", None)
+    if reader is None or not isinstance(reader, DataFrameReader):
+        return
+    if getattr(DataFrameReader, "_emu_cdf_patched", False):
+        return
+
+    orig_load = DataFrameReader.load
+    orig_save = DataFrameWriter.save
+
+    def load(self, path=None, format=None, schema=None, **options):
+        if format is not None:
+            self.format(format)
+        opts = {**(getattr(self, "_options", None) or {}), **options}
+        fmt = (format or getattr(self, "_format", None) or "").lower()
+        if fmt == "delta" and _opt_truthy(_option(opts, "readChangeFeed")) and isinstance(path, str):
+            print("[delta_ops] Change Data Feed read via delta-rs "
+                  "(materialised LocalRelation, not a lazy scan)",
+                  file=sys.stderr, flush=True)
+            start = _option(opts, "startingVersion")
+            end = _option(opts, "endingVersion")
+            return read_change_feed(
+                spark, path,
+                starting_version=int(start) if start not in (None, "") else 0,
+                ending_version=int(end) if end not in (None, "") else None,
+                storage_options=storage_options,
+            )
+        return orig_load(self, path, format=format, schema=schema, **options)
+
+    def save(self, path=None, format=None, mode=None, partitionBy=None, **options):
+        if format is not None:
+            self.format(format)
+        if mode is not None:
+            self.mode(mode)
+        src = (getattr(self._write, "source", None) or "").lower()
+        opts = dict(getattr(self._write, "options", None) or {})
+        opts.update({k: str(v) for k, v in options.items()})
+        if cdf_write_should_intercept(src, path, opts, partitionBy, storage_options):
+            print("[delta_ops] Delta write with Change Data Feed via delta-rs",
+                  file=sys.stderr, flush=True)
+            df = ConnectDF(self._df, self._spark)
+            write_cdf_table(
+                df, path,
+                mode=getattr(self._write, "mode", None) or "error",
+                enable=_opt_truthy(_option(opts, "delta.enableChangeDataFeed")),
+                storage_options=storage_options,
+            )
+            return
+        return orig_save(self, path, format=format, mode=mode,
+                         partitionBy=partitionBy, **options)
+
+    DataFrameReader.load = load
+    DataFrameWriter.save = save
+    DataFrameReader._emu_cdf_patched = True

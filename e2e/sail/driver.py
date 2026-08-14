@@ -227,11 +227,13 @@ expect_unavailable("Structured Streaming execution", start_stream)
 expect_unavailable("OPTIMIZE", lambda: spark.sql("OPTIMIZE events_t").collect())
 expect_unavailable("VACUUM", lambda: spark.sql("VACUUM events_t RETAIN 168 HOURS").collect())
 step("compatibility probe: change data feed")
+# Bare Connect — this suite does not install delta_ops. The Livy agent does,
+# and the engine-matrix sail-delta column is the notebook-API witness.
 cdf_probe = (spark.read.format("delta").option("readChangeFeed", "true")
              .option("startingVersion", 0).load(url))
 cdf_probe.collect()
 assert "_change_type" not in cdf_probe.columns, cdf_probe.columns
-print("known divergence confirmed: CDF options are accepted but return a normal snapshot")
+print("known divergence confirmed: CDF options are accepted but return a normal snapshot (unintercepted Sail)")
 
 # Two overwrite commits from separate sessions, released at one barrier.
 #

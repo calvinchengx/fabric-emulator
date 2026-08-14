@@ -17,22 +17,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spark_agent"))
 
-# delta-rs is an OPTIONAL dependency group. The `notebookutils` CI job runs this
-# suite with `--group test` alone, so importing it at module scope took the whole
-# file down on macOS and Windows. Guarded at COLLECTION time rather than with
-# importorskip inside the fixture: pytest 8 reports an ImportError raised BY a
-# module as an error rather than a skip, and the distinction is too subtle to
-# rest on. Only the two tests needing a table on disk are marked; the matcher and
-# type-mapping tests — most of the file — run everywhere.
+# The notebookutils CI job runs this suite with `--group test`, which now
+# includes deltalake. The guard stays so a venv without that extra still
+# collects: pytest 8 reports an ImportError raised BY a module as an error
+# rather than a skip. Only the tests needing a table on disk are marked; the
+# matcher and type-mapping tests — most of the file — run everywhere.
 try:
     import pyarrow as pa
     from deltalake import write_deltalake
 
     HAVE_DELTA_RS = True
-except ImportError:  # pragma: no cover - exercised by the CI leg without the group
+except ImportError:  # pragma: no cover - a venv without the test group's extras
     HAVE_DELTA_RS = False
 
-needs_delta_rs = pytest.mark.skipif(not HAVE_DELTA_RS, reason="delta-rs group not installed")
+needs_delta_rs = pytest.mark.skipif(not HAVE_DELTA_RS, reason="deltalake not installed")
 
 import delta_ops
 
@@ -40,7 +38,16 @@ import delta_ops
 class FakeSpark:
     """Only `createDataFrame` is used, so only it is provided."""
 
-    def createDataFrame(self, rows, columns):
+    def createDataFrame(self, rows, schema):
+        if isinstance(schema, str):
+            # Field names only — enough to zip the row. Nested DDL (ARRAY<…>,
+            # MAP<…>) is not split on the inner commas.
+            columns = [part.strip().split()[0]
+                       for part in schema.replace("MAP<STRING,STRING>", "MAP")
+                                         .replace("ARRAY<STRING>", "ARRAY")
+                                         .split(",")]
+        else:
+            columns = schema
         return {"rows": rows, "columns": columns}
 
 

@@ -82,7 +82,12 @@ def delta_merge_registered_table(spark):
 
 
 def delta_merge_path_target(spark):
-    """A path-addressed merge target — distinct from the registered-table form."""
+    """A path-addressed merge target — distinct from the registered-table form.
+
+    Update-only: the VALUES row matches the existing id. The interception still
+    has to parse a subquery source against a delta.`path` target; INSERT * is
+    covered by the registered-table probe.
+    """
     p = _table_path("t_merge_path")
     spark.sql("SELECT 1 AS id, 'a' AS v").write.format("delta").mode("overwrite").save(p)
     spark.sql(f"""
@@ -342,15 +347,10 @@ def sql_describe_detail_registered_delta(spark):
     registered table rather than a path, the delta-rs interception has to find
     where the table actually lives before it can act on it.
 
-    Sail does not have DETAIL in its DESCRIBE grammar at all, so this raises
-    rather than returning nothing. That is the BETTER failure — it is loud, and
-    `collect()[0]` never runs on an empty list — but it does mean the
-    name-resolution route is unavailable on Sail, which is why OPTIMIZE against
-    a named table degrades to skipped there.
-
     Recorded separately from the DESCRIBE TABLE row ᵉ because the two fail in
-    opposite ways, and the difference is the whole lesson: one is silent and
-    cost a day, the other is noisy and cost minutes.
+    opposite ways on the bare engine, and the difference is the whole lesson:
+    one is silent and cost a day, the other is noisy and cost minutes. The
+    emulator answers both from the Delta log once LOCATION is recorded.
     """
     p = _table_path("t_detail")
     spark.sql("SELECT 1 AS id").write.format("delta").mode("overwrite").save(p)

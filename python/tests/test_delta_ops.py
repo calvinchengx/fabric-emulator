@@ -215,6 +215,7 @@ def test_storage_options_may_be_a_callable_read_at_statement_time():
 def fake_deltalake(monkeypatch):
     mod = types.ModuleType("deltalake")
     mod.DeltaTable = FakeDeltaTable
+    mod.write_deltalake = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "deltalake", mod)
     return mod
 
@@ -251,6 +252,11 @@ class FakeMerger:
         self.inserts = updates
         return self
 
+    def when_not_matched_insert_all(self, predicate=None, except_cols=None):
+        self.inserts = "*"
+        self.insert_all = {"predicate": predicate, "except_cols": except_cols}
+        return self
+
     def execute(self):
         return self.metrics
 
@@ -276,6 +282,9 @@ class FakeDeltaTable:
         self.merge_call = {"source": source, "predicate": predicate,
                            "source_alias": source_alias, "target_alias": target_alias}
         return self.merger
+
+    def metadata(self):
+        return types.SimpleNamespace(configuration=getattr(self, "configuration", {}))
 
 
 def test_optimize_reports_the_compaction(fake_deltalake):
@@ -331,6 +340,43 @@ def test_merge_refuses_an_insert_whose_arity_does_not_line_up(fake_deltalake):
         d.execute_merge(spark, params, lambda n: "uri")
 
 
+def test_merge_subquery_source_is_run_on_the_engine_not_looked_up_as_a_table(fake_deltalake):
+    ran = []
+
+    def sql(q):
+        ran.append(q)
+        return types.SimpleNamespace(toArrow=lambda: "arrow:subquery")
+
+    spark = types.SimpleNamespace(
+        sql=sql,
+        table=lambda n: (_ for _ in ()).throw(AssertionError(f"named lookup of {n}")))
+    _, params = d.match(
+        "MERGE INTO t AS t "
+        "USING (SELECT * FROM VALUES (1, 'b') AS s(id, v)) AS s "
+        "ON t.id = s.id "
+        "WHEN MATCHED THEN UPDATE SET t.v = s.v "
+        "WHEN NOT MATCHED THEN INSERT *")
+    d.execute_merge(spark, params, lambda n: "uri")
+    assert ran and "SELECT" in ran[0].upper()
+    merger = FakeDeltaTable.last.merger
+    assert FakeDeltaTable.last.merge_call["source"] == "arrow:subquery"
+    assert merger.updates == {"v": "s.v"}
+    assert merger.inserts == "*"
+
+
+def test_merge_path_target_does_not_strip_the_delta_uri(fake_deltalake):
+    spark = types.SimpleNamespace(
+        sql=lambda q: types.SimpleNamespace(toArrow=lambda: "arrow"),
+        table=lambda n: types.SimpleNamespace(toArrow=lambda: "arrow"))
+    _, params = d.match(
+        "MERGE INTO delta.`/tmp/t` AS t "
+        "USING (SELECT 1 AS id, 'b' AS v) AS s "
+        "ON t.id = s.id "
+        "WHEN NOT MATCHED THEN INSERT *")
+    d.execute_merge(spark, params, lambda n: f"resolved:{n}")
+    assert FakeDeltaTable.last.uri == "/tmp/t"
+
+
 def test_merge_refuses_an_unparseable_assignment(fake_deltalake):
     spark = types.SimpleNamespace(
         table=lambda n: types.SimpleNamespace(toArrow=lambda: "arrow"))
@@ -360,15 +406,54 @@ class FakeWriter:
         self.sink["path"] = path
 
 
+_deltalake = types.ModuleType("deltalake")
+HAVE_DELTA_RS = False
 try:
-    import deltalake as _deltalake
-
+    import deltalake as _imported_deltalake
+except ImportError:  # pragma: no cover - a venv without the test group's extras
+    pass
+else:
+    _deltalake = _imported_deltalake
     HAVE_DELTA_RS = True
-except ImportError:  # pragma: no cover - exercised by the CI leg without the group
-    _deltalake = None
-    HAVE_DELTA_RS = False
 
-needs_delta_rs = pytest.mark.skipif(not HAVE_DELTA_RS, reason="delta-rs group not installed")
+needs_delta_rs = pytest.mark.skipif(not HAVE_DELTA_RS, reason="deltalake not installed")
+
+
+@needs_delta_rs
+def test_probe_shaped_merge_upserts_a_real_delta_log(tmp_path):
+    """The engine-matrix MERGE probe, against a real _delta_log.
+
+    Grammar tests can go green on a matcher that never writes. This is the
+    outcome the matrix cell claims: one row updated, one inserted, files on disk.
+    """
+    import pyarrow as pa
+    from deltalake import DeltaTable, write_deltalake
+
+    path = str(tmp_path / "t_merge")
+    write_deltalake(path, pa.table({
+        "id": pa.array([1], pa.int64()),
+        "v": pa.array(["a"]),
+    }))
+    incoming = pa.table({
+        "id": pa.array([1, 2], pa.int64()),
+        "v": pa.array(["b", "c"]),
+    })
+    spark = types.SimpleNamespace(
+        sql=lambda q: types.SimpleNamespace(toArrow=lambda: incoming),
+        table=lambda n: (_ for _ in ()).throw(AssertionError("named source")),
+    )
+    kind, params = d.match(
+        f"MERGE INTO delta.`{path}` AS t "
+        "USING (SELECT * FROM VALUES (1, 'b'), (2, 'c') AS s(id, v)) AS s "
+        "ON t.id = s.id "
+        "WHEN MATCHED THEN UPDATE SET t.v = s.v "
+        "WHEN NOT MATCHED THEN INSERT *")
+    assert kind == "merge"
+    d.execute_merge(spark, params, lambda n: n, storage_options={})
+    got = DeltaTable(path).to_pandas().sort_values("id").reset_index(drop=True)
+    assert list(got["id"]) == [1, 2]
+    assert list(got["v"]) == ["b", "c"]
+
 
 def test_ctas_lands_at_the_schema_location_not_the_engine_warehouse():
     d.remember_schema("gold", "abfss://lake/Tables/gold")
@@ -546,8 +631,6 @@ def test_a_describe_that_answers_with_no_rows_is_an_error_not_an_indexerror(fake
 
 
 def test_install_exposes_the_change_feed_helper(monkeypatch):
-    # Exposed as a helper rather than by intercepting spark.read: silently
-    # rewriting a user's read chain would hide which engine answered.
     spark = FakeSpark()
     d.install(spark, storage_options={"o": 1})
     seen = {}
@@ -571,6 +654,77 @@ def test_an_empty_change_feed_says_how_to_enable_it(monkeypatch, fake_deltalake)
     fake_deltalake.DeltaTable = CDFTable
     with pytest.raises(d.DeltaOpError, match=r"delta\.enableChangeDataFeed"):
         d.read_change_feed(FakeSpark(), "abfss://lake/t")
+
+
+def test_read_change_feed_casts_uint64_so_spark_connect_can_ingest_it(
+        monkeypatch, fake_deltalake):
+    # Connect: [UNSUPPORTED_DATA_TYPE_FOR_ARROW_CONVERSION] uint64. delta-rs
+    # types _commit_version as unsigned; the engine-matrix probe died here
+    # after both halves of the intercept had already run.
+    pa = pytest.importorskip("pyarrow")
+    monkeypatch.setitem(sys.modules, "pyarrow", pa)
+    feed = pa.table({
+        "id": pa.array([1], type=pa.int64()),
+        "_change_type": pa.array(["insert"]),
+        "_commit_version": pa.array([0], type=pa.uint64()),
+    })
+
+    class CDFTable(FakeDeltaTable):
+        def load_cdf(self, starting_version=0, ending_version=None):
+            return types.SimpleNamespace(read_all=lambda: feed)
+
+    fake_deltalake.DeltaTable = CDFTable
+    spark = FakeSpark()
+    d.read_change_feed(spark, "abfss://lake/t")
+    data, _schema = spark.frames[0]
+    assert "uint" not in str(data["_commit_version"].dtype)
+    assert list(data["_change_type"]) == ["insert"]
+
+
+def test_cdf_option_truthy_accepts_spark_spellings():
+    assert d._opt_truthy("true") and d._opt_truthy("TRUE") and d._opt_truthy("1")
+    assert not d._opt_truthy("false") and not d._opt_truthy(None) and not d._opt_truthy("")
+
+
+def test_cdf_write_intercepts_only_the_named_shapes():
+    # The option the notebook set, or a table that already has the feature.
+    # Parquet, partitionBy, and a plain Delta overwrite stay on the engine.
+    assert d.cdf_write_should_intercept(
+        "delta", "/tmp/t", {"delta.enableChangeDataFeed": "true"}, None, {})
+    assert not d.cdf_write_should_intercept(
+        "parquet", "/tmp/t", {"delta.enableChangeDataFeed": "true"}, None, {})
+    assert not d.cdf_write_should_intercept(
+        "delta", "/tmp/t", {}, ["part"], {})
+    assert not d.cdf_write_should_intercept("delta", "/tmp/nope", {}, None, {})
+
+
+@needs_delta_rs
+def test_probe_shaped_cdf_write_and_read_carry_change_type(tmp_path):
+    """The engine-matrix CDF probe, against a real _delta_log.
+
+    Overwrite with the enable option, append without it, read startingVersion=0.
+    Both halves must be this module: a write-only intercept leaves the read
+    inert, a read-only intercept has no feed to serve.
+    """
+    import pyarrow as pa
+
+    path = str(tmp_path / "t_cdf")
+    v0 = types.SimpleNamespace(toArrow=lambda: pa.table({"id": pa.array([1], pa.int64())}))
+    v1 = types.SimpleNamespace(toArrow=lambda: pa.table({"id": pa.array([2], pa.int64())}))
+    d.write_cdf_table(v0, path, mode="overwrite", enable=True, storage_options={})
+    assert d.table_has_cdf(path, {})
+    assert d.cdf_write_should_intercept("delta", path, {}, None, {})
+    d.write_cdf_table(v1, path, mode="append", enable=False, storage_options={})
+
+    spark = FakeSpark()
+    d.read_change_feed(spark, path, starting_version=0, storage_options={})
+    data, _schema = spark.frames[0]
+    assert "_change_type" in list(data.columns)
+    assert "insert" in set(data["_change_type"])
+    assert set(data["id"]) == {1, 2}
+    # Spark Connect rejects uint64; the feed must not hand that width through.
+    if "_commit_version" in data.columns:
+        assert "uint" not in str(data["_commit_version"].dtype)
 
 
 # --- DESCRIBE, answered from the Delta log -----------------------------------
@@ -638,9 +792,12 @@ def test_describe_detail_reports_the_log_not_a_guess(fake_deltalake):
     spark = FakeSpark()
     _, params = d.match("DESCRIBE DETAIL delta.`abfss://lake/t`")
     d.describe_detail(spark, params, lambda n: n)
-    rows, cols = spark.frames[0]
-    assert cols == ["format", "id", "name", "description", "location",
-                    "version", "numFiles", "partitionColumns", "properties"]
+    rows, schema = spark.frames[0]
+    # A list of names makes Spark Connect infer types. Empty partitionColumns
+    # / properties then raise CANNOT_DETERMINE_TYPE — the engine-matrix probe.
+    assert isinstance(schema, str), schema
+    assert "ARRAY<STRING>" in schema.upper()
+    assert "MAP<STRING,STRING>" in schema.upper().replace(" ", "")
     (fmt, ident, name, _desc, loc, version, numfiles, parts, props) = rows[0]
     assert fmt == "delta" and ident == "abc-123" and name == "orders"
     assert loc == "abfss://lake/t"
@@ -702,3 +859,164 @@ def test_install_routes_describe_through_the_delta_log(fake_deltalake):
     spark.sql("DESCRIBE TABLE t")
     assert spark.frames, "DESCRIBE must be answered here, not passed to the engine"
     assert spark.frames[-1][1] == ["col_name", "data_type", "comment"]
+
+
+def test_create_table_using_delta_location_is_remembered_so_describe_can_find_it():
+    # The engine-matrix DESCRIBE probes (and a notebook CREATE TABLE cell) never
+    # call remember() themselves. The statement named its LOCATION; recording
+    # that is not a guess. Without this, DESCRIBE TABLE d_reg falls through to
+    # Sail's zero-row answer and the middle matrix column stays red.
+    spark = FakeSpark()
+    d.install(spark, storage_options={})
+    spark.sql("CREATE TABLE IF NOT EXISTS d_reg USING delta LOCATION '/tmp/t_describe'")
+    assert d.known_location("d_reg") == "/tmp/t_describe"
+    kind, _ = d.match("DESCRIBE TABLE d_reg")
+    assert kind == "describe_table"
+
+
+def test_create_table_using_parquet_location_is_not_remembered():
+    spark = FakeSpark()
+    d.install(spark, storage_options={})
+    spark.sql("CREATE TABLE p_reg USING parquet LOCATION '/tmp/p'")
+    assert d.known_location("p_reg") is None
+    assert d.match("DESCRIBE TABLE p_reg") is None
+
+
+def test_a_failed_create_table_is_not_remembered():
+    class Boom(FakeSpark):
+        def sql(self, query, *a, **kw):
+            raise RuntimeError("catalog refused")
+
+    spark = Boom()
+    d.install(spark, storage_options={})
+    with pytest.raises(RuntimeError, match="catalog refused"):
+        spark.sql("CREATE TABLE d_reg USING delta LOCATION '/tmp/t'")
+    assert d.known_location("d_reg") is None
+
+
+def _fake_pyspark_connect(monkeypatch, Reader, Writer, ConnectDF):
+    rw = types.ModuleType("pyspark.sql.connect.readwriter")
+    rw.DataFrameReader = Reader
+    rw.DataFrameWriter = Writer
+    dfmod = types.ModuleType("pyspark.sql.connect.dataframe")
+    dfmod.DataFrame = ConnectDF
+    monkeypatch.setitem(sys.modules, "pyspark", types.ModuleType("pyspark"))
+    monkeypatch.setitem(sys.modules, "pyspark.sql", types.ModuleType("pyspark.sql"))
+    monkeypatch.setitem(sys.modules, "pyspark.sql.connect", types.ModuleType("pyspark.sql.connect"))
+    monkeypatch.setitem(sys.modules, "pyspark.sql.connect.readwriter", rw)
+    monkeypatch.setitem(sys.modules, "pyspark.sql.connect.dataframe", dfmod)
+
+
+def test_cdf_notebook_api_wraps_load_and_save(monkeypatch, fake_deltalake, capsys):
+    """The Connect reader/writer wrap is what the matrix probe actually calls."""
+    written = []
+    fake_deltalake.write_deltalake = (
+        lambda path, table, **kw: written.append((path, table, kw)))
+
+    class DataFrameReader:
+        def format(self, fmt):
+            self._format = fmt
+            return self
+
+        def load(self, path=None, format=None, schema=None, **options):
+            return "engine-load"
+
+    class DataFrameWriter:
+        def __init__(self):
+            self._write = types.SimpleNamespace(
+                source="delta",
+                options={"delta.enableChangeDataFeed": "true"},
+                mode="overwrite",
+            )
+            self._df = types.SimpleNamespace()
+            self._spark = None
+
+        def format(self, fmt):
+            self._write.source = fmt
+            return self
+
+        def mode(self, m):
+            self._write.mode = m
+            return self
+
+        def save(self, path=None, format=None, mode=None, partitionBy=None, **options):
+            return "engine-save"
+
+    class ConnectDF:
+        def __init__(self, df, spark):
+            self._df, self._spark = df, spark
+
+        def toArrow(self):  # noqa: N802 — pyspark's name
+            return "arrow"
+
+    _fake_pyspark_connect(monkeypatch, DataFrameReader, DataFrameWriter, ConnectDF)
+    spark = FakeSpark()
+    spark.read = DataFrameReader()
+    d._install_cdf_dataframe_api(spark, storage_options={})
+
+    feeds = []
+    monkeypatch.setattr(d, "read_change_feed",
+                        lambda *a, **k: feeds.append((a, k)) or "feed")
+    out = spark.read.load("/tmp/t", format="delta", readChangeFeed="true",
+                          startingVersion=0)
+    assert out == "feed" and feeds
+    assert "Change Data Feed read" in capsys.readouterr().err
+
+    DataFrameWriter().save("/tmp/t")
+    assert written and written[0][0] == "/tmp/t"
+    assert written[0][2]["configuration"] == {"delta.enableChangeDataFeed": "true"}
+    assert "Delta write with Change Data Feed" in capsys.readouterr().err
+
+    # Parquet, and a partitioned Delta write, stay on the engine.
+    parquet = DataFrameWriter()
+    parquet._write.source = "parquet"
+    assert parquet.save("/tmp/p") == "engine-save"
+    assert spark.read.load("/tmp/t", format="parquet") == "engine-load"
+
+
+def test_cdf_notebook_api_wrap_is_idempotent(monkeypatch):
+    class DataFrameReader:
+        def load(self, *a, **k):
+            return "engine"
+
+    class DataFrameWriter:
+        def save(self, *a, **k):
+            return "engine"
+
+    _fake_pyspark_connect(monkeypatch, DataFrameReader, DataFrameWriter, lambda *a, **k: None)
+    spark = FakeSpark()
+    spark.read = DataFrameReader()
+    d._install_cdf_dataframe_api(spark, {})
+    first = DataFrameReader.load
+    d._install_cdf_dataframe_api(spark, {})
+    assert DataFrameReader.load is first
+
+
+def test_write_cdf_table_enables_the_feature_only_when_asked(fake_deltalake):
+    seen = []
+    fake_deltalake.write_deltalake = lambda path, table, **kw: seen.append(kw)
+    df = types.SimpleNamespace(toArrow=lambda: "arrow")
+    d.write_cdf_table(df, "/tmp/t", mode="append", enable=False, storage_options={})
+    assert "configuration" not in seen[0]
+    d.write_cdf_table(df, "/tmp/t", mode=None, enable=True, storage_options={})
+    assert seen[1]["mode"] == "overwrite"
+    assert seen[1]["configuration"] == {"delta.enableChangeDataFeed": "true"}
+
+
+def test_table_has_cdf_reads_the_log_property(fake_deltalake):
+    class CDFTable(FakeDeltaTable):
+        def metadata(self):
+            return types.SimpleNamespace(
+                configuration={"delta.enableChangeDataFeed": "true"})
+
+    fake_deltalake.DeltaTable = CDFTable
+    assert d.table_has_cdf("/tmp/t", {}) is True
+
+
+def test_table_has_cdf_is_false_when_the_log_cannot_open(fake_deltalake, monkeypatch):
+    class Boom:
+        def __init__(self, *a, **k):
+            raise RuntimeError("no table")
+
+    fake_deltalake.DeltaTable = Boom
+    assert d.table_has_cdf("/tmp/missing", {}) is False
