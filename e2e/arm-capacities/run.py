@@ -31,7 +31,8 @@ TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
 SUB = "6082bfda-63d0-46f4-8272-ae9195139feb"
 EXE = ".exe" if os.name == "nt" else ""
 ARM_MODULE = "github.com/calvinchengx/arm-emulator"
-# azure-emulators' pins gate looks for this default. Bump it with the family BOM.
+# azure-emulators' pins gate looks for this default. Bump it with the family BOM
+# when that repo's ARM_EMULATOR_VERSION moves.
 ARM_VERSION = os.environ.get("ARM_VERSION", "v0.4.1")
 
 
