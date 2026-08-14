@@ -87,9 +87,12 @@ The common notebook path — Delta write/append, both time-travel forms,
 `createDataFrame`, SQL, `readStream` — passes on **both**. Ordinary work
 sees no difference except speed.
 
-**Reach for the JVM overlay when your test touches** `OPTIMIZE`/`VACUUM`,
-Change Data Feed, a durable streaming sink (delta/parquet/memory), or the
-RDD/`_jvm` surface — the ❌ rows below. One flag:
+**Reach for the JVM overlay when your test touches** a durable streaming
+sink (delta/parquet/memory), Java/Scala UDFs /
+`spark.jars`, or the RDD/`_jvm` surface — the ❌ rows that stay red in
+the middle column. `OPTIMIZE`/`VACUUM`, LOCATION-bearing `CREATE TABLE`,
+MERGE, DESCRIBE, Change Data Feed, and JSON `multiLine` are closed there.
+One flag:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.override.yml \
@@ -107,11 +110,11 @@ tests never touch.
 | Delta append | ✅ | ✅ | ✅ |
 | Time travel — `option("versionAsOf")` | ✅ | ✅ | ✅ |
 | Time travel — SQL `VERSION AS OF` | ✅ | ✅ | ✅ |
-| `MERGE INTO` a registered table at a **local path** ᵃ | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ✅ |
-| `MERGE INTO delta.`path`` (path target) | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ✅ |
+| `MERGE INTO` a registered table at a **local path** ᵃ | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ✅ | ✅ |
+| `MERGE INTO delta.`path`` (path target) | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ✅ | ✅ |
 | `OPTIMIZE` | ❌ `invalid argument: found OPTIMIZE at 0:8 expected something else, ';', statement, or end of` | ✅ | ✅ |
 | `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ✅ | ✅ |
-| Change Data Feed (must not be inert) ᵇ | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ |
+| Change Data Feed (must not be inert) ᵇ | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ | ✅ |
 | `readStream` (rate source) — schema only ᶜ | ✅ | ✅ | ✅ |
 | Streaming sink — console — liveness only ᶜ | ✅ | ✅ | ✅ |
 | Streaming sink — memory (rows readable) | ❌ `No table format found for: memory` | ❌ `No table format found for: memory` | ✅ |
@@ -124,19 +127,24 @@ tests never touch.
 | SQL over a temp view | ✅ | ✅ | ✅ |
 | Filter on a `row_number()` column the `SELECT` drops ᵈ | ✅ | ✅ | ✅ |
 | `CREATE TABLE` with no `USING` defaults to Delta ᵍ | ❌ `Invalid table location: No commit files found in _delta_log` | ✅ | ❌ `[NOT_SUPPORTED_COMMAND_WITHOUT_HIVE_SUPPORT] CREATE Hive TABLE (AS SELECT) is not supporte` |
-| `DESCRIBE TABLE` on a registered Delta table ᵉ | ❌ `DESCRIBE returned 0 rows: []` | ❌ `DESCRIBE returned 0 rows: []` | ✅ |
-| `DESCRIBE DETAIL` on a registered Delta table ᶠ | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ✅ |
+| `DESCRIBE TABLE` on a registered Delta table ᵉ | ❌ `DESCRIBE returned 0 rows: []` | ✅ | ✅ |
+| `DESCRIBE DETAIL` on a registered Delta table ᶠ | ❌ `invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', 'DATABASE', 'SCHEMA` | ✅ | ✅ |
 | `read.text(wholetext=True)` — one row per file (must not be inert) ʰ | ✅ | ✅ | ✅ |
-| `read.json(multiLine=True)` over a JSON-array file ʰ | ❌ `Json error: Not valid JSON: EOF while parsing a list at line 1 column 1` | ❌ `Json error: Not valid JSON: EOF while parsing a list at line 1 column 1` | ✅ |
+| `read.json(multiLine=True)` over a JSON-array file ʰ | ❌ `Json error: Not valid JSON: EOF while parsing a list at line 1 column 1` | ✅ | ✅ |
 
-**12 of 25 capabilities differ between the engines.**
+**6 of 25 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the
 candidate list for upstream Sail contributions.
 
 ᵃ Qualified deliberately. `e2e/sail` proves the same `MERGE` succeeds on
 Sail when the registered table is backed by an `az://` OneLake URL — the
-path the emulator actually uses. Only the local-path form fails, so this
-row is not evidence that Sail lacks `MERGE`.
+path the emulator actually uses. Only the local-path form fails on the
+bare engine, so the Sail column is not evidence that Sail lacks `MERGE`.
+
+The middle column intercepts this probe shape: a subquery source and
+`INSERT *`, the same split CTAS uses (SELECT on the engine, upsert
+through delta-rs). Named-source MERGE (the medallion shape) was already
+intercepted. `WHEN MATCHED THEN DELETE` still falls through.
 
 ᶜ These two assert less than the others, and say so rather than
 implying more. Every other streaming row now proves rows actually
@@ -149,12 +157,16 @@ a sink, and Sail reports no progress metrics (`lastProgress` is None,
 `recentProgress` is empty) — so asserting on those would fail for a
 missing API rather than a missing capability.
 
-ᵇ The CDF row fails on the **write**, not the read. Sail's writer cannot
-enable the table feature (`Unsupported table features required:
-[ChangeDataFeed]`) even when the property and the feature are both named,
-so the probe never gets a CDF-enabled table to read. The read side is real
-and verified separately in `e2e/livy` against OneLake, on a table written
-by delta-rs. Sail-authored CDF tables need the JVM overlay.
+ᵇ The CDF row on the **middle column** intercepts both halves of the
+notebook API: a Delta write with `delta.enableChangeDataFeed` (and later
+appends to that table) and a read with `readChangeFeed`, announced on
+stderr. The result is materialised (`createDataFrame`); `.explain()` is
+a LocalRelation. Bare Sail still cannot enable the table feature
+(`Unsupported table features required: [ChangeDataFeed]`), and
+`e2e/sail` — which does not install this interception — still shows the
+unwrapped `readChangeFeed` option as accepted and inert. The helper
+`spark.delta_change_feed` remains, verified in `e2e/livy` against
+OneLake. Native CDF on a classic session is the JVM overlay.
 
 ᵈ This row is green, and it is here to keep it that way — it records a
 capability we briefly believed was MISSING. The dbt-fabricspark medallion
@@ -193,49 +205,64 @@ indistinguishability is the actual defect.
 The medallion models now read columns from
 `run_query("select * from t limit 0").column_names`, which carries the
 schema in the result envelope and never asks the catalog. This row going
-green is what would say that workaround can be dropped.
+green on the **middle column** is the emulator answering from the Delta
+log once the table's LOCATION is recorded (`registerLakehouseTables`, or
+`CREATE TABLE … USING delta LOCATION` passing through `spark.sql`). The
+Sail column stays the zero-row gap; that is still what a bare engine
+returns. A name nobody recorded still falls through to Sail.
 
-ᵍ Delta-by-default is a FABRIC property, and this row is red on BOTH
-engines — that is the finding, not a defect in either. dbt-fabricspark's
-file_format_clause macro emits NO clause for exactly one value of
-file_format: `delta`, the one the adapter assumes is the default. So a
-model configured `+file_format: delta` with `+location_root` pointing at
-the lakehouse emitted `create or replace table ... location '...' as ...`
-with no USING, and the lakehouse never received silver while dbt reported
-success. Two rounds of debugging went into a config that was being
-applied correctly the whole time: the same value that proved it was
-applied was the value that suppressed the clause.
+ᵍ Delta-by-default is a FABRIC property. Bare Sail and the JVM overlay
+both default to Hive, so a `CREATE TABLE … LOCATION` with no `USING`
+does not write Delta on either engine. The **middle column** honours an
+explicit LOCATION and writes Delta — more faithful to Fabric than the
+JVM overlay, which is why this row can be ❌ / ✅ / ❌.
 
-Because it is red on the JVM overlay too, the examples'
-fabricspark__file_format_clause override is not a Sail workaround waiting
-for a better engine — it is the price of running dbt-fabricspark anywhere
-that is not Fabric. That is worth knowing before someone deletes it as
-Sail-specific.
+dbt-fabricspark's file_format_clause macro emits NO clause for exactly
+one value of file_format: `delta`, the one the adapter assumes is the
+default. So a model configured `+file_format: delta` with `+location_root`
+pointing at the lakehouse emitted `create or replace table ... location
+'...' as ...` with no USING, and the lakehouse never received silver
+while dbt reported success. Two rounds of debugging went into a config
+that was being applied correctly the whole time: the same value that
+proved it was applied was the value that suppressed the clause.
 
-ᶠ The same question asked of the OTHER introspection route, and it fails
-the opposite way: `DETAIL` is not in Sail's DESCRIBE grammar at all, so
-this RAISES rather than returning nothing. That is the better failure —
-`python/spark_agent/delta_ops.py` resolves a registered table to its physical
-location this way and does `collect()[0]`, which would have been an
-IndexError on an empty result; instead it gets a parse error naming the
-statement. The route is still unavailable on Sail, which is why OPTIMIZE
-against a NAMED table degrades to skipped there while the path-addressed
-form works.
+The fabricspark__file_format_clause override in the examples is still
+required on **bare OSS Spark**, including the JVM overlay. It is not a
+Sail workaround waiting for a better engine — it is the price of running
+dbt-fabricspark anywhere that is not Fabric (or this emulator's
+LOCATION interception). That is worth knowing before someone deletes it
+as Sail-specific.
+
+ᶠ The same question asked of the OTHER introspection route. On bare Sail
+it fails the opposite way from ᵉ: `DETAIL` is not in the DESCRIBE grammar
+at all, so this RAISES rather than returning nothing. That is the better
+failure — a `collect()[0]` never runs on an empty list; instead it gets a
+parse error naming the statement.
+
+The middle column answers from the Delta log once the table's LOCATION is
+recorded, the same way ᵉ does. Named `OPTIMIZE`/`VACUUM` use that cache
+(`remember()`), not a round-trip through Sail's missing grammar. A name
+nobody recorded still falls back to `DESCRIBE DETAIL` and fails loudly.
 
 Kept as its own row rather than folded into ᵉ because the contrast is the
 lesson: the silent one cost a day, the loud one cost minutes, and they
-are the same missing capability.
+are the same missing capability on the bare engine.
 
 ʰ These two arrived as a report that Sail ACCEPTS AND IGNORES both
 options. Measuring it found one real gap and one false alarm, and the
 false alarm is the more useful half.
 
-`multiLine` is real: Sail's JSON reader is NDJSON-only, so a file that is
-one JSON array cannot be parsed at all, while Spark JVM reads it. The
-exact message depends on the fixture's shape, so read the cell as
-evidence of NDJSON-only parsing rather than as a fixed string — the array
-here spans lines, so the reader fails on a bare `[`; an array on ONE line
-fails differently (`Expected JSON record to be an object, found Array`).
+`multiLine` on the **middle column** wraps `DataFrameReader.json` for the
+named option only, parses the file on the driver (including a Spark
+text-writer directory: part file in, `_SUCCESS` skipped), and materialises
+via `createDataFrame`. Announced on stderr; `.explain()` is a LocalRelation.
+Plain `json()`, `multiLine=False`, a list of paths, and a schema fall
+through. Bare Sail stays NDJSON-only: a file that is one JSON array cannot
+be parsed at all, while Spark JVM reads it natively. The exact message
+depends on the fixture's shape, so read the Sail-column cell as evidence of
+NDJSON-only parsing rather than as a fixed string — the array here spans
+lines, so the reader fails on a bare `[`; an array on ONE line fails
+differently (`Expected JSON record to be an object, found Array`).
 The multi-line fixture is kept because it exercises both halves of the
 option: spanning lines AND being an array.
 

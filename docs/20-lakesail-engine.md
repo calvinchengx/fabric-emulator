@@ -101,12 +101,13 @@ touches; every claim below is CI-verified against the emulator:
 | `abfss://ws@onelake.dfs.fabric.microsoft.com/…` (production URL form) | ✅ works unmodified — Sail parses the Hadoop form and the endpoint override routes it; **no path shim needed** | e2e probe |
 | Delta write/read/append, SQL over temp views | ✅ | e2e |
 | Time travel (`option("versionAsOf", n)`) | ✅ (SQL `VERSION AS OF` is a Sail gap) | e2e probe |
-| `MERGE INTO` | ✅ **with a registered table target** (`CREATE TABLE … USING delta LOCATION`); a path-based ``delta.`az://…` `` target does not resolve (reads do) | e2e probe |
+| `MERGE INTO` | ✅ registered table (`CREATE TABLE … USING delta LOCATION`); path-based ``delta.`…` `` through delta-rs on the Livy path. Bare Sail still cannot plan a local-path MERGE (`e2e/sail` is the engine witness) | e2e probe + engine-matrix |
 | `sc` / RDD API / `spark._jvm` | ⚠️ **measured subset emulated** — Spark Connect has no SparkContext on any engine, so the agent binds a local facade for exactly the idioms Fabric code was measured to use: `setLogLevel`, the `parallelize` chain, and `org.apache.log4j`. Everything else raises a pointer. It is eager and LOCAL and refuses above 10,000 elements rather than pose as distributed. **Fidelity inversion vs real Fabric** remains for the rest of the API — `mapPartitions` and friends work in production and refuse here — and the **JVM overlay** (`docker-compose.spark-jvm.yml`) restores the whole thing. See [50-rdd-usage-capture.md](50-rdd-usage-capture.md) for the sweep that sized this | agent facade + unit tests; contract verified against real Spark in `e2e/spark-jvm` |
 | `createDataFrame(local_rows)` | ✅ works — the agents/runners set `spark.conf.set("spark.sql.session.localRelationSizeLimit", <int>)` at session start, overriding the `'3GB'` string pyspark 4.2 chokes on; without that mitigation, use SQL `VALUES` or a 3.5 client | e2e (notebook fixture runs unmodified) |
 | DML row-count results (`INSERT`/`MERGE` envelopes) | ⚠️ DataFusion reports counts as `uint64`, which Arrow conversion to Spark clients rejects — the statement HAS executed; the Livy SQL agent absorbs this specific error as an empty result | dbt e2e finding |
 | Structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs | ❌ absent in Sail v0.6.6 (`OPTIMIZE`/`VACUUM` are intercepted and run through delta-rs, so those two work on the default stack). **Streaming and Java/Scala UDFs are restored by the JVM overlay** | executable negative probes |
-| CDF options, `spark.jars` | ⚠️ accepted but inert on Sail: CDF returns a normal snapshot without `_change_type`; JAR config is stored but there is no JVM classloader. **Both real on the JVM overlay** | executable divergence probes |
+| CDF options, `spark.jars` | ⚠️ on **bare Sail** CDF `readChangeFeed` is accepted but inert (`e2e/sail`). Through the Livy agent the notebook API (write enable + read) is intercepted via delta-rs, announced, and materialised. JAR config is stored but there is no JVM classloader. **JARs real on the JVM overlay** | executable divergence probes + engine-matrix |
+| `read.json(multiLine=True)` | ✅ on the Livy / sail-delta path: the named option is wrapped, announced, and materialised (`createDataFrame`). Bare Sail is NDJSON-only. Native lazy read is the **JVM overlay** | engine-matrix |
 
 ## Known gaps to design around (Sail v0.6.6)
 
@@ -265,7 +266,7 @@ version: N`. Plain writes passed throughout — only the commit-conflict paths
 Azure's `startFrom` is **inclusive**, unlike S3/GCP's exclusive `start-after`;
 `TestBlobListStartFrom` pins that.
 
-Three deliberate limits:
+Deliberate limits:
 
 - **`ZORDER` and `WHERE` are refused, not ignored.** They change *what* gets
   compacted; quietly running a bare compaction instead would be a silent
@@ -274,31 +275,33 @@ Three deliberate limits:
 - **`RETAIN` fractions round down.** delta-rs takes whole hours; retaining
   *less* than asked would delete files the user wanted kept, which is the
   unrecoverable direction.
-- **Change Data Feed is an explicit helper**, `spark.delta_change_feed(uri)`,
-  not an interception of `spark.read`. Silently rewriting a user's read chain
-  would hide which engine answered; calling it by name makes the source
-  obvious. The result is a materialised DataFrame, not a lazy scan.
-
-  **The table must be created by delta-rs**, because Sail's writer cannot enable
-  the feature: it answers `Unsupported table features required: [ChangeDataFeed]`
-  even when the property and the feature are both named. So the emulator can
-  *serve* a change feed on OneLake — verified — but a user cannot produce a
-  CDF-enabled table through Sail. Use the JVM overlay for that, or write the
-  table with `deltalake` directly.
+- **Change Data Feed is intercepted on the notebook API**, announced on
+  stderr. A Delta write with `delta.enableChangeDataFeed`, later appends to
+  that table, and a read with `readChangeFeed` go through delta-rs. The
+  result is a materialised DataFrame (`createDataFrame`), not a lazy scan —
+  `.explain()` is a LocalRelation. `spark.delta_change_feed(uri)` remains as
+  the named helper. Bare Connect without this module (`e2e/sail`) still
+  accepts `readChangeFeed` and returns a snapshot with no `_change_type`;
+  Sail's own writer still cannot enable the feature.
+- **`read.json(multiLine=True)` is intercepted on the Connect reader**,
+  announced on stderr. Sail's JSON reader is NDJSON-only; the wrap parses a
+  JSON array (or object) on the driver and materialises. Plain `json()` and
+  `multiLine=False` stay on the engine. Same LocalRelation caveat as CDF.
 
 Interception is installed **only on the Sail/Connect path**. On the JVM overlay
 Spark runs these natively with full syntax, so intercepting would be a
 downgrade.
 
-### Why these three and not streaming
+### Why these and not streaming
 
-These are bounded statements that start and finish against a table path,
-carrying no Spark session state — so they can be lifted out and run elsewhere.
+These are bounded operations that start and finish against a path, carrying
+no Spark session state — so they can be lifted out and run elsewhere.
 A streaming query is a long-running computation *inside* the engine; there is
 no statement boundary to intercept. That gap needs an upstream Sail fix, which
 is why [engine-matrix.md](engine-matrix.md) still lists the streaming sinks as
 Sail's real remaining gaps.
 
-**Note the matrix measures engines, not the emulator.** It probes Sail directly,
-so `OPTIMIZE`/`VACUUM` stay ❌ there — Sail genuinely does not implement them.
-Through the emulator's Livy agent they work.
+The matrix has three columns. Bare Sail stays ❌ for `OPTIMIZE`/`VACUUM` —
+Sail genuinely does not implement them. The **middle column** is what the Livy
+agent installs, and those two plus MERGE, DESCRIBE, CDF, and JSON `multiLine`
+are ✅ there. Java/Scala UDFs and the streaming sinks stay red in the middle.

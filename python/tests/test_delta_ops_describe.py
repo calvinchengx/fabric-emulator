@@ -40,7 +40,16 @@ import delta_ops
 class FakeSpark:
     """Only `createDataFrame` is used, so only it is provided."""
 
-    def createDataFrame(self, rows, columns):
+    def createDataFrame(self, rows, schema):
+        if isinstance(schema, str):
+            # Field names only — enough to zip the row. Nested DDL (ARRAY<…>,
+            # MAP<…>) is not split on the inner commas.
+            columns = [part.strip().split()[0]
+                       for part in schema.replace("MAP<STRING,STRING>", "MAP")
+                                         .replace("ARRAY<STRING>", "ARRAY")
+                                         .split(",")]
+        else:
+            columns = schema
         return {"rows": rows, "columns": columns}
 
 
