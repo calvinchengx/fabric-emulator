@@ -1174,6 +1174,23 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/az-rest/run.py
 
+  terraform-fabric:
+    name: microsoft/fabric Terraform provider drives Fabric REST (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # Microsoft's own terraform-provider-fabric — unmodified, pulled from
+      # the registry at the pin in e2e/terraform-fabric/main.tf — logs in
+      # through entra-emulator and apply/destroy against this checkout.
+      # Bound only to already-green rows a real stranger can hit (workspaces,
+      # folders, lakehouse create, capacities list/assign, workspace RBAC).
+      # Nothing in HashiCorp Terraform or the provider is patched.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/terraform-fabric/run.py
+
   fab-driven:
     name: The fab-driven example — fab imports definitions, RUNS them, and the bytes are checked
     runs-on: ubuntu-latest

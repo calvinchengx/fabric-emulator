@@ -203,8 +203,9 @@ func TestOneLakePathsSurviveNoSQLEndpoint(t *testing.T) {
 	if props["oneLakeTablesPath"] == nil {
 		t.Fatalf("no OneLake paths without a SQL endpoint: %v", props)
 	}
-	if _, present := props["sqlEndpointProperties"]; present {
-		t.Error("advertised a SQL endpoint that is not listening")
+	ep, _ := props["sqlEndpointProperties"].(map[string]any)
+	if _, present := ep["connectionString"]; present {
+		t.Error("advertised a connectionString for a SQL endpoint that is not listening")
 	}
 }
 

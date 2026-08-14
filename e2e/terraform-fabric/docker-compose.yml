@@ -1,0 +1,49 @@
+# Microsoft's terraform-provider-fabric drives the emulator. The Go Azure
+# SDK's MSAL refuses a non-HTTPS authority and DROPS a non-443 port, so
+# entra-emulator IS login.microsoftonline.com on :443 and fabric is
+# api.fabric.microsoft.com — the same alias trick as e2e/fabric-cli and
+# e2e/az-rest.
+#
+# Do NOT alias login.microsoft.com: azidentity's instance discovery talks
+# to the real public metadata endpoint, then the token request hits the
+# aliased login.microsoftonline.com (entra). Aliasing both would send
+# discovery at entra, which is not that document.
+services:
+  entra:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.7.0}
+    user: "0:0"
+    environment:
+      PUBLIC_ORIGIN: "https://login.microsoftonline.com"
+      LOCAL_DOMAINS: "login.microsoftonline.com"
+      PORT: "443"
+      TLS_ENABLED: "true"
+    networks:
+      default:
+        aliases: ["login.microsoftonline.com"]
+
+  fabric:
+    build: { context: ../.., dockerfile: Dockerfile }
+    user: "0:0"
+    environment:
+      FABRIC_ADDR: ":443"
+      FABRIC_DATA_DIR: "/data"
+      FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      FABRIC_ENTRA_TLS_INSECURE: "true"
+    networks:
+      default:
+        aliases: ["api.fabric.microsoft.com"]
+
+  client:
+    build: { context: ., dockerfile: Dockerfile }
+    depends_on: [entra, fabric]
+    environment:
+      FABRIC_TENANT_ID: "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+      FABRIC_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      FABRIC_CLIENT_SECRET: "daemon-app-secret"
+      FABRIC_ENDPOINT: "https://api.fabric.microsoft.com"
+      FABRIC_PREVIEW: "true"
+      FABRIC_DISABLE_TERRAFORM_PARTNER_ID: "true"
+      AZURE_AUTHORITY_HOST: "https://login.microsoftonline.com"
+      TF_IN_AUTOMATION: "1"
+      TF_INPUT: "0"
+      PYTHONUNBUFFERED: "1"

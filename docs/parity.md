@@ -245,6 +245,7 @@ contract holds better than any assertion we could write ourselves.
 |---|---|---|
 | `fabric-cicd` (Microsoft) | Control plane / CI-CD publish | 🟢 `e2e/fabric-cicd` |
 | **Fabric CLI `fab`** (Microsoft) | Control plane — SPN auth (MSAL) + workspace/item CRUD (Notebook, SemanticModel, Report, DataPipeline, Lakehouse), `ls`/`get`/`api` | 🟢 `e2e/fabric-cli` |
+| **`microsoft/fabric` Terraform provider** (Microsoft) | Control plane — SPN auth (Go azidentity) + workspace / nested folder / Lakehouse / capacity data source / workspace RBAC. Fabric REST, not ARM | 🟢 `e2e/terraform-fabric` |
 | **Fabric Data Engineering VS Code extension 1.18.1 contract** (Microsoft) | Shared-backend/MWC authoring routes through `api.powerbi.com`; interactive kernel websocket is not claimed | 🟢 `e2e/vscode-extension` |
 | Apache Airflow 2.10.5 | `ApacheAirflowJob` DAG discovery, scheduling, execution, and status | 🟢 `e2e/airflow` |
 | MLflow 3 + dbt-duckdb | Workspace-scoped experiment/run/artifact/model lifecycle, followed by dbt's real Delta plugin over the same Spark-written OneLake table | 🟢 `e2e/data-science-loop` |

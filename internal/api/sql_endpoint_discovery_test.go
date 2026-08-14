@@ -109,24 +109,30 @@ func TestLakehouseEndpointIsDialableFromWhereverTheCallerIs(t *testing.T) {
 	}
 }
 
-// The contract-only stack (no sqlserver sidecar) is supported: say nothing about
-// an ENDPOINT that is not listening.
-//
-// Narrowed once the lakehouse gained OneLake paths: this asserted "no properties
-// at all", which was only ever a proxy for "no endpoint" because
-// sqlEndpointProperties was the sole property. The two claims are separate now —
-// OneLake is where the data is whether or not anything serves T-SQL over it —
-// and conflating them would make the honest addition of a path look like a
-// regression.
+// A contract-only stack (no sqlserver sidecar) still reports the SQLEndpoint
+// item and provisioningStatus=Success — microsoft/fabric's Terraform provider
+// polls until that object exists — but it must not invent a connectionString
+// for a listener that is not there.
 func TestLakehouseSaysNothingWithoutASQLEndpoint(t *testing.T) {
 	a, st := newAPI(t)
 	a.SQLEndpointPort = "" // FABRIC_SQL_TDS_ADDR unset
 	ws := seedWorkspace(t, st)
 	lake := seedItem(t, st, ws.ID, "Lakehouse", "lake")
+	a.applyCreationPayload(lake, nil)
 
 	_, body := typedItemBody(t, a, "localhost:9443", ws.ID, lake.ID, "Lakehouse")
 	props, _ := body["properties"].(map[string]any)
-	if ep, present := props["sqlEndpointProperties"]; present {
-		t.Fatalf("advertised a SQL endpoint that is not listening: %v", ep)
+	ep, ok := props["sqlEndpointProperties"].(map[string]any)
+	if !ok {
+		t.Fatalf("no sqlEndpointProperties (terraform polls this): %v", props)
+	}
+	if ep["provisioningStatus"] != "Success" {
+		t.Errorf("provisioningStatus = %v, want Success", ep["provisioningStatus"])
+	}
+	if ep["id"] == nil || ep["id"] == lake.ID {
+		t.Errorf("endpoint id = %v; want the SQLEndpoint item, not the lakehouse", ep["id"])
+	}
+	if _, present := ep["connectionString"]; present {
+		t.Fatalf("advertised a connectionString for a SQL endpoint that is not listening: %v", ep)
 	}
 }

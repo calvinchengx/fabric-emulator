@@ -475,37 +475,22 @@ func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]an
 		// real Fabric names it differently, so it is reported under the name
 		// real Fabric reports it under.
 		//
-		// `id` IS DELIBERATELY ABSENT. On real Fabric the analytics endpoint is
-		// its own SQLEndpoint item with its own GUID; the emulator has no such
-		// item and routes the endpoint by the lakehouse id. Reporting the
-		// lakehouse id under that name would invite a consumer to use it as a
-		// database name, which works here and fails on real Fabric. Leaving it
-		// out fails the other way round: locally, loudly, before it ships.
-		if cs := a.warehouseConnectionString(r); cs != "" {
-			ep := map[string]any{
-				"connectionString": cs,
-				// The emulator provisions the endpoint on first connect, so it
-				// is never pending from the caller's point of view. Real Fabric
-				// can answer InProgress, which a client must handle: hence a
-				// status field at all rather than an implied one.
-				"provisioningStatus": "Success",
-			}
-			// The endpoint's OWN id, which is what refreshMetadata is addressed
-			// by. Absent until the emulator had a SQLEndpoint item to name —
-			// see sqlendpoint.go for why withholding it was right then and wrong
-			// now. Still conditional: a lakehouse created before this existed has
-			// no endpoint item, and inventing one here would report an id that
-			// answers nothing.
-			if id := a.sqlEndpointItemFor(it); id != "" {
-				ep["id"] = id
-			}
-			props := a.oneLakePaths(r, it)
-			props["sqlEndpointProperties"] = ep
-			return props
+		// microsoft/fabric's Terraform provider GET-polls until
+		// sqlEndpointProperties exists and provisioningStatus is Success
+		// (30s loop, default 10m timeout). A contract-only stack has no TDS
+		// listener, so connectionString stays absent; the status and the
+		// SQLEndpoint item id are still the tenant shape, because the item
+		// exists whether or not anything is listening on 1433.
+		props := a.oneLakePaths(r, it)
+		ep := map[string]any{"provisioningStatus": "Success"}
+		if id := a.sqlEndpointItemFor(it); id != "" {
+			ep["id"] = id
 		}
-		// Still reported without a SQL endpoint: OneLake is where the data is,
-		// whether or not anything serves T-SQL over it.
-		return a.oneLakePaths(r, it)
+		if cs := a.warehouseConnectionString(r); cs != "" {
+			ep["connectionString"] = cs
+		}
+		props["sqlEndpointProperties"] = ep
+		return props
 	case "Eventstream":
 		return a.eventstreamProperties(it)
 	case "Eventhouse":
