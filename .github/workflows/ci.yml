@@ -362,6 +362,15 @@ jobs:
     name: Every supported parity claim names its witness
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # `actions: read` ON TOP OF the workflow's `contents: read`, for exactly one
+    # step: check_cron_workflow_freshness reads run history via `gh run list`.
+    # Without it that call fails, every workflow lands in "unknown", and the
+    # check PASSES having verified nothing — the silent no-op it exists to
+    # catch. The script now fails loudly under GITHUB_ACTIONS instead, so a
+    # future permissions trim breaks the build rather than the guarantee.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -420,6 +429,15 @@ jobs:
       # directions because "too narrow" and "too broad" look identical in a
       # green log.
       - run: uv run --frozen --no-sync python scripts/check_entra_install.py
+      # A cron-only workflow is not proved by the next commit — a change to it
+      # is unverified until the schedule fires, which can be a week. Three such
+      # fixes landed in one week and none had executed; one was BROKEN (the
+      # sc-facade oracle died on ModuleNotFoundError and evaluated nothing) and
+      # nothing in the diffs distinguished it from the two that were fine.
+      # Skips cleanly where `gh` is unavailable, so a fork still builds.
+      - run: uv run --frozen --no-sync python scripts/check_cron_workflow_freshness.py
+        env:
+          GH_TOKEN: ${{ github.token }}
       # The portal's event-kind list is GENERATED from internal/store/bus.go.
       # The stream names each SSE frame and EventSource has no wildcard
       # listener, so a kind missing from the client is invisible — no error,
