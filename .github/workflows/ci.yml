@@ -395,6 +395,31 @@ jobs:
       # out still builds and still has a URL, but nothing links to it, so it is
       # published and unreachable. Same drift, same guard.
       - run: uv run --frozen --no-sync python scripts/check_docs_sidebar.py
+      # THE ONE `make check` RAN AND CI DID NOT. Every example must resolve its
+      # target through the `fabric-target` contract — no pinned seed principal,
+      # no localhost endpoint outside the resolver, no emulator-only lever, and
+      # every `definitions/` folder in Fabric's own source format. That is the
+      # whole segregation boundary between "code that runs on Fabric" and "code
+      # that runs here", and it was enforced only on the machine of whoever
+      # happened to type `make check`.
+      #
+      # It never failed, which is exactly why the gap survived: a check that
+      # passes is indistinguishable from a check that is running. Its unit test
+      # exercises the checker's LOGIC against synthetic trees
+      # (`cep.ROOT = tmp_path`) and never points it at this repo's own
+      # `examples/`, so nothing in CI touched the real files either.
+      - run: uv run --frozen --no-sync python scripts/check_example_portability.py
+      # Same gap, and this one is a PRIVACY claim: capture_definition_shape.py
+      # redacts a private tenant's values before a shape is printed to a public
+      # log, and its own docstring says a redactor that passes one value through
+      # "publishes a real customer's hostname forever". The capture runs from
+      # real-fabric.yml's workflow_dispatch, which has itself never run — so
+      # neither the redactor nor its test had ever executed in CI.
+      - run: uv run --frozen --no-sync python scripts/check_capture_redaction.py
+      # And the third: the retry in e2e/entra_install.py, asserted in both
+      # directions because "too narrow" and "too broad" look identical in a
+      # green log.
+      - run: uv run --frozen --no-sync python scripts/check_entra_install.py
       # The portal's event-kind list is GENERATED from internal/store/bus.go.
       # The stream names each SSE frame and EventSource has no wildcard
       # listener, so a kind missing from the client is invisible — no error,
