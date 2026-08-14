@@ -80,7 +80,11 @@ class FakeSpark:
         self.frames = []
         self.saves = []
         self.views = {}
-        self.read = types.SimpleNamespace()
+        # `object`, not the inferred SimpleNamespace: tests swap in their own
+        # reader stand-in (see the Connect case), and inferring the type from
+        # the placeholder makes that assignment a ty error. Nothing reads an
+        # attribute off it, so the widest honest type is the opaque one.
+        self.read: object = types.SimpleNamespace()
 
     def createDataFrame(self, data, schema=None):  # noqa: N802 — pyspark's name
         self.frames.append(data)
