@@ -406,15 +406,17 @@ class FakeWriter:
         self.sink["path"] = path
 
 
+_deltalake = types.ModuleType("deltalake")
+HAVE_DELTA_RS = False
 try:
-    import deltalake as _deltalake
-
+    import deltalake as _imported_deltalake
+except ImportError:  # pragma: no cover - a venv without the test group's extras
+    pass
+else:
+    _deltalake = _imported_deltalake
     HAVE_DELTA_RS = True
-except ImportError:  # pragma: no cover - exercised by the CI leg without the group
-    _deltalake = None
-    HAVE_DELTA_RS = False
 
-needs_delta_rs = pytest.mark.skipif(not HAVE_DELTA_RS, reason="delta-rs group not installed")
+needs_delta_rs = pytest.mark.skipif(not HAVE_DELTA_RS, reason="deltalake not installed")
 
 
 @needs_delta_rs

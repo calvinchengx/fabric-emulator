@@ -671,13 +671,24 @@ def write_cdf_table(df, path, mode="overwrite", enable=False, storage_options=No
     """Write `df` through delta-rs, optionally enabling Change Data Feed."""
     from deltalake import write_deltalake
 
-    kw = {
-        "mode": mode or "overwrite",
-        "storage_options": _resolve_options(storage_options),
-    }
+    data = df.toArrow()
+    opts = _resolve_options(storage_options)
+    # Two calls rather than **kwargs: deltalake types `mode` as a Literal, and
+    # a string pulled out of a dict does not match either overload.
+    if (mode or "").lower() == "append":
+        if enable:
+            write_deltalake(
+                path, data, mode="append", storage_options=opts,
+                configuration={"delta.enableChangeDataFeed": "true"})
+        else:
+            write_deltalake(path, data, mode="append", storage_options=opts)
+        return
     if enable:
-        kw["configuration"] = {"delta.enableChangeDataFeed": "true"}
-    write_deltalake(path, df.toArrow(), **kw)
+        write_deltalake(
+            path, data, mode="overwrite", storage_options=opts,
+            configuration={"delta.enableChangeDataFeed": "true"})
+    else:
+        write_deltalake(path, data, mode="overwrite", storage_options=opts)
 
 
 def read_change_feed(spark, uri, starting_version=0, ending_version=None,

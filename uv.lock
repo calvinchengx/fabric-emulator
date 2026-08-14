@@ -1394,9 +1394,12 @@ spark-connect = [
     { name = "requests" },
 ]
 test = [
+    { name = "deltalake" },
     { name = "fabric-emulator-notebookutils" },
     { name = "fabric-target" },
     { name = "jsonschema" },
+    { name = "pandas" },
+    { name = "pyarrow" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pyyaml" },
@@ -1494,9 +1497,12 @@ spark-connect = [
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 test = [
+    { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "fabric-emulator-notebookutils", editable = "python" },
     { name = "fabric-target", editable = "python/fabric-target" },
     { name = "jsonschema", specifier = ">=4.21,<5" },
+    { name = "pandas", specifier = ">=2,<3" },
+    { name = "pyarrow", specifier = ">=18,<24" },
     { name = "pytest", specifier = ">=8.3,<10" },
     { name = "pytest-cov", specifier = ">=5,<8" },
     { name = "pyyaml", specifier = ">=6,<7" },
