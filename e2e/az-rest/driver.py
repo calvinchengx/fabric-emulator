@@ -30,6 +30,7 @@ import urllib.parse
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import NoReturn
 
 TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
 SP_CLIENT = "00d88624-f0d7-46f6-a641-6232c2608928"
@@ -55,7 +56,7 @@ AZ_ENV = {
 _ARM_STUB: ThreadingHTTPServer | None = None
 
 
-def fail(msg: str) -> None:
+def fail(msg: str) -> NoReturn:
     sys.exit(f"FAIL: {msg}")
 
 
