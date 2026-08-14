@@ -51,10 +51,13 @@ func scanCapacity(row interface{ Scan(...any) error }) (*Capacity, error) {
 }
 
 // seedCapacity inserts the default capacity if missing (idempotent).
+// Region is a Fabric REST capacity region (`West Europe`), not ARM's
+// `westeurope` and not the emulator-internal `local` that microsoft/fabric's
+// Terraform data source refuses (OneOf on PossibleCapacityRegionValues).
 func (s *Store) seedCapacity() error {
 	_, err := s.db.Exec(`
 INSERT INTO capacities (id, display_name, sku, region, state, source, arm_id, max_concurrent_jobs)
-VALUES (?, 'Emulator Capacity', 'F64', 'local', 'Active', ?, '', ?)
+VALUES (?, 'Emulator Capacity', 'F64', 'West Europe', 'Active', ?, '', ?)
 ON CONFLICT(id) DO NOTHING`, DefaultCapacityID, CapacitySourceSeed, DefaultMaxConcurrentJobs)
 	return err
 }

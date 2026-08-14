@@ -268,6 +268,73 @@ func TestGetWorkspaceSuccessAndIdentity(t *testing.T) {
 	}
 }
 
+func TestGetWorkspaceReportsWorkspaceInfo(t *testing.T) {
+	// microsoft/fabric's Terraform provider GET-polls WorkspaceInfo and
+	// dereferences capacityAssignmentProgress. Omitting it is a nil panic;
+	// anything other than Completed/Failed is a 30s retry loop. Assignment
+	// is synchronous here, so GET always reports Completed, plus the
+	// capacity region and production-shaped OneLake endpoints the same
+	// client reads as computed attributes.
+	a, _ := newAPI(t)
+	w := do(a.createWorkspace, admin, "POST", `{"displayName":"info-ws"}`, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", w.Code, w.Body.Bytes())
+	}
+	var ws struct{ ID string }
+	_ = json.Unmarshal(w.Body.Bytes(), &ws)
+	wid := map[string]string{"wid": ws.ID}
+
+	w = do(a.getWorkspace, admin, "GET", "", wid)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get = %d %s", w.Code, w.Body.Bytes())
+	}
+	var info struct {
+		CapacityAssignmentProgress string `json:"capacityAssignmentProgress"`
+		CapacityRegion             string `json:"capacityRegion"`
+		OneLakeEndpoints           struct {
+			BlobEndpoint string `json:"blobEndpoint"`
+			DfsEndpoint  string `json:"dfsEndpoint"`
+		} `json:"oneLakeEndpoints"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if info.CapacityAssignmentProgress != "Completed" {
+		t.Fatalf("progress = %q", info.CapacityAssignmentProgress)
+	}
+	if info.CapacityRegion != "West Europe" {
+		t.Fatalf("region = %q", info.CapacityRegion)
+	}
+	wantBlob := "https://onelake.blob.fabric.microsoft.com/" + ws.ID
+	wantDFS := "https://onelake.dfs.fabric.microsoft.com/" + ws.ID
+	if info.OneLakeEndpoints.BlobEndpoint != wantBlob || info.OneLakeEndpoints.DfsEndpoint != wantDFS {
+		t.Fatalf("onelake endpoints = %+v", info.OneLakeEndpoints)
+	}
+
+	if w := do(a.unassignFromCapacity, admin, "POST", "", wid); w.Code != http.StatusAccepted {
+		t.Fatalf("unassign = %d", w.Code)
+	}
+	w = do(a.getWorkspace, admin, "GET", "", wid)
+	info = struct {
+		CapacityAssignmentProgress string `json:"capacityAssignmentProgress"`
+		CapacityRegion             string `json:"capacityRegion"`
+		OneLakeEndpoints           struct {
+			BlobEndpoint string `json:"blobEndpoint"`
+			DfsEndpoint  string `json:"dfsEndpoint"`
+		} `json:"oneLakeEndpoints"`
+	}{}
+	_ = json.Unmarshal(w.Body.Bytes(), &info)
+	if info.CapacityAssignmentProgress != "Completed" {
+		t.Fatalf("unassigned progress = %q", info.CapacityAssignmentProgress)
+	}
+	if info.CapacityRegion != "" {
+		t.Fatalf("unassigned region = %q; want omitted", info.CapacityRegion)
+	}
+	if strings.Contains(w.Body.String(), `"capacityId"`) {
+		t.Fatalf("unassigned still has capacityId: %s", w.Body.Bytes())
+	}
+}
+
 func TestGitInitializeConnectionDirections(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)

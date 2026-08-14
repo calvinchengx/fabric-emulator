@@ -67,11 +67,38 @@ func (a *API) createWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Pr
 	writeJSON(w, http.StatusCreated, ws)
 }
 
-// workspaceBody is the GET wire shape: the workspace plus its identity when
-// one is provisioned.
+// workspaceBody is the GET wire shape: WorkspaceInfo (capacity assignment
+// progress, region, OneLake endpoints) plus identity when one is provisioned.
+// microsoft/fabric's Terraform provider dereferences capacityAssignmentProgress
+// and retries for 30s on anything other than Completed/Failed.
 type workspaceBody struct {
 	*store.Workspace
-	WorkspaceIdentity *store.WorkspaceIdentity `json:"workspaceIdentity,omitempty"`
+	CapacityAssignmentProgress string                   `json:"capacityAssignmentProgress"`
+	CapacityRegion             string                   `json:"capacityRegion,omitempty"`
+	OneLakeEndpoints           oneLakeEndpoints         `json:"oneLakeEndpoints"`
+	WorkspaceIdentity          *store.WorkspaceIdentity `json:"workspaceIdentity,omitempty"`
+}
+
+type oneLakeEndpoints struct {
+	BlobEndpoint string `json:"blobEndpoint"`
+	DfsEndpoint  string `json:"dfsEndpoint"`
+}
+
+func (a *API) workspaceInfo(ws *store.Workspace) workspaceBody {
+	body := workspaceBody{
+		Workspace:                  ws,
+		CapacityAssignmentProgress: "Completed",
+		OneLakeEndpoints: oneLakeEndpoints{
+			BlobEndpoint: "https://onelake.blob.fabric.microsoft.com/" + ws.ID,
+			DfsEndpoint:  "https://onelake.dfs.fabric.microsoft.com/" + ws.ID,
+		},
+	}
+	if ws.CapacityID != "" {
+		if c, err := a.Store.GetCapacity(ws.CapacityID); err == nil {
+			body.CapacityRegion = c.Region
+		}
+	}
+	return body
 }
 
 func (a *API) getWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
@@ -79,7 +106,7 @@ func (a *API) getWorkspace(w http.ResponseWriter, r *http.Request, p *auth.Princ
 	if !ok {
 		return
 	}
-	body := workspaceBody{Workspace: ws}
+	body := a.workspaceInfo(ws)
 	if wi, err := a.Store.GetWorkspaceIdentity(ws.ID); err == nil {
 		body.WorkspaceIdentity = wi
 	}

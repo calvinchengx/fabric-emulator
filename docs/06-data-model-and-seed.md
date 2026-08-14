@@ -56,7 +56,7 @@ Deterministic, idempotent, and minimal — one row:
 | | |
 |---|---|
 | Capacity id | `eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee` |
-| Shape | `{ displayName: "Emulator Capacity", sku: "F64", region: "local", state: "Active" }` |
+| Shape | `{ displayName: "Emulator Capacity", sku: "F64", region: "West Europe", state: "Active" }` |
 
 Every workspace created without an explicit `capacityId` is auto-assigned to
 it (tools like `fabric-cicd` refuse capacity-less workspaces). When

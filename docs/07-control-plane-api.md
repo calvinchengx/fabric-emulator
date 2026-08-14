@@ -17,7 +17,7 @@ unless marked *sync*.
 |---|---|
 | `GET /workspaces` | list; opt-in `?maxPageSize=N` paginates with a `continuationToken` + `continuationUri` (omit it for the full set); `?roles=` filter is REST-reference-only, not shown in fabric-docs *sync* |
 | `POST /workspaces` | create → 201 `{ id, displayName, capacityId }` |
-| `GET /workspaces/{id}` | get *sync* |
+| `GET /workspaces/{id}` | get *sync* — WorkspaceInfo: `capacityAssignmentProgress` (always `Completed`; assignment is not a poll here), `capacityRegion` when assigned, production-shaped `oneLakeEndpoints` |
 | `PATCH /workspaces/{id}` | rename / describe |
 | `DELETE /workspaces/{id}` | delete (cascades items + role assignments) |
 | `POST /workspaces/{id}/assignToCapacity` | `{ capacityId }` → 202; see the capacity model below |
@@ -40,7 +40,7 @@ it: fabric-cicd refuses to publish into a workspace whose `capacityId` is empty.
 | `GET /v1/capacities` | list capacities the caller can see *sync* |
 
 - **Seed:** every instance boots with one deterministic capacity —
-  `{ id: <fixed GUID>, displayName: "Emulator Capacity", sku: "F64", region: "local", state: "Active" }`.
+  `{ id: <fixed GUID>, displayName: "Emulator Capacity", sku: "F64", region: "West Europe", state: "Active" }`.
 - **ARM consume (opt-in):** set `FABRIC_ARM_URL` to an arm-emulator origin that
   serves `GET /_family/capacities`. Capacities created over
   `Microsoft.Fabric/capacities` then appear on this list under the Fabric REST

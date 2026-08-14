@@ -17,11 +17,12 @@ func TestCapacities(t *testing.T) {
 		t.Fatalf("list = %d", w.Code)
 	}
 	var list struct {
-		Value []struct{ ID, SKU, State string }
+		Value []struct{ ID, SKU, State, Region string }
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &list)
 	if len(list.Value) != 1 || list.Value[0].ID != store.DefaultCapacityID ||
-		list.Value[0].SKU != "F64" || list.Value[0].State != "Active" {
+		list.Value[0].SKU != "F64" || list.Value[0].State != "Active" ||
+		list.Value[0].Region != "West Europe" {
 		t.Fatalf("capacities = %+v", list.Value)
 	}
 
