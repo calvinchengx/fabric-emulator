@@ -71,7 +71,7 @@ docs push.
 
 | Cadence | Suite | Proves |
 |---|---|---|
-| Weekly/manual | `e2e/spark-jvm` | Apache Spark 3.5.3 + Delta 3.2 batch Delta, Hadoop ABFS, RDD/SparkContext, JVM/JAR bridge, Structured Streaming, VACUUM and CDF |
+| Weekly/manual | `e2e/spark-jvm` | Apache Spark 3.5.5 + Delta 3.2 + Java 11 batch Delta, Hadoop ABFS, RDD/SparkContext, JVM/JAR bridge, Structured Streaming, VACUUM and CDF |
 | Weekly/manual | `e2e/notebook-run/run-jvm.py` | the same representative notebook used by Sail runs on the Fabric Runtime 1.3-aligned JVM baseline |
 | Weekly + release | `e2e/notebook-run/real_fabric.py` | the representative DataFrame/SQL notebook publishes and completes in real Microsoft Fabric; secret-gated |
 | Weekly/manual | `e2e/xmla` | Microsoft's own **ADOMD.NET** (`…AdomdClient.NetCore.retail.amd64`) on Linux/.NET 8 aims at a host we name and its first call is captured off the wire: `GET /powerbi/databases/v201606/workspaces?PreferClientRouting=true`, `User-Agent: ASClient/…`, bearer taken from the connection string. Also asserts the `powerbi://` form stays usable on Linux and the `https://…/xmla` and bare `host:port` forms stay Windows-only |

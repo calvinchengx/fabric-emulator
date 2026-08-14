@@ -25,7 +25,8 @@ not a verdict that the capability is impossible; it is the engine's own
 error, kept verbatim because the message is the actionable part. Three
 distinct things hide behind ❌, and the footnotes say which is which:
 
-1. **A real gap** — the engine cannot do it (durable streaming sinks).
+1. **A real gap** — the engine cannot do it (`sc` / `_jvm` on Connect;
+   checkpointed / kafka streaming on Sail).
 2. **A protocol limit** — Spark Connect itself forbids it (`sc`, `_jvm`),
    so no upstream fix exists for *any* Connect client, Sail or Apache's.
 3. **A harness artefact** — the probe's environment, not the engine.
@@ -87,11 +88,14 @@ The common notebook path — Delta write/append, both time-travel forms,
 `createDataFrame`, SQL, `readStream` — passes on **both**. Ordinary work
 sees no difference except speed.
 
-**Reach for the JVM overlay when your test touches** a durable streaming
-sink (delta/parquet/memory), Java/Scala UDFs /
-`spark.jars`, or the RDD/`_jvm` surface — the ❌ rows that stay red in
-the middle column. `OPTIMIZE`/`VACUUM`, LOCATION-bearing `CREATE TABLE`,
-MERGE, DESCRIBE, Change Data Feed, and JSON `multiLine` are closed there.
+**Reach for the JVM overlay when your test touches** Java/Scala UDFs /
+`spark.jars`, the RDD/`_jvm` surface, or a **checkpointed** streaming
+query (kafka / Eventstream / `foreachBatch`). Those are the ❌ rows that
+stay red in the middle column. Durable streaming *sinks* (delta /
+parquet / memory) land one announced micro-batch there — not a Fabric-
+shaped checkpointed query. `OPTIMIZE`/`VACUUM`, LOCATION-bearing
+`CREATE TABLE`, MERGE, DESCRIBE, Change Data Feed, JSON `multiLine`,
+and those sinks are closed on the Livy path.
 One flag:
 
 ```bash
@@ -99,10 +103,10 @@ docker compose -f docker-compose.yml -f docker-compose.override.yml \
                -f docker-compose.spark-jvm.yml up
 ```
 
-Real Fabric Runtime 1.3 *is* JVM Spark 3.5, so the overlay is the higher-
-fidelity engine. It is not the default because a 2.1 GB image and a
-minutes-long startup would cost every user speed to buy capabilities most
-tests never touch.
+Real Fabric Runtime 1.3 *is* JVM Spark 3.5.5 + Delta 3.2 + Java 11, so
+the overlay is the higher-fidelity engine. It is not the default because
+a 2.1 GB image and a minutes-long startup would cost every user speed to
+buy capabilities most tests never touch.
 
 | Capability | Sail (engine) | Sail + delta-rs (emulator) | Spark JVM |
 |---|---|---|---|
@@ -117,9 +121,9 @@ tests never touch.
 | Change Data Feed (must not be inert) ᵇ | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ | ✅ |
 | `readStream` (rate source) — schema only ᶜ | ✅ | ✅ | ✅ |
 | Streaming sink — console — liveness only ᶜ | ✅ | ✅ | ✅ |
-| Streaming sink — memory (rows readable) | ❌ `No table format found for: memory` | ❌ `No table format found for: memory` | ✅ |
-| Streaming sink — parquet (rows readable) | ❌ `cannot write streaming data to listing table` | ❌ `cannot write streaming data to listing table` | ✅ |
-| Streaming sink — **delta** (rows readable) | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ✅ |
+| Streaming sink — memory (rows readable) | ❌ `No table format found for: memory` | ✅ | ✅ |
+| Streaming sink — parquet (rows readable) | ❌ `cannot write streaming data to listing table` | ✅ | ✅ |
+| Streaming sink — **delta** (rows readable) | ❌ `unsupported extension node for streaming: DeltaWriteNode { input: Projection(Projection { ` | ✅ | ✅ |
 | `sc` / RDD API | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `sparkContext` is not supported in Spark Connect a` | ✅ |
 | `spark._jvm` bridge | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `_jvm` is not supported in Spark Connect as it dep` | ❌ `[JVM_ATTRIBUTE_NOT_SUPPORTED] Attribute `_jvm` is not supported in Spark Connect as it dep` | ✅ |
 | `createDataFrame(local_rows)` | ✅ | ✅ | ✅ |
@@ -132,7 +136,7 @@ tests never touch.
 | `read.text(wholetext=True)` — one row per file (must not be inert) ʰ | ✅ | ✅ | ✅ |
 | `read.json(multiLine=True)` over a JSON-array file ʰ | ❌ `Json error: Not valid JSON: EOF while parsing a list at line 1 column 1` | ✅ | ✅ |
 
-**6 of 25 capabilities differ between the engines.**
+**3 of 25 capabilities differ between the engines.**
 Those are precisely the rows the JVM overlay exists for, and the
 candidate list for upstream Sail contributions.
 
@@ -156,6 +160,16 @@ writes to the *server's* stdout, a `readStream` is unobservable without
 a sink, and Sail reports no progress metrics (`lastProgress` is None,
 `recentProgress` is empty) — so asserting on those would fail for a
 missing API rather than a missing capability.
+
+ⁱ The three durable sink rows (memory / parquet / delta) on the
+**middle column** wrap `writeStream.start()`: Sail's streaming `rate`
+plan is collected as a bounded query (`limit(n).collect()`, measured
+2026-08-14) and the rows are batch-written (or registered as a temp
+view). Announced on stderr. There is no checkpoint; a continuous query
+lands one micro-batch. Bare Sail still fails with `DeltaWriteNode` /
+`listing table` / `No table format found for: memory`. `foreachBatch`,
+kafka, and Eventstream options fall through. Native checkpointed
+streaming is the JVM overlay.
 
 ᵇ The CDF row on the **middle column** intercepts both halves of the
 notebook API: a Delta write with `delta.enableChangeDataFeed` (and later

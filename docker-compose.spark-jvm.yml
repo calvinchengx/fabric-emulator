@@ -1,4 +1,4 @@
-# Engine swap: run the Livy statement agent on **Spark 3.5 JVM** instead of the
+# Engine swap: run the Livy statement agent on **Spark 3.5.5 JVM** instead of the
 # default Sail (Rust Spark Connect). Overlay — layer it on the usual files:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.override.yml \

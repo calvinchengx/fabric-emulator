@@ -621,6 +621,15 @@
       "py:test_patch_intercepts_keyword_multiline_and_skips_the_engine"
     ]
   },
+  "structured-streaming": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Structured streaming",
+    "witnesses": [
+      "ci:engine-matrix",
+      "py:test_probe_shaped_delta_and_parquet_both_land_rate_rows",
+      "py:test_patch_intercepts_delta_and_parquet_start_and_skips_the_engine"
+    ]
+  },
   "reference-run-lakehouse-rule": {
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "Reference-run lakehouse rule",

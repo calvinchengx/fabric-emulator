@@ -93,7 +93,7 @@ docker compose -f docker-compose.yml up -d    # what the target runs
 
 ## 4. JVM overlay — `make up-jvm`
 
-Swaps the default Sail engine for **JVM Spark 3.5** — the same engine real
+Swaps the default Sail engine for **JVM Spark 3.5.5** (Java 11, Delta 3.2) — the same engine real
 Fabric Runtime 1.3 uses, so it is the higher-fidelity option.
 
 ```bash
@@ -103,11 +103,13 @@ make up-jvm
 Note this *swaps* rather than adds: the `sail` service is gone and the statement
 agent becomes a classic in-process Spark session.
 
-**Reach for it when your test touches** the RDD/`SparkContext` API, a durable
-streaming sink (delta/parquet/memory), Java/Scala UDFs, `spark.jars`, or a
-CDF-enabled table you need Spark itself to author. Those are exactly the ❌ rows
-in [the engine matrix](engine-matrix.md), which measures both engines with the
-same probes rather than asserting.
+**Reach for it when your test touches** the RDD/`SparkContext` API, a
+**checkpointed** streaming query (kafka / Eventstream / `foreachBatch`),
+Java/Scala UDFs, `spark.jars`, or a CDF-enabled table you need Spark itself
+to author. Durable streaming *sinks* (delta/parquet/memory) land one
+announced micro-batch on the default Livy path. The ❌ rows that stay red
+are in [the engine matrix](engine-matrix.md), which measures both engines
+with the same probes rather than asserting.
 
 **What it costs**, measured on the same 19 probes:
 
