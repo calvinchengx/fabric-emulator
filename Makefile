@@ -149,6 +149,7 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_arch_services.py
 	@$(PY) scripts/check_docs_sidebar.py
 	@$(PY) scripts/check_workflow_concurrency.py
+	@$(PY) scripts/check_cron_workflow_freshness.py
 	@$(PY) scripts/gen_event_kinds.py --check
 	@$(PY) scripts/check_capture_redaction.py
 	@$(PY) scripts/check_entra_install.py
