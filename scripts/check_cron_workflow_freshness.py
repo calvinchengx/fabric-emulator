@@ -135,12 +135,14 @@ def _last_changed_api(repo: str, rel: str, sha: str) -> int:
     # clone: the default-branch query reported "fresh" for a workflow the branch
     # had just modified.
     args = ["gh", "api", f"repos/{repo}/commits", "-X", "GET",
-            "-f", f"path={rel}", "-f", "per_page=1",
-            "--jq", ".[0].commit.committer.date"]
+            "-f", f"path={rel}", "-f", "per_page=1"]
     if sha:
-        args[6:6] = ["-f", f"sha={sha}"]
+        args += ["-f", f"sha={sha}"]
+    args += ["--jq", ".[0].commit.committer.date"]
     r = subprocess.run(args, cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
+        why = (r.stderr or "").strip().replace("\n", " ")[:200]
+        print(f"    {rel}: last-changed unreadable — {why or 'no output'}")
         return 0
     when = r.stdout.strip().replace("Z", "+00:00")
     return int(datetime.datetime.fromisoformat(when).timestamp())
@@ -228,9 +230,10 @@ def main() -> int:
             # Silence here is the failure mode: unreadable history means every
             # workflow looks fresh. Most likely cause is the job losing
             # `actions: read`.
-            print("\nFAIL: run history is unreadable in CI, so every workflow above")
-            print("      would be reported fresh regardless. Check that this job")
-            print("      still grants `actions: read`.")
+            print("\nFAIL: the data above could not be read in CI, so every workflow")
+            print("      would be reported fresh regardless. The per-workflow lines")
+            print("      say which call failed — a last-changed lookup needs")
+            print("      `contents: read`, run history needs `actions: read`.")
             return 1
 
     if stale:
