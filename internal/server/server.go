@@ -282,9 +282,11 @@ func (s *Server) registerControl() {
 		// ticking would make job outcomes depend on how long a test took).
 		// `{"advance":0}` is therefore also a plain "tick now".
 		started := s.API.TickSchedules()
+		admitted := s.API.DrainCapacityQueues()
 		offset, frozen, now := s.Clock.State()
 		writeJSON(w, http.StatusOK, map[string]any{
-			"offset": offset, "frozen": frozen, "now": now, "scheduledJobsStarted": started})
+			"offset": offset, "frozen": frozen, "now": now,
+			"scheduledJobsStarted": started, "queuedJobsAdmitted": admitted})
 	})
 
 	// Fault injection: fail the next N operations, reject the next N

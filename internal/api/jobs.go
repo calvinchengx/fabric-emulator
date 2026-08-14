@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -11,6 +12,10 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
+
+// errCapacitySaturated is returned by startJob when a Manual submit meets a
+// full capacity. The HTTP layer turns it into 430 + Retry-After (docs/36).
+var errCapacitySaturated = errors.New("capacity saturated")
 
 // startJob creates a job instance and drives whatever really executes for that
 // item type. It is the single entry point every invoker shares — the on-demand
@@ -153,9 +158,26 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 	if it.Type == "DataPipeline" || isCopyJobRun {
 		j.CompleteAt = math.MaxInt64
 	}
+
+	a.admitMu.Lock()
+	throttle, queue := a.capacityAdmissionLocked(wid, invokeType)
+	if throttle {
+		a.admitMu.Unlock()
+		return nil, errCapacitySaturated
+	}
+	if queue {
+		j.Queued = true
+		j.CompleteAt = math.MaxInt64
+		j.ExecutionData = exec
+		err := a.Store.CreateJobInstance(j)
+		a.admitMu.Unlock()
+		return j, err
+	}
 	if err := a.Store.CreateJobInstance(j); err != nil {
+		a.admitMu.Unlock()
 		return nil, err
 	}
+	a.admitMu.Unlock()
 	a.Store.PublishJobEvent(wid, it.ID, j.ID, jobType, invokeType, store.JobStarted, "")
 
 	// finalisedNow records the outcome THIS FUNCTION settled, and the deferred
@@ -281,6 +303,158 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 	return j, nil
 }
 
+// capacityAdmissionLocked reports whether a new job on this workspace's
+// capacity should be throttled (Manual) or queued (background). Caller holds
+// admitMu. Unlimited when the workspace has no capacity, the capacity is
+// missing, or MaxConcurrentJobs is 0.
+func (a *API) capacityAdmissionLocked(wid, invokeType string) (throttle, queue bool) {
+	ws, err := a.Store.GetWorkspace(wid)
+	if err != nil || ws.CapacityID == "" {
+		return false, false
+	}
+	c, err := a.Store.GetCapacity(ws.CapacityID)
+	if err != nil || c.MaxConcurrentJobs <= 0 {
+		return false, false
+	}
+	n, err := a.Store.CountActiveJobsOnCapacity(ws.CapacityID)
+	if err != nil || n < c.MaxConcurrentJobs {
+		return false, false
+	}
+	if invokeType == store.InvokeManual {
+		return true, false
+	}
+	return false, true
+}
+
+func (a *API) capacityHasSlot(wid string) bool {
+	throttle, queue := a.capacityAdmissionLocked(wid, store.InvokeScheduled)
+	return !throttle && !queue
+}
+
+// DrainCapacityQueues admits queued jobs into free capacity slots, FIFO.
+// Called from the clock and from list-job-instances — the same levers that
+// fire schedules, so a test never waits on wall time (docs/36).
+func (a *API) DrainCapacityQueues() int {
+	jobs, err := a.Store.ListQueuedJobs()
+	if err != nil {
+		return 0
+	}
+	admitted := 0
+	for _, j := range jobs {
+		it, err := a.Store.GetItemByID(j.ItemID)
+		if err != nil {
+			continue
+		}
+		a.admitMu.Lock()
+		if !a.capacityHasSlot(it.WorkspaceID) {
+			a.admitMu.Unlock()
+			continue
+		}
+		completeAt := a.queuedCompleteAt(it, j)
+		if err := a.Store.AdmitQueuedJob(j.ID, completeAt); err != nil {
+			a.admitMu.Unlock()
+			continue
+		}
+		a.admitMu.Unlock()
+		j.Queued = false
+		j.CompleteAt = completeAt
+		a.dispatchExisting(it.WorkspaceID, it, j)
+		admitted++
+	}
+	return admitted
+}
+
+func (a *API) queuedCompleteAt(it *store.Item, j *store.JobInstance) int64 {
+	if it.Type == "DataPipeline" || it.Type == "ApacheAirflowJob" ||
+		(it.Type == "CopyJob" && (j.JobType == "Execute" || j.JobType == "CopyJob")) ||
+		(it.Type == "SparkJobDefinition" && j.JobType == "sparkjob") {
+		return math.MaxInt64
+	}
+	if it.Type == "Notebook" && j.JobType == "RunNotebook" {
+		run, code := a.parseNotebookRun(it)
+		if code == "" && len(run.Cells) > 0 {
+			return math.MaxInt64
+		}
+	}
+	delay := a.LRODelaySeconds
+	return a.Store.Now() + delay
+}
+
+// dispatchExisting runs the post-create side of startJob for a job that was
+// queued and has just been admitted. Generic clock jobs only need the started
+// event; engine types re-enter the same goroutines a live submit would.
+func (a *API) dispatchExisting(wid string, it *store.Item, j *store.JobInstance) {
+	exec := j.ExecutionData
+	a.Store.PublishJobEvent(wid, it.ID, j.ID, j.JobType, j.InvokeType, store.JobStarted, "")
+	isCopyJobRun := it.Type == "CopyJob" && (j.JobType == "Execute" || j.JobType == "CopyJob")
+	if it.Type == "DataPipeline" {
+		params, _ := exec["parameters"].(map[string]any)
+		trigger, _ := exec["triggerEvent"].(map[string]any)
+		injected := j.FailWith
+		go func() {
+			code := a.runPipelineWith(wid, it, j.ID, params, trigger)
+			if injected != "" {
+				code = injected
+			}
+			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
+			a.publishJobOutcome(wid, it.ID, j.ID, code)
+		}()
+		return
+	}
+	if it.Type == "Notebook" && j.JobType == "RunNotebook" {
+		run, code := a.parseNotebookRun(it)
+		if code == "" {
+			code = referenceRunLakehouseCode(exec, run.Binding.LakehouseID)
+		}
+		nbRun := run
+		a.saveNotebookRun(j.ID, nbRun)
+		if code != "" {
+			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
+			a.Store.PublishJobEvent(wid, it.ID, j.ID, j.JobType, j.InvokeType, store.JobFailed, code)
+		} else if len(nbRun.Cells) > 0 && a.runsNotebooksItself() {
+			nbParams, _ := exec["parameters"].(map[string]any)
+			go a.driveNotebookRun(wid, it.ID, j.ID, nbRun, nbParams)
+		}
+		return
+	}
+	if it.Type == "SparkJobDefinition" && j.JobType == "sparkjob" {
+		run, code := a.parseSparkJobRun(it)
+		a.saveSparkJobRun(j.ID, run)
+		if code != "" {
+			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
+			a.Store.PublishJobEvent(wid, it.ID, j.ID, j.JobType, j.InvokeType, store.JobFailed, code)
+		} else if a.runsNotebooksItself() {
+			go a.driveSparkJobRun(wid, it.ID, j.ID, run)
+		}
+		return
+	}
+	if it.Type == "ApacheAirflowJob" && j.JobType == "Run" {
+		dagID, _ := exec["dagId"].(string)
+		conf, _ := exec["conf"].(map[string]any)
+		if dagID == "" {
+			_ = a.Store.FinalizeJob(it.ID, j.ID, "AirflowDAGIDRequired")
+			a.Store.PublishJobEvent(wid, it.ID, j.ID, j.JobType, j.InvokeType, store.JobFailed, "AirflowDAGIDRequired")
+		} else if a.Airflow == nil {
+			_ = a.Store.FinalizeJob(it.ID, j.ID, "AirflowNotConfigured")
+			a.Store.PublishJobEvent(wid, it.ID, j.ID, j.JobType, j.InvokeType, store.JobFailed, "AirflowNotConfigured")
+		} else {
+			go a.runAirflow(context.Background(), it, j, dagID, conf)
+		}
+		return
+	}
+	if isCopyJobRun {
+		injected := j.FailWith
+		go func() {
+			code := a.runCopyJob(wid, it.ID, j.ID)
+			if injected != "" {
+				code = injected
+			}
+			_ = a.Store.FinalizeJob(it.ID, j.ID, code)
+			a.publishJobOutcome(wid, it.ID, j.ID, code)
+		}()
+	}
+}
+
 // publishJobOutcome announces a job's terminal state on the flow stream. Called
 // where an engine reports back — the point a notebook, Spark job, or Airflow
 // DAG actually finishes, which the clock cannot know.
@@ -319,6 +493,13 @@ func (a *API) createJobInstance(w http.ResponseWriter, r *http.Request, p *auth.
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	j, err := a.startJob(wid, it, jobType, store.InvokeManual, body.ExecutionData)
+	if errors.Is(err, errCapacitySaturated) {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", a.RetryAfterSeconds))
+		writeRetriableErr(w, 430, "CapacityNotAvailable",
+			"The capacity is at its concurrent job limit. Retry after the "+
+				"Retry-After interval, or wait for a running job to finish.")
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
@@ -343,6 +524,7 @@ func (a *API) listJobInstances(w http.ResponseWriter, r *http.Request, p *auth.P
 		return
 	}
 	a.tickItemSchedules(it.ID)
+	a.DrainCapacityQueues()
 	jobs, err := a.Store.ListItemJobInstances(it.ID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
