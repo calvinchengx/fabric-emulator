@@ -37,6 +37,7 @@ import datetime
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -57,14 +58,34 @@ def _utc(ts: int) -> str:
     return datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime("%Y-%m-%d %H:%MZ")
 
 
-def _triggers(doc) -> set:
-    """The `on:` keys. PyYAML parses a bare `on:` as the boolean True."""
-    on = doc.get(True, doc.get("on", {}))
-    if isinstance(on, str):
-        return {on}
-    if isinstance(on, list):
-        return set(on)
-    return set(on or {})
+# STDLIB ONLY, like check_workflow_concurrency.py beside it. The first version
+# used pyyaml — which is declared in the `test` group and absent from the jobs
+# that run this, so it died on ModuleNotFoundError in three of them. The trap is
+# written down in pyproject.toml ("a developer machine usually has pyyaml lying
+# around and CI does not"), and a stale local .venv is exactly why it passed
+# here first. A checker that needs a dependency its own job lacks is a checker
+# that does not run.
+_ON_BLOCK = re.compile(r"^on:\s*$(?P<body>(?:\n(?:[ \t]+.*|\s*))*)", re.M)
+_ON_INLINE = re.compile(r"^on:[ \t]*(?P<value>\S.*)$", re.M)
+_TOP_KEY = re.compile(r"^  ([A-Za-z_][A-Za-z0-9_-]*):", re.M)
+
+
+def _triggers(text: str) -> set:
+    """The `on:` keys of a workflow, read as text."""
+    inline = _ON_INLINE.search(text)
+    if inline:
+        raw = inline.group("value").strip()
+        if raw.startswith("["):
+            return {t.strip().strip("'\"") for t in raw.strip("[]").split(",") if t.strip()}
+        return {raw}
+    block = _ON_BLOCK.search(text)
+    if not block:
+        return set()
+    # No manual stop needed: the body pattern only accepts indented or blank
+    # lines, so an unindented key (`jobs:`, `permissions:`) ends the match by
+    # construction. A defensive loop here was dead — mutating it away changed
+    # nothing, which is how it was found.
+    return set(_TOP_KEY.findall(block.group("body")))
 
 
 def _last_changed(path: pathlib.Path) -> int:
@@ -97,12 +118,6 @@ def _last_run(stem: str):
 
 
 def main() -> int:
-    # pyyaml is a DECLARED dependency, so a missing import means a broken
-    # environment, not a laptop without extras. pyproject.toml records the same
-    # trap being sprung once already ("a developer machine usually has pyyaml
-    # lying around"), so this imports hard rather than skipping.
-    import yaml
-
     in_ci = os.environ.get("GITHUB_ACTIONS") == "true"
     if not shutil.which("gh"):
         if in_ci:
@@ -116,8 +131,7 @@ def main() -> int:
     for path in sorted(WORKFLOWS.glob("*.yml")):
         if path.name in EXEMPT:
             continue
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(doc, dict) or _triggers(doc) & PUSH_TRIGGERS:
+        if _triggers(path.read_text(encoding="utf-8")) & PUSH_TRIGGERS:
             continue
         cron_only.append(path.stem)
         changed = _last_changed(path)
