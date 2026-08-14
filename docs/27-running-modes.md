@@ -104,11 +104,12 @@ Note this *swaps* rather than adds: the `sail` service is gone and the statement
 agent becomes a classic in-process Spark session.
 
 **Reach for it when your test touches** the RDD/`SparkContext` API, a
-**checkpointed** streaming query (native kafka without Eventstream options,
-or `foreachBatch` on an engine stream), Java/Scala UDFs, `spark.jars`, or a
+**checkpointed** streaming query (`foreachBatch` on an engine stream, or
+resume from `checkpointLocation`), Java/Scala UDFs, `spark.jars`, or a
 CDF-enabled table you need Spark itself to author. Durable streaming *sinks*
-(delta/parquet/memory) and the Fabric Eventstream notebook API land one
-announced micro-batch on the default Livy path. The ❌ rows that stay red
+(delta/parquet/memory), OSS `format("kafka")` on Sail, and the Fabric
+Eventstream notebook API land one announced micro-batch on the default Livy
+path. The ❌ rows that stay red
 are in [the engine matrix](engine-matrix.md), which measures both engines
 with the same probes rather than asserting.
 

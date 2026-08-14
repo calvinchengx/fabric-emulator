@@ -93,8 +93,8 @@ sees no difference except speed.
 query (`foreachBatch` on an engine stream). Those are the ❌ rows that
 stay red in the middle column. Durable streaming *sinks* (delta /
 parquet / memory) land one announced micro-batch there — not a Fabric-
-shaped checkpointed query. OSS `format("kafka")` + bootstrap/subscribe
-is the same class of wrap (driver consume → Sail LocalRelation).
+shaped checkpointed query. OSS `format("kafka")` (source and sink) is
+the same class of wrap (driver consume/produce → Sail LocalRelation).
 `OPTIMIZE`/`VACUUM`, LOCATION-bearing
 `CREATE TABLE`, MERGE, DESCRIBE, Change Data Feed, JSON `multiLine`,
 and those sinks are closed on the Livy path.
@@ -171,9 +171,8 @@ plan is collected as a bounded query (`limit(n).collect()`, measured
 view). Announced on stderr. There is no checkpoint; a continuous query
 lands one micro-batch. Bare Sail still fails with `DeltaWriteNode` /
 `listing table` / `No table format found for: memory`. `foreachBatch`
-on an engine stream, and a kafka *sink*, fall through. Native
-`format("kafka")` + bootstrap/subscribe is ʲ. Native checkpointed
-streaming is the JVM overlay.
+on an engine stream falls through. Native `format("kafka")` (source
+and sink) is ʲ. Native checkpointed streaming is the JVM overlay.
 
 ᵇ The CDF row on the **middle column** intercepts both halves of the
 notebook API: a Delta write with `delta.enableChangeDataFeed` (and later
@@ -319,10 +318,13 @@ comes from the array's length rather than its contents, so every
 count-based assertion still passes while every column is empty.
 
 ʲ OSS `spark.read.format("kafka")` with `kafka.bootstrap.servers` +
-`subscribe`. The **middle column** consumes on the driver (kafka-python)
-and `createDataFrame`s the Kafka schema (`key`/`value`/`topic`/
-`partition`/`offset`) into Sail; `CAST(value AS STRING)` therefore runs
-on the engine. Announced; one micro-batch; `.explain()` is a
-LocalRelation. Not `rate`. Bare Sail has no kafka source. JVM uses
-`spark-sql-kafka`. Checkpointed streaming and a kafka *sink* stay on
-the overlay. `subscribePattern` / `assign` / SASL fail loud.
+`subscribe` (the measured probe). The **middle column** consumes on the
+driver (kafka-python) and `createDataFrame`s the Kafka schema
+(`key`/`value`/`topic`/`partition`/`offset`) into Sail; `CAST(value AS
+STRING)` therefore runs on the engine. Announced; one micro-batch;
+`.explain()` is a LocalRelation. Not `rate`. The same wrap honours
+`subscribePattern`, `assign`, JSON `startingOffsets`/`endingOffsets`,
+`includeHeaders`, SASL PLAIN, PEM SSL, and a kafka *sink*
+(`write`/`writeStream.format("kafka")`) — unit-tested, not this probe.
+Bare Sail has no kafka source. JVM uses `spark-sql-kafka`. Checkpointed
+streaming stays on the overlay. GSSAPI and JKS/P12 truststores fail loud.

@@ -55,9 +55,12 @@ spark-agent  --GET /v1/eventstreams/{item}/sources/{ds}-->  fabric-emulator
   JVM:  rewrite to kafka.bootstrap.servers + subscribe → OSS kafka source
   Sail: GET …/sources/{ds}/events → LocalRelation (Kafka columns)
         foreachBatch runs in the agent (Sail cannot pickle UDFs)
-notebook  --format kafka + bootstrap/subscribe-->  spark-agent
+notebook  --format kafka + bootstrap/subscribe/pattern/assign-->  spark-agent
   JVM:  spark-sql-kafka jar
   Sail: kafka-python consume → createDataFrame (bytes on Sail)
+notebook  --write/writeStream format kafka-->  spark-agent
+  JVM:  spark-sql-kafka jar
+  Sail: kafka-python produce from collected rows
 producer / Custom HTTP  -->  Kafka
 POST …/eventstreams  -->  mint datasourceId + CreateTopics
 ```
@@ -79,9 +82,11 @@ POST …/eventstreams  -->  mint datasourceId + CreateTopics
      LocalRelation with the Kafka schema, and runs `foreachBatch` in the
      agent. One micro-batch, announced on stderr, no checkpoint — the same
      class of wrap as CDF / JSON `multiLine`. Native `format("kafka")` with
-     `kafka.bootstrap.servers` + `subscribe` is the same wrap without the
-     Fabric IDs: driver consume → Kafka-schema LocalRelation on Sail. JVM
-     native kafka still uses the jar.
+     `kafka.bootstrap.servers` plus `subscribe` / `subscribePattern` /
+     `assign` is the same wrap without the Fabric IDs: driver consume →
+     Kafka-schema LocalRelation on Sail. JSON offsets, `includeHeaders`,
+     SASL PLAIN, and PEM SSL are honoured; a kafka *sink* produces from
+     the driver. JVM native kafka still uses the jar.
 
 GET the item to read `properties.streams[0].id` — that is the
 `eventstream.datasourceid` the notebook snippet needs.
@@ -124,10 +129,13 @@ row count. A wrong item id must fail. `rate` must not appear.
   streaming ingestion ([25-rti-kusto.md](25-rti-kusto.md)).
 - Lakehouse / Reflex destinations and operators (Filter, GroupBy, windows)
   are not this slice.
-- **Sail `format("kafka")` + bootstrap/subscribe** is a driver consume into
-  a Kafka-schema LocalRelation (bytes on Sail). `subscribePattern` / `assign`
-  / SASL / `includeHeaders` fail loud. Checkpointed streaming and a kafka
-  *sink* stay on the JVM overlay.
+- **Sail `format("kafka")`** is a driver consume/produce into a
+  Kafka-schema LocalRelation (bytes on Sail). `subscribe` /
+  `subscribePattern` / `assign`, JSON `startingOffsets`/`endingOffsets`,
+  `includeHeaders`, SASL PLAIN, and PEM SSL are honoured. A kafka *sink*
+  (`write`/`writeStream.format("kafka")`) produces from the driver.
+  GSSAPI and JKS/P12 truststores fail loud. Checkpointed streaming
+  (`isStreaming`, resume from checkpoint) stays on the JVM overlay.
 - On Sail the result is materialised (`.explain()` is a LocalRelation; one
   micro-batch; `isStreaming` is false). Checkpointed streaming is the JVM
   overlay.
