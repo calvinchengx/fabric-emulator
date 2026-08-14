@@ -58,8 +58,10 @@ against Entra. Neither validator can mint a token.
 `FABRIC_ARM_URL` is set, this process polls `GET /_family/capacities` (the same
 localhost family channel the Key Vault sibling uses for authorization) and
 ARM-created capacities appear on `GET /v1/capacities` under the Fabric REST GUID
-ARM assigned at create. Empty keeps the seeded default. This is not a compose
-default until a released arm-emulator image serves that provider.
+ARM assigned at create. Empty keeps the seeded default. Compose in this repo
+stays standalone (seed only); the family BOM in
+[azure-emulators](https://github.com/calvinchengx/azure-emulators) is where
+`FABRIC_ARM_URL` is wired once both images are released.
 
 ```mermaid
 flowchart LR

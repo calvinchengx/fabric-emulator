@@ -24,7 +24,8 @@
     "witnesses": [
       "go:TestARMCapacitiesAppearOnList",
       "go:TestARMCapacitiesFeedFailureDoesNotBlockBoot",
-      "go:TestARMCapacitiesRefresh"
+      "go:TestARMCapacitiesRefresh",
+      "ci:arm-capacities"
     ]
   },
   "activity-level-lineage": {
