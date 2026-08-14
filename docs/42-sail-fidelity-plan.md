@@ -1,10 +1,10 @@
 # 42 — Sail stays the default: how close to 100% that can get
 
 **Status: bounded SQL interception is in place; the generated matrix is the
-ledger.** DESCRIBE, MERGE, Change Data Feed, and `read.json(multiLine=True)`
-are ✅ on the middle column of [engine-matrix.md](engine-matrix.md). CDF and
-JSON `multiLine` are announced and materialised (§3b, §3c). The residue is
-streaming sinks, `sc` / `_jvm`, and Java/Scala UDFs.
+ledger.** DESCRIBE, MERGE, Change Data Feed, `read.json(multiLine=True)`, and
+durable streaming sinks (delta / parquet / memory) are ✅ on the middle column
+of [engine-matrix.md](engine-matrix.md).
+The residue is `sc` / `_jvm` and Java/Scala UDFs.
 
 Sail is the default engine and stays that way. The question this answers is the
 one that follows from it: **how much of the JVM's capability can Sail reach, and
@@ -44,6 +44,12 @@ The matrix is generated and its footnotes matter.
 - **`read.json(multiLine=True)`** (ʰ): the **middle column** wraps the named
   option, parses the file on the driver, and materialises. Bare Sail stays
   NDJSON-only.
+- **Durable streaming sinks** (ⁱ): the **middle column** wraps
+  `writeStream.format("delta"|"parquet"|"memory").start()`, pulls one
+  micro-batch via `limit(n).collect()` (Sail returns real `rate` rows to the
+  Connect client), and batch-writes. Announced; no checkpoint. Bare Sail
+  still cannot land those sinks. `foreachBatch`, kafka, and Eventstream
+  options fall through.
 
 ## The taxonomy
 
@@ -61,29 +67,18 @@ No engine change reaches these. A classic-session mode would, and that is what
 the JVM overlay is. Java/Scala UDFs and `spark.jars` sit next to this: they
 need Spark's own JVM classes, which is the overlay, not a delta-rs statement.
 
-### 2. Lives inside the engine — not interceptable
+### 2. Lives inside the engine — not interceptable as a long-lived query
 
-Streaming sinks (delta / parquet / memory). `delta_ops.py` states the rule that
-decides this, and it is the right one:
+Streaming *execution* still lives inside Sail: `foreachBatch` is not a
+callback into this process (measured: `start()` fails with
+`missing argument: Python UDF output type`), and a continuous query with a
+checkpoint is engine work.
 
-> each is a **bounded statement that starts and finishes against a table path**,
-> carrying no Spark session state. That makes them interceptable — a streaming
-> query, which lives inside the engine, is not.
-
-A structured streaming query is a long-lived object owned by the engine. There
-is no seam to put delta-rs behind. This is genuine Sail engine work, upstream or
-in the overlay.
-
-The remaining candidate was wrapping durable sinks as `foreachBatch` plus a
-batch Delta/parquet write (Sail already does those as batch). Measured
-2026-08-14 on the `sail-delta` engine-matrix profile:
-`writeStream.foreachBatch(fn).start()` fails immediately with
-`IllegalArgumentException: missing argument: Python UDF output type`, under
-both `trigger(once=True)` and `trigger(processingTime=…)`. The callback never
-ran, so no batch write was attempted. That wrap is out of scope until Sail
-accepts a Python foreachBatch sink. Inventing `rate` rows in delta-rs, or
-mapping Eventstream `format("kafka")` options onto `rate`, would paint the
-cells green for the wrong schema and the wrong path.
+What *is* interceptable is the **notebook sink API** for one bounded pull.
+A streaming `rate` plan executed as a query returns rows to the Connect
+client (`limit(n).collect()`, measured 2026-08-14). §3d wraps `start()` for
+delta / parquet / memory on that fact. Console, kafka, Eventstream options,
+and foreachBatch stay on the engine.
 
 ### 3. Interceptable — bounded, path-scoped, session-free SQL
 
@@ -135,6 +130,27 @@ text-writer directory; the wrap reads the part file and skips `_SUCCESS`.
 distributed workaround (`from_json` + `explode`) stays the right advice for
 production-shaped data.
 
+### 3d. Durable streaming sinks: one micro-batch from Sail
+
+`foreachBatch` is not the seam (bucket 2). `limit(n).collect()` on a
+streaming `rate` plan is: Sail returns real rows to the Connect client.
+`stream_sinks.py` wraps `DataStreamWriter.start()` for `delta`, `parquet`,
+and `memory` (a path, or a `queryName`), pulls `PULL_LIMIT` rows, strips
+flow-event columns, and batch-writes (or `createOrReplaceTempView`).
+Announced on stderr. The query object is a stand-in: `isActive` until
+`stop()`, no checkpoint, one micro-batch even if the caller omitted
+`trigger(once=True)`.
+
+`console`, `kafka`, Eventstream `eventstream.*` options, `foreachBatch` /
+`foreach`, and `outputMode("complete"|"update")` fall through. Inventing
+`rate` rows, or mapping Eventstream kafka onto `rate`, stays forbidden.
+
+Witnesses: `py:test_probe_shaped_delta_and_parquet_both_land_rate_rows`,
+`py:test_patch_intercepts_delta_and_parquet_start_and_skips_the_engine`,
+`ci:engine-matrix` after a `sail-delta` regen. `e2e/sail` does not install
+this module; its "streaming execution unavailable" assertion stays the
+bare-engine fact.
+
 ### 4. Neither engine — a Fabric property, not a Spark one
 
 `CREATE TABLE` with no `USING` is ❌ on **both** bare Sail and the JVM (ᵍ): OSS
@@ -148,7 +164,7 @@ overlay. It does not change Sail's default for a CREATE with no LOCATION.
 |---|---|
 | Bounded SQL (bucket 3) | **Yes**, for statements the matcher locates |
 | Fabric-vs-OSS semantics (bucket 4) | **Yes**, for LOCATION-bearing CREATE |
-| Streaming sinks (bucket 2) | **No** — engine work or the overlay |
+| Streaming sinks (bucket 2 / §3d) | **Yes**, one announced micro-batch; not a checkpointed query |
 | `sc` / `_jvm` / Java/Scala UDFs (bucket 1) | **Never** on Spark Connect |
 | CDF notebook API (§3b) | **Yes**, materialised LocalRelation, announced |
 | JSON `multiLine` (§3c) | **Yes**, materialised LocalRelation, announced |
@@ -181,7 +197,7 @@ The generated matrix is [engine-matrix.md](engine-matrix.md). "Closed by the
 emulator" means the **middle column** goes ✅ after a `sail-delta` regen — not
 a hand-edit, not a helper the notebook does not call.
 
-Today that column is **20 / 25**. Five stay red. They are not one backlog.
+Today that column is **23 / 25**. Two stay red.
 
 | Probe | Closable on this seam? | Why |
 |---|---|---|
@@ -189,13 +205,11 @@ Today that column is **20 / 25**. Five stay red. They are not one backlog.
 | `MERGE INTO delta.\`path\`` | **Done** | Same change; path URI is taken from the statement |
 | Change Data Feed | **Done** | Writer + reader wrapped, announced, materialised |
 | `read.json(multiLine=True)` | **Done** | Named option wrapped, announced, materialised |
-| Streaming sinks (memory / parquet / delta) | **No** | Long-lived query inside the engine; `foreachBatch` fails at `start()` (`Python UDF output type`) |
+| Streaming sinks (memory / parquet / delta) | **Done** | One `limit(n).collect()` + batch write; announced; no checkpoint |
 | `sc` / `_jvm` | **No** | Spark Connect protocol. The Livy RDD facade is a measured subset, and the matrix probe does not install it — painting that cell green would measure the facade, not Spark |
 | Java/Scala UDFs / `spark.jars` | **No** | Need Spark's JVM classloader. Overlay only |
 
-Ceiling on this table: **20 / 25**. That is the reachable maximum on this seam.
-The last five (three sinks + `sc` + `_jvm`) are why the JVM overlay exists.
-Do not grow the seam to chase them.
+Ceiling on this table: **23 / 25**. The last two (`sc` + `_jvm`) are why the JVM overlay exists for the Connect protocol gap. Continuous checkpointed streaming, kafka / Eventstream, and `foreachBatch` are still engine or overlay work.
 
 The rule does not change: a shim that guesses is worse than the gap. Each step
 below is a shape the statement (or the DataFrame options) named, executed the
@@ -242,9 +256,20 @@ engine-matrix fixture: Spark text-writer directory, `_SUCCESS` skipped),
 Plain `json()`, `multiLine=False`, a list of paths, and a schema fall through.
 `partitionBy` is not a reader option here.
 
+### Step 4 — durable streaming sinks — done
+
+Witnesses: `py:test_probe_shaped_delta_and_parquet_both_land_rate_rows`,
+`py:test_patch_intercepts_delta_and_parquet_start_and_skips_the_engine`
+(console / kafka / Eventstream / foreachBatch fall through),
+`ci:engine-matrix` after a `sail-delta` regen.
+
 ### Do not do
 
-- **Streaming sinks.** There is no seam. Upstream Sail, or `make up-jvm`.
+- **Map Eventstream `format("kafka")` onto `rate`, or invent `rate` rows in
+  delta-rs.** The collect wrap pulls Sail's own source; guessing a source
+  paints the cell green for the wrong schema.
+- **Treat `foreachBatch` as a Livy callback.** It pickles to the server and
+  Sail rejects `start()`.
 - **Install the RDD facade into the sail-delta probe** to turn `sc` / `_jvm`
   green. The middle column is "delta-rs interception", not "full Livy agent".
   The facade is documented in [20-lakesail-engine.md](20-lakesail-engine.md)
@@ -265,4 +290,5 @@ Plain `json()`, `multiLine=False`, a list of paths, and a schema fall through.
 
 ## Next
 
-1. **Streaming, Connect, JVM UDFs** — not this seam. The ceiling is 20/25.
+1. **`sc` / `_jvm`, Java/Scala UDFs, checkpointed streaming, Eventstream** —
+   not this seam. The ceiling on the generated table is 23/25.

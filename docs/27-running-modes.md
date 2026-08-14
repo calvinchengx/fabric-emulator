@@ -103,11 +103,13 @@ make up-jvm
 Note this *swaps* rather than adds: the `sail` service is gone and the statement
 agent becomes a classic in-process Spark session.
 
-**Reach for it when your test touches** the RDD/`SparkContext` API, a durable
-streaming sink (delta/parquet/memory), Java/Scala UDFs, `spark.jars`, or a
-CDF-enabled table you need Spark itself to author. Those are exactly the ❌ rows
-in [the engine matrix](engine-matrix.md), which measures both engines with the
-same probes rather than asserting.
+**Reach for it when your test touches** the RDD/`SparkContext` API, a
+**checkpointed** streaming query (kafka / Eventstream / `foreachBatch`),
+Java/Scala UDFs, `spark.jars`, or a CDF-enabled table you need Spark itself
+to author. Durable streaming *sinks* (delta/parquet/memory) land one
+announced micro-batch on the default Livy path. The ❌ rows that stay red
+are in [the engine matrix](engine-matrix.md), which measures both engines
+with the same probes rather than asserting.
 
 **What it costs**, measured on the same 19 probes:
 

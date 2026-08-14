@@ -105,7 +105,7 @@ touches; every claim below is CI-verified against the emulator:
 | `sc` / RDD API / `spark._jvm` | ⚠️ **measured subset emulated** — Spark Connect has no SparkContext on any engine, so the agent binds a local facade for exactly the idioms Fabric code was measured to use: `setLogLevel`, the `parallelize` chain, and `org.apache.log4j`. Everything else raises a pointer. It is eager and LOCAL and refuses above 10,000 elements rather than pose as distributed. **Fidelity inversion vs real Fabric** remains for the rest of the API — `mapPartitions` and friends work in production and refuse here — and the **JVM overlay** (`docker-compose.spark-jvm.yml`) restores the whole thing. See [50-rdd-usage-capture.md](50-rdd-usage-capture.md) for the sweep that sized this | agent facade + unit tests; contract verified against real Spark in `e2e/spark-jvm` |
 | `createDataFrame(local_rows)` | ✅ works — the agents/runners set `spark.conf.set("spark.sql.session.localRelationSizeLimit", <int>)` at session start, overriding the `'3GB'` string pyspark 4.2 chokes on; without that mitigation, use SQL `VALUES` or a 3.5 client | e2e (notebook fixture runs unmodified) |
 | DML row-count results (`INSERT`/`MERGE` envelopes) | ⚠️ DataFusion reports counts as `uint64`, which Arrow conversion to Spark clients rejects — the statement HAS executed; the Livy SQL agent absorbs this specific error as an empty result | dbt e2e finding |
-| Structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs | ❌ absent in Sail v0.6.6 (`OPTIMIZE`/`VACUUM` are intercepted and run through delta-rs, so those two work on the default stack). **Streaming and Java/Scala UDFs are restored by the JVM overlay** | executable negative probes |
+| Structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs | ⚠️ streaming **sinks** (delta / parquet / memory) are one announced micro-batch on the Livy path (`limit(n).collect()` + batch write; no checkpoint). `OPTIMIZE`/`VACUUM` via delta-rs. **Java/Scala UDFs and checkpointed / kafka streaming are the JVM overlay** | executable probes + engine-matrix |
 | CDF options, `spark.jars` | ⚠️ on **bare Sail** CDF `readChangeFeed` is accepted but inert (`e2e/sail`). Through the Livy agent the notebook API (write enable + read) is intercepted via delta-rs, announced, and materialised. JAR config is stored but there is no JVM classloader. **JARs real on the JVM overlay** | executable divergence probes + engine-matrix |
 | `read.json(multiLine=True)` | ✅ on the Livy / sail-delta path: the named option is wrapped, announced, and materialised (`createDataFrame`). Bare Sail is NDJSON-only. Native lazy read is the **JVM overlay** | engine-matrix |
 
@@ -126,7 +126,10 @@ touches; every claim below is CI-verified against the emulator:
   (`internal/onelake/blob.go`), which object_store maps to `AlreadyExists` and
   does not retry, 409 being a client error outside its retry policy. Terminal
   on both sides.
-- **No streaming** (`readStream`/`writeStream` absent), `cache()`/`persist()`
+- **Streaming sinks on the Livy path are one micro-batch**, not a checkpointed
+  query. `readStream` plans; `writeStream.format("delta"|"parquet"|"memory")`
+  is wrapped, announced, and batch-written from a Sail `collect`. Console,
+  kafka, Eventstream, and `foreachBatch` stay on the engine. `cache()`/`persist()`
   are no-ops, no Java/Scala UDFs (Python/Pandas/Arrow UDFs all work), some
   catalog calls missing (`cacheTable`, `refreshTable`, …).
 - **One credential set per server process** — per-workspace identity means one
@@ -297,14 +300,19 @@ downgrade.
 These are bounded operations that start and finish against a path, carrying
 no Spark session state — so they can be lifted out and run elsewhere.
 A streaming query is a long-running computation *inside* the engine; there is
-no statement boundary to intercept. `foreachBatch` is not a workaround: Sail
-rejects `writeStream.foreachBatch(fn).start()` with
+no statement boundary to intercept. `foreachBatch` is not a Livy callback:
+Sail rejects `writeStream.foreachBatch(fn).start()` with
 `missing argument: Python UDF output type` (measured 2026-08-14, `sail-delta`
-profile), so the callback never runs. That gap needs an upstream Sail fix,
-which is why [engine-matrix.md](engine-matrix.md) still lists the streaming
-sinks as Sail's real remaining gaps.
+profile). Durable sinks are a different seam: a streaming `rate` plan
+returns rows to the Connect client via `limit(n).collect()`, so the Livy
+agent wraps `start()` for delta / parquet / memory, pulls one micro-batch,
+and batch-writes (announced; no checkpoint). Console, kafka, and Eventstream
+stay on the engine. Native checkpointed streaming is the JVM overlay, which
+is why [engine-matrix.md](engine-matrix.md) still lists those as a
+divergence from Fabric rather than as a missing notebook API.
 
 The matrix has three columns. Bare Sail stays ❌ for `OPTIMIZE`/`VACUUM` —
 Sail genuinely does not implement them. The **middle column** is what the Livy
-agent installs, and those two plus MERGE, DESCRIBE, CDF, and JSON `multiLine`
-are ✅ there. Java/Scala UDFs and the streaming sinks stay red in the middle.
+agent installs, and those two plus MERGE, DESCRIBE, CDF, JSON `multiLine`,
+and durable streaming sinks (one micro-batch) are ✅ there. Java/Scala UDFs
+and `sc` / `_jvm` stay red in the middle.

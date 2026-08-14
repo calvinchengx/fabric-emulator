@@ -9,7 +9,11 @@ against a table path**, carrying no Spark session state. That makes them
 interceptable — a streaming query, which lives inside the engine, is not.
 `writeStream.foreachBatch` is not a way around that: Sail Connect rejects
 `start()` with `missing argument: Python UDF output type` (measured 2026-08-14
-on the `sail-delta` profile), so the callback never runs.
+on the `sail-delta` profile), so the callback never runs. Durable sinks are
+a different seam: a streaming `rate` plan *will* return rows to this client
+via `limit(n).collect()`, so `stream_sinks.py` wraps `start()` for delta /
+parquet / memory, pulls one micro-batch, and batch-writes. Console, kafka,
+Eventstream options, and foreachBatch still fall through.
 
 So the agent recognises exactly these statements and runs them through
 **delta-rs** (`deltalake`), a real Delta Lake implementation, against the same
@@ -828,6 +832,8 @@ def install(spark, storage_options=None):
     # a Spark session.
     import json_multiline
     json_multiline.install(spark)
+    import stream_sinks
+    stream_sinks.install(spark)
     return original_sql
 
 
