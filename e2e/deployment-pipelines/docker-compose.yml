@@ -14,7 +14,7 @@
 # api.fabric.microsoft.com.
 services:
   entra:
-    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.6.0}
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.7.0}
     user: "0:0"                       # bind privileged :443 (authority has no port)
     environment:
       PUBLIC_ORIGIN: "https://login.microsoftonline.com"

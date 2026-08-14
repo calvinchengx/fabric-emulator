@@ -9,7 +9,7 @@
 # from process env only.
 services:
   entra-emulator:
-    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.6.0}
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.7.0}
     environment:
       ORIGIN_MODE: compat
       TLS_ENABLED: "false"
