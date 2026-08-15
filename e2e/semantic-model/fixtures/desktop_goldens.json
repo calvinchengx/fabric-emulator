@@ -1,5 +1,5 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). FLOOR and CEILING pinned live (FLOOR s=0 errors; CEILING s=0 returns 0). SIGN pinned live (BLANK stays BLANK). ASIN/ATAN pinned live (BLANK stays BLANK). PI/SIN/COS/TAN pinned live (COS(BLANK())=1; SIN/TAN BLANK stays BLANK). DEGREES/RADIANS pinned live (BLANK stays BLANK). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). FLOOR and CEILING pinned live (FLOOR s=0 errors; CEILING s=0 returns 0). SIGN pinned live (BLANK stays BLANK). ASIN/ATAN pinned live (BLANK stays BLANK). PI/SIN/COS/TAN pinned live (COS(BLANK())=1; SIN/TAN BLANK stays BLANK). DEGREES/RADIANS pinned live (BLANK stays BLANK). DATE/YEAR/MONTH/DAY pinned live (two-digit year window 0-30→2000s; month/day overflow). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-09,
   "probes": [
@@ -368,6 +368,108 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", RADIANS(-180))",
       "column": "[v]",
       "want": -3.141592653589793
+    },
+    {
+      "name": "YEAR(DATE(2024, 8, 15))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(DATE(2024, 8, 15)))",
+      "column": "[v]",
+      "want": 2024
+    },
+    {
+      "name": "MONTH(DATE(2024, 8, 15))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MONTH(DATE(2024, 8, 15)))",
+      "column": "[v]",
+      "want": 8
+    },
+    {
+      "name": "DAY(DATE(2024, 8, 15))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DAY(DATE(2024, 8, 15)))",
+      "column": "[v]",
+      "want": 15
+    },
+    {
+      "name": "YEAR(DATE(2024, 13, 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(DATE(2024, 13, 1)))",
+      "column": "[v]",
+      "want": 2025
+    },
+    {
+      "name": "MONTH(DATE(2024, 13, 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MONTH(DATE(2024, 13, 1)))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "YEAR(DATE(2024, 0, 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(DATE(2024, 0, 1)))",
+      "column": "[v]",
+      "want": 2023
+    },
+    {
+      "name": "MONTH(DATE(2024, 0, 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MONTH(DATE(2024, 0, 1)))",
+      "column": "[v]",
+      "want": 12
+    },
+    {
+      "name": "MONTH(DATE(2024, 1, 32))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MONTH(DATE(2024, 1, 32)))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "DAY(DATE(2024, 1, 32))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DAY(DATE(2024, 1, 32)))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "MONTH(DATE(2023, 2, 29))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MONTH(DATE(2023, 2, 29)))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "DAY(DATE(2023, 2, 29))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DAY(DATE(2023, 2, 29)))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "YEAR(DATE(0, 1, 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(DATE(0, 1, 1)))",
+      "column": "[v]",
+      "want": 2000
+    },
+    {
+      "name": "YEAR(DATE(30, 1, 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(DATE(30, 1, 1)))",
+      "column": "[v]",
+      "want": 2030
+    },
+    {
+      "name": "YEAR(DATE(99, 1, 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(DATE(99, 1, 1)))",
+      "column": "[v]",
+      "want": 1999
+    },
+    {
+      "name": "YEAR(DATE(100, 1, 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(DATE(100, 1, 1)))",
+      "column": "[v]",
+      "want": 100
+    },
+    {
+      "name": "YEAR(DATE(-1, 1, 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(DATE(-1, 1, 1)))",
+      "column": "[v]",
+      "want": 1899
+    },
+    {
+      "name": "YEAR(DATE(2024.9, 8, 15))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(DATE(2024.9, 8, 15)))",
+      "column": "[v]",
+      "want": 2025
     }
   ]
 }
