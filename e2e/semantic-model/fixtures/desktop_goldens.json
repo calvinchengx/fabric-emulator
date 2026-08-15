@@ -1,5 +1,5 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). SQRT and MOD pinned live (MOD(-10,3)=2, not Go math.Mod; MOD by 0 errors). SIGN pinned live (BLANK stays BLANK). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). SQRT and MOD pinned live (MOD(-10,3)=2, not Go math.Mod; MOD by 0 errors). SIGN pinned live (BLANK stays BLANK). ASIN/ATAN pinned live (BLANK stays BLANK). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-09,
   "probes": [
@@ -206,6 +206,48 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(0.1))",
       "column": "[v]",
       "want": 1
+    },
+    {
+      "name": "ASIN(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ASIN(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "ASIN(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ASIN(1))",
+      "column": "[v]",
+      "want": 1.5707963267948966
+    },
+    {
+      "name": "ASIN(-1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ASIN(-1))",
+      "column": "[v]",
+      "want": -1.5707963267948966
+    },
+    {
+      "name": "ASIN(0.5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ASIN(0.5))",
+      "column": "[v]",
+      "want": 0.5235987755982989
+    },
+    {
+      "name": "ATAN(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ATAN(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "ATAN(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ATAN(1))",
+      "column": "[v]",
+      "want": 0.7853981633974483
+    },
+    {
+      "name": "ATAN(-1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ATAN(-1))",
+      "column": "[v]",
+      "want": -0.7853981633974483
     }
   ]
 }
