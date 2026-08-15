@@ -216,9 +216,10 @@ is not a Phase 1 blocker.
 
 ## What this does not change
 
-- Parity row **Power BI — DAX beyond the bounded subset** stays 🟡 until a
-  CI witness drives the pump. `e2e/pbix-desktop` on `windows-latest`
-  remains the Desktop witness; it is weekly, `continue-on-error`, and
+- Parity row **Power BI — DAX beyond the bounded subset** stays 🟡 until
+  the pump step on `e2e/pbix-desktop` (`windows-latest`) has been seen
+  green. That job already opened Desktop; it now also starts
+  `e2e/msmdsrv` and POSTs `/v1/dax`. Weekly, `continue-on-error`,
   Windows-only. It is not replaced by UTM on `macos-latest` or
   `dockur/windows` on `ubuntu-latest`.
 - `make up` / OrbStack / Rancher Desktop on a Mac are unchanged.
@@ -238,7 +239,7 @@ reading.
 
 | Path | What we know |
 |---|---|
-| `e2e/pbix-desktop` on `windows-latest` | ~7–8 min, 698 MB Desktop download, bit-identical on the fixture query (5/5) |
+| `e2e/pbix-desktop` on `windows-latest` | ~7–8 min, 698 MB Desktop download, bit-identical on the fixture query (5/5). Same job now starts the DAX pump and POSTs `/v1/dax` |
 | UTM on Apple Silicon | Windows guest: budget 8–16 GB RAM, minutes to boot, plus Desktop inside it |
 | `dockur/windows` on Linux+KVM | Image + Windows install disk (their docs: ≥32 GB free, 2–4 GB RAM for the guest). First boot installs Windows; later boots reuse `/storage` |
 | Wine / GPTK / OrbStack | Not a path. Do not budget it |
