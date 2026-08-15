@@ -1,7 +1,7 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. EXP pinned live (EXP(BLANK())=1). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). EXP pinned live (EXP(BLANK())=1). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
-  "toleranceRel": 1e-9,
+  "toleranceRel": 1e-09,
   "probes": [
     {
       "name": "ACOS(0.5)",
@@ -74,6 +74,48 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(1234, -2))",
       "column": "[v]",
       "want": 1200
+    },
+    {
+      "name": "LOG(10)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG(10))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "LOG(100)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG(100))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "LOG(8, 2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG(8, 2))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "LOG(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG(1))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "LOG10(100)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG10(100))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "LOG10(10)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG10(10))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "LOG10(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG10(1))",
+      "column": "[v]",
+      "want": 0
     },
     {
       "name": "EXP(0)",
