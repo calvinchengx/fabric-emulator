@@ -220,7 +220,7 @@ replayed by `TestDesktopFunctionGoldens`: `ACOS`, then `ABS` (BLANK stays
 BLANK), then `ROUND` (half away from zero; BLANK number stays BLANK,
 BLANK digits count as 0), then `LOG` / `LOG10` (default `LOG` base is 10;
 BLANK/`<=0` and `LOG` base `1`/`<=0` error), then `LN` (argument must be > 0; BLANK
-coerces to 0 and errors), then `SIGN` (BLANK stays BLANK; `SIGN(0)` is 0). Captured on a UTM Windows 11 ARM guest + Desktop.
+coerces to 0 and errors), then `SIGN` (BLANK stays BLANK; `SIGN(0)` is 0), then `ASIN` / `ATAN` (BLANK stays BLANK; `ASIN` outside `[-1, 1]` errors). Captured on a UTM Windows 11 ARM guest + Desktop.
 Clone that guest only while it is **stopped** (`utmctl clone` refuses a
 running VM). Do not treat the live oracle as disposable.
 
