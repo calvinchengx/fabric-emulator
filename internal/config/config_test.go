@@ -45,6 +45,9 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("FABRIC_KQL_URL", "http://kustainer:8080")
 	t.Setenv("FABRIC_DAX_URL", "http://dax-pump:8080")
 	t.Setenv("FABRIC_KAFKA_BOOTSTRAP", "kafka:9092")
+	t.Setenv("FABRIC_DATABRICKS_URL", "https://databricks-emulator:8447")
+	t.Setenv("FABRIC_DATABRICKS_TOKEN", "dapi-test")
+	t.Setenv("FABRIC_DATABRICKS_TLS_INSECURE", "true")
 	c, err := FromEnv()
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +69,21 @@ func TestFromEnv(t *testing.T) {
 	}
 	if c.KafkaBootstrap != "kafka:9092" {
 		t.Fatalf("FromEnv misread the Kafka broker env: %+v", c)
+	}
+	if c.DatabricksURL != "https://databricks-emulator:8447" || c.DatabricksToken != "dapi-test" || !c.DatabricksTLSInsecure {
+		t.Fatalf("FromEnv misread the Databricks env: %+v", c)
+	}
+}
+
+func TestDatabricksURLDefaultsOff(t *testing.T) {
+	t.Setenv("FABRIC_ENTRA_ISSUER", "https://e:1/t/v2.0")
+	t.Setenv("FABRIC_DATABRICKS_URL", "")
+	c, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DatabricksURL != "" || c.DatabricksToken != "" || c.DatabricksTLSInsecure {
+		t.Fatalf("Databricks defaults on: %+v", c)
 	}
 }
 

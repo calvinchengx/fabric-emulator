@@ -29,11 +29,12 @@ import (
 // tasks are Python, which the agent runs for real.
 //
 // PATH ADDRESSING. Databricks addresses a workspace path (`/Shared/etl`) or
-// DBFS (`dbfs:/jobs/etl.py`); the emulator has neither. Paths resolve to
-// OneLake by the same `<lakehouseItemId>/<path>` form HDInsight's rootPath
-// uses, and a `dbfs:` or `/Workspace`-rooted path is REFUSED BY NAME rather
-// than silently reinterpreted — a definition that names DBFS and quietly reads
-// a lakehouse would be the emulator inventing a mapping nobody wrote.
+// DBFS (`dbfs:/jobs/etl.py`). Without FABRIC_DATABRICKS_URL the emulator has
+// neither: paths resolve to OneLake by the same `<lakehouseItemId>/<path>`
+// form HDInsight's rootPath uses, and a `dbfs:` or `/Workspace`-rooted path
+// is REFUSED BY NAME rather than silently reinterpreted. When the URL is set,
+// those paths are submitted to that workspace as written, and a lakehouse
+// path is imported there first.
 //
 // LIBRARIES are refused when present: installing a PyPI/Maven library needs a
 // cluster whose lifecycle the emulator does not own, and an Environment item
