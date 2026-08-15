@@ -222,7 +222,7 @@ BLANK digits count as 0), then `LOG` / `LOG10` (default `LOG` base is 10;
 BLANK/`<=0` and `LOG` base `1`/`<=0` error), then `MIN` (BLANK is not a candidate;
 all-blank is BLANK), then `AVERAGE` (BLANK is not in the mean), then
 `COUNT` (non-blank cells, including text; empty is 0), then `POWER`
-(BLANK base is BLANK; BLANK exponent is 0; `POWER(0, 0)` errors), then `SIGN` (BLANK stays BLANK; `SIGN(0)` is 0). Captured on a UTM Windows 11 ARM guest + Desktop.
+(BLANK base is BLANK; BLANK exponent is 0; `POWER(0, 0)` errors), then `SIGN` (BLANK stays BLANK; `SIGN(0)` is 0), then `ASIN` / `ATAN` (BLANK stays BLANK; `ASIN` outside `[-1, 1]` errors). Captured on a UTM Windows 11 ARM guest + Desktop.
 Clone that guest only while it is **stopped** (`utmctl clone` refuses a
 running VM). Do not treat the live oracle as disposable.
 
