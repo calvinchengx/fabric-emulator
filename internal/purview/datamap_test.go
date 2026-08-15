@@ -353,6 +353,7 @@ func TestEveryRouteRequiresAToken(t *testing.T) {
 	s.Register(mux)
 
 	for _, c := range []struct{ method, target string }{
+		{"GET", "/atlas/v2/lineage/x"},
 		{"GET", "/atlas/v2/types/typedefs"},
 		{"POST", "/atlas/v2/types/typedefs"},
 		{"PUT", "/atlas/v2/types/typedefs"},
