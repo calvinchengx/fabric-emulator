@@ -1,5 +1,5 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). ABS(-2.5)/ABS(0)/ABS(3), ROUND half-away-from-zero (ROUND(-1.5,0)=-2, unlike Go math.Round), and INT floor toward −∞ (INT(-2.1)=-3, unlike Go int() truncate-toward-zero) pinned live the same day. SIGN pinned live (BLANK stays BLANK). ASIN/ATAN pinned live (BLANK stays BLANK). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). ABS(-2.5)/ABS(0)/ABS(3), ROUND half-away-from-zero (ROUND(-1.5,0)=-2, unlike Go math.Round), and INT floor toward −∞ (INT(-2.1)=-3, unlike Go int() truncate-toward-zero) pinned live the same day. SIGN pinned live (BLANK stays BLANK). ASIN/ATAN pinned live (BLANK stays BLANK). PI/SIN/COS/TAN pinned live (COS(BLANK())=1; SIN/TAN BLANK stays BLANK). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-09,
   "probes": [
@@ -230,6 +230,66 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ATAN(-1))",
       "column": "[v]",
       "want": -0.7853981633974483
+    },
+    {
+      "name": "PI()",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", PI())",
+      "column": "[v]",
+      "want": 3.141592653589793
+    },
+    {
+      "name": "SIN(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIN(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "COS(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", COS(0))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "TAN(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", TAN(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "SIN(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIN(1))",
+      "column": "[v]",
+      "want": 0.8414709848078965
+    },
+    {
+      "name": "COS(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", COS(1))",
+      "column": "[v]",
+      "want": 0.5403023058681397
+    },
+    {
+      "name": "TAN(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", TAN(1))",
+      "column": "[v]",
+      "want": 1.5574077246549023
+    },
+    {
+      "name": "SIN(2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIN(2))",
+      "column": "[v]",
+      "want": 0.9092974268256817
+    },
+    {
+      "name": "SIN(PI()/2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIN(PI()/2))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "SIN(-PI()/2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIN(-PI()/2))",
+      "column": "[v]",
+      "want": -1
     }
   ]
 }
