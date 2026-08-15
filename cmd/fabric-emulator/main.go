@@ -98,6 +98,11 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 		webActivity = "stub"
 	}
 	fs.StringVar(&webActivity, "web-activity", webActivity, "pipeline Web activity mode: real (perform the HTTP call) or stub (record success without calling)")
+	customActivity := "real"
+	if !cfg.CustomActivityShell {
+		customActivity = "off"
+	}
+	fs.StringVar(&customActivity, "custom-activity", customActivity, "pipeline Custom (Azure Batch) activity mode: real (run the command in the Spark agent) or off (refuse; no command reaches the agent)")
 	fs.StringVar(&cfg.AirflowURL, "airflow-url", cfg.AirflowURL, "Apache Airflow 2.10 REST API base URL (empty = off)")
 	fs.StringVar(&cfg.AirflowDAGDir, "airflow-dag-dir", cfg.AirflowDAGDir, "shared Airflow DAG directory")
 	fs.StringVar(&cfg.AirflowUsername, "airflow-username", cfg.AirflowUsername, "Airflow basic-auth username")
@@ -112,6 +117,7 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	}
 	cfg.TenantAdmins = config.SplitList(tenantAdmins)
 	cfg.WebActivityStub = strings.EqualFold(webActivity, "stub")
+	cfg.CustomActivityShell = !strings.EqualFold(customActivity, "off")
 	if err := cfg.Finish(); err != nil {
 		return err
 	}

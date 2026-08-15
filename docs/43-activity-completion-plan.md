@@ -21,7 +21,7 @@ What is verifiable, stated so anyone can re-derive it rather than trust it:
 - **17 leaf activity types execute for real** in `internal/api/pipelines.go`'s
   dispatch: notebook, invoke-pipeline, Copy, Lookup, GetMetadata, Delete,
   Script, stored procedure, Web, WebHook, Functions, HDInsight Spark,
-  Databricks notebook, Databricks python, Azure Batch (opt-in), Validation,
+  Databricks notebook, Databricks python, Azure Batch, Validation,
   Data Explorer command. (Several accept more than one wire spelling —
   `RunNotebook`/`TridentNotebook`/`SynapseNotebook` are one behaviour, as are
   `SqlServerStoredProcedure`/`SqlPoolStoredProcedure` and `Web`/`WebActivity` —

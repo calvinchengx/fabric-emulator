@@ -118,6 +118,21 @@ func TestTSQLStrictFromEnv(t *testing.T) {
 	}
 }
 
+func TestCustomActivityFromEnv(t *testing.T) {
+	t.Setenv("FABRIC_CUSTOM_ACTIVITY", "")
+	if !FromEnvPartial().CustomActivityShell {
+		t.Fatal("Custom activity is off by default; it must run without an env var")
+	}
+	t.Setenv("FABRIC_CUSTOM_ACTIVITY", "shell")
+	if !FromEnvPartial().CustomActivityShell {
+		t.Fatal("FABRIC_CUSTOM_ACTIVITY=shell (the old opt-in) must stay on")
+	}
+	t.Setenv("FABRIC_CUSTOM_ACTIVITY", "OFF")
+	if FromEnvPartial().CustomActivityShell {
+		t.Fatal("FABRIC_CUSTOM_ACTIVITY=off did not refuse Custom activity")
+	}
+}
+
 func TestARMURLFromEnv(t *testing.T) {
 	t.Setenv("FABRIC_ARM_URL", "https://arm-emulator:8445")
 	t.Setenv("FABRIC_ARM_POLL_SECONDS", "2")

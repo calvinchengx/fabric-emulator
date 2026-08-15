@@ -270,8 +270,8 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		return e.databricksActivity(act, tp, resolve)
 
 	case "Custom":
-		// Azure Batch. OFF BY DEFAULT — a shell command is arbitrary execution,
-		// not another read; see customactivity.go and config.CustomActivityShell.
+		// Azure Batch. On by default — same agent as a notebook. Off switch is
+		// FABRIC_CUSTOM_ACTIVITY=off; see customactivity.go.
 		return e.customActivity(act, tp, resolve)
 
 	case "HDInsightSpark":

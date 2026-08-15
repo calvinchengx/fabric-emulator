@@ -31,6 +31,9 @@ func newAPI(t *testing.T) (*API, *store.Store) {
 	// (tenantadmin_test.go), and the no-administrators case builds its own API
 	// so this default cannot mask it.
 	a.SetTenantAdmins([]string{"admin-1"})
+	// Custom (Azure Batch) runs by default, matching a notebook on the same
+	// agent. Tests ABOUT the off switch set CustomActivityShell false themselves.
+	a.CustomActivityShell = true
 	return a, st
 }
 

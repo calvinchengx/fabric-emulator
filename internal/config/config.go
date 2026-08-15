@@ -182,21 +182,16 @@ type Config struct {
 	WebActivityStub bool
 
 	// CustomActivityShell enables the Azure Batch (`Custom`) pipeline activity,
-	// which runs a caller-supplied SHELL COMMAND. Empty/false = the activity
-	// refuses by name and no command is ever executed — the same posture
-	// TerminalURL takes, and for the identical reason: a shell command is not
-	// another read, it is arbitrary execution, so it must be an operator's
-	// deliberate act rather than a default.
+	// which runs a caller-supplied SHELL COMMAND in the Spark agent's container.
+	// On by default: a notebook cell on that same agent can already
+	// subprocess.run, behind the same bearer and workspace RBAC, so refusing
+	// Custom by default was the false pass for any pipeline that actually uses
+	// Batch — the same reversal as Web (FABRIC_WEB_ACTIVITY=stub).
 	//
-	// It differs in kind from every other compute activity here. A notebook,
-	// SJD, HDInsight or Databricks task runs PYTHON through the Spark agent —
-	// user code, in the engine's sandbox, which is what those activities mean.
-	// A Custom activity's `command` is a process on whatever host runs the
-	// agent. Enabled, the command is sent to the agent (containerised in the
-	// standard compose deployment) rather than run in the emulator's own
-	// process, so the blast radius is the engine container and not the API.
-	//
-	// FABRIC_CUSTOM_ACTIVITY=shell to enable.
+	// FABRIC_CUSTOM_ACTIVITY=off restores the refusal so no command reaches the
+	// agent. The old opt-in spelling `shell` remains on. The portal terminal
+	// stays opt-in: that route is still arbitrary execution on an otherwise-
+	// unauthenticated surface.
 	CustomActivityShell bool
 
 	// TSQLStrict refuses T-SQL that the SQL Server sidecar accepts but real
@@ -277,7 +272,7 @@ func FromEnvPartial() *Config {
 		ForceLRO:            boolEnv("FABRIC_FORCE_LRO") || boolEnv("FABRIC_DEFINITION_LRO"),
 		NameReservation:     durationEnv("FABRIC_NAME_RESERVATION"),
 		WebActivityStub:     strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
-		CustomActivityShell: strings.EqualFold(os.Getenv("FABRIC_CUSTOM_ACTIVITY"), "shell"),
+		CustomActivityShell: customActivityEnabled(os.Getenv("FABRIC_CUSTOM_ACTIVITY")),
 		WarehouseSQLURL:     os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
 		TSQLStrict:          boolEnv("FABRIC_TSQL_STRICT"),
 		ListPageSize:        intEnv("FABRIC_LIST_PAGE_SIZE"),
@@ -370,6 +365,13 @@ func boolEnv(key string) bool {
 		return true
 	}
 	return false
+}
+
+// customActivityEnabled is on unless the value is the explicit refuse.
+// Empty and "shell" (the old opt-in spelling) are on; "off" matches
+// FABRIC_WEB_ACTIVITY=stub as the hermetic escape.
+func customActivityEnabled(v string) bool {
+	return !strings.EqualFold(strings.TrimSpace(v), "off")
 }
 
 // intEnv reads an integer environment variable, 0 when unset or unparseable.

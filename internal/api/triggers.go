@@ -72,9 +72,10 @@ type triggerRequest struct {
 }
 
 var knownEventTypes = map[string]bool{
-	store.EventFileCreated: true,
-	store.EventFileDeleted: true,
-	store.EventFileRenamed: true,
+	store.EventFileCreated:         true,
+	store.EventFileDeleted:         true,
+	store.EventFileRenamed:         true,
+	store.EventEventstreamReceived: true,
 }
 
 func triggerBody(t *store.EventTrigger) map[string]any {
@@ -137,7 +138,8 @@ func (a *API) applyTriggerRequest(w http.ResponseWriter, r *http.Request, t *sto
 	}
 	if !knownEventTypes[t.EventType] {
 		writeErr(w, http.StatusBadRequest, "InvalidRequest",
-			"eventType must be one of "+store.EventFileCreated+", "+store.EventFileDeleted+", "+store.EventFileRenamed+".")
+			"eventType must be one of "+store.EventFileCreated+", "+store.EventFileDeleted+", "+
+				store.EventFileRenamed+", "+store.EventEventstreamReceived+".")
 		return false
 	}
 	if t.SourceItemID == "" {
@@ -333,11 +335,15 @@ func (a *API) DispatchFileEvent(ev store.FileEvent) int {
 
 // fireTrigger starts one trigger's job with the event bound into it.
 func (a *API) fireTrigger(t *store.EventTrigger, ev store.FileEvent) bool {
+	return a.fireTriggerWith(t, triggerEventParams(ev))
+}
+
+func (a *API) fireTriggerWith(t *store.EventTrigger, params map[string]any) bool {
 	target, err := a.Store.GetItem(t.TargetWorkspaceID, t.TargetItemID)
 	if err != nil {
 		return false // the target was deleted out from under the trigger
 	}
-	exec := map[string]any{"triggerEvent": triggerEventParams(ev)}
+	exec := map[string]any{"triggerEvent": params}
 	if _, err := a.startJob(t.TargetWorkspaceID, target, t.TargetJobType,
 		store.InvokeEventTriggered, exec); err != nil {
 		return false

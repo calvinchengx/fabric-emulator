@@ -15,22 +15,21 @@ import (
 // also `folderPath`, `resourceLinkedService`, `extendedProperties`,
 // `referenceObjects`, `retentionTimeInDays`, `autoUserSpecification`.
 //
-// OFF BY DEFAULT, AND THE REASON IS NOT CAUTION FOR ITS OWN SAKE. Every other
-// compute activity here runs PYTHON through the Spark agent: a notebook, an
-// SJD, an HDInsight entry file, a Databricks task. That is user code inside
-// the engine's sandbox, which is what those activities mean. A Custom
-// activity's `command` is a process on whatever host runs the agent — a
-// different kind of thing, and the repo already has a position on it. From
-// config.go, about the terminal pane: "A terminal is not another read; it is
-// arbitrary execution", and "Empty = the feature does not exist: no route is
-// mounted". This takes the same posture: without FABRIC_CUSTOM_ACTIVITY=shell
-// the activity refuses by name and NO COMMAND IS EVER EXECUTED.
+// ON BY DEFAULT. A notebook, an SJD, an HDInsight entry file and a Databricks
+// task already run PYTHON through the Spark agent — user code inside the
+// engine's sandbox. A Custom activity's `command` is a process on that same
+// host, behind the same bearer and workspace RBAC. Refusing it by default was
+// the false pass for any pipeline that actually uses Batch, the same class of
+// reversal as the Web activity. FABRIC_CUSTOM_ACTIVITY=off restores the
+// refusal so no command reaches the agent; the old opt-in spelling `shell`
+// remains on.
 //
-// Enabled, the command is executed by the SPARK AGENT rather than in the
-// emulator's own process — containerised in the standard compose deployment,
-// so the blast radius is the engine container and not the API. That is the
-// closest available analogue to a Batch pool node: a machine that is not the
-// orchestrator's.
+// The command is executed by the SPARK AGENT rather than in the emulator's
+// own process — containerised in the standard compose deployment, so the
+// blast radius is the engine container and not the API. That is the closest
+// available analogue to a Batch pool node: a machine that is not the
+// orchestrator's. The portal terminal stays opt-in: that route is still
+// arbitrary execution on an otherwise-unauthenticated surface.
 //
 // WHAT IS REFUSED EVEN WHEN ENABLED, each because honouring it would require
 // something the emulator does not have:
@@ -58,11 +57,10 @@ func (e *pipelineExecutor) customActivity(
 	resolve func(json.RawMessage) (any, error),
 ) (map[string]any, error) {
 	if !e.a.CustomActivityShell {
-		return nil, fmt.Errorf("custom activity %q: this activity runs a shell command, which the "+
-			"emulator does not do by default — a command is arbitrary execution rather than "+
-			"another read, so it must be switched on deliberately. Set "+
-			"FABRIC_CUSTOM_ACTIVITY=shell to enable it; the command then runs in the Spark "+
-			"agent's container rather than the emulator's process", act.Name)
+		return nil, fmt.Errorf("custom activity %q: Custom activity execution is off "+
+			"(FABRIC_CUSTOM_ACTIVITY=off) — a command never reaches the agent. Unset it, or "+
+			"set FABRIC_CUSTOM_ACTIVITY=shell, to run the command in the Spark agent's container",
+			act.Name)
 	}
 
 	for _, unsupported := range []struct{ key, why string }{

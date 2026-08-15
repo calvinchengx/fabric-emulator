@@ -108,7 +108,8 @@ type API struct {
 	// a durability claim the emulator cannot honour.
 	webhookWaits sync.Map
 	// CustomActivityShell enables the Custom (Azure Batch) activity's shell
-	// execution; false means it refuses by name. See config.CustomActivityShell.
+	// execution (the production default). False refuses by name so no command
+	// reaches the agent — FABRIC_CUSTOM_ACTIVITY=off. See config.CustomActivityShell.
 	CustomActivityShell bool
 	// RetryAfterSeconds is advertised on 202 responses.
 	RetryAfterSeconds int
