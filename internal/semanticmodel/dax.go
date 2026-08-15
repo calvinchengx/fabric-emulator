@@ -799,7 +799,13 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		}
 		return s, nil
 	case "DIVIDE":
-		if len(fc.args) < 2 {
+		// DIVIDE(numerator, denominator [, alternateResult]) — the third
+		// argument is what a zero denominator returns, defaulting to BLANK.
+		// The guard was `< 2`, which ACCEPTED a third argument and then never
+		// read it: `DIVIDE(x, 0, 0)` answered BLANK where Fabric answers 0, with
+		// no error to notice locally. Accepting an argument you ignore is worse
+		// than rejecting it — the query looks supported and quietly disagrees.
+		if len(fc.args) < 2 || len(fc.args) > 3 {
 			return nil, fmt.Errorf("DIVIDE expects 2 arguments")
 		}
 		a, err := e.scalar(fc.args[0])
@@ -819,6 +825,9 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		if den == 0 {
+			if len(fc.args) == 3 {
+				return e.scalar(fc.args[2])
+			}
 			return nil, nil // DAX DIVIDE → blank on divide-by-zero
 		}
 		return num / den, nil
