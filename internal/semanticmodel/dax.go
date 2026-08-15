@@ -11,7 +11,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `MIN`, `AVERAGE`, `COUNT`, `POWER`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, `DEGREES`, `RADIANS`, `DATE`, `YEAR`, `MONTH`, `DAY`, `TIME`, `HOUR`, `MINUTE`, `SECOND`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `INT`, `MIN`, `AVERAGE`, `COUNT`, `POWER`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, `DEGREES`, `RADIANS`, `DATE`, `YEAR`, `MONTH`, `DAY`, `TIME`, `HOUR`, `MINUTE`, `SECOND`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -1054,6 +1054,26 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, fmt.Errorf("LOG10 argument must be > 0")
 		}
 		return math.Log10(n), nil
+	case "INT":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("INT expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// DAX INT(BLANK) is BLANK. arithNum/asNumber treat nil as 0, which
+		// would return 0 — wrong. Check before coercing.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "INT")
+		if err != nil {
+			return nil, err
+		}
+		// Excel/DAX INT floors toward −∞ (INT(-2.1) = -3), not truncate
+		// toward zero. Desktop 2026-08-15 agrees.
+		return math.Floor(f), nil
 	case "POWER":
 		if len(fc.args) != 2 {
 			return nil, fmt.Errorf("POWER expects 2 arguments")
@@ -1319,63 +1339,6 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
 
-func (e *evalr) datePart(fc funcCall, fn string, part func(time.Time) float64) (any, error) {
-	if len(fc.args) != 1 {
-		return nil, fmt.Errorf("%s expects 1 argument", fn)
-	}
-	a, err := e.scalar(fc.args[0])
-	if err != nil {
-		return nil, err
-	}
-	// Desktop YEAR/MONTH/DAY/HOUR/MINUTE/SECOND(BLANK()) is BLANK.
-	if a == nil {
-		return nil, nil
-	}
-	t, ok := a.(time.Time)
-	if !ok {
-		return nil, fmt.Errorf("%s expects a date", fn)
-	}
-	return part(t), nil
-}
-
-// daxDate is Excel/DAX DATE: parts round half-away-from-zero; month/day overflow
-// (DATE(2024,13,1)=2025-01-01, DATE(2024,1,32)=2024-02-01); day <= 0 errors.
-// Two-digit years: 0–30 → 2000–2030, 31–99 → 1931–1999. Negative years add 1900
-// (DATE(-1,1,1) is 1899). DATE(100,1,1) stays year 100.
-func daxDate(y, m, d float64) (time.Time, error) {
-	di := roundHalfAwayInt(d)
-	if di <= 0 {
-		return time.Time{}, fmt.Errorf("DATE day must be > 0")
-	}
-	return time.Date(daxDateYear(roundHalfAwayInt(y)), time.Month(roundHalfAwayInt(m)), di, 0, 0, 0, 0, time.UTC), nil
-}
-
-func daxDateYear(y int) int {
-	switch {
-	case y >= 0 && y <= 30:
-		return y + 2000
-	case y >= 31 && y <= 99:
-		return y + 1900
-	case y < 0:
-		return y + 1900
-	default:
-		return y
-	}
-}
-
-// daxTime is DAX TIME: parts round half-away-from-zero; hour/minute/second
-// overflow wraps modulo 24h onto the DAX epoch date 1899-12-30 (TIME(25,0,0)
-// is 01:00, TIME(24,0,0) is 00:00 that same day). A negative total errors
-// (TIME(-1,0,0)). BLANK parts coerce to 0.
-func daxTime(h, m, s float64) (time.Time, error) {
-	sec := roundHalfAwayInt(h)*3600 + roundHalfAwayInt(m)*60 + roundHalfAwayInt(s)
-	if sec < 0 {
-		return time.Time{}, fmt.Errorf("TIME result is negative")
-	}
-	sec %= 86400
-	return time.Date(1899, 12, 30, 0, 0, sec, 0, time.UTC), nil
-}
-
 // daxRound is Excel/DAX ROUND: half away from zero (ROUND(-1.5, 0) = -2),
 // not Go math.Round (half toward +Inf, Round(-1.5) = -1). Digits are themselves
 // rounded half-away-from-zero to an integer first (Desktop: ROUND(2.15, 1.5)
@@ -1626,4 +1589,57 @@ func numeric(v any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func (e *evalr) datePart(fc funcCall, fn string, part func(time.Time) float64) (any, error) {
+	if len(fc.args) != 1 {
+		return nil, fmt.Errorf("%s expects 1 argument", fn)
+	}
+	a, err := e.scalar(fc.args[0])
+	if err != nil {
+		return nil, err
+	}
+	// Desktop YEAR/MONTH/DAY/HOUR/MINUTE/SECOND(BLANK()) is BLANK.
+	if a == nil {
+		return nil, nil
+	}
+	t, ok := a.(time.Time)
+	if !ok {
+		return nil, fmt.Errorf("%s expects a date", fn)
+	}
+	return part(t), nil
+}
+
+func daxDate(y, m, d float64) (time.Time, error) {
+	di := roundHalfAwayInt(d)
+	if di <= 0 {
+		return time.Time{}, fmt.Errorf("DATE day must be > 0")
+	}
+	return time.Date(daxDateYear(roundHalfAwayInt(y)), time.Month(roundHalfAwayInt(m)), di, 0, 0, 0, 0, time.UTC), nil
+}
+
+func daxDateYear(y int) int {
+	switch {
+	case y >= 0 && y <= 30:
+		return y + 2000
+	case y >= 31 && y <= 99:
+		return y + 1900
+	case y < 0:
+		return y + 1900
+	default:
+		return y
+	}
+}
+
+// daxTime is DAX TIME: parts round half-away-from-zero; hour/minute/second
+// overflow wraps modulo 24h onto the DAX epoch date 1899-12-30 (TIME(25,0,0)
+// is 01:00, TIME(24,0,0) is 00:00 that same day). A negative total errors
+// (TIME(-1,0,0)). BLANK parts coerce to 0.
+func daxTime(h, m, s float64) (time.Time, error) {
+	sec := roundHalfAwayInt(h)*3600 + roundHalfAwayInt(m)*60 + roundHalfAwayInt(s)
+	if sec < 0 {
+		return time.Time{}, fmt.Errorf("TIME result is negative")
+	}
+	sec %= 86400
+	return time.Date(1899, 12, 30, 0, 0, sec, 0, time.UTC), nil
 }
