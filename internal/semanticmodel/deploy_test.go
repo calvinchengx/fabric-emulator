@@ -48,6 +48,9 @@ func TestCreateOrReplaceTMSLRetail(t *testing.T) {
 	if !strings.Contains(s, `"type":"calculated"`) && !strings.Contains(s, `"type": "calculated"`) {
 		t.Fatal("expected calculated partitions")
 	}
+	if !strings.Contains(s, `"sourceColumn":"StoreId"`) && !strings.Contains(s, `"sourceColumn": "StoreId"`) {
+		t.Fatal("expected sourceColumn on DATATABLE columns (Desktop rejects the omit)")
+	}
 }
 
 func TestCreateOrReplaceTMSLRefusesDirectLake(t *testing.T) {

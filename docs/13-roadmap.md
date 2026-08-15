@@ -419,8 +419,10 @@ phase letter; they extend surfaces the earlier phases already named.
       Fabric notebook API (`format("kafka")` + `eventstream.*`), Custom HTTP
       produce. **Lakehouse destination** appends produce payloads as Delta;
       **Reflex destination** fires `Microsoft.Fabric.Eventstream.EventReceived`
-      as a real `EventTriggered` job. Eventhouse streaming dest and operators
-      stay refused. [51-eventstream-kafka.md](51-eventstream-kafka.md).
+      as a real `EventTriggered` job. **Eventhouse destination** ingests
+      via Kusto `.create-merge` + `.ingest inline` (direct, not Fabric
+      streaming ingest). **Operators** (Filter, GroupBy, tumbling Window)
+      run on the produce batch. [51-eventstream-kafka.md](51-eventstream-kafka.md).
 - [x] **Custom activity on by default** — Azure Batch `command` runs on the
       Spark agent; `FABRIC_CUSTOM_ACTIVITY=off` restores the refusal.
 - [x] **Fabric Core MCP** — `POST /v1/mcp/core`, unmodified Python `mcp` SDK

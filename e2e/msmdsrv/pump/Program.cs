@@ -81,8 +81,30 @@ app.MapPost("/v1/dax", async (HttpRequest req) =>
     catch (Exception e)
     {
         conn?.Dispose();
-        return Results.Json(new { error = new { code = "DAXEngineUnreachable", message = Pump.FirstLine(e) } },
-            statusCode: 503);
+        conn = null;
+        // Desktop's workspace instance often has no database named like the
+        // item (or SYSTEM/the pump user cannot see that name). The open
+        // .pbix is the default catalog on the port — retry without Initial Catalog=.
+        if (!string.IsNullOrWhiteSpace(body.Catalog) && Pump.IsMissingCatalog(e))
+        {
+            try
+            {
+                src = Pump.ResolveSource(null);
+                conn = new AdomdConnection(src.ConnectionString);
+                conn.Open();
+            }
+            catch (Exception e2)
+            {
+                conn?.Dispose();
+                return Results.Json(new { error = new { code = "DAXEngineUnreachable", message = Pump.FirstLine(e2) } },
+                    statusCode: 503);
+            }
+        }
+        else
+        {
+            return Results.Json(new { error = new { code = "DAXEngineUnreachable", message = Pump.FirstLine(e) } },
+                statusCode: 503);
+        }
     }
 
     try
@@ -329,6 +351,14 @@ static class Pump
         return null;
     }
 
+    internal static bool IsMissingCatalog(Exception e)
+    {
+        var msg = FirstLine(e);
+        return msg.Contains("does not exist", StringComparison.OrdinalIgnoreCase) ||
+               msg.Contains("does not have access", StringComparison.OrdinalIgnoreCase) ||
+               msg.Contains("cannot find the", StringComparison.OrdinalIgnoreCase);
+    }
+
     internal static bool IsRejected(string msg)
     {
         if (string.IsNullOrEmpty(msg))
@@ -340,7 +370,12 @@ static class Pump
                msg.Contains("read-only", StringComparison.OrdinalIgnoreCase) ||
                msg.Contains("readonly", StringComparison.OrdinalIgnoreCase) ||
                msg.Contains("cannot create", StringComparison.OrdinalIgnoreCase) ||
-               msg.Contains("operation is not allowed", StringComparison.OrdinalIgnoreCase);
+               msg.Contains("operation is not allowed", StringComparison.OrdinalIgnoreCase) ||
+               // Desktop workspace instance: calculated-table TMSL without
+               // SourceColumn (or empty partitions) cannot CreateOrReplace.
+               // 409 → emulator queries the open .pbix catalog (docs/52).
+               msg.Contains("SourceColumn", StringComparison.OrdinalIgnoreCase) ||
+               msg.Contains("at least one partition", StringComparison.OrdinalIgnoreCase);
     }
 
     static int ReadDesktopPort()

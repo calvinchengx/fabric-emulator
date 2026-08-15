@@ -1,8 +1,8 @@
 # 37 — Runtime fidelity: four documented divergences, and what closing each takes
 
-**Status: divergences 1 (Environments), 2a/2b/2c (Files mount), and 4 (async
-pipelines) are DONE — wire and witness each. The remaining `input_file_name`
-items stay stated in the code.** Each is a
+**Status: divergences 1 (Environments), 2a/2b/2c (Files mount), 3a/3b
+(`input_file_name` SQL rewrite and the non-file diagnostic), and 4 (async
+pipelines) are DONE — wire and witness each.** Each is a
 place where the emulator's *runtime* — the thing a notebook actually sees — is
 deliberately an analog of Fabric's rather than the thing itself. They were
 written down at the moment they were created, which is why this document can
@@ -156,7 +156,7 @@ every write. Its docstring is emphatic that a stub returning `""` would be worse
 than nothing, and that is the standard the two remaining gaps are measured
 against.
 
-### 3a. SQL-string usage bypasses the shim — **M, with real research risk**
+### 3a. SQL-string usage bypasses the shim — **DONE**
 
 `spark.sql("SELECT input_file_name() ...")` never touches the patched
 `F.input_file_name`, so it fails on the engine as if the shim were not there.
@@ -181,6 +181,14 @@ The risk is the same one T-SQL faced and answered with a lexer: a blind string
 replace would be *worse* than the honest gap, because it would corrupt queries
 that merely mention the name. Rewriting must know which relations are tagged and
 leave everything else alone.
+
+**Delivered.** `spark.sql` is wrapped beside the PySpark `F.input_file_name`
+patch. A lexer finds `input_file_name()` only in code (not in strings or
+comments). A view created from a tagged frame registers twice: a clean name
+for `SELECT *`, and a shadow that still carries the tag. SQL that asks for
+the function is rewritten onto that shadow and the tag column; SQL that
+merely mentions the name is left alone. A relation that was never a file
+read raises `InputFileNameError` rather than resolving to `""`.
 
 ### 3b. A non-file frame errors where Spark returns `""` — **do not fix**
 
@@ -215,6 +223,10 @@ and to nothing else.**
 something that names the shim and explains that provenance was requested on a
 frame that never came from a file, instead of a bare `AnalysisException` on an
 internal column name. **Size: XS.**
+
+**Delivered.** `df.select(F.input_file_name())` on a frame with no tag raises
+`InputFileNameError` naming the shim and pointing here. The empty-string
+stub is still refused.
 
 ---
 
@@ -320,12 +332,12 @@ lacks. That is the sequence this rule exists to force.
 | # | Capability | Size | Why this position |
 |---|---|---|---|
 | ~~2c~~ ✅ | ~~Refuse a conflicting lakehouse bind~~ | XS | Done: second bind of a different lakehouse is refused; first mount intact |
-| 3b | Diagnostic error for a non-file frame | XS | Behaviour stays; the message stops being cryptic |
+| ~~3b~~ ✅ | ~~Diagnostic error for a non-file frame~~ | XS | Done: `InputFileNameError` names the shim |
 | ~~—~~ ✅ | ~~Correct the Environments parity row and witness~~ | XS | Done: 🟡, reworded, witness removed. Regrade to 🟢 only with an e2e |
 | ~~1~~ ✅ | ~~Environment items reach the session~~ | S | Done in #67: wire + `e2e/environment` proof with negative control; row 🟢 |
 | ~~2a/2b~~ ✅ | ~~Mount write-back and per-statement refresh~~ | S | Done: flush + pull at every statement; deletes not propagated |
-| 4 | Pipelines async | M | Mechanical, but ~50 test sites |
-| 3a | `input_file_name()` in SQL | M | The only item with genuine research risk |
+| ~~4~~ ✅ | ~~Pipelines async~~ | M | Done: POST returns 202; the client polls |
+| ~~3a~~ ✅ | ~~`input_file_name()` in SQL~~ | M | Done: lexer rewrite onto the tagged shadow view |
 | 2c′ | Agent-per-session pool | L | Deferred; revisit only if concurrent multi-lakehouse sessions become real |
 
 ## What must NOT be done

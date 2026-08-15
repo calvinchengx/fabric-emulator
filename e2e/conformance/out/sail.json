@@ -1,0 +1,58 @@
+[
+  {
+    "id": "1",
+    "contract": "Context chain",
+    "backend": "sail",
+    "status": "gap",
+    "error": "not yet asserted \u2014 needs a running notebook session",
+    "pointer": "38-framework-conformance.md#1-session-context-is-a-control-plane-contract-not-an-environment-variable"
+  },
+  {
+    "id": "2",
+    "contract": "Signature shape",
+    "backend": "sail",
+    "status": "gap",
+    "error": "not yet asserted \u2014 needs a running notebook session",
+    "pointer": "38-framework-conformance.md#2-the-api-shape-is-the-contract-independent-of-behaviour"
+  },
+  {
+    "id": "3",
+    "contract": "Runtime floor",
+    "backend": "sail",
+    "status": "gap",
+    "error": "not yet asserted \u2014 needs a running notebook session",
+    "pointer": "38-framework-conformance.md#3-the-runtime-is-a-versioned-product-not-some-spark"
+  },
+  {
+    "id": "4",
+    "contract": "Write landing",
+    "backend": "sail",
+    "status": "gap",
+    "error": "live backends not yet recorded",
+    "pointer": "38-framework-conformance.md#4-a-success-claim-must-be-witnessed-by-the-artifact"
+  },
+  {
+    "id": "5",
+    "contract": "Concurrent isolation",
+    "backend": "sail",
+    "status": "gap",
+    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
+    "pointer": "38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case"
+  },
+  {
+    "id": "6",
+    "contract": "Rewrite fall-through",
+    "backend": "sail",
+    "status": "gap",
+    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
+    "pointer": "38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract"
+  },
+  {
+    "id": "7",
+    "contract": "Credential lifetime",
+    "backend": "sail",
+    "status": "gap",
+    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
+    "pointer": "38-framework-conformance.md#7-credentials-must-outlive-the-run"
+  }
+]

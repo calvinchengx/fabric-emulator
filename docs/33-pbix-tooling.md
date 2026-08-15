@@ -1,11 +1,13 @@
 # 33 — PBIX tooling: what can read one, what can write one
 
-**Status: Phase 0 and Phase 0b BOTH RUN and passed.** A `.pbix` built from this
-platform's own TMSL is opened by **Microsoft's Power BI Desktop**, which
+**Status: Phase 0, Phase 0b, and Phase 0c have all RUN.** A `.pbix` built from
+this platform's own TMSL is opened by **Microsoft's Power BI Desktop**, which
 evaluates the fixture DAX to bit-identical numbers — measured on a GitHub
-Windows runner, 5 runs out of 5. Nothing is adopted yet; what changed is that
-the ceiling on what can be claimed has moved, and one of the two documented
-blockers turned out not to exist.
+Windows runner, 5 runs out of 5. Phase 0c showed `msmdsrv` listens and accepts
+ADOMD with a shoestring parent PID; `EVALUATE ROW` needs a table. Desktop
+remains the oracle. Nothing is adopted as a headless gold source; what
+changed is that the ceiling on what can be claimed has moved, and one of the
+two documented blockers turned out not to exist.
 
 This exists because a belief in this project was wrong, in the direction that
 matters: a `.pbix` carrying a data model was recorded as not programmatically
@@ -205,6 +207,53 @@ for a human, and it is the one thing here no amount of running will settle.
 Also unmeasured: durability. Five runs on one afternoon against one Desktop
 build is a pass rate, not a trend. Desktop ships monthly, which is why the
 suite is scheduled weekly rather than run once and believed.
+
+## Phase 0c — RUN: msmdsrv listens; ROW needs a table
+
+Phase 0b proved the engine answers when Desktop hosts it. Phase 0c asked
+whether that hosting is required. It is not. `msmdsrv.exe` from the same
+install starts as a sidecar — an `ini`, a live parent PID, a port, no
+`PBIDesktop.exe` — and accepts ADOMD. Desktop remains the oracle; this is
+the engine host, not a new gold source.
+
+### Attempt 1 — refused at listen
+
+`PrivateProcess=0`, `InstanceVisible=1`, a four-line `ini`. The binary
+started, then exited 0 before anything bound the port. The log:
+"Microsoft Analysis Services evaluation period has expired"
+(`0xC1210000`). Run
+[31865593127](https://github.com/calvinchengx/fabric-emulator/actions/runs/31865593127).
+
+`PrivateProcess=0` is the opposite of the published recipe
+([SSAS-on-a-shoestring](https://github.com/akavalar/SSAS-on-a-shoestring)).
+Attempt 1 tested the wrong configuration.
+
+### Attempt 2 — sidecar is real; ROW needs a table
+
+Shoestring `ini`: `PrivateProcess` = a keeper process's PID,
+`InstanceVisible=0`. The probe ran before that process exited. Run
+[31866148921](https://github.com/calvinchengx/fabric-emulator/actions/runs/31866148921):
+
+```
+STAGE listen   :: OK localhost:55123
+STAGE connect  :: OK
+STAGE create   :: OK
+STAGE query    :: AdomdErrorResponseException ::
+                   DAX Evaluate queries work only on databases
+                   which have at least one table.
+```
+
+The engine listened. ADOMD attached. TMSL `createOrReplace` of an empty
+database succeeded. `EVALUATE ROW("x", 1)` was refused because the catalog
+had zero tables — a `DeploymentMode=2` rule, not a sidecar failure.
+
+What this does **not** establish: deploying `retail.bim`, answering
+real-model DAX, or surviving after the parent PID exits. The sidecar
+shape already shipped as #232: a keeper process, and `FABRIC_DAX_URL`
+pointed at the pump. Desktop remains the gold source.
+
+Same EULA caveat as Phase 0b. No `witnesses.json` row. Phases 1–2 are
+not reordered on this.
 
 ## Phases 1–2 — and Phase 0b reorders them
 

@@ -87,6 +87,8 @@ func (s *Service) register(mux *http.ServeMux, wrap func(handler) http.HandlerFu
 		mux.HandleFunc(method+" "+BasePath+rest, wrap(fn))
 	}
 	// --- type system -------------------------------------------------------
+	// --- lineage: DERIVED from Process inputs/outputs, never stored ---------
+	h("GET /atlas/v2/lineage/{guid}", s.getLineage)
 	h("GET /atlas/v2/types/typedefs", s.listTypeDefs)
 	h("POST /atlas/v2/types/typedefs", s.createTypeDefs)
 	h("PUT /atlas/v2/types/typedefs", s.updateTypeDefs)

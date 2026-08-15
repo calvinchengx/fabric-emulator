@@ -82,6 +82,14 @@ def test_the_actual_repo_passes():
     assert run() == 0
 
 
+def test_the_actual_repo_passes_strict():
+    """The matrix has landed, so --strict must pass on the real tree."""
+    cc.DOC = REPO / "docs" / "38-framework-conformance.md"
+    cc.MATRIX = REPO / "docs" / "conformance-matrix.md"
+    cc.WITNESSES = REPO / "docs" / "witnesses.json"
+    assert run(["--strict"]) == 0
+
+
 def test_the_actual_repo_defines_every_contract_it_promises():
     """Seven contracts, and none of them n/a everywhere."""
     cc.DOC = REPO / "docs" / "38-framework-conformance.md"

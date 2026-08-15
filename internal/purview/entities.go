@@ -450,6 +450,11 @@ func (s *Service) deleteEntityByUniqueAttr(w http.ResponseWriter, r *http.Reques
 // EntityStatus doc says so — "Deleted entities are not removed" — and a hard
 // delete would break the lineage and audit reads that later increments add.
 func (s *Service) softDelete(row *store.AtlasEntityRow) (*EntityMutationResponse, error) {
+	// Status must be set on the in-memory row BEFORE PutEntity rewrites the
+	// body: PutEntity persists e.Status, and leaving it ACTIVE here would
+	// undo SetEntityStatus. Lineage filters on the column, so that undo
+	// would keep a deleted Process in the graph.
+	row.Status = statusDeleted
 	if err := s.Store.SetEntityStatus(row.GUID, statusDeleted); err != nil {
 		return nil, err
 	}
@@ -463,7 +468,6 @@ func (s *Service) softDelete(row *store.AtlasEntityRow) (*EntityMutationResponse
 			}
 		}
 	}
-	row.Status = statusDeleted
 	return &EntityMutationResponse{MutatedEntities: map[string][]entityHeader{
 		opDelete: {headerOf(row, generic)},
 	}}, nil

@@ -43,7 +43,7 @@ not "the Linux row." See [Not GitHub-hosted runners](#not-github-hosted-runners)
 |---|---|---|---|
 | **macOS** | [UTM](https://github.com/utmapp/UTM) (or Parallels) on the **host**, not inside OrbStack | Install Windows in the guest, then Power BI Desktop or SSAS Developer. Desktop hosts `msmdsrv` as a child; the port is in `%LOCALAPPDATA%\Microsoft\Power BI Desktop*\*\Data\msmdsrv.port.txt` — the same file `e2e/pbix-desktop/desktop.ps1` already polls. Then `pwsh e2e/msmdsrv/start.ps1` | `FABRIC_DAX_URL=http://<guest-ip>:8080` from the Mac |
 | **Linux** | Docker **Engine on the metal** (or a VM that already has KVM) + [`dockur/windows`](https://github.com/dockur/windows) with `/dev/kvm` | Same guest install as Windows. Compose file: [`e2e/msmdsrv/docker-compose.yml`](../e2e/msmdsrv/docker-compose.yml). `make dax-linux` refuses unless `uname` is Linux **and** `/dev/kvm` exists. Pump still starts inside the guest | `FABRIC_DAX_URL=http://127.0.0.1:8080` (published port) |
-| **Windows** | Nothing. The kernel is already there | Desktop (the path `e2e/pbix-desktop` already runs in CI) or a later headless `msmdsrv` once [33](33-pbix-tooling.md) Phase 0c lands. Then `pwsh e2e/msmdsrv/start.ps1` | `FABRIC_DAX_URL=http://127.0.0.1:8080` |
+| **Windows** | Nothing. The kernel is already there | Desktop (the path `e2e/pbix-desktop` already runs in CI) plus `FABRIC_DAX_URL` (#232). Headless `msmdsrv` listens with a shoestring parent PID ([33](33-pbix-tooling.md) Phase 0c); `ROW` needs a table, so it is not a ready oracle. Then `pwsh e2e/msmdsrv/start.ps1` | `FABRIC_DAX_URL=http://127.0.0.1:8080` |
 
 `dockur/windows` is QEMU in a Linux container. It needs `/dev/kvm` passed
 in. Their own requirements are Linux+KVM or Docker Desktop on **Windows 11**
@@ -199,6 +199,12 @@ the open catalog. Opening a `.pbix` by hand remains valid; it is no longer
 required on a host that accepts TMSL (SSAS Developer, later headless
 `msmdsrv`).
 
+DATATABLE columns must set `sourceColumn` (the BIM `sourceColumn`, or the
+column name). Desktop rejects the omit. The pump also maps that refusal —
+and empty-partition errors — to 409 so a still-open `.pbix` stays queryable.
+If the named catalog is missing on Desktop's workspace instance, `/v1/dax`
+retries without `Initial Catalog=` and hits the open file.
+
 ### Phase 3 — grow the Go subset against the oracle
 
 Unchanged from [33](33-pbix-tooling.md): every new function is one Desktop
@@ -207,6 +213,13 @@ Linux laptop reaches that oracle without waiting for Monday's
 `windows-latest` job. Every-push CI on ubuntu/mac does **not** boot that
 VM; it replays the goldens against Go. That is what keeps those jobs
 honest: they test the engine those runners actually have.
+
+First pin: `ACOS` in
+[`e2e/semantic-model/fixtures/desktop_goldens.json`](../e2e/semantic-model/fixtures/desktop_goldens.json),
+captured on a UTM Windows 11 ARM guest + Desktop, replayed by
+`TestDesktopFunctionGoldens`. Clone that guest only while it is **stopped**
+(`utmctl clone` refuses a running VM). Do not treat the live oracle as
+disposable.
 
 ### Phase 4 — XMLA write-through (only if demanded)
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -35,6 +36,10 @@ func (a *API) registerEventstream(mux *http.ServeMux) {
 		a.withAuth(a.bindEventstreamDestination))
 	mux.HandleFunc("GET /v1/workspaces/{wid}/eventstreams/{iid}/destinations",
 		a.withAuth(a.listEventstreamDestinations))
+	mux.HandleFunc("POST /v1/workspaces/{wid}/eventstreams/{iid}/operators",
+		a.withAuth(a.bindEventstreamOperator))
+	mux.HandleFunc("GET /v1/workspaces/{wid}/eventstreams/{iid}/operators",
+		a.withAuth(a.listEventstreamOperators))
 }
 
 func eventstreamTopic(itemID, datasourceID string) string {
@@ -74,6 +79,9 @@ func (a *API) eventstreamProperties(it *store.Item) map[string]any {
 	if dests := loadEventstreamDestinations(stored); len(dests) > 0 {
 		props["destinations"] = dests
 	}
+	if ops := loadEventstreamOperators(stored); len(ops) > 0 {
+		props["operators"] = ops
+	}
 	return props
 }
 
@@ -81,6 +89,7 @@ type eventstreamDestination struct {
 	Type        string `json:"type"`
 	ItemID      string `json:"itemId"`
 	Table       string `json:"table"`
+	Database    string `json:"database,omitempty"`
 	WorkspaceID string `json:"workspaceId,omitempty"`
 }
 
@@ -134,11 +143,7 @@ func (a *API) bindEventstreamDestination(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	switch body.Type {
-	case "Eventhouse":
-		writeErr(w, http.StatusBadRequest, "EventstreamDestinationEventhouseNotSupported",
-			"An Eventhouse destination needs streaming ingest, which kustainer does not provide.")
-		return
-	case "Lakehouse", "Reflex":
+	case "Lakehouse", "Reflex", "Eventhouse":
 		// bound below
 	case "":
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "type is required.")
@@ -152,7 +157,8 @@ func (a *API) bindEventstreamDestination(w http.ResponseWriter, r *http.Request,
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "itemId is required.")
 		return
 	}
-	if body.Type == "Lakehouse" {
+	switch body.Type {
+	case "Lakehouse":
 		table := strings.TrimSpace(body.Table)
 		if table == "" || strings.Contains(table, "/") {
 			writeErr(w, http.StatusBadRequest, "InvalidRequest",
@@ -160,8 +166,19 @@ func (a *API) bindEventstreamDestination(w http.ResponseWriter, r *http.Request,
 			return
 		}
 		body.Table = table
-	} else {
+		body.Database = ""
+	case "Eventhouse":
+		table := strings.TrimSpace(body.Table)
+		if !kustoTableNameOK(table) {
+			writeErr(w, http.StatusBadRequest, "InvalidRequest",
+				"table must be a Kusto table name ([A-Za-z_][A-Za-z0-9_]*).")
+			return
+		}
+		body.Table = table
+		body.Database = strings.TrimSpace(body.Database)
+	default:
 		body.Table = ""
+		body.Database = ""
 	}
 	destWS := body.WorkspaceID
 	if destWS == "" {
@@ -276,15 +293,29 @@ func (a *API) produceEventstreamEvents(w http.ResponseWriter, r *http.Request, p
 			return
 		}
 	}
-	if err := a.drainEventstreamToLakehouse(it, stored, body); err != nil {
+	drained, err := applyEventstreamOperators(loadEventstreamOperators(stored), body.Events)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "EventstreamOperatorFailed", err.Error())
+		return
+	}
+	out := eventstreamEventBatch{Events: drained}
+	if err := a.drainEventstreamToLakehouse(it, stored, out); err != nil {
 		writeErr(w, http.StatusBadGateway, "EventstreamDestinationWriteFailed", err.Error())
 		return
 	}
-	if err := a.drainEventstreamToReflex(it, stored, body); err != nil {
+	if err := a.drainEventstreamToReflex(it, stored, out); err != nil {
 		writeErr(w, http.StatusBadGateway, "EventstreamDestinationReflexFailed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"produced": len(body.Events), "topic": topic})
+	if err := a.drainEventstreamToEventhouse(it, stored, out); err != nil {
+		writeErr(w, http.StatusBadGateway, "EventstreamDestinationEventhouseFailed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"produced": len(body.Events),
+		"drained":  len(drained),
+		"topic":    topic,
+	})
 }
 
 func (a *API) drainEventstreamToReflex(it *store.Item, stored map[string]string, body eventstreamEventBatch) error {
@@ -363,6 +394,153 @@ func (a *API) drainEventstreamToLakehouse(it *store.Item, stored map[string]stri
 		}
 	}
 	return nil
+}
+
+func (a *API) drainEventstreamToEventhouse(it *store.Item, stored map[string]string, body eventstreamEventBatch) error {
+	dests := loadEventstreamDestinations(stored)
+	for _, d := range dests {
+		if d.Type != "Eventhouse" {
+			continue
+		}
+		destWS := d.WorkspaceID
+		if destWS == "" {
+			destWS = it.WorkspaceID
+		}
+		eh, err := a.Store.GetItem(destWS, d.ItemID)
+		if err != nil {
+			return err
+		}
+		if eh.Type != "Eventhouse" {
+			return fmt.Errorf("destination item %s is not an Eventhouse", d.ItemID)
+		}
+		if a.KQLURL == nil {
+			return fmt.Errorf("no Kusto engine is attached: start the emulator with --kql-url (FABRIC_KQL_URL) pointing at one")
+		}
+		db, err := a.resolveKQLDatabase(destWS, eh.ID, d.Database)
+		if err != nil {
+			return err
+		}
+		tbl := eventsToDeltaTable(body)
+		if tbl == nil {
+			continue
+		}
+		engineDB := engineDatabaseName(db.ID)
+		ctx := context.Background()
+		if err := a.ensureKustoDatabase(ctx, engineDB); err != nil {
+			return err
+		}
+		if err := a.kustoIngestTable(ctx, engineDB, d.Table, tbl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *API) kustoIngestTable(ctx context.Context, engineDB, table string, tbl *warehouse.Table) error {
+	cols := make([]string, len(tbl.Columns))
+	types := make([]string, len(tbl.Columns))
+	for i, name := range tbl.Columns {
+		if !kustoTableNameOK(name) {
+			return fmt.Errorf("column %q is not a Kusto identifier", name)
+		}
+		cols[i] = name
+		for _, row := range tbl.Rows {
+			if i < len(row) {
+				types[i] = kustoWiden(types[i], row[i])
+			}
+		}
+		if types[i] == "" {
+			types[i] = "string"
+		}
+	}
+	var b strings.Builder
+	b.WriteString(".create-merge table ")
+	b.WriteString(table)
+	b.WriteString(" (")
+	for i, name := range cols {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(name)
+		b.WriteByte(':')
+		b.WriteString(types[i])
+	}
+	b.WriteByte(')')
+	if err := a.kustoMgmt(ctx, engineDB, b.String()); err != nil {
+		return err
+	}
+	var rows strings.Builder
+	rows.WriteString(".ingest inline into table ")
+	rows.WriteString(table)
+	rows.WriteString(" <|")
+	for _, row := range tbl.Rows {
+		rows.WriteByte('\n')
+		for i := range cols {
+			if i > 0 {
+				rows.WriteByte(',')
+			}
+			var cell any
+			if i < len(row) {
+				cell = row[i]
+			}
+			rows.WriteString(kustoCSV(cell))
+		}
+	}
+	return a.kustoMgmt(ctx, engineDB, rows.String())
+}
+
+func (a *API) kustoMgmt(ctx context.Context, engineDB, csl string) error {
+	status, payload, err := a.callKusto(ctx, "v1", "mgmt", kustoRequest{DB: engineDB, CSL: csl})
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("the Kusto engine returned %d: %s", status, truncate(payload))
+	}
+	return nil
+}
+
+func kustoTableNameOK(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		ok := r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
+			(i > 0 && r >= '0' && r <= '9')
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func kustoWiden(cur string, v any) string {
+	next := ""
+	switch v.(type) {
+	case nil:
+		return cur
+	case bool:
+		next = "bool"
+	case float64, float32, int, int32, int64:
+		next = "real"
+	default:
+		next = "string"
+	}
+	if cur == "" || cur == next {
+		return next
+	}
+	return "string"
+}
+
+func kustoCSV(v any) string {
+	if v == nil {
+		return ""
+	}
+	s := fmt.Sprint(v)
+	if strings.ContainsAny(s, ",\"\n\r") {
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	}
+	return s
 }
 
 func eventsToDeltaTable(body eventstreamEventBatch) *warehouse.Table {
