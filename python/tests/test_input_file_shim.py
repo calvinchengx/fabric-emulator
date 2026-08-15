@@ -80,7 +80,12 @@ class FakeDFBase:
     def toLocalIterator(self):  # noqa: N802 - PySpark's spelling
         return iter([tuple(self._cols)])
 
+    view_calls = None
+
     def createOrReplaceTempView(self, name):  # noqa: N802 - PySpark's spelling
+        calls = getattr(type(self), "view_calls", None)
+        if calls is not None:
+            calls.append((name, list(self._cols)))
         return f"{name}:{','.join(self._cols)}"
 
     def select(self, *args):
@@ -302,3 +307,103 @@ def test_a_single_file_read_carries_its_own_path(patched, monkeypatch):
     assert "part-0007.csv" in str(tagged_with[TAG]), "the tag must name the file, not the glob"
     if original_with_column is None:
         del FakeDF.withColumn
+
+
+def test_provenance_on_a_non_file_frame_names_the_shim(patched):
+    # docs/37 §3b: the behaviour stays a loud error. What changes is the
+    # message — a bare AnalysisException on an internal column name does not
+    # tell a notebook why provenance failed.
+    input_file, FakeDF = patched
+    from pyspark.sql import functions as F
+
+    with pytest.raises(input_file.InputFileNameError, match="never came from a file"):
+        FakeDF(["a", "b"]).select(F.input_file_name())
+
+
+def test_sql_rewrite_leaves_strings_and_comments_alone(patched):
+    # A blind replace would corrupt a query that merely mentions the name.
+    # That is worse than the honest gap (docs/37 §3a).
+    input_file, _ = patched
+    input_file.forget_tagged_views()
+    q = (
+        "SELECT 'input_file_name()' AS s, id FROM v "
+        "-- input_file_name()\n"
+        "/* input_file_name() */"
+    )
+    assert input_file.rewrite_sql_input_file_name(q) == q
+    assert input_file.sql_uses_input_file_name(q) is False
+
+
+def test_sql_rewrite_function_call_on_a_tagged_view(patched):
+    input_file, _ = patched
+    input_file.forget_tagged_views()
+    input_file.remember_tagged_view("landing", ["id", "name"])
+    out = input_file.rewrite_sql_input_file_name(
+        "SELECT input_file_name() AS src, id FROM landing"
+    )
+    assert input_file._TAG in out
+    assert "input_file_name()" not in out
+    assert input_file.shadow_view_name("landing") in out
+    assert "FROM landing" not in out
+
+
+def test_sql_rewrite_expands_star_so_the_tag_does_not_leak(patched):
+    # The shadow view still carries the tag. Expanding `*` to the columns the
+    # user can see keeps SELECT * from growing a bookkeeping column.
+    input_file, _ = patched
+    input_file.forget_tagged_views()
+    input_file.remember_tagged_view("landing", ["id", "name"])
+    out = input_file.rewrite_sql_input_file_name(
+        "SELECT *, input_file_name() FROM landing"
+    )
+    assert "id, name" in out
+    assert "count(*)" not in out
+    assert "*" not in out.replace(input_file._TAG, "")
+
+
+def test_sql_rewrite_refuses_an_untagged_relation(patched):
+    input_file, _ = patched
+    input_file.forget_tagged_views()
+    with pytest.raises(input_file.InputFileNameError, match="never came from a file"):
+        input_file.rewrite_sql_input_file_name(
+            "SELECT input_file_name() FROM not_a_file"
+        )
+
+
+def test_a_tagged_view_registers_a_shadow_that_keeps_the_tag(patched):
+    # SELECT * uses the clean view. SQL that asks for input_file_name() is
+    # rewritten onto the shadow, which is the only place the per-row path lives.
+    input_file, FakeDF = patched
+    input_file.forget_tagged_views()
+    FakeDF.view_calls = []
+    FakeDF(["id", "name", TAG]).createOrReplaceTempView("landing")
+    assert "landing" in input_file._TAGGED_VIEWS
+    names = [n for n, _ in FakeDF.view_calls]
+    assert "landing" in names
+    assert input_file.shadow_view_name("landing") in names
+    shadow_cols = dict(FakeDF.view_calls)[input_file.shadow_view_name("landing")]
+    assert TAG in shadow_cols
+    clean_cols = dict(FakeDF.view_calls)["landing"]
+    assert TAG not in clean_cols
+    FakeDF.view_calls = None
+
+
+def test_spark_sql_wrap_rewrites_before_the_engine_sees_the_text(patched, monkeypatch):
+    input_file, FakeDF = patched
+    input_file.forget_tagged_views()
+    input_file.remember_tagged_view("landing", ["id"])
+    seen = {}
+
+    class Spark:
+        read = type("R", (), {"csv": lambda self, path, *a, **k: FakeDF(["id"])})()
+
+        def sql(self, query, *a, **k):
+            seen["query"] = query
+            return FakeDF(["src"])
+
+    monkeypatch.setattr(input_file, "engine_has_input_file_name", lambda _s: False)
+    spark = Spark()
+    input_file.install(spark)
+    spark.sql("SELECT input_file_name() AS src FROM landing")
+    assert "input_file_name()" not in seen["query"]
+    assert input_file._TAG in seen["query"]
