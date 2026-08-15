@@ -166,9 +166,9 @@ func TestDAXErrorsAndEdges(t *testing.T) {
 		"SELECT 1",               // not EVALUATE
 		"EVALUATE 'NoSuchTable'", // unknown table
 		`EVALUATE SUMMARIZECOLUMNS('Time'[FiscalYear], "x", [NoMeasure])`, // unknown measure
-		"EVALUATE (",             // parse error
-		"EVALUATE 'Store' extra", // trailing tokens
-		`EVALUATE SUMMARIZECOLUMNS("v", SQRT(-1))`, // Desktop refuses negatives
+		"EVALUATE (",                                 // parse error
+		"EVALUATE 'Store' extra",                     // trailing tokens
+		`EVALUATE SUMMARIZECOLUMNS("v", SQRT(-1))`,   // Desktop refuses negatives
 		`EVALUATE SUMMARIZECOLUMNS("v", MOD(10, 0))`, // Desktop: division by zero
 	}
 	for _, q := range bad {
