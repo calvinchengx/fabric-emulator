@@ -1,5 +1,5 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. ABS(-2.5)/ABS(0)/ABS(3) and ROUND half-away-from-zero (ROUND(-1.5,0)=-2, unlike Go math.Round) pinned live the same day. Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. DEGREES/RADIANS pinned live (BLANK stays BLANK). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-9,
   "probes": [
@@ -74,6 +74,228 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(1234, -2))",
       "column": "[v]",
       "want": 1200
+    },
+    {
+      "name": "LOG(10)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG(10))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "LOG(100)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG(100))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "LOG(8, 2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG(8, 2))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "LOG(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG(1))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "LOG10(100)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG10(100))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "LOG10(10)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG10(10))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "LOG10(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG10(1))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "SIGN(5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(5))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "SIGN(-5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(-5))",
+      "column": "[v]",
+      "want": -1
+    },
+    {
+      "name": "SIGN(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "SIGN(-0.1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(-0.1))",
+      "column": "[v]",
+      "want": -1
+    },
+    {
+      "name": "SIGN(0.1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(0.1))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "ASIN(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ASIN(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "ASIN(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ASIN(1))",
+      "column": "[v]",
+      "want": 1.5707963267948966
+    },
+    {
+      "name": "ASIN(-1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ASIN(-1))",
+      "column": "[v]",
+      "want": -1.5707963267948966
+    },
+    {
+      "name": "ASIN(0.5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ASIN(0.5))",
+      "column": "[v]",
+      "want": 0.5235987755982989
+    },
+    {
+      "name": "ATAN(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ATAN(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "ATAN(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ATAN(1))",
+      "column": "[v]",
+      "want": 0.7853981633974483
+    },
+    {
+      "name": "ATAN(-1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ATAN(-1))",
+      "column": "[v]",
+      "want": -0.7853981633974483
+    },
+    {
+      "name": "PI()",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", PI())",
+      "column": "[v]",
+      "want": 3.141592653589793
+    },
+    {
+      "name": "SIN(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIN(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "COS(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", COS(0))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "TAN(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", TAN(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "SIN(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIN(1))",
+      "column": "[v]",
+      "want": 0.8414709848078965
+    },
+    {
+      "name": "COS(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", COS(1))",
+      "column": "[v]",
+      "want": 0.5403023058681397
+    },
+    {
+      "name": "TAN(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", TAN(1))",
+      "column": "[v]",
+      "want": 1.5574077246549023
+    },
+    {
+      "name": "SIN(2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIN(2))",
+      "column": "[v]",
+      "want": 0.9092974268256817
+    },
+    {
+      "name": "SIN(PI()/2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIN(PI()/2))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "SIN(-PI()/2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIN(-PI()/2))",
+      "column": "[v]",
+      "want": -1
+    },
+    {
+      "name": "DEGREES(PI())",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DEGREES(PI()))",
+      "column": "[v]",
+      "want": 180
+    },
+    {
+      "name": "DEGREES(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DEGREES(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "DEGREES(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DEGREES(1))",
+      "column": "[v]",
+      "want": 57.29577951308232
+    },
+    {
+      "name": "DEGREES(-PI())",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DEGREES(-PI()))",
+      "column": "[v]",
+      "want": -180
+    },
+    {
+      "name": "RADIANS(180)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", RADIANS(180))",
+      "column": "[v]",
+      "want": 3.141592653589793
+    },
+    {
+      "name": "RADIANS(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", RADIANS(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "RADIANS(90)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", RADIANS(90))",
+      "column": "[v]",
+      "want": 1.5707963267948966
+    },
+    {
+      "name": "RADIANS(-180)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", RADIANS(-180))",
+      "column": "[v]",
+      "want": -3.141592653589793
     }
   ]
 }
