@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Hit the DAX pump in front of a live Desktop msmdsrv, and diff the rows.
 
-This is the pump witness (docs/52 Phase 1–2). e2e/pbix-desktop already proves
+This is the pump witness (docs/52 Phase 1-2). e2e/pbix-desktop already proves
 ADOMD against Desktop; this file proves the HTTP front the emulator actually
-calls. It does not start fabric-emulator — the Go relay is unit-tested against
+calls. It does not start fabric-emulator - the Go relay is unit-tested against
 a mock pump. What only Windows can show is that /v1/dax returns Desktop's
 numbers.
 
