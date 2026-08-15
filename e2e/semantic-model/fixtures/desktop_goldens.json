@@ -1,5 +1,5 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). ABS/ROUND/SWITCH pinned live the same day (SWITCH first-match + else; BLANK equals only BLANK). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). ABS/ROUND/SWITCH pinned live the same day (SWITCH first-match + else; BLANK equals only BLANK). SIGN pinned live (BLANK stays BLANK). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-09,
   "probes": [
@@ -146,6 +146,36 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(1.0, 1, 10, 99))",
       "column": "[v]",
       "want": 10
+    },
+    {
+      "name": "SIGN(5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(5))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "SIGN(-5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(-5))",
+      "column": "[v]",
+      "want": -1
+    },
+    {
+      "name": "SIGN(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "SIGN(-0.1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(-0.1))",
+      "column": "[v]",
+      "want": -1
+    },
+    {
+      "name": "SIGN(0.1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SIGN(0.1))",
+      "column": "[v]",
+      "want": 1
     }
   ]
 }
