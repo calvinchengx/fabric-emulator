@@ -1,5 +1,5 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). SQRT and MOD pinned live (MOD(-10,3)=2, not Go math.Mod; MOD by 0 errors). SIGN pinned live (BLANK stays BLANK). ASIN/ATAN pinned live (BLANK stays BLANK). PI/SIN/COS/TAN pinned live (COS(BLANK())=1; SIN/TAN BLANK stays BLANK). DEGREES/RADIANS pinned live (BLANK stays BLANK). DATE/YEAR/MONTH/DAY pinned live (two-digit year window 0-30→2000s; month/day overflow). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). ABS(-2.5)/ABS(0)/ABS(3), ROUND half-away-from-zero (ROUND(-1.5,0)=-2, unlike Go math.Round), and INT floor toward −∞ (INT(-2.1)=-3, unlike Go int() truncate-toward-zero) pinned live the same day. SQRT and MOD pinned live (MOD(-10,3)=2, not Go math.Mod; MOD by 0 errors). SIGN pinned live (BLANK stays BLANK). ASIN/ATAN pinned live (BLANK stays BLANK). PI/SIN/COS/TAN pinned live (COS(BLANK())=1; SIN/TAN BLANK stays BLANK). DEGREES/RADIANS pinned live (BLANK stays BLANK). DATE/YEAR/MONTH/DAY pinned live (two-digit year window 0-30→2000s; month/day overflow). TIME/HOUR/MINUTE/SECOND pinned live (modulo 24h wrap; BLANK parts are 0). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-09,
   "probes": [
@@ -116,6 +116,48 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LOG10(1))",
       "column": "[v]",
       "want": 0
+    },
+    {
+      "name": "INT(2.9)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(2.9))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "INT(2.1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(2.1))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "INT(-2.9)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(-2.9))",
+      "column": "[v]",
+      "want": -3
+    },
+    {
+      "name": "INT(-2.1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(-2.1))",
+      "column": "[v]",
+      "want": -3
+    },
+    {
+      "name": "INT(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "INT(-0.1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(-0.1))",
+      "column": "[v]",
+      "want": -1
+    },
+    {
+      "name": "INT(2.0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(2.0))",
+      "column": "[v]",
+      "want": 2
     },
     {
       "name": "SQRT(9)",
@@ -458,6 +500,78 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(DATE(2024.9, 8, 15)))",
       "column": "[v]",
       "want": 2025
+    },
+    {
+      "name": "HOUR(TIME(12, 30, 45))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", HOUR(TIME(12, 30, 45)))",
+      "column": "[v]",
+      "want": 12
+    },
+    {
+      "name": "MINUTE(TIME(12, 30, 45))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MINUTE(TIME(12, 30, 45)))",
+      "column": "[v]",
+      "want": 30
+    },
+    {
+      "name": "SECOND(TIME(12, 30, 45))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SECOND(TIME(12, 30, 45)))",
+      "column": "[v]",
+      "want": 45
+    },
+    {
+      "name": "HOUR(TIME(0, 0, 0))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", HOUR(TIME(0, 0, 0)))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "HOUR(TIME(25, 0, 0))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", HOUR(TIME(25, 0, 0)))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "HOUR(TIME(24, 0, 0))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", HOUR(TIME(24, 0, 0)))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "MINUTE(TIME(0, 90, 0))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MINUTE(TIME(0, 90, 0)))",
+      "column": "[v]",
+      "want": 30
+    },
+    {
+      "name": "SECOND(TIME(0, 0, 90))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SECOND(TIME(0, 0, 90)))",
+      "column": "[v]",
+      "want": 30
+    },
+    {
+      "name": "HOUR(DATE(2024, 8, 15))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", HOUR(DATE(2024, 8, 15)))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "HOUR(TIME(12.9, 0, 0))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", HOUR(TIME(12.9, 0, 0)))",
+      "column": "[v]",
+      "want": 13
+    },
+    {
+      "name": "MINUTE(TIME(0, 30.9, 0))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MINUTE(TIME(0, 30.9, 0)))",
+      "column": "[v]",
+      "want": 31
+    },
+    {
+      "name": "SECOND(TIME(0, 0, 45.9))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SECOND(TIME(0, 0, 45.9)))",
+      "column": "[v]",
+      "want": 46
     }
   ]
 }
