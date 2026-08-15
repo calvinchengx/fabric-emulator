@@ -1,0 +1,113 @@
+# Contract 4 on the JVM overlay: the every-push "emulator composed over JVM"
+# docs/38 asked for. Same live.py as Sail; the engine is classic Spark 3.5.5
+# (docker-compose.spark-jvm.yml: spark-runtime image, SPARK_REMOTE unset,
+# spark-submit agent.py 8099). No Sail. fabric still drives the agent.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.7.0}
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: ""
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
+    networks:
+      default:
+        aliases:
+          - onelake.dfs.fabric.microsoft.com
+          - api.fabric.microsoft.com
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  spark-agent:
+    build:
+      context: ../..
+      dockerfile: docker/spark-runtime/Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      # Classic in-process session. Compose merges env maps, so this must be
+      # absent — not an empty string — or the agent stays a Connect client
+      # with nowhere to connect (there is no Sail in this stack).
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      FABRIC_API_URL: "http://fabric-emulator"
+      ENTRA_FABRIC_SCOPE: "https://api.fabric.microsoft.com/.default"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+    volumes:
+      - ../../python/spark_agent:/opt/spark/work-dir:ro
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - local[2]
+      # Delta 3.2 checks these on the session spark-submit creates. agent.py
+      # applies the same pair via jvmconf; both places, because getOrCreate()
+      # will not retrofit an already-built session.
+      - --conf
+      - spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+      - --conf
+      - spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+      - --conf
+      - spark.hadoop.fs.azure.always.use.https=false
+      - --conf
+      - spark.hadoop.fs.azure.account.auth.type.onelake.dfs.fabric.microsoft.com=Custom
+      - --conf
+      - spark.hadoop.fs.azure.account.oauth.provider.type.onelake.dfs.fabric.microsoft.com=com.calvinchengx.fabricemu.EntraTokenProvider
+      - --conf
+      - spark.hadoop.fs.azure.emu.token.endpoint=http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token
+      - --conf
+      - spark.hadoop.fs.azure.emu.client.id=00d88624-f0d7-46f6-a641-6232c2608928
+      - --conf
+      - spark.hadoop.fs.azure.emu.client.secret=daemon-app-secret
+      - --conf
+      - spark.hadoop.fs.azure.emu.scope=https://storage.azure.com/.default
+      - /opt/spark/work-dir/agent.py
+      - "8099"
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  client:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: runtime }
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+      spark-agent:
+        condition: service_healthy
+    environment:
+      BACKEND: jvm
+    volumes:
+      - .:/conformance:ro
+      - ./out:/conformance/out
+    command: python /conformance/live.py

@@ -1,37 +1,42 @@
 #!/usr/bin/env python3
 """Record framework-conformance results and generate the committed matrix.
 
-    ./run.py                 record every backend (offline gaps) and rewrite
-                             docs/conformance-matrix.md
-    ./run.py --backend sail  record one backend; rewrite the matrix from all
-                             three committed JSON files
+    ./run.py                 rewrite docs/conformance-matrix.md from the
+                             committed out/*.json (no compose, no go test)
+    ./run.py --backend sail --live
+                             run that backend, record contract 4, rewrite
+                             the matrix from all three JSON files
     ./run.py --check         fail if the generated matrix differs from what
-                             is committed (CI mode)
+                             is committed (CI mode; no compose)
 
 Modelled on e2e/engine-matrix/run.py: the matrix is generated, never edited
 by hand, so a cell cannot drift from the JSON that produced it. A ❌ is
 allowed — the kit lands before every contract passes — but check_conformance.py
 refuses one without a pointer.
 
-Live backends are not started here. Contract 4's assertion (writer ≠ reader)
-is in probes.py and is unit-tested; wiring compose is the next change. Until
-then every required/control cell is a known gap with a pointer into docs/38.
+`--live` is what makes contract 4 real: sail/jvm write through RunNotebook
+and a DFS listing confirms; warehouse writes through emulator TDS and a
+fresh connection SELECTs. Without --live the committed JSON is left alone,
+so a laptop render cannot overwrite a CI-recorded pass with an offline gap.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 DIR = Path(__file__).resolve().parent
+REPO = DIR.parent.parent
 OUT = DIR / "out"
-MATRIX = DIR.parent.parent / "docs" / "conformance-matrix.md"
+MATRIX = REPO / "docs" / "conformance-matrix.md"
 
 # Imported after DIR so `python e2e/conformance/run.py` works from the repo
 # root without installing a package.
 sys.path.insert(0, str(DIR))
-from probes import BACKENDS, record  # noqa: E402
+from probes import BACKENDS, CONTRACTS, Result, record  # noqa: E402
 
 
 def cell(result: dict | None) -> str:
@@ -79,9 +84,10 @@ def render() -> str:
         "`ci:conformance-warehouse`. The contracts themselves are defined in",
         "[38-framework-conformance.md](38-framework-conformance.md).",
         "",
-        "Contract 4 (write landing) is the first asserted row: the harness",
-        "refuses a writer that confirms its own write. Live backends have not",
-        "yet recorded a pass; the cell stays ❌ until they do.",
+        "Contract 4 (write landing) is the first live row: a write through the",
+        "emulator path, confirmed by a reader that is not the engine that wrote.",
+        "A ✅ here is that out-of-band listing (or a fresh TDS SELECT), not the",
+        "writer's own catalog.",
         "",
         "| # | Contract | sail | jvm | warehouse |",
         "|---|---|---|---|---|",
@@ -98,24 +104,94 @@ def render() -> str:
     return "\n".join(lines)
 
 
-def write_backend(backend: str) -> None:
+def write_backend(backend: str, rows: list[dict]) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / f"{backend}.json"
-    path.write_text(json.dumps(record(backend), indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {path}", flush=True)
+
+
+def ensure_out_writable() -> None:
+    """Make `out/` writable by whatever uid the client container runs as.
+
+    Copied from e2e/engine-matrix/run.py: the bind-mounted `out/` is owned by
+    the checkout user, and an existing tracked file is 644. chmod the
+    directory *and* the files, or a container that is not the checkout uid
+    dies on truncate after the measuring is done.
+    """
+    OUT.mkdir(parents=True, exist_ok=True)
+    os.chmod(OUT, 0o777)
+    for existing in OUT.glob("*.json"):
+        os.chmod(existing, 0o666)
+
+
+def run_compose(backend: str) -> int:
+    compose = ["docker", "compose", "-f", str(DIR / f"docker-compose.{backend}.yml")]
+    ensure_out_writable()
+    print(f"==> live write-landing on {backend}", flush=True)
+    try:
+        result = subprocess.run(
+            compose + ["up", "--build", "--abort-on-container-exit",
+                       "--exit-code-from", "client"],
+            cwd=DIR)
+        if result.returncode != 0:
+            subprocess.run(compose + ["logs", "fabric-emulator", "spark-agent", "client"],
+                           cwd=DIR)
+        return result.returncode
+    finally:
+        subprocess.run(compose + ["down", "-v"], cwd=DIR,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def run_warehouse_live() -> int:
+    """CREATE+INSERT through emulator TDS; SELECT on a fresh connection."""
+    title = CONTRACTS[3][1]
+    pointer = CONTRACTS[3][2]
+    # -v so a skip prints `--- SKIP:` — without it `go test` exits 0 and
+    # looks like a pass, which is a writer-confirmed nothing.
+    cmd = ["go", "test", "./internal/server/",
+           "-run", "TestConformanceWriteLanding",
+           "-count=1", "-timeout", "120s", "-v"]
+    print("==> live write-landing on warehouse", flush=True)
+    proc = subprocess.run(cmd, cwd=REPO, text=True, capture_output=True)
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
+    skipped = "--- SKIP:" in proc.stdout or "--- SKIP:" in proc.stderr
+    if proc.returncode == 0 and not skipped:
+        result = Result(id="4", contract=title, backend="warehouse", status="pass")
+        code = 0
+    else:
+        error = ("go test skipped — set WAREHOUSE_MSSQL_DSN"
+                 if skipped else f"go test exited {proc.returncode}")
+        result = Result(
+            id="4", contract=title, backend="warehouse", status="fail",
+            error=error, pointer=pointer)
+        code = proc.returncode or 1
+    write_backend("warehouse", record("warehouse", live_write=lambda: result))
+    return code
+
+
+def run_live(backend: str) -> int:
+    if backend == "warehouse":
+        return run_warehouse_live()
+    return run_compose(backend)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--backend", choices=BACKENDS)
+    ap.add_argument("--live", action="store_true",
+                    help="run the backend and record contract 4 out of band")
     ap.add_argument("--check", action="store_true",
                     help="fail if the generated matrix differs from the committed one")
     args = ap.parse_args()
 
-    if not args.check:
+    if args.live and not args.check:
         for backend in ([args.backend] if args.backend else BACKENDS):
-            write_backend(backend)
+            code = run_live(backend)
+            if code != 0:
+                return code
 
     generated = render()
     if args.check:

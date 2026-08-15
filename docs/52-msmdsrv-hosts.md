@@ -218,9 +218,9 @@ Pins so far, in
 [`e2e/semantic-model/fixtures/desktop_goldens.json`](../e2e/semantic-model/fixtures/desktop_goldens.json),
 replayed by `TestDesktopFunctionGoldens`: `ACOS`, then `ABS` (BLANK stays
 BLANK), then `ROUND` (half away from zero; BLANK number stays BLANK,
-BLANK digits count as 0), then `SQRT` (BLANK stays BLANK; negative
-errors), then `MOD` (`n - d * INT(n/d)`; BLANK n is BLANK; d = 0 errors).
-Captured on a UTM Windows 11 ARM guest + Desktop.
+BLANK digits count as 0), then `LOG` / `LOG10` (default `LOG` base is 10;
+BLANK/`<=0` and `LOG` base `1`/`<=0` error), then `SQRT` (BLANK stays BLANK; negative
+errors), then `MOD` (`n - d * INT(n/d)`; BLANK n is BLANK; d = 0 errors). Captured on a UTM Windows 11 ARM guest + Desktop.
 Clone that guest only while it is **stopped** (`utmctl clone` refuses a
 running VM). Do not treat the live oracle as disposable.
 
