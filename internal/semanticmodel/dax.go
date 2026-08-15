@@ -6,11 +6,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, `DEGREES`, `RADIANS`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, `DEGREES`, `RADIANS`, `DATE`, `YEAR`, `MONTH`, `DAY`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -1117,8 +1118,89 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return f * math.Pi / 180, nil
+	case "DATE":
+		if len(fc.args) != 3 {
+			return nil, fmt.Errorf("DATE expects 3 arguments")
+		}
+		yv, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		mv, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		dv, err := e.scalar(fc.args[2])
+		if err != nil {
+			return nil, err
+		}
+		// BLANK year/month coerce to 0 (year 0 → 2000; month 0 overflows).
+		// BLANK day becomes 0 and errors — Desktop DATE(2024, 1, BLANK()) errors.
+		y, err := arithNum(yv, "DATE")
+		if err != nil {
+			return nil, err
+		}
+		m, err := arithNum(mv, "DATE")
+		if err != nil {
+			return nil, err
+		}
+		d, err := arithNum(dv, "DATE")
+		if err != nil {
+			return nil, err
+		}
+		return daxDate(y, m, d)
+	case "YEAR":
+		return e.datePart(fc, "YEAR", func(t time.Time) float64 { return float64(t.Year()) })
+	case "MONTH":
+		return e.datePart(fc, "MONTH", func(t time.Time) float64 { return float64(t.Month()) })
+	case "DAY":
+		return e.datePart(fc, "DAY", func(t time.Time) float64 { return float64(t.Day()) })
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
+}
+
+func (e *evalr) datePart(fc funcCall, fn string, part func(time.Time) float64) (any, error) {
+	if len(fc.args) != 1 {
+		return nil, fmt.Errorf("%s expects 1 argument", fn)
+	}
+	a, err := e.scalar(fc.args[0])
+	if err != nil {
+		return nil, err
+	}
+	// Desktop YEAR/MONTH/DAY(BLANK()) is BLANK.
+	if a == nil {
+		return nil, nil
+	}
+	t, ok := a.(time.Time)
+	if !ok {
+		return nil, fmt.Errorf("%s expects a date", fn)
+	}
+	return part(t), nil
+}
+
+// daxDate is Excel/DAX DATE: parts round half-away-from-zero; month/day overflow
+// (DATE(2024,13,1)=2025-01-01, DATE(2024,1,32)=2024-02-01); day <= 0 errors.
+// Two-digit years: 0–30 → 2000–2030, 31–99 → 1931–1999. Negative years add 1900
+// (DATE(-1,1,1) is 1899). DATE(100,1,1) stays year 100.
+func daxDate(y, m, d float64) (time.Time, error) {
+	di := roundHalfAwayInt(d)
+	if di <= 0 {
+		return time.Time{}, fmt.Errorf("DATE day must be > 0")
+	}
+	return time.Date(daxDateYear(roundHalfAwayInt(y)), time.Month(roundHalfAwayInt(m)), di, 0, 0, 0, 0, time.UTC), nil
+}
+
+func daxDateYear(y int) int {
+	switch {
+	case y >= 0 && y <= 30:
+		return y + 2000
+	case y >= 31 && y <= 99:
+		return y + 1900
+	case y < 0:
+		return y + 1900
+	default:
+		return y
+	}
 }
 
 // daxRound is Excel/DAX ROUND: half away from zero (ROUND(-1.5, 0) = -2),
