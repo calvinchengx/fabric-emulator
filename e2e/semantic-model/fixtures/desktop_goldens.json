@@ -1,7 +1,7 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. TIME/HOUR/MINUTE/SECOND pinned live (modulo 24h wrap; BLANK parts are 0). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. Batch pin: INT, SWITCH, DISTINCTCOUNT, MAX, MIN, AVERAGE, COUNT, POWER, SQRT, MOD, FLOOR, CEILING, LN, EXP, WEEKDAY, WEEKNUM, EOMONTH, EDATE, TRUNC, QUOTIENT, BLANK, ISBLANK. ATAN2 is not a DAX function. Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
-  "toleranceRel": 1e-9,
+  "toleranceRel": 1e-09,
   "probes": [
     {
       "name": "ACOS(0.5)",
@@ -470,6 +470,426 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SECOND(TIME(0, 0, 45.9)))",
       "column": "[v]",
       "want": 46
+    },
+    {
+      "name": "INT(2.9)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(2.9))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "INT(-2.1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(-2.1))",
+      "column": "[v]",
+      "want": -3
+    },
+    {
+      "name": "INT(-0.1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(-0.1))",
+      "column": "[v]",
+      "want": -1
+    },
+    {
+      "name": "INT(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", INT(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "SWITCH(1, 1, 10, 2, 20, 99)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(1, 1, 10, 2, 20, 99))",
+      "column": "[v]",
+      "want": 10
+    },
+    {
+      "name": "SWITCH(2, 1, 10, 2, 20, 99)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(2, 1, 10, 2, 20, 99))",
+      "column": "[v]",
+      "want": 20
+    },
+    {
+      "name": "SWITCH(3, 1, 10, 2, 20, 99)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(3, 1, 10, 2, 20, 99))",
+      "column": "[v]",
+      "want": 99
+    },
+    {
+      "name": "SWITCH(0, BLANK(), 10, 99)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(0, BLANK(), 10, 99))",
+      "column": "[v]",
+      "want": 99
+    },
+    {
+      "name": "DISTINCTCOUNT(Sales[Units])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DISTINCTCOUNT(Sales[Units]))",
+      "column": "[v]",
+      "want": 4
+    },
+    {
+      "name": "DISTINCTCOUNT(Store[Territory])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DISTINCTCOUNT('Store'[Territory]))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "MAX(Sales[Units])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MAX(Sales[Units]))",
+      "column": "[v]",
+      "want": 40000
+    },
+    {
+      "name": "MIN(Sales[Units])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MIN(Sales[Units]))",
+      "column": "[v]",
+      "want": 30000
+    },
+    {
+      "name": "AVERAGE(Sales[Units])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", AVERAGE(Sales[Units]))",
+      "column": "[v]",
+      "want": 34375
+    },
+    {
+      "name": "COUNT(Sales[Units])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", COUNT(Sales[Units]))",
+      "column": "[v]",
+      "want": 8
+    },
+    {
+      "name": "COUNT(Store[Territory])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", COUNT('Store'[Territory]))",
+      "column": "[v]",
+      "want": 4
+    },
+    {
+      "name": "POWER(2, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", POWER(2, 3))",
+      "column": "[v]",
+      "want": 8
+    },
+    {
+      "name": "POWER(9, 0.5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", POWER(9, 0.5))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "POWER(10, 0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", POWER(10, 0))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "SQRT(9)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SQRT(9))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "SQRT(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SQRT(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "SQRT(2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SQRT(2))",
+      "column": "[v]",
+      "want": 1.4142135623730951
+    },
+    {
+      "name": "MOD(10, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(10, 3))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "MOD(-10, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(-10, 3))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "MOD(10, -3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(10, -3))",
+      "column": "[v]",
+      "want": -2
+    },
+    {
+      "name": "MOD(-10, -3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(-10, -3))",
+      "column": "[v]",
+      "want": -1
+    },
+    {
+      "name": "FLOOR(10.5, 1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", FLOOR(10.5, 1))",
+      "column": "[v]",
+      "want": 10
+    },
+    {
+      "name": "FLOOR(-2.5, 1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", FLOOR(-2.5, 1))",
+      "column": "[v]",
+      "want": -3
+    },
+    {
+      "name": "FLOOR(-2.5, -1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", FLOOR(-2.5, -1))",
+      "column": "[v]",
+      "want": -2
+    },
+    {
+      "name": "CEILING(10.5, 1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", CEILING(10.5, 1))",
+      "column": "[v]",
+      "want": 11
+    },
+    {
+      "name": "CEILING(-2.5, 1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", CEILING(-2.5, 1))",
+      "column": "[v]",
+      "want": -2
+    },
+    {
+      "name": "CEILING(-2.5, -1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", CEILING(-2.5, -1))",
+      "column": "[v]",
+      "want": -3
+    },
+    {
+      "name": "CEILING(10.5, 0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", CEILING(10.5, 0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "LN(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LN(1))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "LN(10)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LN(10))",
+      "column": "[v]",
+      "want": 2.302585092994046
+    },
+    {
+      "name": "EXP(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", EXP(0))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "EXP(1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", EXP(1))",
+      "column": "[v]",
+      "want": 2.7182818284590455
+    },
+    {
+      "name": "WEEKDAY(DATE(2024, 8, 15))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", WEEKDAY(DATE(2024, 8, 15)))",
+      "column": "[v]",
+      "want": 5
+    },
+    {
+      "name": "WEEKDAY(DATE(2024, 8, 15), 2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", WEEKDAY(DATE(2024, 8, 15), 2))",
+      "column": "[v]",
+      "want": 4
+    },
+    {
+      "name": "WEEKDAY(DATE(2024, 8, 15), 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", WEEKDAY(DATE(2024, 8, 15), 3))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "WEEKDAY(DATE(2024, 8, 18))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", WEEKDAY(DATE(2024, 8, 18)))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "WEEKDAY(DATE(2024, 8, 19))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", WEEKDAY(DATE(2024, 8, 19)))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "WEEKNUM(DATE(2024, 1, 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", WEEKNUM(DATE(2024, 1, 1)))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "WEEKNUM(DATE(2024, 1, 7))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", WEEKNUM(DATE(2024, 1, 7)))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "WEEKNUM(DATE(2024, 8, 15))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", WEEKNUM(DATE(2024, 8, 15)))",
+      "column": "[v]",
+      "want": 33
+    },
+    {
+      "name": "WEEKNUM(DATE(2024, 8, 15), 2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", WEEKNUM(DATE(2024, 8, 15), 2))",
+      "column": "[v]",
+      "want": 33
+    },
+    {
+      "name": "WEEKNUM(DATE(2024, 8, 15), 21)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", WEEKNUM(DATE(2024, 8, 15), 21))",
+      "column": "[v]",
+      "want": 33
+    },
+    {
+      "name": "DAY(EOMONTH(DATE(2024, 1, 15), 0))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DAY(EOMONTH(DATE(2024, 1, 15), 0)))",
+      "column": "[v]",
+      "want": 31
+    },
+    {
+      "name": "DAY(EOMONTH(DATE(2024, 1, 15), 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DAY(EOMONTH(DATE(2024, 1, 15), 1)))",
+      "column": "[v]",
+      "want": 29
+    },
+    {
+      "name": "MONTH(EOMONTH(DATE(2024, 1, 15), 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MONTH(EOMONTH(DATE(2024, 1, 15), 1)))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "DAY(EOMONTH(DATE(2024, 2, 1), 0))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DAY(EOMONTH(DATE(2024, 2, 1), 0)))",
+      "column": "[v]",
+      "want": 29
+    },
+    {
+      "name": "DAY(EOMONTH(DATE(2023, 2, 1), 0))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DAY(EOMONTH(DATE(2023, 2, 1), 0)))",
+      "column": "[v]",
+      "want": 28
+    },
+    {
+      "name": "MONTH(EOMONTH(DATE(2024, 1, 15), -1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MONTH(EOMONTH(DATE(2024, 1, 15), -1)))",
+      "column": "[v]",
+      "want": 12
+    },
+    {
+      "name": "MONTH(EDATE(DATE(2024, 1, 15), 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MONTH(EDATE(DATE(2024, 1, 15), 1)))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "DAY(EDATE(DATE(2024, 1, 15), 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DAY(EDATE(DATE(2024, 1, 15), 1)))",
+      "column": "[v]",
+      "want": 15
+    },
+    {
+      "name": "YEAR(EDATE(DATE(2024, 1, 15), 12))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", YEAR(EDATE(DATE(2024, 1, 15), 12)))",
+      "column": "[v]",
+      "want": 2025
+    },
+    {
+      "name": "MONTH(EDATE(DATE(2024, 1, 31), 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MONTH(EDATE(DATE(2024, 1, 31), 1)))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "DAY(EDATE(DATE(2024, 1, 31), 1))",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DAY(EDATE(DATE(2024, 1, 31), 1)))",
+      "column": "[v]",
+      "want": 29
+    },
+    {
+      "name": "TRUNC(2.9)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", TRUNC(2.9))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "TRUNC(-2.9)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", TRUNC(-2.9))",
+      "column": "[v]",
+      "want": -2
+    },
+    {
+      "name": "TRUNC(2.19, 1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", TRUNC(2.19, 1))",
+      "column": "[v]",
+      "want": 2.1
+    },
+    {
+      "name": "TRUNC(-2.19, 1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", TRUNC(-2.19, 1))",
+      "column": "[v]",
+      "want": -2.1
+    },
+    {
+      "name": "TRUNC(123.456, 2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", TRUNC(123.456, 2))",
+      "column": "[v]",
+      "want": 123.45
+    },
+    {
+      "name": "TRUNC(1234, -2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", TRUNC(1234, -2))",
+      "column": "[v]",
+      "want": 1200
+    },
+    {
+      "name": "QUOTIENT(10, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", QUOTIENT(10, 3))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "QUOTIENT(-10, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", QUOTIENT(-10, 3))",
+      "column": "[v]",
+      "want": -3
+    },
+    {
+      "name": "QUOTIENT(10, -3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", QUOTIENT(10, -3))",
+      "column": "[v]",
+      "want": -3
+    },
+    {
+      "name": "QUOTIENT(-10, -3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", QUOTIENT(-10, -3))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "IF(ISBLANK(BLANK()), 1, 0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", IF(ISBLANK(BLANK()), 1, 0))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "IF(ISBLANK(0), 1, 0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", IF(ISBLANK(0), 1, 0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "IF(ISBLANK(1), 1, 0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", IF(ISBLANK(1), 1, 0))",
+      "column": "[v]",
+      "want": 0
     }
   ]
 }

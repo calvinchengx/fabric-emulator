@@ -227,8 +227,14 @@ angle errors), then `DEGREES` / `RADIANS` (BLANK stays BLANK), then
 `DATE` / `YEAR` / `MONTH` / `DAY` (two-digit years 0–30 → 2000s, 31–99 →
 1900s; month/day overflow; day `<=0` errors; `YEAR(BLANK())` is BLANK),
 then `TIME` / `HOUR` / `MINUTE` / `SECOND` (wraps modulo 24h; BLANK parts
-are 0; negative total errors). Captured on a UTM Windows 11 ARM guest +
-Desktop.
+are 0; negative total errors), then the Phase 3 batch: `INT` (floor toward
+−∞), `SWITCH` (BLANK equals only BLANK), `DISTINCTCOUNT` / `MAX` / `MIN` /
+`AVERAGE` / `COUNT` (COUNT includes text), `POWER` (`0^0` errors), `SQRT`,
+`MOD` (`MOD(-10,3)=2`), `FLOOR` / `CEILING` (`CEILING(n,0)=0`), `LN`, `EXP`,
+`WEEKDAY` / `WEEKNUM`, `EOMONTH` / `EDATE`, `TRUNC` (toward zero),
+`QUOTIENT` (toward zero; BLANK divisor errors), `BLANK` / `ISBLANK`
+(`ISBLANK("")` is false). `ATAN2` is not a DAX function. Captured on a
+UTM Windows 11 ARM guest + Desktop.
 Clone that guest only while it is **stopped** (`utmctl clone` refuses a
 running VM). Do not treat the live oracle as disposable.
 

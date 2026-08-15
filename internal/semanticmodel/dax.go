@@ -11,7 +11,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, `DEGREES`, `RADIANS`, `DATE`, `YEAR`, `MONTH`, `DAY`, `TIME`, `HOUR`, `MINUTE`, `SECOND`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `INT`, `SWITCH`, `DISTINCTCOUNT`, `MAX`, `MIN`, `AVERAGE`, `COUNT`, `POWER`, `SQRT`, `MOD`, `FLOOR`, `CEILING`, `LN`, `EXP`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, `DEGREES`, `RADIANS`, `DATE`, `YEAR`, `MONTH`, `DAY`, `TIME`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `WEEKNUM`, `EOMONTH`, `EDATE`, `TRUNC`, `QUOTIENT`, `BLANK`, `ISBLANK`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -850,6 +850,87 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return float64(len(e.activeRows(tbl))), nil
+	case "DISTINCTCOUNT":
+		if len(fc.args) < 1 {
+			return nil, fmt.Errorf("DISTINCTCOUNT expects a column reference")
+		}
+		col, ok := fc.args[0].(columnRef)
+		if !ok {
+			return nil, fmt.Errorf("DISTINCTCOUNT expects a column reference")
+		}
+		tbl, err := e.resolveColumn("DISTINCTCOUNT", col)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		for _, r := range e.activeRows(tbl) {
+			v := r[col.col]
+			if v == nil || isBlankText(v) {
+				continue // BLANK is not a distinct value
+			}
+			seen[distinctKey(v)] = true
+		}
+		return float64(len(seen)), nil
+	case "MAX":
+		return e.minmax(fc, "MAX", 1)
+	case "MIN":
+		return e.minmax(fc, "MIN", -1)
+	case "AVERAGE":
+		if len(fc.args) < 1 {
+			return nil, fmt.Errorf("AVERAGE expects a column reference")
+		}
+		col, ok := fc.args[0].(columnRef)
+		if !ok {
+			return nil, fmt.Errorf("AVERAGE expects a column reference")
+		}
+		tbl, err := e.resolveColumn("AVERAGE", col)
+		if err != nil {
+			return nil, err
+		}
+		var (
+			sum float64
+			n   int
+		)
+		for _, r := range e.activeRows(tbl) {
+			v := r[col.col]
+			if v == nil || isBlankText(v) {
+				continue
+			}
+			f, ok := asNumber(v)
+			if !ok {
+				return nil, fmt.Errorf("cannot average %s[%s]: the value %q is not a number",
+					tbl, col.col, fmt.Sprint(v))
+			}
+			sum += f
+			n++
+		}
+		if n == 0 {
+			return nil, nil
+		}
+		return sum / float64(n), nil
+	case "COUNT":
+		if len(fc.args) < 1 {
+			return nil, fmt.Errorf("COUNT expects a column reference")
+		}
+		col, ok := fc.args[0].(columnRef)
+		if !ok {
+			return nil, fmt.Errorf("COUNT expects a column reference")
+		}
+		tbl, err := e.resolveColumn("COUNT", col)
+		if err != nil {
+			return nil, err
+		}
+		var n int
+		for _, r := range e.activeRows(tbl) {
+			v := r[col.col]
+			if v == nil || isBlankText(v) {
+				continue
+			}
+			n++
+		}
+		// Desktop COUNT counts non-blank text as well as numbers
+		// (COUNT('Store'[Territory]) = 4). Empty set is 0, not BLANK.
+		return float64(n), nil
 	case "SELECTEDVALUE":
 		return e.selectedValue(fc)
 	case "ACOS":
@@ -1191,6 +1272,352 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		return e.datePart(fc, "MINUTE", func(t time.Time) float64 { return float64(t.Minute()) })
 	case "SECOND":
 		return e.datePart(fc, "SECOND", func(t time.Time) float64 { return float64(t.Second()) })
+	case "INT":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("INT expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil // INT(BLANK) is BLANK
+		}
+		f, err := arithNum(a, "INT")
+		if err != nil {
+			return nil, err
+		}
+		// Excel/DAX INT floors toward −∞ (INT(-2.1) = -3), not truncate toward 0.
+		return math.Floor(f), nil
+	case "SWITCH":
+		return e.evalSwitch(fc)
+	case "POWER":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("POWER expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// POWER(BLANK, n) is BLANK. POWER(n, BLANK) is n^0 = 1.
+		if a == nil {
+			return nil, nil
+		}
+		base, err := arithNum(a, "POWER")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		exp, err := arithNum(b, "POWER")
+		if err != nil {
+			return nil, err
+		}
+		if base == 0 && exp == 0 {
+			return nil, fmt.Errorf("POWER(0, 0) is undefined")
+		}
+		out := math.Pow(base, exp)
+		if math.IsNaN(out) || math.IsInf(out, 0) {
+			return nil, fmt.Errorf("POWER result is not a number")
+		}
+		return out, nil
+	case "SQRT":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("SQRT expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil // SQRT(BLANK) is BLANK
+		}
+		f, err := arithNum(a, "SQRT")
+		if err != nil {
+			return nil, err
+		}
+		if f < 0 {
+			return nil, fmt.Errorf("SQRT argument must be >= 0")
+		}
+		return math.Sqrt(f), nil
+	case "MOD":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("MOD expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil // MOD(BLANK, d) is BLANK
+		}
+		n, err := arithNum(a, "MOD")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		d, err := arithNum(b, "MOD")
+		if err != nil {
+			return nil, err
+		}
+		if d == 0 {
+			return nil, fmt.Errorf("MOD division by zero")
+		}
+		// n - d * INT(n/d). Go math.Mod(-10, 3) = -1; Desktop MOD(-10, 3) = 2.
+		return n - d*math.Floor(n/d), nil
+	case "FLOOR":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("FLOOR expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil
+		}
+		n, err := arithNum(a, "FLOOR")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		s, err := arithNum(b, "FLOOR")
+		if err != nil {
+			return nil, err
+		}
+		if s == 0 {
+			return nil, fmt.Errorf("FLOOR division by zero")
+		}
+		return s * math.Floor(n/s), nil
+	case "CEILING":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("CEILING expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil
+		}
+		n, err := arithNum(a, "CEILING")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		s, err := arithNum(b, "CEILING")
+		if err != nil {
+			return nil, err
+		}
+		// Desktop CEILING(10.5, 0) = 0. FLOOR(10.5, 0) errors.
+		if s == 0 {
+			return 0.0, nil
+		}
+		return s * math.Ceil(n/s), nil
+	case "LN":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("LN expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		f, err := arithNum(a, "LN")
+		if err != nil {
+			return nil, err
+		}
+		if f <= 0 {
+			return nil, fmt.Errorf("LN argument must be > 0")
+		}
+		return math.Log(f), nil
+	case "EXP":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("EXP expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		f, err := arithNum(a, "EXP")
+		if err != nil {
+			return nil, err
+		}
+		out := math.Exp(f)
+		if math.IsNaN(out) || math.IsInf(out, 0) {
+			return nil, fmt.Errorf("EXP result is not a number")
+		}
+		return out, nil
+	case "WEEKDAY":
+		t, err := e.dateArg(fc, "WEEKDAY")
+		if err != nil {
+			return nil, err
+		}
+		if t == nil {
+			return nil, nil
+		}
+		rt := 1
+		if len(fc.args) == 2 {
+			rv, err := e.scalar(fc.args[1])
+			if err != nil {
+				return nil, err
+			}
+			rf, err := arithNum(rv, "WEEKDAY")
+			if err != nil {
+				return nil, err
+			}
+			rt = roundHalfAwayInt(rf)
+		}
+		return daxWeekday(*t, rt)
+	case "WEEKNUM":
+		t, err := e.dateArg(fc, "WEEKNUM")
+		if err != nil {
+			return nil, err
+		}
+		if t == nil {
+			return nil, nil
+		}
+		rt := 1
+		if len(fc.args) == 2 {
+			rv, err := e.scalar(fc.args[1])
+			if err != nil {
+				return nil, err
+			}
+			rf, err := arithNum(rv, "WEEKNUM")
+			if err != nil {
+				return nil, err
+			}
+			rt = roundHalfAwayInt(rf)
+		}
+		return daxWeeknum(*t, rt)
+	case "EOMONTH":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("EOMONTH expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil
+		}
+		t, ok := a.(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("EOMONTH expects a date")
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		months, err := arithNum(b, "EOMONTH")
+		if err != nil {
+			return nil, err
+		}
+		return daxEomonth(t, roundHalfAwayInt(months)), nil
+	case "EDATE":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("EDATE expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil
+		}
+		t, ok := a.(time.Time)
+		if !ok {
+			return nil, fmt.Errorf("EDATE expects a date")
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		months, err := arithNum(b, "EDATE")
+		if err != nil {
+			return nil, err
+		}
+		return daxEdate(t, roundHalfAwayInt(months)), nil
+	case "TRUNC":
+		if len(fc.args) < 1 || len(fc.args) > 2 {
+			return nil, fmt.Errorf("TRUNC expects 1 or 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil
+		}
+		n, err := arithNum(a, "TRUNC")
+		if err != nil {
+			return nil, err
+		}
+		digits := 0.0
+		if len(fc.args) == 2 {
+			b, err := e.scalar(fc.args[1])
+			if err != nil {
+				return nil, err
+			}
+			digits, err = arithNum(b, "TRUNC")
+			if err != nil {
+				return nil, err
+			}
+		}
+		return daxTrunc(n, roundHalfAwayInt(digits)), nil
+	case "QUOTIENT":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("QUOTIENT expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil // QUOTIENT(BLANK, n) is BLANK
+		}
+		n, err := arithNum(a, "QUOTIENT")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		d, err := arithNum(b, "QUOTIENT")
+		if err != nil {
+			return nil, err
+		}
+		if d == 0 {
+			return nil, fmt.Errorf("QUOTIENT division by zero")
+		}
+		// Toward zero, unlike INT/FLOOR. QUOTIENT(-10, 3) = -3.
+		return float64(int(n / d)), nil
+	case "BLANK":
+		if len(fc.args) != 0 {
+			return nil, fmt.Errorf("BLANK expects 0 arguments")
+		}
+		return nil, nil
+	case "ISBLANK":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("ISBLANK expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop ISBLANK("") is false. Only true BLANK (nil) is blank.
+		return a == nil, nil
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
@@ -1212,6 +1639,165 @@ func (e *evalr) datePart(fc funcCall, fn string, part func(time.Time) float64) (
 		return nil, fmt.Errorf("%s expects a date", fn)
 	}
 	return part(t), nil
+}
+
+func (e *evalr) dateArg(fc funcCall, fn string) (*time.Time, error) {
+	if len(fc.args) < 1 || len(fc.args) > 2 {
+		return nil, fmt.Errorf("%s expects 1 or 2 arguments", fn)
+	}
+	a, err := e.scalar(fc.args[0])
+	if err != nil {
+		return nil, err
+	}
+	if a == nil {
+		return nil, nil
+	}
+	t, ok := a.(time.Time)
+	if !ok {
+		return nil, fmt.Errorf("%s expects a date", fn)
+	}
+	return &t, nil
+}
+
+func (e *evalr) minmax(fc funcCall, fn string, dir int) (any, error) {
+	if len(fc.args) < 1 {
+		return nil, fmt.Errorf("%s expects a column reference", fn)
+	}
+	col, ok := fc.args[0].(columnRef)
+	if !ok {
+		return nil, fmt.Errorf("%s expects a column reference", fn)
+	}
+	tbl, err := e.resolveColumn(fn, col)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		have bool
+		best any
+	)
+	for _, r := range e.activeRows(tbl) {
+		v := r[col.col]
+		if v == nil || isBlankText(v) {
+			continue
+		}
+		if !have || daxCmp(v, best)*dir > 0 {
+			best = v
+			have = true
+		}
+	}
+	if !have {
+		return nil, nil
+	}
+	return best, nil
+}
+
+func (e *evalr) evalSwitch(fc funcCall) (any, error) {
+	if len(fc.args) < 2 {
+		return nil, fmt.Errorf("SWITCH expects an expression and at least one result")
+	}
+	expr, err := e.scalar(fc.args[0])
+	if err != nil {
+		return nil, err
+	}
+	rest := fc.args[1:]
+	var elseExpr scalarExpr
+	if len(rest)%2 == 1 {
+		elseExpr = rest[len(rest)-1]
+		rest = rest[:len(rest)-1]
+	}
+	for i := 0; i+1 < len(rest); i += 2 {
+		v, err := e.scalar(rest[i])
+		if err != nil {
+			return nil, err
+		}
+		if switchEq(expr, v) {
+			return e.scalar(rest[i+1])
+		}
+	}
+	if elseExpr != nil {
+		return e.scalar(elseExpr)
+	}
+	return nil, nil
+}
+
+func switchEq(l, r any) bool {
+	if l == nil || r == nil {
+		return l == nil && r == nil
+	}
+	return daxCmp(l, r) == 0
+}
+
+func distinctKey(v any) string {
+	if f, ok := numeric(v); ok {
+		return "n:" + strconv.FormatFloat(f, 'g', -1, 64)
+	}
+	return "s:" + dstr(v)
+}
+
+func daxWeekday(t time.Time, returnType int) (float64, error) {
+	wd := int(t.Weekday()) // 0=Sunday
+	switch returnType {
+	case 1:
+		return float64(wd + 1), nil // Sunday=1
+	case 2:
+		if wd == 0 {
+			return 7, nil
+		}
+		return float64(wd), nil // Monday=1, Sunday=7
+	case 3:
+		if wd == 0 {
+			return 6, nil
+		}
+		return float64(wd - 1), nil // Monday=0, Sunday=6
+	default:
+		return 0, fmt.Errorf("WEEKDAY return_type must be 1, 2, or 3")
+	}
+}
+
+func daxWeeknum(t time.Time, returnType int) (float64, error) {
+	switch returnType {
+	case 1:
+		return float64(weeknumFrom(t, time.Sunday)), nil
+	case 2:
+		return float64(weeknumFrom(t, time.Monday)), nil
+	case 21:
+		_, w := t.ISOWeek()
+		return float64(w), nil
+	default:
+		return 0, fmt.Errorf("WEEKNUM return_type not supported")
+	}
+}
+
+func weeknumFrom(t time.Time, startDay time.Weekday) int {
+	jan1 := time.Date(t.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
+	back := (int(jan1.Weekday()) - int(startDay) + 7) % 7
+	start := jan1.AddDate(0, 0, -back)
+	days := int(t.Sub(start).Hours() / 24)
+	return days/7 + 1
+}
+
+func daxEomonth(t time.Time, months int) time.Time {
+	first := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return first.AddDate(0, months+1, 0).AddDate(0, 0, -1)
+}
+
+func daxEdate(t time.Time, months int) time.Time {
+	y, m, d := t.Date()
+	target := time.Date(y, m, 1, 0, 0, 0, 0, time.UTC).AddDate(0, months, 0)
+	last := time.Date(target.Year(), target.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	if d > last {
+		d = last
+	}
+	return time.Date(target.Year(), target.Month(), d, 0, 0, 0, 0, time.UTC)
+}
+
+func daxTrunc(n float64, digits int) float64 {
+	p := math.Pow(10, float64(digits))
+	x := n * p
+	if x >= 0 {
+		return math.Floor(x) / p
+	}
+	return math.Ceil(x) / p
 }
 
 // daxDate is Excel/DAX DATE: parts round half-away-from-zero; month/day overflow
