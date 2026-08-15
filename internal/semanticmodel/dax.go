@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `SWITCH`, `SIGN`, `ASIN`, `ATAN`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `SWITCH`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -1028,6 +1028,64 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return math.Atan(f), nil
+	case "PI":
+		if len(fc.args) != 0 {
+			return nil, fmt.Errorf("PI expects 0 arguments")
+		}
+		return math.Pi, nil
+	case "SIN":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("SIN expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop SIN(BLANK()) is BLANK. arithNum would make SIN(0)=0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "SIN")
+		if err != nil {
+			return nil, err
+		}
+		return math.Sin(f), nil
+	case "COS":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("COS expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop COS(BLANK()) = 1 — BLANK coerces to 0. Do not return BLANK.
+		f, err := arithNum(a, "COS")
+		if err != nil {
+			return nil, err
+		}
+		return math.Cos(f), nil
+	case "TAN":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("TAN expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop TAN(BLANK()) is BLANK. arithNum would make TAN(0)=0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "TAN")
+		if err != nil {
+			return nil, err
+		}
+		out := math.Tan(f)
+		// Desktop TAN(PI()/2) is "Division by zero", not a huge IEEE finite.
+		if math.IsNaN(out) || math.IsInf(out, 0) {
+			return nil, fmt.Errorf("TAN division by zero")
+		}
+		return out, nil
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
