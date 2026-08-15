@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `INT`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `INT`, `SIGN`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -985,6 +985,30 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		// toward zero. Desktop 2026-08-15 agrees.
 		return math.Floor(f), nil
 
+	case "SIGN":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("SIGN expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop SIGN(BLANK()) is BLANK. arithNum would make 0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "SIGN")
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case f > 0:
+			return 1.0, nil
+		case f < 0:
+			return -1.0, nil
+		default:
+			return 0.0, nil
+		}
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
