@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `INT`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -911,6 +911,26 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return daxRound(n, digits), nil
+	case "INT":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("INT expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// DAX INT(BLANK) is BLANK. arithNum/asNumber treat nil as 0, which
+		// would return 0 — wrong. Check before coercing.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "INT")
+		if err != nil {
+			return nil, err
+		}
+		// Excel/DAX INT floors toward −∞ (INT(-2.1) = -3), not truncate
+		// toward zero. Desktop 2026-08-15 agrees.
+		return math.Floor(f), nil
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
