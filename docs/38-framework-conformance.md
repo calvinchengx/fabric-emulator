@@ -1,6 +1,10 @@
 # 38 — Framework conformance: what a Fabric product assumes, and how to test it
 
-**Status: the findings are landed, the kit that would have found them is not.**
+**Status: the kit has landed; contract 4 is the first asserted row.** Live
+backends have not yet recorded a pass — those cells are ❌ with a pointer,
+which is how this document said the kit would merge. The offline half
+(`docs/conformance-matrix.md`, `check_conformance.py --strict`, the three
+`ci:conformance-*` jobs) is what `make check` enforces.
 This document generalises a class of defect the emulator kept shipping: contracts
 that real Fabric *frameworks* depend on, which no amount of reading Microsoft's
 REST reference reveals, because they are not in the REST surface at all. They
@@ -165,7 +169,10 @@ the compute surface, not of one launcher.
 
 ## The conformance kit
 
-**Status: not built.** Items 1–7 are individually tractable. The reason they
+**Status: built.** The harness, the committed matrix, and the offline
+checker are in tree. Items 1–7 are still individually tractable; contract 4
+is the first row whose assertion shape is executable. Live backends are the
+next change. The reason they
 existed for months is that nothing exercised them, and that is the gap worth
 closing first — a new framework will find a new one next week otherwise.
 

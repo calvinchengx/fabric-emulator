@@ -1212,5 +1212,14 @@
       "go:TestDeletedNameIsHeldOnlyWhenAWindowIsConfigured",
       "go:TestTheReservationExpires"
     ]
+  },
+  "framework-conformance-runtime-contracts": {
+    "section": "Runtime contracts (`docs/38`)",
+    "claim": "Framework conformance kit — write landing first",
+    "witnesses": [
+      "ci:conformance-sail",
+      "ci:conformance-jvm",
+      "ci:conformance-warehouse"
+    ]
   }
 }

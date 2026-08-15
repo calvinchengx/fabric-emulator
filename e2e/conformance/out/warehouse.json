@@ -1,0 +1,58 @@
+[
+  {
+    "id": "1",
+    "contract": "Context chain",
+    "backend": "warehouse",
+    "status": "na",
+    "error": "",
+    "pointer": ""
+  },
+  {
+    "id": "2",
+    "contract": "Signature shape",
+    "backend": "warehouse",
+    "status": "na",
+    "error": "",
+    "pointer": ""
+  },
+  {
+    "id": "3",
+    "contract": "Runtime floor",
+    "backend": "warehouse",
+    "status": "na",
+    "error": "",
+    "pointer": ""
+  },
+  {
+    "id": "4",
+    "contract": "Write landing",
+    "backend": "warehouse",
+    "status": "gap",
+    "error": "live backends not yet recorded",
+    "pointer": "38-framework-conformance.md#4-a-success-claim-must-be-witnessed-by-the-artifact"
+  },
+  {
+    "id": "5",
+    "contract": "Concurrent isolation",
+    "backend": "warehouse",
+    "status": "gap",
+    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
+    "pointer": "38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case"
+  },
+  {
+    "id": "6",
+    "contract": "Rewrite fall-through",
+    "backend": "warehouse",
+    "status": "gap",
+    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
+    "pointer": "38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract"
+  },
+  {
+    "id": "7",
+    "contract": "Credential lifetime",
+    "backend": "warehouse",
+    "status": "gap",
+    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
+    "pointer": "38-framework-conformance.md#7-credentials-must-outlive-the-run"
+  }
+]
