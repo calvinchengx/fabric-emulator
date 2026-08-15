@@ -1,10 +1,11 @@
 # 38 — Framework conformance: what a Fabric product assumes, and how to test it
 
-**Status: the kit has landed; contract 4 is the first asserted row.** Live
-backends have not yet recorded a pass — those cells are ❌ with a pointer,
-which is how this document said the kit would merge. The offline half
-(`docs/conformance-matrix.md`, `check_conformance.py --strict`, the three
-`ci:conformance-*` jobs) is what `make check` enforces.
+**Status: live write-landing is wired.** Contract 4 cells are ✅ when CI
+records them — a write through the emulator path, confirmed out of band
+(OneLake DFS on sail/jvm; a fresh TDS connection on warehouse). The engine
+that wrote is never the one that confirms. Contracts 1–3 and 5–7 stay
+known gaps. The offline half (`docs/conformance-matrix.md`,
+`check_conformance.py --strict`) still gates `make check`.
 This document generalises a class of defect the emulator kept shipping: contracts
 that real Fabric *frameworks* depend on, which no amount of reading Microsoft's
 REST reference reveals, because they are not in the REST surface at all. They
@@ -169,12 +170,13 @@ the compute surface, not of one launcher.
 
 ## The conformance kit
 
-**Status: built.** The harness, the committed matrix, and the offline
-checker are in tree. Items 1–7 are still individually tractable; contract 4
-is the first row whose assertion shape is executable. Live backends are the
-next change. The reason they
-existed for months is that nothing exercised them, and that is the gap worth
-closing first — a new framework will find a new one next week otherwise.
+**Status: built, and contract 4 is live.** The harness, the committed
+matrix, and the offline checker are in tree. Sail, JVM, and warehouse each
+write through the emulator path and an out-of-band reader confirms the
+artifact. Items 1–3 and 5–7 are still individually tractable. The reason
+they existed for months is that nothing exercised them, and that is the
+gap worth closing first — a new framework will find a new one next week
+otherwise.
 
 ### What it is
 
@@ -334,15 +336,15 @@ tests what already works cannot tell you what a new consumer will hit.
 
 ### Size
 
-**M.** No engine work and no research risk: it is notebooks, assertions, and one
-CI job. The value is entirely in items 1, 4 and 5, which are the three that
-produced false greens rather than loud failures.
+**M.** No engine work and no research risk: it is notebooks, assertions, and
+three CI jobs. The value is entirely in items 1, 4 and 5, which are the three
+that produced false greens rather than loud failures.
 
-**Start with contract 4 (write landing) on all three backends.** It is the one
+**Contract 4 (write landing) is wired on all three backends.** It is the one
 that produced silent wrong answers rather than loud failures, and it is the only
-row where the out-of-band verification pattern has to be got exactly right. Once
-that harness exists, 5 and 6 are the same harness with different notebooks, and
-1–3 are cheap assertions inside a session that is already running.
+row where the out-of-band verification pattern has to be got exactly right. 5
+and 6 are the same harness with different notebooks, and 1–3 are cheap
+assertions inside a session that is already running.
 
 ### Why not extend the medallion examples instead
 

@@ -25,10 +25,17 @@ import traceback
 from contextlib import contextmanager, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import jvmconf  # no Spark; JVM session configs (see jvmconf.py)
 from pyspark.sql import SparkSession
 
 _b = SparkSession.builder.appName("livy-agent")
-spark = (_b.remote(os.environ["SPARK_REMOTE"]) if os.environ.get("SPARK_REMOTE") else _b).getOrCreate()
+if os.environ.get("SPARK_REMOTE"):
+    spark = _b.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
+else:
+    # Classic JVM: Delta + OneLake ABFS must be on the session that created
+    # it. Without the extension, saveAsTable dies on
+    # DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG.
+    spark = jvmconf.configure(_b, os.environ).getOrCreate()
 def apply_connect_confs():
     """Sail reports this limit as "3GB"; pyspark 4.2's createDataFrame does
     int() on it. Overriding with an integer restores local-relation support for

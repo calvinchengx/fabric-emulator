@@ -13,16 +13,17 @@ Witnesses: `ci:conformance-sail`, `ci:conformance-jvm`,
 `ci:conformance-warehouse`. The contracts themselves are defined in
 [38-framework-conformance.md](38-framework-conformance.md).
 
-Contract 4 (write landing) is the first asserted row: the harness
-refuses a writer that confirms its own write. Live backends have not
-yet recorded a pass; the cell stays ❌ until they do.
+Contract 4 (write landing) is the first live row: a write through the
+emulator path, confirmed by a reader that is not the engine that wrote.
+A ✅ here is that out-of-band listing (or a fresh TDS SELECT), not the
+writer's own catalog.
 
 | # | Contract | sail | jvm | warehouse |
 |---|---|---|---|---|
 | 1 | Context chain | ❌ not yet asserted — needs a running notebook session ([§1](38-framework-conformance.md#1-session-context-is-a-control-plane-contract-not-an-environment-variable)) | ❌ not yet asserted — needs a running notebook session ([§1](38-framework-conformance.md#1-session-context-is-a-control-plane-contract-not-an-environment-variable)) | — |
 | 2 | Signature shape | ❌ not yet asserted — needs a running notebook session ([§2](38-framework-conformance.md#2-the-api-shape-is-the-contract-independent-of-behaviour)) | ❌ not yet asserted — needs a running notebook session ([§2](38-framework-conformance.md#2-the-api-shape-is-the-contract-independent-of-behaviour)) | — |
 | 3 | Runtime floor | ❌ not yet asserted — needs a running notebook session ([§3](38-framework-conformance.md#3-the-runtime-is-a-versioned-product-not-some-spark)) | ❌ not yet asserted — needs a running notebook session ([§3](38-framework-conformance.md#3-the-runtime-is-a-versioned-product-not-some-spark)) | — |
-| 4 | Write landing | ❌ live backends not yet recorded ([§4](38-framework-conformance.md#4-a-success-claim-must-be-witnessed-by-the-artifact)) | ❌ live backends not yet recorded ([§4](38-framework-conformance.md#4-a-success-claim-must-be-witnessed-by-the-artifact)) | ❌ live backends not yet recorded ([§4](38-framework-conformance.md#4-a-success-claim-must-be-witnessed-by-the-artifact)) |
+| 4 | Write landing | ✅ | ✅ | ✅ |
 | 5 | Concurrent isolation | ❌ not yet asserted — same harness as write landing, different notebooks ([§5](38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§5](38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§5](38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case)) |
 | 6 | Rewrite fall-through | ❌ not yet asserted — same harness as write landing, different notebooks ([§6](38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§6](38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§6](38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract)) |
 | 7 | Credential lifetime | ❌ not yet asserted — same harness as write landing, different notebooks ([§7](38-framework-conformance.md#7-credentials-must-outlive-the-run)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§7](38-framework-conformance.md#7-credentials-must-outlive-the-run)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§7](38-framework-conformance.md#7-credentials-must-outlive-the-run)) |
