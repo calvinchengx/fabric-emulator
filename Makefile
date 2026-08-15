@@ -72,7 +72,7 @@ endif
 PY ?= $(shell if command -v uv >/dev/null 2>&1; then echo "uv run --frozen --no-sync python"; \
 	else for c in python3 python py; do if "$$c" -c '' >/dev/null 2>&1; then echo "$$c"; break; fi; done; fi)
 
-.PHONY: help doctor up up-lite up-jupyter up-jvm up-eventstream down restart clean status status-spark spark logs ps seed test check lint
+.PHONY: help doctor up up-lite up-jupyter up-jvm up-eventstream dax-linux down restart clean status status-spark spark logs ps seed test check lint
 
 help: ## Show the available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -96,6 +96,11 @@ up-jvm: ## Swap the default Sail engine for JVM Spark (RDD, streaming sinks, JVM
 
 up-eventstream: ## Sail (default) + Kafka broker for Eventstream notebook API
 	docker compose --profile eventstream -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.eventstream.yml up -d
+
+dax-linux: ## Linux+KVM only: dockur/windows for an msmdsrv guest (docs/52)
+	@test "$$(uname -s)" = Linux || { echo "dax-linux is Linux/KVM only. On macOS use UTM; on Windows run Desktop on the host. See docs/52-msmdsrv-hosts.md" >&2; exit 1; }
+	@test -e /dev/kvm || { echo "dax-linux needs /dev/kvm. Use Docker Engine on the metal, not Docker Desktop / OrbStack / Rancher Desktop on a Mac. See docs/52-msmdsrv-hosts.md" >&2; exit 1; }
+	docker compose -f e2e/msmdsrv/docker-compose.yml up -d
 
 down: ## Stop and remove containers (volumes SURVIVE)
 	$(COMPOSE) down

@@ -1,0 +1,53 @@
+# Linux + Docker Engine + /dev/kvm on the METAL ONLY.
+#
+# This file is not a family profile. `make up` never loads it. It is not
+# a GitHub `ubuntu-latest` job — that runner is already a VM, nested
+# Windows is unsupported as CI, and first boot installs a full guest.
+# OrbStack, Rancher Desktop, and Docker Desktop on macOS do not pass
+# /dev/kvm into containers; `make dax-linux` refuses those hosts.
+# See docs/52-msmdsrv-hosts.md.
+#
+#   make dax-linux
+#   # or:
+#   docker compose -f e2e/msmdsrv/docker-compose.yml up
+#
+# After Windows installs, install Power BI Desktop (or SSAS Developer) inside
+# the guest, open a .pbix, and run the pump there:
+#
+#   pwsh e2e/msmdsrv/start.ps1
+#
+# 8080 is published so the Linux host can reach that pump. Compose does not
+# start the pump — it has to run inside the guest. Point the emulator at it:
+#
+#   FABRIC_DAX_URL=http://127.0.0.1:8080
+#
+# Image tag is unpinned until the first Linux witness; pin a digest then,
+# same as kafka / kustainer.
+services:
+  windows:
+    image: dockurr/windows
+    container_name: fabric-msmdsrv-windows
+    environment:
+      VERSION: "11"
+      RAM_SIZE: "8G"
+      CPU_CORES: "4"
+      # User-mode fallback (no /dev/net/tun): still forward the pump.
+      # Default KVM+tun networking forwards published ports without this.
+      USER_PORTS: "8080"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 8006:8006
+      - 3389:3389/tcp
+      - 3389:3389/udp
+      - 8080:8080
+    volumes:
+      - msmdsrv-windows:/storage
+    stop_grace_period: 2m
+    restart: unless-stopped
+
+volumes:
+  msmdsrv-windows:

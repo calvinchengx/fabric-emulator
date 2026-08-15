@@ -17,6 +17,7 @@ end to end. Come back here when you need to change something.
 | …plus KQL (Eventhouse) | add `--profile rti` | 13 | +4 GB | +4 GB |
 | …plus a shell in the Flow view | add `--profile terminal` | 14 | +5 MB | +5 MB |
 | Spark features Sail lacks (RDD, JVM UDFs) | `make up-jvm` | 6 | ~1 GB | 10 GB |
+| full DAX against `msmdsrv` (optional oracle) | a machine you own — [52](52-msmdsrv-hosts.md) | +Windows guest | — | **8–16 GB**; not `make up`; not `macos-latest` / `ubuntu-latest` |
 | the real Fabric service | `FABRIC_TARGET=real` | 0 | — | — |
 
 **Idle is not the number that matters, and it is nowhere near the other one.**
@@ -149,6 +150,16 @@ make up PROFILE="--profile governance --profile airflow --profile rti"
 `--profile rti` needs **amd64 with AVX2**. Microsoft documents ARM as
 unsupported and Rosetta does not supply AVX2 — on Apple silicon it needs an
 x86-64 VM with a QEMU CPU type that provides it.
+
+There is **no `--profile dax`**. Analysis Services is a Windows process.
+macOS uses UTM on the **host you own**; Linux uses `make dax-linux`
+(Docker Engine + `/dev/kvm` on the metal); Windows runs Desktop on the
+machine. Those are not GitHub `macos-latest` / `ubuntu-latest` — those
+runners are already VMs, and nested Windows is not a CI job. The CI
+oracle is `e2e/pbix-desktop` on `windows-latest`. OrbStack and Rancher
+Desktop on a Mac cannot pass KVM into `dockur/windows`. The guest then
+runs `pwsh e2e/msmdsrv/start.ps1` and the emulator sets `FABRIC_DAX_URL`.
+See [52-msmdsrv-hosts.md](52-msmdsrv-hosts.md).
 
 ### The eventstream profile needs two things
 
