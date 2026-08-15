@@ -1087,7 +1087,11 @@
       "go:TestDatabricksSparkPythonRunsWithArgv",
       "go:TestDatabricksRefusesByName",
       "go:TestDatabricksEngineFailureFailsTheActivity",
-      "go:TestDatabricksNoEngineIsHonest"
+      "go:TestDatabricksNoEngineIsHonest",
+      "go:TestDatabricksRemoteAcceptsDBFS",
+      "go:TestDatabricksRemoteImportsLakehouseFile",
+      "go:TestDatabricksRemoteFailureFailsTheActivity",
+      "go:TestDatabricksRemoteStillRefusesJAR"
     ]
   },
   "azure-batch-activity-adf-custom": {

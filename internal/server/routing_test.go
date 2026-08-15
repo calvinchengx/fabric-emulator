@@ -114,6 +114,24 @@ func TestNewRejectsBadEngineURLs(t *testing.T) {
 	}
 }
 
+func TestNewWiresDatabricksBackend(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.DatabricksURL = "https://databricks-emulator:8447"
+	cfg.DatabricksToken = "dapi-test"
+	cfg.DatabricksTLSInsecure = true
+	srv, err := server.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	if srv.API.DatabricksURL != cfg.DatabricksURL || srv.API.DatabricksToken != cfg.DatabricksToken {
+		t.Fatalf("Databricks backend was not wired: url=%q token=%q", srv.API.DatabricksURL, srv.API.DatabricksToken)
+	}
+	if srv.API.DatabricksHTTP == nil {
+		t.Fatal("DatabricksTLSInsecure did not install a client")
+	}
+}
+
 func TestNewWiresMLflowBackend(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.MLflowURL = "http://mlflow:5000"

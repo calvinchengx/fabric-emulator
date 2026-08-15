@@ -241,6 +241,18 @@ type Config struct {
 	// created over ARM appear on GET /v1/capacities. Empty keeps the seeded
 	// local capacity only — standalone fabric-cicd still works.
 	ARMURL string
+	// DatabricksURL, when set, is a databricks-emulator (or real workspace)
+	// origin. DatabricksNotebook / DatabricksSparkPython submit there instead
+	// of terminating onto the local Spark agent, and dbfs: / /Workspace paths
+	// become legal because they now resolve. Empty keeps today's local
+	// terminate + refuse-those-paths behaviour.
+	DatabricksURL string
+	// DatabricksToken is the PAT (or OIDC access token) sent to DatabricksURL.
+	DatabricksToken string
+	// DatabricksTLSInsecure skips TLS verification for DatabricksURL
+	// (databricks-emulator's self-signed cert).
+	DatabricksTLSInsecure bool
+
 	// ARMPollSeconds is how often the ARM capacities feed is refreshed.
 	ARMPollSeconds int
 
@@ -278,24 +290,27 @@ func FromEnvPartial() *Config {
 		// FABRIC_DEFINITION_LRO is the older, narrower name this shipped under
 		// and is still honoured, so a compose file or CI leg that already sets
 		// it keeps working rather than silently losing the async path.
-		ForceLRO:            boolEnv("FABRIC_FORCE_LRO") || boolEnv("FABRIC_DEFINITION_LRO"),
-		NameReservation:     durationEnv("FABRIC_NAME_RESERVATION"),
-		WebActivityStub:     strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
-		CustomActivityShell: customActivityEnabled(os.Getenv("FABRIC_CUSTOM_ACTIVITY")),
-		WarehouseSQLURL:     os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
-		TSQLStrict:          boolEnv("FABRIC_TSQL_STRICT"),
-		ListPageSize:        intEnv("FABRIC_LIST_PAGE_SIZE"),
-		AirflowURL:          os.Getenv("FABRIC_AIRFLOW_URL"),
-		AirflowDAGDir:       os.Getenv("FABRIC_AIRFLOW_DAG_DIR"),
-		AirflowUsername:     os.Getenv("FABRIC_AIRFLOW_USERNAME"),
-		AirflowPassword:     os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
-		MLflowURL:           os.Getenv("FABRIC_MLFLOW_URL"),
-		KQLURL:              os.Getenv("FABRIC_KQL_URL"),
-		DAXURL:              os.Getenv("FABRIC_DAX_URL"),
-		KafkaBootstrap:      os.Getenv("FABRIC_KAFKA_BOOTSTRAP"),
-		ARMURL:              os.Getenv("FABRIC_ARM_URL"),
-		ARMPollSeconds:      intEnv("FABRIC_ARM_POLL_SECONDS"),
-		RetryAfterSeconds:   1,
+		ForceLRO:              boolEnv("FABRIC_FORCE_LRO") || boolEnv("FABRIC_DEFINITION_LRO"),
+		NameReservation:       durationEnv("FABRIC_NAME_RESERVATION"),
+		WebActivityStub:       strings.EqualFold(os.Getenv("FABRIC_WEB_ACTIVITY"), "stub"),
+		CustomActivityShell:   customActivityEnabled(os.Getenv("FABRIC_CUSTOM_ACTIVITY")),
+		WarehouseSQLURL:       os.Getenv("FABRIC_WAREHOUSE_SQL_URL"),
+		TSQLStrict:            boolEnv("FABRIC_TSQL_STRICT"),
+		ListPageSize:          intEnv("FABRIC_LIST_PAGE_SIZE"),
+		AirflowURL:            os.Getenv("FABRIC_AIRFLOW_URL"),
+		AirflowDAGDir:         os.Getenv("FABRIC_AIRFLOW_DAG_DIR"),
+		AirflowUsername:       os.Getenv("FABRIC_AIRFLOW_USERNAME"),
+		AirflowPassword:       os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
+		MLflowURL:             os.Getenv("FABRIC_MLFLOW_URL"),
+		KQLURL:                os.Getenv("FABRIC_KQL_URL"),
+		DAXURL:                os.Getenv("FABRIC_DAX_URL"),
+		KafkaBootstrap:        os.Getenv("FABRIC_KAFKA_BOOTSTRAP"),
+		DatabricksURL:         os.Getenv("FABRIC_DATABRICKS_URL"),
+		DatabricksToken:       os.Getenv("FABRIC_DATABRICKS_TOKEN"),
+		DatabricksTLSInsecure: boolEnv("FABRIC_DATABRICKS_TLS_INSECURE"),
+		ARMURL:                os.Getenv("FABRIC_ARM_URL"),
+		ARMPollSeconds:        intEnv("FABRIC_ARM_POLL_SECONDS"),
+		RetryAfterSeconds:     1,
 	}
 }
 
