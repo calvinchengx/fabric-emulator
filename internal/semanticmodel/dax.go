@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LN`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -911,6 +911,23 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return daxRound(n, digits), nil
+	case "LN":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("LN expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop LN(BLANK()) errors (BLANK coerces to 0). Do not return BLANK.
+		f, err := arithNum(a, "LN")
+		if err != nil {
+			return nil, err
+		}
+		if f <= 0 {
+			return nil, fmt.Errorf("LN argument must be > 0")
+		}
+		return math.Log(f), nil
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
