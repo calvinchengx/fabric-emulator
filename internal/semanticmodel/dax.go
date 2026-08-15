@@ -894,7 +894,7 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		for _, r := range e.activeRows(tbl) {
 			v := r[col.col]
 			if v == nil || isBlankText(v) {
-				continue
+				continue // BLANK is not in the mean
 			}
 			f, ok := asNumber(v)
 			if !ok {
@@ -928,8 +928,8 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			}
 			n++
 		}
-		// Desktop COUNT counts non-blank text as well as numbers
-		// (COUNT('Store'[Territory]) = 4). Empty set is 0, not BLANK.
+		// Desktop COUNT on this catalog counts non-blank text as well as
+		// numbers (COUNT('Store'[Territory]) = 4). Empty set is 0, not BLANK.
 		return float64(n), nil
 	case "SELECTEDVALUE":
 		return e.selectedValue(fc)
@@ -1046,6 +1046,61 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, fmt.Errorf("LOG10 argument must be > 0")
 		}
 		return math.Log10(n), nil
+	case "INT":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("INT expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// DAX INT(BLANK) is BLANK. arithNum/asNumber treat nil as 0, which
+		// would return 0 — wrong. Check before coercing.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "INT")
+		if err != nil {
+			return nil, err
+		}
+		// Excel/DAX INT floors toward −∞ (INT(-2.1) = -3), not truncate
+		// toward zero. Desktop 2026-08-15 agrees.
+		return math.Floor(f), nil
+	case "POWER":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("POWER expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// DAX POWER(BLANK, n) is BLANK. POWER(n, BLANK) is n^0 = 1
+		// (Desktop: POWER(2, BLANK()) = 1).
+		if a == nil {
+			return nil, nil
+		}
+		base, err := arithNum(a, "POWER")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		exp, err := arithNum(b, "POWER")
+		if err != nil {
+			return nil, err
+		}
+		// Go math.Pow(0, 0) is 1; Desktop refuses 0^0.
+		if base == 0 && exp == 0 {
+			return nil, fmt.Errorf("POWER(0, 0) is undefined")
+		}
+		out := math.Pow(base, exp)
+		if math.IsNaN(out) || math.IsInf(out, 0) {
+			return nil, fmt.Errorf("POWER result is not a number")
+		}
+		return out, nil
+
 	case "SIGN":
 		if len(fc.args) != 1 {
 			return nil, fmt.Errorf("SIGN expects 1 argument")
@@ -1272,57 +1327,8 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		return e.datePart(fc, "MINUTE", func(t time.Time) float64 { return float64(t.Minute()) })
 	case "SECOND":
 		return e.datePart(fc, "SECOND", func(t time.Time) float64 { return float64(t.Second()) })
-	case "INT":
-		if len(fc.args) != 1 {
-			return nil, fmt.Errorf("INT expects 1 argument")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		if a == nil {
-			return nil, nil // INT(BLANK) is BLANK
-		}
-		f, err := arithNum(a, "INT")
-		if err != nil {
-			return nil, err
-		}
-		// Excel/DAX INT floors toward −∞ (INT(-2.1) = -3), not truncate toward 0.
-		return math.Floor(f), nil
 	case "SWITCH":
 		return e.evalSwitch(fc)
-	case "POWER":
-		if len(fc.args) != 2 {
-			return nil, fmt.Errorf("POWER expects 2 arguments")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		// POWER(BLANK, n) is BLANK. POWER(n, BLANK) is n^0 = 1.
-		if a == nil {
-			return nil, nil
-		}
-		base, err := arithNum(a, "POWER")
-		if err != nil {
-			return nil, err
-		}
-		b, err := e.scalar(fc.args[1])
-		if err != nil {
-			return nil, err
-		}
-		exp, err := arithNum(b, "POWER")
-		if err != nil {
-			return nil, err
-		}
-		if base == 0 && exp == 0 {
-			return nil, fmt.Errorf("POWER(0, 0) is undefined")
-		}
-		out := math.Pow(base, exp)
-		if math.IsNaN(out) || math.IsInf(out, 0) {
-			return nil, fmt.Errorf("POWER result is not a number")
-		}
-		return out, nil
 	case "SQRT":
 		if len(fc.args) != 1 {
 			return nil, fmt.Errorf("SQRT expects 1 argument")
@@ -1622,25 +1628,6 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
 
-func (e *evalr) datePart(fc funcCall, fn string, part func(time.Time) float64) (any, error) {
-	if len(fc.args) != 1 {
-		return nil, fmt.Errorf("%s expects 1 argument", fn)
-	}
-	a, err := e.scalar(fc.args[0])
-	if err != nil {
-		return nil, err
-	}
-	// Desktop YEAR/MONTH/DAY/HOUR/MINUTE/SECOND(BLANK()) is BLANK.
-	if a == nil {
-		return nil, nil
-	}
-	t, ok := a.(time.Time)
-	if !ok {
-		return nil, fmt.Errorf("%s expects a date", fn)
-	}
-	return part(t), nil
-}
-
 func (e *evalr) dateArg(fc funcCall, fn string) (*time.Time, error) {
 	if len(fc.args) < 1 || len(fc.args) > 2 {
 		return nil, fmt.Errorf("%s expects 1 or 2 arguments", fn)
@@ -1798,44 +1785,6 @@ func daxTrunc(n float64, digits int) float64 {
 		return math.Floor(x) / p
 	}
 	return math.Ceil(x) / p
-}
-
-// daxDate is Excel/DAX DATE: parts round half-away-from-zero; month/day overflow
-// (DATE(2024,13,1)=2025-01-01, DATE(2024,1,32)=2024-02-01); day <= 0 errors.
-// Two-digit years: 0–30 → 2000–2030, 31–99 → 1931–1999. Negative years add 1900
-// (DATE(-1,1,1) is 1899). DATE(100,1,1) stays year 100.
-func daxDate(y, m, d float64) (time.Time, error) {
-	di := roundHalfAwayInt(d)
-	if di <= 0 {
-		return time.Time{}, fmt.Errorf("DATE day must be > 0")
-	}
-	return time.Date(daxDateYear(roundHalfAwayInt(y)), time.Month(roundHalfAwayInt(m)), di, 0, 0, 0, 0, time.UTC), nil
-}
-
-func daxDateYear(y int) int {
-	switch {
-	case y >= 0 && y <= 30:
-		return y + 2000
-	case y >= 31 && y <= 99:
-		return y + 1900
-	case y < 0:
-		return y + 1900
-	default:
-		return y
-	}
-}
-
-// daxTime is DAX TIME: parts round half-away-from-zero; hour/minute/second
-// overflow wraps modulo 24h onto the DAX epoch date 1899-12-30 (TIME(25,0,0)
-// is 01:00, TIME(24,0,0) is 00:00 that same day). A negative total errors
-// (TIME(-1,0,0)). BLANK parts coerce to 0.
-func daxTime(h, m, s float64) (time.Time, error) {
-	sec := roundHalfAwayInt(h)*3600 + roundHalfAwayInt(m)*60 + roundHalfAwayInt(s)
-	if sec < 0 {
-		return time.Time{}, fmt.Errorf("TIME result is negative")
-	}
-	sec %= 86400
-	return time.Date(1899, 12, 30, 0, 0, sec, 0, time.UTC), nil
 }
 
 // daxRound is Excel/DAX ROUND: half away from zero (ROUND(-1.5, 0) = -2),
@@ -2088,4 +2037,57 @@ func numeric(v any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func (e *evalr) datePart(fc funcCall, fn string, part func(time.Time) float64) (any, error) {
+	if len(fc.args) != 1 {
+		return nil, fmt.Errorf("%s expects 1 argument", fn)
+	}
+	a, err := e.scalar(fc.args[0])
+	if err != nil {
+		return nil, err
+	}
+	// Desktop YEAR/MONTH/DAY/HOUR/MINUTE/SECOND(BLANK()) is BLANK.
+	if a == nil {
+		return nil, nil
+	}
+	t, ok := a.(time.Time)
+	if !ok {
+		return nil, fmt.Errorf("%s expects a date", fn)
+	}
+	return part(t), nil
+}
+
+func daxDate(y, m, d float64) (time.Time, error) {
+	di := roundHalfAwayInt(d)
+	if di <= 0 {
+		return time.Time{}, fmt.Errorf("DATE day must be > 0")
+	}
+	return time.Date(daxDateYear(roundHalfAwayInt(y)), time.Month(roundHalfAwayInt(m)), di, 0, 0, 0, 0, time.UTC), nil
+}
+
+func daxDateYear(y int) int {
+	switch {
+	case y >= 0 && y <= 30:
+		return y + 2000
+	case y >= 31 && y <= 99:
+		return y + 1900
+	case y < 0:
+		return y + 1900
+	default:
+		return y
+	}
+}
+
+// daxTime is DAX TIME: parts round half-away-from-zero; hour/minute/second
+// overflow wraps modulo 24h onto the DAX epoch date 1899-12-30 (TIME(25,0,0)
+// is 01:00, TIME(24,0,0) is 00:00 that same day). A negative total errors
+// (TIME(-1,0,0)). BLANK parts coerce to 0.
+func daxTime(h, m, s float64) (time.Time, error) {
+	sec := roundHalfAwayInt(h)*3600 + roundHalfAwayInt(m)*60 + roundHalfAwayInt(s)
+	if sec < 0 {
+		return time.Time{}, fmt.Errorf("TIME result is negative")
+	}
+	sec %= 86400
+	return time.Date(1899, 12, 30, 0, 0, sec, 0, time.UTC), nil
 }
