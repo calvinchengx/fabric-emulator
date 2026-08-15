@@ -18,16 +18,16 @@ both of which this repo has already paid for in the parity map:
   * a matrix cell quietly stops being produced, and a claim keeps citing a
     witness that no longer runs.
 
-Before the kit is built there is no matrix, and this says so rather than
-passing silently — the applicability table is still enforced against the
-document, which is what makes the check useful on day one.
+The matrix has landed. Without --strict a missing file is still a loud
+NOTE rather than a failure, so a laptop that has not pulled the matrix
+cannot be confused with a silent pass. CI and `make check` pass --strict.
 
 Usage:
     check_conformance.py [--strict]
 
-    --strict  treat a missing conformance matrix as a failure. Off by default,
-              because the kit is scoped and not yet built; turn it on in the
-              same change that lands it, so the matrix can never later vanish.
+    --strict  treat a missing conformance matrix as a failure. Armed in
+              `make check` and CI now that the matrix has landed, so it can
+              never afterwards vanish without failing the build.
 """
 from __future__ import annotations
 
