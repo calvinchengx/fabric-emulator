@@ -2,6 +2,7 @@ package semanticmodel
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -9,12 +10,13 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
-// than mis-evaluate. Correctness is gated by the captured golden fixtures, since
-// no live DAX engine can run in CI.
+// than mis-evaluate. Correctness is gated by captured goldens: tutorial
+// fixtures plus Desktop-agreed scalars in desktop_goldens.json (docs/52
+// Phase 3). Every-push CI replays those against Go; it does not boot msmdsrv.
 
 // Result is a query result: ordered column keys + rows keyed by them, matching
 // the executeQueries JSON shape ("Table[Col]" / "[Measure]").
@@ -849,6 +851,22 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		return float64(len(e.activeRows(tbl))), nil
 	case "SELECTEDVALUE":
 		return e.selectedValue(fc)
+	case "ACOS":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("ACOS expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		f, err := arithNum(a, "ACOS")
+		if err != nil {
+			return nil, err
+		}
+		if f < -1 || f > 1 {
+			return nil, fmt.Errorf("ACOS argument must be between -1 and 1")
+		}
+		return math.Acos(f), nil
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }

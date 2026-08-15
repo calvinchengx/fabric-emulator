@@ -44,6 +44,15 @@ func CreateOrReplaceTMSL(m *Model, data Data) ([]byte, error) {
 			if c.DataType == "" {
 				col["dataType"] = "string"
 			}
+			// Desktop rejects calculated-table columns that omit SourceColumn
+			// ("Column 'X' in calculated table 'Y' is missing the SourceColumn
+			// property"). DATATABLE aliases match the column name unless the
+			// BIM already named a different source.
+			src := c.SourceColumn
+			if src == "" {
+				src = c.Name
+			}
+			col["sourceColumn"] = src
 			cols = append(cols, col)
 		}
 		table := map[string]any{

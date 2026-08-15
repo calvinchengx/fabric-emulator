@@ -1,0 +1,19 @@
+{
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
+  "toleranceRel": 1e-9,
+  "probes": [
+    {
+      "name": "ACOS(0.5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ACOS(0.5))",
+      "column": "[v]",
+      "want": 1.0471975511965976
+    },
+    {
+      "name": "ACOS(-1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ACOS(-1))",
+      "column": "[v]",
+      "want": 3.141592653589793
+    }
+  ]
+}

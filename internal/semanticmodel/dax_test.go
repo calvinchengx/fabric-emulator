@@ -2,6 +2,7 @@ package semanticmodel
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,6 +114,48 @@ func TestDAXGoldenQueries(t *testing.T) {
 	}
 	if ran != g.DAXQueryCount {
 		t.Fatalf("ran %d DAX golden queries, fixture declares %d", ran, g.DAXQueryCount)
+	}
+}
+
+// TestDesktopFunctionGoldens replays Desktop-captured scalar probes against
+// the Go evaluator (docs/52 Phase 3). CI never boots msmdsrv; the numbers
+// were agreed on a UTM Windows 11 ARM guest + Power BI Desktop.
+func TestDesktopFunctionGoldens(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(fixturesDir(), "desktop_goldens.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g struct {
+		ToleranceRel float64 `json:"toleranceRel"`
+		Probes       []struct {
+			Name   string  `json:"name"`
+			DAX    string  `json:"dax"`
+			Column string  `json:"column"`
+			Want   float64 `json:"want"`
+		} `json:"probes"`
+	}
+	if err := json.Unmarshal(b, &g); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.Probes) == 0 {
+		t.Fatal("desktop_goldens.json has no probes")
+	}
+	if g.ToleranceRel <= 0 {
+		g.ToleranceRel = 1e-9
+	}
+	m, d := loadModel(t), loadData(t)
+	for _, p := range g.Probes {
+		res, err := Evaluate(m, d, p.DAX)
+		if err != nil {
+			t.Fatalf("%s: %v", p.Name, err)
+		}
+		if len(res.Rows) != 1 {
+			t.Fatalf("%s: got %d rows, want 1", p.Name, len(res.Rows))
+		}
+		got := toF(res.Rows[0][p.Column])
+		if math.Abs(got-p.Want) > g.ToleranceRel*math.Abs(p.Want) {
+			t.Errorf("%s: got %v, want %v (rel %g)", p.Name, got, p.Want, g.ToleranceRel)
+		}
 	}
 }
 
