@@ -225,8 +225,10 @@ BLANK; `SIGN(0)` is 0), then `ASIN` / `ATAN` (BLANK stays BLANK;
 (`COS(BLANK())` is 1; `SIN`/`TAN` BLANK stays BLANK; `TAN` of a right
 angle errors), then `DEGREES` / `RADIANS` (BLANK stays BLANK), then
 `DATE` / `YEAR` / `MONTH` / `DAY` (two-digit years 0–30 → 2000s, 31–99 →
-1900s; month/day overflow; day `<=0` errors; `YEAR(BLANK())` is BLANK).
-Captured on a UTM Windows 11 ARM guest + Desktop.
+1900s; month/day overflow; day `<=0` errors; `YEAR(BLANK())` is BLANK),
+then `TIME` / `HOUR` / `MINUTE` / `SECOND` (wraps modulo 24h; BLANK parts
+are 0; negative total errors). Captured on a UTM Windows 11 ARM guest +
+Desktop.
 Clone that guest only while it is **stopped** (`utmctl clone` refuses a
 running VM). Do not treat the live oracle as disposable.
 
