@@ -219,8 +219,25 @@ Pins so far, in
 replayed by `TestDesktopFunctionGoldens`: `ACOS`, then `ABS` (BLANK stays
 BLANK), then `ROUND` (half away from zero; BLANK number stays BLANK,
 BLANK digits count as 0), then `LOG` / `LOG10` (default `LOG` base is 10;
-BLANK/`<=0` and `LOG` base `1`/`<=0` error), then `INT` (floor toward −∞; BLANK stays
-BLANK), then `MIN` (BLANK is not a candidate; all-blank is BLANK), then `AVERAGE` (BLANK is not in the mean), then `COUNT` (non-blank cells, including text; empty is 0), then `POWER` (BLANK base is BLANK; BLANK exponent is 0; `POWER(0, 0)` errors), then `SIGN` (BLANK stays BLANK; `SIGN(0)` is 0), then `ASIN` / `ATAN` (BLANK stays BLANK; `ASIN` outside `[-1, 1]` errors), then `PI` / `SIN` / `COS` / `TAN` (`COS(BLANK())` is 1; `SIN`/`TAN` BLANK stays BLANK; `TAN` of a right angle errors), then `DEGREES` / `RADIANS` (BLANK stays BLANK), then `DATE` / `YEAR` / `MONTH` / `DAY` (two-digit years 0–30 → 2000s, 31–99 → 1900s; month/day overflow; day `<=0` errors; `YEAR(BLANK())` is BLANK), then `TIME` / `HOUR` / `MINUTE` / `SECOND` (wraps modulo 24h; BLANK parts are 0; negative total errors). Captured on a UTM Windows 11 ARM guest + Desktop.
+BLANK/`<=0` and `LOG` base `1`/`<=0` error), then `INT` (floor toward −∞;
+BLANK stays BLANK), then `MIN` (BLANK is not a candidate; all-blank is
+BLANK), then `AVERAGE` (BLANK is not in the mean), then `COUNT`
+(non-blank cells, including text; empty is 0), then `POWER` (BLANK base
+is BLANK; BLANK exponent is 0; `POWER(0, 0)` errors), then `SIGN` (BLANK
+stays BLANK; `SIGN(0)` is 0), then `ASIN` / `ATAN` (BLANK stays BLANK;
+`ASIN` outside `[-1, 1]` errors), then `PI` / `SIN` / `COS` / `TAN`
+(`COS(BLANK())` is 1; `SIN`/`TAN` BLANK stays BLANK; `TAN` of a right
+angle errors), then `DEGREES` / `RADIANS` (BLANK stays BLANK), then
+`DATE` / `YEAR` / `MONTH` / `DAY` (two-digit years 0–30 → 2000s, 31–99 →
+1900s; month/day overflow; day `<=0` errors; `YEAR(BLANK())` is BLANK),
+then `TIME` / `HOUR` / `MINUTE` / `SECOND` (wraps modulo 24h; BLANK parts
+are 0; negative total errors), then the rest of the Phase 3 batch:
+`SWITCH` (BLANK equals only BLANK), `DISTINCTCOUNT` / `MAX`, `SQRT`,
+`MOD` (`MOD(-10,3)=2`), `FLOOR` / `CEILING` (`CEILING(n,0)=0`), `LN`,
+`EXP`, `WEEKDAY` / `WEEKNUM`, `EOMONTH` / `EDATE`, `TRUNC` (toward zero),
+`QUOTIENT` (toward zero; BLANK divisor errors), `BLANK` / `ISBLANK`
+(`ISBLANK("")` is false). `ATAN2` is not a DAX function. Captured on a
+UTM Windows 11 ARM guest + Desktop.
 Clone that guest only while it is **stopped** (`utmctl clone` refuses a
 running VM). Do not treat the live oracle as disposable.
 
