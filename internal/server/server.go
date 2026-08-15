@@ -4,6 +4,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -83,6 +84,13 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	a.NameReservation = cfg.NameReservation
 	a.WebActivityStub = cfg.WebActivityStub
 	a.CustomActivityShell = cfg.CustomActivityShell
+	a.DatabricksURL = cfg.DatabricksURL
+	a.DatabricksToken = cfg.DatabricksToken
+	if cfg.DatabricksTLSInsecure {
+		a.DatabricksHTTP = &http.Client{Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}}
+	}
 	if err := a.SetMLflowBackend(cfg.MLflowURL); err != nil {
 		return nil, err
 	}

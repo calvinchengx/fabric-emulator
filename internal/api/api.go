@@ -115,6 +115,12 @@ type API struct {
 	// parked pipeline dies with the process, and pretending otherwise would be
 	// a durability claim the emulator cannot honour.
 	webhookWaits sync.Map
+	// DatabricksURL, when set, is the workspace Databricks activities submit
+	// to (databricks-emulator). Empty keeps local Spark-agent termination.
+	DatabricksURL   string
+	DatabricksToken string
+	DatabricksHTTP  *http.Client
+
 	// CustomActivityShell enables the Custom (Azure Batch) activity's shell
 	// execution (the production default). False refuses by name so no command
 	// reaches the agent — FABRIC_CUSTOM_ACTIVITY=off. See config.CustomActivityShell.

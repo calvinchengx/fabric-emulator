@@ -241,6 +241,18 @@ type Config struct {
 	// created over ARM appear on GET /v1/capacities. Empty keeps the seeded
 	// local capacity only — standalone fabric-cicd still works.
 	ARMURL string
+	// DatabricksURL, when set, is a databricks-emulator (or real workspace)
+	// origin. DatabricksNotebook / DatabricksSparkPython submit there instead
+	// of terminating onto the local Spark agent, and dbfs: / /Workspace paths
+	// become legal because they now resolve. Empty keeps today's local
+	// terminate + refuse-those-paths behaviour.
+	DatabricksURL string
+	// DatabricksToken is the PAT (or OIDC access token) sent to DatabricksURL.
+	DatabricksToken string
+	// DatabricksTLSInsecure skips TLS verification for DatabricksURL
+	// (databricks-emulator's self-signed cert).
+	DatabricksTLSInsecure bool
+
 	// ARMPollSeconds is how often the ARM capacities feed is refreshed.
 	ARMPollSeconds int
 
@@ -292,8 +304,11 @@ func FromEnvPartial() *Config {
 		MLflowURL:           os.Getenv("FABRIC_MLFLOW_URL"),
 		KQLURL:              os.Getenv("FABRIC_KQL_URL"),
 		DAXURL:              os.Getenv("FABRIC_DAX_URL"),
-		KafkaBootstrap:      os.Getenv("FABRIC_KAFKA_BOOTSTRAP"),
-		ARMURL:              os.Getenv("FABRIC_ARM_URL"),
+		KafkaBootstrap:        os.Getenv("FABRIC_KAFKA_BOOTSTRAP"),
+		DatabricksURL:         os.Getenv("FABRIC_DATABRICKS_URL"),
+		DatabricksToken:       os.Getenv("FABRIC_DATABRICKS_TOKEN"),
+		DatabricksTLSInsecure: boolEnv("FABRIC_DATABRICKS_TLS_INSECURE"),
+		ARMURL:                os.Getenv("FABRIC_ARM_URL"),
 		ARMPollSeconds:      intEnv("FABRIC_ARM_POLL_SECONDS"),
 		RetryAfterSeconds:   1,
 	}

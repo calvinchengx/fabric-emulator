@@ -96,24 +96,17 @@ func (e *pipelineExecutor) databricksActivity(
 	if rawPath == "" {
 		return nil, fmt.Errorf("databricks activity %q: %s is required", act.Name, spec.pathKey)
 	}
-	for _, foreign := range []string{"dbfs:/", "/Workspace/", "/Shared/", "/Repos/"} {
-		if strings.HasPrefix(rawPath, foreign) {
-			return nil, fmt.Errorf("databricks activity %q: %q addresses %s, which the emulator "+
-				"does not have — use <lakehouseItemId>/<path> to name a file in OneLake. "+
-				"Reinterpreting a Databricks path as a lakehouse path would invent a mapping "+
-				"nobody wrote", act.Name, rawPath, strings.TrimSuffix(foreign, "/"))
+	remote := strings.TrimRight(e.a.DatabricksURL, "/")
+	if remote == "" {
+		for _, foreign := range []string{"dbfs:/", "/Workspace/", "/Shared/", "/Repos/"} {
+			if strings.HasPrefix(rawPath, foreign) {
+				return nil, fmt.Errorf("databricks activity %q: %q addresses %s, which the emulator "+
+					"does not have — use <lakehouseItemId>/<path> to name a file in OneLake, or set "+
+					"FABRIC_DATABRICKS_URL so those paths resolve on databricks-emulator. "+
+					"Reinterpreting a Databricks path as a lakehouse path would invent a mapping "+
+					"nobody wrote", act.Name, rawPath, strings.TrimSuffix(foreign, "/"))
+			}
 		}
-	}
-
-	itemID, base, ok := splitRootPath(rawPath)
-	if !ok || base == "" {
-		return nil, fmt.Errorf("databricks activity %q: %s %q must be "+
-			"<lakehouseItemId>/<path>", act.Name, spec.pathKey, rawPath)
-	}
-	p, gerr := e.a.Store.GetOneLakePath(itemID, base)
-	if gerr != nil || p.IsDir {
-		return nil, fmt.Errorf("databricks activity %q: no file at %q in item %q",
-			act.Name, base, itemID)
 	}
 
 	// baseParameters is an OBJECT (name -> value) for a notebook task;
@@ -148,6 +141,21 @@ func (e *pipelineExecutor) databricksActivity(
 				argv = append(argv, fmt.Sprint(v))
 			}
 		}
+	}
+
+	if remote != "" {
+		return e.databricksRemote(act, spec, rawPath, params, argv)
+	}
+
+	itemID, base, ok := splitRootPath(rawPath)
+	if !ok || base == "" {
+		return nil, fmt.Errorf("databricks activity %q: %s %q must be "+
+			"<lakehouseItemId>/<path>", act.Name, spec.pathKey, rawPath)
+	}
+	p, gerr := e.a.Store.GetOneLakePath(itemID, base)
+	if gerr != nil || p.IsDir {
+		return nil, fmt.Errorf("databricks activity %q: no file at %q in item %q",
+			act.Name, base, itemID)
 	}
 
 	if !e.a.runsNotebooksItself() {
