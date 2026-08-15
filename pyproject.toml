@@ -39,7 +39,9 @@ test = [
     "pyarrow>=18,<24",
     "pandas>=2,<3",
     "pyjks>=20,<22",
-    "cryptography>=42,<49",
+    # 49.0.0 is the first release that closes the three open wheel and
+    # path-building advisories; held below 50 so a major cannot land unreviewed.
+    "cryptography>=42,<50",
 ]
 lint = [
     "ruff>=0.14,<0.16",
@@ -139,7 +141,7 @@ sail-delta = [
     "kafka-python>=2.0.2,<3",
     # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
     "pyjks>=20,<22",
-    "cryptography>=42,<49",
+    "cryptography>=42,<50",
     # GSSAPI handshake: kafka-python imports this at connect time.
     "gssapi>=1.8,<2",
 ]
@@ -162,7 +164,7 @@ spark-connect = [
     "kafka-python>=2.0.2,<3",
     # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
     "pyjks>=20,<22",
-    "cryptography>=42,<49",
+    "cryptography>=42,<50",
     # GSSAPI handshake: kafka-python imports this at connect time.
     "gssapi>=1.8,<2",
 ]
