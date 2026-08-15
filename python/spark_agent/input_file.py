@@ -36,17 +36,59 @@ file would misalign silently, but it would do so in the plain glob read too.
 
 SCOPE, deliberately narrow. Only installed when the engine actually lacks the
 function, so the JVM overlay keeps Spark's native answer. Only the file readers
-are wrapped. A frame that never came from a file has no tag, and
-`input_file_name()` on it yields "", Spark's own answer for a non-file source.
+are wrapped. A frame that never came from a file has no tag; asking
+`input_file_name()` of it raises `InputFileNameError` naming the shim
+(docs/37 §3b). Spark itself returns "" here — we will not, because an empty
+lineage column is silently wrong.
+
+SQL-string usage (`spark.sql("SELECT input_file_name() …")`) never touches
+the patched `F.input_file_name`. The agent rewrites that call onto the tag
+column when the FROM/JOIN relation is a view registered from a tagged frame,
+and leaves every other mention (strings, comments) alone (docs/37 §3a).
 """
 from __future__ import annotations
 
 import fnmatch
 import glob as _glob
 import posixpath
+import re
 
 _TAG = "__emu_input_file_name"
 _GLOB_CHARS = "*?["
+_TAGGED_VIEWS: dict[str, list[str]] = {}
+_FROM_JOIN = re.compile(r"\b(?:from|join)\s+(`?[\w.]+`?)", re.IGNORECASE)
+_STAR = re.compile(r"(?<![\w.])\*(?!\s*\()")
+_SHADOW_PREFIX = "__emu_ifn_"
+
+
+class InputFileNameError(Exception):
+    """Provenance was asked of a frame or relation that never came from a file."""
+
+
+def forget_tagged_views():
+    """Drop every remembered view. Tests that share a process need a clean map."""
+    _TAGGED_VIEWS.clear()
+
+
+def remember_tagged_view(name: str, columns: list[str]):
+    """Record that `name` was created from a file-tagged frame."""
+    if name:
+        _TAGGED_VIEWS[name] = list(columns)
+
+
+def shadow_view_name(name: str) -> str:
+    """The view that still carries the tag, used only when SQL asks for it."""
+    return f"{_SHADOW_PREFIX}{name}"
+
+
+def _not_a_file_message() -> str:
+    return (
+        "input_file_name() was requested on a frame that never came from a "
+        "file. The emulator's shim reconstructs provenance by tagging file "
+        "reads; a range, table, or untagged view has no path to give. Do not "
+        "stub this to an empty string — that is silently wrong lineage "
+        "(docs/37 §3b)."
+    )
 
 
 def engine_has_input_file_name(spark) -> bool:
@@ -88,6 +130,158 @@ def _list_files(path: str) -> list[str]:
         return []
 
 
+def _code_chunks(sql: str):
+    """Yield (start, end, text) of SQL that is not a string or a comment."""
+    i = 0
+    n = len(sql)
+    code_start = 0
+    while i < n:
+        two = sql[i:i + 2]
+        if two == "--":
+            if i > code_start:
+                yield code_start, i, sql[code_start:i]
+            nl = sql.find("\n", i)
+            i = n if nl < 0 else nl + 1
+            code_start = i
+            continue
+        if two == "/*":
+            if i > code_start:
+                yield code_start, i, sql[code_start:i]
+            end = sql.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            code_start = i
+            continue
+        if sql[i] in ("'", '"'):
+            quote = sql[i]
+            if i > code_start:
+                yield code_start, i, sql[code_start:i]
+            i += 1
+            while i < n:
+                if sql[i] == quote:
+                    if i + 1 < n and sql[i + 1] == quote:
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                i += 1
+            code_start = i
+            continue
+        i += 1
+    if code_start < n:
+        yield code_start, n, sql[code_start:]
+
+
+def _function_calls(sql: str, name: str) -> list[tuple[int, int]]:
+    """Absolute [start, end) spans of `name()` in code, not in strings/comments."""
+    spans = []
+    needle = name.lower()
+    for start, _end, chunk in _code_chunks(sql):
+        lower = chunk.lower()
+        i = 0
+        while True:
+            j = lower.find(needle, i)
+            if j < 0:
+                break
+            if j > 0 and (chunk[j - 1].isalnum() or chunk[j - 1] == "_"):
+                i = j + 1
+                continue
+            after = chunk[j + len(name):].lstrip()
+            if after.startswith("("):
+                close = chunk.find(")", j)
+                spans.append((start + j, start + (close + 1 if close >= 0 else j + len(name))))
+            i = j + 1
+    return spans
+
+
+def sql_uses_input_file_name(sql: str) -> bool:
+    return bool(_function_calls(sql, "input_file_name"))
+
+
+def _relation_names(sql: str) -> list[str]:
+    names = []
+    for _start, _end, chunk in _code_chunks(sql):
+        for match in _FROM_JOIN.finditer(chunk):
+            names.append(match.group(1).replace("`", "").rsplit(".", 1)[-1])
+    return names
+
+
+def _rewrite_relations(sql: str, tagged: list[str]) -> str:
+    tagged_l = {t.lower() for t in tagged}
+    out = []
+    last = 0
+    for start, end, chunk in _code_chunks(sql):
+        out.append(sql[last:start])
+        rewritten = chunk
+        for match in reversed(list(_FROM_JOIN.finditer(chunk))):
+            raw = match.group(1)
+            name = raw.replace("`", "").rsplit(".", 1)[-1]
+            if name.lower() not in tagged_l:
+                continue
+            shadow = shadow_view_name(name)
+            rewritten = rewritten[:match.start(1)] + shadow + rewritten[match.end(1):]
+        out.append(rewritten)
+        last = end
+    out.append(sql[last:])
+    return "".join(out)
+
+
+def _expand_stars(sql: str, columns: list[str]) -> str:
+    if not columns:
+        return sql
+    replacement = ", ".join(columns)
+    out = []
+    last = 0
+    for start, end, chunk in _code_chunks(sql):
+        out.append(sql[last:start])
+        out.append(_STAR.sub(replacement, chunk))
+        last = end
+    out.append(sql[last:])
+    return "".join(out)
+
+
+def rewrite_sql_input_file_name(sql: str) -> str:
+    """Rewrite `input_file_name()` onto the tag when the relation is tagged.
+
+    A UDF cannot do this: the function takes no arguments, so it cannot see
+    the row or the tag. Blind string replace would corrupt a query that merely
+    mentions the name. Leave those alone; fail loud when the relation was
+    never a file read.
+    """
+    if not isinstance(sql, str) or not sql_uses_input_file_name(sql):
+        return sql
+    rels = _relation_names(sql)
+    tagged = []
+    columns = []
+    known = {k.lower(): (k, v) for k, v in _TAGGED_VIEWS.items()}
+    for rel in rels:
+        hit = known.get(rel.lower())
+        if hit:
+            tagged.append(hit[0])
+            columns = hit[1]
+    if not tagged:
+        raise InputFileNameError(_not_a_file_message())
+    out = sql
+    for start, end in reversed(_function_calls(sql, "input_file_name")):
+        out = out[:start] + f"`{_TAG}`" + out[end:]
+    out = _rewrite_relations(out, tagged)
+    return _expand_stars(out, columns)
+
+
+def _install_sql(spark) -> None:
+    """Wrap `spark.sql` so SQL-string usage hits the same tag the PySpark wrap does."""
+    original = getattr(spark, "sql", None)
+    if original is None or getattr(original, "_emu_input_file_sql", False):
+        return
+
+    def sql(query, *args, **kwargs):
+        if isinstance(query, str) and sql_uses_input_file_name(query):
+            query = rewrite_sql_input_file_name(query)
+        return original(query, *args, **kwargs)
+
+    sql._emu_input_file_sql = True
+    spark.sql = sql
+
+
 def install(spark) -> bool:
     """Make `input_file_name()` work on this session. Returns True if installed.
 
@@ -103,6 +297,7 @@ def install(spark) -> bool:
 
     reader_cls = type(spark.read)
     if getattr(reader_cls, "_emu_input_file_patched", False):
+        _install_sql(spark)
         return True
 
     def _wrap(fmt_name):
@@ -195,9 +390,6 @@ def install(spark) -> bool:
         "first",
         "toPandas",
         "toLocalIterator",
-        "createOrReplaceTempView",
-        "createTempView",
-        "createOrReplaceGlobalTempView",
     ):
         if not hasattr(_ConnectDataFrame, _name):
             continue
@@ -225,7 +417,15 @@ def install(spark) -> bool:
         def _make_select(method):
             def hidden(self, *args, **kwargs):
                 wants_tag = any(_TAG in str(a) for a in args)
-                return method(self if wants_tag else _visible(self), *args, **kwargs)
+                if wants_tag:
+                    try:
+                        raw = _raw_columns(self)
+                    except Exception:
+                        raw = []
+                    if _TAG not in raw:
+                        raise InputFileNameError(_not_a_file_message())
+                    return method(self, *args, **kwargs)
+                return method(_visible(self), *args, **kwargs)
 
             return hidden
 
@@ -242,5 +442,33 @@ def install(spark) -> bool:
 
     _ConnectDataFrame.write = write
 
+    # Views: SELECT * stays on a clean registration so the tag cannot leak
+    # through SQL star expansion. A shadow view keeps the tag; spark.sql
+    # rewrites input_file_name() onto that shadow (docs/37 §3a).
+    for _name in (
+        "createOrReplaceTempView",
+        "createTempView",
+        "createOrReplaceGlobalTempView",
+    ):
+        if not hasattr(_ConnectDataFrame, _name):
+            continue
+        _original_view = getattr(_ConnectDataFrame, _name)
+
+        def _make_view(method):
+            def hidden(self, name, *args, **kwargs):
+                try:
+                    raw = _raw_columns(self)
+                except Exception:
+                    raw = []
+                if _TAG in raw:
+                    remember_tagged_view(name, [c for c in raw if c != _TAG])
+                    method(self, shadow_view_name(name), *args, **kwargs)
+                return method(_visible(self), name, *args, **kwargs)
+
+            return hidden
+
+        setattr(_ConnectDataFrame, _name, _make_view(_original_view))
+
+    _install_sql(spark)
     reader_cls._emu_input_file_patched = True
     return True
