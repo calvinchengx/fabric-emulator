@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -867,8 +867,93 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, fmt.Errorf("ACOS argument must be between -1 and 1")
 		}
 		return math.Acos(f), nil
+	case "ABS":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("ABS expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// DAX ABS(BLANK) is BLANK. arithNum/asNumber treat nil as 0, which
+		// would return 0 — wrong. Check before coercing.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "ABS")
+		if err != nil {
+			return nil, err
+		}
+		return math.Abs(f), nil
+	case "ROUND":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("ROUND expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// DAX ROUND(BLANK, n) is BLANK. arithNum/asNumber treat nil as 0.
+		if a == nil {
+			return nil, nil
+		}
+		n, err := arithNum(a, "ROUND")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		// BLANK digits: Desktop ROUND(1.234, BLANK()) = 1 — treat as 0.
+		digits, err := arithNum(b, "ROUND")
+		if err != nil {
+			return nil, err
+		}
+		return daxRound(n, digits), nil
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
+}
+
+// daxRound is Excel/DAX ROUND: half away from zero (ROUND(-1.5, 0) = -2),
+// not Go math.Round (half toward +Inf, Round(-1.5) = -1). Digits are themselves
+// rounded half-away-from-zero to an integer first (Desktop: ROUND(2.15, 1.5)
+// matches ROUND(2.15, 2); ROUND(2.15, 0.5) matches ROUND(2.15, 1)). Negative
+// digits round the integer part (ROUND(1234, -2) = 1200).
+func daxRound(n, digits float64) float64 {
+	return roundHalfAwayPlaces(n, roundHalfAwayInt(digits))
+}
+
+func roundHalfAwayInt(f float64) int {
+	if f >= 0 {
+		return int(math.Floor(f + 0.5))
+	}
+	return int(math.Ceil(f - 0.5))
+}
+
+// roundHalfAwayPlaces shifts via decimal exponent strings so 2.15×10 is
+// parsed as 2.15e1 (21.5) rather than IEEE 21.4999…, which would floor to 2.1.
+func roundHalfAwayPlaces(n float64, places int) float64 {
+	if n == 0 || math.IsNaN(n) || math.IsInf(n, 0) {
+		return n
+	}
+	sign := 1.0
+	abs := n
+	if n < 0 {
+		sign = -1
+		abs = -n
+	}
+	dec := strconv.FormatFloat(abs, 'f', -1, 64)
+	shifted, err := strconv.ParseFloat(dec+"e"+strconv.Itoa(places), 64)
+	if err != nil || math.IsInf(shifted, 0) {
+		shifted = abs * math.Pow(10, float64(places))
+	}
+	rounded := math.Floor(shifted + 0.5)
+	out, err := strconv.ParseFloat(strconv.FormatFloat(rounded, 'f', -1, 64)+"e"+strconv.Itoa(-places), 64)
+	if err != nil || math.IsInf(out, 0) {
+		out = rounded / math.Pow(10, float64(places))
+	}
+	return sign * out
 }
 
 // selectedValue implements SELECTEDVALUE(<column>[, <alternate>]): the single

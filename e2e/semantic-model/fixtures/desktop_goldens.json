@@ -1,5 +1,5 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. ABS(-2.5)/ABS(0)/ABS(3) and ROUND half-away-from-zero (ROUND(-1.5,0)=-2, unlike Go math.Round) pinned live the same day. Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-9,
   "probes": [
@@ -14,6 +14,66 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ACOS(-1))",
       "column": "[v]",
       "want": 3.141592653589793
+    },
+    {
+      "name": "ABS(-2.5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ABS(-2.5))",
+      "column": "[v]",
+      "want": 2.5
+    },
+    {
+      "name": "ABS(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ABS(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "ABS(3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ABS(3))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "ROUND(2.15, 1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(2.15, 1))",
+      "column": "[v]",
+      "want": 2.2
+    },
+    {
+      "name": "ROUND(1.5, 0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(1.5, 0))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "ROUND(-1.5, 0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(-1.5, 0))",
+      "column": "[v]",
+      "want": -2
+    },
+    {
+      "name": "ROUND(2.5, 0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(2.5, 0))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "ROUND(-2.5, 0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(-2.5, 0))",
+      "column": "[v]",
+      "want": -3
+    },
+    {
+      "name": "ROUND(123.456, 2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(123.456, 2))",
+      "column": "[v]",
+      "want": 123.46
+    },
+    {
+      "name": "ROUND(1234, -2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(1234, -2))",
+      "column": "[v]",
+      "want": 1200
     }
   ]
 }
