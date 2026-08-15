@@ -22,7 +22,9 @@ the Fabric portal":
    graph, identities) plus read views of emulator state.
 3. **Sidecars ship real UIs rather than reimplementing them.** OpenMetadata is
    the catalog UI, Airflow is the orchestration UI, kustainer is the KQL
-   engine. A UI that already exists is attached, not rebuilt.
+   engine, Kafka is the Eventstream broker. A UI that already exists is
+   attached, not rebuilt. Fabric Core MCP (`POST /v1/mcp/core`) is the
+   same Core REST behind Streamable HTTP — not a second implementation.
 
 ### The thin/thick line for portal surfaces
 

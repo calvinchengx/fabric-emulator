@@ -13,7 +13,7 @@ The heavyweight or proprietary **compute engines** run by default: `docker
 compose up` auto-loads an override that starts Sail (Spark Connect) and a SQL
 Server sidecar, so Livy sessions, notebook cells and the T-SQL warehouse do real
 work out of the box. What stays 🟠 is the narrower set that needs a *different*
-engine — the JVM overlay, or an opt-in profile — and what cannot be done
+engine — the JVM overlay, or an opt-in profile (`rti`, `eventstream`) — and what cannot be done
 honestly at all is stubbed.
 
 **"Real via our own wire-protocol implementation."** A row is 🟢 **Real** not

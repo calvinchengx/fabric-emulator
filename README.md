@@ -18,10 +18,12 @@
 
 A clean-room, local emulator of **Microsoft Fabric**, built to compose with
 [entra-emulator](https://github.com/calvinchengx/entra-emulator) — the control
-plane (workspaces, items, RBAC, git, LROs) plus a real **OneLake** ADLS/Blob
-data plane, a **T-SQL warehouse** over TDS, native **Livy** sessions on a real
-Spark engine, **Data Factory** pipelines, **Apache Airflow** jobs on a real
-Airflow scheduler, and **KQL** eventhouses.
+plane (workspaces, items, RBAC, git, LROs, Fabric Core MCP) plus a real
+**OneLake** ADLS/Blob data plane, a **T-SQL warehouse** over TDS, native
+**Livy** sessions on a real Spark engine, **Data Factory** pipelines (Web,
+REST, Salesforce, and Azure Batch Custom on by default), **Apache Airflow**
+jobs on a real Airflow scheduler, **KQL** eventhouses, and **Eventstream**
+on a real Apache Kafka broker (Lakehouse and Reflex destinations included).
 
 ![the Data flow view drawing the advanced medallion as it is built: three source systems landing, conformed to bronze, resolved to silver, joined into a Warehouse star, and served to a semantic model](docs/demo/flow.gif)
 
@@ -135,14 +137,31 @@ are shipped and CI-verified on Linux, macOS, and Windows.
   lakehouse rule is enforced, and `concurrency` is honoured when asked for —
   sequential by default, a divergence recorded in [parity.md](docs/parity.md).
   *Schedules* — `.../jobs/{jobType}/schedules` on any item. And *Apache Airflow
-  jobs*, below.
+  jobs*, below. Pipeline **Web** activities make the real HTTP call (stub only
+  if you set `FABRIC_WEB_ACTIVITY=stub`). **Custom** (Azure Batch) runs the
+  command on the Spark agent by default (`FABRIC_CUSTOM_ACTIVITY=off` refuses
+  it). `RestSource`/`RestSink` and Salesforce Bulk API 2.0 are real too.
+- **Real-Time Intelligence (opt-in sidecars):** Eventhouse / KQL Database
+  execute on Microsoft's `kustainer` (`--profile rti`). Eventstream items
+  provision a Kafka topic; Custom HTTP produce writes real key/value bytes;
+  notebooks read with `format("kafka")` + `eventstream.*`. Bind a **Lakehouse**
+  destination to append those events as Delta, or a **Reflex** destination to
+  start a real `EventTriggered` item job
+  (`Microsoft.Fabric.Eventstream.EventReceived`). Eventhouse streaming dest
+  and operators stay refused. See [51](docs/51-eventstream-kafka.md).
+- **Fabric Core MCP** (`POST /v1/mcp/core`) — Streamable HTTP over the same
+  Core REST handlers, witnessed by the unmodified Python `mcp` SDK.
+- **Optional full DAX oracle** — empty `FABRIC_DAX_URL` keeps the in-process
+  bounded evaluator. Point it at a pump in front of Power BI Desktop's
+  `msmdsrv` on a machine you own ([52](docs/52-msmdsrv-hosts.md)). Not a
+  compose default and not GitHub `macos-latest` / `ubuntu-latest`.
 - **Real orchestration (Airflow):** `ApacheAirflowJob` items run on
   **genuine Apache Airflow** — Fabric's own code-first orchestrator *is* upstream
   Airflow, so the sidecar pins the versions Microsoft documents (2.10.5 on
   Python 3.12). DAG sources are stored as item definitions in OneLake, synced
   into the scheduler's DAG folder, and driven through Airflow's REST API for
   discovery, unpause, trigger and terminal-state polling. Real scheduler, real
-  executor, real DAG semantics — no orchestration emulation at all. Attach it
+  executor, real DAG semantics — no orchestration emulation at all.
   On by default in `make up`; `make up PROFILE="--profile governance"` leaves it
   out, and without the wiring the routes answer `AirflowNotConfigured` rather
   than pretending. See
@@ -151,8 +170,9 @@ are shipped and CI-verified on Linux, macOS, and Windows.
 The bare binary runs none of the engines (clock-derived, milliseconds) — but
 `docker compose up` auto-loads the override that attaches them, so the
 documented path is engine-backed by default. Heavier services (KQL,
-OpenMetadata, the terminal) sit behind profiles; `make up` enables `governance`
-for you and the others are opt-in. Coverage floor is 90% (currently ~90%).
+Eventstream, OpenMetadata, the terminal, an optional `msmdsrv` DAX oracle)
+sit behind profiles or a host you own; `make up` enables `governance` for
+you and the others are opt-in. Coverage floor is 90% (currently ~90%).
 
 Docs: <https://calvinchengx.github.io/fabric-emulator/>
 
@@ -166,20 +186,21 @@ and both gold engines. Reference:
 [real compute](docs/14-real-compute.md), the
 [warehouse over TDS](docs/16-warehouse-tds.md),
 [flow observability](docs/31-flow-observability.md),
-[running modes](docs/27-running-modes.md), the [roadmap](docs/13-roadmap.md), and
+[running modes](docs/27-running-modes.md),
+[Eventstream](docs/51-eventstream-kafka.md),
+[the DAX oracle](docs/52-msmdsrv-hosts.md), the [roadmap](docs/13-roadmap.md), and
 the [parity map](docs/parity.md).
 
 ## Parity at a glance
 
-| | Rows | Meaning |
+| | Claims | Meaning |
 |---|---|---|
-| 🟢 **Real** | 89 | Genuine work — real signed JWTs, real bytes on disk, a real engine or client computes |
-| 🟡 **Emulated** | 17 | Faithful API contract and persisted state, but no engine behind it |
-| 🟠 **Non-default engine** | 14 | Real on the JVM Spark overlay or an opt-in profile — *not* "bring your own": `docker compose up` already starts Sail and the SQL Server sidecar |
-| 🔴 **Not implemented** | 19 | Deliberately out of scope — the parity map argues where the boundary sits and why |
+| 🟢 **Real** | **111** | Witnessed — `check_witnesses.py --strict` fails CI if a supported claim loses its witness. Genuine work: real signed JWTs, real bytes, a real engine or client computes |
+| 🟡 **Emulated** | management / clock | Faithful API contract and persisted state, but no engine — LROs and generic item jobs on purpose |
+| 🟠 **Non-default engine** | JVM overlay or a profile | Real on the JVM Spark overlay, `--profile rti`, or `--profile eventstream` — *not* "bring your own": `docker compose up` already starts Sail and the SQL Server sidecar |
+| 🔴 **Not implemented** | honest 501 | Deliberately out of scope — Eventhouse streaming dest, operators, Dataflow exec, Purview system classifiers. The parity map argues where the boundary sits and why |
 
-Every 🟢 row names the witness that proves it, and a CI job fails the build if a
-claim loses its witness. Full detail: [parity map](docs/parity.md).
+Every 🟢 claim names the witness that proves it. Full detail: [parity map](docs/parity.md).
 
 ## What `docker compose up` gives you
 
@@ -192,7 +213,8 @@ identities), so it could equally point at a real Entra tenant.
 | `docker compose up` | both emulators **plus real engines** — a Spark agent and a SQL Server sidecar, via the auto-loaded [override](docker-compose.override.yml). Livy sessions, notebook cells and the T-SQL/TDS warehouse run for real |
 | `docker compose -f docker-compose.yml up` | the lite, contract-only pair — honest `501`s on the engine surfaces |
 | `--profile rti` | Microsoft's own KQL engine behind Eventhouse / KQL Database ([docs/25](docs/25-rti-kusto.md)) |
-| `--profile eventstream` | Apache Kafka KRaft behind Eventstream items — needs `-f docker-compose.eventstream.yml` ([docs/51](docs/51-eventstream-kafka.md)). Works on Sail (default) and the JVM overlay |
+| `--profile eventstream` | Apache Kafka KRaft behind Eventstream items — needs `-f docker-compose.eventstream.yml` ([docs/51](docs/51-eventstream-kafka.md)). Custom HTTP produce, Lakehouse Delta dest, Reflex job dest. Works on Sail (default) and the JVM overlay |
+| `FABRIC_DAX_URL` | Optional pump in front of `msmdsrv` on a machine you own — not a compose profile ([docs/52](docs/52-msmdsrv-hosts.md)) |
 | `--profile governance` | OpenMetadata over the same state your pipelines write ([docs/22](docs/22-openmetadata.md)) |
 | `--profile terminal` | a shell in the Flow view beside the graph — needs `-f docker-compose.terminal.yml` too ([docs/31](docs/31-flow-observability.md#the-terminal-pane)) |
 | `-f docker-compose.spark-jvm.yml` | **swaps** Sail for JVM Spark, buying the RDD API, structured streaming, `OPTIMIZE`/`VACUUM` and Java/Scala UDFs at the cost of image size ([docs/20](docs/20-lakesail-engine.md)) |

@@ -265,3 +265,8 @@ get the same switch via `eval "$(python -m fabric_target env real)"`.
 - Freeze time and inject faults: [testing](10-testing.md).
 - Every endpoint: [control-plane API](07-control-plane-api.md) and
   [OneLake](08-onelake.md).
+- Eventstream (Kafka, Lakehouse dest, Reflex dest):
+  [51-eventstream-kafka.md](51-eventstream-kafka.md).
+- Optional full DAX against `msmdsrv`:
+  [52-msmdsrv-hosts.md](52-msmdsrv-hosts.md).
+- What is real vs emulated: [parity map](parity.md).

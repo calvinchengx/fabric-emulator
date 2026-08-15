@@ -327,9 +327,11 @@ proxy would be a separate sibling.
       real path (`exists`/`itemType`/`size`/`lastModified`/`childItems`);
       **Script**/**SqlServerStoredProcedure** run real T-SQL against a
       Warehouse/SQLDatabase item's own SQL Server database (Track C's backend),
-      targeted the same `{workspaceId?, itemId}` way as Copy/Lookup. Web /
-      external-connector leaves stay stubbed (a real network call breaks the
-      offline/deterministic guarantee).
+      targeted the same `{workspaceId?, itemId}` way as Copy/Lookup.
+      Web, WebHook, REST, Salesforce and Custom (Azure Batch) run for real
+      (Web and Custom can be refused with `FABRIC_WEB_ACTIVITY=stub` /
+      `FABRIC_CUSTOM_ACTIVITY=off`). External stores on Copy stay
+      refused by name.
     - [x] **R5 (Apache Airflow + Dataflow Gen2 boundary)** —
       `ApacheAirflowJob` item/file APIs sync Python DAGs into an attached
       Airflow 2.10.5/Python 3.12 sidecar, unpause and trigger them through the
@@ -402,9 +404,30 @@ Connect) becomes the engine behind every compute surface — PySpark with no JVM
       `createDataFrame` included); JVM image build dropped.
 - [x] **S3** — `e2e/spark` (A2) reborn on Sail with the same
       production-shaped `abfs://` URLs; `EntraTokenProvider.java` + the JVM
-      Dockerfile deleted. **No JVM remains anywhere in the repo.** Tradeoff
-      accepted: the Hadoop-ABFS-driver witness is gone — resurrect as an
-      opt-in nightly if demand appears.
+      Dockerfile deleted. The **default** path has no JVM; the opt-in
+      overlay (`docker-compose.spark-jvm.yml` / `make up-jvm`) later
+      brought JVM Spark back for RDD, checkpointed streaming, and
+      Java/Scala UDFs. Tradeoff accepted on the default: the Hadoop-ABFS
+      driver witness lives on that overlay, not on Sail.
+
+## After S — shipped on the same contract
+
+These landed after the Sail swap and are CI-verified. They are not a new
+phase letter; they extend surfaces the earlier phases already named.
+
+- [x] **Eventstream** — Apache Kafka KRaft sidecar (`--profile eventstream`),
+      Fabric notebook API (`format("kafka")` + `eventstream.*`), Custom HTTP
+      produce. **Lakehouse destination** appends produce payloads as Delta;
+      **Reflex destination** fires `Microsoft.Fabric.Eventstream.EventReceived`
+      as a real `EventTriggered` job. Eventhouse streaming dest and operators
+      stay refused. [51-eventstream-kafka.md](51-eventstream-kafka.md).
+- [x] **Custom activity on by default** — Azure Batch `command` runs on the
+      Spark agent; `FABRIC_CUSTOM_ACTIVITY=off` restores the refusal.
+- [x] **Fabric Core MCP** — `POST /v1/mcp/core`, unmodified Python `mcp` SDK
+      in CI.
+- [x] **Optional `msmdsrv` DAX oracle** — `FABRIC_DAX_URL` relays
+      `executeQueries` to a pump in front of Desktop's engine on a machine
+      you own. Not a compose default. [52-msmdsrv-hosts.md](52-msmdsrv-hosts.md).
 
 ## Sequencing note
 

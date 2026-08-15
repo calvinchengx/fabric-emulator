@@ -5,7 +5,9 @@ handful of routes below are what SDKs, `fabric-cicd`, git integration, and
 deployment-pipeline automation actually call. Typed item collections
 (`/notebooks`, `/lakehouses`, `/warehouses`, `/dataPipelines`, …) are thin
 aliases over the **generic item** shape, so one implementation covers dozens of
-item types. The OneLake data plane has its own page: [08-onelake.md](08-onelake.md).
+item types. Eventstream destination bind, Reflex triggers, and Fabric Core
+MCP (`POST /v1/mcp/core`) are on this plane too. The OneLake data plane has
+its own page: [08-onelake.md](08-onelake.md).
 
 All routes are under `https://api.fabric.microsoft.com/v1` unless noted.
 `application/json`. Bearer required. Mutations are async (see **LRO** below)

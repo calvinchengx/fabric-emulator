@@ -115,23 +115,30 @@ function convert(name) {
 
 function writeIndex() {
   const body = rewriteLinks(
-    `Local emulator of the **Microsoft Fabric control plane** in a single Go binary — ` +
-      `workspaces, items and their CI/CD definitions, workspace RBAC, git integration, jobs, and ` +
-      `the 202/poll long-running-operation contract, all validating Microsoft Entra bearer tokens. ` +
-      `Pairs with its sibling [entra-emulator](https://calvinchengx.github.io/entra-emulator/) — ` +
-      `fabric-emulator validates tokens against its JWKS exactly as real Fabric validates against ` +
-      `Entra — so you can test service-principal automation and \`fabric-cicd\` pipelines offline ` +
-      `with no capacity and no cloud tenant.\n\n` +
-      `:::caution\nLocal development tool only — intentionally insecure (no real authorization ` +
-      `boundary, self-signed TLS). It emulates the control-plane **contract**, not the runtime: ` +
-      `nothing actually computes. Run it on \`localhost\` only.\n:::\n\n` +
+    `Local emulator of **Microsoft Fabric** in a single Go binary — the control ` +
+      `plane (workspaces, items, RBAC, git, jobs, LROs, Fabric Core MCP), a real ` +
+      `OneLake ADLS/Blob data plane, T-SQL over TDS, Livy on a real Spark engine, ` +
+      `Data Factory pipelines, Airflow jobs, KQL eventhouses, and Eventstream on ` +
+      `Apache Kafka. It validates Microsoft Entra bearer tokens against ` +
+      `[entra-emulator](https://calvinchengx.github.io/entra-emulator/) exactly as ` +
+      `real Fabric validates against Entra, so the same pipeline runs unmodified ` +
+      `here and against a real tenant (\`FABRIC_TARGET\`).\n\n` +
+      `\`docker compose up\` attaches Sail and a SQL Server sidecar, so Livy, ` +
+      `notebooks and the warehouse **do real work**. KQL, Eventstream, OpenMetadata ` +
+      `and the Flow terminal sit behind profiles. 111 supported capability claims ` +
+      `each name a witness; CI fails if one is lost.\n\n` +
+      `:::caution\nLocal development tool only — intentionally insecure (no real ` +
+      `authorization boundary, self-signed TLS). Run it on \`localhost\` only.\n:::\n\n` +
       `## Start here\n\n` +
-      `- [Quickstart](01-quickstart.md) — compose up the pair, mint a token, create a workspace, write to OneLake\n` +
+      `- [Quickstart](01-quickstart.md) — compose up the family, mint a token, create a workspace, write to OneLake\n` +
       `- [Installation](02-installation.md) — brew, winget, go install, Docker, compose\n` +
+      `- [Running modes](27-running-modes.md) — default stack, lite, JVM overlay, profiles, optional DAX oracle\n` +
       `- [Architecture](03-architecture.md) — the three-emulator model, token acceptance, the LRO engine\n` +
       `- [Control-plane API](07-control-plane-api.md) and [OneLake](08-onelake.md) — every emulated endpoint\n` +
+      `- [Eventstream](51-eventstream-kafka.md) — Kafka broker, Lakehouse dest, Reflex dest\n` +
       `- [Testing](10-testing.md) — freeze the clock, inject faults; [run the real fabric-cicd](11-testing-with-fabric-cicd.md)\n` +
-      `- [Roadmap](13-roadmap.md) — phases P0–P3 and what's next\n`,
+      `- [Parity](parity.md) — every claim, graded, with its witness\n` +
+      `- [Roadmap](13-roadmap.md) — phases P0–P3, R0–R5, S, and what landed after\n`,
   );
   // The landing page is synthesized here (no /docs source), so it has no
   // "Edit this page" target.

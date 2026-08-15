@@ -18,11 +18,12 @@ defects were.
 
 What is verifiable, stated so anyone can re-derive it rather than trust it:
 
-- **17 leaf activity types execute for real** in `internal/api/pipelines.go`'s
+- **19 leaf activity types execute for real** in `internal/api/pipelines.go`'s
   dispatch: notebook, invoke-pipeline, Copy, Lookup, GetMetadata, Delete,
   Script, stored procedure, Web, WebHook, Functions, HDInsight Spark,
   Databricks notebook, Databricks python, Azure Batch, Validation,
-  Data Explorer command. (Several accept more than one wire spelling —
+  Data Explorer command, Spark Job Definition, Invoke Copy Job. (Several
+  accept more than one wire spelling —
   `RunNotebook`/`TridentNotebook`/`SynapseNotebook` are one behaviour, as are
   `SqlServerStoredProcedure`/`SqlPoolStoredProcedure` and `Web`/`WebActivity` —
   so the *case-label* count is higher than the behaviour count.)
@@ -31,9 +32,9 @@ What is verifiable, stated so anyone can re-derive it rather than trust it:
   Wait, Fail), plus the `Inactive` activity *state*.
 - **13 types refuse by name with a cause**: Dataflow Gen2 (3 spellings), the
   three Azure ML types, the Databricks JAR task, and the six in Phase 7.
-- **7 remain blocked on a wire-name capture** from a real tenant (Phase 0):
-  Refresh SQL Endpoint, Lakehouse maintenance, KQL, Spark Job Definition,
-  Teams, Copy job, Approval.
+- **5 remain blocked on a wire-name capture** from a real tenant (Phase 0):
+  Refresh SQL Endpoint, Lakehouse maintenance, KQL script activity, Teams,
+  Approval. Spark Job Definition and Invoke Copy Job have landed.
 
 **To re-derive:** list the `case` labels in the dispatch switch and in
 `activities.go`, and diff them against the `x-ms-discriminator-value` set in
@@ -59,7 +60,7 @@ dispatch default — see Phase 7 for why that matters.
 | Item | Needs | Unblocks |
 |---|---|---|
 | Wire-name capture | One throwaway pipeline in a real tenant containing Refresh SQL Endpoint, Lakehouse maintenance, KQL, Spark Job Definition, Teams, Copy job, Approval and Refresh Materialized Lake View activities. **Now a button rather than a chore:** run the `Real Fabric conformance` workflow with `capture_item_type: dataPipelines` and the pipeline's display name, and it prints the SHAPE — every `type` discriminator and every property name, with all values redacted, because this repository's logs are public. See `scripts/capture_definition_shape.py` | Phase 2, and the five other blocked activities |
-| Copy job activity case | #78 to settle; owned by the CopyJob session, or claimed by notice after | The 24th real activity — wiring the existing `copyjob` executor into the `pipelines.go` dispatch |
+| ~~Copy job activity case~~ | **Landed** as `InvokeCopyJob` — same executor a direct Copy job run uses | — |
 
 ## Phase 1 — async pipelines (the prerequisite, doc 37 §4)
 
@@ -78,7 +79,7 @@ behaviour inline execution cannot produce.
 | Refresh SQL Endpoint | warehouse reflection | the documented `Success` / **`NotRun`** (nothing unsynced) / `Failure` output statuses; lock-contention failure stays representable | Go: stale reflection → activity → tables current; `NotRun` on a second run with no new data |
 | Lakehouse maintenance | delta_ops OPTIMIZE/VACUUM via the Livy agent | table-scoped maintenance; v-order accepted where documented, refused-by-name where Sail cannot | Go + assertion in `e2e/livy` (compaction observed, not just exit 0) |
 | KQL | kustainer under `--profile rti` | script against a KQL DB; honest 501 without the profile | e2e under the rti job; grade ceiling 🟠 (AVX2/amd64) |
-| SJD wrapper | SJD item execution | activity → item job, both `jobs.go` switches if a job type appears, bus-subscribe-then-drain test per the CopyJob lesson | Go: SJD activity runs the item's job to terminal |
+| ~~SJD wrapper~~ | **Landed** — `SparkJobDefinition` activity runs the referenced item job | — | — |
 
 ## Phase 3 — HTTP-real externals (no park needed)
 
@@ -113,7 +114,7 @@ what exists, refuse what cannot be honoured by name:
 |---|---|---|---|
 | HDInsight | the activity's Spark-job submission | Sail (JVM overlay for JAR types) | M |
 | Azure Databricks | Jobs API stand-in (runs/submit → poll) | notebook/python via the agent; JAR → JVM overlay or refusal-by-name | L |
-| Azure Batch | task submission | the script in a sandboxed container sidecar | L |
+| Azure Batch | **Landed** — `command` on the Spark agent (`FABRIC_CUSTOM_ACTIVITY=off` refuses) | the agent's container, not a Batch node | — |
 | Azure ML | ~~job submission~~ **nothing — refused by name** | ~~python entry via the agent~~ **there is no entry point to run** | S |
 
 **The Azure ML row did not survive its oracle, and the correction is recorded

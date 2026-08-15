@@ -65,6 +65,11 @@ SQL Server sidecar (the T-SQL/TDS warehouse surface — Warehouse, Lakehouse SQL
 endpoint, Fabric SQL Database). `docker-compose.override.yml` — auto-loaded
 alongside [`docker-compose.yml`](../docker-compose.yml), no flag needed — adds
 those sidecars and their env vars; see [14-real-compute.md](14-real-compute.md).
+`--profile rti` attaches Microsoft's KQL engine; `--profile eventstream`
+plus `-f docker-compose.eventstream.yml` attaches Apache Kafka (Lakehouse
+and Reflex destinations included). An optional `msmdsrv` DAX oracle is
+`FABRIC_DAX_URL` on a machine you own, not a compose profile
+([52](52-msmdsrv-hosts.md)).
 
 To run the same stack explicitly on **LakeSail's Sail** (the default Rust
 Spark-Connect engine, with no JVM; see
