@@ -141,11 +141,15 @@ cached. CI remains the witness of record.
 
 ## Boundaries (deliberate, not backlog)
 
-- **Eventhouse streaming ingest / Eventstream→Kusto destination** stays 🔴.
-  The engine is a query/ingest engine; a streaming ingestion pipeline is a
-  different service, and the Kusto emulator explicitly has no streaming
-  ingestion. Eventstream *exec* (Kafka + Fabric Spark options) is a separate
-  slice: [51-eventstream-kafka.md](51-eventstream-kafka.md).
+- **Eventhouse streaming ingest / queued `Kusto.Ingest`** stays 🔴. The
+  engine is a query/ingest engine; Fabric's streaming-ingest protocol and
+  the `ingest-` endpoint are a different service, and the Kusto emulator
+  explicitly has no streaming ingestion. **Eventstream → Eventhouse
+  destination** is a separate green row: Custom HTTP produce drains through
+  **direct** ingest (`.create-merge` + `.ingest inline`) against the already
+  attached engine — the same path this sidecar already supports. That is
+  produce-triggered, not a streaming pipeline.
+  [51-eventstream-kafka.md](51-eventstream-kafka.md).
 - **Queued ingestion / the `ingest-` endpoint and `Kusto.Ingest` SDKs**:
   unsupported by the engine. `ingestionServiceUri` therefore points at the
   engine, and direct ingestion commands are the supported path.

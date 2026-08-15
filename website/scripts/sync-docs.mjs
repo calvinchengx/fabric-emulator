@@ -125,7 +125,7 @@ function writeIndex() {
       `here and against a real tenant (\`FABRIC_TARGET\`).\n\n` +
       `\`docker compose up\` attaches Sail and a SQL Server sidecar, so Livy, ` +
       `notebooks and the warehouse **do real work**. KQL, Eventstream, OpenMetadata ` +
-      `and the Flow terminal sit behind profiles. 111 supported capability claims ` +
+      `and the Flow terminal sit behind profiles. 113 supported capability claims ` +
       `each name a witness; CI fails if one is lost.\n\n` +
       `:::caution\nLocal development tool only — intentionally insecure (no real ` +
       `authorization boundary, self-signed TLS). Run it on \`localhost\` only.\n:::\n\n` +
@@ -135,7 +135,7 @@ function writeIndex() {
       `- [Running modes](27-running-modes.md) — default stack, lite, JVM overlay, profiles, optional DAX oracle\n` +
       `- [Architecture](03-architecture.md) — the three-emulator model, token acceptance, the LRO engine\n` +
       `- [Control-plane API](07-control-plane-api.md) and [OneLake](08-onelake.md) — every emulated endpoint\n` +
-      `- [Eventstream](51-eventstream-kafka.md) — Kafka broker, Lakehouse dest, Reflex dest\n` +
+      `- [Eventstream](51-eventstream-kafka.md) — Kafka broker, Lakehouse / Reflex / Eventhouse dests, operators\n` +
       `- [Testing](10-testing.md) — freeze the clock, inject faults; [run the real fabric-cicd](11-testing-with-fabric-cicd.md)\n` +
       `- [Parity](parity.md) — every claim, graded, with its witness\n` +
       `- [Roadmap](13-roadmap.md) — phases P0–P3, R0–R5, S, and what landed after\n`,

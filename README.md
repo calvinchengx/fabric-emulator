@@ -145,10 +145,12 @@ are shipped and CI-verified on Linux, macOS, and Windows.
   execute on Microsoft's `kustainer` (`--profile rti`). Eventstream items
   provision a Kafka topic; Custom HTTP produce writes real key/value bytes;
   notebooks read with `format("kafka")` + `eventstream.*`. Bind a **Lakehouse**
-  destination to append those events as Delta, or a **Reflex** destination to
+  destination to append those events as Delta, a **Reflex** destination to
   start a real `EventTriggered` item job
-  (`Microsoft.Fabric.Eventstream.EventReceived`). Eventhouse streaming dest
-  and operators stay refused. See [51](docs/51-eventstream-kafka.md).
+  (`Microsoft.Fabric.Eventstream.EventReceived`), or an **Eventhouse**
+  destination to ingest via Kusto `.create-merge` + `.ingest inline`.
+  **Operators** (Filter, GroupBy, tumbling Window) run on the produce batch
+  before destinations. See [51](docs/51-eventstream-kafka.md).
 - **Fabric Core MCP** (`POST /v1/mcp/core`) — Streamable HTTP over the same
   Core REST handlers, witnessed by the unmodified Python `mcp` SDK.
 - **Optional full DAX oracle** — empty `FABRIC_DAX_URL` keeps the in-process
@@ -195,10 +197,10 @@ the [parity map](docs/parity.md).
 
 | | Claims | Meaning |
 |---|---|---|
-| 🟢 **Real** | **111** | Witnessed — `check_witnesses.py --strict` fails CI if a supported claim loses its witness. Genuine work: real signed JWTs, real bytes, a real engine or client computes |
+| 🟢 **Real** | **113** | Witnessed — `check_witnesses.py --strict` fails CI if a supported claim loses its witness. Genuine work: real signed JWTs, real bytes, a real engine or client computes |
 | 🟡 **Emulated** | management / clock | Faithful API contract and persisted state, but no engine — LROs and generic item jobs on purpose |
 | 🟠 **Non-default engine** | JVM overlay or a profile | Real on the JVM Spark overlay, `--profile rti`, or `--profile eventstream` — *not* "bring your own": `docker compose up` already starts Sail and the SQL Server sidecar |
-| 🔴 **Not implemented** | honest 501 | Deliberately out of scope — Eventhouse streaming dest, operators, Dataflow exec, Purview system classifiers. The parity map argues where the boundary sits and why |
+| 🔴 **Not implemented** | honest 501 | Deliberately out of scope — Dataflow exec, Purview system classifiers, Fabric Eventhouse streaming ingest / queued `Kusto.Ingest`. The parity map argues where the boundary sits and why |
 
 Every 🟢 claim names the witness that proves it. Full detail: [parity map](docs/parity.md).
 
