@@ -214,12 +214,13 @@ Linux laptop reaches that oracle without waiting for Monday's
 VM; it replays the goldens against Go. That is what keeps those jobs
 honest: they test the engine those runners actually have.
 
-First pin: `ACOS` in
+Pins so far, in
 [`e2e/semantic-model/fixtures/desktop_goldens.json`](../e2e/semantic-model/fixtures/desktop_goldens.json),
-captured on a UTM Windows 11 ARM guest + Desktop, replayed by
-`TestDesktopFunctionGoldens`. Clone that guest only while it is **stopped**
-(`utmctl clone` refuses a running VM). Do not treat the live oracle as
-disposable.
+replayed by `TestDesktopFunctionGoldens`: `ACOS`, then `ABS` (BLANK stays
+BLANK), then `ROUND` (half away from zero; BLANK number stays BLANK,
+BLANK digits count as 0). Captured on a UTM Windows 11 ARM guest + Desktop.
+Clone that guest only while it is **stopped** (`utmctl clone` refuses a
+running VM). Do not treat the live oracle as disposable.
 
 ### Phase 4 — XMLA write-through (only if demanded)
 
