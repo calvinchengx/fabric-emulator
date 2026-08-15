@@ -616,6 +616,18 @@
       "want": 99
     },
     {
+      "name": "SWITCH(1, 1, 10, 2, 20)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(1, 1, 10, 2, 20))",
+      "column": "[v]",
+      "want": 10
+    },
+    {
+      "name": "SWITCH(1.0, 1, 10, 99)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(1.0, 1, 10, 99))",
+      "column": "[v]",
+      "want": 10
+    },
+    {
       "name": "DISTINCTCOUNT(Sales[Units])",
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DISTINCTCOUNT(Sales[Units]))",
       "column": "[v]",
