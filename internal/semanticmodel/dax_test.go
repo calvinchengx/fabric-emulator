@@ -327,6 +327,116 @@ func TestDAXTimeBlankAndNegative(t *testing.T) {
 	}
 }
 
+// TestDAXPhase3BatchEdges covers BLANK / error / arity paths the Desktop
+// goldens do not pin. Those probes are the happy scalars; Windows total
+// coverage still has to see the refusal and BLANK branches of the Phase 3
+// batch helpers (SWITCH, WEEKDAY, TRUNC, QUOTIENT, ISBLANK, and kin).
+func TestDAXPhase3BatchEdges(t *testing.T) {
+	m, d := loadModel(t), loadData(t)
+
+	blank := []struct {
+		q    string
+		name string
+	}{
+		{`EVALUATE SUMMARIZECOLUMNS("z", SWITCH(3, 1, 10, 2, 20), "k", 1)`, "SWITCH miss without else"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", SQRT(DIVIDE(1, 0)), "k", 1)`, "SQRT(BLANK)"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", MOD(DIVIDE(1, 0), 3), "k", 1)`, "MOD(BLANK, 3)"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", FLOOR(DIVIDE(1, 0), 1), "k", 1)`, "FLOOR(BLANK, 1)"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", CEILING(DIVIDE(1, 0), 1), "k", 1)`, "CEILING(BLANK, 1)"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", WEEKDAY(DIVIDE(1, 0)), "k", 1)`, "WEEKDAY(BLANK)"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", WEEKNUM(DIVIDE(1, 0)), "k", 1)`, "WEEKNUM(BLANK)"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", EOMONTH(DIVIDE(1, 0), 0), "k", 1)`, "EOMONTH(BLANK, 0)"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", EDATE(DIVIDE(1, 0), 1), "k", 1)`, "EDATE(BLANK, 1)"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", TRUNC(DIVIDE(1, 0)), "k", 1)`, "TRUNC(BLANK)"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", QUOTIENT(DIVIDE(1, 0), 3), "k", 1)`, "QUOTIENT(BLANK, 3)"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", BLANK(), "k", 1)`, "BLANK()"},
+		{`EVALUATE SUMMARIZECOLUMNS("z", INT(DIVIDE(1, 0)), "k", 1)`, "INT(BLANK)"},
+	}
+	for _, tc := range blank {
+		res, err := Evaluate(m, d, tc.q)
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if len(res.Rows) != 1 || res.Rows[0]["[z]"] != nil {
+			t.Errorf("%s = %v, want BLANK", tc.name, res.Rows)
+		}
+	}
+
+	res, err := Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", SWITCH(BLANK(), BLANK(), 10, 99))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 10 {
+		t.Errorf("SWITCH(BLANK, BLANK, 10) = %v, want 10", res.Rows)
+	}
+
+	// Sunday 2024-08-18: return_type 2 → 7, return_type 3 → 6.
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", WEEKDAY(DATE(2024, 8, 18), 2))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 7 {
+		t.Errorf("WEEKDAY(Sunday, 2) = %v, want 7", res.Rows)
+	}
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", WEEKDAY(DATE(2024, 8, 18), 3))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 6 {
+		t.Errorf("WEEKDAY(Sunday, 3) = %v, want 6", res.Rows)
+	}
+
+	// Desktop ISBLANK("") is false. ISBLANK(BLANK()) is true.
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", IF(ISBLANK(""), 1, 0))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 0 {
+		t.Errorf("ISBLANK(\"\") = %v, want 0", res.Rows)
+	}
+
+	for _, q := range []string{
+		`EVALUATE SUMMARIZECOLUMNS("v", SWITCH())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", SWITCH(1))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", SQRT())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", SQRT(-1))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", MOD(10))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", MOD(10, 0))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", FLOOR(10.5))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", FLOOR(10.5, 0))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", CEILING(10.5))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", LN())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", LN(0))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", EXP())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", EXP(1000))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", WEEKDAY())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", WEEKDAY(1))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", WEEKDAY(DATE(2024, 8, 15), 4))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", WEEKNUM())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", WEEKNUM(DATE(2024, 8, 15), 3))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", EOMONTH(DATE(2024, 1, 15)))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", EOMONTH(1, 0))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", EDATE(DATE(2024, 1, 15)))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", EDATE(1, 1))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", TRUNC())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", TRUNC(1, 2, 3))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", QUOTIENT(10))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", QUOTIENT(10, 0))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", BLANK(1))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", ISBLANK())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", ISBLANK(1, 2))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", DISTINCTCOUNT())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", DISTINCTCOUNT(1))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", MAX())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", INT())`,
+	} {
+		if _, err := Evaluate(m, d, q); err == nil {
+			t.Errorf("%q: expected error", q)
+		}
+	}
+}
+
 // TestDAXMeasureRecursionIsBounded pins the fix for a whole-PROCESS crash.
 //
 // A measure's expression is re-parsed and evaluated in place, so `M = [M]` — or
