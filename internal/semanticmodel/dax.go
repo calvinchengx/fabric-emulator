@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `FLOOR`, `CEILING`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -911,6 +911,66 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return daxRound(n, digits), nil
+	case "FLOOR":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("FLOOR expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil // FLOOR(BLANK, s) is BLANK
+		}
+		n, err := arithNum(a, "FLOOR")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		s, err := arithNum(b, "FLOOR")
+		if err != nil {
+			return nil, err
+		}
+		if s == 0 {
+			return nil, fmt.Errorf("FLOOR division by zero")
+		}
+		// Desktop: s * INT(n/s), INT = floor toward −∞.
+		// FLOOR(-2.5, 1) = -3; FLOOR(-2.5, -1) = -2.
+		return s * math.Floor(n/s), nil
+	case "CEILING":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("CEILING expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil // CEILING(BLANK, s) is BLANK
+		}
+		n, err := arithNum(a, "CEILING")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		s, err := arithNum(b, "CEILING")
+		if err != nil {
+			return nil, err
+		}
+		// Desktop: CEILING(10.5, 0) = 0 and CEILING(10.5, BLANK()) = 0.
+		// FLOOR(10.5, 0) errors. Do not share FLOOR's zero-significance path.
+		if s == 0 {
+			return 0.0, nil
+		}
+		// s * CEILING(n/s) toward +∞. CEILING(-2.5, 1) = -2;
+		// CEILING(-2.5, -1) = -3.
+		return s * math.Ceil(n/s), nil
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }

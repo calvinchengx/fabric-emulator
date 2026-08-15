@@ -168,6 +168,7 @@ func TestDAXErrorsAndEdges(t *testing.T) {
 		`EVALUATE SUMMARIZECOLUMNS('Time'[FiscalYear], "x", [NoMeasure])`, // unknown measure
 		"EVALUATE (",             // parse error
 		"EVALUATE 'Store' extra", // trailing tokens
+		`EVALUATE SUMMARIZECOLUMNS("v", FLOOR(10.5, 0))`, // Desktop: division by zero
 	}
 	for _, q := range bad {
 		if _, err := Evaluate(m, d, q); err == nil {
