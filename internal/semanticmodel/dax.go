@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `DISTINCTCOUNT`, `MAX`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `DISTINCTCOUNT`, `MAX`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, `DEGREES`, `RADIANS`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -1136,6 +1136,40 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, fmt.Errorf("TAN division by zero")
 		}
 		return out, nil
+	case "DEGREES":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("DEGREES expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop DEGREES(BLANK()) is BLANK. arithNum would make 0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "DEGREES")
+		if err != nil {
+			return nil, err
+		}
+		return f * 180 / math.Pi, nil
+	case "RADIANS":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("RADIANS expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop RADIANS(BLANK()) is BLANK. arithNum would make 0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "RADIANS")
+		if err != nil {
+			return nil, err
+		}
+		return f * math.Pi / 180, nil
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
