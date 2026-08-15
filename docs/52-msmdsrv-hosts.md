@@ -43,7 +43,7 @@ not "the Linux row." See [Not GitHub-hosted runners](#not-github-hosted-runners)
 |---|---|---|---|
 | **macOS** | [UTM](https://github.com/utmapp/UTM) (or Parallels) on the **host**, not inside OrbStack | Install Windows in the guest, then Power BI Desktop or SSAS Developer. Desktop hosts `msmdsrv` as a child; the port is in `%LOCALAPPDATA%\Microsoft\Power BI Desktop*\*\Data\msmdsrv.port.txt` — the same file `e2e/pbix-desktop/desktop.ps1` already polls. Then `pwsh e2e/msmdsrv/start.ps1` | `FABRIC_DAX_URL=http://<guest-ip>:8080` from the Mac |
 | **Linux** | Docker **Engine on the metal** (or a VM that already has KVM) + [`dockur/windows`](https://github.com/dockur/windows) with `/dev/kvm` | Same guest install as Windows. Compose file: [`e2e/msmdsrv/docker-compose.yml`](../e2e/msmdsrv/docker-compose.yml). `make dax-linux` refuses unless `uname` is Linux **and** `/dev/kvm` exists. Pump still starts inside the guest | `FABRIC_DAX_URL=http://127.0.0.1:8080` (published port) |
-| **Windows** | Nothing. The kernel is already there | Desktop (the path `e2e/pbix-desktop` already runs in CI) or a later headless `msmdsrv` once [33](33-pbix-tooling.md) Phase 0c lands. Then `pwsh e2e/msmdsrv/start.ps1` | `FABRIC_DAX_URL=http://127.0.0.1:8080` |
+| **Windows** | Nothing. The kernel is already there | Desktop (the path `e2e/pbix-desktop` already runs in CI) plus `FABRIC_DAX_URL` (#232). Headless `msmdsrv` listens with a shoestring parent PID ([33](33-pbix-tooling.md) Phase 0c); `ROW` needs a table, so it is not a ready oracle. Then `pwsh e2e/msmdsrv/start.ps1` | `FABRIC_DAX_URL=http://127.0.0.1:8080` |
 
 `dockur/windows` is QEMU in a Linux container. It needs `/dev/kvm` passed
 in. Their own requirements are Linux+KVM or Docker Desktop on **Windows 11**
