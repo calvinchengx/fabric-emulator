@@ -15,9 +15,11 @@ preceded its code).
 ## Baseline
 
 Graded from `docs/parity.md` at the time of writing: **60 🟢, 7 🟡, 7 🟠, 14 🔴**
-across 8 areas (a row may carry two marks). CI/CD, Data Warehouse, Platform, and
-OneLake are effectively complete; Data Engineering holds the largest cluster of
-non-green marks, and "item types, engine absent" holds the rest.
+across 8 areas (a row may carry two marks). **Those counts are historical.**
+`check_witnesses.py --strict` now reports **111** supported (🟢) claims.
+CI/CD, Data Warehouse, Platform, and OneLake are effectively complete; Data
+Engineering holds the largest cluster of non-green marks, and "item types,
+engine absent" holds the rest.
 
 ## Won't do — and why that's the right call
 

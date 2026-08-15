@@ -1,9 +1,11 @@
 # 03 — Architecture
 
-fabric-emulator is a **control-plane contract emulator** for Microsoft Fabric,
-plus a thin OneLake data-plane surface. It is the sibling of
+fabric-emulator is a **local Microsoft Fabric runtime**: the control-plane
+contract (workspaces, items, RBAC, git, jobs, LROs, Fabric Core MCP), a real
+OneLake ADLS/Blob data plane, and attached engines for Spark, T-SQL, pipelines,
+Airflow, KQL, and Eventstream. It is the sibling of
 [entra-emulator](https://github.com/calvinchengx/entra-emulator): where that
-project is an Entra ID STS, this one is the Fabric REST surface that *consumes*
+project is an Entra ID STS, this one is the Fabric surface that *consumes*
 Entra tokens.
 
 ## Version grounding
@@ -82,10 +84,12 @@ flowchart LR
         direction TB
         Secrets["/secrets/{name} — data plane 7.4"]
     end
-    subgraph engines["opt-in engine sidecars"]
+    subgraph engines["engine sidecars"]
         direction TB
-        Spark["Spark agent (Livy)"]
-        SQL["SQL Server (warehouse)"]
+        Spark["Spark agent (Livy) — default"]
+        SQL["SQL Server (warehouse) — default"]
+        KQL["kustainer (Eventhouse) — profile rti"]
+        Kafka["Apache Kafka (Eventstream) — profile eventstream"]
     end
     Client -->|"Bearer (aud = fabric / storage)"| API
     Client -->|"Bearer (aud = storage)"| OL
@@ -96,6 +100,8 @@ flowchart LR
     Secrets -->|"verify (iss + aud + sig)"| JWKS
     API -.->|"native execution"| Spark
     WH -.->|"session splice"| SQL
+    API -.->|"KQL relay"| KQL
+    API -.->|"produce / consume"| Kafka
 ```
 
 Every core service in [`docker-compose.yml`](../docker-compose.yml) appears in

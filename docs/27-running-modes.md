@@ -1,8 +1,9 @@
 # 27 — Running modes: default, swapped engine, real Fabric
 
-The emulator runs in five shapes. This page is the map: what each one starts,
-how to confirm it actually works, and when you would want it. Every mode has a
-`make` target, so the commands are identical on Linux, macOS and Windows.
+The emulator runs in a handful of shapes. This page is the map: what each one
+starts, how to confirm it actually works, and when you would want it. Every
+mode has a `make` target, so the commands are identical on Linux, macOS and
+Windows.
 
 If you only want to get going, [the quickstart](01-quickstart.md) walks mode 1
 end to end. Come back here when you need to change something.
@@ -15,6 +16,7 @@ end to end. Come back here when you need to change something.
 | …plus Spark and the T-SQL warehouse | `docker compose up` | 6 | ~1 GB | **8 GB** |
 | …plus catalog, lineage, glossary, Airflow | `make up` | 12 | ~3 GB | **13 GB** |
 | …plus KQL (Eventhouse) | add `--profile rti` | 13 | +4 GB | +4 GB |
+| …plus Eventstream (Kafka, Lakehouse/Reflex dest) | add `--profile eventstream` and `-f docker-compose.eventstream.yml` | +1 | +400 MB | +400 MB |
 | …plus a shell in the Flow view | add `--profile terminal` | 14 | +5 MB | +5 MB |
 | Spark features Sail lacks (RDD, JVM UDFs) | `make up-jvm` | 6 | ~1 GB | 10 GB |
 | full DAX against `msmdsrv` (optional oracle) | a machine you own — [52](52-msmdsrv-hosts.md) | +Windows guest | — | **8–16 GB**; not `make up`; not `macos-latest` / `ubuntu-latest` |
@@ -55,8 +57,8 @@ SQL Server sidecar behind the T-SQL/TDS warehouse. Livy sessions, notebook
 cells, and warehouse queries all do real work — nothing to attach.
 
 `make up` also brings up the **governance profile** (OpenMetadata and its
-Postgres/Elasticsearch), because the quickstart advertises it. That is eleven
-containers. To skip it:
+Postgres/OpenSearch) and **Airflow**, because the quickstart advertises them.
+That is twelve containers. To skip them:
 
 ```bash
 make up PROFILE=          # same stack, no OpenMetadata
@@ -67,8 +69,8 @@ make up PROFILE=          # same stack, no OpenMetadata
 Worth knowing that this is **not** the same as `make up`:
 
 ```bash
-docker compose up         # 6 services  — no governance profile
-make up                   # 11 services — adds OpenMetadata
+docker compose up         # 6 services  — no governance / airflow profiles
+make up                   # 12 services — adds OpenMetadata + Airflow
 ```
 
 Compose auto-loads [`docker-compose.override.yml`](../docker-compose.override.yml),
@@ -139,7 +141,7 @@ them again if you still want them.
 | `governance` | OpenMetadata + Postgres + OpenSearch | catalog, glossary, lineage over the state your pipelines wrote ([22](22-openmetadata.md)) | ~2.8 GB |
 | `airflow` | `apache/airflow` scheduler + webserver | `ApacheAirflowJob` items run on genuine Airflow ([14](14-real-compute.md#e1)) | ~1.1 GB |
 | `rti` | `kustainer` | Microsoft's own KQL engine behind Eventhouse ([25](25-rti-kusto.md)) | 4 GB (its own `mem_limit`) |
-| `eventstream` | `kafka` (`apache/kafka` KRaft) | Fabric Eventstream notebook API on Sail (default) and the JVM overlay ([51](51-eventstream-kafka.md)) | ~400 MB |
+| `eventstream` | `kafka` (`apache/kafka` KRaft) | Fabric Eventstream notebook API, Custom HTTP produce, Lakehouse Delta dest, Reflex job dest ([51](51-eventstream-kafka.md)) | ~400 MB |
 | `terminal` | `ttyd` | a shell in the Flow view, beside the graph ([31](31-flow-observability.md#the-terminal-pane)) | negligible |
 
 ```bash

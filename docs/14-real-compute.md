@@ -36,7 +36,7 @@ service — it is:
 
 1. this repo's OneLake plane becoming complete enough for real engines,
 2. e2e harnesses in `e2e/` (like `e2e/fabric-cicd/`),
-3. compose-level sidecar attachments (Spark, DuckDB, SQL Server).
+3. compose-level sidecar attachments (Spark, SQL Server, Airflow, kustainer, Kafka).
 
 This held even for the piece once expected to become a separate service: the
 **TDS-FedAuth termination** (Track C) shipped **in this repo** as `internal/tds`
@@ -269,7 +269,11 @@ policies — with leaf activities delegating to real work where an engine exists
 | Copy | real byte movement, **OneLake→OneLake** (a file or a directory subtree) | ✅ real (in-family) |
 | Notebook | Livy → the real Spark agent (Track B) | ✅ real (with `--spark-agent-url`) |
 | Script / SqlServerStoredProcedure | real T-SQL against a Warehouse/SQLDatabase item's own SQL Server database (Track C's backend) — the emulator's own scoped `{workspaceId?, itemId}` target reference, not Fabric's linkedService wire shape | ✅ real (with `--warehouse-sql-url`) |
-| Web / Webhook | real HTTP calls to arbitrary URLs would break the offline/deterministic guarantee | 📐 not yet wired |
+| Web / WebHook | real HTTP call; `FABRIC_WEB_ACTIVITY=stub` records success without calling | ✅ real (default) |
+| Custom (Azure Batch) | `command` runs in the Spark agent container; `FABRIC_CUSTOM_ACTIVITY=off` refuses | ✅ real (default) |
+| RestSource / RestSink | real HTTP + pagination into a Lakehouse Delta sink | ✅ real |
+| Salesforce | Bulk API 2.0 ingest and sink | ✅ real |
+| SparkJobDefinition / InvokeCopyJob | run the referenced item; CopyJob moves real OneLake bytes | ✅ real |
 
 Control-flow fidelity is deterministic on the controllable clock: **ForEach**
 honors `isSequential` + `batchCount` and reports the right wall-clock (sequential
@@ -282,9 +286,10 @@ does is real: it exercises real Spark, real OneLake bytes, and real data movemen
 
 **E3 — honestly unobtainable → 501.** Dataflow Gen2 (the Power Query M
 compute is proprietary), self-hosted integration runtime / gateway scenarios,
-and the long tail of cloud connectors outside the scoped set. Activities we
-cannot execute for real fail with a clear 501 — a pipeline "succeeding"
-without doing its work is exactly what this design forbids.
+and cloud connectors outside the scoped set (REST, Salesforce, ServiceNow via
+RestSource, and Custom are in-scope and run). Activities we cannot execute
+for real fail with a clear 501 — a pipeline "succeeding" without doing its
+work is exactly what this design forbids.
 
 CI/CD for pipelines needs none of this and works **today**: `DataPipeline`
 definitions round-trip through git and fabric-cicd like any other item.
@@ -314,7 +319,7 @@ compose files under `e2e/`, independent of this one.
 | `docker compose -f docker-compose.yml up` (opt-out) | entra + fabric-emulator only, same as the bare binary | milliseconds |
 | `docker compose up` (default) | + a Spark agent + a SQL Server sidecar | ~1.5 GB+, seconds to start |
 | A1 delta-rs | Rust library in a Python wheel — no JVM | tens of MB |
-| A2/B PySpark | **full JVM Spark** (local mode or container, via Livy) | GBs, seconds to start |
+| A2/B PySpark | **Sail** (default, Spark Connect, no JVM); JVM overlay is `make up-jvm` | hundreds of MB / GBs |
 | C1 DuckDB | in-process library — no server, no JVM | a few MB |
 | C2 SQL Server | **full SQL Server engine** in a container | ~1.5 GB, x86 (emulated on ARM) |
 
@@ -333,7 +338,7 @@ C2 SQL-auth compromise.
 | **R1+R2** (merged) | **containerized Spark** — A2 (real PySpark writes Delta via ABFS, cross-engine read with delta-rs) **and** B1+B2 (native Livy sessions/HC on a real Spark agent; real RunNotebook mode). JVM Spark image + Docker network so ABFS resolves to the emulator. | ✅ shipped (`e2e/spark`, `e2e/livy`, `e2e/notebook-run`) |
 | **R3** | C1 (DuckDB SQL over the lakehouse) **and** C2/C3 (SQL Server sidecar + in-repo FedAuth-over-TDS splice; two driver witnesses) | ✅ shipped (`e2e/duckdb`, `e2e/dbt-fabric`, gated TDS tests) |
 | **R4** | D1 notebookutils, D2 default-lakehouse sessions, and the pinned D3 VS Code extension authoring contract | ✅ shipped |
-| **R5** | E2 DataPipeline interpreter and real-engine leaves; E1 real Airflow sidecar; explicit Dataflow Gen2 engine boundary | ✅ shipped |
+| **R5** | E2 DataPipeline interpreter and real-engine leaves (Web, Custom, REST, Salesforce, SJD, InvokeCopyJob included); E1 real Airflow sidecar; explicit Dataflow Gen2 engine boundary | ✅ shipped |
 
 ## Correctness: how we prove it
 

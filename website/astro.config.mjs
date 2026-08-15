@@ -35,7 +35,7 @@ export default defineConfig({
         Search: './src/components/Search.astro',
       },
       description:
-        'A local emulator of the Microsoft Fabric control plane — workspaces, items, RBAC, git integration, and long-running operations — that validates Entra bearer tokens.',
+        'A local emulator of Microsoft Fabric — control plane, OneLake, Spark, T-SQL, pipelines, Eventstream, and KQL — that validates Entra bearer tokens.',
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/calvinchengx/fabric-emulator' },
       ],
