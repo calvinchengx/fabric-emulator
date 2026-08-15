@@ -10,8 +10,9 @@ that confirms.** Every false green in the document happened because success
 was reported by the component doing the work.
 
 Live I/O is injected. Without it, a required cell records a known gap with
-a pointer rather than being skipped — the kit lands before every contract
-passes, and a silent skip is how a gap becomes invisible again.
+a pointer rather than being skipped — the kit landed before every contract
+passed, and a silent skip is how a gap becomes invisible again. Contract 4
+is the first row a live backend replaces.
 """
 from __future__ import annotations
 
@@ -49,9 +50,9 @@ NOT_APPLICABLE = frozenset({
 })
 CONTROL = frozenset({(6, "jvm")})
 
-# Why a cell is ❌ today. Contract 4 is the first asserted row: the harness
-# exists and is unit-tested; the live backends have not yet recorded a pass.
-# The others wait on that same harness with different notebooks.
+# Why a cell is ❌ on the offline record() path (live_write is None).
+# Contract 4 is replaced when a live backend records; the others wait on
+# that same harness with different notebooks.
 GAP_REASON = {
     1: "not yet asserted — needs a running notebook session",
     2: "not yet asserted — needs a running notebook session",
