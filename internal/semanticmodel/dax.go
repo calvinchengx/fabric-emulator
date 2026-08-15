@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `SWITCH`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `SWITCH`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -911,16 +911,71 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return daxRound(n, digits), nil
+	case "LOG":
+		if len(fc.args) < 1 || len(fc.args) > 2 {
+			return nil, fmt.Errorf("LOG expects 1 or 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop LOG(BLANK()) errors (BLANK coerces to 0). Do not return BLANK.
+		n, err := arithNum(a, "LOG")
+		if err != nil {
+			return nil, err
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("LOG argument must be > 0")
+		}
+		base := 10.0
+		if len(fc.args) == 2 {
+			b, err := e.scalar(fc.args[1])
+			if err != nil {
+				return nil, err
+			}
+			base, err = arithNum(b, "LOG")
+			if err != nil {
+				return nil, err
+			}
+		}
+		// Desktop: base 1 is "Division by zero"; base <= 0 is a domain error.
+		if base <= 0 || base == 1 {
+			return nil, fmt.Errorf("LOG base must be > 0 and not 1")
+		}
+		out := math.Log(n) / math.Log(base)
+		if math.IsNaN(out) || math.IsInf(out, 0) {
+			return nil, fmt.Errorf("LOG result is not a number")
+		}
+		return out, nil
+	case "LOG10":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("LOG10 expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop LOG10(BLANK()) errors (BLANK coerces to 0). Do not return BLANK.
+		n, err := arithNum(a, "LOG10")
+		if err != nil {
+			return nil, err
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("LOG10 argument must be > 0")
+		}
+		return math.Log10(n), nil
 	case "SWITCH":
 		return e.evalSwitch(fc)
+
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
 
-// evalSwitch is DAX SWITCH(<expr>, <v1>, <r1>[, <v2>, <r2>]…[, <else>]).
-// First equal value wins; an unpaired trailing arg is the else; no match
-// and no else is BLANK. Equality is not daxCmp: BLANK matches only BLANK,
-// never 0 (Desktop: SWITCH(0, BLANK(), 10, 99) = 99).
+// daxRound is Excel/DAX ROUND: half away from zero (ROUND(-1.5, 0) = -2),
+// not Go math.Round (half toward +Inf, Round(-1.5) = -1). Digits are themselves
+// rounded half-away-from-zero to an integer first (Desktop: ROUND(2.15, 1.5)
+// matches ROUND(2.15, 2); ROUND(2.15, 0.5) matches ROUND(2.15, 1)). Negative
+// digits round the integer part (ROUND(1234, -2) = 1200).
 func (e *evalr) evalSwitch(fc funcCall) (any, error) {
 	if len(fc.args) < 2 {
 		return nil, fmt.Errorf("SWITCH expects an expression and at least one result")
@@ -962,6 +1017,7 @@ func switchEq(l, r any) bool {
 // rounded half-away-from-zero to an integer first (Desktop: ROUND(2.15, 1.5)
 // matches ROUND(2.15, 2); ROUND(2.15, 0.5) matches ROUND(2.15, 1)). Negative
 // digits round the integer part (ROUND(1234, -2) = 1200).
+
 func daxRound(n, digits float64) float64 {
 	return roundHalfAwayPlaces(n, roundHalfAwayInt(digits))
 }
