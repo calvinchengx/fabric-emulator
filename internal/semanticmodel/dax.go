@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `FLOOR`, `CEILING`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `FLOOR`, `CEILING`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -911,6 +911,59 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return daxRound(n, digits), nil
+	case "LOG":
+		if len(fc.args) < 1 || len(fc.args) > 2 {
+			return nil, fmt.Errorf("LOG expects 1 or 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop LOG(BLANK()) errors (BLANK coerces to 0). Do not return BLANK.
+		n, err := arithNum(a, "LOG")
+		if err != nil {
+			return nil, err
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("LOG argument must be > 0")
+		}
+		base := 10.0
+		if len(fc.args) == 2 {
+			b, err := e.scalar(fc.args[1])
+			if err != nil {
+				return nil, err
+			}
+			base, err = arithNum(b, "LOG")
+			if err != nil {
+				return nil, err
+			}
+		}
+		// Desktop: base 1 is "Division by zero"; base <= 0 is a domain error.
+		if base <= 0 || base == 1 {
+			return nil, fmt.Errorf("LOG base must be > 0 and not 1")
+		}
+		out := math.Log(n) / math.Log(base)
+		if math.IsNaN(out) || math.IsInf(out, 0) {
+			return nil, fmt.Errorf("LOG result is not a number")
+		}
+		return out, nil
+	case "LOG10":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("LOG10 expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop LOG10(BLANK()) errors (BLANK coerces to 0). Do not return BLANK.
+		n, err := arithNum(a, "LOG10")
+		if err != nil {
+			return nil, err
+		}
+		if n <= 0 {
+			return nil, fmt.Errorf("LOG10 argument must be > 0")
+		}
+		return math.Log10(n), nil
 	case "FLOOR":
 		if len(fc.args) != 2 {
 			return nil, fmt.Errorf("FLOOR expects 2 arguments")
@@ -940,6 +993,7 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		// Desktop: s * INT(n/s), INT = floor toward −∞.
 		// FLOOR(-2.5, 1) = -3; FLOOR(-2.5, -1) = -2.
 		return s * math.Floor(n/s), nil
+
 	case "CEILING":
 		if len(fc.args) != 2 {
 			return nil, fmt.Errorf("CEILING expects 2 arguments")
@@ -971,6 +1025,7 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		// s * CEILING(n/s) toward +∞. CEILING(-2.5, 1) = -2;
 		// CEILING(-2.5, -1) = -3.
 		return s * math.Ceil(n/s), nil
+
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
