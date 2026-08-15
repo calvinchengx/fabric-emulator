@@ -168,6 +168,7 @@ func TestDAXErrorsAndEdges(t *testing.T) {
 		`EVALUATE SUMMARIZECOLUMNS('Time'[FiscalYear], "x", [NoMeasure])`, // unknown measure
 		"EVALUATE (",             // parse error
 		"EVALUATE 'Store' extra", // trailing tokens
+		`EVALUATE SUMMARIZECOLUMNS("v", POWER(0, 0))`, // Desktop refuses 0^0
 	}
 	for _, q := range bad {
 		if _, err := Evaluate(m, d, q); err == nil {
@@ -192,6 +193,137 @@ func TestDAXErrorsAndEdges(t *testing.T) {
 	}
 	if len(res.Rows) != 1 || toF(res.Rows[0]["[n]"]) != 8 {
 		t.Errorf("COUNTROWS(Sales) = %v, want 8", res.Rows)
+	}
+}
+
+// TestDAXMinAverageCountBlankColumns: goldens only pin non-blank columns.
+// Desktop MIN/AVERAGE of an all-blank column is BLANK (not 0); COUNT of that
+// set is 0; COUNT still tallies non-blank text; empty/whitespace cells are
+// skipped the same way as nil.
+func TestDAXMinAverageCountBlankColumns(t *testing.T) {
+	m := &Model{Name: "x", Tables: []Table{{
+		Name: "T",
+		Columns: []Column{
+			{Name: "n", DataType: "int64"},
+			{Name: "t", DataType: "string"},
+		},
+	}}}
+	d := Data{"T": {
+		{"n": nil, "t": "west"},
+		{"n": "", "t": "  "},
+	}}
+
+	res, err := Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("z", MIN(T[n]), "k", 1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0]["[z]"] != nil {
+		t.Errorf("MIN of all-blank = %v, want BLANK", res.Rows)
+	}
+
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("z", AVERAGE(T[n]), "k", 1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0]["[z]"] != nil {
+		t.Errorf("AVERAGE of all-blank = %v, want BLANK", res.Rows)
+	}
+
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("n", COUNT(T[n]))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[n]"]) != 0 {
+		t.Errorf("COUNT of all-blank = %v, want 0", res.Rows)
+	}
+
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("n", COUNT(T[t]))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[n]"]) != 1 {
+		t.Errorf("COUNT of text = %v, want 1 (only %q is non-blank)", res.Rows, "west")
+	}
+}
+
+// TestDAXPowerBlankAndDomainErrors: Desktop POWER(BLANK, n) is BLANK,
+// POWER(n, BLANK) is n^0 = 1. Goldens pin the finite cases and POWER(0, 0);
+// the NaN/Inf domain (negative root, 0^-1) is only an error path here.
+func TestDAXPowerBlankAndDomainErrors(t *testing.T) {
+	m, d := loadModel(t), loadData(t)
+
+	res, err := Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("z", POWER(DIVIDE(1, 0), 2), "k", 1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0]["[z]"] != nil {
+		t.Errorf("POWER(BLANK, 2) = %v, want BLANK", res.Rows)
+	}
+
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", POWER(2, DIVIDE(1, 0)))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 1 {
+		t.Errorf("POWER(2, BLANK) = %v, want 1", res.Rows)
+	}
+
+	for _, q := range []string{
+		`EVALUATE SUMMARIZECOLUMNS("v", POWER(-1, 0.5))`, // NaN
+		`EVALUATE SUMMARIZECOLUMNS("v", POWER(0, -1))`,   // Inf
+		`EVALUATE SUMMARIZECOLUMNS("v", POWER(2))`,
+	} {
+		if _, err := Evaluate(m, d, q); err == nil {
+			t.Errorf("%q: expected error", q)
+		}
+	}
+}
+
+// TestDAXMinAverageCountArity: empty and non-column arguments used to be
+// reachable as a panic (same class as SUM()/COUNTROWS()). AVERAGE of text
+// must error rather than skip into a confident mean.
+func TestDAXMinAverageCountArity(t *testing.T) {
+	m, d := loadModel(t), loadData(t)
+	for _, q := range []string{
+		`EVALUATE SUMMARIZECOLUMNS("v", MIN())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", AVERAGE())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", COUNT())`,
+		`EVALUATE SUMMARIZECOLUMNS("v", MIN(1))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", AVERAGE(1))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", COUNT(1))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", AVERAGE('Store'[Territory]))`,
+		`EVALUATE SUMMARIZECOLUMNS("v", MIN(NoTable[n]))`,
+	} {
+		if _, err := Evaluate(m, d, q); err == nil {
+			t.Errorf("%q: expected error", q)
+		}
+	}
+}
+
+// TestDAXTimeBlankAndNegative: TIME goldens pin wrap-around; they do not
+// pin BLANK parts (coerce to 0) or a negative total (error). HOUR(BLANK)
+// stays BLANK — the same datePart path YEAR/MONTH/DAY already use.
+func TestDAXTimeBlankAndNegative(t *testing.T) {
+	m, d := loadModel(t), loadData(t)
+
+	res, err := Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", HOUR(TIME(DIVIDE(1, 0), 0, 0)))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 0 {
+		t.Errorf("HOUR(TIME(BLANK, 0, 0)) = %v, want 0", res.Rows)
+	}
+
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("z", HOUR(DIVIDE(1, 0)), "k", 1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0]["[z]"] != nil {
+		t.Errorf("HOUR(BLANK) = %v, want BLANK", res.Rows)
+	}
+
+	if _, err := Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", TIME(-1, 0, 0))`); err == nil {
+		t.Error("TIME(-1, 0, 0): expected error")
 	}
 }
 
