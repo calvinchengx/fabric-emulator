@@ -1,5 +1,5 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. ABS(-2.5)/ABS(0)/ABS(3) and ROUND half-away-from-zero (ROUND(-1.5,0)=-2, unlike Go math.Round) pinned live the same day. Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. SQRT and MOD pinned live (MOD(-10,3)=2, not Go math.Mod; MOD by 0 errors). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-9,
   "probes": [
@@ -74,6 +74,66 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(1234, -2))",
       "column": "[v]",
       "want": 1200
+    },
+    {
+      "name": "SQRT(9)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SQRT(9))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "SQRT(0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SQRT(0))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "SQRT(2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SQRT(2))",
+      "column": "[v]",
+      "want": 1.4142135623730951
+    },
+    {
+      "name": "SQRT(0.25)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SQRT(0.25))",
+      "column": "[v]",
+      "want": 0.5
+    },
+    {
+      "name": "MOD(10, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(10, 3))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "MOD(10, 2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(10, 2))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "MOD(-10, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(-10, 3))",
+      "column": "[v]",
+      "want": 2
+    },
+    {
+      "name": "MOD(10, -3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(10, -3))",
+      "column": "[v]",
+      "want": -2
+    },
+    {
+      "name": "MOD(-10, -3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(-10, -3))",
+      "column": "[v]",
+      "want": -1
+    },
+    {
+      "name": "MOD(7.5, 2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(7.5, 2))",
+      "column": "[v]",
+      "want": 1.5
     }
   ]
 }

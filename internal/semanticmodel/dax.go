@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `SQRT`, `MOD`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -911,6 +911,56 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return daxRound(n, digits), nil
+	case "SQRT":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("SQRT expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil // SQRT(BLANK) is BLANK
+		}
+		f, err := arithNum(a, "SQRT")
+		if err != nil {
+			return nil, err
+		}
+		if f < 0 {
+			return nil, fmt.Errorf("SQRT argument must be >= 0")
+		}
+		return math.Sqrt(f), nil
+	case "MOD":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("MOD expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil // MOD(BLANK, d) is BLANK
+		}
+		n, err := arithNum(a, "MOD")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		// BLANK divisor is 0 via arithNum — Desktop: division by zero.
+		d, err := arithNum(b, "MOD")
+		if err != nil {
+			return nil, err
+		}
+		if d == 0 {
+			return nil, fmt.Errorf("MOD division by zero")
+		}
+		// Excel/DAX: n - d * INT(n/d), INT = floor toward −∞.
+		// Go math.Mod is remainder toward zero (Mod(-10, 3) = -1);
+		// Desktop MOD(-10, 3) = 2.
+		return n - d*math.Floor(n/d), nil
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }
