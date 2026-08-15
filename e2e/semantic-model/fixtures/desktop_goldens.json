@@ -1,5 +1,5 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. ABS(-2.5)/ABS(0)/ABS(3) and ROUND half-away-from-zero (ROUND(-1.5,0)=-2, unlike Go math.Round) pinned live the same day. Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. ABS/ROUND/SWITCH pinned live the same day (SWITCH first-match + else; BLANK equals only BLANK). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-9,
   "probes": [
@@ -74,6 +74,36 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(1234, -2))",
       "column": "[v]",
       "want": 1200
+    },
+    {
+      "name": "SWITCH(1, 1, 10, 2, 20, 99)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(1, 1, 10, 2, 20, 99))",
+      "column": "[v]",
+      "want": 10
+    },
+    {
+      "name": "SWITCH(2, 1, 10, 2, 20, 99)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(2, 1, 10, 2, 20, 99))",
+      "column": "[v]",
+      "want": 20
+    },
+    {
+      "name": "SWITCH(3, 1, 10, 2, 20, 99)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(3, 1, 10, 2, 20, 99))",
+      "column": "[v]",
+      "want": 99
+    },
+    {
+      "name": "SWITCH(1, 1, 10, 2, 20)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(1, 1, 10, 2, 20))",
+      "column": "[v]",
+      "want": 10
+    },
+    {
+      "name": "SWITCH(1.0, 1, 10, 99)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SWITCH(1.0, 1, 10, 99))",
+      "column": "[v]",
+      "want": 10
     }
   ]
 }

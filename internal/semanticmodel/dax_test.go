@@ -193,6 +193,15 @@ func TestDAXErrorsAndEdges(t *testing.T) {
 	if len(res.Rows) != 1 || toF(res.Rows[0]["[n]"]) != 8 {
 		t.Errorf("COUNTROWS(Sales) = %v, want 8", res.Rows)
 	}
+
+	// SWITCH with no else and no match is BLANK; SUMMARIZECOLUMNS drops the row.
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", SWITCH(3, 1, 10, 2, 20))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 0 {
+		t.Errorf("SWITCH miss without else should be blank/dropped, got %v", res.Rows)
+	}
 }
 
 // TestDAXMeasureRecursionIsBounded pins the fix for a whole-PROCESS crash.
