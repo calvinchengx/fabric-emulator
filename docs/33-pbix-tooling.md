@@ -226,7 +226,13 @@ per run — real, and the reason this is weekly rather than per-commit.
    `L` into evidence-driven work: every function added is one Desktop agreed
    about, rather than one somebody read the docs for. pbix-mcp stays as the
    fast local check — **through its MCP tool layer, never the internal
-   engine.**
+   engine.** How a Mac or Linux **developer** reaches that same `msmdsrv`
+   without waiting for the weekly Windows job is
+   [52-msmdsrv-hosts.md](52-msmdsrv-hosts.md) — UTM on a Mac you own,
+   `dockur/windows` on Linux+KVM metal, Desktop on a Windows host. Not a
+   compose default, and not GitHub `macos-latest` / `ubuntu-latest`
+   (nested Windows is not a PR job). Every-push CI on those runners tests
+   the Go subset against the goldens this oracle produces.
 2. **`.pbix` as a demo artifact** from the import medallion. Now genuinely
    deliverable, since Desktop is confirmed to open what we build. Still blocked
    for the *advanced* model by the Direct Lake gap above.

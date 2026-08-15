@@ -43,6 +43,7 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("FABRIC_AIRFLOW_PASSWORD", "secret")
 	t.Setenv("FABRIC_MLFLOW_URL", "http://mlflow:5000")
 	t.Setenv("FABRIC_KQL_URL", "http://kustainer:8080")
+	t.Setenv("FABRIC_DAX_URL", "http://dax-pump:8080")
 	t.Setenv("FABRIC_KAFKA_BOOTSTRAP", "kafka:9092")
 	c, err := FromEnv()
 	if err != nil {
@@ -60,6 +61,9 @@ func TestFromEnv(t *testing.T) {
 	if c.KQLURL != "http://kustainer:8080" {
 		t.Fatalf("FromEnv misread the Kusto engine env: %+v", c)
 	}
+	if c.DAXURL != "http://dax-pump:8080" {
+		t.Fatalf("FromEnv misread the DAX pump env: %+v", c)
+	}
 	if c.KafkaBootstrap != "kafka:9092" {
 		t.Fatalf("FromEnv misread the Kafka broker env: %+v", c)
 	}
@@ -76,6 +80,18 @@ func TestKQLURLDefaultsOff(t *testing.T) {
 	}
 	if c.KQLURL != "" {
 		t.Fatalf("KQLURL = %q, want empty", c.KQLURL)
+	}
+}
+
+func TestDAXURLDefaultsOff(t *testing.T) {
+	t.Setenv("FABRIC_ENTRA_ISSUER", "https://e:1/t/v2.0")
+	t.Setenv("FABRIC_DAX_URL", "")
+	c, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DAXURL != "" {
+		t.Fatalf("DAXURL = %q, want empty", c.DAXURL)
 	}
 }
 

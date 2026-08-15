@@ -13,17 +13,48 @@ package api
 // data.json definition parts feed the bounded DAX evaluator (internal/semanticmodel).
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/semanticmodel"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
+
+// SetDAXBackend attaches a DAX pump (empty detaches it). The pump speaks
+// POST /v1/deploy then POST /v1/dax — see docs/52-msmdsrv-hosts.md.
+// msmdsrv itself is not an HTTP executeQueries server.
+func (a *API) SetDAXBackend(raw string) error {
+	if raw == "" {
+		a.DAXURL = nil
+		a.daxMu.Lock()
+		a.daxDeployed = nil
+		a.daxMu.Unlock()
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("invalid DAX pump URL %q", raw)
+	}
+	a.DAXURL = u
+	if a.DAXHTTP == nil {
+		a.DAXHTTP = &http.Client{}
+	}
+	a.daxMu.Lock()
+	a.daxDeployed = map[string]string{}
+	a.daxMu.Unlock()
+	return nil
+}
 
 // PowerBIAudience is the Entra resource a Power BI REST token carries.
 var PowerBIAudience = []string{
@@ -98,9 +129,13 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 
 	results := make([]map[string]any, 0, len(body.Queries))
 	for _, q := range body.Queries {
-		res, err := semanticmodel.Evaluate(model, data, q.Query)
+		rows, err := a.evalDAX(r.Context(), it.ID, model, data, q.Query, body.SerializerSettings.IncludeNulls)
 		if err != nil {
 			a.publishQuery(it, len(body.Queries), true)
+			if isDAXUnreachable(err) {
+				writeErr(w, http.StatusBadGateway, "DAXEngineUnreachable", err.Error())
+				return
+			}
 			// A bad DAX query is a client error, per the Power BI contract.
 			writeJSON(w, http.StatusBadRequest, map[string]any{
 				"error": map[string]string{"code": "DAXQueryError", "message": err.Error()},
@@ -108,7 +143,7 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 			return
 		}
 		results = append(results, map[string]any{
-			"tables": []map[string]any{{"rows": rowsToJSON(res, body.SerializerSettings.IncludeNulls)}},
+			"tables": []map[string]any{{"rows": rows}},
 		})
 	}
 	// The Power BI hop: a read, so it is announced on the flow bus and never
@@ -227,11 +262,164 @@ func (a *API) QueryModelUnauthenticated(itemID, query string) ([]map[string]any,
 			data = d
 		}
 	}
-	res, err := semanticmodel.Evaluate(m, data, query)
+	rows, err := a.evalDAX(context.Background(), itemID, m, data, query, true)
 	if err != nil {
 		a.publishQuery(it, 1, true)
 		return nil, err
 	}
 	a.publishQuery(it, 1, false)
-	return rowsToJSON(res, true), nil
+	return rows, nil
+}
+
+// evalDAX runs one statement. A configured pump is exclusive: the Go
+// subset is not a fallback, so a dead oracle cannot look like a subset miss.
+// Phase 2 publishes the item's TMSL (and data.json as DATATABLE partitions)
+// before the first query so the operator does not have to open a .pbix.
+func (a *API) evalDAX(ctx context.Context, itemID string, model *semanticmodel.Model, data semanticmodel.Data, query string, includeNulls bool) ([]map[string]any, error) {
+	if a.DAXURL != nil {
+		catalog, err := a.ensureDAXCatalog(ctx, itemID, model, data)
+		if err != nil {
+			return nil, err
+		}
+		return a.relayDAX(ctx, query, catalog)
+	}
+	res, err := semanticmodel.Evaluate(model, data, query)
+	if err != nil {
+		return nil, err
+	}
+	return rowsToJSON(res, includeNulls), nil
+}
+
+type daxPumpError struct {
+	unreachable bool
+	msg         string
+}
+
+func (e *daxPumpError) Error() string { return e.msg }
+
+func isDAXUnreachable(err error) bool {
+	var p *daxPumpError
+	return errors.As(err, &p) && p.unreachable
+}
+
+func (a *API) relayDAX(ctx context.Context, query, catalog string) ([]map[string]any, error) {
+	payload, err := json.Marshal(map[string]string{"query": query, "catalog": catalog})
+	if err != nil {
+		return nil, err
+	}
+	u := a.DAXURL.JoinPath("/v1/dax")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(payload))
+	if err != nil {
+		return nil, &daxPumpError{unreachable: true, msg: err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := a.DAXHTTP
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, &daxPumpError{unreachable: true, msg: err.Error()}
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, &daxPumpError{unreachable: true, msg: err.Error()}
+	}
+	if resp.StatusCode >= 500 {
+		return nil, &daxPumpError{unreachable: true, msg: strings.TrimSpace(string(body))}
+	}
+	var parsed struct {
+		Rows  []map[string]any `json:"rows"`
+		Error *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("dax pump: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		if parsed.Error != nil && parsed.Error.Message != "" {
+			return nil, fmt.Errorf("%s", parsed.Error.Message)
+		}
+		return nil, fmt.Errorf("dax pump: HTTP %d", resp.StatusCode)
+	}
+	if parsed.Rows == nil {
+		parsed.Rows = []map[string]any{}
+	}
+	return parsed.Rows, nil
+}
+
+// ensureDAXCatalog publishes the item to msmdsrv once per definition hash.
+// A 409 DAXDeployRejected means the host cannot CreateOrReplace (Desktop's
+// workspace instance) — query the catalog that is already loaded, the Phase 1
+// hand-open path. Any other deploy failure is loud.
+func (a *API) ensureDAXCatalog(ctx context.Context, itemID string, model *semanticmodel.Model, data semanticmodel.Data) (string, error) {
+	tmsl, err := semanticmodel.CreateOrReplaceTMSL(model, data)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(tmsl)
+	hash := hex.EncodeToString(sum[:])
+	a.daxMu.Lock()
+	if a.daxDeployed != nil && a.daxDeployed[itemID] == hash {
+		a.daxMu.Unlock()
+		return model.Name, nil
+	}
+	a.daxMu.Unlock()
+
+	payload, err := json.Marshal(map[string]json.RawMessage{"tmsl": tmsl})
+	if err != nil {
+		return "", err
+	}
+	u := a.DAXURL.JoinPath("/v1/deploy")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(payload))
+	if err != nil {
+		return "", &daxPumpError{unreachable: true, msg: err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := a.DAXHTTP
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", &daxPumpError{unreachable: true, msg: err.Error()}
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", &daxPumpError{unreachable: true, msg: err.Error()}
+	}
+	if resp.StatusCode >= 500 {
+		return "", &daxPumpError{unreachable: true, msg: strings.TrimSpace(string(body))}
+	}
+	var parsed struct {
+		Rejected bool `json:"rejected"`
+		Error    *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(body, &parsed)
+	if resp.StatusCode == http.StatusConflict || parsed.Rejected ||
+		(parsed.Error != nil && parsed.Error.Code == "DAXDeployRejected") {
+		// Desktop (or any host that already has a catalog and will not
+		// create another). Query what is loaded.
+		return model.Name, nil
+	}
+	if resp.StatusCode >= 400 {
+		if parsed.Error != nil && parsed.Error.Message != "" {
+			return "", fmt.Errorf("%s", parsed.Error.Message)
+		}
+		return "", fmt.Errorf("dax pump deploy: HTTP %d", resp.StatusCode)
+	}
+	a.daxMu.Lock()
+	if a.daxDeployed == nil {
+		a.daxDeployed = map[string]string{}
+	}
+	a.daxDeployed[itemID] = hash
+	a.daxMu.Unlock()
+	return model.Name, nil
 }

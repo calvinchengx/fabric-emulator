@@ -50,7 +50,7 @@ jobs:
       # The logic that does not need Desktop, checked first — a failure here is
       # ours and should not be diagnosed through a 20-minute GUI install.
       - name: Unit-test the probe logic
-        run: uv run --frozen --group test pytest e2e/pbix-desktop/test_verify.py -q
+        run: uv run --frozen --group test pytest e2e/pbix-desktop/test_verify.py e2e/msmdsrv/test_smoke.py -q
 
       - name: Build the .pbix from our TMSL
         run: uv run --frozen --no-sync python e2e/pbix-desktop/build_fixture.py
@@ -63,6 +63,13 @@ jobs:
       - name: Query Desktop's engine and diff against executeQueries
         shell: pwsh
         run: uv run --frozen --no-sync python e2e/pbix-desktop/run.py --desktop-log "$env:RUNNER_TEMP\desktop.log"
+
+      # The pump the emulator actually calls (docs/52). Same Desktop process,
+      # HTTP this time. One extra minute; a failure here is a FINDING about
+      # the pump, not about Desktop (the step above already answered that).
+      - name: Query through the DAX pump
+        shell: pwsh
+        run: pwsh -File e2e/msmdsrv/smoke.ps1 -DesktopLog "$env:RUNNER_TEMP\desktop.log"
 
       # Always: the stage lines ARE the finding, including when a stage failed.
       - if: always()

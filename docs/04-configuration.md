@@ -54,6 +54,7 @@ or opt out with `docker compose -f docker-compose.yml up`.
 | `FABRIC_AIRFLOW_PASSWORD` | `-airflow-password` | *(empty)* | Optional Airflow REST basic-auth password. |
 | `FABRIC_MLFLOW_URL` | `-mlflow-url` | *(empty)* | Real MLflow tracking/model-registry server base URL. Enables the workspace-scoped MLflow proxy and typed experiment/model synchronization. |
 | `FABRIC_KAFKA_BOOTSTRAP` | `-kafka-bootstrap` | *(empty)* | Apache Kafka broker `host:port` behind Eventstream items. Empty → item create still works (mgmt) and Spark / Custom-source execution 501s. See [51-eventstream-kafka.md](51-eventstream-kafka.md). |
+| `FABRIC_DAX_URL` | — | *(empty)* | HTTP origin of a DAX pump in front of `msmdsrv` (`POST /v1/deploy` then `POST /v1/dax`). Empty keeps the in-process bounded evaluator — and is what GitHub-hosted ubuntu/mac CI tests. Set-but-unreachable is a 502, not a fallback. Not a compose default, and not a `macos-latest` / `ubuntu-latest` sidecar — [52-msmdsrv-hosts.md](52-msmdsrv-hosts.md). |
 
 ## Subcommands
 

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/semanticmodel"
@@ -389,5 +390,218 @@ func TestDirectLakeSchemaQualifiedTableFallback(t *testing.T) {
 	w := do(a.executeQueries, admin, "POST", `{"queries":[{"query":"EVALUATE Sales"}]}`, map[string]string{"datasetId": model.ID})
 	if w.Code != http.StatusOK || !bytes.Contains(w.Body.Bytes(), []byte(`"Sales[Amount]":9`)) {
 		t.Fatalf("schema-qualified Direct Lake = %d %s", w.Code, w.Body.String())
+	}
+}
+
+// TestExecuteQueriesRelaysWhenDAXURLSet: a configured pump is exclusive.
+// The Go subset must not answer, even for a query it could evaluate — a
+// dead-or-wrong oracle that silently falls back would look like a subset miss.
+func TestExecuteQueriesRelaysWhenDAXURLSet(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	ds := createSemanticModel(t, st, ws.ID)
+
+	var seen string
+	var deploy int
+	pump := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/deploy":
+			deploy++
+			var body struct {
+				TMSL json.RawMessage `json:"tmsl"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if !bytes.Contains(body.TMSL, []byte("createOrReplace")) || !bytes.Contains(body.TMSL, []byte("DATATABLE")) {
+				t.Errorf("deploy TMSL missing createOrReplace/DATATABLE: %s", body.TMSL)
+			}
+			_, _ = w.Write([]byte(`{"ok":true,"database":"RetailAnalysis"}`))
+		case "/v1/dax":
+			var body struct {
+				Query   string `json:"query"`
+				Catalog string `json:"catalog"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			seen = body.Query
+			if body.Catalog != "RetailAnalysis" {
+				t.Errorf("catalog = %q; want RetailAnalysis", body.Catalog)
+			}
+			_, _ = w.Write([]byte(`{"rows":[{"[v]":42}]}`))
+		default:
+			t.Errorf("path = %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(pump.Close)
+	if err := a.SetDAXBackend(pump.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	q := `{"queries":[{"query":"EVALUATE ROW(\"v\", 1)"}]}`
+	w := do(a.executeQueries, admin, "POST", q, map[string]string{"datasetId": ds.ID})
+	if w.Code != 200 {
+		t.Fatalf("relay = %d %s", w.Code, w.Body.Bytes())
+	}
+	if !strings.Contains(seen, "EVALUATE ROW") {
+		t.Fatalf("pump did not see the query: %q", seen)
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"[v]":42`)) {
+		t.Fatalf("response used the Go subset instead of the pump: %s", w.Body.Bytes())
+	}
+	if deploy != 1 {
+		t.Fatalf("deploy calls = %d; want 1", deploy)
+	}
+}
+
+func TestExecuteQueriesSkipsSecondDeploy(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	ds := createSemanticModel(t, st, ws.ID)
+	var deploy int
+	pump := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/deploy" {
+			deploy++
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"rows":[]}`))
+	}))
+	t.Cleanup(pump.Close)
+	if err := a.SetDAXBackend(pump.URL); err != nil {
+		t.Fatal(err)
+	}
+	q := `{"queries":[{"query":"EVALUATE 'Store'"}]}`
+	for i := 0; i < 2; i++ {
+		w := do(a.executeQueries, admin, "POST", q, map[string]string{"datasetId": ds.ID})
+		if w.Code != 200 {
+			t.Fatalf("query %d = %d %s", i, w.Code, w.Body.Bytes())
+		}
+	}
+	if deploy != 1 {
+		t.Fatalf("deploy calls = %d; want 1 (second query is cached)", deploy)
+	}
+}
+
+func TestExecuteQueriesDeployRejectedStillQueries(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	ds := createSemanticModel(t, st, ws.ID)
+	var queried bool
+	pump := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/deploy" {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"rejected":true,"error":{"code":"DAXDeployRejected","message":"Desktop will not create a database"}}`))
+			return
+		}
+		queried = true
+		_, _ = w.Write([]byte(`{"rows":[{"[v]":1}]}`))
+	}))
+	t.Cleanup(pump.Close)
+	if err := a.SetDAXBackend(pump.URL); err != nil {
+		t.Fatal(err)
+	}
+	w := do(a.executeQueries, admin, "POST", `{"queries":[{"query":"EVALUATE ROW(\"v\", 1)"}]}`,
+		map[string]string{"datasetId": ds.ID})
+	if w.Code != 200 {
+		t.Fatalf("rejected deploy = %d %s", w.Code, w.Body.Bytes())
+	}
+	if !queried {
+		t.Fatal("Phase 1 path: Desktop reject must still query the open catalog")
+	}
+}
+
+func TestExecuteQueriesDeployErrorDoesNotQuery(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	ds := createSemanticModel(t, st, ws.ID)
+	var queried bool
+	pump := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/deploy" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":"DAXDeployError","message":"bad TMSL"}}`))
+			return
+		}
+		queried = true
+		_, _ = w.Write([]byte(`{"rows":[]}`))
+	}))
+	t.Cleanup(pump.Close)
+	if err := a.SetDAXBackend(pump.URL); err != nil {
+		t.Fatal(err)
+	}
+	w := do(a.executeQueries, admin, "POST", `{"queries":[{"query":"EVALUATE 'Store'"}]}`,
+		map[string]string{"datasetId": ds.ID})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("bad deploy = %d; want 400", w.Code)
+	}
+	if queried {
+		t.Fatal("a failed CreateOrReplace must not query a stale catalog")
+	}
+}
+
+func TestExecuteQueriesDAXURLRefusesDirectLake(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "sales-lake"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	model := &store.Item{WorkspaceID: ws.ID, Type: "SemanticModel", DisplayName: "Direct Sales"}
+	parts := []store.DefinitionPart{{Path: "model.bim", PayloadType: "InlineBase64",
+		Payload: base64.StdEncoding.EncodeToString(directLakeModel(ws.ID, lake.ID))}}
+	if err := st.CreateItem(model, parts); err != nil {
+		t.Fatal(err)
+	}
+	var hit bool
+	pump := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(pump.Close)
+	if err := a.SetDAXBackend(pump.URL); err != nil {
+		t.Fatal(err)
+	}
+	w := do(a.executeQueries, admin, "POST", `{"queries":[{"query":"EVALUATE Sales"}]}`,
+		map[string]string{"datasetId": model.ID})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Direct Lake + pump = %d; want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Direct Lake") {
+		t.Fatalf("error should name Direct Lake: %s", w.Body.String())
+	}
+	if hit {
+		t.Fatal("must not publish a hollow Direct Lake model to msmdsrv")
+	}
+}
+
+func TestExecuteQueriesDAXUnreachable(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	ds := createSemanticModel(t, st, ws.ID)
+	if err := a.SetDAXBackend("http://127.0.0.1:1"); err != nil {
+		t.Fatal(err)
+	}
+	q := `{"queries":[{"query":"EVALUATE 'Store'"}]}`
+	w := do(a.executeQueries, admin, "POST", q, map[string]string{"datasetId": ds.ID})
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("unreachable pump = %d; want 502", w.Code)
+	}
+	if errorCode(t, w) != "DAXEngineUnreachable" {
+		t.Fatalf("error = %s; want DAXEngineUnreachable", errorCode(t, w))
+	}
+}
+
+func TestSetDAXBackendRejectsJunk(t *testing.T) {
+	a, _ := newAPI(t)
+	if err := a.SetDAXBackend("not-a-url"); err == nil {
+		t.Fatal("SetDAXBackend accepted junk")
+	}
+	if err := a.SetDAXBackend(""); err != nil {
+		t.Fatal(err)
+	}
+	if a.DAXURL != nil {
+		t.Fatal("empty URL should detach the pump")
 	}
 }

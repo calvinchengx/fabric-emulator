@@ -221,6 +221,15 @@ type Config struct {
 	// routes answering an honest 501. See docs/25-rti-kusto.md.
 	KQLURL string
 
+	// DAXURL, when set, is an HTTP origin that speaks the pump contract in
+	// docs/52-msmdsrv-hosts.md (POST /v1/dax). The emulator still does
+	// Power BI auth and workspace RBAC; only EVALUATE is forwarded to a
+	// pump in front of msmdsrv. Empty keeps the in-process bounded
+	// evaluator — the default on every OS, and the only path CI on
+	// Mac/Linux can take. A set-but-unreachable URL is a 502, not a
+	// silent fallback.
+	DAXURL string
+
 	// KafkaBootstrap, when set, is an Apache Kafka broker (host:port) that
 	// Eventstream items provision topics on and that the JVM Spark adapter
 	// subscribes to. Empty leaves Eventstream create as management-only and
@@ -282,6 +291,7 @@ func FromEnvPartial() *Config {
 		AirflowPassword:     os.Getenv("FABRIC_AIRFLOW_PASSWORD"),
 		MLflowURL:           os.Getenv("FABRIC_MLFLOW_URL"),
 		KQLURL:              os.Getenv("FABRIC_KQL_URL"),
+		DAXURL:              os.Getenv("FABRIC_DAX_URL"),
 		KafkaBootstrap:      os.Getenv("FABRIC_KAFKA_BOOTSTRAP"),
 		ARMURL:              os.Getenv("FABRIC_ARM_URL"),
 		ARMPollSeconds:      intEnv("FABRIC_ARM_POLL_SECONDS"),

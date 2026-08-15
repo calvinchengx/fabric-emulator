@@ -72,6 +72,14 @@ type API struct {
 	KQLURL  *url.URL
 	KQLHTTP *http.Client
 	KQLAuth *auth.Validator
+	// DAXURL is an attached DAX pump in front of msmdsrv (docs/52). Nil
+	// keeps the in-process bounded evaluator. DAXHTTP is the client;
+	// tests substitute one. daxDeployed remembers the TMSL hash last
+	// accepted for an item so a second query does not republish.
+	DAXURL      *url.URL
+	DAXHTTP     *http.Client
+	daxMu       sync.Mutex
+	daxDeployed map[string]string
 	// KafkaBootstrap is an attached Apache Kafka broker (host:port) backing
 	// Eventstream execution. Empty → Spark resolution, consume, and Custom
 	// produce 501. Kafka is the client; tests substitute a fake.
