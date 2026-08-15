@@ -70,7 +70,7 @@ env:
 # real effort removing (check_witnesses.py, the .PHONY-derived target list).
 # A uniform bound has nothing to fall out of step with. Jobs that genuinely
 # need longer already say so and are left alone: spark-jvm and notebook-jvm at
-# 45, xmla at 30.
+# 45, the three live conformance jobs at 45 (compose / SQL Server), xmla at 30.
 jobs:
   test:
     name: Build, vet & tests (incl. e2e vs entra-emulator)
@@ -361,39 +361,61 @@ jobs:
   conformance-sail:
     name: Framework conformance (sail)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.32"
-      # Offline: regenerate the matrix from the committed JSON and fail if
-      # docs/conformance-matrix.md drifted. Live write-landing (compose +
-      # out-of-band read) is the next change; until then a cell is a known
-      # gap with a pointer, which is what the kit is allowed to merge with.
-      - run: uv run --frozen --no-sync python e2e/conformance/run.py --check
+      # Live write-landing: RunNotebook through Sail, then a DFS listing from
+      # a client that is not Spark. The committed JSON is the chicken-and-egg
+      # pass; a different error string fails the diff, which is correct.
+      - run: uv run --frozen --no-sync python e2e/conformance/run.py --backend sail --live
+      - run: git diff --exit-code docs/conformance-matrix.md e2e/conformance/out/
 
   conformance-jvm:
     name: Framework conformance (jvm)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.32"
-      - run: uv run --frozen --no-sync python e2e/conformance/run.py --check
+      # Maven Central rate-limits GitHub-hosted runners (shared IP pools).
+      # Same cache + prefetch as engine-matrix / notebook-jvm.
+      - uses: actions/cache@v6
+        with:
+          path: docker/spark-runtime/jars
+          key: spark-jars-${{ hashFiles('docker/spark-runtime/jars.txt') }}
+      - run: scripts/fetch_spark_jars.sh
+      - run: uv run --frozen --no-sync python e2e/conformance/run.py --backend jvm --live
+      - run: git diff --exit-code docs/conformance-matrix.md e2e/conformance/out/
 
   conformance-warehouse:
     name: Framework conformance (warehouse)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Str0ng!Passw0rd"
+        ports:
+          - 1433:1433
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.32"
-      - run: uv run --frozen --no-sync python e2e/conformance/run.py --check
+      - run: uv run --frozen --no-sync python e2e/conformance/run.py --backend warehouse --live
+        env:
+          WAREHOUSE_MSSQL_DSN: "server=localhost;user id=sa;password=Str0ng!Passw0rd;encrypt=disable"
+      - run: git diff --exit-code docs/conformance-matrix.md e2e/conformance/out/
 
   witnesses:
     name: Every supported parity claim names its witness
@@ -425,11 +447,11 @@ jobs:
       # expensive way: a column OpenMetadata refuses costs the whole table.
       - run: uv run --frozen --no-sync python scripts/check_govern_types.py
       # The conformance contracts (docs/38) are proven by executing on a real
-      # backend, which needs those backends live — that is the conformance
-      # jobs' work, once compose is wired. This is the offline half: every
-      # contract the document defines is assigned to a backend, every
-      # required/control cell has a verdict, and every ❌ has a pointer.
-      # --strict: the matrix has landed, so its absence is now a failure.
+      # backend — that is the three conformance-* jobs (compose / go test).
+      # This is the offline half: every contract the document defines is
+      # assigned to a backend, every required/control cell has a verdict,
+      # and every ❌ has a pointer. --strict: the matrix has landed, so its
+      # absence is now a failure.
       - run: uv run --frozen --no-sync python scripts/check_conformance.py --strict
       # docs/03's diagram described a two-system model for as long as
       # keyvault-emulator had been a default compose service — the topology was
