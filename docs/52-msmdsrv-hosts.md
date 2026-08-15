@@ -199,6 +199,12 @@ the open catalog. Opening a `.pbix` by hand remains valid; it is no longer
 required on a host that accepts TMSL (SSAS Developer, later headless
 `msmdsrv`).
 
+DATATABLE columns must set `sourceColumn` (the BIM `sourceColumn`, or the
+column name). Desktop rejects the omit. The pump also maps that refusal —
+and empty-partition errors — to 409 so a still-open `.pbix` stays queryable.
+If the named catalog is missing on Desktop's workspace instance, `/v1/dax`
+retries without `Initial Catalog=` and hits the open file.
+
 ### Phase 3 — grow the Go subset against the oracle
 
 Unchanged from [33](33-pbix-tooling.md): every new function is one Desktop
@@ -207,6 +213,13 @@ Linux laptop reaches that oracle without waiting for Monday's
 `windows-latest` job. Every-push CI on ubuntu/mac does **not** boot that
 VM; it replays the goldens against Go. That is what keeps those jobs
 honest: they test the engine those runners actually have.
+
+First pin: `ACOS` in
+[`e2e/semantic-model/fixtures/desktop_goldens.json`](../e2e/semantic-model/fixtures/desktop_goldens.json),
+captured on a UTM Windows 11 ARM guest + Desktop, replayed by
+`TestDesktopFunctionGoldens`. Clone that guest only while it is **stopped**
+(`utmctl clone` refuses a running VM). Do not treat the live oracle as
+disposable.
 
 ### Phase 4 — XMLA write-through (only if demanded)
 
