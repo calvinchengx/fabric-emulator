@@ -27,9 +27,9 @@
     "id": "4",
     "contract": "Write landing",
     "backend": "sail",
-    "status": "gap",
-    "error": "live backends not yet recorded",
-    "pointer": "38-framework-conformance.md#4-a-success-claim-must-be-witnessed-by-the-artifact"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "5",

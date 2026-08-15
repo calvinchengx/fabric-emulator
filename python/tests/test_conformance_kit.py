@@ -156,7 +156,7 @@ def test_every_failing_cell_in_the_committed_matrix_has_a_pointer():
                 continue
             cells += 1
             assert "](" in cell, cell
-    assert cells == 18  # every required/control cell is currently a known gap
+    assert cells == 15  # contract 4 is live ✅; the other required/control cells are gaps
 
 
 def test_committed_json_names_every_contract_on_every_backend():
@@ -166,3 +166,6 @@ def test_committed_json_names_every_contract_on_every_backend():
             .read_text(encoding="utf-8"))
         assert [r["id"] for r in rows] == [str(n) for n, _, _ in probes.CONTRACTS]
         assert all(r["backend"] == backend for r in rows)
+        four = next(r for r in rows if r["id"] == "4")
+        assert four["status"] == "pass", four
+        assert four["error"] == ""
