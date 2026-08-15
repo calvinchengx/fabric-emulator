@@ -65,6 +65,27 @@ services:
       - /opt/spark/bin/spark-submit
       - --master
       - local[2]
+      # Delta 3.2 checks these on the session spark-submit creates. agent.py
+      # applies the same pair via jvmconf; both places, because getOrCreate()
+      # will not retrofit an already-built session.
+      - --conf
+      - spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension
+      - --conf
+      - spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog
+      - --conf
+      - spark.hadoop.fs.azure.always.use.https=false
+      - --conf
+      - spark.hadoop.fs.azure.account.auth.type.onelake.dfs.fabric.microsoft.com=Custom
+      - --conf
+      - spark.hadoop.fs.azure.account.oauth.provider.type.onelake.dfs.fabric.microsoft.com=com.calvinchengx.fabricemu.EntraTokenProvider
+      - --conf
+      - spark.hadoop.fs.azure.emu.token.endpoint=http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token
+      - --conf
+      - spark.hadoop.fs.azure.emu.client.id=00d88624-f0d7-46f6-a641-6232c2608928
+      - --conf
+      - spark.hadoop.fs.azure.emu.client.secret=daemon-app-secret
+      - --conf
+      - spark.hadoop.fs.azure.emu.scope=https://storage.azure.com/.default
       - /opt/spark/work-dir/agent.py
       - "8099"
     healthcheck:
