@@ -140,6 +140,28 @@ func TestEventTriggerCRUD(t *testing.T) {
 	}
 }
 
+func TestEventTriggerAcceptsEventstreamReceived(t *testing.T) {
+	f := newTrigFixture(t, waitDef)
+	es := &store.Item{WorkspaceID: f.ws.ID, Type: "Eventstream", DisplayName: "clicks"}
+	if err := f.st.CreateItem(es, nil); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"displayName":"on-clicks","eventType":"` + store.EventEventstreamReceived + `",
+		"source":{"itemId":"` + es.ID + `"},
+		"action":{"itemId":"` + f.pipe.ID + `","jobType":"Pipeline"}}`
+	w := f.createTrigger(admin, body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create stream trigger: %d %s", w.Code, w.Body.Bytes())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["eventType"] != store.EventEventstreamReceived {
+		t.Fatalf("eventType = %v", got["eventType"])
+	}
+}
+
 func TestEventTriggerValidationAndRBAC(t *testing.T) {
 	f := newTrigFixture(t, waitDef)
 

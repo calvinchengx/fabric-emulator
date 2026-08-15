@@ -10,13 +10,42 @@ func customPipeline(tp string) string {
       {"name":"Batch","type":"Custom","typeProperties":{` + tp + `}}]}}`
 }
 
-// TestCustomActivityIsOffByDefault is the security assertion, and it is first
-// because it is the one that must never regress: with no opt-in, the activity
-// refuses and NO COMMAND REACHES THE AGENT. A test that only checked the job
-// failed would pass even if the command had run and then been reported as an
-// error, so this asserts the agent was never asked.
-func TestCustomActivityIsOffByDefault(t *testing.T) {
+// TestCustomActivityRunsByDefault is the parity assertion, and it is first
+// because it is the one that must never regress: a Custom activity's command
+// reaches the agent with no extra flag, matching a notebook cell on the same
+// machine. A test that only checked the job completed would pass even if the
+// command had been refused and then stubbed, so this asserts the agent was asked.
+func TestCustomActivityRunsByDefault(t *testing.T) {
 	a, st := newAPI(t)
+	agent := newFakeAgent(t, a)
+	agent.reply = func(code string) map[string]any {
+		return map[string]any{"status": "ok", "data": map[string]any{
+			"text/plain": `{"exitCode":0,"stdout":"pwned\n","stderr":""}`}}
+	}
+	ws := seedWorkspace(t, st)
+
+	pl := createPipeline(t, st, ws.ID, customPipeline(`"command":"echo pwned"`))
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+		t.Fatalf("job = %s; runs=%+v", s, runs)
+	}
+	code := strings.Join(agent.statements(), "\n")
+	if !strings.Contains(code, "echo pwned") {
+		t.Fatalf("the command never reached the agent: %s", code)
+	}
+	if !strings.Contains(code, "subprocess.run") || !strings.Contains(code, "shell=True") {
+		t.Fatalf("the command was not run as a process: %s", code)
+	}
+}
+
+// TestCustomActivityOffRefusesAndDoesNotReachAgent: FABRIC_CUSTOM_ACTIVITY=off
+// restores the old refusal, and NO COMMAND REACHES THE AGENT. A test that only
+// checked the job failed would pass even if the command had run and then been
+// reported as an error, so this asserts the agent was never asked.
+func TestCustomActivityOffRefusesAndDoesNotReachAgent(t *testing.T) {
+	a, st := newAPI(t)
+	a.CustomActivityShell = false
 	agent := newFakeAgent(t, a)
 	ws := seedWorkspace(t, st)
 
@@ -30,21 +59,17 @@ func TestCustomActivityIsOffByDefault(t *testing.T) {
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 	e, _ := runs[0]["error"].(string)
-	if !strings.Contains(e, "FABRIC_CUSTOM_ACTIVITY=shell") {
-		t.Fatalf("refusal %q does not name the switch that enables it", e)
-	}
-	if !strings.Contains(e, "arbitrary execution") {
-		t.Fatalf("refusal %q does not say why it is off by default", e)
+	if !strings.Contains(e, "FABRIC_CUSTOM_ACTIVITY=off") {
+		t.Fatalf("refusal %q does not name the switch that produced it", e)
 	}
 }
 
-// TestCustomActivityRunsWhenEnabled: with the gate open the command reaches
-// the agent, its extendedProperties are set as environment variables (Batch's
-// own contract for them), and the report comes back from the process.
+// TestCustomActivityRunsWhenEnabled: the command reaches the agent, its
+// extendedProperties are set as environment variables (Batch's own contract
+// for them), and the report comes back from the process.
 func TestCustomActivityRunsWhenEnabled(t *testing.T) {
 	a, st := newAPI(t)
 	agent := newFakeAgent(t, a)
-	a.CustomActivityShell = true
 	agent.reply = func(code string) map[string]any {
 		return map[string]any{"status": "ok", "data": map[string]any{
 			"text/plain": `{"exitCode":0,"stdout":"rows=7\n","stderr":""}`}}
@@ -86,7 +111,6 @@ func TestCustomActivityRunsWhenEnabled(t *testing.T) {
 func TestCustomActivityNonZeroExitFails(t *testing.T) {
 	a, st := newAPI(t)
 	agent := newFakeAgent(t, a)
-	a.CustomActivityShell = true
 	agent.reply = func(code string) map[string]any {
 		return map[string]any{"status": "ok", "data": map[string]any{
 			"text/plain": `{"exitCode":2,"stdout":"","stderr":"load.py: no such file"}`}}
@@ -111,7 +135,6 @@ func TestCustomActivityNonZeroExitFails(t *testing.T) {
 func TestCustomActivityUnparseableReportFails(t *testing.T) {
 	a, st := newAPI(t)
 	agent := newFakeAgent(t, a)
-	a.CustomActivityShell = true
 	agent.reply = func(code string) map[string]any {
 		return map[string]any{"status": "ok", "data": map[string]any{"text/plain": "who knows"}}
 	}
@@ -168,7 +191,6 @@ func TestCustomActivityRefusesByName(t *testing.T) {
 // TestCustomActivityNoAgentIsHonest: enabled but with nowhere to run it.
 func TestCustomActivityNoAgentIsHonest(t *testing.T) {
 	a, st := newAPI(t)
-	a.CustomActivityShell = true
 	ws := seedWorkspace(t, st)
 	pl := createPipeline(t, st, ws.ID, customPipeline(`"command":"echo hi"`))
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
@@ -185,7 +207,6 @@ func TestCustomActivityNoAgentIsHonest(t *testing.T) {
 func TestCustomActivityAgentTransportFailure(t *testing.T) {
 	a, st := newAPI(t)
 	brokenAgent(t, a)
-	a.CustomActivityShell = true
 	ws := seedWorkspace(t, st)
 	pl := createPipeline(t, st, ws.ID, customPipeline(`"command":"echo hi"`))
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
@@ -198,7 +219,6 @@ func TestCustomActivityAgentTransportFailure(t *testing.T) {
 func TestCustomActivityStatementErrorFails(t *testing.T) {
 	a, st := newAPI(t)
 	agent := newFakeAgent(t, a)
-	a.CustomActivityShell = true
 	agent.reply = func(code string) map[string]any {
 		return map[string]any{"status": "error", "ename": "OSError", "evalue": "fork failed"}
 	}

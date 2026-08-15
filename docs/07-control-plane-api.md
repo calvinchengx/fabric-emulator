@@ -228,6 +228,37 @@ keeping the newest. Real Fabric never needs the cap because its clock advances
 one second per second; here a caller can advance a year against a one-minute
 Cron, and half a million job instances is not a useful answer.
 
+## Eventstream destinations
+
+| Method + path | Notes |
+|---|---|
+| `POST   /workspaces/{id}/eventstreams/{id}/destinations` | bind a destination *sync* |
+| `GET    /workspaces/{id}/eventstreams/{id}/destinations` | list bindings *sync* |
+
+**This binding surface is emulator-native.** Fabric's Eventstream topology
+(sources → operators → destinations) is assembled in the portal and has no
+public REST — the same situation as Reflex triggers. Bindings are persisted
+on the Eventstream (`item_properties`) and also appear on
+`properties.destinations` so a GET eventstream is not silent.
+
+```json
+{
+  "type": "Lakehouse",
+  "itemId": "<lakehouse-id>",
+  "table": "clicks",
+  "workspaceId": "<optional; defaults to the Eventstream workspace>"
+}
+```
+
+`type` is `Lakehouse` or `Reflex`. For Lakehouse, `table` is a single
+`Tables/<name>` segment (no slashes). **Eventhouse** is refused by name
+(kustainer has no streaming ingest). After a successful Custom HTTP
+produce, a Lakehouse dest appends the event values as a real Delta table;
+a Reflex dest fires triggers on that Reflex whose `eventType` is
+`Microsoft.Fabric.Eventstream.EventReceived` and whose `source.itemId` is
+the Eventstream — each event starts the action job with
+`@pipeline()?.TriggerEvent?.Key` / `.Value`.
+
 ## Event triggers (Reflex / Data Activator)
 
 | Method + path | Notes |

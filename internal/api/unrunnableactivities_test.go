@@ -51,7 +51,7 @@ func TestUnrunnableActivitiesNameTheirCause(t *testing.T) {
 		{"HDInsightHive", []string{"HiveQL", "Spark SQL", "not the same as the guarantee"}},
 		{"HDInsightPig", []string{"Pig Latin", "nothing in the emulator interprets"}},
 		{"HDInsightMapReduce", []string{"NAMED JAVA MAIN CLASS", "both engines"}},
-		{"HDInsightStreaming", []string{"mapper and reducer", "FABRIC_CUSTOM_ACTIVITY"}},
+		{"HDInsightStreaming", []string{"mapper and reducer", "no Hadoop Streaming harness"}},
 		{"DataLakeAnalyticsU-SQL", []string{"U-SQL", "RETIRED THE SERVICE"}},
 		{"ExecuteSSISPackage", []string{"integration runtime", "defined inside the package"}},
 	} {

@@ -64,9 +64,8 @@ var unrunnableActivities = map[string]string{
 
 	"HDInsightStreaming": "runs Hadoop Streaming with a mapper and reducer executed as " +
 		"processes over stdin/stdout on cluster nodes. There is no Hadoop Streaming harness " +
-		"here, and the arbitrary-process half is the posture the Azure Batch activity gates " +
-		"behind FABRIC_CUSTOM_ACTIVITY — that gate covers a command the caller wrote, not a " +
-		"MapReduce runtime the emulator would have to supply around it",
+		"here — a mapper/reducer pair is not a command the caller wrote (that is the Custom " +
+		"activity), it is a MapReduce runtime the emulator would have to supply around it",
 
 	"DataLakeAnalyticsU-SQL": dataLakeAnalyticsCause,
 

@@ -10,6 +10,9 @@ const (
 	EventFileCreated = "Microsoft.Fabric.OneLake.FileCreated"
 	EventFileDeleted = "Microsoft.Fabric.OneLake.FileDeleted"
 	EventFileRenamed = "Microsoft.Fabric.OneLake.FileRenamed"
+	// EventEventstreamReceived is the stream-native Activator event: a Custom
+	// HTTP produce landed, and a Reflex destination is bound. Not a file event.
+	EventEventstreamReceived = "Microsoft.Fabric.Eventstream.EventReceived"
 )
 
 // FileEvent is one OneLake data-plane event.

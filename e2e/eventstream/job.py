@@ -3,9 +3,11 @@
 Works on JVM Spark (OSS kafka source) and on Sail (emulator consume +
 LocalRelation + local foreachBatch). Same notebook snippet either way.
 """
+import base64
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -48,6 +50,82 @@ assert streams and streams[0].get("id"), item
 item_id, datasource_id = item["id"], streams[0]["id"]
 print("eventstream item:", item_id, "datasource:", datasource_id, flush=True)
 
+lake = request("POST", f"{FABRIC}/v1/workspaces/{workspace['id']}/lakehouses",
+               {"displayName": "clicks-lh"}, fabric_token)
+bound = request(
+    "POST",
+    f"{FABRIC}/v1/workspaces/{workspace['id']}/eventstreams/{item_id}/destinations",
+    {"type": "Lakehouse", "itemId": lake["id"], "table": "clicks"},
+    fabric_token,
+)
+assert bound.get("type") == "Lakehouse" and bound.get("table") == "clicks", bound
+print("lakehouse destination bound:", lake["id"], flush=True)
+
+reflex = request("POST", f"{FABRIC}/v1/workspaces/{workspace['id']}/reflexes",
+                 {"displayName": "clicks-reflex"}, fabric_token)
+pipe_def = {
+    "properties": {
+        "activities": [{
+            "name": "Capture",
+            "type": "SetVariable",
+            "typeProperties": {
+                "variableName": "seen",
+                "value": "@pipeline()?.TriggerEvent?.Value",
+            },
+        }],
+        "variables": {"seen": {"type": "String"}},
+    }
+}
+pipe_payload = base64.b64encode(json.dumps(pipe_def).encode()).decode()
+pipe_req = urllib.request.Request(
+    f"{FABRIC}/v1/workspaces/{workspace['id']}/dataPipelines",
+    data=json.dumps({
+        "displayName": "on-clicks",
+        "definition": {"parts": [{
+            "path": "pipeline-content.json",
+            "payloadType": "InlineBase64",
+            "payload": pipe_payload,
+        }]},
+    }).encode(),
+    headers={"Authorization": "Bearer " + fabric_token, "Content-Type": "application/json"},
+    method="POST",
+)
+with urllib.request.urlopen(pipe_req) as response:
+    pipe_raw = response.read()
+    pipe_code = response.status
+    pipe_op = response.headers.get("x-ms-operation-id")
+    pipe = json.loads(pipe_raw) if pipe_raw else {}
+if pipe_code == 202 and pipe_op:
+    for _ in range(60):
+        op = request("GET", f"{FABRIC}/v1/operations/{pipe_op}", token=fabric_token)
+        if op.get("status") == "Succeeded":
+            pipe = request("GET", f"{FABRIC}/v1/operations/{pipe_op}/result", token=fabric_token)
+            break
+        time.sleep(0.1)
+    else:
+        raise SystemExit("pipeline create LRO did not succeed")
+assert pipe.get("id"), pipe
+trig = request(
+    "POST",
+    f"{FABRIC}/v1/workspaces/{workspace['id']}/reflexes/{reflex['id']}/triggers",
+    {
+        "displayName": "on-clicks",
+        "eventType": "Microsoft.Fabric.Eventstream.EventReceived",
+        "source": {"itemId": item_id},
+        "action": {"itemId": pipe["id"], "jobType": "Pipeline"},
+    },
+    fabric_token,
+)
+assert trig.get("eventType") == "Microsoft.Fabric.Eventstream.EventReceived", trig
+reflex_dest = request(
+    "POST",
+    f"{FABRIC}/v1/workspaces/{workspace['id']}/eventstreams/{item_id}/destinations",
+    {"type": "Reflex", "itemId": reflex["id"]},
+    fabric_token,
+)
+assert reflex_dest.get("type") == "Reflex", reflex_dest
+print("reflex destination bound:", reflex["id"], "pipeline:", pipe["id"], flush=True)
+
 payloads = [{"n": i, "src": "custom"} for i in range(5)]
 produced = request(
     "POST",
@@ -57,6 +135,48 @@ produced = request(
 )
 assert produced.get("produced") == 5, produced
 print("custom source produced:", produced, flush=True)
+
+jobs = request(
+    "GET",
+    f"{FABRIC}/v1/workspaces/{workspace['id']}/items/{pipe['id']}/jobs/instances",
+    token=fabric_token,
+)
+runs = jobs.get("value") or []
+assert len(runs) == 5, jobs
+assert all(r.get("invokeType") == "EventTriggered" for r in runs), runs
+print("reflex destination jobs: PASS", flush=True)
+
+storage_token = request("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
+    "grant_type": "client_credentials",
+    "client_id": CLIENT_ID,
+    "client_secret": CLIENT_SECRET,
+    "scope": "https://storage.azure.com/.default",
+}, form=True)["access_token"]
+delta_log_url = (
+    f"{FABRIC}/onelake/{workspace['id']}/{lake['id']}"
+    f"/Tables/clicks/_delta_log/{0:020d}.json"
+)
+req = urllib.request.Request(delta_log_url, headers={"Authorization": "Bearer " + storage_token})
+with urllib.request.urlopen(req) as response:
+    commit = response.read().decode()
+saw_rows = saw_schema = False
+for line in commit.splitlines():
+    if not line.strip():
+        continue
+    action = json.loads(line)
+    if "add" in action:
+        stats = action["add"].get("stats")
+        if isinstance(stats, str):
+            stats = json.loads(stats)
+        assert stats.get("numRecords") == 5, stats
+        saw_rows = True
+    if "metaData" in action:
+        schema = json.loads(action["metaData"]["schemaString"])
+        names = {field["name"] for field in schema["fields"]}
+        assert {"n", "src"} <= names, names
+        saw_schema = True
+assert saw_rows and saw_schema, commit
+print("lakehouse destination delta content: PASS", flush=True)
 
 sys.path.insert(0, "/opt/spark_agent")
 sys.path.insert(0, "/opt/spark/work-dir")

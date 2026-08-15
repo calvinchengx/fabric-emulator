@@ -1,10 +1,14 @@
 # 51 — Eventstream exec: a real Kafka broker behind Fabric Spark options
 
-**Status: shipped, opt-in broker, both engines (🟠).** Eventstream item
+**Status: shipped, opt-in sidecar, graded Real.** Eventstream item
 management always works. Execution — a real Kafka topic the Fabric notebook
 API can subscribe to — is real when an Apache Kafka KRaft broker is attached.
-No broker → honest 501. Sail is the default engine; the JVM overlay keeps a
-native `spark-sql-kafka` source. Neither path maps Eventstream onto `rate`.
+No broker → honest 501. `--profile eventstream` stays opt-in. Sail is the
+default engine; the JVM overlay keeps a native `spark-sql-kafka` source.
+Neither path maps Eventstream onto `rate`. The **Lakehouse destination**
+(Custom HTTP source → Delta append) and the **Reflex destination**
+(Custom HTTP source → item job) are this slice. Eventhouse destination
+and operators are not.
 
 This is the same move as Eventhouse ([25-rti-kusto.md](25-rti-kusto.md)):
 terminate the Fabric names ourselves, relay bytes to a real engine.
@@ -70,8 +74,19 @@ POST …/eventstreams  -->  mint datasourceId + CreateTopics
    on the item, `CreateTopics` against the broker when one is attached.
    Unknown IDs fail at resolve (404), not as an empty stream.
 3. **Custom source** — `POST …/eventstreams/{id}/sources/{ds}/events` writes
-   JSON `key`/`value` bytes into that topic. Not thirty connectors.
-4. **Spark adapter, both engines** — `python/spark_agent/eventstream_kafka.py`:
+   JSON `key`/`value` bytes into that topic. Not thirty connectors. When a
+   Lakehouse destination is bound, those same bytes are parsed and appended
+   as a real Delta table (`Tables/<name>`) after the produce succeeds.
+4. **Lakehouse destination** — emulator-native
+   `POST …/eventstreams/{id}/destinations` with `{type, itemId, table}`.
+   Fabric's topology JSON has no public REST (same as Reflex triggers).
+   `type` must be `Lakehouse`. Eventhouse is refused by name.
+5. **Reflex destination** — same bind surface, `{type: Reflex, itemId}`.
+   A trigger on that Reflex with
+   `eventType: Microsoft.Fabric.Eventstream.EventReceived` and
+   `source.itemId` the Eventstream starts the action job per produced
+   event (`invokeType: EventTriggered`, `TriggerEvent.Key` / `.Value`).
+6. **Spark adapter, both engines** — `python/spark_agent/eventstream_kafka.py`:
    - **JVM:** wraps classic `readStream.format("kafka").load()` when both
      eventstream options are set: Entra-gated lookup, then
      `kafka.bootstrap.servers` + `subscribe` on the real OSS Kafka source
@@ -119,17 +134,25 @@ overlay: add `-f docker-compose.spark-jvm.yml` to that command, or
 - **Sail** — CI job **`eventstream-sail`** in `.github/workflows/ci.yml`.
   Emulator consume + LocalRelation + local `foreachBatch`.
 
-Both create an Eventstream item, produce JSON records through the Custom HTTP
-source, run `format("kafka")` + eventstream options + `foreachBatch`, and
-assert the Kafka schema (`key`, `value`, `topic`, `partition`, `offset`) and
-row count. A wrong item id must fail. `rate` must not appear.
+Both create an Eventstream item, bind a Lakehouse destination, produce JSON
+records through the Custom HTTP source, assert the destination
+`Tables/<name>/_delta_log` commit (row count and field names), then run
+`format("kafka")` + eventstream options + `foreachBatch` and assert the Kafka
+schema (`key`, `value`, `topic`, `partition`, `offset`) and row count. A
+wrong item id must fail. `rate` must not appear.
 
 ## Boundaries (deliberate, not backlog)
 
+- **Lakehouse destination** is this slice: Custom HTTP produce → Delta
+  append into `Tables/<name>`. Bind is emulator-native REST. Spark-native
+  `format("kafka")` writes are not drained; there is no background consumer.
+- **Reflex destination** is this slice: Custom HTTP produce → real item
+  job via the existing Activator fire path. A `FileCreated` trigger on the
+  same Reflex does not fire. No dest bound → no job, even if a stream
+  trigger exists.
 - **Eventhouse / Kusto streaming destination** stays 🔴. kustainer has no
   streaming ingestion ([25-rti-kusto.md](25-rti-kusto.md)).
-- Lakehouse / Reflex destinations and operators (Filter, GroupBy, windows)
-  are not this slice.
+- Operators (Filter, GroupBy, windows) are not this slice.
 - **Sail `format("kafka")`** is a driver consume/produce into a
   Kafka-schema LocalRelation (bytes on Sail). `subscribe` /
   `subscribePattern` / `assign`, JSON `startingOffsets`/`endingOffsets`,

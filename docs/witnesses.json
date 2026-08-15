@@ -235,6 +235,15 @@
       "go:TestSafeNavigationAndTriggerEvent"
     ]
   },
+  "real-time-intelligence-eventhouse-kql-database-real-time-intelligence": {
+    "section": "Item types present, engine absent",
+    "claim": "Real-Time Intelligence \u2014 Eventhouse / KQL Database (`real-time-intelligence/`)",
+    "witnesses": [
+      "ci:rti",
+      "go:TestKustoWithoutEngineIs501",
+      "go:TestEventhouseCreatesDefaultDatabaseAndPublishesQueryUri"
+    ]
+  },
   "real-time-intelligence-eventstream-real-time-intelligence-event-streams": {
     "section": "Item types present, engine absent",
     "claim": "Real-Time Intelligence \u2014 Eventstream (`real-time-intelligence/event-streams/`)",
@@ -261,6 +270,53 @@
       "py:test_gssapi_from_jaas_sets_keytab_and_service",
       "py:test_jks_and_pkcs12_truststores_become_pem",
       "py:test_produce_plain_kafka_sends_key_value_topic"
+    ]
+  },
+  "eventstream-lakehouse-destination": {
+    "section": "Item types present, engine absent",
+    "claim": "Eventstream \u2014 Lakehouse destination",
+    "witnesses": [
+      "ci:eventstream-sail",
+      "go:TestEventstreamDestinationRefusesByName",
+      "go:TestEventstreamBindDestinationValidation",
+      "go:TestEventstreamDestinationRBAC",
+      "go:TestEventstreamBindCrossWorkspaceDestination",
+      "go:TestEventstreamProduceWithoutDestinationCreatesNoTable",
+      "go:TestEventstreamProduceWithLakehouseDestinationWritesRows",
+      "go:TestEventstreamProduceWithLakehouseDestinationAppends",
+      "go:TestEventstreamProduceWithDestinationWithoutBrokerIs501",
+      "go:TestEventstreamProduceNonJSONValueColumn",
+      "go:TestEventstreamDestinationAttributesWrites",
+      "go:TestEventstreamDrainWriteFailure"
+    ]
+  },
+  "eventstream-reflex-destination": {
+    "section": "Item types present, engine absent",
+    "claim": "Eventstream \u2014 Reflex destination",
+    "witnesses": [
+      "ci:eventstream-sail",
+      "go:TestEventstreamBindReflexDestination",
+      "go:TestEventstreamBindReflexDestinationValidation",
+      "go:TestEventstreamProduceWithReflexDestinationStartsJobs",
+      "go:TestEventstreamProduceReflexTriggerEventValue",
+      "go:TestEventstreamProduceWithoutReflexDestDoesNotFire",
+      "go:TestEventstreamProduceReflexDoesNotFireFileTrigger",
+      "go:TestEventstreamProduceReflexWithoutBrokerIs501",
+      "go:TestEventstreamProduceReflexDisabledTriggerDoesNotFire",
+      "go:TestEventstreamProduceReflexWrongSourceDoesNotFire",
+      "go:TestEventstreamProduceReflexAndLakehouseTogether",
+      "go:TestEventstreamMultipleReflexDestinations",
+      "go:TestEventstreamBindCrossWorkspaceReflexDestination",
+      "go:TestEventstreamProduceReflexSecondProduceFiresAgain",
+      "go:TestEventstreamProduceReflexMissingDestItemIs502",
+      "go:TestEventstreamProduceReflexWrongStoredTypeIs502",
+      "go:TestEventstreamProduceReflexDeletedTargetIs502",
+      "go:TestEventstreamDrainReflexUsesEventstreamWorkspaceWhenDestOmitsIt",
+      "go:TestEventstreamDrainReflexClosedStore",
+      "go:TestEventstreamProduceReflexActivationCapSkips",
+      "go:TestStreamTriggerEventParamsShape",
+      "go:TestEventstreamDrainReflexNoop",
+      "go:TestEventTriggerAcceptsEventstreamReceived"
     ]
   },
   "fabric-cicd-tool-publishing": {
@@ -997,7 +1053,8 @@
     "section": "Data Factory (`data-factory/`)",
     "claim": "**Azure Batch** activity (ADF `Custom`)",
     "witnesses": [
-      "go:TestCustomActivityIsOffByDefault",
+      "go:TestCustomActivityRunsByDefault",
+      "go:TestCustomActivityOffRefusesAndDoesNotReachAgent",
       "go:TestCustomActivityRunsWhenEnabled",
       "go:TestCustomActivityNonZeroExitFails",
       "go:TestCustomActivityUnparseableReportFails",
