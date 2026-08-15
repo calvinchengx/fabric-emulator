@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `DISTINCTCOUNT`, `MAX`, `IF`, `ACOS`, `ABS`, `ROUND`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -681,6 +681,15 @@ func isBlankText(v any) bool {
 	return ok && strings.TrimSpace(s) == ""
 }
 
+// distinctKey canonicalizes a value for DISTINCTCOUNT: 1 and 1.0 are one
+// value; text is itself. BLANK is skipped by the caller.
+func distinctKey(v any) string {
+	if f, ok := numeric(v); ok {
+		return "n:" + strconv.FormatFloat(f, 'g', -1, 64)
+	}
+	return "s:" + dstr(v)
+}
+
 // asNumber converts a value for arithmetic: BLANK is 0, a boolean is 1 or 0,
 // and a numeric string parses. Anything else answers false — never 0, which is
 // the coercion that let text total silently.
@@ -849,6 +858,57 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return float64(len(e.activeRows(tbl))), nil
+	case "DISTINCTCOUNT":
+		if len(fc.args) < 1 {
+			return nil, fmt.Errorf("DISTINCTCOUNT expects a column reference")
+		}
+		col, ok := fc.args[0].(columnRef)
+		if !ok {
+			return nil, fmt.Errorf("DISTINCTCOUNT expects a column reference")
+		}
+		tbl, err := e.resolveColumn("DISTINCTCOUNT", col)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		for _, r := range e.activeRows(tbl) {
+			v := r[col.col]
+			if v == nil || isBlankText(v) {
+				continue // BLANK is not a distinct value
+			}
+			seen[distinctKey(v)] = true
+		}
+		return float64(len(seen)), nil
+	case "MAX":
+		if len(fc.args) < 1 {
+			return nil, fmt.Errorf("MAX expects a column reference")
+		}
+		col, ok := fc.args[0].(columnRef)
+		if !ok {
+			return nil, fmt.Errorf("MAX expects a column reference")
+		}
+		tbl, err := e.resolveColumn("MAX", col)
+		if err != nil {
+			return nil, err
+		}
+		var (
+			have bool
+			best any
+		)
+		for _, r := range e.activeRows(tbl) {
+			v := r[col.col]
+			if v == nil || isBlankText(v) {
+				continue // BLANK is not a candidate
+			}
+			if !have || daxCmp(v, best) > 0 {
+				best = v
+				have = true
+			}
+		}
+		if !have {
+			return nil, nil
+		}
+		return best, nil
 	case "SELECTEDVALUE":
 		return e.selectedValue(fc)
 	case "ACOS":
