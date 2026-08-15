@@ -534,6 +534,106 @@ func TestDAXPhase3Helpers(t *testing.T) {
 	}
 }
 
+func TestDeployConverters(t *testing.T) {
+	if daxDataType("int64") != "INTEGER" || daxDataType("double") != "DOUBLE" ||
+		daxDataType("boolean") != "BOOLEAN" || daxDataType("datetime") != "DATETIME" ||
+		daxDataType("string") != "STRING" {
+		t.Fatal("daxDataType")
+	}
+
+	if n, err := asInt(int(3)); err != nil || n != 3 {
+		t.Errorf("asInt(int) = %v %v", n, err)
+	}
+	if n, err := asInt(int32(3)); err != nil || n != 3 {
+		t.Errorf("asInt(int32) = %v %v", n, err)
+	}
+	if n, err := asInt(int64(3)); err != nil || n != 3 {
+		t.Errorf("asInt(int64) = %v %v", n, err)
+	}
+	if n, err := asInt(3.0); err != nil || n != 3 {
+		t.Errorf("asInt(3.0) = %v %v", n, err)
+	}
+	if _, err := asInt(3.5); err == nil {
+		t.Error("asInt(3.5) should fail")
+	}
+	if n, err := asInt(json.Number("7")); err != nil || n != 7 {
+		t.Errorf("asInt(json.Number) = %v %v", n, err)
+	}
+	if n, err := asInt("8"); err != nil || n != 8 {
+		t.Errorf("asInt(string) = %v %v", n, err)
+	}
+	if _, err := asInt(true); err == nil {
+		t.Error("asInt(bool) should fail")
+	}
+
+	if f, err := asFloat(1.5); err != nil || f != 1.5 {
+		t.Errorf("asFloat(float64) = %v %v", f, err)
+	}
+	if f, err := asFloat(2); err != nil || f != 2 {
+		t.Errorf("asFloat(int) = %v %v", f, err)
+	}
+	if f, err := asFloat(int64(3)); err != nil || f != 3 {
+		t.Errorf("asFloat(int64) = %v %v", f, err)
+	}
+	if f, err := asFloat(json.Number("4.5")); err != nil || f != 4.5 {
+		t.Errorf("asFloat(json.Number) = %v %v", f, err)
+	}
+	if f, err := asFloat("6.25"); err != nil || f != 6.25 {
+		t.Errorf("asFloat(string) = %v %v", f, err)
+	}
+	if _, err := asFloat(true); err == nil {
+		t.Error("asFloat(bool) should fail")
+	}
+
+	if b, err := asBool(true); err != nil || !b {
+		t.Errorf("asBool(true) = %v %v", b, err)
+	}
+	if b, err := asBool("false"); err != nil || b {
+		t.Errorf("asBool(\"false\") = %v %v", b, err)
+	}
+	if _, err := asBool(1); err == nil {
+		t.Error("asBool(1) should fail")
+	}
+
+	if s, err := asDateTime(time.Date(2024, 8, 15, 0, 0, 0, 0, time.UTC)); err != nil || s != "DATE(2024,8,15)" {
+		t.Errorf("asDateTime(Time) = %q %v", s, err)
+	}
+	if s, err := asDateTime("2024-08-15T00:00:00Z"); err != nil || s != "DATE(2024,8,15)" {
+		t.Errorf("asDateTime(RFC3339) = %q %v", s, err)
+	}
+	if s, err := asDateTime("2024-08-15"); err != nil || s != "DATE(2024,8,15)" {
+		t.Errorf("asDateTime(date) = %q %v", s, err)
+	}
+	if _, err := asDateTime("nope"); err == nil {
+		t.Error("asDateTime(nope) should fail")
+	}
+	if _, err := asDateTime(1); err == nil {
+		t.Error("asDateTime(int) should fail")
+	}
+
+	if s, err := daxLiteral(nil, "int64"); err != nil || s != "BLANK()" {
+		t.Errorf("daxLiteral(nil) = %q %v", s, err)
+	}
+	if s, err := daxLiteral(3, "int64"); err != nil || s != "3" {
+		t.Errorf("daxLiteral(int) = %q %v", s, err)
+	}
+	if s, err := daxLiteral(1.5, "double"); err != nil || s != "1.5" {
+		t.Errorf("daxLiteral(double) = %q %v", s, err)
+	}
+	if s, err := daxLiteral(true, "boolean"); err != nil || s != "TRUE()" {
+		t.Errorf("daxLiteral(true) = %q %v", s, err)
+	}
+	if s, err := daxLiteral(false, "boolean"); err != nil || s != "FALSE()" {
+		t.Errorf("daxLiteral(false) = %q %v", s, err)
+	}
+	if s, err := daxLiteral("2024-01-02", "datetime"); err != nil || s != "DATE(2024,1,2)" {
+		t.Errorf("daxLiteral(datetime) = %q %v", s, err)
+	}
+	if s, err := daxLiteral("hi", "string"); err != nil || s != `"hi"` {
+		t.Errorf("daxLiteral(string) = %q %v", s, err)
+	}
+}
+
 // TestDAXMeasureRecursionIsBounded pins the fix for a whole-PROCESS crash.
 //
 // A measure's expression is re-parsed and evaluated in place, so `M = [M]` — or
