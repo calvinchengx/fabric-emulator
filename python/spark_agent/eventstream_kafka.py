@@ -53,7 +53,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -838,14 +838,14 @@ def _as_timestamp(value):
         millis = float(value)
         if millis > 1e12:
             millis = millis / 1000.0
-        return datetime.fromtimestamp(millis, tz=UTC).replace(tzinfo=None)
+        return datetime.fromtimestamp(millis, tz=timezone.utc).replace(tzinfo=None)
     text = str(value).replace("Z", "+00:00")
     try:
         ts = datetime.fromisoformat(text)
     except ValueError:
-        return datetime.fromtimestamp(0, tz=UTC).replace(tzinfo=None)
+        return datetime.fromtimestamp(0, tz=timezone.utc).replace(tzinfo=None)
     if ts.tzinfo is not None:
-        ts = ts.astimezone(UTC).replace(tzinfo=None)
+        ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
     return ts
 
 

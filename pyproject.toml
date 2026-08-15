@@ -321,6 +321,12 @@ ignore = [
 # Test files import a module by path before asserting on it, so the import is
 # not at the top and does not need to be.
 "python/tests/*" = ["E402"]
+# `python/spark_agent/` IS MOUNTED INTO THE JVM SPARK IMAGE, which ships
+# **Python 3.8** (`apache/spark:3.5.5-...-python3-ubuntu`). ruff targets py312
+# and UP017 rewrites `timezone.utc` to `datetime.UTC` — a 3.11+ alias that
+# raises ImportError there. That is not hypothetical: it broke the eventstream
+# JVM suite on main, and only a cron-only workflow could see it.
+"python/spark_agent/*" = ["UP017"]
 # The notebookutils shim mirrors Microsoft's API, which is camelCase and takes
 # arguments this code does not use. Renaming to satisfy a linter would break
 # the thing it exists to imitate.
