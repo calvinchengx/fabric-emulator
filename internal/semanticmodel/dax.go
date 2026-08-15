@@ -10,7 +10,7 @@ import (
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
 // tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
-// references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, the infix operators
+// references, `SUM`, `DIVIDE`, `COUNTROWS`, `COUNT`, `MIN`, `AVERAGE`, `IF`, `ACOS`, `ABS`, `ROUND`, `POWER`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
 // no row context beyond aggregation) — unsupported constructs error out rather
@@ -849,6 +849,92 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return float64(len(e.activeRows(tbl))), nil
+	case "MIN":
+		if len(fc.args) < 1 {
+			return nil, fmt.Errorf("MIN expects a column reference")
+		}
+		col, ok := fc.args[0].(columnRef)
+		if !ok {
+			return nil, fmt.Errorf("MIN expects a column reference")
+		}
+		tbl, err := e.resolveColumn("MIN", col)
+		if err != nil {
+			return nil, err
+		}
+		var (
+			have bool
+			best any
+		)
+		for _, r := range e.activeRows(tbl) {
+			v := r[col.col]
+			if v == nil || isBlankText(v) {
+				continue // BLANK is not a candidate
+			}
+			if !have || daxCmp(v, best) < 0 {
+				best = v
+				have = true
+			}
+		}
+		if !have {
+			return nil, nil
+		}
+		return best, nil
+	case "AVERAGE":
+		if len(fc.args) < 1 {
+			return nil, fmt.Errorf("AVERAGE expects a column reference")
+		}
+		col, ok := fc.args[0].(columnRef)
+		if !ok {
+			return nil, fmt.Errorf("AVERAGE expects a column reference")
+		}
+		tbl, err := e.resolveColumn("AVERAGE", col)
+		if err != nil {
+			return nil, err
+		}
+		var (
+			sum float64
+			n   int
+		)
+		for _, r := range e.activeRows(tbl) {
+			v := r[col.col]
+			if v == nil || isBlankText(v) {
+				continue // BLANK is not in the mean
+			}
+			f, ok := asNumber(v)
+			if !ok {
+				return nil, fmt.Errorf("cannot average %s[%s]: the value %q is not a number",
+					tbl, col.col, fmt.Sprint(v))
+			}
+			sum += f
+			n++
+		}
+		if n == 0 {
+			return nil, nil
+		}
+		return sum / float64(n), nil
+	case "COUNT":
+		if len(fc.args) < 1 {
+			return nil, fmt.Errorf("COUNT expects a column reference")
+		}
+		col, ok := fc.args[0].(columnRef)
+		if !ok {
+			return nil, fmt.Errorf("COUNT expects a column reference")
+		}
+		tbl, err := e.resolveColumn("COUNT", col)
+		if err != nil {
+			return nil, err
+		}
+		var n int
+		for _, r := range e.activeRows(tbl) {
+			v := r[col.col]
+			if v == nil || isBlankText(v) {
+				continue
+			}
+			n++
+		}
+		// Desktop COUNT on this catalog counts non-blank text as well as
+		// numbers (COUNT('Store'[Territory]) = 4). Empty set is 0, not BLANK.
+		return float64(n), nil
 	case "SELECTEDVALUE":
 		return e.selectedValue(fc)
 	case "ACOS":
@@ -911,6 +997,40 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return daxRound(n, digits), nil
+	case "POWER":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("POWER expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// DAX POWER(BLANK, n) is BLANK. POWER(n, BLANK) is n^0 = 1
+		// (Desktop: POWER(2, BLANK()) = 1).
+		if a == nil {
+			return nil, nil
+		}
+		base, err := arithNum(a, "POWER")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		exp, err := arithNum(b, "POWER")
+		if err != nil {
+			return nil, err
+		}
+		// Go math.Pow(0, 0) is 1; Desktop refuses 0^0.
+		if base == 0 && exp == 0 {
+			return nil, fmt.Errorf("POWER(0, 0) is undefined")
+		}
+		out := math.Pow(base, exp)
+		if math.IsNaN(out) || math.IsInf(out, 0) {
+			return nil, fmt.Errorf("POWER result is not a number")
+		}
+		return out, nil
 	}
 	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
 }

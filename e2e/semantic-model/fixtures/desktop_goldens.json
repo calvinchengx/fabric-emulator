@@ -1,5 +1,5 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. ABS(-2.5)/ABS(0)/ABS(3) and ROUND half-away-from-zero (ROUND(-1.5,0)=-2, unlike Go math.Round) pinned live the same day. Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. MIN, AVERAGE, COUNT, and POWER pinned live (POWER(0,0) errors; BLANK base is BLANK; BLANK exponent is 0). Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-9,
   "probes": [
@@ -74,6 +74,84 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", ROUND(1234, -2))",
       "column": "[v]",
       "want": 1200
+    },
+    {
+      "name": "MIN(Sales[Units])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MIN(Sales[Units]))",
+      "column": "[v]",
+      "want": 30000
+    },
+    {
+      "name": "MIN(Sales[StoreId])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MIN(Sales[StoreId]))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "MIN(Store[StoreId])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MIN('Store'[StoreId]))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "AVERAGE(Sales[Units])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", AVERAGE(Sales[Units]))",
+      "column": "[v]",
+      "want": 34375
+    },
+    {
+      "name": "AVERAGE(Sales[StoreId])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", AVERAGE(Sales[StoreId]))",
+      "column": "[v]",
+      "want": 2.5
+    },
+    {
+      "name": "AVERAGE(Store[StoreId])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", AVERAGE('Store'[StoreId]))",
+      "column": "[v]",
+      "want": 2.5
+    },
+    {
+      "name": "COUNT(Sales[Units])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", COUNT(Sales[Units]))",
+      "column": "[v]",
+      "want": 8
+    },
+    {
+      "name": "COUNT(Store[StoreId])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", COUNT('Store'[StoreId]))",
+      "column": "[v]",
+      "want": 4
+    },
+    {
+      "name": "COUNT(Store[Territory])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", COUNT('Store'[Territory]))",
+      "column": "[v]",
+      "want": 4
+    },
+    {
+      "name": "POWER(2, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", POWER(2, 3))",
+      "column": "[v]",
+      "want": 8
+    },
+    {
+      "name": "POWER(9, 0.5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", POWER(9, 0.5))",
+      "column": "[v]",
+      "want": 3
+    },
+    {
+      "name": "POWER(10, 0)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", POWER(10, 0))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
+      "name": "POWER(-8, 1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", POWER(-8, 1))",
+      "column": "[v]",
+      "want": -8
     }
   ]
 }
