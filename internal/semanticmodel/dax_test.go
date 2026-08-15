@@ -470,6 +470,87 @@ func TestDAXPhase3BatchEdges(t *testing.T) {
 	}
 }
 
+// TestDAXPhase3DesktopBlankEdges pins the eight Desktop-proved BLANK / error
+// cases the numeric golden harness cannot store. Goldens coerce BLANK to 0
+// and cannot hold an error; these are the traps that would otherwise look
+// like a happy scalar.
+func TestDAXPhase3DesktopBlankEdges(t *testing.T) {
+	m, d := loadModel(t), loadData(t)
+
+	res, err := Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", EXP(BLANK()))`)
+	if err != nil {
+		t.Fatalf("EXP(BLANK()): %v", err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 1 {
+		t.Errorf("EXP(BLANK()) = %v, want 1", res.Rows)
+	}
+
+	if _, err := Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", LN(-1))`); err == nil {
+		t.Error("LN(-1): expected error")
+	}
+
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", CEILING(10.5, BLANK()))`)
+	if err != nil {
+		t.Fatalf("CEILING(10.5, BLANK()): %v", err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 0 {
+		t.Errorf("CEILING(10.5, BLANK()) = %v, want 0", res.Rows)
+	}
+
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", DAY(EOMONTH(DATE(2024, 1, 15), BLANK())))`)
+	if err != nil {
+		t.Fatalf("EOMONTH(date, BLANK()): %v", err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 31 {
+		t.Errorf("DAY(EOMONTH(2024-01-15, BLANK())) = %v, want 31 (months 0)", res.Rows)
+	}
+
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", DAY(EDATE(DATE(2024, 1, 15), BLANK())))`)
+	if err != nil {
+		t.Fatalf("EDATE(date, BLANK()): %v", err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 15 {
+		t.Errorf("DAY(EDATE(2024-01-15, BLANK())) = %v, want 15 (months 0)", res.Rows)
+	}
+
+	res, err = Evaluate(m, d, `EVALUATE SUMMARIZECOLUMNS("v", TRUNC(2.9, BLANK()))`)
+	if err != nil {
+		t.Fatalf("TRUNC(2.9, BLANK()): %v", err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 2 {
+		t.Errorf("TRUNC(2.9, BLANK()) = %v, want 2 (digits 0)", res.Rows)
+	}
+
+	blankCol := &Model{Name: "x", Tables: []Table{{
+		Name:    "T",
+		Columns: []Column{{Name: "n", DataType: "int64"}},
+	}}}
+	blankData := Data{"T": {
+		{"n": nil},
+		{"n": ""},
+		{"n": 1},
+		{"n": 1},
+		{"n": nil},
+		{"n": 2},
+	}}
+
+	res, err = Evaluate(blankCol, Data{"T": {{"n": nil}, {"n": ""}}}, `EVALUATE SUMMARIZECOLUMNS("z", MAX(T[n]), "k", 1)`)
+	if err != nil {
+		t.Fatalf("MAX all-blank: %v", err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0]["[z]"] != nil {
+		t.Errorf("MAX of all-blank = %v, want BLANK", res.Rows)
+	}
+
+	res, err = Evaluate(blankCol, blankData, `EVALUATE SUMMARIZECOLUMNS("v", DISTINCTCOUNT(T[n]))`)
+	if err != nil {
+		t.Fatalf("DISTINCTCOUNT skips BLANK: %v", err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[v]"]) != 2 {
+		t.Errorf("DISTINCTCOUNT with blanks = %v, want 2 (1 and 2; BLANK skipped)", res.Rows)
+	}
+}
+
 func TestDAXPhase3Helpers(t *testing.T) {
 	sun := time.Date(2024, 8, 18, 0, 0, 0, 0, time.UTC) // Sunday
 	mon := time.Date(2024, 8, 19, 0, 0, 0, 0, time.UTC)
