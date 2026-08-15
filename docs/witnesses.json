@@ -319,6 +319,48 @@
       "go:TestEventTriggerAcceptsEventstreamReceived"
     ]
   },
+  "eventstream-eventhouse-destination": {
+    "section": "Item types present, engine absent",
+    "claim": "Eventstream \u2014 Eventhouse destination",
+    "witnesses": [
+      "go:TestEventstreamBindEventhouseDestination",
+      "go:TestEventstreamBindEventhouseValidation",
+      "go:TestEventstreamProduceWithEventhouseDestinationIngests",
+      "go:TestEventstreamEventhouseDestNamedDatabase",
+      "go:TestEventstreamEventhouseDestOmitsWorkspace",
+      "go:TestEventstreamEventhouseDestUnknownDatabase",
+      "go:TestEventstreamEventhouseDestMissingItem",
+      "go:TestEventstreamEventhouseDestDeleted",
+      "go:TestEventstreamEventhouseEmptyAfterFilterSkipsIngest",
+      "go:TestEventstreamEventhouseEngineErrorOnProduce",
+      "go:TestEventstreamEventhouseBadColumnFailsIngest",
+      "go:TestEventstreamEventhouseAndLakehouseTogether",
+      "go:TestEventstreamEventhouseDestWithoutEngineFailsOnProduce",
+      "go:TestEventstreamStoredEventhouseOnLakehouseFailsLoud",
+      "go:TestEventstreamDrainEventhouseNoopAndClosed",
+      "go:TestEventstreamKustoMgmtAndIngest",
+      "go:TestEventstreamDestinationRefusesByName"
+    ]
+  },
+  "eventstream-operators": {
+    "section": "Item types present, engine absent",
+    "claim": "Eventstream \u2014 operators",
+    "witnesses": [
+      "go:TestEventstreamFilterDropsNonMatching",
+      "go:TestEventstreamFilterOps",
+      "go:TestEventstreamGroupByCountsBatch",
+      "go:TestEventstreamGroupByAggregates",
+      "go:TestEventstreamWindowTumblingOnBatch",
+      "go:TestEventstreamWindowTimeFallbacks",
+      "go:TestEventstreamOperatorRefusesByName",
+      "go:TestEventstreamBindOperatorValidation",
+      "go:TestEventstreamOperatorRBAC",
+      "go:TestEventstreamOperatorPropertiesOnGet",
+      "go:TestEventstreamStoredOperatorFailsOnProduce",
+      "go:TestEventstreamLoadPersistOperators",
+      "go:TestEventstreamOperatorHelpers"
+    ]
+  },
   "fabric-cicd-tool-publishing": {
     "section": "CI/CD (`cicd/`)",
     "claim": "`fabric-cicd` tool publishing",

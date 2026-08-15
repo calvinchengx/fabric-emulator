@@ -252,14 +252,59 @@ on the Eventstream (`item_properties`) and also appear on
 }
 ```
 
-`type` is `Lakehouse` or `Reflex`. For Lakehouse, `table` is a single
-`Tables/<name>` segment (no slashes). **Eventhouse** is refused by name
-(kustainer has no streaming ingest). After a successful Custom HTTP
-produce, a Lakehouse dest appends the event values as a real Delta table;
-a Reflex dest fires triggers on that Reflex whose `eventType` is
-`Microsoft.Fabric.Eventstream.EventReceived` and whose `source.itemId` is
-the Eventstream — each event starts the action job with
-`@pipeline()?.TriggerEvent?.Key` / `.Value`.
+`type` is `Lakehouse`, `Reflex`, or `Eventhouse`. For Lakehouse, `table`
+is a single `Tables/<name>` segment (no slashes). For Eventhouse, `table`
+is a Kusto identifier (`[A-Za-z_][A-Za-z0-9_]*`); optional `database` is
+the child KQL Database display name (default: the eventhouse's own child).
+After a successful Custom HTTP produce, operators run on the batch, then
+a Lakehouse dest appends the (possibly filtered/aggregated) values as a
+real Delta table; a Reflex dest fires triggers on that Reflex whose
+`eventType` is `Microsoft.Fabric.Eventstream.EventReceived` and whose
+`source.itemId` is the Eventstream — each event starts the action job with
+`@pipeline()?.TriggerEvent?.Key` / `.Value`; an Eventhouse dest ingests
+via `.create-merge` + `.ingest inline` (direct ingest, not Fabric
+streaming ingest). Produce reports `produced` (Kafka count) and `drained`
+(post-operator count).
+
+```json
+{
+  "type": "Eventhouse",
+  "itemId": "<eventhouse-id>",
+  "table": "clicks",
+  "database": "<optional KQL Database display name>",
+  "workspaceId": "<optional; defaults to the Eventstream workspace>"
+}
+```
+
+## Eventstream operators
+
+| Method + path | Notes |
+|---|---|
+| `POST   /workspaces/{id}/eventstreams/{id}/operators` | bind an operator *sync* |
+| `GET    /workspaces/{id}/eventstreams/{id}/operators` | list operators *sync* |
+
+Same emulator-native surface as destinations — Fabric's topology has no
+public REST. Bindings persist on the Eventstream and appear on
+`properties.operators`.
+
+```json
+{"type": "Filter", "condition": {"field": "n", "op": "gte", "value": 3}}
+```
+
+```json
+{"type": "GroupBy", "keys": ["src"], "aggregates": [{"fn": "count", "as": "n"}]}
+```
+
+```json
+{"type": "Window", "kind": "tumbling", "duration": "1h", "on": "ts"}
+```
+
+Filter ops: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `contains`, `exists`.
+GroupBy aggregates: `count`, `sum`, `min`, `max`, `avg`. Window is
+tumbling on this produce batch only (stamps `_window_start`); hopping and
+sliding are refused. Join, Union, and Expand are refused — they need more
+than one stream. Kafka / DefaultStream stays the raw source; destinations
+see the operator output.
 
 ## Event triggers (Reflex / Data Activator)
 

@@ -5,10 +5,11 @@ management always works. Execution — a real Kafka topic the Fabric notebook
 API can subscribe to — is real when an Apache Kafka KRaft broker is attached.
 No broker → honest 501. `--profile eventstream` stays opt-in. Sail is the
 default engine; the JVM overlay keeps a native `spark-sql-kafka` source.
-Neither path maps Eventstream onto `rate`. The **Lakehouse destination**
-(Custom HTTP source → Delta append) and the **Reflex destination**
-(Custom HTTP source → item job) are this slice. Eventhouse destination
-and operators are not.
+Neither path maps Eventstream onto `rate`. Destinations and operators sit
+on the Custom HTTP produce path: **Lakehouse** (Delta append), **Reflex**
+(item job), **Eventhouse** (Kusto direct ingest), and **Filter / GroupBy /
+tumbling Window** on the produce batch. Kafka stays the raw source; dests
+see operator output.
 
 This is the same move as Eventhouse ([25-rti-kusto.md](25-rti-kusto.md)):
 terminate the Fabric names ourselves, relay bytes to a real engine.
@@ -75,18 +76,29 @@ POST …/eventstreams  -->  mint datasourceId + CreateTopics
    Unknown IDs fail at resolve (404), not as an empty stream.
 3. **Custom source** — `POST …/eventstreams/{id}/sources/{ds}/events` writes
    JSON `key`/`value` bytes into that topic. Not thirty connectors. When a
-   Lakehouse destination is bound, those same bytes are parsed and appended
-   as a real Delta table (`Tables/<name>`) after the produce succeeds.
+   destination is bound, those same bytes (or the operator output) are
+   drained after the produce succeeds.
 4. **Lakehouse destination** — emulator-native
    `POST …/eventstreams/{id}/destinations` with `{type, itemId, table}`.
    Fabric's topology JSON has no public REST (same as Reflex triggers).
-   `type` must be `Lakehouse`. Eventhouse is refused by name.
+   `type` is `Lakehouse`, `Reflex`, or `Eventhouse`.
 5. **Reflex destination** — same bind surface, `{type: Reflex, itemId}`.
    A trigger on that Reflex with
    `eventType: Microsoft.Fabric.Eventstream.EventReceived` and
    `source.itemId` the Eventstream starts the action job per produced
    event (`invokeType: EventTriggered`, `TriggerEvent.Key` / `.Value`).
-6. **Spark adapter, both engines** — `python/spark_agent/eventstream_kafka.py`:
+6. **Eventhouse destination** — `{type: Eventhouse, itemId, table}` and
+   optional `database`. After produce, operator output is ingested with
+   `.create-merge` + `.ingest inline` into the isolated engine database
+   for that KQL Database — the path kustainer actually supports. This is
+   **not** Fabric's streaming-ingest protocol and not `Kusto.Ingest`.
+   No engine attached → produce 502 naming `--kql-url`.
+7. **Operators** — emulator-native `POST …/eventstreams/{id}/operators`.
+   Filter (`eq`/`ne`/`gt`/`gte`/`lt`/`lte`/`contains`/`exists`), GroupBy
+   (`count`/`sum`/`min`/`max`/`avg`), and tumbling Window (this batch
+   only; stamps `_window_start`). Join / Union / Expand and
+   hopping/sliding are refused by name. Kafka consume is still unfiltered.
+8. **Spark adapter, both engines** — `python/spark_agent/eventstream_kafka.py`:
    - **JVM:** wraps classic `readStream.format("kafka").load()` when both
      eventstream options are set: Entra-gated lookup, then
      `kafka.bootstrap.servers` + `subscribe` on the real OSS Kafka source
@@ -141,6 +153,10 @@ records through the Custom HTTP source, assert the destination
 schema (`key`, `value`, `topic`, `partition`, `offset`) and row count. A
 wrong item id must fail. `rate` must not appear.
 
+Eventhouse destination and operators are **Go-unit witnessed** against the
+in-process Kusto stand-in and Lakehouse dest tables. They are not in
+`e2e/eventstream` — that job does not start `--profile rti`.
+
 ## Boundaries (deliberate, not backlog)
 
 - **Lakehouse destination** is this slice: Custom HTTP produce → Delta
@@ -150,9 +166,16 @@ wrong item id must fail. `rate` must not appear.
   job via the existing Activator fire path. A `FileCreated` trigger on the
   same Reflex does not fire. No dest bound → no job, even if a stream
   trigger exists.
-- **Eventhouse / Kusto streaming destination** stays 🔴. kustainer has no
-  streaming ingestion ([25-rti-kusto.md](25-rti-kusto.md)).
-- Operators (Filter, GroupBy, windows) are not this slice.
+- **Eventhouse destination** is this slice: Custom HTTP produce → Kusto
+  **direct** ingest (`.create-merge` + `.ingest inline`). Same produce
+  trigger as Lakehouse; no background consumer. Fabric streaming ingest
+  and queued `Kusto.Ingest` stay refused — the engine does not host them
+  ([25-rti-kusto.md](25-rti-kusto.md)).
+- **Operators** are this slice: Filter, GroupBy, tumbling Window on the
+  produce batch. Destinations see the operator output; Kafka /
+  DefaultStream stays the raw source. Join / Union / Expand and
+  hopping/sliding windows stay refused — they need more than one stream
+  or cross-batch state.
 - **Sail `format("kafka")`** is a driver consume/produce into a
   Kafka-schema LocalRelation (bytes on Sail). `subscribe` /
   `subscribePattern` / `assign`, JSON `startingOffsets`/`endingOffsets`,

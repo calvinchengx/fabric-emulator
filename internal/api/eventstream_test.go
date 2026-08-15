@@ -612,8 +612,8 @@ func TestEventstreamDestinationRefusesByName(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, code string
 	}{
-		{"Eventhouse", `{"type":"Eventhouse","itemId":"` + lh.ID + `","table":"clicks"}`,
-			"EventstreamDestinationEventhouseNotSupported"},
+		{"Eventhouse on a Lakehouse", `{"type":"Eventhouse","itemId":"` + lh.ID + `","table":"clicks"}`,
+			"EventstreamDestinationNotEventhouse"},
 		{"Reflex on a Lakehouse", `{"type":"Reflex","itemId":"` + lh.ID + `"}`,
 			"EventstreamDestinationNotReflex"},
 		{"unknown", `{"type":"CustomEndpoint","itemId":"` + lh.ID + `","table":"clicks"}`,
@@ -782,6 +782,8 @@ func TestEventstreamBindDestinationValidation(t *testing.T) {
 			"ItemNotFound", http.StatusNotFound},
 		{"not a lakehouse", `{"type":"Lakehouse","itemId":"` + notebook.ID + `","table":"clicks"}`,
 			"EventstreamDestinationNotLakehouse", http.StatusBadRequest},
+		{"eventhouse bad table", `{"type":"Eventhouse","itemId":"` + lh.ID + `","table":"Tables/clicks"}`,
+			"InvalidRequest", http.StatusBadRequest},
 	} {
 		got := do(a.bindEventstreamDestination, admin, http.MethodPost, tc.body, path)
 		if got.Code != tc.status || errorCode(t, got) != tc.code {
@@ -1025,7 +1027,7 @@ func TestEventstreamMultipleLakehouseDestinations(t *testing.T) {
 	}
 }
 
-func TestEventstreamSkipsNonLakehouseStoredDestination(t *testing.T) {
+func TestEventstreamStoredEventhouseOnLakehouseFailsLoud(t *testing.T) {
 	a, st := newAPI(t)
 	a.Kafka = &fakeKafka{}
 	ws := seedWorkspace(t, st)
@@ -1039,11 +1041,11 @@ func TestEventstreamSkipsNonLakehouseStoredDestination(t *testing.T) {
 	got := do(a.produceEventstreamEvents, admin, http.MethodPost,
 		fiveCustomEventsJSON(),
 		map[string]string{"wid": ws.ID, "iid": es, "did": ds})
-	if got.Code != http.StatusOK {
+	if got.Code != http.StatusBadGateway || errorCode(t, got) != "EventstreamDestinationEventhouseFailed" {
 		t.Fatalf("produce: %d %s", got.Code, got.Body.Bytes())
 	}
 	if _, err := warehouse.ReadDeltaTable(st, lh.ID, "clicks"); err == nil {
-		t.Fatal("Eventhouse dest in storage was drained")
+		t.Fatal("a Lakehouse was written from a stored Eventhouse dest")
 	}
 }
 
@@ -1877,5 +1879,217 @@ func intFromCell(t *testing.T, v any) int {
 	default:
 		t.Fatalf("not a number: %T %v", v, v)
 		return 0
+	}
+}
+
+func TestEventstreamBindEventhouseDestination(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	es, _ := seedEventstream(t, a, ws.ID)
+	eh, _ := seedEventhouse(t, a, ws.ID, "eh-clicks")
+	got := do(a.bindEventstreamDestination, admin, http.MethodPost,
+		`{"type":"Eventhouse","itemId":"`+eh.ID+`","table":"clicks"}`,
+		map[string]string{"wid": ws.ID, "iid": es})
+	if got.Code != http.StatusCreated {
+		t.Fatalf("bind: %d %s", got.Code, got.Body.Bytes())
+	}
+	listed := do(a.listEventstreamDestinations, admin, http.MethodGet, "",
+		map[string]string{"wid": ws.ID, "iid": es})
+	var list struct{ Value []eventstreamDestination }
+	_ = json.Unmarshal(listed.Body.Bytes(), &list)
+	if len(list.Value) != 1 || list.Value[0].Type != "Eventhouse" || list.Value[0].Table != "clicks" {
+		t.Fatalf("list: %+v", list.Value)
+	}
+}
+
+func TestEventstreamProduceWithEventhouseDestinationIngests(t *testing.T) {
+	a, st := newAPI(t)
+	a.Kafka = &fakeKafka{}
+	engine := attachEngine(t, a)
+	ws := seedWorkspace(t, st)
+	es, ds := seedEventstream(t, a, ws.ID)
+	eh, db := seedEventhouse(t, a, ws.ID, "eh-ingest")
+	bind := do(a.bindEventstreamDestination, admin, http.MethodPost,
+		`{"type":"Eventhouse","itemId":"`+eh.ID+`","table":"clicks"}`,
+		map[string]string{"wid": ws.ID, "iid": es})
+	if bind.Code != http.StatusCreated {
+		t.Fatalf("bind: %d %s", bind.Code, bind.Body.Bytes())
+	}
+	got := do(a.produceEventstreamEvents, admin, http.MethodPost,
+		fiveCustomEventsJSON(),
+		map[string]string{"wid": ws.ID, "iid": es, "did": ds})
+	if got.Code != http.StatusOK {
+		t.Fatalf("produce: %d %s", got.Code, got.Body.Bytes())
+	}
+	engineDB := engineDatabaseName(db.ID)
+	var created, ingested bool
+	for _, c := range engine.sent() {
+		if strings.Contains(c.csl, ".create-merge table clicks") && c.db == engineDB {
+			created = true
+		}
+		if strings.HasPrefix(c.csl, ".ingest inline into table clicks") && c.db == engineDB {
+			ingested = true
+			if !strings.Contains(c.csl, "custom") {
+				t.Fatalf("ingest missing event bytes: %s", c.csl)
+			}
+		}
+	}
+	if !created || !ingested {
+		t.Fatalf("engine calls: %+v (created=%v ingested=%v)", engine.sent(), created, ingested)
+	}
+}
+
+func TestEventstreamEventhouseDestWithoutEngineFailsOnProduce(t *testing.T) {
+	a, st := newAPI(t)
+	a.Kafka = &fakeKafka{}
+	ws := seedWorkspace(t, st)
+	es, ds := seedEventstream(t, a, ws.ID)
+	eh, _ := seedEventhouse(t, a, ws.ID, "eh-no-engine")
+	_ = do(a.bindEventstreamDestination, admin, http.MethodPost,
+		`{"type":"Eventhouse","itemId":"`+eh.ID+`","table":"clicks"}`,
+		map[string]string{"wid": ws.ID, "iid": es})
+	got := do(a.produceEventstreamEvents, admin, http.MethodPost,
+		fiveCustomEventsJSON(),
+		map[string]string{"wid": ws.ID, "iid": es, "did": ds})
+	if got.Code != http.StatusBadGateway || errorCode(t, got) != "EventstreamDestinationEventhouseFailed" {
+		t.Fatalf("produce: %d %s", got.Code, got.Body.Bytes())
+	}
+	if !strings.Contains(got.Body.String(), "Kusto engine") {
+		t.Fatalf("wanted the missing engine named: %s", got.Body.Bytes())
+	}
+}
+
+func TestEventstreamFilterDropsNonMatching(t *testing.T) {
+	a, st := newAPI(t)
+	a.Kafka = &fakeKafka{}
+	ws := seedWorkspace(t, st)
+	es, ds := seedEventstream(t, a, ws.ID)
+	lh := seedLakehouse(t, st, ws.ID, "lh")
+	_ = do(a.bindEventstreamDestination, admin, http.MethodPost,
+		`{"type":"Lakehouse","itemId":"`+lh.ID+`","table":"clicks"}`,
+		map[string]string{"wid": ws.ID, "iid": es})
+	bind := do(a.bindEventstreamOperator, admin, http.MethodPost,
+		`{"type":"Filter","condition":{"field":"n","op":"gte","value":3}}`,
+		map[string]string{"wid": ws.ID, "iid": es})
+	if bind.Code != http.StatusCreated {
+		t.Fatalf("bind op: %d %s", bind.Code, bind.Body.Bytes())
+	}
+	got := do(a.produceEventstreamEvents, admin, http.MethodPost,
+		fiveCustomEventsJSON(),
+		map[string]string{"wid": ws.ID, "iid": es, "did": ds})
+	if got.Code != http.StatusOK {
+		t.Fatalf("produce: %d %s", got.Code, got.Body.Bytes())
+	}
+	var body struct{ Produced, Drained int }
+	_ = json.Unmarshal(got.Body.Bytes(), &body)
+	if body.Produced != 5 || body.Drained != 2 {
+		t.Fatalf("produced/drained = %+v", body)
+	}
+	tbl, err := warehouse.ReadDeltaTable(st, lh.ID, "clicks")
+	if err != nil {
+		t.Fatalf("ReadDeltaTable: %v", err)
+	}
+	if len(tbl.Rows) != 2 {
+		t.Fatalf("rows = %d, want 2 after Filter: %+v", len(tbl.Rows), tbl.Rows)
+	}
+}
+
+func TestEventstreamGroupByCountsBatch(t *testing.T) {
+	a, st := newAPI(t)
+	a.Kafka = &fakeKafka{}
+	ws := seedWorkspace(t, st)
+	es, ds := seedEventstream(t, a, ws.ID)
+	lh := seedLakehouse(t, st, ws.ID, "lh")
+	_ = do(a.bindEventstreamDestination, admin, http.MethodPost,
+		`{"type":"Lakehouse","itemId":"`+lh.ID+`","table":"agg"}`,
+		map[string]string{"wid": ws.ID, "iid": es})
+	bind := do(a.bindEventstreamOperator, admin, http.MethodPost,
+		`{"type":"GroupBy","keys":["src"],"aggregates":[{"fn":"count","as":"n"},{"fn":"sum","field":"n","as":"total"}]}`,
+		map[string]string{"wid": ws.ID, "iid": es})
+	if bind.Code != http.StatusCreated {
+		t.Fatalf("bind op: %d %s", bind.Code, bind.Body.Bytes())
+	}
+	got := do(a.produceEventstreamEvents, admin, http.MethodPost,
+		fiveCustomEventsJSON(),
+		map[string]string{"wid": ws.ID, "iid": es, "did": ds})
+	if got.Code != http.StatusOK {
+		t.Fatalf("produce: %d %s", got.Code, got.Body.Bytes())
+	}
+	tbl, err := warehouse.ReadDeltaTable(st, lh.ID, "agg")
+	if err != nil {
+		t.Fatalf("ReadDeltaTable: %v", err)
+	}
+	if len(tbl.Rows) != 1 {
+		t.Fatalf("groups = %d, want 1: %+v", len(tbl.Rows), tbl.Rows)
+	}
+	nIdx, totalIdx := colIndex(tbl.Columns, "n"), colIndex(tbl.Columns, "total")
+	if nIdx < 0 || totalIdx < 0 {
+		t.Fatalf("columns: %v", tbl.Columns)
+	}
+	if intFromCell(t, tbl.Rows[0][nIdx]) != 5 || intFromCell(t, tbl.Rows[0][totalIdx]) != 10 {
+		t.Fatalf("row = %v", tbl.Rows[0])
+	}
+}
+
+func TestEventstreamWindowTumblingOnBatch(t *testing.T) {
+	a, st := newAPI(t)
+	a.Kafka = &fakeKafka{}
+	ws := seedWorkspace(t, st)
+	es, ds := seedEventstream(t, a, ws.ID)
+	lh := seedLakehouse(t, st, ws.ID, "lh")
+	_ = do(a.bindEventstreamDestination, admin, http.MethodPost,
+		`{"type":"Lakehouse","itemId":"`+lh.ID+`","table":"win"}`,
+		map[string]string{"wid": ws.ID, "iid": es})
+	if got := do(a.bindEventstreamOperator, admin, http.MethodPost,
+		`{"type":"Window","kind":"tumbling","duration":"1h","on":"ts"}`,
+		map[string]string{"wid": ws.ID, "iid": es}); got.Code != http.StatusCreated {
+		t.Fatalf("window: %d %s", got.Code, got.Body.Bytes())
+	}
+	if got := do(a.bindEventstreamOperator, admin, http.MethodPost,
+		`{"type":"GroupBy","keys":["_window_start"],"aggregates":[{"fn":"count","as":"n"}]}`,
+		map[string]string{"wid": ws.ID, "iid": es}); got.Code != http.StatusCreated {
+		t.Fatalf("groupby: %d %s", got.Code, got.Body.Bytes())
+	}
+	got := do(a.produceEventstreamEvents, admin, http.MethodPost,
+		`{"events":[
+			{"value":"{\"ts\":\"2026-01-01T00:10:00Z\",\"n\":1}"},
+			{"value":"{\"ts\":\"2026-01-01T00:50:00Z\",\"n\":2}"},
+			{"value":"{\"ts\":\"2026-01-01T01:10:00Z\",\"n\":3}"}
+		]}`,
+		map[string]string{"wid": ws.ID, "iid": es, "did": ds})
+	if got.Code != http.StatusOK {
+		t.Fatalf("produce: %d %s", got.Code, got.Body.Bytes())
+	}
+	tbl, err := warehouse.ReadDeltaTable(st, lh.ID, "win")
+	if err != nil {
+		t.Fatalf("ReadDeltaTable: %v", err)
+	}
+	if len(tbl.Rows) != 2 {
+		t.Fatalf("windows = %d, want 2: %+v", len(tbl.Rows), tbl.Rows)
+	}
+}
+
+func TestEventstreamOperatorRefusesByName(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	es, _ := seedEventstream(t, a, ws.ID)
+	path := map[string]string{"wid": ws.ID, "iid": es}
+	for _, tc := range []struct {
+		name, body string
+	}{
+		{"join", `{"type":"Join"}`},
+		{"hopping", `{"type":"Window","kind":"hopping","duration":"1m"}`},
+		{"unknown", `{"type":"ManageFields"}`},
+	} {
+		got := do(a.bindEventstreamOperator, admin, http.MethodPost, tc.body, path)
+		if got.Code != http.StatusBadRequest || errorCode(t, got) != "EventstreamOperatorNotSupported" {
+			t.Fatalf("%s: %d %s", tc.name, got.Code, got.Body.Bytes())
+		}
+	}
+	listed := do(a.listEventstreamOperators, admin, http.MethodGet, "", path)
+	var list struct{ Value []eventstreamOperator }
+	_ = json.Unmarshal(listed.Body.Bytes(), &list)
+	if listed.Code != http.StatusOK || len(list.Value) != 0 {
+		t.Fatalf("list after refusals: %d %+v", listed.Code, list.Value)
 	}
 }
