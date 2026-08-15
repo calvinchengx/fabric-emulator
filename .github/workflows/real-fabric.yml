@@ -6,6 +6,8 @@ name: Real Fabric conformance
 # found here are parity-map material: this workflow is the fidelity oracle.
 #
 # Opt-in by secrets; without them the run skips loudly instead of failing.
+# No parity claim cites this workflow until the secrets are set and a
+# conformance job has actually completed — a skipped run is not evidence.
 # Required repository secrets:
 #   AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
 #     — a service principal with a role on the test workspace
@@ -52,7 +54,8 @@ jobs:
   # missing secrets. The only steps that executed were checkout, the toolchain
   # setup, and the secret check itself. So the differential leg — the one thing
   # that can catch an emulator-vs-tenant divergence automatically — was green,
-  # weekly, having never run, and two parity claims cite it as their witness.
+  # weekly, having never run. No parity claim cites this workflow until the
+  # secrets are set and a conformance job has actually completed.
   #
   # A skipped job is visibly not a passing one; a succeeded job full of skipped
   # steps is indistinguishable from a real pass at every level that reads a
