@@ -21,6 +21,11 @@ import (
 // documented v1 shape. It is deliberately dumb — every assertion here is about
 // the emulator's half of the protocol (auth, RBAC, database isolation,
 // relaying), never about KQL semantics, which only a real engine can settle.
+//
+// The one exception is kqlSchemaKeyword below: a fake that accepts KQL no real
+// engine would accept lets a test read as a working example while the same
+// command earns a 400 from kustainer. That is a narrow syntax gate, not a step
+// toward parsing KQL here.
 type kustoEngine struct {
 	mu         sync.Mutex
 	calls      []kustoCall
@@ -47,6 +52,26 @@ func (e *kustoEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(raw, &body)
 	e.mu.Lock()
 	e.calls = append(e.calls, kustoCall{r.URL.Path, body.DB, body.CSL, string(body.Properties)})
+	// Recorded first, then refused: a test asking what the relay sent still
+	// gets its answer, exactly as it would from an engine that logged the
+	// request before parsing it.
+	if kw := kqlSchemaKeyword(body.CSL); kw != "" {
+		e.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		// The real engine's shape, minus its `[line:position=...]`, which this
+		// fake does not attempt to reproduce: kustainer's offsets did not fall
+		// where a plain scan of the command text puts them, and a position
+		// invented here would be one more thing that reads true and is not.
+		payload, _ := json.Marshal(map[string]any{"error": map[string]any{
+			"code":  "BadRequest",
+			"@type": "Kusto.Data.Exceptions.KustoBadRequestException",
+			"@message": "Request is invalid and cannot be processed: Syntax error: SYN0002: " +
+				"A recognition error occurred. " + kw + " is a KQL keyword and cannot name a column; quote it as ['" + kw + "']",
+		}})
+		_, _ = w.Write(payload)
+		return
+	}
 	created := ""
 	switch {
 	case strings.HasPrefix(body.CSL, ".create database "):
@@ -96,10 +121,124 @@ func (e *kustoEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// kqlKeywords are KQL keywords that cannot stand as a bare column name in a
+// schema declaration: real Kusto wants them quoted, ['kind'], and answers the
+// bare form with SYN0002.
+//
+// Provenance matters more than length here, because a keyword listed wrongly
+// makes the fake reject KQL that real Kusto accepts — a worse fault than the
+// one this gate closes. `kind` is the verified member: CI's rti suite watched
+// kustainer answer `.create table Events (ts:datetime, kind:string)` with 400
+// KustoBadRequestException, SYN0002, pointing at that token. The rest are
+// query-language keywords from Microsoft's identifier-naming rules, which say
+// a keyword used as an identifier must be quoted. They are documented rather
+// than witnessed, so the list stays conservative and deliberately partial:
+// absence from it is not evidence that a name is legal. Type names (string,
+// datetime, ...) are left out because only the name half of `name:type` is
+// ever checked, so they would add risk without adding reach.
+var kqlKeywords = map[string]bool{
+	"and": true, "between": true, "by": true, "contains": true,
+	"datatable": true, "distinct": true, "endswith": true, "extend": true,
+	"false": true, "from": true, "has": true, "in": true, "join": true,
+	"kind": true, "let": true, "limit": true, "not": true, "null": true,
+	"on": true, "or": true, "order": true, "parse": true, "print": true,
+	"project": true, "range": true, "set": true, "sort": true,
+	"startswith": true, "summarize": true, "take": true, "then": true,
+	"top": true, "true": true, "union": true, "where": true, "with": true,
+}
+
+// kqlSchemaKeyword returns the first keyword the command uses as a bare column
+// name, or "" if it finds none. It reads the `(name:type, ...)` groups that
+// .create table, .create-merge table and datatable all share, and only where
+// every member of the group has that shape — so `count()` and other call
+// syntax is passed over rather than guessed at. Everything outside such a
+// group (a query body, a table name, a database name) is left to the real
+// engine, which is the only thing that can settle it.
+func kqlSchemaKeyword(csl string) string {
+	for i := 0; i < len(csl); i++ {
+		if csl[i] != '(' {
+			continue
+		}
+		end := strings.IndexByte(csl[i:], ')')
+		if end < 0 {
+			break
+		}
+		group := csl[i+1 : i+end]
+		i += end
+		fields := strings.Split(group, ",")
+		names := make([]string, 0, len(fields))
+		for _, f := range fields {
+			name, typ, ok := strings.Cut(f, ":")
+			name, typ = strings.TrimSpace(name), strings.TrimSpace(typ)
+			if !ok || !kustoTableNameOK(name) || !kustoTableNameOK(typ) {
+				names = nil
+				break
+			}
+			names = append(names, name)
+		}
+		for _, name := range names {
+			if kqlKeywords[strings.ToLower(name)] {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
 func (e *kustoEngine) sent() []kustoCall {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return append([]kustoCall(nil), e.calls...)
+}
+
+// TestKQLSchemaKeywordGate pins both halves of the gate. The rejections are
+// the point of it; the acceptances are what keep it from becoming the larger
+// problem, a fake that refuses KQL kustainer would have run.
+func TestKQLSchemaKeywordGate(t *testing.T) {
+	for _, tc := range []struct{ csl, want string }{
+		// The command this gate exists for, as it stood in the ADX activity
+		// test, and as CI watched kustainer refuse it.
+		{".create table Events (ts:datetime, kind:string)", "kind"},
+		{".create-merge table T (a:string, Where:int)", "Where"},
+		{".set-or-append T <| datatable (by:string) [\"x\"]", "by"},
+
+		// Accepted: the replacement, and the forms already in this package.
+		{".create table Events (DeviceId:string, At:datetime)", ""},
+		{".create-merge table Readings (DeviceId:string, Temp:real, At:datetime)", ""},
+		{".create-merge table T(a:string)", ""},
+		{".show tables", ""},
+		{".drop table Nope", ""},
+		{"T | count", ""},
+		// A keyword outside a schema declaration is the real engine's business:
+		// the column may well exist and be quoted at its declaration.
+		{"Events | summarize count() by kind", ""},
+		// The relay's own create-database command, whose paren group is paths
+		// rather than columns. Misreading it would fail every test here.
+		{`.create database db_x persist (@"/kustodata/dbs/x/md", @"/kustodata/dbs/x/data")`, ""},
+	} {
+		if got := kqlSchemaKeyword(tc.csl); got != tc.want {
+			t.Errorf("kqlSchemaKeyword(%q) = %q, want %q", tc.csl, got, tc.want)
+		}
+	}
+}
+
+// TestKustoRelayRefusesAKeywordColumn: the gate reaches the tests through the
+// relay, in the engine's own error shape, so a command that could not work
+// against kustainer cannot pass here either.
+func TestKustoRelayRefusesAKeywordColumn(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	attachEngine(t, a)
+	eh, _ := seedEventhouse(t, a, ws.ID, "telemetry")
+
+	w := kustoPost(a, ws.ID, eh.ID, "v1", "mgmt",
+		`{"db":"telemetry","csl":".create table Events (ts:datetime, kind:string)"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("mgmt = %d %s, want 400 on a keyword column", w.Code, w.Body.String())
+	}
+	if b := w.Body.String(); !strings.Contains(b, "SYN0002") || !strings.Contains(b, "kind") {
+		t.Errorf("body %s does not carry the engine's complaint", b)
+	}
 }
 
 // attachEngine wires an in-process engine plus a permissive Kusto validator.
