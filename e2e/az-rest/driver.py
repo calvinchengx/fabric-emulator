@@ -39,6 +39,11 @@ CLOUD = "FabricEmulatorCloud"
 FABRIC = "https://api.fabric.microsoft.com"
 FABRIC_AUD = "https://api.fabric.microsoft.com"
 PBI_AUD = "https://analysis.windows.net/powerbi/api"
+ONELAKE = "https://onelake.dfs.fabric.microsoft.com"
+# OneLake takes the STORAGE audience and rejects the Fabric one outright
+# (internal/onelake/onelake_test.go pins that rejection). Same CLI, same login,
+# different `--resource` — which is the whole reason `az rest` can reach it.
+STORAGE_AUD = "https://storage.azure.com"
 CAPACITY = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
 AUTHORITY = "https://login.microsoftonline.com"
 
@@ -200,6 +205,45 @@ def az_rest(method: str, url: str, body=None, resource: str = FABRIC_AUD,
     if blob is None:
         fail(f"az rest {method} {url}: not JSON: {(r.stdout or r.stderr)[:500]}")
     return blob
+
+
+def az_rest_raw(method: str, url: str, body: str | None = None,
+                headers: list[str] | None = None,
+                resource: str = FABRIC_AUD) -> str:
+    """`az rest` where the response is NOT JSON — OneLake returns file bytes,
+    and the DFS create/append/flush verbs answer 201/202 with no body at all.
+    `az_rest` above would call both of those a failure ("not JSON"), so this is
+    a separate helper rather than a flag: the two have genuinely different
+    contracts and collapsing them would hide an empty body behind a {}."""
+    cmd = ["az", "rest", "--method", method, "--uri", url,
+           "--resource", resource, "-o", "tsv"]
+    if headers:
+        cmd.extend(["--headers", *headers])
+    if body is not None:
+        cmd.extend(["--body", body])
+    print(f"    $ az rest -m {method} {url}", flush=True)
+    r = subprocess.run(cmd, env=AZ_ENV, capture_output=True, text=True)
+    if r.returncode != 0:
+        fail(f"az rest {method} {url}\n{(r.stderr or r.stdout)[:2000]}")
+    return r.stdout
+
+
+def onelake_write(item_path: str, content: str) -> None:
+    """ADLS Gen2 create → append → flush, which is what a real OneLake write is.
+    Not a single PUT: the blob endpoint would take one, but the DFS host is the
+    one Fabric documents for OneLake and the one this suite aliases."""
+    url = f"{ONELAKE}/{item_path.lstrip('/')}"
+    az_rest_raw("put", f"{url}?resource=file", resource=STORAGE_AUD)
+    az_rest_raw("patch", f"{url}?action=append&position=0", body=content,
+                headers=["Content-Type=application/octet-stream"],
+                resource=STORAGE_AUD)
+    az_rest_raw("patch", f"{url}?action=flush&position={len(content)}",
+                resource=STORAGE_AUD)
+
+
+def onelake_read(item_path: str) -> str:
+    return az_rest_raw("get", f"{ONELAKE}/{item_path.lstrip('/')}",
+                       resource=STORAGE_AUD).strip()
 
 
 def v1(path: str) -> str:
@@ -492,6 +536,138 @@ def driver() -> None:
     else:
         fail(f"workspaceIdentity survived deprovision: {shape.get('workspaceIdentity')}")
     print("   provisioned, identity on the workspace, deprovisioned")
+
+    print("-- 11. git integration round trip (connect → commit → clone → update)")
+    # Every verb here is public Fabric REST, so the CLI can drive the whole
+    # CI/CD loop. Note what is asserted: the OBSERVABLE state after each 202,
+    # not the operation id. `az rest` does not surface response headers, and
+    # polling the effect is the better witness anyway — a commit that returned
+    # a well-formed operation id and moved nothing would pass the header check.
+    gws = az_rest("post", v1("workspaces"), {"displayName": "az-git-src"})
+    conn = az_rest("post", v1("connections"), {
+        "displayName": "az-github-pat", "connectivityType": "ShareableCloud",
+        "connectionDetails": {"type": "GitHubSourceControl",
+                              "creationMethod": "GitHubSourceControl.Contents",
+                              "parameters": [{"dataType": "Text", "name": "url",
+                                              "value": "https://github.com/calvin/demo"}]}})
+    provider = {"gitProviderType": "GitHub", "ownerName": "calvin",
+                "repositoryName": "demo", "branchName": "main", "directoryName": "/"}
+    creds = {"source": "ConfiguredConnection", "connectionId": conn["id"]}
+    az_rest_raw("post", v1(f"workspaces/{gws['id']}/git/connect"),
+                body=json.dumps({"gitProviderDetails": provider, "myGitCredentials": creds}),
+                headers=["Content-Type=application/json"])
+    mine = az_rest("get", v1(f"workspaces/{gws['id']}/git/myGitCredentials"))
+    if mine.get("source") != "ConfiguredConnection" or mine.get("connectionId") != conn["id"]:
+        fail(f"myGitCredentials = {mine}")
+
+    az_rest("post", v1(f"workspaces/{gws['id']}/items"), {
+        "displayName": "az-nb", "type": "Notebook",
+        "definition": {"parts": [{"path": ".platform", "payload": "e30=",
+                                  "payloadType": "InlineBase64"}]}})
+    init = az_rest("post", v1(f"workspaces/{gws['id']}/git/initializeConnection"))
+    if init.get("requiredAction") != "CommitToGit":
+        fail(f"a workspace with content against a virgin remote should need "
+             f"CommitToGit, got {init}")
+    st = az_rest("get", v1(f"workspaces/{gws['id']}/git/status"))
+    if len(st.get("changes") or []) != 1 or st["changes"][0].get("workspaceChange") != "Added":
+        fail(f"pre-commit status = {st}")
+
+    az_rest_raw("post", v1(f"workspaces/{gws['id']}/git/commitToGit"),
+                body=json.dumps({"mode": "All", "comment": "az rest"}),
+                headers=["Content-Type=application/json"])
+    for _ in range(20):
+        st = az_rest("get", v1(f"workspaces/{gws['id']}/git/status"))
+        if not (st.get("changes") or []) and st.get("remoteCommitHash"):
+            break
+        time.sleep(0.3)
+    else:
+        fail(f"the commit never landed: status still {st}")
+    print(f"   committed; remote is now {st['remoteCommitHash'][:12]}")
+
+    # The clone half — a SECOND workspace on the same remote pulls the item.
+    # This is what makes it a round trip rather than a write nobody read.
+    cws = az_rest("post", v1("workspaces"), {"displayName": "az-git-clone"})
+    az_rest_raw("post", v1(f"workspaces/{cws['id']}/git/connect"),
+                body=json.dumps({"gitProviderDetails": provider, "myGitCredentials": creds}),
+                headers=["Content-Type=application/json"])
+    cinit = az_rest("post", v1(f"workspaces/{cws['id']}/git/initializeConnection"))
+    if cinit.get("requiredAction") != "UpdateFromGit":
+        fail(f"an empty workspace on a populated remote should need "
+             f"UpdateFromGit, got {cinit}")
+    az_rest_raw("post", v1(f"workspaces/{cws['id']}/git/updateFromGit"),
+                body=json.dumps({"remoteCommitHash": cinit["remoteCommitHash"]}),
+                headers=["Content-Type=application/json"])
+    pulled = poll_item(v1(f"workspaces/{cws['id']}/items"), "az-nb")
+    got = az_rest("post", v1(f"workspaces/{cws['id']}/items/{pulled['id']}/getDefinition"))
+    paths = [p.get("path") for p in (got.get("definition") or {}).get("parts") or []]
+    if ".platform" not in paths:
+        fail(f"the cloned item lost its definition: parts = {paths}")
+    az_rest_raw("post", v1(f"workspaces/{gws['id']}/git/disconnect"))
+    print("   connect → commit → clone → updateFromGit → disconnect, definitions intact")
+
+    print("-- 12. CopyJob really copies (bytes checked through OneLake)")
+    # The claim is that a Copy Job COPIES. Reading back `Completed` would
+    # witness the run contract and nothing about the data, so the source is
+    # seeded and the destination read over OneLake — same CLI, same login,
+    # Storage audience instead of Fabric.
+    cjws = az_rest("post", v1("workspaces"), {"displayName": "az-copyjob"})
+    src = az_rest("post", v1(f"workspaces/{cjws['id']}/items"),
+                  {"displayName": "src", "type": "Lakehouse"})
+    dst = az_rest("post", v1(f"workspaces/{cjws['id']}/items"),
+                  {"displayName": "dst", "type": "Lakehouse"})
+    payload = "orders bytes from az rest"
+    onelake_write(f"{cjws['id']}/{src['id']}/Tables/orders/part-0.parquet", payload)
+    if onelake_read(f"{cjws['id']}/{src['id']}/Tables/orders/part-0.parquet") != payload:
+        fail("the seed did not land — the rest of this check would be meaningless")
+
+    lake = {"type": "Lakehouse", "typeProperties": {
+        "workspaceId": cjws["id"], "artifactId": "", "rootFolder": "Tables"}}
+    definition = {
+        "properties": {
+            "jobMode": "Batch",
+            "source": {"type": "LakehouseTable", "connectionSettings":
+                       {**lake, "typeProperties": {**lake["typeProperties"],
+                                                   "artifactId": src["id"]}}},
+            "destination": {"type": "LakehouseTable", "connectionSettings":
+                            {**lake, "typeProperties": {**lake["typeProperties"],
+                                                        "artifactId": dst["id"]}}},
+            "policy": {"timeout": "0.12:00:00"},
+        },
+        "activities": [{"id": "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb", "properties": {
+            "source": {"datasetSettings": {"table": "orders"}},
+            "destination": {"datasetSettings": {"table": "bronze_orders"}},
+            "translator": {"type": "TabularTranslator"},
+        }}],
+    }
+    # Creating an item WITH a definition is a 202 with no body — the id has to
+    # be polled for, unlike the bare Lakehouse creates above which answer 201.
+    az_rest("post", v1(f"workspaces/{cjws['id']}/items"), {
+        "displayName": "az-cj", "type": "CopyJob",
+        "definition": {"parts": [{
+            "path": "copyjob-content.json",
+            "payload": base64.b64encode(json.dumps(definition).encode()).decode(),
+            "payloadType": "InlineBase64"}]}})
+    cj = poll_item(v1(f"workspaces/{cjws['id']}/items"), "az-cj")
+
+    jobs_url = v1(f"workspaces/{cjws['id']}/items/{cj['id']}/jobs/instances")
+    az_rest_raw("post", f"{jobs_url}?jobType=Execute", body="{}",
+                headers=["Content-Type=application/json"])
+    for _ in range(40):
+        runs = (az_rest("get", jobs_url).get("value") or [])
+        states = [r.get("status") for r in runs]
+        if "Completed" in states:
+            break
+        if "Failed" in states:
+            fail(f"the Copy Job failed: {runs}")
+        time.sleep(0.3)
+    else:
+        fail(f"no instance reached Completed: {states}")
+
+    landed = onelake_read(f"{cjws['id']}/{dst['id']}/Tables/bronze_orders/part-0.parquet")
+    if landed != payload:
+        fail(f"destination bytes = {landed!r}, want {payload!r} — the job "
+             f"reported Completed without copying")
+    print(f"   {len(payload)} bytes moved src→dst, read back through OneLake")
 
     print("\nAZ REST E2E: PASS — Microsoft's az CLI drove Fabric REST and activityevents")
 

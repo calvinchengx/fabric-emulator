@@ -424,7 +424,8 @@
       "go:TestGitRoundTrip",
       "go:TestGitStatusAndCommitRoundTrip",
       "go:TestGitConnectionLifecycle",
-      "go:TestGitUpdateFromGitMirrors"
+      "go:TestGitUpdateFromGitMirrors",
+      "ci:az-rest"
     ]
   },
   "governance-domains-v1-admin-domains": {
@@ -1041,7 +1042,8 @@
       "go:TestCopyJobExecuteReallyCopies",
       "go:TestCopyJobRefusesWhatItCannotHonour",
       "go:TestCopyJobStatusReflectsTheCopyNotTheClock",
-      "go:TestCopyJobTerminalEventArrivesExactlyOnceAfterTheCopy"
+      "go:TestCopyJobTerminalEventArrivesExactlyOnceAfterTheCopy",
+      "ci:az-rest"
     ]
   },
   "functions-activity-azurefunctionactivity": {
