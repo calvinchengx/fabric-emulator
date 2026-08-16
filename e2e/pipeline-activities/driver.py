@@ -456,6 +456,59 @@ def check_web_and_webhook(ws: str) -> None:
     print("   WebHook: parked until the callback, and the callback body arrived")
 
 
+def check_functions_activity(ws: str) -> None:
+    print("-- Functions: the key is sent, the URL is built, the response flows on")
+    # The emulator builds functionAppUrl + "/api/" + functionName and sends the
+    # key as x-functions-key. All three are asserted, because each can be wrong
+    # independently and only one of them shows up as a failure on its own.
+    runs = run_pipeline(ws, "pl-fn", {"properties": {
+        "variables": {"n": {"type": "String"}},
+        "activities": [
+            {"name": "Fn", "type": "AzureFunctionActivity", "typeProperties": {
+                "functionAppUrl": "http://target:8080", "functionKey": "s3cret",
+                "functionName": "ingest", "method": "POST", "body": {"batch": 1}}},
+            {"name": "Use", "type": "SetVariable",
+             "dependsOn": [{"activity": "Fn", "dependencyConditions": ["Succeeded"]}],
+             "typeProperties": {"variableName": "n",
+                                "value": "@string(activity('Fn').output.rows)"}},
+        ]}})
+    # The response must have REACHED a downstream expression. An activity that
+    # reported success without calling could not produce `3` from the URL alone.
+    if output_of(runs, "Use").get("value") != "3":
+        fail(f"the function's response did not flow downstream: {output_of(runs, 'Use')}")
+
+    with urllib.request.urlopen("http://target:8080/fn-calls", timeout=10) as r:
+        calls = json.loads(r.read().decode() or "{}").get("calls") or []
+    # Exactly one, and at the URL the contract says: functionAppUrl + /api/ +
+    # functionName. A double-send or a wrong path both matter and neither fails
+    # on its own.
+    if calls != ["POST /api/ingest"]:
+        fail(f"the host saw {calls!r}, want exactly ['POST /api/ingest']")
+    print(f"   one call to {calls[0]}, rows=3 reached the SetVariable")
+
+    # A WRONG key must fail the activity. Without this the check above passes
+    # for an activity that never sends the secret at all — the host would 401,
+    # and only this case proves the 401 is honoured rather than swallowed.
+    pid = az_rest("post", v1(f"workspaces/{ws}/items"),
+                  {"displayName": "pl-fn-badkey", "type": "DataPipeline"})["id"]
+    define(ws, pid, {"properties": {"activities": [
+        {"name": "Fn", "type": "AzureFunctionActivity", "typeProperties": {
+            "functionAppUrl": "http://target:8080", "functionKey": "wrong",
+            "functionName": "ingest", "method": "POST", "body": {}}}]}})
+    az_rest_raw("post", v1(f"workspaces/{ws}/items/{pid}/jobs/instances?jobType=Pipeline"),
+                body="{}", headers=["Content-Type=application/json"])
+    for _ in range(60):
+        got = az_rest("get", v1(f"workspaces/{ws}/items/{pid}/jobs/instances")).get("value") or []
+        states = [r.get("status") for r in got]
+        if "Failed" in states:
+            print("   a wrong key fails the activity, as the 401 demands")
+            return
+        if "Completed" in states:
+            fail("a WRONG function key reported success — the host's 401 was swallowed")
+        time.sleep(0.5)
+    fail(f"the bad-key pipeline never reached a terminal state: {states}")
+
+
 def main() -> int:
     try:
         azrest.login()
@@ -469,9 +522,10 @@ def main() -> int:
         check_control_flow(ws)
         check_retry_policy(ws)
         check_web_and_webhook(ws)
+        check_functions_activity(ws)
         print("\nPIPELINE ACTIVITIES E2E: PASS — az drove Delete, GetMetadata, "
               "Lookup, Validation, ExecutePipeline, ForEach, control flow, "
-              "retry policy and Web — each judged by the data")
+              "retry policy, Web/WebHook and Functions — each judged by the data")
         return 0
     except SystemExit:
         raise

@@ -36,6 +36,7 @@ job, separate witness id, separate blast radius.
 | Control flow (If / Switch / Until / expressions / dependsOn) | `IfCondition` runs the true branch **and not the false one**; `Switch` runs the matching case and neither the other case nor the default; `Until` runs its body exactly 3 times before the condition holds |
 | Per-activity retry policy | an activity pointed at a missing notebook with `policy.retry: 2` — the job **Fails**, and there is **one** activity record carrying `retryAttempt: 2`, not three records |
 | Web + WebHook | `WebActivity` GETs a real endpoint and `pong: true` appears in its output; `WebHook` posts, **parks** while nothing has called back, then the callback releases it and `approved: true` reaches the output |
+| Functions | the response reaches a downstream expression (`rows=3`), the host sees **exactly** `POST /api/ingest` (so `functionAppUrl + /api/ + functionName` was built right, and called once), and a **wrong `x-functions-key` fails the activity** — without which the first two pass for an activity that never sends the secret at all |
 
 ## The rule every check here follows
 
