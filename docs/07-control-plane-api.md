@@ -43,7 +43,8 @@ it: fabric-cicd refuses to publish into a workspace whose `capacityId` is empty.
 
 - **Seed:** every instance boots with one deterministic capacity —
   `{ id: <fixed GUID>, displayName: "Emulator Capacity", sku: "F64", region: "West Europe", state: "Active" }`.
-- **ARM consume (opt-in):** set `FABRIC_ARM_URL` to an arm-emulator origin that
+- **ARM consume (on by default in this repo's compose; opt-out with an
+  explicitly empty value):** `FABRIC_ARM_URL` names an arm-emulator origin that
   serves `GET /_family/capacities`. Capacities created over
   `Microsoft.Fabric/capacities` then appear on this list under the Fabric REST
   GUID ARM assigned at create (ARM's public resource document does not carry

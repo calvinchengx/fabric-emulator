@@ -26,9 +26,9 @@ When re-auditing, diff the grounding files against this SHA
 docs/cicd/git-integration/git-automation.md docs/security/workspace-identity.md
 docs/security/permission-model.md`) and bump the pin.
 
-## The three-system model
+## The four-system model
 
-A Fabric environment is three independent Azure products with three protocols.
+A Fabric environment is four independent Azure products with four protocols.
 Each stays a separate emulator, reached only over HTTP, because that is what the
 real boundary is — and it is what lets any one of them be swapped for the live
 service unchanged (see [21-real-fabric-toggle.md](21-real-fabric-toggle.md)):
@@ -42,28 +42,30 @@ service unchanged (see [21-real-fabric-toggle.md](21-real-fabric-toggle.md)):
    `notebookutils.credentials.getSecret()` inside a notebook. Emulated by
    **azure-keyvault-emulator**; fabric-emulator is a *client* of it
    ([internal/akv](../internal/akv/)).
-3. **The Fabric control plane** — `https://api.fabric.microsoft.com/v1/…`:
+3. **Azure Resource Manager** — the resource lifecycle. A Fabric **capacity** is
+   an ARM resource (`Microsoft.Fabric/capacities`), created and deleted through
+   `management.azure.com`, not through the Fabric REST API. Emulated by
+   **arm-emulator**; fabric-emulator *reads* from it (below).
+4. **The Fabric control plane** — `https://api.fabric.microsoft.com/v1/…`:
    workspace RBAC, item CRUD, item **definitions** (the CI/CD source format),
    git integration, deployment pipelines, long-running operations, and the
    workspace-identity *lifecycle orchestration*. Plus **OneLake**
    (`https://onelake.dfs.fabric.microsoft.com`), an ADLS-Gen2-shaped data plane.
    Emulated by **fabric-emulator**.
 
-Keeping these as three composable emulators preserves single responsibility, and
-the token flow is one-way: **entra ISSUES; fabric and keyvault only VALIDATE**,
-each against entra-emulator's JWKS, exactly as the real products validate
-against Entra. Neither validator can mint a token.
+Keeping these as four composable emulators preserves single responsibility, and
+the token flow is one-way: **entra ISSUES; fabric, keyvault and arm only
+VALIDATE**, each against entra-emulator's JWKS, exactly as the real products
+validate against Entra. No validator can mint a token.
 
-**Opt-in ARM capacities.** A Fabric capacity in Azure is an ARM resource
-(`Microsoft.Fabric/capacities`), owned by
-[arm-emulator](https://github.com/calvinchengx/arm-emulator). When
-`FABRIC_ARM_URL` is set, this process polls `GET /_family/capacities` (the same
-localhost family channel the Key Vault sibling uses for authorization) and
-ARM-created capacities appear on `GET /v1/capacities` under the Fabric REST GUID
-ARM assigned at create. Empty keeps the seeded default. Compose in this repo
-stays standalone (seed only); the family BOM in
-[azure-emulators](https://github.com/calvinchengx/azure-emulators) is where
-`FABRIC_ARM_URL` is wired once both images are released.
+**ARM capacities, on by default.** `FABRIC_ARM_URL` defaults to the
+arm-emulator service in [`docker-compose.yml`](../docker-compose.yml), so a
+capacity created with `PUT …/Microsoft.Fabric/capacities/{name}` appears on
+`GET /v1/capacities` under the Fabric REST GUID ARM assigned at create. This
+process polls `GET /_family/capacities` (the same localhost family channel the
+Key Vault sibling uses for authorization); the seeded capacity stays alongside
+whatever ARM contributes. Setting `FABRIC_ARM_URL=` empty opts out and leaves
+the seed only, which is how the hermetic test paths run.
 
 ```mermaid
 flowchart LR
@@ -84,6 +86,11 @@ flowchart LR
         direction TB
         Secrets["/secrets/{name} — data plane 7.4"]
     end
+    subgraph arm["arm-emulator"]
+        direction TB
+        Caps["Microsoft.Fabric/capacities — ARM resource lifecycle"]
+        Feed["/_family/capacities — localhost feed"]
+    end
     subgraph engines["engine sidecars"]
         direction TB
         Spark["Spark agent (Livy) — default"]
@@ -98,6 +105,10 @@ flowchart LR
     Ident -->|"mint SP / identity tokens"| Forge
     API -->|"resolve AKV reference (aud = vault)"| Secrets
     Secrets -->|"verify (iss + aud + sig)"| JWKS
+    Client -->|"Bearer (aud = management)"| Caps
+    Caps -->|"verify (iss + aud + sig)"| JWKS
+    Caps --> Feed
+    API -.->|"poll (no token, localhost only)"| Feed
     API -.->|"native execution"| Spark
     WH -.->|"session splice"| SQL
     API -.->|"KQL relay"| KQL
