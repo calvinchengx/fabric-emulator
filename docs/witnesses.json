@@ -414,7 +414,8 @@
     "witnesses": [
       "go:TestPipelineGetMetadataFile",
       "go:TestPipelineGetMetadataDir",
-      "go:TestPipelineGetMetadataMissing"
+      "go:TestPipelineGetMetadataMissing",
+      "ci:pipeline-activities"
     ]
   },
   "git-integration-connect-status-commit-update-disconnect": {
@@ -424,7 +425,8 @@
       "go:TestGitRoundTrip",
       "go:TestGitStatusAndCommitRoundTrip",
       "go:TestGitConnectionLifecycle",
-      "go:TestGitUpdateFromGitMirrors"
+      "go:TestGitUpdateFromGitMirrors",
+      "ci:az-rest"
     ]
   },
   "governance-domains-v1-admin-domains": {
@@ -560,7 +562,8 @@
     "section": "Data Factory (`data-factory/`)",
     "claim": "Lookup activity \u2014 **OneLake CSV/JSON/Parquet/Delta**",
     "witnesses": [
-      "go:TestLookupFormat"
+      "go:TestLookupFormat",
+      "ci:pipeline-activities"
     ]
   },
   "merge-into": {
@@ -1031,7 +1034,8 @@
     "witnesses": [
       "go:TestPipelineDeleteFile",
       "go:TestPipelineDeleteRecursiveVsFlat",
-      "go:TestPipelineDeleteMissingFailsLoudly"
+      "go:TestPipelineDeleteMissingFailsLoudly",
+      "ci:pipeline-activities"
     ]
   },
   "copyjob": {
@@ -1041,7 +1045,8 @@
       "go:TestCopyJobExecuteReallyCopies",
       "go:TestCopyJobRefusesWhatItCannotHonour",
       "go:TestCopyJobStatusReflectsTheCopyNotTheClock",
-      "go:TestCopyJobTerminalEventArrivesExactlyOnceAfterTheCopy"
+      "go:TestCopyJobTerminalEventArrivesExactlyOnceAfterTheCopy",
+      "ci:az-rest"
     ]
   },
   "functions-activity-azurefunctionactivity": {
@@ -1152,7 +1157,8 @@
       "go:TestValidationWaitRetriesUntilTheDataArrives",
       "go:TestValidationWaitStopsAtTheDeadline",
       "go:TestValidationWaitSubscribesBeforeReading",
-      "go:TestValidationWaitClampsTheSleepToTheDeadline"
+      "go:TestValidationWaitClampsTheSleepToTheDeadline",
+      "ci:pipeline-activities"
     ]
   },
   "azure-data-explorer-command-activity-azuredataexplorercommand": {

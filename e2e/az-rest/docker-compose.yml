@@ -33,7 +33,14 @@ services:
       FABRIC_NAME_RESERVATION: "1h"
     networks:
       default:
-        aliases: ["api.fabric.microsoft.com"]
+        # onelake.dfs is the SAME container on the same port, and it is here for
+        # one reason: the CopyJob claim is that a Copy Job *copies*. Driving the
+        # run over Fabric REST and reading back `Completed` would witness the job
+        # contract while proving nothing about the bytes — and there is no public
+        # Fabric REST route that lists a lakehouse's tables (the VS Code one is
+        # MWC-authenticated and internal). So the witness seeds and verifies
+        # through OneLake, which needs the Storage audience, not the Fabric one.
+        aliases: ["api.fabric.microsoft.com", "onelake.dfs.fabric.microsoft.com"]
 
   client:
     build: { context: ., dockerfile: Dockerfile }

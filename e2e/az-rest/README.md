@@ -37,6 +37,8 @@ Existing 🟢 rows only. The ledger does not grow.
 | Workspace managed identity handshake | `provisionIdentity` → identity on the workspace → `deprovisionIdentity`; entra is the sibling |
 | Power BI Report items | create with a PBIR definition; `getDefinition` returns the same bytes |
 | Deleted display names held | create / delete / recreate → `409 ItemDisplayNameNotAvailableYet` with `isRetriable: true` |
+| Git integration (connect / status / commit / update / disconnect) | connect with a `ConfiguredConnection`; `initializeConnection` → `CommitToGit`; status shows the Added item; commit; status clean with a remote hash; a **second** workspace connects, gets `UpdateFromGit`, pulls the item, and its definition still has `.platform`; disconnect |
+| `CopyJob` — it really copies | seed `Tables/orders/part-0.parquet` over OneLake, create the CopyJob with its `copyjob-content.json` definition, run `jobType=Execute`, poll the instance to `Completed`, then read `Tables/bronze_orders/part-0.parquet` back and compare the bytes |
 
 ## Left as `go:`
 
@@ -44,5 +46,31 @@ Internal engines, races, and protocols Microsoft's clients never speak:
 pipeline activity interpreters, ForEach/retry/control-flow, `-tsql-strict`,
 `FABRIC_FORCE_LRO`, concurrent Delta overwrite, notebookutils-over-REST
 (real Fabric 404s that path), `runMultiple`, the reference-run lakehouse
-rule, git's in-emulator remote, event-trigger firing, materialized-lake-view
-refresh, CopyJob execution, HDInsight/Databricks/ADX/Functions/Web activities.
+rule, event-trigger firing, materialized-lake-view refresh,
+HDInsight/Databricks/ADX/Functions/Web activities.
+
+**Git integration and CopyJob used to be on that list and are not any more,
+which is worth recording because the reason they were on it was half right.**
+
+Git was listed as "git's in-emulator remote". The remote *is* emulated — but
+the claim is `connect / status / commit / update / disconnect`, and every one
+of those is public Fabric REST that `az` speaks. The emulated remote is what
+the emulator IS; it no more disqualifies the witness than the emulated capacity
+disqualifies the capacities row. What the witness proves is the documented
+contract and its state machine: `initializeConnection` demanding `CommitToGit`
+against a virgin remote and `UpdateFromGit` for a second workspace on a
+populated one, and definitions surviving the round trip.
+
+CopyJob was listed as "CopyJob execution", and the engine really is out of
+reach. But the claim is that a Copy Job **copies**, and driving the run over
+REST to read back `Completed` would have witnessed the job contract while
+proving nothing about the data — the exact shape of false green this repo
+keeps finding. There is no public Fabric REST route listing a lakehouse's
+tables (the VS Code one is MWC-authenticated and internal), so the witness
+seeds the source and reads the destination over **OneLake**, which is the same
+CLI and the same login with `--resource https://storage.azure.com` instead of
+the Fabric audience. Bytes in, bytes out, or it fails.
+
+The general lesson for anything else on the list above: separate "the engine is
+internal" from "the contract is internal". The first is a real ceiling. The
+second is often just an untried client.

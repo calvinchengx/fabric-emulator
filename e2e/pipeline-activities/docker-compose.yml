@@ -1,0 +1,41 @@
+# Microsoft's Azure CLI drives the pipeline ACTIVITIES — a separate job from
+# e2e/az-rest deliberately.
+#
+# It is the same client and could have been four more checks in that driver.
+# It is not, because `check_witnesses.py` already reports `ci:az-rest` carrying
+# more claims than any other witness under its own "check none is over-credited"
+# heading. Piling the activity rows on top would mean one flaky container turns
+# two dozen parity rows red at once, and one silent regression hides them all.
+# Separate job, separate witness id, separate blast radius.
+#
+# onelake.dfs is aliased for the same reason it is in az-rest: these activities
+# are judged by what they did to the DATA, not by the status they reported.
+services:
+  entra:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.8.1}
+    user: "0:0"
+    environment:
+      PUBLIC_ORIGIN: "https://login.microsoftonline.com"
+      LOCAL_DOMAINS: "login.microsoftonline.com"
+      PORT: "443"
+      TLS_ENABLED: "true"
+    networks:
+      default:
+        aliases: ["login.microsoftonline.com"]
+
+  fabric:
+    build: { context: ../.., dockerfile: Dockerfile }
+    user: "0:0"
+    environment:
+      FABRIC_ADDR: ":443"
+      FABRIC_DATA_DIR: "/data"
+      FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      FABRIC_ENTRA_TLS_INSECURE: "true"
+      FABRIC_TENANT_ADMINS: "00d88624-f0d7-46f6-a641-6232c2608928"
+    networks:
+      default:
+        aliases: ["api.fabric.microsoft.com", "onelake.dfs.fabric.microsoft.com"]
+
+  client:
+    build: { context: .., dockerfile: pipeline-activities/Dockerfile }
+    depends_on: [entra, fabric]
