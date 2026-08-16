@@ -414,7 +414,8 @@
     "witnesses": [
       "go:TestPipelineGetMetadataFile",
       "go:TestPipelineGetMetadataDir",
-      "go:TestPipelineGetMetadataMissing"
+      "go:TestPipelineGetMetadataMissing",
+      "ci:pipeline-activities"
     ]
   },
   "git-integration-connect-status-commit-update-disconnect": {
@@ -561,7 +562,8 @@
     "section": "Data Factory (`data-factory/`)",
     "claim": "Lookup activity \u2014 **OneLake CSV/JSON/Parquet/Delta**",
     "witnesses": [
-      "go:TestLookupFormat"
+      "go:TestLookupFormat",
+      "ci:pipeline-activities"
     ]
   },
   "merge-into": {
@@ -1032,7 +1034,8 @@
     "witnesses": [
       "go:TestPipelineDeleteFile",
       "go:TestPipelineDeleteRecursiveVsFlat",
-      "go:TestPipelineDeleteMissingFailsLoudly"
+      "go:TestPipelineDeleteMissingFailsLoudly",
+      "ci:pipeline-activities"
     ]
   },
   "copyjob": {
@@ -1154,7 +1157,8 @@
       "go:TestValidationWaitRetriesUntilTheDataArrives",
       "go:TestValidationWaitStopsAtTheDeadline",
       "go:TestValidationWaitSubscribesBeforeReading",
-      "go:TestValidationWaitClampsTheSleepToTheDeadline"
+      "go:TestValidationWaitClampsTheSleepToTheDeadline",
+      "ci:pipeline-activities"
     ]
   },
   "azure-data-explorer-command-activity-azuredataexplorercommand": {
