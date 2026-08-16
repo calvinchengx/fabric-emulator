@@ -82,14 +82,19 @@ def run_pipeline(ws: str, name: str, content: dict) -> list[dict]:
         if isinstance(detail, dict) and "value" in detail:
             return detail["value"] or []
         time.sleep(0.3)
-    fail(f"{name}: queryactivityruns never returned a value envelope")
+    # `raise` rather than `fail(...)` at a tail position: `fail` is NoReturn,
+    # but it is imported from a module mounted at runtime, so the checker sees
+    # Unknown and reads this function as able to fall off the end returning None.
+    raise SystemExit(f"FAIL: {name}: queryactivityruns never returned a value envelope")
 
 
 def output_of(runs: list[dict], activity: str) -> dict:
     for r in runs:
         if r.get("activityName") == activity:
             return r.get("output") or {}
-    fail(f"activity {activity!r} not in runs: {[r.get('activityName') for r in runs]}")
+    # Same reason as run_pipeline above: an imported NoReturn is Unknown here.
+    raise SystemExit(f"FAIL: activity {activity!r} not in runs: "
+                     f"{[r.get('activityName') for r in runs]}")
 
 
 def check_delete(ws: str) -> None:
