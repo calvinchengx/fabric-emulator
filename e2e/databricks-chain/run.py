@@ -32,18 +32,30 @@ def main() -> int:
         if rc != 0:
             return rc
 
-        pat_path = os.path.join(DATA, "admin.pat")
+        # Read the PAT through the DAEMON, not off the host filesystem. The
+        # container writes it as root with secret permissions, and a real Linux
+        # runner enforces that: reading the bind mount directly died with
+        # `PermissionError: [Errno 13] admin.pat`. Docker Desktop's file sharing
+        # masks the difference locally, which is why this passed on a laptop and
+        # failed in CI. `docker compose cp` runs as root and writes the copy out
+        # owned by the caller.
+        out_path = os.path.join(DATA, "admin.pat.copy")
+        pat = ""
         for _ in range(120):
-            if os.path.isfile(pat_path) and os.path.getsize(pat_path) > 0:
-                break
+            rc = subprocess.run(
+                ["docker", "compose", "cp", "databricks-emulator:/data/admin.pat", out_path],
+                cwd=DIR, env=ENV, capture_output=True).returncode
+            if rc == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+                with open(out_path, encoding="utf-8") as fh:
+                    pat = fh.read().strip()
+                if pat:
+                    break
             time.sleep(1)
-        else:
-            sys.stderr.write(f"FAIL: databricks-emulator never wrote {pat_path}\n")
+        if not pat:
+            sys.stderr.write("FAIL: databricks-emulator never wrote a readable admin.pat\n")
             subprocess.run(["docker", "compose", "logs", "--tail", "60", "databricks-emulator"],
                            cwd=DIR, env=ENV)
             return 1
-        with open(pat_path, encoding="utf-8") as fh:
-            pat = fh.read().strip()
         print(f"   admin PAT minted ({len(pat)} chars)", flush=True)
 
         print("-- phase 2: fabric + client, pointed at it", flush=True)
