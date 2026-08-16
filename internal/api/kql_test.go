@@ -125,30 +125,26 @@ func (e *kustoEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // schema declaration: real Kusto wants them quoted, ['kind'], and answers the
 // bare form with SYN0002.
 //
-// Provenance matters more than length here, because a keyword listed wrongly
-// makes the fake reject KQL that real Kusto accepts — a worse fault than the
-// one this gate closes. `kind` was the first verified member: CI's rti suite
-// watched kustainer answer `.create table Events (ts:datetime, kind:string)`
-// with 400 KustoBadRequestException, SYN0002, pointing at that token. The rest
-// arrived as query-language keywords from Microsoft's identifier-naming rules,
-// which say a keyword used as an identifier must be quoted; e2e/rti/driver.py
-// now probes EVERY member of this list against kustainer in both directions —
-// bare refused, ['quoted'] accepted — so the job fails, naming names, if the
-// list has drifted from what the engine actually does. The list stays
-// deliberately partial all the same: absence from it is not evidence that a
-// name is legal, which is why the production emitter quotes unconditionally
-// (kustoQuoteIdent) instead of consulting a list at all. Type names (string,
-// datetime, ...) are left out because only the name half of `name:type` is
-// ever checked, so they would add risk without adding reach.
+// Every member is WITNESSED, and the list is exactly as long as the evidence.
+// e2e/rti/driver.py probes 36 candidates against kustainer and asserts the
+// refused set equals this one: each of these nine earns a 400
+// KustoBadRequestException / SYN0002 as a bare column name, and the other 27
+// do not. That last part is the surprise worth recording — Microsoft's
+// identifier-naming rules say a keyword used as an identifier must be quoted,
+// and yet kustainer takes `where`, `summarize`, `by` and 24 more bare. An
+// earlier version of this list believed the documentation and would have had
+// the fake refusing KQL the engine runs, which is the worse of the two faults
+// available here.
+//
+// So absence from this list is now evidence, not silence — but only about the
+// column-name position, and only about this engine. The production emitter
+// still quotes unconditionally (kustoQuoteIdent) rather than consulting a
+// list, because a list is a thing that can be wrong and this one already was.
+// Type names (string, datetime, ...) are left out because only the name half
+// of `name:type` is ever checked, so they would add risk without adding reach.
 var kqlKeywords = map[string]bool{
-	"and": true, "between": true, "by": true, "contains": true,
-	"datatable": true, "distinct": true, "endswith": true, "extend": true,
-	"false": true, "from": true, "has": true, "in": true, "join": true,
-	"kind": true, "let": true, "limit": true, "not": true, "null": true,
-	"on": true, "or": true, "order": true, "parse": true, "print": true,
-	"project": true, "range": true, "set": true, "sort": true,
-	"startswith": true, "summarize": true, "take": true, "then": true,
-	"top": true, "true": true, "union": true, "where": true, "with": true,
+	"and": true, "between": true, "false": true, "kind": true, "or": true,
+	"order": true, "project": true, "true": true, "union": true,
 }
 
 // kqlSchemaKeyword returns the first keyword the command uses as a bare column
@@ -226,15 +222,18 @@ func TestKQLSchemaKeywordGate(t *testing.T) {
 		// The command this gate exists for, as it stood in the ADX activity
 		// test, and as CI watched kustainer refuse it.
 		{".create table Events (ts:datetime, kind:string)", "kind"},
-		{".create-merge table T (a:string, Where:int)", "Where"},
-		{".set-or-append T <| datatable (by:string) [\"x\"]", "by"},
+		{".create-merge table T (a:string, Order:int)", "Order"},
+		{".set-or-append T <| datatable (union:string) [\"x\"]", "union"},
 		// One quoted name does not excuse its bare neighbour.
-		{".create-merge table T (['kind']:string, where:int)", "where"},
+		{".create-merge table T (['kind']:string, or:int)", "or"},
 
 		// Quoted is the form real Kusto accepts and the form kustoQuoteIdent
 		// emits — including for names that are not keywords at all.
 		{".create-merge table T (['kind']:string, ['At']:datetime)", ""},
-		{`.create table T (["by"]:string)`, ""},
+		{`.create table T (["project"]:string)`, ""},
+		// Bare and legal: kustainer takes these 27, whatever the naming rules
+		// say, so a gate that refused them would be refusing working KQL.
+		{".create-merge table T (where:string, summarize:int, by:real)", ""},
 		{".create-merge table clicks (['n']:real, ['src']:string)", ""},
 		// A bracket group that is not a plain identifier is not something this
 		// gate can read, so the group goes to the engine rather than a guess.

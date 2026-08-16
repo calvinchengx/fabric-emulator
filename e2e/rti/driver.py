@@ -191,43 +191,53 @@ print("engine database naming stays internal: OK")
 # and the Go tests police that against a FAKE engine whose keyword list only a
 # real one can settle. This is where it gets settled.
 #
-# Both directions are asserted, because each guards a different fault: if the
-# bare form were accepted the gate would be refusing KQL kustainer runs, and if
-# the quoted form were refused the emitter's output would be broken outright.
-KQL_KEYWORDS = [
+# The candidates are every keyword Microsoft's identifier-naming rules put in
+# reach; REFUSED_BARE is what this engine ACTUALLY refuses, and the two are not
+# the same — the rules say a keyword used as an identifier must be quoted, and
+# kustainer accepts 27 of these 36 bare anyway (`where` and `summarize` among
+# them). Only the nine below are real, which is why the set is asserted rather
+# than the list: a keyword drifting in either direction is a fault. Too few and
+# a command the engine refuses passes the Go tests, which is the bug this probe
+# was written for; too many and the fake refuses KQL kustainer runs, which is
+# worse. internal/api/kql_test.go's kqlKeywords must equal REFUSED_BARE.
+KQL_KEYWORD_CANDIDATES = [
     "and", "between", "by", "contains", "datatable", "distinct", "endswith",
     "extend", "false", "from", "has", "in", "join", "kind", "let", "limit",
     "not", "null", "on", "or", "order", "parse", "print", "project", "range",
     "set", "sort", "startswith", "summarize", "take", "then", "top", "true",
     "union", "where", "with",
 ]
+REFUSED_BARE = ["and", "between", "false", "kind", "or", "order", "project", "true", "union"]
 
-accepted_bare = []
-for kw in KQL_KEYWORDS:
+refused = {}
+for kw in KQL_KEYWORD_CANDIDATES:
     bare = requests.post(f"{query_uri}/v1/rest/mgmt", headers=KUSTO_HEADERS,
                          json={"db": DB, "csl": f".create table KwBare_{kw} ({kw}:string)"},
                          timeout=60)
-    if bare.status_code == 200:
-        accepted_bare.append(kw)
-    elif kw == "kind":
-        # The one member witnessed before this probe existed, kept as a named
-        # assertion so a probe that had gone blanket-negative still fails.
+    if bare.status_code != 200:
+        refused[kw] = bare.status_code
+        # A refusal has to be the SYNTAX error this is about. Anything else
+        # (a 5xx, an auth fault) would put a keyword on the list for a reason
+        # that has nothing to do with the grammar.
         assert bare.status_code == 400, (kw, bare.status_code, bare.text[:400])
-        assert "SYN0002" in bare.text, bare.text[:800]
-assert not accepted_bare, (
-    "kustainer accepts these as BARE column names, so internal/api/kql_test.go's "
-    f"kqlKeywords is over-broad and must drop them: {accepted_bare}")
-print(f"{len(KQL_KEYWORDS)} KQL keywords refused as bare column names: OK")
+        assert "SYN0002" in bare.text, (kw, bare.text[:800])
+assert sorted(refused) == sorted(REFUSED_BARE), (
+    "what kustainer refuses as a BARE column name has moved. "
+    f"newly refused (add to kqlKeywords): {sorted(set(refused) - set(REFUSED_BARE))}; "
+    f"no longer refused (drop from kqlKeywords): {sorted(set(REFUSED_BARE) - set(refused))}")
+print(f"{len(refused)} of {len(KQL_KEYWORD_CANDIDATES)} keywords refused bare, "
+      f"all SYN0002: {sorted(refused)}")
 
-# …and every one of them is legal quoted, which is what the emitter writes.
-quoted = ", ".join(f"['{kw}']:string" for kw in KQL_KEYWORDS)
+# …and every candidate is legal QUOTED, refused bare or not — which is why the
+# emitter can quote unconditionally instead of carrying the list above.
+quoted = ", ".join(f"['{kw}']:string" for kw in KQL_KEYWORD_CANDIDATES)
 kusto(query_uri, "mgmt", DB, f".create-merge table KwQuoted ({quoted})")
 kusto(query_uri, "mgmt", DB,
-      ".ingest inline into table KwQuoted <|\n" + ",".join(["x"] * len(KQL_KEYWORDS)))
+      ".ingest inline into table KwQuoted <|\n" + ",".join(["x"] * len(KQL_KEYWORD_CANDIDATES)))
 addressable = primary_rows(kusto(query_uri, "query", DB,
-                                 "KwQuoted | where ['kind'] == 'x' and ['where'] == 'x' | count"))[0][0]
+                                 "KwQuoted | where ['kind'] == 'x' and ['project'] == 'x' | count"))[0][0]
 assert addressable == 1, f"quoted keyword columns are not addressable: {addressable}"
-print("the same keywords quoted: table created, row ingested, column queried back")
+print(f"all {len(KQL_KEYWORD_CANDIDATES)} quoted: table created, row ingested, column queried back")
 
 # The emitter's own output, verbatim: the `.create-merge table` + `.ingest
 # inline` pair kustoIngestTable produces for an event carrying `kind` and `n`.

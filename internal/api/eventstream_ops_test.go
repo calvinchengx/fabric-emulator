@@ -754,12 +754,13 @@ func TestEventstreamKustoMgmtAndIngest(t *testing.T) {
 // TestEventstreamIngestQuotesColumnNames pins the emitted schema byte for byte.
 //
 // The drain names its columns after whatever fields the events carry, and a
-// field called `kind` is ordinary in event data and a KQL keyword in a schema
-// declaration — real Kusto answers the bare form with 400 / SYN0002 (witnessed
-// against kustainer in e2e/rti/driver.py, which probes the whole keyword list).
-// So the emitter quotes every name, and this test is what would notice if it
-// stopped: the fake engine's schema gate refuses a bare keyword the way
-// kustainer did, and the exact-string comparison catches the rest.
+// field called `kind` is ordinary in event data and refused as a bare column
+// name by real Kusto — 400 / SYN0002, witnessed against kustainer in
+// e2e/rti/driver.py. So the emitter quotes every name, and this test is what
+// would notice if it stopped: the fake engine's schema gate refuses a bare
+// keyword the way kustainer did, and the exact-string comparison catches the
+// rest. `where` is in here as a name the engine happens to accept bare — the
+// emitter is not supposed to be deciding which is which.
 func TestEventstreamIngestQuotesColumnNames(t *testing.T) {
 	a, _ := newAPI(t)
 	engine := attachEngine(t, a)
