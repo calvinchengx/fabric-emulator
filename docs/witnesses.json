@@ -1242,6 +1242,7 @@
     "section": "Platform / fundamentals",
     "claim": "**Asynchronous outcomes forced** (`FABRIC_FORCE_LRO`)",
     "witnesses": [
+      "ci:fabric-cicd-lro",
       "go:TestGetDefinitionAsLongRunningOperation",
       "go:TestCreateItemAsLongRunningOperation",
       "go:TestGitInitializeConnectionAsLongRunningOperation",

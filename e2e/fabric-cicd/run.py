@@ -2,7 +2,13 @@
 """e2e: Microsoft's real fabric-cicd Python tool publishes into fabric-emulator,
 authenticated by entra-emulator. Self-contained and OS-agnostic (Linux, macOS,
 Windows): builds fabric-emulator from this repo, installs entra-emulator if
-missing, and runs fabric-cicd from the locked uv dependency group."""
+missing, and runs fabric-cicd from the locked uv dependency group.
+
+Runs in either of the two outcomes the Fabric reference documents for these
+APIs. `FABRIC_FORCE_LRO=1 python3 e2e/fabric-cicd/run.py` starts the emulator
+with the forced-async toggle, so every createItem / getDefinition answers
+202 + Location and fabric-cicd's own poll loop has to follow it; unset, the
+same publish runs against the 201/200 outcomes. CI runs both."""
 
 import os
 import shutil
@@ -24,6 +30,7 @@ ENTRA_PORT = os.environ.get("ENTRA_PORT", "18443")
 FABRIC_PORT = os.environ.get("FABRIC_PORT", "19443")
 TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
 EXE = ".exe" if os.name == "nt" else ""
+FORCE_LRO = os.environ.get("FABRIC_FORCE_LRO", "")
 
 
 def log(msg):
@@ -108,11 +115,15 @@ try:
         "DB_PATH": os.path.join(WORK, "entra.sqlite"),
         "TLS_CERT_DIR": os.path.join(WORK, "entra-tls")})
 
-    log(f"starting fabric-emulator on :{FABRIC_PORT}")
+    # Passed explicitly rather than inherited: which outcome this run witnesses
+    # is the whole point of the leg, and an env var that only ever arrives by
+    # inheritance is one refactor away from silently not arriving at all.
+    log(f"starting fabric-emulator on :{FABRIC_PORT}"
+        + (" with FABRIC_FORCE_LRO=1 (forced asynchronous outcomes)" if FORCE_LRO else ""))
     start("fabric", [
         fabric_bin, "-addr", f":{FABRIC_PORT}", "-data-dir", os.path.join(WORK, "data"),
         "-entra-issuer", f"https://localhost:{ENTRA_PORT}/{TENANT}/v2.0",
-        "-entra-tls-insecure"], os.environ.copy())
+        "-entra-tls-insecure"], {**os.environ, "FABRIC_FORCE_LRO": FORCE_LRO})
 
     wait_healthy(f"https://localhost:{ENTRA_PORT}/health")
     wait_healthy(f"https://localhost:{FABRIC_PORT}/health")
@@ -121,6 +132,7 @@ try:
     subprocess.run([sys.executable, "-u", os.path.join(DIR, "driver.py")], check=True, env={
         **os.environ,  # FABRIC_CICD_DEBUG passes through when set
         "ENTRA_PORT": ENTRA_PORT, "FABRIC_PORT": FABRIC_PORT,
+        "FABRIC_FORCE_LRO": FORCE_LRO,
         "REQUESTS_CA_BUNDLE": os.path.join(WORK, "data", "tls", "cert.pem"),
         "FABRIC_API_ROOT_URL": f"https://api.fabric.microsoft.com:{FABRIC_PORT}",
         "DEFAULT_API_ROOT_URL": f"https://api.fabric.microsoft.com:{FABRIC_PORT}",
