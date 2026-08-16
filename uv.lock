@@ -1425,7 +1425,7 @@ data-science-loop = [
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "mlflow", specifier = ">=3.1,<4" },
     { name = "pyarrow", specifier = ">=18,<24" },
-    { name = "pyspark-client", specifier = "==4.1.1" },
+    { name = "pyspark-client", specifier = "==4.2.0" },
 ]
 dbt-duckdb = [
     { name = "dbt-duckdb", specifier = ">=1.9,<2" },
@@ -1469,7 +1469,7 @@ jupyter = [
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "jupyterlab", specifier = ">=4.2,<5" },
     { name = "pyarrow", specifier = ">=18,<24" },
-    { name = "pyspark-client", specifier = "==4.1.1" },
+    { name = "pyspark-client", specifier = "==4.2.0" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 lint = [
@@ -1489,8 +1489,8 @@ s3 = [
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 sail = [
-    { name = "pysail", specifier = "==0.6.6" },
-    { name = "pyspark-client", specifier = "==4.1.1" },
+    { name = "pysail", specifier = "==0.7.0" },
+    { name = "pyspark-client", specifier = "==4.2.0" },
 ]
 sail-delta = [
     { name = "cryptography", specifier = ">=42,<50" },
@@ -1500,7 +1500,7 @@ sail-delta = [
     { name = "pandas", specifier = ">=2,<3" },
     { name = "pyarrow", specifier = ">=18,<24" },
     { name = "pyjks", specifier = ">=20,<22" },
-    { name = "pyspark-client", specifier = "==4.1.1" },
+    { name = "pyspark-client", specifier = "==4.2.0" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 spark-connect = [
@@ -1508,7 +1508,7 @@ spark-connect = [
     { name = "gssapi", specifier = ">=1.8,<2" },
     { name = "kafka-python", specifier = ">=2.0.2,<3" },
     { name = "pyjks", specifier = ">=20,<22" },
-    { name = "pyspark-client", specifier = "==4.1.1" },
+    { name = "pyspark-client", specifier = "==4.2.0" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 test = [
@@ -4133,20 +4133,20 @@ wheels = [
 
 [[package]]
 name = "pysail"
-version = "0.6.6"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ec/f2/1cb9f63aba6ed73679f6fecb15ee8cd8d71e613e79768fa05631a69ee1fe/pysail-0.6.6.tar.gz", hash = "sha256:96295eb07c5004353ff09f9b22b6cfd78ee553842564aeb80a9cc5f3c63c4fa8", size = 2936417, upload-time = "2026-07-07T12:18:27.053Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/f3/3b7ebad447b43f888ff678d0cd6c0d2b69c8f1412b91c417c8794052e357/pysail-0.7.0.tar.gz", hash = "sha256:93551f92f832c0f90b7a913f90103fd4333c06075c0e6550d52744d78d00d7ff", size = 3302189, upload-time = "2026-08-03T13:15:30.594Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bf/14/025104ef476e756e738672c2d654c19f897704ad09b815a597f54f451f0b/pysail-0.6.6-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:2f0d9dfe48a10fe1dcc2d12b10e4fab1d09e08e383f8cdec7388cdd50a014f51", size = 54863573, upload-time = "2026-07-07T12:18:01.213Z" },
-    { url = "https://files.pythonhosted.org/packages/50/d9/d847d93c6e8a7daaacd22d5f4ab8b64861a36b5fa1a0b4beb0400633731a/pysail-0.6.6-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:c57b9c1182c15b9e12acf960208d930f9de91f2eeae7869513c112a6aa8b2851", size = 50913327, upload-time = "2026-07-07T12:18:06.654Z" },
-    { url = "https://files.pythonhosted.org/packages/a9/54/9162e389fa051b9c1a3f52c54364d66d6f9c7c9c71f70f78542520ac1bb0/pysail-0.6.6-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:6725d7ed514a841af545f4fe1bb76b39d3420ce26b2860e6833c9b5bb7f54366", size = 56182291, upload-time = "2026-07-07T12:18:12.482Z" },
-    { url = "https://files.pythonhosted.org/packages/50/07/aa892d71c1a7786b55a619a1f730c44926938eee13cea651e7ebd52983cb/pysail-0.6.6-cp38-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:c9c74bcaaa8b0f27ecd75350d7b2439548abcb9453994d594985d4afff544530", size = 52860872, upload-time = "2026-07-07T12:18:18.057Z" },
-    { url = "https://files.pythonhosted.org/packages/47/d9/0bdf216671f98f1dc73839e18c6064d028d8572de93cb826a2db9954c0a6/pysail-0.6.6-cp38-abi3-win_amd64.whl", hash = "sha256:6d5d2805370388ed8a348645fe6539fc6f2a96653bd20b9df7ff5d1f7ae0ea9b", size = 61648294, upload-time = "2026-07-07T12:18:23.994Z" },
+    { url = "https://files.pythonhosted.org/packages/56/97/adb98367a47703c69c2512132bd7b8845747109bdf632fca086a888f2ee4/pysail-0.7.0-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:6e9e7b4b693cee9e04a21e86b714834738656517f088945f41623abe98b18420", size = 54416624, upload-time = "2026-08-03T13:15:12.824Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/7e/11744ae642c3f75540f553628b90614b17820463d7ce0825dd16bf145575/pysail-0.7.0-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:b9a6912147f181cec21e272056a0a0669ada7311195441982a7bf89d006a4a22", size = 50598771, upload-time = "2026-08-03T13:15:15.817Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/6c/8cbe71173fa226120f802145b4e762062c0d3970b916ceaffe89bee0723b/pysail-0.7.0-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b952cf718d2fbc670cdcb7a1662dd79f35f217be8badf7e4d7138a32bb475bec", size = 55583286, upload-time = "2026-08-03T13:15:18.757Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/4a/c271eba2310091149cd117465b15a09a8c136e94099400b1997399137db1/pysail-0.7.0-cp38-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:7bf65e4741bee6f4b4c75e902f8662a7d867b4a5e493b28b8e22988b28e2efad", size = 52535074, upload-time = "2026-08-03T13:15:21.552Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/5f/693b8b34a14bc9169c6b5290d185620fa286d6909ae471770a6cbe01a9d8/pysail-0.7.0-cp38-abi3-win_amd64.whl", hash = "sha256:e76ff2c945d1d14ee6eadad9f3429dbdcd137a2bf267b98fc49c666216562a8f", size = 61358452, upload-time = "2026-08-03T13:15:28.255Z" },
 ]
 
 [[package]]
 name = "pyspark-client"
-version = "4.1.1"
+version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -4158,7 +4158,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/41/b0/fde39357666529049f2f71235d7126c7b2d5b4c5e20c072dccf845e9a09d/pyspark_client-4.1.1.tar.gz", hash = "sha256:23bd428d1f96c7196ae8ba29facca7eb56f66b3c380294385101ec8f1872a44a", size = 1600762, upload-time = "2026-01-09T09:38:50.679Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/31/1b/b7fc2cb3cb34a9d71790bd556ac5802c2d93e861c6af850f6e97e3e92b7c/pyspark_client-4.2.0.tar.gz", hash = "sha256:4008fe5e537bf0e57e7243d03abfaac089b7c87316bd07024784d8ea726f5d41", size = 1675557, upload-time = "2026-07-14T22:41:58.134Z" }
 
 [[package]]
 name = "pytest"

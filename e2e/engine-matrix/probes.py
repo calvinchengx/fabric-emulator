@@ -297,9 +297,16 @@ def python_udf(spark):
 
     This failed for a while with `read_udfs() missing 2 required positional
     arguments`, which looked like an engine gap but was a client pin: pyspark
-    4.2.0 added two parameters to `pyspark.worker.read_udfs` and pysail 0.6.6
-    calls the 3-argument form. Fixed by pinning the client to 4.1.1, the version
-    pysail is built against. If this regresses, check that pin before the engine.
+    4.2.0 added two parameters to `pyspark.worker.read_udfs`, and pysail 0.6.x
+    called the 3-argument form. The fix was not a particular version — it was
+    pinning the client to whatever the pysail release is built against, which
+    `pyproject.toml` now does for both halves at once (Sail 0.7.0 + client
+    4.2.0).
+
+    The direction of the constraint was measured rather than assumed, and it is
+    asymmetric: an OLD server cannot take a NEW client, but 0.7.0 takes 4.1.1
+    fine. So a regression here means the client LEADS the server, not merely
+    that the two differ. Check that pin before suspecting the engine.
     """
     from pyspark.sql.functions import udf
     from pyspark.sql.types import IntegerType

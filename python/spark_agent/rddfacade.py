@@ -234,10 +234,12 @@ def attach(session):
     Instance assignment is what makes this possible without patching pyspark:
     its Connect `SparkSession` guards these names in `__getattr__`, which Python
     only consults when normal attribute lookup FAILS. Setting them on the
-    instance means the guard is never reached. Verified against
-    pyspark-client 4.1.1, and it rests on Python's attribute protocol rather
-    than on pyspark internals, so a version bump cannot quietly re-arm the guard
-    without the tests noticing.
+    instance means the guard is never reached. This rests on Python's attribute
+    protocol rather than on pyspark internals, so a client bump cannot quietly
+    re-arm the guard — `test_attach_binds_past_pysparks_getattr_guard` asserts
+    the guard fires BEFORE attach and not after, and it runs against whatever
+    client is pinned. The test is the claim; naming a version here would only
+    record which bump was current when someone last edited the comment.
 
     A JVM session already has real ones; this must never overwrite them, which
     is why the caller checks first and this function is only reached for Connect.

@@ -130,9 +130,12 @@ gives for the catalog UI and Airflow gives for orchestration. What makes it a
   entra-emulator's seeded identity, so only the endpoints are named.
 - `SPARK_REMOTE` points at **Sail** — the same engine a `RunNotebook` job and a
   Livy session use, so a cell here and a cell in a job execute identically.
-- `pyspark-client` is pinned to the **same 4.1.1 the agent uses**. A kernel on a
-  different client than the engine is precisely the drift this profile exists to
-  avoid, and the pin comment in `pyproject.toml` explains what breaks otherwise.
+- `pyspark-client` is pinned to the **same version the agent uses**. A kernel on
+  a different client than the engine is precisely the drift this profile exists
+  to avoid, and the pin comment in `pyproject.toml` explains what breaks
+  otherwise. The version is deliberately not restated here: it is one number
+  shared by the Sail server and every Connect client, and a copy of it in prose
+  is a copy that goes stale silently.
 - `./notebooks` is a host mount, so what you author survives the container and
   is the same file `fabric-cicd` publishes and git syncs.
 
