@@ -12,6 +12,7 @@ node_modules/
 # Local tooling
 .claude/
 
+.nwave/
 # Note: portal/dist IS committed — go:embed needs it for `go build` to be
 # self-sufficient. Rebuild with `pnpm --filter fabric-emulator-portal build`.
 
