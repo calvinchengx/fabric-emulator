@@ -1194,7 +1194,12 @@ def _install_connect(spark):
     DataFrameWriter.save = save
     DataStreamWriter.foreachBatch = foreachBatch
     DataStreamWriter.start = start
-    ConnectDF.writeStream = property(writeStream)
+    # Replacing a property with a property is the whole point of this function,
+    # and ty compares the wrapped types rather than the shape. Suppressed at the
+    # site rather than by ignoring invalid-assignment for the package: the other
+    # five patches above pass the check, so a blanket ignore would hide a real
+    # mismatch in any patch added later.
+    ConnectDF.writeStream = property(writeStream)  # ty: ignore[invalid-assignment]
     DataStreamReader._emu_eventstream_patched = True
     _connect_installed = True
     return True

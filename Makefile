@@ -143,7 +143,7 @@ logs: ## Tail logs (SVC=<service> to narrow)
 lint: ## ruff + ty over the Python sources — the CI lint job, locally
 	@if command -v uv >/dev/null 2>&1; then \
 	  uv run --frozen --group lint ruff check . && \
-	  uv run --frozen --group lint --group test ty check; \
+	  uv run --frozen --group lint --group test --group spark-client ty check; \
 	else \
 	  echo "lint SKIPPED: no uv on PATH — CI still runs ruff + ty" >&2; \
 	fi

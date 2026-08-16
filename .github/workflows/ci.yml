@@ -534,7 +534,22 @@ jobs:
       # `pytest.skip()` never returns, so a `str | None` guarded by it never
       # narrows and subprocess.run appears to be called with None. The checker
       # must see the packages the code actually runs with.
-      - run: uv run --frozen --group lint --group test ty check
+      #
+      # --group spark-client for the same reason, one subsystem later. Without
+      # it `import pyspark` resolved to nothing, so every type flowing through
+      # ~1800 statements of statement agent was `Unknown` and ty checked almost
+      # none of it. It was not that the agent was clean; it was unexamined. A
+      # deliberate `bad: int = col("x")` planted in python/spark_agent/ passed
+      # this job before this line was added.
+      #
+      # `spark-client` and not `sail-delta` (the agent's real group): sail-delta
+      # carries gssapi, which has no manylinux wheel and needs gcc + libkrb5-dev
+      # compiled on the runner — see docker/spark-agent/Dockerfile. A lint job
+      # should not build a Kerberos stack. ty does not error on imports it
+      # cannot resolve, so the few remaining agent imports (kafka, gssapi) stay
+      # Unknown and simply go unchecked, exactly as before. This buys the large
+      # win at no build risk; widening it later is a separate, deliberate change.
+      - run: uv run --frozen --group lint --group test --group spark-client ty check
 
   example-parity:
     name: Each medallion pair differs only in silver
