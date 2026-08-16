@@ -344,6 +344,11 @@ def concurrent_overwrite(value):
                   flush=True)
 
 
+# This block is the third-party witness for the `Concurrent Delta overwrite
+# writers` parity row (docs/witnesses.json). The Go test races 24 blob PUTs
+# and asserts the conditional-create contract directly; this races two REAL
+# pyspark sessions and asserts the property that survives every interleaving,
+# so the two are different levels of the same claim rather than duplicates.
 step("race two overwrite writers on one Delta version")
 with ThreadPoolExecutor(max_workers=2) as executor:
     outcomes = list(executor.map(concurrent_overwrite, (100, 200)))
