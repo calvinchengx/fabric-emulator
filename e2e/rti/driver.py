@@ -255,6 +255,46 @@ kusto(query_uri, "mgmt", DB,
       ".create-merge table StreamEventsBare (kind:string, n:real, At:string)", expect=400)
 print("the unquoted twin is refused: OK")
 
+# ------------------------------------------- KQL keywords as the TABLE name
+# The same defect on the other name in those commands. The drain takes its
+# table name from the destination bind, which validates it with the same
+# character class — so `{"table": "kind"}` binds, and emits a command the
+# engine refuses. Quoting is the same remedy, but the doc that licenses it
+# ("entity names") is doing more work here: the column case is now witnessed
+# above, while a table name is a different position in the grammar, and this
+# is the one place that can settle whether ['name'] is accepted there.
+#
+# Not through kusto(..., expect=400): this is the assertion nobody has seen an
+# answer to, so it records the engine's own status and body in the CI log
+# rather than asserting a status and discarding the message.
+bare_table = requests.post(f"{query_uri}/v1/rest/mgmt", headers=KUSTO_HEADERS,
+                           json={"db": DB, "csl": ".create-merge table kind (a:string)"},
+                           timeout=60)
+assert bare_table.status_code >= 400, (
+    f"the engine ACCEPTED a bare keyword TABLE name ({bare_table.status_code}) — "
+    "there is no defect to fix, and the table name should be left bare")
+print(f"bare `.create-merge table kind`: refused {bare_table.status_code} "
+      f"{bare_table.text[:200]}")
+
+kusto(query_uri, "mgmt", DB, ".create-merge table ['kind'] (a:string)")
+kusto(query_uri, "mgmt", DB, ".ingest inline into table ['kind'] <|\nx")
+assert "kind" in [row[0] for row in primary_rows(kusto(query_uri, "mgmt", DB, ".show tables"))]
+assert primary_rows(kusto(query_uri, "query", DB, "['kind'] | count"))[0][0] == 1
+print("quoted ['kind'] accepted as the table name in create-merge and ingest inline")
+
+# THE ASSERTION A BLANKET CHANGE RESTS ON. Quoting the table name touches every
+# drain, not just the one that names a keyword, so the quoted form must be the
+# SAME ENTITY as the bare one — here, the Readings this file created bare and
+# filled with four rows at the top. Acceptance alone would not rule out the
+# quoted name resolving elsewhere, which would strand a drain's rows in a table
+# its owner cannot see; a quoted COLUMN that named a new column would show up
+# the same way, as a schema wider than three.
+kusto(query_uri, "mgmt", DB,
+      ".create-merge table ['Readings'] (['DeviceId']:string, ['Temp']:real, ['At']:datetime)")
+assert primary_rows(kusto(query_uri, "query", DB, "Readings | getschema | count"))[0][0] == 3
+assert primary_rows(kusto(query_uri, "query", DB, "Readings | count"))[0][0] == 4
+print("fully quoted create-merge merges into Readings unchanged: 3 columns, 4 rows")
+
 # ------------------------------------------------------------------ auth + RBAC
 anon = requests.post(f"{query_uri}/v1/rest/query", json={"db": DB, "csl": "Readings | count"}, timeout=60)
 assert anon.status_code == 401, anon.status_code
