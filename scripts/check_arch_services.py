@@ -97,8 +97,11 @@ def main():
         for name, where in missing:
             print(f"  {name:24s} missing from {where}")
         print(
-            "\nAdd it to the three-system model and to the diagram, or give it a\n"
-            "`profiles:` key if it is genuinely opt-in."
+            # Deliberately no count here: the numbered model in that doc grew
+            # from two to three to four, and a hardcoded number in the fix
+            # instruction is the same drift this check exists to catch.
+            "\nAdd it to the numbered system model and to the diagram, or give\n"
+            "it a `profiles:` key if it is genuinely opt-in."
         )
         return 1
 
