@@ -1,0 +1,77 @@
+# The engine-backed pipeline activities: Custom (ADF Batch), HDInsightSpark and
+# SparkJobDefinition. All three EXECUTE code, so all three need the Spark agent
+# with Sail behind it — which is why they are here and not in
+# e2e/pipeline-activities, whose point is to stay a fast az-CLI stack that a
+# flaky engine cannot take red.
+#
+# The stack is the databricks chain's minus databricks-emulator: #280 proved
+# entra + fabric + sail + spark-agent composes, so this reuses the shape rather
+# than rediscovering it. No two-phase startup, because nothing here mints a
+# secret the emulator needs at boot.
+services:
+  entra:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.8.1}
+    user: "0:0"
+    environment:
+      PUBLIC_ORIGIN: "https://entra:8443"
+      PORT: "8443"
+      TLS_ENABLED: "true"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Built from THIS checkout, not pulled: the point is that these activities
+  # break when this tree breaks them, which a pinned image would hide.
+  sail:
+    build: { context: ../.., dockerfile: docker/sail/Dockerfile }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 50051), 2).close()"]
+      interval: 3s
+      timeout: 2s
+      retries: 40
+
+  spark-agent:
+    build: { context: ../.., dockerfile: docker/spark-agent/Dockerfile }
+    depends_on:
+      sail:
+        condition: service_healthy
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3)"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  fabric:
+    build: { context: ../.., dockerfile: Dockerfile }
+    user: "0:0"
+    depends_on:
+      entra:
+        condition: service_healthy
+      spark-agent:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":443"
+      FABRIC_DATA_DIR: "/data"
+      FABRIC_ENTRA_ISSUER: "https://entra:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      FABRIC_ENTRA_TLS_INSECURE: "true"
+      FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
+    networks:
+      default:
+        aliases: ["api.fabric.microsoft.com", "onelake.dfs.fabric.microsoft.com"]
+
+  client:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
+    depends_on: [fabric]
+    volumes:
+      - ./driver.py:/driver.py:ro
+    environment:
+      FABRIC: "https://api.fabric.microsoft.com"
+      ENTRA: "https://entra:8443"
+    entrypoint: ["python3", "/driver.py"]

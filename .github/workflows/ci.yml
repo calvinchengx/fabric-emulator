@@ -1269,6 +1269,25 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/pipeline-activities/run.py
 
+  engine-activities:
+    name: Custom, HDInsightSpark and SparkJobDefinition run real code on the agent (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      # The three activities that EXECUTE code. Their Go tests drive a FAKE
+      # agent that records the statement it was handed, which proves dispatch
+      # and nothing more — a fake cannot show that the command ran, what it
+      # printed, or that a failure fails the activity.
+      #
+      # Separate from pipeline-activities because these need Sail and the Spark
+      # agent, and that suite's value is being a fast az-CLI stack a flaky
+      # engine cannot take red.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/engine-activities/run.py
+
   databricks-chain:
     name: fabric submits to databricks-emulator, the Databricks SDK confirms it (containerized)
     runs-on: ubuntu-latest
