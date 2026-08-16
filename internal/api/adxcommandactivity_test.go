@@ -14,6 +14,14 @@ func adxPipeline(tp string) string {
       {"name":"Cmd","type":"AzureDataExplorerCommand","typeProperties":{` + tp + `}}]}}`
 }
 
+// attachEngine's fake records the command string without parsing KQL, so an
+// invalid command passes here just as happily as a valid one. Keep the commands
+// below accepted by real Kusto anyway: these tests read as the reference for
+// what an AzureDataExplorerCommand activity should contain, and a command that
+// earns a 400 from the engine is a poor thing to copy. `kind` and its fellow
+// KQL keywords are not usable as column names; the identifiers used here are
+// the ones e2e/rti/driver.py proves against Microsoft's kustainer.
+
 // TestADXCommandReachesTheRealEngine: the command the definition names is the
 // command the engine receives, against the ISOLATED engine database for that
 // KQL Database item — not the display name, and not some other item's. A test
@@ -26,7 +34,7 @@ func TestADXCommandReachesTheRealEngine(t *testing.T) {
 	_, db := seedEventhouse(t, a, ws.ID, "eh")
 
 	pl := createPipeline(t, st, ws.ID, adxPipeline(
-		`"command":".create table Events (ts:datetime, kind:string)",
+		`"command":".create table Events (DeviceId:string, At:datetime)",
          "database":{"itemId":"`+db.ID+`"}`))
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
@@ -78,7 +86,7 @@ func TestADXCommandRefusesAQuery(t *testing.T) {
 	_, db := seedEventhouse(t, a, ws.ID, "eh")
 
 	pl := createPipeline(t, st, ws.ID, adxPipeline(
-		`"command":"Events | summarize count() by kind","database":{"itemId":"`+db.ID+`"}`))
+		`"command":"Events | summarize count() by DeviceId","database":{"itemId":"`+db.ID+`"}`))
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("job = %s, want Failed on a query", s)
