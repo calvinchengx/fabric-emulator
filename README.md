@@ -306,15 +306,18 @@ with `uv add --group <group> <package>` and commit both files.
 ## Emulator family
 
 `fabric-emulator` is a **consumer** of its siblings rather than a peer of them:
-`entra-emulator` issues and signs every token it validates, and
-`azure-keyvault-emulator` resolves the secret behind a vault-backed connection
-credential. `arm-emulator` is an **opt-in** consumer: set `FABRIC_ARM_URL` and
-capacities created over `Microsoft.Fabric/capacities` appear on
-`GET /v1/capacities`. Empty (the compose default) keeps the seeded local
-capacity, so fabric-cicd still works without ARM. The family compose in
-[azure-emulators](https://github.com/calvinchengx/azure-emulators) is where
-`FABRIC_ARM_URL` is pinned against released images.
-`azure-apim-emulator` completes the set.
+[`entra-emulator`](https://github.com/calvinchengx/entra-emulator) issues and signs every token it validates,
+and [`azure-keyvault-emulator`](https://github.com/calvinchengx/azure-keyvault-emulator) resolves the secret
+behind a vault-backed connection credential.
+[`arm-emulator`](https://github.com/calvinchengx/arm-emulator) **runs by default** in this repo's compose:
+Fabric capacities are ARM resources, so capacities created over
+`Microsoft.Fabric/capacities` appear on `GET /v1/capacities` without any extra
+configuration. Set `FABRIC_ARM_URL=` explicitly empty to opt back out, which
+keeps only the seeded local capacity — fabric-cicd still works either way.
+[`azure-apim-emulator`](https://github.com/calvinchengx/azure-apim-emulator) can place this emulator behind
+its gateway as a protected backend, and
+[`databricks-emulator`](https://github.com/calvinchengx/databricks-emulator) is a sibling workspace this one
+can consume through `FABRIC_DATABRICKS_URL`.
 
 To run them together, see [**azure-emulators**](https://github.com/calvinchengx/azure-emulators): a composition-only repo
 holding the family `docker-compose.yml`, the shared issuer wiring, and the

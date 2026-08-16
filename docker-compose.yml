@@ -79,10 +79,36 @@ services:
       # no volume here, so run in-memory or SQLite fails to open.
       KV_DATA_DIR: ""
 
+  # ARM, on by default. Fabric capacities ARE ARM resources, so without this
+  # the stack serves only the seeded local capacity and
+  # `Microsoft.Fabric/capacities` has nowhere to go — a visibly smaller Fabric
+  # than the one the docs describe. Wired exactly as the family BOM wires it,
+  # so the two stacks cannot disagree about issuer or tenant.
+  arm-emulator:
+    image: ghcr.io/calvinchengx/arm-emulator:${ARM_EMULATOR_VERSION:-0.4.1}
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    ports:
+      - "8445:8445" # ARM control plane (resources, Microsoft.Authorization)
+    environment:
+      ARM_ENTRA_ISSUER: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      ARM_ENTRA_JWKS_URL: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/discovery/v2.0/keys"
+      ARM_ENTRA_TLS_INSECURE: "true"
+      ARM_TENANT_ID: "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+      ARM_SUBSCRIPTION_ID: "6082bfda-63d0-46f4-8272-ae9195139feb"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/arm-emulator", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   fabric-emulator:
     image: ghcr.io/calvinchengx/fabric-emulator:${FABRIC_EMULATOR_VERSION:-latest}
     depends_on:
       entra-emulator:
+        condition: service_healthy
+      arm-emulator:
         condition: service_healthy
     ports:
       - "9443:9443" # api.fabric + onelake.dfs + portal (host-routed)
@@ -98,6 +124,13 @@ services:
       FABRIC_ENTRA_JWKS_URL: "https://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/discovery/v2.0/keys"
       # Trust entra-emulator's self-signed cert on the internal network.
       FABRIC_ENTRA_TLS_INSECURE: "true"
+      # ARM-created capacities show up on GET /v1/capacities. The `-` rather
+      # than `:-` is deliberate and matches KV_ARM_URL in the family BOM: an
+      # explicitly empty FABRIC_ARM_URL opts back out to the seeded local
+      # capacity, while unset gets the default.
+      # The ARM feed client reuses FABRIC_ENTRA_TLS_INSECURE above; there is
+      # deliberately no separate FABRIC_ARM_TLS_INSECURE to set.
+      FABRIC_ARM_URL: "${FABRIC_ARM_URL-https://arm-emulator:8445}"
       # The image bakes in FABRIC_DATA_DIR=/data (for callers who mount a
       # volume there); this compose file mounts none, so state is in-memory —
       # override back to empty or the store fails to open /data (no volume).
