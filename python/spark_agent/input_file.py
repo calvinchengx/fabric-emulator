@@ -332,7 +332,10 @@ def install(spark) -> bool:
         # provenance on a non-file frame.
         return F.coalesce(F.col(_TAG), F.lit(""))
 
-    F.input_file_name = _input_file_name
+    # Swapping pyspark's own `input_file_name` for the tag-resolving one is this
+    # module's reason to exist; ty sees a signature that returns Unknown
+    # replacing one that returns Column.
+    F.input_file_name = _input_file_name  # ty: ignore[invalid-assignment]
 
     # --- keeping the tag invisible ------------------------------------------
     #
@@ -440,7 +443,9 @@ def install(spark) -> bool:
     def write(self):
         return original_write.fget(_visible(self))
 
-    _ConnectDataFrame.write = write
+    # Same shape as the writeStream patch in eventstream_kafka: a property
+    # replacing a property, so the tag is stripped before anything persists.
+    _ConnectDataFrame.write = write  # ty: ignore[invalid-assignment]
 
     # Views: SELECT * stays on a clean registration so the tag cannot leak
     # through SQL star expansion. A shadow view keeps the tag; spark.sql

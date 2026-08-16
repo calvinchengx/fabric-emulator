@@ -140,9 +140,18 @@ runtime = []
 # Practical rule: the client may lag the server, but must never lead it. Pin
 # them together anyway — the `test` extra of each pysail release states the
 # client it was built against, and matching it is free.
+#
+# The client version therefore lives HERE, once. It used to be copied into five
+# groups, which meant "one number" was a claim maintained by hand across five
+# edit sites; the groups below include this one instead. It is also the leanest
+# thing that makes `ty` able to see pyspark — no compiled extras — which is why
+# the lint job installs exactly this and nothing more.
+spark-client = [
+    "pyspark-client==4.2.0",
+]
 sail = [
     "pysail==0.7.0",
-    "pyspark-client==4.2.0",
+    { include-group = "spark-client" },
 ]
 # The Sail statement agent also runs Delta maintenance (OPTIMIZE/VACUUM/CDF)
 # through delta-rs, since Sail's planner has no such commands — so the runtime
@@ -152,7 +161,7 @@ sail = [
 # lookalike. requests for the same reason spark-connect carries it: user
 # notebook code calls HTTP APIs, and the agent is where that code runs.
 sail-delta = [
-    "pyspark-client==4.2.0",
+    { include-group = "spark-client" },
     "deltalake>=0.23,<2",
     "pandas>=2,<3",
     "pyarrow>=18,<24",
@@ -177,13 +186,13 @@ sail-delta = [
 # because a restated version is one someone has to remember to update twice.
 jupyter = [
     "jupyterlab>=4.2,<5",
-    "pyspark-client==4.2.0",
+    { include-group = "spark-client" },
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",
     "requests>=2.32,<3",
 ]
 spark-connect = [
-    "pyspark-client==4.2.0",
+    { include-group = "spark-client" },
     "requests>=2.32,<3",
     "kafka-python>=2.0.2,<3",
     # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
@@ -209,7 +218,7 @@ data-science-loop = [
     "deltalake>=0.23,<2",
     "mlflow>=3.1,<4",
     "pyarrow>=18,<24",
-    "pyspark-client==4.2.0",
+    { include-group = "spark-client" },
 ]
 # NOTE: examples/ deliberately do NOT appear here. Each example owns its
 # pyproject.toml + uv.lock so it can be copied out and run standalone, and so
@@ -380,9 +389,17 @@ root = ["scripts", "python"]
 # Unresolved by CONSTRUCTION, not by mistake:
 #   * the checkers and their tests load one another by path via importlib, so
 #     no static checker can follow the module identity;
-#   * the agent imports pyspark, which is installed only inside the Spark image;
 #   * notebook content reads `spark`/`mssparkutils` from injected globals, which
-#     is the contract this emulator exists to provide (docs/38).
+#     is the contract this emulator exists to provide (docs/38);
+#   * the agent's remaining engine-side imports (kafka, gssapi) live only in the
+#     Spark image, because pulling them into a lint venv means compiling a
+#     Kerberos stack (docker/spark-agent/Dockerfile).
+#
+# `pyspark` USED to be the headline reason here, and is not any more: the lint
+# job installs `--group spark-client`, so pyspark resolves and the agent is
+# actually type-checked. That mattered — while pyspark was unresolved, every
+# type in ~1800 statements of agent was Unknown, so this ignore was not
+# narrowing the check, it was standing in for the absence of one.
 unresolved-import = "ignore"
 unresolved-attribute = "ignore"
 unresolved-reference = "ignore"
