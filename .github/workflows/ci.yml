@@ -458,6 +458,7 @@ jobs:
       # right, the cast of services had drifted. Nothing about adding a service
       # reminds anyone to redraw, so the roster is asserted instead.
       - run: uv run --frozen --no-sync python scripts/check_arch_services.py
+      - run: uv run --frozen --no-sync python scripts/check_image_digests.py
       # Starlight's sidebar is an explicit list — no autogenerate. A doc left
       # out still builds and still has a URL, but nothing links to it, so it is
       # published and unreachable. Same drift, same guard.
