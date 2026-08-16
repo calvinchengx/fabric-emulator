@@ -1101,7 +1101,8 @@
       "go:TestDatabricksRemoteAcceptsDBFS",
       "go:TestDatabricksRemoteImportsLakehouseFile",
       "go:TestDatabricksRemoteFailureFailsTheActivity",
-      "go:TestDatabricksRemoteStillRefusesJAR"
+      "go:TestDatabricksRemoteStillRefusesJAR",
+      "ci:databricks-chain"
     ]
   },
   "azure-batch-activity-adf-custom": {
