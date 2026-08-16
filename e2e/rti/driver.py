@@ -266,7 +266,14 @@ def run_pipeline(name, activities, want="Completed"):
 
 cmd_runs = run_pipeline("adx-cmd", [
     {"name": "Cmd", "type": "AzureDataExplorerCommand", "typeProperties": {
-        "command": ".create table PipelineEvents (ts:datetime, kind:string)",
+        # Column names mirror the `.create-merge table Readings` above, which is
+        # PROVEN against this engine. The first version used
+        # `(ts:datetime, kind:string)` — copied from the Go test, which runs
+        # against a FAKE engine that does not parse KQL — and real kustainer
+        # rejected it: `SYN0002 ... [line:position=1:43]`, position 43 being
+        # `kind`, a KQL keyword. The emulator was right throughout: it relayed
+        # the command and reported the engine's 400 faithfully.
+        "command": ".create table PipelineEvents (DeviceId:string, At:datetime)",
         "database": {"itemId": db_ids[0]}}}])   # db_ids[0] IS the item id
 cmd_out = next((r.get("output") or {} for r in cmd_runs if r.get("activityName") == "Cmd"), {})
 
