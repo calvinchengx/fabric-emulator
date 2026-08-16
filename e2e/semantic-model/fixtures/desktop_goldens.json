@@ -1,7 +1,8 @@
 {
-  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). ABS(-2.5)/ABS(0)/ABS(3), ROUND half-away-from-zero (ROUND(-1.5,0)=-2, unlike Go math.Round), and INT floor toward \u2212\u221e (INT(-2.1)=-3, unlike Go int() truncate-toward-zero) pinned live the same day. MIN, AVERAGE, COUNT, and POWER pinned live (POWER(0,0) errors; BLANK base is BLANK; BLANK exponent is 0). SIGN pinned live (BLANK stays BLANK). ASIN/ATAN pinned live (BLANK stays BLANK). PI/SIN/COS/TAN pinned live (COS(BLANK())=1; SIN/TAN BLANK stays BLANK). DEGREES/RADIANS pinned live (BLANK stays BLANK). DATE/YEAR/MONTH/DAY pinned live (two-digit year window 0-30\u21922000s; month/day overflow). TIME/HOUR/MINUTE/SECOND pinned live (modulo 24h wrap; BLANK parts are 0). Phase 3 batch also pins SWITCH, DISTINCTCOUNT, MAX, SQRT, MOD, FLOOR, CEILING, LN, EXP, WEEKDAY, WEEKNUM, EOMONTH, EDATE, TRUNC, QUOTIENT, BLANK, ISBLANK. ATAN2 is not a DAX function. Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
+  "_comment": "Desktop-captured scalar goldens (docs/52 Phase 3). Captured 2026-08-15 on UTM Windows 11 ARM + Power BI Desktop via e2e/msmdsrv pump. LOG/LOG10 pinned live (default LOG base is 10; BLANK/<=0 error). ABS(-2.5)/ABS(0)/ABS(3), ROUND half-away-from-zero (ROUND(-1.5,0)=-2, unlike Go math.Round), and INT floor toward \u2212\u221e (INT(-2.1)=-3, unlike Go int() truncate-toward-zero) pinned live the same day. MIN, AVERAGE, COUNT, and POWER pinned live (POWER(0,0) errors; BLANK base is BLANK; BLANK exponent is 0). SIGN pinned live (BLANK stays BLANK). ASIN/ATAN pinned live (BLANK stays BLANK). PI/SIN/COS/TAN pinned live (COS(BLANK())=1; SIN/TAN BLANK stays BLANK). DEGREES/RADIANS pinned live (BLANK stays BLANK). DATE/YEAR/MONTH/DAY pinned live (two-digit year window 0-30\u21922000s; month/day overflow). TIME/HOUR/MINUTE/SECOND pinned live (modulo 24h wrap; BLANK parts are 0). Phase 3 batch also pins SWITCH, DISTINCTCOUNT, MAX, SQRT, MOD, FLOOR, CEILING, LN, EXP, WEEKDAY, WEEKNUM, EOMONTH, EDATE, TRUNC, QUOTIENT, BLANK, ISBLANK. ATAN2 is not a DAX function. 16 further probes (EXP negative/large, LN sub-1 and LN(e), FLOOR/CEILING with a fractional and a non-divisor significance incl. CEILING(-10,3)=-9 rounding toward +inf, SQRT(0.25), MOD exact-zero and fractional, DISTINCTCOUNT/MAX over the StoreId key on both sides of the relationship) were captured in the same 2026-08-15 Desktop session on the per-function branches that PR #260 superseded, and were salvaged rather than recaptured; every one of them agreed with the Go evaluator on arrival, so they widen the evidence without changing a verdict. Every-push CI replays these against the Go evaluator with empty FABRIC_DAX_URL. Add one function at a time; do not pin a function Go cannot evaluate.",
   "captured": "2026-08-15 UTM Windows 11 ARM + Power BI Desktop",
   "toleranceRel": 1e-09,
+  "probeCount": 175,
   "probes": [
     {
       "name": "ACOS(0.5)",
@@ -640,10 +641,34 @@
       "want": 3
     },
     {
+      "name": "DISTINCTCOUNT(Sales[StoreId])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DISTINCTCOUNT(Sales[StoreId]))",
+      "column": "[v]",
+      "want": 4
+    },
+    {
+      "name": "DISTINCTCOUNT(Store[StoreId])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", DISTINCTCOUNT('Store'[StoreId]))",
+      "column": "[v]",
+      "want": 4
+    },
+    {
       "name": "MAX(Sales[Units])",
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MAX(Sales[Units]))",
       "column": "[v]",
       "want": 40000
+    },
+    {
+      "name": "MAX(Sales[StoreId])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MAX(Sales[StoreId]))",
+      "column": "[v]",
+      "want": 4
+    },
+    {
+      "name": "MAX(Store[StoreId])",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MAX('Store'[StoreId]))",
+      "column": "[v]",
+      "want": 4
     },
     {
       "name": "SQRT(9)",
@@ -662,6 +687,12 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SQRT(2))",
       "column": "[v]",
       "want": 1.4142135623730951
+    },
+    {
+      "name": "SQRT(0.25)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", SQRT(0.25))",
+      "column": "[v]",
+      "want": 0.5
     },
     {
       "name": "MOD(10, 3)",
@@ -688,6 +719,18 @@
       "want": -1
     },
     {
+      "name": "MOD(10, 2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(10, 2))",
+      "column": "[v]",
+      "want": 0
+    },
+    {
+      "name": "MOD(7.5, 2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", MOD(7.5, 2))",
+      "column": "[v]",
+      "want": 1.5
+    },
+    {
       "name": "FLOOR(10.5, 1)",
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", FLOOR(10.5, 1))",
       "column": "[v]",
@@ -704,6 +747,18 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", FLOOR(-2.5, -1))",
       "column": "[v]",
       "want": -2
+    },
+    {
+      "name": "FLOOR(10.5, 0.5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", FLOOR(10.5, 0.5))",
+      "column": "[v]",
+      "want": 10.5
+    },
+    {
+      "name": "FLOOR(10, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", FLOOR(10, 3))",
+      "column": "[v]",
+      "want": 9
     },
     {
       "name": "CEILING(10.5, 1)",
@@ -730,6 +785,24 @@
       "want": 0
     },
     {
+      "name": "CEILING(10.5, 0.5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", CEILING(10.5, 0.5))",
+      "column": "[v]",
+      "want": 10.5
+    },
+    {
+      "name": "CEILING(10, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", CEILING(10, 3))",
+      "column": "[v]",
+      "want": 12
+    },
+    {
+      "name": "CEILING(-10, 3)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", CEILING(-10, 3))",
+      "column": "[v]",
+      "want": -9
+    },
+    {
       "name": "LN(1)",
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LN(1))",
       "column": "[v]",
@@ -742,6 +815,18 @@
       "want": 2.302585092994046
     },
     {
+      "name": "LN(0.5)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LN(0.5))",
+      "column": "[v]",
+      "want": -0.6931471805599453
+    },
+    {
+      "name": "LN(e)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", LN(2.718281828459045))",
+      "column": "[v]",
+      "want": 1
+    },
+    {
       "name": "EXP(0)",
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", EXP(0))",
       "column": "[v]",
@@ -752,6 +837,18 @@
       "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", EXP(1))",
       "column": "[v]",
       "want": 2.7182818284590455
+    },
+    {
+      "name": "EXP(-1)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", EXP(-1))",
+      "column": "[v]",
+      "want": 0.3678794411714423
+    },
+    {
+      "name": "EXP(2)",
+      "dax": "EVALUATE SUMMARIZECOLUMNS(\"v\", EXP(2))",
+      "column": "[v]",
+      "want": 7.3890560989306495
     },
     {
       "name": "WEEKDAY(DATE(2024, 8, 15))",

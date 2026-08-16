@@ -128,6 +128,7 @@ func TestDesktopFunctionGoldens(t *testing.T) {
 	}
 	var g struct {
 		ToleranceRel float64 `json:"toleranceRel"`
+		ProbeCount   int     `json:"probeCount"`
 		Probes       []struct {
 			Name   string  `json:"name"`
 			DAX    string  `json:"dax"`
@@ -140,6 +141,19 @@ func TestDesktopFunctionGoldens(t *testing.T) {
 	}
 	if len(g.Probes) == 0 {
 		t.Fatal("desktop_goldens.json has no probes")
+	}
+	// Cardinality, declared separately from the array — the same guard
+	// TestDAXGoldenQueries gets from DAXQueryCount. Without it this test passes
+	// whether it compares 175 probes or 5: a probe silently dropped by a bad
+	// merge (this fixture is edited on many branches at once, and has already
+	// collided once) reads as a pass, because every probe that REMAINS still
+	// agrees. Assert the count the capture actually produced.
+	if g.ProbeCount == 0 {
+		t.Fatal("desktop_goldens.json declares no probeCount — add it, or a dropped probe is invisible")
+	}
+	if len(g.Probes) != g.ProbeCount {
+		t.Fatalf("fixture holds %d probes, declares probeCount %d — a probe was added or lost without updating the count",
+			len(g.Probes), g.ProbeCount)
 	}
 	if g.ToleranceRel <= 0 {
 		g.ToleranceRel = 1e-9
