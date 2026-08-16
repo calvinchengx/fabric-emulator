@@ -66,10 +66,6 @@ for _attempt in range(30):
         if _attempt == 29:
             raise
         time.sleep(2)
-# Sail reports this limit as "3GB"; pyspark 4.2's createDataFrame does int()
-# on it — override with an integer so plain createDataFrame works.
-spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
-
 path = f"abfs://{ws_id}@{acct}/lake.Lakehouse/Tables/events"
 
 df = spark.createDataFrame([(1, "a"), (2, "b"), (3, "c")], ["id", "name"])

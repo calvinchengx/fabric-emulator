@@ -35,7 +35,6 @@ if os.environ.get("SPARK_REMOTE"):
     # Sail (Spark Connect): Delta-native, no JVM. The Delta/Hive configs below
     # are JVM-session concerns; Sail needs none of them.
     spark = SparkSession.builder.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
-    spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
 else:
     spark = (
         SparkSession.builder.appName("dbt-fabricspark-agent")
