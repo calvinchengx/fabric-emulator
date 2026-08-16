@@ -186,12 +186,7 @@ from pyspark.sql import SparkSession  # noqa: E402
 remote = os.environ.get("SPARK_REMOTE")
 builder = SparkSession.builder.appName("fabric-emulator-eventstream")
 spark = (builder.remote(remote) if remote else builder).getOrCreate()
-if remote:
-    try:
-        spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
-    except Exception:  # noqa: BLE001 — Connect conf is best-effort
-        pass
-else:
+if not remote:
     spark.sparkContext.setLogLevel("WARN")
 assert eventstream_kafka.install(spark)
 

@@ -177,7 +177,6 @@ if os.environ.get("SPARK_REMOTE"):
             if _attempt == 29:
                 raise
             time.sleep(2)
-    spark.conf.set("spark.sql.session.localRelationSizeLimit", str(64 * 1024 * 1024))
     engine = "sail"
 else:
     # JVM oracle: the same notebook runs on the Spark 3.5 / Delta 3.2 baseline
