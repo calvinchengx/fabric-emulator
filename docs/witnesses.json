@@ -1179,7 +1179,8 @@
       "go:TestADXCommandEngineCannotCreateTheDatabase",
       "go:TestADXCommandEngineUnreachable",
       "go:TestADXCommandInputSurface",
-      "go:TestADXCommandHonoursCommandTimeout"
+      "go:TestADXCommandHonoursCommandTimeout",
+      "ci:rti"
     ]
   },
   "unrunnable-adf-activities": {
