@@ -27,11 +27,21 @@ TWO ROUTES, because the claim covers two activities:
                     that called back immediately would make "parked" untestable.
 
   GET  /captured    the callBackUri the last POST carried, or {} if none yet.
+
+  POST /api/<name>  an Azure Functions host. The emulator sends the key as
+                    `x-functions-key` and builds the URL as
+                    functionAppUrl + "/api/" + functionName, so a WRONG key must
+                    401 — otherwise the suite could not tell an activity that
+                    sends the secret from one that forgets it. Records each call
+                    as "METHOD /api/<name>" so the driver can assert the URL was
+                    built correctly and called exactly once.
 """
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _captured: dict[str, str] = {}
+_fn_calls: list[str] = []
+FUNCTION_KEY = "s3cret"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -54,10 +64,23 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {"pong": True, "who": "pipeline-activities-target"})
         elif path == "/captured":
             self._send(200, dict(_captured))
+        elif path == "/fn-calls":
+            self._send(200, {"calls": list(_fn_calls)})
         else:
             self._send(404, {"error": f"no route {path}"})
 
     def do_POST(self):
+        path = self.path.split("?", 1)[0]
+        if path.startswith("/api/"):
+            # A wrong (or absent) key is 401, exactly as a Functions host does.
+            # Without this the witness could not distinguish an activity that
+            # sends `x-functions-key` from one that silently omits it.
+            if self.headers.get("x-functions-key") != FUNCTION_KEY:
+                self._send(401, {"error": "invalid key"})
+                return
+            _fn_calls.append(f"POST {path}")
+            self._send(200, {"rows": 3})
+            return
         n = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(n).decode() if n else ""
         try:

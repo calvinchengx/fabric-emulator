@@ -1059,7 +1059,8 @@
     "witnesses": [
       "go:TestFunctionActivityCallsForReal",
       "go:TestFunctionActivityWrongKeyFails",
-      "go:TestFunctionActivitySchemaRules"
+      "go:TestFunctionActivitySchemaRules",
+      "ci:pipeline-activities"
     ]
   },
   "web-and-webhook-activities": {
