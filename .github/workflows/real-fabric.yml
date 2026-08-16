@@ -8,9 +8,24 @@ name: Real Fabric conformance
 # Opt-in by secrets; without them the run skips loudly instead of failing.
 # No parity claim cites this workflow until the secrets are set and a
 # conformance job has actually completed — a skipped run is not evidence.
+#
+# TWO WAYS TO AUTHENTICATE. The gate picks whichever is configured:
+#
+#   OIDC (preferred) — AZURE_CLIENT_ID + AZURE_TENANT_ID, and NO secret stored
+#     anywhere. Needs a federated credential on the app registration whose
+#     subject matches this repository; `azure/login` then exchanges the run's
+#     id-token for an Entra token, leaving an az session that
+#     DefaultAzureCredential picks up like any developer's. Neither id is
+#     itself secret — both are public in any OIDC discovery document — they
+#     live in `secrets` because that is the only place a workflow can read
+#     per-repository configuration from.
+#   Client secret — the same two plus AZURE_CLIENT_SECRET. Still required by
+#     anything that puts a principal in a request BODY rather than using it to
+#     authenticate: an AzureKeyVault connection accepts only OAuth2 or
+#     ServicePrincipal, so those credentials travel as data and a token cannot
+#     substitute.
+#
 # Required repository secrets:
-#   AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
-#     — a service principal with a role on the test workspace
 #   FABRIC_TEST_WORKSPACE
 #     — display name of a DEDICATED throwaway workspace (the suite creates
 #       and deletes its own items inside it; nothing else is touched)
@@ -19,6 +34,21 @@ name: Real Fabric conformance
 #     account that started a trial can assign a workspace to it, so a service
 #     principal cannot. Run the trial path from a developer machine with
 #     `az login` instead (docs/46-artifact-persistence.md).
+#
+# WHAT THIS WORKFLOW STRUCTURALLY CANNOT COVER. Both modes authenticate as a
+# SERVICE PRINCIPAL, and Fabric treats one differently from a signed-in user in
+# at least two ways: an SP needs the tenant setting "Service principals can use
+# Fabric APIs", and an SP cannot assign a workspace to a TRIAL capacity at all.
+# So CI is the regression signal, not the only way to obtain a real-service
+# witness — and on a trial tenant it is the weaker of the two.
+#
+# THE CONFORMANCE SUITE NEEDS NO SECRETS ON A DEVELOPER MACHINE. `az login`
+# alone satisfies DefaultAzureCredential, which is what fabric_target builds in
+# real mode; the AZURE_* variables below are one of its sources, not a
+# requirement. Measured 2026-08-17 — 12 passed in 2m25s:
+#
+#   FABRIC_TARGET=real FABRIC_WORKSPACE=<workspace> \
+#     uv run --frozen --group fabric-target pytest -m target python/fabric-target/conformance
 
 on:
   workflow_call:
@@ -66,24 +96,77 @@ jobs:
     timeout-minutes: 5
     outputs:
       run: ${{ steps.check.outputs.run }}
+      mode: ${{ steps.check.outputs.mode }}
     steps:
-      - name: Check secrets are configured
+      # ONLY BOOLEANS CROSS INTO THE ENVIRONMENT HERE, never the secret values
+      # themselves: this job needs to know whether each is set and nothing more,
+      # and a value that is never materialised cannot be printed by a `set -x`,
+      # a stack trace or a future step somebody adds below.
+      #
+      # IT TESTS EVERY SECRET IT DEPENDS ON, which the previous condition did
+      # not: keyed on AZURE_CLIENT_SECRET and FABRIC_TEST_WORKSPACE alone, a
+      # missing AZURE_TENANT_ID or AZURE_CLIENT_ID let the job RUN and fail
+      # obscurely several minutes later instead of skipping. A gate that checks
+      # a subset of its inputs reports on the subset, not on the thing.
+      #
+      # AND IT NO LONGER REQUIRES A SECRET TO EXIST. Keying on
+      # AZURE_CLIENT_SECRET made the secretless path unreachable by
+      # construction: a correctly configured OIDC setup, which by design has no
+      # client secret, was indistinguishable from "not configured" and skipped.
+      - name: Check credentials are configured
         id: check
         env:
-          SECRET_SET: ${{ secrets.AZURE_CLIENT_SECRET != '' && secrets.FABRIC_TEST_WORKSPACE != '' }}
+          HAVE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID != '' }}
+          HAVE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID != '' }}
+          HAVE_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE != '' }}
+          HAVE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET != '' }}
         run: |
-          if [ "$SECRET_SET" != "true" ]; then
-            echo "::notice::real-Fabric secrets not configured — the conformance job will SKIP (see workflow header for the required secrets)"
+          set -euo pipefail
+          missing=""
+          [ "$HAVE_CLIENT_ID" = "true" ] || missing="$missing AZURE_CLIENT_ID"
+          [ "$HAVE_TENANT_ID" = "true" ] || missing="$missing AZURE_TENANT_ID"
+          [ "$HAVE_WORKSPACE" = "true" ] || missing="$missing FABRIC_TEST_WORKSPACE"
+          if [ -n "$missing" ]; then
+            echo "::notice::real-Fabric credentials incomplete — missing:$missing. The conformance job will SKIP (see the workflow header)."
             echo "run=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          if [ "$HAVE_CLIENT_SECRET" = "true" ]; then
+            mode=secret
+          else
+            mode=oidc
+          fi
+          echo "::notice::real-Fabric credentials configured; authenticating via $mode"
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
 
   conformance:
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # A JOB-LEVEL `permissions:` REPLACES the file-level default rather than
+    # adding to it, so `contents: read` has to be restated here or the checkout
+    # loses it. `id-token: write` is what lets the runner mint the OIDC token
+    # azure/login exchanges; it grants nothing else, and no other job in this
+    # file gets it.
+    permissions:
+      contents: read
+      id-token: write
+    # HOISTED FROM THE FOUR STEPS BELOW, which each repeated the same three
+    # variables. That repetition is how AZURE_TENANT_ID came to be set on every
+    # step while the gate never checked it was set at all: four copies look like
+    # thoroughness and make the single missing check harder to see.
+    #
+    # In OIDC mode AZURE_CLIENT_SECRET expands to the empty string. That is the
+    # correct value, not a degraded one: `Target.service_principal` requires all
+    # three to be non-empty and returns None otherwise, so a step that needs a
+    # principal as DATA (an AzureKeyVault connection body) refuses by name
+    # instead of sending a half-built credential to the tenant.
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -92,20 +175,31 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.32"
+      # OIDC MODE ONLY, and it is deliberately the only step that differs
+      # between the two modes. It leaves an `az` session behind; nothing reads
+      # its outputs. DefaultAzureCredential then resolves through
+      # AzureCliCredential — the SAME source a developer's `az login` provides,
+      # so the credential path CI exercises is the one a reader would use
+      # rather than a CI-only special case.
+      #
+      # allow-no-subscriptions: the Fabric API is not an ARM resource provider
+      # and this principal needs no subscription. Without the flag azure/login
+      # fails when the tenant has none it can see.
+      - name: Azure login (federated)
+        if: needs.gate.outputs.mode == 'oidc'
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
       - name: Conformance against real Fabric
         env:
           FABRIC_TARGET: real
           FABRIC_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: uv run --frozen --group fabric-target pytest -m target -v python/fabric-target/conformance
       - name: Representative notebook against real Fabric
         env:
           FABRIC_TEST_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: uv run --frozen --group fabric-target python e2e/notebook-run/real_fabric.py
       # THE EXAMPLE'S OWN CODE against real Fabric — the other half of T3 in
       # e2e/fabric-target/run.py, which runs this same step with
@@ -122,9 +216,6 @@ jobs:
           FABRIC_TARGET: real
           FABRIC_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
           WORKSPACE_NAME: ${{ secrets.FABRIC_TEST_WORKSPACE }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           # A workspace created with no capacity accepts the create and then
           # rejects every item in it, so the resolver refuses without this rather
           # than failing one call later. Note a TRIAL capacity cannot be assigned
@@ -147,9 +238,6 @@ jobs:
         if: inputs.capture_item_type != ''
         env:
           FABRIC_TEST_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: |
           if [ -z "${{ inputs.capture_item_name }}" ]; then
             echo "::error::capture_item_name is required when capture_item_type is set"
