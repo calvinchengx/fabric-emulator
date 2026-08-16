@@ -170,7 +170,8 @@
       "go:TestForEachInnerFailurePropagates",
       "go:TestPipelineInvokeByName",
       "go:TestInactiveActivityNeverExecutes",
-      "go:TestInactiveMarkedFailedSteersBranchesWithoutFailingTheRun"
+      "go:TestInactiveMarkedFailedSteersBranchesWithoutFailingTheRun",
+      "ci:pipeline-activities"
     ]
   },
   "data-science-ml-models-experiments-mlflow-data-science": {
@@ -405,7 +406,8 @@
     "claim": "**ForEach** sequential / parallel (`isSequential`, `batchCount`)",
     "witnesses": [
       "go:TestForEachParallelDuration",
-      "go:TestForEachInnerFailurePropagates"
+      "go:TestForEachInnerFailurePropagates",
+      "ci:pipeline-activities"
     ]
   },
   "getmetadata-activity-onelake-path": {
@@ -454,7 +456,8 @@
     "claim": "**Invoke pipeline** (ExecutePipeline)",
     "witnesses": [
       "go:TestPipelineInvokeByName",
-      "go:TestPipelineInvokeBadParameters"
+      "go:TestPipelineInvokeBadParameters",
+      "ci:pipeline-activities"
     ]
   },
   "item-job-execution-jobs-instances": {
@@ -656,7 +659,8 @@
       "go:TestPipelineRetryPolicyJob",
       "go:TestRetryBackoffAccumulates",
       "go:TestRetryPolicyExhausted",
-      "go:TestRetryPolicySucceedsAfterRetries"
+      "go:TestRetryPolicySucceedsAfterRetries",
+      "ci:pipeline-activities"
     ]
   },
   "per-column-type-fidelity-real-sql-types-over-the-wire": {
@@ -1070,7 +1074,8 @@
       "go:TestWebHookParksUntilTheCallback",
       "go:TestWebHookTimesOutOnTheVirtualClock",
       "go:TestWebHookReportStatusOnCallBack",
-      "go:TestWebHookSchemaRules"
+      "go:TestWebHookSchemaRules",
+      "ci:pipeline-activities"
     ]
   },
   "hdinsight-spark-activity-hdinsightspark": {

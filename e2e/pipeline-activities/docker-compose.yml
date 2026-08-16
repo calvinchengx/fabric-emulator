@@ -36,6 +36,21 @@ services:
       default:
         aliases: ["api.fabric.microsoft.com", "onelake.dfs.fabric.microsoft.com"]
 
+  # The Web / WebHook activities need something to CALL. Pointing them at the
+  # emulator's own /health failed on `x509: certificate signed by unknown
+  # authority` — it serves a self-signed leaf and the Web activity verifies TLS,
+  # which is correct and has no skip knob. So: a real endpoint over plain HTTP,
+  # which is also what a Web activity does in life. Same azure-cli image the
+  # client already pulls, so this costs no extra download.
+  target:
+    image: mcr.microsoft.com/azure-cli:2.89.0-azurelinux3.0
+    volumes:
+      - ./target.py:/target.py:ro
+    command: ["python3", "/target.py"]
+    networks:
+      default:
+        aliases: ["target"]
+
   client:
     build: { context: .., dockerfile: pipeline-activities/Dockerfile }
-    depends_on: [entra, fabric]
+    depends_on: [entra, fabric, target]
