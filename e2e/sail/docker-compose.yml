@@ -33,6 +33,11 @@ services:
       FABRIC_DATA_DIR: "" # in-memory; the e2e needs no persistence
       FABRIC_DISABLE_TLS: "true"
       FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      # A materialized lake view's refresh RUNS ITS QUERY on the statement
+      # agent, so without this the refresh is an honest 502 ("no engine")
+      # rather than a silent success. That 502 is what this suite hit the first
+      # time the MLV witness ran here.
+      FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
     healthcheck:
       test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
       interval: 3s
@@ -58,6 +63,25 @@ services:
       # Notebook-friendly session lifetime (default is 900s).
       SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
       RUST_LOG: "info"
+
+  # The statement agent, which is how the emulator drives Sail for the surfaces
+  # that execute a query rather than proxy one. Added for the MLV refresh; Sail
+  # and its OneLake credentials above are unchanged and already proven by the
+  # Delta writes earlier in this suite.
+  spark-agent:
+    build:
+      context: ../..
+      dockerfile: docker/spark-agent/Dockerfile
+    depends_on:
+      sail:
+        condition: service_started
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3)"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
 
   driver:
     build:

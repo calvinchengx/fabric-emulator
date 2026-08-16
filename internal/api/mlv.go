@@ -273,10 +273,18 @@ func (a *API) RefreshMaterializedLakeView(v *store.MaterializedLakeView) error {
 		v.WorkspaceID, v.LakehouseID, v.Name)
 	qj, _ := json.Marshal(v.Query)
 	tj, _ := json.Marshal(target)
+	// `qj`/`tj` are JSON string LITERALS, and a JSON string literal is already a
+	// valid Python one — so they are interpolated directly. They used to be
+	// wrapped in `json.loads(...)`, which is one decode too many: Python parses
+	// the literal first, so json.loads received bare SQL and raised
+	//   JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+	// on every refresh. The Go tests never saw it because their agent records
+	// statements without executing them; e2e/sail runs the real agent, and the
+	// first real execution of this path is what found it.
 	code := fmt.Sprintf(`import json
-__df = spark.sql(json.loads(%s))
+__df = spark.sql(%s)
 __n = __df.count()
-__df.write.format("delta").mode("overwrite").save(json.loads(%s))
+__df.write.format("delta").mode("overwrite").save(%s)
 print(json.dumps({"rowCount": __n}))
 `, string(qj), string(tj))
 

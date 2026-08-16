@@ -96,6 +96,28 @@ def post_json(url, body, token=None):
         return json.loads(r.read() or b"{}")
 
 
+def post_json_verbose(url, body, token=None):
+    """post_json, but an HTTP error carries the SERVER'S MESSAGE.
+
+    `urllib` raises HTTPError with the body unread, so a failure here arrives as
+    a bare `HTTP Error 502: Bad Gateway` and says nothing about why. The MLV
+    refresh below returns its real reason in that body, and two runs were spent
+    guessing at it before this existed."""
+    try:
+        return post_json(url, body, token)
+    except urllib.error.HTTPError as err:
+        detail = err.read().decode(errors="replace")[:600]
+        raise AssertionError(f"POST {url} -> {err.code}: {detail}") from None
+
+
+def get_json(url, token=None):
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("Authorization", "Bearer " + token)
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read() or b"{}")
+
+
 def entra_token(scope):
     form = urllib.parse.urlencode({
         "grant_type": "client_credentials",
@@ -427,5 +449,66 @@ print("put-if-absent on an existing commit refused with 409")
 with urllib.request.urlopen(req, timeout=30) as r:
     assert r.read().decode() == first_commit, "the refused PUT modified the commit"
 print("the refused PUT left the existing commit byte-identical")
+
+# ------------------------------------------ materialized lake view REFRESH
+#
+# The MLV row was witnessed only by Go tests, on the reading that its DEFINITION
+# surface is emulator-native (Fabric defines these with Spark SQL DDL no capture
+# here has observed). That is true of the definition and false of the refresh:
+# the parity row says the rows "land in OneLake as a Delta table under
+# `Tables/`, so a Delta reader ... see[s] a refresh exactly as they see any
+# other write". So the refresh is witnessable by anything that reads Delta.
+#
+# What makes this worth asserting rather than assuming: the row also says a
+# refresh is reported successful ONLY IF a Delta commit actually landed,
+# "checked against OneLake rather than inferred from the statement's exit code,
+# because a cheerful statement that wrote nothing is precisely how a view whose
+# rows do not exist would be reported Materialized". `delta_log_versions` reads
+# `_delta_log` straight off OneLake, so it can tell those two apart.
+step("materialized lake view: create, refresh, and read the rows back")
+lakehouses = get_json(f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses", fabric_token)
+lake_id = next(i["id"] for i in (lakehouses.get("value") or [])
+               if i["displayName"] == "lake")
+mlv_base = f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses/{lake_id}/materializedlakeviews"
+
+# A DEDICATED source table, not the shared `events` one. The first version
+# aggregated over `events` and asserted {eu: 1, us: 1}; by the time this block
+# runs at the end of a long driver, earlier steps have rewritten that table and
+# the answer was {us: 1, ap: 1, eu: 1}. An assertion that depends on another
+# step's leftovers is a flake waiting for someone to reorder the file.
+spark.sql(
+    "SELECT * FROM VALUES (1,'signup','eu'), (2,'purchase','us'), (3,'signup','us')"
+    " AS t(id, kind, region)"
+).write.format("delta").mode("overwrite").save(
+    "az://sailws/lake.Lakehouse/Tables/mlv_src")
+
+created = post_json_verbose(mlv_base, {
+    "name": "signups_by_region",
+    "query": "SELECT region, count(*) AS n FROM mlv_src WHERE kind = 'signup' GROUP BY region",
+    "dependsOn": ["mlv_src"]}, fabric_token)
+
+# A DEFINITION IS NOT A TABLE. Asserting this first is the negative half: a
+# surface that created the table eagerly would pass every check below while
+# reporting a view as materialised before anything had run.
+assert created.get("state") == "NeverRefreshed", created
+assert not delta_log_versions("signups_by_region"), (
+    "a view that has never refreshed already has a Delta log — the definition "
+    "created a table")
+
+refreshed = post_json_verbose(f"{mlv_base}/signups_by_region/refresh", {}, fabric_token)
+assert refreshed.get("state") == "Materialized", refreshed
+assert refreshed.get("isStale") is False, refreshed
+
+# The commit must EXIST on OneLake, not merely be claimed by the API.
+versions = delta_log_versions("signups_by_region")
+assert versions, "refresh reported Materialized with no Delta commit on OneLake"
+
+# And a Delta reader must see the RIGHT ROWS. The aggregation is over the
+# `events` table written earlier: two signups, one eu and one us.
+mlv_rows = spark.read.format("delta").load(
+    "az://sailws/lake.Lakehouse/Tables/signups_by_region").collect()
+got = {row["region"]: row["n"] for row in mlv_rows}
+assert got == {"eu": 1, "us": 1}, got
+print(f"materialized lake view: {len(versions)} Delta commit(s) on OneLake, rows={got}")
 
 print("PASS: sail e2e")
