@@ -718,7 +718,7 @@ func TestEventstreamKustoMgmtAndIngest(t *testing.T) {
 	}
 	var created, ingested bool
 	for _, c := range engine.sent() {
-		if strings.Contains(c.csl, ".create-merge table t") && strings.Contains(c.csl, "n:real") {
+		if strings.Contains(c.csl, ".create-merge table t") && strings.Contains(c.csl, "['n']:real") {
 			created = true
 		}
 		if strings.HasPrefix(c.csl, ".ingest inline into table t") {
@@ -748,5 +748,38 @@ func TestEventstreamKustoMgmtAndIngest(t *testing.T) {
 		Columns: []string{"n"}, Rows: [][]any{{1.0}},
 	}); err == nil {
 		t.Fatal("create-merge engine error")
+	}
+}
+
+// TestEventstreamIngestQuotesColumnNames pins the emitted schema byte for byte.
+//
+// The drain names its columns after whatever fields the events carry, and a
+// field called `kind` is ordinary in event data and a KQL keyword in a schema
+// declaration — real Kusto answers the bare form with 400 / SYN0002 (witnessed
+// against kustainer in e2e/rti/driver.py, which probes the whole keyword list).
+// So the emitter quotes every name, and this test is what would notice if it
+// stopped: the fake engine's schema gate refuses a bare keyword the way
+// kustainer did, and the exact-string comparison catches the rest.
+func TestEventstreamIngestQuotesColumnNames(t *testing.T) {
+	a, _ := newAPI(t)
+	engine := attachEngine(t, a)
+
+	tbl := &warehouse.Table{
+		Columns: []string{"kind", "where", "DeviceId", "n"},
+		Rows:    [][]any{{"click", "eu", "dev-1", 1.0}},
+	}
+	if err := a.kustoIngestTable(context.Background(), "fabricdb", "Events", tbl); err != nil {
+		t.Fatalf("keyword columns were refused by the engine: %v", err)
+	}
+	var create string
+	for _, c := range engine.sent() {
+		if strings.HasPrefix(c.csl, ".create-merge table Events") {
+			create = c.csl
+		}
+	}
+	want := ".create-merge table Events (['kind']:string, ['where']:string, " +
+		"['DeviceId']:string, ['n']:real)"
+	if create != want {
+		t.Errorf("emitted\n\t%q\nwant\n\t%q", create, want)
 	}
 }

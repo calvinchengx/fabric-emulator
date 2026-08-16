@@ -157,6 +157,13 @@ Eventhouse destination and operators are **Go-unit witnessed** against the
 in-process Kusto stand-in and Lakehouse dest tables. They are not in
 `e2e/eventstream` — that job does not start `--profile rti`.
 
+The one thing a stand-in cannot settle is whether the emitted KQL parses, and
+column names are where that bites: a source field called `kind` is a KQL
+keyword, and bare keyword column names earn a `SYN0002` from real Kusto. The
+emitter quotes every column (`['kind']`), and **`e2e/rti` witnesses the emitted
+form against kustainer** — the keyword list refused bare, the quoted form
+created, ingested and queried back ([25-rti-kusto.md](25-rti-kusto.md)).
+
 ## Boundaries (deliberate, not backlog)
 
 - **Lakehouse destination** is this slice: Custom HTTP produce → Delta

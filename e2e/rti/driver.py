@@ -181,6 +181,70 @@ current = primary_rows(kusto(query_uri, "query", DB, "print DB=current_database(
 assert current == DB, f"current_database() = {current!r}, want the Fabric name {DB!r}"
 print("engine database naming stays internal: OK")
 
+# ------------------------------------------- KQL keywords as column names
+# A schema declaration cannot name a column with a BARE KQL keyword: the engine
+# answers SYN0002. This matters beyond hand-written KQL because the emulator's
+# eventstream -> eventhouse drain builds `.create-merge table T (name:type, …)`
+# from whatever fields the events carry (internal/api/eventstream.go,
+# kustoIngestTable), and `kind` is an ordinary field name in event data. The
+# emitter therefore quotes every column — ['kind'], Kusto's documented remedy —
+# and the Go tests police that against a FAKE engine whose keyword list only a
+# real one can settle. This is where it gets settled.
+#
+# Both directions are asserted, because each guards a different fault: if the
+# bare form were accepted the gate would be refusing KQL kustainer runs, and if
+# the quoted form were refused the emitter's output would be broken outright.
+KQL_KEYWORDS = [
+    "and", "between", "by", "contains", "datatable", "distinct", "endswith",
+    "extend", "false", "from", "has", "in", "join", "kind", "let", "limit",
+    "not", "null", "on", "or", "order", "parse", "print", "project", "range",
+    "set", "sort", "startswith", "summarize", "take", "then", "top", "true",
+    "union", "where", "with",
+]
+
+accepted_bare = []
+for kw in KQL_KEYWORDS:
+    bare = requests.post(f"{query_uri}/v1/rest/mgmt", headers=KUSTO_HEADERS,
+                         json={"db": DB, "csl": f".create table KwBare_{kw} ({kw}:string)"},
+                         timeout=60)
+    if bare.status_code == 200:
+        accepted_bare.append(kw)
+    elif kw == "kind":
+        # The one member witnessed before this probe existed, kept as a named
+        # assertion so a probe that had gone blanket-negative still fails.
+        assert bare.status_code == 400, (kw, bare.status_code, bare.text[:400])
+        assert "SYN0002" in bare.text, bare.text[:800]
+assert not accepted_bare, (
+    "kustainer accepts these as BARE column names, so internal/api/kql_test.go's "
+    f"kqlKeywords is over-broad and must drop them: {accepted_bare}")
+print(f"{len(KQL_KEYWORDS)} KQL keywords refused as bare column names: OK")
+
+# …and every one of them is legal quoted, which is what the emitter writes.
+quoted = ", ".join(f"['{kw}']:string" for kw in KQL_KEYWORDS)
+kusto(query_uri, "mgmt", DB, f".create-merge table KwQuoted ({quoted})")
+kusto(query_uri, "mgmt", DB,
+      ".ingest inline into table KwQuoted <|\n" + ",".join(["x"] * len(KQL_KEYWORDS)))
+addressable = primary_rows(kusto(query_uri, "query", DB,
+                                 "KwQuoted | where ['kind'] == 'x' and ['where'] == 'x' | count"))[0][0]
+assert addressable == 1, f"quoted keyword columns are not addressable: {addressable}"
+print("the same keywords quoted: table created, row ingested, column queried back")
+
+# The emitter's own output, verbatim: the `.create-merge table` + `.ingest
+# inline` pair kustoIngestTable produces for an event carrying `kind` and `n`.
+kusto(query_uri, "mgmt", DB,
+      ".create-merge table StreamEvents (['kind']:string, ['n']:real, ['At']:string)")
+kusto(query_uri, "mgmt", DB,
+      ".ingest inline into table StreamEvents <|\nclick,1,2026-07-31T00:00:00Z\nview,2,2026-07-31T00:01:00Z")
+drained = primary_rows(kusto(query_uri, "query", DB,
+                             "StreamEvents | summarize N=count(), Total=sum(['n'])"))[0]
+assert [int(drained[0]), round(float(drained[1]), 3)] == [2, 3.0], drained
+print(f"eventstream drain's emitted KQL runs on the real engine: N={drained[0]} Total={drained[1]}")
+
+# …and its unquoted twin does not, which is the whole reason for the quoting.
+kusto(query_uri, "mgmt", DB,
+      ".create-merge table StreamEventsBare (kind:string, n:real, At:string)", expect=400)
+print("the unquoted twin is refused: OK")
+
 # ------------------------------------------------------------------ auth + RBAC
 anon = requests.post(f"{query_uri}/v1/rest/query", json={"db": DB, "csl": "Readings | count"}, timeout=60)
 assert anon.status_code == 401, anon.status_code

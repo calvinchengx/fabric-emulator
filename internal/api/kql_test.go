@@ -127,13 +127,17 @@ func (e *kustoEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //
 // Provenance matters more than length here, because a keyword listed wrongly
 // makes the fake reject KQL that real Kusto accepts — a worse fault than the
-// one this gate closes. `kind` is the verified member: CI's rti suite watched
-// kustainer answer `.create table Events (ts:datetime, kind:string)` with 400
-// KustoBadRequestException, SYN0002, pointing at that token. The rest are
-// query-language keywords from Microsoft's identifier-naming rules, which say
-// a keyword used as an identifier must be quoted. They are documented rather
-// than witnessed, so the list stays conservative and deliberately partial:
-// absence from it is not evidence that a name is legal. Type names (string,
+// one this gate closes. `kind` was the first verified member: CI's rti suite
+// watched kustainer answer `.create table Events (ts:datetime, kind:string)`
+// with 400 KustoBadRequestException, SYN0002, pointing at that token. The rest
+// arrived as query-language keywords from Microsoft's identifier-naming rules,
+// which say a keyword used as an identifier must be quoted; e2e/rti/driver.py
+// now probes EVERY member of this list against kustainer in both directions —
+// bare refused, ['quoted'] accepted — so the job fails, naming names, if the
+// list has drifted from what the engine actually does. The list stays
+// deliberately partial all the same: absence from it is not evidence that a
+// name is legal, which is why the production emitter quotes unconditionally
+// (kustoQuoteIdent) instead of consulting a list at all. Type names (string,
 // datetime, ...) are left out because only the name half of `name:type` is
 // ever checked, so they would add risk without adding reach.
 var kqlKeywords = map[string]bool{
@@ -154,6 +158,10 @@ var kqlKeywords = map[string]bool{
 // syntax is passed over rather than guessed at. Everything outside such a
 // group (a query body, a table name, a database name) is left to the real
 // engine, which is the only thing that can settle it.
+//
+// A QUOTED name is exempt: ['kind'] is precisely the form real Kusto accepts,
+// and it is what kustoQuoteIdent emits, so a gate that refused it would refuse
+// the corrected output — the worse of the two faults available here.
 func kqlSchemaKeyword(csl string) string {
 	for i := 0; i < len(csl); i++ {
 		if csl[i] != '(' {
@@ -170,11 +178,15 @@ func kqlSchemaKeyword(csl string) string {
 		for _, f := range fields {
 			name, typ, ok := strings.Cut(f, ":")
 			name, typ = strings.TrimSpace(name), strings.TrimSpace(typ)
-			if !ok || !kustoTableNameOK(name) || !kustoTableNameOK(typ) {
+			ident, quoted, valid := kqlIdent(name)
+			if !ok || !valid || !kustoTableNameOK(typ) {
 				names = nil
 				break
 			}
-			names = append(names, name)
+			if quoted {
+				continue
+			}
+			names = append(names, ident)
 		}
 		for _, name := range names {
 			if kqlKeywords[strings.ToLower(name)] {
@@ -183,6 +195,21 @@ func kqlSchemaKeyword(csl string) string {
 		}
 	}
 	return ""
+}
+
+// kqlIdent reads one schema name, reporting the identifier it declares, whether
+// it arrived quoted, and whether it is a name at all. Both bracket forms Kusto
+// documents are accepted, ['name'] and ["name"]; a bracket group whose content
+// is not a plain identifier is not a name this gate will read, so the group
+// falls to the real engine rather than being guessed at.
+func kqlIdent(s string) (name string, quoted, ok bool) {
+	for _, q := range []string{"'", `"`} {
+		if len(s) >= len(q)*2+2 && strings.HasPrefix(s, "["+q) && strings.HasSuffix(s, q+"]") {
+			inner := s[1+len(q) : len(s)-1-len(q)]
+			return inner, true, kustoTableNameOK(inner)
+		}
+	}
+	return s, false, kustoTableNameOK(s)
 }
 
 func (e *kustoEngine) sent() []kustoCall {
@@ -201,6 +228,18 @@ func TestKQLSchemaKeywordGate(t *testing.T) {
 		{".create table Events (ts:datetime, kind:string)", "kind"},
 		{".create-merge table T (a:string, Where:int)", "Where"},
 		{".set-or-append T <| datatable (by:string) [\"x\"]", "by"},
+		// One quoted name does not excuse its bare neighbour.
+		{".create-merge table T (['kind']:string, where:int)", "where"},
+
+		// Quoted is the form real Kusto accepts and the form kustoQuoteIdent
+		// emits — including for names that are not keywords at all.
+		{".create-merge table T (['kind']:string, ['At']:datetime)", ""},
+		{`.create table T (["by"]:string)`, ""},
+		{".create-merge table clicks (['n']:real, ['src']:string)", ""},
+		// A bracket group that is not a plain identifier is not something this
+		// gate can read, so the group goes to the engine rather than a guess.
+		{".create table T (['a'b']:string)", ""},
+		{".create table T (['']:string)", ""},
 
 		// Accepted: the replacement, and the forms already in this package.
 		{".create table Events (DeviceId:string, At:datetime)", ""},
