@@ -19,8 +19,10 @@ Two independent clients are asserted:
   * `azure-kusto-data`, Microsoft's real Kusto SDK, which builds its own
     endpoints from the cluster URI and parses the v2 frame stream.
 """
+import base64
 import json
 import os
+import time
 import urllib.parse
 import urllib.request
 
@@ -211,5 +213,92 @@ with KustoClient(kcsb) as client:
     sdk_tables = [r["TableName"] for r in mgmt.primary_results[0]]
     assert "Readings" in sdk_tables, sdk_tables
     print(f"azure-kusto-data mgmt: {sdk_tables}")
+
+# ------------------------------------ the AzureDataExplorerCommand ACTIVITY
+# The pipeline activity that runs a KQL CONTROL COMMAND against an eventhouse,
+# witnessed here rather than by Go tests alone because everything it needs is
+# already standing: kustainer is the engine, fabric already has FABRIC_KQL_URL,
+# and azure-kusto-data is in this image to confirm the effect independently.
+#
+# Judged by the ENGINE, not the activity's own status. A command activity that
+# reported Succeeded having sent nothing would satisfy any check that read only
+# the pipeline, and the emulator's own note for this row is that the engine's
+# internal database name must not leak back into the output.
+
+
+def run_pipeline(name, activities, want="Completed"):
+    """Create → define → run → wait, returning the activity runs."""
+    pl = fabric_post(f"/v1/workspaces/{ws['id']}/items",
+                     {"displayName": name, "type": "DataPipeline"})
+    payload = base64.b64encode(
+        json.dumps({"properties": {"activities": activities}}).encode()).decode()
+    # Raw POSTs, NOT fabric_post: it calls r.json() unconditionally, and both of
+    # these answer 202 with an EMPTY body (createJobInstance writes
+    # StatusAccepted and nothing else), so parsing would raise JSONDecodeError.
+    # This suite cannot run on Apple silicon — kustainer needs a real x86-64
+    # kernel — so bugs like it are found by reading, or by burning a CI cycle.
+    def _accepted(path, body):
+        r = requests.post(f"{FABRIC}{path}", headers=FABRIC_HEADERS, json=body, timeout=60)
+        assert r.status_code in (200, 201, 202), f"{path} -> {r.status_code} {r.text[:300]}"
+        return r
+
+    _accepted(f"/v1/workspaces/{ws['id']}/items/{pl['id']}/updateDefinition",
+              {"definition": {"parts": [{"path": "pipeline-content.json",
+                                         "payload": payload,
+                                         "payloadType": "InlineBase64"}]}})
+    _accepted(f"/v1/workspaces/{ws['id']}/items/{pl['id']}/jobs/instances?jobType=Pipeline", {})
+    inst = None
+    for _ in range(120):
+        got = fabric_get(
+            f"/v1/workspaces/{ws['id']}/items/{pl['id']}/jobs/instances").get("value") or []
+        inst = next((r for r in got if r.get("status") in ("Completed", "Failed")), None)
+        if inst:
+            break
+        time.sleep(0.5)
+    assert inst, f"{name}: never reached a terminal state"
+    detail = requests.post(
+        f"{FABRIC}/v1/workspaces/{ws['id']}/items/{pl['id']}/jobs/instances/"
+        f"{inst['id']}/queryactivityruns", headers=FABRIC_HEADERS, json={}, timeout=60)
+    runs = (detail.json() or {}).get("value") or []
+    assert inst["status"] == want, f"{name}: job {inst['status']}, want {want}; runs={runs}"
+    return runs
+
+
+cmd_runs = run_pipeline("adx-cmd", [
+    {"name": "Cmd", "type": "AzureDataExplorerCommand", "typeProperties": {
+        # Column names mirror the `.create-merge table Readings` above, which is
+        # PROVEN against this engine. The first version used
+        # `(ts:datetime, kind:string)` — copied from the Go test, which runs
+        # against a FAKE engine that does not parse KQL — and real kustainer
+        # rejected it: `SYN0002 ... [line:position=1:43]`, position 43 being
+        # `kind`, a KQL keyword. The emulator was right throughout: it relayed
+        # the command and reported the engine's 400 faithfully.
+        "command": ".create table PipelineEvents (DeviceId:string, At:datetime)",
+        "database": {"itemId": db_ids[0]}}}])   # db_ids[0] IS the item id
+cmd_out = next((r.get("output") or {} for r in cmd_runs if r.get("activityName") == "Cmd"), {})
+
+# The output must carry the Fabric DISPLAY name, never the engine's internal
+# per-item database name. That mapping is the emulator's job, and a leak here
+# would hand a user a name that does not exist in their workspace.
+assert cmd_out.get("database") == default_db["displayName"], cmd_out
+assert cmd_out.get("tables") is not None, f"the engine's result was dropped: {cmd_out}"
+print(f"ADX command activity: output names {cmd_out['database']!r}, engine result carried")
+
+# A COMMAND activity must refuse a QUERY. Without this the row would be
+# satisfied by an activity that happily runs anything it is handed.
+run_pipeline("adx-query", [
+    {"name": "Cmd", "type": "AzureDataExplorerCommand", "typeProperties": {
+        "command": "PipelineEvents | count",
+        "database": {"itemId": db_ids[0]}}}], want="Failed")
+print("ADX command activity: a query is refused, as the contract says")
+
+with KustoClient(kcsb) as client:
+    # THE ASSERTION THAT MATTERS: Microsoft's own SDK, talking to the engine
+    # directly, sees the table the PIPELINE created. Nothing about the activity
+    # reporting Succeeded implies this.
+    after = [r["TableName"] for r in client.execute_mgmt(DB, ".show tables").primary_results[0]]
+    assert "PipelineEvents" in after, (
+        f"the activity reported success but the engine has no PipelineEvents: {after}")
+    print(f"azure-kusto-data confirms the activity's command landed: {after}")
 
 print("RTI e2e: PASS — real KQL execution behind the Fabric Eventhouse contract")
