@@ -10,7 +10,7 @@
 # tenant returns, which is the claim this job binds.
 services:
   entra:
-    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.6.0}
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.8.1}
     user: "0:0"
     environment:
       PUBLIC_ORIGIN: "https://login.microsoftonline.com"
