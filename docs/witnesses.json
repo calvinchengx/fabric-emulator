@@ -124,7 +124,8 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "Concurrent Delta overwrite writers",
     "witnesses": [
-      "go:TestConcurrentDeltaCommitRace"
+      "go:TestConcurrentDeltaCommitRace",
+      "ci:sail"
     ]
   },
   "connection-by-item-name-vs-guid": {
