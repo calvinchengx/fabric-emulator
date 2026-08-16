@@ -1151,6 +1151,24 @@ jobs:
           version: "0.11.32"
       - run: EVENTSTREAM_ENGINE=sail uv run --frozen --no-sync python e2e/eventstream/run.py
 
+  agent-contract:
+    name: Consumer SQL shapes execute on the built agent (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # The shared agent's consumers do not all send the same SQL, and this repo
+      # only ever sent one dialect of it. `livy-native` below addresses Delta BY
+      # PATH — `OPTIMIZE delta.`uri`` — which never calls delta_ops.resolve();
+      # databricks-emulator addresses tables BY NAME, which does nothing else.
+      # A break in resolve() was therefore invisible here and fatal there, and
+      # shipped four times. This runs the by-name shapes against the agent built
+      # from the published Dockerfile, and release.yml gates the push on it.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/agent-contract/run.py
+
   livy-native:
     name: Native Livy sessions drive Sail (containerized)
     runs-on: ubuntu-latest

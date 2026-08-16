@@ -1,0 +1,45 @@
+# The consumer contract, executed against the agent image before it is published.
+#
+#   run.py → spark-agent (POST /statements) → sail (Spark Connect)
+#
+# Deliberately two services and local paths, not the five-service OneLake stack
+# `e2e/livy` stands up. What this proves is orthogonal to storage: whether the
+# statement SHAPES downstream consumers send survive the agent's interception.
+# Adding entra and OneLake would slow the gate without testing anything it is
+# for, and this gate runs before every publish.
+services:
+  # LakeSail's Sail: the real engine. Local filesystem only — no token, no
+  # object_store, nothing to mint.
+  sail:
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    environment:
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+    volumes:
+      - contract-tables:/tmp/contract
+
+  # THE ARTIFACT UNDER TEST. Built from the same Dockerfile compute-images
+  # publishes, so this exercises what a consumer pulls rather than the working
+  # tree mounted over it — the distinction that let a broken agent ship four
+  # times while the repo's own suite stayed green.
+  spark-agent:
+    build:
+      context: ../..
+      dockerfile: docker/spark-agent/Dockerfile
+    depends_on:
+      sail:
+        condition: service_started
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+    ports:
+      - "18099:8099"
+    # Sail writes the table and delta-rs (inside this container) reopens it, so
+    # both must see the same bytes — the same reason engine-matrix shares a
+    # volume between its probe and its engine.
+    volumes:
+      - contract-tables:/tmp/contract
+
+volumes:
+  contract-tables:
