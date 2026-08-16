@@ -1088,7 +1088,8 @@
       "go:TestHDInsightSparkFailsWhenTheEngineFails",
       "go:TestHDInsightSparkNoEngineIsHonest",
       "go:TestHDInsightSparkRefusesByName",
-      "go:TestHDInsightSparkMissingEntryFile"
+      "go:TestHDInsightSparkMissingEntryFile",
+      "ci:engine-activities"
     ]
   },
   "azure-databricks-activities-databricksnotebook-databrickssparkpython-databrickssparkjar": {
@@ -1118,7 +1119,8 @@
       "go:TestCustomActivityUnparseableReportFails",
       "go:TestCustomActivityRefusesByName",
       "go:TestCustomActivityNoAgentIsHonest",
-      "go:TestCustomActivityStatementErrorFails"
+      "go:TestCustomActivityStatementErrorFails",
+      "ci:engine-activities"
     ]
   },
   "azure-ml-activities": {
@@ -1260,7 +1262,8 @@
     "witnesses": [
       "go:TestInvokeCopyJobActivityReallyCopies",
       "go:TestSparkJobDefinitionActivityRunsOnTheAgent",
-      "go:TestSparkJobDefinitionActivityWithoutAnEngineDoesNotClaimSuccess"
+      "go:TestSparkJobDefinitionActivityWithoutAnEngineDoesNotClaimSuccess",
+      "ci:engine-activities"
     ]
   },
   "deleted-display-names-held-fabricnamereservation": {
