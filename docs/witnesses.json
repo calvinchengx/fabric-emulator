@@ -235,7 +235,8 @@
       "go:TestEventTriggerCRUD",
       "go:TestEventTriggerValidationAndRBAC",
       "go:TestRenameEmitsItsOwnEventType",
-      "go:TestSafeNavigationAndTriggerEvent"
+      "go:TestSafeNavigationAndTriggerEvent",
+      "ci:adls-sdk"
     ]
   },
   "real-time-intelligence-eventhouse-kql-database-real-time-intelligence": {

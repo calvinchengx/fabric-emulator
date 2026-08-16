@@ -13,6 +13,7 @@ Two independent oracles in one run:
 Driving the real SDK is what surfaced the x-ms-range gap (the Blob client
 sends its range as x-ms-range, not Range, and requires 206 + Content-Range).
 """
+import base64
 import json
 import os
 import ssl
@@ -116,5 +117,73 @@ with urllib.request.urlopen(req, context=_CTX) as r:
     dfs = [p["name"] for p in json.loads(r.read())["paths"]]
 assert any(n.endswith("cities.parquet") for n in dfs), dfs
 print(f"DFS surface sees the SDK-written blob: {len(dfs)} paths")
+
+# --------------------------------------- an SDK write FIRES an event trigger
+#
+# The parity row for Reflex event triggers was witnessed only by Go tests, on
+# the reading that the trigger BINDING is an emulator-native surface (Fabric
+# publishes no REST for it) so nothing external could witness it. That confuses
+# the definition with the effect. The binding is ours; the two things that
+# matter are not:
+#
+#   * the WRITE is Microsoft's Azure Blob SDK, already used above, and
+#   * the EFFECT is a real item job, readable over public Fabric REST.
+#
+# So the assertion is end to end through third-party surfaces: a file uploaded
+# by the SDK causes a job the Fabric API reports as EventTriggered.
+lake = post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/items",
+                 {"displayName": "trig-lake", "type": "Lakehouse"}, fabric_token)
+reflex = post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/items",
+                   {"displayName": "watcher", "type": "Reflex"}, fabric_token)
+pipe = post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/items",
+                 {"displayName": "on-landing", "type": "DataPipeline"}, fabric_token)
+wait_def = base64.b64encode(json.dumps({"properties": {"activities": [
+    {"name": "Pause", "type": "Wait", "typeProperties": {"waitTimeInSeconds": 0}}]}}).encode()).decode()
+post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/items/{pipe['id']}/updateDefinition",
+          {"definition": {"parts": [{"path": "pipeline-content.json",
+                                     "payload": wait_def,
+                                     "payloadType": "InlineBase64"}]}}, fabric_token)
+post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/reflexes/{reflex['id']}/triggers", {
+    "displayName": "on-landing", "eventType": "Microsoft.Fabric.OneLake.FileCreated",
+    "source": {"itemId": lake["id"], "pathPrefix": "Files/landing"},
+    "action": {"itemId": pipe["id"], "jobType": "Pipeline"}}, fabric_token)
+
+
+def pipeline_runs():
+    req = urllib.request.Request(
+        f"{FABRIC}/v1/workspaces/{ws['id']}/items/{pipe['id']}/jobs/instances",
+        headers={"Authorization": "Bearer " + fabric_token})
+    with urllib.request.urlopen(req, context=_CTX) as r:
+        return json.loads(r.read()).get("value") or []
+
+
+def sdk_put(rel, body):
+    svc.get_blob_client(container=container,
+                        blob=f"trig-lake.Lakehouse/{rel}").upload_blob(body, overwrite=True)
+
+
+# The NEGATIVE half first: a write outside the watched prefix must start
+# nothing. Without it, a trigger that fires on every write would pass.
+sdk_put("Files/other/ignored.csv", b"x")
+time.sleep(2)
+assert not pipeline_runs(), f"a write outside the prefix started a run: {pipeline_runs()}"
+print("event trigger: an SDK write outside the prefix starts nothing")
+
+sdk_put("Files/landing/orders.csv", b"id\n1\n")
+runs = []
+for _ in range(60):
+    runs = pipeline_runs()
+    if runs:
+        break
+    time.sleep(0.5)
+assert len(runs) == 1, f"watched write started {len(runs)} runs, want 1: {runs}"
+assert runs[0].get("invokeType") == "EventTriggered", runs[0]
+for _ in range(60):
+    got = pipeline_runs()
+    if got and got[0].get("status") in ("Completed", "Failed"):
+        break
+    time.sleep(0.5)
+assert got[0]["status"] == "Completed", got[0]
+print(f"event trigger: the SDK's write ran the pipeline, invokeType={runs[0]['invokeType']}")
 
 print("ADLS-SDK E2E: PASS")
