@@ -122,6 +122,14 @@ job by name. `internal/api/kql_test.go`'s `kqlKeywords` is that set and nothing
 more, which keeps the in-process stand-in from refusing KQL the engine runs —
 the failure mode that matters more here than the one it guards against.
 
+The destination **table** name is the same question in a different position in
+the grammar, and the drain takes it from the bind against the same character
+class. The witness settles that one too: bare `kind` refused, `['kind']`
+accepted in both `.create-merge table` and `.ingest inline into table`, and
+`['Readings']` shown to merge into the table this suite created bare — three
+columns and four rows, unchanged. That last one is what licenses quoting every
+drain's table name rather than only the ones that look dangerous.
+
 That CI job is the **witness of record**: it runs on amd64 runners, and the
 witness depends on `kustainer: service_healthy`, so an engine that never comes
 up fails the job rather than passing quietly.

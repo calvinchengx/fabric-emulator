@@ -158,11 +158,13 @@ in-process Kusto stand-in and Lakehouse dest tables. They are not in
 `e2e/eventstream` — that job does not start `--profile rti`.
 
 The one thing a stand-in cannot settle is whether the emitted KQL parses, and
-column names are where that bites: a source field called `kind` earns a
-`SYN0002` from real Kusto as a bare column name. The emitter quotes every
-column (`['kind']`) rather than deciding which names need it, and **`e2e/rti`
-witnesses the emitted form against kustainer** — 36 candidate keywords probed,
-the nine the engine actually refuses pinned as a set, all 36 legal quoted
+the names in it are where that bites: a source field called `kind`, or a
+destination bound with `{"table": "kind"}`, is a name real Kusto refuses bare
+with `SYN0002`. The emitter quotes both (`['kind']`) rather than deciding which
+names need it, and **`e2e/rti` witnesses the emitted form against kustainer** —
+36 candidate keywords probed, the nine the engine actually refuses pinned as a
+set, all 36 legal quoted, and a quoted name shown to resolve to the same entity
+as the bare one, which is what makes quoting every drain's table safe
 ([25-rti-kusto.md](25-rti-kusto.md)).
 
 ## Boundaries (deliberate, not backlog)

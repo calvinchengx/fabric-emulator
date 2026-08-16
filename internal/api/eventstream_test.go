@@ -1924,10 +1924,10 @@ func TestEventstreamProduceWithEventhouseDestinationIngests(t *testing.T) {
 	engineDB := engineDatabaseName(db.ID)
 	var created, ingested bool
 	for _, c := range engine.sent() {
-		if strings.Contains(c.csl, ".create-merge table clicks") && c.db == engineDB {
+		if strings.Contains(c.csl, ".create-merge table ['clicks']") && c.db == engineDB {
 			created = true
 		}
-		if strings.HasPrefix(c.csl, ".ingest inline into table clicks") && c.db == engineDB {
+		if strings.HasPrefix(c.csl, ".ingest inline into table ['clicks']") && c.db == engineDB {
 			ingested = true
 			if !strings.Contains(c.csl, "custom") {
 				t.Fatalf("ingest missing event bytes: %s", c.csl)

@@ -455,7 +455,7 @@ func (a *API) kustoIngestTable(ctx context.Context, engineDB, table string, tbl 
 	}
 	var b strings.Builder
 	b.WriteString(".create-merge table ")
-	b.WriteString(table)
+	b.WriteString(kustoQuoteIdent(table))
 	b.WriteString(" (")
 	for i, name := range cols {
 		if i > 0 {
@@ -471,7 +471,7 @@ func (a *API) kustoIngestTable(ctx context.Context, engineDB, table string, tbl 
 	}
 	var rows strings.Builder
 	rows.WriteString(".ingest inline into table ")
-	rows.WriteString(table)
+	rows.WriteString(kustoQuoteIdent(table))
 	rows.WriteString(" <|")
 	for _, row := range tbl.Rows {
 		rows.WriteByte('\n')
@@ -515,6 +515,13 @@ func (a *API) kustoMgmt(ctx context.Context, engineDB, csl string) error {
 // exactly the fault that let `kind` through. Quoting unconditionally means the
 // emitter has no list to be wrong about. kustoTableNameOK still runs first,
 // and it is what keeps a `'` or a `]` from ever reaching these brackets.
+//
+// The destination TABLE name goes through here too. It reaches the emitter
+// from bindEventstreamDestination against that same character class, so
+// `{"table": "kind"}` binds and emits the same refusal. That ['name'] is
+// accepted in that position — and that it names the SAME entity a bare name
+// does, which is what makes quoting every drain's table safe — is witnessed in
+// e2e/rti/driver.py, not taken from the doc.
 func kustoQuoteIdent(name string) string { return "['" + name + "']" }
 
 func kustoTableNameOK(name string) bool {

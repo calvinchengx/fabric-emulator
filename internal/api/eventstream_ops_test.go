@@ -451,7 +451,7 @@ func TestEventstreamEventhouseDestNamedDatabase(t *testing.T) {
 	engineDB := engineDatabaseName(db.ID)
 	var ingested bool
 	for _, c := range engine.sent() {
-		if strings.HasPrefix(c.csl, ".ingest inline into table clicks") && c.db == engineDB {
+		if strings.HasPrefix(c.csl, ".ingest inline into table ['clicks']") && c.db == engineDB {
 			ingested = true
 			if !strings.Contains(c.csl, `"a,b"`) {
 				t.Fatalf("csv quoting: %s", c.csl)
@@ -484,7 +484,7 @@ func TestEventstreamEventhouseDestOmitsWorkspace(t *testing.T) {
 	engineDB := engineDatabaseName(db.ID)
 	var ingested bool
 	for _, c := range engine.sent() {
-		if strings.HasPrefix(c.csl, ".ingest inline into table clicks") && c.db == engineDB {
+		if strings.HasPrefix(c.csl, ".ingest inline into table ['clicks']") && c.db == engineDB {
 			ingested = true
 		}
 	}
@@ -650,7 +650,7 @@ func TestEventstreamEventhouseAndLakehouseTogether(t *testing.T) {
 	engineDB := engineDatabaseName(db.ID)
 	var ingested bool
 	for _, c := range engine.sent() {
-		if strings.HasPrefix(c.csl, ".ingest inline into table clicks") && c.db == engineDB {
+		if strings.HasPrefix(c.csl, ".ingest inline into table ['clicks']") && c.db == engineDB {
 			ingested = true
 		}
 	}
@@ -718,10 +718,10 @@ func TestEventstreamKustoMgmtAndIngest(t *testing.T) {
 	}
 	var created, ingested bool
 	for _, c := range engine.sent() {
-		if strings.Contains(c.csl, ".create-merge table t") && strings.Contains(c.csl, "['n']:real") {
+		if strings.Contains(c.csl, ".create-merge table ['t']") && strings.Contains(c.csl, "['n']:real") {
 			created = true
 		}
-		if strings.HasPrefix(c.csl, ".ingest inline into table t") {
+		if strings.HasPrefix(c.csl, ".ingest inline into table ['t']") {
 			ingested = true
 			if !strings.Contains(c.csl, `"a""b"`) {
 				t.Fatalf("quoted: %s", c.csl)
@@ -774,13 +774,43 @@ func TestEventstreamIngestQuotesColumnNames(t *testing.T) {
 	}
 	var create string
 	for _, c := range engine.sent() {
-		if strings.HasPrefix(c.csl, ".create-merge table Events") {
+		if strings.HasPrefix(c.csl, ".create-merge table ['Events']") {
 			create = c.csl
 		}
 	}
-	want := ".create-merge table Events (['kind']:string, ['where']:string, " +
+	want := ".create-merge table ['Events'] (['kind']:string, ['where']:string, " +
 		"['DeviceId']:string, ['n']:real)"
 	if create != want {
 		t.Errorf("emitted\n\t%q\nwant\n\t%q", create, want)
+	}
+}
+
+// TestEventstreamIngestQuotesTableName is the same argument for the other name
+// in those commands, which arrives from the destination bind rather than from
+// the events: `{"table": "kind"}` passes kustoTableNameOK exactly as a `kind`
+// column does.
+//
+// Text is the whole witness here, unlike the columns above: the fake engine's
+// gate reads schema groups only, so a bare keyword TABLE name goes through it
+// unremarked — as it did through kustainer, with a 400.
+func TestEventstreamIngestQuotesTableName(t *testing.T) {
+	a, _ := newAPI(t)
+	engine := attachEngine(t, a)
+
+	tbl := &warehouse.Table{Columns: []string{"n"}, Rows: [][]any{{1.0}}}
+	if err := a.kustoIngestTable(context.Background(), "fabricdb", "kind", tbl); err != nil {
+		t.Fatalf("keyword table name: %v", err)
+	}
+	var create, ingest bool
+	for _, c := range engine.sent() {
+		if c.csl == ".create-merge table ['kind'] (['n']:real)" {
+			create = true
+		}
+		if strings.HasPrefix(c.csl, ".ingest inline into table ['kind'] <|") {
+			ingest = true
+		}
+	}
+	if !create || !ingest {
+		t.Fatalf("the table name went out unquoted: %+v", engine.sent())
 	}
 }
