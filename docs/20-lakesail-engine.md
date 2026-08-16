@@ -119,7 +119,7 @@ touches; every claim below is CI-verified against the emulator:
 | Time travel (`option("versionAsOf", n)`) | ✅ (SQL `VERSION AS OF` is a Sail gap) | e2e probe |
 | `MERGE INTO` | ✅ registered table (`CREATE TABLE … USING delta LOCATION`); path-based ``delta.`…` `` through delta-rs on the Livy path. Bare Sail still cannot plan a local-path MERGE (`e2e/sail` is the engine witness) | e2e probe + engine-matrix |
 | `sc` / RDD API / `spark._jvm` | ⚠️ **measured subset emulated** — Spark Connect has no SparkContext on any engine, so the agent binds a local facade for exactly the idioms Fabric code was measured to use: `setLogLevel`, the `parallelize` chain, and `org.apache.log4j`. Everything else raises a pointer. It is eager and LOCAL and refuses above 10,000 elements rather than pose as distributed. **Fidelity inversion vs real Fabric** remains for the rest of the API — `mapPartitions` and friends work in production and refuse here — and the **JVM overlay** (`docker-compose.spark-jvm.yml`) restores the whole thing. See [50-rdd-usage-capture.md](50-rdd-usage-capture.md) for the sweep that sized this | agent facade + unit tests; contract verified against real Spark in `e2e/spark-jvm` |
-| `createDataFrame(local_rows)` | ✅ works, with nothing preset — the pinned engine serves `localRelationSizeLimit` as a byte count. An earlier engine served it as the string `'3GB'`, which pyspark's `int()` rejected, and every agent and runner carried a preset to paper over it | e2e (notebook fixture runs unmodified) |
+| `createDataFrame(local_rows)` | ✅ works — the pinned engine serves `localRelationSizeLimit` as a byte count and needs nothing. Older Sail serves the string `'3GB'`, which pyspark's `int()` rejects, so the agent reads the value and rewrites it **to the same size** when it will not parse (`connectconf.py`); it never presets a constant, which would cap the limit on engines that don't need it | e2e (notebook fixture runs unmodified) |
 | DML row-count results (`INSERT`/`MERGE` envelopes) | ⚠️ DataFusion reports counts as `uint64`, which Arrow conversion to Spark clients rejects — the statement HAS executed; the Livy SQL agent absorbs this specific error as an empty result | dbt e2e finding |
 | Structured streaming, `OPTIMIZE`/`VACUUM`, Java/Scala UDFs | ⚠️ streaming **sinks** (delta / parquet / memory) are one announced micro-batch on the Livy path (`limit(n).collect()` + batch write; no checkpoint). OSS `format("kafka")` (source and sink) and the Eventstream notebook API are the same class of wrap (driver/emulator consume/produce, Kafka schema, bytes on Sail). `OPTIMIZE`/`VACUUM` via delta-rs. **Java/Scala UDFs and checkpointed streaming are the JVM overlay** | executable probes + engine-matrix |
 | CDF options, `spark.jars` | ⚠️ on **bare Sail** CDF `readChangeFeed` is accepted but inert (`e2e/sail`). Through the Livy agent the notebook API (write enable + read) is intercepted via delta-rs, announced, and materialised. JAR config is stored but there is no JVM classloader. **JARs real on the JVM overlay** | executable divergence probes + engine-matrix |
@@ -341,3 +341,38 @@ Sail genuinely does not implement them. The **middle column** is what the Livy
 agent installs, and those two plus MERGE, DESCRIBE, CDF, JSON `multiLine`,
 and durable streaming sinks (one micro-batch) are ✅ there. Java/Scala UDFs
 and `sc` / `_jvm` stay red in the middle.
+
+### The agent is shared, so its SQL surface is a contract
+
+`emulator-spark-agent` is built and published from this repo and consumed by
+**databricks-emulator**, which pulls the same image by digest. Its Warehouse SQL
+path reaches `delta_ops` through statement shapes this repo's own witnesses
+never send, and nothing in CI stood between a change here and a break there: the
+image publishes on tag, and the consumer finds out on upgrade.
+
+That gap cost four releases. `_CREATE_DELTA_LOCATION` required `USING` to sit
+directly against the table name — the shape dbt-fabricspark emits — so every
+witness here was green while
+
+```sql
+CREATE TABLE events (id INT, name STRING) USING delta LOCATION '…'
+```
+
+went unmatched, the location went unrecorded, and the MERGE two statements later
+fell through to `resolve()`'s `DESCRIBE DETAIL` and died in Sail's parser with
+`found DETAIL at 9:15` — a parse error pointing at a statement the user never
+wrote. Writing the shapes down found a second, latent one in this repo:
+`PARTITIONED BY` before `LOCATION` was silently unrecorded too.
+
+`python/tests/test_agent_consumer_contract.py` is the guard. Each row is a
+statement shape a named consumer actually sends, cited to the file it comes
+from, with the answer the agent owes it — matched to a handler, or recorded as a
+location. It is a unit test with no engine, so it costs milliseconds and runs on
+every PR, and it fails in the repo that would *ship* the regression rather than
+the repo that would suffer it.
+
+**Add a row when a consumer starts emitting a new shape.** The failure this
+catches has no symptom at the point it happens: an unmatched statement raises
+nothing, and the location is simply never recorded. What the test cannot prove
+is that the statement *executes* — that needs an engine, and stays with each
+repo's witnesses.

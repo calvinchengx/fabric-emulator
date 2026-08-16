@@ -586,6 +586,24 @@ def main():
                            "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
     spark = builder.getOrCreate()
 
+    # The agent normalises byte-size confs per session, so the column that
+    # claims to measure the agent's runtime does too. Deliberately keyed to the
+    # `/livy` mount rather than to `remote`: only the sail+delta-rs service
+    # mounts the agent package, and the BARE sail column must stay unaided —
+    # normalising there would report the emulator's behaviour as the engine's.
+    # A no-op against an engine already serving a byte count; on one serving
+    # `'3GB'` it is what stops pyspark's `int()` from failing. Session-wide
+    # rather than per-probe: the delta-rs interception returns its result *as* a
+    # createDataFrame, so OPTIMIZE, VACUUM and MERGE all reach it long after the
+    # operation itself has succeeded.
+    if remote:
+        sys.path.insert(0, "/livy")
+        try:
+            import connectconf
+            connectconf.apply(spark)
+        except ImportError:
+            pass  # bare-sail service mounts probes.py alone; see above
+
     # The "sail+delta-rs" column measures the emulator's actual runtime, not a
     # bare engine: the Livy agent installs this same wrapper for every Sail
     # session. Importing the agent's module (rather than re-implementing it)

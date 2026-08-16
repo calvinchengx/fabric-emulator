@@ -107,17 +107,36 @@ def known_location(name):
     return _LOCATIONS.get(tail)
 
 
-# CREATE [OR REPLACE] TABLE [IF NOT EXISTS] name USING delta LOCATION 'path'
+# CREATE [OR REPLACE] TABLE [IF NOT EXISTS] name [(cols)] USING delta
+#   [clauses] LOCATION 'path'
 #
 # Not an interception: Sail (and the JVM) execute this themselves. We record
 # the LOCATION the statement named so a later DESCRIBE / OPTIMIZE of that name
 # can find the table without asking Sail for DESCRIBE DETAIL, which it does
 # not implement. Recording a path the user wrote is not a guess; USING parquet
 # is left alone.
+#
+# Both optional groups are load-bearing, and their absence was a live break.
+# This pattern once required `USING` to sit directly against the table name,
+# which is the shape dbt-fabricspark emits — so fabric-emulator's own witnesses
+# never noticed that the far more ordinary
+#
+#     CREATE TABLE events (id INT, name STRING) USING delta LOCATION '…'
+#
+# does not match. databricks-emulator's Warehouse SQL emits exactly that, the
+# location went unrecorded, and the next MERGE against the name fell through to
+# resolve()'s DESCRIBE DETAIL and died in Sail's parser. A missed record here is
+# invisible: nothing fails until some later statement needs the location.
+#
+# The column list is matched one paren level deep so `DECIMAL(10,2)` and
+# `VARCHAR(255)` stay inside it. `.*?` covers the clauses Spark allows between
+# USING and LOCATION (OPTIONS, PARTITIONED BY, COMMENT, TBLPROPERTIES); a CTAS
+# carrying a LOCATION cannot reach here, because match() claims it first.
 _CREATE_DELTA_LOCATION = re.compile(
     r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
-    r"(?P<target>[\w.`]+)\s+"
-    r"USING\s+delta\s+"
+    r"(?P<target>[\w.`]+)\s*"
+    r"(?:\((?:[^()]|\([^()]*\))*\)\s*)?"
+    r"USING\s+delta\b.*?"
     r"LOCATION\s+'(?P<location>[^']+)'",
     re.IGNORECASE | re.DOTALL)
 
@@ -777,6 +796,14 @@ def install(spark, storage_options=None):
         wrong-but-valid config. A cache miss degrading silently to a route Sail
         does not implement would be the same mistake again, so it announces
         itself before it tries.
+
+        The fallback also OWNS its failure. Sail has no DETAIL in its DESCRIBE
+        grammar, so on the one engine this module is installed for, the query
+        below is expected to raise — and an uncaught engine error surfaces as
+        `found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', ...`, a parse
+        error pointing at column 9 of a statement the user never wrote. Whoever
+        reads that goes looking at their own MERGE. The cause is a table this
+        process has no location for, and the error has to say so.
         """
         loc = known_location(name)
         if loc:
@@ -785,7 +812,17 @@ def install(spark, storage_options=None):
               f"DESCRIBE DETAIL, which Sail does not implement — if this fails, "
               f"the table was not registered through the emulator",
               file=sys.stderr, flush=True)
-        rows = original_sql(f"DESCRIBE DETAIL {name}").collect()
+        try:
+            rows = original_sql(f"DESCRIBE DETAIL {name}").collect()
+        except DeltaOpError:
+            raise
+        except Exception as err:  # noqa: BLE001 — any engine refusal, same cause
+            raise DeltaOpError(
+                f"cannot resolve {name!r} to a table location: it was not "
+                f"registered through the emulator, and the engine refused "
+                f"DESCRIBE DETAIL ({type(err).__name__}: {err}). Address the "
+                f"table by path (delta.`<uri>`), or create it with an explicit "
+                f"LOCATION so the emulator records where it lives.") from err
         if not rows:
             # Would have been an IndexError naming this file rather than the
             # cause. See the ᵉ row in docs/engine-matrix.md: an engine can answer
