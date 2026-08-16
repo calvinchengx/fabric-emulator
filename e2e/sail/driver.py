@@ -132,10 +132,14 @@ print("connected to sail")
 
 url = "az://sailws/lake.Lakehouse/Tables/events"
 
-# Rows via SQL VALUES, not createDataFrame: pyspark 4.2's local-relation path
-# asks the server for spark.sql.session.localRelationSizeLimit and chokes on
-# Sail 0.6.6's "3GB" string. VALUES keeps everything server-side (and is the
-# better engine witness anyway).
+# Rows via SQL VALUES, not createDataFrame: VALUES keeps everything
+# server-side, so the engine builds the rows. A local relation would ship
+# them from the client and prove less about the engine under test.
+#
+# This was also a workaround once, for an engine that served
+# spark.sql.session.localRelationSizeLimit in a form the client could not
+# parse. That no longer applies on the pinned engine — createDataFrame here
+# was measured working — so the witness argument is the whole reason now.
 step("delta write (overwrite, 3 rows)")
 df = spark.sql(
     "SELECT * FROM VALUES (1,'signup','eu'), (2,'purchase','us'), (3,'signup','us')"
