@@ -145,7 +145,7 @@ jobs:
   # The wheels the standalone acceptance repo installs: the fixture generators
   # and `fabric-target`.
   #
-  # `contoso-data-platform` runs this medallion against the RELEASED image, and
+  # `contoso-fabric-platform` runs this medallion against the RELEASED image, and
   # its assertions must be the same numbers the in-tree examples assert. One
   # generator, published, is what makes that guarantee structural rather than
   # hopeful — two copies differing by a single RNG draw would each pass their
