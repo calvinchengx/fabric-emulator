@@ -94,14 +94,43 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+  # The consumer contract, executed before anything is pushed.
+  #
+  # This is the gate that was missing. The agent is published HERE and consumed
+  # by databricks-emulator, and a break in the path only IT exercises shipped in
+  # four releases with this repo's suite green throughout: fabric-emulator's
+  # witnesses address Delta by path, the consumer addresses it by name, and the
+  # broken code was reachable only by name.
+  #
+  # It runs the by-name shapes against the agent built from the very Dockerfile
+  # the next job publishes, so a regression fails in the repo that would SHIP it
+  # rather than the repo that would suffer it. It also covers the class the unit
+  # contract cannot see at all: `createDataFrame` against a live engine, which
+  # is where the `'3GB'` conf assumption died without any shape being wrong.
+  agent-contract:
+    name: Consumer SQL shapes execute on the built agent
+    needs: [fabric-qualification, make-targets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/agent-contract/run.py
+
   # The compute sidecars ship as images too, so a consumer can PIN them instead of
   # rebuilding from a source tree. Without this, `EMULATOR_VERSION=x.y.z` pinned
   # the emulator but left sail and the statement agent built from whatever the
   # local checkout happened to be — the two components that decide how Spark
   # actually behaves.
+  #
+  # `needs: agent-contract` is the pre-publish gate: a tag that fails the
+  # consumer contract must not reach GHCR, because once it does the only thing
+  # standing between it and a consumer is that consumer's own upgrade.
   compute-images:
     name: Compute sidecar images → GHCR
-    needs: [fabric-qualification, make-targets]
+    needs: [fabric-qualification, make-targets, agent-contract]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
