@@ -565,6 +565,43 @@ func TestDAXPhase3DesktopBlankEdges(t *testing.T) {
 	}
 }
 
+// TestDAXRowConstructor pins Desktop ROW traps the numeric golden harness
+// cannot store: a BLANK cell is kept (SUMMARIZECOLUMNS would drop the
+// group), two columns, and the name/arity refusals.
+func TestDAXRowConstructor(t *testing.T) {
+	m, d := loadModel(t), loadData(t)
+
+	res, err := Evaluate(m, d, `EVALUATE ROW("v", BLANK())`)
+	if err != nil {
+		t.Fatalf("ROW(BLANK): %v", err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0]["[v]"] != nil {
+		t.Errorf("ROW(\"v\", BLANK()) = %v, want one row with BLANK", res.Rows)
+	}
+
+	res, err = Evaluate(m, d, `EVALUATE ROW("a", 1, "b", 2)`)
+	if err != nil {
+		t.Fatalf("ROW two columns: %v", err)
+	}
+	if len(res.Rows) != 1 || toF(res.Rows[0]["[a]"]) != 1 || toF(res.Rows[0]["[b]"]) != 2 {
+		t.Errorf("ROW(\"a\", 1, \"b\", 2) = %v, want [a]=1 [b]=2", res.Rows)
+	}
+
+	for _, q := range []string{
+		`EVALUATE ROW()`,
+		`EVALUATE ROW("x")`,
+		`EVALUATE ROW(1, 1)`,
+		`EVALUATE ROW("a", 1, "b")`,
+		`EVALUATE ROW("a", 1, 2, 3)`,
+		`EVALUATE ROW("a", 1, "a", 2)`,
+		`EVALUATE ROW("", 1)`,
+	} {
+		if _, err := Evaluate(m, d, q); err == nil {
+			t.Errorf("%q: expected error", q)
+		}
+	}
+}
+
 func TestDAXPhase3Helpers(t *testing.T) {
 	sun := time.Date(2024, 8, 18, 0, 0, 0, 0, time.UTC) // Sunday
 	mon := time.Date(2024, 8, 19, 0, 0, 0, 0, time.UTC)

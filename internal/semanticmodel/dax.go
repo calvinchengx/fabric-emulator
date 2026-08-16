@@ -10,7 +10,7 @@ import (
 )
 
 // A bounded DAX evaluator — the subset the golden fixture (and the SemPy/GX
-// tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, measure
+// tutorial's four assets) needs: `EVALUATE <table>`, `SUMMARIZECOLUMNS`, `ROW`, measure
 // references, `SUM`, `DIVIDE`, `COUNTROWS`, `IF`, `ACOS`, `ABS`, `ROUND`, `LOG`, `LOG10`, `INT`, `SWITCH`, `DISTINCTCOUNT`, `MAX`, `MIN`, `AVERAGE`, `COUNT`, `POWER`, `SQRT`, `MOD`, `FLOOR`, `CEILING`, `LN`, `EXP`, `SIGN`, `ASIN`, `ATAN`, `PI`, `SIN`, `COS`, `TAN`, `DEGREES`, `RADIANS`, `DATE`, `YEAR`, `MONTH`, `DAY`, `TIME`, `HOUR`, `MINUTE`, `SECOND`, `WEEKDAY`, `WEEKNUM`, `EOMONTH`, `EDATE`, `TRUNC`, `QUOTIENT`, `BLANK`, `ISBLANK`, the infix operators
 // (`+ - * / &` and the comparisons) and single-hop relationship filter
 // propagation. Not full DAX (no CALCULATE filter modifiers, no time-intelligence,
@@ -128,6 +128,9 @@ type summarize struct {
 	groups  []columnRef
 	outputs []outputCol
 }
+type rowCtor struct {
+	outputs []outputCol
+}
 type outputCol struct {
 	name string
 	expr scalarExpr
@@ -196,6 +199,9 @@ func (p *daxParser) parseTableExpr() (tableExpr, error) {
 	if t.kind == tIdent && strings.EqualFold(t.text, "SUMMARIZECOLUMNS") {
 		return p.parseSummarize()
 	}
+	if t.kind == tIdent && strings.EqualFold(t.text, "ROW") {
+		return p.parseRow()
+	}
 	if t.kind == tqTable || t.kind == tIdent {
 		p.next()
 		return tableRef{name: t.text}, nil
@@ -240,6 +246,61 @@ func (p *daxParser) parseSummarize() (tableExpr, error) {
 		}
 		if sep.text != "," {
 			return nil, fmt.Errorf("expected ',' or ')' in SUMMARIZECOLUMNS, got %q", sep.text)
+		}
+	}
+}
+
+// parseRow parses ROW("name", <expr> [, "name", <expr>]...). Desktop requires
+// at least one name/expr pair, a constant non-empty string name, and unique
+// names. A missing expr after a name is the "must have the scalar expression"
+// refusal, not a trailing-token parse error.
+func (p *daxParser) parseRow() (tableExpr, error) {
+	p.next() // ROW
+	if o := p.next(); o == nil || o.text != "(" {
+		return nil, fmt.Errorf("ROW expects '('")
+	}
+	var r rowCtor
+	seen := map[string]bool{}
+	for {
+		t := p.peek()
+		if t == nil {
+			return nil, fmt.Errorf("unterminated ROW")
+		}
+		if t.text == ")" {
+			p.next()
+			if len(r.outputs) == 0 {
+				return nil, fmt.Errorf("ROW expects at least 2 arguments")
+			}
+			return r, nil
+		}
+		if t.kind != tString {
+			return nil, fmt.Errorf("ROW expects a column name as argument number %d", 2*len(r.outputs)+1)
+		}
+		if t.text == "" {
+			return nil, fmt.Errorf("ROW column name must be a constant non-empty string")
+		}
+		if seen[t.text] {
+			return nil, fmt.Errorf("ROW cannot add column [%s], as it has the same name as an existing column", t.text)
+		}
+		p.next()
+		if c := p.next(); c == nil || c.text != "," {
+			return nil, fmt.Errorf("ROW column %q must have a scalar expression", t.text)
+		}
+		expr, err := p.parseScalar()
+		if err != nil {
+			return nil, err
+		}
+		seen[t.text] = true
+		r.outputs = append(r.outputs, outputCol{name: t.text, expr: expr})
+		sep := p.next()
+		if sep == nil {
+			return nil, fmt.Errorf("unterminated ROW")
+		}
+		if sep.text == ")" {
+			return r, nil
+		}
+		if sep.text != "," {
+			return nil, fmt.Errorf("expected ',' or ')' in ROW, got %q", sep.text)
 		}
 	}
 }
@@ -410,8 +471,27 @@ func (e *evalr) table(te tableExpr) (*Result, error) {
 		return e.evalTableRef(t.name)
 	case summarize:
 		return e.evalSummarize(t)
+	case rowCtor:
+		return e.evalRow(t)
 	}
 	return nil, fmt.Errorf("unsupported table expression %T", te)
+}
+
+// evalRow returns one row. Desktop keeps a BLANK cell — SUMMARIZECOLUMNS
+// would drop an all-blank group, which is why the XMLA probe uses ROW.
+func (e *evalr) evalRow(r rowCtor) (*Result, error) {
+	res := &Result{Rows: []map[string]any{{}}}
+	row := res.Rows[0]
+	for _, o := range r.outputs {
+		key := "[" + o.name + "]"
+		res.Columns = append(res.Columns, key)
+		v, err := e.scalar(o.expr)
+		if err != nil {
+			return nil, err
+		}
+		row[key] = v
+	}
+	return res, nil
 }
 
 // evalTableRef returns every row/column of a table (EVALUATE 'Store').
