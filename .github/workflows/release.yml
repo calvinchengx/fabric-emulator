@@ -203,13 +203,28 @@ jobs:
   # run that fails on a missing asset — and reports it as the platform being
   # broken rather than as a race in this workflow.
   #
+  # `image` and `compute-images` for exactly the same reason, one step later.
+  # The wheels are not the only thing the downstream run consumes: its
+  # `set_release.py` repins FABRIC_EMULATOR_VERSION, SAIL_VERSION *and*
+  # SPARK_AGENT_VERSION to the dispatched version, then composes a stack that
+  # pulls all three tags. Waiting only on the wheels announces a release whose
+  # images may not exist yet.
+  #
+  # MEASURED on v0.27.0, which is why this is not a hypothetical ordering
+  # tidy-up. dispatch fired at 14:36:17; the spark-agent image finished pushing
+  # at 14:44:03 — the downstream repo was told to verify a
+  # `fabric-emulator-spark-agent:0.27.0` that did not exist for another 7m46s.
+  # compute-images is reliably last: it builds linux/arm64 under QEMU, so it
+  # outlives `fixtures` by minutes on every release, and this race is the
+  # normal case rather than an unlucky one.
+  #
   # A PAT, because `secrets.GITHUB_TOKEN` is scoped to THIS repository and
   # cannot dispatch into another one. The failure mode if it is missing or
   # expired is silence, which is why the acceptance workflow also runs on a
   # daily schedule — see its own comment.
   dispatch:
     name: Tell contoso-fabric-platform to verify this release
-    needs: fixtures
+    needs: [fixtures, image, compute-images]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
