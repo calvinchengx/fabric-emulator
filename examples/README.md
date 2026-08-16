@@ -182,7 +182,7 @@ The controllable clock, fault injection, schedules, event triggers, and
 put-if-absent (`If-None-Match` — the Delta concurrency primitive).
 
 The fullest demonstration of those is not in this repository at all. The
-[contoso-data-platform](https://github.com/calvinchengx/contoso-data-platform)
+[contoso-fabric-platform](https://github.com/calvinchengx/contoso-fabric-platform)
 consumer drives the clock, creates schedules and Reflex triggers, and implements
 the `FABRIC_TARGET` toggle. The emulator's own examples show a data platform; a
 downstream consumer shows the emulator's fidelity. That is the wrong way round.

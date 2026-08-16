@@ -195,7 +195,7 @@ jobs:
   # expired is silence, which is why the acceptance workflow also runs on a
   # daily schedule — see its own comment.
   dispatch:
-    name: Tell contoso-data-platform to verify this release
+    name: Tell contoso-fabric-platform to verify this release
     needs: fixtures
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -207,7 +207,7 @@ jobs:
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::ACCEPTANCE_DISPATCH_TOKEN is not set — the release " \
                  "shipped but nothing downstream was told. Add a PAT with " \
-                 "'contents: write' on calvinchengx/contoso-data-platform."
+                 "'contents: write' on calvinchengx/contoso-fabric-platform."
             exit 1
           fi
           # The version travels WITH the event. Without it the downstream repo
@@ -215,7 +215,7 @@ jobs:
           # the previous release — and report success for a release nobody
           # tested.
           version="${GITHUB_REF_NAME#v}"
-          gh api repos/calvinchengx/contoso-data-platform/dispatches \
+          gh api repos/calvinchengx/contoso-fabric-platform/dispatches \
             -f event_type=fabric-emulator-release \
             -F "client_payload[version]=$version" \
             -F "client_payload[tag]=${GITHUB_REF_NAME}"
