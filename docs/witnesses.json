@@ -1215,7 +1215,8 @@
       "go:TestMLVViewerCannotDefineOrRefresh",
       "go:TestMLVWrongItemTypeIsRefused",
       "go:TestMLVRefreshUnknownView",
-      "go:TestMLVUnknownLakehouse"
+      "go:TestMLVUnknownLakehouse",
+      "ci:sail"
     ]
   },
   "servicenow-via-restsource": {
