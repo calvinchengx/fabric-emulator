@@ -1,0 +1,116 @@
+# The family chain: fabric-emulator submits a Databricks activity to
+# databricks-emulator, which runs it on the Spark agent, which runs it on Sail.
+#
+# WHY THIS EXISTS. `FABRIC_DATABRICKS_URL` is documented in the README, in
+# docs/04-configuration.md (which names databricks-emulator as the target), in
+# the v0.25.0 notes, and in internal/api/databricksremote.go — and it appeared
+# in ZERO workflows. The parity row grades the Databricks activities
+# "🟢 Real (notebook + python, local or FABRIC_DATABRICKS_URL)". The local half
+# runs on every push. The remote half had never executed anywhere.
+#
+# THE PAT ORDERING, and why run.py brings this up in two phases. Both emulators
+# are distroless, so there is no shell to wait-and-exec with, and
+# databricks-emulator MINTS its admin PAT on first start rather than taking one
+# from the environment. fabric needs that PAT at startup. So run.py starts the
+# databricks side, reads the PAT it wrote to the bind-mounted data dir, and only
+# then starts fabric with it. A wrapper entrypoint would have been neater and is
+# not available on distroless.
+services:
+  entra:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.8.1}
+    user: "0:0"
+    environment:
+      PUBLIC_ORIGIN: "https://entra:8443"
+      PORT: "8443"
+      TLS_ENABLED: "true"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Sail and the agent are built from THIS checkout rather than pulled: the
+  # chain should break when this tree breaks it, which a pinned image would hide.
+  sail:
+    build: { context: ../.., dockerfile: docker/sail/Dockerfile }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 50051), 2).close()"]
+      interval: 3s
+      timeout: 2s
+      retries: 40
+
+  spark-agent:
+    build: { context: ../.., dockerfile: docker/spark-agent/Dockerfile }
+    depends_on:
+      sail:
+        condition: service_healthy
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3)"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  databricks-emulator:
+    image: ghcr.io/calvinchengx/databricks-emulator:${DATABRICKS_EMULATOR_VERSION:-0.2.4}
+    user: "0:0"
+    depends_on:
+      spark-agent:
+        condition: service_healthy
+    environment:
+      DATABRICKS_ADDR: ":8447"
+      DATABRICKS_DATA_DIR: "/data"
+      DATABRICKS_PUBLIC_URL: "https://databricks-emulator:8447"
+      # Without this, run-now fails naming the missing engine rather than
+      # pretending to succeed — which is the behaviour that makes this chain
+      # worth wiring at all.
+      DATABRICKS_SPARK_CONNECT_URL: "http://spark-agent:8099"
+    volumes:
+      - ${DBX_DATA_DIR:-./.dbxdata}:/data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/databricks-emulator", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  fabric:
+    build: { context: ../.., dockerfile: Dockerfile }
+    user: "0:0"
+    depends_on:
+      entra:
+        condition: service_healthy
+      databricks-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":443"
+      FABRIC_DATA_DIR: "/data"
+      FABRIC_ENTRA_ISSUER: "https://entra:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      FABRIC_ENTRA_TLS_INSECURE: "true"
+      # The half that had never run.
+      FABRIC_DATABRICKS_URL: "https://databricks-emulator:8447"
+      FABRIC_DATABRICKS_TOKEN: "${DATABRICKS_PAT:?run.py must read the minted PAT and pass it}"
+      FABRIC_DATABRICKS_TLS_INSECURE: "true"
+    networks:
+      default:
+        aliases: ["api.fabric.microsoft.com", "onelake.dfs.fabric.microsoft.com"]
+
+  client:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: databricks-sdk }
+    depends_on: [fabric, databricks-emulator]
+    volumes:
+      - ./driver.py:/driver.py:ro
+      # The PEM databricks-emulator persists, used as the CA for the SDK. Its
+      # own tlsclient documents this as the way to trust a sibling: point CAFile
+      # at the cert it wrote, rather than skipping verification.
+      - ${DBX_DATA_DIR:-./.dbxdata}/tls/cert.pem:/dbx-ca.pem:ro
+    environment:
+      DBX_CA: "/dbx-ca.pem"
+      DATABRICKS_PAT: "${DATABRICKS_PAT:?}"
+      FABRIC: "https://api.fabric.microsoft.com"
+      DATABRICKS: "https://databricks-emulator:8447"
+      ENTRA: "https://entra:8443"
+    entrypoint: ["python3", "/driver.py"]

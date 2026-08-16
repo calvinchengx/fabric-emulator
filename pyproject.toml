@@ -201,6 +201,15 @@ spark-connect = [
     # GSSAPI handshake: kafka-python imports this at connect time.
     "gssapi>=1.8,<2",
 ]
+# The official Databricks SDK, as the third-party witness for the family chain:
+# fabric submits a Databricks activity to databricks-emulator, and this reads
+# back from the workspace side that a job and a run really exist. A real client
+# with its own expectations, not a generic HTTP call — if our submission shape
+# were wrong, the SDK itself would fail to parse the workspace's answer.
+databricks-sdk = [
+    "databricks-sdk>=0.130,<1",
+    "requests>=2.32,<3",
+]
 dbt-fabric = ["dbt-fabric>=1.11"]
 dbt-fabricspark = ["dbt-fabricspark>=1.13"]
 dbt-duckdb = [

@@ -1269,6 +1269,29 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/pipeline-activities/run.py
 
+  databricks-chain:
+    name: fabric submits to databricks-emulator, the Databricks SDK confirms it (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      # THE FAMILY CHAIN, and the reason it is worth a job of its own:
+      # `FABRIC_DATABRICKS_URL` was documented in the README, in docs/04
+      # (which names databricks-emulator as the target), in the v0.25.0 notes
+      # and in databricksremote.go — and appeared in NO workflow. The parity row
+      # grades the Databricks activities "🟢 Real (notebook + python, local or
+      # FABRIC_DATABRICKS_URL)"; the local half ran on every push and the remote
+      # half had never executed anywhere. This is an unexercised code path
+      # getting exercised, and the witness is the side effect.
+      #
+      # Six services: entra → fabric → databricks → spark-agent → sail, plus the
+      # client. Sail and the agent build from THIS checkout so the chain breaks
+      # when this tree breaks it; a pinned image would hide that.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/databricks-chain/run.py
+
   terraform-fabric:
     name: microsoft/fabric Terraform provider drives Fabric REST (containerized)
     runs-on: ubuntu-latest
