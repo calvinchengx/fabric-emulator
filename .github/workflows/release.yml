@@ -125,11 +125,24 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # The dependency version this image is tagged with, read from the pins
+      # so a pysail bump cannot publish a tag naming the version it no longer
+      # contains. See scripts/image_tags.py.
+      - name: Dependency version for the tag
+        id: dep
+        run: echo "version=$(python3 scripts/image_tags.py ${{ matrix.name }})" >> "$GITHUB_OUTPUT"
+      # Two names during the rename. The new name says what a consumer pins the
+      # image FOR; the old one keeps every existing reference resolving until
+      # they have moved. The old name keeps its release-version tag, because
+      # that is what those references already pin.
       - uses: docker/metadata-action@v6
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}-${{ matrix.name }}
+          images: |
+            ghcr.io/${{ github.repository_owner }}/emulator-${{ matrix.name }}
+            ghcr.io/${{ github.repository }}-${{ matrix.name }}
           tags: |
+            type=raw,value=${{ steps.dep.outputs.version }},enable=true
             type=semver,pattern={{version}}
             type=raw,value=latest
       - uses: docker/build-push-action@v7
