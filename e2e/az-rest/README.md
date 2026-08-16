@@ -44,7 +44,7 @@ Existing 🟢 rows only. The ledger does not grow.
 
 Internal engines, races, and protocols Microsoft's clients never speak:
 pipeline activity interpreters, ForEach/retry/control-flow, `-tsql-strict`,
-`FABRIC_FORCE_LRO`, concurrent Delta overwrite, notebookutils-over-REST
+concurrent Delta overwrite, notebookutils-over-REST
 (real Fabric 404s that path), `runMultiple`, the reference-run lakehouse
 rule, event-trigger firing, materialized-lake-view refresh,
 HDInsight/Databricks/ADX/Functions/Web activities.
@@ -71,6 +71,18 @@ seeds the source and reads the destination over **OneLake**, which is the same
 CLI and the same login with `--resource https://storage.azure.com` instead of
 the Fabric audience. Bytes in, bytes out, or it fails.
 
+`FABRIC_FORCE_LRO` has since left the list too, and for a third variant of the
+same reason. It was listed because the TOGGLE is emulator-only — no tenant has
+a switch that forces the async outcome — which is true and beside the point:
+what the toggle produces is the documented 202 + `Location` + `Retry-After`
+contract, and a client with its own poll loop either follows it or does not.
+`az rest` is the wrong client for it (it returns the 202 and stops, so the
+polling would be this repo's), so the witness lives where a real poll loop
+already exists: `e2e/fabric-cicd` run with the toggle on, as the
+`fabric-cicd-lro` job.
+
 The general lesson for anything else on the list above: separate "the engine is
 internal" from "the contract is internal". The first is a real ceiling. The
-second is often just an untried client.
+second is often just an untried client. And when the second holds, the witness
+does not have to be *this* suite — it belongs wherever a client already speaks
+the contract.

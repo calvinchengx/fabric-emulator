@@ -683,6 +683,29 @@ jobs:
       # verifies the definition round-trips (idempotently).
       - run: uv run --frozen --group fabric-cicd python e2e/fabric-cicd/run.py
 
+  fabric-cicd-lro:
+    name: Real fabric-cicd tool follows the forced 202 outcomes
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      # The SAME publish as the job above, against an emulator started with
+      # FABRIC_FORCE_LRO=1 — so every createItem and getDefinition answers the
+      # other outcome the reference documents, and fabric-cicd's own poll loop
+      # has to follow Location, honour Retry-After and read the operation's
+      # error body. One platform: the toggle is a server behaviour, and the
+      # sibling job already carries the OS matrix for the client itself.
+      - run: FABRIC_FORCE_LRO=1 uv run --frozen --group fabric-cicd python e2e/fabric-cicd/run.py
+
   arm-capacities:
     name: ARM-created capacities appear on GET /v1/capacities
     strategy:
