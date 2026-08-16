@@ -111,17 +111,38 @@ great-expectations = [
     "pandas>=2.2,<4",
 ]
 runtime = []
-# pyspark-client is pinned to what pysail 0.6.6 is built and tested against
-# (its own `test` extra pins 4.1.1). This is not cosmetic: 4.2.0 added
-# `runner_conf`/`eval_conf` to `pyspark.worker.read_udfs`, which Sail calls with
-# the 3-argument form, so every Python UDF died with
+# pyspark-client is pinned to what pysail is built and tested against — read
+# BOTH versions below as one number, and move them together or not at all.
+#
+# The reason is a real outage, not tidiness. pyspark-client 4.2.0 added
+# `runner_conf`/`eval_conf` to `pyspark.worker.read_udfs`; Sail 0.6.x called the
+# 3-argument form, so pairing 0.6.6 with 4.2.0 killed every Python UDF with
 #   TypeError: read_udfs() missing 2 required positional arguments
 # The UDF runs inside the Sail server's embedded CPython, so the *server* image
-# is what must match — but client and server are pinned together so the two
-# never drift apart. Revisit when pysail supports a newer client.
+# is what must match. Client and server are pinned together so they cannot drift.
+#
+# Sail 0.7.0 moved to Spark 4.2 (lakehq/sail#2289) and its own `test` extra now
+# pins pyspark-client==4.2.0, which is why both numbers change together.
+#
+# MEASURED, because the obvious symmetry argument is wrong. Three combinations
+# were run locally against a real Sail server before this landed:
+#   0.7.0 + 4.2.0  UDF round-trips            <- what we ship
+#   0.7.0 + 4.1.1  UDF ALSO round-trips       <- 0.7.0 tolerates the old client
+#   0.6.6 + 4.2.0  dies in `createDataFrame`  <- ValueError: invalid literal
+#                                                for int() with base 10: '3GB'
+# So the constraint is NOT symmetric, and it is worth knowing which way it runs:
+# the OLD server cannot take the NEW client, while the new server takes either.
+# Note also that the 0.6.6 + 4.2.0 break reproduces as a config-parse failure
+# well before any UDF runs — the `read_udfs` TypeError above is a second,
+# later incompatibility on the same pairing, reachable only once you avoid
+# `createDataFrame` (which is why e2e/sail/driver.py builds rows with VALUES).
+#
+# Practical rule: the client may lag the server, but must never lead it. Pin
+# them together anyway — the `test` extra of each pysail release states the
+# client it was built against, and matching it is free.
 sail = [
-    "pysail==0.6.6",
-    "pyspark-client==4.1.1",
+    "pysail==0.7.0",
+    "pyspark-client==4.2.0",
 ]
 # The Sail statement agent also runs Delta maintenance (OPTIMIZE/VACUUM/CDF)
 # through delta-rs, since Sail's planner has no such commands — so the runtime
@@ -131,7 +152,7 @@ sail = [
 # lookalike. requests for the same reason spark-connect carries it: user
 # notebook code calls HTTP APIs, and the agent is where that code runs.
 sail-delta = [
-    "pyspark-client==4.1.1",
+    "pyspark-client==4.2.0",
     "deltalake>=0.23,<2",
     "pandas>=2,<3",
     "pyarrow>=18,<24",
@@ -149,17 +170,20 @@ sail-delta = [
 # APIs, and the statement agent is where that code executes.
 # JupyterLab for the `jupyter` compose profile: a REAL notebook editor shipped
 # rather than one built into the portal (docs/44). pyspark-client is pinned to
-# the SAME 4.1.1 the agent uses — a kernel on a different client than the engine
-# is exactly the drift this profile exists to avoid.
+# the SAME version the agent uses (see the `sail` group above, which explains
+# why that number is really one number shared with the server) — a kernel on a
+# different client than the engine is exactly the drift this profile exists to
+# avoid. Stated as "the same as the agent" rather than repeating the digits,
+# because a restated version is one someone has to remember to update twice.
 jupyter = [
     "jupyterlab>=4.2,<5",
-    "pyspark-client==4.1.1",
+    "pyspark-client==4.2.0",
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",
     "requests>=2.32,<3",
 ]
 spark-connect = [
-    "pyspark-client==4.1.1",
+    "pyspark-client==4.2.0",
     "requests>=2.32,<3",
     "kafka-python>=2.0.2,<3",
     # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
@@ -185,7 +209,7 @@ data-science-loop = [
     "deltalake>=0.23,<2",
     "mlflow>=3.1,<4",
     "pyarrow>=18,<24",
-    "pyspark-client==4.1.1",
+    "pyspark-client==4.2.0",
 ]
 # NOTE: examples/ deliberately do NOT appear here. Each example owns its
 # pyproject.toml + uv.lock so it can be copied out and run standalone, and so

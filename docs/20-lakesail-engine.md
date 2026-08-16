@@ -9,6 +9,22 @@ a complete emulation of the Microsoft Fabric runtime.
 Grounded against Sail **v0.6.6** (local checkout audit; citations are that
 repo's paths).
 
+> **The shipped pin is now v0.7.0; this audit has not been redone against it.**
+> The version numbers below are left at v0.6.6 deliberately rather than
+> search-replaced forward, because every one of them cites a line in a source
+> tree somebody actually read. Rewriting them to 0.7.0 would turn a measurement
+> into a guess that reads exactly like a measurement.
+>
+> What the upgrade DID establish is narrower and worth separating: the
+> engine-matrix and conformance suites pass on 0.7.0, so the behaviours those
+> probes assert still hold. What is unverified is the prose here that no probe
+> covers, and the 0.7.0 changelog touches several of these areas directly
+> (`fix: correct ceil/floor edge-case bugs and ANSI overflow behavior`,
+> `fix: match Spark ordering semantics for agg and window functions`,
+> `feat: add basic checkpoint support`, `feat: share driver server among
+> sessions`). The checkpoint work in particular may move the streaming gap this
+> doc records. Re-audit before citing any un-probed claim below as current.
+
 ## Why
 
 - **The JVM is our heaviest dependency.** The `apache/spark:3.5.5` stack costs
@@ -82,7 +98,7 @@ Compute claims are split into three evidence tiers:
 
 | Tier | Engine | What a pass establishes |
 |---|---|---|
-| Default | Sail 0.6.6 + PySpark Connect 4.2 | Spark Connect DataFrame/SQL behavior, native Delta behavior, OneLake paths, auth, Livy and notebook integration |
+| Default | Sail 0.7.0 + PySpark Connect 4.2 | Spark Connect DataFrame/SQL behavior, native Delta behavior, OneLake paths, auth, Livy and notebook integration |
 | JVM oracle | Apache Spark 3.5.5 + Delta 3.2 + Java 11 | Fabric Runtime 1.3-aligned Spark Core/JVM behavior and Hadoop ABFS compatibility; scheduled/manual, not part of the default stack |
 | Release oracle | real Microsoft Fabric | representative notebook and API conformance in the managed production runtime; secret-gated and run before releases |
 
