@@ -25,12 +25,23 @@ from __future__ import annotations
 
 import base64
 import json
+import ssl
 import sys
 import time
+import urllib.request
+
+FABRIC_BASE = "https://api.fabric.microsoft.com"
 
 sys.path.insert(0, "/")
 import azrest  # noqa: E402  — the az-rest driver, mounted as a module
-from azrest import az_rest, az_rest_raw, fail, onelake_read, onelake_write, v1  # noqa: E402
+from azrest import (  # noqa: E402
+    az_rest,
+    az_rest_raw,
+    fail,
+    onelake_read,
+    onelake_write,
+    v1,
+)  # noqa: E402
 
 
 def new_workspace(name: str) -> str:
@@ -42,6 +53,15 @@ def new_lakehouse(ws: str, name: str) -> str:
                    {"displayName": name, "type": "Lakehouse"})["id"]
 
 
+def define(ws: str, pid: str, content: dict) -> None:
+    """Attach a pipeline definition to an existing item."""
+    az_rest("post", v1(f"workspaces/{ws}/items/{pid}/updateDefinition"),
+            {"definition": {"parts": [{
+                "path": "pipeline-content.json",
+                "payload": base64.b64encode(json.dumps(content).encode()).decode(),
+                "payloadType": "InlineBase64"}]}})
+
+
 def run_pipeline(ws: str, name: str, content: dict) -> list[dict]:
     """Create → define → run → wait → return the activity runs.
 
@@ -51,11 +71,7 @@ def run_pipeline(ws: str, name: str, content: dict) -> list[dict]:
     """
     pid = az_rest("post", v1(f"workspaces/{ws}/items"),
                   {"displayName": name, "type": "DataPipeline"})["id"]
-    az_rest("post", v1(f"workspaces/{ws}/items/{pid}/updateDefinition"),
-            {"definition": {"parts": [{
-                "path": "pipeline-content.json",
-                "payload": base64.b64encode(json.dumps(content).encode()).decode(),
-                "payloadType": "InlineBase64"}]}})
+    define(ws, pid, content)
     az_rest_raw("post", v1(f"workspaces/{ws}/items/{pid}/jobs/instances?jobType=Pipeline"),
                 body="{}", headers=["Content-Type=application/json"])
 
@@ -207,11 +223,7 @@ def check_validation(ws: str) -> None:
         {"name": "Wait", "type": "Validation", "typeProperties": {
             "dataset": {"itemId": lh, "path": "Files/in/never-written.csv"},
             "timeout": "00:00:02"}}]}}
-    az_rest("post", v1(f"workspaces/{ws}/items/{pid}/updateDefinition"),
-            {"definition": {"parts": [{
-                "path": "pipeline-content.json",
-                "payload": base64.b64encode(json.dumps(absent).encode()).decode(),
-                "payloadType": "InlineBase64"}]}})
+    define(ws, pid, absent)
     az_rest_raw("post", v1(f"workspaces/{ws}/items/{pid}/jobs/instances?jobType=Pipeline"),
                 body="{}", headers=["Content-Type=application/json"])
     for _ in range(60):
@@ -227,6 +239,223 @@ def check_validation(ws: str) -> None:
     fail(f"the absent-data pipeline never reached a terminal state: {states}")
 
 
+def names_of(runs: list[dict]) -> list[str | None]:
+    """`str | None`, not `str`: an activity record without a name is a real
+    shape the checker is right to insist on, and silently dropping it would
+    make a run look shorter than it was."""
+    return [r.get("activityName") for r in runs]
+
+
+def check_execute_pipeline(ws: str) -> None:
+    print("-- ExecutePipeline: the CHILD's effect is what proves it ran")
+    src, dst = new_lakehouse(ws, "ep-src"), new_lakehouse(ws, "ep-dst")
+    onelake_write(f"{ws}/{src}/Files/in", "carried")
+
+    # The child is referenced BY NAME, so the parent has to resolve it. Its
+    # effect is a byte move, not a status: a parent that reported Completed
+    # having invoked nothing would pass any check that read only the parent.
+    child_id = az_rest("post", v1(f"workspaces/{ws}/items"),
+                       {"displayName": "worker", "type": "DataPipeline"})["id"]
+    define(ws, child_id, {"properties": {"activities": [
+        {"name": "Move", "type": "Copy", "typeProperties": {
+            "source": {"location": {"itemId": src, "path": "Files/in"}},
+            "sink": {"location": {"itemId": dst, "path": "Files/out"}}}}]}})
+
+    run_pipeline(ws, "parent", {"properties": {"activities": [
+        {"name": "Call", "type": "ExecutePipeline",
+         "typeProperties": {"pipeline": {"referenceName": "worker"}}}]}})
+    if onelake_read(f"{ws}/{dst}/Files/out") != "carried":
+        fail("the child pipeline's Copy never landed — ExecutePipeline reported "
+             "success without invoking it")
+    print("   parent → worker by name → bytes at the child's sink")
+
+
+def check_foreach(ws: str) -> None:
+    print("-- ForEach: every item runs, sequential and parallel alike")
+    for seq, batch in ((True, None), (False, 3)):
+        tp = {"items": "@createArray('a','b','c')", "isSequential": seq,
+              "activities": [{"name": "Body", "type": "SetVariable", "typeProperties": {
+                  "variableName": "seen", "value": "@toUpper(item())"}}]}
+        if batch:
+            tp["batchCount"] = batch
+        runs = run_pipeline(ws, f"pl-foreach-{'seq' if seq else 'par'}", {"properties": {
+            "variables": {"seen": {"type": "String"}}, "activities": [
+                {"name": "loop", "type": "ForEach", "typeProperties": tp}]}})
+        bodies = [n for n in names_of(runs) if n == "Body"]
+        # THREE iterations, not one: a ForEach that ran its body once and
+        # reported Completed is the failure this counts against.
+        if len(bodies) != 3:
+            fail(f"isSequential={seq}: body ran {len(bodies)}x, want 3 — runs={names_of(runs)}")
+    print("   3 iterations both sequential and with batchCount=3")
+
+
+def check_control_flow(ws: str) -> None:
+    print("-- Control flow: only the taken branch runs, and Until terminates")
+    runs = run_pipeline(ws, "pl-if-switch", {"properties": {
+        "parameters": {"n": {"type": "Integer", "defaultValue": 10},
+                       "mode": {"type": "String", "defaultValue": "b"}},
+        "variables": {"i": {"type": "Integer", "defaultValue": 0}},
+        "activities": [
+            {"name": "branch", "type": "IfCondition", "typeProperties": {
+                "expression": {"value": "@greater(pipeline().parameters.n, 5)",
+                               "type": "Expression"},
+                "ifTrueActivities": [{"name": "big", "type": "SetVariable",
+                                      "typeProperties": {"variableName": "i", "value": "1"}}],
+                "ifFalseActivities": [{"name": "small", "type": "SetVariable",
+                                       "typeProperties": {"variableName": "i", "value": "2"}}]}},
+            {"name": "sw", "type": "Switch", "typeProperties": {
+                "on": {"value": "@pipeline().parameters.mode", "type": "Expression"},
+                "cases": [
+                    {"value": "a", "activities": [{"name": "ca", "type": "SetVariable",
+                     "typeProperties": {"variableName": "i", "value": "3"}}]},
+                    {"value": "b", "activities": [{"name": "cb", "type": "SetVariable",
+                     "typeProperties": {"variableName": "i", "value": "4"}}]}],
+                "defaultActivities": [{"name": "cd", "type": "SetVariable",
+                                       "typeProperties": {"variableName": "i", "value": "5"}}]}},
+        ]}})
+    seen = names_of(runs)
+    # The NEGATIVE half carries the claim: a runner that executed every branch
+    # would satisfy "big ran" and "cb ran" while being completely wrong.
+    for taken, skipped in (("big", "small"), ("cb", "ca"), ("cb", "cd")):
+        if taken not in seen:
+            fail(f"{taken} did not run: {seen}")
+        if skipped in seen:
+            fail(f"{skipped} ran too — the untaken branch was executed: {seen}")
+
+    runs = run_pipeline(ws, "pl-until", {"properties": {
+        "variables": {"i": {"type": "Integer", "defaultValue": 0}},
+        "activities": [{"name": "until", "type": "Until", "typeProperties": {
+            "expression": {"value": "@greaterOrEquals(variables('i'), 3)", "type": "Expression"},
+            "activities": [{"name": "inc", "type": "SetVariable", "typeProperties": {
+                "variableName": "i", "value": "@add(variables('i'),1)"}}]}}]}})
+    incs = [n for n in names_of(runs) if n == "inc"]
+    if len(incs) != 3:
+        fail(f"Until ran its body {len(incs)}x, want exactly 3 before the "
+             f"condition held: {names_of(runs)}")
+    print("   IfCondition and Switch took one branch each; Until stopped at 3")
+
+
+def check_retry_policy(ws: str) -> None:
+    print("-- Retry policy: the attempts are real and recorded once")
+    pid = az_rest("post", v1(f"workspaces/{ws}/items"),
+                  {"displayName": "pl-retry", "type": "DataPipeline"})["id"]
+    define(ws, pid, {"properties": {"activities": [
+        {"name": "RunNb", "type": "TridentNotebook", "policy": {"retry": 2},
+         "typeProperties": {"notebookId": "missing"}}]}})
+    az_rest_raw("post", v1(f"workspaces/{ws}/items/{pid}/jobs/instances?jobType=Pipeline"),
+                body="{}", headers=["Content-Type=application/json"])
+    inst = None
+    for _ in range(60):
+        got = az_rest("get", v1(f"workspaces/{ws}/items/{pid}/jobs/instances")).get("value") or []
+        inst = next((r for r in got if r.get("status") in ("Completed", "Failed")), None)
+        if inst:
+            break
+        time.sleep(0.5)
+    if not inst:
+        fail("the retry pipeline never reached a terminal state")
+    if inst["status"] != "Failed":
+        fail(f"an activity pointing at a missing notebook reported {inst['status']}")
+    detail = az_rest("post", v1(f"workspaces/{ws}/items/{pid}/jobs/instances/"
+                                f"{inst['id']}/queryactivityruns"), {}, allow_error=True)
+    runs = detail.get("value") or []
+    # ONE record carrying retryAttempt=2, not three records: the retry is a
+    # property of the attempt, and three rows would misreport the history.
+    if len(runs) != 1:
+        fail(f"expected 1 activity record after retries, got {len(runs)}: {names_of(runs)}")
+    if runs[0].get("retryAttempt") != 2:
+        fail(f"retryAttempt = {runs[0].get('retryAttempt')!r}, want 2")
+    print("   job Failed, one record, retryAttempt=2")
+
+
+def check_web_and_webhook(ws: str) -> None:
+    print("-- Web + WebHook: a real call, and a park that only a callback releases")
+    # Plain HTTP to a real service, not the emulator: see target.py for why.
+    runs = run_pipeline(ws, "pl-web", {"properties": {"activities": [
+        {"name": "Ping", "type": "WebActivity", "typeProperties": {
+            "url": "http://target:8080/ping.json", "method": "GET"}}]}})
+    out = output_of(runs, "Ping")
+    body = out.get("body") if isinstance(out.get("body"), dict) else out
+    if (body or {}).get("pong") is not True:
+        fail(f"the Web activity's output does not carry the target's response: {out}")
+    print("   Web: GET /ping.json → pong=true in the activity output")
+
+    # WebHook. The receiver answers 200 and does NOT call back, so the activity
+    # must PARK. That the job is still running is half the claim; the other half
+    # is that our callback releases it and its body reaches the output.
+    pid = az_rest("post", v1(f"workspaces/{ws}/items"),
+                  {"displayName": "pl-webhook", "type": "DataPipeline"})["id"]
+    define(ws, pid, {"properties": {"activities": [
+        {"name": "Hook", "type": "WebHook", "typeProperties": {
+            "url": "http://target:8080/hook", "method": "POST",
+            "body": {"job": "nightly"}, "timeout": "00:05:00"}}]}})
+    az_rest_raw("post", v1(f"workspaces/{ws}/items/{pid}/jobs/instances?jobType=Pipeline"),
+                body="{}", headers=["Content-Type=application/json"])
+
+    def instance():
+        got = az_rest("get", v1(f"workspaces/{ws}/items/{pid}/jobs/instances")).get("value") or []
+        return got[0] if got else None
+
+    # urllib, not `az rest`: reading the receiver's own state is test
+    # scaffolding, and az would attach an Azure token to a plain-HTTP endpoint
+    # that neither wants nor understands one. The WITNESS is the emulator
+    # calling `target`; how the driver inspects the receiver afterwards is not
+    # part of the claim.
+    cb, captured = "", {}
+    for _ in range(40):
+        try:
+            with urllib.request.urlopen("http://target:8080/captured", timeout=5) as r:
+                captured = json.loads(r.read().decode() or "{}")
+        except OSError:
+            captured = {}
+        cb = captured.get("callBackUri") or ""
+        if cb:
+            break
+        time.sleep(0.5)
+    if not cb:
+        fail(f"the WebHook never delivered a callBackUri to the receiver; "
+             f"receiver state = {captured}")
+
+    inst = instance()
+    if inst and inst.get("status") in ("Completed", "Failed"):
+        fail(f"the job reached {inst['status']} while the webhook was parked — "
+             f"nothing had called back yet, so it must still be running")
+
+    # TWO things the emulator's contract dictates here, and the first version
+    # of this got both wrong by reaching for `az rest`:
+    #
+    #  1. `callBackUri` is a PATH, not an absolute URL — deliberately, because
+    #     the emulator does not know which base a caller reached it on and a
+    #     wrong absolute would be worse than none (internal/api/webhookactivity.go).
+    #     The receiver prefixes the base it already used.
+    #  2. The callback route takes NO bearer: an external receiver has no Fabric
+    #     token, and possession of the exact URI is the authentication. `az rest`
+    #     would attach one.
+    #
+    # So this is a plain POST with the emulator's own CA trusted — which is
+    # exactly what a real receiver would do.
+    ctx = ssl.create_default_context(cafile=azrest.AZ_ENV["REQUESTS_CA_BUNDLE"])
+    callback_url = cb if cb.startswith("http") else FABRIC_BASE + cb
+    req = urllib.request.Request(
+        callback_url, data=json.dumps({"approved": True}).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
+        if r.status != 200:
+            fail(f"callback returned {r.status}")
+    for _ in range(60):
+        inst = instance()
+        if inst and inst.get("status") in ("Completed", "Failed"):
+            break
+        time.sleep(0.5)
+    if not inst or inst.get("status") != "Completed":
+        fail(f"the callback did not release the parked webhook: {inst}")
+    detail = az_rest("post", v1(f"workspaces/{ws}/items/{pid}/jobs/instances/"
+                                f"{inst['id']}/queryactivityruns"), {}, allow_error=True)
+    hook = output_of(detail.get("value") or [], "Hook")
+    if hook.get("approved") is not True:
+        fail(f"the callback body did not reach the activity output: {hook}")
+    print("   WebHook: parked until the callback, and the callback body arrived")
+
+
 def main() -> int:
     try:
         azrest.login()
@@ -235,8 +464,14 @@ def main() -> int:
         check_getmetadata(ws)
         check_lookup(ws)
         check_validation(ws)
+        check_execute_pipeline(ws)
+        check_foreach(ws)
+        check_control_flow(ws)
+        check_retry_policy(ws)
+        check_web_and_webhook(ws)
         print("\nPIPELINE ACTIVITIES E2E: PASS — az drove Delete, GetMetadata, "
-              "Lookup and Validation, each judged by the data")
+              "Lookup, Validation, ExecutePipeline, ForEach, control flow, "
+              "retry policy and Web — each judged by the data")
         return 0
     except SystemExit:
         raise
