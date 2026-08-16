@@ -36,6 +36,27 @@ else:
     # it. Without the extension, saveAsTable dies on
     # DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG.
     spark = jvmconf.configure(_b, os.environ).getOrCreate()
+
+
+def _normalise_connect_confs():
+    """Ask the engine how it spells its byte-size confs, and act on the answer.
+
+    Connect only. Not a constant preset: this image is consumed by more than one
+    emulator, pointed at different Sail builds that disagree on the spelling, and
+    a preset that is right for one caps user code on the other. See connectconf.
+    """
+    if not os.environ.get("SPARK_REMOTE"):
+        return
+    try:
+        import connectconf
+    except ImportError:  # pragma: no cover - runtime without the agent module
+        return
+    connectconf.apply(spark)
+
+
+_normalise_connect_confs()
+
+
 def _install_delta_ops():
     """Route OPTIMIZE/VACUUM to delta-rs when the engine cannot run them.
 
@@ -266,6 +287,7 @@ def _notebookutils():
 
 def ns(session):
     if session not in namespaces:
+        _normalise_connect_confs()  # survive an engine restart between sessions
         # A PRIVATE SparkSession per Livy session. The agent holds one engine
         # connection and serves concurrent requests, so a shared session makes
         # current-database and temp views process-wide: two notebooks bound to

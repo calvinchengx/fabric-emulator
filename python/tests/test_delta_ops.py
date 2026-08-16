@@ -620,6 +620,29 @@ def test_an_unrecorded_table_falls_back_loudly(fake_deltalake, capsys):
     assert any("DESCRIBE DETAIL" in q for q in spark.queries)
 
 
+def test_an_engine_that_cannot_parse_describe_detail_names_the_real_cause(fake_deltalake):
+    # Sail has no DETAIL in its DESCRIBE grammar, so on the one engine this
+    # module is installed for, the fallback is EXPECTED to raise. Uncaught, the
+    # engine's own parse error surfaced instead — `found DETAIL at 9:15` —
+    # pointing at column 9 of a statement the user never wrote, which sent
+    # every reader looking at their own MERGE rather than at the missing
+    # registration. databricks-emulator lost a release to that message.
+    class Unparseable(FakeSpark):
+        def sql(self, query, *a, **kw):
+            self.queries.append(query)
+            raise RuntimeError("invalid argument: found DETAIL at 9:15 expected "
+                               "'FUNCTION', 'CATALOG', 'DATABASE', ...")
+
+    spark = Unparseable()
+    d.install(spark, storage_options={})
+    with pytest.raises(d.DeltaOpError) as excinfo:
+        spark.sql("OPTIMIZE unregistered")
+    said = str(excinfo.value)
+    assert "unregistered" in said          # which table
+    assert "not registered" in said        # why it had to ask at all
+    assert "found DETAIL" in said          # the engine's own words, kept
+
+
 def test_a_describe_that_answers_with_no_rows_is_an_error_not_an_indexerror(fake_deltalake):
     # An engine can answer a DESCRIBE with the right schema and no rows, and
     # raise nothing — which used to surface as an IndexError naming this file

@@ -16,6 +16,7 @@ any exception is a fail, with its type and message recorded.
 """
 import json
 import os
+import pathlib
 import sys
 import time
 import traceback
@@ -585,6 +586,19 @@ def main():
                    .config("spark.sql.catalog.spark_catalog",
                            "org.apache.spark.sql.delta.catalog.DeltaCatalog"))
     spark = builder.getOrCreate()
+
+    # The agent normalises byte-size confs per session, so the probe does too —
+    # otherwise this column stops measuring the runtime it claims to measure.
+    # It is a no-op against an engine that already serves a byte count, and on
+    # one that serves `'3GB'` it is what stops pyspark's `int()` from failing.
+    # Session-wide rather than per-probe: the delta-rs interception returns its
+    # result *as* a createDataFrame, so OPTIMIZE, VACUUM and MERGE all reach it
+    # long after the operation itself has succeeded.
+    if remote:
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve()
+                               .parents[2] / "python" / "spark_agent"))
+        import connectconf
+        connectconf.apply(spark)
 
     # The "sail+delta-rs" column measures the emulator's actual runtime, not a
     # bare engine: the Livy agent installs this same wrapper for every Sail
