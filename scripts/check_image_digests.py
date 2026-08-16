@@ -16,9 +16,20 @@ follows whatever was published last -- the compose still parses, the stack
 still starts, and the thing under test changed. That is the failure this
 guards: not a broken pin, an invisibly floating one.
 
-The rule is deliberately narrow. It applies ONLY to the images this repo
-publishes and versions this way; third-party images keep their own conventions,
-and a `build:` service has no tag to pin.
+The rule is deliberately narrow, in two directions.
+
+BY FILE: only files that can pull -- compose and env. Documentation naming the
+image in a sentence pulls nothing, and demanding a digest there produces prose
+no one can read and that goes stale every release. The first cut of this
+checker scanned .md and flagged a README, which is how that was learned.
+
+BY LINE: a tag that floats on purpose (`:dev`, `:latest`, an image built
+locally) has no digest to pin, and pinning one would defeat it. Such a line
+carries `digest-exempt: <reason>` and is skipped. The reason is required, and
+it sits on the line it excuses rather than in a list that drifts away from it.
+
+Third-party images keep their own conventions, and a `build:` service has no
+tag to pin.
 """
 import pathlib
 import re
@@ -31,6 +42,16 @@ from image_tags import TAGGED_BY  # noqa: E402
 
 IMAGES = tuple(f"emulator-{suffix}" for suffix in TAGGED_BY)
 SKIP_DIRS = {".git", "node_modules", ".venv", "out", "dist", "__pycache__"}
+# Only files that can actually PULL. Prose naming the image in a sentence
+# cannot float a stack, and requiring a 64-hex digest inside documentation
+# makes it unreadable and stale on every release -- the first version of this
+# checker did exactly that, and flagged a README.
+PULLING_SUFFIXES = {".yml", ".yaml", ".env"}
+# A tag that is floating ON PURPOSE -- `:dev`, `:latest`, a locally built
+# image -- has no digest to pin and pinning one would defeat it. Those lines
+# opt out in place, with a reason, so the exemption is reviewable where it
+# applies rather than in a list somewhere else.
+EXEMPT = re.compile(r"digest-exempt:\s*(?P<reason>\S.*?)\s*$")
 # <registry>/<org>/emulator-<suffix>:<tag> with an optional @sha256:<hex>.
 #
 # The lookbehind is load-bearing: without it `fabric-emulator-spark-agent`
@@ -47,18 +68,18 @@ def offenders(root=ROOT):
     for path in sorted(root.rglob("*")):
         if not path.is_file() or any(p in SKIP_DIRS for p in path.parts):
             continue
-        if path.suffix not in {".yml", ".yaml", ".py", ".md", ".sh", ".env"}:
+        if path.suffix not in PULLING_SUFFIXES:
             continue
-        if path.name in {"check_image_digests.py", "image_tags.py"}:
-            continue  # this checker and its source name the images on purpose
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
         for n, line in enumerate(text.splitlines(), 1):
+            exemption = EXEMPT.search(line)
             for m in REF.finditer(line):
-                if m.group("digest") is None:
-                    yield path.relative_to(root), n, m.group(0)
+                if m.group("digest") is not None or exemption:
+                    continue
+                yield path.relative_to(root), n, m.group(0)
 
 
 def main():
