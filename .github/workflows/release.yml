@@ -29,6 +29,21 @@ jobs:
 
   fabric-qualification:
     uses: ./.github/workflows/real-fabric.yml
+    # `id-token: write` because real-fabric authenticates by OIDC now (#296),
+    # and a CALLED workflow cannot request more than its caller grants. Without
+    # it GitHub refuses the whole run before any job starts, with a
+    # `startup_failure` and no job to read a log from. v0.28.0's first tag hit
+    # exactly that: #296 landed after v0.27.0, so this was the first release to
+    # call the OIDC version and the failure appeared at the tag rather than on
+    # any pull request.
+    #
+    # HERE AND NOT AT THE TOP OF THE FILE, so the jobs that push images and
+    # create the release do not also get the ability to mint identity tokens.
+    # `contents: read` is restated because a job-level block REPLACES the
+    # file-level default rather than adding to it.
+    permissions:
+      contents: read
+      id-token: write
     secrets: inherit
 
   binaries:
