@@ -402,6 +402,12 @@ class FakeWriter:
         self.sink["mode"] = m
         return self
 
+    def option(self, key, value):
+        # See execute_ctas: CREATE OR REPLACE sets `overwriteSchema`, without
+        # which a model that gains a column builds once and fails after.
+        self.sink.setdefault("options", {})[key] = value
+        return self
+
     def save(self, path):
         self.sink["path"] = path
 
@@ -527,6 +533,12 @@ def test_ctas_or_replace_overwrites_and_drops_the_stale_registration():
     _, params = d.match("CREATE OR REPLACE TABLE gold.fct AS SELECT 1")
     d.execute_ctas(None, original_sql, params)
     assert sink["mode"] == "overwrite"
+    # REPLACE replaces the SCHEMA too. Without this the write inherits whatever
+    # columns are already at the location, so a model that gains or loses one
+    # builds the first time and fails every run after with `Field 'x' not found
+    # in table schema` -- which reads as a schema-evolution problem rather than
+    # REPLACE not being honoured. Found by adding one column to a dbt model.
+    assert sink.get("options", {}).get("overwriteSchema") == "true"
     assert any("DROP TABLE IF EXISTS" in q for q in ran)
 
 
