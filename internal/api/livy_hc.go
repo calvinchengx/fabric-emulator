@@ -342,7 +342,13 @@ func (a *API) hcStatementNative(w http.ResponseWriter, r *http.Request, repl *hc
 		if !repl.registered {
 			repl.registered = true
 			a.registerLakehouseTables(repl.replID, repl.workspaceID, repl.lakehouseID)
-			a.applyEnvironment(repl.replID, repl.workspaceID, repl.environmentID)
+			// The outcome is deliberately not acted on here. A Livy session has
+			// no run record to misreport, and the client sees the consequence
+			// directly: the next statement that imports the missing package
+			// errors back to it. The drivers above DO act on it, because a run
+			// detail saying Completed with the Environment listed is a claim the
+			// caller cannot check.
+			_ = a.applyEnvironment(repl.replID, repl.workspaceID, repl.environmentID)
 		}
 		// `kind` selects the statement's language — Livy defines spark, pyspark,
 		// sql and sparkr, and a session's kind is the default when a statement
