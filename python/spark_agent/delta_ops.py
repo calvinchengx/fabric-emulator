@@ -179,12 +179,29 @@ _VACUUM = re.compile(
 # the emulator exists to prevent. Only statements whose SCHEMA the emulator
 # itself registered (with a location) are intercepted; everything else passes
 # to the engine untouched.
+#
+# COMMENTS ARE PART OF THE STATEMENT, and skipping them is not cosmetic. dbt
+# puts the model file's own SQL after AS, and a dbt model conventionally OPENS
+# with a comment explaining what it is for -- so the statement the adapter
+# really sends is `as\n\n-- why this model exists\nselect ...`. Requiring SELECT
+# to sit directly against AS misses every one of those, and the miss is silent:
+# the CTAS falls through to the engine, which writes the table into its own
+# warehouse and answers with a row count. dbt reports `OK created sql table
+# model`, the table is real and queryable from Spark, and the lakehouse never
+# sees it -- so the SQL analytics endpoint does not reflect it and the next
+# layer's every source() fails to resolve. Measured: eight dbt models green,
+# all their tests passing, none of the eight visible to the warehouse.
+#
+# Also skipped BEFORE the statement, where a client's query comment goes -- the
+# `/* {"app": "dbt", ...} */` header adapters prepend.
+_SQL_COMMENTS = r"(?:\s*(?:--[^\n]*(?:\n|$)|/\*.*?\*/))*\s*"
 _CTAS = re.compile(
-    r"^\s*CREATE\s+(?P<replace>OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"^" + _SQL_COMMENTS +
+    r"CREATE\s+(?P<replace>OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
     r"(?P<target>[\w.`]+)\s*"
     r"(?:USING\s+(?P<using>\w+)\s*)?"
     r"(?:LOCATION\s+'(?P<location>[^']+)'\s*)?"
-    r"AS\s+(?P<query>\(?\s*SELECT\b.+)$",
+    r"AS\b" + _SQL_COMMENTS + r"(?P<query>\(?\s*SELECT\b.+)$",
     re.IGNORECASE | re.DOTALL)
 
 # The bounded MERGE shape an upsert notebook writes, which is the shape a

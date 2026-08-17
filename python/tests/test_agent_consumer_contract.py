@@ -116,6 +116,42 @@ CONTRACT = [
     ),
     # Spark allows clauses between USING and LOCATION. dbt emits partitioning
     # this way, and LOCATION arriving after them must still be recorded.
+    # A dbt model file opens with a comment, so the statement the adapter sends
+    # carries one between AS and SELECT. Copied VERBATIM from a dbt-fabricspark
+    # debug log -- whitespace, backquoted relation and all -- because every
+    # hand-written probe of this shape passed and only the adapter's own output
+    # failed. A tidied version of this row would have proved nothing.
+    (
+        "fabric-emulator",
+        "dbt-fabricspark table materialization — contoso-airflow-data-product "
+        "dbt/silver/models/silver_product_hierarchy.sql, via logs/dbt.log",
+        "create or replace table `lake`.silver_product_hierarchy\n"
+        "      \n      \n"
+        "    location 'abfss://contoso-analytics@onelake.dfs.fabric.microsoft.com"
+        "/lake.Lakehouse/Tables/silver_product_hierarchy'\n"
+        "      \n\n      as\n      \n"
+        "-- The reference vendor's hierarchy, as-is.\n"
+        "--\n"
+        "-- Deliberately thin: this vendor is the group data office's publisher.\n"
+        "select * from `default`.bronze_ref_product_hierarchy",
+        ("match", "ctas"),
+        {},
+    ),
+    # The same miss through the other comment syntax. dbt's own query_comment
+    # is a block comment, and a fix that handles only `--` leaves this open.
+    (
+        "fabric-emulator",
+        "dbt-fabricspark — a model whose header is a block comment "
+        "(and the query_comment adapters prepend)",
+        '/* {"app": "dbt", "node_id": "model.contoso_silver.x"} */\n'
+        "create or replace table `lake`.x\n"
+        "    location 'abfss://lake/Tables/x'\n"
+        "      as\n"
+        "/* what this model is for */\n"
+        "select 1 as n",
+        ("match", "ctas"),
+        {},
+    ),
     (
         "fabric-emulator",
         "dbt-fabricspark with +partition_by",
