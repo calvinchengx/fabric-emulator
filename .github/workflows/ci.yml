@@ -855,6 +855,32 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/environment/run.py
 
+  environment-notebook:
+    name: A notebook's own Environment binding installs a package (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # THE OTHER BINDING PATH, and the one most Fabric data engineering uses: a
+      # notebook names its Environment in its own `# META` dependencies rather
+      # than a session naming one by id. Until 0.28.0 the notebook driver
+      # resolved that binding, reported it in the run detail, and never applied
+      # it, so the first import failed while the metadata said otherwise.
+      #
+      # A SEPARATE JOB, not another assertion in `environment`. The spark agent
+      # is one long-lived process, so a package installed by that suite is
+      # importable by every session after it — put both paths on one agent and
+      # this one's negative half passes on the other's install. Measured: it was
+      # written that way first and reported exactly that.
+      #
+      # Both halves assert the REASON, not just the outcome. A notebook
+      # submitted before the agent listens also "fails", which made the first
+      # version of this pass on a stack that executed nothing.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/environment-notebook/run.py
+
   rest-helix:
     name: BMC Helix incidents ingest through the REST connector (containerized)
     runs-on: ubuntu-latest

@@ -182,6 +182,30 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 		a.bindDefaultLakehouse(session, run.Binding)
 	}
 
+	// The bound Environment, installed before any cell runs.
+	//
+	// WHY THIS WAS MISSING AND WHY IT MATTERED. `resolveComputeBinding` already
+	// resolved the Environment onto `run.Environment` for a notebook exactly as
+	// it does for a Spark Job Definition, and the run detail reported it. Only
+	// the job-definition driver and the Livy session ever ACTED on it, so a
+	// notebook binding an Environment ran without its packages and failed with
+	// `ModuleNotFoundError` on the first import — a resolved, reported, ignored
+	// dependency, which is the worst of the three because the metadata says it
+	// was honoured.
+	//
+	// The LIVY behaviour, not the job-definition one, and that is deliberate: a
+	// notebook run IS a session. sparkjobdrive refuses a JAR-bearing Environment
+	// outright because a submitted job is one shot; a session lets
+	// applyEnvironment report JARs as skipped and carry on, which is what an
+	// interactive notebook on a Connect engine should do.
+	if run.Binding.EnvironmentID != "" {
+		envWID := run.Binding.EnvironmentWorkspaceID
+		if envWID == "" {
+			envWID = wid
+		}
+		a.applyEnvironment(session, envWID, run.Binding.EnvironmentID)
+	}
+
 	body := notebookResultBody{Status: "Completed"}
 	if _, err := a.agentPost("/statements", notebookStatement(
 		session, notebookPrelude, "", wid, iid, "", run, forPipeline, nil,

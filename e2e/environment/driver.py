@@ -16,6 +16,14 @@ The negative half matters just as much: the same import is run FIRST, on a
 session with no Environment, and must FAIL. Without that, a package which
 happened to be in the image would make this pass while proving nothing — the
 exact "accepted but inert" trap the engine-matrix probes are written to avoid.
+
+THE OTHER BINDING PATH IS A SEPARATE SUITE, and the separation is forced. A
+**notebook** binds an Environment in its own `# META` dependencies, which is how
+most Fabric data engineering does it, and `e2e/environment-notebook` witnesses
+it. It cannot live here: the agent is ONE long-lived process, so the moment this
+suite installs its package every later session has it, and a notebook negative
+half in the same stack passes while proving nothing. Measured, not assumed — it
+was written here first and reported exactly that.
 """
 
 import json
