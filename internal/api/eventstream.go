@@ -461,7 +461,7 @@ func (a *API) kustoIngestTable(ctx context.Context, engineDB, table string, tbl 
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		b.WriteString(name)
+		b.WriteString(kustoQuoteIdent(name))
 		b.WriteByte(':')
 		b.WriteString(types[i])
 	}
@@ -499,6 +499,23 @@ func (a *API) kustoMgmt(ctx context.Context, engineDB, csl string) error {
 	}
 	return nil
 }
+
+// kustoQuoteIdent wraps a name in Kusto's quoted-identifier form, ['name'].
+//
+// The character class kustoTableNameOK enforces is necessary and not
+// sufficient: a KQL keyword passes it and still cannot stand as a bare column
+// name in a schema declaration. CI's rti suite watched kustainer answer
+// `.create table Events (ts:datetime, kind:string)` with 400
+// KustoBadRequestException / SYN0002, pointing at `kind`. Quoting is Kusto's
+// documented remedy (kusto/query/schema-entities/entity-names).
+//
+// Every name is quoted rather than only the keywords the emulator happens to
+// know: the drain builds its schema from whatever fields the events carry, and
+// a keyword list here would be a list of the names we had thought of, which is
+// exactly the fault that let `kind` through. Quoting unconditionally means the
+// emitter has no list to be wrong about. kustoTableNameOK still runs first,
+// and it is what keeps a `'` or a `]` from ever reaching these brackets.
+func kustoQuoteIdent(name string) string { return "['" + name + "']" }
 
 func kustoTableNameOK(name string) bool {
 	if name == "" {

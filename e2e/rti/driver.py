@@ -181,6 +181,80 @@ current = primary_rows(kusto(query_uri, "query", DB, "print DB=current_database(
 assert current == DB, f"current_database() = {current!r}, want the Fabric name {DB!r}"
 print("engine database naming stays internal: OK")
 
+# ------------------------------------------- KQL keywords as column names
+# A schema declaration cannot name a column with a BARE KQL keyword: the engine
+# answers SYN0002. This matters beyond hand-written KQL because the emulator's
+# eventstream -> eventhouse drain builds `.create-merge table T (name:type, …)`
+# from whatever fields the events carry (internal/api/eventstream.go,
+# kustoIngestTable), and `kind` is an ordinary field name in event data. The
+# emitter therefore quotes every column — ['kind'], Kusto's documented remedy —
+# and the Go tests police that against a FAKE engine whose keyword list only a
+# real one can settle. This is where it gets settled.
+#
+# The candidates are every keyword Microsoft's identifier-naming rules put in
+# reach; REFUSED_BARE is what this engine ACTUALLY refuses, and the two are not
+# the same — the rules say a keyword used as an identifier must be quoted, and
+# kustainer accepts 27 of these 36 bare anyway (`where` and `summarize` among
+# them). Only the nine below are real, which is why the set is asserted rather
+# than the list: a keyword drifting in either direction is a fault. Too few and
+# a command the engine refuses passes the Go tests, which is the bug this probe
+# was written for; too many and the fake refuses KQL kustainer runs, which is
+# worse. internal/api/kql_test.go's kqlKeywords must equal REFUSED_BARE.
+KQL_KEYWORD_CANDIDATES = [
+    "and", "between", "by", "contains", "datatable", "distinct", "endswith",
+    "extend", "false", "from", "has", "in", "join", "kind", "let", "limit",
+    "not", "null", "on", "or", "order", "parse", "print", "project", "range",
+    "set", "sort", "startswith", "summarize", "take", "then", "top", "true",
+    "union", "where", "with",
+]
+REFUSED_BARE = ["and", "between", "false", "kind", "or", "order", "project", "true", "union"]
+
+refused = {}
+for kw in KQL_KEYWORD_CANDIDATES:
+    bare = requests.post(f"{query_uri}/v1/rest/mgmt", headers=KUSTO_HEADERS,
+                         json={"db": DB, "csl": f".create table KwBare_{kw} ({kw}:string)"},
+                         timeout=60)
+    if bare.status_code != 200:
+        refused[kw] = bare.status_code
+        # A refusal has to be the SYNTAX error this is about. Anything else
+        # (a 5xx, an auth fault) would put a keyword on the list for a reason
+        # that has nothing to do with the grammar.
+        assert bare.status_code == 400, (kw, bare.status_code, bare.text[:400])
+        assert "SYN0002" in bare.text, (kw, bare.text[:800])
+assert sorted(refused) == sorted(REFUSED_BARE), (
+    "what kustainer refuses as a BARE column name has moved. "
+    f"newly refused (add to kqlKeywords): {sorted(set(refused) - set(REFUSED_BARE))}; "
+    f"no longer refused (drop from kqlKeywords): {sorted(set(REFUSED_BARE) - set(refused))}")
+print(f"{len(refused)} of {len(KQL_KEYWORD_CANDIDATES)} keywords refused bare, "
+      f"all SYN0002: {sorted(refused)}")
+
+# …and every candidate is legal QUOTED, refused bare or not — which is why the
+# emitter can quote unconditionally instead of carrying the list above.
+quoted = ", ".join(f"['{kw}']:string" for kw in KQL_KEYWORD_CANDIDATES)
+kusto(query_uri, "mgmt", DB, f".create-merge table KwQuoted ({quoted})")
+kusto(query_uri, "mgmt", DB,
+      ".ingest inline into table KwQuoted <|\n" + ",".join(["x"] * len(KQL_KEYWORD_CANDIDATES)))
+addressable = primary_rows(kusto(query_uri, "query", DB,
+                                 "KwQuoted | where ['kind'] == 'x' and ['project'] == 'x' | count"))[0][0]
+assert addressable == 1, f"quoted keyword columns are not addressable: {addressable}"
+print(f"all {len(KQL_KEYWORD_CANDIDATES)} quoted: table created, row ingested, column queried back")
+
+# The emitter's own output, verbatim: the `.create-merge table` + `.ingest
+# inline` pair kustoIngestTable produces for an event carrying `kind` and `n`.
+kusto(query_uri, "mgmt", DB,
+      ".create-merge table StreamEvents (['kind']:string, ['n']:real, ['At']:string)")
+kusto(query_uri, "mgmt", DB,
+      ".ingest inline into table StreamEvents <|\nclick,1,2026-07-31T00:00:00Z\nview,2,2026-07-31T00:01:00Z")
+drained = primary_rows(kusto(query_uri, "query", DB,
+                             "StreamEvents | summarize N=count(), Total=sum(['n'])"))[0]
+assert [int(drained[0]), round(float(drained[1]), 3)] == [2, 3.0], drained
+print(f"eventstream drain's emitted KQL runs on the real engine: N={drained[0]} Total={drained[1]}")
+
+# …and its unquoted twin does not, which is the whole reason for the quoting.
+kusto(query_uri, "mgmt", DB,
+      ".create-merge table StreamEventsBare (kind:string, n:real, At:string)", expect=400)
+print("the unquoted twin is refused: OK")
+
 # ------------------------------------------------------------------ auth + RBAC
 anon = requests.post(f"{query_uri}/v1/rest/query", json={"db": DB, "csl": "Readings | count"}, timeout=60)
 assert anon.status_code == 401, anon.status_code

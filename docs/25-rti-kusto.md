@@ -103,6 +103,25 @@ cross-database isolation check. Two independent client families run over the
 same surface: raw REST, and Microsoft's own `azure-kusto-data` SDK (which
 parses the v2 frame stream and so exercises a second dialect).
 
+It also settles a question no fake engine can: **which column names KQL
+actually refuses**. Some KQL keywords cannot name a column in a schema
+declaration — the engine answers `SYN0002` — and the Eventstream → Eventhouse
+drain builds its `.create-merge table T (name:type, …)` from whatever fields
+the events carry, so `kind` is an ordinary field name that would emit a command
+real Kusto rejects. The emitter quotes every name (`['kind']`, Kusto's
+documented remedy), and the witness probes **36 candidate keywords** against
+kustainer in both directions.
+
+The answer is narrower than the documentation implies. Microsoft's
+identifier-naming rules say a keyword used as an identifier must be quoted, but
+this engine refuses only **nine** bare — `and`, `between`, `false`, `kind`,
+`or`, `order`, `project`, `true`, `union` — and takes the other 27, `where` and
+`summarize` among them. All 36 are legal quoted. So the witness asserts set
+equality: a keyword refused that was not, or accepted that was not, fails the
+job by name. `internal/api/kql_test.go`'s `kqlKeywords` is that set and nothing
+more, which keeps the in-process stand-in from refusing KQL the engine runs —
+the failure mode that matters more here than the one it guards against.
+
 That CI job is the **witness of record**: it runs on amd64 runners, and the
 witness depends on `kustainer: service_healthy`, so an engine that never comes
 up fails the job rather than passing quietly.
