@@ -102,6 +102,13 @@ class FakeDF:
         self._sink["mode"] = m
         return self
 
+    def option(self, key, value):
+        # REPLACE carries `overwriteSchema` -- see execute_ctas. A stub without
+        # it does not fail the behaviour, it fails with AttributeError, which
+        # is a stub problem wearing a bug's clothes.
+        self._sink.setdefault("options", {})[key] = value
+        return self
+
     def save(self, path):
         self._sink["path"] = path
 

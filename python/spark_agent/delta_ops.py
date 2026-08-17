@@ -179,12 +179,37 @@ _VACUUM = re.compile(
 # the emulator exists to prevent. Only statements whose SCHEMA the emulator
 # itself registered (with a location) are intercepted; everything else passes
 # to the engine untouched.
+#
+# COMMENTS ARE PART OF THE STATEMENT, and skipping them is not cosmetic. dbt
+# puts the model file's own SQL after AS, and a dbt model conventionally OPENS
+# with a comment explaining what it is for -- so the statement the adapter
+# really sends is `as\n\n-- why this model exists\nselect ...`. Requiring SELECT
+# to sit directly against AS misses every one of those, and the miss is silent:
+# the CTAS falls through to the engine, which writes the table into its own
+# warehouse and answers with a row count. dbt reports `OK created sql table
+# model`, the table is real and queryable from Spark, and the lakehouse never
+# sees it -- so the SQL analytics endpoint does not reflect it and the next
+# layer's every source() fails to resolve. Measured: eight dbt models green,
+# all their tests passing, none of the eight visible to the warehouse.
+#
+# Also skipped BEFORE the statement, where a client's query comment goes -- the
+# `/* {"app": "dbt", ...} */` header adapters prepend.
+_SQL_COMMENTS = r"(?:\s*(?:--[^\n]*(?:\n|$)|/\*.*?\*/))*\s*"
 _CTAS = re.compile(
-    r"^\s*CREATE\s+(?P<replace>OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"^" + _SQL_COMMENTS +
+    r"CREATE\s+(?P<replace>OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
     r"(?P<target>[\w.`]+)\s*"
     r"(?:USING\s+(?P<using>\w+)\s*)?"
     r"(?:LOCATION\s+'(?P<location>[^']+)'\s*)?"
-    r"AS\s+(?P<query>\(?\s*SELECT\b.+)$",
+    # WITH as well as SELECT. `with … select` is the canonical dbt model shape
+    # -- dbt's own documentation writes models as CTEs and most projects follow
+    # it -- so requiring SELECT here misses the majority of a real silver
+    # layer while claiming the minority. Measured on one project: the three
+    # models that opened with SELECT were intercepted and landed in OneLake
+    # with a _delta_log; the five that opened with WITH fell through and left
+    # bare parquet at the same paths, which the lakehouse cannot read as a
+    # table. Both halves reported success.
+    r"AS\b" + _SQL_COMMENTS + r"(?P<query>\(?\s*(?:SELECT|WITH)\b.+)$",
     re.IGNORECASE | re.DOTALL)
 
 # The bounded MERGE shape an upsert notebook writes, which is the shape a
@@ -357,7 +382,22 @@ def execute_ctas(spark, original_sql, params, storage_options=None):
                 f"Use CREATE OR REPLACE TABLE to overwrite it.")
 
     df = original_sql(params["query"].strip().rstrip(";"))
-    df.write.format("delta").mode("overwrite").save(loc)
+    writer = df.write.format("delta").mode("overwrite")
+    # CREATE OR REPLACE MEANS THE NEW DEFINITION WINS, schema included. Without
+    # this, an overwrite whose columns differ from what is already at `loc`
+    # fails with `Field 'x' not found in table schema. Use mergeSchema=true to
+    # allow schema evolution` -- so a model that gains or loses a column builds
+    # once and fails on every run after that, which is a normal day in dbt.
+    # Measured: adding one column to a silver model turned a green build into
+    # this, and the message points at schema evolution rather than at REPLACE
+    # semantics not being honoured.
+    #
+    # Only for REPLACE. A plain CREATE TABLE over an existing table is already
+    # refused above, and widening its schema silently would be the opposite of
+    # what it asked for.
+    if replace:
+        writer = writer.option("overwriteSchema", "true")
+    writer.save(loc)
     name = f"`{schema}`.`{tbl}`" if schema else f"`{tbl}`"
     if replace:
         try:

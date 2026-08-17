@@ -116,6 +116,65 @@ CONTRACT = [
     ),
     # Spark allows clauses between USING and LOCATION. dbt emits partitioning
     # this way, and LOCATION arriving after them must still be recorded.
+    # A dbt model file opens with a comment, so the statement the adapter sends
+    # carries one between AS and SELECT. Copied VERBATIM from a dbt-fabricspark
+    # debug log -- whitespace, backquoted relation and all -- because every
+    # hand-written probe of this shape passed and only the adapter's own output
+    # failed. A tidied version of this row would have proved nothing.
+    (
+        "fabric-emulator",
+        "dbt-fabricspark table materialization — contoso-airflow-data-product "
+        "dbt/silver/models/silver_product_hierarchy.sql, via logs/dbt.log",
+        "create or replace table `lake`.silver_product_hierarchy\n"
+        "      \n      \n"
+        "    location 'abfss://contoso-analytics@onelake.dfs.fabric.microsoft.com"
+        "/lake.Lakehouse/Tables/silver_product_hierarchy'\n"
+        "      \n\n      as\n      \n"
+        "-- The reference vendor's hierarchy, as-is.\n"
+        "--\n"
+        "-- Deliberately thin: this vendor is the group data office's publisher.\n"
+        "select * from `default`.bronze_ref_product_hierarchy",
+        ("match", "ctas"),
+        {},
+    ),
+    # A CTE, which is how dbt's own documentation writes models and how most
+    # projects follow it. Requiring SELECT claimed the minority of a real
+    # silver layer and missed the majority: measured on one project, the three
+    # models opening with SELECT landed in OneLake with a _delta_log and the
+    # five opening with WITH left bare parquet at the same paths -- unreadable
+    # as a table, and reported as success by both halves.
+    (
+        "fabric-emulator",
+        "dbt-fabricspark — contoso-airflow-data-product "
+        "dbt/silver/models/silver_customers.sql, the canonical `with … select`",
+        "create or replace table `lake`.silver_customers\n"
+        "    location 'abfss://lake/Tables/silver_customers'\n"
+        "      as\n"
+        "-- THE DUPLICATES ARE DELIBERATE. The POS vendor ships a 2% ratio.\n"
+        "with ranked as (\n"
+        "    select *, row_number() over (partition by customer_id "
+        "order by updated_at desc) as rn\n"
+        "    from `default`.bronze_pos_customers\n"
+        ")\n"
+        "select * from ranked where rn = 1",
+        ("match", "ctas"),
+        {},
+    ),
+    # The same miss through the other comment syntax. dbt's own query_comment
+    # is a block comment, and a fix that handles only `--` leaves this open.
+    (
+        "fabric-emulator",
+        "dbt-fabricspark — a model whose header is a block comment "
+        "(and the query_comment adapters prepend)",
+        '/* {"app": "dbt", "node_id": "model.contoso_silver.x"} */\n'
+        "create or replace table `lake`.x\n"
+        "    location 'abfss://lake/Tables/x'\n"
+        "      as\n"
+        "/* what this model is for */\n"
+        "select 1 as n",
+        ("match", "ctas"),
+        {},
+    ),
     (
         "fabric-emulator",
         "dbt-fabricspark with +partition_by",
