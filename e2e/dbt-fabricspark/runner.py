@@ -113,6 +113,14 @@ def main():
         ["dbt", "--no-partial-parse", "seed", "--full-refresh"],
         ["dbt", "--no-partial-parse", "run"],
         ["dbt", "--no-partial-parse", "test"],
+        # `show` is the stage that carries TYPED VALUES back over the wire.
+        # run/test do not: a table model is `create table as select`, which
+        # returns no rows, and a test reads a count. So neither would have
+        # caught the agent handing a date to json.dumps untouched — the reply
+        # was never written and the caller saw a bare RemoteDisconnected.
+        # silver_fx_daily returns two dates and a decimal, so this stage is
+        # what makes the suite a witness for that rather than for DDL alone.
+        ["dbt", "--no-partial-parse", "show", "--select", "silver_fx_daily", "--limit", "5"],
     ]
     for cmd in stages:
         log(" ".join(cmd))
