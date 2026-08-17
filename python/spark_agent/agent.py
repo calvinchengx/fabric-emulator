@@ -25,6 +25,7 @@ import traceback
 from contextlib import contextmanager, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import httpjson
 import jvmconf  # no Spark; JVM session configs (see jvmconf.py)
 from pyspark.sql import SparkSession
 
@@ -412,7 +413,7 @@ def register_tables(session, schema, tables, schemas=None):
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
-        body = json.dumps(obj).encode()
+        code, body = httpjson.encode_response(code, obj)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
