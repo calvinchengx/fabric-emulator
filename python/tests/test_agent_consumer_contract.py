@@ -137,6 +137,29 @@ CONTRACT = [
         ("match", "ctas"),
         {},
     ),
+    # A CTE, which is how dbt's own documentation writes models and how most
+    # projects follow it. Requiring SELECT claimed the minority of a real
+    # silver layer and missed the majority: measured on one project, the three
+    # models opening with SELECT landed in OneLake with a _delta_log and the
+    # five opening with WITH left bare parquet at the same paths -- unreadable
+    # as a table, and reported as success by both halves.
+    (
+        "fabric-emulator",
+        "dbt-fabricspark — contoso-airflow-data-product "
+        "dbt/silver/models/silver_customers.sql, the canonical `with … select`",
+        "create or replace table `lake`.silver_customers\n"
+        "    location 'abfss://lake/Tables/silver_customers'\n"
+        "      as\n"
+        "-- THE DUPLICATES ARE DELIBERATE. The POS vendor ships a 2% ratio.\n"
+        "with ranked as (\n"
+        "    select *, row_number() over (partition by customer_id "
+        "order by updated_at desc) as rn\n"
+        "    from `default`.bronze_pos_customers\n"
+        ")\n"
+        "select * from ranked where rn = 1",
+        ("match", "ctas"),
+        {},
+    ),
     # The same miss through the other comment syntax. dbt's own query_comment
     # is a block comment, and a fix that handles only `--` leaves this open.
     (

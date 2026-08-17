@@ -201,7 +201,15 @@ _CTAS = re.compile(
     r"(?P<target>[\w.`]+)\s*"
     r"(?:USING\s+(?P<using>\w+)\s*)?"
     r"(?:LOCATION\s+'(?P<location>[^']+)'\s*)?"
-    r"AS\b" + _SQL_COMMENTS + r"(?P<query>\(?\s*SELECT\b.+)$",
+    # WITH as well as SELECT. `with … select` is the canonical dbt model shape
+    # -- dbt's own documentation writes models as CTEs and most projects follow
+    # it -- so requiring SELECT here misses the majority of a real silver
+    # layer while claiming the minority. Measured on one project: the three
+    # models that opened with SELECT were intercepted and landed in OneLake
+    # with a _delta_log; the five that opened with WITH fell through and left
+    # bare parquet at the same paths, which the lakehouse cannot read as a
+    # table. Both halves reported success.
+    r"AS\b" + _SQL_COMMENTS + r"(?P<query>\(?\s*(?:SELECT|WITH)\b.+)$",
     re.IGNORECASE | re.DOTALL)
 
 # The bounded MERGE shape an upsert notebook writes, which is the shape a
