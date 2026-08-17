@@ -203,7 +203,16 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 		if envWID == "" {
 			envWID = wid
 		}
-		a.applyEnvironment(session, envWID, run.Binding.EnvironmentID)
+		if out := a.applyEnvironment(session, envWID, run.Binding.EnvironmentID); !out.OK {
+			// Fail rather than run without it. The notebook would hit
+			// ModuleNotFoundError on its first import anyway, several cells
+			// later, with the run detail still reporting the Environment as
+			// honoured -- the caller would be debugging their own code for a
+			// dependency the platform never installed.
+			finalised = true
+			a.failNotebookRun(wid, iid, jid, run, out.Reason)
+			return
+		}
 	}
 
 	body := notebookResultBody{Status: "Completed"}

@@ -195,25 +195,46 @@ func (a *API) registerLakehouseTables(session, wid, lid string) {
 // LOGGED rather than swallowed — a missing package resurfaces much later as a
 // ModuleNotFoundError inside a notebook, and a silent cause is the worst version
 // of that.
-func (a *API) applyEnvironment(session, wid, envID string) {
+// envOutcome says whether a session actually got the environment it binds.
+//
+// The reason it exists: applying used to be fire-and-forget, so a run whose
+// environment could not be read, or which the agent declined, still finished
+// Completed with the run detail reporting the Environment as honoured. The
+// caller then hit ModuleNotFoundError inside a cell, with nothing anywhere
+// saying the packages had never been installed. A resolved, reported, ignored
+// dependency is the worst of the three, and reporting it as honoured is what
+// made it so.
+type envOutcome struct {
+	OK     bool
+	Reason string
+}
+
+func envApplied() envOutcome { return envOutcome{OK: true} }
+func envFailed(f string, a ...any) envOutcome {
+	return envOutcome{Reason: fmt.Sprintf(f, a...)}
+}
+
+func (a *API) applyEnvironment(session, wid, envID string) envOutcome {
 	if envID == "" {
-		return
+		return envApplied()
 	}
 	env, err := a.resolveEnvironment(wid, envID)
 	if err != nil {
-		log.Printf("livy: session %s binds environment %s which cannot be read: %v; "+
-			"the session gets the runtime image as-is", session, envID, err)
-		return
+		log.Printf("livy: session %s binds environment %s which cannot be read: %v",
+			session, envID, err)
+		return envFailed("environment %s cannot be read: %v", envID, err)
 	}
 	if len(env.PythonPackages) == 0 && len(env.SparkConfig) == 0 && len(env.JARs) == 0 {
-		return
+		// Nothing to install is not a failure: the binding is honoured by
+		// having nothing to do.
+		return envApplied()
 	}
 	out, err := a.agentPost("/environment", map[string]any{
 		"session": session, "environment": envID,
 		"packages": env.PythonPackages, "sparkConfig": env.SparkConfig, "jars": env.JARs})
 	if err != nil {
 		log.Printf("livy: applying environment %s to session %s: %v", envID, session, err)
-		return
+		return envFailed("environment %s could not be applied: %v", envID, err)
 	}
 	// The agent answers applied:false with a reason when it declines — most
 	// importantly when another session already bound a DIFFERENT environment.
@@ -224,5 +245,7 @@ func (a *API) applyEnvironment(session, wid, envID string) {
 		reason, _ := out["reason"].(string)
 		log.Printf("livy: environment %s NOT applied to session %s: %s",
 			envID, session, reason)
+		return envFailed("environment %s was not applied: %s", envID, reason)
 	}
+	return envApplied()
 }

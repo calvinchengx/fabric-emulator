@@ -77,7 +77,15 @@ func (a *API) driveSparkJobRun(wid, iid, jid string, run sparkJobRun) {
 		if envWID == "" {
 			envWID = wid
 		}
-		a.applyEnvironment(session, envWID, run.Binding.EnvironmentID)
+		if out := a.applyEnvironment(session, envWID, run.Binding.EnvironmentID); !out.OK {
+			// Same reasoning as the notebook driver: a submitted job that runs
+			// without the packages it declared fails on an import with nothing
+			// naming the cause, and the run detail claims the Environment was
+			// applied.
+			finalised = true
+			a.finishSparkJobRun(wid, iid, jid, run, "Failed", "", out.Reason)
+			return
+		}
 	}
 
 	// argv[0] is the main file and the rest are the definition's arguments,
