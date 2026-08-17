@@ -20,6 +20,27 @@ import (
 //     beforehand. Reserving one up front leaves a window — widened by opening
 //     the store and generating a certificate — for anything else binding :0
 //     to take it first.
+//
+// Neither of those is the budget, and the budget is what failed next: PR #303
+// (job 95436375580, a PYTHON-ONLY diff) reported "run never reported a listen
+// address" on windows-latest after 60s, with the server's own
+// `listening on https://127.0.0.1:55822` printed in the same log — it came up,
+// just later than the wait. That runner was contended enough that
+// `internal/store` took 93s and `internal/api` 244s, so the 60s was measuring
+// the runner rather than the code.
+//
+// So the budget follows poll()'s reasoning below, which the same file already
+// states and which was never extended up here: the select returns the instant
+// `ready` fires, so a fast machine pays NOTHING for the headroom, while a slow
+// one stops reporting a startup as a hang. The failure mode a longer wait
+// costs us is a genuine deadlock taking longer to surface — bounded, and
+// `case <-done` still catches the common case of run exiting early.
+//
+// 120s rather than a rounder, larger number, because there IS a ceiling: two
+// tests call serve(), and `go test` gives the package 10 minutes by default,
+// so a budget of 300s each would replace a clean "never reported a listen
+// address" with a whole-package timeout panic — a worse message for the same
+// event. 120s is double the wait that lapsed, and 240s worst case.
 func serve(t *testing.T, args ...string) string {
 	t.Helper()
 	stop, done, ready := make(chan struct{}), make(chan struct{}), make(chan net.Addr, 1)
@@ -37,7 +58,7 @@ func serve(t *testing.T, args ...string) string {
 		return addr.String()
 	case <-done:
 		t.Fatalf("run exited before it began serving: %v", runErr)
-	case <-time.After(60 * time.Second):
+	case <-time.After(120 * time.Second):
 		t.Fatal("run never reported a listen address")
 	}
 	return ""
