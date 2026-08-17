@@ -27,6 +27,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from pyspark.sql import SparkSession
 
+# The typed-value conversion and the reply encoder are the AGENT's, not this
+# script's. Keeping second copies is exactly how the date bug survived in two
+# places at once: python/spark_agent was fixed and this suite still crashed on
+# the same TypeError, because it runs its own agent. python-runtime's image
+# carries python/ at /app/python (docker/python-runtime/Dockerfile).
+sys.path.insert(0, "/app/python/spark_agent")
+import httpjson  # noqa: E402
+from sqlrun import _jsonable  # noqa: E402
+
 # Delta-enabled so dbt's `create table ... using delta` (the Fabric default)
 # works. Local warehouse is fine for the protocol conformance milestone; binding
 # the session to the lakehouse's OneLake path (ABFS) so Delta lands in OneLake
@@ -68,7 +77,7 @@ def run_sql(code):
         df = spark.sql(code)
         if len(df.schema.fields) == 0:
             return {"status": "ok", "execution_count": 0, "data": {}}
-        rows = [list(r) for r in df.collect()]
+        rows = [[_jsonable(v) for v in r] for r in df.collect()]
         return {
             "status": "ok",
             "execution_count": 0,
@@ -89,7 +98,7 @@ def run_sql(code):
             # INSERT stays 3 rows through this path). Same recovery as
             # python/spark_agent/agent.py.
             try:
-                rows = [list(r.values()) for r in df.toArrow().to_pylist()]
+                rows = [[_jsonable(v) for v in r.values()] for r in df.toArrow().to_pylist()]
                 print(f"[sql-agent] note: uint64 envelope recovered via arrow for: {code}", flush=True)
                 return {"status": "ok", "execution_count": 0,
                         "data": {"application/json": {"schema": df.schema.jsonValue(), "data": rows}}}
@@ -112,7 +121,7 @@ def run_sql(code):
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
-        body = json.dumps(obj).encode()
+        code, body = httpjson.encode_response(code, obj)
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
