@@ -382,7 +382,22 @@ def execute_ctas(spark, original_sql, params, storage_options=None):
                 f"Use CREATE OR REPLACE TABLE to overwrite it.")
 
     df = original_sql(params["query"].strip().rstrip(";"))
-    df.write.format("delta").mode("overwrite").save(loc)
+    writer = df.write.format("delta").mode("overwrite")
+    # CREATE OR REPLACE MEANS THE NEW DEFINITION WINS, schema included. Without
+    # this, an overwrite whose columns differ from what is already at `loc`
+    # fails with `Field 'x' not found in table schema. Use mergeSchema=true to
+    # allow schema evolution` -- so a model that gains or loses a column builds
+    # once and fails on every run after that, which is a normal day in dbt.
+    # Measured: adding one column to a silver model turned a green build into
+    # this, and the message points at schema evolution rather than at REPLACE
+    # semantics not being honoured.
+    #
+    # Only for REPLACE. A plain CREATE TABLE over an existing table is already
+    # refused above, and widening its schema silently would be the opposite of
+    # what it asked for.
+    if replace:
+        writer = writer.option("overwriteSchema", "true")
+    writer.save(loc)
     name = f"`{schema}`.`{tbl}`" if schema else f"`{tbl}`"
     if replace:
         try:
