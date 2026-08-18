@@ -26,6 +26,11 @@ dependencies = [
 
 [tool.uv]
 package = false
+# dbt-core, held below 2.0. See the root repo's pyproject.toml for why:
+# dbt-fabric declares no upper bound on it, and dbt-core 1.12.0 pins
+# sqlparse<0.6.0, so a routine sqlparse bump can only be satisfied by
+# jumping to dbt-core 2.0.0b1, still a beta with no stable release.
+constraint-dependencies = ["dbt-core<2"]
 
 [tool.uv.sources]
 contoso-fixtures = { path = "../contoso-fixtures", editable = true }

@@ -241,6 +241,17 @@ conflicts = [
         { group = "dbt-fabricspark" },
     ],
 ]
+# dbt-core, held below 2.0. TRANSITIVE, not a direct dependency, which is
+# exactly how it got away from us: dbt-fabric/dbt-fabricspark declare no
+# upper bound on it, so a routine sqlparse patch bump (dependabot#307/#308)
+# widened the solver's search space enough to land on 2.0.0b1, the only
+# release past 1.12.0, and still a BETA: no stable 2.0 exists yet. It broke
+# `e2e/dbt-fabric/runner.py`'s profiles.yml: `access_token_expires_on: 0`
+# parsed fine under 1.x and fails 2.0's stricter schema, which wants a
+# string. Constraining rather than adding a direct dependency keeps
+# dbt-fabric's own version selection free; it only forecloses the one
+# transitive jump that broke CI.
+constraint-dependencies = ["dbt-core<2"]
 
 [tool.uv.sources]
 fabric-emulator-notebookutils = { workspace = true }
