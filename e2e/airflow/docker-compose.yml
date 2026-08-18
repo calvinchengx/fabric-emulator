@@ -25,17 +25,28 @@ services:
       timeout: 2s
       retries: 30
 
+  # THE SAME EXECUTOR THE SHIPPED SIDECAR USES. This carried its own copy of
+  # the service and the two drifted: docker-compose.yml moved to Celery for
+  # fidelity with Fabric while this stayed Sequential, so the e2e would have
+  # gone on witnessing a topology nobody runs. Kept in step deliberately --
+  # `test_airflow_e2e_matches_the_shipped_sidecar` fails if they diverge again.
   airflow:
     image: apache/airflow:2.10.5-python3.12
     depends_on:
       volume-init:
         condition: service_healthy
+      airflow-db:
+        condition: service_healthy
+      airflow-broker:
+        condition: service_healthy
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
-      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://airflow-broker:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@airflow-db/airflow
       AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "2"
       AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "1"
     volumes:
@@ -48,12 +59,33 @@ services:
         airflow db migrate
         airflow users create --username admin --password admin --firstname Fabric --lastname Emulator --role Admin --email admin@example.com
         airflow scheduler &
+        airflow celery worker &
         exec airflow webserver
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 5s
       timeout: 3s
       retries: 60
+
+  airflow-db:
+    image: postgres:16.4
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  airflow-broker:
+    image: redis:7.4-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   fabric-emulator:
     build:
