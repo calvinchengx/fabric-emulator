@@ -235,6 +235,23 @@ data-science-loop = [
 
 [tool.uv]
 package = false
+# sqlparse reaches this lock ONLY through dbt-core, which pins `sqlparse<0.6.0`
+# in every release it has published — 1.11.13 through 1.12.2, checked against
+# PyPI, so there is no version of dbt to upgrade INTO that takes the patched
+# sqlparse. Four advisories (three DoS, one escaping) name 0.6.0 as the first
+# patched version, so the choice is this override or living with them.
+#
+# Overriding a maintainer's upper bound is a deliberate deviation, so it was
+# measured rather than assumed. dbt-core touches sqlparse in exactly one place
+# (`dbt/compilation.py`: `parse`, `sql.Token`, `tokens`, `lexer.Lexer`, and the
+# `engine.grouping.MAX_GROUPING_*` caps). Running dbt's own `inject_ctes_into_sql`
+# over four SQL shapes under 0.5.5 and 0.6.0 returns BYTE-IDENTICAL output, and
+# both grouping caps still exist in 0.6.0 — so the pin is upstream caution
+# about a minor bump, not a known incompatibility with the surface dbt uses.
+#
+# Re-check when dbt-core relaxes the bound: this override should then be
+# DELETED rather than left to pin the ecosystem quietly.
+override-dependencies = ["sqlparse>=0.6.0"]
 conflicts = [
     [
         { group = "dbt-fabric" },

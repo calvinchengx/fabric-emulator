@@ -25,6 +25,13 @@ dependencies = [
 
 [tool.uv]
 package = false
+# sqlparse arrives only through dbt-core, which pins `sqlparse<0.6.0` in every
+# published release, so no dbt upgrade reaches the version that patches four
+# advisories. Overridden deliberately, and measured: dbt's single sqlparse call
+# site (`inject_ctes_into_sql`) returns byte-identical SQL under 0.5.5 and
+# 0.6.0. See the root pyproject.toml for the full note; DELETE this once
+# dbt-core relaxes the bound.
+override-dependencies = ["sqlparse>=0.6.0"]
 
 [tool.uv.sources]
 contoso-fixtures = { path = "../contoso-fixtures", editable = true }
