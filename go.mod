@@ -7,8 +7,8 @@ toolchain go1.25.12
 require (
 	github.com/calvinchengx/entra-emulator v0.8.1
 	github.com/microsoft/go-mssqldb v1.10.0
-	github.com/parquet-go/parquet-go v0.30.1
-	github.com/segmentio/kafka-go v0.4.49
+	github.com/parquet-go/parquet-go v0.32.0
+	github.com/segmentio/kafka-go v0.4.51
 	modernc.org/sqlite v1.56.0
 )
 
