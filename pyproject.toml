@@ -36,15 +36,15 @@ test = [
     # gap the moment the Connect wraps landed. Same pins as the `delta-rs`
     # group; pandas is what `read_change_feed` materialises through.
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "pandas>=2,<3",
     "pyjks>=20,<22",
     # 49.0.0 is the first release that closes the three open wheel and
     # path-building advisories; held below 50 so a major cannot land unreviewed.
-    "cryptography>=42,<50",
+    "cryptography>=42,<51",
 ]
 lint = [
-    "ruff>=0.14,<0.16",
+    "ruff>=0.14,<0.17",
     # Astral's type checker. Pre-1.0, so pinned tight: a minor bump can change
     # which inferences it makes, and a type checker that changes its mind
     # between runs is a broken build nobody caused.
@@ -52,7 +52,7 @@ lint = [
 ]
 adls-sdk = [
     "azure-storage-blob>=12.24,<13",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
 ]
 # The third-party witness for the Purview Data Map row. pyapacheatlas speaks
 # Apache Atlas v2, which is what the Data Map IS — so this is a real client
@@ -64,16 +64,16 @@ purview-datamap = [
 # witnesses Fabric Core MCP Server (POST /v1/mcp/core). Pinned below v2: v2
 # renamed streamablehttp_client and dropped the headers= kwarg.
 mcp = [
-    "mcp>=1.12,<2",
+    "mcp>=1.12,<3",
 ]
 delta-rs = [
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
 ]
 duckdb = [
     "deltalake>=0.23,<2",
     "duckdb>=1.1,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
 ]
 s3 = [
     "boto3>=1.35,<2",
@@ -92,7 +92,7 @@ fabric-target = [
 ]
 governance = [
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "requests>=2.32,<3",
     # govern_ingest reads the ODCS contracts, so a cataloged table carries the
     # meaning a human wrote rather than only the shape the emulator can infer.
@@ -103,11 +103,11 @@ governance = [
 # own Copy executor rather than by an engine.
 demo = [
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "requests>=2.32,<3",
 ]
 great-expectations = [
-    "great-expectations>=0.18,<1",
+    "great-expectations>=0.18,<2",
     "pandas>=2.2,<4",
 ]
 runtime = []
@@ -164,14 +164,14 @@ sail-delta = [
     { include-group = "spark-client" },
     "deltalake>=0.23,<2",
     "pandas>=2,<3",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "requests>=2.32,<3",
     # OSS format("kafka") on Sail: the agent consumes and createDataFrames
     # Kafka-schema rows into the engine. JVM keeps spark-sql-kafka.
-    "kafka-python>=2.0.2,<3",
+    "kafka-python>=2.0.2,<4",
     # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
     "pyjks>=20,<22",
-    "cryptography>=42,<50",
+    "cryptography>=42,<51",
     # GSSAPI handshake: kafka-python imports this at connect time.
     "gssapi>=1.8,<2",
 ]
@@ -204,16 +204,16 @@ jupyter = [
     "jupyterlab>=4.2,<5",
     { include-group = "spark-client" },
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "requests>=2.32,<3",
 ]
 spark-connect = [
     { include-group = "spark-client" },
     "requests>=2.32,<3",
-    "kafka-python>=2.0.2,<3",
+    "kafka-python>=2.0.2,<4",
     # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
     "pyjks>=20,<22",
-    "cryptography>=42,<50",
+    "cryptography>=42,<51",
     # GSSAPI handshake: kafka-python imports this at connect time.
     "gssapi>=1.8,<2",
 ]
@@ -231,18 +231,18 @@ dbt-fabricspark = ["dbt-fabricspark>=1.13"]
 dbt-duckdb = [
     "dbt-duckdb>=1.9,<2",
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
 ]
 mlflow = ["mlflow>=3.1,<4"]
 rti = [
-    "azure-kusto-data>=5,<6",
+    "azure-kusto-data>=5,<7",
     "requests>=2.32,<3",
 ]
 data-science-loop = [
     "dbt-duckdb>=1.9,<2",
     "deltalake>=0.23,<2",
     "mlflow>=3.1,<4",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     { include-group = "spark-client" },
 ]
 # NOTE: examples/ deliberately do NOT appear here. Each example owns its
