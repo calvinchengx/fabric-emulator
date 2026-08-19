@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 FABRIC = os.environ["FABRIC_BASE"]
 ENTRA = os.environ["ENTRA_BASE"]
@@ -81,7 +81,7 @@ def wrap_body(result):
 
 async def drive(token):
     url = f"{FABRIC}/v1/mcp/core"
-    async with streamablehttp_client(
+    async with streamable_http_client(
             url, headers={"Authorization": "Bearer " + token}) as streams:
         read, write = streams[0], streams[1]
         async with ClientSession(read, write) as session:
