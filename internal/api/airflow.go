@@ -16,7 +16,12 @@ import (
 // Apache Airflow's REST API and shared DAG volume; tests substitute a witness.
 type AirflowRuntime interface {
 	SyncDAGs(ctx context.Context, itemID string, files map[string][]byte) error
-	TriggerAndWait(ctx context.Context, itemID, dagID, runID string, conf map[string]any) error
+	// DAGFingerprint is read BEFORE the sync, so the trigger can tell that
+	// Airflow's serialised structure has caught up with the files it is about
+	// to run. Taken after the sync it would be worthless -- the stale answer
+	// and the current one are indistinguishable without a baseline.
+	DAGFingerprint(ctx context.Context, dagID string) string
+	TriggerAndWait(ctx context.Context, dagID, runID, before string, conf map[string]any) error
 }
 
 func (a *API) registerAirflow(mux *http.ServeMux) {
@@ -160,6 +165,7 @@ func (a *API) runAirflow(ctx context.Context, it *store.Item, job *store.JobInst
 			}
 		}
 	}
+	before := ""
 	if err == nil && len(files) == 0 {
 		err = &airflowError{"AirflowDAGFileRequired"}
 	}
@@ -172,12 +178,13 @@ func (a *API) runAirflow(ctx context.Context, it *store.Item, job *store.JobInst
 		// job failed." beside an empty dags folder -- with the real reason
 		// discarded one line later. Its own code, so `jobFailureMessage` can
 		// say what to check.
+		before = a.Airflow.DAGFingerprint(ctx, dagID)
 		if syncErr := a.Airflow.SyncDAGs(ctx, it.ID, files); syncErr != nil {
 			err = &airflowError{"AirflowDAGSyncFailed"}
 		}
 	}
 	if err == nil {
-		err = a.Airflow.TriggerAndWait(ctx, it.ID, dagID, job.ID, conf)
+		err = a.Airflow.TriggerAndWait(ctx, dagID, job.ID, before, conf)
 	}
 	code := ""
 	if err != nil {

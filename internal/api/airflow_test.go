@@ -26,7 +26,9 @@ func (w *airflowWitness) SyncDAGs(_ context.Context, _ string, files map[string]
 	w.files = files
 	return w.syncErr
 }
-func (w *airflowWitness) TriggerAndWait(_ context.Context, _, dagID, runID string, conf map[string]any) error {
+func (w *airflowWitness) DAGFingerprint(_ context.Context, _ string) string { return "" }
+
+func (w *airflowWitness) TriggerAndWait(_ context.Context, dagID, runID, _ string, conf map[string]any) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.dagID, w.runID, w.conf = dagID, runID, conf

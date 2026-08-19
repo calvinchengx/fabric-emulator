@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -97,17 +98,10 @@ func (c *Client) SyncDAGs(ctx context.Context, itemID string, files map[string][
 		if err := os.WriteFile(target, raw, 0o644); err != nil {
 			return err
 		}
-		// RESTORE THE MTIME OF AN UNCHANGED FILE. The wipe-and-rewrite above
-		// is what makes this sync simple to reason about, but it also stamps
-		// every file as new on every run -- and the trigger now waits for
-		// Airflow to parse anything newer than the DAG it holds. Without this,
-		// a run whose DAG did not change still pays a full scheduler parse
-		// interval, and paying it repeatedly for nothing is how a correct wait
-		// gets deleted by someone measuring its cost.
-		//
-		// Same bytes means the serialised DAG is already current, so the file
-		// keeps the timestamp it had. Different bytes, or a file that did not
-		// exist, keeps `now` and is correctly waited for.
+		// KEEP THE TIMESTAMP OF AN UNCHANGED FILE. The wipe-and-rewrite that
+		// makes this sync simple to reason about also stamps every file as new
+		// on every run, which needlessly invites the scheduler to re-parse
+		// work it has already done.
 		if prior, ok := previous[clean]; ok && bytes.Equal(prior.content, raw) {
 			_ = os.Chtimes(target, prior.modTime, prior.modTime)
 		}
@@ -115,64 +109,76 @@ func (c *Client) SyncDAGs(ctx context.Context, itemID string, files map[string][
 	return nil
 }
 
-// newestWrite reports the most recent modification time under root, which is
-// when the DAG files this item just synced actually hit the shared volume.
-func newestWrite(root string) (time.Time, error) {
-	var newest time.Time
-	err := filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && info.ModTime().After(newest) {
-			newest = info.ModTime()
-		}
-		return nil
-	})
-	return newest, err
+// DAGFingerprint is the serialised task structure Airflow currently holds for
+// a DAG, as an ordered task-id list. Empty when the DAG is unknown or
+// unreachable, which callers treat as "nothing to compare against".
+//
+// THE TASK LIST IS THE ONLY AUTHORITATIVE SIGNAL, and three cheaper ones were
+// measured and rejected before settling here:
+//
+//   - `last_parsed_time` against the file's mtime. WRONG, and wrong in the
+//     direction that matters: observed 20ms AHEAD of a write whose content the
+//     parse had not read, because the cycle began before the write landed. It
+//     reports that A parse finished, not that THIS file was ingested.
+//   - the same, requiring the parse to be newer by some margin. That is the
+//     45-second sleep this replaces, wearing a different hat.
+//   - `/dagSources/{file_token}` compared against the bytes on disk. Closer,
+//     and still wrong: DagCode was observed matching disk a full THIRTEEN
+//     SECONDS before the task structure changed, so a trigger gated on it
+//     still runs the previous topology.
+//
+// The gap is Airflow's own `min_serialized_dag_update_interval` (30s by
+// default): the processor may read a file and skip rewriting the serialised
+// DAG. Task instances come from that serialisation, so it is the thing to
+// wait for, and asking for the task list asks exactly that question.
+func (c *Client) DAGFingerprint(ctx context.Context, dagID string) string {
+	var payload struct {
+		Tasks []struct {
+			TaskID string `json:"task_id"`
+		} `json:"tasks"`
+	}
+	status, err := c.call(ctx, "GET", "/api/v1/dags/"+url.PathEscape(dagID)+"/tasks", nil, &payload)
+	if err != nil || status >= 300 {
+		return ""
+	}
+	ids := make([]string, 0, len(payload.Tasks))
+	for _, t := range payload.Tasks {
+		ids = append(ids, t.TaskID)
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
 }
 
-// waitForCurrent blocks until Airflow has parsed the files this item just
-// synced, rather than an earlier version of them.
+// waitForCurrent blocks until Airflow's serialised DAG reflects the files just
+// synced, rather than the version it held a moment ago.
 //
-// THE DAG EXISTING IS NOT THE DAG BEING CURRENT, and conflating the two is a
-// race that cannot fail loudly. TriggerAndWait already waits for the DAG to
-// LOAD, which covers a brand-new file: until it parses, there is nothing to
-// unpause. A CHANGED file has the opposite shape -- the DAG is already there,
-// so every check passes instantly and the run is created from the structure
-// currently serialised, which is the previous version. The result is not an
-// error. It is a green run whose task instances belong to code that was
-// replaced, and it reads as a DAG bug: a task the trigger rule referenced with
-// no instance at all, or a newly added task returning in state `removed` while
-// its downstream fails. Both were diagnosed as product defects first.
-//
-// `last_parsed_time` against the file's mtime is the exact question -- has the
-// scheduler read what is on disk NOW -- and Airflow's own API answers it, so
-// nothing here estimates a scan interval.
-func (c *Client) waitForCurrent(ctx context.Context, itemID, dagID string) error {
-	written, err := newestWrite(filepath.Join(c.DAGDir, itemID))
-	if err != nil {
-		// Not fatal. If the sync directory cannot be walked there is nothing
-		// to compare against, and refusing to run would turn a missing
-		// optimisation into an outage.
+// A DAG THAT EXISTS IS NOT A DAG THAT IS CURRENT. TriggerAndWait already waits
+// for the DAG to LOAD, which covers a brand-new file: until it parses there is
+// nothing to unpause. A CHANGED file has the opposite shape -- the DAG is
+// already registered, every check passes instantly, and the run is created
+// from the structure currently serialised. The result is not an error. It is a
+// green run whose task instances belong to replaced code, and it surfaces as a
+// task the trigger rule references having no instance, or a new task returning
+// `removed` while its downstream fails. Both were diagnosed as DAG bugs first.
+func (c *Client) waitForCurrent(ctx context.Context, dagID, before string) error {
+	if before == "" {
+		// Nothing to compare against: a DAG Airflow has never served cannot go
+		// stale, and the load wait above already covered its arrival.
 		return nil
 	}
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		var dag struct {
-			LastParsedTime string `json:"last_parsed_time"`
-		}
-		status, err := c.call(ctx, "GET", "/api/v1/dags/"+url.PathEscape(dagID), nil, &dag)
-		if err == nil && status < 300 && dag.LastParsedTime != "" {
-			if parsed, perr := time.Parse(time.RFC3339Nano, dag.LastParsedTime); perr == nil {
-				if parsed.After(written) {
-					return nil
-				}
-			}
+		if now := c.DAGFingerprint(ctx, dagID); now != "" && now != before {
+			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf(
-				"Airflow did not re-parse DAG %q within 2m of its files being "+
-					"synced; triggering now would run the previous version", dagID)
+			// DELIBERATELY NOT AN ERROR. A change that does not alter the task
+			// set -- a callable's body, a default arg -- produces no
+			// observable difference here and would otherwise fail every such
+			// run. Two minutes is far past the serialisation interval that
+			// causes the staleness, so proceeding is the right call; the
+			// topology changes that actually bit are caught above.
+			return nil
 		}
 		if err := sleep(ctx, c.PollInterval); err != nil {
 			return err
@@ -180,7 +186,7 @@ func (c *Client) waitForCurrent(ctx context.Context, itemID, dagID string) error
 	}
 }
 
-func (c *Client) TriggerAndWait(ctx context.Context, itemID, dagID, runID string, conf map[string]any) error {
+func (c *Client) TriggerAndWait(ctx context.Context, dagID, runID, before string, conf map[string]any) error {
 	// Uploaded DAGs may take one scheduler parse interval to appear.
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
@@ -198,7 +204,7 @@ func (c *Client) TriggerAndWait(ctx context.Context, itemID, dagID, runID string
 	// BETWEEN LOADING AND TRIGGERING, which is the only place it works: after
 	// the DAG is known to exist, and before a run is created from whatever is
 	// serialised at that instant.
-	if err := c.waitForCurrent(ctx, itemID, dagID); err != nil {
+	if err := c.waitForCurrent(ctx, dagID, before); err != nil {
 		return err
 	}
 	var created map[string]any
