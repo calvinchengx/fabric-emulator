@@ -392,6 +392,34 @@ func leafCount(n parquet.Node) int {
 	return total
 }
 
+// logicalValue reads one member out of parquet-go 0.32's LogicalType union,
+// which replaced the old struct-of-optional-pointers. Generic because every
+// caller asks the same question of a different member, and a nil annotation
+// must answer "no" rather than panic.
+func logicalValue[T format.LogicalTypeValue](lt *format.LogicalType) (T, bool) {
+	var zero T
+	if lt == nil {
+		return zero, false
+	}
+	v, ok := lt.Value.(T)
+	return v, ok
+}
+
+// isTextAnnotation reports whether the schema SAYS these bytes are text.
+// Three annotations mean text — STRING, JSON and ENUM — and they are listed
+// here rather than inline so the byte-array branch keeps reading as one
+// question.
+func isTextAnnotation(lt *format.LogicalType) bool {
+	if lt == nil {
+		return false
+	}
+	switch lt.Value.(type) {
+	case *format.StringType, *format.JsonType, *format.EnumType:
+		return true
+	}
+	return false
+}
+
 // goValue converts a parquet Value to a Go value (nil for NULL). lt is the
 // column's logical annotation, which must win over the physical kind: the same
 // INT32 is a plain int or a date, the same INT64 a long, an unscaled decimal or
@@ -402,14 +430,17 @@ func goValue(v parquet.Value, lt *format.LogicalType) any {
 	if v.IsNull() {
 		return nil
 	}
+	// parquet-go 0.32 turned LogicalType from a struct of optional pointers
+	// into a real thrift union with one Value, so the annotation is read by
+	// type rather than by nil-check. Same three questions, same order.
 	if lt != nil {
-		switch {
-		case lt.Decimal != nil:
-			return decimalValue(v, lt.Decimal)
-		case lt.Date != nil:
+		switch t := lt.Value.(type) {
+		case *format.DecimalType:
+			return decimalValue(v, t)
+		case *format.DateType:
 			return Date{T: epochDay.AddDate(0, 0, int(v.Int32()))}
-		case lt.Timestamp != nil:
-			return Timestamp{T: timestampTime(v.Int64(), lt.Timestamp)}
+		case *format.TimestampType:
+			return Timestamp{T: timestampTime(v.Int64(), t)}
 		}
 	}
 	switch v.Kind() {
@@ -429,7 +460,7 @@ func goValue(v parquet.Value, lt *format.LogicalType) any {
 		// Unsigned is deliberately excluded. Delta has no unsigned types, so
 		// this is defensive — but a uint16 up to 65535 does not fit an int16,
 		// and reflecting one width too WIDE is lossless where narrowing is not.
-		if lt != nil && lt.Integer != nil && lt.Integer.BitWidth <= 16 && lt.Integer.IsSigned {
+		if it, ok := logicalValue[*format.IntType](lt); ok && it.BitWidth <= 16 && it.IsSigned {
 			return int16(v.Int32())
 		}
 		// int32, not int64: a widened int reflects as BIGINT where Fabric says
@@ -450,7 +481,7 @@ func goValue(v parquet.Value, lt *format.LogicalType) any {
 		// Only text when the schema SAYS it is text. Unannotated bytes are
 		// binary, and stringifying them both loses the distinction and can
 		// produce invalid UTF-8 in a string column.
-		if lt != nil && (lt.UTF8 != nil || lt.Json != nil || lt.Enum != nil) {
+		if isTextAnnotation(lt) {
 			return string(v.ByteArray())
 		}
 		if lt == nil {
@@ -468,10 +499,10 @@ var epochDay = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 // timestampTime applies the annotation's unit. Getting this wrong is silent:
 // microseconds read as milliseconds land in 1970 rather than failing.
 func timestampTime(n int64, ts *format.TimestampType) time.Time {
-	switch {
-	case ts.Unit.Nanos != nil:
+	switch ts.Unit.Value.(type) {
+	case *format.NanoSeconds:
 		return time.Unix(0, n).UTC()
-	case ts.Unit.Millis != nil:
+	case *format.MilliSeconds:
 		return time.UnixMilli(n).UTC()
 	default: // Micros is the Delta/Spark default
 		return time.UnixMicro(n).UTC()
