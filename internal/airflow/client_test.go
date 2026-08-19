@@ -16,21 +16,21 @@ import (
 
 func TestSyncDAGsReplacesItemTreeAndRejectsTraversal(t *testing.T) {
 	c := &Client{DAGDir: t.TempDir()}
-	if err := c.SyncDAGs(context.Background(), "item", map[string][]byte{"nested/dag.py": []byte("v1")}); err != nil {
+	if _, err := c.SyncDAGs(context.Background(), "item", map[string][]byte{"nested/dag.py": []byte("v1")}); err != nil {
 		t.Fatal(err)
 	}
 	p := filepath.Join(c.DAGDir, "item", "nested", "dag.py")
 	if raw, err := os.ReadFile(p); err != nil || string(raw) != "v1" {
 		t.Fatalf("read=%q err=%v", raw, err)
 	}
-	if err := c.SyncDAGs(context.Background(), "item", map[string][]byte{"new.py": []byte("v2")}); err != nil {
+	if _, err := c.SyncDAGs(context.Background(), "item", map[string][]byte{"new.py": []byte("v2")}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Fatalf("stale DAG remains: %v", err)
 	}
 	for _, name := range []string{"../escape.py", "/absolute.py", "."} {
-		if err := c.SyncDAGs(context.Background(), "item", map[string][]byte{name: []byte("x")}); err == nil {
+		if _, err := c.SyncDAGs(context.Background(), "item", map[string][]byte{name: []byte("x")}); err == nil {
 			t.Errorf("path %q accepted", name)
 		}
 		if raw, err := os.ReadFile(filepath.Join(c.DAGDir, "item", "new.py")); err != nil || string(raw) != "v2" {
@@ -39,7 +39,7 @@ func TestSyncDAGsReplacesItemTreeAndRejectsTraversal(t *testing.T) {
 	}
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := c.SyncDAGs(cancelled, "item", map[string][]byte{"cancelled.py": []byte("x")}); !errors.Is(err, context.Canceled) {
+	if _, err := c.SyncDAGs(cancelled, "item", map[string][]byte{"cancelled.py": []byte("x")}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled sync error=%v", err)
 	}
 }
@@ -251,7 +251,7 @@ func TestSyncKeepsTheTimestampOfAnUnchangedFile(t *testing.T) {
 	}
 	ctx := context.Background()
 	files := map[string][]byte{"dags/d.py": []byte("# one")}
-	if err := c.SyncDAGs(ctx, "item-1", files); err != nil {
+	if _, err := c.SyncDAGs(ctx, "item-1", files); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dagDir, "item-1", "dags", "d.py")
@@ -267,7 +267,7 @@ func TestSyncKeepsTheTimestampOfAnUnchangedFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := c.SyncDAGs(ctx, "item-1", files); err != nil {
+	if _, err := c.SyncDAGs(ctx, "item-1", files); err != nil {
 		t.Fatal(err)
 	}
 	same, err := os.Stat(path)
@@ -280,7 +280,7 @@ func TestSyncKeepsTheTimestampOfAnUnchangedFile(t *testing.T) {
 
 	// CHANGED bytes must take the new time, or the wait would be skipped
 	// exactly when it is needed.
-	if err := c.SyncDAGs(ctx, "item-1", map[string][]byte{"dags/d.py": []byte("# two")}); err != nil {
+	if _, err := c.SyncDAGs(ctx, "item-1", map[string][]byte{"dags/d.py": []byte("# two")}); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := os.Stat(path)
@@ -289,5 +289,58 @@ func TestSyncKeepsTheTimestampOfAnUnchangedFile(t *testing.T) {
 	}
 	if !changed.ModTime().After(old) {
 		t.Fatalf("changed bytes kept the old timestamp: %v", changed.ModTime())
+	}
+}
+
+// Re-running an UNMODIFIED DAG is the common case, and it must not wait.
+//
+// Only a changed file can leave Airflow's serialisation stale. If the bytes
+// are identical, what Airflow holds is already what is on disk -- and waiting
+// for its task set to "change" would wait for something that will never
+// happen, spending the entire timeout on every ordinary re-run.
+func TestSyncReportsWhetherAnythingActuallyChanged(t *testing.T) {
+	dagDir := t.TempDir()
+	c, err := New("http://airflow.invalid", dagDir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	files := map[string][]byte{"dags/d.py": []byte("# one")}
+
+	changed, err := c.SyncDAGs(ctx, "item-1", files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("a first sync creates the file and must report a change")
+	}
+
+	if changed, err = c.SyncDAGs(ctx, "item-1", files); err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("identical bytes reported as a change -- every re-run would pay the wait")
+	}
+
+	if changed, err = c.SyncDAGs(ctx, "item-1", map[string][]byte{"dags/d.py": []byte("# two")}); err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("different bytes reported as unchanged -- the wait would be skipped when needed")
+	}
+
+	// A REMOVED file changes the item as surely as an edited one.
+	if changed, err = c.SyncDAGs(ctx, "item-1", map[string][]byte{
+		"dags/d.py": []byte("# two"), "dags/e.py": []byte("# new")}); err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("an added file reported as unchanged")
+	}
+	if changed, err = c.SyncDAGs(ctx, "item-1", map[string][]byte{"dags/d.py": []byte("# two")}); err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("a removed file reported as unchanged")
 	}
 }

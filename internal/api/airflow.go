@@ -15,7 +15,9 @@ import (
 // AirflowRuntime is the deliberately small upstream boundary. Production uses
 // Apache Airflow's REST API and shared DAG volume; tests substitute a witness.
 type AirflowRuntime interface {
-	SyncDAGs(ctx context.Context, itemID string, files map[string][]byte) error
+	// Reports whether any DAG changed: only a changed file can leave
+	// Airflow's serialisation stale, so an unchanged sync needs no wait.
+	SyncDAGs(ctx context.Context, itemID string, files map[string][]byte) (bool, error)
 	// DAGFingerprint is read BEFORE the sync, so the trigger can tell that
 	// Airflow's serialised structure has caught up with the files it is about
 	// to run. Taken after the sync it would be worthless -- the stale answer
@@ -179,8 +181,16 @@ func (a *API) runAirflow(ctx context.Context, it *store.Item, job *store.JobInst
 		// discarded one line later. Its own code, so `jobFailureMessage` can
 		// say what to check.
 		before = a.Airflow.DAGFingerprint(ctx, dagID)
-		if syncErr := a.Airflow.SyncDAGs(ctx, it.ID, files); syncErr != nil {
+		changed, syncErr := a.Airflow.SyncDAGs(ctx, it.ID, files)
+		if syncErr != nil {
 			err = &airflowError{"AirflowDAGSyncFailed"}
+		}
+		if !changed {
+			// Nothing moved on disk, so nothing Airflow holds can be stale.
+			// Dropping the baseline tells the trigger there is nothing to
+			// wait for -- otherwise the most common case, re-running an
+			// unmodified DAG, would pay the whole timeout every time.
+			before = ""
 		}
 	}
 	if err == nil {

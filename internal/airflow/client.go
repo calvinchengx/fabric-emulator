@@ -59,7 +59,16 @@ func readExisting(root string) map[string]syncedFile {
 	return out
 }
 
-func (c *Client) SyncDAGs(ctx context.Context, itemID string, files map[string][]byte) error {
+// SyncDAGs writes an item's DAGs to the shared volume and reports whether any
+// of them actually changed.
+//
+// THE CALLER NEEDS THAT ANSWER, not as an optimisation but for correctness of
+// the wait that follows. A serialised DAG can only be STALE relative to files
+// that changed; if the bytes are identical, what Airflow holds is already what
+// is on disk and waiting for its task set to "change" would wait for something
+// that is never going to happen -- burning the full timeout on the most common
+// case there is, re-running an unmodified DAG.
+func (c *Client) SyncDAGs(ctx context.Context, itemID string, files map[string][]byte) (bool, error) {
 	root := filepath.Join(c.DAGDir, itemID)
 	cleanFiles := make(map[string][]byte, len(files))
 	for name, raw := range files {
@@ -72,41 +81,47 @@ func (c *Client) SyncDAGs(ctx context.Context, itemID string, files map[string][
 		rooted := clean != "" && os.IsPathSeparator(clean[0])
 		if clean == "." || clean == ".." || rooted || filepath.IsAbs(clean) ||
 			strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("invalid DAG path %q", name)
+			return false, fmt.Errorf("invalid DAG path %q", name)
 		}
 		cleanFiles[clean] = raw
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	// READ BEFORE WIPING, so an unchanged file can keep its timestamp. Best
 	// effort: anything unreadable simply counts as changed, which is the safe
 	// direction -- it waits when it need not have, rather than triggering
 	// against a serialisation it should have waited for.
 	previous := readExisting(root)
+	// A REMOVED FILE IS A CHANGE TOO, so compare the sets and not just the
+	// bytes of what arrived.
+	changed := len(previous) != len(cleanFiles)
 	if err := os.RemoveAll(root); err != nil {
-		return err
+		return false, err
 	}
 	for clean, raw := range cleanFiles {
 		if err := ctx.Err(); err != nil {
-			return err
+			return false, err
 		}
 		target := filepath.Join(root, clean)
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
+			return false, err
 		}
 		if err := os.WriteFile(target, raw, 0o644); err != nil {
-			return err
+			return false, err
 		}
 		// KEEP THE TIMESTAMP OF AN UNCHANGED FILE. The wipe-and-rewrite that
 		// makes this sync simple to reason about also stamps every file as new
 		// on every run, which needlessly invites the scheduler to re-parse
 		// work it has already done.
-		if prior, ok := previous[clean]; ok && bytes.Equal(prior.content, raw) {
+		prior, ok := previous[clean]
+		if ok && bytes.Equal(prior.content, raw) {
 			_ = os.Chtimes(target, prior.modTime, prior.modTime)
+			continue
 		}
+		changed = true
 	}
-	return nil
+	return changed, nil
 }
 
 // DAGFingerprint is the serialised task structure Airflow currently holds for
