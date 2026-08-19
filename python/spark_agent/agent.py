@@ -28,7 +28,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpjson
 import jvmconf  # no Spark; JVM session configs (see jvmconf.py)
 import session_recovery
+import task_scope
 from pyspark.sql import SparkSession
+
+# Before any statement can bind a scope, and before this module's own
+# `os.environ` reads below — with nothing bound both attributes resolve exactly
+# as they did before (task_scope.py).
+task_scope.install()
 
 
 def build_spark():
@@ -271,9 +277,24 @@ session_isolated = {}  # Livy session id -> did it get a private SparkSession
 # it; each statement binds it into notebookutils.runtime so two notebooks in
 # one agent cannot read each other's workspace.
 session_context = {}
+# Per-session argv and environment (task_scope.py). A task's parameters and its
+# resolved secrets arrive as writes to `sys` and `os`, one object each per
+# interpreter: without a per-session view, two tasks dispatched in the same wave
+# overwrite each other and both read the winner's, reporting SUCCESS either way.
+session_scopes = {}
 catalog_claims = catalog.Claims()  # only consulted when isolation is unavailable
 
 
+def scope_for(session):
+    """This session's argv/env view, made on first use and held until /close.
+
+    Per SESSION rather than per statement, because a session stands in for the
+    task process: a second statement must still see the argv the first was given.
+    """
+    scope = session_scopes.get(session)
+    if scope is None:
+        scope = session_scopes[session] = task_scope.TaskScope()
+    return scope
 
 
 def _notebookutils():
@@ -493,22 +514,34 @@ class Handler(BaseHTTPRequestHandler):
                 print("files_mount: refresh before statement failed:\n"
                       + traceback.format_exc(), flush=True)
             try:
-                with cell_context(req.get("jobId"), req.get("cellIndex")):
-                    session = req.get("session", "default")
-                    with runtime_scope(session, req):
-                        if (req.get("kind") or "").lower() == "sql":
-                            result = sqlrun.run_sql(req.get("code", ""), ns(session))
-                        else:
-                            result = run_code(req.get("code", ""), ns(session))
-                    # The engine dropping our session is not this statement's
-                    # fault and, until #312, was permanent: nothing re-ran
-                    # getOrCreate(), so every later statement failed the same
-                    # way. Rebuild now so the NEXT one works, and tell the user
-                    # what the rebuild cost. This statement still fails —
-                    # re-running arbitrary user code that may already have
-                    # written data is not something the agent can do safely.
-                    if session_recovery.envelope_is_lost_session(result):
-                        session_recovery.annotate(result, recover_lost_session())
+                session = req.get("session", "default")
+                # OUTERMOST, so everything inside resolves against this task.
+                # cell_context's FABRIC_JOB_ID export is an `os.environ` write
+                # too: its save/restore kept one cell's identity off the NEXT
+                # statement, but overlapping statements are what the agent
+                # actually serves, and there restore-on-exit put the other
+                # statement's value back under a still-running one.
+                # The noqa stays: combining these needs a parenthesised
+                # multi-context `with`, which is 3.9+ syntax, and this file runs
+                # on 3.8 in the JVM overlay image
+                # (test_spark_agent_runs_on_python38.py) — ruff is right about
+                # the target it was told about, not the one that ships.
+                with task_scope.scoped(scope_for(session)):  # noqa: SIM117
+                    with cell_context(req.get("jobId"), req.get("cellIndex")):
+                        with runtime_scope(session, req):
+                            if (req.get("kind") or "").lower() == "sql":
+                                result = sqlrun.run_sql(req.get("code", ""), ns(session))
+                            else:
+                                result = run_code(req.get("code", ""), ns(session))
+                        # The engine dropping our session is not this statement's
+                        # fault and, until #312, was permanent: nothing re-ran
+                        # getOrCreate(), so every later statement failed the same
+                        # way. Rebuild now so the NEXT one works, and tell the
+                        # user what the rebuild cost. This statement still fails
+                        # — re-running arbitrary user code that may already have
+                        # written data is not something the agent can do safely.
+                        if session_recovery.envelope_is_lost_session(result):
+                            session_recovery.annotate(result, recover_lost_session())
             finally:
                 try:
                     import files_mount
@@ -544,6 +577,7 @@ class Handler(BaseHTTPRequestHandler):
                       + traceback.format_exc(), flush=True)
             namespaces.pop(req.get("session", ""), None)
             session_context.pop(req.get("session", ""), None)
+            session_scopes.pop(req.get("session", ""), None)
             self._send(200, {"closed": True})
         else:
             self._send(404, {"error": "not found"})
