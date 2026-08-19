@@ -227,3 +227,55 @@ func TestTriggerWaitsUntilAirflowHasParsedTheFilesJustSynced(t *testing.T) {
 		t.Fatalf("parse checks=%d -- the wait did not actually poll", parseChecks.Load())
 	}
 }
+
+// An unchanged DAG must not be restamped, or every run pays a scheduler parse
+// interval for nothing -- and a correct wait that always costs 30 seconds is a
+// wait somebody deletes.
+func TestSyncKeepsTheTimestampOfAnUnchangedFile(t *testing.T) {
+	dagDir := t.TempDir()
+	c, err := New("http://airflow.invalid", dagDir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	files := map[string][]byte{"dags/d.py": []byte("# one")}
+	if err := c.SyncDAGs(ctx, "item-1", files); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dagDir, "item-1", "dags", "d.py")
+	first, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Backdate, so a rewrite is unmistakable rather than lost in clock
+	// resolution.
+	old := first.ModTime().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.SyncDAGs(ctx, "item-1", files); err != nil {
+		t.Fatal(err)
+	}
+	same, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !same.ModTime().Equal(old) {
+		t.Fatalf("identical bytes were restamped: %v -> %v", old, same.ModTime())
+	}
+
+	// CHANGED bytes must take the new time, or the wait would be skipped
+	// exactly when it is needed.
+	if err := c.SyncDAGs(ctx, "item-1", map[string][]byte{"dags/d.py": []byte("# two")}); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed.ModTime().After(old) {
+		t.Fatalf("changed bytes kept the old timestamp: %v", changed.ModTime())
+	}
+}

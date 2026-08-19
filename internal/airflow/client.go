@@ -31,6 +31,33 @@ func New(baseURL, dagDir, username, password string) (*Client, error) {
 	return &Client{BaseURL: strings.TrimSuffix(baseURL, "/"), DAGDir: dagDir, Username: username, Password: password, HTTP: &http.Client{Timeout: 30 * time.Second}, PollInterval: time.Second}, nil
 }
 
+type syncedFile struct {
+	content []byte
+	modTime time.Time
+}
+
+// readExisting snapshots what an item's DAG directory already holds, keyed the
+// same way the incoming files are, so the two can be compared byte for byte.
+func readExisting(root string) map[string]syncedFile {
+	out := map[string]syncedFile{}
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		out[rel] = syncedFile{content: content, modTime: info.ModTime()}
+		return nil
+	})
+	return out
+}
+
 func (c *Client) SyncDAGs(ctx context.Context, itemID string, files map[string][]byte) error {
 	root := filepath.Join(c.DAGDir, itemID)
 	cleanFiles := make(map[string][]byte, len(files))
@@ -51,6 +78,11 @@ func (c *Client) SyncDAGs(ctx context.Context, itemID string, files map[string][
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// READ BEFORE WIPING, so an unchanged file can keep its timestamp. Best
+	// effort: anything unreadable simply counts as changed, which is the safe
+	// direction -- it waits when it need not have, rather than triggering
+	// against a serialisation it should have waited for.
+	previous := readExisting(root)
 	if err := os.RemoveAll(root); err != nil {
 		return err
 	}
@@ -64,6 +96,20 @@ func (c *Client) SyncDAGs(ctx context.Context, itemID string, files map[string][
 		}
 		if err := os.WriteFile(target, raw, 0o644); err != nil {
 			return err
+		}
+		// RESTORE THE MTIME OF AN UNCHANGED FILE. The wipe-and-rewrite above
+		// is what makes this sync simple to reason about, but it also stamps
+		// every file as new on every run -- and the trigger now waits for
+		// Airflow to parse anything newer than the DAG it holds. Without this,
+		// a run whose DAG did not change still pays a full scheduler parse
+		// interval, and paying it repeatedly for nothing is how a correct wait
+		// gets deleted by someone measuring its cost.
+		//
+		// Same bytes means the serialised DAG is already current, so the file
+		// keeps the timestamp it had. Different bytes, or a file that did not
+		// exist, keeps `now` and is correctly waited for.
+		if prior, ok := previous[clean]; ok && bytes.Equal(prior.content, raw) {
+			_ = os.Chtimes(target, prior.modTime, prior.modTime)
 		}
 	}
 	return nil
