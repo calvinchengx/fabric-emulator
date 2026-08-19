@@ -33,12 +33,18 @@ harder to diagnose than the error it replaced. The caller reports what was lost.
 # Spark Connect raises SparkConnectGrpcException carrying an INVALID_HANDLE
 # error class. Matching the type alone would recover on one engine and not the
 # other, with nothing to say which.
+# Each entry is a tuple of substrings that must ALL appear. "is not running" is
+# on its own far too loose to trigger a rebuild — "the container is not
+# running", "the Docker daemon is not running" and any engine-side message about
+# something else that stopped would all match, and every one of them would cost
+# every open notebook its temp views. Sail's actual text is
+# "invalid argument: session <uuid> is not running", so pair it with "session".
 LOST_SESSION_MARKERS = (
-    "is not running",           # Sail: "invalid argument: session <uuid> is not running"
-    "invalid_handle.session_closed",
-    "invalid_handle.session_not_found",
-    "session_not_found",
-    "session is closed",
+    ("session", "is not running"),
+    ("invalid_handle.session_closed",),
+    ("invalid_handle.session_not_found",),
+    ("session_not_found",),
+    ("session is closed",),
 )
 
 # There is deliberately NO deny-list beside this. I wrote one first — to keep
@@ -65,7 +71,7 @@ def is_lost_session_text(text):
     user error would drop every namespace's temp views for a typo.
     """
     text = (text or "").lower()
-    return any(m in text for m in LOST_SESSION_MARKERS)
+    return any(all(part in text for part in markers) for markers in LOST_SESSION_MARKERS)
 
 
 def is_lost_session(exc):

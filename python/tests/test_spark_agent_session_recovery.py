@@ -178,3 +178,18 @@ def test_annotate_is_a_no_op_when_the_rebuild_failed():
     session_recovery.annotate(result, None)
     assert result["evalue"] == "boom"
     assert result["traceback"] == ["boom"]
+
+
+def test_something_else_that_is_not_running_is_not_a_lost_session():
+    # "is not running" alone is far too loose: these are messages about
+    # something ELSE having stopped, and recovering on them would cost every
+    # open notebook its temp views for an unrelated failure.
+    for text in ("RuntimeError: the container is not running",
+                 "docker: Error response from daemon: the Docker daemon is not running",
+                 "OSError: the mount helper is not running"):
+        assert not session_recovery.is_lost_session_text(text), text
+
+
+def test_sails_message_still_matches_with_the_tightened_marker():
+    assert session_recovery.is_lost_session_text(
+        "invalid argument: session 7f3a1c22 is not running")
