@@ -36,7 +36,7 @@ test = [
     # gap the moment the Connect wraps landed. Same pins as the `delta-rs`
     # group; pandas is what `read_change_feed` materialises through.
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "pandas>=2,<3",
     "pyjks>=20,<22",
     # 49.0.0 is the first release that closes the three open wheel and
@@ -52,7 +52,7 @@ lint = [
 ]
 adls-sdk = [
     "azure-storage-blob>=12.24,<13",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
 ]
 # The third-party witness for the Purview Data Map row. pyapacheatlas speaks
 # Apache Atlas v2, which is what the Data Map IS — so this is a real client
@@ -68,12 +68,12 @@ mcp = [
 ]
 delta-rs = [
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
 ]
 duckdb = [
     "deltalake>=0.23,<2",
     "duckdb>=1.1,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
 ]
 s3 = [
     "boto3>=1.35,<2",
@@ -92,7 +92,7 @@ fabric-target = [
 ]
 governance = [
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "requests>=2.32,<3",
     # govern_ingest reads the ODCS contracts, so a cataloged table carries the
     # meaning a human wrote rather than only the shape the emulator can infer.
@@ -103,7 +103,7 @@ governance = [
 # own Copy executor rather than by an engine.
 demo = [
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "requests>=2.32,<3",
 ]
 great-expectations = [
@@ -164,7 +164,7 @@ sail-delta = [
     { include-group = "spark-client" },
     "deltalake>=0.23,<2",
     "pandas>=2,<3",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "requests>=2.32,<3",
     # OSS format("kafka") on Sail: the agent consumes and createDataFrames
     # Kafka-schema rows into the engine. JVM keeps spark-sql-kafka.
@@ -204,7 +204,7 @@ jupyter = [
     "jupyterlab>=4.2,<5",
     { include-group = "spark-client" },
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "requests>=2.32,<3",
 ]
 spark-connect = [
@@ -231,7 +231,7 @@ dbt-fabricspark = ["dbt-fabricspark>=1.13"]
 dbt-duckdb = [
     "dbt-duckdb>=1.9,<2",
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
 ]
 mlflow = ["mlflow>=3.1,<4"]
 rti = [
@@ -242,7 +242,7 @@ data-science-loop = [
     "dbt-duckdb>=1.9,<2",
     "deltalake>=0.23,<2",
     "mlflow>=3.1,<4",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     { include-group = "spark-client" },
 ]
 # NOTE: examples/ deliberately do NOT appear here. Each example owns its
