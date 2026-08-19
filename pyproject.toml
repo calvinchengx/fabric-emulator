@@ -64,7 +64,12 @@ purview-datamap = [
 # witnesses Fabric Core MCP Server (POST /v1/mcp/core). Pinned below v2: v2
 # renamed streamablehttp_client and dropped the headers= kwarg.
 mcp = [
-    "mcp>=1.12,<2",
+    # >=2, not >=1.12: mcp 2.0 renamed `streamablehttp_client` to
+    # `streamable_http_client`, which e2e/mcp-core/driver.py imports. A
+    # floor that still admitted 1.x would resolve a client that import
+    # cannot find, and the suite would fail on ImportError rather than on
+    # anything about the emulator.
+    "mcp>=2,<3",
 ]
 delta-rs = [
     "deltalake>=0.23,<2",
