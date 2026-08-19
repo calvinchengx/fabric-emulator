@@ -23,6 +23,9 @@ jobs:
   secrets:
     name: gitleaks
     runs-on: ubuntu-latest
+    # A wedged run must fail rather than sit in GitHub's 6-hour default,
+    # where 'pending' and 'stuck' look identical.
+    timeout-minutes: 15
     steps:
       # Full history: a secret that was committed and then removed is still in
       # the pack, still cloneable, and still leaked. Scanning only the tip
@@ -50,6 +53,9 @@ jobs:
   vulnerabilities:
     name: govulncheck
     runs-on: ubuntu-latest
+    # A wedged run must fail rather than sit in GitHub's 6-hour default,
+    # where 'pending' and 'stuck' look identical.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
