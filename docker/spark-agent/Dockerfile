@@ -25,10 +25,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml uv.lock ./
 COPY python/ ./python/
-# sail-delta, not spark-connect: the agent routes OPTIMIZE/VACUUM/CDF through
-# delta-rs, so `deltalake` belongs in the image. With spark-connect the import
-# failed and the interception silently never installed.
-RUN uv sync --frozen --no-install-project --group sail-delta
+# spark-agent-dbt, which includes sail-delta: the agent routes
+# OPTIMIZE/VACUUM/CDF through delta-rs, so `deltalake` belongs in the image
+# (with spark-connect the import failed and the interception silently never
+# installed), and it also runs dbt for databricks-emulator's `dbt_task`, which
+# hands this image a project and a profile rather than a statement.
+# --no-cache: uv's DOWNLOAD cache is build input, and it was being baked into
+# the runtime image -- 538 MB of it in the published 4.2.0, for wheels nothing
+# unpacks again. Separable from the dbt addition and fixed here because it is
+# the same line: without it this image would appear to double when the actual
+# cost of dbt is the venv, +219 MB.
+RUN uv sync --frozen --no-install-project --no-cache --group spark-agent-dbt
 
 ENV PATH="/app/.venv/bin:${PATH}"
 # Same reason as docker/python-runtime, and set here too because the two images

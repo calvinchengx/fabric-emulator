@@ -175,6 +175,22 @@ sail-delta = [
     # GSSAPI handshake: kafka-python imports this at connect time.
     "gssapi>=1.8,<2",
 ]
+# dbt on the statement agent, for databricks-emulator's `dbt_task`.
+#
+# A SEPARATE GROUP, not folded into sail-delta, because sail-delta also builds
+# the engine matrix's "Sail + delta-rs" probe and that column measures the
+# shipped runtime: adding an adapter it never calls would make the probe a
+# lookalike of the agent rather than the agent.
+#
+# Why a DATABRICKS adapter ships from this repository: the agent image is the
+# family's, not Fabric's. databricks-emulator terminates `dbt_task` and hands
+# the project here, because dbt is an ordinary warehouse client and running it
+# as a job changes who invokes it, not what it connects to. Without this the
+# task fails naming this image, which is honest and still unusable.
+spark-agent-dbt = [
+    { include-group = "sail-delta" },
+    "dbt-databricks==1.12.4",
+]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP
 # APIs, and the statement agent is where that code executes.
 # JupyterLab for the `jupyter` compose profile: a REAL notebook editor shipped
@@ -256,6 +272,16 @@ conflicts = [
     [
         { group = "dbt-fabric" },
         { group = "dbt-fabricspark" },
+    ],
+    # dbt-databricks 1.12.4 pins databricks-sdk<0.118; this repository's own
+    # databricks-sdk group wants >=0.130 for the Databricks-activity e2e. Both
+    # are correct and they are never installed together: the agent image takes
+    # spark-agent-dbt, that e2e takes databricks-sdk. Declared rather than
+    # resolved by loosening one, which would silently move the version a
+    # witness runs against.
+    [
+        { group = "spark-agent-dbt" },
+        { group = "databricks-sdk" },
     ],
 ]
 
