@@ -59,6 +59,15 @@ func jobFailureMessage(code string) string {
 		return "This Copy job's DESTINATION is an external connection (SQL, " +
 			"Blob, …). The emulator executes Lakehouse-to-Lakehouse legs only; " +
 			"external stores need credentials and drivers it does not hold."
+	case "AirflowDAGSyncFailed":
+		return "The job's DAG files could not be written to the Airflow DAG " +
+			"directory. That directory is a volume shared with the Airflow " +
+			"sidecar, and the emulator runs as a non-root uid: if the volume " +
+			"comes up owned by the Airflow user without group or world write, " +
+			"the emulator cannot write into it and the scheduler sees no DAGs. " +
+			"Check that FABRIC_AIRFLOW_DAG_DIR is writable by the emulator's " +
+			"uid — the shipped compose has the Airflow container widen it at " +
+			"startup, because it owns the directory."
 	case "CopyJobWriteBehaviorNotSupported":
 		return "This Copy job's writeBehavior needs key-based reconciliation " +
 			"(Merge/Upsert). Append and Overwrite execute for real; a Merge " +
