@@ -234,7 +234,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         if: matrix.os == 'ubuntu-latest' && github.ref == 'refs/heads/main'
         with:
           version: "0.11.32"
@@ -298,7 +298,7 @@ jobs:
       # control plane, the Livy/agent path and the notebook drive, and the job
       # is already the slowest thing here. Adding another suite is one line —
       # the wiring is in the harness, not here.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - name: Instrumented e2e suites
@@ -342,7 +342,7 @@ jobs:
       # Regenerates the matrix from both engines and fails if the committed
       # file differs. That is what stops a claim like "SQL VERSION AS OF is a
       # Sail gap" surviving a Sail upgrade that closed it.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Maven Central rate-limits GitHub-hosted runners (shared IP pools), and a
@@ -364,7 +364,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Live write-landing: RunNotebook through Sail, then a DFS listing from
@@ -379,7 +379,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Maven Central rate-limits GitHub-hosted runners (shared IP pools).
@@ -409,7 +409,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: "1.25"
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/conformance/run.py --backend warehouse --live
@@ -439,7 +439,7 @@ jobs:
       # witness — or a witness that no longer exists — fails the build. That
       # second case is the valuable one: it catches a test being renamed or
       # deleted out from under the claim that depended on it.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python scripts/check_witnesses.py --strict
@@ -516,7 +516,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Python had no static enforcement at all while Go had `go vet` from the
@@ -579,7 +579,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       # WHY THIS RUNS ON EVERY PR and not only at release time. This script was
       # invoked from release.yml alone, so a dependency added to an example broke
       # a job nothing exercised until a tag was pushed — and that is exactly how
@@ -641,7 +641,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: pnpm install --frozen-lockfile
@@ -675,7 +675,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Self-contained: starts entra-emulator (go install) + fabric-emulator,
@@ -695,7 +695,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # The SAME publish as the job above, against an emulator started with
@@ -722,7 +722,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Self-contained: entra from go.mod, arm-emulator from the ARM_VERSION
@@ -746,7 +746,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Unit layer: pure resolver tests (no network). Install the package so
@@ -771,7 +771,7 @@ jobs:
       # own azure-kusto-data SDK. Linux/amd64 only: Microsoft documents ARM as
       # unsupported for the engine (its native layer needs AVX2), so this is
       # the only place the engine can be witnessed at all.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/rti/run.py
@@ -790,7 +790,7 @@ jobs:
       # which forces the emulator to sign the upstream request itself. A
       # deliberately wrong secret must be refused, or nothing is being
       # verified.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/s3/run.py
@@ -809,7 +809,7 @@ jobs:
       # semantics are not witnessed and are not claimed to be.
       # Non-vacuous by construction: azure-storage-blob writes the blob, an
       # unauthenticated GET must 403, and a tampered SAS must be refused.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/azurite-shortcut/run.py
@@ -830,7 +830,7 @@ jobs:
       # exist (and the org COUNTS the polls), result paging ends on the literal
       # string "null", the upload is PUT with text/csv and anything else is
       # REJECTED, and a job left Open is never processed.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/salesforce/run.py
@@ -850,7 +850,7 @@ jobs:
       # Environment and must FAIL — otherwise a package that happened to be in
       # the image would make this pass while proving nothing, which is the
       # accepted-but-inert trap the engine-matrix probes are written to avoid.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/environment/run.py
@@ -876,7 +876,7 @@ jobs:
       # Both halves assert the REASON, not just the outcome. A notebook
       # submitted before the agent listens also "fails", which made the first
       # version of this pass on a stack that executed nothing.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/environment-notebook/run.py
@@ -901,7 +901,7 @@ jobs:
       # 5 incidents at a page size of 2 means a connector that read only the
       # first page reports 2 and looks healthy — the row count is the assertion
       # that only full pagination can satisfy.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/rest-helix/run.py
@@ -926,7 +926,7 @@ jobs:
       # 5988 Link headers) because a connector implementing one would otherwise
       # pass half the claim looking whole. 5 records at page size 2: one page
       # reports 2, one page short reports 4, only a complete read reports 5.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/rest-servicenow/run.py
@@ -945,7 +945,7 @@ jobs:
       #
       # The suite existed without a job for it: nothing ran it on push, and it
       # only surfaced because a local runner enumerates e2e/*/run.py.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/external-shortcuts/run.py
@@ -959,7 +959,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # The optional governance profile, witnessed: family + OpenMetadata
@@ -977,7 +977,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - uses: pnpm/action-setup@v6
@@ -1007,7 +1007,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # The catalog inside the family trust chain: OM's authenticator is
@@ -1031,7 +1031,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Starts entra-emulator + fabric-emulator, then the real `deltalake`
@@ -1056,7 +1056,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Microsoft's real `azure-storage-blob` SDK uploads a pyarrow-written
@@ -1080,7 +1080,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # `pyapacheatlas` is an off-the-shelf Apache Atlas v2 client, and the
@@ -1105,7 +1105,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # The official `mcp` package is the Streamable HTTP client VS Code and
@@ -1131,7 +1131,7 @@ jobs:
       # the same object. Linux-only: azcopy (a Go binary) trusts the emulator's
       # self-signed CA via SSL_CERT_FILE, which the macOS system verifier rejects
       # for the dev cert's >825-day validity.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/azcopy/run.py
@@ -1153,7 +1153,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Replays the routes extracted from Microsoft's pinned extension 1.18.1
@@ -1166,7 +1166,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Airflow 2.10.5/Python 3.12 discovers the uploaded DAG, schedules it,
@@ -1182,7 +1182,7 @@ jobs:
       # Builds fabric-emulator from source + the Sail image, then a real
       # PySpark Connect client writes/reads a Delta table through the
       # OneLake plane using production-shaped abfs:// URLs. No JVM anywhere.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/spark/run.py
@@ -1195,7 +1195,7 @@ jobs:
       - uses: actions/checkout@v7
       # Default engine: consume Kafka through the emulator, materialise the
       # Kafka schema, run foreachBatch in the Connect client. Never `rate`.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: EVENTSTREAM_ENGINE=sail uv run --frozen --no-sync python e2e/eventstream/run.py
@@ -1213,7 +1213,7 @@ jobs:
       # A break in resolve() was therefore invisible here and fatal there, and
       # shipped four times. This runs the by-name shapes against the agent built
       # from the published Dockerfile, and release.yml gates the push on it.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/agent-contract/run.py
@@ -1228,7 +1228,7 @@ jobs:
       # statement-executor agent — a real client creates a session, submits
       # PySpark statements, and gets results computed by Sail, with NO
       # Apache Livy server. The engine is Sail (no JVM), like spark-a2.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/livy/run.py
@@ -1244,7 +1244,7 @@ jobs:
       # e2e script that ships in no artifact, so it proves a path a user cannot
       # walk. This stack is only published services, and the emulator drives the
       # agent itself.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/notebook-driven/run.py
@@ -1259,7 +1259,7 @@ jobs:
       # PySpark Connect client drives Sail (no JVM in any container), writing
       # and reading Delta through the OneLake Blob surface with entra
       # client-credentials auth minted before server start.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/sail/run.py
@@ -1273,7 +1273,7 @@ jobs:
       # One physical OneLake Delta table crosses four real engines/clients:
       # Sail executes PySpark SQL, Direct Lake evaluates DAX, MLflow 3 tracks
       # the observation, and dbt-duckdb's Delta plugin builds/tests it.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/data-science-loop/run.py
@@ -1293,7 +1293,7 @@ jobs:
       # poll -> result) via `fab api`, since fab 1.6 has no typed verbs for
       # that surface. The highest-authority borrowed oracle. Linux-only
       # (docker compose), like the other e2es.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/fabric-cli/run.py
@@ -1310,7 +1310,7 @@ jobs:
       # rows a real stranger can hit (admin, folders, RBAC, capacities,
       # schedules, report definitions, provisionIdentity, name reservation).
       # Pipeline engines, races, and emulator-only headers stay go:.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/az-rest/run.py
@@ -1331,7 +1331,7 @@ jobs:
       # Every check is judged by the DATA, never by the reported status: a
       # Delete that deleted nothing, a Validation that blessed an absent file,
       # and a Lookup that found no rows all report Completed.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/pipeline-activities/run.py
@@ -1350,7 +1350,7 @@ jobs:
       # Separate from pipeline-activities because these need Sail and the Spark
       # agent, and that suite's value is being a fast az-CLI stack a flaky
       # engine cannot take red.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/engine-activities/run.py
@@ -1373,7 +1373,7 @@ jobs:
       # Six services: entra → fabric → databricks → spark-agent → sail, plus the
       # client. Sail and the agent build from THIS checkout so the chain breaks
       # when this tree breaks it; a pinned image would hide that.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/databricks-chain/run.py
@@ -1390,7 +1390,7 @@ jobs:
       # Bound only to already-green rows a real stranger can hit (workspaces,
       # folders, lakehouse create, capacities list/assign, workspace RBAC).
       # Nothing in HashiCorp Terraform or the provider is patched.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/terraform-fabric/run.py
@@ -1408,7 +1408,7 @@ jobs:
       # That difference found two emulator defects — a silently truncated
       # oversized upload and an undefined `mssparkutils` — so it earns its own
       # job rather than folding into the CRUD suite. See docs/34.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/fab-driven/run.py
@@ -1425,7 +1425,7 @@ jobs:
       # flow Microsoft's own DeploymentPipelines-DeployAll.ps1 uses, then that
       # script's REST sequence. Proves entra-emulator satisfies MSAL's .NET
       # implementation, not just its Python one. Linux-only (docker compose).
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/deployment-pipelines/run.py
@@ -1441,7 +1441,7 @@ jobs:
       # High-Concurrency surface, with Sail computing the models and an
       # Entra token minted by entra-emulator. A second, independent client over
       # the Livy HC layer — parity witness. Linux-only (Sail container stack).
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/dbt-fabricspark/run.py
@@ -1457,7 +1457,7 @@ jobs:
       # mssql-python + FedAuth (token minted by entra-emulator), byte-spliced to
       # a real SQL Server sidecar. A third TDS driver witness (go-mssqldb and
       # pyodbc/ODBC 18 remain covered elsewhere). Linux-only (SQL Server image).
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/dbt-fabric/run.py
@@ -1533,7 +1533,7 @@ jobs:
           # will not load its bundled driver without them.
           sudo ACCEPT_EULA=Y apt-get install -y --no-install-recommends \
             msodbcsql18 unixodbc libltdl7 libkrb5-3 libgssapi-krb5-2
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/${{ matrix.harness }}/run.py
@@ -1596,7 +1596,7 @@ jobs:
         with:
           name: silver-summary-medallion-dbt-fabricspark
           path: examples/medallion-dbt-fabricspark
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Fail loudly if a summary is missing rather than letting compare.py's
@@ -1645,7 +1645,7 @@ jobs:
         with:
           name: advanced-summaries-medallion-advanced-dbt-fabricspark
           path: examples/medallion-advanced-dbt-fabricspark
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Fail loudly if a summary is missing rather than letting compare.py's
@@ -1677,7 +1677,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Real DuckDB runs SQL (aggregation, join, filter) over Delta tables in
@@ -1700,7 +1700,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # T2 unit layer: the shim resolves emulator vs real Fabric from
@@ -1734,7 +1734,7 @@ jobs:
       # them through Spark Connect against OneLake (a Delta
       # table lands), and the run is reported back so the RunNotebook job
       # reflects real execution. Linux-only.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # Maven Central rate-limits GitHub-hosted runners (shared IP pools), and a
@@ -1796,7 +1796,7 @@ jobs:
       # Publishes the golden TMSL model as a SemanticModel item and runs the
       # DAX golden queries through the executeQueries endpoint (real Power BI
       # audience token), asserting the rows match the hand-computed oracle.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/semantic-model/run.py
@@ -1817,7 +1817,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
       # The SemPy/GX tutorial's subject: real great_expectations validates the
