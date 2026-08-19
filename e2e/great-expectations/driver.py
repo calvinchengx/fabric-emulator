@@ -48,6 +48,11 @@ def query(dax):
     return df
 
 
+# ty reports every keyword below as `unknown-argument`: GE 1.x builds its
+# Expectation classes from pydantic models, so a static checker sees no declared
+# parameters on them. The keywords are correct — the offline harness and CI both
+# execute these calls — so the suppressions are about the checker's view of a
+# third-party library, not about the calls.
 def batch(df):
     """A GE 1.x Batch over `df`, ready to validate single Expectations.
 
@@ -77,19 +82,19 @@ results = []
 # Retail Store Suite: row count in range + valid 5-digit zip.
 b = batch(query(dax["Store Asset"]))
 results.append(("Retail Store", "row_count_between(1,10)",
-                b.validate(gxe.ExpectTableRowCountToBeBetween(min_value=1, max_value=10)).success))
+                b.validate(gxe.ExpectTableRowCountToBeBetween(min_value=1, max_value=10)).success))  # ty: ignore[unknown-argument]
 results.append(("Retail Store", "valid_zip5(PostalCode)",
-                b.validate(gxe.ExpectColumnValuesToMatchRegex(column="PostalCode", regex=r"^\d{5}$")).success))
+                b.validate(gxe.ExpectColumnValuesToMatchRegex(column="PostalCode", regex=r"^\d{5}$")).success))  # ty: ignore[unknown-argument]
 
 # Retail Measure Suite: TotalUnits above threshold.
 b = batch(query(dax["Total Units Asset"]))
 results.append(("Retail Measure", "TotalUnits >= 50000",
-                b.validate(gxe.ExpectColumnValuesToBeBetween(column="TotalUnits", min_value=50000)).success))
+                b.validate(gxe.ExpectColumnValuesToBeBetween(column="TotalUnits", min_value=50000)).success))  # ty: ignore[unknown-argument]
 
 # Retail DAX Suite: the YoY ratio must be within band — the tutorial's failing asset.
 b = batch(query(dax["Total Units YoY Asset"]))
 ratio = b.validate(gxe.ExpectColumnValuesToBeBetween(
-    column="Total Units Ratio", min_value=0.8, max_value=1.5))
+    column="Total Units Ratio", min_value=0.8, max_value=1.5))  # ty: ignore[unknown-argument]
 results.append(("Retail DAX", "Total Units Ratio in [0.8, 1.5]", ratio.success))
 
 for suite, exp, ok in results:
