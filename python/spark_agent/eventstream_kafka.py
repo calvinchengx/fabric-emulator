@@ -749,14 +749,21 @@ def _kafka_poll(spec):
         ) from exc
     servers = [s.strip() for s in spec["bootstrap"].split(",") if s.strip()]
     timeout_ms = int(spec["timeout_ms"])
-    consumer = KafkaConsumer(
-        bootstrap_servers=servers,
-        enable_auto_commit=False,
-        consumer_timeout_ms=timeout_ms,
-        request_timeout_ms=max(timeout_ms + 5000, 15000),
-        api_version_auto_timeout_ms=min(timeout_ms, 10000),
-        **(spec.get("client") or {}),
-    )
+    conf = {
+        "bootstrap_servers": servers,
+        "enable_auto_commit": False,
+        "consumer_timeout_ms": timeout_ms,
+        "request_timeout_ms": max(timeout_ms + 5000, 15000),
+    }
+    # `api_version_auto_timeout_ms` bounds the broker version probe, and
+    # kafka-python 3 REMOVED it — passing it there is not ignored, it raises
+    # `KafkaConfigurationError: Unrecognized configs`, so every eventstream read
+    # fails before it connects. Asked of the installed client rather than
+    # pinned to a version, because this agent image is consumed by more than one
+    # emulator and they do not upgrade in step (same reasoning as connectconf).
+    if "api_version_auto_timeout_ms" in getattr(KafkaConsumer, "DEFAULT_CONFIG", {}):
+        conf["api_version_auto_timeout_ms"] = min(timeout_ms, 10000)
+    consumer = KafkaConsumer(**conf, **(spec.get("client") or {}))
     try:
         topics = _resolve_topics(consumer, spec)
         tps = _partitions_for(consumer, TopicPartition, spec, topics)
