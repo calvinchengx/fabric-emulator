@@ -64,7 +64,7 @@ purview-datamap = [
 # witnesses Fabric Core MCP Server (POST /v1/mcp/core). Pinned below v2: v2
 # renamed streamablehttp_client and dropped the headers= kwarg.
 mcp = [
-    "mcp>=1.12,<2",
+    "mcp>=1.12,<3",
 ]
 delta-rs = [
     "deltalake>=0.23,<2",
