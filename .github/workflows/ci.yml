@@ -1521,6 +1521,18 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
+      # The .debs, so a stalled mirror is a cache hit rather than a lost job.
+      # An OPTIMISATION, not a dependency — exactly like the spark-jars cache
+      # above: a cold or unusable cache falls through to the network path below,
+      # which is the one that was here before and is unchanged in substance.
+      #
+      # Scoped by runner.arch as well as OS because the .debs are architecture
+      # specific, and carrying a -v1 so a package-list change can invalidate it
+      # deliberately rather than by hoping the key changes.
+      - uses: actions/cache@v6
+        with:
+          path: ~/odbc-debs
+          key: odbc18-${{ runner.os }}-${{ runner.arch }}-msodbcsql18-unixodbc-krb5-v1
       - name: Microsoft ODBC Driver 18 (pyodbc warmup) and mssql-python libs
         # BOUNDED, because an unbounded install here does not fail — it eats the
         # job. 2026-08-19: packages.microsoft.com stalled and this step ran for
@@ -1529,47 +1541,75 @@ jobs:
         # failing on a missing artifact. Nothing in that picture named the
         # mirror; the run looked like a broken test.
         #
-        # A step budget turns that into a fast, attributable failure, and the
-        # retries mean a blip costs seconds rather than a re-run. 8 minutes is
-        # ~10x the step's normal time and still leaves the 25-minute job budget
-        # to the thing being tested.
+        # 8 minutes is ~3x the step's measured time when the mirror is healthy
+        # (2m18s) and still leaves the 25-minute job budget to the thing being
+        # tested.
         timeout-minutes: 8
         run: |
           set -euo pipefail
-          # Retry the NETWORK operations only. A failure of `install` or `tee`
-          # is a real error and retrying it would just hide it three times.
-          retry() {
-            for attempt in 1 2 3; do
-              if "$@"; then return 0; fi
-              echo "::warning::attempt $attempt failed: $*"
-              sleep $((attempt * 10))
-            done
-            echo "::error::gave up after 3 attempts: $*"
-            return 1
-          }
-          fetch_key() {
-            # --max-time so a stalled mirror returns instead of hanging: curl's
-            # default is no timeout at all, which is how this step ate 25
-            # minutes. gpg is run as the normal user, NOT under sudo: `sudo gpg
-            # --dearmor` tries to open /dev/tty, which a runner does not have,
-            # and dies with "cannot open '/dev/tty'". The Dockerfile this
-            # replaced was root and never hit it.
-            curl -sSL --max-time 120 --retry-connrefused \
-              https://packages.microsoft.com/keys/microsoft.asc \
-              | gpg --dearmor --batch --yes -o /tmp/microsoft-prod.gpg
-          }
-          retry fetch_key
-          sudo install -o root -g root -m 644 \
-            /tmp/microsoft-prod.gpg /usr/share/keyrings/microsoft-prod.gpg
-          echo "deb [signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
-            | sudo tee /etc/apt/sources.list.d/mssql-release.list
-          retry sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update
-          # msodbcsql18: medallion warmup still uses pyodbc (common.tds_connect).
-          # libltdl7 + krb5: dbt-fabric 1.11 talks TDS through mssql-python, which
-          # will not load its bundled driver without them.
-          retry sudo ACCEPT_EULA=Y apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
-            install -y --no-install-recommends \
-            msodbcsql18 unixodbc libltdl7 libkrb5-3 libgssapi-krb5-2
+          PKGS="msodbcsql18 unixodbc libltdl7 libkrb5-3 libgssapi-krb5-2"
+          # msodbcsql18 will not configure without an accepted EULA, and dpkg
+          # cannot be answered interactively on a runner. Seeded for BOTH paths.
+          echo "msodbcsql18 msodbcsql/ACCEPT_EULA boolean true" | sudo debconf-set-selections
+
+          # --- the cache hit: no network at all ---------------------------------
+          if ls ~/odbc-debs/*.deb >/dev/null 2>&1 \
+             && sudo ACCEPT_EULA=Y dpkg -i ~/odbc-debs/*.deb; then
+            echo "installed from $(ls ~/odbc-debs/*.deb | wc -l | tr -d ' ') cached .debs; the mirror was not contacted"
+          else
+            # A miss, or a cache that no longer satisfies this runner image —
+            # a dependency the image used to provide and no longer does would
+            # fail `dpkg -i` here. Either way the network path runs and
+            # repopulates, so a stale cache costs a slow job, never a red one.
+            echo "::notice::ODBC package cache cold or unusable; fetching from packages.microsoft.com"
+
+            # Retry the NETWORK operations only. A failure of `install` or `tee`
+            # is a real error and retrying it would just hide it three times.
+            retry() {
+              for attempt in 1 2 3; do
+                if "$@"; then return 0; fi
+                echo "::warning::attempt $attempt failed: $*"
+                sleep $((attempt * 10))
+              done
+              echo "::error::gave up after 3 attempts: $*"
+              return 1
+            }
+            fetch_key() {
+              # --max-time so a stalled mirror returns instead of hanging:
+              # curl's default is no timeout at all, which is how this step ate
+              # 25 minutes. gpg runs as the normal user, NOT under sudo: `sudo
+              # gpg --dearmor` tries to open /dev/tty, which a runner does not
+              # have, and dies with "cannot open '/dev/tty'".
+              curl -sSL --max-time 120 --retry-connrefused \
+                https://packages.microsoft.com/keys/microsoft.asc \
+                | gpg --dearmor --batch --yes -o /tmp/microsoft-prod.gpg
+            }
+            retry fetch_key
+            sudo install -o root -g root -m 644 \
+              /tmp/microsoft-prod.gpg /usr/share/keyrings/microsoft-prod.gpg
+            echo "deb [signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
+              | sudo tee /etc/apt/sources.list.d/mssql-release.list
+            retry sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update
+            # Emptied first so the archive holds OUR dependency closure and
+            # nothing the runner image happened to leave there — the cached set
+            # is then exactly what `dpkg -i` needs next time.
+            sudo apt-get clean
+            # msodbcsql18: medallion warmup still uses pyodbc (common.tds_connect).
+            # libltdl7 + krb5: dbt-fabric 1.11 talks TDS through mssql-python,
+            # which will not load its bundled driver without them.
+            retry sudo ACCEPT_EULA=Y apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
+              install -y --no-install-recommends --download-only $PKGS
+            mkdir -p ~/odbc-debs
+            sudo cp /var/cache/apt/archives/*.deb ~/odbc-debs/
+            sudo chown -R "$USER" ~/odbc-debs
+            sudo ACCEPT_EULA=Y dpkg -i ~/odbc-debs/*.deb
+          fi
+
+          # Neither path is trusted on its say-so: prove the driver is actually
+          # installed. A cache that half-installed would otherwise surface much
+          # later as a confusing pyodbc error inside the medallion run.
+          dpkg -s msodbcsql18 >/dev/null
+          odbcinst -q -d | head -5
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           version: "0.11.32"
