@@ -29,6 +29,43 @@ engine absent" holds the rest.
 | Generic item job status | 🟡 | Same reason. (DataPipeline jobs already run for real.) |
 | ~~Web / external-connector activity leaves~~ | — | **Reversed, and the reasoning was wrong.** This row argued that executing arbitrary URLs would destroy the offline guarantee. It protected the wrong thing: the offline promise is that the **emulator** makes no calls of its own, never that a user's pipeline cannot reach the service it names. A pipeline branching on `@activity('Ping').output.status` got a fabricated success from a URL nothing contacted — green locally, different in Fabric, which is the exact failure class this emulator exists to prevent. The Web activity now makes the real call; `RestSource`/`RestSink` read, page and write; Salesforce runs both Bulk API 2.0 lifecycles. Hermetic runs stay available and **explicit** (`FABRIC_WEB_ACTIVITY=stub`), labelled in the output so such a run cannot be mistaken for one that called. See [40-rest-connector-plan.md](40-rest-connector-plan.md) and [41-salesforce-connector-plan.md](41-salesforce-connector-plan.md) |
 
+## The seven own-only rows, split by whether they CAN be converted
+
+`family_parity.py fabric` reports **106 of 113** green claims independently
+evidenced, and the remaining seven read like a backlog. They are not one list.
+Sorted by what would actually close them — which is the only sort that tells a
+maintainer where to start:
+
+**Impossible, and now marked `boundary:` in the manifest.** No packaged
+third-party client speaks these surfaces, so a `ci:` witness cannot exist rather
+than not existing yet:
+
+| Row | Why no client can witness it |
+|---|---|
+| Eventstream operators | filter / groupBy / window are bound through Fabric's own portal and the internal authoring API; no released SDK or CLI exposes them |
+| Eventstream Eventhouse destination | same — the binding has no public client. The *ingest* half is separately witnessed against real Kusto (kustainer); what stays own-only is the eventstream-to-eventhouse binding, not the KQL |
+| `notebookutils.notebook.run` exit values OVER REST | real Fabric **404s this path**. It is a shim convenience the service does not offer, so there is nothing for a real client to agree with. The in-notebook contract it shadows is its own row, green on its own evidence |
+
+So the honest denominator is **110, not 113**, and 106/110 is a floor rather than
+a score with three items of debt hiding in it.
+
+**Gated on the real-Fabric differential leg — three rows.** Reference-run
+lakehouse rule, `runMultiple` failure contract, `runMultiple` retry and timeouts.
+Each asserts that our shim matches Fabric's own semantics, and the only oracle
+for "what Fabric does" is Fabric. These convert the day `real-fabric.yml` runs
+for real; today its `conformance` job is `skipped` in every run, because
+`AZURE_CLIENT_ID` and `FABRIC_TEST_WORKSPACE` are unset (`AZURE_TENANT_ID` is
+set, and OIDC needs no client secret).
+
+**Convertible today — one row, and it is the interesting one.** Class B strict
+mode (`-tsql-strict`) looks emulator-only because the *toggle* is ours. What the
+toggle produces is a **refusal over TDS**, and `ci:warehouse-tds` already drives
+that surface with a real client. This is exactly the shape of `FABRIC_FORCE_LRO`,
+which was own-only for the same mistaken reason until a real client's poll loop
+was pointed at it: separate "the engine is internal" from "the contract is
+internal". The oracle for *which* constructs Fabric rejects stays the reference
+(docs/29), the same as it is today.
+
 ## Tier 1 — Control plane only (no engine, no research risk)
 
 Pure CRUD + RBAC in patterns the repo has executed a dozen times.

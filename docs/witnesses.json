@@ -343,7 +343,8 @@
       "go:TestEventstreamStoredEventhouseOnLakehouseFailsLoud",
       "go:TestEventstreamDrainEventhouseNoopAndClosed",
       "go:TestEventstreamKustoMgmtAndIngest",
-      "go:TestEventstreamDestinationRefusesByName"
+      "go:TestEventstreamDestinationRefusesByName",
+      "boundary:same as eventstream-operators \u2014 the destination binding has no public client. The INGEST half is separately witnessed against real Kusto (kustainer) in the ADX command activity work; what stays own-only is the eventstream-to-eventhouse binding, not the KQL (docs/24-parity-completion.md)"
     ]
   },
   "eventstream-operators": {
@@ -362,7 +363,8 @@
       "go:TestEventstreamOperatorPropertiesOnGet",
       "go:TestEventstreamStoredOperatorFailsOnProduce",
       "go:TestEventstreamLoadPersistOperators",
-      "go:TestEventstreamOperatorHelpers"
+      "go:TestEventstreamOperatorHelpers",
+      "boundary:no packaged third-party client speaks this surface \u2014 filter/groupBy/window operators are bound through Fabric's own portal and the internal Eventstream authoring API, and no released SDK or CLI exposes them, so a ci: witness cannot exist rather than not existing yet (docs/24-parity-completion.md)"
     ]
   },
   "fabric-cicd-tool-publishing": {
@@ -636,7 +638,8 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "**`notebookutils.notebook.run` \u2014 exit values OVER REST**",
     "witnesses": [
-      "py:test_notebook_run"
+      "py:test_notebook_run",
+      "boundary:real Fabric 404s this path, so no third-party client can exercise it BY CONSTRUCTION \u2014 the row is a shim convenience the service does not offer, and the in-notebook contract it shadows is the row above, which is green on its own evidence (docs/24-parity-completion.md)"
     ]
   },
   "notebookutils-notebook-runmultiple-dag-structure-and-ordering": {
