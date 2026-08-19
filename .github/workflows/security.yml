@@ -48,7 +48,10 @@ jobs:
         run: gitleaks dir . --config .gitleaks.toml --no-banner --redact --verbose
 
       - name: Scan the history
-        run: gitleaks git . --config .gitleaks.toml --no-banner --redact
+      # --verbose here too, and it is not noise: without it a failing scan
+      # logs "leaks found: 3" and nothing else, so the one job whose whole
+      # output is "which line" names no line. --redact still masks the value.
+        run: gitleaks git . --config .gitleaks.toml --no-banner --redact --verbose
 
   vulnerabilities:
     name: govulncheck
