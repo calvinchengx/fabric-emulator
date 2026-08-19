@@ -114,6 +114,7 @@
     "section": "Data Warehouse (`data-warehouse/`)",
     "claim": "**Class B strict mode** (`-tsql-strict`)",
     "witnesses": [
+      "ci:warehouse-tds",
       "go:TestCheckStrictCorpus",
       "go:TestStrictCorpusCoversEveryFeature",
       "go:TestStrictModeGatesClassBConstructs",
