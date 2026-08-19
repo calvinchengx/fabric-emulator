@@ -27,16 +27,27 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpjson
 import jvmconf  # no Spark; JVM session configs (see jvmconf.py)
+import session_recovery
 from pyspark.sql import SparkSession
 
-_b = SparkSession.builder.appName("livy-agent")
-if os.environ.get("SPARK_REMOTE"):
-    spark = _b.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
-else:
+
+def build_spark():
+    """The one place a shared SparkSession is created, so recovery can re-run it.
+
+    Was inline at import until issue #312: when the engine dropped the session
+    there was no second caller of getOrCreate(), so the agent stayed broken
+    until the container restarted. Naming it changes nothing at boot.
+    """
+    b = SparkSession.builder.appName("livy-agent")
+    if os.environ.get("SPARK_REMOTE"):
+        return b.remote(os.environ["SPARK_REMOTE"]).getOrCreate()
     # Classic JVM: Delta + OneLake ABFS must be on the session that created
     # it. Without the extension, saveAsTable dies on
     # DELTA_CONFIGURE_SPARK_SESSION_WITH_EXTENSION_AND_CATALOG.
-    spark = jvmconf.configure(_b, os.environ).getOrCreate()
+    return jvmconf.configure(b, os.environ).getOrCreate()
+
+
+spark = build_spark()
 
 
 def _normalise_connect_confs():
@@ -320,6 +331,30 @@ def ns(session):
     return namespaces[session]
 
 
+def recover_lost_session():
+    """Rebuild the shared session after the engine dropped it, and rebind.
+
+    Returns the note to show the user, or None if the rebuild itself failed —
+    in which case the original error stands, because reporting a recovery that
+    did not happen is worse than the failure it replaces.
+    """
+    global spark
+    try:
+        spark = build_spark()
+    except Exception:  # noqa: BLE001 — engine still down; the caller reports the real error
+        print("agent: rebuilding the Spark session failed:\n" + traceback.format_exc(),
+              file=sys.stderr, flush=True)
+        return None
+    _normalise_connect_confs()
+    _install_delta_ops()
+    rebound = session_recovery.rebind(
+        namespaces, spark, catalog.isolate,
+        attach_sc=(None if os.environ.get("SPARK_REMOTE") is None else rddfacade.attach))
+    note = session_recovery.note(rebound)
+    print(note, file=sys.stderr, flush=True)
+    return note
+
+
 def remember_context(session, req):
     """Merge identity fields from a /mount or /statements body into this session."""
     cur = session_context.setdefault(session, {})
@@ -465,6 +500,15 @@ class Handler(BaseHTTPRequestHandler):
                             result = sqlrun.run_sql(req.get("code", ""), ns(session))
                         else:
                             result = run_code(req.get("code", ""), ns(session))
+                    # The engine dropping our session is not this statement's
+                    # fault and, until #312, was permanent: nothing re-ran
+                    # getOrCreate(), so every later statement failed the same
+                    # way. Rebuild now so the NEXT one works, and tell the user
+                    # what the rebuild cost. This statement still fails —
+                    # re-running arbitrary user code that may already have
+                    # written data is not something the agent can do safely.
+                    if session_recovery.envelope_is_lost_session(result):
+                        session_recovery.annotate(result, recover_lost_session())
             finally:
                 try:
                     import files_mount
