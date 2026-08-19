@@ -19,6 +19,7 @@ import sys
 import urllib.parse
 import urllib.request
 
+import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -81,8 +82,19 @@ def wrap_body(result):
 
 async def drive(token):
     url = f"{FABRIC}/v1/mcp/core"
-    async with streamable_http_client(
-            url, headers={"Authorization": "Bearer " + token}) as streams:
+    # mcp 2.0 took the per-call `headers`/`auth`/`timeout` kwargs off
+    # streamable_http_client and takes a caller-supplied client instead, so the
+    # bearer and the emulator's self-signed cert are configured ONCE here rather
+    # than per call. Note the client is httpx2, not httpx: mcp 2.0 brought its
+    # own stack (httpx2, httpcore2), and passing an httpx.AsyncClient here fails
+    # at the type, not at the request.
+    async with (
+        # verify=False: the emulator serves a self-signed cert, as everywhere
+        # else in this harness (see _CTX above).
+        httpx2.AsyncClient(headers={"Authorization": "Bearer " + token},
+                           verify=False) as http_client,  # noqa: S501
+        streamable_http_client(url, http_client=http_client) as streams,
+    ):
         read, write = streams[0], streams[1]
         async with ClientSession(read, write) as session:
             await session.initialize()
