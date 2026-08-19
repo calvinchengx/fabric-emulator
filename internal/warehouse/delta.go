@@ -478,16 +478,21 @@ func goValue(v parquet.Value, lt *format.LogicalType) any {
 	case parquet.Double:
 		return v.Double()
 	case parquet.ByteArray, parquet.FixedLenByteArray:
-		// Only text when the schema SAYS it is text. Unannotated bytes are
-		// binary, and stringifying them both loses the distinction and can
-		// produce invalid UTF-8 in a string column.
+		// Only text when the schema SAYS it is text. Everything else is bytes,
+		// including UUID and BSON: stringifying them loses the distinction and
+		// can produce invalid UTF-8 in a string column.
+		//
+		// This used to fall through to string for EVERY non-nil annotation, so
+		// isTextAnnotation could not change an outcome and a mutation to it
+		// failed no test (#339). The oracle is not a new Fabric measurement:
+		// Delta declares no UUID or BSON type, so a column carrying either
+		// annotation is `binary` in the Delta log, and docs/16 already measures
+		// `binary` -> `varbinary` against the real endpoint. Text is one type too
+		// permissive, which is the direction that ships quietly.
 		if isTextAnnotation(lt) {
 			return string(v.ByteArray())
 		}
-		if lt == nil {
-			return append([]byte(nil), v.ByteArray()...)
-		}
-		return string(v.ByteArray())
+		return append([]byte(nil), v.ByteArray()...)
 	default:
 		return v.String()
 	}

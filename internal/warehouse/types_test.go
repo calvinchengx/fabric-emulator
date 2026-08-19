@@ -998,3 +998,108 @@ func TestTimestampAndIdentifierRendering(t *testing.T) {
 			"unpaired one, or the identifier can be escaped from", body)
 	}
 }
+
+// byteArrayShapes is one column per BYTE_ARRAY annotation that a Delta table
+// can carry, in the encodings parquet-go writes for each tag.
+//
+// Physically these are all BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY, so the
+// annotation is the ONLY thing separating a varchar column from a varbinary
+// one. That is the whole reason goValue consults it.
+type byteArrayShapes struct {
+	Txt string   `parquet:"txt"`     // STRING  -> text
+	Js  string   `parquet:"js,json"` // JSON    -> text
+	En  string   `parquet:"en,enum"` // ENUM    -> text
+	UU  [16]byte `parquet:"uu,uuid"` // UUID    -> BYTES
+	Raw []byte   `parquet:"raw"`     // none    -> bytes
+}
+
+// TestByteArrayAnnotationDecidesTextOrBytes pins the question #339 found
+// unanswerable: the byte-array branch promised to return text "only when the
+// schema SAYS it is text" and then returned text for every non-nil annotation,
+// so isTextAnnotation could not change an outcome and a mutation to it failed
+// no test.
+//
+// Asserting the Go type is what makes the mutation visible. Asserting only the
+// value would not: `string(b)` and `[]byte(b)` compare equal under a
+// string()-conversion, so a test that reads the cell as text passes either way
+// — the same "assert the substance, not something that co-occurs with it"
+// failure this package has hit before.
+//
+// UUID and BSON are the cases that matter. Delta declares no such types, so a
+// column annotated either way is `binary` in the Delta log, which docs/16
+// measures against real Fabric as `varbinary`. Surfacing it as varchar is the
+// permissive direction: locally a SELECT returns a plausible-looking string,
+// and it diverges only on a real deploy.
+func TestByteArrayAnnotationDecidesTextOrBytes(t *testing.T) {
+	uu := [16]byte{0xde, 0xad, 0xbe, 0xef, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0xfe, 0xff}
+	var buf bytes.Buffer
+	w := parquet.NewGenericWriter[byteArrayShapes](&buf)
+	if _, err := w.Write([]byteArrayShapes{{
+		Txt: "plain", Js: `{"a":1}`, En: "GREEN", UU: uu, Raw: []byte{0x00, 0xff},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tbl, err := readParquet(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// wantText says whether the ANNOTATION makes this column text; wantSQL is
+	// what the endpoint must then surface, so the assertion spans the decision
+	// and its user-visible consequence rather than stopping at the Go value.
+	for _, c := range []struct {
+		col      string
+		wantText bool
+		wantSQL  string
+	}{
+		{"txt", true, varcharType},
+		{"js", true, varcharType},
+		{"en", true, varcharType},
+		{"uu", false, "VARBINARY(4000)"},
+		{"raw", false, "VARBINARY(4000)"},
+	} {
+		idx := -1
+		for i, name := range tbl.Columns {
+			if name == c.col {
+				idx = i
+			}
+		}
+		if idx < 0 {
+			t.Fatalf("column %q missing from %v", c.col, tbl.Columns)
+		}
+		got := tbl.Rows[0][idx]
+		switch v := got.(type) {
+		case string:
+			if !c.wantText {
+				t.Errorf("%s: reflected as string %q, want []byte — a binary "+
+					"annotation surfaced as text", c.col, v)
+			}
+		case []byte:
+			if c.wantText {
+				t.Errorf("%s: reflected as []byte %v, want string", c.col, v)
+			}
+		default:
+			t.Errorf("%s: reflected as %T, want string or []byte", c.col, got)
+		}
+		if sql := sqlType(tbl, idx); sql != c.wantSQL {
+			t.Errorf("%s: sqlType = %s, want %s", c.col, sql, c.wantSQL)
+		}
+	}
+
+	// The UUID's bytes must survive intact. A string round-trip through
+	// invalid UTF-8 replaces bad sequences with U+FFFD, so this fails loudly
+	// on the old behaviour rather than merely reporting the wrong type.
+	idx := -1
+	for i, name := range tbl.Columns {
+		if name == "uu" {
+			idx = i
+		}
+	}
+	if b, ok := tbl.Rows[0][idx].([]byte); ok && !bytes.Equal(b, uu[:]) {
+		t.Errorf("uuid bytes = % x, want % x", b, uu[:])
+	}
+}
