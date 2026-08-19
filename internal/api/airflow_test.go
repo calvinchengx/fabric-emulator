@@ -210,3 +210,80 @@ func pathTail(s string) string {
 	}
 	return s[i+1:]
 }
+
+// A DAG-SYNC FAILURE MUST NOT LOOK LIKE A DAG THAT FAILED. Both used to
+// finalize as `AirflowRunFailed`, whose message is the bare "The job failed."
+// -- so an operator whose emulator could not WRITE the DAG files saw a failed
+// run beside an empty dags folder and no reason at all. That is not
+// hypothetical: it is how a consumer platform's first end-to-end run failed,
+// and the cause (a shared volume the emulator's non-root uid could not write)
+// took a permissions audit to find rather than a read of the error.
+//
+// The distinction has to survive to the CODE, because the message is derived
+// from it.
+func TestAirflowDAGSyncFailureIsDistinctFromARunFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runtime *airflowWitness
+		want    string
+	}{
+		{"sync", &airflowWitness{syncErr: errors.New("permission denied")}, "AirflowDAGSyncFailed"},
+		{"run", &airflowWitness{runErr: errors.New("task failed")}, "AirflowRunFailed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, st := newAPI(t)
+			a.Airflow = tc.runtime
+			ws := seedWorkspace(t, st)
+			it := &store.Item{WorkspaceID: ws.ID, Type: "ApacheAirflowJob", DisplayName: "air"}
+			if err := st.CreateItem(it, nil); err != nil {
+				t.Fatal(err)
+			}
+			_ = st.CreateOneLakePath(&store.OneLakePath{
+				WorkspaceID: ws.ID, ItemID: it.ID,
+				RelPath: "Files/dags/hello.py", Content: []byte("# dag"),
+			}, false)
+			body := `{"executionData":{"dagId":"hello"}}`
+			r := httptest.NewRequest("POST", "/x?jobType=Run", strings.NewReader(body))
+			r.SetPathValue("wid", ws.ID)
+			r.SetPathValue("iid", it.ID)
+			w := httptest.NewRecorder()
+			a.createJobInstance(w, r, admin)
+			if w.Code != 202 {
+				t.Fatalf("run = %d %s", w.Code, w.Body.String())
+			}
+			jid := strings.TrimPrefix(
+				w.Header().Get("Location"),
+				"https://example.com/v1/workspaces/"+ws.ID+"/items/"+it.ID+"/jobs/instances/")
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				job, err := st.GetJobInstance(it.ID, jid)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if job.FailWith != "" {
+					if job.FailWith != tc.want {
+						t.Fatalf("failure code = %q, want %q", job.FailWith, tc.want)
+					}
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("job never failed: %+v", job)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		})
+	}
+
+	// And the code has to carry a message that names what to check. A distinct
+	// code whose message is still "The job failed." would have moved the
+	// problem rather than fixed it.
+	msg := jobFailureMessage("AirflowDAGSyncFailed")
+	if msg == "The job failed." {
+		t.Fatal("AirflowDAGSyncFailed has no message of its own")
+	}
+	for _, want := range []string{"DAG", "writable", "uid"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("message does not mention %q: %s", want, msg)
+		}
+	}
+}

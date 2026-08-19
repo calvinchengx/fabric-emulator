@@ -164,7 +164,17 @@ func (a *API) runAirflow(ctx context.Context, it *store.Item, job *store.JobInst
 		err = &airflowError{"AirflowDAGFileRequired"}
 	}
 	if err == nil {
-		err = a.Airflow.SyncDAGs(ctx, it.ID, files)
+		// A SYNC FAILURE IS NOT A DAG FAILURE, and collapsing the two cost a
+		// consumer an afternoon. The DAG directory is a volume shared with the
+		// Airflow sidecar; if the emulator's uid cannot write there,
+		// `os.WriteFile` returns `permission denied`, the job is finalized as
+		// the generic `AirflowRunFailed`, and what the operator sees is "The
+		// job failed." beside an empty dags folder -- with the real reason
+		// discarded one line later. Its own code, so `jobFailureMessage` can
+		// say what to check.
+		if syncErr := a.Airflow.SyncDAGs(ctx, it.ID, files); syncErr != nil {
+			err = &airflowError{"AirflowDAGSyncFailed"}
+		}
 	}
 	if err == nil {
 		err = a.Airflow.TriggerAndWait(ctx, dagID, job.ID, conf)
