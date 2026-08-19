@@ -168,7 +168,7 @@ sail-delta = [
     "requests>=2.32,<3",
     # OSS format("kafka") on Sail: the agent consumes and createDataFrames
     # Kafka-schema rows into the engine. JVM keeps spark-sql-kafka.
-    "kafka-python>=2.0.2,<3",
+    "kafka-python>=2.0.2,<4",
     # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
     "pyjks>=20,<22",
     "cryptography>=42,<50",
@@ -210,7 +210,7 @@ jupyter = [
 spark-connect = [
     { include-group = "spark-client" },
     "requests>=2.32,<3",
-    "kafka-python>=2.0.2,<3",
+    "kafka-python>=2.0.2,<4",
     # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
     "pyjks>=20,<22",
     "cryptography>=42,<50",

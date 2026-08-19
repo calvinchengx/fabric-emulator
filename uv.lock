@@ -1017,10 +1017,10 @@ resolution-markers = [
     "python_full_version < '3.14' and sys_platform == 'linux'",
 ]
 dependencies = [
-    { name = "google-auth" },
-    { name = "protobuf" },
-    { name = "requests" },
-    { name = "urllib3" },
+    { name = "google-auth", marker = "extra == 'group-22-fabric-emulator-python-databricks-sdk' or extra != 'group-22-fabric-emulator-python-spark-agent-dbt' or (extra == 'group-22-fabric-emulator-python-dbt-fabric' and extra == 'group-22-fabric-emulator-python-dbt-fabricspark')" },
+    { name = "protobuf", marker = "extra == 'group-22-fabric-emulator-python-databricks-sdk' or extra != 'group-22-fabric-emulator-python-spark-agent-dbt' or (extra == 'group-22-fabric-emulator-python-dbt-fabric' and extra == 'group-22-fabric-emulator-python-dbt-fabricspark')" },
+    { name = "requests", marker = "extra == 'group-22-fabric-emulator-python-databricks-sdk' or extra != 'group-22-fabric-emulator-python-spark-agent-dbt' or (extra == 'group-22-fabric-emulator-python-dbt-fabric' and extra == 'group-22-fabric-emulator-python-dbt-fabricspark')" },
+    { name = "urllib3", marker = "extra == 'group-22-fabric-emulator-python-databricks-sdk' or extra != 'group-22-fabric-emulator-python-spark-agent-dbt' or (extra == 'group-22-fabric-emulator-python-dbt-fabric' and extra == 'group-22-fabric-emulator-python-dbt-fabricspark')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/48/29/d553b49b7d38d7ce71f12c2b67aa0e7988c054f5101e13c1cb896b69307c/databricks_sdk-0.130.0.tar.gz", hash = "sha256:1ea962d1fd10a0e8eb3b405d6f9023cdb7ef1942b34eaeb02ecf14c84131d4e8", size = 1156390, upload-time = "2026-08-16T04:31:09.392Z" }
 wheels = [
@@ -1675,7 +1675,7 @@ sail-delta = [
     { name = "cryptography", specifier = ">=42,<50" },
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "gssapi", specifier = ">=1.8,<2" },
-    { name = "kafka-python", specifier = ">=2.0.2,<3" },
+    { name = "kafka-python", specifier = ">=2.0.2,<4" },
     { name = "pandas", specifier = ">=2,<3" },
     { name = "pyarrow", specifier = ">=18,<24" },
     { name = "pyjks", specifier = ">=20,<22" },
@@ -1687,7 +1687,7 @@ spark-agent-dbt = [
     { name = "dbt-databricks", specifier = "==1.12.4" },
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "gssapi", specifier = ">=1.8,<2" },
-    { name = "kafka-python", specifier = ">=2.0.2,<3" },
+    { name = "kafka-python", specifier = ">=2.0.2,<4" },
     { name = "pandas", specifier = ">=2,<3" },
     { name = "pyarrow", specifier = ">=18,<24" },
     { name = "pyjks", specifier = ">=20,<22" },
@@ -1698,7 +1698,7 @@ spark-client = [{ name = "pyspark-client", specifier = "==4.2.0" }]
 spark-connect = [
     { name = "cryptography", specifier = ">=42,<50" },
     { name = "gssapi", specifier = ">=1.8,<2" },
-    { name = "kafka-python", specifier = ">=2.0.2,<3" },
+    { name = "kafka-python", specifier = ">=2.0.2,<4" },
     { name = "pyjks", specifier = ">=20,<22" },
     { name = "pyspark-client", specifier = "==4.2.0" },
     { name = "requests", specifier = ">=2.32,<3" },
@@ -2214,8 +2214,8 @@ name = "gunicorn"
 version = "26.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'group-22-fabric-emulator-python-dbt-fabric' and extra == 'group-22-fabric-emulator-python-dbt-fabricspark') or (extra != 'group-22-fabric-emulator-python-dbt-fabricspark' and extra == 'group-22-fabric-emulator-python-spark-agent-dbt') or (extra != 'group-22-fabric-emulator-python-dbt-fabric' and extra == 'group-22-fabric-emulator-python-spark-agent-dbt')" },
-    { name = "packaging", version = "26.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-22-fabric-emulator-python-databricks-sdk' or extra != 'group-22-fabric-emulator-python-spark-agent-dbt' or (extra == 'group-22-fabric-emulator-python-dbt-fabric' and extra == 'group-22-fabric-emulator-python-dbt-fabricspark')" },
+    { name = "packaging", version = "25.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'win32' and extra != 'group-22-fabric-emulator-python-dbt-fabricspark' and extra == 'group-22-fabric-emulator-python-spark-agent-dbt') or (sys_platform != 'win32' and extra != 'group-22-fabric-emulator-python-dbt-fabric' and extra == 'group-22-fabric-emulator-python-spark-agent-dbt') or (extra == 'group-22-fabric-emulator-python-databricks-sdk' and extra == 'group-22-fabric-emulator-python-spark-agent-dbt') or (extra == 'group-22-fabric-emulator-python-dbt-fabric' and extra == 'group-22-fabric-emulator-python-dbt-fabricspark')" },
+    { name = "packaging", version = "26.2", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'win32' and extra == 'group-22-fabric-emulator-python-databricks-sdk') or (sys_platform != 'win32' and extra != 'group-22-fabric-emulator-python-dbt-fabric' and extra != 'group-22-fabric-emulator-python-spark-agent-dbt') or (sys_platform != 'win32' and extra == 'group-22-fabric-emulator-python-dbt-fabric' and extra != 'group-22-fabric-emulator-python-dbt-fabricspark' and extra != 'group-22-fabric-emulator-python-spark-agent-dbt') or (extra == 'group-22-fabric-emulator-python-databricks-sdk' and extra == 'group-22-fabric-emulator-python-spark-agent-dbt') or (extra == 'group-22-fabric-emulator-python-dbt-fabric' and extra == 'group-22-fabric-emulator-python-dbt-fabricspark')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6d/b7/a4a3f632f823e432ce6bc65f62961b7980c898c77f075a2f7118cb3846fe/gunicorn-26.0.0.tar.gz", hash = "sha256:ca9346f85e3a4aeeb64d491045c16b9a35647abd37ea15efe53080eb8b090baf", size = 727286, upload-time = "2026-05-05T06:38:25.529Z" }
 wheels = [
@@ -2780,11 +2780,11 @@ wheels = [
 
 [[package]]
 name = "kafka-python"
-version = "2.3.2"
+version = "3.0.11"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c6/7e/9eb4363e5018b71edf77de3d2fbd687f1e3a55d43101138a5b7f2ca56d97/kafka_python-2.3.2.tar.gz", hash = "sha256:2d2469bcabc2551be7eaf7fb512e1241484d358800f2665b90e7e24fea84259d", size = 357589, upload-time = "2026-06-03T22:46:49.022Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/6a/8a3bfb819b5350652dfa5365409b7c611eed8ae0b37c84f53d0a26ae9513/kafka_python-3.0.11.tar.gz", hash = "sha256:a003d927e79c801d6cfd1e59ceaaf78807351e75cdb5b8ee9ce4262586f9780f", size = 514717, upload-time = "2026-08-16T16:46:15.481Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/db/cfe23cfacc9aabeef59e349aa6c2738d195df1d56ccf8c31362abdd68ddb/kafka_python-2.3.2-py2.py3-none-any.whl", hash = "sha256:e8a5e6f2c4ce13a8041669337038d5125e0e09e6d6f0911902ae5939e5b9595e", size = 326623, upload-time = "2026-06-03T22:46:47.417Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/9a/191343fd96564cbbed51bd33a53c08144e1ce285e2f10fb1578899e86c28/kafka_python-3.0.11-py3-none-any.whl", hash = "sha256:9d10cab4e11e02545d82c7e5af5702da5aa46dd4eccd11ad92a50bf6dbbecd14", size = 614237, upload-time = "2026-08-16T16:46:13.54Z" },
 ]
 
 [[package]]
