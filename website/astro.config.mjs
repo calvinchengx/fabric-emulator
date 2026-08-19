@@ -98,6 +98,7 @@ export default defineConfig({
             { slug: '51-eventstream-kafka' },
             { slug: '29-tsql-parity' },
             { slug: '30-odcs-data-contracts' },
+            { slug: '53-dbt-expectations' },
             { slug: '31-flow-observability' },
             { slug: '32-xmla-plan' },
             { slug: '33-pbix-tooling' },
