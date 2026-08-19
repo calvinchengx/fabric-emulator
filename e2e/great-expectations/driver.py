@@ -82,19 +82,19 @@ results = []
 # Retail Store Suite: row count in range + valid 5-digit zip.
 b = batch(query(dax["Store Asset"]))
 results.append(("Retail Store", "row_count_between(1,10)",
-                b.validate(gxe.ExpectTableRowCountToBeBetween(min_value=1, max_value=10)).success))  # ty: ignore[unknown-argument]
+                b.validate(gxe.ExpectTableRowCountToBeBetween(min_value=1, max_value=10)).success))
 results.append(("Retail Store", "valid_zip5(PostalCode)",
-                b.validate(gxe.ExpectColumnValuesToMatchRegex(column="PostalCode", regex=r"^\d{5}$")).success))  # ty: ignore[unknown-argument]
+                b.validate(gxe.ExpectColumnValuesToMatchRegex(column="PostalCode", regex=r"^\d{5}$")).success))
 
 # Retail Measure Suite: TotalUnits above threshold.
 b = batch(query(dax["Total Units Asset"]))
 results.append(("Retail Measure", "TotalUnits >= 50000",
-                b.validate(gxe.ExpectColumnValuesToBeBetween(column="TotalUnits", min_value=50000)).success))  # ty: ignore[unknown-argument]
+                b.validate(gxe.ExpectColumnValuesToBeBetween(column="TotalUnits", min_value=50000)).success))
 
 # Retail DAX Suite: the YoY ratio must be within band — the tutorial's failing asset.
 b = batch(query(dax["Total Units YoY Asset"]))
 ratio = b.validate(gxe.ExpectColumnValuesToBeBetween(
-    column="Total Units Ratio", min_value=0.8, max_value=1.5))  # ty: ignore[unknown-argument]
+    column="Total Units Ratio", min_value=0.8, max_value=1.5))
 results.append(("Retail DAX", "Total Units Ratio in [0.8, 1.5]", ratio.success))
 
 for suite, exp, ok in results:
