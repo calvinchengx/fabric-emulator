@@ -69,7 +69,72 @@ func (c *Client) SyncDAGs(ctx context.Context, itemID string, files map[string][
 	return nil
 }
 
-func (c *Client) TriggerAndWait(ctx context.Context, dagID, runID string, conf map[string]any) error {
+// newestWrite reports the most recent modification time under root, which is
+// when the DAG files this item just synced actually hit the shared volume.
+func newestWrite(root string) (time.Time, error) {
+	var newest time.Time
+	err := filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
+	return newest, err
+}
+
+// waitForCurrent blocks until Airflow has parsed the files this item just
+// synced, rather than an earlier version of them.
+//
+// THE DAG EXISTING IS NOT THE DAG BEING CURRENT, and conflating the two is a
+// race that cannot fail loudly. TriggerAndWait already waits for the DAG to
+// LOAD, which covers a brand-new file: until it parses, there is nothing to
+// unpause. A CHANGED file has the opposite shape -- the DAG is already there,
+// so every check passes instantly and the run is created from the structure
+// currently serialised, which is the previous version. The result is not an
+// error. It is a green run whose task instances belong to code that was
+// replaced, and it reads as a DAG bug: a task the trigger rule referenced with
+// no instance at all, or a newly added task returning in state `removed` while
+// its downstream fails. Both were diagnosed as product defects first.
+//
+// `last_parsed_time` against the file's mtime is the exact question -- has the
+// scheduler read what is on disk NOW -- and Airflow's own API answers it, so
+// nothing here estimates a scan interval.
+func (c *Client) waitForCurrent(ctx context.Context, itemID, dagID string) error {
+	written, err := newestWrite(filepath.Join(c.DAGDir, itemID))
+	if err != nil {
+		// Not fatal. If the sync directory cannot be walked there is nothing
+		// to compare against, and refusing to run would turn a missing
+		// optimisation into an outage.
+		return nil
+	}
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		var dag struct {
+			LastParsedTime string `json:"last_parsed_time"`
+		}
+		status, err := c.call(ctx, "GET", "/api/v1/dags/"+url.PathEscape(dagID), nil, &dag)
+		if err == nil && status < 300 && dag.LastParsedTime != "" {
+			if parsed, perr := time.Parse(time.RFC3339Nano, dag.LastParsedTime); perr == nil {
+				if parsed.After(written) {
+					return nil
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"Airflow did not re-parse DAG %q within 2m of its files being "+
+					"synced; triggering now would run the previous version", dagID)
+		}
+		if err := sleep(ctx, c.PollInterval); err != nil {
+			return err
+		}
+	}
+}
+
+func (c *Client) TriggerAndWait(ctx context.Context, itemID, dagID, runID string, conf map[string]any) error {
 	// Uploaded DAGs may take one scheduler parse interval to appear.
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
@@ -83,6 +148,12 @@ func (c *Client) TriggerAndWait(ctx context.Context, dagID, runID string, conf m
 		if err := sleep(ctx, c.PollInterval); err != nil {
 			return err
 		}
+	}
+	// BETWEEN LOADING AND TRIGGERING, which is the only place it works: after
+	// the DAG is known to exist, and before a run is created from whatever is
+	// serialised at that instant.
+	if err := c.waitForCurrent(ctx, itemID, dagID); err != nil {
+		return err
 	}
 	var created map[string]any
 	status, err := c.call(ctx, "POST", "/api/v1/dags/"+url.PathEscape(dagID)+"/dagRuns", map[string]any{"dag_run_id": runID, "conf": conf}, &created)

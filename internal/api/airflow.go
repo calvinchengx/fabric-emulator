@@ -16,7 +16,7 @@ import (
 // Apache Airflow's REST API and shared DAG volume; tests substitute a witness.
 type AirflowRuntime interface {
 	SyncDAGs(ctx context.Context, itemID string, files map[string][]byte) error
-	TriggerAndWait(ctx context.Context, dagID, runID string, conf map[string]any) error
+	TriggerAndWait(ctx context.Context, itemID, dagID, runID string, conf map[string]any) error
 }
 
 func (a *API) registerAirflow(mux *http.ServeMux) {
@@ -177,7 +177,7 @@ func (a *API) runAirflow(ctx context.Context, it *store.Item, job *store.JobInst
 		}
 	}
 	if err == nil {
-		err = a.Airflow.TriggerAndWait(ctx, dagID, job.ID, conf)
+		err = a.Airflow.TriggerAndWait(ctx, it.ID, dagID, job.ID, conf)
 	}
 	code := ""
 	if err != nil {

@@ -78,7 +78,7 @@ func TestTriggerAndWaitSuccessWithBasicAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.PollInterval = time.Millisecond
-	if err := c.TriggerAndWait(context.Background(), "hello dag", "run-1", map[string]any{"x": 1}); err != nil {
+	if err := c.TriggerAndWait(context.Background(), "item-1", "hello dag", "run-1", map[string]any{"x": 1}); err != nil {
 		t.Fatal(err)
 	}
 	if polls.Load() != 2 {
@@ -126,7 +126,7 @@ func TestTriggerAndWaitFailuresAndCancellation(t *testing.T) {
 				ctx, cancel = context.WithTimeout(ctx, 5*time.Millisecond)
 				defer cancel()
 			}
-			if err := c.TriggerAndWait(ctx, "dag", "run", nil); err == nil {
+			if err := c.TriggerAndWait(ctx, "item-1", "dag", "run", nil); err == nil {
 				t.Fatal("expected error")
 			}
 		})
@@ -155,5 +155,75 @@ func TestCallTransportAndRequestErrors(t *testing.T) {
 	c = &Client{BaseURL: "http://127.0.0.1:1", HTTP: &http.Client{Timeout: 50 * time.Millisecond}}
 	if _, err := c.call(context.Background(), "GET", "/", nil, nil); err == nil {
 		t.Fatal("transport failure succeeded")
+	}
+}
+
+// A DAG that EXISTS is not a DAG that is CURRENT. Triggering on existence
+// alone creates the run from whatever is serialised at that instant, which for
+// a changed file is the previous version -- a green run whose task instances
+// belong to replaced code. This asserts the trigger waits for Airflow to
+// report a parse NEWER than the files on disk.
+func TestTriggerWaitsUntilAirflowHasParsedTheFilesJustSynced(t *testing.T) {
+	dagDir := t.TempDir()
+	item := "item-1"
+	if err := os.MkdirAll(filepath.Join(dagDir, item, "dags"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dagFile := filepath.Join(dagDir, item, "dags", "d.py")
+	if err := os.WriteFile(dagFile, []byte("# dag"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dagFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written := info.ModTime()
+
+	var parseChecks atomic.Int32
+	var triggered atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PATCH":
+			w.Write([]byte(`{}`))
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/dags/d"):
+			// STALE TWICE, THEN CURRENT. The first answers predate the file
+			// on disk, which is exactly the window the old code triggered in.
+			n := parseChecks.Add(1)
+			stamp := written.Add(-time.Minute)
+			if n > 2 {
+				stamp = written.Add(time.Second)
+			}
+			w.Write([]byte(`{"last_parsed_time":"` +
+				stamp.UTC().Format(time.RFC3339Nano) + `"}`))
+		case r.Method == "POST":
+			if parseChecks.Load() <= 2 {
+				t.Errorf("triggered after %d parse checks -- the run was created "+
+					"while Airflow still held the previous serialisation",
+					parseChecks.Load())
+			}
+			triggered.Store(true)
+			w.WriteHeader(200)
+			w.Write([]byte(`{}`))
+		case r.Method == "GET":
+			w.Write([]byte(`{"state":"success"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL, dagDir, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.PollInterval = time.Millisecond
+	if err := c.TriggerAndWait(context.Background(), item, "d", "run-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !triggered.Load() {
+		t.Fatal("never triggered")
+	}
+	if parseChecks.Load() < 3 {
+		t.Fatalf("parse checks=%d -- the wait did not actually poll", parseChecks.Load())
 	}
 }
