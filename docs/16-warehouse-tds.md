@@ -142,6 +142,30 @@ Inferring from the decoded Go value alone answers all of those wrong.
 | `binary` | `varbinary` |
 | `decimal(p,s)` | `decimal(p,s)` |
 
+**A BYTE_ARRAY is text only when the annotation says so, and UUID/BSON do not
+say so.** `string` and `binary` share a physical encoding, so the logical
+annotation is the only separator. Three annotations mean text: STRING, JSON and
+ENUM. Every other one is bytes, including UUID (16 raw bytes), BSON, FLOAT16,
+INTERVAL and the geometry types.
+
+This was wrong until #339: the reader returned a Go `string` for EVERY non-nil
+annotation, so a UUID column surfaced as `varchar` holding invalid UTF-8
+(`"\xde\xad\xbe\xef…"`) instead of `varbinary`. The branch that reads as the
+decision could not change the outcome, which is why a mutation to it failed no
+test.
+
+**Derived, not measured, and the derivation is the point.** Delta declares no
+UUID or BSON type — the left column above is the whole list — so a Delta column
+carrying either annotation is `binary` in the log, and `binary` -> `varbinary`
+is already measured against a real endpoint. Asking Fabric directly is close to
+unaskable: there is no Delta schema that declares a UUID column, so the
+annotation only appears when a writer (pyarrow, say) annotates more finely than
+Delta requires *underneath* a `binary` column. If someone with tenant access
+wants the direct confirmation anyway, the check is: write a Delta table with a
+`binary` column using pyarrow with a UUID extension type, then read
+`INFORMATION_SCHEMA.DATA_TYPE` from the SQL analytics endpoint; `varbinary`
+confirms this row.
+
 This was wrong for the first four rows until 2026-08-04, reported from
 contoso-data-platform: `date`, `timestamp` and `integer` all arrived as Go
 `int64` and all three surfaced as `bigint`, while `binary` arrived as a Go
