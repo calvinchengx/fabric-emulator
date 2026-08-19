@@ -462,6 +462,10 @@ jobs:
       # out still builds and still has a URL, but nothing links to it, so it is
       # published and unreachable. Same drift, same guard.
       - run: uv run --frozen --no-sync python scripts/check_docs_sidebar.py
+      # The site build does NOT catch a dangling intra-doc link: measured, it
+      # exits 0 and publishes a 404. Nor can it see a page missing from the
+      # sidebar, which is published but unreachable by navigation.
+      - run: uv run --frozen --no-sync python scripts/check_docs_links.py --strict
       # THE ONE `make check` RAN AND CI DID NOT. Every example must resolve its
       # target through the `fabric-target` contract — no pinned seed principal,
       # no localhost endpoint outside the resolver, no emulator-only lever, and
