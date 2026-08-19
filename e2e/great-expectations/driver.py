@@ -19,6 +19,7 @@ import re
 import urllib.request
 
 import great_expectations as gx
+import great_expectations.expectations as gxe
 import pandas as pd
 
 FABRIC = os.environ["FABRIC_URL"]
@@ -47,13 +48,23 @@ def query(dax):
     return df
 
 
-def validator(df):
+def batch(df):
+    """A GE 1.x Batch over `df`, ready to validate single Expectations.
+
+    Ported from 0.18's `ctx.get_validator(...)` + `v.expect_*()`, which 1.0
+    removed: `context.sources` is now `context.data_sources`, an asset yields a
+    BATCH DEFINITION rather than a batch request, and expectations are objects
+    passed to `batch.validate(...)` instead of methods on a validator. The
+    tutorial's shape is unchanged — one batch per asset, one result per
+    expectation — because `validate()` returns the same
+    ExpectationValidationResult, with `.success` and `partial_unexpected_list`.
+    """
     ctx = gx.get_context()
     n = next(_names)
-    src = ctx.sources.add_pandas(f"src{n}")
-    asset = src.add_dataframe_asset(f"asset{n}")
-    br = asset.build_batch_request(dataframe=df)
-    return ctx.get_validator(batch_request=br, create_expectation_suite_with_name=f"suite{n}")
+    bd = (ctx.data_sources.add_pandas(f"src{n}")
+          .add_dataframe_asset(f"asset{n}")
+          .add_batch_definition_whole_dataframe(f"batch{n}"))
+    return bd.get_batch(batch_parameters={"dataframe": df})
 
 
 # DAX per asset — single-sourced from the semantic-model golden fixture.
@@ -64,20 +75,21 @@ dax = {q["name"]: q["dax"] for q in golden["queries"]}
 results = []
 
 # Retail Store Suite: row count in range + valid 5-digit zip.
-v = validator(query(dax["Store Asset"]))
+b = batch(query(dax["Store Asset"]))
 results.append(("Retail Store", "row_count_between(1,10)",
-                v.expect_table_row_count_to_be_between(min_value=1, max_value=10).success))
+                b.validate(gxe.ExpectTableRowCountToBeBetween(min_value=1, max_value=10)).success))
 results.append(("Retail Store", "valid_zip5(PostalCode)",
-                v.expect_column_values_to_match_regex("PostalCode", r"^\d{5}$").success))
+                b.validate(gxe.ExpectColumnValuesToMatchRegex(column="PostalCode", regex=r"^\d{5}$")).success))
 
 # Retail Measure Suite: TotalUnits above threshold.
-v = validator(query(dax["Total Units Asset"]))
+b = batch(query(dax["Total Units Asset"]))
 results.append(("Retail Measure", "TotalUnits >= 50000",
-                v.expect_column_values_to_be_between("TotalUnits", min_value=50000).success))
+                b.validate(gxe.ExpectColumnValuesToBeBetween(column="TotalUnits", min_value=50000)).success))
 
 # Retail DAX Suite: the YoY ratio must be within band — the tutorial's failing asset.
-v = validator(query(dax["Total Units YoY Asset"]))
-ratio = v.expect_column_values_to_be_between("Total Units Ratio", min_value=0.8, max_value=1.5)
+b = batch(query(dax["Total Units YoY Asset"]))
+ratio = b.validate(gxe.ExpectColumnValuesToBeBetween(
+    column="Total Units Ratio", min_value=0.8, max_value=1.5))
 results.append(("Retail DAX", "Total Units Ratio in [0.8, 1.5]", ratio.success))
 
 for suite, exp, ok in results:
