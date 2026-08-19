@@ -1,8 +1,7 @@
 module github.com/calvinchengx/fabric-emulator
 
-go 1.25.11
+go 1.26.6
 
-toolchain go1.25.12
 
 require (
 	github.com/calvinchengx/entra-emulator v0.8.1

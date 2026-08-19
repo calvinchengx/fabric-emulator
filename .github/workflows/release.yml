@@ -57,7 +57,7 @@ jobs:
           fetch-depth: 0 # GoReleaser needs full history/tags
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: '~> v2'

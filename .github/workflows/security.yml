@@ -1,0 +1,70 @@
+# Secret scanning and vulnerability scanning.
+#
+# Neither existed anywhere in the emulator family before this workflow. The
+# gap that prompted it: govulncheck reported standard-library vulnerabilities
+# in every Go repo, 6 to 25 each, all of them fixed by moving off Go 1.25. A
+# scanner nobody runs is a scanner that finds nothing.
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Vulnerabilities are published against code that has not changed, so this
+    # cannot only run on push: a repo that is finished still needs watching.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    # A wedged run must fail rather than sit in GitHub's 6-hour default,
+    # where 'pending' and 'stuck' look identical.
+    timeout-minutes: 15
+    steps:
+      # Full history: a secret that was committed and then removed is still in
+      # the pack, still cloneable, and still leaked. Scanning only the tip
+      # would report clean on exactly the case that matters most.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.0
+        run: |
+          curl -fsSL -o /tmp/gl.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gl.tgz -C /tmp gitleaks
+          sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan the working tree
+        run: gitleaks dir . --config .gitleaks.toml --no-banner --redact --verbose
+
+      - name: Scan the history
+      # --verbose here too, and it is not noise: without it a failing scan
+      # logs "leaks found: 3" and nothing else, so the one job whose whole
+      # output is "which line" names no line. --redact still masks the value.
+        run: gitleaks git . --config .gitleaks.toml --no-banner --redact --verbose
+
+  vulnerabilities:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    # A wedged run must fail rather than sit in GitHub's 6-hour default,
+    # where 'pending' and 'stuck' look identical.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Reports only vulnerabilities the code can actually REACH, so a finding
+      # here is a call path rather than a dependency-tree coincidence.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

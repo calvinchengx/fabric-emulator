@@ -1,0 +1,50 @@
+# Secret scanning for an emulator repo.
+#
+# THE HARD PART IS THE FALSE POSITIVES, and they are structural rather than
+# incidental. An Azure emulator is full of GUIDs: tenant ids, application
+# (client) ids, role definition ids, workspace and item ids. gitleaks'
+# `generic-api-key` rule matches a bare GUID, so a faithful emulator looks like
+# a repo leaking dozens of keys.
+#
+# Allowlisting those is correct, not a concession: **a tenant id, an
+# application (client) id and a role definition id are not secrets.** Microsoft
+# publishes its own, they appear in every quickstart, and they are useless
+# without a credential. What IS a secret is a client SECRET, a private key, a
+# PAT or a connection string, and nothing below allowlists those: every default
+# rule that looks for a credential in context (client_secret=, password=,
+# private key headers, cloud provider tokens) stays armed.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Identifiers, vendored specifications and prose, none of them credentials"
+
+regexes = [
+  # A bare GUID and nothing else. Tenant, client, role definition, workspace
+  # and item ids all take this shape. A GUID-shaped credential would still be
+  # caught by the rules that match on surrounding context.
+  '''^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$''',
+  # The JOSE header of an unsigned/test JWT. `eyJhbGciOi...` is base64 of
+  # `{"alg":...`, so every JWT fixture in every policy test trips the rule.
+  # A real leaked token is caught by its payload and signature, not this prefix.
+  '''^eyJhbGciOi[A-Za-z0-9_\-]*\.?$''',
+  # A Go identifier the rule mistook for a key. `x509.MarshalECPrivateKey` is
+  # the standard library function being assigned, not a private key.
+  '''^[a-z][a-zA-Z0-9]*\.[A-Z][A-Za-z0-9]+$''',
+  # Base64 of "not-a-blob": a fixture whose whole purpose is to be rejected as
+  # an invalid key blob. Decoded and verified before allowlisting.
+  '''^bm90LWEtYmxvYg=*$''',
+]
+
+paths = [
+  # Microsoft's published REST specification, vendored verbatim. Its example
+  # ids are Microsoft's own, and editing them to please a scanner would make
+  # the vendored copy differ from upstream.
+  '''swagger\.json$''',
+  '''openapi\.(json|ya?ml)$''',
+  # Documentation. A worked example in prose is not a deployed credential, and
+  # the docs are where seeded values are deliberately published so a reader can
+  # reproduce a call.
+  '''docs/.*\.md$''',
+  '''README\.md$''',
+]
