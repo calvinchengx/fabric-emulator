@@ -226,17 +226,41 @@ services:
   # the bug the spark-agent profile shipped once, which is why the terminal
   # overlay is split the same way.
   #
-  # SequentialExecutor on SQLite: this is a local fidelity target, not a
-  # throughput one, and it keeps the sidecar to one container.
+  # CELERY, BECAUSE FABRIC GIVES A DAG AUTHOR NO CHOICE. This ran
+  # SequentialExecutor on SQLite, argued as "a local fidelity target, not a
+  # throughput one" -- but the executor is not a throughput knob here.
+  # Microsoft documents Fabric's default as `CeleryExecutor` AND lists
+  # `AIRFLOW__CORE__EXECUTOR` among the configurations a user cannot override,
+  # so on real Fabric it is always Celery and no DAG can opt out.
+  #
+  # Sequential runs ONE TASK AT A TIME. A DAG with four parallel ingests and
+  # seven concurrent models serialises, passes, and demonstrates behaviour no
+  # Fabric user can have -- and a one-task witness DAG cannot see the
+  # difference, which is why this was green for as long as it was. Fidelity
+  # that only holds for trivial DAGs is the kind worth not claiming.
+  #
+  # The cost is two more containers, both profile-gated with this one: Celery
+  # needs a broker, and a parallel executor needs a metadata database SQLite
+  # cannot be (concurrent writers get `database is locked`).
   airflow:
     profiles: [airflow]
     image: apache/airflow:2.10.5-python3.12
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+      airflow-broker:
+        condition: service_healthy
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      # FABRIC'S DEFAULT IS False, and the emulator's client PATCHes
+      # `is_paused: false` before every trigger anyway, so this only removes a
+      # difference nothing depended on.
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
-      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://airflow-broker:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@airflow-db/airflow
       # The emulator writes a DAG and then waits for Airflow to notice it; the
       # defaults (5 min) make that look like a hang.
       AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "2"
@@ -245,6 +269,10 @@ services:
       - airflow-dags:/opt/airflow/dags
     ports:
       - "8085:8080" # the Airflow UI, for looking at what a job actually did
+    # Scheduler, WORKER and webserver in one container. Three processes rather
+    # than three services: the topology that matters for fidelity is Celery's
+    # queue between scheduler and worker, which is present either way, and
+    # splitting them would add a service without adding a behaviour.
     command:
       - bash
       - -ec
@@ -253,12 +281,42 @@ services:
         airflow users create --username admin --password admin \
           --firstname Fabric --lastname Emulator --role Admin --email admin@example.com
         airflow scheduler &
+        airflow celery worker &
         exec airflow webserver
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 5s
       timeout: 3s
       retries: 60
+
+  # Celery's metadata database. NOT a preference: a parallel executor needs
+  # concurrent writers and SQLite answers `database is locked`, which is why
+  # the executor and the database had to move together.
+  airflow-db:
+    profiles: [airflow]
+    image: postgres:16.4
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Celery's broker: the queue the scheduler puts tasks on and the worker takes
+  # them off. This is the part that makes the executor Celery rather than Local.
+  airflow-broker:
+    profiles: [airflow]
+    image: redis:7.4-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   # ---- Real-Time Intelligence (optional): Kusto engine, profile-gated -------
   # Microsoft's own KQL engine container (the Azure Data Explorer "Kusto
@@ -479,3 +537,5 @@ volumes:
   # reads them from the same volume. One volume is what makes the sync a file
   # copy rather than an upload API.
   airflow-dags:
+  # Airflow's own metadata database, separate from OpenMetadata's.
+  airflow-db-data:
