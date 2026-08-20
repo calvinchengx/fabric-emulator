@@ -1,6 +1,6 @@
 services:
   entra-emulator:
-    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.8.1}
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.9.0}
     environment:
       ORIGIN_MODE: compat
       TLS_ENABLED: "false"
