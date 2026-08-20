@@ -69,7 +69,9 @@ def published_pattern() -> re.Pattern[str]:
     try:
         return re.compile(match.group("body"))
     except re.error as exc:
-        raise SystemExit(f"docs-links: DOC_RE does not compile as a Python regex ({exc})")
+        raise SystemExit(
+            f"docs-links: DOC_RE does not compile as a Python regex ({exc})"
+        ) from exc
 
 
 def problems() -> list[str]:
