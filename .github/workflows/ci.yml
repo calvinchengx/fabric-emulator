@@ -1905,7 +1905,7 @@ jobs:
       # ratio DAX asset fails (out of band), mirroring the tutorial.
       - run: uv run --frozen --group great-expectations python e2e/great-expectations/run.py
 
-  lint:
+  golangci:
     name: golangci-lint
     runs-on: ubuntu-latest
     # A wedged run must fail rather than sit in GitHub's 6-hour default, where
