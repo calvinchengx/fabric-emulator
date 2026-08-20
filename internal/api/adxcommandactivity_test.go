@@ -64,7 +64,7 @@ func TestADXCommandReachesTheRealEngine(t *testing.T) {
 	if s, _ := out["database"].(string); s != db.DisplayName {
 		t.Fatalf("output names %q, want the Fabric display name %q", s, db.DisplayName)
 	}
-	if raw, _ := out["tables"]; raw == nil {
+	if raw := out["tables"]; raw == nil {
 		t.Fatalf("the engine's result was dropped: %+v", out)
 	}
 	rendered, _ := json.Marshal(out)

@@ -94,7 +94,7 @@ func (o *sfOrg) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		o.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"id":"750xx000000005LAAQ","state":%q,"errorMessage":"boom"}`, state)))
+		fmt.Fprintf(w, `{"id":"750xx000000005LAAQ","state":%q,"errorMessage":"boom"}`, state)
 
 	default:
 		http.Error(w, "unexpected", http.StatusNotFound)

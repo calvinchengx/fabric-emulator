@@ -47,7 +47,7 @@ func strictTDS(t *testing.T, backendDSN string, strict bool) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 
 	ws := &store.Workspace{DisplayName: fmt.Sprintf("strict-ws-%t", strict)}
 	if err := srv.Store.CreateWorkspace(ws, store.Principal{
@@ -64,7 +64,7 @@ func strictTDS(t *testing.T, backendDSN string, strict bool) *sql.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	go srv.TDS.Serve(ln)
+	go func() { _ = srv.TDS.Serve(ln) }()
 
 	// The client names its database, which is what takes the byte-splice path
 	// production uses — connecting with none would skip the RBAC wall and prove

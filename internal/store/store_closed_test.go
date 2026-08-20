@@ -13,7 +13,7 @@ func TestClosedDBErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	_ = s.Close()
 
 	p := Principal{ID: "p", Type: "User"}
 	if err := s.CreateWorkspace(&Workspace{DisplayName: "w"}, p); err == nil {
@@ -176,7 +176,7 @@ func TestClosedDBFolderErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	_ = s.Close()
 	if err := s.CreateFolder(&Folder{WorkspaceID: "w", DisplayName: "f"}); err == nil {
 		t.Error("CreateFolder on closed DB succeeded")
 	}
@@ -202,7 +202,7 @@ func TestClosedDBIdentityErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	_ = s.Close()
 	if err := s.SetWorkspaceIdentity(&WorkspaceIdentity{WorkspaceID: "w", IdentityID: "i", AppID: "a"}); err == nil {
 		t.Error("SetWorkspaceIdentity on closed DB succeeded")
 	}
@@ -219,7 +219,7 @@ func TestClosedDBCapacityErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	_ = s.Close()
 	if _, err := s.GetCapacity("x"); err == nil {
 		t.Error("GetCapacity on closed DB succeeded")
 	}
@@ -239,7 +239,7 @@ func TestClosedDBShortcutErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	_ = s.Close()
 	if err := s.CreateShortcut(&Shortcut{ItemID: "i", Path: "p", Name: "n"}); err == nil {
 		t.Error("CreateShortcut on closed DB succeeded")
 	}

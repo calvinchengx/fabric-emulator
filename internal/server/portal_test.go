@@ -361,7 +361,7 @@ func TestPortalWarehouseTDSConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 	fabric := httptest.NewServer(srv.Handler())
 	t.Cleanup(fabric.Close)
 
@@ -426,7 +426,7 @@ func TestPortalSPAServing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Content-Type"), "javascript") {
 		t.Fatalf("asset %s: %d %s", asset, resp.StatusCode, resp.Header.Get("Content-Type"))
@@ -437,7 +437,7 @@ func TestPortalSPAServing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	if !strings.Contains(resp.Header.Get("Content-Type"), "application/json") {
 		t.Fatal("/health should still serve JSON")

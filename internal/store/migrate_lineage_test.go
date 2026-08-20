@@ -71,7 +71,7 @@ func TestRelaxLineageJobFKUpgradesAnOlderDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("opening a pre-migration database failed: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	// 1. The existing edge survived, with its columns intact.
 	var activity, srcPath, producer string
@@ -132,13 +132,13 @@ func TestRelaxLineageJobFKIsIdempotent(t *testing.T) {
 		// A workspace FK may reject this; the edge is not the point of this test.
 		t.Logf("seed edge not inserted (%v); the reopen below is what matters", err)
 	}
-	s1.Close()
+	_ = s1.Close()
 
 	s2, err := Open(dir, clock.New())
 	if err != nil {
 		t.Fatalf("reopening an already-migrated database failed: %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	if err := s2.relaxLineageJobFK(); err != nil {
 		t.Fatalf("running the migration a third time errored: %v", err)
 	}

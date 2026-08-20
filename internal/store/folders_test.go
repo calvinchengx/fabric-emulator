@@ -14,7 +14,7 @@ func TestFolderGetUpdateDeleteMove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	ws := &Workspace{DisplayName: "w"}
 	if err := s.CreateWorkspace(ws, Principal{ID: "a", Type: "User"}); err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestFolderIsUnderDefensiveCycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	ws := &Workspace{DisplayName: "w"}
 	if err := s.CreateWorkspace(ws, Principal{ID: "a", Type: "User"}); err != nil {
 		t.Fatal(err)

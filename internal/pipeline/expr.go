@@ -59,9 +59,10 @@ func evalString(s string, ctx *evalContext) (value, error) {
 		if strings.HasPrefix(s[i:], "@{") {
 			depth, j := 1, i+2
 			for ; j < len(s) && depth > 0; j++ {
-				if s[j] == '{' {
+				switch s[j] {
+				case '{':
 					depth++
-				} else if s[j] == '}' {
+				case '}':
 					depth--
 				}
 			}

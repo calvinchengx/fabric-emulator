@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -296,14 +295,4 @@ func TestKeyCredentialResolvedFromKeyVault(t *testing.T) {
 	if w := do(a.createConnection, admin, "POST", skip, nil); w.Code != http.StatusCreated {
 		t.Errorf("skipTestConnection = %d; want 201", w.Code)
 	}
-}
-
-// mustHost is the host:port of a stub vault URL, for akv's vault allowlist.
-func mustHost(t *testing.T, raw string) string {
-	t.Helper()
-	u, err := url.Parse(raw)
-	if err != nil {
-		t.Fatalf("parse %q: %v", raw, err)
-	}
-	return u.Host
 }

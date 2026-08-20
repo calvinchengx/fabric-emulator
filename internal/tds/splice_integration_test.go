@@ -93,7 +93,7 @@ func TestSpliceEndToEnd(t *testing.T) {
 		t.Fatal(lerr)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 
 	// Serve until the connection closes, and ANSWER AN ATTENTION, because a real
 	// engine does. Answering exactly one batch and closing was the other half of
@@ -148,7 +148,7 @@ func TestServerHandshakeErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().String()
 	buf := make([]byte, 8)
 
@@ -219,7 +219,7 @@ func TestReEncodeReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;database=lh;encrypt=disable;dial timeout=5", addr.Port)
 	c, _ := mssql.NewAccessTokenConnector(dsn, func() (string, error) { return "a.b.c", nil })
@@ -253,7 +253,7 @@ func TestOnConnectRejects(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;database=x;encrypt=disable;dial timeout=5", addr.Port)
 	c, _ := mssql.NewAccessTokenConnector(dsn, func() (string, error) { return "a.b.c", nil })
@@ -318,7 +318,7 @@ func TestLoginWithoutDatabaseIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 
 	// No `database=` in the DSN: LOGIN7 carries an empty database name.
 	addr := ln.Addr().(*net.TCPAddr)
@@ -407,7 +407,7 @@ func TestConfiguredAuthorizerNeverReachesTheReEncodeRelay(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 
 	// The rejected session: no database, so the login must fail outright.
@@ -435,7 +435,8 @@ func TestConfiguredAuthorizerNeverReachesTheReEncodeRelay(t *testing.T) {
 	var dialed int
 	var ran []string
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		if dialed, ran = be.counts(); dialed > 0 {
+		// Only dialed is read here; ran is re-read after the loop.
+		if dialed, _ = be.counts(); dialed > 0 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -469,7 +470,7 @@ func TestReEncodeRelayRejectsStrictStatement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;database=db;encrypt=disable;dial timeout=5", addr.Port)
 	c, _ := mssql.NewAccessTokenConnector(dsn, func() (string, error) { return "a.b.c", nil })
@@ -567,7 +568,7 @@ func TestReEncodeRelaySkipsNonBatchMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 
 	conn, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
@@ -625,7 +626,7 @@ func TestSpliceDialRejectsLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;database=lh;encrypt=disable;dial timeout=5", addr.Port)
@@ -660,7 +661,7 @@ func TestLoginWithNoValidatorIsRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;database=db;encrypt=disable;dial timeout=5", addr.Port)
 	c, _ := mssql.NewAccessTokenConnector(dsn, func() (string, error) { return "any.token.at.all", nil })

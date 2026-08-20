@@ -51,7 +51,7 @@ func TestWarehouseDeltaReflectionE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 
 	// Seed a lakehouse and a Delta table (part-0.parquet + _delta_log) in OneLake.
 	ws := &store.Workspace{DisplayName: "wh-ws"}
@@ -82,7 +82,7 @@ func TestWarehouseDeltaReflectionE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.TDS.Serve(ln)
+	go func() { _ = srv.TDS.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 
 	// Connect with database=<lakehouse id> → reflection runs on login.

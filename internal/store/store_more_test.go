@@ -95,13 +95,13 @@ func TestOpenPersistsAcrossReopen(t *testing.T) {
 	if err := s1.CreateWorkspace(ws, Principal{ID: "p", Type: "User"}); err != nil {
 		t.Fatal(err)
 	}
-	s1.Close()
+	_ = s1.Close()
 
 	s2, err := Open(dir, clock.New())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	got, err := s2.GetWorkspace(ws.ID)
 	if err != nil || got.DisplayName != "durable" {
 		t.Fatalf("reopened workspace = %+v, %v", got, err)
@@ -125,7 +125,7 @@ func TestOpenBadDir(t *testing.T) {
 	}
 	s, err := Open(filepath.Join(file, "data"), clock.New())
 	if err == nil {
-		s.Close()
+		_ = s.Close()
 		t.Fatal("Open accepted a data dir underneath a regular file")
 	}
 }
@@ -137,7 +137,7 @@ func TestItemProperties(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	ws := &Workspace{DisplayName: "w"}
 	if err := s.CreateWorkspace(ws, Principal{ID: "p", Type: "User"}); err != nil {
 		t.Fatal(err)

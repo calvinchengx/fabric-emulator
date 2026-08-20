@@ -23,7 +23,7 @@ func newAPI(t *testing.T) (*API, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	a := New(st, nil, 1, 0)
 	// The suite's `admin` principal is a declared Fabric administrator, so
 	// tests written before the tenant-admin gate still exercise the surfaces

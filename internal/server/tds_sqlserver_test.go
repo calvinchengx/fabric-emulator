@@ -58,7 +58,7 @@ func TestWarehouseSQLServerRelayE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 	if srv.TDS == nil || srv.TDS.Backend == nil {
 		t.Fatal("expected a TDS server with a SQL Server backend")
 	}
@@ -83,7 +83,7 @@ func TestWarehouseSQLServerRelayE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.TDS.Serve(ln)
+	go func() { _ = srv.TDS.Serve(ln) }()
 
 	// Connect the real SQL client to the emulator with a real entra token.
 	addr := ln.Addr().(*net.TCPAddr)

@@ -87,7 +87,7 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 
 	ws := &store.Workspace{DisplayName: "datalake-ws"}
 	if err := st.CreateWorkspace(ws, store.Principal{ID: "admin-1", Type: "ServicePrincipal"}); err != nil {
@@ -149,7 +149,7 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	v := &auth.Validator{}
 	s := New(st, v)
 	if s.Store != st || s.Auth != v {

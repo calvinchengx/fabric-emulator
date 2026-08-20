@@ -57,7 +57,7 @@ func (k *kafkaBroker) CreateTopic(topic string) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	controller, err := conn.Controller()
 	if err != nil {
 		return err
@@ -66,7 +66,7 @@ func (k *kafkaBroker) CreateTopic(topic string) error {
 	if err != nil {
 		return err
 	}
-	defer ctrl.Close()
+	defer func() { _ = ctrl.Close() }()
 	err = ctrl.CreateTopics(kafka.TopicConfig{
 		Topic:             topic,
 		NumPartitions:     1,
@@ -86,7 +86,7 @@ func (k *kafkaBroker) Produce(topic string, key, value []byte) error {
 		RequiredAcks: kafka.RequireOne,
 		BatchTimeout: 10 * time.Millisecond,
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return w.WriteMessages(ctx, kafka.Message{Key: key, Value: value})
@@ -108,7 +108,7 @@ func (k *kafkaBroker) Consume(topic string, max int, wait time.Duration) ([]Kafk
 		MaxWait:     200 * time.Millisecond,
 		StartOffset: kafka.FirstOffset,
 	})
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()

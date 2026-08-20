@@ -16,7 +16,7 @@ func namesStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -103,7 +103,7 @@ func TestItemNameTaken(t *testing.T) {
 
 func TestNameTakenClosedDB(t *testing.T) {
 	s := namesStore(t)
-	s.Close()
+	_ = s.Close()
 	if _, err := s.WorkspaceNameTaken("x", ""); err == nil {
 		t.Fatal("WorkspaceNameTaken on closed DB should error")
 	}

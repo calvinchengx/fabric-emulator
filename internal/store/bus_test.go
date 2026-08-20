@@ -18,7 +18,7 @@ func newBusStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -368,7 +368,7 @@ func TestPublishAfterCloseIsSafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	_ = s.Close()
 	s.publish(Event{Kind: KindFile, Path: "Files/after-close.csv"})
 	s.emitFileEvent(EventFileCreated, "w", "i", "Files/after-close.csv", Attribution{})
 }
@@ -425,7 +425,7 @@ func TestPublishDuringCloseDoesNotPanic(t *testing.T) {
 		}
 		close(start)
 		runtime.Gosched() // let the publishers get going before shutting down
-		s.Close()         // concurrent with every publisher above
+		_ = s.Close()     // concurrent with every publisher above
 		stop.Store(true)
 		wg.Wait()
 	}
@@ -444,7 +444,7 @@ func TestPublishNeverBlocksWhenTheQueueIsFull(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	// Wedge the dispatcher: a subscriber that never reads, plus enough events to
 	// overflow the 1024-deep raw queue several times over.

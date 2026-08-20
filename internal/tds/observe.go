@@ -175,8 +175,8 @@ func leadingKeyword(sql string) string {
 			sql = rest
 		default:
 			end := strings.IndexFunc(sql, func(r rune) bool {
-				return !(r == '_' || r == '@' || r == '#' ||
-					(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+				return r != '_' && r != '@' && r != '#' &&
+					(r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
 			})
 			if end < 0 {
 				end = len(sql)

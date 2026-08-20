@@ -245,7 +245,7 @@ func TestNegativePageSizeDisablesPaging(t *testing.T) {
 	writePage(&API{ListPageSize: -1}, w, r, items)
 
 	var body map[string]any
-	json.Unmarshal(w.Body.Bytes(), &body)
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	if _, paged := body["continuationToken"]; paged {
 		t.Fatal("paging was disabled but a token was emitted")
 	}
@@ -265,7 +265,7 @@ func TestMaxPageSizeCannotExceedTheServerPageSize(t *testing.T) {
 	var body struct {
 		Value []map[string]string `json:"value"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &body)
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	if len(body.Value) != 3 {
 		t.Fatalf("maxPageSize widened the page to %d, want the server's 3", len(body.Value))
 	}

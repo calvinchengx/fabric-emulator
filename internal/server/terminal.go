@@ -190,7 +190,7 @@ func (s *Server) terminalProxy(w http.ResponseWriter, r *http.Request) {
 	// Anything the client already sent past the header goes upstream first, or
 	// the first keystroke of a fast client is lost.
 	if n := buf.Reader.Buffered(); n > 0 {
-		if pending, rerr := buf.Reader.Peek(n); rerr == nil {
+		if pending, rerr := buf.Peek(n); rerr == nil {
 			_, _ = upstream.Write(pending)
 		}
 	}

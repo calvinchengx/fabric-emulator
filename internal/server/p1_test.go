@@ -15,8 +15,6 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
-const platformPart = `{"path":".platform","payload":"e30=","payloadType":"InlineBase64"}`
-
 func TestDefinitionRoundTripAndTypedAliases(t *testing.T) {
 	f := newFixture(t)
 	var ws struct{ ID string }

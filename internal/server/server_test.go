@@ -54,7 +54,7 @@ func newFixture(t *testing.T) *fixture {
 	// A short keepalive so a test that opens the flow stream does not wait a
 	// full interval at teardown (internal/server/events.go explains why).
 	srv.EventKeepalive = 100 * time.Millisecond
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 	fabric := httptest.NewServer(srv.Handler())
 	t.Cleanup(fabric.Close)
 
@@ -465,7 +465,7 @@ func newFixtureWithARM(t *testing.T, armURL string) *fixture {
 		t.Fatal(err)
 	}
 	srv.EventKeepalive = 100 * time.Millisecond
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 	fabric := httptest.NewServer(srv.Handler())
 	t.Cleanup(fabric.Close)
 

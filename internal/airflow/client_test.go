@@ -51,10 +51,10 @@ func TestTriggerAndWaitSuccessWithBasicAuth(t *testing.T) {
 		if !ok || u != "admin" || p != "secret" {
 			t.Errorf("basic auth=%q %q %v", u, p, ok)
 		}
-		switch {
-		case r.Method == "PATCH":
+		switch r.Method {
+		case "PATCH":
 			w.Write([]byte(`{}`))
-		case r.Method == "POST":
+		case "POST":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body["dag_run_id"] != "run-1" {
@@ -62,7 +62,7 @@ func TestTriggerAndWaitSuccessWithBasicAuth(t *testing.T) {
 			}
 			w.WriteHeader(200)
 			w.Write([]byte(`{}`))
-		case r.Method == "GET":
+		case "GET":
 			state := "running"
 			if polls.Add(1) > 1 {
 				state = "success"

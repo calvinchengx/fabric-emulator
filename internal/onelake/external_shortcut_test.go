@@ -27,7 +27,7 @@ func TestResolveExternalShortcutCredentialsAndErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	svc := New(st, nil)
 
 	// These four exercise the plain HTTP read-through, so the target type is
@@ -83,7 +83,7 @@ func TestResolveReadExposesEmptyManagedFolders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ws := &store.Workspace{DisplayName: "w"}
 	if err := st.CreateWorkspace(ws, store.Principal{ID: "owner", Type: "User"}); err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestResolveExternalShortcutSignsS3WithSigV4(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	svc := New(st, nil)
 
 	// Fabric's S3 connector collects an Access Key Id and a Secret Access Key;
@@ -174,7 +174,7 @@ func TestExternalShortcutWriteAndDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	svc := New(st, nil)
 
 	conn := &store.Connection{DisplayName: "adls", CredentialsJSON: `{"credentialType":"Anonymous"}`}
@@ -232,7 +232,7 @@ func TestExternalShortcutWriteSurfacesUpstreamFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	svc := New(st, nil)
 	conn := &store.Connection{DisplayName: "adls", CredentialsJSON: `{"credentialType":"Anonymous"}`}
 	if err := st.CreateConnection(conn); err != nil {
@@ -253,7 +253,7 @@ func TestS3RegionOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	svc := New(st, nil)
 	if got := svc.S3Region(); got != "us-east-1" {
 		t.Fatalf("default region = %q", got)
@@ -271,7 +271,7 @@ func TestExternalWriteAndDeleteFailurePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	svc := New(st, nil)
 
 	// A shortcut whose connection no longer exists.
@@ -346,7 +346,7 @@ func TestAnOversizedShortcutReadIsRefusedRatherThanServedShort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	svc := New(st, nil)
 
 	conn := &store.Connection{DisplayName: "anon", CredentialsJSON: `{"credentialType":"Anonymous"}`}
@@ -382,7 +382,7 @@ func TestAShortcutReadInsideTheCeilingIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	svc := New(st, nil)
 	conn := &store.Connection{DisplayName: "anon2", CredentialsJSON: `{"credentialType":"Anonymous"}`}
 	if err := st.CreateConnection(conn); err != nil {

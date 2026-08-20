@@ -231,7 +231,7 @@ func TestUpdateDeploymentPipelinePatchSemantics(t *testing.T) {
 		t.Fatalf("patch = %d: %s", w.Code, w.Body)
 	}
 	got := &store.DeploymentPipeline{}
-	json.Unmarshal(w.Body.Bytes(), got)
+	_ = json.Unmarshal(w.Body.Bytes(), got)
 	if got.DisplayName != "renamed" || got.Description != "keep me" {
 		t.Fatalf("patch lost a field: %+v", got)
 	}
@@ -419,7 +419,7 @@ func TestUnassignStageWorkspaceAPI(t *testing.T) {
 		t.Fatalf("unassign = %d: %s", w.Code, w.Body)
 	}
 	got := &store.DeploymentStage{}
-	json.Unmarshal(w.Body.Bytes(), got)
+	_ = json.Unmarshal(w.Body.Bytes(), got)
 	if got.WorkspaceID != "" {
 		t.Fatalf("unassign response still assigned: %+v", got)
 	}
@@ -591,7 +591,7 @@ func TestDeploymentOperationsAPI(t *testing.T) {
 		t.Fatalf("get operation = %d: %s", got.Code, got.Body)
 	}
 	one := &store.DeploymentOperation{}
-	json.Unmarshal(got.Body.Bytes(), one)
+	_ = json.Unmarshal(got.Body.Bytes(), one)
 	if one.ID != opID || len(one.Items) != 1 {
 		t.Fatalf("get operation body = %+v", one)
 	}
@@ -741,7 +741,7 @@ func TestDeploymentStoreErrors(t *testing.T) {
 	if err := st.SetStageWorkspace(pl.ID, sts[0].ID, ws.ID); err != nil {
 		t.Fatal(err)
 	}
-	st.Close()
+	_ = st.Close()
 	ids := map[string]string{"pid": pl.ID, "sid": sts[0].ID}
 	for name, h := range map[string]handler{
 		"list":   a.listDeploymentPipelines,

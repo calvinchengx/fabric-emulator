@@ -139,7 +139,6 @@ func (g *gatedWriter) hold()            { g.mu.Lock(); g.gate = make(chan struct
 func (g *gatedWriter) release()         { g.mu.Lock(); close(g.gate); g.gate = nil; g.mu.Unlock() }
 func (g *gatedWriter) failWith(e error) { g.mu.Lock(); g.err = e; g.mu.Unlock() }
 func (g *gatedWriter) text() string     { g.mu.Lock(); defer g.mu.Unlock(); return g.body.String() }
-func (g *gatedWriter) status() int      { g.mu.Lock(); defer g.mu.Unlock(); return g.code }
 
 // TestFlowStreamRefusesAConnectionItCannotStream: the handler asserts a Flusher
 // up front. Without the check it would stream into a writer that never reaches

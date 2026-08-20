@@ -136,7 +136,7 @@ func TestReflect(t *testing.T) {
 // TestReflectListError: a store error listing Tables/ surfaces, not panics.
 func TestReflectListError(t *testing.T) {
 	st, _, itemID := seedLakehouse(t)
-	st.Close() // a closed store makes ListOneLakePaths fail
+	_ = st.Close() // a closed store makes ListOneLakePaths fail
 	db := testsupport.OpenMSSQL(t)
 	if _, err := Reflect(context.Background(), db, st, itemID); err == nil {
 		t.Fatal("expected an error from the closed store")

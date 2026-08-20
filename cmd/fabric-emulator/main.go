@@ -140,7 +140,7 @@ func run(args []string, stop <-chan struct{}, ready chan<- net.Addr) error {
 	if err != nil {
 		return err
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {

@@ -69,13 +69,15 @@ func TestSpliceObservesAcceptedWrite(t *testing.T) {
 	clientA, clientB := net.Pipe()
 	backendA, backendB := net.Pipe()
 	seen := make(chan string, 4)
-	go spliceSession(clientA, backendA, false, false,
-		func(db string, flows []tsql.Flow) {
-			for _, f := range flows {
-				seen <- db + "|" + f.Kind + "|" + strings.Join(f.Target, ".") +
-					"<-" + strings.Join(f.Sources[0], ".")
-			}
-		}, "wh-guid")
+	go func() {
+		_ = spliceSession(clientA, backendA, false, false,
+			func(db string, flows []tsql.Flow) {
+				for _, f := range flows {
+					seen <- db + "|" + f.Kind + "|" + strings.Join(f.Target, ".") +
+						"<-" + strings.Join(f.Sources[0], ".")
+				}
+			}, "wh-guid")
+	}()
 
 	// Client sends a CTAS; the fake backend accepts it.
 	go func() {

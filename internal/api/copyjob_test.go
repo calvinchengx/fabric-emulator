@@ -326,7 +326,7 @@ func TestCopyJobStatusReflectsTheCopyNotTheClock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	a := New(st, nil, 1, 3600) // an hour of LRO delay: the clock cannot finish this job
 
 	ws := seedWorkspace(t, st)

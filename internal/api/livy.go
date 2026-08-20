@@ -32,14 +32,24 @@ func (a *API) SetLivyBackend(rawURL string) error {
 		return err
 	}
 	a.livyBackend = u
-	proxy := httputil.NewSingleHostReverseProxy(u)
-	// The default director joins the backend's base path with r.URL.Path, so
-	// the handler sets r.URL.Path to just the Livy-native suffix
-	// (/sessions, /batches, …) and the director prepends the backend base.
-	base := proxy.Director
-	proxy.Director = func(r *http.Request) {
-		base(r)
-		r.Host = u.Host
+	// Rewrite, not Director: Director is deprecated as of Go 1.26, which this
+	// module requires. Constructed directly because NewSingleHostReverseProxy
+	// installs a Director, and ReverseProxy refuses to have both.
+	//
+	// SetURL is the replacement for the wrapped default director: it joins the
+	// backend's base path with the inbound path, which is what the handler
+	// depends on when it sets r.URL.Path to just the Livy-native suffix
+	// (/sessions, /batches, …) and lets the proxy prepend the backend base.
+	//
+	// SetXForwarded is called explicitly because ReverseProxy adds
+	// X-Forwarded-For for a Director and NOT for a Rewrite, so omitting it
+	// would silently drop a header this proxy used to send.
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetXForwarded()
+			pr.SetURL(u)
+			pr.Out.Host = u.Host
+		},
 	}
 	a.livy = proxy
 	return nil

@@ -135,7 +135,7 @@ func TestEventstreamPropertiesClosedStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.Close()
+	_ = st.Close()
 	if got := a.eventstreamProperties(it); got != nil {
 		t.Fatalf("closed store properties: %v", got)
 	}
@@ -305,7 +305,7 @@ func TestEventstreamLoadPersistOperators(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed.Close()
+	_ = closed.Close()
 	if err := persistEventstreamOperators(closed, "missing", []eventstreamOperator{{Type: "Filter"}}); err == nil {
 		t.Fatal("persist on closed store succeeded")
 	}
@@ -675,7 +675,7 @@ func TestEventstreamDrainEventhouseNoopAndClosed(t *testing.T) {
 	stored := map[string]string{
 		propEventstreamDestinations: `[{"type":"Eventhouse","itemId":"` + eh.ID + `","table":"clicks","workspaceId":"` + ws.ID + `"}]`,
 	}
-	st.Close()
+	_ = st.Close()
 	if err := a.drainEventstreamToEventhouse(it, stored, eventBatch(`{"n":1}`)); err == nil {
 		t.Fatal("drain on a closed store succeeded")
 	}

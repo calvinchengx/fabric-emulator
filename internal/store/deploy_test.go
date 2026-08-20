@@ -366,7 +366,7 @@ func TestDeployEmptySourceStage(t *testing.T) {
 func TestDeployClosedDBErrors(t *testing.T) {
 	f := newDeployFixture(t, []string{"orders"}, nil)
 	pl, sts := f.pl, f.stages
-	f.s.Close()
+	_ = f.s.Close()
 
 	if _, err := f.s.DeployStageContent(pl.ID, sts[0].ID, sts[1].ID, NewID(), "", "a", nil); err == nil {
 		t.Error("DeployStageContent on closed DB succeeded")

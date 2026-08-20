@@ -46,7 +46,8 @@ func clientLogin(conn net.Conn, user, password, database, serverName string) (lo
 	if err := WriteMessage(conn, PktLogin7, buildLogin7(user, password, database, serverName)); err != nil {
 		return nil, fmt.Errorf("sending LOGIN7: %w", err)
 	}
-	typ, data, err = ReadMessage(conn)
+	// The LOGIN7 response type is not inspected; only its payload is.
+	_, data, err = ReadMessage(conn)
 	if err != nil {
 		return nil, fmt.Errorf("reading the LOGIN7 response: %w", err)
 	}

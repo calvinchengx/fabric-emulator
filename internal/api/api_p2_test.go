@@ -50,7 +50,7 @@ func newRegisteredAPI(t *testing.T) (*http.ServeMux, *store.Store, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {

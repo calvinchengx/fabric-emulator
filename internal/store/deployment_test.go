@@ -15,7 +15,7 @@ func newDeploymentStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -481,7 +481,7 @@ func TestDeploymentClosedDBErrors(t *testing.T) {
 	pl := mkPipeline(t, s, "release", 2)
 	sts, _ := s.ListDeploymentStages(pl.ID)
 	stageID := sts[0].ID
-	s.Close()
+	_ = s.Close()
 
 	two := []*DeploymentStage{{DisplayName: "a"}, {DisplayName: "b"}}
 	if err := s.CreateDeploymentPipeline(&DeploymentPipeline{DisplayName: "x"}, two, Principal{ID: "p"}); err == nil {

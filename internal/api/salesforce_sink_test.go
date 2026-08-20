@@ -67,7 +67,7 @@ func (o *sfIngestOrg) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			content = strings.TrimPrefix(content, "/")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"id":%q,"contentUrl":%q,"state":"Open"}`, id, content)))
+		fmt.Fprintf(w, `{"id":%q,"contentUrl":%q,"state":"Open"}`, id, content)
 
 	case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/batches"):
 		if ct := r.Header.Get("Content-Type"); ct != "text/csv" {
@@ -94,9 +94,9 @@ func (o *sfIngestOrg) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		state, failed := o.state, o.failed
 		o.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(
+		fmt.Fprintf(w,
 			`{"state":%q,"errorMessage":"boom","numberRecordsProcessed":%d,"numberRecordsFailed":%d}`,
-			state, 2, failed)))
+			state, 2, failed)
 
 	default:
 		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
