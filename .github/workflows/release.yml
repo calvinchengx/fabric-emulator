@@ -202,7 +202,7 @@ jobs:
   # The wheels the standalone acceptance repo installs: the fixture generators
   # and `fabric-target`.
   #
-  # `contoso-fabric-platform` runs this medallion against the RELEASED image, and
+  # `fabric-platform-notebook-pipelines` runs this medallion against the RELEASED image, and
   # its assertions must be the same numbers the in-tree examples assert. One
   # generator, published, is what makes that guarantee structural rather than
   # hopeful — two copies differing by a single RNG draw would each pass their
@@ -267,7 +267,7 @@ jobs:
   # expired is silence, which is why the acceptance workflow also runs on a
   # daily schedule — see its own comment.
   dispatch:
-    name: Tell contoso-fabric-platform to verify this release
+    name: Tell every Fabric platform to verify this release
     needs: [fixtures, image, compute-images]
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -276,19 +276,55 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ACCEPTANCE_DISPATCH_TOKEN }}
         run: |
+          # ALL THREE FABRIC PLATFORMS, not just the one this job grew up with.
+          # Each pins FABRIC_EMULATOR_VERSION and each has an acceptance
+          # workflow listening for this event. Telling one of three meant the
+          # other two adopted releases nobody had verified against them, and
+          # their pins moved when somebody remembered.
+          targets="fabric-platform-notebook-pipelines fabric-platform-airflow3 fabric-platform-airflow-builtin"
           if [ -z "$GH_TOKEN" ]; then
             echo "::error::ACCEPTANCE_DISPATCH_TOKEN is not set — the release " \
                  "shipped but nothing downstream was told. Add a PAT with " \
-                 "'contents: write' on calvinchengx/contoso-fabric-platform."
+                 "'contents: write' on every fabric-platform-* repository."
             exit 1
           fi
+          # THE NAME MUST BE THE REPOSITORY'S OWN, not one GitHub redirects for
+          # us. This job addressed `contoso-fabric-platform` for releases after
+          # that repository was renamed, and every one of them succeeded: the API
+          # follows a rename silently, so nothing here could tell. A redirect
+          # that works is still a name we did not update, and the day the old one
+          # is reused by something else this dispatch reaches the wrong repo.
+          for name in $targets; do
+            target="calvinchengx/$name"
+            actual=$(gh api "repos/$target" -q .full_name)
+            if [ "$actual" != "$target" ]; then
+              echo "::error::$target now resolves to $actual. The dispatch is " \
+                   "riding a GitHub redirect: update the name here rather than " \
+                   "relying on it."
+              exit 1
+            fi
+          done
           # The version travels WITH the event. Without it the downstream repo
           # would verify whatever its own versions.env pins — quite possibly
           # the previous release — and report success for a release nobody
           # tested.
           version="${GITHUB_REF_NAME#v}"
-          gh api repos/calvinchengx/contoso-fabric-platform/dispatches \
-            -f event_type=fabric-emulator-release \
-            -F "client_payload[version]=$version" \
-            -F "client_payload[tag]=${GITHUB_REF_NAME}"
-          echo "dispatched fabric-emulator-release for $version"
+          # EVERY target is told, and a failure on one does not silently spare
+          # the others: the loop records failures and exits non-zero at the end,
+          # so a release cannot report success having reached two of three.
+          failed=""
+          for name in $targets; do
+            if gh api "repos/calvinchengx/$name/dispatches" \
+                 -f event_type=fabric-emulator-release \
+                 -F "client_payload[version]=$version" \
+                 -F "client_payload[tag]=${GITHUB_REF_NAME}"; then
+              echo "dispatched fabric-emulator-release $version to $name"
+            else
+              echo "::error::could not dispatch to $name"
+              failed="$failed $name"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::not dispatched:$failed"
+            exit 1
+          fi
