@@ -66,7 +66,7 @@ services:
           - "onelake.dfs.fabric.microsoft.com"
 
   sail:
-    image: ghcr.io/calvinchengx/fabric-emulator-sail:${SAIL_VERSION:?see .env}
+    image: ghcr.io/calvinchengx/emulator-sail:${SAIL_VERSION:?see .env}
     depends_on:
       fabric-emulator: { condition: service_healthy }
     environment:
@@ -79,7 +79,7 @@ services:
       SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
 
   spark-agent:
-    image: ghcr.io/calvinchengx/fabric-emulator-spark-agent:${SPARK_AGENT_VERSION:?see .env}
+    image: ghcr.io/calvinchengx/emulator-spark-agent:${SPARK_AGENT_VERSION:?see .env}
     depends_on:
       sail: { condition: service_started }
     environment:

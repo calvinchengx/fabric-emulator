@@ -34,8 +34,8 @@ TAG = "ci"
 # separate version knobs cannot drift apart in CI.
 IMAGES = [
     ("ghcr.io/calvinchengx/fabric-emulator", "Dockerfile"),
-    ("ghcr.io/calvinchengx/fabric-emulator-sail", "docker/sail/Dockerfile"),
-    ("ghcr.io/calvinchengx/fabric-emulator-spark-agent", "docker/spark-agent/Dockerfile"),
+    ("ghcr.io/calvinchengx/emulator-sail", "docker/sail/Dockerfile"),
+    ("ghcr.io/calvinchengx/emulator-spark-agent", "docker/spark-agent/Dockerfile"),
 ]
 
 ENV = {
