@@ -103,7 +103,7 @@ Concretely, that also unlocks:
   (`202` → poll `/v1/operations/{id}`). The emulator's clock control makes an LRO
   complete instantly or pins it in `Running` — impossible against real Fabric.
 
-See [`contoso-fabric-platform`](https://github.com/calvinchengx/contoso-fabric-platform)
+See [`fabric-platform-notebook-pipelines`](https://github.com/calvinchengx/fabric-platform-notebook-pipelines)
 for what this looks like end to end: four real vendor sources, a full medallion,
 a semantic model serving Power BI, all catalogued in OpenMetadata, running
 against a published release of this emulator.
