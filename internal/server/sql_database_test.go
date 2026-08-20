@@ -45,7 +45,7 @@ func TestSQLDatabaseMirror(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 
 	ws := &store.Workspace{DisplayName: "sqldb-ws"}
 	if err := srv.Store.CreateWorkspace(ws, store.Principal{ID: entra.DaemonClientID, Type: "ServicePrincipal"}); err != nil {
@@ -61,7 +61,7 @@ func TestSQLDatabaseMirror(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.TDS.Serve(ln)
+	go func() { _ = srv.TDS.Serve(ln) }()
 	port := ln.Addr().(*net.TCPAddr).Port
 	token := forgeAppToken(t, emu, "https://database.windows.net")
 	conn := func() *sql.DB {

@@ -47,6 +47,10 @@ func checkCreateTableRestrictions(toks []Token) error {
 			// Fabric allows IDENTITY only on BIGINT. The type precedes the
 			// keyword: `id BIGINT IDENTITY(1,1)`.
 			if ty := previousTypeName(toks, i); ty != "" && ty != "BIGINT" {
+				// Opens with "Fabric Warehouse restriction", a proper noun, which
+				// ST1005 exempts. The string starts on the next line, so the
+				// source-matched rule in .golangci.yml cannot see it from here.
+				//nolint:staticcheck // ST1005: opens with a proper noun
 				return fmt.Errorf(
 					"Fabric Warehouse restriction: an IDENTITY column must be BIGINT, "+
 						"not %s — the tenant answers \"Identity column must be of data "+
@@ -55,6 +59,10 @@ func checkCreateTableRestrictions(toks []Token) error {
 			}
 		case "PRIMARY":
 			if i+1 < len(toks) && strings.EqualFold(nextWord(toks, i), "KEY") {
+				// Opens with "Fabric Warehouse restriction", a proper noun, which
+				// ST1005 exempts. The string starts on the next line, so the
+				// source-matched rule in .golangci.yml cannot see it from here.
+				//nolint:staticcheck // ST1005: opens with a proper noun
 				return fmt.Errorf(
 					"Fabric Warehouse restriction: PRIMARY KEY is not supported in " +
 						"CREATE TABLE — not even NOT ENFORCED. Create the table, then " +

@@ -38,7 +38,7 @@ func TestWarehouseRouter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ws := &store.Workspace{DisplayName: "w"}
 	if err := st.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func TestSQLDBFor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ws := &store.Workspace{DisplayName: "w"}
 	if err := st.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
 		t.Fatal(err)
@@ -217,7 +217,7 @@ func TestMirrorItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ws := &store.Workspace{DisplayName: "w"}
 	if err := st.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
 		t.Fatal(err)
@@ -261,7 +261,7 @@ func TestResolveSQLItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	ws := &store.Workspace{DisplayName: "analytics"}
 	if err := st.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
 		t.Fatal(err)

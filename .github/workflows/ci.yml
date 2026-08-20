@@ -1904,3 +1904,20 @@ jobs:
       # emulator's executeQueries results — Store/Measure suites pass, the YoY
       # ratio DAX asset fails (out of band), mirroring the tutorial.
       - run: uv run --frozen --group great-expectations python e2e/great-expectations/run.py
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    # A wedged run must fail rather than sit in GitHub's 6-hour default, where
+    # 'pending' and 'stuck' look identical.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Gated at zero. See .golangci.yml for what is excluded and why.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2

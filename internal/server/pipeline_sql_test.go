@@ -40,7 +40,7 @@ func TestPipelineSQLActivitiesE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 	fabric := httptest.NewServer(srv.Handler())
 	t.Cleanup(fabric.Close)
 	token := forgeAppToken(t, emu, "https://api.fabric.microsoft.com")

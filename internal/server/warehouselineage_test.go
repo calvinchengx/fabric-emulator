@@ -26,7 +26,7 @@ func newLineageFixture(t *testing.T) *lineageFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	ws := &store.Workspace{DisplayName: "w"}
 	if err := st.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
 		t.Fatal(err)

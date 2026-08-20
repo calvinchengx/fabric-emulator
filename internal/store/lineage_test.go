@@ -11,7 +11,7 @@ func TestLineageEdgeLifecycleAndIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	ws := &Workspace{DisplayName: "w"}
 	if err := s.CreateWorkspace(ws, Principal{ID: "owner", Type: "User"}); err != nil {
 		t.Fatal(err)

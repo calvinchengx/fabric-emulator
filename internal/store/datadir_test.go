@@ -28,7 +28,7 @@ func TestOpenCreatesTheDataDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open on a missing data dir: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	if _, err := os.Stat(filepath.Join(dir, "fabric-emulator.db")); err != nil {
 		t.Fatalf("database not created in %s: %v", dir, err)
@@ -42,5 +42,5 @@ func TestOpenStillDefaultsToMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("in-memory Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 }

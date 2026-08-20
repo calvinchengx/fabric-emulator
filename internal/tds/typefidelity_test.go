@@ -39,7 +39,7 @@ func TestResultTypeFidelity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;encrypt=disable;dial timeout=5", addr.Port)
 	c, err := mssql.NewAccessTokenConnector(dsn, func() (string, error) { return "a.b.c", nil })

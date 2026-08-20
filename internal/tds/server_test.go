@@ -29,7 +29,7 @@ func TestServerFedAuthLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;encrypt=disable;dial timeout=5", addr.Port)
@@ -63,7 +63,7 @@ func TestServerQuerySelect1(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;encrypt=disable;dial timeout=5", addr.Port)
 
@@ -93,7 +93,7 @@ func TestServerRejectsNonFedAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 
 	// A SQL-login DSN (user/password) presents no FedAuth token → login rejected.

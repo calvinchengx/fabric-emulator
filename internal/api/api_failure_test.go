@@ -22,7 +22,7 @@ func newDiskAPI(t *testing.T) (*API, *store.Store, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	return New(st, nil, 1, 0), st, dir
 }
 

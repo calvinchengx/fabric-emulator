@@ -68,7 +68,7 @@ func TestBackendRelayResultSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;encrypt=disable;dial timeout=5", addr.Port)
 
@@ -135,7 +135,7 @@ func TestBackendQueryError(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.Serve(ln)
+	go func() { _ = srv.Serve(ln) }()
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;encrypt=disable;dial timeout=5", addr.Port)
 

@@ -1148,7 +1148,7 @@ func TestEventstreamDrainWriteFailure(t *testing.T) {
 	stored := map[string]string{
 		propEventstreamDestinations: `[{"type":"Lakehouse","itemId":"` + lh.ID + `","table":"clicks","workspaceId":"` + ws.ID + `"}]`,
 	}
-	st.Close()
+	_ = st.Close()
 	if err := a.drainEventstreamToLakehouse(it, stored, eventBatch(`{"n":1}`)); err == nil {
 		t.Fatal("drain on a closed store succeeded")
 	}
@@ -1697,7 +1697,7 @@ func TestEventstreamDrainReflexClosedStore(t *testing.T) {
 	stored := map[string]string{
 		propEventstreamDestinations: `[{"type":"Reflex","itemId":"` + reflex.ID + `","workspaceId":"` + ws.ID + `"}]`,
 	}
-	st.Close()
+	_ = st.Close()
 	if err := a.drainEventstreamToReflex(it, stored, eventBatch(`{"n":1}`)); err == nil {
 		t.Fatal("drain on a closed store succeeded")
 	}
@@ -1801,7 +1801,7 @@ func TestEventsToDeltaTableAndLoadDestinations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed.Close()
+	_ = closed.Close()
 	if err := persistEventstreamDestinations(closed, "missing", []eventstreamDestination{{Type: "Lakehouse"}}); err == nil {
 		t.Fatal("persist on closed store succeeded")
 	}

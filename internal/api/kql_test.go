@@ -97,8 +97,8 @@ func (e *kustoEngine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	switch {
-	case body.CSL == ".show databases":
+	switch body.CSL {
+	case ".show databases":
 		rows := make([][]any, 0, len(names))
 		for _, name := range names {
 			rows = append(rows, []any{name})

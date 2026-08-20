@@ -254,7 +254,7 @@ func TestScheduleRequestValidation(t *testing.T) {
 	}
 	bad := `{"configuration":{"type":"Cron","interval":0,"startDateTime":"2024-01-01T00:00:00Z","endDateTime":"2024-02-01T00:00:00Z","localTimeZoneId":"UTC"}}`
 	w := f.create(admin, bad)
-	if w.Code != http.StatusBadRequest || !strings.Contains(string(w.Body.Bytes()), "interval") {
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "interval") {
 		t.Fatalf("bad interval = %d %s", w.Code, w.Body.Bytes())
 	}
 	if n, _ := f.st.CountItemSchedules(f.item.ID, "RunNotebook"); n != 0 {

@@ -57,7 +57,7 @@ func TestWarehouseTDSEndpointE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { srv.Close() })
+	t.Cleanup(func() { _ = srv.Close() })
 	if srv.TDS == nil {
 		t.Fatal("SQLTDSAddr set but srv.TDS is nil")
 	}
@@ -66,7 +66,7 @@ func TestWarehouseTDSEndpointE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	go srv.TDS.Serve(ln)
+	go func() { _ = srv.TDS.Serve(ln) }()
 
 	addr := ln.Addr().(*net.TCPAddr)
 	dsn := fmt.Sprintf("server=127.0.0.1;port=%d;encrypt=disable;dial timeout=5", addr.Port)

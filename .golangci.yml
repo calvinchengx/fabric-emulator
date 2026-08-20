@@ -1,0 +1,44 @@
+version: "2"
+linters:
+  default: none
+  enable: [errcheck, govet, ineffassign, staticcheck, unused]
+  settings:
+    errcheck:
+      # Deferred cleanup and writes to a response/stdout. The return value is
+      # unactionable at these call sites: the connection is already going away,
+      # or the client has already disconnected. Everything else must be checked.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*database/sql.Tx).Rollback
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*net/http.Server).Close
+        - (io.ReadCloser).Close
+        - (net/http.ResponseWriter).Write
+        - fmt.Fprintf
+        - fmt.Fprint
+        - fmt.Fprintln
+  exclusions:
+    rules:
+      # ST1005 wants a lowercase first word, and exempts error strings that
+      # open with a proper noun or identifier. All 26 here do, and they name
+      # the thing that failed: the product (Airflow, Spark), the Fabric feature
+      # (Direct Lake), or the Eventstream operator kind the definition declared
+      # (Filter, Window). Lowercasing "Direct Lake table %q" to "direct Lake"
+      # would be wrong rather than merely ugly.
+      #
+      # Matched on the source line, not the path, so the exemption names which
+      # nouns are exempt and an ordinary capitalised error in the same file is
+      # still reported.
+      - linters: [staticcheck]
+        text: "ST1005"
+        source: '(Errorf|errors\.New)\("(Airflow|Direct Lake|Filter|Spark|Window) '
+issues:
+  # Defaults cap identical issues at 3 and each linter at 50, which turns a
+  # count into an underestimate: six identical unchecked Close calls reported
+  # as three. Uncapped, so the number means what it says.
+  max-same-issues: 0
+  max-issues-per-linter: 0

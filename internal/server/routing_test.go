@@ -123,7 +123,7 @@ func TestNewWiresDatabricksBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	if srv.API.DatabricksURL != cfg.DatabricksURL || srv.API.DatabricksToken != cfg.DatabricksToken {
 		t.Fatalf("Databricks backend was not wired: url=%q token=%q", srv.API.DatabricksURL, srv.API.DatabricksToken)
 	}
@@ -139,7 +139,7 @@ func TestNewWiresMLflowBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	if srv.API.MLflowURL == nil || srv.API.MLflowURL.String() != cfg.MLflowURL || srv.API.MLflowHTTP == nil {
 		t.Fatalf("MLflow backend was not wired: %+v", srv.API.MLflowURL)
 	}
@@ -155,7 +155,7 @@ func TestNewWiresAirflowBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	if srv.API.Airflow == nil {
 		t.Fatal("Airflow backend was not wired")
 	}
@@ -172,7 +172,7 @@ func TestNewWiresWarehouseSQLBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	if srv.TDS == nil || srv.TDS.Backend == nil || srv.TDS.OnConnect == nil {
 		t.Fatalf("TDS wiring incomplete: %+v", srv.TDS)
 	}
@@ -187,7 +187,7 @@ func TestNewWiresWarehouseSQLBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stub.Close()
+	defer func() { _ = stub.Close() }()
 	if stub.TDS == nil || stub.TDS.Backend != nil {
 		t.Errorf("stub TDS wiring: %+v", stub.TDS)
 	}
@@ -246,7 +246,7 @@ func TestUnknownAPIPathIsJSON404(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	h := srv.Handler()
 
 	for _, path := range []string{
@@ -295,7 +295,7 @@ func TestPortalStoreErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.Close() // every subsequent store call errors
+	_ = srv.Close() // every subsequent store call errors
 	h := srv.Handler()
 	for _, path := range []string{
 		"/_emulator/portal/workspaces",
@@ -332,7 +332,7 @@ func TestNewAdvertisesTheSQLEndpointPortOnWarehouses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	if got := srv.API.SQLEndpointPort; got != "11533" {
 		t.Fatalf("SQLEndpointPort = %q, want the port from SQLTDSAddr (11533)", got)
 	}
@@ -345,7 +345,7 @@ func TestNewAdvertisesTheSQLEndpointPortOnWarehouses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	if got := s2.API.SQLEndpointPort; got != "" {
 		t.Fatalf("SQLEndpointPort = %q with no TDS listener; want empty", got)
 	}

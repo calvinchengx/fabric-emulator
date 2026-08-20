@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -260,14 +259,4 @@ func TestLivyPassthroughE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.mustStatus(f.call("GET", base+"sessions", f.token, nil, nil), http.StatusNotImplemented, "no backend")
-}
-
-// mustHost is the host:port of a test server URL, for akv's vault allowlist.
-func mustHost(t *testing.T, raw string) string {
-	t.Helper()
-	u, err := url.Parse(raw)
-	if err != nil {
-		t.Fatalf("parse %q: %v", raw, err)
-	}
-	return u.Host
 }

@@ -72,7 +72,7 @@ select count(*) as failures from dbt_internal_test`
 	if iAll < 0 || iMain < 0 || iInternal < 0 {
 		t.Fatalf("a CTE went missing:\n%s", got)
 	}
-	if !(iAll < iMain && iMain < iInternal) {
+	if iAll >= iMain || iMain >= iInternal {
 		t.Fatalf("order wrong (want all_values < test_main_sql < dbt_internal_test):\n%s", got)
 	}
 	// And no nesting remains: exactly one WITH keyword survives.

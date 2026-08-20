@@ -18,7 +18,7 @@ func TestARMCapacitiesRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 
 	const armID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	feed := map[string]any{
@@ -72,7 +72,7 @@ func TestARMCapacitiesRefreshErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 
 	src := NewARMCapacities(st, "http://127.0.0.1:1", false, nil, 0)
 	if src.TTL != 5*time.Second {
@@ -105,7 +105,7 @@ func TestARMCapacitiesRefreshErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed.Close()
+	_ = closed.Close()
 	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"generated": 1,
@@ -144,7 +144,7 @@ func TestARMCapacitiesRunStops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	var n atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n.Add(1)

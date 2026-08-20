@@ -11,7 +11,7 @@ func TestListAllWorkspaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	all, err := s.ListAllWorkspaces()
 	if err != nil || len(all) != 0 {
@@ -44,7 +44,7 @@ func TestListJobInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	jobs, err := s.ListJobInstances(0)
 	if err != nil || len(jobs) != 0 {
@@ -93,7 +93,7 @@ func TestListOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	ops, err := s.ListOperations(0)
 	if err != nil || len(ops) != 0 {

@@ -332,7 +332,7 @@ func TestClosedDBOneLakeErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	_ = s.Close()
 	if err := s.CreateOneLakePath(&OneLakePath{WorkspaceID: "w", ItemID: "i", RelPath: "f", Content: []byte{}}, false); err == nil {
 		t.Error("CreateOneLakePath on closed DB succeeded")
 	}

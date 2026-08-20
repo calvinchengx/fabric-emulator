@@ -119,7 +119,7 @@ func (a *API) kustoRelay(w http.ResponseWriter, r *http.Request, p *auth.Princip
 		return
 	}
 	ver, kind := r.PathValue("ver"), r.PathValue("kind")
-	if !(ver == "v1" && (kind == "query" || kind == "mgmt")) && !(ver == "v2" && kind == "query") {
+	if (ver != "v1" || (kind != "query" && kind != "mgmt")) && (ver != "v2" || kind != "query") {
 		writeKustoErr(w, http.StatusNotFound, "General_BadRequest",
 			"Only /v1/rest/query, /v1/rest/mgmt and /v2/rest/query exist.")
 		return

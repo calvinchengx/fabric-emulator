@@ -54,7 +54,7 @@ func seedLakehouse(t *testing.T) (*store.Store, string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 	ws := &store.Workspace{DisplayName: "w"}
 	if err := st.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
 		t.Fatal(err)

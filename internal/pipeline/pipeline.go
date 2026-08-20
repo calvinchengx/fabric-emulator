@@ -308,10 +308,10 @@ func depsReady(deps []Dependency, status map[string]string) (ready, satisfied bo
 			return false, false
 		}
 		if !conditionMet(d.DependencyConditions, st) {
-			satisfied = false
-			// Still ready (all deps final), just not satisfied.
-			ready = true
-			// Keep scanning to ensure all deps are final.
+			// Not satisfied. Still READY if every dependency is final, so keep
+			// scanning rather than returning here: a later missing dependency
+			// means the activity is not ready at all. The named returns are set
+			// by the returns below, not here.
 			for _, d2 := range deps {
 				if _, ok := status[d2.Activity]; !ok {
 					return false, false

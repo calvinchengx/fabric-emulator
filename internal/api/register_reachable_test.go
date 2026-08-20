@@ -32,6 +32,12 @@ import (
 // exists.
 func TestEveryRegistrationIsReachableFromRegister(t *testing.T) {
 	fset := token.NewFileSet()
+	// DEFERRED, not kept on principle. parser.ParseDir is deprecated as of Go
+	// 1.25; the replacement is reading the directory and calling ParseFile per
+	// file, which changes how this test discovers the package. This test is
+	// what keeps registration reachability DERIVED rather than declared, so it
+	// gets its own change rather than a rewrite inside a lint sweep.
+	//nolint:staticcheck // SA1019: ParseDir migration tracked separately
 	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
 		return !strings.HasSuffix(fi.Name(), "_test.go")
 	}, 0)
