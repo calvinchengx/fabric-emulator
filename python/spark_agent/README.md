@@ -7,7 +7,7 @@ the code.
 ## Why it lives here and not in `e2e/`
 
 It used to live in `e2e/livy/`, and that was a packaging bug rather than a
-filing preference. `ghcr.io/calvinchengx/fabric-emulator-spark-agent` is built
+filing preference. `ghcr.io/calvinchengx/emulator-spark-agent` is built
 from `docker/spark-agent/Dockerfile`, which copies `python/` — so anything
 under `e2e/` was never in the published image. Every compose file in this
 repository bind-mounted the source tree over the top, which meant the gap was

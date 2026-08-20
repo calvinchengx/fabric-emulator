@@ -24,7 +24,7 @@ services:
     # image + build: `docker compose pull` fetches the published sidecar (so a
     # pinned SAIL_VERSION is reproducible), while `docker compose build` still
     # works from source for local development. Defaults to latest, like the rest.
-    image: ghcr.io/calvinchengx/fabric-emulator-sail:${SAIL_VERSION:-latest}
+    image: ghcr.io/calvinchengx/emulator-sail:${SAIL_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/sail/Dockerfile
@@ -58,7 +58,7 @@ services:
       retries: 20
 
   spark-agent:
-    image: ghcr.io/calvinchengx/fabric-emulator-spark-agent:${SPARK_AGENT_VERSION:-latest}
+    image: ghcr.io/calvinchengx/emulator-spark-agent:${SPARK_AGENT_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/spark-agent/Dockerfile
