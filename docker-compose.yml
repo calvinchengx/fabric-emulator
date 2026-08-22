@@ -400,6 +400,20 @@ services:
   # ---- Governance (optional): OpenMetadata, profile-gated -------------------
   # Mirrors OpenMetadata's own quickstart compose (docker-compose-postgres.yml
   # @ 1.13.2), profile-gated so `docker compose up` never starts or pulls it.
+  #
+  # THE IMAGES COME FROM GHCR, not from docker.getcollate.io (G44). That vendor
+  # registry is backed by neither Docker Hub nor GHCR, four repositories pull it
+  # on nightly crons, and on 2026-08-22 it took two of them down: a TLS
+  # handshake timeout, then `connection reset by peer` on a rerun nineteen
+  # minutes later, which is more than the bounded retry in
+  # e2e/governance/stack.py absorbs.
+  #
+  # `calvinchengx/emulators` copies the manifest INDEX with
+  # `buildx imagetools create` and records the digest GHCR serves; both mirrors
+  # carry linux/amd64 and linux/arm64 and their index digests are identical to
+  # upstream's. The version below is still the vendored one, and
+  # test_the_pinned_schema_matches_the_version_docker_compose_runs still holds
+  # all three pins to it.
   # The OM env schema defaults every connection var; we set only the hosts.
   # Heavier than the emulators: the search backend alone wants ~1 GB heap.
   #
@@ -412,7 +426,7 @@ services:
   # ELv2/SSPL even though the source regained an AGPL option in 8.16.
   om-postgresql:
     profiles: [governance]
-    image: docker.getcollate.io/openmetadata/postgresql:1.13.2
+    image: ghcr.io/calvinchengx/openmetadata-postgresql:1.13.2
     command: "--work_mem=10MB"
     environment:
       POSTGRES_USER: postgres
@@ -448,7 +462,7 @@ services:
 
   om-migrate:
     profiles: [governance]
-    image: docker.getcollate.io/openmetadata/server:1.13.2
+    image: ghcr.io/calvinchengx/openmetadata-server:1.13.2
     command: "./bootstrap/openmetadata-ops.sh migrate"
     environment:
       DB_HOST: om-postgresql
@@ -472,7 +486,7 @@ services:
 
   openmetadata:
     profiles: [governance]
-    image: docker.getcollate.io/openmetadata/server:1.13.2
+    image: ghcr.io/calvinchengx/openmetadata-server:1.13.2
     ports:
       - "8585:8585" # UI + API (seeded basic-auth admin)
     environment:
