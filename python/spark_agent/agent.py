@@ -467,6 +467,52 @@ def register_tables(session, schema, tables, schemas=None):
                             isolated=session_isolated.get(session, True))
 
 
+def _apply_onelake_security(req):
+    """Reshape the session for the statement's principal, if we know one.
+
+    SILENT WHEN UNCONFIGURED, and deliberately: an agent driven by something
+    other than this emulator's Livy layer gets no principal, and must keep
+    working rather than refuse every statement. It is not a security hole — the
+    unconfigured case is the one where nothing has been secured either.
+
+    A FAILURE TO READ POLICY DOES NOT RUN THE CELL UNFILTERED. The exception
+    propagates: better a statement that errors than one that quietly returns
+    rows the caller may not have.
+    """
+    principal = req.get("principal")
+    workspace = req.get("workspace")
+    item = req.get("item")
+    if not (principal and workspace and item):
+        return
+    # The emulator sends workspace+item only when the item HAS policy, so
+    # arriving here means enforcement is required. An agent image without the
+    # module cannot honour that, and running the cell anyway would serve
+    # unfiltered rows to someone the policy narrows — so refuse instead.
+    try:
+        import onelake_security
+    except ImportError as exc:  # pragma: no cover - older agent image
+        raise RuntimeError(
+            "this item has OneLake security roles, and this Spark agent image "
+            "cannot apply them (onelake_security missing). Bump the agent "
+            "digest, or remove the roles."
+        ) from exc
+    import storage
+
+    base = (os.environ.get("AZURE_STORAGE_ENDPOINT") or "").rstrip("/")
+    if base.endswith("/onelake"):
+        base = base[: -len("/onelake")]
+    tok = storage.token()
+    if not base or not tok:
+        return
+    access = onelake_security.fetch_access(base, workspace, item, principal, tok)
+    try:
+        tables = [r[1] for r in spark.sql("SHOW TABLES").collect()]
+    except Exception:  # noqa: BLE001 - no catalog yet: nothing to reshape
+        return
+    onelake_security.apply(spark, access, tables,
+                           log=lambda m: print(m, flush=True))
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         code, body = httpjson.encode_response(code, obj)
@@ -526,6 +572,13 @@ class Handler(BaseHTTPRequestHandler):
                 # on 3.8 in the JVM overlay image
                 # (test_spark_agent_runs_on_python38.py) — ruff is right about
                 # the target it was told about, not the one that ships.
+                # OneLake security, before the user's code and after the
+                # scope is bound: the session is reshaped so a table the caller
+                # may not read is not in it, and one they may read in part is a
+                # filtered view. Doing it per statement rather than at bind
+                # keeps a policy change visible to the next cell, which is what
+                # revoking access has to mean.
+                _apply_onelake_security(req)
                 with task_scope.scoped(scope_for(session)):  # noqa: SIM117
                     with cell_context(req.get("jobId"), req.get("cellIndex")):
                         with runtime_scope(session, req):
