@@ -23,9 +23,37 @@ tested.
 import os
 import traceback
 
+# How a session was isolated, and — the part that matters to OneLake security —
+# whether it got a catalog of its OWN.
+#
+# Measured (e2e/onelake-security-bypass): a `builder.create()` session on Sail
+# starts with an EMPTY catalog and sees nothing the parent registered, so
+# reshaping it touches nobody else. `newSession()` is the opposite by design:
+# the JVM docs give it its own temp views and current database over the SAME
+# catalog, so a DROP there is a DROP for every session on that engine.
+#
+# That difference decides whether securing a session by editing its catalog is
+# enforcement or vandalism, so it is recorded rather than inferred at the point
+# of use. The JVM entry is the conservative reading: it has not been measured
+# here, and being wrong about it costs a refusal, never a leak.
+ROUTE_NEW_SESSION = "newSession"
+ROUTE_CONNECT = "connect"
+ROUTE_SHARED = ""
+
+CATALOG_IS_PRIVATE = {
+    ROUTE_CONNECT: True,
+    ROUTE_NEW_SESSION: False,
+    ROUTE_SHARED: False,
+}
+
 
 def isolate(root, remote=None):
-    """Return (session, isolated) — a private SparkSession where possible.
+    """Return (session, route) — a private SparkSession where possible.
+
+    `route` is one of the ROUTE_* constants and is falsy exactly when isolation
+    failed, so `bool(route)` is the old `isolated` flag. It is a route rather
+    than a flag because the two routes differ in a way that matters downstream:
+    only one of them comes with a catalog of its own (see CATALOG_IS_PRIVATE).
 
     TWO ROUTES, because the engines differ and only one of them was ever taken.
 
@@ -53,7 +81,7 @@ def isolate(root, remote=None):
     try:
         session = root.newSession()
         if session is not None:
-            return session, True
+            return session, ROUTE_NEW_SESSION
     except Exception:  # noqa: BLE001 — Connect has no newSession; try below
         pass
 
@@ -64,10 +92,10 @@ def isolate(root, remote=None):
 
             session = SparkSession.builder.remote(remote).create()
             if session is not None:
-                return session, True
+                return session, ROUTE_CONNECT
         except Exception:  # noqa: BLE001 — degrade, as above
             pass
-    return root, False
+    return root, ROUTE_SHARED
 
 
 class Claims:

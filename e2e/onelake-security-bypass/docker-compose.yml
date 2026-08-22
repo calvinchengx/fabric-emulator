@@ -34,6 +34,7 @@ services:
         condition: service_healthy
     volumes:
       - ./probe.py:/probe.py:ro
+      - ./catalog_shapes.py:/catalog_shapes.py:ro
     environment:
       SPARK_REMOTE: "sc://sail:50051"
     command: python /probe.py
