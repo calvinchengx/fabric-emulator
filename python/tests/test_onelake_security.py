@@ -6,11 +6,8 @@ provoke through a live Spark session while being exactly what a security
 control must get right.
 """
 import json
-import io
 import sys
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spark_agent"))
 import onelake_security as ols  # noqa: E402
