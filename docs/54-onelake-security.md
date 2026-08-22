@@ -296,3 +296,58 @@ without anyone noticing.
   `VIEW_DEFINITION` and `SELECT`. Hiding a table's *existence* from a user with
   no role on it is part of the contract, not a nicety, and needs its own
   assertion.
+
+## Stage 5's enforcement, corrected by measurement
+
+Stage 5 secured a session by reshaping its catalog: a narrowed table becomes a
+temp view holding the filter, a denied one is removed. Two assumptions under
+that were never measured, and `e2e/onelake-security-bypass` measured them.
+
+**A temp view shadows the unqualified name only, and that was a live bypass.**
+With the filter installed, `SELECT count(*) FROM sales` returned 2 rows of 3 and
+one column of two, while `SELECT count(*) FROM default.sales` returned all 3
+rows and both columns. The second spelling is not exotic: `catalog.register()`
+deliberately registers every table into a schema *and* into `default` so
+unqualified names resolve the way they do in a lakehouse-attached notebook, so
+the convenience registration was the door. Enforcement now sweeps every
+qualified registration of a secured table out of the session, leaving the view
+as the only way to name it, and the livy e2e asserts both spellings are blocked.
+
+This was a defect in a row already marked supported, not the documented
+path-read gap. It is the difference between "the query language is filtered" and
+"the data is filtered", and only measurement separated them.
+
+**Which is sound only where the catalog is private.** Removing a registration
+changes whatever catalog the session has. Measured: Sail gives each
+`builder.create()` session its own, and the owner's session was untouched
+throughout — same table, same 3 rows, still listed. `newSession()` on the JVM
+overlay shares the catalog by contract, where the same sweep would take the
+table away from everyone. `catalog.CATALOG_IS_PRIVATE` records which route
+gives which, and `onelake_security.apply()` **refuses** rather than reshaping a
+shared catalog. The JVM entry is the conservative reading and is not measured
+here: being wrong about it costs a refusal, never a leak.
+
+**The shared-metastore worry was unfounded.** The suspicion that a viewer's
+`DROP TABLE` unregisters a table for the owner was measured false on Sail: owner
+count unchanged, table still listed, Delta files intact. It remains the reason
+the refusal above exists for engines that do share.
+
+**Re-application has to start from the table, not from last statement's view.**
+`apply()` runs per statement, and the sweep removes what the view was built
+from, so the second statement rebuilds the filter over an already-filtered
+relation — which fails outright once CLS has removed a column the row filter
+names. The livy e2e caught exactly that: statement one filtered, statement two
+returned "Table not found". `restore()` re-registers from the recorded location
+before re-securing, **unqualified**, so it lands in the current database that
+the filter's own SQL resolves against. Re-registering into `default` is the
+plausible-looking version that does not work, because the agent sets the
+current database to the lakehouse schema.
+
+### Still open: direct path reads
+
+`spark.read.format("delta").load("abfss://…")` still returns unfiltered rows.
+That is not fixable in the catalog, and real Fabric does not try: the platform
+**blocks** direct path access to a secured table for non-privileged users, and
+lists exactly the patterns it blocks — `spark.read...load`, `DeltaTable.forPath`,
+and OneLake REST/SDK reads of a secured `Tables/<table>`. So the fix belongs in
+our OneLake surface, refusing the read, rather than in the engine filtering it.

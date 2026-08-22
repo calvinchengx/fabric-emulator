@@ -96,8 +96,16 @@ def envelope_is_lost_session(result):
     return is_lost_session_text("\n".join(parts))
 
 
-def rebind(namespaces, new_spark, isolate, attach_sc=None):
+def rebind(namespaces, new_spark, isolate, attach_sc=None, on_route=None):
     """Point every live namespace at `new_spark`, returning the sessions rebound.
+
+    `on_route(session, route)` is called with each rebound session's NEW
+    isolation route. A recovered session can land on a different route than it
+    started on -- the engine it reconnects to is not required to be the engine
+    it left -- and OneLake security reads that route to decide whether editing
+    the catalog is safe. A stale route recorded as the private one would let a
+    shared-catalog session be reshaped, which is the leaking direction, so the
+    fresh value is pushed out rather than left to expire.
 
     The per-Livy-session objects are derived from the shared one (`newSession`),
     so when the shared session dies they all die with it — rebinding only the
@@ -111,7 +119,9 @@ def rebind(namespaces, new_spark, isolate, attach_sc=None):
     for session, g in namespaces.items():
         if "spark" not in g:
             continue
-        session_spark, _isolated = isolate(new_spark)
+        session_spark, route = isolate(new_spark)
+        if on_route is not None:
+            on_route(session, route)
         g["spark"] = session_spark
         if attach_sc is not None:
             try:

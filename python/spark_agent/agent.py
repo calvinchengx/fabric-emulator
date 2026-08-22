@@ -273,6 +273,9 @@ def apply_environment(req):
 
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 session_isolated = {}  # Livy session id -> did it get a private SparkSession
+session_route = {}     # Livy session id -> HOW (catalog.ROUTE_*), which says
+                       # whether its CATALOG is private too — see
+                       # onelake_security.apply(catalog_private=...)
 # Per-session notebook identity (docs/38 §1). /mount and /statements remember
 # it; each statement binds it into notebookutils.runtime so two notebooks in
 # one agent cannot read each other's workspace.
@@ -328,8 +331,10 @@ def ns(session):
         # loser read the other's tables under an unqualified name. `newSession`
         # keeps the engine and splits that state. Engines that lack it fall back
         # to the shared session, where catalog.py detects the collision instead.
-        session_spark, isolated = catalog.isolate(spark)
+        session_spark, route = catalog.isolate(spark)
+        isolated = bool(route)
         session_isolated[session] = isolated
+        session_route[session] = route
         # A per-session engine session is a DIFFERENT SparkSession object, so
         # the OPTIMIZE/VACUUM interception installed on the root at import does
         # not reach it — `spark.sql` there is the unwrapped one and Sail answers with
@@ -375,9 +380,14 @@ def recover_lost_session():
         return None
     _normalise_connect_confs()
     _install_delta_ops()
+    def _record_route(sid, route):
+        session_isolated[sid] = bool(route)
+        session_route[sid] = route
+
     rebound = session_recovery.rebind(
         namespaces, spark, catalog.isolate,
-        attach_sc=(None if os.environ.get("SPARK_REMOTE") is None else rddfacade.attach))
+        attach_sc=(None if os.environ.get("SPARK_REMOTE") is None else rddfacade.attach),
+        on_route=_record_route)
     note = session_recovery.note(rebound)
     print(note, file=sys.stderr, flush=True)
     return note
@@ -525,8 +535,28 @@ def _apply_onelake_security(req, session):
         tables = [r[1] for r in sess_spark.sql("SHOW TABLES").collect()]
     except Exception:  # noqa: BLE001 - no catalog yet: nothing to reshape
         return
+    # A session whose catalog is shared cannot be secured by editing it, and
+    # apply() raises rather than half-doing it. The exception propagates for the
+    # same reason a policy-read failure does: an errored statement beats one
+    # that quietly returns rows the caller may not have.
+    private = catalog.CATALOG_IS_PRIVATE.get(session_route.get(session), False)
+
+    def _known_location(name):
+        # delta_ops is imported lazily everywhere in this module (it needs the
+        # engine up), so it is imported here rather than referenced as a global
+        # that does not exist. A missing registry is "location unknown", which
+        # restore() already handles.
+        try:
+            import delta_ops
+
+            return delta_ops.known_location(name)
+        except Exception:  # noqa: BLE001
+            return None
+
     onelake_security.apply(sess_spark, access, tables,
-                           log=lambda m: print(m, flush=True))
+                           log=lambda m: print(m, flush=True),
+                           catalog_private=private,
+                           location_of=_known_location)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -658,6 +688,7 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:  # noqa: BLE001 - already gone, or no stop()
                     pass
             session_isolated.pop(sid, None)
+            session_route.pop(sid, None)
             self._send(200, {"closed": True})
         else:
             self._send(404, {"error": "not found"})

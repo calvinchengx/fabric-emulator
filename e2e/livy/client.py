@@ -440,6 +440,29 @@ def main():
     assert vcols == "region_id", f"viewer columns = {vcols!r}, want region_id only"
     print(f"    viewer columns: {vcols} -- CLS applied by the engine", flush=True)
 
+    # THE QUALIFIED NAME, which is how the filter used to be walked around.
+    # A temp view shadows the unqualified name only, and `catalog.register()`
+    # registers every table into `default` as well so unqualified names resolve
+    # like a lakehouse-attached notebook. Measured in
+    # `e2e/onelake-security-bypass`: with the view in place, `default.sales`
+    # returned all 3 rows and both columns. Enforcement now sweeps every
+    # qualified registration, so naming the table that way must find nothing
+    # rather than find the unfiltered table.
+    def viewer_read(sql_text):
+        """Run a read in the viewer's session, returning ('ok', v) or ('blocked', msg)."""
+        code = ("try:\n"
+                f"    _v = spark.sql({sql_text!r}).collect()[0][0]\n"
+                "    print('ok', _v)\n"
+                "except Exception as _e:\n"
+                "    print('blocked', type(_e).__name__)\n")
+        return vrun(code).strip()
+
+    for spelling in ("default.sales", "spark_catalog.default.sales"):
+        out = viewer_read(f"SELECT count(*) FROM {spelling}")
+        assert not out.startswith("ok 3"), (
+            f"the viewer read the UNFILTERED table through {spelling}: {out}")
+        print(f"    viewer via {spelling}: {out}", flush=True)
+
     # And the owner's session is unchanged: a role narrows the user it names,
     # not the table.
     still = orun("spark.sql('SELECT count(*) AS n FROM sales').collect()[0][0]")
