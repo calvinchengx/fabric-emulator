@@ -249,10 +249,14 @@ without anyone noticing.
 
 ## Boundaries, stated rather than discovered
 
-- **`members.fabricItemMembers`** — roles can grant access to another *item*,
-  not only to principals. Business events exclude it; lakehouses do not. Decide
-  before stage 1: retrofitting a second member kind into the evaluator later
-  invalidates the witnesses built on the first.
+- **`members.fabricItemMembers`** — **decided in stage 1: both member kinds are
+  modelled, and this one is not optional.** It is the *virtual* membership the
+  default roles rely on — "all users that have the necessary permissions to view
+  data in the item (the ReadAll permission, for example) are included as members
+  of this default role". An evaluator with only explicit Entra members cannot
+  express `DefaultReader`, so a newly created item would be unreadable by
+  everyone: not a simplification of the product, a different one. `Members`
+  therefore carries `Entra` and `ItemAccess`, and membership is the union.
 - **`ReadWrite`** — the docs define read and write permissions. Stages 2-4 cover
   `Read` only; write scoping is a later increment and the parity row must not
   imply otherwise.
