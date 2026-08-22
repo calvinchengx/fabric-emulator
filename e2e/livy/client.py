@@ -52,14 +52,14 @@ def wait_health(url, deadline=90):
     raise RuntimeError(f"health never came up: {url}")
 
 
-def forge_token(oid):
-    """A Fabric-audience token whose principal is `oid`.
+def forge_token(oid, audience="https://api.fabric.microsoft.com"):
+    """A token for `audience` whose principal is `oid`.
 
     The forge API needs a registered clientId, so the app stays the seeded one
     and `oid` is overridden -- the claim the emulator resolves a principal from.
     """
     _, t = http("POST", f"{ENTRA}/admin/api/tokens", {
-        "audience": "https://api.fabric.microsoft.com",
+        "audience": audience,
         "extraClaims": {"oid": oid, "sub": oid},
     })
     return t.get("access_token") or t["token"]
@@ -462,6 +462,35 @@ def main():
         assert not out.startswith("ok 3"), (
             f"the viewer read the UNFILTERED table through {spelling}: {out}")
         print(f"    viewer via {spelling}: {out}", flush=True)
+
+    # DIRECT PATH ACCESS, with the viewer's OWN identity. Row and column
+    # security cannot be applied to bytes, so Fabric blocks the read rather
+    # than serving them unfiltered -- "the query is blocked if the user
+    # requesting access isn't permitted to see all the rows or columns in that
+    # table". This is the OneLake REST/SDK case of that rule.
+    def onelake_get(path, bearer):
+        req = urllib.request.Request(
+            f"{FABRIC}/{ws['id']}/{lake['id']}/{path}", method="GET",
+            headers={"Host": "onelake.dfs.fabric.microsoft.com",
+                     "Authorization": "Bearer " + bearer})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, b""
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()[:200]
+
+    log_path = "Tables/sales/_delta_log/00000000000000000000.json"
+    # The control FIRST: the daemon identity is Contributor and reads it, so a
+    # 403 below cannot be "the file is missing" or "the host is wrong".
+    code, body = onelake_get(log_path, storage_token)
+    assert code == 200, f"the daemon could not read {log_path}: {code} {body!r}"
+
+    vstore = forge_token(VIEWER, audience="https://storage.azure.com")
+    code, body = onelake_get(log_path, vstore)
+    assert code == 403, f"the viewer read the raw table directly: {code} {body!r}"
+    assert b"row-level" in body or b"column-level" in body, body
+    print(f"    viewer direct read of {log_path}: {code} -- blocked by OneLake",
+          flush=True)
 
     # And the owner's session is unchanged: a role narrows the user it names,
     # not the table.

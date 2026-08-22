@@ -351,3 +351,45 @@ That is not fixable in the catalog, and real Fabric does not try: the platform
 lists exactly the patterns it blocks — `spark.read...load`, `DeltaTable.forPath`,
 and OneLake REST/SDK reads of a secured `Tables/<table>`. So the fix belongs in
 our OneLake surface, refusing the read, rather than in the engine filtering it.
+
+## Direct path access, blocked at the platform
+
+Real Fabric does not filter a raw read, it refuses it: "certain OneLake security
+features like row and column level security aren't supported by storage level
+operations, [so] not all types of access to row or column level secured data can
+be permitted", and "for user access to data in OneLake with RLS or CLS on it,
+the query is blocked if the user requesting access isn't permitted to see all
+the rows or columns in that table". The Spark article names the three patterns:
+`spark.read.format("delta").load("abfss://…")`, `DeltaTable.forPath`, and
+OneLake REST/SDK reads of a secured `Tables/<table>` folder.
+
+So this belongs in the OneLake surface, not in the engine. `authorizeViewer`
+asks `onelakesec.Narrowing()` after `Allows()` and refuses with the reason
+named. One change covers both the DFS and Blob surfaces because both already
+route through that function — two spellings of one store, and a refusal only one
+of them honours is not a refusal.
+
+**An unrestricted covering grant still reads.** Roles union rather than compete,
+so a principal who reaches the table through any grant that narrows nothing may
+see all of it, and `Narrowing` scans every covering entry rather than the first.
+Intersecting instead would let ADDING a role take access away, which a
+Permit-only model cannot express, and would fire the block on principals the
+product does not restrict.
+
+**Admin, Member and Contributor are unaffected** — "workspace Admin, Member, and
+Contributor roles aren't restricted by RLS or CLS" — and they never reach this
+code, because the viewer path is the only caller.
+
+### What this does NOT close, and why
+
+A notebook's `spark.read.format("delta").load("abfss://…")` still returns
+unfiltered rows. Not because the rule is missing, but because of WHOSE identity
+does the reading: our Spark agent holds one service credential and uses it for
+every caller, so the read arrives at OneLake as a Contributor and is correctly
+allowed. Real Fabric's user context carries the user's own identity, which is
+what makes the platform block reach that call there.
+
+Closing it needs the two-context split — a system context holding the credential
+and doing the reading, a user context that never has it. Until then the parity
+row says **Partial** and names the gap, because a row claiming the guarantee
+would be claiming the half we have as the whole.
