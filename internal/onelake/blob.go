@@ -165,6 +165,16 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	segs := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+
+	// The security API is addressed by its own /v1.0 prefix, and the
+	// account-prefixed OneLake path (`{host}/onelake/...`) lands here rather
+	// than on the dfs handler. One endpoint, reachable by either spelling: a
+	// client picks a surface by URL shape, and this one is not a data path.
+	if isPrincipalAccessPath(segs) {
+		s.principalAccess(w, r, p, segs[2], segs[4])
+		return
+	}
+
 	if len(segs) == 0 || segs[0] == "" {
 		writeBlobErr(w, http.StatusBadRequest, "InvalidUri", "Container (workspace) required.")
 		return

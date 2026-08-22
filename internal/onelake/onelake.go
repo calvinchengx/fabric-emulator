@@ -443,6 +443,20 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	segs := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+
+	// The engine-facing security API sits on this host under its own /v1.0
+	// prefix, so it is dispatched before the ADLS path grammar below claims
+	// the segments.
+	if len(segs) == 6 && segs[0] == "v1.0" && segs[1] == "workspaces" &&
+		segs[3] == "artifacts" && segs[5] == "securityPolicy" {
+		writeDFSErr(w, dfsError{"PathNotFound", http.StatusNotFound,
+			"Use securityPolicy/principalAccess."})
+		return
+	}
+	if isPrincipalAccessPath(segs) {
+		s.principalAccess(w, r, p, segs[2], segs[4])
+		return
+	}
 	if len(segs) == 0 || segs[0] == "" {
 		// Account level: HEAD only.
 		if r.Method == http.MethodHead {
