@@ -253,3 +253,42 @@ func addOnce(xs []string, v string) []string {
 	}
 	return append(xs, v)
 }
+
+// Covers reports whether an effective-access entry reaches target.
+//
+// A grant on a folder reaches everything beneath it — "Read: grants the user
+// the ability to read data from a table", and a table is a directory of files —
+// so `Tables/dbo/Customers` covers the parquet parts inside it. It does NOT
+// reach a sibling: prefix matching has to be segment-aware, or a grant on
+// `Tables/dbo/Cust` would silently cover `Tables/dbo/Customers`.
+func Covers(entryPath, target string) bool {
+	e := strings.Trim(entryPath, "/")
+	t := strings.Trim(target, "/")
+	if e == "" || strings.EqualFold(e, t) {
+		return true
+	}
+	return len(t) > len(e) && strings.EqualFold(t[:len(e)], e) && t[len(e)] == '/'
+}
+
+// Allows reports whether any entry grants access to target.
+//
+// Deny-by-default lives here too: no entries means no access, which is the
+// correct answer for a principal in no role rather than a reason to fall back
+// to some other check.
+func Allows(entries []AccessEntry, target string) bool {
+	for _, e := range entries {
+		if e.Effect == EffectPermit && Covers(e.Path, target) {
+			return true
+		}
+	}
+	return false
+}
+
+// InputFor picks which half of the item a path belongs to, so a caller can ask
+// the evaluator the question that matches the path it holds.
+func InputFor(rel string) string {
+	if strings.EqualFold(firstSegment(strings.Trim(rel, "/")), InputFiles) {
+		return InputFiles
+	}
+	return InputTables
+}

@@ -25,6 +25,7 @@ import (
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/pkg/onelakesec"
 )
 
 // StorageAudience is the only token audience OneLake accepts.
@@ -465,12 +466,19 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// OneLake API access is the ReadAll permission: Admin/Member/Contributor
-	// only (roles-workspaces.md). Viewers read through the SQL endpoint
-	// (ReadData), which the emulator does not model — so they are denied
-	// here, exactly as in real Fabric.
-	if store.RoleRank(role) < store.RoleRank(store.RoleContributor) {
+	// only (roles-workspaces.md). A Viewer has no ReadAll — but OneLake
+	// security can GRANT one specific paths: "No by default. Use OneLake
+	// security to grant the access" (data-access-control-model.md).
+	//
+	// So a Viewer is not refused here. The grant is per ITEM and per PATH, and
+	// neither is known yet, so the decision moves to authorizeViewer below.
+	// Anyone with no workspace role at all is refused now regardless: workspace
+	// permissions are "the first security boundary", and OneLake security
+	// narrows within an item rather than admitting a stranger to the tenant.
+	viewerOnly := store.RoleRank(role) < store.RoleRank(store.RoleContributor)
+	if viewerOnly && (role == "" || len(segs) == 1) {
 		writeDFSErr(w, dfsError{"AuthorizationFailure", http.StatusForbidden,
-			"OneLake API access requires ReadAll (the Contributor role or above); Viewers read via the SQL endpoint."})
+			"OneLake API access requires ReadAll (the Contributor role or above), or a OneLake security role granting the path."})
 		return
 	}
 
@@ -496,6 +504,17 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := strings.Join(segs[2:], "/")
+
+	// A Viewer reaches only what a OneLake security role grants, and only for
+	// reading. Admin/Member/Contributor never arrive here: their Write
+	// permission "overrides any OneLake security Read permissions", so a role
+	// cannot take away what the workspace already gave.
+	if viewerOnly {
+		if derr := s.authorizeViewer(it.ID, rel, p.ID, r.Method); derr != nil {
+			writeDFSErr(w, *derr)
+			return
+		}
+	}
 
 	// The item root (/{item}) and its first level (/{item}/Files, /Tables)
 	// are Fabric-managed: readable, never created/renamed/deleted via ADLS.
@@ -797,4 +816,32 @@ func (t *traceWriter) Write(b []byte) (int, error) {
 	n, err := t.ResponseWriter.Write(b)
 	t.n += n
 	return n, err
+}
+
+// authorizeViewer decides whether a Viewer — who has no ReadAll — may touch one
+// path, on the strength of the item's OneLake security roles.
+//
+// READ ONLY, DELIBERATELY. The model defines a ReadWrite permission, and a
+// Viewer holding one could legitimately write. This increment implements Read
+// and refuses the rest rather than accepting a ReadWrite grant it would then
+// half-honour: a write allowed here but not scoped elsewhere is worse than a
+// write refused. docs/54-onelake-security.md records the boundary.
+func (s *Service) authorizeViewer(itemID, rel, principalID, method string) *dfsError {
+	if method != http.MethodGet && method != http.MethodHead {
+		return &dfsError{"AuthorizationFailure", http.StatusForbidden,
+			"A OneLake security role grants Read; writing requires the Contributor role or above."}
+	}
+	roles, err := s.Store.EvaluatableRoles(itemID)
+	if err != nil {
+		return &dfsError{"InternalError", http.StatusInternalServerError, err.Error()}
+	}
+	// Deny by default: no roles is a decision, not a reason to fall through to
+	// some looser check.
+	entries := onelakesec.Effective(roles,
+		onelakesec.Principal{ObjectID: principalID}, onelakesec.InputFor(rel))
+	if !onelakesec.Allows(entries, rel) {
+		return &dfsError{"AuthorizationFailure", http.StatusForbidden,
+			"No OneLake security role grants this principal access to the path."}
+	}
+	return nil
 }

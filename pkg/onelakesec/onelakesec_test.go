@@ -305,3 +305,56 @@ func TestABareOtherHalfScopeIsNotReinterpreted(t *testing.T) {
 		t.Fatalf("a Files scope answered a Tables question: %v", pathsOf(got))
 	}
 }
+
+// Coverage is segment-aware. Plain prefix matching would let a grant on
+// `Tables/dbo/Cust` reach `Tables/dbo/Customers`, which is a different table.
+func TestCoversIsSegmentAware(t *testing.T) {
+	for _, tc := range []struct {
+		entry, target string
+		want          bool
+	}{
+		{"Tables", "Tables", true},
+		{"Tables", "Tables/dbo/Customers", true},
+		{"Tables/dbo/Customers", "Tables/dbo/Customers", true},
+		{"Tables/dbo/Customers", "Tables/dbo/Customers/part-0.parquet", true},
+		{"Tables/dbo/Customers", "Tables/dbo/Orders", false},
+		{"Tables/dbo/Cust", "Tables/dbo/Customers", false},
+		{"Tables/dbo/Customers", "Tables/dbo", false},
+		{"Files/raw", "Tables/raw", false},
+		{"", "Tables/anything", true},
+	} {
+		if got := Covers(tc.entry, tc.target); got != tc.want {
+			t.Errorf("Covers(%q, %q) = %v, want %v", tc.entry, tc.target, got, tc.want)
+		}
+	}
+}
+
+func TestAllowsIsDenyByDefault(t *testing.T) {
+	if Allows(nil, "Tables/dbo/Customers") {
+		t.Fatal("no entries granted access")
+	}
+	entries := []AccessEntry{{Path: "Tables/dbo/Customers", Effect: EffectPermit}}
+	if !Allows(entries, "Tables/dbo/Customers/part-0.parquet") {
+		t.Fatal("a granted folder did not reach a file inside it")
+	}
+	if Allows(entries, "Tables/dbo/Orders") {
+		t.Fatal("a grant on one table reached another")
+	}
+	// An entry that is not a Permit grants nothing, whatever its path.
+	if Allows([]AccessEntry{{Path: "Tables", Effect: "Deny"}}, "Tables/x") {
+		t.Fatal("a non-Permit entry granted access")
+	}
+}
+
+func TestInputForPicksTheHalf(t *testing.T) {
+	for _, tc := range []struct{ rel, want string }{
+		{"Files/raw/x.csv", InputFiles},
+		{"files/raw", InputFiles},
+		{"Tables/dbo/T", InputTables},
+		{"", InputTables},
+	} {
+		if got := InputFor(tc.rel); got != tc.want {
+			t.Errorf("InputFor(%q) = %s, want %s", tc.rel, got, tc.want)
+		}
+	}
+}
