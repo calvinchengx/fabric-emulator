@@ -63,6 +63,7 @@ export default defineConfig({
             { slug: '07-control-plane-api' },
             { slug: '08-onelake' },
             { slug: '54-onelake-security' },
+            { slug: '55-tsql-security' },
             { slug: '09-identity-handshake' },
           ],
         },
