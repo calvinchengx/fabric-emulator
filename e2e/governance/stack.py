@@ -5,11 +5,18 @@
 Both bring up the same family + OpenMetadata, and each carried its own copy of
 *how* — which is exactly how one of them ended up without the pull retry.
 
-OpenMetadata ships from docker.getcollate.io, a third-party registry with no
-mirror, so a reset connection or a TLS handshake timeout mid-pull reds an
-otherwise-green run. `run.py` learned that and grew a bounded retry; `sso.py`
-held the same twenty lines minus the retry, and failed on precisely that pull.
-Two copies of a boot sequence is one copy that will not get the next fix.
+OpenMetadata used to ship here straight from docker.getcollate.io, a vendor
+registry backed by neither Docker Hub nor GHCR, so a reset connection or a TLS
+handshake timeout mid-pull reds an otherwise-green run. `run.py` learned that
+and grew a bounded retry; `sso.py` held the same twenty lines minus the retry,
+and failed on precisely that pull. Two copies of a boot sequence is one copy
+that will not get the next fix.
+
+THERE IS A MIRROR NOW (G44) and the retry stays anyway. docker-compose.yml
+pulls both images from ghcr.io/calvinchengx, which removes the single-vendor
+dependency; it does not make GHCR incapable of a hiccup, and the retry costs
+nothing on a healthy pull. What changed is that a failure here is now the
+family's own registry rather than somebody else's.
 
 Sibling module rather than a package: every e2e suite here is a directory of
 scripts run as `python e2e/<suite>/run.py`, and this follows that.

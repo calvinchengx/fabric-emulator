@@ -197,9 +197,45 @@ def test_the_pinned_schema_matches_the_version_docker_compose_runs():
     vendored = m.group(1)
 
     compose = (ROOT / "docker-compose.yml").read_text()
-    pins = set(re.findall(r"docker\.getcollate\.io/openmetadata/[a-z]+:([0-9.]+)", compose))
+    # REGISTRY-AGNOSTIC, because the registry moved once already (G44: the
+    # images are mirrored into GHCR, where the repository is `openmetadata-server`
+    # rather than `openmetadata/server`). A pattern naming one host stops
+    # matching when the host changes and this test then depends entirely on the
+    # `assert pins` below to notice -- which it would, but as "no pins found"
+    # rather than as the version mismatch it is here to catch.
+    pins = set(re.findall(
+        r"image:\s*\S*openmetadata[-/](?:server|postgresql):([0-9.]+)", compose))
     assert pins, "no OpenMetadata image pins found in docker-compose.yml"
     assert pins == {vendored}, (
         f"vendored schema is {vendored} but docker-compose.yml pins {sorted(pins)} — "
         "re-vendor with scripts/vendor_openmetadata_schema.py or revert the image bump"
     )
+
+
+def test_the_catalog_images_come_from_a_registry_this_family_keeps_up():
+    """G44. OpenMetadata shipped straight from docker.getcollate.io, and on
+    2026-08-22 that registry failed two platform nightlies within an hour: a
+    TLS handshake timeout, then `connection reset by peer` on a rerun nineteen
+    minutes later. Neither Docker Hub nor GHCR backs it, and four repositories
+    pull it on crons, so it fails unattended and reads as a broken governance
+    step rather than as somebody else's outage.
+
+    The images are mirrored into ghcr.io/calvinchengx by
+    `calvinchengx/emulators`, which copies the manifest index with
+    `buildx imagetools create` and records the digest the registry serves.
+
+    THE TEST ABOVE WILL NOT CATCH A REVERT. Its pin regex is deliberately
+    registry-agnostic so a future move does not silently stop matching --
+    measured: pointing all three images back at the vendor leaves it green.
+    Which registry is a separate claim and needs its own assertion.
+    """
+    compose = (ROOT / "docker-compose.yml").read_text()
+    images = [ln.strip() for ln in compose.splitlines()
+              if ln.strip().startswith("image:") and "openmetadata" in ln]
+    assert len(images) == 3, (
+        f"expected three OpenMetadata image pins, found {len(images)} -- if the "
+        f"governance stack changed shape, this test needs to know")
+    for line in images:
+        assert "ghcr.io/calvinchengx/openmetadata-" in line, (
+            f"{line} does not come from the family's registry; see G44 and "
+            f"calvinchengx/emulators mirrors.json")
