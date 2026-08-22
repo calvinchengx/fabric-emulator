@@ -75,7 +75,7 @@ def _normalise_connect_confs():
 _normalise_connect_confs()
 
 
-def _install_delta_ops():
+def _install_delta_ops(target=None):
     """Route OPTIMIZE/VACUUM to delta-rs when the engine cannot run them.
 
     Wrapping `spark.sql` rather than scanning statement text: user code reaches
@@ -100,7 +100,7 @@ def _install_delta_ops():
     except ImportError:  # pragma: no cover - runtime without deltalake
         return
 
-    delta_ops.install(spark, storage.options)
+    delta_ops.install(target if target is not None else spark, storage.options)
 
 
 _install_delta_ops()
@@ -330,6 +330,13 @@ def ns(session):
         # to the shared session, where catalog.py detects the collision instead.
         session_spark, isolated = catalog.isolate(spark)
         session_isolated[session] = isolated
+        # A per-session engine session is a DIFFERENT SparkSession object, so
+        # the OPTIMIZE/VACUUM interception installed on the root at import does
+        # not reach it — `spark.sql` there is the unwrapped one and Sail answers with
+        # "found OPTIMIZE at 0:8". Install per session, which the e2e caught the
+        # moment isolation started actually working.
+        if isolated:
+            _install_delta_ops(session_spark)
         namespaces[session] = {"spark": session_spark}
         try:
             # A JVM session has the real thing; never shadow it.
@@ -636,9 +643,21 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 print("files_mount: flush on close failed:\n"
                       + traceback.format_exc(), flush=True)
-            namespaces.pop(req.get("session", ""), None)
-            session_context.pop(req.get("session", ""), None)
-            session_scopes.pop(req.get("session", ""), None)
+            sid = req.get("session", "")
+            gone = namespaces.pop(sid, None)
+            session_context.pop(sid, None)
+            session_scopes.pop(sid, None)
+            # A Connect-isolated session is a session ON THE SERVER, not just a
+            # dict here: dropping the reference leaves Sail holding it until its
+            # timeout (an hour, by our compose). Release it, but only when this
+            # session actually owned one — stopping the SHARED session would
+            # take every other Livy session down with it.
+            if gone is not None and session_isolated.get(sid):
+                try:
+                    gone["spark"].stop()
+                except Exception:  # noqa: BLE001 - already gone, or no stop()
+                    pass
+            session_isolated.pop(sid, None)
             self._send(200, {"closed": True})
         else:
             self._send(404, {"error": "not found"})

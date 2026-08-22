@@ -347,3 +347,89 @@ def test_registration_succeeds_on_both_engine_shapes(supports_current_database):
                            claims=catalog.Claims(), isolated=isolated)
     assert out["registered"] == 1
     assert spark.resolve("t") == "abfss://lake_a/Tables/t"
+
+
+# --- isolate(): the Spark Connect route --------------------------------------
+#
+# On Connect `newSession()` does not exist — it raises JVM_ATTRIBUTE_NOT_SUPPORTED
+# — so before this route existed, isolate() degraded on EVERY call against Sail
+# and nothing was ever isolated. That is not cosmetic: a OneLake security row
+# filter is a per-user temp view, and on a shared session one user's filter
+# narrowed another user's data. e2e/sail-session-isolation is the measurement.
+
+
+class FakeConnectBuilder:
+    """Stands in for `SparkSession.builder`, recording which call was used."""
+
+    def __init__(self, sink, session=None, raises=None):
+        self.sink = sink
+        self.session = session
+        self.raises = raises
+
+    def remote(self, url):
+        self.sink["remote"] = url
+        return self
+
+    def create(self):
+        self.sink["called"] = "create"
+        if self.raises:
+            raise self.raises
+        return self.session
+
+    def getOrCreate(self):  # noqa: N802 - the pyspark spelling
+        self.sink["called"] = "getOrCreate"
+        return self.session
+
+
+def install_fake_pyspark(monkeypatch, sink, session=None, raises=None):
+    import sys
+    import types
+
+    mod = types.ModuleType("pyspark.sql")
+    mod.SparkSession = types.SimpleNamespace(
+        builder=FakeConnectBuilder(sink, session, raises))
+    monkeypatch.setitem(sys.modules, "pyspark.sql", mod)
+
+
+def test_isolate_falls_back_to_a_new_connect_session(monkeypatch):
+    sink = {}
+    private = FakeSpark()
+    install_fake_pyspark(monkeypatch, sink, session=private)
+    root = FakeSpark(supports_new_session=False)
+
+    session, isolated = catalog.isolate(root, remote="sc://sail:50051")
+    assert (session, isolated) == (private, True)
+    assert sink["remote"] == "sc://sail:50051"
+    # create(), NOT getOrCreate(): the latter hands back the session we already
+    # have, which is the leak this route exists to close.
+    assert sink["called"] == "create"
+
+
+def test_isolate_prefers_new_session_when_the_engine_has_it(monkeypatch):
+    sink = {}
+    install_fake_pyspark(monkeypatch, sink, session=FakeSpark())
+    root = FakeSpark()  # JVM-shaped: newSession works
+
+    session, isolated = catalog.isolate(root, remote="sc://sail:50051")
+    assert isolated is True and session is not root
+    assert "called" not in sink, "the Connect route ran on an engine with newSession"
+
+
+def test_isolate_degrades_when_there_is_no_remote(monkeypatch):
+    monkeypatch.delenv("SPARK_REMOTE", raising=False)
+    root = FakeSpark(supports_new_session=False)
+    assert catalog.isolate(root) == (root, False)
+
+
+def test_isolate_degrades_when_creating_a_connect_session_fails(monkeypatch):
+    install_fake_pyspark(monkeypatch, {}, raises=RuntimeError("no route to host"))
+    root = FakeSpark(supports_new_session=False)
+    assert catalog.isolate(root, remote="sc://sail:50051") == (root, False)
+
+
+def test_isolate_reads_the_remote_from_the_environment(monkeypatch):
+    sink = {}
+    install_fake_pyspark(monkeypatch, sink, session=FakeSpark())
+    monkeypatch.setenv("SPARK_REMOTE", "sc://from-env:50051")
+    catalog.isolate(FakeSpark(supports_new_session=False))
+    assert sink["remote"] == "sc://from-env:50051"

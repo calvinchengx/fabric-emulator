@@ -52,6 +52,19 @@ def wait_health(url, deadline=90):
     raise RuntimeError(f"health never came up: {url}")
 
 
+def forge_token(oid):
+    """A Fabric-audience token whose principal is `oid`.
+
+    The forge API needs a registered clientId, so the app stays the seeded one
+    and `oid` is overridden -- the claim the emulator resolves a principal from.
+    """
+    _, t = http("POST", f"{ENTRA}/admin/api/tokens", {
+        "audience": "https://api.fabric.microsoft.com",
+        "extraClaims": {"oid": oid, "sub": oid},
+    })
+    return t.get("access_token") or t["token"]
+
+
 def main():
     wait_health(f"{FABRIC}/health")
     print("fabric up", flush=True)
@@ -337,6 +350,91 @@ def main():
     assert bg["state"] == "success", bg
     assert any("even rows: 500" in line for line in bg.get("log", [])), bg["log"]
     http("DELETE", f"{base}/batches/{b['id']}", token=token)
+
+    # --- OneLake security: the ENGINE applies the row filter (doc 54, stage 5).
+    #
+    # Stage 4 proved a third-party engine can fetch policy and filter for itself.
+    # This is the other half: a notebook running AS a user, where Fabric's own
+    # engine is what enforces. The user writes ordinary SQL and never sees the
+    # policy -- which is the whole point, and why the filter is applied to the
+    # RELATION rather than by rewriting their query.
+    print("== OneLake security: row filtering in the engine", flush=True)
+
+    VIEWER = "livy-rls-viewer"
+    http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/roleAssignments",
+         {"principal": {"id": VIEWER, "type": "User"}, "role": "Viewer"}, token=token)
+
+    # Its own owner session: the one above was closed, and a witness that
+    # depends on an earlier section's leftovers fails for the wrong reason.
+    _, osess = http("POST", f"{base}/sessions", {"kind": "pyspark"}, token=token)
+    osid = osess["id"]
+
+    def orun(code_str):
+        _, st = http("POST", f"{base}/sessions/{osid}/statements", {"code": code_str}, token=token)
+        stid = st["id"]
+        for _ in range(120):
+            _, got = http("GET", f"{base}/sessions/{osid}/statements/{stid}", token=token)
+            if got["state"] == "available":
+                out = got["output"]
+                if out.get("status") != "ok":
+                    raise RuntimeError(f"owner statement error: {out}")
+                return out["data"]["text/plain"].strip()
+            time.sleep(1)
+        raise RuntimeError("owner statement never became available")
+
+    # A Delta table with rows from two regions, written through the engine.
+    orun("df = spark.createDataFrame([(1, 10), (1, 20), (2, 30)], ['region_id', 'amount'])")
+    orun(f"df.write.format('delta').mode('overwrite').save('abfss://{ws['id']}@onelake.dfs.fabric.microsoft.com/{lake['id']}/Tables/sales')")
+    orun("spark.sql(\"CREATE TABLE IF NOT EXISTS sales USING delta LOCATION "
+         f"'abfss://{ws['id']}@onelake.dfs.fabric.microsoft.com/{lake['id']}/Tables/sales'\")")
+    full = orun("spark.sql('SELECT count(*) AS n FROM sales').collect()[0][0]")
+    assert full == "3", f"the unfiltered table should hold 3 rows, got {full}"
+    print(f"    unfiltered: {full} rows", flush=True)
+
+    # The role narrows the viewer to one region. The predicate names the table
+    # as the engine binds it -- dialect and naming are the integrator's problem,
+    # which docs/54 records rather than papers over.
+    http("PUT", f"{FABRIC}/v1/workspaces/{ws['id']}/items/{lake['id']}/dataAccessRoles",
+         {"value": [{
+             "name": "region1_only",
+             "decisionRules": [{
+                 "effect": "Permit",
+                 "rows": "SELECT * FROM sales WHERE region_id = 1",
+                 "permission": [
+                     {"attributeName": "Path", "attributeValueIncludedIn": ["Tables/sales"]},
+                     {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}]}],
+             "members": {"microsoftEntraMembers": [{"objectId": VIEWER}]}}]},
+         token=token)
+
+    # A session opened BY the viewer: the principal travels with the statement,
+    # which is how the agent knows whose policy to apply.
+    vtok = forge_token(VIEWER)
+    _, vsess = http("POST", f"{base}/sessions", {"kind": "pyspark"}, token=vtok)
+    vsid = vsess["id"]
+
+    def vrun(code_str):
+        _, st = http("POST", f"{base}/sessions/{vsid}/statements", {"code": code_str}, token=vtok)
+        stid = st["id"]
+        for _ in range(120):
+            _, got = http("GET", f"{base}/sessions/{vsid}/statements/{stid}", token=vtok)
+            if got["state"] == "available":
+                out = got["output"]
+                if out.get("status") != "ok":
+                    raise RuntimeError(f"viewer statement error: {out}")
+                return out["data"]["text/plain"].strip()
+            time.sleep(1)
+        raise RuntimeError("viewer statement never became available")
+
+    filtered = vrun("spark.sql('SELECT count(*) AS n FROM sales').collect()[0][0]")
+    assert filtered == "2", f"the viewer should see 2 of 3 rows, got {filtered}"
+    assert filtered != full, "the filter changed nothing"
+    print(f"    viewer sees {filtered} of {full} rows -- RLS applied by the engine", flush=True)
+
+    # And the owner's session is unchanged: a role narrows the user it names,
+    # not the table.
+    still = orun("spark.sql('SELECT count(*) AS n FROM sales').collect()[0][0]")
+    assert still == "3", f"the owner was narrowed too: {still}"
+    print("    owner still sees all 3 -- the role narrows a user, not the table", flush=True)
 
     print("NATIVE-LIVY E2E: PASS", flush=True)
 

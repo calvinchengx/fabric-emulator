@@ -20,28 +20,54 @@ silently-wrong. Split out of agent.py so it is importable without starting
 Spark: agent.py calls `getOrCreate()` at import, so nothing there can be unit
 tested.
 """
+import os
 import traceback
 
 
-def isolate(root):
+def isolate(root, remote=None):
     """Return (session, isolated) — a private SparkSession where possible.
 
-    `newSession()` shares the underlying engine and connection but gets its own
-    SQLConf, temp views and current database, which is exactly the scope that
-    was leaking. An engine that does not implement it returns the root session
-    and False; the caller then registers under collision detection instead.
+    TWO ROUTES, because the engines differ and only one of them was ever taken.
 
-    Broad except on purpose: this runs against three engines (JVM Spark, Sail
+    `newSession()` is the JVM route: same engine and connection, own SQLConf,
+    temp views and current database. On **Spark Connect it does not exist at
+    all** — it raises `JVM_ATTRIBUTE_NOT_SUPPORTED`, so on Sail this function
+    used to degrade on every single call and nothing was ever isolated. The
+    comment above about collision detection described the fallback as the
+    exception; on the default engine it was the rule.
+
+    That was not merely untidy. A OneLake security row filter is installed as a
+    per-user temp view, and on a shared session one user's filter narrowed
+    another user's data (docs/54, stage 5). Measured, then measured again:
+    `e2e/sail-session-isolation` shows `builder.create()` isolates on Sail while
+    `getOrCreate()` leaks.
+
+    So Connect gets its own route: a NEW client session against the same
+    server. `create()` and not `getOrCreate()` — the latter hands back the
+    session we already have, which is the leak.
+
+    Broad excepts on purpose: this runs against three engines (JVM Spark, Sail
     over Spark Connect, and whatever a consumer overlays), and an engine that
-    raises anything at all here must degrade rather than fail the session bind.
+    raises anything at all must degrade rather than fail the session bind.
     """
     try:
         session = root.newSession()
-    except Exception:  # noqa: BLE001 — any engine that cannot, degrades
-        return root, False
-    if session is None:
-        return root, False
-    return session, True
+        if session is not None:
+            return session, True
+    except Exception:  # noqa: BLE001 — Connect has no newSession; try below
+        pass
+
+    remote = remote or os.environ.get("SPARK_REMOTE")
+    if remote:
+        try:
+            from pyspark.sql import SparkSession
+
+            session = SparkSession.builder.remote(remote).create()
+            if session is not None:
+                return session, True
+        except Exception:  # noqa: BLE001 — degrade, as above
+            pass
+    return root, False
 
 
 class Claims:
