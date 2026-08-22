@@ -35,10 +35,21 @@ def post_json(url, body, token=None, ctx=None):
         return json.loads(r.read() or b"{}")
 
 
-def entra_token(scope=None, audience=None):
+def req_json(url, method, body=None, token=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"Content-Type": "application/json"})
+    if token:
+        req.add_header("Authorization", "Bearer " + token)
+    with urllib.request.urlopen(req, context=INSECURE) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def entra_token(scope=None, audience=None, client_id=None):
     if audience:  # forge: arbitrary audience (Storage)
         tok = post_json(f"{ENTRA}/admin/api/tokens",
-                        {"clientId": "00d88624-f0d7-46f6-a641-6232c2608928", "audience": audience},
+                        {"clientId": client_id or "00d88624-f0d7-46f6-a641-6232c2608928",
+                         "audience": audience},
                         ctx=INSECURE)
         return tok.get("access_token") or tok["token"]
     form = urllib.parse.urlencode({
@@ -50,6 +61,20 @@ def entra_token(scope=None, audience=None):
     req = urllib.request.Request(f"{ENTRA}/{TENANT}/oauth2/v2.0/token", data=form)
     with urllib.request.urlopen(req, context=INSECURE) as r:
         return json.loads(r.read())["access_token"]
+
+
+def viewer_storage_token(oid):
+    """A Storage token whose principal is `oid`.
+
+    The forge API needs a REGISTERED clientId, so the app stays the seeded one
+    and `oid` is overridden instead -- which is the claim the emulator resolves
+    a principal from (internal/auth: "oid claim (falls back to sub)").
+    """
+    t = post_json(f"{ENTRA}/admin/api/tokens", {
+        "audience": "https://storage.azure.com",
+        "extraClaims": {"oid": oid, "sub": oid},
+    }, ctx=INSECURE)
+    return t.get("access_token") or t["token"]
 
 
 fabric_token = entra_token(scope="https://api.fabric.microsoft.com/.default")
@@ -108,5 +133,46 @@ names = [p["name"] for p in listing["paths"]]
 assert any("_delta_log/00000000000000000000.json" in n for n in names), names
 assert any(n.endswith(".parquet") for n in names), names
 print(f"DFS sees the Delta table: {len(names)} paths incl _delta_log + parquet")
+
+# --- OneLake security: delta-rs sees the refusal as a storage error.
+#
+# A real Delta reader, not our client. The point is the CONTROL: a Viewer
+# granted one table must fail on the next one, or the grant proves nothing about
+# scope and the surface might simply be open.
+VIEWER = "delta-rs-viewer"
+post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/roleAssignments",
+          {"principal": {"id": VIEWER, "type": "User"}, "role": "Viewer"}, fabric_token)
+
+# A second table the role will NOT name.
+other_url = f"az://{ws['id']}/{lh['id']}/Tables/secrets"
+write_deltalake(other_url, pa.table({"id": pa.array([9], pa.int64())}),
+                storage_options=storage_options)
+
+viewer_opts = dict(storage_options, azure_storage_token=viewer_storage_token(VIEWER))
+
+
+def viewer_can_read(table_url):
+    try:
+        DeltaTable(table_url, storage_options=viewer_opts).to_pyarrow_table()
+        return True
+    except Exception:
+        # delta-rs surfaces a 403 as a generic object-store error; what matters
+        # is that the read does not succeed.
+        return False
+
+
+assert not viewer_can_read(guid_url), "a Viewer read a Delta table with no role granting it"
+print("delta-rs: viewer without a role cannot read")
+
+req_json(f"{FABRIC}/v1/workspaces/{ws['id']}/items/{lh['id']}/dataAccessRoles", "PUT", {"value": [{
+    "name": "readers",
+    "decisionRules": [{"effect": "Permit", "permission": [
+        {"attributeName": "Path", "attributeValueIncludedIn": ["Tables/events"]},
+        {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}]}],
+    "members": {"microsoftEntraMembers": [{"objectId": VIEWER}]}}]}, fabric_token)
+
+assert viewer_can_read(guid_url), "the granted Delta table was still refused"
+assert not viewer_can_read(other_url), "a grant on one table let delta-rs read another"
+print("delta-rs: the granted table reads, the ungranted one does not")
 
 print("DELTA-RS E2E: PASS")

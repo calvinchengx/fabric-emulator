@@ -45,10 +45,21 @@ def post_json(url, body, token=None):
         return json.loads(r.read() or b"{}")
 
 
-def entra_token(scope=None, audience=None):
+def req_json(url, method, body=None, token=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"Content-Type": "application/json"})
+    if token:
+        req.add_header("Authorization", "Bearer " + token)
+    with urllib.request.urlopen(req, context=_CTX) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def entra_token(scope=None, audience=None, client_id=None):
     if audience:
         t = post_json(f"{ENTRA}/admin/api/tokens",
-                      {"clientId": "00d88624-f0d7-46f6-a641-6232c2608928", "audience": audience})
+                      {"clientId": client_id or "00d88624-f0d7-46f6-a641-6232c2608928",
+                       "audience": audience})
         return t.get("access_token") or t["token"]
     form = urllib.parse.urlencode({
         "grant_type": "client_credentials",
@@ -68,6 +79,20 @@ class StaticCredential:
 
     def get_token(self, *scopes, **kwargs):
         return AccessToken(self._token, int(time.time()) + 3600)
+
+
+def viewer_storage_token(oid):
+    """A Storage token whose principal is `oid`.
+
+    The forge API needs a REGISTERED clientId, so the app stays the seeded one
+    and `oid` is overridden instead -- which is the claim the emulator resolves
+    a principal from (internal/auth: "oid claim (falls back to sub)").
+    """
+    t = post_json(f"{ENTRA}/admin/api/tokens", {
+        "audience": "https://storage.azure.com",
+        "extraClaims": {"oid": oid, "sub": oid},
+    })
+    return t.get("access_token") or t["token"]
 
 
 fabric_token = entra_token(scope="https://api.fabric.microsoft.com/.default")
@@ -185,5 +210,55 @@ for _ in range(60):
     time.sleep(0.5)
 assert got[0]["status"] == "Completed", got[0]
 print(f"event trigger: the SDK's write ran the pipeline, invokeType={runs[0]['invokeType']}")
+
+# --- OneLake security: a role widens a Viewer, and only to what it names.
+#
+# The SDK is the point. Our own tests prove the emulator refuses; this proves an
+# UNMODIFIED Microsoft SDK sees the refusal as a 403 on the wire, which is what
+# a caller actually builds against. The denial is the assertion that carries
+# weight — a granted read alone would pass against a surface enforcing nothing.
+from azure.core.exceptions import HttpResponseError  # noqa: E402
+
+VIEWER = "onelake-sec-viewer"
+post_json(f"{FABRIC}/v1/workspaces/{ws['id']}/roleAssignments",
+          {"principal": {"id": VIEWER, "type": "User"}, "role": "Viewer"}, fabric_token)
+
+granted_blob = "lake.Lakehouse/Tables/dbo/Customers/part-0.parquet"
+denied_blob = "lake.Lakehouse/Tables/dbo/Orders/part-0.parquet"
+for b in (granted_blob, denied_blob):
+    svc.get_blob_client(container=container, blob=b).upload_blob(payload, overwrite=True)
+
+viewer_svc = BlobServiceClient(
+    account_url=f"{FABRIC}/onelake",
+    credential=StaticCredential(viewer_storage_token(VIEWER)),
+    connection_verify=False)
+
+
+def viewer_status(blob):
+    try:
+        viewer_svc.get_blob_client(container=container, blob=blob).download_blob().readall()
+        return 200
+    except HttpResponseError as e:
+        return e.status_code
+
+
+# Before any role: a Viewer has no ReadAll, so both are refused. This is the
+# state every item is in until someone authors a role.
+assert viewer_status(granted_blob) == 403, "a Viewer read OneLake with no role granting it"
+print("viewer without a role: 403 from the SDK")
+
+lake_id = [i for i in req_json(f"{FABRIC}/v1/workspaces/{ws['id']}/items", "GET", None, fabric_token)["value"]
+           if i["displayName"] == "lake"][0]["id"]
+req_json(f"{FABRIC}/v1/workspaces/{ws['id']}/items/{lake_id}/dataAccessRoles", "PUT", {"value": [{
+    "name": "readers",
+    "decisionRules": [{"effect": "Permit", "permission": [
+        {"attributeName": "Path", "attributeValueIncludedIn": ["Tables/dbo/Customers"]},
+        {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}]}],
+    "members": {"microsoftEntraMembers": [{"objectId": VIEWER}]}}]}, fabric_token)
+
+assert viewer_status(granted_blob) == 200, "the granted path was still refused"
+# THE CONTROL: the sibling table was never granted, and must stay refused.
+assert viewer_status(denied_blob) == 403, "a grant on one table reached another"
+print("OneLake security: the SDK reads the granted table and is refused the sibling")
 
 print("ADLS-SDK E2E: PASS")
