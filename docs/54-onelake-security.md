@@ -42,12 +42,17 @@ security is on the other side of it: it has no hostname of its own. Its two
 endpoints live on `api.fabric.microsoft.com` and
 `onelake.dfs.fabric.microsoft.com`, both of which are this binary.
 
-It also has exactly one consumer, and can only ever have one.
+It also has one consumer today, and no obvious second one:
 `databricks-emulator` governs data through Unity Catalog and
 `snowflake-emulator` through its own grants; neither can use a Fabric data
-access role. A separate repo would buy no reuse and cost the family's release
-ordering — release the library, sweep the consumer, bump the BOM — for a
-dependency that never leaves this tree.
+access role. A separate repo would cost the family's release ordering — release
+the library, sweep the consumer, bump the BOM — for a dependency that never
+leaves this tree.
+
+That is a judgement about *today*, so the reuse option is kept open cheaply
+rather than argued away: the evaluator lives in `pkg/`, not `internal/`, so a
+future consumer imports a package instead of forcing a repository extraction.
+See [the evaluator](#2-pkgonelakesec--a-pure-evaluator).
 
 ### Not a sidecar
 
@@ -92,7 +97,7 @@ Three pieces. Only the middle one knows the rules.
 Keyed by item and versioned by ETag, because both endpoints trade in `If-Match`
 and `If-None-Match`. Rows and columns hang off the rule.
 
-### 2. `internal/onelakesec` — a pure evaluator
+### 2. `pkg/onelakesec` — a pure evaluator
 
     func Effective(roles []store.OneLakeRole, principal string,
                    memberships []string, input string) []AccessEntry
@@ -104,6 +109,12 @@ computed and belongs beside the other rules.
 
 Being pure is what makes it testable without a stack, and what makes the two
 consumers below provably consistent: they call one function.
+
+**`pkg/`, not `internal/`, deliberately.** Go's `internal/` rule makes a package
+unimportable by any other module, so putting the evaluator there would mean the
+only way to ever reuse it is to extract a repository. It costs nothing to keep
+the door open, and the rest of the layer — the store rows, the DFS surface —
+stays internal where it belongs.
 
 ### 3. Two consumers, neither owning the rules
 
@@ -134,6 +145,55 @@ serves the same evaluation to engines, filters included:
 Note what `rows` is: **SQL text, not rows**. OneLake decides, the engine
 applies. That single fact is why the layer can be decoupled at all, and it is
 the contract the design has to preserve.
+
+## Building directly on OneLake
+
+A service that uses OneLake as its lake and OneLake security as its access
+control, without Fabric's engines, is a **supported pattern in the product** and
+must stay supported here.
+
+> OneLake provides open access to all of your Fabric items through existing ADLS
+> and Blob APIs and SDKs. You can access your data in OneLake through any API,
+> SDK, or tool compatible with ADLS or Azure Blob Storage just by using a OneLake
+> URI instead. — `onelake/onelake-access-api.md`
+
+The authorized engine model extends the same freedom to compute: a third-party
+engine reads the files itself and applies the filters this layer hands it. No
+Fabric engine is in the path.
+
+**What that pattern is not, in the product, is a separate deployment.** The same
+page is equally clear:
+
+> As OneLake is software as a service (SaaS), some operations, such as managing
+> permissions or updating items, must be done through Fabric experiences, and
+> can't be done via ADLS APIs.
+
+and OneLake "exists across your entire Fabric tenant". A workspace is a Fabric
+construct, an item is a Fabric construct, and a data access role is defined **on
+a Fabric item** through the Fabric API. Reading is ADLS-compatible; authoring is
+control-plane, always.
+
+So the division of labour is:
+
+| Concern | Where, in the product | Where, here |
+|---|---|---|
+| Read and write bytes | ADLS Gen2 / Blob APIs | the DFS + Blob surfaces |
+| Fetch effective access | `securityPolicy/principalAccess` | same endpoint |
+| Author roles | Fabric REST | `dataAccessRoles` on the control plane |
+
+**We do not ship a standalone OneLake binary**, because that would emulate a
+topology the product does not have. A consumer built against standalone-OneLake
+would discover in a real tenant that role management needs the Fabric control
+plane after all — the emulator leniency this family treats as worse than a gap,
+because it destroys the signal rather than merely missing it.
+
+The honest lever for weight is the topology that already exists:
+
+    make up-lite     # contract-only: no Sail, no agent, no SQL Server
+
+One image, serving the control plane, OneLake, and this layer. A service that
+speaks only ADLS APIs plus `principalAccess` needs nothing else running, and
+`ci:duckdb` (below) is the witness that it genuinely needs nothing else.
 
 ## Staging, and what each stage may claim
 
