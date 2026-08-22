@@ -1,0 +1,39 @@
+# A SPIKE, not a parity witness. Two questions about the stage-5 enforcement in
+# `python/spark_agent/onelake_security.py`, both answerable by measurement:
+#
+#   1. does a FULLY-QUALIFIED name resolve past the temp view that holds the
+#      filter, giving a viewer the unfiltered table?
+#   2. does `_drop`s `DROP TABLE` hit the SHARED metastore, so a viewer opening
+#      a session unregisters the table for the OWNER?
+#
+# Both are about catalog semantics, so the stack is Sail and nothing else: no
+# emulator, no entra, no OneLake. Each service left out is a way the answer
+# could have been about something other than the catalog.
+services:
+  sail:
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    environment:
+      RUST_LOG: "info"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket; socket.create_connection(('127.0.0.1', 50051), 2).close()"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  probe:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
+    depends_on:
+      sail:
+        condition: service_healthy
+    volumes:
+      - ./probe.py:/probe.py:ro
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+    command: python /probe.py
