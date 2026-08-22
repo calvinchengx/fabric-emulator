@@ -292,3 +292,52 @@ func InputFor(rel string) string {
 	}
 	return InputTables
 }
+
+// Narrowing returns the grant that restricts target by rows or columns, or nil
+// when nothing does.
+//
+// WHY A POLICY QUESTION AND NOT A STORAGE ONE. Row and column security cannot
+// be applied to bytes: "certain OneLake security features like row and column
+// level security aren't supported by storage level operations, not all types of
+// access to row or column level secured data can be permitted". So the platform
+// refuses instead — "for user access to data in OneLake with RLS or CLS on it,
+// the query is blocked if the user requesting access isn't permitted to see all
+// the rows or columns in that table" — and this is the question it asks first.
+//
+// AN UNRESTRICTED COVERING GRANT WINS, exactly as it does in Effective. Roles
+// union rather than compete, so a principal who reaches this table through any
+// grant that narrows nothing is permitted to see all of it, and a narrowing
+// grant elsewhere must not take that away. Covering grants can differ in path
+// as well as role — `Tables` and `Tables/sales` both cover `Tables/sales/x` —
+// which is why this scans them all rather than trusting one entry.
+func Narrowing(entries []AccessEntry, target string) *AccessEntry {
+	var found *AccessEntry
+	for i := range entries {
+		e := &entries[i]
+		if !Covers(e.Path, target) {
+			continue
+		}
+		if e.Rows == "" && len(e.Columns) == 0 {
+			return nil
+		}
+		if found == nil {
+			found = e
+		}
+	}
+	return found
+}
+
+// Why describes a narrowing in one clause, for an error a caller can act on.
+func (e *AccessEntry) Why() string {
+	switch {
+	case e == nil:
+		return ""
+	case e.Rows != "" && len(e.Columns) > 0:
+		return "row-level and column-level security"
+	case e.Rows != "":
+		return "row-level security"
+	case len(e.Columns) > 0:
+		return "column-level security"
+	}
+	return ""
+}

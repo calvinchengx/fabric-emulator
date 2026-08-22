@@ -358,3 +358,94 @@ func TestInputForPicksTheHalf(t *testing.T) {
 		}
 	}
 }
+
+// --- Narrowing ---------------------------------------------------------------
+//
+// The predicate behind "direct file access is blocked". It has to agree with
+// Effective's union semantics, or the block fires on principals the product
+// does not restrict — a refusal that looks like security and is a bug.
+
+func TestNarrowingReportsRowsColumnsOrBoth(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		entry AccessEntry
+		why   string
+	}{
+		{"rows", AccessEntry{Path: "Tables/sales", Rows: "SELECT * FROM sales WHERE r = 1"},
+			"row-level security"},
+		{"columns", AccessEntry{Path: "Tables/sales", Columns: []string{"id"}},
+			"column-level security"},
+		{"both", AccessEntry{Path: "Tables/sales", Rows: "SELECT 1", Columns: []string{"id"}},
+			"row-level and column-level security"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Narrowing([]AccessEntry{tc.entry}, "Tables/sales/part-0.parquet")
+			if got == nil {
+				t.Fatal("a narrowed grant was reported as unrestricted")
+			}
+			if got.Why() != tc.why {
+				t.Fatalf("Why() = %q, want %q", got.Why(), tc.why)
+			}
+		})
+	}
+}
+
+func TestAnUnrestrictedGrantIsNotNarrowing(t *testing.T) {
+	entries := []AccessEntry{{Path: "Tables/sales", Access: []string{"Read"}}}
+	if got := Narrowing(entries, "Tables/sales/part-0.parquet"); got != nil {
+		t.Fatalf("an unrestricted grant reported as narrowing: %+v", got)
+	}
+}
+
+func TestAnUnrestrictedGrantAtAnotherPathStillWins(t *testing.T) {
+	// `Tables` and `Tables/sales` both cover the target. Roles union, so the
+	// unrestricted one decides — checking only the first covering entry would
+	// make the answer depend on sort order.
+	entries := []AccessEntry{
+		{Path: "Tables", Access: []string{"Read"}},
+		{Path: "Tables/sales", Rows: "SELECT * FROM sales WHERE r = 1"},
+	}
+	if got := Narrowing(entries, "Tables/sales/part-0.parquet"); got != nil {
+		t.Fatalf("a broader unrestricted grant was ignored: %+v", got)
+	}
+	// ...and the same set in the other order gives the same answer.
+	entries[0], entries[1] = entries[1], entries[0]
+	if got := Narrowing(entries, "Tables/sales/part-0.parquet"); got != nil {
+		t.Fatalf("order changed the answer: %+v", got)
+	}
+}
+
+func TestANarrowingGrantOnASiblingDoesNotReach(t *testing.T) {
+	// Segment-aware, like Covers: a filter on `Tables/sales` must not block
+	// `Tables/salesforce`, and prefix matching alone would.
+	entries := []AccessEntry{{Path: "Tables/sales", Rows: "SELECT 1"}}
+	if got := Narrowing(entries, "Tables/salesforce/part-0.parquet"); got != nil {
+		t.Fatalf("a sibling table was blocked: %+v", got)
+	}
+}
+
+func TestNothingCoveringIsNotNarrowing(t *testing.T) {
+	// Deny-by-default is Allows's job. Narrowing answers only "may they see
+	// ALL of it", and conflating the two would turn every ungranted path into
+	// an RLS message.
+	if got := Narrowing(nil, "Tables/sales/part-0.parquet"); got != nil {
+		t.Fatalf("no entries reported as narrowing: %+v", got)
+	}
+}
+
+func TestWhyOnANilEntryIsEmpty(t *testing.T) {
+	var e *AccessEntry
+	if e.Why() != "" {
+		t.Fatalf("Why() on nil = %q", e.Why())
+	}
+}
+
+func TestWhyOnAnUnrestrictedEntryIsEmpty(t *testing.T) {
+	// Narrowing never returns such an entry, so this branch is defensive —
+	// and an untested defensive branch is where a future caller reading Why()
+	// directly gets a sentence describing a restriction that is not there.
+	e := AccessEntry{Path: "Tables/sales", Access: []string{"Read"}}
+	if e.Why() != "" {
+		t.Fatalf("Why() on an unrestricted entry = %q", e.Why())
+	}
+}
