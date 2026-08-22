@@ -48,8 +48,10 @@ evidence behind a green row.
 Two rules follow, both enforced under --strict:
 
   * a gated witness that the manifest does not declare (and, symmetrically, a
-    declaration for a witness that no longer skips — a stale note is how the
-    map drifts back out of step);
+    declaration that describes nothing — a stale note is how the map drifts
+    back out of step). A declaration goes stale two unrelated ways: the test
+    stopped skipping, or it is credited to no SUPPORTED claim. They want
+    opposite fixes, so the reason is computed and printed, never assumed;
   * a claim whose witnesses are ALL gated, which is a green row that a default
     `go test ./...` proves nothing about. That count is 0 today; the rule is
     here to keep it there.
@@ -221,6 +223,61 @@ def py_test_names() -> set:
     return names
 
 
+def stale_declarations(declared, gated_used, credited, gated_tests, tests,
+                       manifest) -> dict:
+    """`_gated` entries that describe nothing, each with WHY.
+
+    A declaration is live when the witness is credited to a supported claim AND
+    is detected as gated. Failing either makes it stale, but the two failures
+    are unrelated and want opposite fixes, and for its first months this check
+    reported both as "no longer skips".
+
+    That misdiagnosis cost real time: three T-SQL security tests share one
+    `newSecFixture(t)` gate, the parity map got two of the three verdict cells
+    left at not-implemented while their prose was rewritten to claim support,
+    and the checker answered "these witnesses no longer skip". They skip. They
+    were simply credited to claims no longer marked supported. The declarations
+    were deleted to clear the gate — exactly backwards, since the map then
+    under-declared two genuinely gated witnesses and the red rows stayed red.
+
+    So the reason is computed rather than assumed, and the message names which
+    of the two happened.
+    """
+    keys_for: dict[str, list] = {}
+    for key, entry in manifest.items():
+        for witness in entry.get("witnesses", []):
+            keys_for.setdefault(witness, []).append(key)
+
+    out = {}
+    for witness in declared:
+        if witness in gated_used:
+            continue
+        kind, _, name = witness.partition(":")
+        keys = keys_for.get(witness, [])
+        if witness in credited:
+            # Credited to a supported claim, so the gate scan is the authority:
+            # go/sdk gates are detected, and not being detected means the
+            # t.Skip is gone.
+            if kind in ("go", "sdk") and name in tests and name not in gated_tests:
+                out[witness] = "no longer skips — the gate is gone from the test. Drop it."
+            else:
+                out[witness] = "credited but not resolved as gated. Drop it."
+        elif not keys:
+            out[witness] = ("named by no manifest entry at all — a renamed or deleted "
+                            "witness. Drop it.")
+        else:
+            still = " ".join(sorted(keys))
+            gate = ("it still skips" if name in gated_tests else "it no longer skips")
+            out[witness] = (
+                f"still gated ({gate}) but credited to no SUPPORTED claim: its "
+                f"manifest entries ({still}) are not marked supported in the "
+                "parity map. Either the row was demoted on purpose — then drop "
+                "this declaration too — or a verdict cell was left behind while "
+                "the claim moved. Check the map before deleting."
+            )
+    return out
+
+
 def main() -> int:
     strict = "--strict" in sys.argv
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.exists() else {}
@@ -303,7 +360,8 @@ def main() -> int:
     print(f"  credited witnesses that can SKIP          : {len(gated_used)}")
 
     undeclared = {w: why for w, why in gated_used.items() if w not in declared_gates}
-    stale = [w for w in declared_gates if w not in gated_used]
+    stale = stale_declarations(declared_gates, gated_used, set(shared),
+                               gated_tests, tests, manifest)
     # A claim with no witness that runs unconditionally is a green row a default
     # `go test ./...` proves nothing about.
     unproven = [(section, feature, key) for section, feature, key in claims
@@ -327,9 +385,9 @@ def main() -> int:
                 print(f"  {witness:<46} skips via {why}")
             print(f"      -> {reason}")
     if stale:
-        print("\nStale gate declarations (these witnesses no longer skip):")
-        for witness in stale:
-            print(f"  {witness}")
+        print("\nStale gate declarations:")
+        for witness, why in stale.items():
+            print(f"  {witness}\n      {why}")
     if unproven:
         print("\nClaims whose every witness can skip — a default test run proves")
         print("nothing about these:")
@@ -364,8 +422,9 @@ def main() -> int:
             print(f'  "{witness}": "<reason>"   (skips via {why})')
         failed = True
     if strict and stale:
-        print("\nFAIL: remove the stale `_gated` entries above — they no longer skip,")
-        print("and a stale note is how this map drifts back out of step.")
+        print("\nFAIL: the `_gated` entries above no longer describe a gated witness")
+        print("behind a supported claim. Each line says which of the two it is, and")
+        print("they want opposite fixes: drop the declaration, or restore the claim.")
         failed = True
     if strict and unproven:
         print("\nFAIL: a claim needs at least one witness that runs unconditionally.")

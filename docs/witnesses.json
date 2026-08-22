@@ -35,7 +35,9 @@
     "sdk:TestWarehouseDeltaReflectionE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "go:TestWarehouseRouter": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "sdk:TestWarehouseSQLServerRelayE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "sdk:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml)."
+    "sdk:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestRelayEnforcesColumnLevelSecurity": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestRelayEnforcesDynamicDataMasking": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "abfss-onelake-dfs-fabric-microsoft-com-production-paths": {
     "section": "Data Engineering (`data-engineering/`)",
