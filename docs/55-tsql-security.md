@@ -82,8 +82,8 @@ at login and never touched again.
 
 | Stage | Build | May claim |
 |---|---|---|
-| 1 | per-principal database users, provisioned on connect | nothing; no visible behaviour change |
-| 2 | the spliced session authenticates as the caller | callers are distinguishable; `USER_NAME()` differs |
+| 1 ✅ | per-principal database users, provisioned on connect | nothing; no visible behaviour change |
+| 2 ✅ | the spliced session authenticates as the caller | callers are distinguishable; `USER_NAME()` differs |
 | 3 | RLS witnessed | `CREATE SECURITY POLICY` filters by caller |
 | 4 | CLS witnessed | a denied column errors for one caller and not another |
 | 5 | DDM witnessed | a masked column reads masked, and `UNMASK` reveals it |

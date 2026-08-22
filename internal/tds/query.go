@@ -16,6 +16,19 @@ type Backend interface {
 	Query(ctx context.Context, sql string) (*Result, error)
 }
 
+// Connection is what OnConnect resolved about a client: which backend database
+// its SQL should reach, whether the surface is read-only, and WHO is asking.
+//
+// A struct rather than three returns because the third one arrived late and
+// silently: a caller that forgot to thread the principal through would compile
+// and then run every client as the relay's own account, which is precisely the
+// bug docs/55 exists to close. A named field is harder to drop by accident.
+type Connection struct {
+	TargetDB  string
+	ReadOnly  bool
+	Principal string
+}
+
 // SpliceBackend is a Backend that can open a raw, already-authenticated
 // connection to the real engine for a given database. The server splices the
 // client's post-login TDS session straight to it (byte-forwarding), so the
@@ -27,7 +40,12 @@ type SpliceBackend interface {
 	// Dial returns the authenticated backend connection and the raw login-response
 	// token stream the engine sent (LOGINACK, ENVCHANGEs, collation, …), which the
 	// server forwards to the client so its session state matches the engine's.
-	Dial(ctx context.Context, database string) (net.Conn, []byte, error)
+	//
+	// `principal` is the CALLER, and the connection authenticates as them rather
+	// than as the relay's own account — which is what gives the engine's RLS,
+	// CLS and masking somebody to restrict (docs/55-tsql-security.md). Empty
+	// means internal work with no caller, and keeps the DSN account.
+	Dial(ctx context.Context, database, principal string, readOnly bool) (net.Conn, []byte, error)
 }
 
 // ColType is the wire type a result column is encoded as. Integer/float/bit

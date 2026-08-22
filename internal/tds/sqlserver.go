@@ -157,9 +157,26 @@ func (b *sqlServerBackend) Query(ctx context.Context, query string) (*Result, er
 // for post-login traffic. The server splices the client's session onto it, so
 // SQL Server itself produces every response token (full fidelity). The service
 // credential and address come from the base DSN.
-func (b *sqlServerBackend) Dial(ctx context.Context, database string) (net.Conn, []byte, error) {
+func (b *sqlServerBackend) Dial(ctx context.Context, database, principal string, readOnly bool) (net.Conn, []byte, error) {
 	if b.base == nil {
 		return nil, nil, fmt.Errorf("no backend DSN configured for splicing")
+	}
+	// AUTHENTICATE AS THE CALLER, so the engine's own RLS, CLS and masking have
+	// somebody to restrict. Without this every client is the DSN account — one
+	// identity for everyone, which a filter predicate cannot tell apart and a
+	// column DENY has no grantee for (docs/55-tsql-security.md).
+	//
+	// Provision first: a login that does not exist yet cannot be logged in as,
+	// and a reconnect is the normal case so this is idempotent. A FAILURE HERE
+	// FAILS THE CONNECTION rather than falling back to the DSN account —
+	// falling back would hand the caller a sysadmin session and look like it
+	// worked.
+	user, password := b.base.User, b.base.Password
+	if principal != "" {
+		if err := EnsurePrincipal(ctx, b.pool(""), b.pool(database), principal, readOnly); err != nil {
+			return nil, nil, fmt.Errorf("provisioning %s: %w", principal, err)
+		}
+		user, password = principal, principalPassword(principal)
 	}
 	conn, err := b.dialBackend(ctx)
 	if err != nil {
@@ -169,7 +186,7 @@ func (b *sqlServerBackend) Dial(ctx context.Context, database string) (net.Conn,
 	if serverName == "" {
 		serverName = "." // a pipe DSN carries no host; "." is the local server
 	}
-	loginResp, err := clientLogin(conn, b.base.User, b.base.Password, database, serverName)
+	loginResp, err := clientLogin(conn, user, password, database, serverName)
 	if err != nil {
 		conn.Close()
 		return nil, nil, err

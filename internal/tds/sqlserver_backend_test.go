@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"testing"
 )
@@ -24,7 +25,7 @@ func TestDialSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, login, err := be.Dial(context.Background(), "itemdb")
+	conn, login, err := be.Dial(context.Background(), "itemdb", "", false)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestBackendPerDatabase(t *testing.T) {
 
 	// Dial reaches the backend login handshake (which errors — no server — but the
 	// dial+login path is covered).
-	if _, _, err := be.Dial(context.Background(), "item-1"); err == nil {
+	if _, _, err := be.Dial(context.Background(), "item-1", "", false); err == nil {
 		t.Error("expected a connect/login error from Dial with no server")
 	}
 	// A DSN with no explicit port exercises Dial's default-1433 branch (still
@@ -74,7 +75,7 @@ func TestBackendPerDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := noPort.Dial(context.Background(), "item"); err == nil {
+	if _, _, err := noPort.Dial(context.Background(), "item", "", false); err == nil {
 		t.Error("expected a connect error dialing the default port with no server")
 	}
 
@@ -87,7 +88,7 @@ func TestBackendPerDatabase(t *testing.T) {
 		t.Error("test-backend DB should be the (nil) default")
 	}
 	// Dial on a backend with no base DSN is a clear error, not a panic.
-	if _, _, err := tb.Dial(context.Background(), "x"); err == nil {
+	if _, _, err := tb.Dial(context.Background(), "x", "", false); err == nil {
 		t.Error("Dial without a base DSN should error")
 	}
 }
@@ -114,5 +115,27 @@ func TestSafeDBName(t *testing.T) {
 	}
 	if safeDBName(strings.Repeat("a", 129)) {
 		t.Error("overlong name accepted")
+	}
+}
+
+// Dial authenticates as the CALLER, and a provisioning failure fails the
+// connection rather than falling back to the relay's own account — a fallback
+// would hand the caller a sysadmin session and look like it worked
+// (docs/55-tsql-security.md).
+func TestDialRefusesWhenTheCallerCannotBeProvisioned(t *testing.T) {
+	dsn := os.Getenv("WAREHOUSE_MSSQL_DSN")
+	if dsn == "" {
+		t.Skip("set WAREHOUSE_MSSQL_DSN to run the caller-provisioning tests")
+	}
+	be, err := NewSQLServerBackend(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A name SQL Server will not accept as a principal.
+	bad := strings.Repeat("x", 200)
+	if _, _, err := be.Dial(context.Background(), "master", bad, false); err == nil {
+		t.Fatal("an unprovisionable caller was dialed anyway")
+	} else if !strings.Contains(err.Error(), "provisioning") {
+		t.Fatalf("error = %v; want it to name provisioning, so the cause is readable", err)
 	}
 }

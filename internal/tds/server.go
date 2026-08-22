@@ -35,7 +35,7 @@ type Server struct {
 	// to route queries to) plus whether the surface is read-only (a lakehouse
 	// endpoint, or a Viewer). An error rejects the login (no access, unknown or
 	// non-SQL item).
-	OnConnect func(ctx context.Context, server, database, token string) (targetDB string, readOnly bool, err error)
+	OnConnect func(ctx context.Context, server, database, token string) (Connection, error)
 	// Observe, if set, is told about each write statement the backend accepted,
 	// with the resolved target database. It is how a warehouse build (dbt over
 	// TDS) reaches the lineage graph — see observe.go.
@@ -103,6 +103,7 @@ func (s *Server) handle(conn net.Conn) error {
 	// login.Database when the client connected by display name.
 	readOnly := false
 	targetDB := login.Database
+	principal := ""
 	if s.OnConnect != nil {
 		// An empty database is REJECTED, not waved through. OnConnect is the only
 		// place a TDS connection's workspace role and read-only-ness are decided,
@@ -117,11 +118,11 @@ func (s *Server) handle(conn net.Conn) error {
 			return s.reject(conn, "a database name is required: the connection's "+
 				"workspace access is resolved from it")
 		}
-		db, ro, err := s.OnConnect(context.Background(), login.ServerName, login.Database, login.FedAuthToken)
+		got, err := s.OnConnect(context.Background(), login.ServerName, login.Database, login.FedAuthToken)
 		if err != nil {
 			return s.reject(conn, err.Error())
 		}
-		targetDB, readOnly = db, ro
+		targetDB, readOnly, principal = got.TargetDB, got.ReadOnly, got.Principal
 	}
 	// Full-fidelity path: if the backend can open a raw authenticated connection
 	// to the real engine, splice the client's post-login session straight to it
@@ -130,7 +131,7 @@ func (s *Server) handle(conn net.Conn) error {
 	// which the Microsoft ODBC/JDBC driver family requires. Dial before acking so
 	// a backend failure can still reject the login cleanly.
 	if sb, ok := s.Backend.(SpliceBackend); ok && targetDB != "" {
-		backendConn, backendLogin, err := sb.Dial(context.Background(), targetDB)
+		backendConn, backendLogin, err := sb.Dial(context.Background(), targetDB, principal, readOnly)
 		if err != nil {
 			return s.reject(conn, "backend connect failed: "+err.Error())
 		}
