@@ -58,12 +58,22 @@ func TestLivyPassthrough(t *testing.T) {
 		t.Fatalf("sub-path proxy path = %q", gotPath)
 	}
 
-	// RBAC: Viewer reads but cannot submit; ungranted 403s; unknown lakehouse 404s.
+	// RBAC: a Viewer both reads AND submits. That assertion inverted
+	// deliberately — "filtering applies to Viewer and to users granted access
+	// through OneLake security roles"
+	// (data-engineering/spark-onelake-security.md), so a Viewer refused a
+	// statement is a Viewer whose row-level security can never apply. What
+	// stops them writing is the OneLake surface, not this gate.
 	if w := do(a.livyProxy, viewer, "GET", "", pv(ws.ID, lake.ID, "sessions")); w.Code != http.StatusCreated {
 		t.Fatalf("viewer read = %d", w.Code)
 	}
-	if w := do(a.livyProxy, viewer, "POST", "{}", pv(ws.ID, lake.ID, "batches")); w.Code != http.StatusForbidden {
-		t.Fatalf("viewer submit = %d; want 403", w.Code)
+	if w := do(a.livyProxy, viewer, "POST", "{}", pv(ws.ID, lake.ID, "batches")); w.Code == http.StatusForbidden {
+		t.Fatalf("viewer submit = 403; a Viewer must be able to run a query")
+	}
+	// Closing a session stays Contributor: sessions are not owner-scoped, so a
+	// Viewer-level delete would let one caller close another's.
+	if w := do(a.livyProxy, viewer, "DELETE", "", pv(ws.ID, lake.ID, "sessions/0")); w.Code != http.StatusForbidden {
+		t.Fatalf("viewer delete = %d; want 403", w.Code)
 	}
 	if w := do(a.livyProxy, &authNobody, "GET", "", pv(ws.ID, lake.ID, "sessions")); w.Code != http.StatusForbidden {
 		t.Fatalf("ungranted = %d; want 403", w.Code)

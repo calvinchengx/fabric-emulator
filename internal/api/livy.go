@@ -79,8 +79,21 @@ func (a *API) hcClient() *http.Client {
 // (session/statement status) need Viewer.
 func (a *API) livyProxy(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	wid := r.PathValue("wid")
+	// RUNNING A QUERY IS READING, so a Viewer may open a session and submit
+	// statements. That is not a relaxation for its own sake: OneLake security
+	// exists to filter exactly this caller — "filtering applies to Viewer and
+	// to users granted access through OneLake security roles"
+	// (data-engineering/spark-onelake-security.md) — and a Viewer refused a
+	// session is a Viewer whose row-level security can never apply.
+	//
+	// What stops a Viewer WRITING is not this gate: the OneLake surface refuses
+	// their writes whatever a role grants (docs/54, stage 3), so a statement
+	// that tries fails there, where the data is, rather than here.
+	//
+	// DELETE stays Contributor: sessions are not owner-scoped, so a
+	// Viewer-level delete would let one caller close another's session.
 	min := store.RoleViewer
-	if r.Method == http.MethodPost || r.Method == http.MethodDelete {
+	if r.Method == http.MethodDelete {
 		min = store.RoleContributor
 	}
 	if _, _, ok := a.requireRole(w, wid, p, min); !ok {

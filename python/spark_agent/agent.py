@@ -467,7 +467,7 @@ def register_tables(session, schema, tables, schemas=None):
                             isolated=session_isolated.get(session, True))
 
 
-def _apply_onelake_security(req):
+def _apply_onelake_security(req, session):
     """Reshape the session for the statement's principal, if we know one.
 
     SILENT WHEN UNCONFIGURED, and deliberately: an agent driven by something
@@ -505,11 +505,20 @@ def _apply_onelake_security(req):
     if not base or not tok:
         return
     access = onelake_security.fetch_access(base, workspace, item, principal, tok)
+    # THE SESSION'S SparkSession, never the process-wide one. `ns()` hands each
+    # Livy session a private session exactly so temp views are not process-wide,
+    # and a filter installed on the shared session is a filter applied to
+    # everyone: the first run of this narrowed the OWNER's session to the
+    # viewer's rows, which the e2e caught. Same shared-state trap as sys.argv
+    # and stdout, one layer up.
+    sess_spark = ns(session).get("spark")
+    if sess_spark is None:
+        return
     try:
-        tables = [r[1] for r in spark.sql("SHOW TABLES").collect()]
+        tables = [r[1] for r in sess_spark.sql("SHOW TABLES").collect()]
     except Exception:  # noqa: BLE001 - no catalog yet: nothing to reshape
         return
-    onelake_security.apply(spark, access, tables,
+    onelake_security.apply(sess_spark, access, tables,
                            log=lambda m: print(m, flush=True))
 
 
@@ -572,13 +581,12 @@ class Handler(BaseHTTPRequestHandler):
                 # on 3.8 in the JVM overlay image
                 # (test_spark_agent_runs_on_python38.py) — ruff is right about
                 # the target it was told about, not the one that ships.
-                # OneLake security, before the user's code and after the
-                # scope is bound: the session is reshaped so a table the caller
-                # may not read is not in it, and one they may read in part is a
-                # filtered view. Doing it per statement rather than at bind
-                # keeps a policy change visible to the next cell, which is what
-                # revoking access has to mean.
-                _apply_onelake_security(req)
+                #
+                # OneLake security first: the SESSION is reshaped so a table
+                # this caller may not read is not in it, and one they may read
+                # in part is a filtered view. Per statement rather than at bind,
+                # so revoking access reaches the next cell.
+                _apply_onelake_security(req, session)
                 with task_scope.scoped(scope_for(session)):  # noqa: SIM117
                     with cell_context(req.get("jobId"), req.get("cellIndex")):
                         with runtime_scope(session, req):

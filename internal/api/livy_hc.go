@@ -283,11 +283,10 @@ func (a *API) deleteHC(w http.ResponseWriter, r *http.Request, p *auth.Principal
 // hcStatement executes (POST) or reads (GET) a statement in a REPL by proxying
 // to the REPL's real backend Livy session — opened lazily on first execute.
 func (a *API) hcStatement(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	min := store.RoleViewer
-	if r.Method == http.MethodPost {
-		min = store.RoleContributor
-	}
-	if !a.hcScope(w, r, p, min) {
+	// Viewer, for the same reason as the native path: a query is a read, and
+	// OneLake security is what narrows it. The two Livy surfaces must agree, or
+	// which one a client picked would decide whether policy applied.
+	if !a.hcScope(w, r, p, store.RoleViewer) {
 		return
 	}
 	repl, ok := a.hcMgr().replFor(r.PathValue("sid"), r.PathValue("replid"))

@@ -121,7 +121,10 @@ func TestHCRBACAndScope(t *testing.T) {
 	if err := st.CreateItem(lake, nil); err != nil {
 		t.Fatal(err)
 	}
-	// Viewer cannot acquire (Contributor) but can read; ungranted 403; unknown lakehouse 404.
+	// Acquiring a REPL slot stays Contributor — it is capacity, not a query,
+	// and the high-concurrency pool is a shared resource. Running STATEMENTS in
+	// one is Viewer-level, which is where OneLake security applies (see
+	// TestLivyPassthrough for the reasoning).
 	if w := do(a.acquireHC, viewer, "POST", "{}", hcPV(ws.ID, lake.ID, nil)); w.Code != http.StatusForbidden {
 		t.Fatalf("viewer acquire = %d; want 403", w.Code)
 	}
