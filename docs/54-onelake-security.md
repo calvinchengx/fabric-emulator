@@ -393,3 +393,72 @@ Closing it needs the two-context split — a system context holding the credenti
 and doing the reading, a user context that never has it. Until then the parity
 row says **Partial** and names the gap, because a row claiming the guarantee
 would be claiming the half we have as the whole.
+
+## The two-context model
+
+Stage A made OneLake refuse a direct path read from a narrowed principal, and
+that refusal does not reach a notebook. Measured (`e2e/two-context/probe.py`),
+against a Viewer narrowed to one region and one column:
+
+| question | answer |
+|---|---|
+| is the SQL path filtered? | yes — 2 of 3 rows |
+| can a cell obtain the agent's storage bearer? | **yes** — `__import__('storage').token()` returns it |
+| can a cell obtain the credential that MINTS one? | **yes** — `ENTRA_CLIENT_SECRET` is in the process environment |
+| can the viewer read the files by path from a cell? | **yes** — all 3 rows, both columns |
+| the same viewer's own identity, straight at OneLake? | **403** — stage A, working |
+
+So the gap is the IDENTITY, not the rule. The agent holds one service credential
+and uses it for every caller, so a notebook's read arrives at OneLake as a
+Contributor and is correctly allowed. Real Fabric's user context carries the
+user's own identity, which is what makes the platform block apply there.
+
+The client secret is the sharper half. A token expires and can be scoped; a
+secret in the environment lets a cell mint fresh ones indefinitely, for any
+audience the app is allowed. No in-process mitigation reaches this: user code
+runs through `exec()` in the agent's own process, so `__import__`, `os.environ`
+and the module globals are all one namespace away. **The split has to be by
+process.** That is what Fabric describes:
+
+> **User context.** Runs the user's notebook … with the user's identity. This
+> context plans the query and consumes the filtered output, but it never has
+> direct, unfiltered access to secured tables.
+>
+> **System (security) context.** A privileged, Microsoft-managed context that
+> resolves the user's effective access against OneLake, reads the underlying
+> Delta files, applies RLS row filtering and CLS projections, and returns only
+> the rows and columns the user is allowed to see.
+
+### Stages
+
+**B1 — the user context becomes its own process.** Statements execute in a child
+per Livy session that holds neither the storage bearer nor the client secret.
+Its Spark session is configured with a token forged for the CALLER, so a path
+read arrives at OneLake as that principal and stage A refuses it when the grant
+narrows. The child keeps everything a cell can see today — stdout capture, the
+`sc` facade, delta_ops interception — or the split is a regression dressed as a
+fix.
+
+**B2 — the system context produces the filtered relation.** With B1 the SQL path
+would break, because the secured view reads through the user's token and OneLake
+now refuses it. So the parent, which still holds the credential, reads the Delta
+files, applies the row filter and column projection, and puts the result where
+the child can read it without OneLake at all. This is the emulator's version of
+"the system context reads and filters"; it materialises where Fabric filters
+in-plan, which is a boundary to state, not to hide.
+
+**B3 — witnesses and parity.** The probe above becomes assertions: the cell
+cannot reach a credential, the path read is refused, the SQL path still returns
+2 of 3 rows and one column, and the owner is untouched. Only then does the
+direct-path-access row go from 🟡 to 🟢.
+
+### Costs, stated before building
+
+- **A process per Livy session** is memory and start-up latency the agent does
+  not spend today.
+- **B2 materialises.** A filtered snapshot is a copy, and a copy is stale the
+  moment the table moves. Per-statement refresh keeps it honest and costs the
+  copy each time.
+- **The `sc` facade and RDD contract cross a process boundary.** Some of what
+  works today may not survive, and what does not must be reported rather than
+  quietly dropped.
