@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -325,5 +326,137 @@ func TestLivyNativeBatchVariants(t *testing.T) {
 	// Unknown workspace 400s.
 	if w := do(a.livyProxy, admin, "POST", `{"file":"nope/lh.Lakehouse/Files/job.py"}`, pv(ws.ID, lake.ID, "batches")); w.Code != http.StatusBadRequest {
 		t.Fatalf("unknown ws = %d", w.Code)
+	}
+}
+
+// The agent has one interpreter for many sessions, so a statement that did not
+// say whose it is would be a statement the engine cannot apply OneLake security
+// to. Assert the principal reaches the agent on the wire, not just that the
+// session remembers it.
+func TestLivyStatementsCarryThePrincipalToTheAgent(t *testing.T) {
+	var seen []map[string]any
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": "idle"})
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		seen = append(seen, body)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "data": map[string]any{"text/plain": "1"}})
+	}))
+	defer agent.Close()
+
+	a, st := newAPI(t)
+	if err := a.SetLivyAgent(agent.URL); err != nil {
+		t.Fatal(err)
+	}
+	ws := seedWorkspace(t, st)
+	lake := &store.Item{WorkspaceID: ws.ID, DisplayName: "lake", Type: "Lakehouse"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	vals := map[string]string{"wid": ws.ID, "lid": lake.ID, "livypath": "sessions"}
+	created := do(a.livyProxy, admin, "POST", `{"kind":"pyspark"}`, vals)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create session = %d %s", created.Code, created.Body)
+	}
+	var sess struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &sess); err != nil {
+		t.Fatal(err)
+	}
+	vals["livypath"] = fmt.Sprintf("sessions/%d/statements", sess.ID)
+	if w := do(a.livyProxy, admin, "POST", `{"code":"1+1"}`, vals); w.Code != http.StatusCreated {
+		t.Fatalf("submit statement = %d %s", w.Code, w.Body)
+	}
+
+	// Session creation also registers the lakehouse tables, so pick out the
+	// user's statement rather than assuming it is the only one.
+	var users []map[string]any
+	for _, st := range seen {
+		if code, _ := st["code"].(string); strings.Contains(code, "1+1") {
+			users = append(users, st)
+		}
+	}
+	if len(users) != 1 {
+		t.Fatalf("agent saw %d user statements among %d, want 1", len(users), len(seen))
+	}
+	if got := users[0]["principal"]; got != admin.ID {
+		t.Fatalf("principal = %v, want %q — the agent cannot enforce for an unnamed user", got, admin.ID)
+	}
+}
+
+// The item travels only when it HAS policy. That gate is what lets a stack
+// pinned to an older agent image keep working on unsecured items, while an
+// item with roles reaches an agent that will refuse rather than run the cell
+// unfiltered.
+func TestTheItemIsSentOnlyWhenItHasPolicy(t *testing.T) {
+	var seen []map[string]any
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": "idle"})
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		seen = append(seen, body)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "data": map[string]any{"text/plain": "1"}})
+	}))
+	defer agent.Close()
+
+	a, st := newAPI(t)
+	if err := a.SetLivyAgent(agent.URL); err != nil {
+		t.Fatal(err)
+	}
+	ws := seedWorkspace(t, st)
+	lake := &store.Item{WorkspaceID: ws.ID, DisplayName: "lake", Type: "Lakehouse"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	vals := map[string]string{"wid": ws.ID, "lid": lake.ID, "livypath": "sessions"}
+	created := do(a.livyProxy, admin, "POST", `{"kind":"pyspark"}`, vals)
+	var sess struct {
+		ID int `json:"id"`
+	}
+	_ = json.Unmarshal(created.Body.Bytes(), &sess)
+	vals["livypath"] = fmt.Sprintf("sessions/%d/statements", sess.ID)
+
+	userStatement := func() map[string]any {
+		t.Helper()
+		for i := len(seen) - 1; i >= 0; i-- {
+			if code, _ := seen[i]["code"].(string); strings.Contains(code, "marker") {
+				return seen[i]
+			}
+		}
+		t.Fatal("no user statement reached the agent")
+		return nil
+	}
+
+	// No roles on the item: the agent is told who, but not where, so an older
+	// image runs the cell exactly as before.
+	do(a.livyProxy, admin, "POST", `{"code":"marker1"}`, vals)
+	st1 := userStatement()
+	if st1["principal"] != admin.ID {
+		t.Fatalf("principal missing: %v", st1)
+	}
+	if _, ok := st1["item"]; ok {
+		t.Fatalf("item sent for an unsecured lakehouse: %v", st1)
+	}
+
+	// With a role, the item travels and enforcement becomes required.
+	if err := st.PutOneLakeRoles(lake.ID, []store.OneLakeRole{{
+		ItemID: lake.ID, Name: "readers",
+		Body: []byte(`{"name":"readers","decisionRules":[],"members":{}}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	do(a.livyProxy, admin, "POST", `{"code":"marker2"}`, vals)
+	st2 := userStatement()
+	if st2["item"] != lake.ID || st2["workspace"] != ws.ID {
+		t.Fatalf("a secured item did not reach the agent: %v", st2)
 	}
 }

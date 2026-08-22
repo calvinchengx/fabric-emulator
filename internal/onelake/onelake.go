@@ -25,6 +25,7 @@ import (
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/pkg/onelakesec"
 )
 
 // StorageAudience is the only token audience OneLake accepts.
@@ -442,6 +443,20 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	segs := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+
+	// The engine-facing security API sits on this host under its own /v1.0
+	// prefix, so it is dispatched before the ADLS path grammar below claims
+	// the segments.
+	if len(segs) == 6 && segs[0] == "v1.0" && segs[1] == "workspaces" &&
+		segs[3] == "artifacts" && segs[5] == "securityPolicy" {
+		writeDFSErr(w, dfsError{"PathNotFound", http.StatusNotFound,
+			"Use securityPolicy/principalAccess."})
+		return
+	}
+	if isPrincipalAccessPath(segs) {
+		s.principalAccess(w, r, p, segs[2], segs[4])
+		return
+	}
 	if len(segs) == 0 || segs[0] == "" {
 		// Account level: HEAD only.
 		if r.Method == http.MethodHead {
@@ -465,23 +480,42 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// OneLake API access is the ReadAll permission: Admin/Member/Contributor
-	// only (roles-workspaces.md). Viewers read through the SQL endpoint
-	// (ReadData), which the emulator does not model — so they are denied
-	// here, exactly as in real Fabric.
-	if store.RoleRank(role) < store.RoleRank(store.RoleContributor) {
+	// only (roles-workspaces.md). A Viewer has no ReadAll — but OneLake
+	// security can GRANT one specific paths: "No by default. Use OneLake
+	// security to grant the access" (data-access-control-model.md).
+	//
+	// So a Viewer is not refused here. The grant is per ITEM and per PATH, and
+	// neither is known yet, so the decision moves to authorizeViewer below.
+	// Anyone with no workspace role at all is refused now regardless: workspace
+	// permissions are "the first security boundary", and OneLake security
+	// narrows within an item rather than admitting a stranger to the tenant.
+	viewerOnly := store.RoleRank(role) < store.RoleRank(store.RoleContributor)
+	if viewerOnly && role == "" {
 		writeDFSErr(w, dfsError{"AuthorizationFailure", http.StatusForbidden,
-			"OneLake API access requires ReadAll (the Contributor role or above); Viewers read via the SQL endpoint."})
+			"OneLake API access requires ReadAll (the Contributor role or above), or a OneLake security role granting the path."})
 		return
+	}
+	// A Viewer may LIST, filtered to what a role covers — an engine enumerates
+	// a table before reading it. Everything else at the workspace level stays
+	// refused: a grant is scoped to an item and confers nothing above it.
+	var filter *viewerFilter
+	if viewerOnly {
+		filter = s.newViewerFilter(p.ID)
 	}
 
 	// Workspace (container) level.
 	if len(segs) == 1 {
 		switch {
 		case r.Method == http.MethodHead:
+			if viewerOnly {
+				writeDFSErr(w, dfsError{"AuthorizationFailure", http.StatusForbidden,
+					"OneLake API access requires ReadAll (the Contributor role or above)."})
+				return
+			}
 			permHeaders(w)
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Query().Get("resource") == "filesystem":
-			s.list(w, r, ws)
+			s.list(w, r, ws, filter)
 		default:
 			// Managing workspaces is a Fabric-experience operation.
 			writeDFSErr(w, dfsError{"OperationNotAllowedOnFilesystem", http.StatusConflict,
@@ -496,6 +530,17 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := strings.Join(segs[2:], "/")
+
+	// A Viewer reaches only what a OneLake security role grants, and only for
+	// reading. Admin/Member/Contributor never arrive here: their Write
+	// permission "overrides any OneLake security Read permissions", so a role
+	// cannot take away what the workspace already gave.
+	if viewerOnly {
+		if derr := s.authorizeViewer(it.ID, rel, p.ID, r.Method); derr != nil {
+			writeDFSErr(w, *derr)
+			return
+		}
+	}
 
 	// The item root (/{item}) and its first level (/{item}/Files, /Tables)
 	// are Fabric-managed: readable, never created/renamed/deleted via ADLS.
@@ -690,7 +735,7 @@ func (s *Service) patch(w http.ResponseWriter, r *http.Request, itemID, rel stri
 }
 
 // list implements GET /{workspace}?resource=filesystem[&directory=][&recursive=].
-func (s *Service) list(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
+func (s *Service) list(w http.ResponseWriter, r *http.Request, ws *store.Workspace, filter *viewerFilter) {
 	recursive := strings.EqualFold(r.URL.Query().Get("recursive"), "true")
 	directory := strings.Trim(r.URL.Query().Get("directory"), "/")
 
@@ -710,7 +755,11 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, ws *store.Workspa
 		}
 		for _, it := range items {
 			name := it.DisplayName + "." + it.Type
-			out = append(out, entry{Name: name, IsDirectory: "true"})
+			// The item directory itself is visible only to someone who can see
+			// something inside it, or its mere name discloses what exists.
+			if filter == nil {
+				out = append(out, entry{Name: name, IsDirectory: "true"})
+			}
 			if recursive {
 				paths, err := s.Store.ListOneLakePaths(it.ID, "", true)
 				if err != nil {
@@ -718,6 +767,9 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, ws *store.Workspa
 					return
 				}
 				for _, p := range paths {
+					if !filter.allows(it.ID, p.RelPath) {
+						continue // withheld: no role covers it
+					}
 					e := entry{Name: name + "/" + p.RelPath}
 					if p.IsDir {
 						e.IsDirectory = "true"
@@ -745,6 +797,9 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, ws *store.Workspa
 			return
 		}
 		for _, p := range paths {
+			if !filter.allows(it.ID, p.RelPath) {
+				continue // withheld: no role covers it
+			}
 			e := entry{Name: segs[0] + "/" + p.RelPath}
 			if p.IsDir {
 				e.IsDirectory = "true"
@@ -753,6 +808,12 @@ func (s *Service) list(w http.ResponseWriter, r *http.Request, ws *store.Workspa
 			}
 			out = append(out, e)
 		}
+	}
+	// A short listing because policy could not be read would say "you have
+	// access to nothing", which is a different fact from what happened.
+	if err := filter.Err(); err != nil {
+		writeDFSErr(w, dfsError{"InternalError", http.StatusInternalServerError, err.Error()})
+		return
 	}
 	if out == nil {
 		out = []entry{}
@@ -797,4 +858,95 @@ func (t *traceWriter) Write(b []byte) (int, error) {
 	n, err := t.ResponseWriter.Write(b)
 	t.n += n
 	return n, err
+}
+
+// authorizeViewer decides whether a Viewer — who has no ReadAll — may touch one
+// path, on the strength of the item's OneLake security roles.
+//
+// READ ONLY, DELIBERATELY. The model defines a ReadWrite permission, and a
+// Viewer holding one could legitimately write. This increment implements Read
+// and refuses the rest rather than accepting a ReadWrite grant it would then
+// half-honour: a write allowed here but not scoped elsewhere is worse than a
+// write refused. docs/54-onelake-security.md records the boundary.
+func (s *Service) authorizeViewer(itemID, rel, principalID, method string) *dfsError {
+	if method != http.MethodGet && method != http.MethodHead {
+		return &dfsError{"AuthorizationFailure", http.StatusForbidden,
+			"A OneLake security role grants Read; writing requires the Contributor role or above."}
+	}
+	roles, err := s.Store.EvaluatableRoles(itemID)
+	if err != nil {
+		return &dfsError{"InternalError", http.StatusInternalServerError, err.Error()}
+	}
+	// Deny by default: no roles is a decision, not a reason to fall through to
+	// some looser check.
+	entries := onelakesec.Effective(roles,
+		onelakesec.Principal{ObjectID: principalID}, onelakesec.InputFor(rel))
+	if !onelakesec.Allows(entries, rel) {
+		return &dfsError{"AuthorizationFailure", http.StatusForbidden,
+			"No OneLake security role grants this principal access to the path."}
+	}
+	return nil
+}
+
+// viewerFilter decides which listing entries a Viewer may see, from that
+// Viewer's OneLake security roles.
+//
+// WHY FILTER RATHER THAN REFUSE. A Delta reader does not fetch one path: it
+// LISTS the table directory, then reads `_delta_log` and the parquet parts. So
+// refusing the list refuses the engine even though every individual path it
+// wanted is granted — measured with real delta-rs, which is why this exists.
+//
+// WHY FILTER RATHER THAN ALLOW. An unfiltered listing hands back the names of
+// every table the caller cannot read. "Read: grants the user the ability to
+// read data from a table and view the associated table and column metadata" —
+// metadata is part of what a role grants, so it is part of what its absence
+// withholds.
+//
+// FAILS CLOSED, AND SAYS SO. A store error hides everything rather than
+// showing everything, and Err() lets the caller turn that into a 500 instead of
+// serving an empty listing that reads like "you have access to nothing".
+type viewerFilter struct {
+	svc         *Service
+	principalID string
+	cache       map[string][]onelakesec.AccessEntry
+	err         error
+}
+
+// newViewerFilter builds a filter. Roles are fetched once per item and input
+// half, because a workspace listing crosses every item in it and re-reading per
+// path would turn one listing into an N-query scan.
+func (s *Service) newViewerFilter(principalID string) *viewerFilter {
+	return &viewerFilter{svc: s, principalID: principalID,
+		cache: map[string][]onelakesec.AccessEntry{}}
+}
+
+func (f *viewerFilter) allows(itemID, rel string) bool {
+	if f == nil {
+		return true // not a Viewer: nothing to filter
+	}
+	if f.err != nil {
+		return false
+	}
+	input := onelakesec.InputFor(rel)
+	key := itemID + "|" + input
+	entries, ok := f.cache[key]
+	if !ok {
+		roles, err := f.svc.Store.EvaluatableRoles(itemID)
+		if err != nil {
+			f.err = err
+			return false
+		}
+		entries = onelakesec.Effective(roles,
+			onelakesec.Principal{ObjectID: f.principalID}, input)
+		f.cache[key] = entries
+	}
+	return onelakesec.Allows(entries, rel)
+}
+
+// Err reports a failure to read policy during filtering.
+func (f *viewerFilter) Err() error {
+	if f == nil {
+		return nil
+	}
+	return f.err
 }

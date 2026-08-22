@@ -27,7 +27,7 @@ func (f *fakeSpliceBackend) Query(context.Context, string) (*Result, error) {
 	return nil, fmt.Errorf("unused")
 }
 
-func (f *fakeSpliceBackend) Dial(context.Context, string) (net.Conn, []byte, error) {
+func (f *fakeSpliceBackend) Dial(context.Context, string, string, Role) (net.Conn, []byte, error) {
 	if f.dialErr != nil {
 		return nil, nil, f.dialErr
 	}
@@ -84,8 +84,8 @@ func TestSpliceEndToEnd(t *testing.T) {
 	srv := &Server{
 		Auth:    func(string) error { return nil },
 		Backend: be,
-		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
-			return "item-db", false, nil
+		OnConnect: func(context.Context, string, string, string) (Connection, error) {
+			return Connection{TargetDB: "item-db"}, nil
 		},
 	}
 	ln, lerr := net.Listen("tcp", "127.0.0.1:0")
@@ -210,8 +210,8 @@ func TestReEncodeReadOnly(t *testing.T) {
 	srv := &Server{
 		Auth:    func(string) error { return nil },
 		Backend: roBackend{},
-		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
-			return "db", true, nil // read-only surface
+		OnConnect: func(context.Context, string, string, string) (Connection, error) {
+			return Connection{TargetDB: "db", ReadOnly: true}, nil // read-only surface
 		},
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -244,8 +244,8 @@ func TestOnConnectRejects(t *testing.T) {
 	srv := &Server{
 		Auth:    func(string) error { return nil },
 		Backend: roBackend{},
-		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
-			return "", false, fmt.Errorf("access denied: no role")
+		OnConnect: func(context.Context, string, string, string) (Connection, error) {
+			return Connection{}, fmt.Errorf("access denied: no role")
 		},
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -308,9 +308,9 @@ func TestLoginWithoutDatabaseIsRejected(t *testing.T) {
 	srv := &Server{
 		Auth:    func(string) error { return nil }, // a valid token, no workspace role
 		Backend: be,
-		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
+		OnConnect: func(context.Context, string, string, string) (Connection, error) {
 			authorized = true
-			return "db", false, nil
+			return Connection{TargetDB: "db"}, nil
 		},
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -362,7 +362,7 @@ func (c *countingSpliceBackend) Query(_ context.Context, q string) (*Result, err
 	return &Result{Columns: []Column{{Name: "x", Type: ColInt}}, Rows: [][]any{{int64(1)}}}, nil
 }
 
-func (c *countingSpliceBackend) Dial(context.Context, string) (net.Conn, []byte, error) {
+func (c *countingSpliceBackend) Dial(context.Context, string, string, Role) (net.Conn, []byte, error) {
 	c.mu.Lock()
 	c.dialed++
 	c.mu.Unlock()
@@ -398,8 +398,8 @@ func TestConfiguredAuthorizerNeverReachesTheReEncodeRelay(t *testing.T) {
 	srv := &Server{
 		Auth:    func(string) error { return nil },
 		Backend: be,
-		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
-			return "item-db", false, nil
+		OnConnect: func(context.Context, string, string, string) (Connection, error) {
+			return Connection{TargetDB: "item-db"}, nil
 		},
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -461,8 +461,8 @@ func TestReEncodeRelayRejectsStrictStatement(t *testing.T) {
 		Auth:    func(string) error { return nil },
 		Backend: be,
 		Strict:  true,
-		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
-			return "db", false, nil
+		OnConnect: func(context.Context, string, string, string) (Connection, error) {
+			return Connection{TargetDB: "db"}, nil
 		},
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -559,8 +559,8 @@ func TestReEncodeRelaySkipsNonBatchMessages(t *testing.T) {
 	srv := &Server{
 		Auth:    func(string) error { return nil },
 		Backend: be,
-		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
-			return "db", false, nil
+		OnConnect: func(context.Context, string, string, string) (Connection, error) {
+			return Connection{TargetDB: "db"}, nil
 		},
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -617,8 +617,8 @@ func TestSpliceDialRejectsLogin(t *testing.T) {
 	srv := &Server{
 		Auth:    func(string) error { return nil },
 		Backend: &fakeSpliceBackend{dialErr: fmt.Errorf("engine down")},
-		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
-			return "item-db", false, nil
+		OnConnect: func(context.Context, string, string, string) (Connection, error) {
+			return Connection{TargetDB: "item-db"}, nil
 		},
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -652,8 +652,8 @@ func TestLoginWithNoValidatorIsRejected(t *testing.T) {
 	be := &countingBackend{}
 	srv := &Server{ // deliberately no Auth
 		Backend: be,
-		OnConnect: func(context.Context, string, string, string) (string, bool, error) {
-			return "db", false, nil
+		OnConnect: func(context.Context, string, string, string) (Connection, error) {
+			return Connection{TargetDB: "db"}, nil
 		},
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

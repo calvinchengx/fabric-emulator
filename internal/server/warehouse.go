@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/tds"
 	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 )
 
@@ -30,31 +31,31 @@ type warehouseBackend interface {
 // rejected), and the surface is read-only for a Lakehouse (the analytics
 // endpoint) or a Viewer — read-write for a Warehouse with Contributor+.
 // principalOf resolves the FedAuth token to its principal id.
-func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(token string) (string, error)) func(context.Context, string, string, string) (string, bool, error) {
+func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(token string) (string, error)) func(context.Context, string, string, string) (tds.Connection, error) {
 	// One Reflector for the life of the server, captured here rather than made
 	// per connection — its whole value is remembering across logins. See its
 	// doc: without that memory a retrying client restarts the entire reflection
 	// every attempt and can only finish if one attempt fits inside the login
 	// timeout.
 	reflector := &warehouse.Reflector{}
-	return func(ctx context.Context, server, database, token string) (string, bool, error) {
+	return func(ctx context.Context, server, database, token string) (tds.Connection, error) {
 		principal, err := principalOf(token)
 		if err != nil {
-			return "", false, fmt.Errorf("resolving principal: %w", err)
+			return tds.Connection{}, fmt.Errorf("resolving principal: %w", err)
 		}
 		it, err := resolveSQLItem(st, server, database)
 		if err != nil {
-			return "", false, err
+			return tds.Connection{}, err
 		}
 		role, err := st.RoleOf(it.WorkspaceID, principal)
 		if err != nil {
-			return "", false, fmt.Errorf("checking access: %w", err)
+			return tds.Connection{}, fmt.Errorf("checking access: %w", err)
 		}
 		if role == "" {
-			return "", false, fmt.Errorf("access denied: the principal has no role on the workspace of %q", database)
+			return tds.Connection{}, fmt.Errorf("access denied: the principal has no role on the workspace of %q", database)
 		}
 		if err := be.EnsureDatabase(ctx, it.ID); err != nil {
-			return "", false, fmt.Errorf("preparing database: %w", err)
+			return tds.Connection{}, fmt.Errorf("preparing database: %w", err)
 		}
 		// A lakehouse endpoint is always read-only; a warehouse is read-write for
 		// Contributor and above, read-only for a Viewer.
@@ -62,16 +63,40 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 		switch it.Type {
 		case "Lakehouse":
 			if _, err := reflector.Reflect(ctx, be.DB(it.ID), st, it.ID); err != nil {
-				return "", false, fmt.Errorf("reflecting lakehouse: %w", err)
+				return tds.Connection{}, fmt.Errorf("reflecting lakehouse: %w", err)
 			}
-			return it.ID, readOnly, nil
+			// The database rung, which is NOT the same question as read-only: a
+			// Contributor may write but must not be able to rewrite the security
+			// policy that constrains them. Admin and Member own the item in Fabric's
+			// model — "can edit OneLake security roles" is exactly those two — so they
+			// are the ones who can author here too.
+			dbRole := tds.RoleReader
+			switch {
+			case store.RoleRank(role) >= store.RoleRank(store.RoleMember):
+				dbRole = tds.RoleOwner
+			case !readOnly:
+				dbRole = tds.RoleWriter
+			}
+			return tds.Connection{TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole}, nil
 		case "Warehouse", "SQLDatabase":
 			// A Warehouse and a Fabric SQL Database are both read-write T-SQL over
 			// their own SQL Server database (the SQL Database is OLTP and also mirrors
 			// to OneLake Delta — see warehouse.Mirror).
-			return it.ID, readOnly, nil
+			// The database rung, which is NOT the same question as read-only: a
+			// Contributor may write but must not be able to rewrite the security
+			// policy that constrains them. Admin and Member own the item in Fabric's
+			// model — "can edit OneLake security roles" is exactly those two — so they
+			// are the ones who can author here too.
+			dbRole := tds.RoleReader
+			switch {
+			case store.RoleRank(role) >= store.RoleRank(store.RoleMember):
+				dbRole = tds.RoleOwner
+			case !readOnly:
+				dbRole = tds.RoleWriter
+			}
+			return tds.Connection{TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole}, nil
 		default:
-			return "", false, fmt.Errorf("item %q (type %s) has no SQL endpoint", database, it.Type)
+			return tds.Connection{}, fmt.Errorf("item %q (type %s) has no SQL endpoint", database, it.Type)
 		}
 	}
 }

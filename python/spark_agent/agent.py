@@ -75,7 +75,7 @@ def _normalise_connect_confs():
 _normalise_connect_confs()
 
 
-def _install_delta_ops():
+def _install_delta_ops(target=None):
     """Route OPTIMIZE/VACUUM to delta-rs when the engine cannot run them.
 
     Wrapping `spark.sql` rather than scanning statement text: user code reaches
@@ -100,7 +100,7 @@ def _install_delta_ops():
     except ImportError:  # pragma: no cover - runtime without deltalake
         return
 
-    delta_ops.install(spark, storage.options)
+    delta_ops.install(target if target is not None else spark, storage.options)
 
 
 _install_delta_ops()
@@ -330,6 +330,13 @@ def ns(session):
         # to the shared session, where catalog.py detects the collision instead.
         session_spark, isolated = catalog.isolate(spark)
         session_isolated[session] = isolated
+        # A per-session engine session is a DIFFERENT SparkSession object, so
+        # the OPTIMIZE/VACUUM interception installed on the root at import does
+        # not reach it — `spark.sql` there is the unwrapped one and Sail answers with
+        # "found OPTIMIZE at 0:8". Install per session, which the e2e caught the
+        # moment isolation started actually working.
+        if isolated:
+            _install_delta_ops(session_spark)
         namespaces[session] = {"spark": session_spark}
         try:
             # A JVM session has the real thing; never shadow it.
@@ -467,6 +474,61 @@ def register_tables(session, schema, tables, schemas=None):
                             isolated=session_isolated.get(session, True))
 
 
+def _apply_onelake_security(req, session):
+    """Reshape the session for the statement's principal, if we know one.
+
+    SILENT WHEN UNCONFIGURED, and deliberately: an agent driven by something
+    other than this emulator's Livy layer gets no principal, and must keep
+    working rather than refuse every statement. It is not a security hole — the
+    unconfigured case is the one where nothing has been secured either.
+
+    A FAILURE TO READ POLICY DOES NOT RUN THE CELL UNFILTERED. The exception
+    propagates: better a statement that errors than one that quietly returns
+    rows the caller may not have.
+    """
+    principal = req.get("principal")
+    workspace = req.get("workspace")
+    item = req.get("item")
+    if not (principal and workspace and item):
+        return
+    # The emulator sends workspace+item only when the item HAS policy, so
+    # arriving here means enforcement is required. An agent image without the
+    # module cannot honour that, and running the cell anyway would serve
+    # unfiltered rows to someone the policy narrows — so refuse instead.
+    try:
+        import onelake_security
+    except ImportError as exc:  # pragma: no cover - older agent image
+        raise RuntimeError(
+            "this item has OneLake security roles, and this Spark agent image "
+            "cannot apply them (onelake_security missing). Bump the agent "
+            "digest, or remove the roles."
+        ) from exc
+    import storage
+
+    base = (os.environ.get("AZURE_STORAGE_ENDPOINT") or "").rstrip("/")
+    if base.endswith("/onelake"):
+        base = base[: -len("/onelake")]
+    tok = storage.token()
+    if not base or not tok:
+        return
+    access = onelake_security.fetch_access(base, workspace, item, principal, tok)
+    # THE SESSION'S SparkSession, never the process-wide one. `ns()` hands each
+    # Livy session a private session exactly so temp views are not process-wide,
+    # and a filter installed on the shared session is a filter applied to
+    # everyone: the first run of this narrowed the OWNER's session to the
+    # viewer's rows, which the e2e caught. Same shared-state trap as sys.argv
+    # and stdout, one layer up.
+    sess_spark = ns(session).get("spark")
+    if sess_spark is None:
+        return
+    try:
+        tables = [r[1] for r in sess_spark.sql("SHOW TABLES").collect()]
+    except Exception:  # noqa: BLE001 - no catalog yet: nothing to reshape
+        return
+    onelake_security.apply(sess_spark, access, tables,
+                           log=lambda m: print(m, flush=True))
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         code, body = httpjson.encode_response(code, obj)
@@ -526,6 +588,12 @@ class Handler(BaseHTTPRequestHandler):
                 # on 3.8 in the JVM overlay image
                 # (test_spark_agent_runs_on_python38.py) — ruff is right about
                 # the target it was told about, not the one that ships.
+                #
+                # OneLake security first: the SESSION is reshaped so a table
+                # this caller may not read is not in it, and one they may read
+                # in part is a filtered view. Per statement rather than at bind,
+                # so revoking access reaches the next cell.
+                _apply_onelake_security(req, session)
                 with task_scope.scoped(scope_for(session)):  # noqa: SIM117
                     with cell_context(req.get("jobId"), req.get("cellIndex")):
                         with runtime_scope(session, req):
@@ -575,9 +643,21 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 print("files_mount: flush on close failed:\n"
                       + traceback.format_exc(), flush=True)
-            namespaces.pop(req.get("session", ""), None)
-            session_context.pop(req.get("session", ""), None)
-            session_scopes.pop(req.get("session", ""), None)
+            sid = req.get("session", "")
+            gone = namespaces.pop(sid, None)
+            session_context.pop(sid, None)
+            session_scopes.pop(sid, None)
+            # A Connect-isolated session is a session ON THE SERVER, not just a
+            # dict here: dropping the reference leaves Sail holding it until its
+            # timeout (an hour, by our compose). Release it, but only when this
+            # session actually owned one — stopping the SHARED session would
+            # take every other Livy session down with it.
+            if gone is not None and session_isolated.get(sid):
+                try:
+                    gone["spark"].stop()
+                except Exception:  # noqa: BLE001 - already gone, or no stop()
+                    pass
+            session_isolated.pop(sid, None)
             self._send(200, {"closed": True})
         else:
             self._send(404, {"error": "not found"})

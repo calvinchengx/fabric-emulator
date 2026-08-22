@@ -1,5 +1,32 @@
 {
+  "row-level-security-t-sql-create-security-policy-filter-predicate": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "Row-level security (T-SQL) \u2014 CREATE SECURITY POLICY \u2026 FILTER PREDICATE",
+    "witnesses": [
+      "ci:warehouse-tds",
+      "go:TestRelayEnforcesRowLevelSecurity",
+      "go:TestSQLServerRestrictsTheProvisionedCaller"
+    ]
+  },
+  "column-level-security-t-sql-grant-select-on-t-col": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "Column-level security (T-SQL) \u2014 GRANT SELECT ON t(col)",
+    "witnesses": [
+      "ci:warehouse-tds",
+      "go:TestRelayEnforcesColumnLevelSecurity"
+    ]
+  },
+  "dynamic-data-masking-alter-table-masked-with": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "Dynamic data masking \u2014 ALTER TABLE \u2026 MASKED WITH",
+    "witnesses": [
+      "ci:warehouse-tds",
+      "go:TestRelayEnforcesDynamicDataMasking"
+    ]
+  },
   "_gated": {
+    "go:TestRelayEnforcesRowLevelSecurity": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestSQLServerRestrictsTheProvisionedCaller": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestMirrorSnapshotsBaseTables": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "go:TestPipelineSQLActivitiesE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "go:TestReflectDecimalColumn": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
@@ -8,7 +35,9 @@
     "sdk:TestWarehouseDeltaReflectionE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "go:TestWarehouseRouter": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "sdk:TestWarehouseSQLServerRelayE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "sdk:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml)."
+    "sdk:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestRelayEnforcesColumnLevelSecurity": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestRelayEnforcesDynamicDataMasking": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "abfss-onelake-dfs-fabric-microsoft-com-production-paths": {
     "section": "Data Engineering (`data-engineering/`)",

@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/calvinchengx/fabric-emulator/internal/auth"
 )
 
 // SetLivyAgent points the native Livy layer at a Spark statement-executor agent
@@ -45,8 +47,17 @@ type livyStatement struct {
 }
 
 type livySession struct {
-	ID         int
-	Kind       string
+	ID   int
+	Kind string
+	// Principal is who opened the session. Real Fabric runs a notebook AS a
+	// user and the engine enforces that user's OneLake security; the agent
+	// cannot ask "who is this" of a statement, so the session carries it.
+	Principal string
+	// Workspace and Item address the lakehouse this session is bound to, which
+	// is what the agent needs to ask OneLake security about the tables it is
+	// about to expose.
+	Workspace  string
+	Item       string
 	statements []*livyStatement
 }
 
@@ -109,12 +120,12 @@ func (a *API) agentPost(path string, body any) (map[string]any, error) {
 
 // livyNative dispatches the Livy-native suffix. RBAC + lakehouse existence are
 // already checked by livyProxy.
-func (a *API) livyNative(w http.ResponseWriter, r *http.Request) {
+func (a *API) livyNative(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	parts := strings.Split(strings.Trim(r.PathValue("livypath"), "/"), "/")
 	m := a.livyMgr()
 	switch {
 	case len(parts) == 1 && parts[0] == "sessions" && r.Method == http.MethodPost:
-		a.createLivySession(w, r, m)
+		a.createLivySession(w, r, m, p)
 	case len(parts) == 1 && parts[0] == "sessions" && r.Method == http.MethodGet:
 		m.mu.Lock()
 		ids := make([]map[string]any, 0, len(m.sessions))
@@ -148,7 +159,7 @@ func sessionBody(s *livySession) map[string]any {
 	return map[string]any{"id": s.ID, "state": "idle", "kind": s.Kind, "appId": fmt.Sprintf("livy-agent-%d", s.ID)}
 }
 
-func (a *API) createLivySession(w http.ResponseWriter, r *http.Request, m *livyManager) {
+func (a *API) createLivySession(w http.ResponseWriter, r *http.Request, m *livyManager, p *auth.Principal) {
 	var body struct {
 		Kind string `json:"kind"`
 	}
@@ -162,7 +173,8 @@ func (a *API) createLivySession(w http.ResponseWriter, r *http.Request, m *livyM
 		return
 	}
 	m.mu.Lock()
-	s := &livySession{ID: m.nextID, Kind: body.Kind}
+	s := &livySession{ID: m.nextID, Kind: body.Kind, Principal: p.ID,
+		Workspace: r.PathValue("wid"), Item: r.PathValue("lid")}
 	m.sessions[s.ID] = s
 	m.nextID++
 	m.mu.Unlock()
@@ -243,8 +255,22 @@ func (a *API) submitLivyStatement(w http.ResponseWriter, r *http.Request, id str
 	}
 
 	// Drive the agent's REPL for this session's namespace — real Spark runs it.
-	out, err := a.agentPost("/statements", map[string]any{
-		"session": strconv.Itoa(s.ID), "code": body.Code, "kind": kind})
+	// The principal travels with every statement, not just at session open:
+	// the agent holds one interpreter for many sessions and has no other way to
+	// know whose OneLake security applies to the code it is about to run.
+	payload := map[string]any{
+		"session": strconv.Itoa(s.ID), "code": body.Code, "kind": kind,
+		"principal": s.Principal}
+	// The item is sent ONLY when it actually has OneLake security roles, and
+	// that is a compatibility decision rather than an optimisation: the agent
+	// treats these fields as "enforcement is required here" and fails closed if
+	// it cannot honour them. Sending them unconditionally would break every
+	// stack pinned to an agent image older than this feature, on items where
+	// there is nothing to enforce.
+	if roles, err := a.Store.EvaluatableRoles(s.Item); err == nil && len(roles) > 0 {
+		payload["workspace"], payload["item"] = s.Workspace, s.Item
+	}
+	out, err := a.agentPost("/statements", payload)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "SparkAgentError", err.Error())
 		return

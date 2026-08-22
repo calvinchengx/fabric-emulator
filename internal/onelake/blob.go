@@ -165,6 +165,16 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	segs := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+
+	// The security API is addressed by its own /v1.0 prefix, and the
+	// account-prefixed OneLake path (`{host}/onelake/...`) lands here rather
+	// than on the dfs handler. One endpoint, reachable by either spelling: a
+	// client picks a surface by URL shape, and this one is not a data path.
+	if isPrincipalAccessPath(segs) {
+		s.principalAccess(w, r, p, segs[2], segs[4])
+		return
+	}
+
 	if len(segs) == 0 || segs[0] == "" {
 		writeBlobErr(w, http.StatusBadRequest, "InvalidUri", "Container (workspace) required.")
 		return
@@ -179,19 +189,37 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 		writeBlobErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	if store.RoleRank(role) < store.RoleRank(store.RoleContributor) {
+	// Same rule as the DFS surface: a Viewer has no ReadAll and is refused by
+	// default, but a OneLake security role can grant one specific paths. The
+	// grant is per item and per path, so the decision waits until both are
+	// known. The two surfaces must agree — a policy honoured on dfs and ignored
+	// on blob is a bypass, and the SDKs pick a surface by URL shape alone.
+	viewerOnly := store.RoleRank(role) < store.RoleRank(store.RoleContributor)
+	if viewerOnly && role == "" {
 		writeBlobErr(w, http.StatusForbidden, "AuthorizationFailure",
-			"OneLake API access requires ReadAll (Contributor or above).")
+			"OneLake API access requires ReadAll (Contributor or above), or a OneLake security role granting the path.")
 		return
+	}
+	// A Viewer may LIST — a Delta reader enumerates a table before reading it —
+	// but sees only what a role covers. Anything else at the container level
+	// stays refused: a grant is scoped to an item and confers nothing above it.
+	var filter *viewerFilter
+	if viewerOnly {
+		filter = s.newViewerFilter(p.ID)
 	}
 
 	// Container level: HEAD (exists) and List Blobs.
 	if len(segs) == 1 {
 		switch {
 		case r.Method == http.MethodHead || (r.Method == http.MethodGet && r.URL.Query().Get("comp") == ""):
+			if viewerOnly {
+				writeBlobErr(w, http.StatusForbidden, "AuthorizationFailure",
+					"OneLake API access requires ReadAll (Contributor or above).")
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Query().Get("comp") == "list":
-			s.listBlobs(w, r, ws)
+			s.listBlobs(w, r, ws, filter)
 		default:
 			writeBlobErr(w, http.StatusConflict, "OperationNotAllowedOnContainer",
 				"Workspaces are managed through Fabric experiences, not Blob APIs.")
@@ -205,6 +233,12 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rel := strings.Join(segs[2:], "/")
+	if viewerOnly {
+		if derr := s.authorizeViewer(it.ID, rel, p.ID, r.Method); derr != nil {
+			writeBlobErr(w, derr.status, derr.code, derr.msg)
+			return
+		}
+	}
 	// Managed folders: blobs live only under the item's managed first level.
 	if len(segs) <= 3 && (r.Method == http.MethodPut || r.Method == http.MethodDelete) {
 		writeBlobErr(w, http.StatusConflict, "OperationNotAllowedOnManagedFolder",
@@ -402,7 +436,7 @@ func guidAddressed(prefix, itemID string) bool {
 // the kernel rejects it as "Invalid table version: N". That makes every
 // delta-rs commit-conflict path fail (OPTIMIZE, VACUUM, MERGE) while plain
 // writes still pass, because only the former re-reads the log from an offset.
-func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
+func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Workspace, filter *viewerFilter) {
 	q := r.URL.Query()
 	prefix := strings.TrimPrefix(q.Get("prefix"), "/")
 	delimiter := q.Get("delimiter")
@@ -440,8 +474,17 @@ func (s *Service) listBlobs(w http.ResponseWriter, r *http.Request, ws *store.Wo
 			if p.IsDir {
 				continue // Blob namespaces are flat; directories are virtual
 			}
+			if !filter.allows(it.ID, p.RelPath) {
+				continue // withheld: no OneLake security role covers it
+			}
 			all = append(all, blob{name: base + "/" + p.RelPath, p: p})
 		}
+	}
+	if err := filter.Err(); err != nil {
+		// Serving a short listing because policy could not be read would say
+		// "you have access to nothing", which is a different fact.
+		writeBlobErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].name < all[j].name })
 

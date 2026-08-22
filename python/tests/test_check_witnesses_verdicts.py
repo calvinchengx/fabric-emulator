@@ -157,7 +157,40 @@ def test_a_stale_gate_declaration_fails(repo, capsys):
     assert run() == 1
     out = capsys.readouterr().out
     assert "Stale gate declarations" in out
-    assert "remove the stale" in out
+    assert "no longer skips" in out
+
+
+def test_a_declaration_for_a_witness_no_claim_names_says_so(repo, capsys):
+    # Stale cause two: the witness was renamed or deleted, so no manifest entry
+    # mentions it. Nothing to check against the parity map — just drop it.
+    repo([("Widgets", "🟢 Real")],
+         {"_gated": {"go:TestVanished": "needs a real SQL Server"},
+          "widgets": {"section": "Platform / fundamentals", "claim": "Widgets",
+                      "witnesses": ["go:TestReal"]}})
+    assert run() == 1
+    out = capsys.readouterr().out
+    assert "named by no manifest entry" in out
+    assert "no longer skips" not in out
+
+
+def test_a_gated_witness_behind_a_demoted_row_is_not_reported_as_ungated(repo, capsys):
+    # Stale cause three, and the one that misled a reader for real: the witness
+    # STILL skips, but its claim is no longer marked supported, so the claim
+    # walk never credits it. Reporting that as "no longer skips" sent someone
+    # to delete a live declaration when the actual defect was a verdict cell
+    # left at 🔴 while the row's prose claimed support.
+    repo([("Widgets", "🟢 Real"), ("Gadgets", "🔴 Not implemented")],
+         {"_gated": {"go:TestGated": "needs a real SQL Server"},
+          "widgets": {"section": "Platform / fundamentals", "claim": "Widgets",
+                      "witnesses": ["go:TestReal"]},
+          "gadgets": {"section": "Platform / fundamentals", "claim": "Gadgets",
+                      "witnesses": ["go:TestGated"]}})
+    assert run() == 1
+    out = capsys.readouterr().out
+    assert "credited to no SUPPORTED claim" in out
+    assert "it still skips" in out
+    assert "gadgets" in out          # names the entry to look at
+    assert "no longer skips" not in out
 
 
 def test_a_claim_whose_every_witness_can_skip_fails(repo, capsys):

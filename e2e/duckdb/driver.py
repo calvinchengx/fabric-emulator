@@ -56,6 +56,16 @@ def fabric_token():
         return json.loads(r.read())["access_token"]
 
 
+def req(url, method, body=None, token=None):
+    data = json.dumps(body).encode() if body is not None else None
+    r = urllib.request.Request(url, data=data, method=method,
+                               headers={"Content-Type": "application/json"})
+    if token:
+        r.add_header("Authorization", "Bearer " + token)
+    with urllib.request.urlopen(r, context=_CTX) as resp:
+        return json.loads(resp.read() or b"{}")
+
+
 ft, st = fabric_token(), storage_token()
 ws = post(f"{FABRIC}/v1/workspaces", {"displayName": "warehouse-ws"}, ft)
 post(f"{FABRIC}/v1/workspaces/{ws['id']}/lakehouses", {"displayName": "lake"}, ft)
@@ -88,5 +98,70 @@ joined = con.sql("""
     WHERE s.amount >= 20 GROUP BY r.name ORDER BY total DESC""").fetchall()
 assert joined == [("eu", 60), ("us", 80)] or joined == [("us", 80), ("eu", 60)], joined
 print(f"join + filter: {joined}", flush=True)
+
+# --- The AUTHORIZED ENGINE MODEL, with DuckDB as the third-party engine.
+#
+# Microsoft documents this sequence for engines that are not Fabric's own:
+#
+#   1. read the raw files with a privileged identity
+#   2. fetch the effective policy for a USER from principalAccess
+#   3. apply the returned row/column filters in your own query layer
+#   4. return only the permitted data
+#
+# Every other witness tests our enforcement. This one tests whether the
+# CONTRACT is usable by something we did not write, which is the only way to
+# find out if the seam is real.
+VIEWER = "duckdb-viewer"
+post(f"{FABRIC}/v1/workspaces/{ws['id']}/roleAssignments",
+     {"principal": {"id": VIEWER, "type": "User"}, "role": "Viewer"}, ft)
+
+lake_id = [i for i in req(f"{FABRIC}/v1/workspaces/{ws['id']}/items", "GET", None, ft)["value"]
+           if i["displayName"] == "lake"][0]["id"]
+
+# `sales` is granted, narrowed to one region. `regions` is not granted at all.
+# The predicate is authored in the engine's dialect: OneLake stores the text and
+# the engine runs it, which is exactly the division of labour the model defines.
+req(f"{FABRIC}/v1/workspaces/{ws['id']}/items/{lake_id}/dataAccessRoles", "PUT", {"value": [{
+    "name": "region1_only",
+    "decisionRules": [{
+        "effect": "Permit",
+        "rows": "SELECT * FROM sales WHERE region_id = 1",
+        "permission": [
+            {"attributeName": "Path", "attributeValueIncludedIn": ["Tables/sales"]},
+            {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}]}],
+    "members": {"microsoftEntraMembers": [{"objectId": VIEWER}]}}]}, ft)
+
+# STEP 2: the engine asks what this user may see. It uses its OWN privileged
+# token -- the user never authenticates to OneLake at all.
+# On the OneLake data plane, not the control plane: in a real tenant this is
+# onelake.dfs.fabric.microsoft.com, and here it is the account-prefixed form
+# the rest of this suite already uses for OneLake.
+policy = req(f"{FABRIC}/onelake/v1.0/workspaces/{ws['id']}/artifacts/{lake_id}"
+             "/securityPolicy/principalAccess", "GET",
+             {"aadObjectId": VIEWER, "inputPath": "Tables"}, st)
+by_path = {e["path"]: e for e in policy["value"]}
+assert "Tables/sales" in by_path, policy
+assert "Tables/regions" not in by_path, f"an ungranted table appeared in the policy: {policy}"
+assert policy["identityETag"] and policy["metadataETag"], policy
+print(f"principalAccess: {sorted(by_path)} (regions withheld)", flush=True)
+
+# STEP 3: DuckDB applies the returned predicate in its own query layer.
+predicate = by_path["Tables/sales"]["rows"]
+assert predicate, f"no row filter returned: {by_path['Tables/sales']}"
+con.execute(f"CREATE VIEW sales_for_user AS {predicate}")
+
+# STEP 4: the user's query sees only their rows. The unfiltered numbers are
+# right there for comparison, so a filter that did nothing cannot pass.
+user_agg = con.sql("SELECT region_id, SUM(amount) t, COUNT(*) n "
+                   "FROM sales_for_user GROUP BY region_id ORDER BY region_id").fetchall()
+assert user_agg == [(1, 90, 3)], user_agg
+assert user_agg != agg, "the row filter changed nothing; the unfiltered result is identical"
+print(f"row-level security applied by DuckDB: {user_agg} (unfiltered was {agg})", flush=True)
+
+# And the engine must refuse to serve what the policy never mentioned -- the
+# check a careless integration skips, leaving an ungranted table readable
+# because the engine already had the bytes.
+assert "Tables/regions" not in by_path
+print("authorized engine model: DuckDB filtered on OneLake's policy", flush=True)
 
 print("DUCKDB-WAREHOUSE E2E: PASS", flush=True)

@@ -485,6 +485,15 @@ CREATE TABLE IF NOT EXISTS deployment_pipeline_operations (
 	created_at INTEGER NOT NULL,
 	detail TEXT NOT NULL           -- JSON: [{sourceItemId,targetItemId,outcome,…}]
 );
+CREATE TABLE IF NOT EXISTS onelake_roles (
+	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	-- The role's decisionRules and members, verbatim as the client sent them.
+	-- Atlas-style open shapes: fields we do not read are still fields the
+	-- client expects back, and PUT dataAccessRoles replaces the whole set.
+	body TEXT NOT NULL,
+	PRIMARY KEY (item_id, name)
+);
 CREATE TABLE IF NOT EXISTS deployment_pipeline_roles (
 	pipeline_id TEXT NOT NULL REFERENCES deployment_pipelines(id) ON DELETE CASCADE,
 	principal_id TEXT NOT NULL,
