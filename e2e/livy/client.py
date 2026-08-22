@@ -400,6 +400,9 @@ def main():
              "decisionRules": [{
                  "effect": "Permit",
                  "rows": "SELECT * FROM sales WHERE region_id = 1",
+                 # CLS alongside RLS: the two compose, and the viewer should
+                 # lose the `amount` column as well as the region-2 rows.
+                 "columns": ["region_id"],
                  "permission": [
                      {"attributeName": "Path", "attributeValueIncludedIn": ["Tables/sales"]},
                      {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}]}],
@@ -430,11 +433,20 @@ def main():
     assert filtered != full, "the filter changed nothing"
     print(f"    viewer sees {filtered} of {full} rows -- RLS applied by the engine", flush=True)
 
+    # COLUMN-level security, in the same read. A column the role omits must be
+    # absent from the user's dataframe, not merely null — the difference between
+    # withholding a value and withholding its existence.
+    vcols = vrun("','.join(spark.sql('SELECT * FROM sales').columns)").strip("'\"")
+    assert vcols == "region_id", f"viewer columns = {vcols!r}, want region_id only"
+    print(f"    viewer columns: {vcols} -- CLS applied by the engine", flush=True)
+
     # And the owner's session is unchanged: a role narrows the user it names,
     # not the table.
     still = orun("spark.sql('SELECT count(*) AS n FROM sales').collect()[0][0]")
     assert still == "3", f"the owner was narrowed too: {still}"
-    print("    owner still sees all 3 -- the role narrows a user, not the table", flush=True)
+    ocols = orun("','.join(spark.sql('SELECT * FROM sales').columns)").strip("'\"")
+    assert ocols == "region_id,amount", f"owner columns = {ocols!r}, want both"
+    print(f"    owner still sees all 3 rows and columns {ocols}", flush=True)
 
     print("NATIVE-LIVY E2E: PASS", flush=True)
 
