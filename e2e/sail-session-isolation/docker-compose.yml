@@ -1,0 +1,35 @@
+# A SPIKE, not a parity witness. One question, answered by measurement:
+#
+#   can the Spark agent give each Livy session its own Sail session?
+#
+# It decides an architecture, so it is worth its own stack. No emulator, no
+# entra, no OneLake -- storage is irrelevant to session scoping, and every
+# service left out is a way the answer could have been about something else.
+services:
+  sail:
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    environment:
+      RUST_LOG: "info"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket; socket.create_connection(('127.0.0.1', 50051), 2).close()"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  probe:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
+    depends_on:
+      sail:
+        condition: service_healthy
+    volumes:
+      - ./probe.py:/probe.py:ro
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+    command: python /probe.py
