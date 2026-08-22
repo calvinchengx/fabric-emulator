@@ -157,7 +157,7 @@ func (b *sqlServerBackend) Query(ctx context.Context, query string) (*Result, er
 // for post-login traffic. The server splices the client's session onto it, so
 // SQL Server itself produces every response token (full fidelity). The service
 // credential and address come from the base DSN.
-func (b *sqlServerBackend) Dial(ctx context.Context, database, principal string, readOnly bool) (net.Conn, []byte, error) {
+func (b *sqlServerBackend) Dial(ctx context.Context, database, principal string, role Role) (net.Conn, []byte, error) {
 	if b.base == nil {
 		return nil, nil, fmt.Errorf("no backend DSN configured for splicing")
 	}
@@ -173,7 +173,7 @@ func (b *sqlServerBackend) Dial(ctx context.Context, database, principal string,
 	// worked.
 	user, password := b.base.User, b.base.Password
 	if principal != "" {
-		if err := EnsurePrincipal(ctx, b.pool(""), b.pool(database), principal, readOnly); err != nil {
+		if err := EnsurePrincipal(ctx, b.pool(""), b.pool(database), principal, role); err != nil {
 			return nil, nil, fmt.Errorf("provisioning %s: %w", principal, err)
 		}
 		user, password = principal, principalPassword(principal)

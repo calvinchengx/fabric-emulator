@@ -65,12 +65,36 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 			if _, err := reflector.Reflect(ctx, be.DB(it.ID), st, it.ID); err != nil {
 				return tds.Connection{}, fmt.Errorf("reflecting lakehouse: %w", err)
 			}
-			return tds.Connection{TargetDB: it.ID, ReadOnly: readOnly, Principal: principal}, nil
+			// The database rung, which is NOT the same question as read-only: a
+			// Contributor may write but must not be able to rewrite the security
+			// policy that constrains them. Admin and Member own the item in Fabric's
+			// model — "can edit OneLake security roles" is exactly those two — so they
+			// are the ones who can author here too.
+			dbRole := tds.RoleReader
+			switch {
+			case store.RoleRank(role) >= store.RoleRank(store.RoleMember):
+				dbRole = tds.RoleOwner
+			case !readOnly:
+				dbRole = tds.RoleWriter
+			}
+			return tds.Connection{TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole}, nil
 		case "Warehouse", "SQLDatabase":
 			// A Warehouse and a Fabric SQL Database are both read-write T-SQL over
 			// their own SQL Server database (the SQL Database is OLTP and also mirrors
 			// to OneLake Delta — see warehouse.Mirror).
-			return tds.Connection{TargetDB: it.ID, ReadOnly: readOnly, Principal: principal}, nil
+			// The database rung, which is NOT the same question as read-only: a
+			// Contributor may write but must not be able to rewrite the security
+			// policy that constrains them. Admin and Member own the item in Fabric's
+			// model — "can edit OneLake security roles" is exactly those two — so they
+			// are the ones who can author here too.
+			dbRole := tds.RoleReader
+			switch {
+			case store.RoleRank(role) >= store.RoleRank(store.RoleMember):
+				dbRole = tds.RoleOwner
+			case !readOnly:
+				dbRole = tds.RoleWriter
+			}
+			return tds.Connection{TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole}, nil
 		default:
 			return tds.Connection{}, fmt.Errorf("item %q (type %s) has no SQL endpoint", database, it.Type)
 		}

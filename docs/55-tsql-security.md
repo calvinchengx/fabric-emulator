@@ -84,9 +84,9 @@ at login and never touched again.
 |---|---|---|
 | 1 ✅ | per-principal database users, provisioned on connect | nothing; no visible behaviour change |
 | 2 ✅ | the spliced session authenticates as the caller | callers are distinguishable; `USER_NAME()` differs |
-| 3 | RLS witnessed | `CREATE SECURITY POLICY` filters by caller |
-| 4 | CLS witnessed | a denied column errors for one caller and not another |
-| 5 | DDM witnessed | a masked column reads masked, and `UNMASK` reveals it |
+| 3 ✅ | RLS witnessed | `CREATE SECURITY POLICY` filters by caller |
+| 4 ✅ | CLS witnessed | a denied column errors for one caller and not another |
+| 5 ✅ | DDM witnessed | a masked column reads masked, and `UNMASK` reveals it |
 
 ## Witnesses
 
@@ -106,6 +106,12 @@ Every stage needs the unrestricted caller asserted in the same run.
 - **The sysadmin path stays.** Internal work (reflection, mirroring, catalog
   maintenance) keeps using the DSN account through the pooled `Query` path.
   Those are the emulator acting as the service, not as a user.
+- **A grantee must have connected once.** Provisioning happens on connect, so
+  an owner writing `DENY … TO [someone]` before that someone has ever opened a
+  session gets "Cannot find the user". Real Fabric materialises the principal
+  when workspace access is granted; we do it lazily. Measured — it is the second
+  thing the e2e caught — and cheap to fix later by provisioning every workspace
+  principal on any connect, at the cost of a query per login.
 - **Lakehouse SQL analytics endpoint.** The same T-SQL features apply there in
   the product, and its OneLake-security interaction is mode-dependent (user
   identity vs delegated identity). This increment covers the Warehouse; the

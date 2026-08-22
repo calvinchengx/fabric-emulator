@@ -27,7 +27,7 @@ func (f *fakeSpliceBackend) Query(context.Context, string) (*Result, error) {
 	return nil, fmt.Errorf("unused")
 }
 
-func (f *fakeSpliceBackend) Dial(context.Context, string, string, bool) (net.Conn, []byte, error) {
+func (f *fakeSpliceBackend) Dial(context.Context, string, string, Role) (net.Conn, []byte, error) {
 	if f.dialErr != nil {
 		return nil, nil, f.dialErr
 	}
@@ -362,7 +362,7 @@ func (c *countingSpliceBackend) Query(_ context.Context, q string) (*Result, err
 	return &Result{Columns: []Column{{Name: "x", Type: ColInt}}, Rows: [][]any{{int64(1)}}}, nil
 }
 
-func (c *countingSpliceBackend) Dial(context.Context, string, string, bool) (net.Conn, []byte, error) {
+func (c *countingSpliceBackend) Dial(context.Context, string, string, Role) (net.Conn, []byte, error) {
 	c.mu.Lock()
 	c.dialed++
 	c.mu.Unlock()

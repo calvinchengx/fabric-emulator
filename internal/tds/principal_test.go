@@ -53,7 +53,7 @@ func TestPrincipalNameEscapesTheQuoteCharacter(t *testing.T) {
 // through every masked column and the emulator would look like it enforced
 // masking while enforcing nothing.
 func TestWritersDoNotGetOwnership(t *testing.T) {
-	rights := principalRights(false)
+	rights := principalRights(RoleWriter)
 	for _, r := range rights {
 		if r == "db_owner" || r == "db_securityadmin" {
 			t.Fatalf("a writer was granted %s, which bypasses masking and CLS", r)
@@ -68,8 +68,19 @@ func TestWritersDoNotGetOwnership(t *testing.T) {
 	}
 }
 
+// An owner must be able to AUTHOR policy — CREATE SECURITY POLICY, ADD MASKED
+// WITH and GRANT all need rights a writer does not have. The first e2e run
+// failed on all three with "User does not have permission to perform this
+// action", which is what this rung exists to prevent.
+func TestOwnersCanAuthorPolicy(t *testing.T) {
+	rights := principalRights(RoleOwner)
+	if len(rights) != 1 || rights[0] != "db_owner" {
+		t.Fatalf("owner rights = %v, want db_owner", rights)
+	}
+}
+
 func TestReadersGetOnlyRead(t *testing.T) {
-	rights := principalRights(true)
+	rights := principalRights(RoleReader)
 	if len(rights) != 1 || rights[0] != "db_datareader" {
 		t.Fatalf("reader rights = %v, want db_datareader alone", rights)
 	}
@@ -79,7 +90,7 @@ func TestEnsurePrincipalRefusesAnEmptyCaller(t *testing.T) {
 	// No id means no principal to be, and connecting as "nobody" would fall
 	// back to the relay's own sysadmin account — the exact bypass this exists
 	// to remove.
-	if err := EnsurePrincipal(t.Context(), nil, nil, "", false); err == nil {
+	if err := EnsurePrincipal(t.Context(), nil, nil, "", RoleWriter); err == nil {
 		t.Fatal("an empty object id was accepted")
 	}
 }
@@ -140,11 +151,11 @@ func TestEnsurePrincipalIsIdempotentAndDistinguishing(t *testing.T) {
 	ctx := t.Context()
 	alice := "aaaaaaaa-0000-0000-0000-" + uuidish() + "0000"
 
-	if err := EnsurePrincipal(ctx, master, target, alice, true); err != nil {
+	if err := EnsurePrincipal(ctx, master, target, alice, RoleReader); err != nil {
 		t.Fatalf("first provision: %v", err)
 	}
 	// A reconnect is the normal case, so running it twice must not error.
-	if err := EnsurePrincipal(ctx, master, target, alice, true); err != nil {
+	if err := EnsurePrincipal(ctx, master, target, alice, RoleReader); err != nil {
 		t.Fatalf("second provision: %v", err)
 	}
 
@@ -214,7 +225,7 @@ func TestSQLServerRestrictsTheProvisionedCaller(t *testing.T) {
 	alice := "aaaaaaaa-1111-0000-0000-" + uuidish() + "0000"
 	bob := "bbbbbbbb-2222-0000-0000-" + uuidish() + "0000"
 	for _, who := range []string{alice, bob} {
-		if err := EnsurePrincipal(ctx, master, target, who, true); err != nil {
+		if err := EnsurePrincipal(ctx, master, target, who, RoleReader); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -305,7 +316,7 @@ func TestEnsurePrincipalReportsEngineFailures(t *testing.T) {
 	ctx := t.Context()
 	// A name SQL Server will refuse: the login statement cannot be built from it.
 	bad := strings.Repeat("x", 200)
-	if err := EnsurePrincipal(ctx, master, target, bad, false); err == nil {
+	if err := EnsurePrincipal(ctx, master, target, bad, RoleWriter); err == nil {
 		t.Fatal("an unusable principal name was reported as provisioned")
 	}
 }

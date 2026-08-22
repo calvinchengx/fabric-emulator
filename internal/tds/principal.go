@@ -57,20 +57,47 @@ func principalName(objectID string) string {
 
 // principalRights is what a workspace role implies inside the database.
 //
-// DELIBERATELY NOT db_owner for writers. db_owner carries CONTROL, which
-// implies UNMASK and makes masking invisible — a writer would silently see
-// through every masked column, and the emulator would look like it had
-// implemented masking while enforcing nothing.
-func principalRights(readOnly bool) []string {
-	if readOnly {
+// THREE RUNGS, and the middle one is the interesting part.
+//
+//   - A READER gets db_datareader and nothing else.
+//   - A WRITER gets read, write and DDL — dbt builds a warehouse by issuing
+//     CREATE TABLE — but deliberately NOT db_owner. Ownership carries CONTROL,
+//     which implies UNMASK: a writer would silently see through every masked
+//     column, and the emulator would look like it enforced masking while
+//     enforcing nothing.
+//   - An OWNER (workspace Admin or Member) gets db_owner, because somebody has
+//     to be able to AUTHOR the policy. `CREATE SECURITY POLICY` needs
+//     ALTER ANY SECURITY POLICY, `ADD MASKED WITH` needs ALTER ANY MASK, and
+//     `GRANT`/`DENY` needs the right to grant — the first run of the e2e failed
+//     on all three with "User does not have permission to perform this action".
+//     That an owner also sees unmasked data is the product's shape too: they own
+//     the warehouse and define what everyone else may see.
+func principalRights(role Role) []string {
+	switch role {
+	case RoleOwner:
+		return []string{"db_owner"}
+	case RoleWriter:
+		return []string{"db_datareader", "db_datawriter", "db_ddladmin"}
+	default:
 		return []string{"db_datareader"}
 	}
-	return []string{"db_datareader", "db_datawriter", "db_ddladmin"}
 }
+
+// Role is the database-side rung a workspace role maps to.
+type Role int
+
+const (
+	// RoleReader can select and nothing else.
+	RoleReader Role = iota
+	// RoleWriter can also insert, update and create tables.
+	RoleWriter
+	// RoleOwner can additionally author security policies, masks and grants.
+	RoleOwner
+)
 
 // EnsurePrincipal makes the caller's login and database user exist, with the
 // rights its workspace role implies. Idempotent: a reconnect is the normal case.
-func EnsurePrincipal(ctx context.Context, master, target *sql.DB, objectID string, readOnly bool) error {
+func EnsurePrincipal(ctx context.Context, master, target *sql.DB, objectID string, role Role) error {
 	if objectID == "" {
 		return fmt.Errorf("no principal to provision")
 	}
@@ -91,8 +118,8 @@ IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'%s')
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'%s')
     CREATE USER [%s] FOR LOGIN [%s];`,
 		strings.ReplaceAll(objectID, "'", "''"), name, name)
-	for _, role := range principalRights(readOnly) {
-		fmt.Fprintf(&b, "\nALTER ROLE [%s] ADD MEMBER [%s];", role, name)
+	for _, r := range principalRights(role) {
+		fmt.Fprintf(&b, "\nALTER ROLE [%s] ADD MEMBER [%s];", r, name)
 	}
 	if _, err := target.ExecContext(ctx, b.String()); err != nil {
 		return fmt.Errorf("create user for %s: %w", objectID, err)

@@ -27,6 +27,10 @@ type Connection struct {
 	TargetDB  string
 	ReadOnly  bool
 	Principal string
+	// Role is the database rung this caller gets. Separate from ReadOnly
+	// because "may write" and "may author security policy" are different
+	// questions, and collapsing them left nobody able to define a policy at all.
+	Role Role
 }
 
 // SpliceBackend is a Backend that can open a raw, already-authenticated
@@ -45,7 +49,7 @@ type SpliceBackend interface {
 	// than as the relay's own account — which is what gives the engine's RLS,
 	// CLS and masking somebody to restrict (docs/55-tsql-security.md). Empty
 	// means internal work with no caller, and keeps the DSN account.
-	Dial(ctx context.Context, database, principal string, readOnly bool) (net.Conn, []byte, error)
+	Dial(ctx context.Context, database, principal string, role Role) (net.Conn, []byte, error)
 }
 
 // ColType is the wire type a result column is encoded as. Integer/float/bit
