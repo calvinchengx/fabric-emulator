@@ -209,6 +209,10 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/bulkMove", a.withAuth(a.bulkMoveItems))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/move", a.withAuth(a.moveItem))
+	// OneLake security roles. Authoring is control-plane by design: OneLake is
+	// ADLS-compatible for reads and deliberately not for permissions.
+	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/dataAccessRoles", a.withAuth(a.listDataAccessRoles))
+	mux.HandleFunc("PUT /v1/workspaces/{wid}/items/{iid}/dataAccessRoles", a.withAuth(a.putDataAccessRoles))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/getDefinition", a.withAuth(a.getDefinition))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/items/{iid}/updateDefinition", a.withAuth(a.updateDefinition))
 

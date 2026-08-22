@@ -254,3 +254,62 @@ func TestOneLakeRolesReportStoreFailures(t *testing.T) {
 		t.Error("DeleteOneLakeRoles on a closed store returned nil")
 	}
 }
+
+// Policy for an item that does not exist is refused by the foreign key, rather
+// than stored against an id that a later item could be assigned. Orphaned
+// policy is the shape that grants access nobody authored.
+func TestPolicyForAnUnknownItemIsRefused(t *testing.T) {
+	s := newTestStore(t)
+	err := s.PutOneLakeRoles("no-such-item", []OneLakeRole{
+		{Name: "readers", Body: json.RawMessage(readersRole)}})
+	if err == nil {
+		t.Fatal("roles were stored against an item that does not exist")
+	}
+}
+
+// The DELETE half of the replace runs before the inserts, so a failure there
+// has to surface rather than leaving the old policy in place while reporting
+// success — that would be a PUT that silently did nothing.
+func TestPutSurfacesAFailureBeforeItWrites(t *testing.T) {
+	s := newTestStore(t)
+	it := lakehouse(t, s)
+	if _, err := s.db.Exec(`DROP TABLE onelake_roles`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutOneLakeRoles(it.ID, []OneLakeRole{
+		{Name: "readers", Body: json.RawMessage(readersRole)}}); err == nil {
+		t.Fatal("PutOneLakeRoles reported success with no table to write to")
+	}
+}
+
+// A row that cannot be read is an error, not a skipped role. Silently dropping
+// it would quietly narrow someone's access and look like a policy change.
+func TestAnUnreadableRowFailsTheRead(t *testing.T) {
+	s := newTestStore(t)
+	it := lakehouse(t, s)
+	// Recreate the table without NOT NULL so a corrupt row can exist at all,
+	// then write one. Scanning NULL into a string is what a real corruption
+	// would look like here.
+	for _, stmt := range []string{
+		`DROP TABLE onelake_roles`,
+		`CREATE TABLE onelake_roles (item_id TEXT NOT NULL, name TEXT NOT NULL,
+		   body TEXT, PRIMARY KEY (item_id, name))`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO onelake_roles (item_id, name, body) VALUES (?, 'broken', NULL)`,
+		it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ListOneLakeRoles(it.ID); err == nil {
+		t.Fatal("a row that cannot be scanned was reported as no error")
+	}
+	// EvaluatableRoles rides on the same read, so it must fail too rather than
+	// returning an empty (deny-everything) policy that looks authored.
+	if _, err := s.EvaluatableRoles(it.ID); err == nil {
+		t.Fatal("EvaluatableRoles turned an unreadable row into an empty policy")
+	}
+}

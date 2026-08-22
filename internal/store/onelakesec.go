@@ -16,7 +16,6 @@ package store
 // them doing its own lookup.
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 
@@ -156,10 +155,10 @@ func (s *Store) EvaluatableRoles(itemID string) ([]onelakesec.Role, error) {
 
 // DeleteOneLakeRoles drops every role on an item. Item deletion cascades, so
 // this exists for the explicit "clear the policy" case.
+//
+// Deleting nothing is not an error: a DELETE that matches no rows leaves the
+// item with no policy, which is what the caller asked for.
 func (s *Store) DeleteOneLakeRoles(itemID string) error {
 	_, err := s.db.Exec(`DELETE FROM onelake_roles WHERE item_id = ?`, itemID)
-	if err == sql.ErrNoRows {
-		return nil
-	}
 	return err
 }

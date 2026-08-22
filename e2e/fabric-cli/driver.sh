@@ -278,6 +278,53 @@ assert urllib.parse.parse_qs(u.query).get("continuationToken") == [d["continuati
     f"continuationUri carries a different token: {uri}"
 print(f"    continuationUri ok: {u.scheme}://{u.netloc}{u.path}")' || fail "continuationUri shape"
 
+echo "==> OneLake security: dataAccessRoles through fab api"
+# Authoring is control-plane by design -- OneLake is ADLS-compatible for reads
+# and deliberately not for permissions -- so Microsoft's own client drives it
+# here, over the documented payload rather than a shape we invented.
+WSID1=$(fab get "$WS" -q id | guid); [ -n "$WSID1" ] || fail "workspace id for roles"
+LHID=$(fab get "$WS/lake.Lakehouse" -q id | guid); [ -n "$LHID" ] || fail "lakehouse id"
+
+ROLES='{"value":[{"name":"readers","decisionRules":[{"effect":"Permit","permission":[
+  {"attributeName":"Path","attributeValueIncludedIn":["Tables/dbo/Customers"]},
+  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]}],
+  "members":{"microsoftEntraMembers":[{"objectId":"11111111-1111-1111-1111-111111111111"}]}}]}'
+
+fab api "workspaces/$WSID1/items/$LHID/dataAccessRoles" -X put -i "$ROLES" >/dev/null \
+  || fail "put dataAccessRoles"
+
+fab api "workspaces/$WSID1/items/$LHID/dataAccessRoles" | python3 -c '
+import json,sys
+d=json.loads(sys.stdin.read())
+for k in ("text","body","result"):
+    if isinstance(d,dict) and k in d and isinstance(d[k],(dict,list)): d=d[k]
+if isinstance(d,str): d=json.loads(d)
+roles=d["value"]
+assert len(roles)==1, f"want one role, got {len(roles)}"
+r=roles[0]
+assert r["name"]=="readers", r
+# The parts a client depends on must survive the round trip: a role whose
+# members or scope were dropped grants nothing and looks like a broken policy.
+members=r["members"]["microsoftEntraMembers"]
+assert len(members)==1, r
+perms=r["decisionRules"][0]["permission"]
+paths=[p for p in perms if p["attributeName"]=="Path"][0]["attributeValueIncludedIn"]
+assert paths==["Tables/dbo/Customers"], paths
+print("    dataAccessRoles round-tripped with members and scope intact")' || fail "dataAccessRoles shape"
+
+# PUT replaces: the reference says it deletes roles absent from the payload.
+# A merge would leave a revoked role live, which is the direction that matters.
+fab api "workspaces/$WSID1/items/$LHID/dataAccessRoles" -X put -i '{"value":[]}' >/dev/null \
+  || fail "clear dataAccessRoles"
+fab api "workspaces/$WSID1/items/$LHID/dataAccessRoles" | python3 -c '
+import json,sys
+d=json.loads(sys.stdin.read())
+for k in ("text","body","result"):
+    if isinstance(d,dict) and k in d and isinstance(d[k],(dict,list)): d=d[k]
+if isinstance(d,str): d=json.loads(d)
+assert d["value"]==[], f"a replacing PUT left roles behind: {d}"
+print("    an empty PUT revoked the role")' || fail "dataAccessRoles replace"
+
 echo "==> rm an item, then the workspace"
 fab rm "$WS/nb.Notebook" -f || fail "rm item"
 fab exists "$WS/nb.Notebook" | grep -qi false || fail "item still exists after rm"
