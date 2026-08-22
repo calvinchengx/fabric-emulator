@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/calvinchengx/fabric-emulator/internal/auth"
 )
 
 // SetLivyAgent points the native Livy layer at a Spark statement-executor agent
@@ -45,8 +47,12 @@ type livyStatement struct {
 }
 
 type livySession struct {
-	ID         int
-	Kind       string
+	ID   int
+	Kind string
+	// Principal is who opened the session. Real Fabric runs a notebook AS a
+	// user and the engine enforces that user's OneLake security; the agent
+	// cannot ask "who is this" of a statement, so the session carries it.
+	Principal  string
 	statements []*livyStatement
 }
 
@@ -109,12 +115,12 @@ func (a *API) agentPost(path string, body any) (map[string]any, error) {
 
 // livyNative dispatches the Livy-native suffix. RBAC + lakehouse existence are
 // already checked by livyProxy.
-func (a *API) livyNative(w http.ResponseWriter, r *http.Request) {
+func (a *API) livyNative(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
 	parts := strings.Split(strings.Trim(r.PathValue("livypath"), "/"), "/")
 	m := a.livyMgr()
 	switch {
 	case len(parts) == 1 && parts[0] == "sessions" && r.Method == http.MethodPost:
-		a.createLivySession(w, r, m)
+		a.createLivySession(w, r, m, p)
 	case len(parts) == 1 && parts[0] == "sessions" && r.Method == http.MethodGet:
 		m.mu.Lock()
 		ids := make([]map[string]any, 0, len(m.sessions))
@@ -148,7 +154,7 @@ func sessionBody(s *livySession) map[string]any {
 	return map[string]any{"id": s.ID, "state": "idle", "kind": s.Kind, "appId": fmt.Sprintf("livy-agent-%d", s.ID)}
 }
 
-func (a *API) createLivySession(w http.ResponseWriter, r *http.Request, m *livyManager) {
+func (a *API) createLivySession(w http.ResponseWriter, r *http.Request, m *livyManager, p *auth.Principal) {
 	var body struct {
 		Kind string `json:"kind"`
 	}
@@ -162,7 +168,7 @@ func (a *API) createLivySession(w http.ResponseWriter, r *http.Request, m *livyM
 		return
 	}
 	m.mu.Lock()
-	s := &livySession{ID: m.nextID, Kind: body.Kind}
+	s := &livySession{ID: m.nextID, Kind: body.Kind, Principal: p.ID}
 	m.sessions[s.ID] = s
 	m.nextID++
 	m.mu.Unlock()
@@ -243,8 +249,12 @@ func (a *API) submitLivyStatement(w http.ResponseWriter, r *http.Request, id str
 	}
 
 	// Drive the agent's REPL for this session's namespace — real Spark runs it.
+	// The principal travels with every statement, not just at session open:
+	// the agent holds one interpreter for many sessions and has no other way to
+	// know whose OneLake security applies to the code it is about to run.
 	out, err := a.agentPost("/statements", map[string]any{
-		"session": strconv.Itoa(s.ID), "code": body.Code, "kind": kind})
+		"session": strconv.Itoa(s.ID), "code": body.Code, "kind": kind,
+		"principal": s.Principal})
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "SparkAgentError", err.Error())
 		return

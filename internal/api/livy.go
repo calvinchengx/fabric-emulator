@@ -94,7 +94,7 @@ func (a *API) livyProxy(w http.ResponseWriter, r *http.Request, p *auth.Principa
 	// With a statement-executor agent configured, terminate Livy natively and
 	// drive real Spark ourselves (no Apache Livy server needed).
 	if a.livyAgent != nil {
-		a.livyNative(w, r)
+		a.livyNative(w, r, p)
 		return
 	}
 	if a.livy == nil {
