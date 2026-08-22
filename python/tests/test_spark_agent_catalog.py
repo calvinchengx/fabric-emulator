@@ -171,22 +171,22 @@ def test_concurrent_binds_each_keep_their_own_resolution():
 
 def test_isolate_returns_a_private_session_when_the_engine_can():
     root = FakeSpark()
-    session, isolated = catalog.isolate(root)
-    assert isolated is True
+    session, route = catalog.isolate(root)
+    assert route == catalog.ROUTE_NEW_SESSION
     assert session is not root
     assert session.server is root.server  # same engine, split session state
 
 
 def test_isolate_degrades_when_new_session_raises():
     root = FakeSpark(supports_new_session=False)
-    session, isolated = catalog.isolate(root)
-    assert (session, isolated) == (root, False)
+    session, route = catalog.isolate(root)
+    assert (session, route) == (root, catalog.ROUTE_SHARED)
 
 
 def test_isolate_degrades_when_new_session_returns_none():
     root = FakeSpark(new_session_returns_none=True)
-    session, isolated = catalog.isolate(root)
-    assert (session, isolated) == (root, False)
+    session, route = catalog.isolate(root)
+    assert (session, route) == (root, catalog.ROUTE_SHARED)
 
 
 # --- the degraded path: detect, report, and do not perform -------------------
@@ -331,20 +331,22 @@ def test_a_schema_qualified_table_is_not_mirrored_into_default():
 
 def test_the_result_reports_whether_the_session_was_isolated():
     root = FakeSpark()
-    spark, isolated = catalog.isolate(root)
-    assert catalog.register(spark, "s", "lake_a", [], isolated=isolated)["isolated"] is True
+    spark, route = catalog.isolate(root)
+    assert catalog.register(spark, "s", "lake_a", [],
+                            isolated=bool(route))["isolated"] is True
     degraded = FakeSpark(supports_new_session=False)
-    spark2, isolated2 = catalog.isolate(degraded)
-    assert catalog.register(spark2, "s", "lake_a", [], isolated=isolated2)["isolated"] is False
+    spark2, route2 = catalog.isolate(degraded)
+    assert catalog.register(spark2, "s", "lake_a", [],
+                            isolated=bool(route2))["isolated"] is False
 
 
 @pytest.mark.parametrize("supports_current_database", [True, False])
 def test_registration_succeeds_on_both_engine_shapes(supports_current_database):
     root = FakeSpark(supports_current_database=supports_current_database)
-    spark, isolated = catalog.isolate(root)
+    spark, route = catalog.isolate(root)
     out = catalog.register(spark, "s", "lake_a",
                            [{"name": "t", "location": "abfss://lake_a/Tables/t"}],
-                           claims=catalog.Claims(), isolated=isolated)
+                           claims=catalog.Claims(), isolated=bool(route))
     assert out["registered"] == 1
     assert spark.resolve("t") == "abfss://lake_a/Tables/t"
 
@@ -397,8 +399,8 @@ def test_isolate_falls_back_to_a_new_connect_session(monkeypatch):
     install_fake_pyspark(monkeypatch, sink, session=private)
     root = FakeSpark(supports_new_session=False)
 
-    session, isolated = catalog.isolate(root, remote="sc://sail:50051")
-    assert (session, isolated) == (private, True)
+    session, route = catalog.isolate(root, remote="sc://sail:50051")
+    assert (session, route) == (private, catalog.ROUTE_CONNECT)
     assert sink["remote"] == "sc://sail:50051"
     # create(), NOT getOrCreate(): the latter hands back the session we already
     # have, which is the leak this route exists to close.
@@ -410,21 +412,21 @@ def test_isolate_prefers_new_session_when_the_engine_has_it(monkeypatch):
     install_fake_pyspark(monkeypatch, sink, session=FakeSpark())
     root = FakeSpark()  # JVM-shaped: newSession works
 
-    session, isolated = catalog.isolate(root, remote="sc://sail:50051")
-    assert isolated is True and session is not root
+    session, route = catalog.isolate(root, remote="sc://sail:50051")
+    assert route == catalog.ROUTE_NEW_SESSION and session is not root
     assert "called" not in sink, "the Connect route ran on an engine with newSession"
 
 
 def test_isolate_degrades_when_there_is_no_remote(monkeypatch):
     monkeypatch.delenv("SPARK_REMOTE", raising=False)
     root = FakeSpark(supports_new_session=False)
-    assert catalog.isolate(root) == (root, False)
+    assert catalog.isolate(root) == (root, catalog.ROUTE_SHARED)
 
 
 def test_isolate_degrades_when_creating_a_connect_session_fails(monkeypatch):
     install_fake_pyspark(monkeypatch, {}, raises=RuntimeError("no route to host"))
     root = FakeSpark(supports_new_session=False)
-    assert catalog.isolate(root, remote="sc://sail:50051") == (root, False)
+    assert catalog.isolate(root, remote="sc://sail:50051") == (root, catalog.ROUTE_SHARED)
 
 
 def test_isolate_reads_the_remote_from_the_environment(monkeypatch):
@@ -433,3 +435,23 @@ def test_isolate_reads_the_remote_from_the_environment(monkeypatch):
     monkeypatch.setenv("SPARK_REMOTE", "sc://from-env:50051")
     catalog.isolate(FakeSpark(supports_new_session=False))
     assert sink["remote"] == "sc://from-env:50051"
+
+
+# --- the route says whether the CATALOG is private, not just the session ------
+#
+# OneLake security reshapes a session's catalog to enforce, so it must know
+# whether that catalog belongs to anyone else. Both routes isolate the SESSION;
+# only one of them isolates the CATALOG, and conflating the two is what let a
+# viewer's filter be installed where the owner could feel it.
+
+def test_only_the_connect_route_reports_a_private_catalog():
+    assert catalog.CATALOG_IS_PRIVATE[catalog.ROUTE_CONNECT] is True
+    assert catalog.CATALOG_IS_PRIVATE[catalog.ROUTE_NEW_SESSION] is False
+    assert catalog.CATALOG_IS_PRIVATE[catalog.ROUTE_SHARED] is False
+
+
+def test_an_unknown_route_is_not_treated_as_private():
+    # The lookup is by .get(route, False) at the call site, so a route this
+    # table has never heard of must fail CLOSED rather than KeyError or, worse,
+    # default to private.
+    assert catalog.CATALOG_IS_PRIVATE.get("some-future-engine", False) is False

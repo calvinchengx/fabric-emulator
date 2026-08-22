@@ -885,6 +885,25 @@ func (s *Service) authorizeViewer(itemID, rel, principalID, method string) *dfsE
 		return &dfsError{"AuthorizationFailure", http.StatusForbidden,
 			"No OneLake security role grants this principal access to the path."}
 	}
+	// DIRECT FILE ACCESS IS BLOCKED when the grant narrows the table. Reading
+	// bytes cannot apply a row filter or a column projection, so a principal
+	// who may see only part of a table may not fetch its files at all: "the
+	// query is blocked if the user requesting access isn't permitted to see all
+	// the rows or columns in that table". Fabric names the same three patterns
+	// this refuses — `spark.read...load("abfss://…")`, `DeltaTable.forPath`,
+	// and OneLake REST/SDK reads of a secured `Tables/<table>` folder.
+	//
+	// The filtered read is not lost, it moves: a Fabric engine, or a third
+	// party through securityPolicy/principalAccess, fetches the data with its
+	// own identity and applies the filter in its compute. That is why this
+	// refusal reaches only principals whose grant narrows something — an
+	// engine's identity is Contributor or above and never arrives here.
+	if narrowing := onelakesec.Narrowing(entries, rel); narrowing != nil {
+		return &dfsError{"AuthorizationFailure", http.StatusForbidden,
+			"This principal is subject to " + narrowing.Why() + " on this table, " +
+				"which storage-level reads cannot apply, so direct path access is blocked. " +
+				"Read it through a Fabric engine, or through securityPolicy/principalAccess."}
+	}
 	return nil
 }
 
