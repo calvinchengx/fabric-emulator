@@ -45,7 +45,7 @@ func askAccess(t *testing.T, f *fixture, caller, subject, input string) (*princi
 // as SQL to apply itself.
 func TestPrincipalAccessReportsTheSubjectsGrant(t *testing.T) {
 	f := newFixture(t)
-	grantRole(t, f, "engine-1", store.RoleContributor)
+	grantRole(t, f, "engine-1", store.RoleMember)
 	grantRole(t, f, "viewer-1", store.RoleViewer)
 	putRole(t, f, "viewer-1", "Tables/dbo/Customers")
 
@@ -68,7 +68,7 @@ func TestPrincipalAccessReportsTheSubjectsGrant(t *testing.T) {
 // rows; a 403 or a 404 would make it retry or fail the query instead.
 func TestNoAccessIsAnEmptyListNotAnError(t *testing.T) {
 	f := newFixture(t)
-	grantRole(t, f, "engine-1", store.RoleContributor)
+	grantRole(t, f, "engine-1", store.RoleMember)
 	grantRole(t, f, "viewer-1", store.RoleViewer)
 
 	out, code := askAccess(t, f, "engine-1", "viewer-1", "Tables")
@@ -107,7 +107,7 @@ func TestOnlyAPrivilegedCallerMayAsk(t *testing.T) {
 // An engine told otherwise would filter rows away from someone entitled to all.
 func TestASubjectWithReadAllSeesEverything(t *testing.T) {
 	f := newFixture(t)
-	grantRole(t, f, "engine-1", store.RoleContributor)
+	grantRole(t, f, "engine-1", store.RoleMember)
 	grantRole(t, f, "contrib-1", store.RoleContributor)
 	// A role that names someone else and narrows one table.
 	putRole(t, f, "viewer-1", "Tables/dbo/Customers")
@@ -121,7 +121,7 @@ func TestASubjectWithReadAllSeesEverything(t *testing.T) {
 // inputPath picks a half, and a Files rule must not answer a Tables question.
 func TestInputPathSelectsTheHalf(t *testing.T) {
 	f := newFixture(t)
-	grantRole(t, f, "engine-1", store.RoleContributor)
+	grantRole(t, f, "engine-1", store.RoleMember)
 	grantRole(t, f, "viewer-1", store.RoleViewer)
 	putRole(t, f, "viewer-1", "Files/raw")
 
@@ -135,7 +135,7 @@ func TestInputPathSelectsTheHalf(t *testing.T) {
 
 func TestPrincipalAccessRefusesBadRequests(t *testing.T) {
 	f := newFixture(t)
-	grantRole(t, f, "engine-1", store.RoleContributor)
+	grantRole(t, f, "engine-1", store.RoleMember)
 	tok := f.storageToken("engine-1")
 
 	for _, tc := range []struct {
@@ -163,7 +163,7 @@ func TestPrincipalAccessRefusesBadRequests(t *testing.T) {
 // pointless.
 func TestTheMetadataETagTracksThePolicy(t *testing.T) {
 	f := newFixture(t)
-	grantRole(t, f, "engine-1", store.RoleContributor)
+	grantRole(t, f, "engine-1", store.RoleMember)
 	grantRole(t, f, "viewer-1", store.RoleViewer)
 	putRole(t, f, "viewer-1", "Tables/dbo/Customers")
 
@@ -209,7 +209,7 @@ func (f *fixture) doWithHeader(method, target, token string, body []byte, hdr ma
 
 func TestPrincipalAccessRefusesUnknownTargetsAndMethods(t *testing.T) {
 	f := newFixture(t)
-	grantRole(t, f, "engine-1", store.RoleContributor)
+	grantRole(t, f, "engine-1", store.RoleMember)
 	tok := f.storageToken("engine-1")
 	body := []byte(`{"aadObjectId":"viewer-1","inputPath":"Tables"}`)
 
@@ -294,7 +294,7 @@ func TestSubjectAccessSurfacesAStoreFailure(t *testing.T) {
 // enforcement depend on how the caller happened to address the account.
 func TestPrincipalAccessIsReachableOnBothSurfaces(t *testing.T) {
 	f := newFixture(t)
-	grantRole(t, f, "engine-1", store.RoleContributor)
+	grantRole(t, f, "engine-1", store.RoleMember)
 	grantRole(t, f, "viewer-1", store.RoleViewer)
 	putRole(t, f, "viewer-1", "Tables/dbo/Customers")
 	body := []byte(`{"aadObjectId":"viewer-1","inputPath":"Tables"}`)
@@ -307,5 +307,33 @@ func TestPrincipalAccessIsReachableOnBothSurfaces(t *testing.T) {
 	}
 	if dfs.Body.String() != blob.Body.String() {
 		t.Fatalf("the two surfaces answered differently:\n dfs=%s\nblob=%s", dfs.Body, blob.Body)
+	}
+}
+
+// The bar is Member, not ReadAll. A Contributor can read the DATA and still
+// cannot read the POLICY: the integration guide puts the engine identity in the
+// Member role specifically because that is what grants "access to read OneLake
+// security role metadata through the authorized engine APIs". Gating on
+// Contributor would be laxer than the product, in the direction that leaks
+// who-can-see-what.
+func TestAContributorCannotReadThePolicy(t *testing.T) {
+	f := newFixture(t)
+	grantRole(t, f, "contrib-1", store.RoleContributor)
+	grantRole(t, f, "member-1", store.RoleMember)
+	grantRole(t, f, "viewer-1", store.RoleViewer)
+	putRole(t, f, "viewer-1", "Tables/dbo/Customers")
+
+	if _, code := askAccess(t, f, "contrib-1", "viewer-1", "Tables"); code != http.StatusForbidden {
+		t.Errorf("contributor = %d, want 403", code)
+	}
+	if _, code := askAccess(t, f, "member-1", "viewer-1", "Tables"); code != http.StatusOK {
+		t.Errorf("member = %d, want 200", code)
+	}
+	// And the contributor can still read the data it was refused the policy for
+	// — the two permissions are genuinely separate.
+	seedFile(t, f, "Tables/dbo/Customers/part-0.parquet")
+	if w := f.do("GET", "/"+f.ws.ID+"/"+f.it.ID+"/Tables/dbo/Customers/part-0.parquet",
+		f.storageToken("contrib-1"), nil); w.Code != http.StatusOK {
+		t.Errorf("contributor data read = %d, want 200", w.Code)
 	}
 }

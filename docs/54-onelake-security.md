@@ -236,6 +236,35 @@ dataframe is *missing* the column. This is the discipline that made
 `e2e/task-parameters` worth having — it asserted the leak was gone, not that the
 happy path worked.
 
+## What the DuckDB witness is, and is not
+
+It performs the documented authorized-engine flow end to end, and it is not
+"DuckDB supports OneLake security". Three differences, stated so the witness is
+not read as more than it is.
+
+**DuckDB has no OneLake integration.** The suite is a harness that ACTS as an
+authorized engine, with DuckDB as its compute layer. Nothing shipped by DuckDB
+Labs calls `principalAccess`. The docs address "third-party engine developers",
+and this is what one of them would write, not what their users get for free.
+
+**The predicate dialect is the integrator's problem.** Real Fabric returns
+T-SQL — `SELECT * FROM [dbo].[Customers] WHERE [customerId] = '123'` — and
+bracketed identifiers are not DuckDB syntax. The witness authors its predicate
+in the engine's own dialect, which keeps the test about the CONTRACT rather than
+about a translator. A real integration needs that translator, and this emulator
+does not provide one.
+
+**The engine identity's own restrictions are not modelled.** The guide requires
+the engine to have unrestricted Read, and says API calls return errors if RLS or
+CLS applies to the engine identity itself. We do not enforce that: an engine
+identity narrowed by a role would get an answer here where the product would
+fail. A boundary, not a claim.
+
+What the witness DOES establish is the part that matters for an emulator: the
+sequence works against us unmodified — privileged read, fetch effective access
+for a named end user, filter in the engine's own layer, return only permitted
+rows — and the ungranted table never appears in the policy at all.
+
 ## Preview risk
 
 `securityPolicy/principalAccess` and the external-engine integration are both

@@ -69,17 +69,21 @@ func (s *Service) principalAccess(w http.ResponseWriter, r *http.Request, p *aut
 		writeDFSErr(w, *derr)
 		return
 	}
-	// The CALLER is the engine. Reading policy is at least as sensitive as
-	// reading the data it protects, so it takes the same ReadAll bar — and a
-	// Viewer granted one table cannot use this to discover the rest.
+	// The CALLER is the engine, and the bar is WORKSPACE MEMBER, not ReadAll.
+	// The integration guide is specific: add the engine's service principal to
+	// the Member role, which "grants the identity ... access to read OneLake
+	// security role metadata through the authorized engine APIs". Contributor
+	// carries ReadAll and can read the DATA, and still cannot read the POLICY —
+	// so gating this on ReadAll would be laxer than the product, in the
+	// direction that leaks who-can-see-what.
 	role, err := s.Store.RoleOf(ws.ID, p.ID)
 	if err != nil {
 		writeDFSErr(w, dfsError{"InternalError", http.StatusInternalServerError, err.Error()})
 		return
 	}
-	if store.RoleRank(role) < store.RoleRank(store.RoleContributor) {
+	if store.RoleRank(role) < store.RoleRank(store.RoleMember) {
 		writeDFSErr(w, dfsError{"AuthorizationFailure", http.StatusForbidden,
-			"Reading a security policy requires ReadAll (the Contributor role or above)."})
+			"Reading a security policy requires the workspace Member role or above."})
 		return
 	}
 	it, derr := s.resolveItem(ws.ID, itemSeg)
