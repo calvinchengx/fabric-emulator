@@ -12,7 +12,27 @@ import sys
 # silence that sends someone looking in the wrong place: it already produced a
 # bug filed against databricks-emulator rather than against this agent.
 #
-# REFUSED RATHER THAN IMPLEMENTED, for two different reasons.
+# NAMED IN THE LOG RATHER THAN REFUSED, and that is a correction. The first cut
+# of this refused them outright, on the issue's premise that "nothing sends
+# them any more" -- true of databricks-emulator's MAIN, and false of every
+# databricks-emulator anyone can run. The fix that stopped sending them
+# (databricks-emulator#75) merged 2026-08-21; the newest release, v0.2.9, is
+# from 2026-08-20. So no published image omits them, and `e2e/databricks-chain`
+# -- which pins 0.2.4 -- failed on the refusal within minutes.
+#
+# That is the same version-skew hazard this file already reasons about for
+# UNKNOWN fields, and it applies just as much to fields we know are inert: the
+# emulator and its callers are separate images with independent versions, so a
+# refusal can only be added once every caller that sends the field is gone from
+# the fleet.
+#
+# TO PROMOTE THESE TO REFUSALS: wait for a databricks-emulator release carrying
+# #75, move the pins that consume it (e2e/databricks-chain and any platform
+# repo), then move these entries into a REFUSED map and return an error
+# envelope instead of logging. The reasons below are why they will never be
+# implemented; the log is only how they are reported until then.
+#
+# NEITHER WILL BE IMPLEMENTED, for two different reasons.
 #
 # `env` could be implemented -- `task_scope` already gives each session its own
 # environment -- but Fabric's Livy statement payload is `{"code", "kind"}`
@@ -27,7 +47,7 @@ import sys
 # the Livy session its own SparkSession it lands on the SHARED one and leaks
 # into every other session. `apply_environment` gets away with it only because
 # an Environment binds once per agent and refuses a second.
-REFUSED_STATEMENT_FIELDS = {
+IGNORED_STATEMENT_FIELDS = {
     "env": "set a task's environment in the code it runs, where no agent can "
            "drop it; Fabric's Livy statement payload is {code, kind}",
     "spark_conf": "a statement-level conf is not statement-scoped: it outlives "
@@ -54,19 +74,19 @@ KNOWN_STATEMENT_FIELDS = {
 
 
 def check(req):
-    """Refuse a field this route would silently ignore; name the rest.
+    """Say what this route is dropping. Always returns None -- it never refuses.
 
-    Returns an error envelope, or None to proceed.
+    The harm #349 documents is the SILENCE: a field accepted and discarded,
+    which sent a reader to file a bug against the wrong repository. Saying so
+    fixes that. Refusing would fix it harder and break every caller running a
+    released databricks-emulator, which all of them are.
     """
-    for name, why in REFUSED_STATEMENT_FIELDS.items():
+    for name, why in IGNORED_STATEMENT_FIELDS.items():
         if name in req:
-            return {"status": "error", "ename": "UnsupportedField",
-                    "evalue": f"/statements does not apply {name!r}: {why}",
-                    "traceback": [f"the request carried {name!r}, which this "
-                                  "route would have ignored; refusing rather "
-                                  "than accepting it silently"]}
+            print(f"agent: /statements does NOT apply {name!r} and is dropping "
+                  f"it: {why}", file=sys.stderr, flush=True)
     unknown = sorted(set(req) - KNOWN_STATEMENT_FIELDS
-                     - set(REFUSED_STATEMENT_FIELDS))
+                     - set(IGNORED_STATEMENT_FIELDS))
     if unknown:
         print(f"agent: /statements ignoring unknown field(s): {', '.join(unknown)}",
               file=sys.stderr, flush=True)

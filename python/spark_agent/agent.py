@@ -624,10 +624,7 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0) or 0)
         req = json.loads(self.rfile.read(n) or b"{}")
         if self.path == "/statements":
-            refusal = statement_fields.check(req)
-            if refusal is not None:
-                self._send(200, refusal)
-                return
+            statement_fields.check(req)
             # Livy statements carry a `kind`. A `sql` statement is Spark SQL and
             # must come back as a structured result set; anything else is Python
             # and comes back as REPL text. Before this dispatch existed the agent
