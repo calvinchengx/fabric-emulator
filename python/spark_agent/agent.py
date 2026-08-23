@@ -22,7 +22,7 @@ import json
 import os
 import sys
 import traceback
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpjson
@@ -466,7 +466,13 @@ def run_code(code, g):
     if tree.body and isinstance(tree.body[-1], ast.Expr):
         last_expr = ast.Expression(tree.body.pop().value)
     try:
-        with redirect_stdout(out):
+        # NOT redirect_stdout. That assigns `sys.stdout`, one attribute on one
+        # module per interpreter, and this server runs statements concurrently:
+        # measured (#346), one task's response carried another's output and two
+        # came back empty. `task_scope.capturing` binds the buffer in a
+        # ContextVar instead, so each statement resolves its own and neither
+        # restores over the other.
+        with task_scope.capturing(out):
             if tree.body:
                 exec(compile(tree, "<statement>", "exec"), g)
             result = eval(compile(last_expr, "<statement>", "eval"), g) if last_expr is not None else None

@@ -20,6 +20,7 @@ rest of the suite. That is safe by construction: with no scope bound both
 attributes fall through to the real process values, which the
 `unbound_*` tests below assert directly rather than assume.
 """
+import io
 import os
 import subprocess
 import sys
@@ -282,3 +283,102 @@ def test_cell_identity_survives_an_overlapping_statement():
     assert got["a"] == "job-a"
     assert got["b"] == "job-b"
     assert "FABRIC_JOB_ID" not in os.environ
+
+
+# --- stdout -------------------------------------------------------------------
+#
+# #346: `sys.stdout` is the same class of shared module state as `argv`, and it
+# was captured with `contextlib.redirect_stdout` — the save/restore discipline
+# this module's docstring rules out. Measured with three concurrent tasks: one
+# response carried ANOTHER task's output and two carried nothing.
+#
+# Same barrier as the argv tests, and for the same reason: the interleaving is
+# an input, not a sample. Both statements are inside their capture before
+# either prints, which is the order that breaks. A stress loop would pass on a
+# broken tree most of the time.
+
+def test_concurrent_statements_each_capture_their_own_output():
+    def task(word):
+        def body(sync):
+            buffer = io.StringIO()
+            with task_scope.capturing(buffer):
+                sync()  # the other statement is now inside its capture too
+                print(word)
+                sync()  # ...and has printed, before either reads
+            return buffer.getvalue()
+        return body
+
+    got = run_concurrently({"a": task("alpha"), "b": task("beta")})
+    assert got["a"] == "alpha\n", f"a's response carried {got['a']!r}"
+    assert got["b"] == "beta\n", f"b's response carried {got['b']!r}"
+
+
+def test_a_statement_that_reimports_sys_still_captures_its_own_output():
+    """`import sys; sys.stdout.write(...)` walks past any rebound local name,
+    the same way the argv test's re-import does."""
+    def task(word):
+        def body(sync):
+            buffer = io.StringIO()
+            with task_scope.capturing(buffer):
+                sync()
+                import sys as reimported
+
+                reimported.stdout.write(word)
+                sync()
+            return buffer.getvalue()
+        return body
+
+    got = run_concurrently({"a": task("alpha"), "b": task("beta")})
+    assert got == {"a": "alpha", "b": "beta"}
+
+
+def test_output_outside_a_capture_goes_to_the_real_stdout(capsys):
+    """The agent's own logging must not vanish into whichever statement happens
+    to be running, and must not raise when none is."""
+    print("agent: a line of its own")
+    assert "agent: a line of its own" in capsys.readouterr().out
+
+
+def test_a_capture_ends_when_the_statement_does():
+    buffer = io.StringIO()
+    with task_scope.capturing(buffer):
+        print("inside")
+    assert buffer.getvalue() == "inside\n"
+    # And the next print does not land in a buffer nobody is reading.
+    assert task_scope._capture.get() is None
+
+
+def test_print_is_captured_not_only_sys_stdout_write():
+    """THE CASE A PROPERTY WOULD HAVE MISSED, which is why the proxy exists.
+
+    `print` reaches stdout through `PySys_GetObject` — a read of the sys module
+    DICT — so a property on the module's type is never consulted. Measured
+    while building this: with the property approach, `sys.stdout.write` was
+    captured and `print` went straight to the real stream. Since `print` is how
+    a statement almost always produces output, that version would have captured
+    almost nothing while passing a `sys.stdout.write` test.
+    """
+    buffer = io.StringIO()
+    with task_scope.capturing(buffer):
+        print("printed")
+        sys.stdout.write("written\n")
+    assert buffer.getvalue() == "printed\nwritten\n"
+
+
+def test_a_harness_that_swaps_stdout_does_not_disable_capturing():
+    """pytest assigns `sys.stdout` after import, replacing the dict entry. The
+    proxy is re-applied per capture so that cannot silently switch capturing
+    off — which is how this would rot in the one environment that tests it."""
+    replacement = io.StringIO()
+    saved = sys.__dict__["stdout"]
+    try:
+        sys.__dict__["stdout"] = replacement  # the harness swaps it
+        buffer = io.StringIO()
+        with task_scope.capturing(buffer):
+            print("still captured")
+        assert buffer.getvalue() == "still captured\n"
+        # ...and output outside a capture reaches what the harness installed.
+        print("to the harness")
+        assert "to the harness" in replacement.getvalue()
+    finally:
+        sys.__dict__["stdout"] = saved
