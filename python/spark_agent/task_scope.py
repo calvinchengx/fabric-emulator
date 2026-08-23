@@ -67,6 +67,17 @@ from contextvars import ContextVar
 # subscripted ContextVar.
 _bound = ContextVar("spark_agent_task_scope", default=None)
 
+# The buffer the RUNNING STATEMENT's prints go to.
+#
+# ITS OWN ContextVar, not a field on the session scope, and the difference is
+# not cosmetic. A scope is per SESSION and lives as long as the session does; a
+# capture buffer is per STATEMENT. Two statements of the same session can be in
+# flight at once -- the agent is a ThreadingHTTPServer and nothing serialises
+# them per session -- and hanging the buffer off the shared scope would put both
+# of their output in one place, which is the bug being fixed with a smaller
+# blast radius.
+_capture = ContextVar("spark_agent_stdout", default=None)
+
 # A scoped `del os.environ[k]` must hide a PROCESS variable from this session
 # without unsetting it for the agent. Storing a tombstone keeps the delete
 # private; actually deleting it would be the same class of bug this module
@@ -198,6 +209,87 @@ def bind(scope):
 
 def unbind(token):
     _bound.reset(token)
+
+
+class _SessionStdout:
+    """The single object in `sys.__dict__["stdout"]`, routed per statement.
+
+    NOT A PROPERTY ON `_AgentSys`, which is what `argv` uses and what the issue
+    proposed. Measured: it does not work.
+
+        print("x")            -> the REAL stdout   (property bypassed)
+        sys.stdout.write("x") -> the capture       (property honoured)
+
+    `print` reaches stdout through `PySys_GetObject`, which reads the sys
+    module's DICT directly; a property lives on the module's TYPE and is never
+    consulted. `sys.argv` is safe because user code reads it as an attribute,
+    and `print` is the overwhelmingly common way a statement produces output --
+    so the property approach would have captured almost nothing while looking
+    correct in a `sys.stdout.write` test.
+
+    So the dict entry stays ONE stable object and the routing happens inside
+    it. Nothing is saved or restored, which is the property this module exists
+    to preserve: a concurrent statement resolves its own buffer through the
+    ContextVar and neither can restore over the other.
+    """
+
+    def __init__(self, wrapped):
+        # The stream to use when no statement is capturing: the agent's own
+        # log. Held rather than looked up, because looking it up would find
+        # this proxy.
+        self._wrapped = wrapped
+
+    def _target(self):
+        captured = _capture.get()
+        return self._wrapped if captured is None else captured
+
+    def write(self, text):
+        return self._target().write(text)
+
+    def writelines(self, lines):
+        return self._target().writelines(lines)
+
+    def flush(self):
+        return self._target().flush()
+
+    def __getattr__(self, name):
+        # `encoding`, `fileno`, `isatty`, everything else a caller may reach
+        # for. Delegated to whichever stream is live, so a captured statement
+        # sees the buffer's answers -- including `fileno()` raising, exactly as
+        # it did under redirect_stdout.
+        return getattr(self._target(), name)
+
+
+def _ensure_proxy():
+    """Put the proxy in the sys module dict, over whatever is there now.
+
+    Idempotent, and re-applied on every capture rather than once at install:
+    pytest and other harnesses assign `sys.stdout` after import, which replaces
+    the dict entry outright. Re-checking here costs one isinstance and means a
+    capture cannot silently stop working because something else swapped the
+    stream first.
+    """
+    current = sys.__dict__.get("stdout")
+    if not isinstance(current, _SessionStdout):
+        sys.__dict__["stdout"] = _SessionStdout(current)
+
+
+@contextmanager
+def capturing(buffer):
+    """Send this statement's prints to `buffer` for the duration.
+
+    Replaces `redirect_stdout` at the one call site that captures a statement's
+    output. Nothing is saved or restored: the buffer is bound in a ContextVar
+    and read by the proxy sitting in `sys.__dict__["stdout"]`, so a concurrent
+    statement in another thread resolves its own and neither can restore over
+    the other.
+    """
+    _ensure_proxy()
+    token = _capture.set(buffer)
+    try:
+        yield buffer
+    finally:
+        _capture.reset(token)
 
 
 @contextmanager
