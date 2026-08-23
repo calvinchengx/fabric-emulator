@@ -90,6 +90,29 @@ REQUIRED_STATS = (
 REAL_TENANT = "real-fabric"
 
 
+def shown(path: pathlib.PurePath) -> str:
+    """A path as a reader wants to see it: relative to the repo when it is inside it.
+
+    Every caller is inside a failure message, and `Path.relative_to` RAISES for
+    a path outside ROOT. So the branch whose whole job is to explain a problem
+    replaced the explanation with a ValueError from pathlib. Invisible in
+    production, where these are module constants under ROOT, and that is
+    exactly why nothing had ever executed one of them: the tests moved ROOT to
+    sit above their fixtures, which is the workaround this removes.
+
+    `as_posix()` rather than `str()`, as the sibling checkers already do: on
+    Windows `str()` renders `docs\\witnesses.json`, so one failure would read
+    two ways across the three platforms this suite runs on.
+
+    `PurePath`, not `Path`: nothing here touches the filesystem, and the wider
+    type is what lets the Windows rendering be tested from any platform.
+    """
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def read(path: pathlib.Path) -> str:
     """UTF-8 explicitly. The matrices' glyphs are what is being matched, and a
     locale-dependent read turns them into mojibake that matches nothing while
@@ -119,7 +142,7 @@ def real_tenant_claims() -> int:
     data = json.loads(read(WITNESSES))
     claims = {k: v for k, v in data.items() if k != "_gated"}
     if not claims:
-        raise SystemExit(f"FAIL: no claims parsed from {WITNESSES.relative_to(ROOT)}")
+        raise SystemExit(f"FAIL: no claims parsed from {shown(WITNESSES)}")
     return sum(
         1
         for claim in claims.values()
@@ -149,7 +172,7 @@ def engine_matrix() -> dict:
             passes[name] = passes.get(name, 0) + (1 if cell.startswith("✅") else 0)
     if not probes:
         raise SystemExit(
-            f"FAIL: no probes parsed from {ENGINE_MATRIX.relative_to(ROOT)} -- the "
+            f"FAIL: no probes parsed from {shown(ENGINE_MATRIX)} -- the "
             "matrix is not empty, so this is a parsing failure, and the page "
             "would show a dash while looking fine."
         )
@@ -177,7 +200,7 @@ def conformance() -> dict:
                 proven += 1
     if not contracts:
         raise SystemExit(
-            f"FAIL: no contracts parsed from {CONFORMANCE.relative_to(ROOT)}"
+            f"FAIL: no contracts parsed from {shown(CONFORMANCE)}"
         )
     return {"contracts": contracts, "proven": proven, "applicable": applicable}
 
@@ -186,7 +209,7 @@ def site_stats() -> dict:
     """The docs build's own tally, read rather than recomputed."""
     if not SITE_STATS.exists():
         raise SystemExit(
-            f"FAIL: {SITE_STATS.relative_to(ROOT)} does not exist. It is written by "
+            f"FAIL: {shown(SITE_STATS)} does not exist. It is written by "
             "the Astro build (`pnpm --filter fabric-emulator-docs build`), which "
             "must run before this script."
         )
@@ -196,7 +219,7 @@ def site_stats() -> dict:
         for key in path:
             if not isinstance(node, dict) or key not in node:
                 raise SystemExit(
-                    f"FAIL: {SITE_STATS.relative_to(ROOT)} no longer carries "
+                    f"FAIL: {shown(SITE_STATS)} no longer carries "
                     f"{'.'.join(path)}, which the landing page reads. Something in "
                     "website/scripts/sync-docs.mjs stopped counting it."
                 )
