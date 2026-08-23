@@ -107,7 +107,7 @@ WORKER = textwrap.dedent("""
     sys.path.insert(0, %r)
     import usercontext as uc
 
-    responses = uc.claim_protocol_stream()
+    responses = uc.protocol_stream()
 
     def run(code, g, kind=""):
         return {"status": "ok", "data": {"text/plain": repr(eval(code, g))},
@@ -209,25 +209,15 @@ def test_close_kills_a_child_that_will_not_leave():
     assert ctx.proc is None
 
 
-def test_the_childs_log_stream_is_inherited_and_not_a_pipe():
-    # stdout is the protocol and the parent drains it. stderr carries the
-    # child's log and MUST be inherited: an undrained pipe blocks the child once
-    # ~64KB of library chatter fills it, which presents as a statement that
-    # never returns rather than as a full buffer.
+def test_both_of_the_childs_log_streams_are_inherited():
+    # Responses have a pipe of their own, so stdout and stderr are free to be
+    # the child's log. Capturing either would risk an undrained pipe blocking
+    # the child once ~64KB of library chatter fills it, which presents as a
+    # statement that never returns rather than as a full buffer.
     ctx = spawn()
     try:
-        assert ctx.proc.stderr is None, "the child's log was captured, not inherited"
-        assert ctx.proc.stdout is not None, "the protocol stream is not readable"
-    finally:
-        ctx.close()
-
-
-def test_a_grant_is_not_needed_for_the_protocol_to_work():
-    # The response stream is no longer announced through the environment, so a
-    # child started with a scrubbed environment still answers.
-    ctx = spawn()
-    try:
-        assert ctx.run("2 * 21")["data"]["text/plain"] == "42"
+        assert ctx.proc.stdout is None, "the child's stdout was captured"
+        assert ctx.proc.stderr is None, "the child's stderr was captured"
     finally:
         ctx.close()
 
@@ -458,3 +448,82 @@ def test_a_windows_style_pipe_error_is_reported_like_a_broken_one():
         assert got["status"] == "error" and got["ename"] == "UserContextLost"
     finally:
         ctx.close()
+
+
+# --- the Windows spawn, covered from POSIX ------------------------------------
+#
+# `pass_fds` raises on Windows, so the private descriptor is handed over as a
+# kernel HANDLE named in PROC_THREAD_ATTRIBUTE_HANDLE_LIST instead. That branch
+# cannot execute here, and shipping it uncovered is how the last two
+# portability defects reached CI instead of a test — so the three platform calls
+# are injected and the wiring is asserted.
+
+class _FakeWin:
+    def __init__(self):
+        self.inheritable = []
+        self.listed: list = []
+
+    def get_osfhandle(self, fd):
+        return 0xBEEF0000 + fd
+
+    def set_handle_inheritable(self, handle, flag):
+        self.inheritable.append((handle, flag))
+
+    def startupinfo(self, handles):
+        self.listed[:] = handles
+        return {"lpAttributeList": {"handle_list": list(handles)}}
+
+
+def _fake_popen(sink):
+    def popen(argv, **kwargs):
+        sink.update(kwargs)
+        sink["argv"] = argv
+        return _FakeProc(kwargs)
+    return popen
+
+
+def test_the_windows_spawn_names_the_handle_rather_than_a_descriptor():
+    sink, win = {}, _FakeWin()
+    ctx = uc.UserContext(argv=["child"], env={"PATH": "/x"}, windows=True,
+                         winapi=win, popen=_fake_popen(sink)).start()
+    try:
+        handle = win.listed[0]
+        # Marked inheritable, named in the handle list, and its VALUE — not a
+        # descriptor number — passed to the child.
+        assert (handle, True) in win.inheritable
+        assert sink["startupinfo"]["lpAttributeList"]["handle_list"] == [handle]
+        assert sink["env"][uc.RESPONSE_HANDLE_ENV] == str(handle)
+        assert uc.RESPONSE_FD_ENV not in sink["env"]
+        # pass_fds is what raises on Windows; it must not be passed at all.
+        assert "pass_fds" not in sink
+    finally:
+        ctx.proc = None
+
+
+def test_the_posix_spawn_names_a_descriptor_rather_than_a_handle():
+    sink = {}
+    ctx = uc.UserContext(argv=["child"], env={"PATH": "/x"}, windows=False,
+                         popen=_fake_popen(sink)).start()
+    try:
+        assert sink["pass_fds"] == (int(sink["env"][uc.RESPONSE_FD_ENV]),)
+        assert uc.RESPONSE_HANDLE_ENV not in sink["env"]
+        assert "startupinfo" not in sink
+    finally:
+        ctx.proc = None
+
+
+def test_neither_spawn_captures_the_childs_log_streams():
+    for windows in (True, False):
+        sink = {}
+        uc.UserContext(argv=["child"], windows=windows, winapi=_FakeWin(),
+                       popen=_fake_popen(sink)).start()
+        assert "stdout" not in sink and "stderr" not in sink, windows
+        assert sink["stdin"] is subprocess.PIPE
+
+
+def test_the_child_reads_its_descriptor_from_the_posix_variable(tmp_path):
+    target = tmp_path / "out"
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT)
+    with uc.protocol_stream(env={uc.RESPONSE_FD_ENV: str(fd)}, windows=False) as f:
+        f.write(b"framed\n")
+    assert target.read_bytes() == b"framed\n"

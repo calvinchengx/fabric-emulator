@@ -455,12 +455,25 @@ it dark keeps the code reviewable and the behaviour unchanged. The flag is a
 staging device with a removal condition, not a setting: when B2 lands, the
 default flips and the flag goes.
 
-**The transport is stdout, claimed.** The child takes descriptor 1 for the
-protocol and points descriptor 1 at stderr, so everything that prints reaches
-the agent's log and the only writer on the protocol is the child itself. The
-obvious design -- a private descriptor via `pass_fds` -- is POSIX-only:
-`ValueError: pass_fds not supported on Windows`, found by the Windows unit-test
-job after the POSIX one was green.
+**The protocol has a descriptor of its own, on both platforms.** stdout and
+stderr stay the child's log; responses travel on a private pipe. The platforms
+do not share a mechanism for handing one over, so there are two spawns:
+
+| | POSIX | Windows |
+|---|---|---|
+| handed over as | a descriptor NUMBER, via `pass_fds` | a kernel HANDLE, via `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` |
+| why that works | fork copies the descriptor table, exec keeps what is not close-on-exec | `CreateProcess` builds a fresh process; only named handles are inherited |
+| the child does | reads the number from the environment | `msvcrt.open_osfhandle(handle, O_WRONLY \| O_BINARY)` |
+
+`subprocess` refuses `pass_fds` on Windows outright, and it does so with an
+`assert` -- so under `python -O` the flag is silently DROPPED rather than
+raising, and the child simply has no descriptor. O_BINARY is not decoration
+either: the CRT would open the handle in text mode and rewrite every newline,
+and newlines are the frame delimiter.
+
+The Windows branch is covered from POSIX by injecting its three platform calls,
+because code that first executes on a machine nobody can step through is how the
+two earlier portability defects reached CI instead of a test.
 
 **B3 — witnesses and parity.** The probe above becomes assertions: the cell
 cannot reach a credential, the path read is refused, the SQL path still returns

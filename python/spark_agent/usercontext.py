@@ -20,17 +20,33 @@ the service credential, resolves policy, and prepares what the child may see.
 The child gets a token minted for the CALLER, so a path read arrives at OneLake
 as that principal and the platform block applies.
 
-THE PROTOCOL DOES NOT SHARE A STREAM WITH ANYTHING THAT PRINTS. pyspark
-warnings, Delta chatter and any library that writes on import would otherwise
-land in the middle of a response, which is a corruption waiting for the first
-one that does. So the child claims descriptor 1 for the protocol and points
-descriptor 1 -- the one every later print resolves through -- at stderr, which
-the agent inherits as its log.
+THE PROTOCOL GETS A DESCRIPTOR OF ITS OWN. pyspark warnings, Delta chatter and
+any library that writes on import would otherwise land in the middle of a
+response, which is a corruption waiting for the first one that does. So stdout
+stays the child's log, inherited by the agent, and responses travel on a private
+pipe.
 
-That is the portable spelling of it. Passing a private descriptor with
-`pass_fds` is the obvious design and raises `ValueError: pass_fds not supported
-on Windows`, which the Windows unit-test job found after the POSIX one was
-green. `os.dup`/`os.dup2` work on both.
+TWO WAYS TO HAND ONE OVER, because the platforms do not share a mechanism:
+
+  * POSIX: `pass_fds`. fork copies the descriptor table and exec keeps whatever
+    is not close-on-exec, so the child sees the same fd NUMBER. The parent says
+    which number in the environment.
+  * Windows: there is no descriptor table to inherit -- `CreateProcess` builds a
+    fresh process, `STARTUPINFO` has slots for exactly stdin/stdout/stderr, and
+    a descriptor is a C-runtime notion layered over a kernel HANDLE. So the
+    handle is marked inheritable and named in
+    `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` (`lpAttributeList={"handle_list": ...}`),
+    the parent passes the HANDLE value, and the child turns it back into a
+    descriptor with `msvcrt.open_osfhandle`. Python appends the std handles to
+    that list itself when any stream is redirected, so a stdin pipe alongside an
+    inherited stdout still works.
+
+`subprocess` refuses `pass_fds` on Windows outright -- `assert not pass_fds,
+"pass_fds not supported on Windows."` -- and it is an ASSERT, so under `python
+-O` the flag is silently dropped rather than raising. Neither platform's path is
+guessed at: the POSIX one is exercised by real subprocesses below, and the
+Windows one is covered on POSIX through injected platform calls and then proved
+by the Windows job.
 
 WHAT IS NOT SOLVED HERE. The child still needs to READ, and a narrowed table
 refuses its token by design. Making the filtered rows available is the system
@@ -163,7 +179,8 @@ class UserContext:
     """
 
 
-    def __init__(self, argv=None, env=None, popen=None, grants=None):
+    def __init__(self, argv=None, env=None, popen=None, grants=None,
+                 windows=None, winapi=None):
         # BY PATH, not `-m`. The agent image puts these modules flat on
         # sys.path rather than in a `spark_agent` package, so `-m
         # spark_agent.usercontext` resolves on a developer checkout and fails in
@@ -179,19 +196,41 @@ class UserContext:
         # failed.
         self.grants = dict(grants or {})
         self._popen = popen or subprocess.Popen
+        # Both injectable so the branch POSIX cannot execute is still covered.
+        self.windows = (os.name == "nt") if windows is None else windows
+        self.winapi = winapi or WinApi()
         self.proc = None
         self._responses = None
 
     def start(self):
         env = child_env(self.env)
         env.update(self.grants)
-        # stdout is the PROTOCOL, and the parent drains it one response at a
-        # time. stderr is inherited so the child's log reaches the agent's --
-        # and so it cannot fill an undrained pipe and block the child, which is
-        # what capturing it would risk.
-        self.proc = self._popen(self.argv, env=env, stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE)
-        self._responses = self.proc.stdout
+        read_fd, write_fd = os.pipe()
+        try:
+            # stdout and stderr are INHERITED: they are the child's log, and
+            # capturing either would risk an undrained pipe blocking the child
+            # once ~64KB of library chatter fills it. Only stdin is a pipe, for
+            # requests; responses come back on the private one below.
+            if self.windows:
+                handle = self.winapi.get_osfhandle(write_fd)
+                self.winapi.set_handle_inheritable(handle, True)
+                env[RESPONSE_HANDLE_ENV] = str(handle)
+                self.proc = self._popen(
+                    self.argv, env=env, stdin=subprocess.PIPE,
+                    startupinfo=self.winapi.startupinfo([handle]))
+            else:
+                env[RESPONSE_FD_ENV] = str(write_fd)
+                self.proc = self._popen(
+                    self.argv, env=env, stdin=subprocess.PIPE,
+                    pass_fds=(write_fd,))
+        finally:
+            # The parent keeps the READ end only. Leaving the write end open
+            # here means the read never sees EOF when the child dies, and a
+            # crashed child becomes a hang instead of an error. On Windows this
+            # closes the HANDLE too -- after CreateProcess, so the child already
+            # has its own copy.
+            os.close(write_fd)
+        self._responses = os.fdopen(read_fd, "rb")
         return self
 
     def prepare(self, tables):
@@ -252,28 +291,48 @@ class UserContext:
         self.proc, self._responses = None, None
 
 
-def claim_protocol_stream():
-    """Take descriptor 1 for the protocol; send everything else to stderr.
+RESPONSE_FD_ENV = "SPARK_AGENT_RESPONSE_FD"          # POSIX: a descriptor number
+RESPONSE_HANDLE_ENV = "SPARK_AGENT_RESPONSE_HANDLE"  # Windows: a kernel HANDLE
 
-    Returned as a binary file the caller owns. After this, `print`, a library
-    writing to `sys.stdout`, and anything a C extension writes to fd 1 all reach
-    stderr instead -- so the only writer on the protocol stream is us.
 
-    `run_code` captures USER prints separately, by swapping the `sys.stdout`
-    object; this is about everything that does not go through it.
+class WinApi:
+    """The three Windows calls the private-handle route needs.
+
+    A seam, not an abstraction. Injecting it is what lets POSIX CI cover the
+    Windows branch: without it that code would first execute on a machine none
+    of us can step through, which is how the last two portability defects
+    reached CI instead of a test.
     """
-    protocol = os.dup(1)
-    os.dup2(2, 1)
-    if os.name == "nt":  # pragma: no cover - POSIX CI cannot reach this
-        # Windows opens descriptor 1 in TEXT mode, which rewrites every \n on
-        # the way out. The frames are newline-delimited, so leaving it would put
-        # a \r before each delimiter -- survivable, since JSON treats it as
-        # whitespace, but it makes the framing depend on a parser's tolerance
-        # rather than on the format. Say binary and mean it.
+
+    def get_osfhandle(self, fd):  # pragma: no cover - Windows only
         import msvcrt
 
-        msvcrt.setmode(protocol, os.O_BINARY)
-    return os.fdopen(protocol, "wb")
+        return msvcrt.get_osfhandle(fd)
+
+    def set_handle_inheritable(self, handle, flag):  # pragma: no cover
+        os.set_handle_inheritable(handle, flag)
+
+    def startupinfo(self, handles):  # pragma: no cover
+        return subprocess.STARTUPINFO(lpAttributeList={"handle_list": handles})
+
+
+def protocol_stream(env=None, windows=None):
+    """The child's end of the response pipe, as a binary file it owns.
+
+    On Windows the descriptor is manufactured from the inherited handle, and
+    O_BINARY is not decoration: the CRT would otherwise open it in text mode and
+    rewrite every newline on the way out, and newlines are the frame delimiter.
+    """
+    env = os.environ if env is None else env
+    windows = (os.name == "nt") if windows is None else windows
+    if windows:  # pragma: no cover - the child half runs only on Windows
+        import msvcrt
+
+        handle = int(env[RESPONSE_HANDLE_ENV])
+        fd = msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
+    else:
+        fd = int(env[RESPONSE_FD_ENV])
+    return os.fdopen(fd, "wb")
 
 
 def _dispatch(code, g, kind):  # pragma: no cover - runs in the child
@@ -392,8 +451,10 @@ def close_session(session):
 
 
 def main():  # pragma: no cover - exercised as a subprocess, not in-process
-    # BEFORE importing anything that might print: agent brings up Spark.
-    responses = claim_protocol_stream()
+    # Opened BEFORE importing agent, which brings up Spark: the descriptor must
+    # be claimed while we still know it is ours, not after a library has had a
+    # chance to touch the table.
+    responses = protocol_stream()
     import agent
 
     with responses:
