@@ -744,7 +744,23 @@ carrying no `jobId`, so `cell_context` has nothing to export and `None` is
 right on both sides. Asserting it would pin the harness rather than the
 boundary.
 
-`FABRIC_TWO_CONTEXT` still defaults OFF, but the reason has changed. It is no
-longer a missing guarantee or missing coverage -- it is that turning it on
-starts an engine per user in every consumer's stack, which is a resource
-decision for the family rather than a correctness one.
+### On by default
+
+`FABRIC_TWO_CONTEXT` now defaults ON; `FABRIC_TWO_CONTEXT=0` opts out.
+
+**It engages only where there is policy.** `is_secured` requires a statement to
+name a principal, a workspace AND an item, which the emulator sends only when
+the item HAS data access roles. Measured rather than argued: the
+`notebook-driven` suite, which has no roles anywhere, passes with **zero
+engines started**. The cost lands on the workloads that asked for the
+enforcement and nowhere else.
+
+The escape hatch is not the staging flag this started as. That one guarded an
+incomplete feature and was meant to be deleted. This one covers a resource
+decision -- enforcement costs an engine per user, ~66 MiB -- so a consumer who
+cannot afford it can say so, and get the previous weaker behaviour knowingly
+rather than by pinning an old image.
+
+Measured with the default on: `livy-native` passes, including the owner still
+seeing all 3 rows and both columns through an engine of their own, and
+`two-context` passes with the path read refused.
