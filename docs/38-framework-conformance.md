@@ -1,13 +1,15 @@
 # 38 — Framework conformance: what a Fabric product assumes, and how to test it
 
-**Status: contracts 4 and 1 are live.** Contract 4 is ✅ on all three
+**Status: contracts 4, 1 and 2 are live.** Contract 4 is ✅ on all three
 backends — a write through the emulator path, confirmed out of band (OneLake
 DFS on sail/jvm; a fresh TDS connection on warehouse). The engine that wrote
 is never the one that confirms. **Contract 1 is ✅ on sail and ❌ on jvm**,
 and the jvm red is a real defect rather than a missing assertion: the JVM
 overlay image has no `notebookutils` installed at all, so a notebook cannot
-import the surface this repo grades 🟢 Real. Contracts 2–3 and 5–7 stay
-known gaps. The offline half (`docs/conformance-matrix.md`,
+import the surface this repo grades 🟢 Real. **Contract 2 is ❌ on both**,
+and also for a real reason: seven of the eleven documented
+`notebookutils.notebook` methods do not exist in the shim (see below).
+Contracts 3 and 5–7 stay known gaps. The offline half (`docs/conformance-matrix.md`,
 `check_conformance.py --strict`) still gates `make check`.
 
 **Two defects came out of contract 1's first run, and neither was visible to
@@ -105,9 +107,32 @@ nothing to switch — the emulator has one session and attaches the notebook's o
 binding. What is not correct is omitting the parameter, because omission is a
 signal frameworks read.
 
-**The fix.** A signature-pinning test over the whole surface, the way
-`test(schema)` pins REST payload fields against the reference. A parameter that
-real Fabric accepts must appear here, whether or not it does anything.
+**The fix, landed for `notebookutils.notebook`.**
+`e2e/conformance/notebookutils-reference.json` pins the documented signatures
+the way `test(schema)` pins REST payload fields, and **every entry cites the
+Microsoft page it was read from plus that page's own last-updated date** — a
+reference assembled from memory would be this same defect one tier up, a claim
+about Fabric with nothing behind it. Its scope is declared rather than implied:
+`fs`, `credentials`, `env`, `runtime`, `lakehouse`, `session`, `udf` and
+`variableLibrary` are listed as not yet covered, so a partial reference cannot
+be read as a complete one.
+
+**What the probe found.** The four orchestration methods are correct —
+`run`, `runMultiple`, `validateDAG`, `exit` all carry their documented
+parameters in the documented order. **Seven documented methods are absent
+entirely**: `create`, `get`, `getDefinition`, `update`, `updateDefinition`,
+`delete`, `list` — the whole notebook-management surface a CI/CD framework
+introspects before it will run. The emulator has these operations over REST;
+the shim does not expose them.
+
+**Missing fails, extra passes, order counts.** A framework declines on an
+absent parameter without calling anything, so omission is the signal. Accepting
+one and ignoring it is correct emulation when there is nothing to switch — this
+shim already carries `spark_environment` and `attach_lakehouse`, which
+Microsoft's current page does not document, and that is fine. Order is part of
+the contract because Fabric's own examples are positional
+(`run("Sample1", 90, {"input": 20})`): right names in the wrong order accept
+that call and do something else with it.
 
 ### 3. The runtime is a versioned product, not "some Spark"
 
@@ -200,10 +225,10 @@ the compute surface, not of one launcher.
 **Status: built; contracts 4 and 1 are live.** The harness, the committed
 matrix, and the offline checker are in tree. Sail, JVM, and warehouse each
 write through the emulator path and an out-of-band reader confirms the
-artifact. Items 2–3 and 5–7 are still individually tractable. The reason
+artifact. Items 3 and 5–7 are still individually tractable. The reason
 they existed for months is that nothing exercised them, and that is the
 gap worth closing first — a new framework will find a new one next week
-otherwise. Contract 1 found two on its first run.
+otherwise. Contract 1 found two on its first run, and contract 2 a third.
 
 **Contracts share a run but must not share a failure.** Contract 1 rides the
 same notebook as contract 4, which costs nothing and describes one session

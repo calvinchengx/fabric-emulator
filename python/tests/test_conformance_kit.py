@@ -250,3 +250,79 @@ def test_committed_json_names_every_contract_on_every_backend():
         four = next(r for r in rows if r["id"] == "4")
         assert four["status"] == "pass", four
         assert four["error"] == ""
+
+
+def _sig(**kw):
+    seen = {"run": ["path", "timeout_seconds", "arguments", "workspace"]}
+    seen.update(kw)
+    return probes.SignatureClaim(ok=True, seen=seen)
+
+
+REF = {"run": {"params": ["path", "timeout_seconds", "arguments", "workspace"]}}
+
+
+def test_signature_shape_passes_when_every_documented_parameter_is_present():
+    r = probes.signature_shape(session=lambda: _sig(), reference=REF, backend="sail")
+    assert r.status == "pass"
+
+
+def test_signature_shape_allows_extra_parameters():
+    """Accepting a parameter and ignoring it is correct emulation when there is
+    nothing to switch; the emulator has one session. Only omission is a signal."""
+    r = probes.signature_shape(
+        session=lambda: _sig(run=["path", "timeout_seconds", "arguments", "workspace",
+                                  "spark_environment", "attach_lakehouse"]),
+        reference=REF, backend="sail")
+    assert r.status == "pass"
+
+
+def test_signature_shape_fails_on_a_missing_parameter():
+    r = probes.signature_shape(
+        session=lambda: _sig(run=["path", "timeout_seconds", "arguments"]),
+        reference=REF, backend="sail")
+    assert r.status == "fail"
+    assert "missing workspace" in r.error
+
+
+def test_signature_shape_fails_on_a_missing_method():
+    """Absence is the case that matters most: a framework reads it and stops."""
+    r = probes.signature_shape(
+        session=lambda: probes.SignatureClaim(ok=True, seen={}),
+        reference=REF, backend="sail")
+    assert r.status == "fail"
+    assert "absent" in r.error and "run" in r.error
+
+
+def test_signature_shape_fails_when_documented_parameters_are_out_of_order():
+    """Fabric's own examples are positional -- `run("Sample1", 90, {...})`. Right
+    names in the wrong order accept that call and do something else with it."""
+    r = probes.signature_shape(
+        session=lambda: _sig(run=["path", "arguments", "timeout_seconds", "workspace"]),
+        reference=REF, backend="sail")
+    assert r.status == "fail"
+    assert "out of order" in r.error
+
+
+def test_signature_shape_reports_the_sessions_own_error():
+    r = probes.signature_shape(
+        session=lambda: probes.SignatureClaim(ok=False, error="no signatures reported"),
+        reference=REF, backend="sail")
+    assert r.status == "fail"
+    assert "no signatures reported" in r.error
+
+
+def test_every_reference_entry_cites_a_source():
+    """A reference assembled from memory is the same defect one tier up: a claim
+    about Fabric with nothing behind it."""
+    ref = json.loads(
+        (REPO / "e2e" / "conformance" / "notebookutils-reference.json")
+        .read_text(encoding="utf-8"))
+    assert ref["modules_not_yet_covered"], "the scope must be declared, not implied"
+    for module, methods in ref["modules"].items():
+        assert methods, module
+        for name, spec in methods.items():
+            assert spec["source"].startswith("https://learn.microsoft.com/"), name
+            assert spec["read"], name
+            assert spec["params"], name
+            # The verbatim line is what a reviewer checks the params against.
+            assert spec["verbatim"].startswith(f"{name}("), name

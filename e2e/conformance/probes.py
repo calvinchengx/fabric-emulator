@@ -55,7 +55,7 @@ CONTROL = frozenset({(6, "jvm")})
 # that same harness with different notebooks.
 GAP_REASON = {
     1: "no live session recorded — the offline path cannot prove a session contract",
-    2: "not yet asserted — needs a running notebook session",
+    2: "no live session recorded — the offline path cannot read a live signature",
     3: "not yet asserted — needs a running notebook session",
     4: "live backends not yet recorded",
     5: "not yet asserted — same harness as write landing, different notebooks",
@@ -209,6 +209,77 @@ def context_chain(
         return Result(id="1", contract=title, backend=backend, status="fail",
                       error="; ".join(wrong), pointer=pointer)
     return Result(id="1", contract=title, backend=backend, status="pass")
+
+
+@dataclass(frozen=True)
+class SignatureClaim:
+    """The signatures one notebook session reported for a module.
+
+    `seen` maps method name to its ordered parameter list. A method the
+    session could not find at all is simply absent, which is the case that
+    matters most: omission is what a framework reads.
+    """
+
+    ok: bool
+    seen: dict[str, list[str]] | None = None
+    error: str = ""
+
+
+def signature_shape(
+    *,
+    session: Callable[[], SignatureClaim],
+    reference: dict,
+    backend: str,
+) -> Result:
+    """Contract 2: every parameter real Fabric accepts is present.
+
+    THE ASYMMETRY IS THE CONTRACT, and it is not a style preference. A missing
+    parameter fails; an EXTRA one does not. A framework introspects a signature
+    and declines to run when a parameter it needs is absent -- without ever
+    calling anything -- so omission is a signal it reads. Accepting a parameter
+    and ignoring it is correct emulation when there is nothing to switch; the
+    emulator has one session and attaches the notebook's own binding.
+
+    ORDER IS PART OF THE SIGNATURE, because Fabric's documented calls are
+    positional (`run("Sample1", 90, {"input": 20})`). A runtime with the right
+    names in the wrong order accepts that call and does something else with it,
+    which is worse than refusing it.
+    """
+    title = CONTRACTS[1][1]
+    pointer = CONTRACTS[1][2]
+    claim = session()
+    if not claim.ok:
+        return Result(id="2", contract=title, backend=backend, status="fail",
+                      error=claim.error or "the session reported no signatures",
+                      pointer=pointer)
+
+    seen = claim.seen or {}
+    missing_methods, wrong = [], []
+    for method, spec in sorted(reference.items()):
+        if method not in seen:
+            missing_methods.append(method)
+            continue
+        want = spec["params"]
+        got = seen[method]
+        # Extra trailing parameters are allowed; the documented ones must be
+        # present, in order, at the front.
+        if got[:len(want)] != want:
+            missing = [p for p in want if p not in got]
+            if missing:
+                wrong.append(f"{method} is missing {', '.join(missing)}")
+            else:
+                wrong.append(f"{method} has {want} out of order: {got[:len(want)]}")
+
+    problems = []
+    if missing_methods:
+        problems.append(
+            f"{len(missing_methods)} documented method(s) absent: "
+            + ", ".join(missing_methods))
+    problems.extend(wrong)
+    if problems:
+        return Result(id="2", contract=title, backend=backend, status="fail",
+                      error="; ".join(problems), pointer=pointer)
+    return Result(id="2", contract=title, backend=backend, status="pass")
 
 
 def record(backend: str, live: dict[int, Result] | None = None) -> list[dict]:

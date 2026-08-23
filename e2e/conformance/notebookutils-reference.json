@@ -1,0 +1,112 @@
+{
+  "_comment": [
+    "THE PARAMETERS REAL FABRIC ACCEPTS, cited per method. Contract 2 in",
+    "docs/38-framework-conformance.md: a framework inspects a signature and",
+    "declines to run if a parameter is missing, WITHOUT EVER CALLING IT.",
+    "Accepting a parameter and ignoring it is correct emulation when there is",
+    "nothing to switch; omitting it is not, because omission is the signal.",
+    "",
+    "EVERY ENTRY CARRIES ITS SOURCE. A reference assembled from memory would be",
+    "the same defect one tier up: a claim about Fabric with nothing behind it.",
+    "`source` is the page the signature was read from and `read` is that page's",
+    "own last-updated date, so a stale entry can be found without re-reading",
+    "every page.",
+    "",
+    "SCOPE IS DECLARED, NOT IMPLIED. This covers `notebookutils.notebook` only.",
+    "fs, credentials, env, runtime, lakehouse, session, udf and variableLibrary",
+    "are listed in `modules_not_yet_covered` so the file cannot be mistaken for",
+    "the whole surface — a partial reference read as complete would turn absent",
+    "checks into apparent passes."
+  ],
+  "modules_not_yet_covered": [
+    "notebookutils.fs",
+    "notebookutils.credentials",
+    "notebookutils.env",
+    "notebookutils.runtime",
+    "notebookutils.lakehouse",
+    "notebookutils.session",
+    "notebookutils.udf",
+    "notebookutils.variableLibrary"
+  ],
+  "modules": {
+    "notebookutils.notebook": {
+      "run": {
+        "params": ["path", "timeout_seconds", "arguments", "workspace"],
+        "defaults": {"timeout_seconds": 90, "arguments": null, "workspace": ""},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-run",
+        "read": "2026-04-02",
+        "verbatim": "run(path: str, timeout_seconds: int = 90, arguments: dict = None, workspace: str = \"\"): str"
+      },
+      "runMultiple": {
+        "params": ["dag", "config"],
+        "defaults": {"config": null},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-run",
+        "read": "2026-04-02",
+        "verbatim": "runMultiple(dag: Any, config: dict = None): dict[str, dict[str, Any]]"
+      },
+      "validateDAG": {
+        "params": ["dag"],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-run",
+        "read": "2026-04-02",
+        "verbatim": "validateDAG(dag: Any): bool"
+      },
+      "exit": {
+        "params": ["value"],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-run",
+        "read": "2026-04-02",
+        "verbatim": "exit(value: str): None"
+      },
+      "create": {
+        "params": ["name", "description", "content", "defaultLakehouse", "defaultLakehouseWorkspace", "workspaceId"],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
+        "read": "2026-08-04",
+        "verbatim": "create(name, description, content, defaultLakehouse, defaultLakehouseWorkspace, workspaceId): Artifact"
+      },
+      "get": {
+        "params": ["name", "workspaceId"],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
+        "read": "2026-08-04",
+        "verbatim": "get(name, workspaceId): Artifact"
+      },
+      "getDefinition": {
+        "params": ["name", "workspaceId", "format"],
+        "defaults": {"format": "ipynb"},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
+        "read": "2026-08-04",
+        "verbatim": "getDefinition(name, workspaceId, format): String"
+      },
+      "update": {
+        "params": ["name", "newName", "description", "workspaceId"],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
+        "read": "2026-08-04",
+        "verbatim": "update(name, newName, description, workspaceId): Artifact"
+      },
+      "updateDefinition": {
+        "params": ["name", "content", "defaultLakehouse", "defaultLakehouseWorkspace", "workspaceId", "environmentId", "environmentWorkspaceId"],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
+        "read": "2026-08-04",
+        "verbatim": "updateDefinition(name, content, defaultLakehouse, defaultLakehouseWorkspace, workspaceId, environmentId, environmentWorkspaceId): bool"
+      },
+      "delete": {
+        "params": ["name", "workspaceId"],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
+        "read": "2026-08-04",
+        "verbatim": "delete(name, workspaceId): Boolean"
+      },
+      "list": {
+        "params": ["workspaceId", "maxResults"],
+        "defaults": {"maxResults": 1000},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
+        "read": "2026-08-04",
+        "verbatim": "list(workspaceId, maxResults): Array[Artifact]"
+      }
+    }
+  }
+}

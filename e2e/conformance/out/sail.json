@@ -11,8 +11,8 @@
     "id": "2",
     "contract": "Signature shape",
     "backend": "sail",
-    "status": "gap",
-    "error": "not yet asserted \u2014 needs a running notebook session",
+    "status": "fail",
+    "error": "7 documented method(s) absent: create, delete, get, getDefinition, list, update, updateDefinition",
     "pointer": "38-framework-conformance.md#2-the-api-shape-is-the-contract-independent-of-behaviour"
   },
   {

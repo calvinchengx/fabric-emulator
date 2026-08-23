@@ -11,8 +11,8 @@
     "id": "2",
     "contract": "Signature shape",
     "backend": "jvm",
-    "status": "gap",
-    "error": "not yet asserted \u2014 needs a running notebook session",
+    "status": "fail",
+    "error": "no signatures in the findings artifact \u2014 the session did not get as far as reporting them",
     "pointer": "38-framework-conformance.md#2-the-api-shape-is-the-contract-independent-of-behaviour"
   },
   {

@@ -26,9 +26,11 @@ sys.path.insert(0, str(DIR))
 from probes import (  # noqa: E402
     Artifact,
     ContextClaim,
+    SignatureClaim,
     WriteClaim,
     context_chain,
     record,
+    signature_shape,
     write_landing,
 )
 
@@ -93,6 +95,29 @@ try:
         # artifact rather than only in prose.
         "context_capacity": (_ctx or {}).get("currentCapacityId", ""),
     }
+    # Contract 2, in the same artifact and the same run. Signature shape is a
+    # property of the surface as the SESSION sees it, so it is read here rather
+    # than from the client's own import -- the client runs a different
+    # interpreter with a different package set, and asserting on that would
+    # prove something about the harness.
+    import inspect as _inspect
+
+    _sigs = {}
+    for _name in dir(_nbu.notebook):
+        if _name.startswith("_"):
+            continue
+        _fn = getattr(_nbu.notebook, _name, None)
+        if not callable(_fn):
+            continue
+        try:
+            _sigs[_name] = [p.name for p in
+                            _inspect.signature(_fn).parameters.values()
+                            if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
+        except (TypeError, ValueError):
+            # A builtin with no introspectable signature is not "absent"; say so
+            # rather than letting it read as a missing method.
+            _sigs[_name] = ["<no signature>"]
+    _findings["notebook_signatures"] = _sigs
     # An EXPLICIT abfss target, never a relative path: fs._resolve() reads a
     # relative one out of the very runtime context under test, so a relative
     # write would make the artifact's location depend on the answer measured.
@@ -112,6 +137,9 @@ _lake = ""
 # failed to write it says WHY, and a red that does not point at its cause is
 # most of the way back to a silent skip.
 _said = ""
+# Contract 2's half of the same findings file, kept beside the contract-1 half
+# so one DFS read serves both.
+_sigs_seen = None
 
 
 def log(msg: str) -> None:
@@ -285,7 +313,10 @@ def session_context() -> ContextClaim:
         return ContextClaim(
             ok=False,
             error=f"no context findings at {FINDINGS_PATH}: {exc}{why}")
-    log(f"context findings: {found}")
+    global _sigs_seen
+    _sigs_seen = found.get("notebook_signatures")
+    log(f"context findings: { {k: v for k, v in found.items() if k != 'notebook_signatures'} }")
+    log(f"notebook signatures reported: {len(_sigs_seen or {})} callables")
     return ContextClaim(
         ok=True,
         env_workspace=found.get("env_workspace", ""),
@@ -295,6 +326,23 @@ def session_context() -> ContextClaim:
         env_fallback_set=bool(found.get("env_fallback_set")),
         error="; ".join(found.get("errors", [])),
     )
+
+
+def session_signatures() -> SignatureClaim:
+    """Contract 2 reads the artifact contract 1 already fetched.
+
+    Deliberately NOT a second notebook or a second read: the findings file
+    carries both halves, so the two contracts describe one session and one
+    round trip. `session_context()` must have run first; if it did not, the
+    absent signatures are reported rather than silently read as an empty
+    surface, which would fail every method for the wrong reason.
+    """
+    if _sigs_seen is None:
+        return SignatureClaim(
+            ok=False,
+            error="no signatures in the findings artifact — "
+                  "the session did not get as far as reporting them")
+    return SignatureClaim(ok=True, seen=_sigs_seen)
 
 
 def main() -> int:
@@ -317,12 +365,16 @@ def main() -> int:
         expected_lakehouse=_lake,
         backend=backend,
     )
-    rows = record(backend, live={1: ctx, 4: result})
+    ref = json.loads((DIR / "notebookutils-reference.json").read_text(
+        encoding="utf-8"))["modules"]["notebookutils.notebook"]
+    sig = signature_shape(session=session_signatures, reference=ref, backend=backend)
+    rows = record(backend, live={1: ctx, 2: sig, 4: result})
     out = DIR / "out"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{backend}.json"
     path.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
     log(f"wrote {path} contract 1={ctx.status} {ctx.error}".rstrip())
+    log(f"wrote {path} contract 2={sig.status} {sig.error}".rstrip())
     log(f"wrote {path} contract 4={result.status} {result.error}".rstrip())
     return 0
 
