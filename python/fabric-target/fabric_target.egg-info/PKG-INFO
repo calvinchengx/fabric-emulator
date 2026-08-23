@@ -3,7 +3,7 @@ Name: fabric-target
 Version: 0.1.0
 Summary: One toggle between fabric-emulator and real Microsoft Fabric: FABRIC_TARGET=emulator|real resolves endpoints + credentials; code holds names.
 Project-URL: Homepage, https://github.com/calvinchengx/fabric-emulator
-Project-URL: Documentation, https://calvinchengx.github.io/fabric-emulator/21-real-fabric-toggle/
+Project-URL: Documentation, https://calvinchengx.github.io/fabric-emulator/docs/21-real-fabric-toggle/
 Requires-Python: >=3.9
 Provides-Extra: real
 Requires-Dist: azure-identity>=1.17; extra == "real"
