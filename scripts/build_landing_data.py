@@ -145,7 +145,7 @@ def engine_matrix() -> dict:
         if not columns or len(cells) - 1 != len(columns):
             continue
         probes += 1
-        for name, cell in zip(columns, cells[1:]):
+        for name, cell in zip(columns, cells[1:], strict=True):
             passes[name] = passes.get(name, 0) + (1 if cell.startswith("✅") else 0)
     if not probes:
         raise SystemExit(
