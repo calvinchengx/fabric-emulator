@@ -14,7 +14,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, '..', '..');
 const DOCS_SRC = join(REPO, 'docs');
 const OUT = join(here, '..', 'src', 'content', 'docs');
-export const BASE = '/fabric-emulator/';
+export const BASE = '/fabric-emulator/docs/';
 
 // Parity version data (release tags + the live map), collected once. `version`
 // is e.g. "v0.2.0" on a tag or "v0.1.0-69-g1935665" between releases.
@@ -30,7 +30,7 @@ const PARITY_RE = /^parity\.md$/;
 // (the parity map and the generated Spark engine matrix).
 const DOC_RE = /^(\d{2}-.*|parity|engine-matrix)\.md$/;
 
-// Rewrite `](./|docs/ NN-slug.md#anchor)` → `](/fabric-emulator/NN-slug/#anchor)`,
+// Rewrite `](./|docs/ NN-slug.md#anchor)` → `](/fabric-emulator/docs/NN-slug/#anchor)`,
 // and the un-numbered `parity.md` the same way.
 const LINK_RE = /\]\((?:\.\/|docs\/)?(\d{2}-[a-z0-9-]+|parity|engine-matrix)\.md(#[^)]*)?\)/g;
 
@@ -216,10 +216,20 @@ const stats = { version: PARITY.version, parity: parityStats(PARITY), docs: name
 // which is the strongest kind this repo recognises.
 try {
   const witnesses = JSON.parse(readFileSync(join(REPO, 'docs', 'witnesses.json'), 'utf8'));
-  const all = Object.values(witnesses).flatMap((c) => c.witnesses ?? []);
+  // `_gated` is not a claim. It records WHY a credited witness is allowed to
+  // skip, and counting it as one has been inflating the claim total by exactly
+  // one for as long as this block has existed.
+  const claims = Object.entries(witnesses)
+    .filter(([key]) => key !== '_gated')
+    .map(([, claim]) => claim);
+  const all = claims.flatMap((c) => c.witnesses ?? []);
   stats.witnesses = {
-    claims: Object.keys(witnesses).length,
+    claims: claims.length,
     total: all.length,
+    // References are not things: a claim is a row, a witness is a test or a
+    // job, and several rows legitimately rest on the same one. `total` counts
+    // the credits, `distinct` counts what actually runs.
+    distinct: new Set(all).size,
     ci: all.filter((w) => w.startsWith('ci:')).length,
     jobs: new Set(all.filter((w) => w.startsWith('ci:')).map((w) => w.slice(3))).size,
   };

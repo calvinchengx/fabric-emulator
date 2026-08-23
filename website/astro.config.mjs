@@ -3,18 +3,20 @@ import starlight from '@astrojs/starlight';
 import { remarkMermaid } from './plugins/remark-mermaid.mjs';
 
 // Project GitHub Pages site: https://calvinchengx.github.io/fabric-emulator/
+// The hand-written landing page owns the root; every rendered chapter lives
+// one level down, under /fabric-emulator/docs/ (see .github/workflows/docs-site.yml).
 export default defineConfig({
   site: 'https://calvinchengx.github.io',
-  base: '/fabric-emulator/',
+  base: '/fabric-emulator/docs/',
   // Docs were renumbered into reading order; keep the old published URLs alive.
   redirects: {
-    '/01-architecture/': '/fabric-emulator/03-architecture/',
-    '/02-api-surface/': '/fabric-emulator/07-control-plane-api/',
-    '/03-roadmap/': '/fabric-emulator/13-roadmap/',
-    '/04-real-compute/': '/fabric-emulator/14-real-compute/',
+    '/01-architecture/': '/fabric-emulator/docs/03-architecture/',
+    '/02-api-surface/': '/fabric-emulator/docs/07-control-plane-api/',
+    '/03-roadmap/': '/fabric-emulator/docs/13-roadmap/',
+    '/04-real-compute/': '/fabric-emulator/docs/14-real-compute/',
     // The parity map dropped its reading-order number (it's a living
     // reference, not a chapter) and now lives at /parity/.
-    '/17-parity/': '/fabric-emulator/parity/',
+    '/17-parity/': '/fabric-emulator/docs/parity/',
   },
   // remarkMermaid turns ```mermaid fences into <pre class="mermaid"> before
   // Expressive Code sees them; src/components/Head.astro renders them client-side.

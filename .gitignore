@@ -19,6 +19,11 @@ node_modules/
 # GoReleaser build output
 /dist/
 
+# The assembled docs site: site/index.html at the root with website/dist under
+# docs/, plus the manifests scripts/build_landing_data.py copies beside the
+# landing page. Rebuilt by .github/workflows/docs-site.yml on every publish.
+/_site/
+
 # Playwright
 test-results/
 playwright-report/
