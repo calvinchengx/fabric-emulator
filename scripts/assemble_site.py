@@ -272,7 +272,13 @@ def self_test() -> int:
         ok &= root_is_free
         print(f"  {'ok  ' if root_is_free else 'FAIL'} the root is left for the landing page")
 
-        points_at_docs = f'href="{BASE}kept/"' in (out / "kept" / "index.html").read_text()
+        # `and have`: without it this reads a file the check above just found
+        # missing, so a self-test that had ALREADY caught the bug died with a
+        # traceback instead of reporting its four lines and returning 1. A
+        # self-test that crashes on the failure it detects is one nobody can
+        # read the output of.
+        points_at_docs = have and f'href="{BASE}kept/"' in (
+            out / "kept" / "index.html").read_text()
         ok &= points_at_docs
         print(f"  {'ok  ' if points_at_docs else 'FAIL'} the stub points into {BASE}")
 
