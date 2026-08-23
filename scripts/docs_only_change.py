@@ -41,7 +41,12 @@ import sys
 
 # Everything under these is documentation for this purpose. `website/` is the
 # Astro site: its scripts, components and config exist only to render `docs/`.
-DOC_TREES = ("docs/", "website/")
+# `site/` is the hand-written landing page that the same published site serves
+# at its root: one self-contained HTML file, read by nothing but a browser and
+# by `scripts/build_landing_data.py`, which docs-site.yml runs on every change
+# under `site/**`. So the check that can observe a landing-page edit runs in
+# the workflow that builds it, and no job this lane skips can see the file.
+DOC_TREES = ("docs/", "website/", "site/")
 
 # Loose files that are documentation despite living at the root. Listed rather
 # than matched by `*.md`, so a new root-level markdown file (a LICENSE-adjacent
@@ -106,6 +111,9 @@ def self_test() -> int:
     cases: list[tuple[str, bool, str]] = [
         ("M\tdocs/01-quickstart.md", True, "edited page"),
         ("M\twebsite/scripts/sync-docs.mjs", True, "the #363 change itself"),
+        ("M\tsite/index.html", True, "the landing page the docs site serves at its root"),
+        ("M\tsite/index.html\nM\tscripts/build_landing_data.py", False,
+         "the guard that reads the landing page is code, so it disqualifies the lane"),
         ("M\tREADME.md", True, "root readme"),
         ("A\tdocs/55-new.md\nM\tREADME.md", True, "several docs"),
         ("M\tinternal/api/items.go", False, "code"),

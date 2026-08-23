@@ -5,7 +5,12 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'site/**'
       - 'website/**'
+      # The guard that reads site/index.html. Triggering on the page and not on
+      # the script that checks it would leave an edit to the check with nothing
+      # running it.
+      - 'scripts/build_landing_data.py'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - 'package.json'
@@ -37,7 +42,12 @@ on:
   pull_request:
     paths:
       - 'docs/**'
+      - 'site/**'
       - 'website/**'
+      # The guard that reads site/index.html. Triggering on the page and not on
+      # the script that checks it would leave an edit to the check with nothing
+      # running it.
+      - 'scripts/build_landing_data.py'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
       - 'package.json'
@@ -89,6 +99,22 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter fabric-emulator-docs build
 
+      # The published site is the hand-written landing page at the root with
+      # the rendered docs beneath it, so `/` is the project's front door and
+      # every chapter lives under `/fabric-emulator/docs/`. The Astro base
+      # moved with it (website/astro.config.mjs).
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp site/index.html _site/index.html
+          cp -R website/dist _site/docs
+
+      # The landing page states six totals and types none of them. This copies
+      # the manifests it reads and FAILS on a page that hardcodes a number, so
+      # a stale headline is a red build rather than a quiet lie.
+      - name: Landing page totals come from the manifests
+        run: python3 scripts/build_landing_data.py --out _site --landing site/index.html
+
       # Coverage badges, served from this site's own origin — no third-party
       # coverage service, no upload token, no account. The numbers come from
       # the last CI run on main that produced them, because only that run had a
@@ -124,11 +150,18 @@ jobs:
             python3 scripts/coverage_badges.py --out website/dist
           fi
           ls -1 website/dist/*.json
+          # The badge documents were served from the site ROOT before the docs
+          # moved under /docs/, and those URLs are baked into README badges and
+          # into shields.io query strings that this repo cannot rewrite once a
+          # reader has them. They are five small JSON files, so they are served
+          # from BOTH places rather than breaking the old URL.
+          cp website/dist/*.json _site/
+          cp website/dist/*.json _site/docs/
 
       - uses: actions/upload-pages-artifact@v5
         if: github.event_name != 'pull_request'
         with:
-          path: website/dist
+          path: _site
 
   deploy:
     name: Deploy to GitHub Pages

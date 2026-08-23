@@ -17,7 +17,7 @@ sessions = ["requests>=2.31"]
 
 [project.urls]
 Homepage = "https://github.com/calvinchengx/fabric-emulator"
-Documentation = "https://calvinchengx.github.io/fabric-emulator/21-real-fabric-toggle/"
+Documentation = "https://calvinchengx.github.io/fabric-emulator/docs/21-real-fabric-toggle/"
 
 [tool.setuptools.packages.find]
 where = ["."]
