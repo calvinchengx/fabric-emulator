@@ -3,9 +3,9 @@
     "id": "1",
     "contract": "Context chain",
     "backend": "sail",
-    "status": "gap",
-    "error": "not yet asserted \u2014 needs a running notebook session",
-    "pointer": "38-framework-conformance.md#1-session-context-is-a-control-plane-contract-not-an-environment-variable"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "2",

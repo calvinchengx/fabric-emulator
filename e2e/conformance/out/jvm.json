@@ -3,8 +3,8 @@
     "id": "1",
     "contract": "Context chain",
     "backend": "jvm",
-    "status": "gap",
-    "error": "not yet asserted \u2014 needs a running notebook session",
+    "status": "fail",
+    "error": "no context findings at lake.Lakehouse/Files/conformance/context.json: HTTP Error 404: Not Found \u2014 the session said: context findings NOT written: ModuleNotFoundError No module named 'notebookutils'",
     "pointer": "38-framework-conformance.md#1-session-context-is-a-control-plane-contract-not-an-environment-variable"
   },
   {

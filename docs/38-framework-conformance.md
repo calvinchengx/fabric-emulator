@@ -1,11 +1,38 @@
 # 38 — Framework conformance: what a Fabric product assumes, and how to test it
 
-**Status: live write-landing is wired.** Contract 4 cells are ✅ when CI
-records them — a write through the emulator path, confirmed out of band
-(OneLake DFS on sail/jvm; a fresh TDS connection on warehouse). The engine
-that wrote is never the one that confirms. Contracts 1–3 and 5–7 stay
+**Status: contracts 4 and 1 are live.** Contract 4 is ✅ on all three
+backends — a write through the emulator path, confirmed out of band (OneLake
+DFS on sail/jvm; a fresh TDS connection on warehouse). The engine that wrote
+is never the one that confirms. **Contract 1 is ✅ on sail and ❌ on jvm**,
+and the jvm red is a real defect rather than a missing assertion: the JVM
+overlay image has no `notebookutils` installed at all, so a notebook cannot
+import the surface this repo grades 🟢 Real. Contracts 2–3 and 5–7 stay
 known gaps. The offline half (`docs/conformance-matrix.md`,
 `check_conformance.py --strict`) still gates `make check`.
+
+**Two defects came out of contract 1's first run, and neither was visible to
+anything else in the repo.** Both are the class this document names: green
+parity rows, green witnesses, green test suite, and a notebook that cannot do
+the thing.
+
+1. **`notebookutils` is unconfigured in the spark-agent.** The shim defaults
+   to `http://127.0.0.1:19080`, which inside that container is nothing, so
+   `fs.put` from a `RunNotebook` cell raised `Connection refused`. No shipped
+   compose (`docker-compose.override.yml`, `.compute.yml`, `.spark-jvm.yml`)
+   and no `e2e/*` compose sets `NOTEBOOKUTILS_FABRIC_URL` on the agent;
+   `jupyter` in `docker-compose.yml` sets all three. So the shim works in a
+   Jupyter cell and fails in a notebook job — while the jupyter service's own
+   comment claims "a cell here and a cell in a RunNotebook job execute
+   identically". The conformance composes set them so the contract can be
+   measured at all; **the shipped composes are unchanged and still carry the
+   gap.**
+2. **The JVM overlay has no `notebookutils` at all** — `ModuleNotFoundError`,
+   not a configuration problem. Contract 3 already flags that image's Python
+   as below the framework floor; it also lacks the shim.
+
+Neither is fixed here. A change that lands the harness and rewrites two images
+is one nobody can review, and the matrix exists precisely so a gap can be
+recorded red with a pointer instead of blocking the kit.
 This document generalises a class of defect the emulator kept shipping: contracts
 that real Fabric *frameworks* depend on, which no amount of reading Microsoft's
 REST reference reveals, because they are not in the REST surface at all. They
@@ -170,13 +197,26 @@ the compute surface, not of one launcher.
 
 ## The conformance kit
 
-**Status: built, and contract 4 is live.** The harness, the committed
+**Status: built; contracts 4 and 1 are live.** The harness, the committed
 matrix, and the offline checker are in tree. Sail, JVM, and warehouse each
 write through the emulator path and an out-of-band reader confirms the
-artifact. Items 1–3 and 5–7 are still individually tractable. The reason
+artifact. Items 2–3 and 5–7 are still individually tractable. The reason
 they existed for months is that nothing exercised them, and that is the
 gap worth closing first — a new framework will find a new one next week
-otherwise.
+otherwise. Contract 1 found two on its first run.
+
+**Contracts share a run but must not share a failure.** Contract 1 rides the
+same notebook as contract 4, which costs nothing and describes one session
+rather than two. Twice while wiring it, a contract-1 failure failed the *job*
+and turned contract 4 red — with the table landed and the out-of-band reader
+seeing it. Its cell is guarded whole, imports included, and the absent
+artifact is the failure signal. The rule generalises to every contract that
+joins this run.
+
+**A red must point at its cause.** A missing artifact says only `404`. The
+notebook prints why it could not write one, and the harness quotes that line
+into the cell, so the jvm red reads `ModuleNotFoundError: No module named
+'notebookutils'` rather than leaving a reader to guess.
 
 ### What it is
 

@@ -48,6 +48,19 @@ services:
       fabric-emulator:
         condition: service_healthy
     environment:
+      # THE SHIM NEEDS ENDPOINTS, and no compose in this repo gave the agent
+      # any. Its default is 127.0.0.1:19080, which inside this container is
+      # nothing — so `notebookutils.fs` raised `Connection refused` from a
+      # RunNotebook cell. Measured by the contract-1 probe on its first run,
+      # which is the first thing that ever called notebookutils from inside a
+      # notebook job here. See the PR: the SHIPPED composes have the same gap.
+      #
+      # NOT workspace/lakehouse ids: those are the environment fallback that
+      # contract 1 must never be able to answer through, and setting them here
+      # would make the cell unprovable rather than green.
+      NOTEBOOKUTILS_FABRIC_URL: "http://fabric-emulator"
+      NOTEBOOKUTILS_ENTRA_URL: "http://entra-emulator:8443"
+      NOTEBOOKUTILS_INSECURE: "1"
       # Classic in-process session. Compose merges env maps, so this must be
       # absent — not an empty string — or the agent stays a Connect client
       # with nowhere to connect (there is no Sail in this stack).

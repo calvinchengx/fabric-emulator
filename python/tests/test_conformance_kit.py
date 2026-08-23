@@ -106,15 +106,82 @@ def test_record_rejects_an_unknown_backend():
         probes.record("flink")
 
 
-def test_live_write_replaces_only_contract_4():
-    def live():
-        return probes.Result(
-            id="4", contract="Write landing", backend="sail", status="pass")
-
-    rows = {r["id"]: r for r in probes.record("sail", live_write=live)}
+def test_a_live_result_replaces_only_the_contract_it_names():
+    live = {4: probes.Result(
+        id="4", contract="Write landing", backend="sail", status="pass")}
+    rows = {r["id"]: r for r in probes.record("sail", live=live)}
     assert rows["4"]["status"] == "pass"
     assert rows["1"]["status"] == "gap"
     assert rows["5"]["status"] == "gap"
+
+
+def test_a_live_result_cannot_make_an_inapplicable_cell_applicable():
+    """The applicability table is the authority, not the harness.
+
+    A backend that offered a result for a contract it has no surface for would
+    otherwise publish a green where the doc says `n/a` — a cell nobody could
+    reconcile with the prose.
+    """
+    live = {1: probes.Result(
+        id="1", contract="Context chain", backend="warehouse", status="pass")}
+    rows = {r["id"]: r for r in probes.record("warehouse", live=live)}
+    assert rows["1"]["status"] == "na"
+
+
+def test_a_live_result_for_an_unknown_contract_is_refused():
+    with pytest.raises(ValueError, match="unknown contract"):
+        probes.record("sail", live={9: probes.Result(
+            id="9", contract="?", backend="sail", status="pass")})
+
+
+def _claim(**kw):
+    base = dict(ok=True, env_workspace="ws", context_workspace="ws",
+                context_lakehouse="lake")
+    base.update(kw)
+    return probes.ContextClaim(**base)
+
+
+def test_context_chain_passes_when_every_link_matches_the_control_plane():
+    r = probes.context_chain(session=lambda: _claim(), expected_workspace="ws",
+                             expected_lakehouse="lake", backend="sail")
+    assert r.status == "pass"
+
+
+def test_context_chain_fails_when_a_single_link_is_empty():
+    """A framework stops at the first link that answers, so one broken link is
+    a broken chain even when the others are right."""
+    r = probes.context_chain(session=lambda: _claim(context_workspace=""),
+                             expected_workspace="ws", expected_lakehouse="lake",
+                             backend="sail")
+    assert r.status == "fail"
+    assert "runtime.context[currentWorkspaceId]" in r.error
+    assert r.pointer
+
+
+def test_context_chain_names_every_wrong_link_not_only_the_first():
+    r = probes.context_chain(
+        session=lambda: _claim(env_workspace="other", context_lakehouse=""),
+        expected_workspace="ws", expected_lakehouse="lake", backend="sail")
+    assert "env.getWorkspaceId()" in r.error
+    assert "defaultLakehouseId" in r.error
+
+
+def test_context_chain_refuses_a_run_where_the_env_fallback_was_set():
+    """The fallback answering correctly is how the broken links stayed
+    invisible; a green earned that way would re-create the defect."""
+    r = probes.context_chain(session=lambda: _claim(env_fallback_set=True),
+                             expected_workspace="ws", expected_lakehouse="lake",
+                             backend="sail")
+    assert r.status == "fail"
+    assert "fallback" in r.error
+
+
+def test_context_chain_reports_the_sessions_own_error():
+    r = probes.context_chain(
+        session=lambda: probes.ContextClaim(ok=False, error="no findings written"),
+        expected_workspace="ws", expected_lakehouse="lake", backend="sail")
+    assert r.status == "fail"
+    assert "no findings written" in r.error
 
 
 def test_applicability_matches_docs_38():
@@ -156,7 +223,21 @@ def test_every_failing_cell_in_the_committed_matrix_has_a_pointer():
                 continue
             cells += 1
             assert "](" in cell, cell
-    assert cells == 15  # contract 4 is live ✅; the other required/control cells are gaps
+    # DERIVED, not a magic number. This started as `== 15` and broke the moment
+    # a cell went green, which is a test that has to be edited every time the
+    # thing it guards improves — and an edit-on-every-change assertion teaches
+    # people to edit it without reading it. The claim worth pinning is that the
+    # rendered ❌ count agrees with the recorded results, so a matrix cannot
+    # show a red the JSON does not have (or hide one it does).
+    recorded = 0
+    for backend in probes.BACKENDS:
+        rows = json.loads(
+            (REPO / "e2e" / "conformance" / "out" / f"{backend}.json")
+            .read_text(encoding="utf-8"))
+        recorded += sum(1 for r in rows if r["status"] in ("gap", "fail"))
+    assert cells == recorded, (
+        f"the matrix renders {cells} ❌ cells but the committed results hold "
+        f"{recorded} — regenerate with e2e/conformance/run.py")
 
 
 def test_committed_json_names_every_contract_on_every_backend():
