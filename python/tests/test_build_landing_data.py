@@ -114,10 +114,45 @@ def sources(tmp_path, monkeypatch):
         if write_stats:
             site_stats.write_text(json.dumps(stats), encoding="utf-8")
         monkeypatch.setattr(c, "SITE_STATS", site_stats)
-        # Only used to shorten paths in messages; tmp_path is under it now.
-        monkeypatch.setattr(c, "ROOT", tmp_path)
+        # ROOT is deliberately left alone. tmp_path is outside the repo, so
+        # every failure message these provoke names a path ROOT does not
+        # contain, which is the case `shown()` exists to survive.
 
     return build
+
+
+# --- rendering a path inside a failure message -----------------------------
+
+def test_a_path_inside_the_repo_is_shortened():
+    assert c.shown(c.ROOT / "docs" / "witnesses.json") == "docs/witnesses.json"
+
+
+def test_a_path_outside_the_repo_is_shown_whole(tmp_path):
+    # `Path.relative_to` raises for anything outside ROOT, and every caller is
+    # inside a failure message. Without the fallback the branch whose job is to
+    # explain a problem replaces the explanation with a pathlib traceback.
+    outside = tmp_path / "witnesses.json"
+    assert c.shown(outside) == outside.as_posix()
+
+
+def test_a_message_reads_the_same_on_every_platform(monkeypatch):
+    # This suite runs on three operating systems, and `str()` on a Windows path
+    # renders backslashes, so one failure would read two ways depending on the
+    # runner. Driven with pure Windows paths so the case is exercised wherever
+    # this happens to run, rather than only on the platform that has the bug.
+    root = pathlib.PureWindowsPath(r"D:\a\fabric-emulator\fabric-emulator")
+    monkeypatch.setattr(c, "ROOT", root)
+    assert c.shown(root / "docs" / "witnesses.json") == "docs/witnesses.json"
+    assert c.shown(pathlib.PureWindowsPath(r"C:\elsewhere\x.json")) == "C:/elsewhere/x.json"
+
+
+def test_a_failure_message_survives_a_path_outside_the_repo(sources, tmp_path):
+    # The same thing through a real error branch: what a reader gets is the
+    # diagnosis, not a ValueError raised from inside the reporting.
+    sources(witnesses={"_gated": {}})
+    with pytest.raises(SystemExit) as excinfo:
+        c.real_tenant_claims()
+    assert (tmp_path / "witnesses.json").as_posix() in str(excinfo.value)
 
 
 # --- the check half: every case is a page it must refuse -------------------
@@ -208,6 +243,17 @@ def test_engine_matrix_counts_a_pass_per_column(sources):
     assert matrix["probes"] == 3
     assert matrix["columns"] == ["Sail", "Sail (emulator)", "JVM overlay"]
     assert matrix["passes"] == {"Sail": 1, "Sail (emulator)": 2, "JVM overlay": 3}
+
+
+def test_engine_matrix_skips_a_row_that_does_not_match_the_header(sources):
+    """The width guard is load-bearing, not defensive tidiness.
+
+    `zip(columns, cells[1:], strict=True)` below RAISES on a row with the wrong
+    number of cells, so without the guard one malformed line in a generated
+    matrix takes down the docs deploy with a ValueError instead of publishing.
+    """
+    sources(engine=ENGINE_MD + "| ragged | ✅ |\n")
+    assert c.engine_matrix()["probes"] == 3
 
 
 def test_engine_matrix_refuses_a_matrix_it_could_not_parse(sources):
