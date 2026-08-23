@@ -136,6 +136,21 @@ function writeIndex() {
       `:::caution\n**Local development tool only** — intentionally insecure (no ` +
       `real authorization boundary, self-signed TLS, seeded credentials). Run it ` +
       `on \`localhost\` only.\n:::\n\n` +
+      `## The gap this is built around\n\n` +
+      `Testing Fabric work against Fabric means a tenant, a capacity and a `+
+      `cloud round trip for every iteration. A capacity is shared and always `+
+      `on, so a pull request cannot have one of its own, and a workspace is `+
+      `shared state, so one run's cleanup is another run's broken fixture. `+
+      `The usual outcome is that the Fabric-specific parts (the deployment `+
+      `pipeline, the OneLake writes, the notebook that only fails on real `+
+      `data) are the parts nobody tests until they break in someone else's `+
+      `run.\n\n` +
+      `This puts the whole tenant on a laptop: up in seconds, offline, torn `+
+      `down and recreated per test. What it cannot do is *assert* that it `+
+      `behaves like Fabric, which is why every supported claim below names `+
+      `the test that witnesses it, and the known differences are `+
+      `[written down](37-runtime-fidelity-gaps.md) rather than left to be `+
+      `discovered.\n\n` +
       `## Start here\n\n` +
       `- [Quickstart](01-quickstart.md) — compose up the family, mint a token, create a workspace, write to OneLake\n` +
       `- [Installation](02-installation.md) — brew, winget, \`go install\`, Docker, compose\n` +
