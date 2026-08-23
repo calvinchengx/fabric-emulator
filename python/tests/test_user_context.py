@@ -107,11 +107,13 @@ WORKER = textwrap.dedent("""
     sys.path.insert(0, %r)
     import usercontext as uc
 
+    responses = uc.claim_protocol_stream()
+
     def run(code, g, kind=""):
         return {"status": "ok", "data": {"text/plain": repr(eval(code, g))},
                 "kind": kind}
 
-    with os.fdopen(uc.response_fd(), "wb") as responses:
+    with responses:
         uc.serve(sys.stdin.buffer, responses, run, dict)
 """)
 
@@ -207,15 +209,25 @@ def test_close_kills_a_child_that_will_not_leave():
     assert ctx.proc is None
 
 
-def test_the_childs_stdout_is_inherited_and_not_a_pipe():
-    # Caught by mutation, not by design: capturing the child's stdout passed
-    # every other test here, because responses travel on their own descriptor
-    # either way. It is still a defect twice over — the agent loses the child's
-    # log, and an undrained pipe blocks the child once ~64KB of library chatter
-    # fills it, which presents as a statement that never returns.
+def test_the_childs_log_stream_is_inherited_and_not_a_pipe():
+    # stdout is the protocol and the parent drains it. stderr carries the
+    # child's log and MUST be inherited: an undrained pipe blocks the child once
+    # ~64KB of library chatter fills it, which presents as a statement that
+    # never returns rather than as a full buffer.
     ctx = spawn()
     try:
-        assert ctx.proc.stdout is None, "the child's stdout was captured, not inherited"
+        assert ctx.proc.stderr is None, "the child's log was captured, not inherited"
+        assert ctx.proc.stdout is not None, "the protocol stream is not readable"
+    finally:
+        ctx.close()
+
+
+def test_a_grant_is_not_needed_for_the_protocol_to_work():
+    # The response stream is no longer announced through the environment, so a
+    # child started with a scrubbed environment still answers.
+    ctx = spawn()
+    try:
+        assert ctx.run("2 * 21")["data"]["text/plain"] == "42"
     finally:
         ctx.close()
 
@@ -287,13 +299,13 @@ def test_a_grant_survives_the_scrub():
                          popen=lambda *a, **kw: _FakeProc(kw))
     ctx.start()
     assert ctx.proc.kwargs["env"]["AZURE_STORAGE_TOKEN"] == "the-callers-one"
-    assert uc.UserContext.RESPONSE_FD_ENV in ctx.proc.kwargs["env"]
 
 
 class _FakeProc:
     def __init__(self, kwargs):
         self.kwargs = kwargs
         self.stdin = io.BytesIO()
+        self.stdout = io.BytesIO()
 
     def poll(self):
         return None

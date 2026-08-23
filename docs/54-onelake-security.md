@@ -455,6 +455,13 @@ it dark keeps the code reviewable and the behaviour unchanged. The flag is a
 staging device with a removal condition, not a setting: when B2 lands, the
 default flips and the flag goes.
 
+**The transport is stdout, claimed.** The child takes descriptor 1 for the
+protocol and points descriptor 1 at stderr, so everything that prints reaches
+the agent's log and the only writer on the protocol is the child itself. The
+obvious design -- a private descriptor via `pass_fds` -- is POSIX-only:
+`ValueError: pass_fds not supported on Windows`, found by the Windows unit-test
+job after the POSIX one was green.
+
 **B3 — witnesses and parity.** The probe above becomes assertions: the cell
 cannot reach a credential, the path read is refused, the SQL path still returns
 2 of 3 rows and one column, and the owner is untouched. Only then does the

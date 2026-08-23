@@ -20,11 +20,17 @@ the service credential, resolves policy, and prepares what the child may see.
 The child gets a token minted for the CALLER, so a path read arrives at OneLake
 as that principal and the platform block applies.
 
-THE PROTOCOL DOES NOT SHARE STDOUT. The child's stdout is the agent's log --
-pyspark warnings, Delta chatter, anything a library decides to print -- so
-responses travel on their own descriptor. Framing the protocol on a stream that
-third-party code also writes to is a corruption waiting for the first library
-that prints on import.
+THE PROTOCOL DOES NOT SHARE A STREAM WITH ANYTHING THAT PRINTS. pyspark
+warnings, Delta chatter and any library that writes on import would otherwise
+land in the middle of a response, which is a corruption waiting for the first
+one that does. So the child claims descriptor 1 for the protocol and points
+descriptor 1 -- the one every later print resolves through -- at stderr, which
+the agent inherits as its log.
+
+That is the portable spelling of it. Passing a private descriptor with
+`pass_fds` is the obvious design and raises `ValueError: pass_fds not supported
+on Windows`, which the Windows unit-test job found after the POSIX one was
+green. `os.dup`/`os.dup2` work on both.
 
 WHAT IS NOT SOLVED HERE. The child still needs to READ, and a narrowed table
 refuses its token by design. Making the filtered rows available is the system
@@ -156,13 +162,6 @@ class UserContext:
     cross-session leak that per-session Spark sessions were built to close.
     """
 
-    # The child is TOLD which descriptor to answer on rather than assuming one.
-    # `pass_fds` keeps a descriptor's NUMBER across the fork, it does not
-    # renumber it to 3, so a hardcoded 3 is whatever the parent happened to have
-    # open there — "Bad file descriptor" if nothing, someone else's stream if
-    # something. Renumbering with dup2 in a preexec_fn would work and runs
-    # arbitrary code between fork and exec; naming the number does not.
-    RESPONSE_FD_ENV = "SPARK_AGENT_RESPONSE_FD"
 
     def __init__(self, argv=None, env=None, popen=None, grants=None):
         # BY PATH, not `-m`. The agent image puts these modules flat on
@@ -184,21 +183,15 @@ class UserContext:
         self._responses = None
 
     def start(self):
-        read_fd, write_fd = os.pipe()
         env = child_env(self.env)
         env.update(self.grants)
-        env[self.RESPONSE_FD_ENV] = str(write_fd)
-        try:
-            self.proc = self._popen(
-                self.argv, env=env, stdin=subprocess.PIPE,
-                pass_fds=(write_fd,),
-            )
-        finally:
-            # The parent holds the READ end only. Leaving the write end open
-            # here means the read never sees EOF when the child dies, and a
-            # crashed child becomes a hang instead of an error.
-            os.close(write_fd)
-        self._responses = os.fdopen(read_fd, "rb")
+        # stdout is the PROTOCOL, and the parent drains it one response at a
+        # time. stderr is inherited so the child's log reaches the agent's --
+        # and so it cannot fill an undrained pipe and block the child, which is
+        # what capturing it would risk.
+        self.proc = self._popen(self.argv, env=env, stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE)
+        self._responses = self.proc.stdout
         return self
 
     def prepare(self, tables):
@@ -254,10 +247,28 @@ class UserContext:
         self.proc, self._responses = None, None
 
 
-def response_fd(env=None):
-    """The descriptor the parent told this child to answer on."""
-    env = os.environ if env is None else env
-    return int(env[UserContext.RESPONSE_FD_ENV])
+def claim_protocol_stream():
+    """Take descriptor 1 for the protocol; send everything else to stderr.
+
+    Returned as a binary file the caller owns. After this, `print`, a library
+    writing to `sys.stdout`, and anything a C extension writes to fd 1 all reach
+    stderr instead -- so the only writer on the protocol stream is us.
+
+    `run_code` captures USER prints separately, by swapping the `sys.stdout`
+    object; this is about everything that does not go through it.
+    """
+    protocol = os.dup(1)
+    os.dup2(2, 1)
+    if os.name == "nt":  # pragma: no cover - POSIX CI cannot reach this
+        # Windows opens descriptor 1 in TEXT mode, which rewrites every \n on
+        # the way out. The frames are newline-delimited, so leaving it would put
+        # a \r before each delimiter -- survivable, since JSON treats it as
+        # whitespace, but it makes the framing depend on a parser's tolerance
+        # rather than on the format. Say binary and mean it.
+        import msvcrt
+
+        msvcrt.setmode(protocol, os.O_BINARY)
+    return os.fdopen(protocol, "wb")
 
 
 def _dispatch(code, g, kind):  # pragma: no cover - runs in the child
@@ -376,9 +387,11 @@ def close_session(session):
 
 
 def main():  # pragma: no cover - exercised as a subprocess, not in-process
+    # BEFORE importing anything that might print: agent brings up Spark.
+    responses = claim_protocol_stream()
     import agent
 
-    with os.fdopen(response_fd(), "wb") as responses:
+    with responses:
         serve(sys.stdin.buffer, responses, _dispatch, lambda: agent.ns("child"))
 
 
