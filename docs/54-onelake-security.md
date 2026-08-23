@@ -565,12 +565,40 @@ Two further things the sweep showed, both worse than expected:
 
 ### What could close it
 
-Not per-operation credentials, then. The remaining route is **one engine
-process per user context**, launched with the caller's token, since a
-per-process credential is exactly what Sail supports. That is the two-context
-model one level down: the user context already has its own process, and this
-would give it its own engine. The cost is a Sail per Livy session, and it is
-not free -- but it is possible, which the option above is not.
+Not per-operation credentials, then. The remaining route is **an engine process
+per USER**, launched with that user's token, since a per-process credential is
+exactly what Sail supports.
+
+**And that is the shape Fabric actually has.** One shared engine serving every
+caller is our compression, not the product's: "in standard mode, each notebook
+or pipeline activity starts its own Spark session", and high-concurrency mode
+shares one only within a **single-user boundary** -- listed under *Security*,
+and "if any requirement differs, Fabric starts a separate Spark session"
+(high-concurrency-overview.md). Fabric never shares an engine across users. So
+the path-read gap is not a Sail limitation we would be working around; it is a
+consequence of a deviation we introduced, and per-user engines remove the
+deviation rather than adding a mitigation. Sail's per-process credential is
+correct *for a process that belongs to one user*.
+
+**Measured, before proposing it** (`e2e/sail-per-user-footprint`): five engines
+side by side, each given a 20k-row Delta write, read-back and aggregation
+against OneLake, over three rounds.
+
+| | per engine |
+|---|---|
+| idle | 37-44 MiB |
+| steady, after real work | **~66 MiB** |
+| transient peak observed | ~152 MiB, released by the next round |
+| growth across three rounds of work | none (66.6, 66.4, 66.2, 65.6 MiB, flat) |
+
+So ten users is around 660 MiB steady and twenty around 1.3 GiB, against a
+16 GiB VM that already holds two stacks. Affordability is not the obstacle.
+
+What remains to design is **where the filtered snapshot lives**: the system
+context reads privileged and must leave the result where the user's engine can
+read it without OneLake, which today is a local path on the one shared engine.
+Separate engines need a shared volume, and that is compose configuration in the
+platform repos too, not only here.
 
 Until then the direct-path-access parity row stays **🟡**, and it says the
 engine is the reason. A row claiming the guarantee would be claiming a

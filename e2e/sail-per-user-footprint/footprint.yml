@@ -1,0 +1,41 @@
+# Four MORE Sails alongside the livy stack's one, to price an engine per user.
+#
+# A layer over e2e/livy rather than a new stack: the base already spells the
+# emulator's HTTP/TLS settings correctly, and re-deriving them is how the first
+# attempt at this came up on 9443 and failed its own healthcheck.
+# Paths resolve against the FIRST -f file's directory (e2e/livy).
+x-sail: &sail
+  build:
+    context: ../..
+    dockerfile: docker/sail/Dockerfile
+  depends_on:
+    fabric-emulator:
+      condition: service_healthy
+  environment:
+    ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+    ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+    ENTRA_CLIENT_SECRET: "daemon-app-secret"
+    AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+    AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+    AZURE_ALLOW_HTTP: "true"
+    SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+    RUST_LOG: "warn"
+
+services:
+  sail2: {<<: *sail}
+  sail3: {<<: *sail}
+  sail4: {<<: *sail}
+  sail5: {<<: *sail}
+
+  driver:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    volumes:
+      - ../sail-per-user-footprint/workload.py:/workload.py:ro
+      - ../sail-per-user-footprint/drive.py:/drive.py:ro
+    command: ["python3", "/drive.py"]
