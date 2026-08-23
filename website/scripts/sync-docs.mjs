@@ -8,7 +8,7 @@
 import { readdirSync, readFileSync, writeFileSync, rmSync, mkdirSync, existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { collectParity, writeParityHistory, parityManifest } from './parity-versions.mjs';
+import { collectParity, writeParityHistory, parityManifest, parityStats } from './parity-versions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO = join(here, '..', '..');
@@ -22,7 +22,10 @@ const PARITY = collectParity(REPO);
 const IS_RELEASE = /^v\d+\.\d+\.\d+$/.test(PARITY.version);
 // The parity map is the one doc without a reading-order number: it is a living
 // reference rather than a chapter, and its URL is just /parity/.
-const PARITY_RE = /(^|[/-])parity\.md$/;
+// Exact, for the same reason as in parity-versions.mjs: the loose form also
+// matched `29-tsql-parity.md`, which then carried a version stamp describing a
+// history it is not part of.
+const PARITY_RE = /^parity\.md$/;
 // Docs are `NN-name.md` chapters, plus the un-numbered living references
 // (the parity map and the generated Spark engine matrix).
 const DOC_RE = /^(\d{2}-.*|parity|engine-matrix)\.md$/;
@@ -113,7 +116,7 @@ function convert(name) {
   return frontmatter + body;
 }
 
-function writeIndex() {
+function writeOverview() {
   // NO COUNTS HERE, deliberately. This page carried "113 supported capability
   // claims" long after the number was 120: a figure hardcoded in a generator
   // is a claim nothing checks, on the one page most likely to be read and
@@ -180,11 +183,12 @@ function writeIndex() {
       `- [OpenMetadata](22-openmetadata.md) — catalog the emulated estate\n` +
       `- [Roadmap](13-roadmap.md) — phases P0–P3, R0–R5, S, and what landed after\n`,
   );
-  // The landing page is synthesized here (no /docs source), so it has no
-  // "Edit this page" target.
+  // Synthesized here (no /docs source), so it has no "Edit this page"
+  // target. This is the docs OVERVIEW, at /overview/ and first in the
+  // sidebar; the site root is the landing page in src/pages/index.astro.
   const frontmatter =
-    `---\ntitle: Fabric Emulator\ndescription: A local Microsoft Fabric — control plane, OneLake, and engines that actually compute — validating real Entra tokens, with every supported claim tied to a named witness.\neditUrl: false\n---\n\n`;
-  writeFileSync(join(OUT, 'index.md'), frontmatter + body);
+    `---\ntitle: Overview\ndescription: A local Microsoft Fabric — control plane, OneLake, and engines that actually compute — validating real Entra tokens, with every supported claim tied to a named witness.\neditUrl: false\n---\n\n`;
+  writeFileSync(join(OUT, 'overview.md'), frontmatter + body);
 }
 
 rmSync(OUT, { recursive: true, force: true });
@@ -193,14 +197,47 @@ const names = readdirSync(DOCS_SRC).filter((n) => DOC_RE.test(n)).sort();
 for (const name of names) {
   writeFileSync(join(OUT, name), convert(name));
 }
-writeIndex();
+writeOverview();
 const info = writeParityHistory(OUT, PARITY, { convertBody });
 // The right-sidebar picker is an Astro component and can't shell out to git, so
 // hand it the same points as a build-time manifest.
 const DATA = join(here, '..', 'src', 'data');
 mkdirSync(DATA, { recursive: true });
 writeFileSync(join(DATA, 'parity-versions.json'), JSON.stringify(parityManifest(PARITY), null, 2) + '\n');
+
+// EVERY NUMBER ON THE LANDING PAGE IS COUNTED HERE, none is typed into the
+// page. The old landing page carried "113 supported capability claims" long
+// after the figure was 120 — a number in prose has no idea a row was added,
+// and the page most likely to be read is the least likely to be re-read. A
+// figure this file cannot compute does not go on the page.
+const stats = { version: PARITY.version, parity: parityStats(PARITY), docs: names.length };
+// Witness kinds are not equal evidence and the page says so, so they are
+// counted separately: `ci:` is a CI job driving a real third-party client,
+// which is the strongest kind this repo recognises.
+try {
+  const witnesses = JSON.parse(readFileSync(join(REPO, 'docs', 'witnesses.json'), 'utf8'));
+  const all = Object.values(witnesses).flatMap((c) => c.witnesses ?? []);
+  stats.witnesses = {
+    claims: Object.keys(witnesses).length,
+    total: all.length,
+    ci: all.filter((w) => w.startsWith('ci:')).length,
+    jobs: new Set(all.filter((w) => w.startsWith('ci:')).map((w) => w.slice(3))).size,
+  };
+} catch {
+  // No manifest, no numbers: the page renders an em dash rather than a guess.
+}
+// e2e suites: each directory under e2e/ is one real-client scenario. Counted
+// rather than stated for the same reason as everything else here.
+try {
+  stats.e2e = readdirSync(join(REPO, 'e2e'), { withFileTypes: true })
+    .filter((d) => d.isDirectory()).length;
+} catch {
+  /* not a full checkout */
+}
+writeFileSync(join(DATA, 'site-stats.json'), JSON.stringify(stats, null, 2) + '\n');
+
 console.log(
-  `sync-docs: wrote ${names.length} docs + index to src/content/docs/ ` +
-    `(parity ${info.version}; ${info.snapshots.length} tagged snapshot(s))`,
+  `sync-docs: wrote ${names.length} docs + overview to src/content/docs/ ` +
+    `(parity ${info.version}; ${info.snapshots.length} tagged snapshot(s); ` +
+    `${stats.parity.real} real of ${stats.parity.total} rows)`,
 );
