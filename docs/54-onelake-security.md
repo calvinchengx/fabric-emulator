@@ -669,3 +669,50 @@ and the witness asserts exactly that, with the reason in the failure message:
 Asserting the current number is the difference between a documented gap and a
 forgotten one. A 🟡 row with nothing watching it stays 🟡 long after the reason
 expires; this one fails the build the day the reason does.
+
+
+## The gap is closed, by removing the deviation that caused it
+
+`spark.read.format("delta").load("abfss://…")` from a notebook cell now returns
+**403 Forbidden** for a principal the policy narrows, witnessed in
+`ci:two-context`:
+
+```
+viewer: 2 of 3 rows, columns region_id  -- supplied by the system context
+viewer catalog: ['sales']
+the cell's bearer is the caller's own, not the agent's
+path read from a cell: blocked ... 403 Forbidden
+```
+
+Nothing intercepts that call. It is refused by OneLake, because the engine
+executing it belongs to the caller and carries the caller's token, so the read
+arrives as a principal whose grant narrows the table -- stage A, reached at
+last. The repair was not a new control; it was deleting a compression of ours.
+
+Three pieces, each measured before it was built:
+
+* **An engine per user** (`engine.py`). Fabric starts a Spark session per
+  notebook and shares one only within a single-user boundary, so one shared
+  Sail was never the product's shape. Engines are keyed by PRINCIPAL and
+  reference-counted by the sessions using them: a user's second notebook joins
+  the first's engine, and the last `/close` stops it. Measured at ~66 MiB
+  steady each, flat over three rounds of real work.
+* **`pysail` in the agent image**, so the agent can start one. +130 MB
+  (1.08 -> 1.21 GB), the whole cost of the packaging change.
+* **Rows, not snapshots.** The system context sends the filtered relation as
+  Arrow over the protocol the two contexts already share. This became
+  compulsory the moment engines were per user -- the child's engine looked for
+  the parent's snapshot and reported "No commit files found in _delta_log",
+  because they are different processes on different filesystems -- and it is
+  also what Fabric does: its system context returns rows, not paths.
+
+### What is still true
+
+* The user context holds no service credential and no way to mint one.
+* An ungranted table is never named to it, so deny-by-default costs nothing.
+* The owner is untouched: a role narrows the principal it names.
+* The handover is bounded by memory and `localRelationSizeLimit`, and that
+  ceiling must fail loudly rather than truncate.
+* `FABRIC_TWO_CONTEXT` still defaults OFF. What holds it there is no longer a
+  missing guarantee but missing coverage: `notebookutils`, the `sc` facade and
+  the RDD contract are not yet exercised across the process boundary.

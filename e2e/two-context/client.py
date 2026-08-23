@@ -152,17 +152,34 @@ def main():
     still = orun("spark.sql('SELECT count(*) FROM sales').collect()[0][0]")
     assert still == "3", f"the owner was narrowed too: {still}"
 
-    # 5. TRIPWIRE, not a guarantee. Sail holds its own AZURE_STORAGE_TOKEN and
-    #    performs this read with that identity, so the split cannot reach it
-    #    (docs/54). If this ever stops being 3, the gap closed and the parity
-    #    row and doc 54 are stale -- which is exactly what should fail here.
-    leaked = vrun(f"spark.read.format('delta').load({sales!r}).count()")
-    assert leaked == "3", (
-        f"the path read returned {leaked}, not 3. If the engine now carries "
-        "per-session identity, this is GOOD NEWS: update docs/54 and flip the "
-        "direct-path-access parity row from Partial to Real.")
-    print(f"    path read still returns {leaked} of 3 -- the engine's own "
-          "credential, documented in docs/54", flush=True)
+    # 5. THE PATH READ, refused. This is the whole point of the split, and it
+    #    is refused by ONELAKE rather than by anything we patched: the cell's
+    #    engine belongs to this caller and carries this caller's token, so the
+    #    read arrives as a principal whose grant narrows the table, and the
+    #    platform blocks it exactly as Fabric documents.
+    #
+    #    For most of this feature's life it returned all 3 rows, because one
+    #    shared engine served every caller with a service credential. A
+    #    per-user engine is not a mitigation bolted on top; it is the shape
+    #    Fabric has, and the refusal falls out of it.
+    def cell(code_str):
+        code = ("try:\n"
+                f"    _v = {code_str}\n"
+                "    print('ok', _v)\n"
+                "except Exception as _e:\n"
+                "    print('blocked', type(_e).__name__, str(_e)[:120])\n")
+        return vrun(code).strip()
+
+    out = cell(f"spark.read.format('delta').load({sales!r}).count()")
+    assert not out.startswith("ok"), f"the cell read the unfiltered table: {out}"
+    assert "403" in out or "Forbidden" in out, (
+        f"the path read failed, but not with OneLake's refusal: {out}")
+    print(f"    path read from a cell: {out[:90]}", flush=True)
+
+    # And the SQL path still works for the same caller in the same breath, so
+    # the refusal above is scoped to raw access rather than to the table.
+    again = vrun("spark.sql('SELECT count(*) FROM sales').collect()[0][0]")
+    assert again == "2", f"the filtered read broke: {again}"
 
     print("TWO-CONTEXT E2E: PASS", flush=True)
     return 0

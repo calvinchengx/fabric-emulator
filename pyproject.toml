@@ -195,6 +195,13 @@ sail-delta = [
 spark-agent-dbt = [
     { include-group = "sail-delta" },
     "dbt-databricks==1.12.4",
+    # The engine, in the AGENT image. Fabric starts a Spark session per notebook
+    # and shares one only within a single-user boundary, so the agent needs to
+    # be able to start an engine per user rather than route every caller through
+    # one shared server (docs/54). Same pin as the `sail` group: two Sails of
+    # different versions in one stack would make a parity result depend on which
+    # one answered.
+    "pysail==0.7.0",
 ]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP
 # APIs, and the statement agent is where that code executes.

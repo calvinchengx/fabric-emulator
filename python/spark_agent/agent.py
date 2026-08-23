@@ -281,12 +281,6 @@ session_isolated = {}  # Livy session id -> did it get a private SparkSession
 # dark keeps the code reviewable and the behaviour unchanged; the flag goes away
 # when B2 lands and the default flips.
 TWO_CONTEXT = os.environ.get("FABRIC_TWO_CONTEXT") == "1"
-# Where the system context writes a caller's filtered snapshot. LOCAL to the
-# engine, deliberately: the whole point is a place the user context can read
-# without OneLake in the way, so putting it back in OneLake would hand the
-# refusal we just worked around to the filtered copy as well.
-SCRATCH_ROOT = os.environ.get("FABRIC_ONELAKE_SECURITY_SCRATCH",
-                              "/tmp/fabric-onelake-security")
 
 session_route = {}     # Livy session id -> HOW (catalog.ROUTE_*), which says
                        # whether its CATALOG is private too — see
@@ -578,8 +572,7 @@ def _apply_onelake_security(req, session):
         # shared catalog. Those exist to simulate, inside one namespace, the
         # separation this path actually has.
         permitted = onelake_security.prepare(
-            sess_spark, access, tables, _known_location,
-            SCRATCH_ROOT, str(session), log=log)
+            sess_spark, access, tables, _known_location, log=log)
         answer = usercontext.for_session(session, principal).prepare(permitted)
         if answer.get("status") != "ok":
             raise RuntimeError("the user context could not be prepared: "

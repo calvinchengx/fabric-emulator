@@ -351,6 +351,18 @@ def _dispatch(code, g, kind):  # pragma: no cover - runs in the child
     return agent.run_code(code, g)
 
 
+def _bind_arrow(spark, name, encoded):
+    """Bind `name` to rows the system context sent, without touching storage."""
+    import base64
+    import io
+
+    import pyarrow.ipc as ipc
+
+    with ipc.open_stream(io.BytesIO(base64.b64decode(encoded))) as reader:
+        table = reader.read_all()
+    spark.createDataFrame(table.to_pandas()).createOrReplaceTempView(name)
+
+
 def register(g, tables):
     """Make the permitted tables nameable in the child, and nothing else.
 
@@ -367,7 +379,8 @@ def register(g, tables):
     if spark is None:
         return {"status": "error", "ename": "NoSession",
                 "evalue": "the user context has no Spark session"}
-    wanted = {t["name"]: t for t in tables if t.get("name") and t.get("location")}
+    wanted = {t["name"]: t for t in tables
+              if t.get("name") and (t.get("location") or t.get("arrow"))}
     bound = g.setdefault("__onelake_bound__", set())
     errors = []
     for name in sorted(bound - set(wanted)):
@@ -378,8 +391,15 @@ def register(g, tables):
     bound.clear()
     for name, t in wanted.items():
         try:
-            spark.sql(f"CREATE OR REPLACE TEMP VIEW `{name}` AS "
-                      f"SELECT * FROM delta.`{t['location']}`")
+            if t.get("arrow"):
+                # A relation the system context FILTERED and sent. It is bound
+                # as a local relation, so nothing here reaches OneLake -- which
+                # is the point: the caller's own identity is refused on this
+                # table, and rightly.
+                _bind_arrow(spark, name, t["arrow"])
+            else:
+                spark.sql(f"CREATE OR REPLACE TEMP VIEW `{name}` AS "
+                          f"SELECT * FROM delta.`{t['location']}`")
             bound.add(name)
         except Exception as exc:  # noqa: BLE001
             # A name we cannot bind must not be left bound to something older.
@@ -415,6 +435,24 @@ def is_secured(req):
     return bool(req.get("principal") and req.get("workspace") and req.get("item"))
 
 
+_engines = None  # set lazily: engine.Registry, one Sail per principal
+
+
+def engines():
+    """The per-principal engine registry, created on first use.
+
+    Lazy because importing it is cheap but CREATING one is a decision: an agent
+    that never serves a secured statement should never own an engine registry,
+    and tests that never touch this path should not have to reset one.
+    """
+    global _engines
+    if _engines is None:
+        import engine
+
+        _engines = engine.Registry()
+    return _engines
+
+
 def for_session(session, principal, mint=None, build=None):
     """The child that runs this session's code, started on first use.
 
@@ -435,19 +473,33 @@ def for_session(session, principal, mint=None, build=None):
             "this item has OneLake security roles, so its statements run in a "
             "user context with the caller's own identity, and no token could "
             f"be minted for {principal!r}")
-    ctx = (build or _build)(token)
+    ctx = (build or _build)(token, principal, session)
     _contexts[session] = ctx
     return ctx
 
 
-def _build(token):
-    return UserContext(grants={"AZURE_STORAGE_TOKEN": token}).start()
+def _build(token, principal, session):
+    """A user context, pointed at an engine that belongs to this principal.
+
+    SPARK_REMOTE is a GRANT rather than inherited, because the value being
+    replaced is the shared engine every other session uses. A child that
+    inherited it would run the caller's code on the engine holding the service
+    credential, which is the arrangement the split exists to end -- and it would
+    look like it was working.
+    """
+    eng = engines().acquire(principal, session, token)
+    return UserContext(grants={"AZURE_STORAGE_TOKEN": token,
+                               "SPARK_REMOTE": eng.remote}).start()
 
 
 def close_session(session):
     ctx = _contexts.pop(session, None)
     if ctx is not None:
         ctx.close()
+    # The child first, then its engine: releasing the engine while the child is
+    # still connected would take the engine out from under a live statement.
+    if _engines is not None:
+        _engines.release(session)
 
 
 def main():  # pragma: no cover - exercised as a subprocess, not in-process

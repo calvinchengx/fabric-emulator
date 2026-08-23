@@ -272,31 +272,39 @@ def _drop(spark, name, log=None):
 # statement keeps the staleness inside one cell.
 
 
-def scratch_for(root, session, name):
-    """Where one session's filtered snapshot of one table lives.
+def handover(system_spark, name, entry):
+    """The caller's permitted view of `name`, as Arrow bytes to send them.
 
-    Session-scoped, because two callers of the same table get DIFFERENT rows and
-    a shared path would serve whichever was written last -- the same
-    one-object-many-meanings defect that per-session Spark sessions exist to
-    avoid, one layer down.
+    NOT A SNAPSHOT ON DISK. The filtered rows have to reach an engine the caller
+    can use, and there is nowhere to put them: a narrowed caller can read only
+    what their role grants, so a scratch path in the item is 403
+    (internal/onelake, TestANarrowedViewerCannotReadAScratchPathInTheSameItem),
+    and anywhere else means a volume shared by two engines -- compose
+    configuration in every platform repo. Measured the moment engines became
+    per-user: the child's engine looked for the parent's snapshot and reported
+    "No commit files found in _delta_log", because it is a different process on
+    a different filesystem.
+
+    Sending the rows is also the more faithful of the two. Fabric's system
+    context "returns only the rows and columns the user is allowed to see"; it
+    does not write them somewhere and hand over a path.
+
+    The filter runs in the SYSTEM session, where the real table is registered
+    and the privileged identity can read it.
     """
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in f"{session}-{name}")
-    return f"{root.rstrip('/')}/{safe}"
+    import base64
+    import io
+
+    import pyarrow.ipc as ipc
+
+    table = system_spark.sql(secure_view_sql(name, entry)).toArrow()
+    sink = io.BytesIO()
+    with ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    return base64.b64encode(sink.getvalue()).decode()
 
 
-def materialize(system_spark, name, entry, path):
-    """Write the caller's permitted view of `name` to `path`, privileged.
-
-    The filter is the author's own SQL and is run in the SYSTEM session, where
-    the real table is registered and the privileged identity can read it.
-    """
-    system_spark.sql(secure_view_sql(name, entry)) \
-        .write.format("delta").mode("overwrite").save(path)
-    return path
-
-
-def prepare(system_spark, access, tables, location_of, scratch_root, session,
-            log=None):
+def prepare(system_spark, access, tables, location_of, log=None):
     """What the user context may register, and where each thing lives.
 
     Three outcomes per table, and the DEFAULT is the withholding one:
@@ -328,14 +336,13 @@ def prepare(system_spark, access, tables, location_of, scratch_root, session,
             elif log:
                 log(f"onelake-security: {name} has no recorded location, withheld")
             continue
-        path = scratch_for(scratch_root, session, name)
         try:
-            materialize(system_spark, name, entry, path)
+            rows = handover(system_spark, name, entry)
         except Exception as exc:  # noqa: BLE001
             if log:
                 log(f"onelake-security: {name} withheld ({exc})")
             continue
-        out.append({"name": name, "location": path, "filtered": True})
+        out.append({"name": name, "arrow": rows, "filtered": True})
         if log:
             log(f"onelake-security: {name} filtered into the user context")
     return out

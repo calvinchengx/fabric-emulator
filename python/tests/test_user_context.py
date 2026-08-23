@@ -316,8 +316,8 @@ def test_only_a_statement_naming_all_three_is_secured():
 def test_one_child_per_session_reused_across_statements(monkeypatch):
     built = []
     monkeypatch.setattr(uc, "_contexts", {})
-    def build(token):
-        built.append(token)
+    def build(token, principal, session):
+        built.append((token, principal, session))
         return object()
 
     a1 = uc.for_session("s1", "viewer", mint=lambda p: "tok-" + p, build=build)
@@ -325,7 +325,9 @@ def test_one_child_per_session_reused_across_statements(monkeypatch):
     b = uc.for_session("s2", "viewer", mint=lambda p: "tok-" + p, build=build)
     assert a1 is a2, "a second statement started a second child"
     assert b is not a1, "two sessions shared one namespace"
-    assert built == ["tok-viewer", "tok-viewer"]
+    # The child is per SESSION; which principal and session it belongs to is
+    # passed through, because the ENGINE behind it is per principal.
+    assert built == [("tok-viewer", "viewer", "s1"), ("tok-viewer", "viewer", "s2")]
 
 
 def test_a_session_with_no_mintable_identity_is_refused(monkeypatch):
@@ -333,7 +335,8 @@ def test_a_session_with_no_mintable_identity_is_refused(monkeypatch):
     # service credential, which is the whole thing being closed.
     monkeypatch.setattr(uc, "_contexts", {})
     try:
-        uc.for_session("s1", "viewer", mint=lambda p: None, build=lambda t: object())
+        uc.for_session("s1", "viewer", mint=lambda p: None,
+                       build=lambda t, pr, se: object())
     except RuntimeError as exc:
         assert "viewer" in str(exc) and "OneLake security" in str(exc)
     else:
@@ -348,7 +351,7 @@ def test_closing_a_session_closes_its_child(monkeypatch):
         def close(self):
             closed.append(True)
 
-    uc.for_session("s1", "v", mint=lambda p: "t", build=lambda t: Fake())
+    uc.for_session("s1", "v", mint=lambda p: "t", build=lambda t, pr, se: Fake())
     uc.close_session("s1")
     assert closed == [True]
     uc.close_session("s1")  # idempotent: /close can arrive twice
@@ -527,3 +530,87 @@ def test_the_child_reads_its_descriptor_from_the_posix_variable(tmp_path):
     with uc.protocol_stream(env={uc.RESPONSE_FD_ENV: str(fd)}, windows=False) as f:
         f.write(b"framed\n")
     assert target.read_bytes() == b"framed\n"
+
+
+def test_a_secured_session_is_pointed_at_its_own_engine(monkeypatch):
+    # SPARK_REMOTE is GRANTED, not inherited. A child that inherited it would
+    # run the caller's code on the shared engine — the one holding the service
+    # credential — and would look like it was working.
+    monkeypatch.setattr(uc, "_contexts", {})
+    seen = {}
+
+    class FakeEngine:
+        remote = "sc://127.0.0.1:51999"
+
+        def __init__(self):
+            self.sessions = set()
+
+    class FakeRegistry:
+        def acquire(self, principal, session, token):
+            seen.update(principal=principal, session=session, token=token)
+            return FakeEngine()
+
+    monkeypatch.setattr(uc, "engines", lambda: FakeRegistry())
+    started = {}
+    monkeypatch.setattr(uc, "UserContext",
+                        lambda **kw: type("C", (), {"start": lambda s: started.update(kw)})())
+    uc.for_session("s1", "viewer-1", mint=lambda p: "callers-token")
+
+    assert seen == {"principal": "viewer-1", "session": "s1", "token": "callers-token"}
+    assert started["grants"]["SPARK_REMOTE"] == "sc://127.0.0.1:51999"
+    assert started["grants"]["AZURE_STORAGE_TOKEN"] == "callers-token"
+
+
+def test_closing_a_session_releases_its_engine_after_its_child(monkeypatch):
+    # Order matters: releasing the engine while the child is still connected
+    # would take it out from under a live statement.
+    monkeypatch.setattr(uc, "_contexts", {})
+    order = []
+
+    class FakeCtx:
+        def close(self):
+            order.append("child")
+
+    class FakeRegistry:
+        def release(self, session):
+            order.append(f"engine:{session}")
+            return True
+
+    uc._contexts["s1"] = FakeCtx()
+    monkeypatch.setattr(uc, "_engines", FakeRegistry())
+    uc.close_session("s1")
+    assert order == ["child", "engine:s1"]
+
+
+def test_arrow_rows_are_bound_without_touching_storage():
+    # The caller's identity is refused on this table, so the binding must not
+    # reach OneLake at all — the rows arrive with the request.
+    import base64
+    import io
+
+    import pyarrow as pa
+    import pyarrow.ipc as ipc
+
+    table = pa.table({"region_id": [1, 1]})
+    sink = io.BytesIO()
+    with ipc.new_stream(sink, table.schema) as w:
+        w.write_table(table)
+    encoded = base64.b64encode(sink.getvalue()).decode()
+
+    made = {}
+
+    class Spark(_Spark):
+        def createDataFrame(self, pdf):  # noqa: N802 - pyspark's spelling
+            made["rows"] = len(pdf)
+
+            class DF:
+                def createOrReplaceTempView(self, name):  # noqa: N802
+                    made["view"] = name
+            return DF()
+
+    g = {"spark": Spark()}
+    got = uc.register(g, [{"name": "sales", "arrow": encoded, "filtered": True}])
+    assert got["status"] == "ok" and got["bound"] == ["sales"]
+    assert made == {"rows": 2, "view": "sales"}
+    assert not [q for q in g["spark"].ran if "delta.`" in q], \
+        "it went to storage for a relation it was handed"
