@@ -72,7 +72,7 @@ endif
 PY ?= $(shell if command -v uv >/dev/null 2>&1; then echo "uv run --frozen --no-sync python"; \
 	else for c in python3 python py; do if "$$c" -c '' >/dev/null 2>&1; then echo "$$c"; break; fi; done; fi)
 
-.PHONY: help doctor up up-lite up-jupyter up-jvm up-eventstream dax-linux down restart clean status status-spark spark logs ps seed test check lint
+.PHONY: help doctor up up-lite up-jupyter up-jvm up-eventstream dax-linux down restart clean status status-spark spark logs ps seed test check lint docs-build docs-serve
 
 help: ## Show the available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -171,3 +171,47 @@ portal-types: ## Type-check the portal, and prove a new event kind breaks it
 
 test: check ## Repo invariants, then Go build, vet and unit tests
 	go build ./... && go vet ./... && go test ./...
+
+# ---------------------------------------------------------------------------
+# The documentation site.
+#
+# Not called `docs`: there is a docs/ DIRECTORY here, and a target sharing its
+# name is satisfied by the directory existing. `make docs` would print
+# "nothing to be done" and exit 0, which is the failure that looks like
+# success. .PHONY below would also fix it; a name that cannot collide fixes it
+# whether or not someone remembers .PHONY.
+#
+# `pnpm --filter $(DOCS_PKG) dev` is the fast inner loop for PROSE, and it is
+# not this. It is based at the docs subpath and knows nothing about the tree
+# around it, so under it the landing page does not exist, the redirect stubs do
+# not exist, and the badge documents the landing page fetches do not exist. Use
+# it to write a page; use `make docs-serve` before believing the site works.
+#
+# CI runs `make docs-build` and publishes what it leaves in ./_site, with ONE
+# addition it cannot make here: the coverage badges, whose numbers come from
+# the last CI run's artifact and are not reproducible locally. This target
+# writes them as "n/a" instead, which is the same fallback the workflow uses
+# when no artifact is found, so the tiles are laid out the way they publish.
+DOCS_PKG  ?= fabric-emulator-docs
+DOCS_PORT ?= 8099
+# The interpreter CI uses, pinned. These scripts are stdlib-only, hence
+# --no-project: no environment to resolve, and a local 3.9 cannot pass
+# something 3.12 would reject.
+UVPY ?= uv run --no-project --python 3.12 python
+
+docs-build: ## Build the published site into ./_site (what CI deploys)
+	@command -v uv >/dev/null 2>&1 || { echo "uv is not on PATH: https://docs.astral.sh/uv/" >&2; exit 1; }
+	pnpm install --frozen-lockfile
+	$(UVPY) scripts/check_docs_links.py --strict
+	pnpm --filter $(DOCS_PKG) build
+	$(UVPY) scripts/assemble_site.py --self-test
+	$(UVPY) scripts/assemble_site.py --out _site
+	@# The n/a badges named above, written where CI copies the real ones over
+	@# them: both at the root, where the README's published shields URLs name
+	@# them, and under /docs/. AFTER the assembler, which clears _site.
+	$(UVPY) scripts/coverage_badges.py --out _site
+	$(UVPY) scripts/coverage_badges.py --out _site/docs
+	$(UVPY) scripts/build_landing_data.py --out _site --landing site/index.html
+
+docs-serve: docs-build ## …and serve it locally at its published URLs (DOCS_PORT=8099)
+	$(UVPY) scripts/assemble_site.py --serve --site _site --port $(DOCS_PORT)
