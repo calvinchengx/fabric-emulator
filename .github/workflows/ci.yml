@@ -72,9 +72,11 @@ env:
 # need longer already say so and are left alone: spark-jvm and notebook-jvm at
 # 45, the three live conformance jobs at 45 (compose / SQL Server), xmla at 30.
 jobs:
-  # THE DOCS LANE. Every job below this one is gated on `docs_only != 'true'`,
-  # so a change confined to `docs/`, `website/` or a root readme runs this job
-  # and `witnesses` and nothing else. #363 — one line in a generator that emits
+  # THE DOCS LANE, ON PULL REQUESTS ONLY. Every job below this one is gated on
+  # `docs_only != 'true'`, so a PULL REQUEST confined to `docs/`, `website/` or
+  # a root readme runs this job and `witnesses` and nothing else. A push to
+  # main always runs everything -- see the classify step for the two green
+  # commits that made that necessary. #363 — one line in a generator that emits
   # markdown — ran 95 checks on the PR and the same matrix again on main; none
   # of them can observe a markdown file, and the wait is what makes a two-minute
   # docs correction feel expensive enough to postpone.
@@ -121,6 +123,33 @@ jobs:
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
+          # THE LANE IS FOR PULL REQUESTS. EVERY COMMIT ON MAIN GETS THE FULL
+          # MATRIX, whatever it touched.
+          #
+          # This was not the original rule, and the original rule was wrong in
+          # a way that took two days to see. `eec3e8c` and `61ca518` are both
+          # docs-only commits, both reported CI SUCCESS on main, and both ran
+          # two jobs; the last commit whose full suite actually ran was
+          # `90646db`, which FAILED. So main's tip read green while four tests
+          # were broken underneath it, and the two PRs open at the time
+          # inherited a red baseline nobody had been told about.
+          #
+          # The per-commit skip is defensible on its own terms -- a markdown
+          # file cannot break a Go test -- and that is exactly why it is
+          # dangerous: each green is locally true and the branch's state is
+          # not. This file's own concurrency comment already states the rule
+          # this violated: every main commit gets its own verdict, because
+          # every one of them is shipped and each is what a bisect will later
+          # ask about. A carried-forward verdict is not a verdict.
+          #
+          # The saving that matters is kept. Iteration happens on the pull
+          # request, where a docs change now runs two jobs instead of ninety;
+          # merging it costs one full run, once.
+          if [ "${GITHUB_EVENT_NAME}" != "pull_request" ]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "event is ${GITHUB_EVENT_NAME}, not a pull request: every commit on main gets the full matrix"
+            exit 0
+          fi
           # A force push and a branch's first commit both give the null sha,
           # and a tag build's `before` is meaningless. None of those is a docs
           # change; all of them run everything.

@@ -67,9 +67,21 @@ the real-tool e2e — is in [12-e2e-matrix.md](12-e2e-matrix.md).
 
 ## The docs lane — what a documentation change runs
 
-A change confined to `docs/`, `website/` or a root readme runs **two** CI jobs
-instead of ninety-odd. `scripts/docs_only_change.py` classifies the diff, and
-every job in `ci.yml` except `witnesses` is gated on the answer.
+A **pull request** confined to `docs/`, `website/` or a root readme runs **two**
+CI jobs instead of ninety-odd. `scripts/docs_only_change.py` classifies the
+diff, and every job in `ci.yml` except `witnesses` is gated on the answer.
+
+**A push to main always runs everything**, whatever it touched. The lane
+originally applied there too, and that was a mistake worth recording: two
+docs-only commits landed, each reported CI success having run two jobs, and the
+last commit whose suite actually ran had *failed*. Main's tip read green while
+four tests were broken underneath it, and the pull requests open at the time
+inherited a red baseline nobody had been told about. Each of those greens was
+locally true, which is what made the branch's state so hard to see. The rule
+`ci.yml`'s concurrency block already states applies here as well: every commit
+on main gets its own verdict, because every one is shipped and each is what a
+bisect will later ask about. Iteration happens on the pull request anyway, so
+the saving that matters is kept and merging costs one full run, once.
 
 `witnesses` is not gated, deliberately: it is the job that reads the docs — the
 parity claims and their witnesses, the sidebar, intra-doc links, the
