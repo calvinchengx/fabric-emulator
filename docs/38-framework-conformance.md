@@ -1,15 +1,16 @@
 # 38 — Framework conformance: what a Fabric product assumes, and how to test it
 
-**Status: contracts 4, 1 and 2 are live. 5 of 18 cells.** Contract 4 is ✅ on all three
+**Status: contracts 4, 1 and 2 are live and GREEN ON EVERY APPLICABLE BACKEND. 7 of 18 cells.** Contract 4 is ✅ on all three
 backends — a write through the emulator path, confirmed out of band (OneLake
 DFS on sail/jvm; a fresh TDS connection on warehouse). The engine that wrote
 is never the one that confirms. **Contract 1 is ✅ on sail and ❌ on jvm**,
 and the jvm red is a real defect rather than a missing assertion: the JVM
 overlay image has no `notebookutils` installed at all, so a notebook cannot
-import the surface this repo grades 🟢 Real. **Contract 2 is ✅ on sail** —
-it found seven of the eleven documented `notebookutils.notebook` methods
-missing, and **they are now implemented** (see below) — and ❌ on jvm for the
-same missing-module reason. Contracts 3 and 5–7 stay known gaps. The offline half (`docs/conformance-matrix.md`,
+import the surface this repo grades 🟢 Real. **Both are now ✅ on both
+backends**: the seven missing `notebookutils.notebook` methods are implemented,
+and the JVM overlay has an interpreter that can import the shim at all.
+Contracts 3 and 5–7 stay known gaps — though contract 3's *defect* is fixed
+even though its cell is not yet asserted. The offline half (`docs/conformance-matrix.md`,
 `check_conformance.py --strict`) still gates `make check`.
 
 **Two defects came out of contract 1's first run, and neither was visible to
@@ -155,12 +156,22 @@ that call and do something else with it.
 preinstalled library set together as one versioned unit. A framework declares
 which runtime it targets and assumes that floor.
 
-**Where the emulator stands.** Two images with different Python versions and no
-statement about which Fabric runtime either claims to be. The JVM overlay is
-built on a Spark image shipping Python 3.8, which is below the floor of current
-frameworks; the first failure is a missing stdlib module, arriving long after the
-agent reported ready, which reads as a notebook fault rather than a runtime that
-was never eligible.
+**Where the emulator stood, and what changed.** Two images with different
+Python versions and no statement about which Fabric runtime either claims to be.
+The JVM overlay was built on a Spark image shipping **Python 3.8.10**, and
+[Fabric Runtime 1.3 is **Python 3.11**](https://learn.microsoft.com/en-us/fabric/data-engineering/runtime-1-3)
+— everything else in that image already matched the runtime it claims to be
+(Spark 3.5, Delta 3.2, Java 11, Scala 2.12) and the interpreter did not.
+
+Not cosmetic: `notebookutils` requires `>= 3.9`, so a notebook on that overlay
+could not import the surface **at all**, which is what held contracts 1 and 2 red
+there. The overlay now carries Python 3.11 in a virtualenv with the shim
+installed, and `PYSPARK_PYTHON` points at it. PySpark itself needed no change —
+Spark ships it as `pyspark.zip` on `PYTHONPATH`, so it is interpreter-agnostic.
+
+**The cell is still ❌ because nothing asserts it yet.** The image is right; the
+probe that would prove it is contract 3's remaining work, and a fixed defect
+with no assertion is exactly the state this matrix refuses to paint green.
 
 **The fix.** Declare the Fabric Runtime version each image targets, make the
 Python floor match it, and have the engine matrix assert it. A runtime that

@@ -20,8 +20,8 @@ writer's own catalog.
 
 | # | Contract | sail | jvm | warehouse |
 |---|---|---|---|---|
-| 1 | Context chain | ✅ | ❌ no context findings at lake.Lakehouse/Files/conformance/context.json:  ([§1](38-framework-conformance.md#1-session-context-is-a-control-plane-contract-not-an-environment-variable)) | — |
-| 2 | Signature shape | ✅ | ❌ no signatures in the findings artifact — the session did not get as fa ([§2](38-framework-conformance.md#2-the-api-shape-is-the-contract-independent-of-behaviour)) | — |
+| 1 | Context chain | ✅ | ✅ | — |
+| 2 | Signature shape | ✅ | ✅ | — |
 | 3 | Runtime floor | ❌ not yet asserted — needs a running notebook session ([§3](38-framework-conformance.md#3-the-runtime-is-a-versioned-product-not-some-spark)) | ❌ not yet asserted — needs a running notebook session ([§3](38-framework-conformance.md#3-the-runtime-is-a-versioned-product-not-some-spark)) | — |
 | 4 | Write landing | ✅ | ✅ | ✅ |
 | 5 | Concurrent isolation | ❌ not yet asserted — same harness as write landing, different notebooks ([§5](38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§5](38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§5](38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case)) |

@@ -3,17 +3,17 @@
     "id": "1",
     "contract": "Context chain",
     "backend": "jvm",
-    "status": "fail",
-    "error": "no context findings at lake.Lakehouse/Files/conformance/context.json: HTTP Error 404: Not Found \u2014 the session said: context findings NOT written: ModuleNotFoundError No module named 'notebookutils'",
-    "pointer": "38-framework-conformance.md#1-session-context-is-a-control-plane-contract-not-an-environment-variable"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "2",
     "contract": "Signature shape",
     "backend": "jvm",
-    "status": "fail",
-    "error": "no signatures in the findings artifact \u2014 the session did not get as far as reporting them",
-    "pointer": "38-framework-conformance.md#2-the-api-shape-is-the-contract-independent-of-behaviour"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "3",
