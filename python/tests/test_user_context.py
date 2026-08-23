@@ -437,3 +437,24 @@ def test_serve_routes_prepare_to_register_not_to_run():
              lambda: {"spark": _Spark()})
     assert ran == [], "a prepare was executed as user code"
     assert json.loads(out.getvalue())["status"] == "ok"
+
+
+def test_a_windows_style_pipe_error_is_reported_like_a_broken_one():
+    # Windows raises OSError(EINVAL) where POSIX raises BrokenPipeError, and a
+    # BrokenPipeError-only except let it escape into the agent's request
+    # thread. Simulated rather than skipped, so POSIX CI covers the branch that
+    # only Windows reaches naturally.
+    ctx = spawn()
+    try:
+        class _Einval:
+            def write(self, _b):
+                raise OSError(22, "Invalid argument")
+
+            def flush(self):
+                pass
+
+        ctx.proc.stdin = _Einval()
+        got = ctx.run("1")
+        assert got["status"] == "error" and got["ename"] == "UserContextLost"
+    finally:
+        ctx.close()

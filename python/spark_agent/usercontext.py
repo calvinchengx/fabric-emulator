@@ -215,7 +215,12 @@ class UserContext:
         try:
             self.proc.stdin.write(frame(request))
             self.proc.stdin.flush()
-        except (BrokenPipeError, ValueError):
+        except (OSError, ValueError):
+            # OSError, not BrokenPipeError. Writing to a dead child's pipe is
+            # EPIPE on POSIX and EINVAL (`[Errno 22] Invalid argument`) on
+            # Windows, which is an OSError but NOT a BrokenPipeError -- found by
+            # the Windows job with the narrower except in place. ValueError
+            # covers a stdin already closed by `close()`.
             return self._died()
         line = self._responses.readline()
         if not line:
@@ -236,8 +241,8 @@ class UserContext:
             self.proc.stdin.write(frame({"op": "close"}))
             self.proc.stdin.flush()
             self.proc.stdin.close()
-        except (BrokenPipeError, ValueError, AttributeError):
-            pass
+        except (OSError, ValueError, AttributeError):
+            pass  # same portability reason as _exchange
         try:
             self.proc.wait(timeout=10)
         except Exception:  # noqa: BLE001 - a child that will not go is killed
