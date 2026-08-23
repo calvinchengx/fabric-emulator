@@ -351,3 +351,77 @@ def test_closing_a_session_closes_its_child(monkeypatch):
     assert closed == [True]
     uc.close_session("s1")  # idempotent: /close can arrive twice
     assert closed == [True]
+
+
+# --- binding the permitted tables in the child --------------------------------
+#
+# The parent decides WHAT and WHERE; the child only binds names. A child that
+# chose its own sources could choose the unfiltered one, which is the split
+# undone.
+
+class _Spark:
+    def __init__(self, fail_on=()):
+        self.ran = []
+        self.fail_on = fail_on
+
+    def sql(self, q):
+        self.ran.append(q)
+        if any(f in q for f in self.fail_on):
+            raise RuntimeError("nope")
+
+
+def test_prepare_binds_each_permitted_table_to_its_place():
+    g = {"spark": _Spark()}
+    got = uc.register(g, [{"name": "sales", "location": "/tmp/snap/sales",
+                           "filtered": True},
+                          {"name": "regions", "location": "abfss://l/regions"}])
+    assert got["status"] == "ok" and got["bound"] == ["regions", "sales"]
+    assert any("/tmp/snap/sales" in q for q in g["spark"].ran)
+    assert any("abfss://l/regions" in q for q in g["spark"].ran)
+    # REPLACE, so a statement after a policy change cannot keep the old one.
+    assert all("CREATE OR REPLACE TEMP VIEW" in q
+               for q in g["spark"].ran if q.startswith("CREATE"))
+
+
+def test_a_table_the_parent_stops_listing_is_unbound():
+    # Revocation has to reach the next cell. Leaving it bound would serve last
+    # statement's snapshot to someone who just lost access.
+    spark = _Spark()
+    g = {"spark": spark}
+    uc.register(g, [{"name": "sales", "location": "/tmp/snap/sales"}])
+    spark.ran.clear()
+    got = uc.register(g, [])
+    assert got["status"] == "ok" and got["bound"] == []
+    assert "DROP VIEW IF EXISTS `sales`" in spark.ran
+
+
+def test_an_entry_with_no_location_is_not_bound():
+    g = {"spark": _Spark()}
+    got = uc.register(g, [{"name": "sales"}, {"location": "/tmp/x"}])
+    assert got["bound"] == []
+    assert g["spark"].ran == []
+
+
+def test_a_binding_that_fails_leaves_the_name_unbound():
+    # Not bound to something older, and not silently reported ok: a half-applied
+    # policy is the state where a caller reads what they should not.
+    spark = _Spark(fail_on=("/tmp/broken",))
+    g = {"spark": spark}
+    got = uc.register(g, [{"name": "sales", "location": "/tmp/broken"}])
+    assert got["status"] == "error" and got["ename"] == "PrepareFailed"
+    assert "DROP VIEW IF EXISTS `sales`" in spark.ran
+
+
+def test_prepare_without_a_session_is_an_error_not_a_crash():
+    got = uc.register({}, [{"name": "sales", "location": "/tmp/x"}])
+    assert got["status"] == "error" and got["ename"] == "NoSession"
+
+
+def test_serve_routes_prepare_to_register_not_to_run():
+    out = io.BytesIO()
+    ran = []
+    uc.serve([uc.frame({"op": "prepare", "tables": []})], out,
+             lambda c, g, k="": ran.append(c) or {"status": "ok"},
+             lambda: {"spark": _Spark()})
+    assert ran == [], "a prepare was executed as user code"
+    assert json.loads(out.getvalue())["status"] == "ok"

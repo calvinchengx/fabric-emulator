@@ -250,3 +250,92 @@ def _drop(spark, name, log=None):
             pass
     if log:
         log(f"onelake-security: {name} withheld")
+
+
+# --- the system context: read privileged, hand over only what is permitted ----
+#
+# Stage B2. With the user context running as the CALLER, a narrowed table
+# refuses its token -- correctly, that is stage A working. So the filtered rows
+# have to come from somewhere the caller is allowed to read, and producing them
+# is the privileged half's job: "a privileged, Microsoft-managed context that
+# resolves the user's effective access against OneLake, reads the underlying
+# Delta files, applies RLS row filtering and CLS projections, and returns only
+# the rows and columns the user is allowed to see."
+#
+# WE MATERIALISE WHERE FABRIC FILTERS IN-PLAN. Fabric applies the filter during
+# execution, with bitmap or deletion-vector filtering close to the Delta scan.
+# One process cannot hand a live relation to another, so this writes the
+# filtered result to a scratch path the engine can read without OneLake in the
+# way. The guarantee is the same -- the user context never holds unfiltered
+# bytes -- and the differences are real and stated: a snapshot costs a copy, and
+# it is a snapshot, so it is stale the moment the table moves. Recomputing per
+# statement keeps the staleness inside one cell.
+
+
+def scratch_for(root, session, name):
+    """Where one session's filtered snapshot of one table lives.
+
+    Session-scoped, because two callers of the same table get DIFFERENT rows and
+    a shared path would serve whichever was written last -- the same
+    one-object-many-meanings defect that per-session Spark sessions exist to
+    avoid, one layer down.
+    """
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in f"{session}-{name}")
+    return f"{root.rstrip('/')}/{safe}"
+
+
+def materialize(system_spark, name, entry, path):
+    """Write the caller's permitted view of `name` to `path`, privileged.
+
+    The filter is the author's own SQL and is run in the SYSTEM session, where
+    the real table is registered and the privileged identity can read it.
+    """
+    system_spark.sql(secure_view_sql(name, entry)) \
+        .write.format("delta").mode("overwrite").save(path)
+    return path
+
+
+def prepare(system_spark, access, tables, location_of, scratch_root, session,
+            log=None):
+    """What the user context may register, and where each thing lives.
+
+    Three outcomes per table, and the DEFAULT is the withholding one:
+
+      * no grant covers it -> absent from the result, so it is not registered in
+        the user context at all. Nothing to drop and nothing to sweep, because
+        it was never there: the deny-by-default the catalog approach had to
+        simulate is free once the two contexts are separate.
+      * granted in full -> the real location. The caller's own token reads it,
+        and OneLake permits that, so there is nothing to copy.
+      * granted in part -> a filtered snapshot, written here.
+
+    A table we cannot place is omitted rather than guessed at. Returning it
+    unfiltered because its location is unknown would be the one failure this
+    whole stage exists to prevent.
+    """
+    out = []
+    unrestricted = access.get("*")
+    for name in tables:
+        entry = access.get(name, unrestricted)
+        if entry is None:
+            if log:
+                log(f"onelake-security: {name} withheld from the user context")
+            continue
+        if not entry["rows"] and not entry["columns"]:
+            location = location_of(name) if location_of else None
+            if location:
+                out.append({"name": name, "location": location})
+            elif log:
+                log(f"onelake-security: {name} has no recorded location, withheld")
+            continue
+        path = scratch_for(scratch_root, session, name)
+        try:
+            materialize(system_spark, name, entry, path)
+        except Exception as exc:  # noqa: BLE001
+            if log:
+                log(f"onelake-security: {name} withheld ({exc})")
+            continue
+        out.append({"name": name, "location": path, "filtered": True})
+        if log:
+            log(f"onelake-security: {name} filtered into the user context")
+    return out

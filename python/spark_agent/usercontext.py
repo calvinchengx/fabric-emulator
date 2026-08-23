@@ -140,7 +140,10 @@ def serve(requests, responses, run, globals_factory):
             return
         if req.get("op") == "close":
             return
-        envelope = run(req.get("code") or "", g, req.get("kind") or "")
+        if req.get("op") == "prepare":
+            envelope = register(g, req.get("tables") or [])
+        else:
+            envelope = run(req.get("code") or "", g, req.get("kind") or "")
         responses.write(frame(envelope))
         responses.flush()
 
@@ -162,7 +165,13 @@ class UserContext:
     RESPONSE_FD_ENV = "SPARK_AGENT_RESPONSE_FD"
 
     def __init__(self, argv=None, env=None, popen=None, grants=None):
-        self.argv = argv or [sys.executable, "-m", "spark_agent.usercontext"]
+        # BY PATH, not `-m`. The agent image puts these modules flat on
+        # sys.path rather than in a `spark_agent` package, so `-m
+        # spark_agent.usercontext` resolves on a developer checkout and fails in
+        # the image with "No module named 'spark_agent'" — measured. Running the
+        # file also puts its own directory on sys.path[0], which is what lets
+        # the child `import agent` the same way the parent does.
+        self.argv = argv or [sys.executable, os.path.abspath(__file__)]
         self.env = env
         # Applied AFTER scrubbing, so the child can be given the caller's own
         # token by the same name the scrub removed the service one under.
@@ -192,6 +201,10 @@ class UserContext:
         self._responses = os.fdopen(read_fd, "rb")
         return self
 
+    def prepare(self, tables):
+        """Tell the child which tables it may name, and where each one is."""
+        return self._exchange({"op": "prepare", "tables": tables})
+
     def run(self, code, kind=""):
         """Execute one statement in the child, returning Livy's envelope.
 
@@ -200,10 +213,14 @@ class UserContext:
         is unambiguous, and the alternative -- waiting on a process that has
         already gone -- is the failure mode this reports instead.
         """
+        return self._exchange({"code": code, "kind": kind})
+
+    def _exchange(self, request):
+        """One request, one answer, or a reported death. Never a hang."""
         if self.proc is None or self._responses is None:
             raise RuntimeError("user context not started")
         try:
-            self.proc.stdin.write(frame({"code": code, "kind": kind}))
+            self.proc.stdin.write(frame(request))
             self.proc.stdin.flush()
         except (BrokenPipeError, ValueError):
             return self._died()
@@ -257,6 +274,49 @@ def _dispatch(code, g, kind):  # pragma: no cover - runs in the child
 
         return sqlrun.run_sql(code, g)
     return agent.run_code(code, g)
+
+
+def register(g, tables):
+    """Make the permitted tables nameable in the child, and nothing else.
+
+    The parent decided WHAT and WHERE (`onelake_security.prepare`); this only
+    binds names. Keeping the decision on the privileged side is the point of the
+    split -- a child that chose its own sources could choose the unfiltered one.
+
+    REPLACE, not create-if-missing. A statement may follow a policy change, and
+    a table that was narrowed further must not keep resolving to last
+    statement's snapshot. Registrations the parent no longer lists are dropped
+    for the same reason: a revoked table has to stop being nameable.
+    """
+    spark = g.get("spark")
+    if spark is None:
+        return {"status": "error", "ename": "NoSession",
+                "evalue": "the user context has no Spark session"}
+    wanted = {t["name"]: t for t in tables if t.get("name") and t.get("location")}
+    bound = g.setdefault("__onelake_bound__", set())
+    errors = []
+    for name in sorted(bound - set(wanted)):
+        try:
+            spark.sql(f"DROP VIEW IF EXISTS `{name}`")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{name}: {exc}")
+    bound.clear()
+    for name, t in wanted.items():
+        try:
+            spark.sql(f"CREATE OR REPLACE TEMP VIEW `{name}` AS "
+                      f"SELECT * FROM delta.`{t['location']}`")
+            bound.add(name)
+        except Exception as exc:  # noqa: BLE001
+            # A name we cannot bind must not be left bound to something older.
+            try:
+                spark.sql(f"DROP VIEW IF EXISTS `{name}`")
+            except Exception:  # noqa: BLE001
+                pass
+            errors.append(f"{name}: {exc}")
+    if errors:
+        return {"status": "error", "ename": "PrepareFailed",
+                "evalue": "; ".join(errors)}
+    return {"status": "ok", "bound": sorted(bound)}
 
 
 # --- which sessions get one, and their lifetimes ------------------------------

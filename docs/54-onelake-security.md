@@ -470,3 +470,56 @@ direct-path-access row go from 🟡 to 🟢.
 - **The `sc` facade and RDD contract cross a process boundary.** Some of what
   works today may not survive, and what does not must be reported rather than
   quietly dropped.
+
+
+## B2 landed, and it does not close the path read. Here is why
+
+The system context works. With `FABRIC_TWO_CONTEXT=1` the whole livy e2e passes:
+the viewer sees 2 of 3 rows and one column of two, both bypass spellings are
+refused, the owner is untouched — and the filtered rows now arrive from a
+snapshot the privileged half wrote, not from a view over a table the caller can
+still name. Withholding got simpler too: a table the caller may not read is
+never registered in the user context, so there is nothing to drop and nothing to
+sweep. The catalog sweep and the shared-catalog refusal exist to simulate, inside
+one namespace, the separation this path actually has.
+
+Re-running `e2e/two-context/probe.py` with the flag on:
+
+| question | before | after |
+|---|---|---|
+| `ENTRA_CLIENT_SECRET` in the cell's environment | **yes** | **no** |
+| `storage.token()` returns a bearer | the SERVICE one | the CALLER's own |
+| SQL path filtered | 2 of 3 | 2 of 3 |
+| **`spark.read...load(abfss://…)` from a cell** | **3 rows, both columns** | **3 rows, both columns** |
+
+The escalation is closed. The path read is not, and the reason is not in the
+agent at all.
+
+**The engine is a third process, and it holds a credential of its own.**
+Measured, in the running container: `docker/sail/launcher.py` mints a bearer
+with client credentials at start-up and exports it as `AZURE_STORAGE_TOKEN` into
+Sail's environment, and the live Sail process has it. A bare
+`spark.read.load("abfss://…")` is executed BY SAIL, so it uses Sail's daemon
+identity whatever the calling process holds. Splitting the agent into two
+contexts cannot reach that, because the read never happens in either of them.
+
+Real Fabric does not have this problem: its Spark executors run in the user's
+context with the user's identity, so the platform block applies to the engine's
+own read. Our Sail is one long-lived shared server with one identity.
+
+### The option, and its cost
+
+There is a way to close it: **take the ambient credential away from the
+engine**. With no `AZURE_STORAGE_TOKEN` in Sail's environment, every read must
+carry its own options — the agent's own paths already pass them explicitly, so
+the system context keeps working, and a bare path read from a cell fails for
+want of a credential.
+
+It is not a small change. It reaches EVERY session, not just secured ones: any
+notebook anywhere that reads `abfss://` without options stops working, which is
+a large behavioural change to buy one guarantee. It should be measured against
+the e2e suite before anyone commits to it, and it is not in this stage.
+
+Until then the direct-path-access parity row stays **🟡**, and it says the
+engine is the reason. A row claiming the guarantee would be claiming a
+separation that a third process quietly opts out of.
