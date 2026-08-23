@@ -114,36 +114,61 @@ function convert(name) {
 }
 
 function writeIndex() {
+  // NO COUNTS HERE, deliberately. This page carried "113 supported capability
+  // claims" long after the number was 120: a figure hardcoded in a generator
+  // is a claim nothing checks, on the one page most likely to be read and
+  // least likely to be re-read. The parity map owns the number and is
+  // regenerated with it; this page owns the invitation to go and look.
   const body = rewriteLinks(
-    `Local emulator of **Microsoft Fabric** in a single Go binary — the control ` +
-      `plane (workspaces, items, RBAC, git, jobs, LROs, Fabric Core MCP), a real ` +
-      `OneLake ADLS/Blob data plane, T-SQL over TDS, Livy on a real Spark engine, ` +
-      `Data Factory pipelines, Airflow jobs, KQL eventhouses, and Eventstream on ` +
-      `Apache Kafka. It validates Microsoft Entra bearer tokens against ` +
-      `[entra-emulator](https://calvinchengx.github.io/entra-emulator/) exactly as ` +
-      `real Fabric validates against Entra, so the same pipeline runs unmodified ` +
+    `A local **Microsoft Fabric**: the control plane, OneLake, and engines that ` +
+      `genuinely run your code. Workspaces, items and their CI/CD definitions, ` +
+      `workspace RBAC, git integration, jobs and the 202/poll long-running-` +
+      `operation contract — validating Microsoft Entra bearer tokens against ` +
+      `[entra-emulator](https://calvinchengx.github.io/entra-emulator/) exactly ` +
+      `as real Fabric validates against Entra. The same pipeline runs unmodified ` +
       `here and against a real tenant (\`FABRIC_TARGET\`).\n\n` +
-      `\`docker compose up\` attaches Sail and a SQL Server sidecar, so Livy, ` +
-      `notebooks and the warehouse **do real work**. KQL, Eventstream, OpenMetadata ` +
-      `and the Flow terminal sit behind profiles. 113 supported capability claims ` +
-      `each name a witness; CI fails if one is lost.\n\n` +
-      `:::caution\nLocal development tool only — intentionally insecure (no real ` +
-      `authorization boundary, self-signed TLS). Run it on \`localhost\` only.\n:::\n\n` +
+      `**It computes.** \`docker compose up\` attaches Sail and a SQL Server ` +
+      `sidecar: a notebook runs on Spark and writes Delta to OneLake, a warehouse ` +
+      `query executes over a real TDS connection, and KQL runs on Microsoft's own ` +
+      `Kusto engine. Microsoft's own tools drive it — \`fabric-cicd\`, the Fabric ` +
+      `CLI, \`dbt-fabric\`, the Terraform provider, the VS Code extension — with ` +
+      `no capacity and no cloud tenant.\n\n` +
+      `:::caution\n**Local development tool only** — intentionally insecure (no ` +
+      `real authorization boundary, self-signed TLS, seeded credentials). Run it ` +
+      `on \`localhost\` only.\n:::\n\n` +
       `## Start here\n\n` +
       `- [Quickstart](01-quickstart.md) — compose up the family, mint a token, create a workspace, write to OneLake\n` +
-      `- [Installation](02-installation.md) — brew, winget, go install, Docker, compose\n` +
+      `- [Installation](02-installation.md) — brew, winget, \`go install\`, Docker, compose\n` +
+      `- [Tutorial](28-tutorial-end-to-end.md) — a medallion pipeline end to end, bronze through gold\n` +
       `- [Running modes](27-running-modes.md) — default stack, lite, JVM overlay, profiles, optional DAX oracle\n` +
-      `- [Architecture](03-architecture.md) — the three-emulator model, token acceptance, the LRO engine\n` +
-      `- [Control-plane API](07-control-plane-api.md) and [OneLake](08-onelake.md) — every emulated endpoint\n` +
-      `- [Eventstream](51-eventstream-kafka.md) — Kafka broker, Lakehouse / Reflex / Eventhouse dests, operators\n` +
-      `- [Testing](10-testing.md) — freeze the clock, inject faults; [run the real fabric-cicd](11-testing-with-fabric-cicd.md)\n` +
-      `- [Parity](parity.md) — every claim, graded, with its witness\n` +
+      `- [Architecture](03-architecture.md) — the emulator family, token acceptance, the LRO engine\n\n` +
+      `## What it runs\n\n` +
+      `- [Real compute](14-real-compute.md) — what actually executes, and what is still only a contract\n` +
+      `- [Notebooks and Spark](20-lakesail-engine.md) — Sail as the default engine, JVM Spark as an optional oracle\n` +
+      `- [Warehouse and T-SQL](16-warehouse-tds.md) — a real TDS endpoint over SQL Server, and its [T-SQL parity](29-tsql-parity.md)\n` +
+      `- [OneLake](08-onelake.md) — the ADLS and Blob surfaces, shortcuts, Delta, and [OneLake security](54-onelake-security.md)\n` +
+      `- [Control-plane API](07-control-plane-api.md) — every emulated endpoint, including Fabric Core MCP\n` +
+      `- [Real-Time Intelligence](25-rti-kusto.md) and [Eventstream](51-eventstream-kafka.md) — KQL eventhouses and a Kafka broker\n` +
+      `- [Deployment pipelines](23-deployment-pipelines.md) and [git integration](11-testing-with-fabric-cicd.md) — CI/CD against a local tenant\n\n` +
+      `## How the claims are checked\n\n` +
+      `Parity here is not self-assessed. Every supported capability names the ` +
+      `test that witnesses it, CI fails if one loses its witness, and the ` +
+      `strongest witnesses are third-party clients rather than our own tests.\n\n` +
+      `- [Parity map](parity.md) — every claim, graded, with the witness that holds it\n` +
+      `- [Ecosystem conformance](38-framework-conformance.md) — real vendor and OSS clients driving the emulator in CI\n` +
+      `- [Runtime fidelity gaps](37-runtime-fidelity-gaps.md) — where it still differs from Fabric, stated rather than discovered\n` +
+      `- [Testing](10-testing.md) — freeze the clock, inject faults, force LRO outcomes\n` +
+      `- [Parity history](parity-history.md) — how the map moved, release by release\n\n` +
+      `## Going further\n\n` +
+      `- [Configuration](04-configuration.md) and [TLS and hosts](05-tls-and-hosts.md)\n` +
+      `- [Real Fabric toggle](21-real-fabric-toggle.md) — point the same code at a real tenant\n` +
+      `- [OpenMetadata](22-openmetadata.md) — catalog the emulated estate\n` +
       `- [Roadmap](13-roadmap.md) — phases P0–P3, R0–R5, S, and what landed after\n`,
   );
   // The landing page is synthesized here (no /docs source), so it has no
   // "Edit this page" target.
   const frontmatter =
-    `---\ntitle: Fabric Emulator\ndescription: A local emulator of the Microsoft Fabric control plane that validates Entra bearer tokens.\neditUrl: false\n---\n\n`;
+    `---\ntitle: Fabric Emulator\ndescription: A local Microsoft Fabric — control plane, OneLake, and engines that actually compute — validating real Entra tokens, with every supported claim tied to a named witness.\neditUrl: false\n---\n\n`;
   writeFileSync(join(OUT, 'index.md'), frontmatter + body);
 }
 
