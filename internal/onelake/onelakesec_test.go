@@ -578,3 +578,29 @@ func TestAnUnrestrictedGrantSurvivesANarrowingOne(t *testing.T) {
 		t.Fatalf("an unrestricted grant did not survive a narrowing one: %d (%s)", w.Code, w.Body)
 	}
 }
+
+// Can the system context stage a filtered snapshot somewhere in OneLake the
+// narrowed caller can already read? If it could, per-user engines would need no
+// shared volume. It cannot: deny-by-default covers everything a role does not
+// name, so staging would mean writing the emulator's plumbing into the item's
+// dataAccessRoles where the user can see it. docs/54 sends the rows instead.
+func TestANarrowedViewerCannotReadAScratchPathInTheSameItem(t *testing.T) {
+	f := newFixture(t)
+	grantRole(t, f, "viewer-1", store.RoleViewer)
+	seedFile(t, f, "Tables/dbo/Customers/part-0.parquet")
+	seedFile(t, f, "Files/_scratch/viewer-1/Customers/part-0.parquet")
+	putNarrowingRole(t, f, "viewer-1", "Tables/dbo/Customers",
+		"SELECT * FROM Customers WHERE region = 1", nil)
+
+	base := "/" + f.ws.ID + "/" + f.it.ID + "/"
+	tok := f.storageToken("viewer-1")
+	// The control: the narrowed table itself is refused (stage A).
+	if w := f.do("GET", base+"Tables/dbo/Customers/part-0.parquet", tok, nil); w.Code != http.StatusForbidden {
+		t.Fatalf("the narrowed table = %d, want 403", w.Code)
+	}
+	if w := f.do("GET", base+"Files/_scratch/viewer-1/Customers/part-0.parquet",
+		tok, nil); w.Code != http.StatusForbidden {
+		t.Fatalf("a scratch path was readable (%d) — if this is deliberate, docs/54's "+
+			"handover design can be simplified; if not, deny-by-default has a hole", w.Code)
+	}
+}

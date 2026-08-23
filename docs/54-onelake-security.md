@@ -594,11 +594,45 @@ against OneLake, over three rounds.
 So ten users is around 660 MiB steady and twenty around 1.3 GiB, against a
 16 GiB VM that already holds two stacks. Affordability is not the obstacle.
 
-What remains to design is **where the filtered snapshot lives**: the system
-context reads privileged and must leave the result where the user's engine can
-read it without OneLake, which today is a local path on the one shared engine.
-Separate engines need a shared volume, and that is compose configuration in the
-platform repos too, not only here.
+### The snapshot should not exist
+
+The obvious follow-on question was where to put the filtered snapshot once the
+two contexts have separate engines. It has a better answer: **nowhere**.
+
+*Staging it in OneLake is impossible without corrupting the user's policy.* A
+narrowed caller can read only what their role grants, so a scratch path in the
+same item is 403 -- measured, not assumed
+(`TestCanANarrowedViewerReadAScratchPathInTheSameItem`). Making it readable
+would mean the emulator writing its own plumbing into the item's
+`dataAccessRoles`, where the user can see it through the API. That is not a
+design.
+
+*Staging it outside OneLake* means a volume shared by both engines, which is
+compose configuration in every platform repo, not just this one.
+
+*So send the rows instead.* The two contexts already share a protocol. The
+system context reads privileged, applies the filter, and hands back the RESULT
+as Arrow IPC; the user context binds the name to what it was given. No scratch
+path, no shared volume, no change outside the agent -- and it works the same
+whether the engines are shared or one per user.
+
+**It is also the more faithful of the two.** Fabric's system context "returns
+only the rows and columns the user is allowed to see"; it does not write them
+somewhere and hand over a path. The snapshot was the deviation, and removing it
+narrows the gap between us and the product rather than widening it.
+
+Measured before proposing it (`e2e/system-context-handover`): a filtered
+relation carrying nulls, a `DECIMAL(18,4)`, a timestamp, a date, a boolean and
+a binary column crosses as Arrow and arrives with every type and value intact.
+Type drift was the risk worth checking -- a decimal quietly becoming a float
+would be a corruption of user data, not a bug in a filter.
+
+**The bound, stated:** the filtered result is materialised in the parent's
+memory, crossed, and re-materialised in the engine as a local relation, so it
+is bounded by memory and by Spark Connect's `localRelationSizeLimit` (the
+config `connectconf.py` already normalises). That ceiling must fail LOUDLY. A
+filter that silently returned the first N rows would be a security control
+quietly reporting the wrong answer, which is worse than one that refuses.
 
 Until then the direct-path-access parity row stays **🟡**, and it says the
 engine is the reason. A row claiming the guarantee would be claiming a

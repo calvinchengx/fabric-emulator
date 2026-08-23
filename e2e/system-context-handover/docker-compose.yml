@@ -1,0 +1,39 @@
+# Can the privileged half hand a filtered relation to the user context IN BAND,
+# instead of staging it where both engines can reach it?
+#
+# Staging is dead: a narrowed caller can read only what their role grants, so a
+# scratch path in OneLake is 403 unless we mutate the item's policy
+# (internal/onelake, TestCanANarrowedViewerReadAScratchPathInTheSameItem). The
+# alternative is to send the rows, which is also what Fabric does -- its system
+# context RETURNS filtered rows rather than writing them somewhere.
+#
+# Sail and a probe, nothing else: this is a question about Arrow round-tripping
+# through the engine, and storage would only add ways to be wrong about it.
+services:
+  sail:
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    environment:
+      RUST_LOG: "warn"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket; socket.create_connection(('127.0.0.1', 50051), 2).close()"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  probe:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
+    depends_on:
+      sail:
+        condition: service_healthy
+    volumes:
+      - ./probe.py:/probe.py:ro
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+    command: ["python3", "/probe.py"]
