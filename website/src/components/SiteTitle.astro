@@ -1,0 +1,69 @@
+---
+// A back-link to this project's landing page, beside the site title.
+//
+// WHY IT EXISTS. The landing page links into the docs; nothing linked back, so
+// a reader who followed one of those links had the browser's Back button and
+// nothing else. Measured across the family: eleven repositories publish a
+// Starlight site and nine of them had no way back at all.
+//
+// WHY BESIDE THE TITLE. Not in the header's icon row, which is
+// `sl-hidden md:sl-flex` -- anything there vanishes on a narrow viewport, which
+// is exactly where a reader is most likely to be lost. The title renders at
+// every width, so a sibling of the title does too. Not in the sidebar either:
+// among a list of document titles, one more link reads as one more document.
+//
+// WHY THE HREF IS COMPUTED. `import.meta.env.BASE_URL` is the base Astro was
+// configured with, so this file is identical in every repository and cannot
+// drift from the site it belongs to. Two shapes exist in this family and both
+// resolve correctly:
+//
+//   base /repo/docs/  ->  /repo/          the landing page took the root
+//   base /repo/       ->  /repo/          docs sit at the root beside it
+//
+import Default from '@astrojs/starlight/components/SiteTitle.astro';
+
+const base = import.meta.env.BASE_URL;
+const home = base.replace(/docs\/?$/, '') || '/';
+---
+
+<div class="title-row">
+  <a class="site-home" href={home} aria-label="Back to the project home page">
+    <span aria-hidden="true">&larr;</span><span class="label">Home</span>
+  </a>
+  <Default><slot /></Default>
+</div>
+
+<style>
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+  }
+  .site-home {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-shrink: 0;
+    padding: 0.25rem 0.6rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 999px;
+    color: var(--sl-color-white);
+    font-size: var(--sl-text-xs);
+    font-weight: 600;
+    line-height: 1.4;
+    text-decoration: none;
+  }
+  .site-home:hover {
+    background: var(--sl-color-gray-6);
+    border-color: var(--sl-color-accent);
+    color: var(--sl-color-accent-high);
+  }
+  /* On the narrowest screens the arrow alone carries it, so the site title
+     keeps the room it needs. */
+  @media (max-width: 30rem) {
+    .site-home .label {
+      display: none;
+    }
+  }
+</style>
