@@ -527,18 +527,50 @@ Real Fabric does not have this problem: its Spark executors run in the user's
 context with the user's identity, so the platform block applies to the engine's
 own read. Our Sail is one long-lived shared server with one identity.
 
-### The option, and its cost
+### The option I proposed, and why it does not exist
 
-There is a way to close it: **take the ambient credential away from the
-engine**. With no `AZURE_STORAGE_TOKEN` in Sail's environment, every read must
-carry its own options — the agent's own paths already pass them explicitly, so
-the system context keeps working, and a bare path read from a cell fails for
-want of a credential.
+The obvious repair is to **take the ambient credential away from the engine**:
+with no `AZURE_STORAGE_TOKEN` in Sail's environment, every read would have to
+carry its own, and a bare path read from a cell would fail for want of one.
 
-It is not a small change. It reaches EVERY session, not just secured ones: any
-notebook anywhere that reads `abfss://` without options stops working, which is
-a large behavioural change to buy one guarantee. It should be measured against
-the e2e suite before anyone commits to it, and it is not in this stage.
+**Measured, and it is not available.** `e2e/sail-per-read-credential` runs two
+Sails side by side -- one with a credential to seed the table, one without --
+and asks the credential-less engine to read it three ways:
+
+| read | result |
+|---|---|
+| seed + read through the engine WITH a credential (the control) | 3 rows |
+| no options at all | `deadline has elapsed` after 14s |
+| `read.options(azure_storage_token=...)` | `deadline has elapsed` after 14s |
+| the same values set as session confs | `deadline has elapsed` after 14s |
+
+There is no per-operation channel. [docs/20](20-lakesail-engine.md) already
+recorded why, and this reproduces it independently: Sail builds its Azure store
+with `MicrosoftAzureBuilder::from_env()`, which reads credentials **once per
+process**, and `spark.conf.set("fs.azure.*")` is stored but ignored.
+
+Two further things the sweep showed, both worse than expected:
+
+* **It is not a clean refusal.** Without a credential, `object_store` retries a
+  transport Timeout ten times before failing, so the cost of the missing
+  credential is a ~14 second hang and an opaque `deadline has elapsed`, not an
+  authorization error a caller could act on.
+* **It is not scoped to path reads.** `delta_ops` injects `storage_options`
+  only on its delta-rs routes (change-feed read and write); ordinary reads and
+  writes fall through to `orig_load`/`orig_save` with none. So the ambient
+  credential serves ALL Spark I/O against OneLake, including the system
+  context's own filtered-snapshot writes. Three suites were run against a
+  credential-less engine before the question was settled -- `sail`, `livy` and
+  `two-context` -- and all three failed, `livy` on a WRITE.
+
+### What could close it
+
+Not per-operation credentials, then. The remaining route is **one engine
+process per user context**, launched with the caller's token, since a
+per-process credential is exactly what Sail supports. That is the two-context
+model one level down: the user context already has its own process, and this
+would give it its own engine. The cost is a Sail per Livy session, and it is
+not free -- but it is possible, which the option above is not.
 
 Until then the direct-path-access parity row stays **🟡**, and it says the
 engine is the reason. A row claiming the guarantee would be claiming a

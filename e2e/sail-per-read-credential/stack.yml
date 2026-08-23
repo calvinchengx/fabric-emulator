@@ -1,0 +1,38 @@
+# A SECOND Sail, identical to the first except that it has no way to mint a
+# storage credential -- `ENTRA_TOKEN_URL: ""` makes the launcher exec sail
+# directly (docker/sail/launcher.py).
+#
+# TWO ENGINES, because the table has to exist before it can be read and writing
+# is the first thing that breaks without a credential. The seeded write goes
+# through the normal `sail`; every read under test goes to this one.
+services:
+  sail-nocred:
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      ENTRA_TOKEN_URL: ""
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+
+  client:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: spark-connect }
+    depends_on:
+      sail-nocred:
+        condition: service_started
+    volumes:
+      - ../sail-per-read-credential/probe.py:/probe.py:ro
+    environment:
+      SPARK_REMOTE: "sc://sail-nocred:50051"
+      SEED_REMOTE: "sc://sail:50051"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+    command: ["python3", "/probe.py"]
