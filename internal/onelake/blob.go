@@ -136,16 +136,40 @@ func (b *blockStage) commit(key string, ids []string) ([]byte, bool) {
 	return out, true
 }
 
+// blobError is the Blob dialect's error document. A struct rather than a
+// format string, so encoding/xml does the escaping.
+type blobError struct {
+	XMLName xml.Name `xml:"Error"`
+	Code    string   `xml:"Code"`
+	Message string   `xml:"Message"`
+}
+
 func writeBlobErr(w http.ResponseWriter, status int, code, msg string) {
 	w.Header().Set("x-ms-error-code", code)
 	w.Header().Set("Content-Type", "application/xml")
+	noSniff(w)
 	w.WriteHeader(status)
-	fmt.Fprintf(w, `<?xml version="1.0" encoding="utf-8"?><Error><Code>%s</Code><Message>%s</Message></Error>`, code, msg)
+	// ENCODED, NOT FORMATTED. This was an `fmt.Fprintf` with two bare `%s`,
+	// and `msg` is frequently the caller's own path -- `ContainerNotFound`
+	// passes "No item matches <seg>" straight through. Markup in a path
+	// therefore arrived in the document verbatim, and unescaped markup does
+	// not merely risk being rendered: it makes the XML malformed, which is
+	// exactly when a browser stops parsing it as XML and starts guessing.
+	//
+	// The sibling DFS dialect had the same shape and was fixed first; this one
+	// was missed because the search stopped at onelake.go. The listing a few
+	// hundred lines below was always safe -- it went through xml.Encoder.
+	fmt.Fprint(w, xml.Header)
+	_ = xml.NewEncoder(w).Encode(blobError{Code: code, Message: msg})
 }
 
 // ServeBlob handles the Blob dialect. Paths arrive workspace-first (the
 // /onelake account prefix, when present, is stripped by the router).
 func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
+	// Before anything else, as in ServeHTTP: this dialect serves stored bytes
+	// and error documents quoting the caller's path, and neither should be
+	// re-sniffed into HTML.
+	noSniff(w)
 	// Same env-gated tracing as the DFS surface (ServeHTTP): the Blob dialect
 	// is what delta-rs speaks, so a Delta commit is only visible here.
 	if os.Getenv("ONELAKE_TRACE") != "" {
