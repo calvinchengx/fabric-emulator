@@ -527,18 +527,112 @@ Real Fabric does not have this problem: its Spark executors run in the user's
 context with the user's identity, so the platform block applies to the engine's
 own read. Our Sail is one long-lived shared server with one identity.
 
-### The option, and its cost
+### The option I proposed, and why it does not exist
 
-There is a way to close it: **take the ambient credential away from the
-engine**. With no `AZURE_STORAGE_TOKEN` in Sail's environment, every read must
-carry its own options — the agent's own paths already pass them explicitly, so
-the system context keeps working, and a bare path read from a cell fails for
-want of a credential.
+The obvious repair is to **take the ambient credential away from the engine**:
+with no `AZURE_STORAGE_TOKEN` in Sail's environment, every read would have to
+carry its own, and a bare path read from a cell would fail for want of one.
 
-It is not a small change. It reaches EVERY session, not just secured ones: any
-notebook anywhere that reads `abfss://` without options stops working, which is
-a large behavioural change to buy one guarantee. It should be measured against
-the e2e suite before anyone commits to it, and it is not in this stage.
+**Measured, and it is not available.** `e2e/sail-per-read-credential` runs two
+Sails side by side -- one with a credential to seed the table, one without --
+and asks the credential-less engine to read it three ways:
+
+| read | result |
+|---|---|
+| seed + read through the engine WITH a credential (the control) | 3 rows |
+| no options at all | `deadline has elapsed` after 14s |
+| `read.options(azure_storage_token=...)` | `deadline has elapsed` after 14s |
+| the same values set as session confs | `deadline has elapsed` after 14s |
+
+There is no per-operation channel. [docs/20](20-lakesail-engine.md) already
+recorded why, and this reproduces it independently: Sail builds its Azure store
+with `MicrosoftAzureBuilder::from_env()`, which reads credentials **once per
+process**, and `spark.conf.set("fs.azure.*")` is stored but ignored.
+
+Two further things the sweep showed, both worse than expected:
+
+* **It is not a clean refusal.** Without a credential, `object_store` retries a
+  transport Timeout ten times before failing, so the cost of the missing
+  credential is a ~14 second hang and an opaque `deadline has elapsed`, not an
+  authorization error a caller could act on.
+* **It is not scoped to path reads.** `delta_ops` injects `storage_options`
+  only on its delta-rs routes (change-feed read and write); ordinary reads and
+  writes fall through to `orig_load`/`orig_save` with none. So the ambient
+  credential serves ALL Spark I/O against OneLake, including the system
+  context's own filtered-snapshot writes. Three suites were run against a
+  credential-less engine before the question was settled -- `sail`, `livy` and
+  `two-context` -- and all three failed, `livy` on a WRITE.
+
+### What could close it
+
+Not per-operation credentials, then. The remaining route is **an engine process
+per USER**, launched with that user's token, since a per-process credential is
+exactly what Sail supports.
+
+**And that is the shape Fabric actually has.** One shared engine serving every
+caller is our compression, not the product's: "in standard mode, each notebook
+or pipeline activity starts its own Spark session", and high-concurrency mode
+shares one only within a **single-user boundary** -- listed under *Security*,
+and "if any requirement differs, Fabric starts a separate Spark session"
+(high-concurrency-overview.md). Fabric never shares an engine across users. So
+the path-read gap is not a Sail limitation we would be working around; it is a
+consequence of a deviation we introduced, and per-user engines remove the
+deviation rather than adding a mitigation. Sail's per-process credential is
+correct *for a process that belongs to one user*.
+
+**Measured, before proposing it** (`e2e/sail-per-user-footprint`): five engines
+side by side, each given a 20k-row Delta write, read-back and aggregation
+against OneLake, over three rounds.
+
+| | per engine |
+|---|---|
+| idle | 37-44 MiB |
+| steady, after real work | **~66 MiB** |
+| transient peak observed | ~152 MiB, released by the next round |
+| growth across three rounds of work | none (66.6, 66.4, 66.2, 65.6 MiB, flat) |
+
+So ten users is around 660 MiB steady and twenty around 1.3 GiB, against a
+16 GiB VM that already holds two stacks. Affordability is not the obstacle.
+
+### The snapshot should not exist
+
+The obvious follow-on question was where to put the filtered snapshot once the
+two contexts have separate engines. It has a better answer: **nowhere**.
+
+*Staging it in OneLake is impossible without corrupting the user's policy.* A
+narrowed caller can read only what their role grants, so a scratch path in the
+same item is 403 -- measured, not assumed
+(`TestCanANarrowedViewerReadAScratchPathInTheSameItem`). Making it readable
+would mean the emulator writing its own plumbing into the item's
+`dataAccessRoles`, where the user can see it through the API. That is not a
+design.
+
+*Staging it outside OneLake* means a volume shared by both engines, which is
+compose configuration in every platform repo, not just this one.
+
+*So send the rows instead.* The two contexts already share a protocol. The
+system context reads privileged, applies the filter, and hands back the RESULT
+as Arrow IPC; the user context binds the name to what it was given. No scratch
+path, no shared volume, no change outside the agent -- and it works the same
+whether the engines are shared or one per user.
+
+**It is also the more faithful of the two.** Fabric's system context "returns
+only the rows and columns the user is allowed to see"; it does not write them
+somewhere and hand over a path. The snapshot was the deviation, and removing it
+narrows the gap between us and the product rather than widening it.
+
+Measured before proposing it (`e2e/system-context-handover`): a filtered
+relation carrying nulls, a `DECIMAL(18,4)`, a timestamp, a date, a boolean and
+a binary column crosses as Arrow and arrives with every type and value intact.
+Type drift was the risk worth checking -- a decimal quietly becoming a float
+would be a corruption of user data, not a bug in a filter.
+
+**The bound, stated:** the filtered result is materialised in the parent's
+memory, crossed, and re-materialised in the engine as a local relation, so it
+is bounded by memory and by Spark Connect's `localRelationSizeLimit` (the
+config `connectconf.py` already normalises). That ceiling must fail LOUDLY. A
+filter that silently returned the first N rows would be a security control
+quietly reporting the wrong answer, which is worse than one that refuses.
 
 Until then the direct-path-access parity row stays **🟡**, and it says the
 engine is the reason. A row claiming the guarantee would be claiming a
