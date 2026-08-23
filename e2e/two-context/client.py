@@ -181,6 +181,49 @@ def main():
     again = vrun("spark.sql('SELECT count(*) FROM sales').collect()[0][0]")
     assert again == "2", f"the filtered read broke: {again}"
 
+    # 6. THE SURFACE A NOTEBOOK EXPECTS, across the process boundary.
+    #
+    #    The split moved statement execution into a child, and everything a
+    #    cell can touch has to move with it or the split is a regression
+    #    dressed as a fix. `ns()` binds these in the child the same way it does
+    #    in the parent, but three things are applied AROUND the statement by the
+    #    parent -- the runtime context, the cell context and the task scope --
+    #    and a child is not inside them.
+    #
+    #    Reported together rather than asserted one at a time, so a single run
+    #    says which of them cross and which do not.
+    surface = {
+        "spark": "type(spark).__name__",
+        "sc facade": "type(sc).__name__",
+        "sc.parallelize().toDF()": "sc.parallelize([(1,), (2,)]).toDF().count()",
+        "spark.sparkContext": "type(spark.sparkContext).__name__",
+        "notebookutils": "type(notebookutils).__name__",
+        "mssparkutils": "type(mssparkutils).__name__",
+        "notebookutils.fs": "sorted(d for d in dir(notebookutils.fs) if not d.startswith('_'))[:4]",
+        "runtime context": "notebookutils.runtime.context.get('currentWorkspaceId')",
+        "the lakehouse mount": "__import__('os').path.isdir('/lakehouse/default/Files')",
+        "the job id": "__import__('os').environ.get('FABRIC_JOB_ID')",
+    }
+    print("\n6. the notebook surface inside the user context", flush=True)
+    results = {}
+    for label, expr in surface.items():
+        results[label] = cell(f"repr({expr})")
+        print(f"    {label:<26} {results[label][:80]}", flush=True)
+
+    # The one that did NOT cross until it was made to: the parent binds the
+    # runtime context around a statement that runs in another process, so a
+    # notebook reading its own identity got None purely because its item had a
+    # policy on it.
+    assert "ok" in results["runtime context"] and "None" not in results["runtime context"], (
+        f"the runtime context did not reach the user context: {results['runtime context']}")
+    for label in ("spark", "sc facade", "notebookutils", "mssparkutils",
+                  "sc.parallelize().toDF()", "the lakehouse mount"):
+        assert results[label].startswith("ok"), f"{label} did not survive the split: {results[label]}"
+    # `the job id` is REPORTED, not asserted: these are interactive statements
+    # submitted with no jobId, so `cell_context` has nothing to export and None
+    # is the right answer on both sides of the split. Asserting a value here
+    # would pin the harness rather than the boundary.
+
     print("TWO-CONTEXT E2E: PASS", flush=True)
     return 0
 

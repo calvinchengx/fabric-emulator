@@ -63,7 +63,7 @@ def test_scrubbing_does_not_mutate_the_parent_environment(monkeypatch):
 def test_serve_runs_each_request_and_answers_once():
     seen = []
 
-    def run(code, g, kind=""):
+    def run(code, g, kind="", context=None):
         seen.append((code, g, kind))
         return {"status": "ok", "data": {"text/plain": code.upper()}}
 
@@ -79,7 +79,7 @@ def test_serve_runs_each_request_and_answers_once():
 def test_serve_stops_on_close():
     out = io.BytesIO()
     uc.serve([uc.frame({"op": "close"}), uc.frame({"code": "never"})],
-             out, lambda c, g, k="": {"status": "ok"}, dict)
+             out, lambda c, g, k="", ctx=None: {"status": "ok"}, dict)
     assert out.getvalue() == b""
 
 
@@ -89,14 +89,14 @@ def test_serve_stops_rather_than_spinning_on_a_broken_pipe():
     # parse — a busy loop in a child nobody is watching.
     out = io.BytesIO()
     uc.serve([b"not json\n", uc.frame({"code": "x"})],
-             out, lambda c, g, k="": {"status": "ok"}, dict)
+             out, lambda c, g, k="", ctx=None: {"status": "ok"}, dict)
     assert out.getvalue() == b""
 
 
 def test_blank_lines_are_not_requests():
     out = io.BytesIO()
     uc.serve([b"\n", uc.frame({"code": "x"})],
-             out, lambda c, g, k="": {"status": "ok", "ran": c}, dict)
+             out, lambda c, g, k="", ctx=None: {"status": "ok", "ran": c}, dict)
     assert len(out.getvalue().splitlines()) == 1
 
 
@@ -109,9 +109,9 @@ WORKER = textwrap.dedent("""
 
     responses = uc.protocol_stream()
 
-    def run(code, g, kind=""):
+    def run(code, g, kind="", context=None):
         return {"status": "ok", "data": {"text/plain": repr(eval(code, g))},
-                "kind": kind}
+                "kind": kind, "context": context}
 
     with responses:
         uc.serve(sys.stdin.buffer, responses, run, dict)
@@ -426,7 +426,7 @@ def test_serve_routes_prepare_to_register_not_to_run():
     out = io.BytesIO()
     ran = []
     uc.serve([uc.frame({"op": "prepare", "tables": []})], out,
-             lambda c, g, k="": ran.append(c) or {"status": "ok"},
+             lambda c, g, k="", ctx=None: ran.append(c) or {"status": "ok"},
              lambda: {"spark": _Spark()})
     assert ran == [], "a prepare was executed as user code"
     assert json.loads(out.getvalue())["status"] == "ok"
@@ -614,3 +614,25 @@ def test_arrow_rows_are_bound_without_touching_storage():
     assert made == {"rows": 2, "view": "sales"}
     assert not [q for q in g["spark"].ran if "delta.`" in q], \
         "it went to storage for a relation it was handed"
+
+
+def test_the_statement_carries_the_runtime_context_to_the_child():
+    # The parent's runtime_scope binds notebookutils for the duration of a
+    # statement, and a child is not inside the parent's `with`. So the context
+    # travels with the request instead.
+    ctx = spawn()
+    try:
+        got = ctx.run("1", context={"currentWorkspaceId": "ws-1"})
+        assert got["context"] == {"currentWorkspaceId": "ws-1"}
+    finally:
+        ctx.close()
+
+
+def test_a_statement_with_no_context_still_runs():
+    # Not every caller has one — an agent driven by something other than this
+    # emulator's Livy layer sends no identity, and must keep working.
+    ctx = spawn()
+    try:
+        assert ctx.run("2 + 2")["data"]["text/plain"] == "4"
+    finally:
+        ctx.close()

@@ -713,6 +713,38 @@ Three pieces, each measured before it was built:
 * The owner is untouched: a role narrows the principal it names.
 * The handover is bounded by memory and `localRelationSizeLimit`, and that
   ceiling must fail loudly rather than truncate.
-* `FABRIC_TWO_CONTEXT` still defaults OFF. What holds it there is no longer a
-  missing guarantee but missing coverage: `notebookutils`, the `sc` facade and
-  the RDD contract are not yet exercised across the process boundary.
+### The notebook surface, across the boundary
+
+A split that took things away from a cell would be a regression wearing a fix's
+clothes, so `ci:two-context` now walks the surface inside the user context and
+prints what it finds:
+
+```
+spark                      ok 'SparkSession'
+sc facade                  ok 'SparkContextFacade'
+sc.parallelize().toDF()    ok 2
+spark.sparkContext         ok 'SparkContextFacade'
+notebookutils              ok '_AgentSys'
+mssparkutils               ok '_AgentSys'
+notebookutils.fs           ok ['FileInfo', 'append', 'config', 'cp']
+runtime context            ok '2b316bd0-...'
+the lakehouse mount        ok True
+```
+
+Eight of the nine crossed on their own, because the child builds its namespace
+through the same `ns()` the parent does. **One did not**: the runtime context
+came back `None`. The parent binds it with `runtime_scope` for the duration of
+a statement, and a child is not inside the parent's `with` -- so a notebook
+reading its own identity got a different answer purely because its item had a
+policy on it. The context now travels WITH the statement and is bound in the
+child.
+
+`the job id` is reported and not asserted: these are interactive statements
+carrying no `jobId`, so `cell_context` has nothing to export and `None` is
+right on both sides. Asserting it would pin the harness rather than the
+boundary.
+
+`FABRIC_TWO_CONTEXT` still defaults OFF, but the reason has changed. It is no
+longer a missing guarantee or missing coverage -- it is that turning it on
+starts an engine per user in every consumer's stack, which is a resource
+decision for the family rather than a correctness one.

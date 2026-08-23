@@ -655,9 +655,13 @@ class Handler(BaseHTTPRequestHandler):
                             if TWO_CONTEXT and usercontext.is_secured(req):
                                 # The user context runs it, with the caller's
                                 # identity and none of the agent's credentials.
+                                # The context travels WITH the statement: the
+                                # parent's runtime_scope cannot reach into
+                                # another process, so the child binds it there.
                                 result = usercontext.for_session(
                                     session, req.get("principal")).run(
-                                        req.get("code", ""), req.get("kind") or "")
+                                        req.get("code", ""), req.get("kind") or "",
+                                        context=session_context.get(session) or {})
                             elif (req.get("kind") or "").lower() == "sql":
                                 result = sqlrun.run_sql(req.get("code", ""), ns(session))
                             else:

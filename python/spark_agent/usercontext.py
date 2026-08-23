@@ -165,7 +165,8 @@ def serve(requests, responses, run, globals_factory):
         if req.get("op") == "prepare":
             envelope = register(g, req.get("tables") or [])
         else:
-            envelope = run(req.get("code") or "", g, req.get("kind") or "")
+            envelope = run(req.get("code") or "", g, req.get("kind") or "",
+                           req.get("context") or {})
         responses.write(frame(envelope))
         responses.flush()
 
@@ -237,7 +238,7 @@ class UserContext:
         """Tell the child which tables it may name, and where each one is."""
         return self._exchange({"op": "prepare", "tables": tables})
 
-    def run(self, code, kind=""):
+    def run(self, code, kind="", context=None):
         """Execute one statement in the child, returning Livy's envelope.
 
         A child that dies mid-statement is reported as an error naming that,
@@ -245,7 +246,8 @@ class UserContext:
         is unambiguous, and the alternative -- waiting on a process that has
         already gone -- is the failure mode this reports instead.
         """
-        return self._exchange({"code": code, "kind": kind})
+        return self._exchange({"code": code, "kind": kind,
+                               "context": context or {}})
 
     def _exchange(self, request):
         """One request, one answer, or a reported death. Never a hang."""
@@ -335,20 +337,40 @@ def protocol_stream(env=None, windows=None):
     return os.fdopen(fd, "wb")
 
 
-def _dispatch(code, g, kind):  # pragma: no cover - runs in the child
+def _dispatch(code, g, kind, context=None):  # pragma: no cover - runs in the child
     """SQL and Python are different entry points, and the child serves both.
 
     Routing on `kind` in the child rather than sending pre-dispatched code keeps
     one protocol: the parent forwards the request it received instead of knowing
     which of the agent's two runners applies.
+
+    THE RUNTIME CONTEXT IS BOUND HERE, not inherited. The parent wraps each
+    statement in `runtime_scope`, which binds `notebookutils.runtime.context`
+    for the duration -- and a child is not inside the parent's `with`. Measured:
+    before this, `notebookutils.runtime.context.get("currentWorkspaceId")`
+    returned None in a secured session while returning the workspace everywhere
+    else, so a notebook reading its own identity got a different answer purely
+    because its item had a policy on it.
     """
     import agent
 
-    if (kind or "").lower() == "sql":
-        import sqlrun
+    def _run():
+        if (kind or "").lower() == "sql":
+            import sqlrun
 
-        return sqlrun.run_sql(code, g)
-    return agent.run_code(code, g)
+            return sqlrun.run_sql(code, g)
+        return agent.run_code(code, g)
+
+    nbu = g.get("notebookutils")
+    bind = getattr(getattr(nbu, "runtime", None), "bind", None)
+    unbind = getattr(getattr(nbu, "runtime", None), "unbind", None)
+    if not (context and bind and unbind):
+        return _run()
+    token = bind(dict(context))
+    try:
+        return _run()
+    finally:
+        unbind(token)
 
 
 def _bind_arrow(spark, name, encoded):
