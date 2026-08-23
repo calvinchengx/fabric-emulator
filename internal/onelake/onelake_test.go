@@ -789,3 +789,81 @@ func TestAWriteAtTheCeilingStillLandsWhole(t *testing.T) {
 		t.Fatalf("stored %d bytes of %d", got.Body.Len(), n)
 	}
 }
+
+// The error message quotes the caller's own path back at them, so markup in a
+// path must not survive into the body as markup.
+//
+// CodeQL reported this as reflected XSS (go/reflected-xss, alert 71). The old
+// body was built with `%q`, which is GO quoting: it leaves < > and & intact,
+// so a browser that sniffed past `application/json` rendered them.
+func TestDFSErrorEscapesMarkupFromTheCallersPath(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeDFSErr(rec, dfsError{"PathNotFound", http.StatusNotFound,
+		`No item matches <script>alert(1)</script> & "friends".`})
+
+	body := rec.Body.String()
+	for _, raw := range []string{"<script>", "</script>", "<", ">"} {
+		if strings.Contains(body, raw) {
+			t.Fatalf("raw %q survived into the body: %s", raw, body)
+		}
+	}
+	// The escaped forms encoding/json produces, which is what makes the body
+	// inert even if a browser sniffs past the Content-Type.
+	for _, esc := range []string{`\u003c`, `\u003e`, `\u0026`} {
+		if !strings.Contains(body, esc) {
+			t.Fatalf("expected %s in the escaped body: %s", esc, body)
+		}
+	}
+
+	// And it must still be JSON a client can parse -- the point of the change
+	// was correctness as much as safety.
+	var got struct {
+		Error struct{ Code, Message string } `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body is not valid JSON: %v\n%s", err, body)
+	}
+	if !strings.Contains(got.Error.Message, "<script>") {
+		t.Fatalf("decoding did not recover the original message: %q", got.Error.Message)
+	}
+	if got.Error.Code != "PathNotFound" {
+		t.Fatalf("code lost: %q", got.Error.Code)
+	}
+}
+
+// `%q` emitted \x00 for a control byte, which is not valid JSON. A path can
+// contain one, so the body it produced was unparseable.
+func TestDFSErrorEncodesControlBytesAsValidJSON(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeDFSErr(rec, dfsError{"PathNotFound", http.StatusNotFound, "bad\x00path\x1f"})
+	if strings.Contains(rec.Body.String(), `\x`) {
+		t.Fatalf("Go-style escape in a JSON body: %s", rec.Body.String())
+	}
+	var any map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &any); err != nil {
+		t.Fatalf("control bytes produced invalid JSON: %v\n%s", err, rec.Body.String())
+	}
+}
+
+// A Content-Type that is not HTML is a request, not an instruction, unless
+// nosniff says otherwise -- and this service serves whatever was uploaded.
+func TestEveryResponseRefusesMIMESniffing(t *testing.T) {
+	t.Run("error", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		writeDFSErr(rec, dfsError{"PathNotFound", http.StatusNotFound, "nope"})
+		if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Fatalf("X-Content-Type-Options=%q", got)
+		}
+	})
+	t.Run("stored content", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		serveContent(rec, httptest.NewRequest(http.MethodGet, "/f", nil),
+			[]byte("<html><script>alert(1)</script></html>"))
+		if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Fatalf("uploaded HTML served without nosniff: %q", got)
+		}
+		if got := rec.Header().Get("Content-Type"); got != "application/octet-stream" {
+			t.Fatalf("stored content served as %q", got)
+		}
+	})
+}
