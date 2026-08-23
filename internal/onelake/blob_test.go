@@ -990,3 +990,43 @@ func TestListBlobsOmitsDirectories(t *testing.T) {
 		t.Errorf("blobs = %v; want only the real file", blobs)
 	}
 }
+
+// The Blob dialect quotes the caller's path back too -- ContainerNotFound
+// passes "No item matches <seg>" straight through -- and it used to do so with
+// a bare %s into an XML document.
+//
+// Unescaped markup does not merely risk being rendered: it makes the XML
+// malformed, which is exactly when a browser stops parsing it as XML and
+// starts guessing. The DFS dialect was fixed first; this one was missed
+// because the search stopped at onelake.go.
+func TestBlobErrorEscapesMarkupFromTheCallersPath(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeBlobErr(rec, http.StatusNotFound, "ContainerNotFound",
+		`No item matches <script>alert(1)</script> & "friends".`)
+
+	body := rec.Body.String()
+	if strings.Contains(body, "<script>") {
+		t.Fatalf("raw markup survived into the document: %s", body)
+	}
+	if !strings.Contains(body, "&lt;script&gt;") {
+		t.Fatalf("expected escaped markup: %s", body)
+	}
+
+	// Still well-formed, and still the message that went in.
+	var got struct {
+		Code    string `xml:"Code"`
+		Message string `xml:"Message"`
+	}
+	if err := xml.Unmarshal([]byte(strings.TrimPrefix(body, xml.Header)), &got); err != nil {
+		t.Fatalf("document is not well-formed XML: %v\n%s", err, body)
+	}
+	if !strings.Contains(got.Message, "<script>") {
+		t.Fatalf("decoding did not recover the original message: %q", got.Message)
+	}
+	if got.Code != "ContainerNotFound" {
+		t.Fatalf("code lost: %q", got.Code)
+	}
+	if h := rec.Header().Get("X-Content-Type-Options"); h != "nosniff" {
+		t.Fatalf("X-Content-Type-Options=%q", h)
+	}
+}
