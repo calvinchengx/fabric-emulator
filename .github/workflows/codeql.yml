@@ -19,6 +19,19 @@ on:
   schedule:
     - cron: '31 7 * * 1' # weekly, Monday 07:31 UTC (parity with Default setup)
 
+# THE FLOOR FOR EVERY JOB HERE, as every other workflow in this repo declares.
+# `analyze` carried its own block and `changes` carried none, so `changes` ran
+# with whatever the repository default grants -- which CodeQL's own `actions`
+# pack flagged on this very file (actions/missing-workflow-permissions). A job
+# that checks out the tree and diffs it needs to read contents and nothing else.
+#
+# Workflow-level rather than a second job-level block, so a job added tomorrow
+# inherits the floor instead of silently getting the default. `analyze` keeps
+# its own block: a job-level `permissions` replaces this wholesale, and it needs
+# security-events: write to upload SARIF.
+permissions:
+  contents: read
+
 # Superseding a PR run is free money. Superseding a main run is not: a cancelled
 # CodeQL job still uploads its SARIF, flagged `unsuccessful execution` with zero
 # results, and that errored analysis becomes the newest one for its category —

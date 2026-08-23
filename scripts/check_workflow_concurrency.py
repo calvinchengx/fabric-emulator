@@ -43,6 +43,17 @@ to `gh pr checks`. The timeouts were added to all 47 jobs in one pass; nothing
 stopped the 48th from arriving without one, which is the same
 maintained-by-attention coupling this file already exists to remove.
 
+THIRD INVARIANT: EVERY WORKFLOW DECLARES A TOP-LEVEL `permissions:` BLOCK.
+Without one a job gets whatever the repository default grants, which is a
+write-scoped token for a job that only reads. CodeQL's `actions` pack found the
+one file that lacked it -- codeql.yml, whose `analyze` job carried its own block
+while its `changes` job carried none and therefore inherited the default. Every
+other workflow already declared one, which is precisely the shape the paragraph
+above describes: an invariant established in one pass, with nothing to stop the
+next arrival from missing it. Top-level rather than per-job, so a job added
+tomorrow inherits a floor instead of the default; a job needing more still
+overrides it, as `analyze` does for `security-events: write`.
+
 Usage:
     check_workflow_concurrency.py     exit non-zero describing any divergence
 """
@@ -53,6 +64,11 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 COUPLED = ("ci.yml", "make-targets.yml")
+
+# A top-level `permissions:` block. Anchored at column 0 for the same reason the
+# concurrency pattern is: a job-level block is indented, and matching one would
+# report a floor that does not exist.
+_PERMISSIONS = re.compile(r"^permissions:\s*$", re.MULTILINE)
 
 # A top-level `concurrency:` block and its two keys. Anchored at column 0 so a
 # job-level concurrency block (indented) is never mistaken for the workflow's.
@@ -191,6 +207,15 @@ def main():
     except ConcurrencyUnreadable as exc:
         problems.append(str(exc))
 
+    # A workflow with no floor hands every job in it the repository default.
+    unscoped = [path.name for path in sorted(WORKFLOWS.glob("*.yml"))
+                if not _PERMISSIONS.search(path.read_text(encoding="utf-8"))]
+    if unscoped:
+        problems.append(
+            f"{len(unscoped)} workflow(s) declare no top-level `permissions:`, so every "
+            f"job in them takes the repository default rather than a floor:\n    "
+            + "\n    ".join(unscoped))
+
     if problems:
         print("check_workflow_concurrency: " + "\n\n".join(problems))
         print(f"\n{a} and {b} together are what \"main is green\" means; a verdict from "
@@ -201,7 +226,8 @@ def main():
                 for p in sorted(WORKFLOWS.glob("*.yml")))
     print(f"check_workflow_concurrency: {a} and {b} agree "
           f"(group {expr_a}, cancel-in-progress {cancel_a}); "
-          f"all {total} jobs declare timeout-minutes")
+          f"all {total} jobs declare timeout-minutes; "
+          f"all {len(list(WORKFLOWS.glob('*.yml')))} workflows declare top-level permissions")
     return 0
 
 
