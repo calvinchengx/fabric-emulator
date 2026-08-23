@@ -296,3 +296,282 @@ without anyone noticing.
   `VIEW_DEFINITION` and `SELECT`. Hiding a table's *existence* from a user with
   no role on it is part of the contract, not a nicety, and needs its own
   assertion.
+
+## Stage 5's enforcement, corrected by measurement
+
+Stage 5 secured a session by reshaping its catalog: a narrowed table becomes a
+temp view holding the filter, a denied one is removed. Two assumptions under
+that were never measured, and `e2e/onelake-security-bypass` measured them.
+
+**A temp view shadows the unqualified name only, and that was a live bypass.**
+With the filter installed, `SELECT count(*) FROM sales` returned 2 rows of 3 and
+one column of two, while `SELECT count(*) FROM default.sales` returned all 3
+rows and both columns. The second spelling is not exotic: `catalog.register()`
+deliberately registers every table into a schema *and* into `default` so
+unqualified names resolve the way they do in a lakehouse-attached notebook, so
+the convenience registration was the door. Enforcement now sweeps every
+qualified registration of a secured table out of the session, leaving the view
+as the only way to name it, and the livy e2e asserts both spellings are blocked.
+
+This was a defect in a row already marked supported, not the documented
+path-read gap. It is the difference between "the query language is filtered" and
+"the data is filtered", and only measurement separated them.
+
+**Which is sound only where the catalog is private.** Removing a registration
+changes whatever catalog the session has. Measured: Sail gives each
+`builder.create()` session its own, and the owner's session was untouched
+throughout — same table, same 3 rows, still listed. `newSession()` on the JVM
+overlay shares the catalog by contract, where the same sweep would take the
+table away from everyone. `catalog.CATALOG_IS_PRIVATE` records which route
+gives which, and `onelake_security.apply()` **refuses** rather than reshaping a
+shared catalog. The JVM entry is the conservative reading and is not measured
+here: being wrong about it costs a refusal, never a leak.
+
+**The shared-metastore worry was unfounded.** The suspicion that a viewer's
+`DROP TABLE` unregisters a table for the owner was measured false on Sail: owner
+count unchanged, table still listed, Delta files intact. It remains the reason
+the refusal above exists for engines that do share.
+
+**Re-application has to start from the table, not from last statement's view.**
+`apply()` runs per statement, and the sweep removes what the view was built
+from, so the second statement rebuilds the filter over an already-filtered
+relation — which fails outright once CLS has removed a column the row filter
+names. The livy e2e caught exactly that: statement one filtered, statement two
+returned "Table not found". `restore()` re-registers from the recorded location
+before re-securing, **unqualified**, so it lands in the current database that
+the filter's own SQL resolves against. Re-registering into `default` is the
+plausible-looking version that does not work, because the agent sets the
+current database to the lakehouse schema.
+
+### Still open: direct path reads
+
+`spark.read.format("delta").load("abfss://…")` still returns unfiltered rows.
+That is not fixable in the catalog, and real Fabric does not try: the platform
+**blocks** direct path access to a secured table for non-privileged users, and
+lists exactly the patterns it blocks — `spark.read...load`, `DeltaTable.forPath`,
+and OneLake REST/SDK reads of a secured `Tables/<table>`. So the fix belongs in
+our OneLake surface, refusing the read, rather than in the engine filtering it.
+
+## Direct path access, blocked at the platform
+
+Real Fabric does not filter a raw read, it refuses it: "certain OneLake security
+features like row and column level security aren't supported by storage level
+operations, [so] not all types of access to row or column level secured data can
+be permitted", and "for user access to data in OneLake with RLS or CLS on it,
+the query is blocked if the user requesting access isn't permitted to see all
+the rows or columns in that table". The Spark article names the three patterns:
+`spark.read.format("delta").load("abfss://…")`, `DeltaTable.forPath`, and
+OneLake REST/SDK reads of a secured `Tables/<table>` folder.
+
+So this belongs in the OneLake surface, not in the engine. `authorizeViewer`
+asks `onelakesec.Narrowing()` after `Allows()` and refuses with the reason
+named. One change covers both the DFS and Blob surfaces because both already
+route through that function — two spellings of one store, and a refusal only one
+of them honours is not a refusal.
+
+**An unrestricted covering grant still reads.** Roles union rather than compete,
+so a principal who reaches the table through any grant that narrows nothing may
+see all of it, and `Narrowing` scans every covering entry rather than the first.
+Intersecting instead would let ADDING a role take access away, which a
+Permit-only model cannot express, and would fire the block on principals the
+product does not restrict.
+
+**Admin, Member and Contributor are unaffected** — "workspace Admin, Member, and
+Contributor roles aren't restricted by RLS or CLS" — and they never reach this
+code, because the viewer path is the only caller.
+
+### What this does NOT close, and why
+
+A notebook's `spark.read.format("delta").load("abfss://…")` still returns
+unfiltered rows. Not because the rule is missing, but because of WHOSE identity
+does the reading: our Spark agent holds one service credential and uses it for
+every caller, so the read arrives at OneLake as a Contributor and is correctly
+allowed. Real Fabric's user context carries the user's own identity, which is
+what makes the platform block reach that call there.
+
+Closing it needs the two-context split — a system context holding the credential
+and doing the reading, a user context that never has it. Until then the parity
+row says **Partial** and names the gap, because a row claiming the guarantee
+would be claiming the half we have as the whole.
+
+## The two-context model
+
+Stage A made OneLake refuse a direct path read from a narrowed principal, and
+that refusal does not reach a notebook. Measured (`e2e/two-context/probe.py`),
+against a Viewer narrowed to one region and one column:
+
+| question | answer |
+|---|---|
+| is the SQL path filtered? | yes — 2 of 3 rows |
+| can a cell obtain the agent's storage bearer? | **yes** — `__import__('storage').token()` returns it |
+| can a cell obtain the credential that MINTS one? | **yes** — `ENTRA_CLIENT_SECRET` is in the process environment |
+| can the viewer read the files by path from a cell? | **yes** — all 3 rows, both columns |
+| the same viewer's own identity, straight at OneLake? | **403** — stage A, working |
+
+So the gap is the IDENTITY, not the rule. The agent holds one service credential
+and uses it for every caller, so a notebook's read arrives at OneLake as a
+Contributor and is correctly allowed. Real Fabric's user context carries the
+user's own identity, which is what makes the platform block apply there.
+
+The client secret is the sharper half. A token expires and can be scoped; a
+secret in the environment lets a cell mint fresh ones indefinitely, for any
+audience the app is allowed. No in-process mitigation reaches this: user code
+runs through `exec()` in the agent's own process, so `__import__`, `os.environ`
+and the module globals are all one namespace away. **The split has to be by
+process.** That is what Fabric describes:
+
+> **User context.** Runs the user's notebook … with the user's identity. This
+> context plans the query and consumes the filtered output, but it never has
+> direct, unfiltered access to secured tables.
+>
+> **System (security) context.** A privileged, Microsoft-managed context that
+> resolves the user's effective access against OneLake, reads the underlying
+> Delta files, applies RLS row filtering and CLS projections, and returns only
+> the rows and columns the user is allowed to see.
+
+### Stages
+
+**B1 — the user context becomes its own process.** Statements execute in a child
+per Livy session that holds neither the storage bearer nor the client secret.
+Its Spark session is configured with a token forged for the CALLER, so a path
+read arrives at OneLake as that principal and stage A refuses it when the grant
+narrows. The child keeps everything a cell can see today — stdout capture, the
+`sc` facade, delta_ops interception — or the split is a regression dressed as a
+fix.
+
+**B2 — the system context produces the filtered relation.** With B1 the SQL path
+would break, because the secured view reads through the user's token and OneLake
+now refuses it. So the parent, which still holds the credential, reads the Delta
+files, applies the row filter and column projection, and puts the result where
+the child can read it without OneLake at all. This is the emulator's version of
+"the system context reads and filters"; it materialises where Fabric filters
+in-plan, which is a boundary to state, not to hide.
+
+**B1 is wired but dark.** `FABRIC_TWO_CONTEXT=1` turns it on; the default is
+off, and deliberately, because B1 ALONE IS A REGRESSION. The child reads as the
+caller, and a narrowed table refuses that principal by design, so a secured
+session would lose the filtered read it has today until B2 supplies it. Shipping
+it dark keeps the code reviewable and the behaviour unchanged. The flag is a
+staging device with a removal condition, not a setting: when B2 lands, the
+default flips and the flag goes.
+
+**The protocol has a descriptor of its own, on both platforms.** stdout and
+stderr stay the child's log; responses travel on a private pipe. The platforms
+do not share a mechanism for handing one over, so there are two spawns:
+
+| | POSIX | Windows |
+|---|---|---|
+| handed over as | a descriptor NUMBER, via `pass_fds` | a kernel HANDLE, via `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` |
+| why that works | fork copies the descriptor table, exec keeps what is not close-on-exec | `CreateProcess` builds a fresh process; only named handles are inherited |
+| the child does | reads the number from the environment | `msvcrt.open_osfhandle(handle, O_WRONLY \| O_BINARY)` |
+
+`subprocess` refuses `pass_fds` on Windows outright, and it does so with an
+`assert` -- so under `python -O` the flag is silently DROPPED rather than
+raising, and the child simply has no descriptor. O_BINARY is not decoration
+either: the CRT would open the handle in text mode and rewrite every newline,
+and newlines are the frame delimiter.
+
+The Windows branch is covered from POSIX by injecting its three platform calls,
+because code that first executes on a machine nobody can step through is how the
+two earlier portability defects reached CI instead of a test.
+
+**B3 — witnesses and parity.** `e2e/two-context` runs the livy stack with the
+split on and asserts what a cell can and cannot reach. It does NOT turn the
+direct-path row green, because B2 measured why that is not ours to close; what
+it witnesses is the separation.
+
+### Costs, stated before building
+
+- **A process per Livy session** is memory and start-up latency the agent does
+  not spend today.
+- **B2 materialises.** A filtered snapshot is a copy, and a copy is stale the
+  moment the table moves. Per-statement refresh keeps it honest and costs the
+  copy each time.
+- **The `sc` facade and RDD contract cross a process boundary.** Some of what
+  works today may not survive, and what does not must be reported rather than
+  quietly dropped.
+
+
+## B2 landed, and it does not close the path read. Here is why
+
+The system context works. With `FABRIC_TWO_CONTEXT=1` the whole livy e2e passes:
+the viewer sees 2 of 3 rows and one column of two, both bypass spellings are
+refused, the owner is untouched — and the filtered rows now arrive from a
+snapshot the privileged half wrote, not from a view over a table the caller can
+still name. Withholding got simpler too: a table the caller may not read is
+never registered in the user context, so there is nothing to drop and nothing to
+sweep. The catalog sweep and the shared-catalog refusal exist to simulate, inside
+one namespace, the separation this path actually has.
+
+Re-running `e2e/two-context/probe.py` with the flag on:
+
+| question | before | after |
+|---|---|---|
+| `ENTRA_CLIENT_SECRET` in the cell's environment | **yes** | **no** |
+| `storage.token()` returns a bearer | the SERVICE one | the CALLER's own |
+| SQL path filtered | 2 of 3 | 2 of 3 |
+| **`spark.read...load(abfss://…)` from a cell** | **3 rows, both columns** | **3 rows, both columns** |
+
+The escalation is closed. The path read is not, and the reason is not in the
+agent at all.
+
+**The engine is a third process, and it holds a credential of its own.**
+Measured, in the running container: `docker/sail/launcher.py` mints a bearer
+with client credentials at start-up and exports it as `AZURE_STORAGE_TOKEN` into
+Sail's environment, and the live Sail process has it. A bare
+`spark.read.load("abfss://…")` is executed BY SAIL, so it uses Sail's daemon
+identity whatever the calling process holds. Splitting the agent into two
+contexts cannot reach that, because the read never happens in either of them.
+
+Real Fabric does not have this problem: its Spark executors run in the user's
+context with the user's identity, so the platform block applies to the engine's
+own read. Our Sail is one long-lived shared server with one identity.
+
+### The option, and its cost
+
+There is a way to close it: **take the ambient credential away from the
+engine**. With no `AZURE_STORAGE_TOKEN` in Sail's environment, every read must
+carry its own options — the agent's own paths already pass them explicitly, so
+the system context keeps working, and a bare path read from a cell fails for
+want of a credential.
+
+It is not a small change. It reaches EVERY session, not just secured ones: any
+notebook anywhere that reads `abfss://` without options stops working, which is
+a large behavioural change to buy one guarantee. It should be measured against
+the e2e suite before anyone commits to it, and it is not in this stage.
+
+Until then the direct-path-access parity row stays **🟡**, and it says the
+engine is the reason. A row claiming the guarantee would be claiming a
+separation that a third process quietly opts out of.
+
+
+## B3: what the witness asserts, and the one thing it only watches
+
+`e2e/two-context/` layers `FABRIC_TWO_CONTEXT=1` over the livy stack — a layer
+rather than a fifth copy of those four services, so the base cannot drift away
+from it — and runs as `ci:two-context`:
+
+```
+viewer: 2 of 3 rows, columns region_id  -- supplied by the system context
+viewer catalog: ['sales']               -- `secret` is not merely unreadable, it is absent
+viewer environment: ['AZURE_STORAGE_TOKEN', 'ENTRA_TOKEN_URL']
+the cell's bearer is the caller's own, not the agent's
+owner still sees 3 of 3
+```
+
+Every claim is paired with one that must still succeed. A stack where nothing
+worked would satisfy "the cell cannot reach the secret" and prove nothing, so
+the viewer being *filtered rather than broken* is asserted in the same run, and
+so is the owner being untouched. The bearer check compares against the service
+token the harness itself holds: not merely "a token", and not the agent's.
+
+**The path read is a tripwire, not a guarantee.** It still returns all 3 rows,
+and the witness asserts exactly that, with the reason in the failure message:
+
+> the path read returned N, not 3. If the engine now carries per-session
+> identity, this is GOOD NEWS: update docs/54 and flip the direct-path-access
+> parity row from Partial to Real.
+
+Asserting the current number is the difference between a documented gap and a
+forgotten one. A 🟡 row with nothing watching it stays 🟡 long after the reason
+expires; this one fails the build the day the reason does.

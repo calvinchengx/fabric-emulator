@@ -397,3 +397,184 @@ func TestTheFilterStaysClosedAfterAFailure(t *testing.T) {
 		t.Fatal("the failure was not reported")
 	}
 }
+
+// --- direct file access is blocked when the grant narrows the table ----------
+//
+// Row and column security cannot be applied to bytes, so Fabric refuses the
+// read rather than serving them unfiltered: "the query is blocked if the user
+// requesting access isn't permitted to see all the rows or columns in that
+// table". Measured against the emulator before this existed, a Viewer under an
+// RLS role fetched the parquet parts and got every row.
+//
+// The pairing matters as much as the refusal. A surface that 403s every viewer
+// would pass the first assertion and be useless, so each case below names both
+// who is stopped and who is not.
+
+// putNarrowingRole installs a role that grants a path AND restricts it.
+func putNarrowingRole(t *testing.T, f *fixture, principal, path, rows string, cols []string) {
+	t.Helper()
+	rule := map[string]any{
+		"effect": "Permit",
+		"permission": []map[string]any{
+			{"attributeName": "Path", "attributeValueIncludedIn": []string{path}},
+			{"attributeName": "Action", "attributeValueIncludedIn": []string{"Read"}},
+		},
+	}
+	if rows != "" {
+		rule["rows"] = rows
+	}
+	if len(cols) > 0 {
+		rule["columns"] = cols
+	}
+	body, err := json.Marshal(map[string]any{
+		"name": "narrowed", "decisionRules": []map[string]any{rule},
+		"members": map[string]any{
+			"microsoftEntraMembers": []map[string]string{{"objectId": principal}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.PutOneLakeRoles(f.it.ID, []store.OneLakeRole{
+		{ItemID: f.it.ID, Name: "narrowed", Body: body}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRowLevelSecurityBlocksTheDirectPathRead(t *testing.T) {
+	f := newFixture(t)
+	grantRole(t, f, "viewer-1", store.RoleViewer)
+	seedFile(t, f, "Tables/dbo/Customers/part-0.parquet")
+	base := "/" + f.ws.ID + "/" + f.it.ID + "/"
+	tok := f.storageToken("viewer-1")
+
+	// A plain grant reads: this is the control, and it is what stops the
+	// refusal below from being "viewers cannot read anything".
+	putRole(t, f, "viewer-1", "Tables/dbo/Customers")
+	if w := f.do("GET", base+"Tables/dbo/Customers/part-0.parquet", tok, nil); w.Code != http.StatusOK {
+		t.Fatalf("unrestricted grant = %d, want 200 (%s)", w.Code, w.Body)
+	}
+
+	// The same grant, now carrying a row filter, blocks the same read.
+	putNarrowingRole(t, f, "viewer-1", "Tables/dbo/Customers",
+		"SELECT * FROM Customers WHERE region = 1", nil)
+	w := f.do("GET", base+"Tables/dbo/Customers/part-0.parquet", tok, nil)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("RLS-narrowed direct read = %d, want 403 (%s)", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "row-level security") {
+		t.Fatalf("the refusal does not say why: %s", w.Body)
+	}
+}
+
+func TestColumnLevelSecurityBlocksTheDirectPathRead(t *testing.T) {
+	f := newFixture(t)
+	grantRole(t, f, "viewer-1", store.RoleViewer)
+	seedFile(t, f, "Tables/dbo/Customers/part-0.parquet")
+	base := "/" + f.ws.ID + "/" + f.it.ID + "/"
+
+	putNarrowingRole(t, f, "viewer-1", "Tables/dbo/Customers", "", []string{"id"})
+	w := f.do("GET", base+"Tables/dbo/Customers/part-0.parquet", f.storageToken("viewer-1"), nil)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("CLS-narrowed direct read = %d, want 403 (%s)", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "column-level security") {
+		t.Fatalf("the refusal does not say why: %s", w.Body)
+	}
+}
+
+func TestTheBlockDoesNotReachContributorsAndAbove(t *testing.T) {
+	// "Workspace Admin, Member, and Contributor roles aren't restricted by RLS
+	// or CLS." They never reach the viewer path at all, and this pins that a
+	// narrowing role cannot take away what the workspace already gave — the
+	// same shape as TestARoleDoesNotNarrowContributorsAndAbove, for the new
+	// refusal rather than the old one.
+	f := newFixture(t)
+	grantRole(t, f, "contrib-1", store.RoleContributor)
+	seedFile(t, f, "Tables/dbo/Customers/part-0.parquet")
+	putNarrowingRole(t, f, "contrib-1", "Tables/dbo/Customers",
+		"SELECT * FROM Customers WHERE region = 1", []string{"id"})
+
+	base := "/" + f.ws.ID + "/" + f.it.ID + "/"
+	if w := f.do("GET", base+"Tables/dbo/Customers/part-0.parquet",
+		f.storageToken("contrib-1"), nil); w.Code != http.StatusOK {
+		t.Fatalf("contributor under a narrowing role = %d, want 200 (%s)", w.Code, w.Body)
+	}
+}
+
+func TestTheBlockCoversTheBlobSurfaceToo(t *testing.T) {
+	// dfs and blob are two spellings of one store, and a refusal on one that
+	// the other does not honour is not a refusal. Same shape as
+	// TestBlobAndDFSAgreeOnAGrant, for the narrowing block.
+	f := newFixture(t)
+	grantRole(t, f, "viewer-1", store.RoleViewer)
+	seedFile(t, f, "Tables/dbo/Customers/part-0.parquet")
+	putNarrowingRole(t, f, "viewer-1", "Tables/dbo/Customers",
+		"SELECT * FROM Customers WHERE region = 1", nil)
+
+	path := "/" + f.ws.ID + "/" + f.it.ID + "/Tables/dbo/Customers/part-0.parquet"
+	tok := f.storageToken("viewer-1")
+	if w := f.do("GET", path, tok, nil); w.Code != http.StatusForbidden {
+		t.Fatalf("dfs = %d, want 403", w.Code)
+	}
+	if w := f.doBlob("GET", path, tok, nil, nil); w.Code != http.StatusForbidden {
+		t.Fatalf("blob = %d, want 403 (%s)", w.Code, w.Body)
+	}
+}
+
+func TestAnUnrestrictedGrantSurvivesANarrowingOne(t *testing.T) {
+	// Roles union rather than compete, so a principal who reaches the table
+	// through any grant that narrows nothing may see all of it. Intersecting
+	// here would let ADDING a role take access away, which the Permit-only
+	// model cannot express — and would make the block fire on principals the
+	// product does not restrict.
+	f := newFixture(t)
+	grantRole(t, f, "viewer-1", store.RoleViewer)
+	seedFile(t, f, "Tables/dbo/Customers/part-0.parquet")
+
+	narrowed, err := json.Marshal(map[string]any{
+		"name": "narrowed",
+		"decisionRules": []map[string]any{{
+			"effect": "Permit",
+			"rows":   "SELECT * FROM Customers WHERE region = 1",
+			"permission": []map[string]any{
+				{"attributeName": "Path", "attributeValueIncludedIn": []string{"Tables/dbo/Customers"}},
+				{"attributeName": "Action", "attributeValueIncludedIn": []string{"Read"}},
+			},
+		}},
+		"members": map[string]any{
+			"microsoftEntraMembers": []map[string]string{{"objectId": "viewer-1"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, err := json.Marshal(map[string]any{
+		"name": "readers",
+		"decisionRules": []map[string]any{{
+			"effect": "Permit",
+			"permission": []map[string]any{
+				{"attributeName": "Path", "attributeValueIncludedIn": []string{"Tables/dbo/Customers"}},
+				{"attributeName": "Action", "attributeValueIncludedIn": []string{"Read"}},
+			},
+		}},
+		"members": map[string]any{
+			"microsoftEntraMembers": []map[string]string{{"objectId": "viewer-1"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.PutOneLakeRoles(f.it.ID, []store.OneLakeRole{
+		{ItemID: f.it.ID, Name: "narrowed", Body: narrowed},
+		{ItemID: f.it.ID, Name: "readers", Body: full},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	base := "/" + f.ws.ID + "/" + f.it.ID + "/"
+	if w := f.do("GET", base+"Tables/dbo/Customers/part-0.parquet",
+		f.storageToken("viewer-1"), nil); w.Code != http.StatusOK {
+		t.Fatalf("an unrestricted grant did not survive a narrowing one: %d (%s)", w.Code, w.Body)
+	}
+}

@@ -1242,6 +1242,23 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/livy/run.py
 
+  two-context:
+    name: A notebook cell runs without the agent's credentials (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # The same Livy stack as `livy-native`, with FABRIC_TWO_CONTEXT=1. It
+      # witnesses the SEPARATION rather than the feature: a viewer's cell is
+      # filtered to 2 of 3 rows by the privileged half, cannot name a table no
+      # rule grants, and holds neither the service bearer nor the client secret
+      # that mints one. It also carries a tripwire on the path read that is
+      # still open (docs/54) so the gap cannot close unnoticed.
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/two-context/run.py
+
   notebook-driven:
     name: A notebook runs with no runner in the stack (containerized)
     runs-on: ubuntu-latest

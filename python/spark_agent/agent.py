@@ -29,6 +29,7 @@ import httpjson
 import jvmconf  # no Spark; JVM session configs (see jvmconf.py)
 import session_recovery
 import task_scope
+import usercontext
 from pyspark.sql import SparkSession
 
 # Before any statement can bind a scope, and before this module's own
@@ -273,6 +274,23 @@ def apply_environment(req):
 
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 session_isolated = {}  # Livy session id -> did it get a private SparkSession
+# THE TWO-CONTEXT SPLIT, staged. Off by default because stage B1 alone is a
+# REGRESSION: the child reads as the caller, and a narrowed table refuses that
+# principal by design, so a secured session would lose the filtered read it has
+# today until the system context supplies it (stage B2, docs/54). Shipping it
+# dark keeps the code reviewable and the behaviour unchanged; the flag goes away
+# when B2 lands and the default flips.
+TWO_CONTEXT = os.environ.get("FABRIC_TWO_CONTEXT") == "1"
+# Where the system context writes a caller's filtered snapshot. LOCAL to the
+# engine, deliberately: the whole point is a place the user context can read
+# without OneLake in the way, so putting it back in OneLake would hand the
+# refusal we just worked around to the filtered copy as well.
+SCRATCH_ROOT = os.environ.get("FABRIC_ONELAKE_SECURITY_SCRATCH",
+                              "/tmp/fabric-onelake-security")
+
+session_route = {}     # Livy session id -> HOW (catalog.ROUTE_*), which says
+                       # whether its CATALOG is private too — see
+                       # onelake_security.apply(catalog_private=...)
 # Per-session notebook identity (docs/38 §1). /mount and /statements remember
 # it; each statement binds it into notebookutils.runtime so two notebooks in
 # one agent cannot read each other's workspace.
@@ -328,8 +346,10 @@ def ns(session):
         # loser read the other's tables under an unqualified name. `newSession`
         # keeps the engine and splits that state. Engines that lack it fall back
         # to the shared session, where catalog.py detects the collision instead.
-        session_spark, isolated = catalog.isolate(spark)
+        session_spark, route = catalog.isolate(spark)
+        isolated = bool(route)
         session_isolated[session] = isolated
+        session_route[session] = route
         # A per-session engine session is a DIFFERENT SparkSession object, so
         # the OPTIMIZE/VACUUM interception installed on the root at import does
         # not reach it — `spark.sql` there is the unwrapped one and Sail answers with
@@ -375,9 +395,14 @@ def recover_lost_session():
         return None
     _normalise_connect_confs()
     _install_delta_ops()
+    def _record_route(sid, route):
+        session_isolated[sid] = bool(route)
+        session_route[sid] = route
+
     rebound = session_recovery.rebind(
         namespaces, spark, catalog.isolate,
-        attach_sc=(None if os.environ.get("SPARK_REMOTE") is None else rddfacade.attach))
+        attach_sc=(None if os.environ.get("SPARK_REMOTE") is None else rddfacade.attach),
+        on_route=_record_route)
     note = session_recovery.note(rebound)
     print(note, file=sys.stderr, flush=True)
     return note
@@ -525,8 +550,45 @@ def _apply_onelake_security(req, session):
         tables = [r[1] for r in sess_spark.sql("SHOW TABLES").collect()]
     except Exception:  # noqa: BLE001 - no catalog yet: nothing to reshape
         return
+    # A session whose catalog is shared cannot be secured by editing it, and
+    # apply() raises rather than half-doing it. The exception propagates for the
+    # same reason a policy-read failure does: an errored statement beats one
+    # that quietly returns rows the caller may not have.
+    private = catalog.CATALOG_IS_PRIVATE.get(session_route.get(session), False)
+
+    def _known_location(name):
+        # delta_ops is imported lazily everywhere in this module (it needs the
+        # engine up), so it is imported here rather than referenced as a global
+        # that does not exist. A missing registry is "location unknown", which
+        # restore() already handles.
+        try:
+            import delta_ops
+
+            return delta_ops.known_location(name)
+        except Exception:  # noqa: BLE001
+            return None
+
+    log = lambda m: print(m, flush=True)  # noqa: E731 - one call site, twice
+    if TWO_CONTEXT and usercontext.is_secured(req):
+        # TWO CONTEXTS. `sess_spark` is the SYSTEM context: privileged, holding
+        # the real tables. It reads and filters here, and the user context is
+        # told only where the results are. Nothing about the caller's session
+        # is reshaped, because there is nothing unfiltered in it to reshape —
+        # which is why this path needs no sweep, no restore and no refusal on a
+        # shared catalog. Those exist to simulate, inside one namespace, the
+        # separation this path actually has.
+        permitted = onelake_security.prepare(
+            sess_spark, access, tables, _known_location,
+            SCRATCH_ROOT, str(session), log=log)
+        answer = usercontext.for_session(session, principal).prepare(permitted)
+        if answer.get("status") != "ok":
+            raise RuntimeError("the user context could not be prepared: "
+                               + str(answer.get("evalue")))
+        return
     onelake_security.apply(sess_spark, access, tables,
-                           log=lambda m: print(m, flush=True))
+                           log=log,
+                           catalog_private=private,
+                           location_of=_known_location)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -597,7 +659,13 @@ class Handler(BaseHTTPRequestHandler):
                 with task_scope.scoped(scope_for(session)):  # noqa: SIM117
                     with cell_context(req.get("jobId"), req.get("cellIndex")):
                         with runtime_scope(session, req):
-                            if (req.get("kind") or "").lower() == "sql":
+                            if TWO_CONTEXT and usercontext.is_secured(req):
+                                # The user context runs it, with the caller's
+                                # identity and none of the agent's credentials.
+                                result = usercontext.for_session(
+                                    session, req.get("principal")).run(
+                                        req.get("code", ""), req.get("kind") or "")
+                            elif (req.get("kind") or "").lower() == "sql":
                                 result = sqlrun.run_sql(req.get("code", ""), ns(session))
                             else:
                                 result = run_code(req.get("code", ""), ns(session))
@@ -658,6 +726,8 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:  # noqa: BLE001 - already gone, or no stop()
                     pass
             session_isolated.pop(sid, None)
+            session_route.pop(sid, None)
+            usercontext.close_session(sid)
             self._send(200, {"closed": True})
         else:
             self._send(404, {"error": "not found"})
