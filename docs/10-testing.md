@@ -65,6 +65,41 @@ Every package covers itself (90% floor cross-package, currently ~90%), on
 Linux, macOS, and Windows. The full matrix of what CI verifies — including
 the real-tool e2e — is in [12-e2e-matrix.md](12-e2e-matrix.md).
 
+## The docs lane — what a documentation change runs
+
+A change confined to `docs/`, `website/` or a root readme runs **two** CI jobs
+instead of ninety-odd. `scripts/docs_only_change.py` classifies the diff, and
+every job in `ci.yml` except `witnesses` is gated on the answer.
+
+`witnesses` is not gated, deliberately: it is the job that reads the docs — the
+parity claims and their witnesses, the sidebar, intra-doc links, the
+conformance matrix — so it runs on a documentation change and a code change
+alike. What the lane removes is the jobs that cannot observe a markdown file,
+not the ones that check it. A documentation pull request also builds the
+Starlight site (`docs-site.yml` now triggers on `pull_request`), which nothing
+did before: an Astro failure used to be found after merge.
+
+Three properties are load-bearing, and each is there because of a specific way
+this could go wrong:
+
+- **Unknown means run everything.** An empty diff, a force push's null `before`,
+  a range git cannot resolve: all answer `false`. A classifier that guesses
+  "docs" when it does not know turns a missing verdict into a green one.
+- **A deletion or rename is never docs-only**, whatever the paths say.
+  `internal/api/examples_readme_test.go` reads `examples/README.md` and fails
+  when a `(../docs/<file>)` link points at nothing, so removing a page *can*
+  break a Go test. Adding or editing one cannot.
+- **Skipped, not absent.** The gate is a job-level `if:`, not `paths-ignore:`
+  on the workflow, so a documentation pull request shows sixty-odd jobs
+  explicitly declining to run and the classifier's reasoning is in the run's
+  own log. A path-filtered workflow does not appear in the checks at all, and a
+  green rollup that is green partly because things did not run is a false
+  all-clear.
+
+Not covered: `make-targets.yml` (three jobs) still runs on every change. It is
+also the release gate via `workflow_call`, and a gate that can be skipped is
+worth more care than three runner-minutes.
+
 ## The failure this codebase keeps producing
 
 Seven times in one day, across two people working in parallel, a bug took the

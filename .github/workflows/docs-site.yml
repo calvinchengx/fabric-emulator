@@ -28,6 +28,20 @@ on:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
+  # BUILD on a docs pull request, deploy nothing. Until now the site was first
+  # built on main, so an Astro failure or a broken link in a new page was found
+  # AFTER merge — and with CI's docs lane skipping 60-odd jobs, this is the one
+  # check a docs PR should have. The deploy job below is gated off for PRs, and
+  # the concurrency group differs (see below), so a PR build cannot touch the
+  # published site or the deploy queue.
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'website/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - '.github/workflows/docs-site.yml'
   workflow_dispatch:
 
 # Allow the deploy job to publish to GitHub Pages.
@@ -37,9 +51,16 @@ permissions:
   id-token: write
 
 # One in-flight deploy at a time; don't cancel a running publish.
+#
+# PR builds get their OWN group, per ref. Sharing `pages` would make a PR build
+# sit in the same single-slot queue as a real deploy — and GitHub keeps one
+# pending run per group, so a burst of PR builds silently drops a queued
+# publish. That has happened here before; it presents as "the site just did not
+# update", with every run green. A PR build supersedes itself instead, which is
+# correct for a ref under development and safe because it publishes nothing.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -80,26 +101,40 @@ jobs:
       # rather than a made-up number. A badge that says n/a is honest; a docs
       # deploy blocked on a coverage artifact is not worth the coupling.
       - name: Coverage badges (from the last CI run on main)
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          run_id=$(gh run list --workflow=ci.yml --branch=main --status=success \
-                     --limit=1 --json databaseId --jq '.[0].databaseId' || true)
-          if [ -n "$run_id" ] && gh run download "$run_id" -n coverage-badges -D website/dist 2>/dev/null; then
-            echo "badges from CI run $run_id"
-          else
-            echo "::warning::no coverage-badges artifact found; publishing n/a badges"
+          # The LAST run is not good enough any more. CI's docs lane skips
+          # coverage-e2e, so a docs-only push produces a successful CI run with
+          # no coverage-badges artifact — and taking only the newest would
+          # replace real numbers with "n/a" every time someone fixed a typo.
+          # Walk back until one actually yields the artifact.
+          found=""
+          for run_id in $(gh run list --workflow=ci.yml --branch=main --status=success \
+                            --limit=15 --json databaseId --jq '.[].databaseId'); do
+            if gh run download "$run_id" -n coverage-badges -D website/dist 2>/dev/null; then
+              echo "badges from CI run $run_id"
+              found=1
+              break
+            fi
+          done
+          if [ -z "$found" ]; then
+            echo "::warning::no coverage-badges artifact in the last 15 successful CI runs; publishing n/a badges"
             python3 scripts/coverage_badges.py --out website/dist
           fi
           ls -1 website/dist/*.json
 
       - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
         with:
           path: website/dist
 
   deploy:
     name: Deploy to GitHub Pages
     needs: build
+    # A pull request builds the site and stops there.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment:

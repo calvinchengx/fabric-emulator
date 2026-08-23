@@ -25,7 +25,7 @@ def site(tmp_path, monkeypatch):
     """A docs tree, an astro config and a sync-docs.mjs we control."""
 
     def build(docs=(), slugs=(), doc_re=r"^(\d{2}-.*|parity)\.md$", readme=None,
-              parity_versions=False, sync_body=None):
+              parity_versions=False, sync_body=None, synthesized="overview"):
         docs_dir = tmp_path / "docs"
         docs_dir.mkdir(exist_ok=True)
         for name, *body in [(d,) if isinstance(d, str) else d for d in docs]:
@@ -33,7 +33,12 @@ def site(tmp_path, monkeypatch):
         config = tmp_path / "astro.config.mjs"
         config.write_text("sidebar: [\n" + "\n".join(f"  {{ slug: '{s}' }}," for s in slugs) + "\n]\n")
         sync = tmp_path / "sync-docs.mjs"
-        sync.write_text(sync_body if sync_body is not None else f"const DOC_RE = /{doc_re}/;\n")
+        # The fixture must model BOTH things the checker derives from the
+        # generator: the published-set regex and the pages it synthesizes.
+        default_body = f"const DOC_RE = /{doc_re}/;\n"
+        if synthesized:
+            default_body += f"writeFileSync(join(OUT, '{synthesized}.md'), frontmatter + body);\n"
+        sync.write_text(sync_body if sync_body is not None else default_body)
         root = tmp_path / "root"
         root.mkdir(exist_ok=True)
         if readme is not None:
@@ -78,10 +83,26 @@ def test_readme_link_into_docs_is_checked(site):
     assert any("README.md links to docs/99-nope.md" in p for p in c.problems())
 
 
-def test_index_needs_no_sidebar_entry(site):
-    site(docs=["index.md", "01-quickstart.md"], slugs=["01-quickstart"],
-         doc_re=r"^(\d{2}-.*|parity|index)\.md$")
+def test_a_synthesized_page_needs_no_sidebar_entry(site):
+    """And the exemption is the generator's, not this test's."""
+    site(docs=["overview.md", "01-quickstart.md"], slugs=["01-quickstart"],
+         doc_re=r"^(\d{2}-.*|parity|overview)\.md$", synthesized="overview")
     assert c.problems() == []
+
+
+def test_a_sidebar_slug_for_a_synthesized_page_is_not_dangling(site):
+    """The live case: `overview` is first in the sidebar and has no docs file."""
+    site(docs=["01-quickstart.md"], slugs=["01-quickstart", "overview"], synthesized="overview")
+    assert c.problems() == []
+
+
+def test_a_generator_that_synthesizes_nothing_is_an_error(site):
+    """Empty would mean 'exempt nothing', which reads exactly like 'all fine'."""
+    site(docs=["01-quickstart.md"], slugs=["01-quickstart"],
+         sync_body=r"const DOC_RE = /^(\d{2}-.*)\.md$/;" + "\n")
+    with pytest.raises(SystemExit) as exc:
+        c.problems()
+    assert "synthesizes no page" in str(exc.value)
 
 
 def test_generated_parity_history_is_exempt_only_with_the_generator(site):

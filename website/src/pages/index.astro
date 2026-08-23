@@ -1,0 +1,488 @@
+---
+// THE SITE ROOT. Starlight owns every other route; this static page wins over
+// its catch-all, so `/fabric-emulator/` is a landing page and the docs
+// overview it replaced now lives at `/fabric-emulator/overview/` (first in the
+// sidebar). No published URL moved: the docs were already served flat from the
+// base, and only the root page changed.
+//
+// EVERY NUMBER HERE IS IMPORTED, NOT TYPED. site-stats.json is written by
+// sync-docs.mjs from docs/parity.md and docs/witnesses.json on each build. The
+// page this replaced hardcoded "113 supported capability claims" and was wrong
+// by seven within a fortnight; a number in prose has no idea a row was added.
+import stats from '../data/site-stats.json';
+
+const base = import.meta.env.BASE_URL;
+const repo = 'https://github.com/calvinchengx/fabric-emulator';
+const p = stats.parity;
+const w = stats.witnesses ?? {};
+// A release build stamps `v0.33.0`; between releases it is `latest-<sha>`, and
+// the pill says so rather than implying a release nobody cut.
+const released = /^v\d+\.\d+\.\d+$/.test(stats.version);
+const releaseUrl = released ? `${repo}/releases/tag/${stats.version}` : `${repo}/releases`;
+const num = (n) => (typeof n === 'number' ? n.toLocaleString('en') : '—');
+---
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fabric Emulator — run Fabric work on a laptop</title>
+<meta name="description" content="A local Microsoft Fabric: control plane, OneLake, Spark, T-SQL, pipelines, Eventstream and KQL, validating real Entra tokens. Every supported claim names the test that witnesses it.">
+<link rel="canonical" href={`https://calvinchengx.github.io${base}`}>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◫</text></svg>">
+<style>
+:root{
+  --bg:#fbfbfa; --panel:#fff; --ink:#16181d; --muted:#5c6270; --line:#e3e5e9;
+  --accent:#1a5fb4; --accent-soft:#e8f0fb;
+  --ship:#0f6f4c; --ship-bg:#e6f3ed;
+  --wip:#8a5a00; --wip-bg:#fdf3e0;
+  --plan:#5c6270; --plan-bg:#eef0f3;
+  --code:#f4f5f7; --diagram-line:#828c9c; --diagram-fill:#fff;
+  --radius:14px;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0f1115; --panel:#151920; --ink:#e8eaee; --muted:#98a0ae; --line:#262b34;
+    --accent:#77aaff; --accent-soft:#14202f;
+    --ship:#5ec9a0; --ship-bg:#11291f;
+    --wip:#e0a94a; --wip-bg:#2a2114;
+    --plan:#98a0ae; --plan-bg:#1c212a;
+    --code:#11151b; --diagram-line:#5a6575; --diagram-fill:#1c222c;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);
+  line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:0 24px}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.9em;background:var(--code);padding:.15em .4em;border-radius:5px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:var(--radius);
+  padding:18px 20px;overflow-x:auto;font-family:var(--mono);font-size:.88rem;line-height:1.55}
+pre code{background:none;padding:0}
+h1,h2,h3{line-height:1.25;letter-spacing:-.02em}
+h2{font-size:1.7rem;margin:0 0 8px}
+.sec{padding:60px 0;border-top:1px solid var(--line)}
+.sec>.wrap>p.lede{color:var(--muted);font-size:1.05rem;max-width:70ch;margin:0 0 32px}
+
+.hero{padding:76px 0 64px}
+.eyebrow{font-family:var(--mono);font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--accent);margin:0 0 18px}
+.hero h1{font-size:clamp(2.1rem,5.2vw,3.4rem);margin:0 0 20px;max-width:20ch}
+.hero p{font-size:1.15rem;color:var(--muted);max-width:64ch;margin:0 0 14px}
+.hero .claim{color:var(--ink);font-weight:600;border-left:3px solid var(--accent);
+  padding-left:16px;margin-top:28px;max-width:62ch}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:32px}
+.btn{display:inline-block;padding:11px 20px;border-radius:10px;text-decoration:none;
+  font-weight:600;font-size:.94rem;border:1px solid var(--line)}
+.btn.primary{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.btn.ghost{color:var(--ink)}
+.release-pill{display:inline-flex;align-items:center;gap:9px;margin:0 0 20px;padding:6px 14px;
+  border:1px solid var(--line);border-radius:999px;background:var(--panel);
+  text-decoration:none;color:var(--muted);font-size:.86rem}
+.release-pill span{background:var(--accent-soft);color:var(--accent);font-weight:700;
+  border-radius:999px;padding:2px 9px;font-size:.78rem}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-top:44px}
+.stat{background:var(--panel);padding:20px}
+.stat b{display:block;font-size:1.65rem;letter-spacing:-.03em}
+.stat span{color:var(--muted);font-size:.83rem}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:24px}
+.card h3{font-size:1.08rem;margin:0 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.card p{margin:0 0 12px;color:var(--muted);font-size:.94rem}
+.card .ev{font-family:var(--mono);font-size:.78rem;color:var(--ink);background:var(--code);
+  border-radius:8px;padding:9px 12px;display:block}
+.tag{font-size:.68rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  padding:3px 9px;border-radius:999px;white-space:nowrap}
+.t-ship{color:var(--ship);background:var(--ship-bg)}
+.t-wip{color:var(--wip);background:var(--wip-bg)}
+.t-plan{color:var(--plan);background:var(--plan-bg)}
+
+.tbl{width:100%;border-collapse:collapse;font-size:.92rem;margin-top:8px}
+.tbl th,.tbl td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl th{font-size:.75rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600}
+.tbl td:first-child{font-weight:600}
+.scroll{overflow-x:auto}
+
+figure{margin:0}
+figcaption{color:var(--muted);font-size:.85rem;margin-top:12px;text-align:center}
+svg .lbl{font:600 12px var(--font);fill:var(--ink)}
+svg .sub{font:11px var(--mono);fill:var(--muted)}
+svg .bx{fill:var(--diagram-fill);stroke:var(--diagram-line);stroke-width:1.5}
+svg .ac{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5}
+svg .ar{stroke:var(--diagram-line);stroke-width:1.5;fill:none}
+
+.note{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:0 var(--radius) var(--radius) 0;padding:20px 24px;margin-top:28px}
+.note b{display:block;margin-bottom:6px}
+.note p{margin:0;color:var(--muted);font-size:.94rem}
+.warn{border-left-color:var(--wip)}
+footer{padding:44px 0 60px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
+footer a{text-decoration:none}
+
+.topnav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:saturate(1.4) blur(8px);border-bottom:1px solid var(--line)}
+.topnav .wrap{display:flex;align-items:center;gap:18px;height:56px}
+.topnav .brand{font-family:var(--mono);font-size:.82rem;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--ink);text-decoration:none;font-weight:600}
+.topnav .links{margin-left:auto;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.topnav .links a{color:var(--muted);text-decoration:none;font-size:.92rem}
+.topnav .links a:hover{color:var(--accent)}
+.topnav .links a.strong{color:var(--accent);font-weight:600}
+@media (max-width:640px){.topnav .links a:not(.strong){display:none}}
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="wrap">
+    <a class="brand" href={base}>Fabric Emulator</a>
+    <div class="links">
+      <a href="#gap">Why</a>
+      <a href="#runs">What it runs</a>
+      <a href="#checked">Evidence</a>
+      <a href="#start">Run it</a>
+      <a href={repo}>GitHub</a>
+      <a class="strong" href={`${base}overview/`}>Documentation &rarr;</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Fabric Emulator</p>
+    <a class="release-pill" href={releaseUrl}>
+      <span>{released ? stats.version : 'unreleased'}</span>
+      {released ? 'one binary, one compose file' : `building on ${stats.version}`} &rarr;
+    </a>
+    <h1>Run your Fabric work on a laptop. Then prove it behaves.</h1>
+    <p>A local <b>Microsoft Fabric</b>: the control plane, OneLake, and engines that genuinely
+      run your code. Workspaces, items and their CI/CD definitions, workspace RBAC, git
+      integration, jobs and the 202/poll long-running-operation contract, validating Microsoft
+      Entra bearer tokens against <a href="https://calvinchengx.github.io/entra-emulator/">entra-emulator</a>{' '}
+      exactly as real Fabric validates against Entra.</p>
+    <p>Microsoft's own tools drive it: <code>fabric-cicd</code>, the Fabric CLI,{' '}
+      <code>dbt-fabric</code>, the Terraform provider, the VS Code extension. The same pipeline
+      runs unmodified here and against a real tenant.</p>
+    <p class="claim">Every supported capability names the test that witnesses it, and CI fails
+      when one loses its witness. Where something is a contract and not an engine, this page
+      says which.</p>
+    <div class="cta">
+      <a class="btn primary" href={`${base}01-quickstart/`}>Quickstart</a>
+      <a class="btn ghost" href={`${base}overview/`}>Read the docs</a>
+      <a class="btn ghost" href={repo}>Source on GitHub</a>
+      <a class="btn ghost" href={`${base}parity/`}>The parity map</a>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>{num(p.real)}</b><span>capabilities graded real, of {num(p.total)}</span></div>
+      <div class="stat"><b>{num(w.total)}</b><span>witnesses over {num(w.claims)} claims</span></div>
+      <div class="stat"><b>{num(w.jobs)}</b><span>CI jobs driving real clients</span></div>
+      <div class="stat"><b>{num(stats.e2e)}</b><span>end-to-end suites</span></div>
+      <div class="stat"><b>{num(stats.docs)}</b><span>pages of documentation</span></div>
+    </div>
+  </div>
+</header>
+
+<section class="sec" id="gap">
+  <div class="wrap">
+    <h2>The gap this is built around</h2>
+    <p class="lede">Testing Fabric work against Fabric means a tenant, a capacity and a cloud
+      round trip for every iteration. The consequences are specific, and they are not really
+      about speed.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>A pull request cannot have a capacity</h3>
+        <p>A capacity is shared and always on. Nothing spins one up per branch, so the Fabric
+          part of a change is the part continuous integration never exercises.</p>
+        <span class="ev">Here: `docker compose up`, per run, on the runner</span>
+      </div>
+      <div class="card">
+        <h3>A workspace is shared state</h3>
+        <p>One run's cleanup is another run's broken fixture. Teams either serialise on a
+          workspace or discover the collision as a failure in somebody else's job.</p>
+        <span class="ev">Here: a tenant per test, created and thrown away</span>
+      </div>
+      <div class="card">
+        <h3>So the risky parts go untested</h3>
+        <p>The deployment pipeline, the OneLake writes, the notebook that only fails on real
+          data. They break in production because production was the first place they ran.</p>
+        <span class="ev">Here: the same code, offline, before it is pushed</span>
+      </div>
+    </div>
+    <div class="note">
+      <b>An emulator cannot assert that it behaves like Fabric.</b>
+      <p>That is the whole difficulty, and it is why this project spends more effort on evidence
+        than on features. Real clients drive the surfaces, the differences that remain are{' '}
+        <a href={`${base}37-runtime-fidelity-gaps/`}>written down</a> rather than left to be
+        discovered, and the same suite can be pointed at a real tenant with{' '}
+        <code>FABRIC_TARGET</code> to find out where the two disagree.</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="wrap">
+    <h2>How it fits together</h2>
+    <p class="lede">One Go binary is the control plane and OneLake. The engines beside it are
+      real, unmodified software: Sail for Spark, SQL Server for T-SQL, Microsoft's own Kusto
+      container for KQL, Apache Kafka for Eventstream. No client knows it is not Fabric.</p>
+    <figure>
+      <svg viewBox="0 0 940 380" width="100%" role="img" aria-label="Architecture: Microsoft's own clients authenticate against entra-emulator, then call the fabric-emulator binary, which serves the control plane, OneLake and the Livy and TDS front doors, and dispatches work to Sail, SQL Server, Kusto and Kafka.">
+        <rect class="bx" x="8" y="120" width="150" height="112" rx="10"/>
+        <text class="lbl" x="83" y="146" text-anchor="middle">Microsoft's tools</text>
+        <text class="sub" x="83" y="167" text-anchor="middle">fabric-cicd · fab CLI</text>
+        <text class="sub" x="83" y="183" text-anchor="middle">dbt · Terraform</text>
+        <text class="sub" x="83" y="199" text-anchor="middle">VS Code · azcopy</text>
+        <text class="sub" x="83" y="215" text-anchor="middle">your own pipeline</text>
+
+        <rect class="bx" x="206" y="20" width="150" height="64" rx="10"/>
+        <text class="lbl" x="281" y="46" text-anchor="middle">entra-emulator</text>
+        <text class="sub" x="281" y="65" text-anchor="middle">real signed JWTs</text>
+
+        <rect class="ac" x="206" y="120" width="180" height="112" rx="10"/>
+        <text class="lbl" x="296" y="147" text-anchor="middle">fabric-emulator</text>
+        <text class="sub" x="296" y="168" text-anchor="middle">control plane · RBAC</text>
+        <text class="sub" x="296" y="184" text-anchor="middle">OneLake (ADLS · Blob)</text>
+        <text class="sub" x="296" y="200" text-anchor="middle">Livy · TDS · pipelines</text>
+        <text class="sub" x="296" y="216" text-anchor="middle">LRO engine · MCP</text>
+
+        <rect class="bx" x="440" y="120" width="150" height="112" rx="10"/>
+        <text class="lbl" x="515" y="150" text-anchor="middle">OneLake on disk</text>
+        <text class="sub" x="515" y="171" text-anchor="middle">real Delta bytes</text>
+        <text class="sub" x="515" y="187" text-anchor="middle">shortcuts</text>
+        <text class="sub" x="515" y="203" text-anchor="middle">item-scoped security</text>
+
+        <rect class="bx" x="660" y="20" width="270" height="58" rx="10"/>
+        <text class="lbl" x="795" y="44" text-anchor="middle">Sail (Spark Connect, Rust)</text>
+        <text class="sub" x="795" y="63" text-anchor="middle">notebooks · Livy · Delta write</text>
+
+        <rect class="bx" x="660" y="98" width="270" height="58" rx="10"/>
+        <text class="lbl" x="795" y="122" text-anchor="middle">SQL Server</text>
+        <text class="sub" x="795" y="141" text-anchor="middle">warehouse T-SQL over real TDS</text>
+
+        <rect class="bx" x="660" y="176" width="270" height="58" rx="10"/>
+        <text class="lbl" x="795" y="200" text-anchor="middle">Kusto (Microsoft's container)</text>
+        <text class="sub" x="795" y="219" text-anchor="middle">KQL eventhouses · profile</text>
+
+        <rect class="bx" x="660" y="254" width="270" height="58" rx="10"/>
+        <text class="lbl" x="795" y="278" text-anchor="middle">Apache Kafka (KRaft)</text>
+        <text class="sub" x="795" y="297" text-anchor="middle">Eventstream · profile</text>
+
+        <path class="ar" d="M158 176 H200" marker-end="url(#a)"/>
+        <path class="ar" d="M296 120 V90" marker-end="url(#a)"/>
+        <path class="ar" d="M386 176 H434" marker-end="url(#a)"/>
+        <path class="ar" d="M386 160 H410 V49 H654" marker-end="url(#a)"/>
+        <path class="ar" d="M386 176 H420 V127 H654" marker-end="url(#a)"/>
+        <path class="ar" d="M386 192 H420 V205 H654" marker-end="url(#a)"/>
+        <path class="ar" d="M386 208 H410 V283 H654" marker-end="url(#a)"/>
+        <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor" style="color:var(--diagram-line)"/></marker></defs>
+      </svg>
+      <figcaption>Tokens are validated, not trusted. Bytes are written, not recorded. The
+        binary implements Fabric's wire protocol; the compute beside it is somebody else's
+        engine, unmodified.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="sec" id="runs">
+  <div class="wrap">
+    <h2>What it runs</h2>
+    <p class="lede">{num(p.real)} of {num(p.total)} graded capabilities do real work.
+      {num(p.emulated)} are a faithful contract without an engine, {num(p.nonDefaultEngine)} need
+      an engine that is not the default, and {num(p.notImplemented)} are an honest 501. Each row
+      below links to the page that carries the detail.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>Control plane <span class="tag t-ship">real</span></h3>
+        <p>Workspaces, items and their CI/CD definitions, folders, workspace RBAC enforced from
+          the validated bearer principal, git integration, deployment pipelines, jobs, and the
+          202/poll long-running-operation contract. Fabric Core MCP included.</p>
+        <span class="ev"><a href={`${base}07-control-plane-api/`}>07 — control-plane API</a></span>
+      </div>
+      <div class="card">
+        <h3>OneLake <span class="tag t-ship">real bytes</span></h3>
+        <p>Both dialects of the data plane, ADLS Gen2 and Blob, addressed as Fabric addresses
+          them. Real Delta on disk with put-if-absent commit atomicity, shortcuts, and
+          item-scoped OneLake security with RLS and CLS.</p>
+        <span class="ev"><a href={`${base}08-onelake/`}>08 — OneLake</a> ·
+          <a href={`${base}54-onelake-security/`}>54 — OneLake security</a></span>
+      </div>
+      <div class="card">
+        <h3>Notebooks and Spark <span class="tag t-ship">real engine</span></h3>
+        <p>Sail, a Rust Spark Connect implementation, is the default: sessions start in
+          milliseconds and Delta is native. The JVM Spark overlay is available as an oracle when
+          a surface needs a real JVM, and the two are measured against the same probes.</p>
+        <span class="ev"><a href={`${base}20-lakesail-engine/`}>20 — the engine</a> ·
+          <a href={`${base}engine-matrix/`}>engine matrix</a></span>
+      </div>
+      <div class="card">
+        <h3>Warehouse and T-SQL <span class="tag t-ship">real TDS</span></h3>
+        <p>A real TDS endpoint backed by SQL Server, so Microsoft's own drivers connect.
+          Row-level security, column-level security and dynamic data masking are enforced by the
+          database rather than filtered on the way out.</p>
+        <span class="ev"><a href={`${base}16-warehouse-tds/`}>16 — warehouse</a> ·
+          <a href={`${base}29-tsql-parity/`}>29 — T-SQL parity</a></span>
+      </div>
+      <div class="card">
+        <h3>Pipelines and orchestration <span class="tag t-ship">real interpreter</span></h3>
+        <p>Data Factory pipelines with the expression language and control flow interpreted for
+          real, activities dispatched to the engines above, and Apache Airflow jobs.</p>
+        <span class="ev"><a href={`${base}23-deployment-pipelines/`}>23 — deployment pipelines</a></span>
+      </div>
+      <div class="card">
+        <h3>Real-Time Intelligence <span class="tag t-wip">profile</span></h3>
+        <p>KQL runs on Microsoft's own Kusto container and Eventstream on Apache Kafka, both
+          behind an opt-in profile because most tests never reach them and the images are not
+          small.</p>
+        <span class="ev"><a href={`${base}25-rti-kusto/`}>25 — RTI</a> ·
+          <a href={`${base}51-eventstream-kafka/`}>51 — Eventstream</a></span>
+      </div>
+      <div class="card">
+        <h3>The same code against real Fabric <span class="tag t-ship">by configuration</span></h3>
+        <p>One environment variable points the conformance suite at a real tenant instead of
+          this one. That is the fidelity oracle: divergences found there become parity-map rows
+          rather than surprises.</p>
+        <span class="ev"><a href={`${base}21-real-fabric-toggle/`}>21 — real Fabric toggle</a></span>
+      </div>
+      <div class="card">
+        <h3>Governance and catalog <span class="tag t-wip">profile</span></h3>
+        <p>OpenMetadata catalogues the emulated estate — workspaces, lakehouses, Delta tables —
+          so lineage and glossary work has something to run against locally.</p>
+        <span class="ev"><a href={`${base}22-openmetadata/`}>22 — OpenMetadata</a></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="checked">
+  <div class="wrap">
+    <h2>How the claims are checked</h2>
+    <p class="lede">Parity here is not self-assessed. {num(w.total)} witnesses are mapped to
+      {num(w.claims)} claims, and a claim whose witness is renamed or deleted fails the build
+      rather than quietly becoming an assertion.</p>
+    <div class="scroll">
+      <table class="tbl">
+        <thead><tr><th>Kind</th><th>What it is</th><th>Why it ranks where it does</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>ci:</code></td>
+            <td>A CI job in which a real third-party client does the talking</td>
+            <td>Strongest. A packaged release of somebody else's software, over a network, with
+              no knowledge of this codebase</td>
+          </tr>
+          <tr>
+            <td><code>sdk:</code></td>
+            <td>A Go test in which Microsoft's own client speaks the protocol</td>
+            <td>Third-party evidence too, but in-process rather than a released client over a
+              network, so it ranks below <code>ci:</code></td>
+          </tr>
+          <tr>
+            <td><code>go:</code></td>
+            <td>A Go test: real HTTP, real signed JWTs, real RBAC</td>
+            <td>Our own client. Proves the code agrees with itself, which is the weakest thing
+              a green test can mean</td>
+          </tr>
+          <tr>
+            <td><code>boundary:</code></td>
+            <td>The claim is scoped by a documented limitation</td>
+            <td>Not a witness at all, and named as such, with the reason recorded beside it</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <b>A witness whose name exists is not a witness that ran.</b>
+      <p>That gap cost real time twice here, so the checker detects skipped tests and gated jobs
+        rather than taking a name on trust. The parity map is{' '}
+        <a href={`${base}parity/`}>the ledger</a>, its{' '}
+        <a href={`${base}parity-history/`}>history</a> shows how every row moved release by
+        release, and <a href={`${base}38-framework-conformance/`}>ecosystem conformance</a>{' '}
+        lists the real clients driving it in CI.</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="status">
+  <div class="wrap">
+    <h2>Honest status</h2>
+    <p class="lede">The full ledger is <a href={`${base}parity/`}>the parity map</a>. These are the
+      entries most likely to matter before you start, stated here rather than found later.</p>
+    <div class="scroll">
+      <table class="tbl">
+        <thead><tr><th>Capability</th><th>Status</th><th>What that means</th></tr></thead>
+        <tbody>
+          <tr><td>Java and Scala UDFs, <code>spark.jars</code></td><td><span class="tag t-plan">not on the default engine</span></td><td>Sail has no JVM classloader, so a JAR is accepted and inert. The JVM overlay has a real one</td></tr>
+          <tr><td><code>sc</code>, the RDD API, <code>spark._jvm</code></td><td><span class="tag t-wip">partly, by measurement</span></td><td>Spark Connect exposes no SparkContext or JVM bridge; the measured subset that does work is in the engine matrix rather than asserted</td></tr>
+          <tr><td>Structured streaming</td><td><span class="tag t-wip">partly</span></td><td><code>readStream</code> plans, and durable sinks pull a micro-batch on the Livy path</td></tr>
+          <tr><td>Dataflow Gen2</td><td><span class="tag t-plan">management only</span></td><td>The item and its definition round-trip; refresh and in-pipeline execution fail by name, because the Power Query M engine is not something to fake</td></tr>
+          <tr><td>Purview scanning and system classifiers</td><td><span class="tag t-plan">not implemented</span></td><td>A scan is an engine, and the ~200 built-in classifiers are proprietary detection patterns. This row can never move</td></tr>
+          <tr><td>On-prem gateways and connectors</td><td><span class="tag t-plan">not implemented</span></td><td>Absent rather than stubbed</td></tr>
+          <tr><td>Real-tenant conformance</td><td><span class="tag t-wip">gated, unwitnessed</span></td><td>The suite and the workflow exist; the secrets that would point them at a real tenant are unset, so that leg has never run — and a skipped run is not evidence</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <b>Local development tool only.</b>
+      <p>Intentionally insecure: no real authorization boundary, self-signed TLS, seeded
+        credentials. Run it on <code>localhost</code> only.</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="get">
+  <div class="wrap">
+    <h2>Get it</h2>
+    <p class="lede">A single Go binary, or the container image. Homebrew and GHCR publish on every
+      tag; winget lags, because Microsoft's moderation takes days.</p>
+<pre><code>brew install calvinchengx/tap/fabric-emulator
+winget install calvinchengx.fabric-emulator
+go install {`github.com/calvinchengx/fabric-emulator/cmd/fabric-emulator@latest`}
+docker pull ghcr.io/calvinchengx/fabric-emulator:latest</code></pre>
+    <p class="lede" style="margin-top:24px">Every option, including the archives and the compose
+      files, is in <a href={`${base}02-installation/`}>installation</a>. What each running mode
+      costs in memory and startup time is in <a href={`${base}27-running-modes/`}>running modes</a>.</p>
+  </div>
+</section>
+
+<section class="sec" id="start">
+  <div class="wrap">
+    <h2>Run the whole family</h2>
+    <p class="lede">One command brings up the control plane, OneLake, Entra, Key Vault and the
+      compute sidecars, with Spark-compatible compute already attached. Check the machine first;{' '}
+      <code>make doctor</code> names what is missing rather than letting it surface later as a
+      broken recipe.</p>
+<pre><code>git clone https://github.com/calvinchengx/fabric-emulator
+cd fabric-emulator
+make doctor
+docker compose up          # or: make up, which adds OpenMetadata and Airflow</code></pre>
+    <p class="lede" style="margin-top:28px">Then mint a token, create a workspace and write to
+      OneLake, in <a href={`${base}01-quickstart/`}>the quickstart</a> — or take the{' '}
+      <a href={`${base}28-tutorial-end-to-end/`}>medallion tutorial</a> from bronze through gold.
+      Allow the runtime 8&nbsp;GB; the six default services idle at about 530&nbsp;MB.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p><a href={repo}>github.com/calvinchengx/fabric-emulator</a> — part of the{' '}
+      <a href="https://github.com/calvinchengx/azure-emulators">azure-emulators</a> family:
+      Entra, Key Vault, ARM, APIM and Databricks emulators, developed together and released
+      together.</p>
+    <p>Third-party engines and clients are used as published and never modified. Where one has a
+      bug, it is logged upstream and routed around rather than patched here, so what passes
+      locally is what passes against the real thing.</p>
+    <p><a href={`${base}overview/`}>Documentation</a> ·
+      <a href={`${base}parity/`}>Parity map</a> ·
+      <a href={`${base}13-roadmap/`}>Roadmap</a> ·
+      <a href="https://calvinchengx.github.io/entra-emulator/">entra-emulator</a> ·
+      <a href="https://calvinchengx.github.io/data-agent-service/">data-agent-service</a></p>
+  </div>
+</footer>
+
+</body>
+</html>

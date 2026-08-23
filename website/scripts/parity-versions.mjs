@@ -18,7 +18,14 @@ import { join } from 'node:path';
 
 // The parity doc is `docs/parity.md` today, but older tags carry it numbered
 // (`docs/17-parity.md`), so snapshots of those tags must still match.
-const PARITY_RE = /(^|[/-])parity\.md$/;
+// EXACT, and it must stay exact. This was `/(^|[/-])parity\.md$/`, which also
+// matches `29-tsql-parity.md` — and since both `ls-tree` and `readdirSync`
+// return names in sorted order, `29-tsql-parity.md` won every lookup the day
+// it was added. The published changelog has been reading the T-SQL page as the
+// parity map ever since, and said so in plain sight: "Current: 0 🟢 Real ·
+// 0 🟡 · 0 🟠 · 0 🔴", because that page grades with ✅/❌. Nothing failed. A
+// generator that finds the WRONG file still produces a page.
+const PARITY_RE = /^(docs\/)?parity\.md$/;
 
 function git(repo, args) {
   return execSync(`git ${args}`, { cwd: repo, stdio: ['ignore', 'pipe', 'ignore'] }).toString();
@@ -169,6 +176,22 @@ export function collectParity(repo) {
   const liveSlug = liveName ? liveName.replace(/\.md$/, '') : null;
   points.push({ label: version, released: isRelease(version), latest: true, md: liveMd });
   return { version, liveSlug, points, firstTag: tags[0] ?? null };
+}
+
+// The live map's tally, for the landing page. Counted from the same parse the
+// history pages use, never typed: the one number on the old landing page was
+// hardcoded and read "113 supported capability claims" long after it was 120.
+export function parityStats(parity) {
+  const live = parity.points.find((pt) => pt.latest);
+  const tally = statusTally(parseParity(live ? live.md : ''));
+  const total = Object.values(tally).reduce((a, b) => a + b, 0);
+  return {
+    real: tally['🟢'],
+    emulated: tally['🟡'],
+    nonDefaultEngine: tally['🟠'],
+    notImplemented: tally['🔴'],
+    total,
+  };
 }
 
 // The site URL of a version's parity view: the live map for "latest", a

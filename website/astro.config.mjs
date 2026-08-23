@@ -46,7 +46,7 @@ export default defineConfig({
         {
           label: 'Getting started',
           items: [
-            { slug: 'index' },
+            { slug: 'overview' },
             { slug: '01-quickstart' },
             { slug: '02-installation' },
             { slug: '26-platform-setup' },
