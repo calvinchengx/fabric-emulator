@@ -320,120 +320,110 @@ def test_a_restore_that_fails_says_so_and_leaves_no_table_behind():
 # --- the system context (stage B2) --------------------------------------------
 #
 # With the user context running as the caller, a narrowed table refuses its
-# token. These pin what the privileged half hands over instead, and — more
-# importantly — what it refuses to hand over.
+# token. These pin what the privileged half hands over instead — and, more
+# importantly, what it refuses to hand over.
+#
+# IT SENDS ROWS, IT DOES NOT STAGE THEM. There is nowhere to stage: a narrowed
+# caller can read no scratch path we could write (internal/onelake,
+# TestANarrowedViewerCannotReadAScratchPathInTheSameItem), and once engines are
+# per user the two halves do not even share a filesystem — measured as
+# "No commit files found in _delta_log" the first time a child looked for its
+# parent's snapshot.
 
-class WriterSpark(CatalogSpark):
-    """Records what was written where, so a snapshot can be checked."""
+class ArrowSpark(CatalogSpark):
+    """A fake whose `sql()` returns something that can be turned into Arrow."""
 
-    def __init__(self, fail_write=False, **kw):
+    def __init__(self, rows=((1, 10),), fail_arrow=False, **kw):
         super().__init__(**kw)
-        self.written = []
-        self.fail_write = fail_write
+        self.rows = list(rows)
+        self.fail_arrow = fail_arrow
+        self.filtered = []
 
     def sql(self, q):
         super().sql(q)
-        return _Writer(self, q)
+        return _Relation(self, q)
 
 
-class _Writer:
+class _Relation:
     def __init__(self, spark, query):
         self.spark, self.query = spark, query
 
-    @property
-    def write(self):
-        return self
+    def toArrow(self):  # noqa: N802 - pyspark's spelling
+        import pyarrow as pa
 
-    def format(self, fmt):
-        self._fmt = fmt
-        return self
+        if self.spark.fail_arrow:
+            raise RuntimeError("the engine could not materialise it")
+        self.spark.filtered.append(self.query)
+        return pa.table({"region_id": [r[0] for r in self.spark.rows],
+                         "amount": [r[1] for r in self.spark.rows]})
 
-    def mode(self, mode):
-        self._mode = mode
-        return self
 
-    def save(self, path):
-        if self.spark.fail_write:
-            raise RuntimeError("the scratch volume is full")
-        self.spark.written.append((self.query, path, self._fmt, self._mode))
+def decode(encoded):
+    import base64
+    import io
+
+    import pyarrow.ipc as ipc
+
+    with ipc.open_stream(io.BytesIO(base64.b64decode(encoded))) as r:
+        return r.read_all()
 
 
 def test_an_ungranted_table_is_simply_absent():
-    # Deny-by-default becomes free: it is never registered in the user context,
-    # so there is nothing to drop and nothing to sweep.
-    spark = WriterSpark()
-    got = ols.prepare(spark, {}, ["secret"], lambda n: "abfss://l/secret",
-                      "/tmp/scratch", "s1")
+    # Deny-by-default becomes free: it is never named to the user context, so
+    # there is nothing to drop and nothing to sweep.
+    spark = ArrowSpark()
+    got = ols.prepare(spark, {}, ["secret"], lambda n: "abfss://l/secret")
     assert got == []
-    assert spark.written == []
+    assert spark.filtered == []
 
 
 def test_a_fully_granted_table_is_handed_over_by_LOCATION_not_copied():
-    # The caller's own token reads it and OneLake permits that, so copying
-    # would be pure cost.
-    spark = WriterSpark()
+    # The caller's own token reads it and OneLake permits that, so moving the
+    # bytes would be pure cost.
+    spark = ArrowSpark()
     got = ols.prepare(spark, {"sales": {"rows": "", "columns": []}}, ["sales"],
-                      lambda n: "abfss://lake/Tables/sales", "/tmp/scratch", "s1")
+                      lambda n: "abfss://lake/Tables/sales")
     assert got == [{"name": "sales", "location": "abfss://lake/Tables/sales"}]
-    assert spark.written == [], "an unrestricted table was needlessly copied"
+    assert spark.filtered == [], "an unrestricted table was needlessly copied"
 
 
-def test_a_narrowed_table_is_materialised_and_handed_over_by_PATH():
-    spark = WriterSpark()
+def test_a_narrowed_table_is_filtered_and_sent_as_rows():
+    spark = ArrowSpark(rows=[(1, 10), (1, 20)])
     entry = {"rows": "SELECT * FROM sales WHERE r = 1", "columns": ["region_id"]}
-    got = ols.prepare(spark, {"sales": entry}, ["sales"],
-                      lambda n: "abfss://lake/Tables/sales", "/tmp/scratch", "s1")
-    assert got[0]["filtered"] is True
-    assert got[0]["location"].startswith("/tmp/scratch/")
-    query, path, fmt, mode = spark.written[0]
-    # The FILTER is what was written, not the table.
-    assert query == "SELECT region_id FROM (SELECT * FROM sales WHERE r = 1)"
-    assert (fmt, mode) == ("delta", "overwrite")
-    assert path == got[0]["location"]
+    got = ols.prepare(spark, {"sales": entry}, ["sales"], lambda n: "abfss://l/sales")
 
-
-def test_two_sessions_do_not_share_one_snapshot():
-    # Two callers of the same table get different rows. A shared path would
-    # serve whichever was written last — the same one-object-many-meanings
-    # defect that per-session Spark sessions exist to avoid.
-    a = ols.scratch_for("/tmp/scratch", "s1", "sales")
-    b = ols.scratch_for("/tmp/scratch", "s2", "sales")
-    assert a != b
-
-
-def test_a_scratch_path_cannot_escape_its_root():
-    # The table name reaches this from policy, and policy is data. A name with
-    # a slash or a `..` in it must not choose where the snapshot is written.
-    got = ols.scratch_for("/tmp/scratch", "s1", "../../etc/passwd")
-    assert got.startswith("/tmp/scratch/")
-    assert ".." not in got.split("/tmp/scratch/")[1]
+    assert got[0]["name"] == "sales" and got[0]["filtered"] is True
+    assert "location" not in got[0], "a path was handed over instead of the rows"
+    # The FILTER is what ran, not the table.
+    assert spark.filtered == ["SELECT region_id FROM (SELECT * FROM sales WHERE r = 1)"]
+    table = decode(got[0]["arrow"])
+    assert table.num_rows == 2
+    assert table.column_names == ["region_id", "amount"]
 
 
 def test_a_table_with_no_known_location_is_withheld_not_passed_through():
     # Handing it over unfiltered because we could not place it is the one
     # failure this stage exists to prevent.
     lines = []
-    got = ols.prepare(WriterSpark(), {"sales": {"rows": "", "columns": []}},
-                      ["sales"], lambda n: None, "/tmp/scratch", "s1",
-                      log=lines.append)
+    got = ols.prepare(ArrowSpark(), {"sales": {"rows": "", "columns": []}},
+                      ["sales"], lambda n: None, log=lines.append)
     assert got == []
     assert any("no recorded location" in x for x in lines), lines
 
 
-def test_a_snapshot_that_fails_to_write_withholds_the_table():
+def test_a_relation_that_will_not_materialise_withholds_the_table():
     lines = []
-    spark = WriterSpark(fail_write=True)
+    spark = ArrowSpark(fail_arrow=True)
     got = ols.prepare(spark, {"sales": {"rows": "SELECT 1", "columns": []}},
-                      ["sales"], lambda n: "abfss://l/sales", "/tmp/scratch",
-                      "s1", log=lines.append)
+                      ["sales"], lambda n: "abfss://l/sales", log=lines.append)
     assert got == []
     assert any("withheld" in x for x in lines), lines
 
 
 def test_a_wildcard_grant_hands_over_every_table_by_location():
-    spark = WriterSpark()
+    spark = ArrowSpark()
     got = ols.prepare(spark, {"*": {"rows": "", "columns": []}},
-                      ["sales", "regions"], lambda n: f"abfss://l/{n}",
-                      "/tmp/scratch", "s1")
+                      ["sales", "regions"], lambda n: f"abfss://l/{n}")
     assert [g["name"] for g in got] == ["sales", "regions"]
-    assert spark.written == []
+    assert all("location" in g for g in got)
+    assert spark.filtered == []

@@ -669,3 +669,98 @@ and the witness asserts exactly that, with the reason in the failure message:
 Asserting the current number is the difference between a documented gap and a
 forgotten one. A 🟡 row with nothing watching it stays 🟡 long after the reason
 expires; this one fails the build the day the reason does.
+
+
+## The gap is closed, by removing the deviation that caused it
+
+`spark.read.format("delta").load("abfss://…")` from a notebook cell now returns
+**403 Forbidden** for a principal the policy narrows, witnessed in
+`ci:two-context`:
+
+```
+viewer: 2 of 3 rows, columns region_id  -- supplied by the system context
+viewer catalog: ['sales']
+the cell's bearer is the caller's own, not the agent's
+path read from a cell: blocked ... 403 Forbidden
+```
+
+Nothing intercepts that call. It is refused by OneLake, because the engine
+executing it belongs to the caller and carries the caller's token, so the read
+arrives as a principal whose grant narrows the table -- stage A, reached at
+last. The repair was not a new control; it was deleting a compression of ours.
+
+Three pieces, each measured before it was built:
+
+* **An engine per user** (`engine.py`). Fabric starts a Spark session per
+  notebook and shares one only within a single-user boundary, so one shared
+  Sail was never the product's shape. Engines are keyed by PRINCIPAL and
+  reference-counted by the sessions using them: a user's second notebook joins
+  the first's engine, and the last `/close` stops it. Measured at ~66 MiB
+  steady each, flat over three rounds of real work.
+* **`pysail` in the agent image**, so the agent can start one. +130 MB
+  (1.08 -> 1.21 GB), the whole cost of the packaging change.
+* **Rows, not snapshots.** The system context sends the filtered relation as
+  Arrow over the protocol the two contexts already share. This became
+  compulsory the moment engines were per user -- the child's engine looked for
+  the parent's snapshot and reported "No commit files found in _delta_log",
+  because they are different processes on different filesystems -- and it is
+  also what Fabric does: its system context returns rows, not paths.
+
+### What is still true
+
+* The user context holds no service credential and no way to mint one.
+* An ungranted table is never named to it, so deny-by-default costs nothing.
+* The owner is untouched: a role narrows the principal it names.
+* The handover is bounded by memory and `localRelationSizeLimit`, and that
+  ceiling must fail loudly rather than truncate.
+### The notebook surface, across the boundary
+
+A split that took things away from a cell would be a regression wearing a fix's
+clothes, so `ci:two-context` now walks the surface inside the user context and
+prints what it finds:
+
+```
+spark                      ok 'SparkSession'
+sc facade                  ok 'SparkContextFacade'
+sc.parallelize().toDF()    ok 2
+spark.sparkContext         ok 'SparkContextFacade'
+notebookutils              ok '_AgentSys'
+mssparkutils               ok '_AgentSys'
+notebookutils.fs           ok ['FileInfo', 'append', 'config', 'cp']
+runtime context            ok '2b316bd0-...'
+the lakehouse mount        ok True
+```
+
+Eight of the nine crossed on their own, because the child builds its namespace
+through the same `ns()` the parent does. **One did not**: the runtime context
+came back `None`. The parent binds it with `runtime_scope` for the duration of
+a statement, and a child is not inside the parent's `with` -- so a notebook
+reading its own identity got a different answer purely because its item had a
+policy on it. The context now travels WITH the statement and is bound in the
+child.
+
+`the job id` is reported and not asserted: these are interactive statements
+carrying no `jobId`, so `cell_context` has nothing to export and `None` is
+right on both sides. Asserting it would pin the harness rather than the
+boundary.
+
+### On by default
+
+`FABRIC_TWO_CONTEXT` now defaults ON; `FABRIC_TWO_CONTEXT=0` opts out.
+
+**It engages only where there is policy.** `is_secured` requires a statement to
+name a principal, a workspace AND an item, which the emulator sends only when
+the item HAS data access roles. Measured rather than argued: the
+`notebook-driven` suite, which has no roles anywhere, passes with **zero
+engines started**. The cost lands on the workloads that asked for the
+enforcement and nowhere else.
+
+The escape hatch is not the staging flag this started as. That one guarded an
+incomplete feature and was meant to be deleted. This one covers a resource
+decision -- enforcement costs an engine per user, ~66 MiB -- so a consumer who
+cannot afford it can say so, and get the previous weaker behaviour knowingly
+rather than by pinning an old image.
+
+Measured with the default on: `livy-native` passes, including the owner still
+seeing all 3 rows and both columns through an engine of their own, and
+`two-context` passes with the path read refused.

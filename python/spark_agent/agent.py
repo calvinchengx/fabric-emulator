@@ -274,19 +274,27 @@ def apply_environment(req):
 
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 session_isolated = {}  # Livy session id -> did it get a private SparkSession
-# THE TWO-CONTEXT SPLIT, staged. Off by default because stage B1 alone is a
-# REGRESSION: the child reads as the caller, and a narrowed table refuses that
-# principal by design, so a secured session would lose the filtered read it has
-# today until the system context supplies it (stage B2, docs/54). Shipping it
-# dark keeps the code reviewable and the behaviour unchanged; the flag goes away
-# when B2 lands and the default flips.
-TWO_CONTEXT = os.environ.get("FABRIC_TWO_CONTEXT") == "1"
-# Where the system context writes a caller's filtered snapshot. LOCAL to the
-# engine, deliberately: the whole point is a place the user context can read
-# without OneLake in the way, so putting it back in OneLake would hand the
-# refusal we just worked around to the filtered copy as well.
-SCRATCH_ROOT = os.environ.get("FABRIC_ONELAKE_SECURITY_SCRATCH",
-                              "/tmp/fabric-onelake-security")
+# THE TWO-CONTEXT SPLIT, on by default.
+#
+# A statement against an item carrying OneLake security roles runs in a child
+# process with a token minted for the CALLER, on an engine of that caller's own.
+# That is what makes a path read arrive as the caller and be refused by OneLake
+# (docs/54), and it is the shape Fabric has: it starts a Spark session per
+# notebook and shares one only within a single-user boundary.
+#
+# IT ENGAGES ONLY WHERE THERE IS POLICY. `usercontext.is_secured` requires the
+# statement to name a principal, a workspace AND an item, which the emulator
+# sends only when the item HAS data access roles. A stack with no roles anywhere
+# starts no engines and behaves exactly as before -- the cost lands on the
+# workloads that asked for the enforcement.
+#
+# `FABRIC_TWO_CONTEXT=0` opts out. This is no longer the staging flag it started
+# as -- that one guarded an incomplete feature and was meant to be deleted. This
+# one is an escape hatch for a resource decision: enforcement now costs an
+# engine per user (~66 MiB), and a consumer who cannot afford that should be
+# able to say so and get the previous, weaker behaviour knowingly rather than by
+# running an old image.
+TWO_CONTEXT = os.environ.get("FABRIC_TWO_CONTEXT", "1") != "0"
 
 session_route = {}     # Livy session id -> HOW (catalog.ROUTE_*), which says
                        # whether its CATALOG is private too — see
@@ -578,8 +586,7 @@ def _apply_onelake_security(req, session):
         # shared catalog. Those exist to simulate, inside one namespace, the
         # separation this path actually has.
         permitted = onelake_security.prepare(
-            sess_spark, access, tables, _known_location,
-            SCRATCH_ROOT, str(session), log=log)
+            sess_spark, access, tables, _known_location, log=log)
         answer = usercontext.for_session(session, principal).prepare(permitted)
         if answer.get("status") != "ok":
             raise RuntimeError("the user context could not be prepared: "
@@ -662,9 +669,13 @@ class Handler(BaseHTTPRequestHandler):
                             if TWO_CONTEXT and usercontext.is_secured(req):
                                 # The user context runs it, with the caller's
                                 # identity and none of the agent's credentials.
+                                # The context travels WITH the statement: the
+                                # parent's runtime_scope cannot reach into
+                                # another process, so the child binds it there.
                                 result = usercontext.for_session(
                                     session, req.get("principal")).run(
-                                        req.get("code", ""), req.get("kind") or "")
+                                        req.get("code", ""), req.get("kind") or "",
+                                        context=session_context.get(session) or {})
                             elif (req.get("kind") or "").lower() == "sql":
                                 result = sqlrun.run_sql(req.get("code", ""), ns(session))
                             else:

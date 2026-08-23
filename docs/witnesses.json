@@ -1340,6 +1340,17 @@
       "py:test_a_session_with_no_mintable_identity_is_refused"
     ]
   },
+  "direct-path-access-blocked-for-a-narrowed-principal": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "Direct path access blocked for a narrowed principal",
+    "witnesses": [
+      "ci:two-context",
+      "go:TestRowLevelSecurityBlocksTheDirectPathRead",
+      "go:TestColumnLevelSecurityBlocksTheDirectPathRead",
+      "go:TestTheBlockCoversTheBlobSurfaceToo",
+      "py:test_engine"
+    ]
+  },
   "_gated": {
     "go:TestRelayEnforcesRowLevelSecurity": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestSQLServerRestrictsTheProvisionedCaller": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
