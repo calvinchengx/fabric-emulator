@@ -447,6 +447,14 @@ the child can read it without OneLake at all. This is the emulator's version of
 "the system context reads and filters"; it materialises where Fabric filters
 in-plan, which is a boundary to state, not to hide.
 
+**B1 is wired but dark.** `FABRIC_TWO_CONTEXT=1` turns it on; the default is
+off, and deliberately, because B1 ALONE IS A REGRESSION. The child reads as the
+caller, and a narrowed table refuses that principal by design, so a secured
+session would lose the filtered read it has today until B2 supplies it. Shipping
+it dark keeps the code reviewable and the behaviour unchanged. The flag is a
+staging device with a removal condition, not a setting: when B2 lands, the
+default flips and the flag goes.
+
 **B3 — witnesses and parity.** The probe above becomes assertions: the cell
 cannot reach a credential, the path read is refused, the SQL path still returns
 2 of 3 rows and one column, and the owner is untouched. Only then does the

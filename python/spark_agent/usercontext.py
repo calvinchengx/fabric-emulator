@@ -34,8 +34,11 @@ direction, deliberately.
 """
 import json
 import os
+import ssl
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 
 # Names whose VALUE is a key. Scrubbed from the child's environment: the token
 # is the thing being escalated, and the client secret is worse, because a secret
@@ -69,6 +72,47 @@ def child_env(env=None):
     return out
 
 
+def caller_token(principal, env=None, opener=None):
+    """A storage-audience token for the CALLER — the emulator's stand-in for OBO.
+
+    Real Fabric's user context runs with the user's own identity; there the
+    platform mints that. Here the agent asks entra-emulator to issue one for the
+    principal the statement names, which is the same shape of claim and the same
+    consequence: a read arrives at OneLake as the caller, so a grant that
+    narrows them refuses it.
+
+    Returns None rather than raising. A child with no storage token cannot read
+    OneLake at all, which is the failing-closed direction; a child holding the
+    SERVICE token would be the other one.
+    """
+    env = os.environ if env is None else env
+    url = env.get("ENTRA_TOKEN_URL")
+    if not url or not principal:
+        return None
+    parts = urllib.parse.urlsplit(url)
+    admin = urllib.parse.urlunsplit(
+        (parts.scheme, parts.netloc, "/admin/api/tokens", "", ""))
+    body = json.dumps({
+        "audience": env.get("ENTRA_STORAGE_AUDIENCE", "https://storage.azure.com"),
+        "extraClaims": {"oid": principal, "sub": principal},
+    }).encode()
+    req = urllib.request.Request(
+        admin, data=body, method="POST",
+        headers={"Content-Type": "application/json"})
+    # Same self-signed-TLS allowance as storage._mint, for the same reason: the
+    # issuer is named by our own config, not by anything user-supplied.
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    do = opener or (lambda r: urllib.request.urlopen(r, timeout=30, context=ctx))
+    try:
+        with do(req) as response:
+            payload = json.loads(response.read() or b"{}")
+    except Exception:  # noqa: BLE001 - no token is a refusal, not a crash
+        return None
+    return payload.get("access_token") or payload.get("token")
+
+
 def frame(obj):
     """One protocol message: compact JSON, one line, newline-terminated."""
     return (json.dumps(obj) + "\n").encode()
@@ -96,7 +140,7 @@ def serve(requests, responses, run, globals_factory):
             return
         if req.get("op") == "close":
             return
-        envelope = run(req.get("code") or "", g)
+        envelope = run(req.get("code") or "", g, req.get("kind") or "")
         responses.write(frame(envelope))
         responses.flush()
 
@@ -117,9 +161,15 @@ class UserContext:
     # arbitrary code between fork and exec; naming the number does not.
     RESPONSE_FD_ENV = "SPARK_AGENT_RESPONSE_FD"
 
-    def __init__(self, argv=None, env=None, popen=None):
+    def __init__(self, argv=None, env=None, popen=None, grants=None):
         self.argv = argv or [sys.executable, "-m", "spark_agent.usercontext"]
         self.env = env
+        # Applied AFTER scrubbing, so the child can be given the caller's own
+        # token by the same name the scrub removed the service one under.
+        # Merging before would scrub what we just granted, which reads as "the
+        # child has no credential" and is indistinguishable from a mint that
+        # failed.
+        self.grants = dict(grants or {})
         self._popen = popen or subprocess.Popen
         self.proc = None
         self._responses = None
@@ -127,6 +177,7 @@ class UserContext:
     def start(self):
         read_fd, write_fd = os.pipe()
         env = child_env(self.env)
+        env.update(self.grants)
         env[self.RESPONSE_FD_ENV] = str(write_fd)
         try:
             self.proc = self._popen(
@@ -141,7 +192,7 @@ class UserContext:
         self._responses = os.fdopen(read_fd, "rb")
         return self
 
-    def run(self, code):
+    def run(self, code, kind=""):
         """Execute one statement in the child, returning Livy's envelope.
 
         A child that dies mid-statement is reported as an error naming that,
@@ -152,7 +203,7 @@ class UserContext:
         if self.proc is None or self._responses is None:
             raise RuntimeError("user context not started")
         try:
-            self.proc.stdin.write(frame({"code": code}))
+            self.proc.stdin.write(frame({"code": code, "kind": kind}))
             self.proc.stdin.flush()
         except (BrokenPipeError, ValueError):
             return self._died()
@@ -192,11 +243,83 @@ def response_fd(env=None):
     return int(env[UserContext.RESPONSE_FD_ENV])
 
 
+def _dispatch(code, g, kind):  # pragma: no cover - runs in the child
+    """SQL and Python are different entry points, and the child serves both.
+
+    Routing on `kind` in the child rather than sending pre-dispatched code keeps
+    one protocol: the parent forwards the request it received instead of knowing
+    which of the agent's two runners applies.
+    """
+    import agent
+
+    if (kind or "").lower() == "sql":
+        import sqlrun
+
+        return sqlrun.run_sql(code, g)
+    return agent.run_code(code, g)
+
+
+# --- which sessions get one, and their lifetimes ------------------------------
+#
+# Here rather than in agent.py for the reason catalog.py and sqlrun.py are here:
+# agent.py calls getOrCreate() at import, so nothing defined in it can be unit
+# tested. A decision about WHO runs with WHICH identity is the last thing that
+# should live where its tests cannot reach.
+
+_contexts = {}  # Livy session id -> UserContext, for SECURED sessions only
+
+
+def is_secured(req):
+    """Does this statement's item carry OneLake security roles?
+
+    The emulator sends `workspace` and `item` alongside the principal ONLY when
+    the item has policy, so their presence IS the signal -- the same one
+    `_apply_onelake_security` already acts on. Asking the store again would be a
+    second answer to a question already answered, and two answers drift.
+    """
+    return bool(req.get("principal") and req.get("workspace") and req.get("item"))
+
+
+def for_session(session, principal, mint=None, build=None):
+    """The child that runs this session's code, started on first use.
+
+    Per Livy session, because the namespace a notebook accumulates is that
+    session's. One child shared across sessions would reintroduce exactly the
+    cross-session leak that per-session Spark sessions exist to close.
+    """
+    ctx = _contexts.get(session)
+    if ctx is not None:
+        return ctx
+    token = (mint or caller_token)(principal)
+    if not token:
+        # No caller identity, no user context. Falling back to in-process
+        # execution here would run the cell with the SERVICE credential, which
+        # is the thing being closed, so this refuses instead -- the same
+        # fail-closed direction as a policy read that errors.
+        raise RuntimeError(
+            "this item has OneLake security roles, so its statements run in a "
+            "user context with the caller's own identity, and no token could "
+            f"be minted for {principal!r}")
+    ctx = (build or _build)(token)
+    _contexts[session] = ctx
+    return ctx
+
+
+def _build(token):
+    return UserContext(grants={"AZURE_STORAGE_TOKEN": token}).start()
+
+
+def close_session(session):
+    ctx = _contexts.pop(session, None)
+    if ctx is not None:
+        ctx.close()
+
+
 def main():  # pragma: no cover - exercised as a subprocess, not in-process
     import agent
 
     with os.fdopen(response_fd(), "wb") as responses:
-        serve(sys.stdin.buffer, responses, agent.run_code, dict)
+        serve(sys.stdin.buffer, responses, _dispatch, lambda: agent.ns("child"))
 
 
 if __name__ == "__main__":  # pragma: no cover

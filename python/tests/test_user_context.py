@@ -63,8 +63,8 @@ def test_scrubbing_does_not_mutate_the_parent_environment(monkeypatch):
 def test_serve_runs_each_request_and_answers_once():
     seen = []
 
-    def run(code, g):
-        seen.append((code, g))
+    def run(code, g, kind=""):
+        seen.append((code, g, kind))
         return {"status": "ok", "data": {"text/plain": code.upper()}}
 
     out = io.BytesIO()
@@ -79,7 +79,7 @@ def test_serve_runs_each_request_and_answers_once():
 def test_serve_stops_on_close():
     out = io.BytesIO()
     uc.serve([uc.frame({"op": "close"}), uc.frame({"code": "never"})],
-             out, lambda c, g: {"status": "ok"}, dict)
+             out, lambda c, g, k="": {"status": "ok"}, dict)
     assert out.getvalue() == b""
 
 
@@ -89,14 +89,14 @@ def test_serve_stops_rather_than_spinning_on_a_broken_pipe():
     # parse — a busy loop in a child nobody is watching.
     out = io.BytesIO()
     uc.serve([b"not json\n", uc.frame({"code": "x"})],
-             out, lambda c, g: {"status": "ok"}, dict)
+             out, lambda c, g, k="": {"status": "ok"}, dict)
     assert out.getvalue() == b""
 
 
 def test_blank_lines_are_not_requests():
     out = io.BytesIO()
     uc.serve([b"\n", uc.frame({"code": "x"})],
-             out, lambda c, g: {"status": "ok", "ran": c}, dict)
+             out, lambda c, g, k="": {"status": "ok", "ran": c}, dict)
     assert len(out.getvalue().splitlines()) == 1
 
 
@@ -107,8 +107,9 @@ WORKER = textwrap.dedent("""
     sys.path.insert(0, %r)
     import usercontext as uc
 
-    def run(code, g):
-        return {"status": "ok", "data": {"text/plain": repr(eval(code, g))}}
+    def run(code, g, kind=""):
+        return {"status": "ok", "data": {"text/plain": repr(eval(code, g))},
+                "kind": kind}
 
     with os.fdopen(uc.response_fd(), "wb") as responses:
         uc.serve(sys.stdin.buffer, responses, run, dict)
@@ -217,3 +218,136 @@ def test_the_childs_stdout_is_inherited_and_not_a_pipe():
         assert ctx.proc.stdout is None, "the child's stdout was captured, not inherited"
     finally:
         ctx.close()
+
+
+# --- the caller's identity ----------------------------------------------------
+#
+# The point of the split. A child holding the SERVICE token is the escalation
+# with extra steps; a child holding the CALLER's token is a read that OneLake
+# can refuse, which is what stage A already does for that principal.
+
+class _Resp:
+    def __init__(self, payload):
+        self._payload = json.dumps(payload).encode()
+
+    def read(self):
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_the_caller_token_is_minted_for_the_named_principal():
+    seen = {}
+
+    def opener(req):
+        seen["url"] = req.full_url
+        seen["body"] = json.loads(req.data)
+        return _Resp({"access_token": "for-the-viewer"})
+
+    got = uc.caller_token("viewer-1",
+                          env={"ENTRA_TOKEN_URL": "https://entra:8443/tid/oauth2/v2.0/token"},
+                          opener=opener)
+    assert got == "for-the-viewer"
+    # The admin issuer on the SAME origin as the configured token URL — derived,
+    # not a second setting that can drift out of step with it.
+    assert seen["url"] == "https://entra:8443/admin/api/tokens"
+    assert seen["body"]["extraClaims"] == {"oid": "viewer-1", "sub": "viewer-1"}
+    assert seen["body"]["audience"] == "https://storage.azure.com"
+
+
+def test_no_principal_means_no_token():
+    assert uc.caller_token("", env={"ENTRA_TOKEN_URL": "https://entra/t"}) is None
+
+
+def test_no_issuer_means_no_token():
+    assert uc.caller_token("viewer-1", env={}) is None
+
+
+def test_a_mint_that_fails_yields_no_token_rather_than_raising():
+    # Fails CLOSED: a child with no storage token cannot read OneLake, which is
+    # a refusal. Raising here would fail the statement with a mint error, and
+    # falling back to the service token would be the leak.
+    def opener(_req):
+        raise OSError("issuer unreachable")
+
+    assert uc.caller_token("viewer-1", env={"ENTRA_TOKEN_URL": "https://entra/t"},
+                           opener=opener) is None
+
+
+def test_a_grant_survives_the_scrub():
+    # AZURE_STORAGE_TOKEN is scrubbed, and the caller's token is handed over
+    # under that same name. Merging it before the scrub would delete it.
+    ctx = uc.UserContext(argv=["true"],
+                         env={"AZURE_STORAGE_TOKEN": "the-service-one"},
+                         grants={"AZURE_STORAGE_TOKEN": "the-callers-one"},
+                         popen=lambda *a, **kw: _FakeProc(kw))
+    ctx.start()
+    assert ctx.proc.kwargs["env"]["AZURE_STORAGE_TOKEN"] == "the-callers-one"
+    assert uc.UserContext.RESPONSE_FD_ENV in ctx.proc.kwargs["env"]
+
+
+class _FakeProc:
+    def __init__(self, kwargs):
+        self.kwargs = kwargs
+        self.stdin = io.BytesIO()
+
+    def poll(self):
+        return None
+
+
+# --- which sessions get a user context ----------------------------------------
+
+def test_only_a_statement_naming_all_three_is_secured():
+    # The emulator sends workspace+item alongside the principal only when the
+    # item HAS policy. Any one missing means there is nothing to enforce, and
+    # treating that as secured would put every session in a child.
+    assert uc.is_secured({"principal": "v", "workspace": "w", "item": "i"})
+    assert not uc.is_secured({"principal": "v", "workspace": "w"})
+    assert not uc.is_secured({"workspace": "w", "item": "i"})
+    assert not uc.is_secured({})
+
+
+def test_one_child_per_session_reused_across_statements(monkeypatch):
+    built = []
+    monkeypatch.setattr(uc, "_contexts", {})
+    def build(token):
+        built.append(token)
+        return object()
+
+    a1 = uc.for_session("s1", "viewer", mint=lambda p: "tok-" + p, build=build)
+    a2 = uc.for_session("s1", "viewer", mint=lambda p: "tok-" + p, build=build)
+    b = uc.for_session("s2", "viewer", mint=lambda p: "tok-" + p, build=build)
+    assert a1 is a2, "a second statement started a second child"
+    assert b is not a1, "two sessions shared one namespace"
+    assert built == ["tok-viewer", "tok-viewer"]
+
+
+def test_a_session_with_no_mintable_identity_is_refused(monkeypatch):
+    # NOT a fallback to in-process execution: that would run the cell with the
+    # service credential, which is the whole thing being closed.
+    monkeypatch.setattr(uc, "_contexts", {})
+    try:
+        uc.for_session("s1", "viewer", mint=lambda p: None, build=lambda t: object())
+    except RuntimeError as exc:
+        assert "viewer" in str(exc) and "OneLake security" in str(exc)
+    else:
+        raise AssertionError("a secured statement ran without a caller identity")
+
+
+def test_closing_a_session_closes_its_child(monkeypatch):
+    monkeypatch.setattr(uc, "_contexts", {})
+    closed = []
+
+    class Fake:
+        def close(self):
+            closed.append(True)
+
+    uc.for_session("s1", "v", mint=lambda p: "t", build=lambda t: Fake())
+    uc.close_session("s1")
+    assert closed == [True]
+    uc.close_session("s1")  # idempotent: /close can arrive twice
+    assert closed == [True]

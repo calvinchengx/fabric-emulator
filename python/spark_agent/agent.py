@@ -29,6 +29,7 @@ import httpjson
 import jvmconf  # no Spark; JVM session configs (see jvmconf.py)
 import session_recovery
 import task_scope
+import usercontext
 from pyspark.sql import SparkSession
 
 # Before any statement can bind a scope, and before this module's own
@@ -273,6 +274,14 @@ def apply_environment(req):
 
 namespaces = {}  # Livy session id -> its persistent globals dict (a REPL)
 session_isolated = {}  # Livy session id -> did it get a private SparkSession
+# THE TWO-CONTEXT SPLIT, staged. Off by default because stage B1 alone is a
+# REGRESSION: the child reads as the caller, and a narrowed table refuses that
+# principal by design, so a secured session would lose the filtered read it has
+# today until the system context supplies it (stage B2, docs/54). Shipping it
+# dark keeps the code reviewable and the behaviour unchanged; the flag goes away
+# when B2 lands and the default flips.
+TWO_CONTEXT = os.environ.get("FABRIC_TWO_CONTEXT") == "1"
+
 session_route = {}     # Livy session id -> HOW (catalog.ROUTE_*), which says
                        # whether its CATALOG is private too — see
                        # onelake_security.apply(catalog_private=...)
@@ -627,7 +636,13 @@ class Handler(BaseHTTPRequestHandler):
                 with task_scope.scoped(scope_for(session)):  # noqa: SIM117
                     with cell_context(req.get("jobId"), req.get("cellIndex")):
                         with runtime_scope(session, req):
-                            if (req.get("kind") or "").lower() == "sql":
+                            if TWO_CONTEXT and usercontext.is_secured(req):
+                                # The user context runs it, with the caller's
+                                # identity and none of the agent's credentials.
+                                result = usercontext.for_session(
+                                    session, req.get("principal")).run(
+                                        req.get("code", ""), req.get("kind") or "")
+                            elif (req.get("kind") or "").lower() == "sql":
                                 result = sqlrun.run_sql(req.get("code", ""), ns(session))
                             else:
                                 result = run_code(req.get("code", ""), ns(session))
@@ -689,6 +704,7 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             session_isolated.pop(sid, None)
             session_route.pop(sid, None)
+            usercontext.close_session(sid)
             self._send(200, {"closed": True})
         else:
             self._send(404, {"error": "not found"})
