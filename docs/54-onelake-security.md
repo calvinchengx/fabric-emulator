@@ -475,10 +475,10 @@ The Windows branch is covered from POSIX by injecting its three platform calls,
 because code that first executes on a machine nobody can step through is how the
 two earlier portability defects reached CI instead of a test.
 
-**B3 — witnesses and parity.** The probe above becomes assertions: the cell
-cannot reach a credential, the path read is refused, the SQL path still returns
-2 of 3 rows and one column, and the owner is untouched. Only then does the
-direct-path-access row go from 🟡 to 🟢.
+**B3 — witnesses and parity.** `e2e/two-context` runs the livy stack with the
+split on and asserts what a cell can and cannot reach. It does NOT turn the
+direct-path row green, because B2 measured why that is not ours to close; what
+it witnesses is the separation.
 
 ### Costs, stated before building
 
@@ -543,3 +543,35 @@ the e2e suite before anyone commits to it, and it is not in this stage.
 Until then the direct-path-access parity row stays **🟡**, and it says the
 engine is the reason. A row claiming the guarantee would be claiming a
 separation that a third process quietly opts out of.
+
+
+## B3: what the witness asserts, and the one thing it only watches
+
+`e2e/two-context/` layers `FABRIC_TWO_CONTEXT=1` over the livy stack — a layer
+rather than a fifth copy of those four services, so the base cannot drift away
+from it — and runs as `ci:two-context`:
+
+```
+viewer: 2 of 3 rows, columns region_id  -- supplied by the system context
+viewer catalog: ['sales']               -- `secret` is not merely unreadable, it is absent
+viewer environment: ['AZURE_STORAGE_TOKEN', 'ENTRA_TOKEN_URL']
+the cell's bearer is the caller's own, not the agent's
+owner still sees 3 of 3
+```
+
+Every claim is paired with one that must still succeed. A stack where nothing
+worked would satisfy "the cell cannot reach the secret" and prove nothing, so
+the viewer being *filtered rather than broken* is asserted in the same run, and
+so is the owner being untouched. The bearer check compares against the service
+token the harness itself holds: not merely "a token", and not the agent's.
+
+**The path read is a tripwire, not a guarantee.** It still returns all 3 rows,
+and the witness asserts exactly that, with the reason in the failure message:
+
+> the path read returned N, not 3. If the engine now carries per-session
+> identity, this is GOOD NEWS: update docs/54 and flip the direct-path-access
+> parity row from Partial to Real.
+
+Asserting the current number is the difference between a documented gap and a
+forgotten one. A 🟡 row with nothing watching it stays 🟡 long after the reason
+expires; this one fails the build the day the reason does.

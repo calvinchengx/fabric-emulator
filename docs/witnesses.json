@@ -1324,9 +1324,20 @@
     "claim": "Row- and column-level security, applied by the engine",
     "witnesses": [
       "ci:livy-native",
+      "ci:two-context",
       "py:test_onelake_security",
       "go:TestRowLevelSecurityBlocksTheDirectPathRead",
       "go:TestColumnLevelSecurityBlocksTheDirectPathRead"
+    ]
+  },
+  "two-context-execution-the-user-context-holds-no-service-credential": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "Two-context execution \u2014 the user context holds no service credential",
+    "witnesses": [
+      "ci:two-context",
+      "py:test_user_context",
+      "py:test_the_client_secret_does_not_travel_to_the_child",
+      "py:test_a_session_with_no_mintable_identity_is_refused"
     ]
   },
   "_gated": {

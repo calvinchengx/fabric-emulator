@@ -1,0 +1,18 @@
+# The livy stack, with the two-context split turned ON.
+#
+# A LAYER, not a fifth copy of that stack. The services are identical -- entra,
+# fabric-emulator, sail, spark-agent -- and the only difference that matters is
+# one environment variable, so duplicating 40 lines of compose would buy nothing
+# and drift the moment the base changes.
+#
+# PATHS RESOLVE AGAINST THE FIRST -f FILE'S DIRECTORY (e2e/livy), which is why
+# the mount below is spelled `../two-context/...` and not `./...`.
+services:
+  spark-agent:
+    environment:
+      FABRIC_TWO_CONTEXT: "1"
+
+  client:
+    volumes:
+      - ../two-context/client.py:/two_context.py:ro
+    command: ["python3", "/two_context.py"]
