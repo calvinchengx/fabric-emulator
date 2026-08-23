@@ -28,6 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpjson
 import jvmconf  # no Spark; JVM session configs (see jvmconf.py)
 import session_recovery
+import statement_fields
 import task_scope
 import usercontext
 from pyspark.sql import SparkSession
@@ -623,6 +624,7 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0) or 0)
         req = json.loads(self.rfile.read(n) or b"{}")
         if self.path == "/statements":
+            statement_fields.check(req)
             # Livy statements carry a `kind`. A `sql` statement is Spark SQL and
             # must come back as a structured result set; anything else is Python
             # and comes back as REPL text. Before this dispatch existed the agent
