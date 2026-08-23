@@ -26,6 +26,9 @@ concurrency:
   group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -155,6 +158,9 @@ concurrency:
   group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -208,6 +214,33 @@ def test_a_step_level_uses_is_not_exempt(workflows, capsys):
 # `on:` also carries two-space keys (push:, pull_request:). Counting those as
 # jobs was the first draft's bug — it read 47 jobs where there were 45 and
 # reported `push:` as missing a timeout.
+def test_a_workflow_without_top_level_permissions_fails(workflows, capsys):
+    # The third invariant had no test at all. It was added to the checker, the
+    # baseline above did not carry a `permissions:` block, and four unrelated
+    # tests went red -- which is how the suite reported it: as four failures
+    # about concurrency and timeouts, none of them naming permissions. An
+    # invariant nobody has watched fail is an invariant nobody knows the
+    # direction of.
+    workflows(ci=GOOD_CI.replace("permissions:\n  contents: read\n\n", ""))
+    assert c.main() == 1
+    out = capsys.readouterr().out
+    assert "no top-level `permissions:`" in out
+    assert "ci.yml" in out
+
+
+def test_a_job_level_permissions_block_is_not_mistaken_for_the_workflows(workflows, capsys):
+    # Indented, so it belongs to the job and leaves every OTHER job on the
+    # repository default. The checker anchors at column 0 for exactly this.
+    indented = GOOD_CI.replace(
+        "permissions:\n  contents: read\n\n", ""
+    ).replace(
+        "    timeout-minutes: 25", "    timeout-minutes: 25\n    permissions:\n      contents: read"
+    )
+    workflows(ci=indented)
+    assert c.main() == 1
+    assert "no top-level `permissions:`" in capsys.readouterr().out
+
+
 def test_on_block_keys_are_not_counted_as_jobs(workflows, capsys):
     workflows(ci="""\
 name: CI
@@ -219,6 +252,9 @@ on:
 concurrency:
   group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'push' }}
+
+permissions:
+  contents: read
 
 jobs:
   build:
