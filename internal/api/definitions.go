@@ -80,7 +80,8 @@ func (a *API) updateDefinition(w http.ResponseWriter, r *http.Request, p *auth.P
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "definition.parts is required.")
 		return
 	}
-	if err := a.Store.SetDefinition(it.ID, env.Definition.Parts); err != nil {
+	if err := a.Store.SetDefinition(
+		it.ID, notebookExecutableParts(it.Type, env.Definition.Parts)); err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}

@@ -11,9 +11,9 @@
     "id": "2",
     "contract": "Signature shape",
     "backend": "sail",
-    "status": "fail",
-    "error": "7 documented method(s) absent: create, delete, get, getDefinition, list, update, updateDefinition",
-    "pointer": "38-framework-conformance.md#2-the-api-shape-is-the-contract-independent-of-behaviour"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "3",

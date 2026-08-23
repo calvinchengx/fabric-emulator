@@ -98,6 +98,7 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request, p *auth.Princip
 	if body.Definition != nil {
 		parts = body.Definition.Parts
 	}
+	parts = notebookExecutableParts(body.Type, parts)
 	if code, msg := a.definitionRejection(body.Type, parts); msg != "" {
 		writeErr(w, http.StatusBadRequest, code, msg)
 		return

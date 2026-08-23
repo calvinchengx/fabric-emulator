@@ -1365,5 +1365,24 @@
     "sdk:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "go:TestRelayEnforcesColumnLevelSecurity": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestRelayEnforcesDynamicDataMasking": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+  },
+  "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "**`notebookutils.notebook` management** (`create`, `get`, `getDefinition`, `update`, `updateDefinition`, `delete`, `list`)",
+    "witnesses": [
+      "py:test_create_sends_only_the_ipynb_part",
+      "py:test_create_follows_the_202_operation",
+      "py:test_create_refuses_json_that_is_not_a_notebook",
+      "py:test_get_accepts_an_id_as_well_as_a_name",
+      "py:test_getDefinition_returns_the_ipynb_string",
+      "py:test_updateDefinition_reads_current_content_for_a_lakehouse_only_change",
+      "py:test_updateDefinition_does_not_poll_for_a_result_document",
+      "py:test_delete_removes_the_item_and_returns_true",
+      "py:test_list_returns_artifacts_and_honours_maxResults",
+      "go:TestCreateNotebookFromIPYNBDerivesTheExecutablePart",
+      "go:TestCreateNotebookWithBothPartsDoesNotRederive",
+      "go:TestNotebookExecutablePartsScope",
+      "boundary:no packaged third-party client speaks this surface \u2014 it is the in-notebook `notebookutils` API, not a REST endpoint an SDK wraps, so a `ci:` witness cannot exist rather than not existing yet. The REST it drives is separately witnessed by the items API rows"
+    ]
   }
 }
