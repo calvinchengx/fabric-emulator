@@ -15,10 +15,32 @@ const base = import.meta.env.BASE_URL;
 const repo = 'https://github.com/calvinchengx/fabric-emulator';
 const p = stats.parity;
 const w = stats.witnesses ?? {};
-// A release build stamps `v0.33.0`; between releases it is `latest-<sha>`, and
-// the pill says so rather than implying a release nobody cut.
+// A release build stamps `v0.33.0`; between releases it is `latest-<sha>`.
+//
+// TWO DIFFERENT FACTS, and the pill used to collapse them. `version` describes
+// THIS BUILD; `latestRelease` describes the PROJECT. When the docs are built
+// from main -- which is almost always, because they publish on push -- the
+// first is `latest-<sha>` and the pill read `unreleased`. To anyone landing on
+// the front page that says "nobody has cut a release of this", of a repository
+// with a long tag history. The build being unreleased and the project being
+// unreleased are not the same claim.
+//
+// So the pill leads with the release when there is one, and says plainly that
+// the docs run ahead of it. Only a project with no tags at all says nothing.
 const released = /^v\d+\.\d+\.\d+$/.test(stats.version);
-const releaseUrl = released ? `${repo}/releases/tag/${stats.version}` : `${repo}/releases`;
+const latestRelease = stats.latestRelease ?? null;
+const onLatest = released && stats.version === latestRelease;
+const pillVersion = released ? stats.version : latestRelease;
+const releaseUrl = pillVersion ? `${repo}/releases/tag/${pillVersion}` : `${repo}/releases`;
+// What the trailing clause says, in order of what the reader most needs:
+//   on the tag        -> what you get
+//   ahead of the tag  -> the release, and that these docs are newer
+//   no tags at all    -> the honest "unreleased"
+const pillNote = onLatest || released
+  ? 'one binary, one compose file'
+  : latestRelease
+    ? `latest release \u00b7 docs built from ${stats.version}`
+    : `building on ${stats.version}`;
 const num = (n) => (typeof n === 'number' ? n.toLocaleString('en') : '—');
 ---
 <!doctype html>
@@ -156,8 +178,8 @@ footer a{text-decoration:none}
   <div class="wrap">
     <p class="eyebrow">Fabric Emulator</p>
     <a class="release-pill" href={releaseUrl}>
-      <span>{released ? stats.version : 'unreleased'}</span>
-      {released ? 'one binary, one compose file' : `building on ${stats.version}`} &rarr;
+      <span>{pillVersion ?? 'unreleased'}</span>
+      {pillNote} &rarr;
     </a>
     <h1>Run your Fabric work on a laptop. Then prove it behaves.</h1>
     <p>A local <b>Microsoft Fabric</b>: the control plane, OneLake, and engines that genuinely

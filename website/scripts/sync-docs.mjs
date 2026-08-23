@@ -210,7 +210,8 @@ writeFileSync(join(DATA, 'parity-versions.json'), JSON.stringify(parityManifest(
 // after the figure was 120 — a number in prose has no idea a row was added,
 // and the page most likely to be read is the least likely to be re-read. A
 // figure this file cannot compute does not go on the page.
-const stats = { version: PARITY.version, parity: parityStats(PARITY), docs: names.length };
+const stats = { version: PARITY.version, latestRelease: PARITY.latestRelease,
+                parity: parityStats(PARITY), docs: names.length };
 // Witness kinds are not equal evidence and the page says so, so they are
 // counted separately: `ci:` is a CI job driving a real third-party client,
 // which is the strongest kind this repo recognises.

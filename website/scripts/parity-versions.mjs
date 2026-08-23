@@ -175,7 +175,13 @@ export function collectParity(repo) {
   const liveMd = liveName ? readFileSync(join(docsDir, liveName), 'utf8') : '';
   const liveSlug = liveName ? liveName.replace(/\.md$/, '') : null;
   points.push({ label: version, released: isRelease(version), latest: true, md: liveMd });
-  return { version, liveSlug, points, firstTag: tags[0] ?? null };
+  // latestRelease is the newest v* tag, INDEPENDENT of what this build sits
+  // on. `version` describes the build; this describes the project. A docs
+  // site built from main has a `latest-<sha>` version and still belongs to a
+  // project with releases, and conflating the two made the front page announce
+  // `unreleased` to a reader of a repository with thirty-one of them.
+  return { version, liveSlug, points, firstTag: tags[0] ?? null,
+           latestRelease: tags[tags.length - 1] ?? null };
 }
 
 // The live map's tally, for the landing page. Counted from the same parse the
