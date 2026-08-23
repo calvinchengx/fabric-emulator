@@ -63,8 +63,44 @@ type dfsError struct {
 func writeDFSErr(w http.ResponseWriter, e dfsError) {
 	w.Header().Set("x-ms-error-code", e.code)
 	w.Header().Set("Content-Type", "application/json")
+	noSniff(w)
 	w.WriteHeader(e.status)
-	fmt.Fprintf(w, `{"error":{"code":%q,"message":%q}}`, e.code, e.msg)
+	// encoding/json, NOT `%q`. These messages quote the caller's own path back
+	// at them -- "No item matches <seg>" -- so the value is attacker-chosen,
+	// and Go's %q is GO quoting, not JSON:
+	//
+	//   * it leaves < > & intact, so the body carries markup verbatim and a
+	//     browser that sniffs past the Content-Type renders it. That is the
+	//     reflected-XSS report this closes.
+	//   * it emits \x00 for a control byte, which is not valid JSON at all, so
+	//     a path with one produced a body no client could parse.
+	//
+	// json.Marshal escapes <, > and & to \u003c, \u003e and \u0026 by default
+	// and encodes control bytes as \u0000, which fixes both at once.
+	body, err := json.Marshal(map[string]any{
+		"error": map[string]string{"code": e.code, "message": e.msg},
+	})
+	if err != nil {
+		// A map of strings cannot fail to marshal, but saying so beats an
+		// empty body if it ever does.
+		body = []byte(`{"error":{"code":"InternalError","message":"error could not be encoded"}}`)
+	}
+	_, _ = w.Write(body)
+}
+
+// noSniff stops a browser second-guessing the Content-Type.
+//
+// EVERY response, not just the error bodies. This service hands back two kinds
+// of attacker-influenced bytes: error messages quoting the caller's path, and
+// the stored file content of `serveContent`, which is whatever somebody
+// uploaded. Both already carry a Content-Type that is not HTML --
+// `application/json` and `application/octet-stream` -- and without this header
+// that is a request, not an instruction: a browser may sniff the body and
+// render markup anyway, which turns an upload into stored XSS on this origin.
+//
+// Real ADLS Gen2 sends it, so this is parity rather than local hardening.
+func noSniff(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 }
 
 // permHeaders sets OneLake's canned permission response headers.
@@ -93,6 +129,7 @@ func pathHeaders(w http.ResponseWriter, p *store.OneLakePath, st *store.Store) {
 // downloads and requires a 206 + Content-Range in reply).
 func serveContent(w http.ResponseWriter, r *http.Request, content []byte) {
 	w.Header().Set("Content-Type", "application/octet-stream")
+	noSniff(w)
 	w.Header().Set("Accept-Ranges", "bytes")
 	rng := r.Header.Get("Range")
 	if rng == "" {
@@ -407,6 +444,10 @@ func (s *Service) renameSource(wsID, itemID, src string) (string, *dfsError) {
 
 // ServeHTTP implements the DFS endpoint.
 func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// BEFORE ANYTHING ELSE, so every path out of this handler carries it --
+	// including the ones that write a body without going through writeDFSErr
+	// or serveContent, and the ones added later.
+	noSniff(w)
 	// Env-gated request tracing (diagnostics only; off in prod). Read per
 	// request so it can be toggled without a restart (and in tests).
 	if os.Getenv("ONELAKE_TRACE") != "" {
