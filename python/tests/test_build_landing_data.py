@@ -31,22 +31,20 @@ import build_landing_data as c  # noqa: E402
 
 # A page that satisfies every rule. Each test below mutates ONE thing.
 GOOD_PAGE = """\
-<!doctype html>
-<html><body>
-<!-- stats:start -->
-<div class="stat"><b id="witness-count">&mdash;</b><span>witnesses</span></div>
-<div class="stat"><b id="claims-count">&mdash;</b><span>claims</span></div>
-<div class="stat"><b id="parity-real">&mdash;</b><span>real</span></div>
-<div class="stat"><b id="e2e-suites">&mdash;</b><span>suites</span></div>
-<div class="stat"><b id="engine-pass">&mdash;</b><span>probes</span></div>
-<div class="stat"><b id="conformance-proven">&mdash;</b><span>cells</span></div>
-<div class="stat"><b id="verified-count">&mdash;</b><span>real tenant</span></div>
-<!-- stats:end -->
-<script>
-  load('site-stats.json');
-  load('evidence-summary.json');
-</script>
-</body></html>
+---
+import stats from '../data/site-stats.json';
+const num = (n) => n.toLocaleString('en');
+---
+<header>
+  {/* stats:start - every figure below must be an expression, never a typed
+      number. */}
+  <div class="stats">
+    <div class="stat"><b>{num(p.real)}</b><span>graded real, of {num(p.total)}</span></div>
+    <div class="stat"><b>{num(w.total)}</b><span>witnesses</span></div>
+    <div class="stat"><b>{num(stats.docs)}</b><span>pages</span></div>
+  </div>
+  {/* stats:end */}
+</header>
 """
 
 ENGINE_MD = """\
@@ -91,7 +89,7 @@ def page(tmp_path):
         if old is not None:
             assert old in body, f"the fixture no longer contains {old!r}"
             body = body.replace(old, new)
-        path = tmp_path / "index.html"
+        path = tmp_path / "index.astro"
         path.write_text(body, encoding="utf-8")
         return path
 
@@ -170,52 +168,50 @@ def test_a_page_that_does_not_exist(tmp_path):
 
 
 def test_a_page_with_no_stats_region(page):
-    code, message = c.check_page(page(old="<!-- stats:start -->", new=""))
+    code, message = c.check_page(page(old="{/* stats:end */}", new=""))
     assert code == 1
     assert "stats:start" in message
 
 
-def test_a_typed_number_in_a_bound_element(page):
-    """The defect this whole script exists for."""
+def test_a_typed_number_where_an_expression_belongs(page):
+    """The defect this whole script exists for.
+
+    These docs said "113 supported capability claims" long after the figure was
+    120. Astro cannot prevent somebody typing the number; this can.
+    """
     code, message = c.check_page(
-        page(old='<b id="parity-real">&mdash;</b>', new='<b id="parity-real">138</b>'))
+        page(old="<b>{num(p.real)}</b>", new="<b>139</b>"))
     assert code == 1
-    assert "parity-real" in message
-    assert "'138'" in message
+    assert "'<b>139</b>'" in message or "139" in message
+    assert "typed number" in message
 
 
-def test_a_headline_figure_with_no_placeholder_behind_it(page):
-    """A number can be typed WITHOUT an id, which the binding check cannot see."""
+def test_a_number_typed_beside_an_expression_is_still_caught(page):
+    """Half-interpolated is not interpolated: the literal still goes stale."""
     code, message = c.check_page(
-        page(old='<span>witnesses</span>', new='<b>599 witnesses</b>'))
+        page(old="<b>{num(w.total)}</b>", new="<b>{num(w.total)} of 159</b>"))
     assert code == 1
-    assert "headline figure" in message
+    assert "typed number" in message
 
 
-def test_a_missing_binding(page):
-    code, message = c.check_page(page(old='id="verified-count"', new='id="something"'))
+def test_a_page_that_stopped_importing_the_manifest(page):
+    code, message = c.check_page(
+        page(old="import stats from '../data/site-stats.json';", new=""))
     assert code == 1
-    assert "verified-count" in message
-
-
-def test_a_page_that_stopped_reading_a_manifest(page):
-    code, message = c.check_page(page(old="load('evidence-summary.json');", new=""))
-    assert code == 1
-    assert "evidence-summary.json" in message
-    assert "dash forever" in message
+    assert "site-stats.json" in message
 
 
 def test_a_manifest_named_only_in_a_comment_is_not_read(page):
     """The mutation that beat the first version of this check.
 
-    Renaming the fetch left the old filename sitting in the comment above it,
-    and a substring search called that "still reads it".
+    Renaming the import left the old filename in a comment above it, and a
+    substring search called that "still reads it".
     """
     code, message = c.check_page(page(
-        old="load('evidence-summary.json');",
-        new="// evidence-summary.json used to be loaded here\n  load('other.json');"))
+        old="import stats from '../data/site-stats.json';",
+        new="// site-stats.json used to be imported here\nimport stats from './other.json';"))
     assert code == 1
-    assert "evidence-summary.json" in message
+    assert "site-stats.json" in message
 
 
 @pytest.mark.parametrize("spelling", ["load('x.json')", 'fetch("x.json")', "fetch( 'x.json'"])
@@ -349,13 +345,13 @@ def test_main_refuses_before_writing_anything(sources, page, tmp_path, monkeypat
     """A refused page must not leave a half-built _site behind."""
     sources()
     out = tmp_path / "_site"
-    bad = page(old='<b id="parity-real">&mdash;</b>', new='<b id="parity-real">138</b>')
+    bad = page(old="<b>{num(p.real)}</b>", new="<b>139</b>")
     monkeypatch.setattr(sys, "argv", [
         "build_landing_data.py", "--out", str(out), "--landing", str(bad)])
 
     assert c.main() == 1
     assert not out.exists()
-    assert "parity-real" in capsys.readouterr().out
+    assert "typed number" in capsys.readouterr().out
 
 
 def test_the_real_landing_page_satisfies_its_own_check():
@@ -365,8 +361,10 @@ def test_the_real_landing_page_satisfies_its_own_check():
     says nothing about what is published. This is the control in the other
     direction: the page actually in the tree must pass.
     """
-    landing = c.ROOT / "site" / "index.html"
-    if not landing.exists():
-        pytest.skip(f"{landing} is not in this checkout")
+    landing = c.ROOT / "website" / "src" / "pages" / "index.astro"
+    # NOT skipped when absent. This is the only test that reads what is
+    # actually published, and a skip here would look identical to a pass on the
+    # day somebody moves the hero.
+    assert landing.exists(), f"{landing} is missing; the hero this checks is gone"
     code, message = c.check_page(landing)
     assert code == 0, message

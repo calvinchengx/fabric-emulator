@@ -199,6 +199,10 @@ footer a{text-decoration:none}
       <a class="btn ghost" href={repo}>Source on GitHub</a>
       <a class="btn ghost" href={`${base}parity/`}>The parity map</a>
     </div>
+    {/* stats:start — every figure below must be an expression, never a typed
+        number. scripts/build_landing_data.py enforces it and fails the build
+        if a literal appears, because this page's docs once said "113 supported
+        capability claims" long after the figure was 120. */}
     <div class="stats">
       <div class="stat"><b>{num(p.real)}</b><span>capabilities graded real, of {num(p.total)}</span></div>
       <div class="stat"><b>{num(w.total)}</b><span>witnesses over {num(w.claims)} claims</span></div>
@@ -206,6 +210,7 @@ footer a{text-decoration:none}
       <div class="stat"><b>{num(stats.e2e)}</b><span>end-to-end suites</span></div>
       <div class="stat"><b>{num(stats.docs)}</b><span>pages of documentation</span></div>
     </div>
+    {/* stats:end */}
   </div>
 </header>
 

@@ -211,7 +211,7 @@ docs-build: ## Build the published site into ./_site (what CI deploys)
 	@# them, and under /docs/. AFTER the assembler, which clears _site.
 	$(UVPY) scripts/coverage_badges.py --out _site
 	$(UVPY) scripts/coverage_badges.py --out _site/docs
-	$(UVPY) scripts/build_landing_data.py --out _site --landing site/index.html
+	$(UVPY) scripts/build_landing_data.py --out _site --landing website/src/pages/index.astro
 
 docs-serve: docs-build ## …and serve it locally at its published URLs (DOCS_PORT=8099)
 	$(UVPY) scripts/assemble_site.py --serve --site _site --port $(DOCS_PORT)

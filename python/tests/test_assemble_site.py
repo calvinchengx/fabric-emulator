@@ -49,16 +49,11 @@ def site(tmp_path, monkeypatch):
     """Point the module's inputs at a tree this test owns."""
 
     def build(routes=("", "01-quickstart", "parity"), published=None, page=None,
-              landing="<html>landing</html>", write_routes=True, write_landing=True,
-              write_dist=True):
+              write_routes=True, write_dist=True):
         if write_dist:
             monkeypatch.setattr(c, "DIST", build_dist(tmp_path, routes, page))
         else:
             monkeypatch.setattr(c, "DIST", tmp_path / "no-dist")
-        landing_path = tmp_path / "index.html"
-        if write_landing:
-            landing_path.write_text(landing, encoding="utf-8")
-        monkeypatch.setattr(c, "LANDING", landing_path)
         routes_file = tmp_path / "published-routes.txt"
         if write_routes:
             listed = published if published is not None else [r for r in routes if r]
@@ -108,7 +103,13 @@ def test_assembly_puts_the_docs_under_the_base_and_the_landing_at_the_root(site,
     out = site()
     assert c.assemble(out) == 0
 
-    assert (out / "index.html").read_text(encoding="utf-8") == "<html>landing</html>"
+    # ONE HERO AT BOTH DOORS. The root is a copy of the built docs index, not
+    # a second page: two sources were what let the version pill drift.
+    root = (out / "index.html").read_text(encoding="utf-8")
+    assert root == (out / "docs" / "index.html").read_text(encoding="utf-8")
+    # And it must be a real page, not a redirect stub -- SiteTitle.astro sends
+    # every docs reader here, and a redirect would send them straight back.
+    assert "http-equiv=\"refresh\"" not in root
     assert (out / "docs" / "01-quickstart" / "index.html").is_file()
     # And the pre-move path still resolves, which is the whole point.
     assert f'href="{c.BASE}01-quickstart/"' in (
@@ -151,10 +152,18 @@ def test_assembly_needs_a_docs_build(site):
         c.assemble(out)
 
 
-def test_assembly_needs_a_landing_page(site):
-    out = site(write_landing=False)
-    with pytest.raises(SystemExit, match="no landing page"):
-        c.assemble(out)
+def test_the_root_is_a_page_rather_than_a_redirect(site):
+    """SiteTitle.astro links every docs page back to the root.
+
+    That component exists because nine of eleven Starlight sites in this family
+    offered no way back at all. If the root redirected to the docs root, the
+    back-link would return the reader to the page they left.
+    """
+    out = site()
+    assert c.assemble(out) == 0
+    root = (out / "index.html").read_text(encoding="utf-8")
+    assert "http-equiv=\"refresh\"" not in root
+    assert "<html" in root.lower()
 
 
 def test_assembly_clears_what_was_there_before(site):

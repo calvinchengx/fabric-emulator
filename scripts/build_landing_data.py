@@ -23,7 +23,7 @@ the two generated matrices, and how many claims rest on a real-tenant witness.
 Run it after the Astro build, which is what writes site-stats.json:
 
     pnpm --filter fabric-emulator-docs build
-    ./scripts/build_landing_data.py --out _site --landing site/index.html
+    ./scripts/build_landing_data.py --out _site --landing website/src/pages/index.astro
 """
 
 from __future__ import annotations
@@ -57,10 +57,17 @@ BINDINGS = {
 # The stat row is delimited in the page by these comments, so this script reads
 # exactly the region where a total is stated as a headline rather than guessing
 # at the shape of the markup around it.
-STATS_REGION = re.compile(r"<!-- stats:start -->(.*?)<!-- stats:end -->", re.S)
-ID_ELEMENT = re.compile(r"<(b|span)\b[^>]*\bid=\"([^\"]+)\"[^>]*>(.*?)</\1>", re.S)
+# The region is DECLARED, not inferred from a class name that could be renamed
+# without anyone noticing the check had stopped covering anything.
+STATS_REGION = re.compile(r"\{/\* stats:start.*?\*/\}(.*?)\{/\* stats:end \*/\}", re.S)
 BOLD_ELEMENT = re.compile(r"<b\b[^>]*>(.*?)</b>", re.S)
-PLACEHOLDER = "&mdash;"
+# `{num(p.real)}` and friends. Anything left after these and the tags come out
+# is something a person typed.
+EXPRESSION = re.compile(r"\{[^{}]*\}")
+# An IMPORT, not a mention. The old check required a `load('…')` call for the
+# same reason: a manifest named in a comment is not a manifest being read, and
+# the failure it guards against looks identical either way.
+IMPORTS_STATS = re.compile(r"import\s+\w+\s+from\s+['\"][^'\"]*site-stats\.json['\"]")
 
 
 # A manifest is "read" only when the page FETCHES it. Matching the bare
@@ -228,7 +235,19 @@ def site_stats() -> dict:
 
 
 def check_page(page: pathlib.Path) -> tuple[int, str]:
-    """Refuse a page that types a total, or stops reading one."""
+    """Refuse a landing page that TYPES a total instead of interpolating it.
+
+    REPOINTED AT THE ASTRO SOURCE. This used to read a hand-written
+    site/index.html whose figures were fetched at run time, and it required
+    each one to be an `&mdash;` placeholder. That page is gone: the docs root
+    is the only hero now, and Astro interpolates `site-stats.json` at build
+    time, so an interpolated figure cannot go stale.
+
+    What Astro does NOT prevent is somebody typing `139` where `{num(p.real)}`
+    belongs, and that is the failure this ever existed for -- these docs once
+    said "113 supported capability claims" long after the number was 120. So
+    the check moves to the source and asks the same question of it.
+    """
     if not page.exists():
         return 1, f"FAIL: {page} does not exist."
     text = read(page)
@@ -236,43 +255,28 @@ def check_page(page: pathlib.Path) -> tuple[int, str]:
     region = STATS_REGION.search(text)
     if not region:
         return 1, (
-            f"FAIL: {page} has no <!-- stats:start --> ... <!-- stats:end --> region, "
-            "so this script cannot tell a placeholder from a typed number."
+            f"FAIL: {page} has no {{/* stats:start */}} ... {{/* stats:end */}} region, "
+            "so this script cannot tell an interpolation from a typed number."
         )
-    stats = region.group(1)
 
-    for match in ID_ELEMENT.finditer(stats):
-        element_id, inner = match.group(2), match.group(3)
-        if inner.strip() != PLACEHOLDER:
+    for figure in BOLD_ELEMENT.findall(region.group(1)):
+        residue = re.sub(r"<[^>]+>", "", EXPRESSION.sub("", figure))
+        if any(char.isdigit() for char in residue):
             return 1, (
-                f"FAIL: {page} fills #{element_id} with {inner.strip()!r}. Every "
-                "figure in the stat row is read at run time; a typed number goes "
-                "stale the day the count moves, and this project has already "
-                "published one that did."
-            )
-
-    for match in BOLD_ELEMENT.finditer(stats):
-        body = re.sub(r"<[^>]+>", "", match.group(1))
-        if any(char.isdigit() for char in body):
-            return 1, (
-                f"FAIL: {page} states {body.strip()!r} as a headline figure with no "
-                "placeholder behind it. Bind it to an id and fill it from a manifest."
+                f"FAIL: {page} states {figure.strip()!r} as a headline figure with a "
+                "typed number in it. Every total on this page is interpolated from "
+                "site-stats.json; a literal goes stale the day the count moves, and "
+                "this project has already published one that did."
             )
 
-    for element_id, source in BINDINGS.items():
-        if f'id="{element_id}"' not in text:
-            return 1, (
-                f"FAIL: {page} no longer has #{element_id}, so a headline number "
-                "would never fill."
-            )
-        if not fetches(text, source):
-            return 1, (
-                f"FAIL: {page} no longer reads {source}, so #{element_id} would "
-                "show a dash forever."
-            )
+    if not IMPORTS_STATS.search(text):
+        return 1, (
+            f"FAIL: {page} does not import site-stats.json, so its totals are no "
+            "longer derived from the manifest that owns them. A file named in a "
+            "comment is not a file being read."
+        )
 
     return 0, ""
-
 
 def main() -> int:
     parser = argparse.ArgumentParser()

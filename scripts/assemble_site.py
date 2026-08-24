@@ -41,7 +41,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "website" / "dist"
-LANDING = ROOT / "site" / "index.html"
 ROUTES = ROOT / "website" / "published-routes.txt"
 BASE = "/fabric-emulator/docs/"
 
@@ -99,15 +98,29 @@ def assemble(out: Path) -> int:
         raise SystemExit(
             f"assemble_site: no Starlight build at {DIST}. Run the docs build first."
         )
-    if not LANDING.is_file():
-        raise SystemExit(f"assemble_site: no landing page at {LANDING}")
 
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
     shutil.copytree(DIST, out / "docs")
-    shutil.copy2(LANDING, out / "index.html")
+    # ONE HERO, SERVED AT BOTH DOORS FROM ONE SOURCE.
+    #
+    # There were two: a hand-written site/index.html at the root and the Astro
+    # page at /docs/. Parallel drafts of the same page -- the same sections in
+    # the same order, one a strict superset of the other -- maintained
+    # separately, which is how the version pill came to read "unreleased" on a
+    # repository with 33 tags in one of them and not the other.
+    #
+    # COPIED, NOT REDIRECTED, and the difference matters. A redirect at the
+    # root would make SiteTitle.astro's back-link circular: it sends a reader
+    # from any docs page to `/fabric-emulator/`, and it exists because nine of
+    # eleven Starlight sites in this family offered no way back at all. The
+    # root must therefore remain a page.
+    #
+    # The duplication that hurt was TWO SOURCES, not two URLs. One build output
+    # at both paths costs a copy and removes the authoring surface that drifted.
+    shutil.copy2(DIST / "index.html", out / "index.html")
 
     # A stub for every route the docs now serve, at the path it used to have.
     new = routes_in(out / "docs")

@@ -41,12 +41,13 @@ import sys
 
 # Everything under these is documentation for this purpose. `website/` is the
 # Astro site: its scripts, components and config exist only to render `docs/`.
-# `site/` is the hand-written landing page that the same published site serves
-# at its root: one self-contained HTML file, read by nothing but a browser and
-# by `scripts/build_landing_data.py`, which docs-site.yml runs on every change
-# under `site/**`. So the check that can observe a landing-page edit runs in
-# the workflow that builds it, and no job this lane skips can see the file.
-DOC_TREES = ("docs/", "website/", "site/")
+# `site/` used to hold a hand-written landing page served at the root. There is
+# one hero now -- website/src/pages/index.astro, copied to both the root and
+# the docs root by the assembler -- so it lives under `website/` like the rest
+# of the site, and `scripts/build_landing_data.py` reads it there. The check
+# that can observe a hero edit still runs in the workflow that builds it, and
+# no job this lane skips can see the file.
+DOC_TREES = ("docs/", "website/")
 
 # Loose files that are documentation despite living at the root. Listed rather
 # than matched by `*.md`, so a new root-level markdown file (a LICENSE-adjacent
@@ -111,9 +112,10 @@ def self_test() -> int:
     cases: list[tuple[str, bool, str]] = [
         ("M\tdocs/01-quickstart.md", True, "edited page"),
         ("M\twebsite/scripts/sync-docs.mjs", True, "the #363 change itself"),
-        ("M\tsite/index.html", True, "the landing page the docs site serves at its root"),
-        ("M\tsite/index.html\nM\tscripts/build_landing_data.py", False,
-         "the guard that reads the landing page is code, so it disqualifies the lane"),
+        ("M\twebsite/src/pages/index.astro", True,
+         "the hero, which serves both the root and the docs root from one source"),
+        ("M\twebsite/src/pages/index.astro\nM\tscripts/build_landing_data.py", False,
+         "the guard that reads the hero is code, so it disqualifies the lane"),
         ("M\tREADME.md", True, "root readme"),
         ("A\tdocs/55-new.md\nM\tREADME.md", True, "several docs"),
         ("M\tinternal/api/items.go", False, "code"),
