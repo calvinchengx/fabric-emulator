@@ -532,6 +532,16 @@ engine's session catalog went away. That is the whole finding in two numbers,
 and it is what justifies the oracle below asking storage rather than reasoning
 about registrations.
 
+**And the JVM leg is the control that names the cause.** The identical notebook,
+the identical 60s token and the identical 75s wait run on the JVM overlay too —
+and there `reread_ok` is **True**. The table is still in the catalog after the
+wait. The difference is not the wait, the token or the catalog: the JVM overlay
+has no launcher, because `EntraTokenProvider` refreshes **in process**, and that
+run records zero restarts. So this is not "long waits lose tables"; it is
+specifically **sail's restart-based refresh discarding session state**, and the
+engine that refreshes without restarting keeps its table. Measured on both, from
+the same probe, on the same run of the kit.
+
 **Asking the lakehouse, not just the bookkeeping, is the part that took a
 correction.** The first version consulted only what the agent had registered —
 `delta_ops`'s recorded locations and the control plane's `/register` payload —
