@@ -356,13 +356,48 @@ bytes; one that stayed out of the way cannot. The emulator has no way to forge
 this short of reproducing its own input verbatim, which is the same thing as not
 having touched it.
 
-**`OPTIMIZE <name>` cannot resolve a table a notebook wrote.** The delta-rs
-interception resolves a NAME through the emulator's registration, and
-`saveAsTable` inside a notebook does not register it that way: `OPTIMIZE events`
-fails with `cannot resolve 'events' to a table location: it was not registered
-through the emulator`. Measured twice. The probe uses the path form, which is
-what `e2e/livy` proves against a real OneLake table — but the name is what a
-notebook author would type, so this is a gap rather than a preference.
+**`OPTIMIZE <name>` cannot resolve a table a notebook wrote — on sail, and only
+there.** This was recorded as a flat product limitation. It is not one, and the
+probe now measures it on both engines every run rather than remembering it:
+
+| engine | `OPTIMIZE events` | |
+|---|---|---|
+| sail | **fails** | `DeltaOpError: cannot resolve 'events' to a table location: it was not registered through the emulator, and the engine refused DESCRIBE DETAIL (IllegalArgumentException: invalid argument: found DETAIL at 9:15 expected 'FUNCTION', 'CATALOG', …)` |
+| jvm | **succeeds** | — |
+
+The reason is not that one engine is better at resolving names. It is that
+**`delta_ops` is only installed on the Sail/Connect path at all** —
+`agent.py` returns early unless `SPARK_REMOTE` is set, deliberately, because "on
+the JVM overlay Spark runs these natively and interception would be a downgrade
+— the JVM supports the full syntax (ZORDER, WHERE) that the delta-rs path
+refuses." On jvm the question never arises: Delta resolves the name through its
+own session catalog, which is where `saveAsTable` registered it.
+
+So on the one engine where the interception exists, its `resolve()` has two
+routes and a notebook-written table defeats both. `known_location()` is
+populated by `register()` — which enumerates the lakehouse's `Tables/` when the
+session opens, *before* cell 0 has written anything — and by
+`CREATE TABLE … USING delta LOCATION` statements passing through, which a
+`saveAsTable` is not. The fallback is `DESCRIBE DETAIL`, which Sail's grammar
+does not have.
+
+**The failure is at least a good one**, and that is by design rather than by
+luck: `resolve()` announces the fallback before attempting it and owns the
+error, so what the user sees names the cause and the remedy instead of surfacing
+Sail's parse error about column 9 of a statement they never wrote. The module's
+own comment explains why — "everything that went wrong around this code went
+wrong quietly".
+
+**A derivation exists and is not used, which is the actual lead.**
+`_SCHEMA_LOCATIONS` is already in this module, and CTAS placement already
+derives `<schema location>/<table>` from it. `resolve()` never consults it. And
+`bindDefaultLakehouse` issues `CREATE DATABASE IF NOT EXISTS … LOCATION
+'<abfs tables path>'`, so the lakehouse's location *is stated to the engine* and
+then dropped — `remember_stated_delta_location` matches only
+`CREATE TABLE … USING delta LOCATION`. Recording the database form would let
+`events` resolve by derivation, on the engine that needs it, with no DESCRIBE at
+all. **Not done here**; the probe records the two numbers so the claim stops
+being a memory.
 
 ### 7. Credentials must outlive the run
 

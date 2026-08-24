@@ -234,12 +234,26 @@ try:
         _unrec, _unrec_err = _try(lambda: spark.sql(
             f"MERGE INTO delta.`{_tbl}` t USING (SELECT 1 AS id) s "
             "ON t.id = s.id WHEN MATCHED THEN DELETE").collect())
+        # MEASURED, NOT ASSERTED. docs/38 records that `OPTIMIZE <name>`
+        # cannot resolve a table a notebook wrote, because the interception
+        # resolves a name through the emulator's registration and
+        # `saveAsTable` does not register it that way. That was measured on
+        # sail only — and the fallback when there is no recorded location is
+        # `DESCRIBE DETAIL`, which Sail does not implement and Spark does. So
+        # the same statement may well behave differently per engine, and a
+        # gap recorded as universal deserves a number from each. Recorded
+        # here, graded by nothing: contract 6 is about fall-through, and this
+        # is a separate limitation that happens to be cheap to observe from
+        # the same cell.
+        _name_ok, _name_err = _try(lambda: spark.sql("OPTIMIZE events").collect())
         _findings["fall_through"] = {
             "table_error": "",
             "recognised_ok": not _rec_err,
             "recognised_error": _rec_err,
             "unrecognised_ok": not _unrec_err,
             "unrecognised_error": _unrec_err,
+            "name_form_ok": not _name_err,
+            "name_form_error": _name_err,
         }
     else:
         _findings["fall_through"] = {"skipped": True}
