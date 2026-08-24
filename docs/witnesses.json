@@ -577,7 +577,8 @@
       "go:TestHCLivyE2E",
       "go:TestHCSessionPacking",
       "go:TestHCRBACAndScope",
-      "ci:spark-a2"
+      "ci:spark-a2",
+      "ci:dbt-fabricspark"
     ]
   },
   "lookup-activity-onelake-csv-json-parquet-delta": {
@@ -885,7 +886,8 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "Spark session / statement / batch via the **Livy API**",
     "witnesses": [
-      "ci:livy-native"
+      "ci:livy-native",
+      "ci:dbt-fabricspark"
     ]
   },
   "sql-analytics-endpoint-semantics-over-lakehouse-delta": {

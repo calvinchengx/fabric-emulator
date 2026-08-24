@@ -16,9 +16,12 @@ The valuable seams are the three the checker gets wrong most cheaply:
     one-level check missed a helper fronting another helper.
 """
 import importlib.util
+import json
 import sys
 import textwrap
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -210,3 +213,153 @@ def test_the_actual_repo_passes_strict():
     cw.CI = REPO / ".github" / "workflows" / "ci.yml"
     sys.argv = ["check_witnesses.py", "--strict"]
     assert cw.main() == 0
+
+
+# --- the ecosystem-conformance table -----------------------------------------
+#
+# That section is SKIPPED by the claim scanner, correctly: its rows are clients,
+# not capabilities. Which left its 🟢 marks governed by nothing, and two real
+# client suites sitting outside the manifest — `dbt-fabricspark`, which runs in
+# five CI jobs and was cited by no claim, and `vscode-extension`. The tests
+# below drive the reconciliation from the failing side, because a checker over
+# a table that currently satisfies it passes whether or not it works.
+
+@pytest.fixture(autouse=True)
+def _restore_module_globals():
+    """Every test here rebinds module-level paths and maps on `cw`.
+
+    Autouse and module-wide on purpose: without it the last test to run leaves
+    its tmp_path bound to cw.PARITY, and whichever test is appended next reads
+    a directory that pytest has deleted. Nothing had bitten yet, which is the
+    only reason it was safe to leave.
+    """
+    saved = {name: getattr(cw, name)
+             for name in ("PARITY", "MANIFEST", "ROOT", "CI", "JOB_FOR", "UNCREDITED")
+             if hasattr(cw, name)}
+    yield
+    for name, value in saved.items():
+        setattr(cw, name, value)
+
+
+ECO_DOC = textwrap.dedent("""\
+    # Parity
+
+    ## Platform
+
+    | Fabric feature | Notes | Status |
+    |---|---|---|
+    | Workspaces CRUD | crud | 🟢 Real |
+
+    ## Ecosystem conformance: real OSS/vendor clients as witnesses
+
+    | Real client (pinned) | Surface exercised | Status |
+    |---|---|---|
+    | `some-client` | Control plane | 🟢 `e2e/some-client` — debug→run |
+    | `go-mssqldb` | TDS | 🟢 `internal/server`, `internal/tds` |
+    | `not-yet` | Nothing | 🔴 planned |
+
+    Prose underneath mentioning `e2e/type-map`, which is a probe, not a row.
+    """)
+
+
+def eco(tmp_path, manifest, text=ECO_DOC, job_for=None, uncredited=None):
+    p = tmp_path / "parity.md"
+    p.write_text(text, encoding="utf-8")
+    cw.PARITY = p
+    cw.JOB_FOR = {} if job_for is None else job_for
+    cw.UNCREDITED = {} if uncredited is None else uncredited
+    return cw.ecosystem_gaps(manifest)
+
+
+def cited(*jobs):
+    return {"a-claim": {"witnesses": [f"ci:{j}" for j in jobs]}}
+
+
+def test_a_credited_client_row_is_clean(tmp_path):
+    assert eco(tmp_path, cited("some-client")) == []
+
+
+def test_a_client_row_nothing_cites_is_reported(tmp_path):
+    """The live case. Deleting that CI job would turn nothing red."""
+    problems = eco(tmp_path, cited("something-else"))
+    assert len(problems) == 1
+    assert "e2e/some-client" in problems[0]
+    assert "ci:some-client" in problems[0]
+
+
+def test_a_row_naming_no_e2e_suite_is_not_checked(tmp_path):
+    """`go-mssqldb` is witnessed from internal/, and that is legitimate."""
+    assert all("mssqldb" not in p for p in eco(tmp_path, cited("some-client")))
+
+
+def test_an_unsupported_row_is_not_required_to_have_a_witness(tmp_path):
+    assert all("not-yet" not in p for p in eco(tmp_path, cited("some-client")))
+
+
+def test_prose_below_the_table_is_not_read_as_a_row(tmp_path):
+    """Reading the whole section reported `e2e/type-map` — a probe another
+    suite invokes — as an uncredited witness. A false alarm gets a gate
+    switched off, so the parser takes rows, not section text."""
+    assert all("type-map" not in p for p in eco(tmp_path, cited("some-client")))
+
+
+def test_a_suite_whose_job_is_named_differently_resolves_through_job_for(tmp_path):
+    assert eco(tmp_path, cited("client-job"),
+               job_for={"some-client": "client-job"}) == []
+
+
+def test_a_stale_job_for_entry_is_reported(tmp_path):
+    """A mapping to a job that witnesses nothing: renamed again, or wrong all
+    along. Either way it is a declaration nothing checks, which is the shape of
+    the original bug."""
+    problems = eco(tmp_path, cited("some-client"),
+                   job_for={"some-client": "gone-away"})
+    assert any("JOB_FOR" in p and "gone-away" in p for p in problems)
+
+
+def test_an_exempt_suite_is_not_required_to_be_credited(tmp_path):
+    assert eco(tmp_path, cited("nothing"),
+               uncredited={"some-client": "no graded row covers it"}) == []
+
+
+def test_an_exemption_that_is_now_credited_is_reported(tmp_path):
+    """Exemptions describe the present or they describe the past."""
+    problems = eco(tmp_path, cited("some-client"),
+                   uncredited={"some-client": "stale reason"})
+    assert any("UNCREDITED" in p for p in problems)
+
+
+def test_a_map_without_the_section_is_not_forced_to_have_one(tmp_path):
+    """A synthetic map in a unit test has no ecosystem table, and requiring one
+    is how #367 broke four tests: an invariant its own fixtures could not
+    satisfy. That THIS repo's map carries the section is asserted against the
+    repo, below, where it can be true."""
+    text = ECO_DOC.split("## Ecosystem")[0]
+    assert eco(tmp_path, cited("some-client"), text=text) == []
+
+
+def test_a_table_with_no_suite_at_all_is_an_error_not_a_pass(tmp_path):
+    """Vacuous success is the failure mode this whole file exists for."""
+    text = ECO_DOC.replace("🟢 `e2e/some-client` — debug→run", "🟢 somewhere")
+    with pytest.raises(cw.Unreadable, match=r"vacuous"):
+        eco(tmp_path, cited("some-client"), text=text)
+
+
+def test_the_committed_map_still_has_a_readable_ecosystem_table():
+    """The control the generic tests cannot give: all of them build their own
+    table, so every one would pass with the real section renamed away and the
+    reconciliation quietly disabled."""
+    cw.PARITY = REPO / "docs" / "parity.md"
+    suites = cw.ecosystem_suites()
+    assert len(suites) > 10, suites
+    assert "dbt-fabricspark" in suites
+
+
+def test_the_committed_map_credits_dbt_fabricspark(tmp_path):
+    """The regression this was opened for: Microsoft's Spark adapter drives the
+    Livy high-concurrency surface and was credited to no claim, while the two
+    `ci:dbt-fabric` citations sat on the warehouse rows."""
+    manifest = json.loads((REPO / "docs" / "witnesses.json").read_text(encoding="utf-8"))
+    cites = {w for entry in manifest.values() if isinstance(entry, dict)
+             for w in entry.get("witnesses", [])}
+    assert "ci:dbt-fabricspark" in cites
