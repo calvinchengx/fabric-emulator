@@ -271,6 +271,7 @@ contract holds better than any assertion we could write ourselves.
 | DuckDB | Lakehouse SQL over Delta/Parquet | 🟢 `e2e/duckdb` |
 | PySpark behind the **Livy API** | Spark sessions / statements | 🟢 `e2e/spark`, `e2e/livy`, `e2e/notebook-run` |
 | `notebookutils` | Notebook utility shim | 🟢 `e2e/notebookutils` |
+| **JupyterLab** (Project Jupyter) — the editor `make up-jupyter` ships | The shim and Spark Connect inside a REAL ipykernel, driven by `nbclient`; then the same `.ipynb` published and run by the emulator through the agent, compared cell by cell | 🟢 `e2e/jupyter` — kernel and agent agree |
 | `go-mssqldb` | Warehouse/Lakehouse **TDS + FedAuth** | 🟢 `internal/server`, `internal/tds` |
 | **`dbt-fabricspark`** (Microsoft) | Fabric **Spark** via Livy HC sessions | 🟢 `e2e/dbt-fabricspark` — debug→seed→run→test on Sail |
 | **`dbt-fabric`** (Microsoft) | Warehouse **TDS via mssql-python** (1.11+) | 🟢 `e2e/dbt-fabric` — debug→seed→run→test through the TDS splice |

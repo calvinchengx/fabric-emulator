@@ -1,0 +1,136 @@
+# The Jupyter profile, executed — one notebook, run twice.
+#
+# `make up-jupyter` ships a real JupyterLab attached to the family (docs/44),
+# and nothing in CI ever started it: the only mention of the profile in any
+# workflow was a comment about the Makefile target existing. This runs the same
+# image headlessly, drives a real ipykernel with nbclient, then publishes the
+# SAME .ipynb and lets the emulator run it through the agent, and compares the
+# two per cell. See e2e/jupyter/driver.py for what that does and does not prove.
+#
+# The stack is e2e/notebook-driven's — emulator, Sail, published agent — because
+# the job half of the comparison must be the path a consumer walks. The only
+# service that differs is the client, built from docker/jupyter/Dockerfile.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.9.0}
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: "" # in-memory; the e2e needs no persistence
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      # THE WHOLE CONFIGURATION. One variable turns a stack that can only park
+      # notebook jobs into one that runs them.
+      FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
+    networks:
+      default:
+        aliases:
+          - onelake.dfs.fabric.microsoft.com
+          - api.fabric.microsoft.com
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  sail:
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+
+  # Built from its own Dockerfile, with no bind mount and no command — the
+  # published image, as a consumer would get it.
+  spark-agent:
+    build:
+      context: ../..
+      dockerfile: docker/spark-agent/Dockerfile
+    depends_on:
+      sail:
+        condition: service_started
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+      # THE SHIM'S OWN ENDPOINTS, which the shipped stack sets on this service
+      # (docker-compose.override.yml, compute.yml, spark-jvm.yml) and
+      # e2e/notebook-driven does not, because its notebook only calls
+      # `notebook.exit`, which the agent preamble provides. The first run of
+      # this suite failed on exactly that: cell 2 called `notebookutils.fs.put`
+      # inside the agent and got `Connection refused`, while the same cell
+      # worked in the kernel. That is the cross-harness difference this suite
+      # exists to surface, found on its own first execution — though here the
+      # difference was in the compose file rather than in the product.
+      NOTEBOOKUTILS_FABRIC_URL: "http://fabric-emulator"
+      NOTEBOOKUTILS_ENTRA_URL: "http://entra-emulator:8443"
+      NOTEBOOKUTILS_INSECURE: "1"
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+    # `started` is not `listening`. The agent builds a Spark session before it
+    # binds, so a client that submits a job the moment the container exists gets
+    # `connection refused` on cell 0 — which the emulator correctly reports as a
+    # failed run, making a startup race look like a broken feature.
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  # The JupyterLab image `make up-jupyter` ships, with a driver instead of a
+  # server. Same Dockerfile, so the kernel this drives is the kernel a person
+  # gets: the shim on PYTHONPATH, Spark Connect at Sail, nothing added.
+  client:
+    build:
+      context: ../..
+      dockerfile: docker/jupyter/Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+      spark-agent:
+        condition: service_healthy
+    environment:
+      SPARK_REMOTE: "sc://sail:50051"
+      NOTEBOOKUTILS_FABRIC_URL: "http://api.fabric.microsoft.com"
+      NOTEBOOKUTILS_ENTRA_URL: "http://entra-emulator:8443"
+      NOTEBOOKUTILS_TENANT: "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
+      NOTEBOOKUTILS_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      NOTEBOOKUTILS_CLIENT_SECRET: "daemon-app-secret"
+      NOTEBOOKUTILS_INSECURE: "1"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+    volumes:
+      - ./driver.py:/driver.py:ro
+    working_dir: /
+    command: python /driver.py

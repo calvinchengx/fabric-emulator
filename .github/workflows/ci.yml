@@ -1434,6 +1434,26 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/two-context/run.py
 
+  jupyter:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: The shipped JupyterLab image runs a notebook, twice (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # `make up-jupyter` ships a real JupyterLab (docs/44) and nothing in CI
+      # had ever started it: the only mention of the profile in any workflow
+      # was a comment about the Makefile target existing. This drives the same
+      # image headlessly with nbclient, then publishes the SAME .ipynb and lets
+      # the emulator run it through the agent, and compares the two per cell.
+      # Not a probe of Fabric's execution model — that is the Go parser and the
+      # agent, and it belongs to notebook-run and notebook-driven (docs/56).
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/jupyter/run.py
+
   notebook-driven:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
