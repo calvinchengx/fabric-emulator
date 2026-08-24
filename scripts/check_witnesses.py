@@ -87,6 +87,42 @@ if hasattr(sys.stdout, "reconfigure"):
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PARITY = ROOT / "docs" / "parity.md"
 MANIFEST = ROOT / "docs" / "witnesses.json"
+
+# The ecosystem-conformance section is SKIPPED by the claim scanner below, and
+# correctly: its rows are clients, not capabilities. But that left its 🟢 marks
+# governed by nothing. A client row could say 🟢 while no claim credited the
+# suite behind it, and the whole point of a third-party witness is that it
+# backs a claim -- delete that CI job and nothing would go red.
+#
+# Found by review, twice over: `e2e/dbt-fabricspark` runs in five CI jobs,
+# is named in that table, and was cited by no claim, while `ci:dbt-fabric`
+# was cited twice. The surface it drives -- Livy High-Concurrency -- rested on
+# three of our own Go tests plus a Spark Connect suite that speaks a different
+# protocol. The strongest available evidence was sitting outside the manifest.
+ECOSYSTEM_SECTION = "Ecosystem conformance: real OSS/vendor clients as witnesses"
+
+# Suites named in that table that deliberately credit no claim. Each needs a
+# REASON, because "not credited" and "credited to nothing yet" look identical.
+# Suites whose CI job is named differently from the directory. Small, explicit
+# and self-policing (a mapping to a job that witnesses nothing is reported),
+# because deriving it from ci.yml went wrong in a way worth recording: the
+# medallion jobs invoke their suites through an `examples/` matrix, not an
+# `e2e/` path, so a reachability scan attributed `e2e/medallion` to whichever
+# unrelated job happened to mention it.
+JOB_FOR = {
+    "spark": "spark-a2",
+    "livy": "livy-native",
+    "eventstream": "eventstream-sail",
+}
+
+UNCREDITED = {
+    "vscode-extension": (
+        "exercises the shared-backend/MWC authoring routes through "
+        "api.powerbi.com, which no row in the graded sections covers. Not a "
+        "missing citation: a missing claim. See issue #385 (the map states no "
+        "denominator) -- the fix is a graded row, and then a citation here."
+    ),
+}
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 
 # Sections that do not make capability claims: the legend, the conformance
@@ -99,6 +135,10 @@ SKIP_SECTIONS = {
     "Emulator-only (no Fabric equivalent — these exist for testing)",
     "Why the boundary sits where it does",
 }
+
+
+class Unreadable(Exception):
+    """The parity map no longer has the shape this checker reads."""
 
 
 def key_for(feature: str) -> str:
@@ -278,6 +318,78 @@ def stale_declarations(declared, gated_used, credited, gated_tests, tests,
     return out
 
 
+def ecosystem_suites() -> list[str]:
+    """The e2e suite named by each ROW of the ecosystem-conformance table.
+
+    Rows, not the section text: the prose underneath mentions `e2e/type-map`,
+    which is a probe another suite invokes rather than a client row of its own.
+    Reading the whole section reported it as an uncredited witness, which is
+    the sort of false alarm that gets a gate switched off.
+    """
+    text = PARITY.read_text(encoding="utf-8")
+    if "## " + ECOSYSTEM_SECTION not in text:
+        # No section, nothing to reconcile. NOT an error here: a synthetic map
+        # in a unit test has no ecosystem table and should not be forced to
+        # grow one — that is how #367 broke four tests, by adding an invariant
+        # its own fixtures could not satisfy. The requirement that THIS repo's
+        # map carries the section belongs to the real-repo test, where it can
+        # actually be true, and where a rename fails loudly.
+        return []
+    section = text.split("## " + ECOSYSTEM_SECTION, 1)[1].split("\n## ", 1)[0]
+    suites = []
+    for line in section.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 3 or "🟢" not in cells[-1]:
+            continue
+        suites += re.findall(r"e2e/([a-z0-9][a-z0-9-]*)", cells[-1])
+    if not suites:
+        raise Unreadable(
+            "the ecosystem-conformance table names no e2e suite in any 🟢 row. The "
+            "row format must have changed, and this check is now vacuous.")
+    return sorted(set(suites))
+
+
+def ecosystem_gaps(manifest: dict) -> list[str]:
+    """Every real-client suite in the ecosystem table must back a claim.
+
+    Plus the two declaration maps police themselves: an alias that resolves to
+    nothing, or an exemption for a suite that IS credited now, is stale and
+    says so. A declaration nothing checks is how the original gap survived.
+    """
+    cited = {w[3:] for entry in manifest.values()
+             if isinstance(entry, dict)
+             for w in entry.get("witnesses", []) or [] if w.startswith("ci:")}
+    suites = ecosystem_suites()
+    if not suites:
+        return []  # no table here; see ecosystem_suites for why that is allowed
+    problems = []
+    for suite in suites:
+        job = JOB_FOR.get(suite, suite)
+        if suite in UNCREDITED:
+            if job in cited:
+                problems.append(
+                    f"e2e/{suite} is listed in UNCREDITED but ci:{job} now witnesses a "
+                    "claim. Drop the exemption; it is describing the past.")
+            continue
+        if job not in cited:
+            problems.append(
+                f"e2e/{suite} is a 🟢 client row but no claim cites ci:{job}. Delete "
+                "that CI job and nothing would go red — credit it on the rows it "
+                "drives, or add it to UNCREDITED with the reason.")
+    # Staleness of the two maps, checked only once a table was actually read:
+    # against a synthetic map that names none of these suites, every entry
+    # would look stale and the checker would fail four unrelated tests.
+    for suite, job in sorted(JOB_FOR.items()):
+        if job in cited or suite in UNCREDITED or suite not in suites:
+            continue
+        problems.append(
+            f"JOB_FOR maps e2e/{suite} to ci:{job}, which witnesses nothing. Either "
+            "the job was renamed again, or the mapping was always wrong.")
+    return problems
+
+
 def main() -> int:
     strict = "--strict" in sys.argv
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.exists() else {}
@@ -401,6 +513,15 @@ def main() -> int:
         for witness, covered in heavy[:5]:
             print(f"  {witness}: {len(covered)} claims")
 
+    try:
+        eco = ecosystem_gaps(manifest)
+    except Unreadable as exc:
+        eco = [str(exc)]
+    if eco:
+        print("\nEcosystem-conformance suites that back no claim:")
+        for problem in eco:
+            print(f"  {problem}")
+
     if missing:
         print("\nClaims with no manifest entry:")
         for section, feature, key in missing[:20]:
@@ -428,6 +549,11 @@ def main() -> int:
         failed = True
     if strict and unproven:
         print("\nFAIL: a claim needs at least one witness that runs unconditionally.")
+        failed = True
+    if strict and eco:
+        print("\nFAIL: a client named in the ecosystem-conformance table must be the")
+        print("witness for something. That table is the only place several real-client")
+        print("suites are recorded, and nothing reconciled it against the manifest.")
         failed = True
     return 1 if failed else 0
 
