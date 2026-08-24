@@ -92,6 +92,45 @@ That is the whole argument for Phase 0. Reading the surface from Microsoft's own
 pages converts *"modules we know we have not covered"* into *"modules Fabric
 has"*, and only the second one can be complete.
 
+## Axis B — behaviour
+
+No table. That is the finding, not an omission.
+
+Axis A can be counted because a surface is enumerable: a member either exists
+with the documented signature or it does not. Behaviour has no such list. The
+question is whether `fs.cp` copies what Fabric's `fs.cp` copies, whether
+`credentials.getSecret` resolves the same way against the same input, whether
+`env.getWorkspaceId` returns the string a pipeline would branch on identically
+— and none of that is derivable from the row above it.
+
+**Contract 2 says so in its own title:** *"the API shape is the contract,
+independent of behaviour."* A method can carry every documented parameter, in
+the right order, and do entirely the wrong thing. That cell stays green. Axis A
+grading `notebook` ✅ is therefore not a partial answer to this axis; it is an
+answer to a different question that happens to be about the same module.
+
+**What is actually measured today.** Six of the seven live contracts assert
+behaviour — context chain, runtime floor, write landing, concurrent isolation,
+rewrite fall-through, credential lifetime — and each was chosen because it had
+produced a *silent wrong answer*. That is real evidence, and it is evidence
+about **failure classes**, not about members. No member of the utils surface
+carries a behaviour assertion of its own. The count for this axis is zero, and
+unlike Axis A there is not even a denominator to be honest about.
+
+**The failure mode, stated plainly.** A member that exists, matches its
+signature, is listed in the reference, and returns the wrong answer is invisible
+to every check in this repository today. It would show as ✅ in the Axis A table
+and would not appear here at all. That is the shape of gap this document exists
+to name rather than discover.
+
+**What would close it** is [Phase 3](#phase-3--behaviour-contracts), which is
+the largest phase for this reason: it is the only one that cannot be done by
+enumeration. Each member needs an assertion in the shape contract 4 established
+— execute through the real path, then verify out of band, so the component that
+acted is never the one that confirms. Until then the honest sentence about this
+axis is that nobody has asked the question of any member, which is different
+from having asked and found nothing wrong.
+
 ## Axis C — the execution model
 
 What the cell parser handles today, read from `internal/notebook/parse.go`.
