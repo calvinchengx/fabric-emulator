@@ -244,15 +244,24 @@ def test_the_target_and_the_rest_cannot_compete_for_the_same_characters():
     passed on the VULNERABLE pattern too, and a test that cannot fail on the
     bug it names is worse than no test.
 
-    Asserted instead: the separator is whitespace, and the target cannot
-    contain whitespace. That is the property that makes the split
-    deterministic, and it is checkable.
+    Asserted instead: BOTH ends of the separator are pinned. The target stops
+    at whitespace so it cannot eat the separator, and the rest must begin with
+    a non-space so the separator cannot eat the rest.
+
+    The first fix pinned only the first end, and CodeQL re-flagged the pattern
+    within minutes on `'%run\\t!\\t'` with many `'\\t\\t'` — `[ \\t]+` and `.*`
+    were still competing for the tabs, `.` matching one too. So this test
+    checks both, because a half-fix here looked exactly like a whole one.
     """
     pattern = run_magic._RUN.pattern
-    assert r"[ \t]+(?P<rest>" in pattern, \
-        "the rest must be reached through a whitespace separator"
-    assert r"\s+(?P<target>" not in pattern, \
-        r"an unbounded \s+ before the target reintroduces the ambiguity"
+    # BOTH ENDS, and the first version of this test only checked one — which
+    # is exactly why it passed a pattern CodeQL then re-flagged.
+    assert r"(?P<target>" in pattern and r"\S+" in pattern, \
+        "the target must stop at whitespace, so it cannot eat the separator"
+    assert r"(?P<rest>\S" in pattern, \
+        "the rest must START non-space, so the separator cannot eat the rest"
+    assert r"(?P<rest>.*)" not in pattern, \
+        "an unanchored rest competes with the separator for whitespace"
     # And the property that separator implies: a target stops at whitespace.
     m = run_magic._RUN.match("%run one two three")
     assert m.group("target") == "one"

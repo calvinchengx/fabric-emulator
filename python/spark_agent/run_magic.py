@@ -34,16 +34,25 @@ import re
 # non-space made matching polynomial in the line's length. CodeQL flagged it
 # high, on the exact shape — `'%run !'` with many `'!!'`.
 #
-# Separated by requiring the boundary to be whitespace the target cannot
-# contain: `\S+` stops at the first space, and `rest` must begin with one. The
-# split is then deterministic and matching is linear.
+# Separated by making EVERY boundary unambiguous, which took two passes and the
+# scanner was right both times:
+#
+#   `\S+` stops at the first space, so the target cannot eat the separator.
+#   `rest` must START with a non-space (`\S.*`), so the separator cannot eat
+#   the rest. The first fix only did the former, and CodeQL immediately
+#   re-flagged the pattern on `'%run\t!\t'` with many `'\t\t'` — because
+#   `[ \t]+` and `.*` still competed for the tabs, `.` matching one too.
+#
+# With both ends pinned there is exactly one way to split any line: the
+# separator takes all the whitespace, and anything else fails on the first
+# character instead of backtracking through every position.
 #
 # `[ \t]` rather than `\s`: this matches ONE LINE at a time, and letting the
 # separator match a newline would join a `%run` to the statement below it.
 _RUN = re.compile(
     r'^(?P<indent>[ \t]*)%run[ \t]+'
     r'(?P<target>"[^"]*"|\'[^\']*\'|\S+)'
-    r'(?:[ \t]+(?P<rest>.*))?$')
+    r'(?:[ \t]+(?P<rest>\S.*)?)?$')
 
 HELPER = "__fabric_run_notebook__"
 
