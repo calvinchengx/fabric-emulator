@@ -555,11 +555,14 @@ def _table_should_exist(name):
     bare = (name or "").replace("`", "").strip().lower().rsplit(".", 1)[-1]
     if not bare:
         return False
+    # try/except/else rather than rebinding the module name to None: `ty`
+    # refuses `delta_ops = None` because the name is already the module, and
+    # the else-branch says the same thing without the assignment.
     try:
         import delta_ops
     except Exception:  # noqa: BLE001 - no registry is not evidence either way
-        delta_ops = None
-    if delta_ops is not None:
+        pass
+    else:
         try:
             if delta_ops.known_location(bare):
                 return True
