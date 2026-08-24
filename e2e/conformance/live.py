@@ -24,14 +24,19 @@ from pathlib import Path
 DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(DIR))
 from probes import (  # noqa: E402
+    CONTROL,
     Artifact,
     ContextClaim,
+    CredentialClaim,
+    FallThroughClaim,
     IsolationClaim,
     RuntimeClaim,
     SignatureClaim,
     WriteClaim,
     concurrent_isolation,
     context_chain,
+    credential_lifetime,
+    fall_through,
     record,
     runtime_floor,
     signature_shape,
@@ -43,7 +48,27 @@ FABRIC = "http://api.fabric.microsoft.com"
 TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
 CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
 CLIENT_SECRET = "daemon-app-secret"
-ACCT = "onelake.dfs.fabric.microsoft.com"
+# THE DFS SURFACE, ADDRESSED BY CONTAINER AND ROUTED BY HOST HEADER.
+#
+# The emulator decides OneLake-vs-control-plane from the Host header, so the
+# hostname in the URL is not load-bearing — and it must not be, because what
+# that alias points at is not settled. A TLS terminator was put behind it on
+# the jvm leg (`abfss://` forces TLS, so hadoop cannot reach a plaintext
+# stack), and pointing these plain reads at the alias broke every one of them
+# at once: contract 1 reported `<urlopen error>`, and 2, 3, 5 and 6 reported
+# "the session did not get as far as..." — one unreachable reader wearing five
+# different failures.
+#
+# THE TERMINATOR IS NOT IN THE TREE — it regressed contract 4 and was reverted,
+# see docs/38 §6. This decoupling stays regardless: it is what let the
+# terminator be tried at all without taking five cells down with it, and it is
+# what will let a working one land. A reader that had to be re-pointed every
+# time the alias moved would make each attempt cost five false reds.
+#
+# This process is still an out-of-band reader: a different container, a token it
+# minted itself, and no Spark. Which hostname it dials is not part of that claim.
+ACCT = "fabric-emulator"
+DFS_HOST = "onelake.dfs.fabric.microsoft.com"
 TABLE_DIR = "lake.Lakehouse/Tables/events"
 # Contract 1's findings, as a plain JSON file rather than a Delta table: the
 # out-of-band reader is then a single DFS GET with no Parquet parser, and the
@@ -71,7 +96,7 @@ try:
         "abfss://__WS__@onelake.dfs.fabric.microsoft.com/__DIR__/__MARKER__.json",
         _json.dumps({
             "marker": "__MARKER__",
-            "notebook": _ctx.get("currentNotebookId", ""),
+            "identity": _ctx.get("currentNotebookId", ""),
             "workspace": _ctx.get("currentWorkspaceId", ""),
         }), True)
     print("child __MARKER__ wrote its findings")
@@ -101,7 +126,7 @@ print("wrote", df.count(), "rows")
 # still failed the job and turned contract 4 red -- with its table landed and
 # the out-of-band listing seeing five paths. One contract's red must never be
 # another's, and the absent artifact is contract 1's failure signal by itself.
-import json as _json, os as _os
+import json as _json, os as _os, time
 
 try:
     import notebookutils as _nbu
@@ -157,6 +182,145 @@ try:
     # the engine behaves like Spark 3.5 is the engine matrix's question.
     import sys as _sys
 
+    # Contract 6. Two statements against one small Delta table: OPTIMIZE, which
+    # the agent's grammar recognises and routes to delta-rs, and a MERGE with
+    # `WHEN MATCHED THEN DELETE`, which it deliberately does NOT intercept. The
+    # first proves the interception is installed at all; the second is the
+    # contract. Both outcomes are recorded, never asserted here — the harness
+    # decides, and it decides differently for the control engine.
+    # THE SCHEME IS `abfs://`, AND THAT IS THE WHOLE OF THE JVM STORY.
+    #
+    # This probe used to hardcode `abfss://`. Hadoop's ABFS driver forces TLS
+    # for that scheme — `fs.azure.always.use.https=false` downgrades `abfs://`
+    # and nothing else — so against a plaintext stack every request failed at
+    # the socket with status 0, hadoop-azure retried forever, and the notebook
+    # HUNG: five threads parked in AbfsRestOperation.completeExecute for
+    # 324s-864s. That was read as "the JVM overlay cannot reach OneLake by
+    # path", and a TLS terminator was built to fix it.
+    #
+    # It is not what was happening. The JVM overlay reaches OneLake by path on
+    # every single run: cell 0's `saveAsTable` commits its Delta log to
+    # `abfs://…@onelake.dfs.fabric.microsoft.com/…/Tables/events/_delta_log`,
+    # which is what contract 4 confirms out of band. ONE STATEMENT IN THIS FILE
+    # was spelling the scheme differently from everything else in the stack —
+    # `bindDefaultLakehouse`, `livy_catalog` and `mlv.go` all emit `abfs://`,
+    # commented there as "the same string a user would have written".
+    #
+    # So the fix is to stop being the outlier, not to terminate TLS. Real
+    # Fabric serves `abfss://` and `e2e/livy` proves the path form against it;
+    # `abfs://` is that same path spelled for a stack that serves plaintext,
+    # and it is the spelling this emulator hands every engine.
+    #
+    # The gate stays. A HANG IS WORSE THAN A RED — these statements share a
+    # notebook with contracts 1, 2, 3 and 4, so one hang takes five cells down
+    # and reports the harness's own timeout as five separate defects, which
+    # happened twice. A backend opts in when its compose says it can answer.
+    if _os.environ.get("CONFORMANCE_FALL_THROUGH") == "1":
+        # PATH-ADDRESSED, not by catalog name. The delta-rs interception resolves
+        # a NAME through the emulator's registration, and a table written by
+        # `saveAsTable` inside a notebook is not registered that way — `OPTIMIZE
+        # events` fails with `cannot resolve 'events' to a table location: it was
+        # not registered through the emulator`. Measured, twice, on this probe's
+        # first two runs. The path form is what `e2e/livy` proves against a real
+        # OneLake table, so it is the shape a notebook author is told to use.
+        #
+        # On `events`, the table cell 0 already wrote. The coupling with contract
+        # 4 is one-way and harmless: OPTIMIZE compacts and the MERGE deletes at
+        # most one row, while contract 4's reader asserts only that OneLake lists
+        # paths under the table, which both leave true.
+        _tbl = ("abfs://__WS__@onelake.dfs.fabric.microsoft.com"
+                "/lake.Lakehouse/Tables/events")
+        _rec, _rec_err = _try(lambda: spark.sql(f"OPTIMIZE delta.`{_tbl}`").collect())
+        _unrec, _unrec_err = _try(lambda: spark.sql(
+            f"MERGE INTO delta.`{_tbl}` t USING (SELECT 1 AS id) s "
+            "ON t.id = s.id WHEN MATCHED THEN DELETE").collect())
+        # MEASURED, NOT ASSERTED. docs/38 records that `OPTIMIZE <name>`
+        # cannot resolve a table a notebook wrote, because the interception
+        # resolves a name through the emulator's registration and
+        # `saveAsTable` does not register it that way. That was measured on
+        # sail only — and the fallback when there is no recorded location is
+        # `DESCRIBE DETAIL`, which Sail does not implement and Spark does. So
+        # the same statement may well behave differently per engine, and a
+        # gap recorded as universal deserves a number from each. Recorded
+        # here, graded by nothing: contract 6 is about fall-through, and this
+        # is a separate limitation that happens to be cheap to observe from
+        # the same cell.
+        _name_ok, _name_err = _try(lambda: spark.sql("OPTIMIZE events").collect())
+        _findings["fall_through"] = {
+            "table_error": "",
+            "recognised_ok": not _rec_err,
+            "recognised_error": _rec_err,
+            "unrecognised_ok": not _unrec_err,
+            "unrecognised_error": _unrec_err,
+            "name_form_ok": not _name_err,
+            "name_form_error": _name_err,
+        }
+    else:
+        _findings["fall_through"] = {"skipped": True}
+
+    # Contract 7. Two OneLake reads with a wait between them longer than the
+    # access-token lifetime the stack was configured with.
+    #
+    # THROUGH THE ENGINE, not the shim: the credential under test is the one the
+    # emulator hands the engine (sail's resident launcher, the JVM's
+    # EntraTokenProvider), and the shim mints its own. `spark.read` on the table
+    # cell 0 wrote exercises exactly that.
+    #
+    # BY CATALOG NAME, deliberately — this contract is about a credential, and
+    # addressing the table by path would drag in the scheme question the
+    # fall-through gate above deals with. One contract, one variable.
+    _life = int(_os.environ.get("CONFORMANCE_TOKEN_LIFETIME", "0") or 0)
+    if _life > 0:
+        # THE SECOND OPERATION IS A WRITE TO A FRESH TABLE, NOT A RE-READ.
+        #
+        # A re-read of `events` failed after the wait with
+        # `AnalysisException: Table not found: [TABLE_OR_VIEW_NOT_FOUND]` while
+        # the read BEFORE the wait succeeded — the catalog entry a `saveAsTable`
+        # created was gone 75 seconds later, in the same session and the same
+        # cell. That is worth its own investigation and is NOT what this contract
+        # is about: §7 is a token minted at container start and every OneLake
+        # operation answering 401 an hour later, not a catalog forgetting a name.
+        #
+        # A write to a new table needs the engine's OneLake credential and
+        # nothing that has to survive the wait, so it measures the contract
+        # rather than the mystery. The catalog observation is recorded in
+        # docs/38 §7 instead of being routed around silently.
+        _b, _b_err = _try(lambda: spark.read.table("events").count())
+        _wait = _life + 15
+        time.sleep(_wait)
+        _a, _a_err = _try(lambda: spark.createDataFrame(
+            [(1, "after")], ["id", "v"]).write.format("delta")
+            .mode("overwrite").saveAsTable("cred_after"))
+        # MEASURED, NOT GRADED. Re-reading the table cell 0 wrote is what
+        # originally failed here, and docs/38 §7 now explains why: sail's
+        # credential refresh is a process restart, and the restart takes the
+        # engine's session catalog with it. The verbatim error is recorded
+        # because the agent has to RECOGNISE this failure to report it as a
+        # restart rather than let it read as a typo — and detection built on a
+        # remembered error message is how the last three of these went wrong.
+        _r, _r_err = _try(lambda: spark.read.table("events").count())
+        # THE SAME DATA, BY PATH. This is what turns "the engine forgot the
+        # table" from an inference into a demonstration: if the catalog read
+        # above fails while this succeeds, the bytes are exactly where cell 0
+        # put them and it is the ENGINE's session state that went away — which
+        # is the condition session_recovery.forgotten_table_in() detects, and
+        # the reason its oracle asks the lakehouse rather than the agent's
+        # bookkeeping.
+        _p, _p_err = _try(lambda: spark.read.format("delta").load(
+            "abfs://__WS__@onelake.dfs.fabric.microsoft.com"
+            "/lake.Lakehouse/Tables/events").count())
+        _findings["credential"] = {
+            "reread_ok": not _r_err,
+            "reread_error": _r_err,
+            "path_read_ok": not _p_err,
+            "path_read_error": _p_err,
+            "lifetime": _life, "slept": _wait,
+            "before_ok": not _b_err, "before_error": _b_err,
+            "after_ok": not _a_err, "after_error": _a_err,
+        }
+    else:
+        _findings["credential"] = {"skipped": True}
+
     _findings["runtime"] = {
         "declared": _os.environ.get("FABRIC_RUNTIME", ""),
         "python": ".".join(str(n) for n in _sys.version_info[:3]),
@@ -185,14 +349,16 @@ _said = ""
 # so one DFS read serves both.
 _sigs_seen = None
 _runtime_seen = None
+_fall_seen = None
+_cred_seen = None
 
 
 def log(msg: str) -> None:
     print(f"==> {msg}", flush=True)
 
 
-def req(method, url, body=None, token=None, form=False):
-    data, headers = None, {}
+def req(method, url, body=None, token=None, form=False, headers=None):
+    data, headers = None, dict(headers or {})
     if body is not None:
         if form:
             data = urllib.parse.urlencode(body).encode()
@@ -208,11 +374,36 @@ def req(method, url, body=None, token=None, form=False):
         return resp.status, resp.headers, (json.loads(raw) if raw else {})
 
 
-def fabric_token() -> str:
-    return req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
+# A token this process minted, re-minted before it can expire.
+#
+# CONTRACT 7 SHORTENS THE ACCESS-TOKEN LIFETIME FOR THE WHOLE STACK
+# (TOKEN_LIFETIME_ACCESS_SECONDS), because the emulator has one setting and not
+# one per audience. That is fine for the engine, which is the thing under test,
+# and NOT fine for a client that minted once and then polled a job for minutes:
+# it would 401 partway through and report a broken pipeline. Caching with an
+# expiry is what makes a short lifetime safe to ask for — and it is what a
+# correct client does anyway, which is the same argument docs/38 §7 makes about
+# the engine.
+_tokens: dict[str, tuple[str, float]] = {}
+
+
+def _cached_token(scope: str) -> str:
+    tok, good_until = _tokens.get(scope, ("", 0.0))
+    if tok and time.monotonic() < good_until:
+        return tok
+    body = req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
         "grant_type": "client_credentials", "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "scope": "https://api.fabric.microsoft.com/.default"}, form=True)[2]["access_token"]
+        "client_secret": CLIENT_SECRET, "scope": scope}, form=True)[2]
+    # Two thirds of the advertised life, floored at 10s: re-mint before expiry
+    # rather than after a 401, because a 401 mid-poll is indistinguishable from
+    # a job that failed.
+    ttl = float(body.get("expires_in") or 3600)
+    _tokens[scope] = (body["access_token"], time.monotonic() + max(ttl * 2 / 3, 10.0))
+    return body["access_token"]
+
+
+def fabric_token() -> str:
+    return _cached_token("https://api.fabric.microsoft.com/.default")
 
 
 def storage_token() -> str:
@@ -224,19 +415,15 @@ def storage_token() -> str:
     except urllib.error.HTTPError as e:
         if e.code != 409:
             raise
-    return req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
-        "grant_type": "client_credentials", "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "scope": "https://storage.azure.com/.default"}, form=True)[2]["access_token"]
+    return _cached_token("https://storage.azure.com/.default")
 
 
 def writer() -> WriteClaim:
     """Publish + submit + poll. The claim is the job status, nothing else."""
     global _ws
-    ft = fabric_token()
-    ws = req("POST", f"{FABRIC}/v1/workspaces", {"displayName": "nb-ws"}, token=ft)[2]["id"]
+    ws = req("POST", f"{FABRIC}/v1/workspaces", {"displayName": "nb-ws"}, token=fabric_token())[2]["id"]
     lake = req("POST", f"{FABRIC}/v1/workspaces/{ws}/lakehouses",
-               {"displayName": "lake"}, token=ft)[2]
+               {"displayName": "lake"}, token=fabric_token())[2]
     _ws = ws
     global _lake
     _lake = lake["id"]
@@ -261,13 +448,13 @@ def writer() -> WriteClaim:
             "payload": base64.b64encode(
                 (NOTEBOOK_BODY.replace("__WS__", ws).replace("__FINDINGS__", FINDINGS_PATH)
                  + meta).encode()).decode()}]}},
-        token=ft)
+        token=fabric_token())
     opid = headers.get("x-ms-operation-id")
     nb = None
     for _ in range(60):
-        body = req("GET", f"{FABRIC}/v1/operations/{opid}", token=ft)[2]
+        body = req("GET", f"{FABRIC}/v1/operations/{opid}", token=fabric_token())[2]
         if body.get("status") == "Succeeded":
-            nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=ft)[2]["id"]
+            nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=fabric_token())[2]["id"]
             break
         time.sleep(1)
     if not nb:
@@ -276,14 +463,20 @@ def writer() -> WriteClaim:
 
     _, hdrs, _ = req(
         "POST", f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances?jobType=RunNotebook",
-        token=ft)
+        token=fabric_token())
     jid = hdrs["Location"].rstrip("/").rsplit("/", 1)[-1]
     log(f"submitted RunNotebook job {jid}")
 
     base = f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}"
     status = None
-    for _ in range(180):
-        status = req("GET", base, token=ft)[2].get("status")
+    # GENEROUS ON PURPOSE. This notebook now carries contracts 1, 2, 3, 4 and 6,
+    # and contract 6 runs OPTIMIZE and MERGE against an abfss table — seconds on
+    # Sail, minutes on the JVM overlay. At 180s the jvm leg reported
+    # `job status = InProgress` and every contract in the artifact failed for
+    # one reason: the harness gave up first. A timeout that reads as five
+    # defects is worse than a slow run.
+    for _ in range(900):
+        status = req("GET", base, token=fabric_token())[2].get("status")
         if status in ("Completed", "Failed", "Cancelled", "Deduped"):
             break
         time.sleep(1)
@@ -291,7 +484,7 @@ def writer() -> WriteClaim:
         # The run detail says which cell died. Logging it is not confirmation —
         # confirmation is the reader's listing.
         try:
-            detail = req("GET", f"{base}/notebookRun", token=ft)[2]
+            detail = req("GET", f"{base}/notebookRun", token=fabric_token())[2]
             for c in sorted(detail.get("cells", []), key=lambda c: c["index"]):
                 log(f"cell {c['index']} {c['status']}: "
                     f"{c.get('error') or c.get('output', '')[:300]}")
@@ -299,11 +492,11 @@ def writer() -> WriteClaim:
             log(f"could not fetch run detail: {exc}")
         return WriteClaim(ok=False, error=f"job status = {status}")
     log(f"job reached {status}")
-    _remember_output(base, ft)
+    _remember_output(base, fabric_token())
     return WriteClaim(ok=True)
 
 
-def _remember_output(base: str, ft: str) -> None:
+def _remember_output(base: str, token: str) -> None:
     """Keep the cells' stdout so a later contract can quote its own failure.
 
     Fetched on SUCCESS as well as failure: contract 1's cell is guarded so it
@@ -311,7 +504,7 @@ def _remember_output(base: str, ft: str) -> None:
     """
     global _said
     try:
-        detail = req("GET", f"{base}/notebookRun", token=ft)[2]
+        detail = req("GET", f"{base}/notebookRun", token=fabric_token())[2]
         _said = "\n".join(c.get("output", "") for c in detail.get("cells", []))
     except Exception as exc:  # noqa: BLE001 — diagnostics, never the verdict
         log(f"could not fetch run detail: {exc}")
@@ -325,7 +518,8 @@ def reader() -> Artifact:
     sft = storage_token()
     try:
         listing = req("GET", f"http://{ACCT}/{_ws}?resource=filesystem&recursive=true"
-                             f"&directory={urllib.parse.quote(TABLE_DIR)}", token=sft)[2]
+                             f"&directory={urllib.parse.quote(TABLE_DIR)}",
+                      token=sft, headers={"Host": DFS_HOST})[2]
     except Exception as exc:  # noqa: BLE001 — a missing table is found=False
         log(f"reader listing failed: {exc}")
         return Artifact(found=False, location=TABLE_DIR)
@@ -348,7 +542,7 @@ def session_context() -> ContextClaim:
         sft = storage_token()
         r = urllib.request.Request(
             f"http://{ACCT}/{_ws}/{urllib.parse.quote(FINDINGS_PATH)}",
-            headers={"Authorization": "Bearer " + sft})
+            headers={"Authorization": "Bearer " + sft, "Host": DFS_HOST})
         with urllib.request.urlopen(r, timeout=60) as resp:
             found = json.loads(resp.read())
     except Exception as exc:  # noqa: BLE001 — a missing artifact is the finding
@@ -361,6 +555,9 @@ def session_context() -> ContextClaim:
     global _sigs_seen, _runtime_seen
     _sigs_seen = found.get("notebook_signatures")
     _runtime_seen = found.get("runtime")
+    global _fall_seen, _cred_seen
+    _fall_seen = found.get("fall_through")
+    _cred_seen = found.get("credential")
     log(f"context findings: { {k: v for k, v in found.items() if k != 'notebook_signatures'} }")
     log(f"notebook signatures reported: {len(_sigs_seen or {})} callables")
     return ContextClaim(
@@ -416,7 +613,6 @@ def fan_out() -> dict[str, str]:
     Returns marker -> the notebook id the control plane issued, which is what
     the probe compares each child's own belief against.
     """
-    ft = fabric_token()
     expected, jobs = {}, []
     for i in range(FANOUT_N):
         marker = f"child{i}"
@@ -428,13 +624,13 @@ def fan_out() -> dict[str, str]:
                 "definition": {"parts": [{
                     "path": "notebook-content.py", "payloadType": "InlineBase64",
                     "payload": base64.b64encode(body.encode()).decode()}]}},
-            token=ft)
+            token=fabric_token())
         opid = headers.get("x-ms-operation-id")
         nb = None
         for _ in range(60):
-            op = req("GET", f"{FABRIC}/v1/operations/{opid}", token=ft)[2]
+            op = req("GET", f"{FABRIC}/v1/operations/{opid}", token=fabric_token())[2]
             if op.get("status") == "Succeeded":
-                nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=ft)[2]["id"]
+                nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=fabric_token())[2]["id"]
                 break
             time.sleep(1)
         if not nb:
@@ -444,7 +640,7 @@ def fan_out() -> dict[str, str]:
         _, hdrs, _ = req(
             "POST",
             f"{FABRIC}/v1/workspaces/{_ws}/items/{nb}/jobs/instances?jobType=RunNotebook",
-            token=ft)
+            token=fabric_token())
         jobs.append((marker, nb, hdrs["Location"].rstrip("/").rsplit("/", 1)[-1]))
     log(f"submitted {len(jobs)} concurrent RunNotebook jobs")
 
@@ -453,7 +649,7 @@ def fan_out() -> dict[str, str]:
     while pending and time.monotonic() < deadline:
         for jid, (marker, nb) in list(pending.items()):
             base = f"{FABRIC}/v1/workspaces/{_ws}/items/{nb}/jobs/instances/{jid}"
-            status = req("GET", base, token=ft)[2].get("status")
+            status = req("GET", base, token=fabric_token())[2].get("status")
             if status in ("Completed", "Failed", "Cancelled", "Deduped"):
                 log(f"{marker}: {status}")
                 pending.pop(jid)
@@ -472,13 +668,70 @@ def session_isolation(expected: dict) -> IsolationClaim:
         try:
             r = urllib.request.Request(
                 f"http://{ACCT}/{_ws}/{urllib.parse.quote(FANOUT_DIR)}/{marker}.json",
-                headers={"Authorization": "Bearer " + sft})
+                headers={"Authorization": "Bearer " + sft, "Host": DFS_HOST})
             with urllib.request.urlopen(r, timeout=60) as resp:
                 seen[marker] = json.loads(resp.read())
         except Exception as exc:  # noqa: BLE001 — a missing child is the finding
             log(f"{marker}: no findings ({exc})")
     log(f"fan-out artifacts read: {len(seen)}/{len(expected)}")
     return IsolationClaim(ok=True, seen=seen)
+
+
+def session_fall_through() -> FallThroughClaim:
+    """Contract 6 reads the same artifact contracts 1-3 already fetched."""
+    if _fall_seen is None:
+        return FallThroughClaim(
+            ok=False,
+            error="no fall-through results in the findings artifact — "
+                  "the session did not get as far as running the statements")
+    if _fall_seen.get("skipped"):
+        return FallThroughClaim(
+            ok=False,
+            error=("not run on this backend: CONFORMANCE_FALL_THROUGH is not set "
+                   "in its compose. The gate exists because a statement that "
+                   "hangs takes contracts 1-4 down with it and reports the "
+                   "harness's own timeout as five separate defects — measured "
+                   "twice, when this probe still spelled the table `abfss://` "
+                   "and hadoop forced TLS against a plaintext stack"))
+    if _fall_seen.get("table_error"):
+        return FallThroughClaim(
+            ok=False,
+            error=("the probe table could not be created "
+                   f"({_fall_seen['table_error'][:160]}), so neither statement "
+                   "says anything about the grammar"))
+    return FallThroughClaim(
+        ok=True,
+        recognised_ok=bool(_fall_seen.get("recognised_ok")),
+        recognised_error=_fall_seen.get("recognised_error", ""),
+        unrecognised_ok=bool(_fall_seen.get("unrecognised_ok")),
+        unrecognised_error=_fall_seen.get("unrecognised_error", ""),
+        name_form_ok=(None if "name_form_ok" not in _fall_seen
+                      else bool(_fall_seen.get("name_form_ok"))),
+        name_form_error=_fall_seen.get("name_form_error", ""),
+    )
+
+
+def session_credential() -> CredentialClaim:
+    """Contract 7 reads the same artifact contracts 1-3 and 6 already fetched."""
+    if _cred_seen is None:
+        return CredentialClaim(
+            ok=False,
+            error="no credential results in the findings artifact — "
+                  "the session did not get as far as the two reads")
+    if _cred_seen.get("skipped"):
+        return CredentialClaim(
+            ok=False,
+            error="not run: CONFORMANCE_TOKEN_LIFETIME was not set, so the "
+                  "session had no lifetime to outlive")
+    return CredentialClaim(
+        ok=True,
+        lifetime=int(_cred_seen.get("lifetime") or 0),
+        slept=float(_cred_seen.get("slept") or 0),
+        before_ok=bool(_cred_seen.get("before_ok")),
+        before_error=_cred_seen.get("before_error", ""),
+        after_ok=bool(_cred_seen.get("after_ok")),
+        after_error=_cred_seen.get("after_error", ""),
+    )
 
 
 def main() -> int:
@@ -511,7 +764,15 @@ def main() -> int:
     iso = concurrent_isolation(
         session=lambda: session_isolation(expected),
         expected=expected, backend=backend)
-    rows = record(backend, live={1: ctx, 2: sig, 3: floor, 4: result, 5: iso})
+    # `control` comes from the applicability table, not from a backend name:
+    # the jvm column is `control` for this contract and required for the rest,
+    # and the doc is the authority on which is which.
+    fall = fall_through(session=session_fall_through, backend=backend,
+                        control=(6, backend) in CONTROL)
+    rows = record(backend,
+                  live={1: ctx, 2: sig, 3: floor, 4: result, 5: iso, 6: fall,
+                        7: credential_lifetime(session=session_credential,
+                                               backend=backend)})
     out = DIR / "out"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{backend}.json"
@@ -520,6 +781,9 @@ def main() -> int:
     log(f"wrote {path} contract 2={sig.status} {sig.error}".rstrip())
     log(f"wrote {path} contract 3={floor.status} {floor.error}".rstrip())
     log(f"wrote {path} contract 5={iso.status} {iso.error}".rstrip())
+    log(f"wrote {path} contract 6={fall.status} {fall.error}".rstrip())
+    seven = next(r for r in rows if r["id"] == "7")
+    log(f"wrote {path} contract 7={seven['status']} {seven.get('error', '')}".rstrip())
     log(f"wrote {path} contract 4={result.status} {result.error}".rstrip())
     return 0
 

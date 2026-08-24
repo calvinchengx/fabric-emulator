@@ -43,16 +43,16 @@
     "id": "6",
     "contract": "Rewrite fall-through",
     "backend": "sail",
-    "status": "gap",
-    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
-    "pointer": "38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "7",
     "contract": "Credential lifetime",
     "backend": "sail",
-    "status": "gap",
-    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
-    "pointer": "38-framework-conformance.md#7-credentials-must-outlive-the-run"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   }
 ]

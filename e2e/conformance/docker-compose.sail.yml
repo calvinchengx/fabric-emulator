@@ -8,6 +8,13 @@ services:
   entra-emulator:
     image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.9.0}
     environment:
+      # CONTRACT 7 NEEDS A TOKEN THAT CAN EXPIRE INSIDE A TEST. The default is
+      # 3600s and the defect it guards took an hour to appear in production —
+      # so the clock is made cheap rather than the test made slow. One setting
+      # covers every audience, which is why live.py caches and re-mints: a
+      # client that minted once and polled for minutes would 401 partway and
+      # report a broken pipeline instead of a short token.
+      TOKEN_LIFETIME_ACCESS_SECONDS: "60"
       ORIGIN_MODE: compat
       TLS_ENABLED: "false"
       PORT: "8443"
@@ -67,6 +74,14 @@ services:
       sail:
         condition: service_started
     environment:
+      # The same number the notebook is told, so contract 7 can assert that the
+      # wait exceeded the lifetime rather than assuming it did.
+      CONFORMANCE_TOKEN_LIFETIME: "60"
+      # Contract 6 runs only here. Sail reaches OneLake through the agent's
+      # delta-rs interception, which addresses the store over http; the JVM
+      # overlay goes through hadoop's ABFS driver, which forces TLS for
+      # `abfss://` and cannot reach a plaintext stack at all. See live.py.
+      CONFORMANCE_FALL_THROUGH: "1"
       # THE SHIM NEEDS ENDPOINTS, and no compose in this repo gave the agent
       # any. Its default is 127.0.0.1:19080, which inside this container is
       # nothing — so `notebookutils.fs` raised `Connection refused` from a

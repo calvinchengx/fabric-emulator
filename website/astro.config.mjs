@@ -117,6 +117,7 @@ export default defineConfig({
             { slug: '37-runtime-fidelity-gaps' },
             { slug: '38-framework-conformance' },
             { slug: '39-run-multiple-parity-plan' },
+            { slug: '56-notebook-capability-parity-plan' },
             { slug: '40-rest-connector-plan' },
             { slug: '41-salesforce-connector-plan' },
             { slug: '42-sail-fidelity-plan' },

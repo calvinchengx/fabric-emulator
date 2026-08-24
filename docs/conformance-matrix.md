@@ -13,10 +13,11 @@ Witnesses: `ci:conformance-sail`, `ci:conformance-jvm`,
 `ci:conformance-warehouse`. The contracts themselves are defined in
 [38-framework-conformance.md](38-framework-conformance.md).
 
-Contract 4 (write landing) is the first live row: a write through the
-emulator path, confirmed by a reader that is not the engine that wrote.
-A ✅ here is that out-of-band listing (or a fresh TDS SELECT), not the
-writer's own catalog.
+Every ✅ below was recorded by a live run. The lakehouse columns
+execute notebooks through RunNotebook and confirm through OneLake; the
+warehouse column runs T-SQL through the emulator's TDS relay against a
+real SQL Server and confirms on a connection that is not the one that
+wrote. A ✅ is that out-of-band reader, never the writer's own catalog.
 
 | # | Contract | sail | jvm | warehouse |
 |---|---|---|---|---|
@@ -24,6 +25,6 @@ writer's own catalog.
 | 2 | Signature shape | ✅ | ✅ | — |
 | 3 | Runtime floor | ✅ | ✅ | — |
 | 4 | Write landing | ✅ | ✅ | ✅ |
-| 5 | Concurrent isolation | ✅ | ✅ | ❌ no live fan-out recorded — isolation is a property of concurrent sessi ([§5](38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case)) |
-| 6 | Rewrite fall-through | ❌ not yet asserted — same harness as write landing, different notebooks ([§6](38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§6](38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§6](38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract)) |
-| 7 | Credential lifetime | ❌ not yet asserted — same harness as write landing, different notebooks ([§7](38-framework-conformance.md#7-credentials-must-outlive-the-run)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§7](38-framework-conformance.md#7-credentials-must-outlive-the-run)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§7](38-framework-conformance.md#7-credentials-must-outlive-the-run)) |
+| 5 | Concurrent isolation | ✅ | ✅ | ✅ |
+| 6 | Rewrite fall-through | ✅ | ✅ | ✅ |
+| 7 | Credential lifetime | ✅ | ✅ | ✅ |

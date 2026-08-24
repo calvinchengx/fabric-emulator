@@ -156,6 +156,81 @@ def remember_stated_delta_location(sql: str) -> None:
     else:
         remember(target, loc)
 
+# CREATE {DATABASE|SCHEMA} [IF NOT EXISTS] name LOCATION 'path'
+#
+# The emulator ITSELF issues this: `bindDefaultLakehouse` binds a notebook's
+# default lakehouse with `CREATE DATABASE IF NOT EXISTS <name> LOCATION
+# '<abfs …/Tables>'`. That statement is the authoritative answer to "where does
+# this lakehouse put tables", and until now the agent watched it go past and
+# threw it away — `remember_stated_delta_location` matches CREATE TABLE only.
+# Recording it is what lets a table the notebook creates later be located
+# without asking the engine anything.
+_CREATE_SCHEMA_LOCATION = re.compile(
+    r"^\s*CREATE\s+(?:DATABASE|SCHEMA)\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"(?P<name>[\w.`]+)\s+LOCATION\s+'(?P<location>[^']+)'",
+    re.IGNORECASE | re.DOTALL)
+
+
+def remember_stated_schema_location(sql: str) -> None:
+    """If `sql` is CREATE DATABASE/SCHEMA … LOCATION, record that pair."""
+    if not isinstance(sql, str):
+        return
+    m = _CREATE_SCHEMA_LOCATION.match(sql)
+    if not m:
+        return
+    remember_schema(m.group("name").replace("`", ""), m.group("location"))
+
+
+def derive_location(name, storage_options=None):
+    """Locate `name` under a schema the emulator told us about, or None.
+
+    WHY THIS IS NOT A GUESS, which matters more here than the feature does. A
+    derived path that turns out to be wrong would send OPTIMIZE or MERGE at
+    somewhere data is not, and the whole point of this module is that it never
+    does that quietly. So the candidate is CHECKED — `is_deltatable` against
+    the real storage — and a candidate that is not a Delta table is simply not
+    an answer. Nothing is inferred from a name alone.
+
+    AND AMBIGUITY IS REFUSED, NOT RANKED. Two lakehouses registered in one
+    agent can both hold a `customers`, and picking the first would hand a
+    notebook another lakehouse's data under its own table name — the exact
+    cross-lakehouse leak `catalog.Claims` guards the unqualified path against.
+    Two hits raise; the caller must qualify or use a path.
+
+    Returns None when nothing matches, so the caller falls through to the
+    engine exactly as before. This adds a route; it removes none.
+    """
+    if not name or not _SCHEMA_LOCATIONS:
+        return None
+    bare = name.replace("`", "").strip().lower().rsplit(".", 1)[-1]
+    if not bare:
+        return None
+    try:
+        from deltalake import DeltaTable
+    except ImportError:  # pragma: no cover - runtime without deltalake
+        return None
+    options = _resolve_options(storage_options)
+    hits = []
+    for schema, loc in sorted(_SCHEMA_LOCATIONS.items()):
+        candidate = f"{loc}/{bare}"
+        try:
+            found = DeltaTable.is_deltatable(candidate, storage_options=options)
+        except Exception:  # noqa: BLE001 - unreadable is not evidence either way
+            continue
+        if found:
+            hits.append((schema, candidate))
+    if not hits:
+        return None
+    if len(hits) > 1:
+        raise DeltaOpError(
+            f"{name!r} is ambiguous: it exists under "
+            + " and ".join(f"{schema!r} ({loc})" for schema, loc in hits)
+            + ". Qualify it (`<schema>`.`<table>`) or address it by path "
+              "(delta.`<uri>`) — resolving it here would pick one lakehouse's "
+              "data to answer for another's.")
+    return hits[0][1]
+
+
 # `OPTIMIZE delta.`path``, `OPTIMIZE tbl`, optionally with a WHERE predicate or
 # ZORDER clause. The predicate/zorder are captured so they can be *refused*
 # rather than silently ignored — quietly dropping a WHERE would compact more
@@ -848,6 +923,19 @@ def install(spark, storage_options=None):
         loc = known_location(name)
         if loc:
             return loc
+        # DERIVE BEFORE ASKING THE ENGINE. A table the NOTEBOOK created —
+        # `saveAsTable("events")` — is registered by neither route above:
+        # `register()` enumerated the lakehouse before the write happened, and
+        # a DataFrameWriter call is not a CREATE TABLE … LOCATION statement for
+        # anything to overhear. But the emulator did state where the lakehouse
+        # puts tables, so the location is derivable and, crucially, CHECKABLE.
+        # This used to fall straight through to a DESCRIBE DETAIL that Sail
+        # cannot parse, which is the whole of docs/38 §6's `OPTIMIZE <name>`
+        # gap.
+        loc = derive_location(name, storage_options)
+        if loc:
+            remember(name.replace("`", "").strip().rsplit(".", 1)[-1], loc)
+            return loc
         print(f"[delta_ops] no recorded location for {name!r}; falling back to "
               f"DESCRIBE DETAIL, which Sail does not implement — if this fails, "
               f"the table was not registered through the emulator",
@@ -878,6 +966,7 @@ def install(spark, storage_options=None):
         if matched is None:
             result = original_sql(query, *args, **kwargs)
             remember_stated_delta_location(query)
+            remember_stated_schema_location(query)
             return result
         kind, params = matched
         # These two answer with real rows rather than a result line, so they

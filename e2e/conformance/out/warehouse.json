@@ -35,24 +35,24 @@
     "id": "5",
     "contract": "Concurrent isolation",
     "backend": "warehouse",
-    "status": "gap",
-    "error": "no live fan-out recorded \u2014 isolation is a property of concurrent sessions",
-    "pointer": "38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "6",
     "contract": "Rewrite fall-through",
     "backend": "warehouse",
-    "status": "gap",
-    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
-    "pointer": "38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "7",
     "contract": "Credential lifetime",
     "backend": "warehouse",
-    "status": "gap",
-    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
-    "pointer": "38-framework-conformance.md#7-credentials-must-outlive-the-run"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   }
 ]

@@ -403,7 +403,7 @@ def _iso(seen):
 
 
 def _clean():
-    return {m: {"marker": m, "notebook": nb} for m, nb in EXPECTED_CHILDREN.items()}
+    return {m: {"marker": m, "identity": nb} for m, nb in EXPECTED_CHILDREN.items()}
 
 
 def test_concurrent_isolation_passes_when_each_child_knows_only_itself():
@@ -416,20 +416,20 @@ def test_concurrent_isolation_catches_a_child_reporting_another_childs_identity(
     """The leak this contract exists for. One long-lived agent with a namespace
     per session means anything process-global crosses concurrent runs."""
     seen = _clean()
-    seen["child1"]["notebook"] = "nb-0"
+    seen["child1"]["identity"] = "nb-0"
     r = probes.concurrent_isolation(session=lambda: _iso(seen),
                                     expected=EXPECTED_CHILDREN, backend="sail")
     assert r.status == "fail"
-    assert "believes it is notebook nb-0" in r.error
+    assert "believes it is nb-0" in r.error
 
 
 def test_concurrent_isolation_names_a_shared_identity_as_such():
     """N children all reporting one id is already caught per-child; saying it
     once names the leak instead of listing N mismatches."""
-    seen = {m: {"marker": m, "notebook": "nb-0"} for m in EXPECTED_CHILDREN}
+    seen = {m: {"marker": m, "identity": "nb-0"} for m in EXPECTED_CHILDREN}
     r = probes.concurrent_isolation(session=lambda: _iso(seen),
                                     expected=EXPECTED_CHILDREN, backend="sail")
-    assert "share a notebook identity" in r.error
+    assert "sessions share an identity" in r.error
 
 
 def test_concurrent_isolation_catches_a_child_writing_another_childs_file():
@@ -443,7 +443,7 @@ def test_concurrent_isolation_catches_a_child_writing_another_childs_file():
 
 def test_concurrent_isolation_reports_children_that_wrote_nothing():
     """A fan-out where two of three vanished must not read as isolation."""
-    seen = {"child0": {"marker": "child0", "notebook": "nb-0"}}
+    seen = {"child0": {"marker": "child0", "identity": "nb-0"}}
     r = probes.concurrent_isolation(session=lambda: _iso(seen),
                                     expected=EXPECTED_CHILDREN, backend="sail")
     assert r.status == "fail"
@@ -455,3 +455,215 @@ def test_concurrent_isolation_refuses_a_fan_out_that_never_happened():
         session=lambda: probes.IsolationClaim(ok=False, error="no children were created"),
         expected={}, backend="sail")
     assert r.status == "fail"
+
+
+def _cred(**kw):
+    base = dict(ok=True, lifetime=60, slept=75.0, before_ok=True, after_ok=True)
+    base.update(kw)
+    return probes.CredentialClaim(**base)
+
+
+def test_credential_lifetime_passes_when_a_run_outlives_its_token():
+    r = probes.credential_lifetime(session=lambda: _cred(), backend="sail")
+    assert r.status == "pass"
+
+
+def test_credential_lifetime_needs_a_working_baseline_first():
+    """A session that could never reach OneLake would otherwise 'pass' a check
+    that only looked at the second operation."""
+    r = probes.credential_lifetime(
+        session=lambda: _cred(before_ok=False, before_error="401"), backend="sail")
+    assert r.status == "fail"
+    assert "BEFORE the wait failed" in r.error
+
+
+def test_credential_lifetime_refuses_a_wait_shorter_than_the_token():
+    """THE defect: a token minted at container start, an hour later every read
+    401s. A probe that slept less than the token lived would pass on a runtime
+    that never re-mints — which is the thing under test."""
+    r = probes.credential_lifetime(session=lambda: _cred(slept=30.0), backend="sail")
+    assert r.status == "fail"
+    assert "gap was never opened" in r.error
+
+
+def test_credential_lifetime_refuses_a_run_that_reported_no_lifetime():
+    r = probes.credential_lifetime(session=lambda: _cred(lifetime=0), backend="sail")
+    assert r.status == "fail"
+    assert "no token lifetime" in r.error
+
+
+def test_credential_lifetime_fails_when_the_second_read_401s():
+    r = probes.credential_lifetime(
+        session=lambda: _cred(after_ok=False, after_error="401 Unauthorized"),
+        backend="sail")
+    assert r.status == "fail"
+    assert "past a 60s token lifetime" in r.error and "401" in r.error
+
+
+def test_credential_lifetime_reports_a_session_that_never_ran_it():
+    r = probes.credential_lifetime(
+        session=lambda: probes.CredentialClaim(ok=False, error="not run: no lifetime set"),
+        backend="sail")
+    assert r.status == "fail"
+    assert "not run" in r.error
+
+
+# ---------------------------------------------------------------- contract 6
+#
+# These are new alongside the warehouse column, and they cover the whole probe
+# rather than only the branch that column added: contract 6 shipped without any
+# unit test of `fall_through`, which its two siblings both had.
+
+
+def _ft(**kw):
+    base = dict(ok=True, recognised_ok=True, unrecognised_ok=False,
+                unrecognised_error="cannot plan MERGE")
+    base.update(kw)
+    return probes.FallThroughClaim(**base)
+
+
+def test_fall_through_passes_on_the_default_engine():
+    r = probes.fall_through(session=lambda: _ft(), backend="sail", control=False)
+    assert r.status == "pass"
+
+
+def test_fall_through_is_vacuous_if_nothing_is_intercepting():
+    """The recognised statement must SUCCEED. If the interception is not
+    installed, everything falls through and the result means nothing."""
+    r = probes.fall_through(
+        session=lambda: _ft(recognised_ok=False, recognised_error="OPTIMIZE failed"),
+        backend="sail", control=False)
+    assert r.status == "fail"
+    assert "DOES recognise failed" in r.error
+
+
+def test_fall_through_refuses_a_failure_that_names_our_own_rewriter():
+    """A rewrite that failed is a different defect wearing the same red."""
+    r = probes.fall_through(
+        session=lambda: _ft(unrecognised_error="delta-rs could not plan this"),
+        backend="sail", control=False)
+    assert r.status == "fail"
+    assert "the agent's own rewriting" in r.error
+
+
+def test_fall_through_refuses_a_failure_with_no_error_text():
+    r = probes.fall_through(
+        session=lambda: _ft(unrecognised_error="   "),
+        backend="sail", control=False)
+    assert r.status == "fail"
+    assert "no error text to attribute" in r.error
+
+
+def test_fall_through_fails_when_the_default_engine_ran_what_it_cannot_plan():
+    r = probes.fall_through(
+        session=lambda: _ft(unrecognised_ok=True, unrecognised_error=""),
+        backend="sail", control=False)
+    assert r.status == "fail"
+    assert "something rewrote it" in r.error
+
+
+def test_fall_through_control_engine_must_run_the_statement():
+    """The control column is what makes the default engine's red readable."""
+    r = probes.fall_through(session=lambda: _ft(unrecognised_ok=True),
+                            backend="jvm", control=True)
+    assert r.status == "pass"
+    r = probes.fall_through(session=lambda: _ft(unrecognised_ok=False),
+                            backend="jvm", control=True)
+    assert r.status == "fail"
+    assert "control engine could not run" in r.error
+
+
+def test_fall_through_reports_a_session_that_ran_neither_statement():
+    r = probes.fall_through(
+        session=lambda: probes.FallThroughClaim(ok=False, error="the session died"),
+        backend="sail", control=False)
+    assert r.status == "fail"
+    assert "the session died" in r.error
+
+
+def test_fall_through_echo_is_the_witness_on_a_single_engine_surface():
+    """The warehouse has no contrasting engine, so the engine returning the
+    bytes it was given is what proves nothing rewrote them."""
+    sent = "WITH a AS (WITH b AS (SELECT 1 x) SELECT x FROM b) SELECT x FROM a"
+    r = probes.fall_through(
+        session=lambda: _ft(echo_sent=sent, echo_got=sent),
+        backend="warehouse", control=False)
+    assert r.status == "pass"
+
+
+def test_fall_through_echo_fails_when_the_bytes_came_back_changed():
+    sent = "WITH a AS (WITH b AS (SELECT 1 x) SELECT x FROM b) SELECT x FROM a"
+    r = probes.fall_through(
+        session=lambda: _ft(echo_sent=sent, echo_got="WITH b AS (SELECT 1 x) ..."),
+        backend="warehouse", control=False)
+    assert r.status == "fail"
+    assert "echoed back text the session did not send" in r.error
+
+
+def test_fall_through_echo_replaces_the_control_contrast_rather_than_adding_to_it():
+    """Requiring both would make the single-engine surface unprovable. An echo
+    that round-trips passes even though the unrecognised statement 'succeeded',
+    which on a two-engine surface would be the failure."""
+    sent = "SELECT 1"
+    r = probes.fall_through(
+        session=lambda: _ft(unrecognised_ok=True, echo_sent=sent, echo_got=sent),
+        backend="warehouse", control=False)
+    assert r.status == "pass"
+
+
+# ---------------------------------------------------------------- contract 7
+
+
+def test_credential_lifetime_refuses_a_surface_that_accepts_an_expired_token():
+    """'The run outlived its token' and 'nothing checks credentials' are the
+    same green, and the second is a hole wearing the first's result."""
+    r = probes.credential_lifetime(
+        session=lambda: _cred(expiry_checked=True, expiry_accepted=True),
+        backend="warehouse")
+    assert r.status == "fail"
+    assert "already-expired credential was ACCEPTED" in r.error
+
+
+def test_credential_lifetime_passes_when_expiry_is_enforced():
+    r = probes.credential_lifetime(
+        session=lambda: _cred(expiry_checked=True, expiry_accepted=False),
+        backend="warehouse")
+    assert r.status == "pass"
+
+
+def test_credential_lifetime_grades_a_surface_that_cannot_check_expiry_on_the_wait():
+    """Where the stronger form is unavailable the contract stays what it was;
+    it is not silently downgraded for the surfaces that DO offer it."""
+    r = probes.credential_lifetime(
+        session=lambda: _cred(expiry_checked=False, expiry_accepted=True),
+        backend="sail")
+    assert r.status == "pass"
+
+
+def test_fall_through_grades_the_catalog_name_form_when_offered():
+    """`OPTIMIZE delta.`<uri>`` is what the probe can always spell; `OPTIMIZE
+    events` is what an author types. A hatch that needs a URI is not the hatch
+    this contract claims — and this stayed a 'recorded gap' for exactly as long
+    as it went ungraded."""
+    r = probes.fall_through(
+        session=lambda: _ft(name_form_ok=True), backend="sail", control=False)
+    assert r.status == "pass"
+
+
+def test_fall_through_fails_when_only_the_path_form_works():
+    r = probes.fall_through(
+        session=lambda: _ft(name_form_ok=False,
+                            name_form_error="cannot resolve 'events'"),
+        backend="sail", control=False)
+    assert r.status == "fail"
+    assert "NOT by catalog name" in r.error
+
+
+def test_fall_through_does_not_invent_a_name_form_verdict_for_a_surface_without_one():
+    """None is 'not offered', and must not be graded as either outcome. The
+    warehouse leg asserts in Go and has no catalog-name analogue."""
+    sent = "SELECT 1"
+    r = probes.fall_through(
+        session=lambda: _ft(echo_sent=sent, echo_got=sent, name_form_ok=None),
+        backend="warehouse", control=False)
+    assert r.status == "pass"

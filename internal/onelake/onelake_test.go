@@ -170,7 +170,7 @@ func TestWriteDFSErr(t *testing.T) {
 
 func TestPermHeaders(t *testing.T) {
 	w := httptest.NewRecorder()
-	permHeaders(w)
+	permHeaders(w, false)
 	if w.Header().Get("x-ms-owner") != "$superuser" ||
 		w.Header().Get("x-ms-group") != "$superuser" ||
 		w.Header().Get("x-ms-permissions") != "---------" {
@@ -866,4 +866,40 @@ func TestEveryResponseRefusesMIMESniffing(t *testing.T) {
 			t.Fatalf("stored content served as %q", got)
 		}
 	})
+}
+
+// ADLS's "Get Access Control List" carries x-ms-acl; nothing else does.
+//
+// Hadoop's ABFS driver reads it in AbfsClient.getAclStatus. This surface
+// answered owner/group/permissions and omitted the ACL, which a client that
+// must parse it treats as a failure — and hadoop-azure then RETRIES rather than
+// reporting, so the caller hangs with no error anywhere.
+func TestGetAccessControlCarriesTheACL(t *testing.T) {
+	for _, tc := range []struct {
+		name, query string
+		wantACL     bool
+	}{
+		{"the ACL request", "action=getAccessControl&upn=false", true},
+		{"any other HEAD", "", false},
+		{"case-insensitive, as query values are", "action=GETACCESSCONTROL", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodHead, "/ws/item/Tables?"+tc.query, nil)
+			permHeaders(w, wantsACL(r))
+			got := w.Header().Get("x-ms-acl")
+			if tc.wantACL && got == "" {
+				t.Fatal("x-ms-acl missing from the getAccessControl response")
+			}
+			if !tc.wantACL && got != "" {
+				t.Fatalf("x-ms-acl on a response that is not getAccessControl: %q", got)
+			}
+			// The ACL must not contradict the permissions beside it: OneLake
+			// exposes no POSIX permissions and this surface has always said so.
+			if tc.wantACL && got != "user::---,group::---,other::---" {
+				t.Fatalf("x-ms-acl %q disagrees with x-ms-permissions %q",
+					got, w.Header().Get("x-ms-permissions"))
+			}
+		})
+	}
 }
