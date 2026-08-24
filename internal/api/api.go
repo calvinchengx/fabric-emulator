@@ -457,7 +457,7 @@ func (a *API) startOperationWithID(w http.ResponseWriter, r *http.Request, id, k
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	loc := fmt.Sprintf("https://%s/v1/operations/%s", r.Host, op.ID)
+	loc := fmt.Sprintf("%s/v1/operations/%s", externalBase(r), op.ID)
 	w.Header().Set("x-ms-operation-id", op.ID)
 	w.Header().Set("Location", loc)
 	w.Header().Set("Retry-After", fmt.Sprintf("%d", a.RetryAfterSeconds))
