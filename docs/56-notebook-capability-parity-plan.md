@@ -236,7 +236,18 @@ not a missing feature. It is a wrong answer, and it is the reason "no handler
 found by search" is a claim about the search rather than about the system.
 
 `internal/notebook/celllang.go` now gives a cell four dispositions, and the two
-in the middle carry the judgement:
+in the middle carry the judgement.
+
+**The Go tests were not enough, and the reason is the shape of the defect.**
+They call `Disposition(language)` directly — and that function was never wrong.
+The parser always classified the magic correctly; the RUN LOOP ignored the
+answer. The bug lived in the gap between the classifier and its caller, which
+is exactly where a unit test on the classifier passes on both sides. The four
+dispositions are now observed through a real RunNotebook job as well
+(`ci:conformance-sail`), with every cell chosen to be invalid Python so a
+regression cannot pass quietly. Reintroducing the old behaviour was measured:
+it fails with the original signature, `NameError: name 'false' is not defined`.
+
 
 - **`%%configure` is accepted and IGNORED, never silently.** The cell records
   that it changed nothing and that the requested executors, memory and conf were

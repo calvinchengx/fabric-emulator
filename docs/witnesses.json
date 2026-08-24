@@ -1399,6 +1399,7 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "Notebook cell languages (%%sql, %%pyspark, %%configure, %%html, %%markdown, %%spark)",
     "witnesses": [
+      "ci:conformance-sail",
       "go:TestUnsupportedLanguagesAreNamedNotMisExecuted",
       "go:TestConfigureIsIgnoredOutLoud",
       "go:TestMarkupIsRenderedNotExecuted",

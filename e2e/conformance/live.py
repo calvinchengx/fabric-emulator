@@ -110,6 +110,71 @@ def run_scaled(n):
     return n * run_scale
 """
 
+# --- cell languages -----------------------------------------------------------
+#
+# The four dispositions, through a REAL RunNotebook job. They already had Go
+# tests, but those call `Disposition(language)` directly — and the defect this
+# closed never lived there. The parser always classified the magic correctly;
+# the RUN LOOP ignored the answer and sent everything that was not `sql` to the
+# Python executor. So the bug sat in the gap between the classifier and its
+# caller, and a unit test on the classifier passes on both sides of it.
+#
+# Every cell below is chosen so that EXECUTING IT AS PYTHON FAILS. That is what
+# makes this non-vacuous: if the run loop regressed to the old behaviour, these
+# notebooks would not quietly pass, they would break.
+CELL_LANGUAGES_BODY = """# Fabric notebook source
+
+# CELL ********************
+# MAGIC %%configure
+# MAGIC {
+# MAGIC   "driverMemory": "28g",
+# MAGIC   "useStarterPool": false
+# MAGIC }
+
+# CELL ********************
+# MAGIC %%html
+# MAGIC <h1>this is markup, not code</h1>
+
+# CELL ********************
+# MAGIC %%markdown
+# MAGIC ## a heading
+# MAGIC and *emphasis*, which is not Python either
+
+# CELL ********************
+import json as _json
+
+import notebookutils as _nbu
+
+_nbu.fs.put(
+    "abfss://__WS__@onelake.dfs.fabric.microsoft.com/__DIR__/languages.json",
+    _json.dumps({"ran": True}), True)
+print("the python cell after the magics ran")
+"""
+
+# `useStarterPool: false` is JSON, not Python — `false` is a NameError. The
+# `<h1>` cell is a SyntaxError. Neither can pass by being executed.
+
+SCALA_BODY = """# Fabric notebook source
+
+# CELL ********************
+# MAGIC %%spark
+# MAGIC val rows = spark.range(5).count()
+# MAGIC println(s"scala counted $rows")
+
+# CELL ********************
+import json as _json
+
+import notebookutils as _nbu
+
+# MUST NEVER RUN. An unsupported cell fails the run and stops it, so this
+# marker's ABSENCE is the assertion — a run that carried on past a refused
+# cell would leave it behind.
+_nbu.fs.put(
+    "abfss://__WS__@onelake.dfs.fabric.microsoft.com/__DIR__/after-scala.json",
+    _json.dumps({"ran": True}), True)
+"""
+
+
 CHILD_BODY = """# Fabric notebook source
 
 # CELL ********************
@@ -746,6 +811,126 @@ def fan_out() -> dict[str, str]:
     return expected
 
 
+LANGUAGES_DIR = "lake.Lakehouse/Files/conformance/languages"
+
+
+def _publish(name: str, body: str) -> str:
+    """Publish a notebook and return its id, following the 200-or-202 outcome."""
+    _, headers, _ = req(
+        "POST", f"{FABRIC}/v1/workspaces/{_ws}/items", {
+            "displayName": name, "type": "Notebook",
+            "definition": {"parts": [{
+                "path": "notebook-content.py", "payloadType": "InlineBase64",
+                "payload": base64.b64encode(
+                    body.replace("__WS__", _ws)
+                        .replace("__DIR__", LANGUAGES_DIR).encode()).decode()}]}},
+        token=fabric_token())
+    opid = headers.get("x-ms-operation-id")
+    for _ in range(60):
+        op = req("GET", f"{FABRIC}/v1/operations/{opid}", token=fabric_token())[2]
+        if op.get("status") == "Succeeded":
+            return req("GET", f"{FABRIC}/v1/operations/{opid}/result",
+                       token=fabric_token())[2]["id"]
+        time.sleep(1)
+    raise RuntimeError(f"notebook {name!r} never finished creating")
+
+
+def _run_to_completion(nb: str):
+    """Submit RunNotebook, wait, and return (status, per-cell detail)."""
+    _, hdrs, _ = req(
+        "POST", f"{FABRIC}/v1/workspaces/{_ws}/items/{nb}/jobs/instances?jobType=RunNotebook",
+        token=fabric_token())
+    jid = hdrs["Location"].rstrip("/").rsplit("/", 1)[-1]
+    base = f"{FABRIC}/v1/workspaces/{_ws}/items/{nb}/jobs/instances/{jid}"
+    status = None
+    for _ in range(900):
+        status = req("GET", base, token=fabric_token())[2].get("status")
+        if status in ("Completed", "Failed", "Cancelled", "Deduped"):
+            break
+        time.sleep(1)
+    detail = req("GET", f"{base}/notebookRun", token=fabric_token())[2]
+    return status, sorted(detail.get("cells", []), key=lambda c: c["index"])
+
+
+def _marker_exists(name: str) -> bool:
+    """Read a marker over DFS. Not Spark, not the job record."""
+    r = urllib.request.Request(
+        f"http://{ACCT}/{_ws}/{urllib.parse.quote(LANGUAGES_DIR)}/{name}",
+        headers={"Authorization": "Bearer " + storage_token(), "Host": DFS_HOST})
+    try:
+        with urllib.request.urlopen(r, timeout=60) as resp:
+            return resp.status == 200
+    except Exception:  # noqa: BLE001 — absence is an answer here, not a failure
+        return False
+
+
+def cell_languages() -> dict:
+    """The four dispositions, observed through a real run.
+
+    NOT A CONTRACT CELL — it is not one of docs/38's seven, so it stays out of
+    the matrix and fails the RUN instead, the same way `%run` does.
+
+    Returns {"ok": bool, "error": str}.
+    """
+    try:
+        nb = _publish("cell-languages-nb", CELL_LANGUAGES_BODY)
+        status, cells = _run_to_completion(nb)
+        if status != "Completed":
+            return {"ok": False,
+                    "error": f"the magics notebook ended {status}: "
+                             + "; ".join(f"cell {c['index']} {c['status']} "
+                                         f"{c.get('error') or ''}" for c in cells)}
+        if len(cells) < 4:
+            return {"ok": False, "error": f"expected 4 cells, got {len(cells)}"}
+        # %%configure: ACCEPTED AND IGNORED, and it has to SAY so. Executed as
+        # Python this cell is a NameError (`false`), so a pass here cannot come
+        # from it having run.
+        note = cells[0].get("output") or ""
+        if "IGNORED" not in note or "not applied" not in note:
+            return {"ok": False,
+                    "error": f"%%configure did not report being ignored: {note!r}"}
+        # %%html and %%markdown: rendered, never executed. The html cell is a
+        # Python SyntaxError, so this too cannot pass by executing.
+        for i in (1, 2):
+            if cells[i].get("status") != "Succeeded":
+                return {"ok": False,
+                        "error": f"markup cell {i} did not succeed: {cells[i]}"}
+            if "rendered, not executed" not in (cells[i].get("output") or ""):
+                return {"ok": False,
+                        "error": f"markup cell {i} did not report rendering: {cells[i]}"}
+        # ...and the ordinary Python cell after them still ran. Confirmed OUT OF
+        # BAND: the marker is read over DFS, not taken from the job record.
+        if not _marker_exists("languages.json"):
+            return {"ok": False,
+                    "error": "the python cell after the magics left no marker"}
+    except Exception as exc:  # noqa: BLE001 — the reason is the finding
+        return {"ok": False, "error": f"magics notebook: {type(exc).__name__}: {exc}"}
+
+    try:
+        nb = _publish("scala-nb", SCALA_BODY)
+        status, cells = _run_to_completion(nb)
+        if status != "Failed":
+            return {"ok": False,
+                    "error": f"a Scala cell did not fail the run: status={status}"}
+        err = (cells[0].get("error") or "") if cells else ""
+        # NAMED, which is the whole point: this used to be a Python
+        # SyntaxError pointing at correct Scala.
+        if "scala" not in err.lower():
+            return {"ok": False,
+                    "error": f"the refusal does not name the language: {err!r}"}
+        if "Real Fabric runs it" not in err:
+            return {"ok": False,
+                    "error": f"the refusal reads as 'your cell is invalid': {err!r}"}
+        # THE RUN STOPPED. Absence is the assertion — a run that carried on
+        # past a refused cell would have left this marker behind.
+        if _marker_exists("after-scala.json"):
+            return {"ok": False,
+                    "error": "the run continued past a cell it refused"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"scala notebook: {type(exc).__name__}: {exc}"}
+    return {"ok": True, "error": ""}
+
+
 def session_isolation(expected: dict) -> IsolationClaim:
     """Read every child's artifact over DFS. Not Spark, not any of the writers."""
     if not expected:
@@ -892,6 +1077,21 @@ def main() -> int:
         log(f"%run FAILED: {_run_magic_seen.get('error') or 'no reason given'}")
         return 1
     log("%run: helpers spliced into this session — run_scaled/run_label usable")
+
+    # Cell languages — also not a contract cell, and gated the same way.
+    #
+    # These four dispositions had Go tests, and those call
+    # `Disposition(language)` directly. The defect they were written for did
+    # not live there: the parser always classified the magic correctly and the
+    # RUN LOOP ignored the answer, so the bug sat in the gap between the
+    # classifier and its caller — where a unit test on the classifier passes on
+    # both sides of it. This runs the loop.
+    languages = cell_languages()
+    if not languages["ok"]:
+        log(f"cell languages FAILED: {languages['error']}")
+        return 1
+    log("cell languages: configure ignored out loud, markup rendered, "
+        "Scala refused by name and the run stopped")
     return 0
 
 
