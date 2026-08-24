@@ -236,6 +236,72 @@ try:
         }]},
     }, ft)
 
+    # --- a Variable Library, with an ACTIVE value set that overrides a SUBSET -
+    # Two variables and an override for exactly one of them. Overriding both
+    # would not distinguish "the active set won" from "the whole file won", and
+    # overriding neither would not distinguish resolution from echoing defaults.
+    def _part(path, doc):
+        return {"path": path,
+                "payload": base64.b64encode(json.dumps(doc).encode()).decode(),
+                "payloadType": "InlineBase64"}
+
+    http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/variableLibraries", {
+        "displayName": "app-config",
+        "definition": {"parts": [
+            _part("variables.json", {"variables": [
+                {"name": "retries", "type": "Integer", "value": 3},
+                {"name": "endpoint", "type": "String", "value": "https://dev.example"},
+            ]}),
+            _part("valueSets/prod.json", {"name": "prod", "variableOverrides": [
+                {"name": "endpoint", "value": "https://prod.example"},
+            ]}),
+        ]},
+    }, ft)
+    # Resolved by LISTING rather than from the create response: a create that
+    # carries a definition may answer 202 with an empty body, and reading an
+    # `id` out of that gets a KeyError instead of an item.
+    varlib = next(x for x in http(
+        "GET", f"{FABRIC}/v1/workspaces/{ws['id']}/variableLibraries", token=ft)["value"]
+        if x["displayName"] == "app-config")
+    # The active set is item PROPERTY, not definition — per-workspace state.
+    http("PATCH", f"{FABRIC}/v1/workspaces/{ws['id']}/variableLibraries/{varlib['id']}",
+         {"properties": {"activeValueSetName": "prod"}}, ft)
+
+    # --- a User Data Function item, with its three documented definition parts -
+    # getFunctions reads the item's REAL definition and runs its REAL code, so
+    # the seed has to be a genuine function_app.py, not a placeholder.
+    function_app = (
+        "import fabric.functions as fn\n"
+        "\n"
+        "udf = fn.UserDataFunctions()\n"
+        "\n"
+        "@udf.function()\n"
+        "def add_tax(amount: float, rate: float) -> float:\n"
+        "    return round(amount * (1 + rate), 2)\n"
+    )
+    http("POST", f"{FABRIC}/v1/workspaces/{ws['id']}/userDataFunctions", {
+        "displayName": "pricing-udf", "type": "UserDataFunction",
+        "definition": {"parts": [
+            _part("definition.json", {
+                "functions": [{"name": "add_tax", "description": "amount plus tax"}],
+                "connectedDataSources": [],
+            }),
+            _part("resources/functions.json", {"functionsMetadata": [{
+                "name": "add_tax",
+                "fabricProperties": {
+                    "fabricFunctionParameters": [
+                        {"name": "amount", "type": "float"},
+                        {"name": "rate", "type": "float"},
+                    ],
+                    "fabricFunctionReturnType": "float",
+                },
+            }]}),
+            {"path": "function_app.py",
+             "payload": base64.b64encode(function_app.encode()).decode(),
+             "payloadType": "InlineBase64"},
+        ]},
+    }, ft)
+
     log("seeding a Key Vault secret")
     vt = token("https://vault.azure.net/.default")
     http("PUT", f"{KV}/secrets/db-password?api-version=7.4", {"value": "s3cr3t-value"}, vt)

@@ -6,8 +6,17 @@ Its wiring (endpoints, identity, default lakehouse) comes entirely from the
 environment the orchestrator injects, the same way real Fabric injects the
 runtime context into the kernel.
 """
+import json
+
 import notebookutils
-from notebookutils import credentials, fs, lakehouse, runtime
+from notebookutils import (
+    credentials,
+    fs,
+    lakehouse,
+    runtime,
+    udf,
+    variableLibrary,
+)
 from notebookutils.common.exceptions import RunMultipleFailedException
 
 ctx = runtime.context
@@ -246,6 +255,130 @@ bypassed = notebookutils.notebook.run(
     "other-lake-nb", 90, {"useRootDefaultLakehouse": True})
 print(f"useRootDefaultLakehouse bypassed the check: {bypassed!r}", flush=True)
 assert bypassed == "", bypassed
+
+# =============================================================================
+# Axis B: the remaining members, exercised rather than merely shaped.
+#
+# Contract 2 has always proven these EXIST with the documented signatures. The
+# sections below are the other half — what they DO — and each confirms it OUT
+# OF BAND, the same rule the phase 3 block above follows: the call that acted
+# is never the call that answers.
+# =============================================================================
+
+# --- fs.rm: gone, and recursion is not the default ---------------------------
+fs.put("Files/doomed.txt", "delete me")
+assert fs.exists("Files/doomed.txt")
+assert fs.rm("Files/doomed.txt") is True
+assert not fs.exists("Files/doomed.txt"), "rm reported success and left the file"
+# A non-empty DIRECTORY without recurse must be refused. Without this half, an
+# rm that quietly deleted trees would pass every assertion above.
+fs.put("Files/keepdir/inner.txt", "still here")
+try:
+    fs.rm("Files/keepdir")
+    raise AssertionError("rm removed a non-empty directory without recurse=True")
+except (OSError, ValueError) as e:
+    assert "recurse" in str(e).lower(), e
+assert fs.exists("Files/keepdir/inner.txt"), "a refused rm must leave the tree intact"
+assert fs.rm("Files/keepdir", recurse=True) is True
+assert not fs.exists("Files/keepdir/inner.txt"), "recursive rm left the child"
+print("fs.rm: removed a file, refused a non-empty tree, then recursed", flush=True)
+
+# --- lakehouse.getWithProperties: MORE than get, not the same answer ---------
+plain = lakehouse.get(ctx["defaultLakehouseId"])
+withprops = lakehouse.getWithProperties(ctx["defaultLakehouseId"])
+assert withprops["id"] == plain["id"], (withprops, plain)
+props2 = withprops.get("properties") or {}
+assert props2, "getWithProperties returned nothing get() does not already give"
+# The OneLake paths are what the properties are FOR, and they must point at
+# this lakehouse rather than being any non-empty dict.
+blob = json.dumps(props2)
+assert ctx["defaultLakehouseId"] in blob, props2
+print(f"lakehouse.getWithProperties: carries {sorted(props2)}", flush=True)
+
+# --- notebook item CRUD, end to end ------------------------------------------
+IPYNB = {"cells": [{"cell_type": "code", "source": ["print('v1')\n"],
+                    "metadata": {}, "outputs": [], "execution_count": None}],
+         "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
+
+made_nb = notebookutils.notebook.create("axis-b-nb", "created by the e2e", IPYNB)
+assert made_nb.id, made_nb
+# OUT OF BAND: a fresh list, not the create response.
+assert "axis-b-nb" in [n.displayName for n in notebookutils.notebook.list()], \
+    [n.displayName for n in notebookutils.notebook.list()]
+print(f"notebook.create + list: {made_nb.displayName} is in the workspace", flush=True)
+
+# get by NAME and by ID must resolve to the same item — Fabric's management
+# APIs take either, and a shim that only handled one would strand a caller
+# holding the id create() just returned.
+assert notebookutils.notebook.get("axis-b-nb").id == made_nb.id
+assert notebookutils.notebook.get(made_nb.id).displayName == "axis-b-nb"
+print("notebook.get: same item by display name and by id", flush=True)
+
+fetched = notebookutils.notebook.getDefinition("axis-b-nb")
+assert "print('v1')" in fetched, fetched[:200]
+print("notebook.getDefinition: the .ipynb came back with its cell", flush=True)
+
+IPYNB["cells"][0]["source"] = ["print('v2')\n"]
+assert notebookutils.notebook.updateDefinition("axis-b-nb", IPYNB) is True
+after_def = notebookutils.notebook.getDefinition("axis-b-nb")
+assert "print('v2')" in after_def and "print('v1')" not in after_def, after_def[:200]
+print("notebook.updateDefinition: v1 replaced by v2, read back separately", flush=True)
+
+renamed_nb = notebookutils.notebook.update("axis-b-nb", "axis-b-renamed", "renamed")
+assert renamed_nb.displayName == "axis-b-renamed", renamed_nb
+listed_nb = [n.displayName for n in notebookutils.notebook.list()]
+assert "axis-b-renamed" in listed_nb and "axis-b-nb" not in listed_nb, listed_nb
+print("notebook.update: rename visible in a fresh listing", flush=True)
+
+assert notebookutils.notebook.delete("axis-b-renamed") is True
+assert "axis-b-renamed" not in [n.displayName for n in notebookutils.notebook.list()]
+print("notebook.delete: gone from a fresh listing", flush=True)
+
+# --- variableLibrary: the ACTIVE value set decides ---------------------------
+lib = variableLibrary.getLibrary("app-config")
+# `endpoint` is overridden by the active set; `retries` is not. Both halves are
+# the test — one proves the override applied, the other proves the defaults
+# were not simply discarded.
+assert lib.endpoint == "https://prod.example", lib.asDict()
+assert lib.retries == 3, lib.asDict()
+assert lib.getVariable("endpoint") == lib["endpoint"] == lib.endpoint
+print(f"variableLibrary.getLibrary: active set won for endpoint, "
+      f"default kept for retries ({lib.asDict()})", flush=True)
+
+assert variableLibrary.get("$(/**/app-config/endpoint)") == "https://prod.example"
+# Names are case-sensitive here, unlike the pipeline surface. A shim that
+# smoothed that over would pass locally and fail on Fabric.
+try:
+    variableLibrary.get("$(/**/app-config/Endpoint)")
+    raise AssertionError("a wrong-case variable name resolved")
+except variableLibrary.VariableLibraryError as e:
+    assert "case-sensitive" in str(e), e
+# The `/**/` prefix is required by the reference.
+try:
+    variableLibrary.get("$(app-config/endpoint)")
+    raise AssertionError("a reference without the /**/ prefix was accepted")
+except variableLibrary.VariableLibraryError as e:
+    assert "/**/" in str(e), e
+print("variableLibrary.get: resolved by reference, and held both documented rules",
+      flush=True)
+
+# --- udf.getFunctions: the item's OWN code, actually run ---------------------
+funcs = udf.getFunctions("pricing-udf")
+detail = [d for d in funcs.functionDetails if d["Name"] == "add_tax"]
+assert detail, funcs.functionDetails
+assert [p["name"] for p in detail[0]["Parameters"]] == ["amount", "rate"], detail[0]
+assert funcs.itemDetails["Name"] == "pricing-udf", funcs.itemDetails
+# Keyword and positional must agree, and the answer must come from the seeded
+# function_app.py rather than from anything this file computes.
+assert funcs.add_tax(amount=100.0, rate=0.1) == 110.0
+assert funcs.add_tax(100.0, 0.1) == 110.0, "positional args did not match declared order"
+try:
+    offered = funcs.no_such_function
+    raise AssertionError(f"an undeclared function was offered as callable: {offered}")
+except AttributeError as e:
+    assert "add_tax" in str(e), e
+print("udf.getFunctions: ran the item's real code by keyword and by position",
+      flush=True)
 
 # notebookutils.notebook.exit is the documented way a notebook returns a value.
 try:
