@@ -1129,3 +1129,111 @@ def test_notebook_resolves_its_workspace_from_the_context(http, monkeypatch):
     http.push({"value": []})
     notebook.list()
     assert f"/workspaces/{WS}/" in http.last()["url"], http.last()["url"]
+
+
+# --- members the vendored stubs found, and the docs transcription missed -----
+#
+# `scripts/check_notebookutils_surface.py` holds Microsoft's published stubs
+# beside Microsoft's documentation. Everything below was a `known gap` in that
+# report: real surface, absent here, invisible to a careful reading of the
+# per-module pages.
+
+def test_getcurrentworkspaceid_answers_from_the_bound_context(monkeypatch):
+    """The SAME source as runtime.context, not a second read of the
+    environment. Contract 1 exists because a runtime answering from an
+    environment fallback can hide two broken control-plane links; a second
+    accessor with its own fallback would reopen exactly that."""
+    token = runtime.bind({"currentWorkspaceId": "ws-bound"})
+    try:
+        assert runtime.getCurrentWorkspaceId() == "ws-bound"
+        assert runtime.getCurrentWorkspaceId() == runtime.context["currentWorkspaceId"]
+    finally:
+        runtime.unbind(token)
+
+
+def test_fs_nbrespath_is_the_same_answer_as_the_attribute(monkeypatch):
+    """Two Microsoft sources, two shapes, ONE answer.
+
+    The documentation presents `notebookutils.nbResPath` as a value; the stub
+    carries `fs.nbResPath()` as a function. Both are offered because both are
+    real to somebody's code — but a shim answering them differently would be
+    two answers to one question, which is worse than missing one of them.
+    """
+    from notebookutils import nbresources
+
+    monkeypatch.setattr(nbresources, "nb_res_path", lambda: "/tmp/builtin")
+    assert fs.nbResPath() == "/tmp/builtin"
+
+
+def test_refreshmounts_recopies_without_dropping_the_mount(monkeypatch):
+    """A refresh must not unmount-then-mount: that deletes the local tree and
+    leaves a window where an open path is gone. It re-copies in place."""
+    seen = []
+    monkeypatch.setattr(fs, "_materialise", lambda src, local: seen.append((src, local)))
+    monkeypatch.setitem(fs._MOUNTS, "/m",
+                        fs.MountPointInfo("abfss://src", "/m", "/local/m"))
+    try:
+        assert fs.refreshMounts() is True
+        assert seen == [("abfss://src", "/local/m")]
+        # Still mounted, and from the same source.
+        assert fs._MOUNTS["/m"].source == "abfss://src"
+    finally:
+        fs._MOUNTS.pop("/m", None)
+
+
+def test_refreshmounts_with_nothing_mounted_is_not_an_error(monkeypatch):
+    monkeypatch.setattr(fs, "_MOUNTS", {})
+    assert fs.refreshMounts() is True
+
+
+def test_lakehouse_getdefinition_reads_the_typed_collection(http):
+    # raw=True, so the answer is the (status, headers, body) triple the 202
+    # path needs to see. 200 here: the followed-202 case is _lro's own test.
+    http.push((200, {}, b'{"definition": {"parts": [{"path": "x"}]}}'))
+    got = lakehouse.getDefinition(LH)
+    assert got["definition"]["parts"][0]["path"] == "x"
+    # The documented URL is on the TYPED collection, not the generic item
+    # surface: a client following the per-item-type reference gets a 404 on the
+    # exact URL that reference prints.
+    assert http.last()["url"].endswith(f"/lakehouses/{LH}/getDefinition")
+
+
+def test_lakehouse_updatedefinition_does_not_poll_for_a_result(http):
+    """updateDefinition has no result document, and polling /result for it
+    404s on a success — which is why `want_result` exists at all."""
+    http.push((200, {}, b"{}"))
+    assert lakehouse.updateDefinition(LH, {"parts": []}) is True
+    assert http.last()["url"].endswith(f"/lakehouses/{LH}/updateDefinition")
+    assert not any(c["url"].endswith("/result") for c in http.calls)
+
+
+def test_udf_run_is_getfunctions_not_a_second_execution_path(monkeypatch):
+    """The waiver this replaced said the UDF item type has no engine here.
+    That stopped being true when getFunctions started running the item's own
+    `function_app.py` — so `run` is the one-call spelling of the same thing,
+    and must not grow a second way to execute a function."""
+    calls = {}
+
+    class Fns:
+        def add_tax(self, amount, rate):
+            calls["args"] = (amount, rate)
+            return 110.0
+
+    def fake_get_functions(artifact, ws=""):
+        calls["item"] = artifact
+        return Fns()
+
+    monkeypatch.setattr(udf, "getFunctions", fake_get_functions)
+    got = udf.run("pricing-udf", "add_tax", {"amount": 100.0, "rate": 0.1})
+    assert got == 110.0
+    assert calls["args"] == (100.0, 0.1)
+    assert calls["item"] == "pricing-udf"
+
+
+def test_udf_run_with_no_parameters_calls_with_none(monkeypatch):
+    class Fns:
+        def ping(self):
+            return "pong"
+
+    monkeypatch.setattr(udf, "getFunctions", lambda artifact, ws="": Fns())
+    assert udf.run("item", "ping") == "pong"

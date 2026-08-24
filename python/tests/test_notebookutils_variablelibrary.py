@@ -257,9 +257,13 @@ def test_operation_that_never_completes_times_out(monkeypatch):
     monkeypatch.setattr(vl.credentials, "getToken", lambda audience: "tok")
     monkeypatch.setattr(vl, "config", lambda: type("C", (), {
         "fabric_url": "https://localhost:9443", "workspace_id": WS})())
-    # Collapse the deadline so the test does not wait two minutes.
-    monkeypatch.setattr(vl.time, "monotonic", lambda: calls["n"] * 1000.0)
-    monkeypatch.setattr(vl.time, "sleep", lambda s: None)
+    # Collapse the deadline so the test does not wait two minutes. The clock
+    # lives in `_lro` now: the 200-or-202 loop was written here, in
+    # `notebook`, and was about to be written a third time in `lakehouse`, so
+    # it moved to one place. This module still OWNS the error type and the
+    # token — those differ per module; the protocol does not.
+    monkeypatch.setattr(vl._lro.time, "monotonic", lambda: calls["n"] * 1000.0)
+    monkeypatch.setattr(vl._lro.time, "sleep", lambda s: None)
     with pytest.raises(vl.VariableLibraryError) as e:
         vl.getLibrary("envLib")
     assert "did not complete" in str(e.value)

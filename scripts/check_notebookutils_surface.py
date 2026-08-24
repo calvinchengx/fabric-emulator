@@ -110,25 +110,13 @@ WAIVED = {
 # Gaps that ARE surface Microsoft ships. Each is visible in every run rather
 # than living in a diff nobody runs, and removing an entry is how one is closed.
 PLANNED = {
-    "fs.help": "the help() family — Fabric's own fs page opens by documenting "
-               "`notebookutils.fs.help()` as the discovery mechanism, and we have it on "
-               "no module. The transcription did not yield it because it is prose on the "
-               "page rather than a row in the method table",
-    "credentials.help": "see fs.help",
-    "lakehouse.help": "see fs.help",
-    "notebook.help": "see fs.help",
-    "runtime.help": "see fs.help",
-    "session.help": "see fs.help",
-    "udf.help": "see fs.help",
-    "fs.refreshMounts": "mount lifecycle beyond the single mount point docs/37 models",
-    "fs.nbResPath": "notebook resources (`builtin/`), which Axis C also lists as absent",
-    "lakehouse.getDefinition": "definition round-trip through the shim; the REST surface "
-                               "behind it exists",
-    "lakehouse.updateDefinition": "as getDefinition",
-    "runtime.getCurrentWorkspaceId": "runtime context member",
-    "udf.run": "invoking a User Data Function; the UDF item type has no engine here",
-    "udf.getHelpString": "help text for udf",
-    "variableLibrary.getHelpString": "help text for variableLibrary",
+    # Emptied by the reconciliation that followed this file landing: holding the
+    # stub beside the docs turned "we transcribed carefully" into a list, and
+    # the list was closable. Two of the entries had gone stale before anyone
+    # read them — `fs.nbResPath` said Axis C listed it as absent (it had landed),
+    # and `udf.run` said the UDF item has no engine here (getFunctions runs the
+    # item's own code). A waiver nobody rechecks is how a gap becomes furniture,
+    # which is why --strict fails on an entry that is no longer a gap.
 }
 
 # Parameters we accept that Fabric's documentation does not list. Forgiving is
