@@ -27,9 +27,23 @@ import re
 # inside a string literal or a comment is not a magic, and matching one would
 # rewrite the user's data — the same mistake the T-SQL dialect layer refuses to
 # make when it declines to tokenize inside quotes.
+# NO AMBIGUITY BETWEEN THE TARGET AND THE REST, which is a ReDoS fix and not
+# a tidy-up. The first version was `\s+(?P<target>…|\S+)(?P<rest>.*)$`, where
+# `\S+` and `.*` compete for the same characters: every split between them is a
+# candidate the engine must try, so `%run` followed by a long run of
+# non-space made matching polynomial in the line's length. CodeQL flagged it
+# high, on the exact shape — `'%run !'` with many `'!!'`.
+#
+# Separated by requiring the boundary to be whitespace the target cannot
+# contain: `\S+` stops at the first space, and `rest` must begin with one. The
+# split is then deterministic and matching is linear.
+#
+# `[ \t]` rather than `\s`: this matches ONE LINE at a time, and letting the
+# separator match a newline would join a `%run` to the statement below it.
 _RUN = re.compile(
-    r'^(?P<indent>[ \t]*)%run\s+(?P<target>"[^"]+"|\'[^\']+\'|\S+)'
-    r'(?P<rest>.*)$')
+    r'^(?P<indent>[ \t]*)%run[ \t]+'
+    r'(?P<target>"[^"]*"|\'[^\']*\'|\S+)'
+    r'(?:[ \t]+(?P<rest>.*))?$')
 
 HELPER = "__fabric_run_notebook__"
 
@@ -51,7 +65,7 @@ def expand(source, helper=HELPER):
             out.append(line)
             continue
         target = m.group("target").strip("\"'")
-        rest = m.group("rest").strip()
+        rest = (m.group("rest") or "").strip()
         args = _arguments(rest)
         out.append(f"{m.group('indent')}{helper}({target!r}, {args!r})")
         changed = True

@@ -226,3 +226,56 @@ def test_the_error_names_the_documented_syntax():
     g = {}
     with pytest.raises(ValueError, match=r'%run notebook \{"param": value\}'):
         _runner(g, {"h": {"cells": []}})("h", {"__unparsed__": "oops"})
+
+
+def test_the_target_and_the_rest_cannot_compete_for_the_same_characters():
+    """The ReDoS fix (CodeQL, high), asserted STRUCTURALLY — because a timing
+    test here would be vacuous and I checked.
+
+    The first pattern was `\\s+(?P<target>…|\\S+)(?P<rest>.*)$`: `\\S+` and `.*`
+    can both match the same characters, so every split between them is a
+    candidate the engine may have to try. That ambiguity is real and is what
+    the scanner flagged.
+
+    What I could NOT do is reproduce it as slowness. On CPython's engine the
+    match succeeds greedily and returns in microseconds for every shape I
+    tried — long runs of `!`, of quotes, of spaces, and the exact
+    `'%run !' + '!!'…` case reported. So a `time.monotonic()` guard would have
+    passed on the VULNERABLE pattern too, and a test that cannot fail on the
+    bug it names is worse than no test.
+
+    Asserted instead: the separator is whitespace, and the target cannot
+    contain whitespace. That is the property that makes the split
+    deterministic, and it is checkable.
+    """
+    pattern = run_magic._RUN.pattern
+    assert r"[ \t]+(?P<rest>" in pattern, \
+        "the rest must be reached through a whitespace separator"
+    assert r"\s+(?P<target>" not in pattern, \
+        r"an unbounded \s+ before the target reintroduces the ambiguity"
+    # And the property that separator implies: a target stops at whitespace.
+    m = run_magic._RUN.match("%run one two three")
+    assert m.group("target") == "one"
+    assert m.group("rest") == "two three"
+
+
+def test_a_target_and_arguments_are_split_on_whitespace_only():
+    """The boundary that makes the pattern linear must not change behaviour:
+    a target still ends at the first space, and the rest still starts after
+    it."""
+    out = run_magic.expand('%run helpers   {"p": 1}')
+    assert out == "__fabric_run_notebook__('helpers', {'p': 1})"
+
+
+def test_a_run_with_no_target_is_not_a_magic():
+    """`%run` alone has nothing to run. Rewriting it to a call with an empty
+    name would fail later, further from the cause."""
+    assert run_magic.expand("%run") == "%run"
+    assert run_magic.expand("%run   ") == "%run   "
+
+
+def test_a_newline_cannot_be_the_separator():
+    """This matches ONE LINE at a time. If the separator matched a newline, a
+    bare `%run` would swallow the statement below it as its arguments."""
+    out = run_magic.expand("%run helpers\nx = 1")
+    assert out.splitlines()[1] == "x = 1"

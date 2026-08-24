@@ -13,6 +13,8 @@ different classes for the same thing.
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "spark_agent"))
 
 import notebook_display  # noqa: E402
@@ -140,13 +142,16 @@ def test_a_spark_frame_is_not_mistaken_for_a_pandas_one():
     assert notebook_display._is_pandas_frame(df) is False
 
 
-def test_the_spark_summary_asks_the_engine_for_distinct_and_null_counts(monkeypatch):
-    """The summary is a real aggregation, not a guess. Fabric computes it;
-    inventing plausible numbers would be worse than not having the flag.
+@pytest.fixture
+def fake_functions(monkeypatch):
+    """`pyspark.sql.functions`, stubbed.
 
-    The engine is faked at the `functions` boundary so the SHAPE of the
-    aggregation is asserted — one countDistinct and one null-count per column —
-    without starting Spark.
+    THIS SUITE MUST RUN WITHOUT PYSPARK. The shim-test job installs the
+    notebookutils group and nothing else, so a test that reached the real
+    import passed on a laptop and failed on CI — measured, on macos-latest,
+    exactly that way. `notebook_display` imports pyspark lazily inside
+    `_spark_summary` precisely so the module stays importable in that
+    environment; the tests have to honour the same constraint.
     """
     import types
 
@@ -171,11 +176,22 @@ def test_the_spark_summary_asks_the_engine_for_distinct_and_null_counts(monkeypa
         count=alias_of("null"),
         when=lambda cond, val: cond,
     )
-    monkeypatch.setitem(sys.modules, "pyspark",
-                        types.ModuleType("pyspark"))
+    monkeypatch.setitem(sys.modules, "pyspark", types.ModuleType("pyspark"))
     sql_mod = types.ModuleType("pyspark.sql")
     sql_mod.functions = fake
     monkeypatch.setitem(sys.modules, "pyspark.sql", sql_mod)
+    return asked
+
+
+def test_the_spark_summary_asks_the_engine_for_distinct_and_null_counts(fake_functions):
+    """The summary is a real aggregation, not a guess. Fabric computes it;
+    inventing plausible numbers would be worse than not having the flag.
+
+    The engine is faked at the `functions` boundary so the SHAPE of the
+    aggregation is asserted — one countDistinct and one null-count per column —
+    without starting Spark.
+    """
+    import types
 
     row = {"__uniq__id": 3, "__null__id": 1,
            "__uniq__name": 2, "__null__name": 0}
@@ -184,12 +200,12 @@ def test_the_spark_summary_asks_the_engine_for_distinct_and_null_counts(monkeypa
     df.agg = lambda *a: types.SimpleNamespace(collect=lambda: [row])
 
     out = notebook_display.render(df, summary=True)
-    assert [k for k, _ in asked] == ["uniq", "null", "uniq", "null"]
+    assert [k for k, _ in fake_functions] == ["uniq", "null", "uniq", "null"]
     assert "bigint" in out and "string" in out
     assert "3" in out and "1" in out
 
 
-def test_a_spark_summary_of_a_frame_with_no_columns_still_renders_a_header():
+def test_a_spark_summary_of_a_frame_with_no_columns_still_renders_a_header(fake_functions):
     """A header-only answer is a real one; rendering nothing would look like
     the call failed."""
     import types
