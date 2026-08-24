@@ -549,6 +549,11 @@ jobs:
       # would — Microsoft renaming a parameter, which turns a keyword call
       # written for Fabric into a TypeError here.
       - run: uv run --frozen --no-sync python scripts/check_notebookutils_surface.py --strict
+      # Names the notebook runtime READS that nothing SETS. Four defects
+      # shared that shape — implemented, unit-tested, green, and
+      # non-functional, because the test supplied what the product never
+      # produced.
+      - run: uv run --frozen --no-sync python scripts/check_runtime_wiring.py --strict
       # Cheap guard for the constraint the governance e2e discovers the
       # expensive way: a column OpenMetadata refuses costs the whole table.
       - run: uv run --frozen --no-sync python scripts/check_govern_types.py
