@@ -1399,6 +1399,7 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "Notebook cell languages (%%sql, %%pyspark, %%configure, %%html, %%markdown, %%spark)",
     "witnesses": [
+      "ci:conformance-sail",
       "go:TestUnsupportedLanguagesAreNamedNotMisExecuted",
       "go:TestConfigureIsIgnoredOutLoud",
       "go:TestMarkupIsRenderedNotExecuted",
@@ -1410,6 +1411,15 @@
     "claim": "`%run` — splices another notebook's code into this session",
     "witnesses": [
       "ci:conformance-sail"
+    ]
+  },
+  "notebook-resources-notebookutils-nbrespath-builtin": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "**Notebook resources** (`notebookutils.nbResPath`, `builtin/`)",
+    "witnesses": [
+      "ci:conformance-sail",
+      "go:TestTheRootNotebookReachesTheChildsStatements",
+      "go:TestADirectSubmissionCarriesNoRoot"
     ]
   }
 }

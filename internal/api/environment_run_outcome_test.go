@@ -38,7 +38,7 @@ func TestANotebookRunFailsWhenItsEnvironmentIsDeclined(t *testing.T) {
 			{Index: 0, Kind: "code", Language: "python", Source: "import cowsay", Status: "Pending"},
 		},
 	}
-	a.driveNotebookRun(ws.ID, "item-1", "job-1", run, nil, false)
+	a.driveNotebookRun(ws.ID, "item-1", "job-1", run, nil, false, referenceRoot{})
 
 	// The cells must never have run: a notebook without its packages produces a
 	// misleading ModuleNotFoundError, which is what this replaces.
@@ -63,7 +63,7 @@ func TestANotebookRunFailsWhenItsEnvironmentCannotBeRead(t *testing.T) {
 			{Index: 0, Kind: "code", Language: "python", Source: "import cowsay", Status: "Pending"},
 		},
 	}
-	a.driveNotebookRun(ws.ID, "item-1", "job-1", run, nil, false)
+	a.driveNotebookRun(ws.ID, "item-1", "job-1", run, nil, false, referenceRoot{})
 
 	for _, rec := range stub.recorded() {
 		if rec.path == "/statements" {
@@ -86,7 +86,7 @@ func TestANotebookRunProceedsWhenItsEnvironmentApplies(t *testing.T) {
 			{Index: 0, Kind: "code", Language: "python", Source: "import cowsay", Status: "Pending"},
 		},
 	}
-	a.driveNotebookRun(ws.ID, "item-1", "job-1", run, nil, false)
+	a.driveNotebookRun(ws.ID, "item-1", "job-1", run, nil, false, referenceRoot{})
 
 	ran := false
 	for _, rec := range stub.recorded() {
@@ -110,7 +110,7 @@ func TestANotebookRunWithNoEnvironmentStillRuns(t *testing.T) {
 			{Index: 0, Kind: "code", Language: "python", Source: "print(1)", Status: "Pending"},
 		},
 	}
-	a.driveNotebookRun(ws.ID, "item-1", "job-1", run, nil, false)
+	a.driveNotebookRun(ws.ID, "item-1", "job-1", run, nil, false, referenceRoot{})
 
 	ran := false
 	for _, rec := range stub.recorded() {

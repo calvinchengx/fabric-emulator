@@ -237,6 +237,40 @@ def test_the_parent_lakehouse_is_sent_so_the_rule_can_fire(service):
     assert submitted(svc)["parentLakehouseId"] == "lake-1"
 
 
+def test_the_root_notebook_is_sent_so_builtin_resolves_against_it(service, monkeypatch):
+    """`builtin/` means the ROOT notebook's folder, not the running one.
+
+    Nothing sent a root before this, so `rootNotebookId` was never set anywhere
+    in the tree and a referenced child resolved `nbResPath` to its OWN
+    resources — a notebook reading different files depending on how it was
+    started. Measured in e2e/conformance: removing this line makes the child
+    read its own copy of the same filename.
+    """
+    monkeypatch.setattr(notebook.runtime, "context",
+                        {"currentNotebookId": "nb-root", "currentWorkspaceId": WS})
+    svc = service()
+    notebook.run("nb")
+    exec_data = submitted(svc)
+    assert exec_data["rootNotebookId"] == "nb-root"
+    assert exec_data["rootWorkspaceId"] == WS
+
+
+def test_a_nested_reference_forwards_the_root_it_was_given(service, monkeypatch):
+    """The subtlety, and the reason this is not just `currentNotebookId`.
+
+    A parent that is ITSELF a child must pass on the root it received. Reading
+    the current notebook unconditionally would make every generation its own
+    root, and the grandchild would see the middle notebook's resources —
+    breaking exactly the case the rule exists for.
+    """
+    monkeypatch.setattr(notebook.runtime, "context",
+                        {"rootNotebookId": "nb-root", "rootWorkspaceId": WS,
+                         "currentNotebookId": "nb-middle", "currentWorkspaceId": WS})
+    svc = service()
+    notebook.run("nb")
+    assert submitted(svc)["rootNotebookId"] == "nb-root"
+
+
 def test_use_root_default_lakehouse_travels_out_of_the_arguments(service):
     # Fabric puts the flag in `arguments`; it configures the RUN, so forwarding
     # it to the child as a parameter would set a variable the notebook never

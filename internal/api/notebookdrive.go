@@ -124,11 +124,35 @@ func notebookSessionID(jid string) string { return "notebook-" + jid }
 // and lakehouse travel with the code so the agent can bind runtime.context to
 // THIS notebook (docs/38 §1) — the env fallback is process-global and is what
 // a framework that probes mssparkutils.env.getWorkspaceId() first used to miss.
-func notebookStatement(session, code, kind, wid, iid, jid string, run notebookRun, forPipeline bool, cellIndex *int) map[string]any {
+// referenceRoot is the notebook a HUMAN started, carried down through a
+// reference run.
+//
+// `builtin/` means the ROOT notebook's resource folder, never the running
+// one: Microsoft's guidance is that it "will always point to the root
+// notebook's built-in folder", so a referenced child sees its PARENT's
+// resources. Without this the child resolved to its own, and a notebook read
+// different files depending on how it was started — which is the divergence
+// `notebookutils.nbresources` was written to avoid and could not, because
+// nothing in this tree ever sent a root.
+//
+// Empty for a direct submission and for a pipeline-driven notebook: those ARE
+// the root, and the shim already falls back to the current notebook.
+type referenceRoot struct {
+	NotebookID  string
+	WorkspaceID string
+}
+
+func notebookStatement(session, code, kind, wid, iid, jid string, run notebookRun, forPipeline bool, cellIndex *int, root referenceRoot) map[string]any {
 	m := map[string]any{
 		"session": session, "code": code,
 		"workspaceId": wid, "notebookId": iid,
 		"isForPipeline": forPipeline,
+	}
+	if root.NotebookID != "" {
+		m["rootNotebookId"] = root.NotebookID
+	}
+	if root.WorkspaceID != "" {
+		m["rootWorkspaceId"] = root.WorkspaceID
 	}
 	if kind != "" {
 		m["kind"] = kind
@@ -145,7 +169,7 @@ func notebookStatement(session, code, kind, wid, iid, jid string, run notebookRu
 	return m
 }
 
-func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map[string]any, forPipeline bool) {
+func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map[string]any, forPipeline bool, root referenceRoot) {
 	session := notebookSessionID(jid)
 
 	// A goroutine that dies silently is why a notebook can leave every cell
@@ -218,7 +242,7 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 
 	body := notebookResultBody{Status: "Completed"}
 	if _, err := a.agentPost("/statements", notebookStatement(
-		session, notebookPrelude, "", wid, iid, "", run, forPipeline, nil,
+		session, notebookPrelude, "", wid, iid, "", run, forPipeline, nil, root,
 	)); err != nil {
 		finalised = true
 		a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("the Spark agent is unreachable: %v", err))
@@ -296,7 +320,7 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 		// vary per cell (docker/sail/launcher.py). Those stay unattributed.
 		idx := cell.Index
 		out, err := a.agentPost("/statements", notebookStatement(
-			session, cell.Source, kind, wid, iid, jid, run, forPipeline, &idx,
+			session, cell.Source, kind, wid, iid, jid, run, forPipeline, &idx, root,
 		))
 		if err != nil {
 			finalised = true
@@ -308,7 +332,7 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 		// beneath THAT cell, not beneath the first one.
 		if i == injectAfter && paramCode != "" {
 			if _, perr := a.agentPost("/statements", notebookStatement(
-				session, paramCode, "python", wid, iid, jid, run, forPipeline, &idx,
+				session, paramCode, "python", wid, iid, jid, run, forPipeline, &idx, root,
 			)); perr != nil {
 				finalised = true
 				a.failNotebookRun(wid, iid, jid, run, fmt.Sprintf("applying run parameters: %v", perr))
@@ -379,6 +403,7 @@ except Exception:
 `, name, tables, name)
 	if _, err := a.agentPost("/statements", notebookStatement(
 		session, code, "", b.WorkspaceID, "", "", notebookRun{Binding: b}, false, nil,
+		referenceRoot{},
 	)); err != nil {
 		log.Printf("notebook: binding default lakehouse %s: %v", name, err)
 	}
@@ -405,7 +430,7 @@ func (a *API) notebookExitValue(session string) (string, bool) {
 	out, err := a.agentPost("/statements", notebookStatement(
 		session,
 		`import json as _j; print(_j.dumps({"exited": __nb_exit__ is not None, "value": __nb_exit__}))`,
-		"", "", "", "", notebookRun{}, false, nil,
+		"", "", "", "", notebookRun{}, false, nil, referenceRoot{},
 	))
 	if err != nil {
 		return "", false

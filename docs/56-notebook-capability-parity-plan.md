@@ -270,8 +270,8 @@ failed."* That caveat earned its place.
 | `%%spark` (Scala) / `%%sparkr` | absent | **recognised, then executed as Python** | refused by name |
 | `%%html` / `%%markdown` | absent | **recognised, then executed as Python** | rendered, not executed |
 | `%run` | absent | absent | implemented |
-| notebook resources (`builtin/`) | absent | absent | `nbResPath`, root-notebook semantics |
-| `display()` / `displayHTML()` | *unverified* | **absent — `NameError`** | implemented |
+| notebook resources (`builtin/`) | absent | absent | `nbResPath`, root-notebook semantics — and the root was never sent |
+| `display()` / `displayHTML()` | *unverified* | **absent — `NameError`** | implemented, and rich under a kernel |
 | Files mount (one point) | "decision needed" | **already decided in docs/37** | no action; see below |
 
 ### Absent would have been better than what was there
@@ -284,7 +284,18 @@ not a missing feature. It is a wrong answer, and it is the reason "no handler
 found by search" is a claim about the search rather than about the system.
 
 `internal/notebook/celllang.go` now gives a cell four dispositions, and the two
-in the middle carry the judgement:
+in the middle carry the judgement.
+
+**The Go tests were not enough, and the reason is the shape of the defect.**
+They call `Disposition(language)` directly — and that function was never wrong.
+The parser always classified the magic correctly; the RUN LOOP ignored the
+answer. The bug lived in the gap between the classifier and its caller, which
+is exactly where a unit test on the classifier passes on both sides. The four
+dispositions are now observed through a real RunNotebook job as well
+(`ci:conformance-sail`), with every cell chosen to be invalid Python so a
+regression cannot pass quietly. Reintroducing the old behaviour was measured:
+it fails with the original signature, `NameError: name 'false' is not defined`.
+
 
 - **`%%configure` is accepted and IGNORED, never silently.** The cell records
   that it changed nothing and that the requested executors, memory and conf were
@@ -312,9 +323,47 @@ unique values and missing values — a data *quality* read a notebook branches o
 so there **is** something to switch. `%%configure` asks for hardware this
 emulator does not have; that genuinely has nothing to switch.
 
-What is *not* emulated is stated in the module: Fabric renders an interactive
-table with charts and an inspect panel; this renders text. Same data, same
-shape, no interactivity.
+**"Nothing here to render into" was true of the agent and false of the
+repository.** The `jupyter` compose profile ships a real JupyterLab against this
+same stack, so there IS a front end — and printing text into it throws away the
+one thing a front end can use. `display` now publishes a MIME bundle
+(`text/html` plus a `text/plain` alternative, both from one description of the
+data) when a kernel is present, and prints when it is not, which is what every
+stdout-reading suite asserts on.
+
+That image's kernel also had to bind **Fabric's** `display`, not IPython's. The
+two are not interchangeable: IPython's renders a DataFrame's repr and answers
+`display(df, summary=True)` with a TypeError, so a notebook authored against a
+stock kernel behaves differently on Fabric.
+
+`ci:notebook-display` runs nbclient against the kernel from that same image and
+reads the notebook's own outputs — the only harness here that can tell a
+published bundle from a print, which is precisely why this row went unevidenced
+for so long while every other suite read stdout.
+
+What is *still* not emulated, and what no local front end can settle: Fabric's
+`display` is a proprietary widget with chart views, sorting and an inspect
+panel. A correct HTML table is not that widget. The gap narrows from "text only"
+to "the data and its shape, in the form a front end renders"; the interactivity
+remains a stated divergence.
+
+### The root notebook was never sent
+
+`nbResPath` resolves `builtin/` against the ROOT notebook — the one a human
+started — and shipped with a unit test proving it. That test set
+`rootNotebookId` on a stubbed context. **Nothing in the tree ever produced
+one**, so in a real reference run the key was absent and a child resolved to
+its own folder: the precise divergence the module was written to prevent.
+
+The test was not wrong about the semantics; it constructed the condition it was
+checking. Found by writing the end-to-end witness, which is the only thing that
+could have found it.
+
+`notebook.run` / `runMultiple` now forward the root — **forward, not replace**,
+so a parent that is itself a child passes on the root it was given rather than
+becoming one. The e2e's negative control is what makes it an assertion: both
+notebooks carry a `builtin/data.txt` with different content, so the child's
+answer names which folder it resolved against.
 
 ### The mount divergence was not an open decision
 

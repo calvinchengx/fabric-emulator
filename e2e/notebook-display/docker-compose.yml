@@ -1,0 +1,79 @@
+# `display()` under a REAL Jupyter kernel.
+#
+# Every other notebook harness here captures stdout, so the only thing it can
+# ever prove about `display` is that some text came out. Fabric's `display`
+# emits a rich output a front end renders — and the repository already ships a
+# real JupyterLab against this same stack (the `jupyter` compose profile), so
+# "there is nothing to render into" was true of the agent and false of the repo.
+#
+# The client runs nbclient INSIDE the jupyter image, against the same kernel
+# `make up-jupyter` gives a human, and reads the notebook's own outputs.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.9.0}
+    environment:
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  sail:
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: ""
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  # THE SAME IMAGE `make up-jupyter` runs. Not a lookalike: if its startup file
+  # or PYTHONPATH stopped binding Fabric's builtins, this would go red.
+  client:
+    build:
+      context: ../..
+      dockerfile: docker/jupyter/Dockerfile
+    depends_on:
+      sail:
+        condition: service_started
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      NOTEBOOKUTILS_FABRIC_URL: "http://fabric-emulator"
+      NOTEBOOKUTILS_ENTRA_URL: "http://entra-emulator:8443"
+      NOTEBOOKUTILS_INSECURE: "1"
+      SPARK_REMOTE: "sc://sail:50051"
+    volumes:
+      - ./client.py:/client.py:ro
+    working_dir: /
+    command: ["python3", "/client.py"]

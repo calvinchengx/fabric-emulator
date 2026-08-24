@@ -457,6 +457,13 @@ def remember_context(session, req):
         ("defaultLakehouseId", "lakehouseId"),
         ("currentNotebookId", "notebookId"),
         ("currentJobId", "jobId"),
+        # The ROOT of a reference run — the notebook a human started.
+        # `notebookutils.nbResPath` resolves `builtin/` against it, never
+        # against the running child, so a referenced notebook sees its
+        # parent's resources rather than files that change with how it was
+        # invoked.
+        ("rootNotebookId", "rootNotebookId"),
+        ("rootWorkspaceId", "rootWorkspaceId"),
     )
     for dest, src in mapping:
         if req.get(src):

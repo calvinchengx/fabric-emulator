@@ -1415,6 +1415,24 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/livy/run.py
 
+  notebook-display:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: display() renders through a real Jupyter kernel (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # Every other notebook suite reads stdout, so none of them can tell a
+      # published MIME bundle from a print — which is how `display` sat at
+      # "text, no evidence" while this repo shipped a real JupyterLab against
+      # the same stack. nbclient executes a notebook against the kernel from
+      # THAT image and reads the notebook's own outputs.
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/notebook-display/run.py
+
   two-context:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
