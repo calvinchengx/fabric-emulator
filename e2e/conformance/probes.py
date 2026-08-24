@@ -9,6 +9,14 @@ The rule that makes it real: **the engine that wrote must not be the one
 that confirms.** Every false green in the document happened because success
 was reported by the component doing the work.
 
+A SEAM WORTH KNOWING ABOUT. This module is where sail and jvm assert; the
+warehouse column asserts in Go (`internal/server/tds_conformance*_test.go`),
+because its contracts are TDS sessions and there is no notebook to carry a
+probe. `run.py` records those cells from the Go test verdicts. The rules
+here are therefore the NORMATIVE statement of what each contract means —
+unit-tested, and what docs/38 describes — but nothing mechanically checks
+that the Go legs and these agree. Change one and read the other.
+
 Live I/O is injected. Without it, a required cell records a known gap with
 a pointer rather than being skipped — the kit landed before every contract
 passed, and a silent skip is how a gap becomes invisible again. Contract 4
@@ -374,9 +382,16 @@ def runtime_floor(
 class IsolationClaim:
     """What a fan-out of concurrent notebooks reported, one entry each.
 
-    `seen` maps the marker a notebook was given to what it wrote back:
-    `{"marker": ..., "notebook": <id it believes it is>}`. A notebook that
+    `seen` maps the marker a session was given to what it wrote back:
+    `{"marker": ..., "identity": <who it believes it is>}`. A session that
     wrote nothing is absent, which is itself a finding.
+
+    IDENTITY IS PER-SURFACE, and the key is deliberately not called
+    "notebook". On a lakehouse it is the notebook id the control plane
+    issued the child; on the warehouse there is no notebook — it is the
+    warehouse item the session was dialed at, and the database principal the
+    relay logged it in as. Both are control-plane-issued and both are what
+    leaks if the relay keeps them anywhere process-global.
     """
 
     ok: bool
@@ -392,17 +407,18 @@ def concurrent_isolation(
 ) -> Result:
     """Contract 5: N children at once, each seeing only its own identity.
 
-    `expected` maps each child's marker to the notebook id the CONTROL PLANE
+    `expected` maps each child's marker to the identity the CONTROL PLANE
     issued it, so the comparison is against what the harness created rather
     than against what another child reported. Two children that leaked into
     each other would agree with each other and disagree with this.
 
-    WHY MARKERS AND IDS BOTH. A marker alone proves a child ran; the id proves
-    it knew WHICH child it was. The emulator runs one long-lived agent with a
-    namespace per session, so everything process-global leaks across concurrent
+    WHY MARKERS AND IDENTITIES BOTH. A marker alone proves a child ran; the
+    identity proves it knew WHICH child it was. The emulator runs one
+    long-lived agent with a namespace per session, so everything
+    process-global leaks across concurrent
     runs — the prelude's exit-value global did exactly that once, and a
     `runtime.context` built at import would do it again. A child reporting
-    another child's notebook id is that leak, and it is invisible to any
+    another child's identity is that leak, and it is invisible to any
     assertion that only counts successes.
     """
     title = CONTRACTS[4][1]
@@ -427,17 +443,17 @@ def concurrent_isolation(
             problems.append(
                 f"the artifact for {marker} carries marker "
                 f"{got.get('marker')!r} — a child wrote another child's file")
-        if got.get("notebook") != want:
+        if got.get("identity") != want:
             problems.append(
-                f"{marker} believes it is notebook {got.get('notebook') or '<empty>'}; "
+                f"{marker} believes it is {got.get('identity') or '<empty>'}; "
                 f"the control plane issued it {want}")
     # Distinct ids, stated separately: N children all reporting the SAME id
     # would already be caught above, but saying it this way names the leak
     # rather than listing N mismatches.
-    ids = [v.get("notebook") for v in seen.values() if v.get("notebook")]
+    ids = [v.get("identity") for v in seen.values() if v.get("identity")]
     if ids and len(set(ids)) != len(ids):
         problems.append(
-            f"children share a notebook identity: {sorted(ids)}")
+            f"sessions share an identity: {sorted(ids)}")
     if problems:
         return Result(id="5", contract=title, backend=backend, status="fail",
                       error="; ".join(problems), pointer=pointer)
@@ -453,6 +469,8 @@ class FallThroughClaim:
     recognised_error: str = ""
     unrecognised_ok: bool = False
     unrecognised_error: str = ""
+    echo_sent: str = ""
+    echo_got: str = ""
     error: str = ""
 
 
@@ -484,6 +502,20 @@ def fall_through(
 
     A failure that quotes the agent's own interceptors is refused rather than
     counted: that is a rewrite that failed, not a fall-through.
+
+    THE ECHO IS THE SECOND WITNESS FORM, for a surface that has only one
+    engine. The warehouse relays to SQL Server and there is no contrasting
+    engine to run the same statement, so the contrast cannot be the witness
+    there. Instead the session sends a statement whose payload is a STRING
+    LITERAL containing the exact construct the rewriter does recognise, and
+    compares what the engine echoed back against what was sent. A rewriter
+    that tokenised the literal as SQL changes those bytes; one that stayed out
+    of the way cannot. The engine returns the proof, and the emulator cannot
+    forge it without reproducing its own input verbatim.
+
+    When `echo_sent` is set it REPLACES the control contrast, because the two
+    are alternative answers to the same question and requiring both would make
+    the single-engine surface unprovable rather than proven differently.
     """
     title = CONTRACTS[5][1]
     pointer = CONTRACTS[5][2]
@@ -498,7 +530,13 @@ def fall_through(
             "the statement the grammar DOES recognise failed "
             f"({claim.recognised_error[:160]}) — with nothing intercepting, "
             "fall-through proves nothing")
-    if control:
+    if claim.echo_sent:
+        if claim.echo_got != claim.echo_sent:
+            problems.append(
+                "the engine echoed back text the session did not send — "
+                f"sent {claim.echo_sent!r}, got {claim.echo_got!r}; something "
+                "rewrote a statement it does not model")
+    elif control:
         if not claim.unrecognised_ok:
             problems.append(
                 "the control engine could not run the unrecognised statement "
@@ -534,6 +572,8 @@ class CredentialClaim:
     before_error: str = ""
     after_ok: bool = False
     after_error: str = ""
+    expiry_checked: bool = False
+    expiry_accepted: bool = False
     error: str = ""
 
 
@@ -555,6 +595,15 @@ def credential_lifetime(
     later every OneLake read answering 401, and a human restarting by hand
     because it reads as a storage outage. So the session reports both numbers and
     this refuses to grade a run where the gap was never opened.
+
+    AND SURVIVING IS ONLY MEANINGFUL IF EXPIRY IS ENFORCED. "The run kept
+    working past the lifetime" and "nothing ever checks a credential" produce
+    the identical green, and the second is a security hole wearing the first's
+    result. A surface that can present a deliberately expired credential
+    reports `expiry_checked`, and this then requires that it was REFUSED. A
+    surface that cannot leaves it false and is graded on the wait alone — the
+    contract stays what it was, and where the stronger form is available it is
+    demanded.
     """
     title = CONTRACTS[6][1]
     pointer = CONTRACTS[6][2]
@@ -587,7 +636,14 @@ def credential_lifetime(
         return Result(
             id="7", contract=title, backend=backend, status="fail",
             error=(f"after {claim.slept:.0f}s, past a {claim.lifetime}s token "
-                   f"lifetime, OneLake failed: {claim.after_error[:200]}"),
+                   f"lifetime, the operation failed: {claim.after_error[:200]}"),
+            pointer=pointer)
+    if claim.expiry_checked and claim.expiry_accepted:
+        return Result(
+            id="7", contract=title, backend=backend, status="fail",
+            error=("an already-expired credential was ACCEPTED, so outliving a "
+                   "lifetime here says nothing about refreshing one — nothing "
+                   "is checking expiry at all"),
             pointer=pointer)
     return Result(id="7", contract=title, backend=backend, status="pass")
 

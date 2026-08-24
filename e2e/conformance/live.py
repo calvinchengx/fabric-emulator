@@ -89,7 +89,7 @@ try:
         "abfss://__WS__@onelake.dfs.fabric.microsoft.com/__DIR__/__MARKER__.json",
         _json.dumps({
             "marker": "__MARKER__",
-            "notebook": _ctx.get("currentNotebookId", ""),
+            "identity": _ctx.get("currentNotebookId", ""),
             "workspace": _ctx.get("currentWorkspaceId", ""),
         }), True)
     print("child __MARKER__ wrote its findings")

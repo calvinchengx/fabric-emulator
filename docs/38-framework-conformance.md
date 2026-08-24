@@ -246,6 +246,24 @@ child ran; the id proves it knew WHICH child it was. A child reporting another
 child's identity is the leak, and it is invisible to any assertion that only
 counts successes.
 
+**And on the warehouse, where there is no notebook.** Three TDS sessions are
+opened at once, each dialed at its own Warehouse item and logged in as its own
+Entra object id, and — as with the notebooks — **all three are connected before
+any of them executes**. That ordering is the test: the relay gives each caller
+its own backend connection and its own database principal *precisely because* a
+shared or pooled one lets identity drift between callers
+(`internal/tds/principal.go` says so in its own header), and drift is only
+possible while two sessions are live at once. Connect, run and close them one at
+a time and the same code runs while the property goes unexercised.
+
+Each session then reports the identity **the engine attributes to it** —
+`DB_NAME()` and `SUSER_SNAME()`, SQL Server's answer, not the emulator's — and
+that is compared against what the control plane issued: the item id it was
+dialed at and the oid its token carried. Measured, the three answer
+`<item>/<oid>` for three different items and three different oids. Afterwards a
+**fresh connection per warehouse** counts the tables, because a write that
+landed in the wrong warehouse is a leak no session would report about itself.
+
 ### 6. Engine gaps need a bounded-rewrite escape hatch, with a stated contract
 
 **The pattern, now used three times.** A strict grammar recognises a bounded
@@ -290,6 +308,29 @@ surfaced because the engine matrix probes local paths — its own text says
 credentials are out of scope there — and no notebook had addressed OneLake by
 `abfss://` on that engine.
 
+**Asserted on the warehouse too, by a different witness — because that surface
+has only one engine.** The JVM column is what makes the lakehouse cell provable:
+one statement, two engines, opposite outcomes. The warehouse relays to SQL
+Server and there is no second engine to contrast against, so a contrast cannot
+be the witness there. Instead the engine is made to **return the bytes it was
+given**.
+
+The recognised leg is CTAS. SQL Server has no `CREATE TABLE … AS SELECT` — it
+spells that `SELECT … INTO` — and refuses the form outright, measured as
+`Incorrect syntax near the keyword 'SELECT'` when sent to it directly. So a CTAS
+that succeeds *through the relay* can only have succeeded through
+`internal/tsql`'s rewrite. That is what stops the second leg being vacuous:
+everything falls through when nothing is intercepting.
+
+The fall-through leg is an echo. The session sends
+`SELECT '<a nested CTE>' AS payload` — a string literal containing the *exact*
+construct the rewriter does recognise, which is the most tempting possible input
+for a tokenizer that does not respect quoting — and compares what came back
+against what was sent. A rewriter that flattened the literal changes those
+bytes; one that stayed out of the way cannot. The emulator has no way to forge
+this short of reproducing its own input verbatim, which is the same thing as not
+having touched it.
+
 **`OPTIMIZE <name>` cannot resolve a table a notebook wrote.** The delta-rs
 interception resolves a NAME through the emulator's registration, and
 `saveAsTable` inside a notebook does not register it that way: `OPTIMIZE events`
@@ -326,6 +367,27 @@ thirds of advertised life. A client that minted once and then polled a job for
 minutes would 401 partway through and report a broken pipeline instead of a
 short token. That is the same argument this contract makes about the engine, one
 tier up.
+
+**On the warehouse, and with the leg that makes it mean anything.** A TDS
+session logs in with an Entra token and then lives as long as the client keeps
+it. The probe mints a token with an explicit 60-second lifetime, pins **one**
+physical connection so the pool cannot answer the question by quietly opening a
+second, runs a baseline query, waits 75 seconds, and writes. It succeeds.
+
+But *"the session kept working past its lifetime"* and *"nothing ever checks a
+credential"* produce the identical green, and the second is a security hole
+wearing the first's result. So a final leg presents an **already-expired** token
+on a fresh connection and requires it to be **refused**. Without it this cell
+would pass just as happily against an endpoint that validated nothing.
+
+That leg also has to be aimed outside the validator's clock skew, and the first
+draft was not. `internal/auth` allows 60 seconds of skew, as every real JWT
+validator does; a token expired by exactly 60 seconds therefore sits *on* the
+boundary and is legitimately accepted. Reading that as *"nothing is checking
+expiry at all"* was the probe's error, not the emulator's. Expired by ten
+minutes it is refused, and the two measurements together — `-60` accepted,
+`-600` refused — are what show the leg discriminates rather than merely
+returning the answer that was wanted.
 
 **An open question this contract surfaced and did not answer.** The second
 operation was originally a re-read of the table cell 0 wrote. It failed with
@@ -381,9 +443,9 @@ correctly when probed.
 | 2 | Signature shape | Every parameter real Fabric accepts is present on the `notebookutils`/`mssparkutils` surface, pinned against the reference |
 | 3 | Runtime floor | The image declares a Fabric Runtime version, and its Python meets that runtime's floor |
 | 4 | Write landing | Every write path (`saveAsTable` qualified and unqualified, CTAS, MERGE, mount write-back) is followed by a OneLake listing proving the artifact is where Fabric puts it |
-| 5 | Concurrent isolation | A fan-out of N children each reports its own exit value, binds its own lakehouse, and sees its own context |
-| 6 | Fall-through | A statement the rewrite grammar does not recognise reaches the engine unmodified, and fails honestly if the engine cannot plan it |
-| 7 | Credential lifetime | A run that outlives the token lifetime keeps reading |
+| 5 | Concurrent isolation | N sessions live at once, each reporting its own identity: notebook children each see their own context; TDS sessions each answer with their own warehouse and principal |
+| 6 | Fall-through | A statement the rewrite grammar does not recognise reaches the engine unmodified — proven by a second engine that *can* plan it, or, where there is only one, by the engine echoing the bytes back |
+| 7 | Credential lifetime | A run that outlives the token lifetime keeps working, on a surface that still refuses an expired credential |
 
 ### Every contract proves real execution, on a real backend
 
@@ -428,6 +490,14 @@ target; on JVM the engine *can*, so the grammar must be proven to stay out of th
 way. The same holds for `input_file_name()`: shimmed on Sail, native on JVM. A
 single-engine suite cannot tell "the rewrite worked" from "the rewrite was not
 needed and fired anyway".
+
+Which raises the obvious question about the warehouse, where contract 6 is
+`required` and there is no second engine to be the control. The answer is that
+the contrast is not the only possible witness, just the only one available on
+the lakehouse: the warehouse instead makes the engine **echo back the statement
+it was given**, with the recognised construct quoted inside it as a literal.
+That is not a weaker form of the same test — it is a direct observation where
+the lakehouse can only manage a differential one.
 
 ### CI realisation
 

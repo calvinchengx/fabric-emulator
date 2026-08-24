@@ -14,10 +14,12 @@ by hand, so a cell cannot drift from the JSON that produced it. A ❌ is
 allowed — the kit lands before every contract passes — but check_conformance.py
 refuses one without a pointer.
 
-`--live` is what makes contract 4 real: sail/jvm write through RunNotebook
-and a DFS listing confirms; warehouse writes through emulator TDS and a
-fresh connection SELECTs. Without --live the committed JSON is left alone,
-so a laptop render cannot overwrite a CI-recorded pass with an offline gap.
+`--live` is what makes a cell real. sail/jvm run a notebook through
+RunNotebook and confirm out of band; warehouse runs the contracts as Go
+tests against a real SQL Server over the emulator's TDS relay, each cell
+recorded from its OWN `--- PASS:` line rather than from the process exit
+code. Without --live the committed JSON is left alone, so a laptop render
+cannot overwrite a CI-recorded pass with an offline gap.
 """
 from __future__ import annotations
 
@@ -84,10 +86,11 @@ def render() -> str:
         "`ci:conformance-warehouse`. The contracts themselves are defined in",
         "[38-framework-conformance.md](38-framework-conformance.md).",
         "",
-        "Contract 4 (write landing) is the first live row: a write through the",
-        "emulator path, confirmed by a reader that is not the engine that wrote.",
-        "A ✅ here is that out-of-band listing (or a fresh TDS SELECT), not the",
-        "writer's own catalog.",
+        "Every ✅ below was recorded by a live run. The lakehouse columns",
+        "execute notebooks through RunNotebook and confirm through OneLake; the",
+        "warehouse column runs T-SQL through the emulator's TDS relay against a",
+        "real SQL Server and confirms on a connection that is not the one that",
+        "wrote. A ✅ is that out-of-band reader, never the writer's own catalog.",
         "",
         "| # | Contract | sail | jvm | warehouse |",
         "|---|---|---|---|---|",
@@ -143,32 +146,79 @@ def run_compose(backend: str) -> int:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+# The warehouse leg of each contract, and the Go test that proves it. Contracts
+# 1-3 are absent because they are n/a here: they are properties of a notebook
+# session and this surface has none.
+#
+# ONE `go test` INVOCATION, not four. They share a cold SQL Server start, and
+# four processes would each pay for it; more importantly a single -v transcript
+# is one artifact to read when a cell goes red.
+WAREHOUSE_TESTS: dict[int, str] = {
+    4: "TestConformanceWriteLanding",
+    5: "TestConformanceConcurrentIsolation",
+    6: "TestConformanceFallThrough",
+    7: "TestConformanceCredentialLifetime",
+}
+
+
 def run_warehouse_live() -> int:
-    """CREATE+INSERT through emulator TDS; SELECT on a fresh connection."""
-    title = CONTRACTS[3][1]
-    pointer = CONTRACTS[3][2]
-    # -v so a skip prints `--- SKIP:` — without it `go test` exits 0 and
-    # looks like a pass, which is a writer-confirmed nothing.
+    """Run the warehouse contracts and record each cell from its own verdict.
+
+    PER-TEST VERDICTS, NOT THE PROCESS EXIT CODE. `go test` exits non-zero if
+    any test fails, and reading that as "the warehouse failed" would turn one
+    red cell into four — the same collapse the jvm hang produced before contract
+    6 was gated. `--- PASS:` / `--- FAIL:` / `--- SKIP:` per test is what gets
+    recorded.
+
+    A SKIP IS RECORDED AS A GAP, never as a pass. Without -v a skipped test
+    exits 0 and is indistinguishable from a green, which is a writer-confirmed
+    nothing.
+    """
+    names = "|".join(WAREHOUSE_TESTS.values())
     cmd = ["go", "test", "./internal/server/",
-           "-run", "TestConformanceWriteLanding",
-           "-count=1", "-timeout", "120s", "-v"]
-    print("==> live write-landing on warehouse", flush=True)
+           "-run", f"^({names})$",
+           # Contract 7 is a 75s wait by construction, so the ceiling has to
+           # clear it with room for a cold backend rather than being tuned to
+           # the fast contracts.
+           "-count=1", "-timeout", "600s", "-v"]
+    print("==> live warehouse contracts", flush=True)
     proc = subprocess.run(cmd, cwd=REPO, text=True, capture_output=True)
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
-    skipped = "--- SKIP:" in proc.stdout or "--- SKIP:" in proc.stderr
-    if proc.returncode == 0 and not skipped:
-        result = Result(id="4", contract=title, backend="warehouse", status="pass")
-        code = 0
-    else:
-        error = ("go test skipped — set WAREHOUSE_MSSQL_DSN"
-                 if skipped else f"go test exited {proc.returncode}")
-        result = Result(
-            id="4", contract=title, backend="warehouse", status="fail",
-            error=error, pointer=pointer)
-        code = proc.returncode or 1
-    write_backend("warehouse", record("warehouse", live={4: result}))
-    return code
+    transcript = proc.stdout + proc.stderr
+
+    verdicts: dict[str, str] = {}
+    for line in transcript.splitlines():
+        stripped = line.strip()
+        for word in ("PASS", "FAIL", "SKIP"):
+            prefix = f"--- {word}: "
+            if stripped.startswith(prefix):
+                verdicts[stripped[len(prefix):].split(" ")[0]] = word
+
+    live: dict[int, Result] = {}
+    failed = False
+    for num, test in WAREHOUSE_TESTS.items():
+        title = CONTRACTS[num - 1][1]
+        pointer = CONTRACTS[num - 1][2]
+        verdict = verdicts.get(test)
+        if verdict == "PASS":
+            live[num] = Result(id=str(num), contract=title,
+                               backend="warehouse", status="pass")
+            continue
+        failed = True
+        if verdict == "SKIP":
+            error = f"{test} skipped — set WAREHOUSE_MSSQL_DSN"
+        elif verdict == "FAIL":
+            error = f"{test} failed — see the go test transcript"
+        else:
+            # No verdict at all: the process died before this test reported,
+            # which is not the same as the contract failing and must not be
+            # recorded as though the assertion had run.
+            error = f"{test} produced no verdict (go test exited {proc.returncode})"
+        live[num] = Result(id=str(num), contract=title, backend="warehouse",
+                           status="fail", error=error, pointer=pointer)
+    write_backend("warehouse", record("warehouse", live=live))
+    return (proc.returncode or 1) if failed else 0
 
 
 def run_live(backend: str) -> int:
@@ -182,7 +232,7 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--backend", choices=BACKENDS)
     ap.add_argument("--live", action="store_true",
-                    help="run the backend and record contract 4 out of band")
+                    help="run the backend and record its contracts out of band")
     ap.add_argument("--check", action="store_true",
                     help="fail if the generated matrix differs from the committed one")
     args = ap.parse_args()
