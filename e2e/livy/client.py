@@ -158,6 +158,87 @@ def main():
     assert back.get("data") == [[3]], f"count-back disagrees — re-execution or loss: {back}"
     print("INSERT envelope -> [[3]], table still 3 (count recovered, not re-run)", flush=True)
 
+    # --- notebookutils.session: the lifecycle of the session itself ----------
+    #
+    # WHY HERE. These two members are the only part of the documented surface a
+    # single-script e2e cannot reach: `stop()` ends the namespace the script is
+    # running in, and `restartPython()` clears it — self-destructive in the
+    # notebookutils suite, which is one script. A Livy session is the opposite
+    # shape: each statement is a separate submission against a persistent REPL,
+    # so a statement can restart the session and the NEXT statement can report
+    # what survived. That is what makes the property assertable at all.
+    #
+    # A THIRD session, deliberately. Restarting or stopping the session this
+    # suite has been using would take its earlier state with it, and the
+    # isolation half below needs a bystander that must NOT be affected.
+    _, lsess = http("POST", f"{base}/sessions", {"kind": "pyspark"}, token=token)
+    lsid = lsess["id"]
+    # ...and its bystander, created here rather than reused from an earlier
+    # section: the session this suite opened first is deleted at line ~297, so
+    # borrowing it would make this block depend on another section's teardown.
+    _, bsess = http("POST", f"{base}/sessions", {"kind": "pyspark"}, token=token)
+    bsid = bsess["id"]
+
+    def lrun(code_str, session=None):
+        sess = session or lsid
+        _, st = http("POST", f"{base}/sessions/{sess}/statements",
+                     {"code": code_str}, token=token)
+        stid = st["id"]
+        for _ in range(120):
+            _, got = http("GET", f"{base}/sessions/{sess}/statements/{stid}", token=token)
+            if got["state"] == "available":
+                out = got["output"]
+                if out.get("status") != "ok":
+                    raise RuntimeError(f"lifecycle statement error: {out}")
+                return out["data"]["text/plain"].strip()
+            time.sleep(1)
+        raise RuntimeError("lifecycle statement never became available")
+
+    # Interpreter state, and ENGINE state, in the session about to restart.
+    lrun("marker = 'set-before-restart'")
+    lrun("spark.createDataFrame([(1,),(2,)], ['n']).createOrReplaceTempView('survivor')")
+    assert lrun("marker") == "'set-before-restart'"
+    # A bystander in the SAME agent process, which must come through untouched.
+    lrun("bystander = 'untouched'", session=bsid)
+
+    lrun("import notebookutils; notebookutils.session.restartPython()")
+
+    # Interpreter state is GONE...
+    assert lrun("'marker' in dir()") == "False", "restartPython kept a user variable"
+    # ...the Spark context SURVIVED, which is the entire distinction the method
+    # exists to draw. Asserted through the engine, not through the agent's
+    # reply: a temp view lives in the session Spark holds, so answering this
+    # requires the handle to have been carried across rather than rebuilt.
+    assert lrun("spark.sql('SELECT count(*) AS n FROM survivor').collect()[0][0]") == "2", \
+        "restartPython took the Spark context with it"
+    # ...and the notebook BUILTINS came back. On Fabric these are the kernel's,
+    # so a restart cannot remove them; rebinding only notebookutils left a
+    # session where `display(df)` was a NameError for the rest of its life.
+    assert lrun("callable(display) and callable(displayHTML)") == "True", \
+        "restartPython left the session without its notebook builtins"
+    print(f"    restartPython: variables gone, Spark context and builtins kept "
+          f"(session {lsid})", flush=True)
+
+    # THE ISOLATION HALF, and the one that fails loudest if this is wired
+    # through the environment instead of per statement. The agent is ONE
+    # process behind every session; an os.environ session id is a single value
+    # shared by all of them, so `restartPython()` here would have cleared the
+    # bystander too — and the assertion above would still have passed.
+    assert lrun("bystander", session=bsid) == "'untouched'", \
+        "restartPython in one session cleared another's namespace"
+    print("    restartPython: the other session in the same agent was untouched",
+          flush=True)
+
+    # stop() ends THIS session. Confirmed out of band twice: the namespace that
+    # answers afterwards is a fresh one, and the bystander is still whole.
+    lrun("after_stop_marker = 'still here'")
+    lrun("import notebookutils; notebookutils.session.stop()")
+    assert lrun("'after_stop_marker' in dir()") == "False", \
+        "stop() left the session's namespace behind"
+    assert lrun("bystander", session=bsid) == "'untouched'", \
+        "stop() in one session took another's namespace with it"
+    print("    stop: the namespace is gone, and only this session's", flush=True)
+
     # --- Spark Job Definition, EXECUTED BY THE EMULATOR.
     #
     # This suite is where the claim can be witnessed at all: the emulator here
@@ -499,6 +580,27 @@ def main():
     ocols = orun("','.join(spark.sql('SELECT * FROM sales').columns)").strip("'\"")
     assert ocols == "region_id,amount", f"owner columns = {ocols!r}, want both"
     print(f"    owner still sees all 3 rows and columns {ocols}", flush=True)
+
+    # --- restartPython in a SECURED session, where the interpreter is a child
+    #
+    # The block above runs before any OneLake role exists, so its sessions are
+    # ordinary and their namespace lives in the agent. Here the item carries
+    # policy, so every statement executes in a per-caller CHILD PROCESS — and
+    # the interpreter to restart is that child, not `namespaces[session]` in
+    # the parent. Clearing the parent's dict would have reported a successful
+    # restart that did nothing, which is why this leg exists separately.
+    orun("secured_marker = 'set-before-restart'")
+    assert orun("secured_marker") == "'set-before-restart'"
+    orun("import notebookutils; notebookutils.session.restartPython()")
+    assert orun("'secured_marker' in dir()") == "False", \
+        "restartPython reported success without restarting the child"
+    # The session still works, and still sees its own data: a restart is not a
+    # teardown, and the engine this principal holds was deliberately not
+    # released.
+    assert orun("spark.sql('SELECT count(*) AS n FROM sales').collect()[0][0]") == "3", \
+        "the restart took the secured session's engine with it"
+    print("    restartPython (secured): the child restarted, the engine stayed",
+          flush=True)
 
     print("NATIVE-LIVY E2E: PASS", flush=True)
 

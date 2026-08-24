@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import types
 from pathlib import Path
 
 AGENT = Path(__file__).resolve().parents[1] / "spark_agent"
@@ -63,7 +64,7 @@ def test_scrubbing_does_not_mutate_the_parent_environment(monkeypatch):
 def test_serve_runs_each_request_and_answers_once():
     seen = []
 
-    def run(code, g, kind="", context=None):
+    def run(code, g, kind="", context=None, identity=None):
         seen.append((code, g, kind))
         return {"status": "ok", "data": {"text/plain": code.upper()}}
 
@@ -79,7 +80,7 @@ def test_serve_runs_each_request_and_answers_once():
 def test_serve_stops_on_close():
     out = io.BytesIO()
     uc.serve([uc.frame({"op": "close"}), uc.frame({"code": "never"})],
-             out, lambda c, g, k="", ctx=None: {"status": "ok"}, dict)
+             out, lambda c, g, k="", ctx=None, idy=None: {"status": "ok"}, dict)
     assert out.getvalue() == b""
 
 
@@ -89,14 +90,14 @@ def test_serve_stops_rather_than_spinning_on_a_broken_pipe():
     # parse — a busy loop in a child nobody is watching.
     out = io.BytesIO()
     uc.serve([b"not json\n", uc.frame({"code": "x"})],
-             out, lambda c, g, k="", ctx=None: {"status": "ok"}, dict)
+             out, lambda c, g, k="", ctx=None, idy=None: {"status": "ok"}, dict)
     assert out.getvalue() == b""
 
 
 def test_blank_lines_are_not_requests():
     out = io.BytesIO()
     uc.serve([b"\n", uc.frame({"code": "x"})],
-             out, lambda c, g, k="", ctx=None: {"status": "ok", "ran": c}, dict)
+             out, lambda c, g, k="", ctx=None, idy=None: {"status": "ok", "ran": c}, dict)
     assert len(out.getvalue().splitlines()) == 1
 
 
@@ -109,9 +110,9 @@ WORKER = textwrap.dedent("""
 
     responses = uc.protocol_stream()
 
-    def run(code, g, kind="", context=None):
+    def run(code, g, kind="", context=None, identity=None):
         return {"status": "ok", "data": {"text/plain": repr(eval(code, g))},
-                "kind": kind, "context": context}
+                "kind": kind, "context": context, "identity": identity}
 
     with responses:
         uc.serve(sys.stdin.buffer, responses, run, dict)
@@ -426,7 +427,7 @@ def test_serve_routes_prepare_to_register_not_to_run():
     out = io.BytesIO()
     ran = []
     uc.serve([uc.frame({"op": "prepare", "tables": []})], out,
-             lambda c, g, k="", ctx=None: ran.append(c) or {"status": "ok"},
+             lambda c, g, k="", ctx=None, idy=None: ran.append(c) or {"status": "ok"},
              lambda: {"spark": _Spark()})
     assert ran == [], "a prepare was executed as user code"
     assert json.loads(out.getvalue())["status"] == "ok"
@@ -624,6 +625,87 @@ def test_the_statement_carries_the_runtime_context_to_the_child():
     try:
         got = ctx.run("1", context={"currentWorkspaceId": "ws-1"})
         assert got["context"] == {"currentWorkspaceId": "ws-1"}
+    finally:
+        ctx.close()
+
+
+class _ClosableCtx:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_restart_is_deferred_because_the_child_is_still_answering(monkeypatch):
+    """restartPython() runs INSIDE the child it restarts.
+
+    Closing it at request time kills the process that still owes the parent an
+    answer, and the caller gets `UserContextLost: the user context exited
+    (None)` instead of a restart — measured exactly that way in e2e/livy. So
+    the request only MARKS the session, and the agent applies it once the
+    statement has been answered.
+    """
+    ctx = _ClosableCtx()
+    monkeypatch.setitem(uc._contexts, "s1", ctx)
+    assert uc.request_restart("s1") is True
+    assert ctx.closed is False, "the child was closed while it was still answering"
+    assert uc._contexts.get("s1") is ctx, "the child was dropped too early"
+
+    assert uc.apply_pending_restart("s1") is True
+    assert ctx.closed is True
+    assert "s1" not in uc._contexts, "the next statement must build a fresh child"
+
+
+def test_a_restart_is_applied_once(monkeypatch):
+    """A second statement must not restart a child nobody asked to restart."""
+    ctx = _ClosableCtx()
+    monkeypatch.setitem(uc._contexts, "s1", ctx)
+    uc.request_restart("s1")
+    uc.apply_pending_restart("s1")
+    assert uc.apply_pending_restart("s1") is False
+
+
+def test_an_unsecured_session_has_no_child_to_restart():
+    """False, not an error: an ordinary session's namespace lives in the agent
+    and the caller restarts it the ordinary way. Reporting True here would let
+    a restart that never happened look successful."""
+    uc._pending_restart.discard("nobody")
+    assert uc.request_restart("nobody") is False
+    assert uc.apply_pending_restart("nobody") is False
+    assert uc.restart_session("nobody") is False
+
+
+def test_a_restart_keeps_the_engine_and_a_close_releases_it(monkeypatch):
+    """The difference between the two, and the whole point of restartPython:
+    Spark survives a Python restart. Releasing the engine here would cost every
+    cached DataFrame the method exists to preserve."""
+    released = []
+    monkeypatch.setattr(uc, "_engines",
+                        types.SimpleNamespace(release=released.append))
+    monkeypatch.setitem(uc._contexts, "s1", _ClosableCtx())
+    uc.restart_session("s1")
+    assert released == [], "restart released the engine"
+
+    monkeypatch.setitem(uc._contexts, "s2", _ClosableCtx())
+    uc.close_session("s2")
+    assert released == ["s2"], "close did not release the engine"
+
+
+def test_the_statement_carries_the_session_identity_to_the_child():
+    # The SAME defect the context above fixes, in a second field that was
+    # missed. notebookutils.session.stop()/restartPython() ask the agent to act
+    # on THIS session, so they need its id and the agent's address — bound by
+    # the parent per statement, and a child is not inside that `with`. Measured
+    # before this: both raised "running outside a notebook session" INSIDE a
+    # session, but only when the item carried OneLake policy, so the two
+    # members worked or did not purely by whether the item was secured.
+    ctx = spawn()
+    try:
+        got = ctx.run("1", identity={"agentUrl": "http://127.0.0.1:8099",
+                                     "session": "sess-7"})
+        assert got["identity"] == {"agentUrl": "http://127.0.0.1:8099",
+                                   "session": "sess-7"}
     finally:
         ctx.close()
 

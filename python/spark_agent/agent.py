@@ -306,6 +306,10 @@ session_route = {}     # Livy session id -> HOW (catalog.ROUTE_*), which says
 # it; each statement binds it into notebookutils.runtime so two notebooks in
 # one agent cannot read each other's workspace.
 session_context = {}
+
+# Set in __main__ from the port actually bound. Module-scope default keeps
+# `import agent` (tests, embedding) working without one.
+AGENT_URL = os.environ.get("SPARK_AGENT_URL") or "http://127.0.0.1:8099"
 # Per-session argv and environment (task_scope.py). A task's parameters and its
 # resolved secrets arrive as writes to `sys` and `os`, one object each per
 # interpreter: without a per-session view, two tasks dispatched in the same wave
@@ -476,10 +480,20 @@ def runtime_scope(session, req):
         yield
         return
     token = bind(session_context.get(session) or {})
+    # `notebookutils.session` needs THIS session's id and this agent's address.
+    # Bound per statement rather than exported to os.environ, because the agent
+    # is one process behind many concurrent sessions and an environment
+    # variable would give every one of them the same id — `stop()` in one
+    # notebook would then end another's session.
+    sbind = getattr(getattr(nbu, "session", None), "bind", None)
+    sunbind = getattr(getattr(nbu, "session", None), "unbind", None)
+    stoken = sbind(AGENT_URL, session) if sbind and sunbind else None
     try:
         yield
     finally:
         unbind(token)
+        if sunbind is not None and stoken is not None:
+            sunbind(stoken)
 
 
 def run_code(code, g):
@@ -616,6 +630,15 @@ def restart_python(session):
         mssparkutils = getattr(nbu, "mssparkutils", None)
         if mssparkutils is not None:
             g["mssparkutils"] = mssparkutils
+    # THE NOTEBOOK BUILTINS COME BACK TOO. On Fabric `display`, `displayHTML`
+    # and `%run` are provided by the kernel, not by the user's namespace, so a
+    # Python restart cannot take them away. Rebinding only notebookutils left a
+    # session where `display(df)` raised NameError and `%run` was a SyntaxError
+    # for the rest of its life — a restart that costs the user variables is the
+    # contract, one that costs the notebook its builtins is a defect.
+    g[run_magic.HELPER] = _make_run_helper(g)
+    g["display"] = notebook_display.display
+    g["displayHTML"] = notebook_display.displayHTML
     return {"restarted": True, "kept": sorted(keep), "dropped": dropped}
 
 
@@ -809,7 +832,9 @@ class Handler(BaseHTTPRequestHandler):
                                 result = usercontext.for_session(
                                     session, req.get("principal")).run(
                                         req.get("code", ""), req.get("kind") or "",
-                                        context=session_context.get(session) or {})
+                                        context=session_context.get(session) or {},
+                                        identity={"agentUrl": AGENT_URL,
+                                                  "session": session})
                             elif (req.get("kind") or "").lower() == "sql":
                                 result = sqlrun.run_sql(req.get("code", ""), ns(session))
                             else:
@@ -845,6 +870,18 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:  # noqa: BLE001
                     print("files_mount: flush after statement failed:\n"
                           + traceback.format_exc(), flush=True)
+                # A restartPython() from INSIDE this statement can only happen
+                # now: the child it restarts is the one that has been answering
+                # this request. In `finally` so a statement that raised still
+                # gets the restart it asked for.
+                try:
+                    if usercontext.apply_pending_restart(
+                            req.get("session", "default")):
+                        print("agent: user context restarted after the statement",
+                              flush=True)
+                except Exception:  # noqa: BLE001 - a failed restart is not this
+                    print("agent: deferred user-context restart failed:\n"
+                          + traceback.format_exc(), flush=True)
             self._send(200, result)
         elif self.path == "/register":
             self._send(200, register_tables(req.get("session", "default"),
@@ -875,7 +912,17 @@ class Handler(BaseHTTPRequestHandler):
             # agent is shared (docs/38 §5), so restarting the interpreter really
             # would end every other live notebook — the same reason /close drops
             # one namespace rather than exiting.
-            self._send(200, restart_python(req.get("session", "default")))
+            sid = req.get("session", "default")
+            # A SECURED session executes in a child process, so its interpreter
+            # is that child and restarting `namespaces[sid]` here would clear a
+            # namespace it never runs in — reporting a successful restart that
+            # did nothing. The engine is deliberately not released: Spark
+            # survives a Python restart, which is the whole method.
+            if usercontext.request_restart(sid):
+                self._send(200, {"restarted": True, "userContext": True,
+                                 "when": "after this statement"})
+            else:
+                self._send(200, restart_python(sid))
         elif self.path == "/close":
             try:
                 import files_mount
@@ -910,5 +957,10 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8099
+    # notebookutils.session asks the agent to end or restart THIS session, so
+    # it needs the agent's address. Loopback, not the published host: the call
+    # comes from inside this process and must not depend on how the outside
+    # world reaches it.
+    AGENT_URL = f"http://127.0.0.1:{port}"
     print(f"livy-agent ready on :{port}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()

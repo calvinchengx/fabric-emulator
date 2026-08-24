@@ -166,7 +166,7 @@ def serve(requests, responses, run, globals_factory):
             envelope = register(g, req.get("tables") or [])
         else:
             envelope = run(req.get("code") or "", g, req.get("kind") or "",
-                           req.get("context") or {})
+                           req.get("context") or {}, req.get("identity") or {})
         responses.write(frame(envelope))
         responses.flush()
 
@@ -238,16 +238,26 @@ class UserContext:
         """Tell the child which tables it may name, and where each one is."""
         return self._exchange({"op": "prepare", "tables": tables})
 
-    def run(self, code, kind="", context=None):
+    def run(self, code, kind="", context=None, identity=None):
         """Execute one statement in the child, returning Livy's envelope.
 
         A child that dies mid-statement is reported as an error naming that,
         never as a hang and never as an empty success: EOF on the response pipe
         is unambiguous, and the alternative -- waiting on a process that has
         already gone -- is the failure mode this reports instead.
+
+        `identity` travels for the same reason `context` does, and was missed
+        when `context` was fixed: `notebookutils.session` needs this session's
+        id and the agent's address, the parent binds them per statement, and a
+        child is not inside the parent's `with`. Measured: `restartPython()`
+        raised "this is running outside a notebook session" INSIDE a notebook
+        session, but only when the item carried OneLake policy -- so the two
+        session members worked or did not purely by whether the item was
+        secured.
         """
         return self._exchange({"code": code, "kind": kind,
-                               "context": context or {}})
+                               "context": context or {},
+                               "identity": identity or {}})
 
     def _exchange(self, request):
         """One request, one answer, or a reported death. Never a hang."""
@@ -337,7 +347,7 @@ def protocol_stream(env=None, windows=None):
     return os.fdopen(fd, "wb")
 
 
-def _dispatch(code, g, kind, context=None):  # pragma: no cover - runs in the child
+def _dispatch(code, g, kind, context=None, identity=None):  # pragma: no cover - runs in the child
     """SQL and Python are different entry points, and the child serves both.
 
     Routing on `kind` in the child rather than sending pre-dispatched code keeps
@@ -364,13 +374,24 @@ def _dispatch(code, g, kind, context=None):  # pragma: no cover - runs in the ch
     nbu = g.get("notebookutils")
     bind = getattr(getattr(nbu, "runtime", None), "bind", None)
     unbind = getattr(getattr(nbu, "runtime", None), "unbind", None)
+    sbind = getattr(getattr(nbu, "session", None), "bind", None)
+    sunbind = getattr(getattr(nbu, "session", None), "unbind", None)
+    stoken = None
+    if identity and sbind and sunbind:
+        stoken = sbind(identity.get("agentUrl"), identity.get("session"))
     if not (context and bind and unbind):
-        return _run()
+        try:
+            return _run()
+        finally:
+            if sunbind is not None and stoken is not None:
+                sunbind(stoken)
     token = bind(dict(context))
     try:
         return _run()
     finally:
         unbind(token)
+        if sunbind is not None and stoken is not None:
+            sunbind(stoken)
 
 
 def _bind_arrow(spark, name, encoded):
@@ -512,6 +533,63 @@ def _build(token, principal, session):
     eng = engines().acquire(principal, session, token)
     return UserContext(grants={"AZURE_STORAGE_TOKEN": token,
                                "SPARK_REMOTE": eng.remote}).start()
+
+
+_pending_restart = set()
+
+
+def request_restart(session):
+    """Mark this session's child for restart AFTER the current statement.
+
+    NOT IMMEDIATE, and it cannot be: the statement asking for the restart is
+    running IN the child, so closing it here kills the process that still owes
+    the parent an answer. Measured exactly that way -- the request came back
+    `UserContextLost: the user context exited (None)` instead of restarting
+    anything.
+
+    Deferring also matches what the method means. Fabric restarts the
+    interpreter and the NEXT cell meets a clean namespace; the cell that called
+    it still finishes.
+
+    Returns True when there is a child to restart, False for an unsecured
+    session whose namespace the parent owns and restarts directly.
+    """
+    if session not in _contexts:
+        return False
+    _pending_restart.add(session)
+    return True
+
+
+def apply_pending_restart(session):
+    """Do the deferred restart, if one was asked for. True when it happened."""
+    if session not in _pending_restart:
+        return False
+    _pending_restart.discard(session)
+    return restart_session(session)
+
+
+def restart_session(session):
+    """Drop this session's child so the next statement gets a fresh one.
+
+    For a SECURED session the interpreter IS the child, so restarting the
+    interpreter means restarting the child -- clearing `namespaces[session]` in
+    the parent would clear a namespace this session never executes in, and
+    report success for a restart that did nothing.
+
+    The ENGINE IS NOT RELEASED, which is the difference from close_session and
+    the whole point of `restartPython`: the Spark context survives a Python
+    restart. The next `for_session` builds a child pointed at the engine this
+    principal already holds.
+
+    Returns True when there was a child to restart, False when this session has
+    none -- an unsecured session, whose namespace the parent owns and which the
+    caller restarts the ordinary way.
+    """
+    ctx = _contexts.pop(session, None)
+    if ctx is None:
+        return False
+    ctx.close()
+    return True
 
 
 def close_session(session):

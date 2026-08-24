@@ -944,6 +944,41 @@ def test_rm_of_a_directory_is_recursive_only_when_asked(http):
     assert "recursive=true" in http.last()["url"]
 
 
+def test_the_bound_session_wins_over_the_environment(monkeypatch):
+    """The agent binds per statement; os.environ is process-wide.
+
+    That ordering IS the isolation. One agent serves many concurrent sessions,
+    so an environment variable would hand every one of them the same id and
+    `stop()` in one notebook would end another's session — the shared-agent
+    leak in its most destructive form. The environment stays as the fallback
+    for someone driving the agent directly, and nothing more.
+    """
+    monkeypatch.setenv("SPARK_AGENT_URL", "http://process-wide:1")
+    monkeypatch.setenv("FABRIC_SESSION_ID", "the-wrong-session")
+    token = session.bind("http://this-statement:8099/", "the-right-session")
+    try:
+        assert session._agent_url() == "http://this-statement:8099"
+        assert session._session_id() == "the-right-session"
+    finally:
+        session.unbind(token)
+    # ...and once unbound, the environment is what is left.
+    assert session._agent_url() == "http://process-wide:1"
+    assert session._session_id() == "the-wrong-session"
+
+
+def test_an_empty_binding_falls_through_to_the_environment(monkeypatch):
+    """A bind with nothing in it is not an answer. An agent that has no URL to
+    offer must not shadow an operator who set one."""
+    monkeypatch.setenv("SPARK_AGENT_URL", "http://from-the-env:1")
+    monkeypatch.setenv("FABRIC_SESSION_ID", "env-session")
+    token = session.bind("", "")
+    try:
+        assert session._agent_url() == "http://from-the-env:1"
+        assert session._session_id() == "env-session"
+    finally:
+        session.unbind(token)
+
+
 def test_rm_of_a_non_empty_directory_raises_the_filesystem_error(http):
     """ADLS answers 409 DirectoryNotEmpty; a notebook author catches OSError.
 

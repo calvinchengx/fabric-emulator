@@ -16,12 +16,39 @@ reachable — a plain `python` importing the shim — they say so rather than
 pretending to have stopped something.
 """
 import os
+from contextvars import ContextVar
 
 from ._http import request
+
+# BOUND PER STATEMENT, NOT READ FROM THE ENVIRONMENT. The agent is one process
+# behind many sessions, so `FABRIC_SESSION_ID` in os.environ would be a single
+# value shared by every concurrent notebook — one session would stop another's,
+# which is the shared-agent leak contract 5 exists to catch, in its most
+# destructive form. `runtime.context` already solved this with a ContextVar the
+# agent binds around each statement; this is the same mechanism for the same
+# reason, kept separate so the documented context dict gains no invented keys.
+#
+# Until this existed both methods raised "running outside a notebook session"
+# INSIDE a notebook session — nothing set those variables anywhere in the tree
+# — so the two members were unreachable in the one place they are meant to be
+# used. Unit tests passed throughout, because they set the environment.
+_bound: ContextVar[tuple | None] = ContextVar("notebookutils_session", default=None)
+
+
+def bind(agent_url, session_id):
+    """Pin this statement to its agent and session. Returns a token for unbind."""
+    return _bound.set((agent_url or "", session_id or ""))
+
+
+def unbind(token):
+    _bound.reset(token)
 
 
 def _agent_url():
     """Where the statement agent listens, if this is running inside one."""
+    bound = _bound.get()
+    if bound and bound[0]:
+        return bound[0].rstrip("/")
     return (os.environ.get("SPARK_AGENT_URL")
             or os.environ.get("NOTEBOOKUTILS_AGENT_URL")
             or "").rstrip("/")
@@ -29,6 +56,9 @@ def _agent_url():
 
 def _session_id():
     """This caller's Livy session, as the runtime exports it."""
+    bound = _bound.get()
+    if bound and bound[1]:
+        return bound[1]
     return (os.environ.get("FABRIC_SESSION_ID")
             or os.environ.get("LIVY_SESSION_ID")
             or "")
