@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- The same mark the landing page carries inline (site/index.html). Starlight
+       defaults its <link rel="icon"> to /favicon.svg and does NOT check that the
+       file exists, so without this every published doc page 404s its icon. -->
+  <text y=".9em" font-size="90">◱</text>
+</svg>
