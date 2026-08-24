@@ -105,6 +105,14 @@ FILE = f"{BASE}/Files/jupyter-note.txt"
 # Three cells, each printing one line this driver compares between harnesses.
 # Every value is fixed or derived from fixed input; nothing here reads a clock,
 # a hostname or a path that differs between a kernel and an agent.
+# EVERY CELL REPORTS WITH `print`, AND THAT IS LOAD-BEARING. The kernel-side
+# reader below keeps `output_type == "stream"` only, so a cell that reports
+# through `display()` lands as `display_data` and arrives here as no marker line
+# at all — "kernel cell N printed no marker line", which names the cell rather
+# than the reason. `display` publishes a MIME bundle under a kernel and prints
+# under the agent, deliberately (e2e/notebook-display proves that half), so the
+# two harnesses cannot be compared through it. Report with print; assert rich
+# output over there.
 CELLS = [
     """\
 import notebookutils
