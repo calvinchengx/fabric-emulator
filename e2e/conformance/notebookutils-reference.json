@@ -596,13 +596,20 @@
       "should be built against it."
     ],
     "mssparkutils": [
-      "The legacy alias. The overview page states the rename is complete, that",
-      "existing code stays backward compatible, and that the namespace WILL BE",
-      "RETIRED. It has its own page (microsoft-spark-utilities) which is not",
-      "transcribed here: emulating a namespace Microsoft is retiring is a",
-      "different decision from emulating the current one, and it should be made",
-      "deliberately rather than by transcription. This tree ships no",
-      "`mssparkutils` module at all today."
+      "The legacy alias, and IT IS PRESENT \u2014 corrected. Phase 0 recorded it as",
+      "absent from the tree because `find -name 'mssparkutils*'` found no FILE.",
+      "It is not a file: `notebookutils/__init__.py` aliases the package to",
+      "itself, so both `notebookutils.mssparkutils` and a top-level",
+      "`import mssparkutils` resolve to the same module, and the agent binds it",
+      "as a notebook global. Verified by importing it, which is what the",
+      "original check should have done \u2014 searching for a filename answers a",
+      "question about the filesystem, not about the namespace.",
+      "",
+      "The overview page states the rename is complete, that existing code stays",
+      "backward compatible, and that the mssparkutils namespace WILL BE RETIRED.",
+      "Aliasing rather than reimplementing is the right shape for that: one",
+      "surface, two names, and nothing extra to keep in step when the old name",
+      "goes away."
     ],
     "language_variants": [
       "Signatures here are the PYTHON spelling. The pages note that Scala uses",

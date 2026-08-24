@@ -132,7 +132,7 @@ much work each entry is:
 |---|---|---|
 | `fs`, `credentials`, `env`, `runtime`, `lakehouse`, `variableLibrary` | exists, ungraded | Shipped code nothing checks. Work is **go and check** — and expect some of it to be wrong, because nothing has ever failed on it. |
 | `session`, `udf` | does not exist | Not written. Work is **go and build**. Same list, different order of magnitude. |
-| `mssparkutils` | on neither | Absent from the tree *and* absent from the list of known absences. |
+| `mssparkutils` | ~~on neither~~ **present** | Recorded as absent on both counts. Wrong: it is an alias in `__init__.py`, and the check looked for a filename. |
 
 The deeper limit was structural: **the list was bounded by what its author knew
 to list.** An honest record of known absences, and by construction unable to
@@ -147,12 +147,18 @@ wrong in both directions:
   mssparkutils-era holdover this shim still ships. Harmless (contract 2 allows
   extra surface) but it must not be counted as parity, and nothing should be
   built against it.
-- **`mssparkutils` was missing from the record of what is missing** — absent
-  from the tree and absent from the list, while the shim's own docstrings
-  reference it. The overview states the rename is complete, that old code stays
-  backward compatible, and that **the namespace will be retired**. Emulating a
-  namespace Microsoft is retiring is a different decision from emulating the
-  current one, and it is now recorded as a decision rather than an oversight.
+- **`mssparkutils` — and this is a correction to Phase 0, not a finding.**
+  It was recorded as absent from the tree *and* from the list of known
+  absences. It is present: `notebookutils/__init__.py` aliases the package to
+  itself, so both `notebookutils.mssparkutils` and a top-level
+  `import mssparkutils` resolve to the same module, and the agent binds it as a
+  notebook global. The original check was `find -name 'mssparkutils*'`, which
+  found no *file* — **a question about the filesystem, not about the
+  namespace**. Importing it takes one line and answers the actual question.
+  The overview states the rename is complete and the namespace **will be
+  retired**, and aliasing rather than reimplementing is the right shape for
+  that: one surface, two names, nothing extra to keep in step when the old name
+  goes away.
 
 The file now separates the two things that field conflated: every module is
 **cited**, and `graded_by_contract_2` names the far smaller set the live probe
