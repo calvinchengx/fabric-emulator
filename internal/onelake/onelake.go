@@ -54,6 +54,12 @@ var ignoredHeaders = []string{
 // Query params OneLake rejects outright (they change the whole call).
 var rejectedActions = map[string]bool{"setaccesscontrol": true, "setaccesscontrolrecursive": true}
 
+// wantsACL reports whether this request is ADLS's "Get Access Control List"
+// (HEAD ?action=getAccessControl), the one response shape that carries x-ms-acl.
+func wantsACL(r *http.Request) bool {
+	return strings.EqualFold(r.URL.Query().Get("action"), "getAccessControl")
+}
+
 type dfsError struct {
 	code   string
 	status int
@@ -104,10 +110,27 @@ func noSniff(w http.ResponseWriter) {
 }
 
 // permHeaders sets OneLake's canned permission response headers.
-func permHeaders(w http.ResponseWriter) {
+func permHeaders(w http.ResponseWriter, withACL bool) {
 	w.Header().Set("x-ms-owner", "$superuser")
 	w.Header().Set("x-ms-group", "$superuser")
 	w.Header().Set("x-ms-permissions", "---------")
+	// x-ms-acl IS PART OF THE getAccessControl RESPONSE, and only that one.
+	//
+	// Hadoop's ABFS driver reads it in AbfsClient.getAclStatus. Without it the
+	// operation never completes and hadoop-azure RETRIES — measured on the JVM
+	// overlay as five threads parked in AbfsRestOperation.completeExecute for
+	// 324s to 864s, one per statement, accumulating and never exiting. The
+	// notebook hangs; nothing anywhere reports an error. A response that is
+	// missing a field the caller must parse is worse than one that refuses,
+	// because a correct client treats it as retryable.
+	//
+	// The value MATCHES the canned permissions above rather than inventing
+	// access: OneLake does not expose POSIX permissions, `---------` is what
+	// this surface has always answered (docs/08-onelake.md), and an ACL saying
+	// something different would be two answers to one question.
+	if withACL {
+		w.Header().Set("x-ms-acl", "user::---,group::---,other::---")
+	}
 }
 
 // pathHeaders stamps the per-path metadata storage clients depend on.
@@ -501,7 +524,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(segs) == 0 || segs[0] == "" {
 		// Account level: HEAD only.
 		if r.Method == http.MethodHead {
-			permHeaders(w)
+			permHeaders(w, wantsACL(r))
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -553,7 +576,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					"OneLake API access requires ReadAll (the Contributor role or above)."})
 				return
 			}
-			permHeaders(w)
+			permHeaders(w, wantsACL(r))
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Query().Get("resource") == "filesystem":
 			s.list(w, r, ws, filter)
@@ -589,7 +612,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(segs) <= 3 {
 		switch r.Method {
 		case http.MethodHead:
-			permHeaders(w)
+			permHeaders(w, wantsACL(r))
 			w.Header().Set("x-ms-resource-type", "directory")
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
@@ -670,7 +693,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeDFSErr(w, *derr)
 			return
 		}
-		permHeaders(w)
+		permHeaders(w, wantsACL(r))
 		pathHeaders(w, pth, s.Store)
 		w.Header().Set("Content-Length", strconv.Itoa(len(pth.Content)))
 		if pth.IsDir {
@@ -690,7 +713,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeDFSErr(w, dfsError{"PathIsDirectory", http.StatusBadRequest, "The path is a directory."})
 			return
 		}
-		permHeaders(w)
+		permHeaders(w, wantsACL(r))
 		pathHeaders(w, pth, s.Store)
 		serveContent(w, r, pth.Content)
 
