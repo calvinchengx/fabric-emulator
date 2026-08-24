@@ -194,8 +194,12 @@ func TestOneLakeDataPlane(t *testing.T) {
 	olStatus(t, f.ol(t, "PUT", "/"+ws.ID+"/"+lake.ID+"/Files/raw/b.txt?resource=file", aliceStorage, nil),
 		http.StatusCreated, "contributor write")
 
-	// Delete a directory removes its subtree.
-	olStatus(t, f.ol(t, "DELETE", "/"+ws.ID+"/"+lake.ID+"/Files/raw", storage, nil), http.StatusOK, "delete dir")
+	// A non-empty directory is refused without ?recursive=true (ADLS Gen2),
+	// and removes its subtree with it.
+	olStatus(t, f.ol(t, "DELETE", "/"+ws.ID+"/"+lake.ID+"/Files/raw", storage, nil),
+		http.StatusConflict, "delete non-empty dir without recursive")
+	olStatus(t, f.ol(t, "DELETE", "/"+ws.ID+"/"+lake.ID+"/Files/raw?recursive=true", storage, nil),
+		http.StatusOK, "delete dir")
 	olStatus(t, f.ol(t, "GET", base, storage, nil), http.StatusNotFound, "file gone with dir")
 
 	// Unknown workspace/item 404.
