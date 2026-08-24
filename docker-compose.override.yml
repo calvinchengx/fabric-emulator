@@ -71,6 +71,22 @@ services:
     # so this file configures the container rather than completing it — which
     # is what a consumer of the published tag gets too.
     environment:
+      # THE SHIM NEEDS ENDPOINTS. Its default is 127.0.0.1:19080, which inside
+      # this container is nothing, so `notebookutils.fs` raised `Connection
+      # refused` from a RunNotebook cell while working fine in a Jupyter one —
+      # the jupyter service in docker-compose.yml has carried this wiring all
+      # along and the agent never did, though that service's own comment claims
+      # "a cell here and a cell in a RunNotebook job execute identically".
+      #
+      # Found by the framework-conformance contract-1 probe, which was the first
+      # thing that ever called notebookutils from inside a notebook job.
+      #
+      # NOT workspace/lakehouse ids: those are the environment fallback, and a
+      # runtime that answers through it can hide two broken control-plane links
+      # (docs/38 §1). The agent binds the real context per statement.
+      NOTEBOOKUTILS_FABRIC_URL: "http://fabric-emulator"
+      NOTEBOOKUTILS_ENTRA_URL: "http://entra-emulator:8443"
+      NOTEBOOKUTILS_INSECURE: "1"
       SPARK_REMOTE: "sc://sail:50051" # Spark Connect client — no JVM
       # The delta-rs path talks to OneLake directly, so it needs its own
       # credentials — a Connect client cannot read back the bearer sail holds.

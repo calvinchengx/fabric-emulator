@@ -87,5 +87,58 @@ USER spark
 # dropping back to spark so it lands in the image rather than a user directory a
 # restart discards.
 USER root
-RUN pip install --no-cache-dir requests==2.32.4
+# PYTHON 3.11, BECAUSE FABRIC RUNTIME 1.3 IS PYTHON 3.11.
+#
+# The base ships 3.8.10 (Ubuntu 20.04). Everything else in this image already
+# matches the runtime it claims to be — Spark 3.5, Delta 3.2, Java 11, Scala
+# 2.12 — and the interpreter did not, which is framework-conformance contract 3
+# (docs/38 §3) in one line. It is not a cosmetic gap: `notebookutils` requires
+# >= 3.9, so a notebook on this overlay could not import the surface at all
+# (`ModuleNotFoundError`), and the first failure arrived long after the agent
+# reported ready, reading as a notebook fault rather than a runtime that was
+# never eligible.
+#
+# uv's standalone build rather than apt or a COPY from python:3.11-slim. apt
+# means a PPA on a 20.04 that this file has already been burned by once (see the
+# JDK comment above); the slim image is Debian bookworm, whose glibc 2.36 a
+# 20.04 userland cannot load. uv is already in this image and its interpreters
+# are built for old glibc on purpose.
+#
+# PYSPARK IS NOT AFFECTED and does not need reinstalling: Spark ships it as
+# /opt/spark/python/lib/pyspark.zip and spark-submit puts that on PYTHONPATH, so
+# it is interpreter-agnostic. Only PYSPARK_PYTHON has to point at the new one,
+# for the driver and the executors alike.
+ENV UV_PYTHON_INSTALL_DIR=/opt/python
+COPY python/pyproject.toml /tmp/nbu/pyproject.toml
+COPY python/notebookutils /tmp/nbu/notebookutils
+# A VIRTUALENV, not a system install. uv's managed interpreters are marked
+# externally-managed (PEP 668) and both pip and `uv pip --system` refuse them —
+# correctly. A venv is the supported way to own a site-packages, and it needs no
+# override flag that would also silence a real warning later.
+#
+# `requests` for the reason it was already here: nearly every framework pulls it
+# in, and without it a notebook dies after the agent has reported ready.
+# `notebookutils` because contract 2 measured this overlay as having none of the
+# surface a Fabric notebook calls.
+RUN uv python install 3.11 \
+    && uv venv --python 3.11 /opt/nbenv \
+    && uv pip install --python /opt/nbenv/bin/python --no-cache \
+        requests==2.32.4 /tmp/nbu \
+    && rm -rf /tmp/nbu \
+    && chmod -R a+rX /opt/nbenv /opt/python
+ENV PYSPARK_PYTHON=/opt/nbenv/bin/python \
+    PYSPARK_DRIVER_PYTHON=/opt/nbenv/bin/python
+# THE RUNTIME THIS IMAGE TARGETS, declared rather than inferred.
+#
+# Framework-conformance contract 3 (docs/38 §3): a Fabric Runtime pins Spark,
+# Delta, Python and a library set together as one versioned unit, and a
+# framework declares which runtime it targets and assumes that floor. Two images
+# with different Python versions and no statement about which runtime either
+# claimed is how the JVM overlay shipped Python 3.8 under a "Runtime 1.3"
+# heading for months.
+#
+# This declares the FLOOR the image targets -- interpreter and library
+# versions -- not that its engine is Spark. Whether the engine behaves like
+# Spark is the engine matrix's question, and it answers it row by row.
+ENV FABRIC_RUNTIME=1.3
 USER spark

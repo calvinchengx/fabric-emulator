@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/compute"
@@ -207,6 +208,56 @@ func (a *API) resolveEnvironment(wid, envID string) (compute.Environment, error)
 		return compute.Environment{}, err
 	}
 	return compute.ParseEnvironment(parts)
+}
+
+// notebookExecutableParts derives `notebook-content.py` from an `.ipynb` part
+// when the caller supplied only the `.ipynb`.
+//
+// WHY THE SERVER AND NOT THE CLIENT. Microsoft's own `notebookutils.notebook.
+// create(content=...)` takes `.ipynb` JSON, and the documented items API accepts
+// whatever parts a caller sends. This emulator EXECUTES from
+// `notebook-content.py` (internal/notebook/parse.go), so a notebook created the
+// documented way with only an `.ipynb` part was stored happily and then failed
+// to run with `notebook-content.py is missing` -- a create that reports success
+// and produces something unrunnable, which is the false-green shape docs/38 §4
+// is about.
+//
+// Deriving it here rather than in the shim keeps ONE definition of the
+// conversion, in the package that owns the parser, so a Python client, the
+// VS Code route and a raw REST caller cannot drift apart. `vscodeIPYNBToFabric`
+// is that one definition and is reused unchanged.
+//
+// A caller that sends BOTH parts is left alone: an explicit `.py` is the
+// author's, and overwriting it with a re-derivation would silently discard
+// whatever the ipynb round trip does not carry.
+func notebookExecutableParts(itemType string, parts []store.DefinitionPart) []store.DefinitionPart {
+	if !strings.EqualFold(itemType, "Notebook") {
+		return parts
+	}
+	var ipynb *store.DefinitionPart
+	for i := range parts {
+		switch parts[i].Path {
+		case "notebook-content.py":
+			return parts
+		case "notebook-content.ipynb":
+			ipynb = &parts[i]
+		}
+	}
+	if ipynb == nil {
+		return parts
+	}
+	raw, err := base64.StdEncoding.DecodeString(ipynb.Payload)
+	if err != nil {
+		// Not ours to reject here: the payload is stored as sent and the
+		// create still succeeds, exactly as it did before this derivation
+		// existed. A malformed payload is the caller's error to see.
+		return parts
+	}
+	return append(parts, store.DefinitionPart{
+		Path:        "notebook-content.py",
+		PayloadType: "InlineBase64",
+		Payload:     base64.StdEncoding.EncodeToString(vscodeIPYNBToFabric(raw)),
+	})
 }
 
 // notebookContent decodes the `notebook-content.py` payload from the item's

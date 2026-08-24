@@ -1,11 +1,45 @@
 # 38 — Framework conformance: what a Fabric product assumes, and how to test it
 
-**Status: live write-landing is wired.** Contract 4 cells are ✅ when CI
-records them — a write through the emulator path, confirmed out of band
-(OneLake DFS on sail/jvm; a fresh TDS connection on warehouse). The engine
-that wrote is never the one that confirms. Contracts 1–3 and 5–7 stay
-known gaps. The offline half (`docs/conformance-matrix.md`,
+**Status: contracts 1–5 are live. 11 of 18 cells.** Contract 4 is ✅ on all three
+backends — a write through the emulator path, confirmed out of band (OneLake
+DFS on sail/jvm; a fresh TDS connection on warehouse). The engine that wrote
+is never the one that confirms. **Contract 1 is ✅ on sail and ❌ on jvm**,
+and the jvm red is a real defect rather than a missing assertion: the JVM
+overlay image has no `notebookutils` installed at all, so a notebook cannot
+import the surface this repo grades 🟢 Real. **Both are now ✅ on both
+backends**: the seven missing `notebookutils.notebook` methods are implemented,
+and the JVM overlay has an interpreter that can import the shim at all.
+**Contract 3 is now asserted too**, and green: both images declare the Fabric
+Runtime they target and both meet its Python floor. **Contract 5 is green on
+sail and jvm** — three notebooks submitted at once, each writing its own
+artifact, each knowing only its own identity — and stays ❌ on warehouse, where
+concurrent TDS sessions need a Go leg this kit does not have yet. Contracts 6–7
+stay known gaps. The offline half (`docs/conformance-matrix.md`,
 `check_conformance.py --strict`) still gates `make check`.
+
+**Two defects came out of contract 1's first run, and neither was visible to
+anything else in the repo.** Both are the class this document names: green
+parity rows, green witnesses, green test suite, and a notebook that cannot do
+the thing.
+
+1. **`notebookutils` is unconfigured in the spark-agent.** The shim defaults
+   to `http://127.0.0.1:19080`, which inside that container is nothing, so
+   `fs.put` from a `RunNotebook` cell raised `Connection refused`. No shipped
+   compose (`docker-compose.override.yml`, `.compute.yml`, `.spark-jvm.yml`)
+   and no `e2e/*` compose sets `NOTEBOOKUTILS_FABRIC_URL` on the agent;
+   `jupyter` in `docker-compose.yml` sets all three. So the shim works in a
+   Jupyter cell and fails in a notebook job — while the jupyter service's own
+   comment claims "a cell here and a cell in a RunNotebook job execute
+   identically". The conformance composes set them so the contract can be
+   measured at all; **the shipped composes are unchanged and still carry the
+   gap.**
+2. **The JVM overlay has no `notebookutils` at all** — `ModuleNotFoundError`,
+   not a configuration problem. Contract 3 already flags that image's Python
+   as below the framework floor; it also lacks the shim.
+
+Neither is fixed here. A change that lands the harness and rewrites two images
+is one nobody can review, and the matrix exists precisely so a gap can be
+recorded red with a pointer instead of blocking the kit.
 This document generalises a class of defect the emulator kept shipping: contracts
 that real Fabric *frameworks* depend on, which no amount of reading Microsoft's
 REST reference reveals, because they are not in the REST surface at all. They
@@ -78,9 +112,47 @@ nothing to switch — the emulator has one session and attaches the notebook's o
 binding. What is not correct is omitting the parameter, because omission is a
 signal frameworks read.
 
-**The fix.** A signature-pinning test over the whole surface, the way
-`test(schema)` pins REST payload fields against the reference. A parameter that
-real Fabric accepts must appear here, whether or not it does anything.
+**The fix, landed for `notebookutils.notebook`.**
+`e2e/conformance/notebookutils-reference.json` pins the documented signatures
+the way `test(schema)` pins REST payload fields, and **every entry cites the
+Microsoft page it was read from plus that page's own last-updated date** — a
+reference assembled from memory would be this same defect one tier up, a claim
+about Fabric with nothing behind it. Its scope is declared rather than implied:
+`fs`, `credentials`, `env`, `runtime`, `lakehouse`, `session`, `udf` and
+`variableLibrary` are listed as not yet covered, so a partial reference cannot
+be read as a complete one.
+
+**What the probe found, and what was done about it.** The four orchestration
+methods were correct — `run`, `runMultiple`, `validateDAG`, `exit` all carry
+their documented parameters in the documented order. **Seven documented methods
+were absent entirely**: `create`, `get`, `getDefinition`, `update`,
+`updateDefinition`, `delete`, `list` — the whole notebook-management surface a
+CI/CD framework introspects before it will run.
+
+They are now implemented, and implementing them surfaced a third defect one
+layer down. Microsoft's `create(content=…)` takes **`.ipynb`**; this emulator
+executes from `notebook-content.py`. Nothing derived one from the other outside
+the VS Code route, so a notebook created the documented way stored happily,
+returned 201/202, and its `RunNotebook` job then failed with
+`notebook-content.py is missing` — **a create that reports success and produces
+something unrunnable**, which is §4's shape arriving one API call later.
+
+The derivation is **server-side** (`notebookExecutableParts`, called from
+`createItem` and `updateDefinition`), reusing the existing converter, so there
+is one definition of it in the package that owns the parser and a Python client,
+the VS Code route and a raw REST caller cannot drift apart. Doing it in the shim
+would have been a second definition. Two refusals in it: an author who sends
+both parts keeps theirs, and an undecodable payload is stored as sent rather
+than rejected there.
+
+**Missing fails, extra passes, order counts.** A framework declines on an
+absent parameter without calling anything, so omission is the signal. Accepting
+one and ignoring it is correct emulation when there is nothing to switch — this
+shim already carries `spark_environment` and `attach_lakehouse`, which
+Microsoft's current page does not document, and that is fine. Order is part of
+the contract because Fabric's own examples are positional
+(`run("Sample1", 90, {"input": 20})`): right names in the wrong order accept
+that call and do something else with it.
 
 ### 3. The runtime is a versioned product, not "some Spark"
 
@@ -88,12 +160,34 @@ real Fabric accepts must appear here, whether or not it does anything.
 preinstalled library set together as one versioned unit. A framework declares
 which runtime it targets and assumes that floor.
 
-**Where the emulator stands.** Two images with different Python versions and no
-statement about which Fabric runtime either claims to be. The JVM overlay is
-built on a Spark image shipping Python 3.8, which is below the floor of current
-frameworks; the first failure is a missing stdlib module, arriving long after the
-agent reported ready, which reads as a notebook fault rather than a runtime that
-was never eligible.
+**Where the emulator stood, and what changed.** Two images with different
+Python versions and no statement about which Fabric runtime either claims to be.
+The JVM overlay was built on a Spark image shipping **Python 3.8.10**, and
+[Fabric Runtime 1.3 is **Python 3.11**](https://learn.microsoft.com/en-us/fabric/data-engineering/runtime-1-3)
+— everything else in that image already matched the runtime it claims to be
+(Spark 3.5, Delta 3.2, Java 11, Scala 2.12) and the interpreter did not.
+
+Not cosmetic: `notebookutils` requires `>= 3.9`, so a notebook on that overlay
+could not import the surface **at all**, which is what held contracts 1 and 2 red
+there. The overlay now carries Python 3.11 in a virtualenv with the shim
+installed, and `PYSPARK_PYTHON` points at it. PySpark itself needed no change —
+Spark ships it as `pyspark.zip` on `PYTHONPATH`, so it is interpreter-agnostic.
+
+**The assertion now exists.** Both images carry `ENV FABRIC_RUNTIME=1.3`, and
+`e2e/conformance/fabric-runtimes.json` holds that runtime's floor with the
+Microsoft page and its last-updated date. Two failures are distinguished
+because they are different problems: an image that declares NOTHING cannot be
+asked the question at all, and an image that declares a runtime and ships below
+its floor answers it wrongly — which is worse, and is what happened here.
+
+**Only Python is asserted.** It is the floor that actually broke. Whether the
+engine behaves like Spark 3.5 is the engine matrix's question, and it answers
+that row by row rather than by trusting a version string; Spark's reported
+version is recorded in the findings for drift, not asserted.
+
+The comparison is numeric, not textual, and that is not fussiness: `3.8` sorts
+above `3.11` as a string, so a string comparison would have passed the exact
+image that failed.
 
 **The fix.** Declare the Fabric Runtime version each image targets, make the
 Python floor match it, and have the engine matrix assert it. A runtime that
@@ -137,6 +231,19 @@ boundaries and refuses a second lakehouse rather than switching; the single
 shared. The shared-agent model is a legitimate emulator choice; letting it leak
 is not.
 
+**Now proven, on both engines.** Three notebooks are published, **all submitted
+before any is polled** — serial submission would prove nothing, because the leak
+only exists while two sessions are live in the same agent at once — and each
+writes its own file under `Files/conformance/fanout/`. The probe compares each
+child's reported notebook id against the id **the control plane issued that
+child**, not against what another child said: two children that had leaked into
+each other would agree with each other and disagree with the harness.
+
+Markers and ids both, because they answer different questions. A marker proves a
+child ran; the id proves it knew WHICH child it was. A child reporting another
+child's identity is the leak, and it is invisible to any assertion that only
+counts successes.
+
 ### 6. Engine gaps need a bounded-rewrite escape hatch, with a stated contract
 
 **The pattern, now used three times.** A strict grammar recognises a bounded
@@ -170,13 +277,26 @@ the compute surface, not of one launcher.
 
 ## The conformance kit
 
-**Status: built, and contract 4 is live.** The harness, the committed
+**Status: built; contracts 4 and 1 are live.** The harness, the committed
 matrix, and the offline checker are in tree. Sail, JVM, and warehouse each
 write through the emulator path and an out-of-band reader confirms the
-artifact. Items 1–3 and 5–7 are still individually tractable. The reason
+artifact. Items 3 and 5–7 are still individually tractable. The reason
 they existed for months is that nothing exercised them, and that is the
 gap worth closing first — a new framework will find a new one next week
-otherwise.
+otherwise. Contract 1 found two on its first run, and contract 2 a third.
+
+**Contracts share a run but must not share a failure.** Contract 1 rides the
+same notebook as contract 4, which costs nothing and describes one session
+rather than two. Twice while wiring it, a contract-1 failure failed the *job*
+and turned contract 4 red — with the table landed and the out-of-band reader
+seeing it. Its cell is guarded whole, imports included, and the absent
+artifact is the failure signal. The rule generalises to every contract that
+joins this run.
+
+**A red must point at its cause.** A missing artifact says only `404`. The
+notebook prints why it could not write one, and the harness quotes that line
+into the cell, so the jvm red reads `ModuleNotFoundError: No module named
+'notebookutils'` rather than leaving a reader to guess.
 
 ### What it is
 

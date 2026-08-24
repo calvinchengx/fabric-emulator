@@ -167,7 +167,7 @@ def run_warehouse_live() -> int:
             id="4", contract=title, backend="warehouse", status="fail",
             error=error, pointer=pointer)
         code = proc.returncode or 1
-    write_backend("warehouse", record("warehouse", live_write=lambda: result))
+    write_backend("warehouse", record("warehouse", live={4: result}))
     return code
 
 

@@ -48,4 +48,17 @@ ENV PYTHONUNBUFFERED=1
 # Runnable with no command and no mount — the whole repair. Everything the
 # agent still needs is environment (SPARK_REMOTE, the Entra and storage
 # variables); nothing it needs is a file from the host.
+# THE RUNTIME THIS IMAGE TARGETS, declared rather than inferred.
+#
+# Framework-conformance contract 3 (docs/38 §3): a Fabric Runtime pins Spark,
+# Delta, Python and a library set together as one versioned unit, and a
+# framework declares which runtime it targets and assumes that floor. Two images
+# with different Python versions and no statement about which runtime either
+# claimed is how the JVM overlay shipped Python 3.8 under a "Runtime 1.3"
+# heading for months.
+#
+# This declares the FLOOR the image targets -- interpreter and library
+# versions -- not that its engine is Spark. Whether the engine behaves like
+# Spark is the engine matrix's question, and it answers it row by row.
+ENV FABRIC_RUNTIME=1.3
 CMD ["python3", "/app/python/spark_agent/agent.py"]

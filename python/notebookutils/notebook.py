@@ -12,6 +12,8 @@ NotebookError on `timeoutSeconds`, and that timeout is the truth: nothing ran.
 A notebook with no executable cells still completes immediately, because there
 is nothing to wait for.
 """
+import base64
+import json
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +22,12 @@ from . import credentials
 from ._config import config
 from ._http import request
 from .common.exceptions import RunMultipleFailedException
+
+# `list` BECOMES A NOTEBOOK API IN THIS MODULE (Fabric names it that), which
+# shadows the builtin for everything defined after it. Captured here, before the
+# shadow exists, so the two internal uses keep meaning the builtin. Measured, not
+# guessed: without this, 37 tests fail inside runMultiple's own helpers.
+_list = list
 
 _TERMINAL = {"Completed", "Failed", "Cancelled", "Deduped"}
 
@@ -48,6 +56,276 @@ def _resolve_item(name, workspaceId, token):
         if it.get("displayName") == name:
             return ws, it["id"]
     raise NotebookError(f"notebook {name!r} not found in workspace {ws}")
+
+
+class Artifact:
+    """What the management APIs return: `displayName`, `id`, `description`.
+
+    An object rather than the raw dict, because Microsoft's examples read
+    `notebook.displayName` and `notebook.id`. A dict would make every one of
+    those lines an AttributeError in a notebook that works on Fabric.
+    """
+
+    __slots__ = ("description", "displayName", "id", "type", "workspaceId")
+
+    def __init__(self, raw):
+        self.id = raw.get("id", "")
+        self.displayName = raw.get("displayName", "")
+        self.description = raw.get("description", "")
+        self.type = raw.get("type", "")
+        self.workspaceId = raw.get("workspaceId", "")
+
+    def __repr__(self):
+        return f"Artifact(displayName={self.displayName!r}, id={self.id!r})"
+
+    def __eq__(self, other):
+        return isinstance(other, Artifact) and other.id == self.id
+
+    def _asdict(self):
+        return {"id": self.id, "displayName": self.displayName,
+                "description": self.description, "type": self.type,
+                "workspaceId": self.workspaceId}
+
+
+def _follow(status, headers, payload, *, what, want_result=True):
+    """Resolve the 200-or-202 outcome the items API is documented to have.
+
+    BOTH ARE LEGAL and a real tenant answers 202, so a client that reads the
+    202 body gets `null` and reports an empty result rather than an error. The
+    emulator can be told to always answer 202 (FABRIC_FORCE_LRO) precisely so
+    this path is exercised locally instead of only in production.
+
+    `want_result` is False for operations that have no result document — real
+    Fabric's updateDefinition is one, and polling `/result` for it would 404 on
+    a success.
+    """
+    if status != 202:
+        return json.loads(payload) if payload else {}
+    op = headers.get("x-ms-operation-id") or headers.get("X-Ms-Operation-Id")
+    location = headers.get("Location") or headers.get("location")
+    if not op and not location:
+        raise NotebookError(f"{what} returned 202 with no operation to follow")
+    op_url = location or f"{config().fabric_url}/v1/operations/{op}"
+    deadline = time.monotonic() + 120
+    while True:
+        state = request("GET", op_url, token=credentials.getToken("pbi"))
+        st = state.get("status")
+        if st == "Succeeded":
+            break
+        if st == "Failed":
+            raise NotebookError(f"{what} operation failed: {state.get('error')}")
+        if time.monotonic() > deadline:
+            raise NotebookError(f"{what} operation did not complete")
+        time.sleep(0.2)
+    if not want_result:
+        return {}
+    return request("GET", op_url.rstrip("/") + "/result",
+                   token=credentials.getToken("pbi"))
+
+
+def _ws(workspaceId):
+    ws = workspaceId or config().workspace_id
+    if not ws:
+        raise NotebookError(
+            "no workspace: pass workspaceId, or run inside a notebook whose "
+            "session carries one")
+    return ws
+
+
+def _notebook_parts(content):
+    """Definition parts for `.ipynb` content, as Fabric's `create` documents it.
+
+    ONLY THE `.ipynb` IS SENT. The emulator derives the executable
+    `notebook-content.py` from it server-side, where the parser lives, so this
+    client does not carry a second copy of that conversion — and real Fabric
+    does its own. A client-side conversion would be two definitions of one
+    thing, which is the defect this repository keeps finding.
+    """
+    if isinstance(content, dict):
+        content = json.dumps(content)
+    if isinstance(content, str):
+        content = content.encode()
+    if not content:
+        # Documented: "Cannot be empty". Refused here rather than sent, so the
+        # error names the parameter instead of arriving as a 400 about parts.
+        raise NotebookError("content cannot be empty; pass valid .ipynb JSON")
+    # A JSON OBJECT WITH NO `cells` IS EMPTY IN THE WAY THAT MATTERS: `{}` is
+    # valid JSON and carries no notebook, so the server would derive an
+    # executable part with nothing in it and the create would "succeed" into a
+    # notebook that runs zero cells. Fabric documents the minimum shape
+    # (cells / metadata / nbformat), and `cells` is the part that makes it one.
+    #
+    # Content that is not JSON at all is passed through untouched: the `.py`
+    # form is what getDefinition falls back to, and refusing it here would break
+    # the round trip updateDefinition uses for a lakehouse-only change.
+    try:
+        parsed = json.loads(content)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict) and "cells" not in parsed:
+        raise NotebookError(
+            "content is not a notebook: valid .ipynb JSON needs `cells` "
+            "(minimum: {\"cells\": [], \"metadata\": {}, \"nbformat\": 4, "
+            "\"nbformat_minor\": 5})")
+    return [{"path": "notebook-content.ipynb", "payloadType": "InlineBase64",
+             "payload": base64.b64encode(content).decode()}]
+
+
+def create(name, description="", content=None, defaultLakehouse=None,
+           defaultLakehouseWorkspace=None, workspaceId=None):
+    """Create a notebook item and return its `Artifact`."""
+    ws = _ws(workspaceId)
+    body = {"displayName": name, "type": "Notebook",
+            "definition": {"parts": _notebook_parts(content)}}
+    if description:
+        body["description"] = description
+    if defaultLakehouse:
+        # The binding lives in the notebook's own metadata on Fabric, and the
+        # emulator reads it from there too, so it is applied to the definition
+        # rather than sent as an item field that neither would honour.
+        body["definition"]["parts"] = _with_lakehouse(
+            body["definition"]["parts"], defaultLakehouse,
+            defaultLakehouseWorkspace or ws)
+    status, headers, payload = request(
+        "POST", f"{config().fabric_url}/v1/workspaces/{ws}/items",
+        token=credentials.getToken("pbi"), body=body, raw=True)
+    return Artifact(_follow(status, headers, payload, what="create"))
+
+
+def _with_lakehouse(parts, lakehouse, lakehouse_ws):
+    """Append the `dependencies.lakehouse` metadata Fabric reads for a default.
+
+    Kept beside the parts rather than mutating the caller's `.ipynb`: the
+    metadata block is Fabric's own convention for the binding, and rewriting a
+    user's notebook JSON to carry it would change the artifact they handed us.
+    """
+    meta = {"dependencies": {"lakehouse": {
+        "default_lakehouse_name": lakehouse,
+        "default_lakehouse_workspace_id": lakehouse_ws}}}
+    return [*parts, {
+        "path": "notebook-content-metadata.json", "payloadType": "InlineBase64",
+        "payload": base64.b64encode(json.dumps(meta).encode()).decode()}]
+
+
+def get(name, workspaceId=None):
+    """The notebook's `Artifact`, by display name or id."""
+    ws, item_id = _resolve_item_or_id(name, workspaceId)
+    raw = request("GET", f"{config().fabric_url}/v1/workspaces/{ws}/items/{item_id}",
+                  token=credentials.getToken("pbi"))
+    return Artifact(raw)
+
+
+def getDefinition(name, workspaceId=None, format=None):  # noqa: A002 - Fabric's name
+    """The notebook's content as `.ipynb`, as a string.
+
+    `format` is accepted because Fabric documents it and defaults to `ipynb`;
+    the emulator stores one definition, so anything else is refused rather than
+    silently answered with ipynb.
+    """
+    if format not in (None, "", "ipynb"):
+        raise NotebookError(f"unsupported format {format!r}; Fabric documents 'ipynb'")
+    ws, item_id = _resolve_item_or_id(name, workspaceId)
+    status, headers, payload = request(
+        "POST",
+        f"{config().fabric_url}/v1/workspaces/{ws}/items/{item_id}/getDefinition",
+        token=credentials.getToken("pbi"), raw=True)
+    body = _follow(status, headers, payload, what="getDefinition")
+    parts = (body.get("definition") or {}).get("parts") or []
+    for wanted in ("notebook-content.ipynb", "notebook-content.py"):
+        for part in parts:
+            if part.get("path") == wanted:
+                return base64.b64decode(part.get("payload", "")).decode()
+    raise NotebookError(
+        f"notebook {name!r} has no notebook-content part to return")
+
+
+def update(name, newName, description=None, workspaceId=None):
+    """Rename a notebook (and optionally re-describe it). Returns the Artifact."""
+    ws, item_id = _resolve_item_or_id(name, workspaceId)
+    body = {"displayName": newName}
+    if description is not None:
+        body["description"] = description
+    raw = request("PATCH", f"{config().fabric_url}/v1/workspaces/{ws}/items/{item_id}",
+                  token=credentials.getToken("pbi"), body=body)
+    return Artifact(raw)
+
+
+def updateDefinition(name, content=None, defaultLakehouse=None,
+                     defaultLakehouseWorkspace=None, workspaceId=None,
+                     environmentId=None, environmentWorkspaceId=None):
+    """Replace the notebook's content and/or its default lakehouse. True on success.
+
+    `environmentId` / `environmentWorkspaceId` are accepted because Fabric
+    documents them for the Spark runtime; the emulator binds an Environment
+    through the item's own definition, so they are recorded in the metadata part
+    rather than dropped — a parameter accepted and ignored is the shape §2 of
+    docs/38 calls correct, but recording it costs nothing and keeps the
+    round trip honest.
+    """
+    ws, item_id = _resolve_item_or_id(name, workspaceId)
+    if content is None and defaultLakehouse is None:
+        raise NotebookError(
+            "updateDefinition needs content, defaultLakehouse, or both")
+    parts = _notebook_parts(content) if content is not None else []
+    if not parts:
+        # Lakehouse-only change: keep what is there and re-send it, because the
+        # API replaces the whole definition rather than patching it.
+        current = getDefinition(name, workspaceId=ws)
+        parts = _notebook_parts(current)
+    if defaultLakehouse:
+        parts = _with_lakehouse(parts, defaultLakehouse,
+                                defaultLakehouseWorkspace or ws)
+    if environmentId:
+        parts = [*parts, {
+            "path": "notebook-environment.json", "payloadType": "InlineBase64",
+            "payload": base64.b64encode(json.dumps({
+                "environmentId": environmentId,
+                "environmentWorkspaceId": environmentWorkspaceId or ws,
+            }).encode()).decode()}]
+    status, headers, payload = request(
+        "POST",
+        f"{config().fabric_url}/v1/workspaces/{ws}/items/{item_id}/updateDefinition",
+        token=credentials.getToken("pbi"), body={"definition": {"parts": parts}},
+        raw=True)
+    _follow(status, headers, payload, what="updateDefinition", want_result=False)
+    return True
+
+
+def delete(name, workspaceId=None):
+    """Delete a notebook. True on success."""
+    ws, item_id = _resolve_item_or_id(name, workspaceId)
+    request("DELETE", f"{config().fabric_url}/v1/workspaces/{ws}/items/{item_id}",
+            token=credentials.getToken("pbi"))
+    return True
+
+
+def list(workspaceId=None, maxResults=1000):  # noqa: A001 - Fabric's name
+    """Every notebook in the workspace, as `Artifact`s."""
+    ws = _ws(workspaceId)
+    resp = request("GET", f"{config().fabric_url}/v1/workspaces/{ws}/items?type=Notebook",
+                   token=credentials.getToken("pbi"))
+    items = resp.get("value", [])[:maxResults]
+    return [Artifact(it) for it in items]
+
+
+def _resolve_item_or_id(name, workspaceId):
+    """(workspace, item id) for a display name OR an id.
+
+    Fabric's management APIs take "name or ID" everywhere, so a caller holding
+    an id from `create()` must not have to look the name up again.
+    """
+    ws = _ws(workspaceId)
+    try:
+        return _resolve_item(name, ws, credentials.getToken("pbi"))
+    except NotebookError:
+        # Not a display name in this workspace; try it as an id before giving up.
+        try:
+            request("GET", f"{config().fabric_url}/v1/workspaces/{ws}/items/{name}",
+                    token=credentials.getToken("pbi"))
+        except Exception:
+            raise NotebookError(
+                f"notebook {name!r} not found in workspace {ws}") from None
+        return ws, name
 
 
 def run(path, timeout_seconds=_DEFAULT_TIMEOUT_PER_CELL, arguments=None, workspace=None,
@@ -373,7 +651,7 @@ def _run_level(activities, concurrency):
         return [_run_activity(a) for a in activities]
     workers = len(activities) if concurrency is None else min(concurrency, len(activities))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(_run_activity, activities))
+        return _list(pool.map(_run_activity, activities))
 
 
 def _concurrency(dag):
@@ -463,7 +741,7 @@ def _normalise_dag(dag):
                 act["workspace"] = act["workspaceId"]
             out.append(act)
         return out
-    if isinstance(dag, (list, tuple)):
+    if isinstance(dag, (_list, tuple)):
         return [{"name": n, "path": n} for n in dag]
     raise NotebookError("runMultiple takes a list of notebook names or a DAG dict")
 
@@ -488,7 +766,7 @@ def _dependency_levels(activities):
     A cycle raises rather than hanging or silently dropping activities — the
     two failure modes a caller cannot debug from the outside.
     """
-    remaining = list(activities)
+    remaining = _list(activities)
     emitted, levels = set(), []
     while remaining:
         ready = [a for a in remaining

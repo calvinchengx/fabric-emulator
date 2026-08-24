@@ -23,7 +23,20 @@ from pathlib import Path
 
 DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(DIR))
-from probes import Artifact, WriteClaim, record, write_landing  # noqa: E402
+from probes import (  # noqa: E402
+    Artifact,
+    ContextClaim,
+    IsolationClaim,
+    RuntimeClaim,
+    SignatureClaim,
+    WriteClaim,
+    concurrent_isolation,
+    context_chain,
+    record,
+    runtime_floor,
+    signature_shape,
+    write_landing,
+)
 
 ENTRA = "http://entra-emulator:8443"
 FABRIC = "http://api.fabric.microsoft.com"
@@ -32,6 +45,39 @@ CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
 CLIENT_SECRET = "daemon-app-secret"
 ACCT = "onelake.dfs.fabric.microsoft.com"
 TABLE_DIR = "lake.Lakehouse/Tables/events"
+# Contract 1's findings, as a plain JSON file rather than a Delta table: the
+# out-of-band reader is then a single DFS GET with no Parquet parser, and the
+# file is what a Fabric notebook can write with one documented call.
+FINDINGS_PATH = "lake.Lakehouse/Files/conformance/context.json"
+# Contract 5's children write one file each, keyed by the marker they were
+# given, so a child that wrote another child's file is visible as a mismatch
+# rather than as an overwrite nobody can see.
+FANOUT_DIR = "lake.Lakehouse/Files/conformance/fanout"
+FANOUT_N = 3
+
+# One cell, parameterised by the marker the harness bakes in. Its whole job is
+# to say WHICH notebook it believes it is — the identity a shared agent could
+# leak — alongside the marker only this child was given.
+CHILD_BODY = """# Fabric notebook source
+
+# CELL ********************
+import json as _json
+
+try:
+    import notebookutils as _nbu
+
+    _ctx = dict(_nbu.runtime.context)
+    _nbu.fs.put(
+        "abfss://__WS__@onelake.dfs.fabric.microsoft.com/__DIR__/__MARKER__.json",
+        _json.dumps({
+            "marker": "__MARKER__",
+            "notebook": _ctx.get("currentNotebookId", ""),
+            "workspace": _ctx.get("currentWorkspaceId", ""),
+        }), True)
+    print("child __MARKER__ wrote its findings")
+except Exception as _exc:  # noqa: BLE001
+    print("child __MARKER__ NOT written:", type(_exc).__name__, _exc)
+"""
 
 # The notebook-driven write path, and only that path: unqualified
 # saveAsTable("events"). No CTAS, MERGE, mount, or qualified name — those
@@ -43,11 +89,102 @@ NOTEBOOK_BODY = """# Fabric notebook source
 df = spark.createDataFrame([(1, "a"), (2, "b"), (3, "c"), (4, "d")], ["id", "name"])
 df.write.format("delta").mode("overwrite").saveAsTable("events")
 print("wrote", df.count(), "rows")
+
+# CELL ********************
+# Contract 1. Each link of the chain is asked SEPARATELY, in the order a
+# framework probes it, and each answer is recorded even when it raises --
+# "this link is broken" is the finding, not a reason to abandon the cell.
+#
+# THE WHOLE CELL IS GUARDED, imports included. Contracts 1 and 4 share one run
+# to keep it cheap, and a partial guard is not a guard: the first version
+# wrapped only the write, so `import notebookutils` failing on the JVM overlay
+# still failed the job and turned contract 4 red -- with its table landed and
+# the out-of-band listing seeing five paths. One contract's red must never be
+# another's, and the absent artifact is contract 1's failure signal by itself.
+import json as _json, os as _os
+
+try:
+    import notebookutils as _nbu
+
+    def _try(fn):
+        try:
+            return fn(), ""
+        except Exception as exc:  # noqa: BLE001 -- a broken link is a finding
+            return "", f"{type(exc).__name__}: {exc}"
+
+    _env_ws, _env_err = _try(lambda: _nbu.mssparkutils.env.getWorkspaceId())
+    _ctx, _ctx_err = _try(lambda: dict(_nbu.runtime.context))
+    _findings = {
+        "env_workspace": _env_ws,
+        "context_workspace": (_ctx or {}).get("currentWorkspaceId", ""),
+        "context_lakehouse": (_ctx or {}).get("defaultLakehouseId", ""),
+        # The fallback the emulator keeps for a kernel with no agent. Reported
+        # so the harness can REFUSE a pass that only the fallback earned.
+        "fallback_workspace": _os.environ.get("NOTEBOOKUTILS_WORKSPACE_ID", ""),
+        "env_fallback_set": bool(_os.environ.get("NOTEBOOKUTILS_WORKSPACE_ID")
+                                 or _os.environ.get("NOTEBOOKUTILS_LAKEHOUSE_ID")),
+        "errors": [e for e in (_env_err, _ctx_err) if e],
+        # Absent in the emulator today; recorded so the gap is visible in the
+        # artifact rather than only in prose.
+        "context_capacity": (_ctx or {}).get("currentCapacityId", ""),
+    }
+    # Contract 2, in the same artifact and the same run. Signature shape is a
+    # property of the surface as the SESSION sees it, so it is read here rather
+    # than from the client's own import -- the client runs a different
+    # interpreter with a different package set, and asserting on that would
+    # prove something about the harness.
+    import inspect as _inspect
+
+    _sigs = {}
+    for _name in dir(_nbu.notebook):
+        if _name.startswith("_"):
+            continue
+        _fn = getattr(_nbu.notebook, _name, None)
+        if not callable(_fn):
+            continue
+        try:
+            _sigs[_name] = [p.name for p in
+                            _inspect.signature(_fn).parameters.values()
+                            if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
+        except (TypeError, ValueError):
+            # A builtin with no introspectable signature is not "absent"; say so
+            # rather than letting it read as a missing method.
+            _sigs[_name] = ["<no signature>"]
+    _findings["notebook_signatures"] = _sigs
+    # Contract 3. Read from the SESSION's own interpreter, because that is the
+    # one a notebook's imports resolve against — reading the client's would
+    # describe the harness. `spark.version` is recorded, not asserted: whether
+    # the engine behaves like Spark 3.5 is the engine matrix's question.
+    import sys as _sys
+
+    _findings["runtime"] = {
+        "declared": _os.environ.get("FABRIC_RUNTIME", ""),
+        "python": ".".join(str(n) for n in _sys.version_info[:3]),
+        "spark": _try(lambda: spark.version)[0],
+    }
+    # An EXPLICIT abfss target, never a relative path: fs._resolve() reads a
+    # relative one out of the very runtime context under test, so a relative
+    # write would make the artifact's location depend on the answer measured.
+    _nbu.fs.put("abfss://__WS__@onelake.dfs.fabric.microsoft.com/__FINDINGS__",
+                _json.dumps(_findings), True)
+    print("context findings written")
+except Exception as _exc:  # noqa: BLE001
+    print("context findings NOT written:", type(_exc).__name__, _exc)
 """
 
-# Set by writer() so reader() can list the same workspace. Empty if the
-# writer never got as far as creating one.
+# Set by writer() so the readers can address the same workspace, and so the
+# contract-1 comparison has the ids the CONTROL PLANE issued rather than the
+# ones the session believes. Empty if the writer never got that far.
 _ws = ""
+_lake = ""
+# What the notebook printed. A missing artifact says only "404"; the cell that
+# failed to write it says WHY, and a red that does not point at its cause is
+# most of the way back to a silent skip.
+_said = ""
+# Contract 2's half of the same findings file, kept beside the contract-1 half
+# so one DFS read serves both.
+_sigs_seen = None
+_runtime_seen = None
 
 
 def log(msg: str) -> None:
@@ -78,6 +215,21 @@ def fabric_token() -> str:
         "scope": "https://api.fabric.microsoft.com/.default"}, form=True)[2]["access_token"]
 
 
+def storage_token() -> str:
+    """A fresh Storage-audience token, minted here — never the writer's."""
+    try:
+        req("POST", f"{ENTRA}/admin/api/apps", {
+            "displayName": "Azure Storage", "appIdUri": "https://storage.azure.com",
+            "isConfidential": False})
+    except urllib.error.HTTPError as e:
+        if e.code != 409:
+            raise
+    return req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
+        "grant_type": "client_credentials", "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "scope": "https://storage.azure.com/.default"}, form=True)[2]["access_token"]
+
+
 def writer() -> WriteClaim:
     """Publish + submit + poll. The claim is the job status, nothing else."""
     global _ws
@@ -86,6 +238,8 @@ def writer() -> WriteClaim:
     lake = req("POST", f"{FABRIC}/v1/workspaces/{ws}/lakehouses",
                {"displayName": "lake"}, token=ft)[2]
     _ws = ws
+    global _lake
+    _lake = lake["id"]
     log(f"workspace {ws}, lakehouse {lake['id']}")
 
     # Default lakehouse in the notebook's own metadata — what makes
@@ -104,7 +258,9 @@ def writer() -> WriteClaim:
         "displayName": "etl-nb", "type": "Notebook",
         "definition": {"parts": [{
             "path": "notebook-content.py", "payloadType": "InlineBase64",
-            "payload": base64.b64encode((NOTEBOOK_BODY + meta).encode()).decode()}]}},
+            "payload": base64.b64encode(
+                (NOTEBOOK_BODY.replace("__WS__", ws).replace("__FINDINGS__", FINDINGS_PATH)
+                 + meta).encode()).decode()}]}},
         token=ft)
     opid = headers.get("x-ms-operation-id")
     nb = None
@@ -143,25 +299,30 @@ def writer() -> WriteClaim:
             log(f"could not fetch run detail: {exc}")
         return WriteClaim(ok=False, error=f"job status = {status}")
     log(f"job reached {status}")
+    _remember_output(base, ft)
     return WriteClaim(ok=True)
+
+
+def _remember_output(base: str, ft: str) -> None:
+    """Keep the cells' stdout so a later contract can quote its own failure.
+
+    Fetched on SUCCESS as well as failure: contract 1's cell is guarded so it
+    cannot fail the job, which means its reason only ever appears here.
+    """
+    global _said
+    try:
+        detail = req("GET", f"{base}/notebookRun", token=ft)[2]
+        _said = "\n".join(c.get("output", "") for c in detail.get("cells", []))
+    except Exception as exc:  # noqa: BLE001 — diagnostics, never the verdict
+        log(f"could not fetch run detail: {exc}")
 
 
 def reader() -> Artifact:
     """New Storage token, then a DFS listing. Not Spark, not the writer."""
     if not _ws:
         return Artifact(found=False, location=TABLE_DIR)
-    try:
-        req("POST", f"{ENTRA}/admin/api/apps", {
-            "displayName": "Azure Storage", "appIdUri": "https://storage.azure.com",
-            "isConfidential": False})
-    except urllib.error.HTTPError as e:
-        if e.code != 409:
-            raise
     # Fresh token, minted here — not the Fabric-audience token writer() used.
-    sft = req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
-        "grant_type": "client_credentials", "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "scope": "https://storage.azure.com/.default"}, form=True)[2]["access_token"]
+    sft = storage_token()
     try:
         listing = req("GET", f"http://{ACCT}/{_ws}?resource=filesystem&recursive=true"
                              f"&directory={urllib.parse.quote(TABLE_DIR)}", token=sft)[2]
@@ -171,6 +332,153 @@ def reader() -> Artifact:
     names = [p["name"] for p in listing.get("paths", [])]
     log(f"OneLake listing under {TABLE_DIR}: {len(names)} path(s)")
     return Artifact(found=bool(names), location=TABLE_DIR)
+
+
+def session_context() -> ContextClaim:
+    """Read the findings the notebook wrote, over DFS. Not Spark, not the writer.
+
+    This process never ran inside the session, so what it can testify to is
+    what the session RECORDED. The comparison that makes that meaningful is
+    against `_ws` / `_lake`, which the control plane issued to the harness
+    before the notebook existed — see probes.context_chain.
+    """
+    if not _ws:
+        return ContextClaim(ok=False, error="no workspace was created")
+    try:
+        sft = storage_token()
+        r = urllib.request.Request(
+            f"http://{ACCT}/{_ws}/{urllib.parse.quote(FINDINGS_PATH)}",
+            headers={"Authorization": "Bearer " + sft})
+        with urllib.request.urlopen(r, timeout=60) as resp:
+            found = json.loads(resp.read())
+    except Exception as exc:  # noqa: BLE001 — a missing artifact is the finding
+        said = next((ln.strip() for ln in _said.splitlines()
+                     if ln.startswith("context findings NOT written:")), "")
+        why = f" — the session said: {said}" if said else ""
+        return ContextClaim(
+            ok=False,
+            error=f"no context findings at {FINDINGS_PATH}: {exc}{why}")
+    global _sigs_seen, _runtime_seen
+    _sigs_seen = found.get("notebook_signatures")
+    _runtime_seen = found.get("runtime")
+    log(f"context findings: { {k: v for k, v in found.items() if k != 'notebook_signatures'} }")
+    log(f"notebook signatures reported: {len(_sigs_seen or {})} callables")
+    return ContextClaim(
+        ok=True,
+        env_workspace=found.get("env_workspace", ""),
+        context_workspace=found.get("context_workspace", ""),
+        context_lakehouse=found.get("context_lakehouse", ""),
+        fallback_workspace=found.get("fallback_workspace", ""),
+        env_fallback_set=bool(found.get("env_fallback_set")),
+        error="; ".join(found.get("errors", [])),
+    )
+
+
+def session_signatures() -> SignatureClaim:
+    """Contract 2 reads the artifact contract 1 already fetched.
+
+    Deliberately NOT a second notebook or a second read: the findings file
+    carries both halves, so the two contracts describe one session and one
+    round trip. `session_context()` must have run first; if it did not, the
+    absent signatures are reported rather than silently read as an empty
+    surface, which would fail every method for the wrong reason.
+    """
+    if _sigs_seen is None:
+        return SignatureClaim(
+            ok=False,
+            error="no signatures in the findings artifact — "
+                  "the session did not get as far as reporting them")
+    return SignatureClaim(ok=True, seen=_sigs_seen)
+
+
+def session_runtime() -> RuntimeClaim:
+    """Contract 3 reads the same artifact contracts 1 and 2 already fetched."""
+    if _runtime_seen is None:
+        return RuntimeClaim(
+            ok=False,
+            error="no runtime in the findings artifact — "
+                  "the session did not get as far as reporting it")
+    return RuntimeClaim(
+        ok=True,
+        declared=_runtime_seen.get("declared", ""),
+        python=_runtime_seen.get("python", ""),
+        spark=_runtime_seen.get("spark", ""),
+    )
+
+
+def fan_out() -> dict[str, str]:
+    """Publish N notebooks, submit them AT ONCE, and wait for all of them.
+
+    Submitting serially would prove nothing: the leak contract 5 is about only
+    exists while two sessions are live in the same agent at the same time. So
+    every job is submitted before any is polled.
+
+    Returns marker -> the notebook id the control plane issued, which is what
+    the probe compares each child's own belief against.
+    """
+    ft = fabric_token()
+    expected, jobs = {}, []
+    for i in range(FANOUT_N):
+        marker = f"child{i}"
+        body = (CHILD_BODY.replace("__WS__", _ws)
+                .replace("__DIR__", FANOUT_DIR).replace("__MARKER__", marker))
+        _, headers, _ = req(
+            "POST", f"{FABRIC}/v1/workspaces/{_ws}/items", {
+                "displayName": f"fanout-{marker}", "type": "Notebook",
+                "definition": {"parts": [{
+                    "path": "notebook-content.py", "payloadType": "InlineBase64",
+                    "payload": base64.b64encode(body.encode()).decode()}]}},
+            token=ft)
+        opid = headers.get("x-ms-operation-id")
+        nb = None
+        for _ in range(60):
+            op = req("GET", f"{FABRIC}/v1/operations/{opid}", token=ft)[2]
+            if op.get("status") == "Succeeded":
+                nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=ft)[2]["id"]
+                break
+            time.sleep(1)
+        if not nb:
+            log(f"{marker}: notebook never finished creating")
+            continue
+        expected[marker] = nb
+        _, hdrs, _ = req(
+            "POST",
+            f"{FABRIC}/v1/workspaces/{_ws}/items/{nb}/jobs/instances?jobType=RunNotebook",
+            token=ft)
+        jobs.append((marker, nb, hdrs["Location"].rstrip("/").rsplit("/", 1)[-1]))
+    log(f"submitted {len(jobs)} concurrent RunNotebook jobs")
+
+    deadline = time.monotonic() + 300
+    pending = {j: (m, nb) for m, nb, j in jobs}
+    while pending and time.monotonic() < deadline:
+        for jid, (marker, nb) in list(pending.items()):
+            base = f"{FABRIC}/v1/workspaces/{_ws}/items/{nb}/jobs/instances/{jid}"
+            status = req("GET", base, token=ft)[2].get("status")
+            if status in ("Completed", "Failed", "Cancelled", "Deduped"):
+                log(f"{marker}: {status}")
+                pending.pop(jid)
+        if pending:
+            time.sleep(1)
+    return expected
+
+
+def session_isolation(expected: dict) -> IsolationClaim:
+    """Read every child's artifact over DFS. Not Spark, not any of the writers."""
+    if not expected:
+        return IsolationClaim(ok=False, error="no children were created")
+    sft = storage_token()
+    seen = {}
+    for marker in expected:
+        try:
+            r = urllib.request.Request(
+                f"http://{ACCT}/{_ws}/{urllib.parse.quote(FANOUT_DIR)}/{marker}.json",
+                headers={"Authorization": "Bearer " + sft})
+            with urllib.request.urlopen(r, timeout=60) as resp:
+                seen[marker] = json.loads(resp.read())
+        except Exception as exc:  # noqa: BLE001 — a missing child is the finding
+            log(f"{marker}: no findings ({exc})")
+    log(f"fan-out artifacts read: {len(seen)}/{len(expected)}")
+    return IsolationClaim(ok=True, seen=seen)
 
 
 def main() -> int:
@@ -184,11 +492,34 @@ def main() -> int:
         expected_location=TABLE_DIR,
         backend=backend,
     )
-    rows = record(backend, live_write=lambda: result)
+    # Contract 1 rides the SAME run: the notebook that wrote the table also
+    # recorded its context, so the two cells describe one session rather than
+    # two, and the run costs no extra notebook.
+    ctx = context_chain(
+        session=session_context,
+        expected_workspace=_ws,
+        expected_lakehouse=_lake,
+        backend=backend,
+    )
+    ref = json.loads((DIR / "notebookutils-reference.json").read_text(
+        encoding="utf-8"))["modules"]["notebookutils.notebook"]
+    sig = signature_shape(session=session_signatures, reference=ref, backend=backend)
+    runtimes = json.loads((DIR / "fabric-runtimes.json").read_text(
+        encoding="utf-8"))["runtimes"]
+    floor = runtime_floor(session=session_runtime, runtimes=runtimes, backend=backend)
+    expected = fan_out()
+    iso = concurrent_isolation(
+        session=lambda: session_isolation(expected),
+        expected=expected, backend=backend)
+    rows = record(backend, live={1: ctx, 2: sig, 3: floor, 4: result, 5: iso})
     out = DIR / "out"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{backend}.json"
     path.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
+    log(f"wrote {path} contract 1={ctx.status} {ctx.error}".rstrip())
+    log(f"wrote {path} contract 2={sig.status} {sig.error}".rstrip())
+    log(f"wrote {path} contract 3={floor.status} {floor.error}".rstrip())
+    log(f"wrote {path} contract 5={iso.status} {iso.error}".rstrip())
     log(f"wrote {path} contract 4={result.status} {result.error}".rstrip())
     return 0
 
