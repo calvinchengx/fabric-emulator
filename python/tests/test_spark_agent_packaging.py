@@ -162,9 +162,9 @@ def test_the_runtime_images_share_one_preamble():
 
     # COPY differs by one line (the agent needs no build ARG), so compare the
     # lines that carry the dependency set rather than the whole list.
-    for shared in ("pyproject.toml uv.lock ./", "python/ ./python/"):
-        assert shared in _directives(AGENT_DOCKERFILE, "COPY")
-        assert shared in _directives(RUNTIME_DOCKERFILE, "COPY")
+    for copied in ("pyproject.toml uv.lock ./", "python/ ./python/"):
+        assert copied in _directives(AGENT_DOCKERFILE, "COPY")
+        assert copied in _directives(RUNTIME_DOCKERFILE, "COPY")
 
 
 def test_the_release_builds_the_agent_from_its_own_dockerfile():
