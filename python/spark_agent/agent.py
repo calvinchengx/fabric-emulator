@@ -205,6 +205,7 @@ def _install_custom_wheels():
 _install_custom_wheels()
 
 import catalog  # noqa: E402 — after the engine is up; see catalog.py for why it is split out
+import notebook_display  # noqa: E402 — pure rendering, tested without an engine
 import rddfacade  # noqa: E402 — same split: importable with no session, and unit-tested
 import run_magic  # noqa: E402 — a pure source rewrite, tested without an engine
 import sqlrun  # noqa: E402 — same split, same reason: importable without a session
@@ -390,6 +391,13 @@ def ns(session):
         # helper it rewrites to has to close over this namespace specifically.
         namespaces[session][run_magic.HELPER] = _make_run_helper(
             namespaces[session])
+        # `display` and `displayHTML` are notebook BUILTINS on Fabric — not
+        # imports. A notebook writes `display(df)` with nothing above it, so
+        # they have to be in the namespace or that line is a NameError. They
+        # were absent entirely, which docs/56 carried as "unverified" until it
+        # was measured.
+        namespaces[session]["display"] = notebook_display.display
+        namespaces[session]["displayHTML"] = notebook_display.displayHTML
     return namespaces[session]
 
 
