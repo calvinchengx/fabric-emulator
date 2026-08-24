@@ -500,6 +500,14 @@ def run_code(code, g):
         return {"status": "error", "ename": "Error", "evalue": tb[-1] if tb else "error", "traceback": tb}
 
 
+# The last /register payload per session, kept so a catalog the ENGINE lost can
+# be rebuilt without asking the control plane again. Sail's credential refresh
+# restarts the engine (docker/sail/launcher.py) and the restart takes the
+# session catalog with it, silently — see session_recovery.forgotten_table_in.
+# This is the only state needed to put the registrations back.
+session_registration = {}
+
+
 def register_tables(session, schema, tables, schemas=None):
     """Declare a lakehouse's Delta tables in this REPL's Spark catalog.
 
@@ -509,9 +517,93 @@ def register_tables(session, schema, tables, schemas=None):
     resolving an unqualified name against another lakehouse.
     """
     g = ns(session)
+    session_registration[session] = (schema, tables, schemas)
     return catalog.register(g.get("spark"), session, schema, tables,
                             schemas=schemas, claims=catalog_claims,
                             isolated=session_isolated.get(session, True))
+
+
+def _table_should_exist(name):
+    """Is `name` a table that EXISTS, which the engine has nonetheless lost?
+
+    The half of the forgotten-table test that keeps a typo a typo, and the
+    ordering below is the whole design. Three oracles, cheapest first, any one
+    sufficient:
+
+      1. `delta_ops` has a location for it — registered or derived earlier in
+         this process;
+      2. the control plane declared it in this session's /register payload;
+      3. THE LAKEHOUSE ITSELF has it.
+
+    THE THIRD IS THE ONE THAT MATTERS, and leaving it out made this miss the
+    exact case it was written for. A notebook's `saveAsTable("events")` on a
+    fresh lakehouse is in NEITHER of the first two: `register()` enumerated the
+    lakehouse before the write happened, and a DataFrameWriter call is not a
+    statement the agent's `sql` wrapper ever sees. The first draft of this
+    therefore answered "no" for precisely the table whose disappearance
+    prompted the fix.
+
+    Asking storage is also the semantically right question. "The table is in the
+    lakehouse and the engine cannot see it" IS the forgotten-session condition,
+    stated directly rather than inferred from bookkeeping. A typo is not in the
+    lakehouse either, so it still answers no and is still left alone.
+
+    The agent process does not restart when sail does, so oracles 1 and 2
+    survive the event being detected; oracle 3 does not depend on surviving
+    anything.
+    """
+    bare = (name or "").replace("`", "").strip().lower().rsplit(".", 1)[-1]
+    if not bare:
+        return False
+    try:
+        import delta_ops
+    except Exception:  # noqa: BLE001 - no registry is not evidence either way
+        delta_ops = None
+    if delta_ops is not None:
+        try:
+            if delta_ops.known_location(bare):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+    for _schema, tables, _schemas in session_registration.values():
+        for t in tables or []:
+            if str(t.get("name", "")).strip().lower() == bare:
+                return True
+    if delta_ops is not None:
+        try:
+            import storage
+
+            # Ambiguity raises here, and that is not an answer to THIS question:
+            # a name in two lakehouses is still a name the engine should have
+            # been able to resolve, so it counts as existing.
+            try:
+                return bool(delta_ops.derive_location(bare, storage.options))
+            except delta_ops.DeltaOpError:
+                return True
+        except Exception:  # noqa: BLE001 - unreadable storage is not evidence
+            return False
+    return False
+
+
+def recover_forgotten_session(session):
+    """Re-register this session's tables after the engine forgot them.
+
+    Returns the number of tables put back, or None if there was nothing
+    recorded to put back — in which case the caller still reports the cause,
+    because "the engine restarted" is the useful half even when the agent has
+    no registration to replay.
+    """
+    recorded = session_registration.get(session)
+    if not recorded:
+        return None
+    schema, tables, schemas = recorded
+    try:
+        out = register_tables(session, schema, tables, schemas)
+    except Exception:  # noqa: BLE001 — the note still names the cause
+        print("agent: re-registering after an engine restart failed:\n"
+              + traceback.format_exc(), file=sys.stderr, flush=True)
+        return None
+    return out.get("registered") if isinstance(out, dict) else None
 
 
 def _apply_onelake_security(req, session):
@@ -697,6 +789,21 @@ class Handler(BaseHTTPRequestHandler):
                         # written data is not something the agent can do safely.
                         if session_recovery.envelope_is_lost_session(result):
                             session_recovery.annotate(result, recover_lost_session())
+                        else:
+                            # A DIFFERENT SHAPE OF THE SAME EVENT. A launcher
+                            # restart never reports a lost session — sail
+                            # re-creates the id and the client is just told its
+                            # table is missing, which reads as a typo. Only a
+                            # name THIS AGENT REGISTERED counts, so a real typo
+                            # is left completely alone.
+                            forgotten = session_recovery.forgotten_table_in(
+                                result, _table_should_exist)
+                            if forgotten:
+                                session_recovery.annotate(
+                                    result,
+                                    session_recovery.forgotten_table_note(
+                                        forgotten,
+                                        recover_forgotten_session(session)))
             finally:
                 try:
                     import files_mount

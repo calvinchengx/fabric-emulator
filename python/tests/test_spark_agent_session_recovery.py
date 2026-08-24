@@ -193,3 +193,91 @@ def test_something_else_that_is_not_running_is_not_a_lost_session():
 def test_sails_message_still_matches_with_the_tightened_marker():
     assert session_recovery.is_lost_session_text(
         "invalid argument: session 7f3a1c22 is not running")
+
+
+# ---------------------------------------------------------------------------
+# A table the engine FORGOT, which is a different event wearing the same red.
+#
+# Sail's credential refresh restarts the engine, the restart discards session
+# state, and sail re-creates the session under the same id — so none of
+# LOST_SESSION_MARKERS fires and the client is just told its table is missing.
+# Both messages below are MEASURED, not invented: the sail one came from the
+# conformance contract-7 probe, which records it verbatim every run.
+
+SAIL_FORGOT = ("AnalysisException: Table not found: [TABLE_OR_VIEW_NOT_FOUND] "
+               "Table or view not found: events")
+SPARK_FORGOT = "[TABLE_OR_VIEW_NOT_FOUND] The table or view `events` cannot be found."
+
+
+def _err(evalue, traceback=()):
+    return {"status": "error", "evalue": evalue, "traceback": list(traceback)}
+
+
+def _registered(*names):
+    lowered = {n.lower() for n in names}
+    return lambda n: n.lower() in lowered
+
+
+def test_a_forgotten_table_is_recognised_on_sail():
+    assert session_recovery.forgotten_table_in(_err(SAIL_FORGOT), _registered("events")) == "events"
+
+
+def test_a_forgotten_table_is_recognised_on_spark():
+    """Different wording, same event — the name is backticked rather than
+    trailing a colon, which one regex silently got wrong."""
+    assert session_recovery.forgotten_table_in(_err(SPARK_FORGOT), _registered("events")) == "events"
+
+
+def test_a_typo_is_left_completely_alone():
+    """THE GUARD. Text alone cannot tell a forgotten table from a misspelt one,
+    so the registry is the real test — and recovering from a typo would drop
+    every namespace's temp views for a slip of the finger."""
+    assert session_recovery.forgotten_table_in(_err(SAIL_FORGOT), _registered("orders")) is None
+
+
+def test_an_unrelated_error_is_not_a_forgotten_table():
+    assert session_recovery.forgotten_table_in(
+        _err("ZeroDivisionError: division by zero"), _registered("events")) is None
+
+
+def test_a_successful_result_is_never_a_forgotten_table():
+    assert session_recovery.forgotten_table_in({"status": "ok"}, _registered("events")) is None
+
+
+def test_the_marker_can_live_in_the_traceback_not_only_evalue():
+    """Same reason envelope_is_lost_session reads both: evalue is only the last
+    line, and a failure raised inside library code puts the message further up."""
+    assert session_recovery.forgotten_table_in(
+        _err("RuntimeError: statement failed", traceback=[SAIL_FORGOT]),
+        _registered("events")) == "events"
+
+
+def test_a_registry_that_raises_is_not_treated_as_evidence():
+    def boom(_name):
+        raise RuntimeError("registry unavailable")
+
+    assert session_recovery.forgotten_table_in(_err(SAIL_FORGOT), boom) is None
+
+
+def test_a_lost_session_is_not_also_reported_as_a_forgotten_table():
+    """The two paths must not both fire: a genuinely lost session already has a
+    recovery that rebuilds the whole engine handle."""
+    lost = _err("IllegalArgumentException: invalid argument: session abc is not running")
+    assert session_recovery.envelope_is_lost_session(lost)
+    assert session_recovery.forgotten_table_in(lost, _registered("events")) is None
+
+
+def test_the_note_names_what_did_not_survive():
+    """Reporting only the half that worked hands back a notebook that looks
+    whole and is not — the 'friendlier face' this module refuses."""
+    note = session_recovery.forgotten_table_note("events", 3)
+    assert "restarted to refresh" in note
+    assert "3 table(s) have been re-registered" in note
+    assert "Temp views" in note and "did NOT" in note
+    assert "re-run it" in note
+
+
+def test_the_note_still_names_the_cause_when_nothing_could_be_re_registered():
+    note = session_recovery.forgotten_table_note("events", None)
+    assert "restarted to refresh" in note
+    assert "re-registered" not in note

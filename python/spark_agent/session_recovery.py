@@ -25,6 +25,7 @@ away. A "transparent" reconnect hands the user a notebook that has quietly
 forgotten its temp views — the same failure wearing a friendlier face, and
 harder to diagnose than the error it replaced. The caller reports what was lost.
 """
+import re
 
 # Substrings, lowercased, that mean THIS CLIENT'S SESSION is gone rather than
 # the statement being wrong. Kept as markers rather than exception types because
@@ -94,6 +95,104 @@ def envelope_is_lost_session(result):
     if isinstance(tb, (list, tuple)):
         parts.extend(str(line) for line in tb)
     return is_lost_session_text("\n".join(parts))
+
+
+# A table that WAS there and now is not. Distinct from LOST_SESSION_MARKERS
+# because the engine does not report this as a lost session at all -- see
+# forgotten_table_in below.
+FORGOTTEN_TABLE_MARKERS = (
+    ("table_or_view_not_found",),
+    ("table or view not found",),
+    ("table not found",),
+)
+
+# The name inside those messages, and there is more than one shape. MEASURED,
+# not recalled -- an earlier version of this matched one pattern against a
+# half-remembered message and silently extracted the word "The":
+#
+#   sail   AnalysisException: Table not found: [TABLE_OR_VIEW_NOT_FOUND]
+#          Table or view not found: events
+#   spark  [TABLE_OR_VIEW_NOT_FOUND] The table or view `events` cannot be found.
+#
+# So CANDIDATES are collected rather than a single name parsed. Every plausible
+# identifier in the message is offered to `was_registered`, and the registry
+# decides. That is safe precisely because the registry is the real test: a
+# message full of ordinary words yields no registered name and nothing fires.
+_NAME_AFTER_NOT_FOUND = re.compile(r"not\s+found\s*:\s*[`'\"]?([\w.]+)", re.IGNORECASE)
+_QUOTED_NAME = re.compile(r"[`'\"]([\w.]+)[`'\"]")
+
+
+def _candidate_names(text):
+    """Every identifier in `text` that could be the table, most likely first."""
+    seen, out = set(), []
+    for pattern in (_NAME_AFTER_NOT_FOUND, _QUOTED_NAME):
+        for name in pattern.findall(text):
+            key = name.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(name)
+    return out
+
+
+def forgotten_table_in(result, was_registered):
+    """The name of a table this agent registered that the engine has forgotten.
+
+    WHY THIS EXISTS, AND WHY IT IS NOT AN ERROR-TEXT MATCH ALONE. Sail's
+    credential refresh is a process restart (`docker/sail/launcher.py`): the
+    Storage bearer only enters sail through startup env, so re-minting it needs
+    a new process, and object_store reads that env exactly once -- docs/20
+    records this as "the one thing the Sail side cannot do". The restart
+    discards the engine's session state, and sail then re-creates the session
+    under the SAME id on the next statement, so nothing ever reports the session
+    as not running and NONE of LOST_SESSION_MARKERS fires. The client is simply
+    told its table does not exist.
+
+    That is indistinguishable from a typo, which is exactly the failure this
+    module exists to prevent: an unattributed loss is worse than a loud one. So
+    the text match is only half the test. The other half is `was_registered` --
+    the agent asking its OWN records whether it put that table in the catalog.
+    A typo answers no and is left completely alone; a table the agent registered
+    and the engine has forgotten answers yes, and only that pair means the
+    engine went away underneath this session.
+
+    Returns the table name, or None.
+    """
+    if not isinstance(result, dict) or result.get("status") != "error":
+        return None
+    parts = [str(result.get("evalue") or "")]
+    tb = result.get("traceback") or []
+    if isinstance(tb, (list, tuple)):
+        parts.extend(str(line) for line in tb)
+    text = "\n".join(parts)
+    low = text.lower()
+    if not any(all(part in low for part in markers)
+               for markers in FORGOTTEN_TABLE_MARKERS):
+        return None
+    for name in _candidate_names(text):
+        try:
+            if was_registered(name):
+                return name
+        except Exception:  # noqa: BLE001 - a registry that cannot answer is not evidence
+            return None
+    return None
+
+
+def forgotten_table_note(name, reregistered):
+    """What to tell the user after re-establishing a forgotten session.
+
+    NAMES WHAT WAS NOT RECOVERED, deliberately. Catalog registrations can be
+    rebuilt from the lakehouse; temp views, cached DataFrames and session-scoped
+    conf lived in the engine process that went away and cannot be. Reporting
+    only the half that worked would hand back a notebook that looks whole and is
+    not -- the "friendlier face" this module's header refuses.
+    """
+    head = (f"[recovered] the engine restarted to refresh its Storage credential, "
+            f"which discards session state, so {name!r} was missing from the "
+            f"catalog rather than from the lakehouse.")
+    if reregistered:
+        head += f" {reregistered} table(s) have been re-registered."
+    return (head + " Temp views, cached DataFrames and session-scoped conf did NOT "
+            "survive and must be recreated. This statement did not run; re-run it.")
 
 
 def rebind(namespaces, new_spark, isolate, attach_sc=None, on_route=None):

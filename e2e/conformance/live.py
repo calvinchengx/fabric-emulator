@@ -291,7 +291,29 @@ try:
         _a, _a_err = _try(lambda: spark.createDataFrame(
             [(1, "after")], ["id", "v"]).write.format("delta")
             .mode("overwrite").saveAsTable("cred_after"))
+        # MEASURED, NOT GRADED. Re-reading the table cell 0 wrote is what
+        # originally failed here, and docs/38 §7 now explains why: sail's
+        # credential refresh is a process restart, and the restart takes the
+        # engine's session catalog with it. The verbatim error is recorded
+        # because the agent has to RECOGNISE this failure to report it as a
+        # restart rather than let it read as a typo — and detection built on a
+        # remembered error message is how the last three of these went wrong.
+        _r, _r_err = _try(lambda: spark.read.table("events").count())
+        # THE SAME DATA, BY PATH. This is what turns "the engine forgot the
+        # table" from an inference into a demonstration: if the catalog read
+        # above fails while this succeeds, the bytes are exactly where cell 0
+        # put them and it is the ENGINE's session state that went away — which
+        # is the condition session_recovery.forgotten_table_in() detects, and
+        # the reason its oracle asks the lakehouse rather than the agent's
+        # bookkeeping.
+        _p, _p_err = _try(lambda: spark.read.format("delta").load(
+            "abfs://__WS__@onelake.dfs.fabric.microsoft.com"
+            "/lake.Lakehouse/Tables/events").count())
         _findings["credential"] = {
+            "reread_ok": not _r_err,
+            "reread_error": _r_err,
+            "path_read_ok": not _p_err,
+            "path_read_error": _p_err,
             "lifetime": _life, "slept": _wait,
             "before_ok": not _b_err, "before_error": _b_err,
             "after_ok": not _a_err, "after_error": _a_err,

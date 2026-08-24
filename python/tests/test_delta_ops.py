@@ -1055,3 +1055,99 @@ def test_table_has_cdf_is_false_when_the_log_cannot_open(fake_deltalake, monkeyp
 
     fake_deltalake.DeltaTable = Boom
     assert d.table_has_cdf("/tmp/missing", {}) is False
+
+
+# ---------------------------------------------------------------------------
+# Locating a table the NOTEBOOK created.
+#
+# docs/38 §6 recorded that `OPTIMIZE <name>` cannot resolve a table written by
+# `saveAsTable`, because neither registration route covers it: `register()`
+# enumerates the lakehouse before the notebook writes, and a DataFrameWriter
+# call is not a CREATE TABLE … LOCATION for anything to overhear. The emulator
+# does state where the lakehouse puts tables, though — `bindDefaultLakehouse`
+# issues CREATE DATABASE … LOCATION — and that is what these cover.
+
+
+def test_a_stated_database_location_is_recorded():
+    """The exact statement bindDefaultLakehouse issues."""
+    d.forget_all()
+    d.remember_stated_schema_location(
+        "CREATE DATABASE IF NOT EXISTS `lake` "
+        "LOCATION 'abfs://ws@onelake.dfs.fabric.microsoft.com/lh/Tables'")
+    assert d.known_schema_location("lake") == \
+        "abfs://ws@onelake.dfs.fabric.microsoft.com/lh/Tables"
+
+
+def test_schema_spelling_and_no_if_not_exists_are_both_recorded():
+    d.forget_all()
+    d.remember_stated_schema_location("CREATE SCHEMA bronze LOCATION 'abfss://a/Tables/bronze'")
+    assert d.known_schema_location("bronze") == "abfss://a/Tables/bronze"
+
+
+def test_a_database_without_a_location_records_nothing():
+    """A bare CREATE DATABASE says nothing about where tables go."""
+    d.forget_all()
+    d.remember_stated_schema_location("CREATE DATABASE IF NOT EXISTS `lake`")
+    assert d.known_schema_location("lake") is None
+
+
+def test_create_table_is_not_mistaken_for_a_schema():
+    d.forget_all()
+    d.remember_stated_schema_location(
+        "CREATE TABLE t USING delta LOCATION 'abfss://a/Tables/t'")
+    assert d.known_schema_location("t") is None
+
+
+@needs_delta_rs
+def test_derive_locates_a_notebook_written_table_under_a_known_schema(monkeypatch):
+    d.forget_all()
+    d.remember_schema("lake", "abfs://ws@host/lh/Tables")
+    monkeypatch.setattr(d, "_resolve_options", lambda _o: {})
+    monkeypatch.setattr(_deltalake.DeltaTable, "is_deltatable",
+                        staticmethod(lambda *_a, **_k: True))
+    assert d.derive_location("events") == "abfs://ws@host/lh/Tables/events"
+
+
+@needs_delta_rs
+def test_derive_refuses_to_infer_from_a_name_alone(monkeypatch):
+    """THE POINT OF THE CHECK. A derived path that is not a Delta table is not
+    an answer — returning it would aim OPTIMIZE at somewhere data is not."""
+    d.forget_all()
+    d.remember_schema("lake", "abfs://ws@host/lh/Tables")
+    monkeypatch.setattr(d, "_resolve_options", lambda _o: {})
+    monkeypatch.setattr(_deltalake.DeltaTable, "is_deltatable",
+                        staticmethod(lambda *_a, **_k: False))
+    assert d.derive_location("events") is None
+
+
+@needs_delta_rs
+def test_derive_refuses_an_ambiguous_name_rather_than_picking_one(monkeypatch):
+    """Two lakehouses can both hold `customers`. Answering for the wrong one is
+    the cross-lakehouse leak catalog.Claims guards the unqualified path against."""
+    d.forget_all()
+    d.remember_schema("lake_a", "abfs://ws@host/a/Tables")
+    d.remember_schema("lake_b", "abfs://ws@host/b/Tables")
+    monkeypatch.setattr(d, "_resolve_options", lambda _o: {})
+    monkeypatch.setattr(_deltalake.DeltaTable, "is_deltatable",
+                        staticmethod(lambda *_a, **_k: True))
+    with pytest.raises(d.DeltaOpError, match="ambiguous"):
+        d.derive_location("customers")
+
+
+@needs_delta_rs
+def test_derive_treats_unreadable_storage_as_no_answer(monkeypatch):
+    """Same rule as the CTAS existence check: unreadable is not evidence."""
+    d.forget_all()
+    d.remember_schema("lake", "abfs://ws@host/lh/Tables")
+    monkeypatch.setattr(d, "_resolve_options", lambda _o: {})
+
+    def boom(*_a, **_k):
+        raise OSError("Account must be specified")
+
+    monkeypatch.setattr(_deltalake.DeltaTable, "is_deltatable", staticmethod(boom))
+    assert d.derive_location("events") is None
+
+
+def test_derive_is_a_no_op_when_no_schema_was_ever_stated():
+    d.forget_all()
+    assert d.derive_location("events") is None

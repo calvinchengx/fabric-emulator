@@ -29,8 +29,14 @@ That is the failure `python/spark_agent/session_recovery.py` was written to
 prevent, and it slips past because nothing ever reports the session as not
 running, so none of its markers fire. With the default 3600s lifetime it costs a
 notebook its session state once an hour rather than once a minute, which is why
-it went unnoticed. Recorded in docs/38 §7; NOT fixed here — the fix is either a
-refresh that does not restart, or a restart that re-establishes the session.
+it went unnoticed.
+
+A refresh that does not restart is not available — object_store reads the bearer
+from env exactly once — so the restart stays and the AFTERMATH is what was made
+honest: `session_recovery.forgotten_table_in()` recognises a table the agent
+registered and the engine has forgotten, the agent replays that session's
+registrations, and the note names what could not be replayed. Recorded in
+docs/38 §7.
 
 Skipped entirely (plain exec, original behaviour) when AZURE_STORAGE_TOKEN is
 already set or ENTRA_TOKEN_URL is unset, so the image still works against real

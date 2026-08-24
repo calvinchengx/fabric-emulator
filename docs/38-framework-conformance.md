@@ -388,16 +388,27 @@ Sail's parse error about column 9 of a statement they never wrote. The module's
 own comment explains why — "everything that went wrong around this code went
 wrong quietly".
 
-**A derivation exists and is not used, which is the actual lead.**
-`_SCHEMA_LOCATIONS` is already in this module, and CTAS placement already
-derives `<schema location>/<table>` from it. `resolve()` never consults it. And
-`bindDefaultLakehouse` issues `CREATE DATABASE IF NOT EXISTS … LOCATION
-'<abfs tables path>'`, so the lakehouse's location *is stated to the engine* and
-then dropped — `remember_stated_delta_location` matches only
-`CREATE TABLE … USING delta LOCATION`. Recording the database form would let
-`events` resolve by derivation, on the engine that needs it, with no DESCRIBE at
-all. **Not done here**; the probe records the two numbers so the claim stops
-being a memory.
+**Now closed, by a derivation that was already half-built.** `_SCHEMA_LOCATIONS`
+was in the module and CTAS placement already derived `<schema location>/<table>`
+from it; `resolve()` simply never consulted it. And `bindDefaultLakehouse`
+issues `CREATE DATABASE IF NOT EXISTS … LOCATION '<abfs tables path>'`, so the
+lakehouse's location *was already being stated to the engine* and then dropped —
+`remember_stated_delta_location` matches only `CREATE TABLE … USING delta
+LOCATION`. Capturing the database form and deriving from it resolves `events`
+with no DESCRIBE at all. Measured after the change: **`OPTIMIZE events` succeeds
+on sail**, and the fallback is never even announced.
+
+**The derivation is checked, not guessed**, which matters more than the feature.
+A derived path that is not actually a Delta table is *not an answer* —
+`is_deltatable` decides, so nothing is inferred from a name alone, and a miss
+falls through to the engine exactly as before. And **ambiguity is refused rather
+than ranked**: two lakehouses can both hold a `customers`, and picking one would
+hand a notebook another lakehouse's data under its own table name — the
+cross-lakehouse leak `catalog.Claims` guards the unqualified path against. Two
+hits raise and tell the author to qualify.
+
+The probe still records both engines' numbers every run, so the claim stays a
+measurement rather than reverting to a memory.
 
 ### 7. Credentials must outlive the run
 
@@ -494,10 +505,64 @@ rather than once a minute, which is why nothing had caught it; the conformance
 stack's 60s token is what made it visible in a single run. Contract 7 still
 passes and passes fairly — the probe writes a *fresh* table, which needs the
 engine's credential and nothing that must survive the wait, so it measures the
-credential rather than the catalog. **The catalog behaviour is a separate defect
-and is not fixed here**, but it is now located rather than open: either the
-refresh must not restart the engine, or the restart must re-establish what the
-session had.
+credential rather than the catalog.
+
+**The restart cannot be removed, so the fix makes it attributable.** Sail reads
+its Storage bearer once, through startup env (`MicrosoftAzureBuilder::from_env`),
+which [20-lakesail-engine.md](20-lakesail-engine.md) already records as "the one
+thing the Sail side cannot do" — refresh without a restart. So the agent now
+RECOGNISES the aftermath instead of passing it on as a missing table:
+`session_recovery.forgotten_table_in()` matches the error **and** asks whether
+that table actually exists. Both halves are required, and the second is the one
+that matters: a typo is not in the lakehouse and is left completely alone, while
+a table that IS in the lakehouse and which the engine cannot see can only mean
+the engine went away.
+
+**And the condition is demonstrated, not argued.** The probe now reads the same
+table twice after the wait — once by catalog name, once by path — and records
+both:
+
+```
+reread_ok     False    spark.read.table("events")
+path_read_ok  True     spark.read.format("delta").load("abfs://…/Tables/events")
+```
+
+Same cell, same session. The bytes are exactly where cell 0 put them; only the
+engine's session catalog went away. That is the whole finding in two numbers,
+and it is what justifies the oracle below asking storage rather than reasoning
+about registrations.
+
+**Asking the lakehouse, not just the bookkeeping, is the part that took a
+correction.** The first version consulted only what the agent had registered —
+`delta_ops`'s recorded locations and the control plane's `/register` payload —
+and that misses the exact case this fix exists for. A notebook's
+`saveAsTable("events")` on a fresh lakehouse is in neither: `register()`
+enumerated the lakehouse *before* the write happened, and a DataFrameWriter call
+is not a statement the agent's `sql` wrapper ever sees. So it would have
+answered "no" for precisely the table whose disappearance prompted the fix.
+Storage is also the semantically right question — "the table is in the lakehouse
+and the engine cannot see it" *is* the condition, stated rather than inferred. The session's registrations are
+then replayed from the last `/register` payload, and the note says what did
+*not* come back — temp views, cached DataFrames and session-scoped conf, which
+lived in the process that exited.
+
+The error text this matches is **measured, not recalled**. The contract-7 probe
+records it verbatim on every run (`reread_error`), and a first attempt at the
+matcher — written against a half-remembered message — silently extracted the
+word `"The"` from Spark's phrasing. The two real shapes are:
+
+```
+sail   AnalysisException: Table not found: [TABLE_OR_VIEW_NOT_FOUND]
+       Table or view not found: events
+spark  [TABLE_OR_VIEW_NOT_FOUND] The table or view `events` cannot be found.
+```
+
+**What this fix does not have is an end-to-end witness**, and neither does the
+lost-session recovery it sits beside: both are unit-tested only. A real one
+would need a notebook cell that lets the failure propagate rather than catching
+it, because the annotation is applied to the statement envelope and a cell that
+handles its own exception never produces one. Said here rather than left to be
+assumed from the fact that the behaviour is covered.
 
 ---
 
