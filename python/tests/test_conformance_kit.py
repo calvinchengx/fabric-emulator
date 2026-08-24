@@ -326,3 +326,70 @@ def test_every_reference_entry_cites_a_source():
             assert spec["params"], name
             # The verbatim line is what a reviewer checks the params against.
             assert spec["verbatim"].startswith(f"{name}("), name
+
+
+RUNTIMES = {"1.3": {"python": "3.11", "spark": "3.5"}}
+
+
+def _rt(**kw):
+    base = dict(ok=True, declared="1.3", python="3.11.15", spark="3.5.5")
+    base.update(kw)
+    return probes.RuntimeClaim(**base)
+
+
+def test_runtime_floor_passes_when_the_image_meets_what_it_declares():
+    r = probes.runtime_floor(session=lambda: _rt(), runtimes=RUNTIMES, backend="jvm")
+    assert r.status == "pass"
+
+
+def test_runtime_floor_fails_an_image_that_declares_nothing():
+    """A framework targeting Runtime 1.3 has no way to ask whether this is one."""
+    r = probes.runtime_floor(session=lambda: _rt(declared=""), runtimes=RUNTIMES,
+                             backend="jvm")
+    assert r.status == "fail"
+    assert "declares no FABRIC_RUNTIME" in r.error
+
+
+def test_runtime_floor_fails_an_image_below_the_floor_it_declares():
+    """The measured case: the overlay shipped 3.8.10 under a Runtime 1.3
+    heading, and `notebookutils` needs >= 3.9, so nothing could import it."""
+    r = probes.runtime_floor(session=lambda: _rt(python="3.8.10"),
+                             runtimes=RUNTIMES, backend="jvm")
+    assert r.status == "fail"
+    assert "Python 3.11" in r.error and "3.8.10" in r.error
+
+
+def test_runtime_floor_fails_a_runtime_this_kit_cannot_cite():
+    """Declaring 1.4 and being believed would be a claim with no source."""
+    r = probes.runtime_floor(session=lambda: _rt(declared="1.4"),
+                             runtimes=RUNTIMES, backend="jvm")
+    assert r.status == "fail"
+    assert "no cited floor" in r.error
+
+
+def test_runtime_floor_compares_versions_numerically_not_as_strings():
+    """`3.8` sorts above `3.11` as text, which would pass the exact image that
+    failed. The bug this guards is a comparison, not a version."""
+    assert probes._at_least("3.11.15", "3.11")
+    assert probes._at_least("3.12.0", "3.11")
+    assert not probes._at_least("3.8.10", "3.11")
+    assert not probes._at_least("3.9", "3.11")
+    # Suffixed and short forms both resolve rather than raising.
+    assert probes._at_least("3.11.0rc1", "3.11")
+    assert probes._at_least("4", "3.11")
+
+
+def test_every_runtime_entry_cites_a_source():
+    ref = json.loads(
+        (REPO / "e2e" / "conformance" / "fabric-runtimes.json")
+        .read_text(encoding="utf-8"))
+    for version, spec in ref["runtimes"].items():
+        assert spec["source"].startswith("https://learn.microsoft.com/"), version
+        assert spec["read"] and spec["python"], version
+
+
+def test_both_images_declare_the_runtime_they_target():
+    """The declaration is the contract; without it contract 3 cannot be asked."""
+    for path in ("docker/spark-agent/Dockerfile", "docker/spark-runtime/Dockerfile"):
+        text = (REPO / path).read_text(encoding="utf-8")
+        assert "ENV FABRIC_RUNTIME=" in text, path

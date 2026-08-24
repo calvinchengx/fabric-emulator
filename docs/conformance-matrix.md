@@ -22,7 +22,7 @@ writer's own catalog.
 |---|---|---|---|---|
 | 1 | Context chain | ✅ | ✅ | — |
 | 2 | Signature shape | ✅ | ✅ | — |
-| 3 | Runtime floor | ❌ not yet asserted — needs a running notebook session ([§3](38-framework-conformance.md#3-the-runtime-is-a-versioned-product-not-some-spark)) | ❌ not yet asserted — needs a running notebook session ([§3](38-framework-conformance.md#3-the-runtime-is-a-versioned-product-not-some-spark)) | — |
+| 3 | Runtime floor | ✅ | ✅ | — |
 | 4 | Write landing | ✅ | ✅ | ✅ |
 | 5 | Concurrent isolation | ❌ not yet asserted — same harness as write landing, different notebooks ([§5](38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§5](38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§5](38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case)) |
 | 6 | Rewrite fall-through | ❌ not yet asserted — same harness as write landing, different notebooks ([§6](38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§6](38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract)) | ❌ not yet asserted — same harness as write landing, different notebooks ([§6](38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract)) |

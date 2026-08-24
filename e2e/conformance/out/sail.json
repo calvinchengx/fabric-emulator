@@ -19,9 +19,9 @@
     "id": "3",
     "contract": "Runtime floor",
     "backend": "sail",
-    "status": "gap",
-    "error": "not yet asserted \u2014 needs a running notebook session",
-    "pointer": "38-framework-conformance.md#3-the-runtime-is-a-versioned-product-not-some-spark"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "4",

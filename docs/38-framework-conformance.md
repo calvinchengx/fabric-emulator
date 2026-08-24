@@ -1,6 +1,6 @@
 # 38 — Framework conformance: what a Fabric product assumes, and how to test it
 
-**Status: contracts 4, 1 and 2 are live and GREEN ON EVERY APPLICABLE BACKEND. 7 of 18 cells.** Contract 4 is ✅ on all three
+**Status: contracts 1–4 are live and GREEN ON EVERY APPLICABLE BACKEND. 9 of 18 cells.** Contract 4 is ✅ on all three
 backends — a write through the emulator path, confirmed out of band (OneLake
 DFS on sail/jvm; a fresh TDS connection on warehouse). The engine that wrote
 is never the one that confirms. **Contract 1 is ✅ on sail and ❌ on jvm**,
@@ -9,8 +9,9 @@ overlay image has no `notebookutils` installed at all, so a notebook cannot
 import the surface this repo grades 🟢 Real. **Both are now ✅ on both
 backends**: the seven missing `notebookutils.notebook` methods are implemented,
 and the JVM overlay has an interpreter that can import the shim at all.
-Contracts 3 and 5–7 stay known gaps — though contract 3's *defect* is fixed
-even though its cell is not yet asserted. The offline half (`docs/conformance-matrix.md`,
+**Contract 3 is now asserted too**, and green: both images declare the Fabric
+Runtime they target and both meet its Python floor. Contracts 5–7 stay known
+gaps. The offline half (`docs/conformance-matrix.md`,
 `check_conformance.py --strict`) still gates `make check`.
 
 **Two defects came out of contract 1's first run, and neither was visible to
@@ -169,9 +170,21 @@ there. The overlay now carries Python 3.11 in a virtualenv with the shim
 installed, and `PYSPARK_PYTHON` points at it. PySpark itself needed no change —
 Spark ships it as `pyspark.zip` on `PYTHONPATH`, so it is interpreter-agnostic.
 
-**The cell is still ❌ because nothing asserts it yet.** The image is right; the
-probe that would prove it is contract 3's remaining work, and a fixed defect
-with no assertion is exactly the state this matrix refuses to paint green.
+**The assertion now exists.** Both images carry `ENV FABRIC_RUNTIME=1.3`, and
+`e2e/conformance/fabric-runtimes.json` holds that runtime's floor with the
+Microsoft page and its last-updated date. Two failures are distinguished
+because they are different problems: an image that declares NOTHING cannot be
+asked the question at all, and an image that declares a runtime and ships below
+its floor answers it wrongly — which is worse, and is what happened here.
+
+**Only Python is asserted.** It is the floor that actually broke. Whether the
+engine behaves like Spark 3.5 is the engine matrix's question, and it answers
+that row by row rather than by trusting a version string; Spark's reported
+version is recorded in the findings for drift, not asserted.
+
+The comparison is numeric, not textual, and that is not fussiness: `3.8` sorts
+above `3.11` as a string, so a string comparison would have passed the exact
+image that failed.
 
 **The fix.** Declare the Fabric Runtime version each image targets, make the
 Python floor match it, and have the engine matrix assert it. A runtime that

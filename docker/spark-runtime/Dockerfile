@@ -128,4 +128,17 @@ RUN uv python install 3.11 \
     && chmod -R a+rX /opt/nbenv /opt/python
 ENV PYSPARK_PYTHON=/opt/nbenv/bin/python \
     PYSPARK_DRIVER_PYTHON=/opt/nbenv/bin/python
+# THE RUNTIME THIS IMAGE TARGETS, declared rather than inferred.
+#
+# Framework-conformance contract 3 (docs/38 §3): a Fabric Runtime pins Spark,
+# Delta, Python and a library set together as one versioned unit, and a
+# framework declares which runtime it targets and assumes that floor. Two images
+# with different Python versions and no statement about which runtime either
+# claimed is how the JVM overlay shipped Python 3.8 under a "Runtime 1.3"
+# heading for months.
+#
+# This declares the FLOOR the image targets -- interpreter and library
+# versions -- not that its engine is Spark. Whether the engine behaves like
+# Spark is the engine matrix's question, and it answers it row by row.
+ENV FABRIC_RUNTIME=1.3
 USER spark

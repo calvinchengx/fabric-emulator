@@ -56,7 +56,7 @@ CONTROL = frozenset({(6, "jvm")})
 GAP_REASON = {
     1: "no live session recorded — the offline path cannot prove a session contract",
     2: "no live session recorded — the offline path cannot read a live signature",
-    3: "not yet asserted — needs a running notebook session",
+    3: "no live session recorded — a runtime floor is a property of the running image",
     4: "live backends not yet recorded",
     5: "not yet asserted — same harness as write landing, different notebooks",
     6: "not yet asserted — same harness as write landing, different notebooks",
@@ -280,6 +280,94 @@ def signature_shape(
         return Result(id="2", contract=title, backend=backend, status="fail",
                       error="; ".join(problems), pointer=pointer)
     return Result(id="2", contract=title, backend=backend, status="pass")
+
+
+@dataclass(frozen=True)
+class RuntimeClaim:
+    """What one session reported about the runtime it is running on."""
+
+    ok: bool
+    declared: str = ""
+    python: str = ""
+    spark: str = ""
+    error: str = ""
+
+
+def _at_least(got: str, want: str) -> bool:
+    """Version compare on the numeric prefix, without a packaging dependency.
+
+    `3.11.15` meets a `3.11` floor; `3.8.10` does not. Compared as integers so
+    3.8 does not sort above 3.11, which is the whole reason this is not a
+    string comparison.
+    """
+    def parts(v):
+        out = []
+        for chunk in v.split("."):
+            digits = ""
+            for ch in chunk:
+                if not ch.isdigit():
+                    break
+                digits += ch
+            out.append(int(digits) if digits else 0)
+        return out
+
+    a, b = parts(got), parts(want)
+    a += [0] * (len(b) - len(a))
+    b += [0] * (len(a) - len(b))
+    return a >= b
+
+
+def runtime_floor(
+    *,
+    session: Callable[[], RuntimeClaim],
+    runtimes: dict,
+    backend: str,
+) -> Result:
+    """Contract 3: the image declares a Fabric Runtime and MEETS its floor.
+
+    TWO FAILURES, NOT ONE, and they are different problems. An image that
+    declares nothing cannot be checked at all -- a framework targeting Runtime
+    1.3 has no way to ask whether this is one. An image that declares a runtime
+    and ships below its floor is worse: it answers the question wrongly, and
+    the first symptom is a missing module long after the agent reported ready,
+    which reads as a notebook fault rather than a runtime that was never
+    eligible.
+
+    ONLY PYTHON IS ASSERTED. It is the floor that actually broke. Whether the
+    engine behaves like Spark 3.5 is the engine matrix's question, which it
+    answers row by row rather than by trusting a version string.
+    """
+    title = CONTRACTS[2][1]
+    pointer = CONTRACTS[2][2]
+    claim = session()
+    if not claim.ok:
+        return Result(id="3", contract=title, backend=backend, status="fail",
+                      error=claim.error or "the session reported no runtime",
+                      pointer=pointer)
+    if not claim.declared:
+        return Result(
+            id="3", contract=title, backend=backend, status="fail",
+            error=("the image declares no FABRIC_RUNTIME, so a framework "
+                   "targeting a runtime cannot ask whether this is one"),
+            pointer=pointer)
+    spec = runtimes.get(claim.declared)
+    if spec is None:
+        return Result(
+            id="3", contract=title, backend=backend, status="fail",
+            error=(f"the image declares Fabric Runtime {claim.declared!r}, which "
+                   f"this kit has no cited floor for: {sorted(runtimes)}"),
+            pointer=pointer)
+    if not claim.python:
+        return Result(id="3", contract=title, backend=backend, status="fail",
+                      error="the session reported no Python version",
+                      pointer=pointer)
+    if not _at_least(claim.python, spec["python"]):
+        return Result(
+            id="3", contract=title, backend=backend, status="fail",
+            error=(f"declares Fabric Runtime {claim.declared} (Python "
+                   f"{spec['python']}) and runs Python {claim.python}"),
+            pointer=pointer)
+    return Result(id="3", contract=title, backend=backend, status="pass")
 
 
 def record(backend: str, live: dict[int, Result] | None = None) -> list[dict]:

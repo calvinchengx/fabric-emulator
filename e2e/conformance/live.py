@@ -26,10 +26,12 @@ sys.path.insert(0, str(DIR))
 from probes import (  # noqa: E402
     Artifact,
     ContextClaim,
+    RuntimeClaim,
     SignatureClaim,
     WriteClaim,
     context_chain,
     record,
+    runtime_floor,
     signature_shape,
     write_landing,
 )
@@ -118,6 +120,17 @@ try:
             # rather than letting it read as a missing method.
             _sigs[_name] = ["<no signature>"]
     _findings["notebook_signatures"] = _sigs
+    # Contract 3. Read from the SESSION's own interpreter, because that is the
+    # one a notebook's imports resolve against — reading the client's would
+    # describe the harness. `spark.version` is recorded, not asserted: whether
+    # the engine behaves like Spark 3.5 is the engine matrix's question.
+    import sys as _sys
+
+    _findings["runtime"] = {
+        "declared": _os.environ.get("FABRIC_RUNTIME", ""),
+        "python": ".".join(str(n) for n in _sys.version_info[:3]),
+        "spark": _try(lambda: spark.version)[0],
+    }
     # An EXPLICIT abfss target, never a relative path: fs._resolve() reads a
     # relative one out of the very runtime context under test, so a relative
     # write would make the artifact's location depend on the answer measured.
@@ -140,6 +153,7 @@ _said = ""
 # Contract 2's half of the same findings file, kept beside the contract-1 half
 # so one DFS read serves both.
 _sigs_seen = None
+_runtime_seen = None
 
 
 def log(msg: str) -> None:
@@ -313,8 +327,9 @@ def session_context() -> ContextClaim:
         return ContextClaim(
             ok=False,
             error=f"no context findings at {FINDINGS_PATH}: {exc}{why}")
-    global _sigs_seen
+    global _sigs_seen, _runtime_seen
     _sigs_seen = found.get("notebook_signatures")
+    _runtime_seen = found.get("runtime")
     log(f"context findings: { {k: v for k, v in found.items() if k != 'notebook_signatures'} }")
     log(f"notebook signatures reported: {len(_sigs_seen or {})} callables")
     return ContextClaim(
@@ -345,6 +360,21 @@ def session_signatures() -> SignatureClaim:
     return SignatureClaim(ok=True, seen=_sigs_seen)
 
 
+def session_runtime() -> RuntimeClaim:
+    """Contract 3 reads the same artifact contracts 1 and 2 already fetched."""
+    if _runtime_seen is None:
+        return RuntimeClaim(
+            ok=False,
+            error="no runtime in the findings artifact — "
+                  "the session did not get as far as reporting it")
+    return RuntimeClaim(
+        ok=True,
+        declared=_runtime_seen.get("declared", ""),
+        python=_runtime_seen.get("python", ""),
+        spark=_runtime_seen.get("spark", ""),
+    )
+
+
 def main() -> int:
     backend = os.environ.get("BACKEND", "")
     if backend not in ("sail", "jvm"):
@@ -368,13 +398,17 @@ def main() -> int:
     ref = json.loads((DIR / "notebookutils-reference.json").read_text(
         encoding="utf-8"))["modules"]["notebookutils.notebook"]
     sig = signature_shape(session=session_signatures, reference=ref, backend=backend)
-    rows = record(backend, live={1: ctx, 2: sig, 4: result})
+    runtimes = json.loads((DIR / "fabric-runtimes.json").read_text(
+        encoding="utf-8"))["runtimes"]
+    floor = runtime_floor(session=session_runtime, runtimes=runtimes, backend=backend)
+    rows = record(backend, live={1: ctx, 2: sig, 3: floor, 4: result})
     out = DIR / "out"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{backend}.json"
     path.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
     log(f"wrote {path} contract 1={ctx.status} {ctx.error}".rstrip())
     log(f"wrote {path} contract 2={sig.status} {sig.error}".rstrip())
+    log(f"wrote {path} contract 3={floor.status} {floor.error}".rstrip())
     log(f"wrote {path} contract 4={result.status} {result.error}".rstrip())
     return 0
 

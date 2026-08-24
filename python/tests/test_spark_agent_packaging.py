@@ -132,13 +132,33 @@ def test_the_runtime_images_share_one_preamble():
     the interpreter, the uv release and the venv path are pinned together here
     rather than left to whoever edits one file and not the other.
     """
+    # WHAT IS SHARED IS THE ENVIRONMENT, not what the image claims to BE.
+    # `FABRIC_RUNTIME` is a declaration that the image is a Fabric notebook
+    # runtime and meets that runtime's floor (docs/38 §3). The agent executes
+    # notebook cells and can say that; python-runtime is a client image that
+    # never runs a cell, and declaring it there would be a false claim — the
+    # opposite of what this file is for. So it is compared out by name rather
+    # than by loosening the check.
+    image_specific = {"FABRIC_RUNTIME"}
+
+    def shared(path, verb):
+        return [d for d in _directives(path, verb)
+                if d.split("=", 1)[0] not in image_specific]
+
     for verb in ("FROM", "WORKDIR", "ENV"):
-        agent = _directives(AGENT_DOCKERFILE, verb)
-        runtime = _directives(RUNTIME_DOCKERFILE, verb)
+        agent = shared(AGENT_DOCKERFILE, verb)
+        runtime = shared(RUNTIME_DOCKERFILE, verb)
         assert agent == runtime, (
             f"{verb} drifted between the two runtime images: "
             f"spark-agent={agent} python-runtime={runtime}"
         )
+
+    # The declaration itself is still pinned — just to the images that execute
+    # notebook code, which is the claim it makes.
+    assert "ENV FABRIC_RUNTIME=" in AGENT_DOCKERFILE.read_text(encoding="utf-8")
+    assert "ENV FABRIC_RUNTIME=" not in RUNTIME_DOCKERFILE.read_text(encoding="utf-8"), (
+        "python-runtime is a client image; declaring a Fabric Runtime there "
+        "would claim it runs notebook cells")
 
     # COPY differs by one line (the agent needs no build ARG), so compare the
     # lines that carry the dependency set rather than the whole list.
