@@ -52,7 +52,7 @@
     "contract": "Credential lifetime",
     "backend": "warehouse",
     "status": "gap",
-    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
+    "error": "no live run recorded \u2014 outliving a token needs a session that outlived one",
     "pointer": "38-framework-conformance.md#7-credentials-must-outlive-the-run"
   }
 ]

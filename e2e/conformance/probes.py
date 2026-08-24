@@ -60,7 +60,7 @@ GAP_REASON = {
     4: "live backends not yet recorded",
     5: "no live fan-out recorded — isolation is a property of concurrent sessions",
     6: "no live statements recorded — fall-through is a property of a running engine",
-    7: "not yet asserted — same harness as write landing, different notebooks",
+    7: "no live run recorded — outliving a token needs a session that outlived one",
 }
 
 
@@ -521,6 +521,75 @@ def fall_through(
         return Result(id="6", contract=title, backend=backend, status="fail",
                       error="; ".join(problems), pointer=pointer)
     return Result(id="6", contract=title, backend=backend, status="pass")
+
+
+@dataclass(frozen=True)
+class CredentialClaim:
+    """Two OneLake operations from one session, separated by a token lifetime."""
+
+    ok: bool
+    lifetime: int = 0
+    slept: float = 0.0
+    before_ok: bool = False
+    before_error: str = ""
+    after_ok: bool = False
+    after_error: str = ""
+    error: str = ""
+
+
+def credential_lifetime(
+    *,
+    session: Callable[[], CredentialClaim],
+    backend: str,
+) -> Result:
+    """Contract 7: a run that outlives the token keeps reading.
+
+    THE FIRST OPERATION IS THE CONTROL. If it fails, nothing about the second
+    says anything: a session that could never reach OneLake would "pass" a test
+    that only checked the second one failed for the right reason, and fail one
+    that only checked it succeeded, for the wrong one.
+
+    THE SLEEP MUST ACTUALLY EXCEED THE LIFETIME. A probe that slept less than the
+    token lived would pass on every runtime, including one that never re-mints —
+    which is precisely the defect: a token minted at container start, an hour
+    later every OneLake read answering 401, and a human restarting by hand
+    because it reads as a storage outage. So the session reports both numbers and
+    this refuses to grade a run where the gap was never opened.
+    """
+    title = CONTRACTS[6][1]
+    pointer = CONTRACTS[6][2]
+    claim = session()
+    if not claim.ok:
+        return Result(id="7", contract=title, backend=backend, status="fail",
+                      error=claim.error or "the session ran neither operation",
+                      pointer=pointer)
+    if not claim.before_ok:
+        return Result(
+            id="7", contract=title, backend=backend, status="fail",
+            error=("the operation BEFORE the wait failed "
+                   f"({claim.before_error[:160]}) — with no working baseline the "
+                   "second one proves nothing either way"),
+            pointer=pointer)
+    if claim.lifetime <= 0:
+        return Result(
+            id="7", contract=title, backend=backend, status="fail",
+            error=("the session reported no token lifetime, so it cannot say "
+                   "whether the wait outlived one"),
+            pointer=pointer)
+    if claim.slept <= claim.lifetime:
+        return Result(
+            id="7", contract=title, backend=backend, status="fail",
+            error=(f"slept {claim.slept:.0f}s against a {claim.lifetime}s token "
+                   "lifetime — the gap was never opened, so a pass here would "
+                   "hold for a runtime that never re-mints"),
+            pointer=pointer)
+    if not claim.after_ok:
+        return Result(
+            id="7", contract=title, backend=backend, status="fail",
+            error=(f"after {claim.slept:.0f}s, past a {claim.lifetime}s token "
+                   f"lifetime, OneLake failed: {claim.after_error[:200]}"),
+            pointer=pointer)
+    return Result(id="7", contract=title, backend=backend, status="pass")
 
 
 def record(backend: str, live: dict[int, Result] | None = None) -> list[dict]:

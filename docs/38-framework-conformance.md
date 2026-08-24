@@ -1,6 +1,6 @@
 # 38 — Framework conformance: what a Fabric product assumes, and how to test it
 
-**Status: contracts 1–6 are live. 12 of 18 cells.** Contract 4 is ✅ on all three
+**Status: all seven contracts are live. 14 of 18 cells.** Contract 4 is ✅ on all three
 backends — a write through the emulator path, confirmed out of band (OneLake
 DFS on sail/jvm; a fresh TDS connection on warehouse). The engine that wrote
 is never the one that confirms. **Contract 1 is ✅ on sail and ❌ on jvm**,
@@ -14,7 +14,9 @@ Runtime they target and both meet its Python floor. **Contract 5 is green on
 sail and jvm** — three notebooks submitted at once, each writing its own
 artifact, each knowing only its own identity — and stays ❌ on warehouse, where
 concurrent TDS sessions need a Go leg this kit does not have yet. **Contract 6 is green on sail** and records a gap on jvm for a reason worth its
-own paragraph below. Contract 7 stays a known gap. The offline half (`docs/conformance-matrix.md`,
+own paragraph below. **Contract 7 is green on both.** What remains is the
+warehouse column for 5, 6 and 7, which needs a Go leg driving concurrent TDS
+sessions, and contract 6 on jvm. The offline half (`docs/conformance-matrix.md`,
 `check_conformance.py --strict`) still gates `make check`.
 
 **Two defects came out of contract 1's first run, and neither was visible to
@@ -305,6 +307,38 @@ outage. Fixed for one engine by keeping the launcher resident and re-minting.
 **The generalisation.** Any credential the emulator hands to an engine needs a
 refresh path, because real runs outlive token lifetimes. This is a property of
 the compute surface, not of one launcher.
+
+**Asserted by making the clock cheap rather than the test slow.**
+`TOKEN_LIFETIME_ACCESS_SECONDS=60` on the conformance entra-emulator, and the
+notebook writes to OneLake through the engine 75 seconds after the session
+started — past a lifetime the original defect took an hour to cross.
+
+**The wait must actually exceed the lifetime, and the probe checks that.** A
+probe that slept less than the token lived would pass on a runtime that never
+re-mints, which is the exact defect. The session reports both numbers and the
+harness refuses to grade a run where the gap was never opened. The read *before*
+the wait is the control: without a working baseline the second operation says
+nothing either way.
+
+**One setting covers every audience**, so shortening it also shortens the
+harness's own token — which is why `live.py` now caches and re-mints at two
+thirds of advertised life. A client that minted once and then polled a job for
+minutes would 401 partway through and report a broken pipeline instead of a
+short token. That is the same argument this contract makes about the engine, one
+tier up.
+
+**An open question this contract surfaced and did not answer.** The second
+operation was originally a re-read of the table cell 0 wrote. It failed with
+`AnalysisException: Table not found: [TABLE_OR_VIEW_NOT_FOUND]` while the read
+*before* the wait succeeded — the catalog entry a `saveAsTable` created was gone
+75 seconds later, in the same session and the same cell, on **sail**. Whether a
+session is being recycled underneath the cell or a catalog entry is expiring is
+not established. It is not what §7 is about — a credential dying, not a catalog
+forgetting a name — so the probe writes to a fresh table instead, which needs
+the engine's credential and nothing that must survive the wait. **The
+observation is recorded here rather than routed around silently**, because a
+notebook that cannot see its own table after a minute would matter to anyone
+running something long.
 
 ---
 

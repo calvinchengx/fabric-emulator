@@ -455,3 +455,54 @@ def test_concurrent_isolation_refuses_a_fan_out_that_never_happened():
         session=lambda: probes.IsolationClaim(ok=False, error="no children were created"),
         expected={}, backend="sail")
     assert r.status == "fail"
+
+
+def _cred(**kw):
+    base = dict(ok=True, lifetime=60, slept=75.0, before_ok=True, after_ok=True)
+    base.update(kw)
+    return probes.CredentialClaim(**base)
+
+
+def test_credential_lifetime_passes_when_a_run_outlives_its_token():
+    r = probes.credential_lifetime(session=lambda: _cred(), backend="sail")
+    assert r.status == "pass"
+
+
+def test_credential_lifetime_needs_a_working_baseline_first():
+    """A session that could never reach OneLake would otherwise 'pass' a check
+    that only looked at the second operation."""
+    r = probes.credential_lifetime(
+        session=lambda: _cred(before_ok=False, before_error="401"), backend="sail")
+    assert r.status == "fail"
+    assert "BEFORE the wait failed" in r.error
+
+
+def test_credential_lifetime_refuses_a_wait_shorter_than_the_token():
+    """THE defect: a token minted at container start, an hour later every read
+    401s. A probe that slept less than the token lived would pass on a runtime
+    that never re-mints — which is the thing under test."""
+    r = probes.credential_lifetime(session=lambda: _cred(slept=30.0), backend="sail")
+    assert r.status == "fail"
+    assert "gap was never opened" in r.error
+
+
+def test_credential_lifetime_refuses_a_run_that_reported_no_lifetime():
+    r = probes.credential_lifetime(session=lambda: _cred(lifetime=0), backend="sail")
+    assert r.status == "fail"
+    assert "no token lifetime" in r.error
+
+
+def test_credential_lifetime_fails_when_the_second_read_401s():
+    r = probes.credential_lifetime(
+        session=lambda: _cred(after_ok=False, after_error="401 Unauthorized"),
+        backend="sail")
+    assert r.status == "fail"
+    assert "past a 60s token lifetime" in r.error and "401" in r.error
+
+
+def test_credential_lifetime_reports_a_session_that_never_ran_it():
+    r = probes.credential_lifetime(
+        session=lambda: probes.CredentialClaim(ok=False, error="not run: no lifetime set"),
+        backend="sail")
+    assert r.status == "fail"
+    assert "not run" in r.error

@@ -27,6 +27,7 @@ from probes import (  # noqa: E402
     CONTROL,
     Artifact,
     ContextClaim,
+    CredentialClaim,
     FallThroughClaim,
     IsolationClaim,
     RuntimeClaim,
@@ -34,6 +35,7 @@ from probes import (  # noqa: E402
     WriteClaim,
     concurrent_isolation,
     context_chain,
+    credential_lifetime,
     fall_through,
     record,
     runtime_floor,
@@ -117,7 +119,7 @@ print("wrote", df.count(), "rows")
 # still failed the job and turned contract 4 red -- with its table landed and
 # the out-of-band listing seeing five paths. One contract's red must never be
 # another's, and the absent artifact is contract 1's failure signal by itself.
-import json as _json, os as _os
+import json as _json, os as _os, time
 
 try:
     import notebookutils as _nbu
@@ -228,6 +230,47 @@ try:
     else:
         _findings["fall_through"] = {"skipped": True}
 
+    # Contract 7. Two OneLake reads with a wait between them longer than the
+    # access-token lifetime the stack was configured with.
+    #
+    # THROUGH THE ENGINE, not the shim: the credential under test is the one the
+    # emulator hands the engine (sail's resident launcher, the JVM's
+    # EntraTokenProvider), and the shim mints its own. `spark.read` on the table
+    # cell 0 wrote exercises exactly that.
+    #
+    # BY CATALOG NAME, deliberately — an `abfss://` path is unreachable on the
+    # JVM overlay (see the fall-through gate above), and this contract has
+    # nothing to do with that limitation.
+    _life = int(_os.environ.get("CONFORMANCE_TOKEN_LIFETIME", "0") or 0)
+    if _life > 0:
+        # THE SECOND OPERATION IS A WRITE TO A FRESH TABLE, NOT A RE-READ.
+        #
+        # A re-read of `events` failed after the wait with
+        # `AnalysisException: Table not found: [TABLE_OR_VIEW_NOT_FOUND]` while
+        # the read BEFORE the wait succeeded — the catalog entry a `saveAsTable`
+        # created was gone 75 seconds later, in the same session and the same
+        # cell. That is worth its own investigation and is NOT what this contract
+        # is about: §7 is a token minted at container start and every OneLake
+        # operation answering 401 an hour later, not a catalog forgetting a name.
+        #
+        # A write to a new table needs the engine's OneLake credential and
+        # nothing that has to survive the wait, so it measures the contract
+        # rather than the mystery. The catalog observation is recorded in
+        # docs/38 §7 instead of being routed around silently.
+        _b, _b_err = _try(lambda: spark.read.table("events").count())
+        _wait = _life + 15
+        time.sleep(_wait)
+        _a, _a_err = _try(lambda: spark.createDataFrame(
+            [(1, "after")], ["id", "v"]).write.format("delta")
+            .mode("overwrite").saveAsTable("cred_after"))
+        _findings["credential"] = {
+            "lifetime": _life, "slept": _wait,
+            "before_ok": not _b_err, "before_error": _b_err,
+            "after_ok": not _a_err, "after_error": _a_err,
+        }
+    else:
+        _findings["credential"] = {"skipped": True}
+
     _findings["runtime"] = {
         "declared": _os.environ.get("FABRIC_RUNTIME", ""),
         "python": ".".join(str(n) for n in _sys.version_info[:3]),
@@ -257,6 +300,7 @@ _said = ""
 _sigs_seen = None
 _runtime_seen = None
 _fall_seen = None
+_cred_seen = None
 
 
 def log(msg: str) -> None:
@@ -280,11 +324,36 @@ def req(method, url, body=None, token=None, form=False, headers=None):
         return resp.status, resp.headers, (json.loads(raw) if raw else {})
 
 
-def fabric_token() -> str:
-    return req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
+# A token this process minted, re-minted before it can expire.
+#
+# CONTRACT 7 SHORTENS THE ACCESS-TOKEN LIFETIME FOR THE WHOLE STACK
+# (TOKEN_LIFETIME_ACCESS_SECONDS), because the emulator has one setting and not
+# one per audience. That is fine for the engine, which is the thing under test,
+# and NOT fine for a client that minted once and then polled a job for minutes:
+# it would 401 partway through and report a broken pipeline. Caching with an
+# expiry is what makes a short lifetime safe to ask for — and it is what a
+# correct client does anyway, which is the same argument docs/38 §7 makes about
+# the engine.
+_tokens: dict[str, tuple[str, float]] = {}
+
+
+def _cached_token(scope: str) -> str:
+    tok, good_until = _tokens.get(scope, ("", 0.0))
+    if tok and time.monotonic() < good_until:
+        return tok
+    body = req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
         "grant_type": "client_credentials", "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "scope": "https://api.fabric.microsoft.com/.default"}, form=True)[2]["access_token"]
+        "client_secret": CLIENT_SECRET, "scope": scope}, form=True)[2]
+    # Two thirds of the advertised life, floored at 10s: re-mint before expiry
+    # rather than after a 401, because a 401 mid-poll is indistinguishable from
+    # a job that failed.
+    ttl = float(body.get("expires_in") or 3600)
+    _tokens[scope] = (body["access_token"], time.monotonic() + max(ttl * 2 / 3, 10.0))
+    return body["access_token"]
+
+
+def fabric_token() -> str:
+    return _cached_token("https://api.fabric.microsoft.com/.default")
 
 
 def storage_token() -> str:
@@ -296,19 +365,15 @@ def storage_token() -> str:
     except urllib.error.HTTPError as e:
         if e.code != 409:
             raise
-    return req("POST", f"{ENTRA}/{TENANT}/oauth2/v2.0/token", {
-        "grant_type": "client_credentials", "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "scope": "https://storage.azure.com/.default"}, form=True)[2]["access_token"]
+    return _cached_token("https://storage.azure.com/.default")
 
 
 def writer() -> WriteClaim:
     """Publish + submit + poll. The claim is the job status, nothing else."""
     global _ws
-    ft = fabric_token()
-    ws = req("POST", f"{FABRIC}/v1/workspaces", {"displayName": "nb-ws"}, token=ft)[2]["id"]
+    ws = req("POST", f"{FABRIC}/v1/workspaces", {"displayName": "nb-ws"}, token=fabric_token())[2]["id"]
     lake = req("POST", f"{FABRIC}/v1/workspaces/{ws}/lakehouses",
-               {"displayName": "lake"}, token=ft)[2]
+               {"displayName": "lake"}, token=fabric_token())[2]
     _ws = ws
     global _lake
     _lake = lake["id"]
@@ -333,13 +398,13 @@ def writer() -> WriteClaim:
             "payload": base64.b64encode(
                 (NOTEBOOK_BODY.replace("__WS__", ws).replace("__FINDINGS__", FINDINGS_PATH)
                  + meta).encode()).decode()}]}},
-        token=ft)
+        token=fabric_token())
     opid = headers.get("x-ms-operation-id")
     nb = None
     for _ in range(60):
-        body = req("GET", f"{FABRIC}/v1/operations/{opid}", token=ft)[2]
+        body = req("GET", f"{FABRIC}/v1/operations/{opid}", token=fabric_token())[2]
         if body.get("status") == "Succeeded":
-            nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=ft)[2]["id"]
+            nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=fabric_token())[2]["id"]
             break
         time.sleep(1)
     if not nb:
@@ -348,7 +413,7 @@ def writer() -> WriteClaim:
 
     _, hdrs, _ = req(
         "POST", f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances?jobType=RunNotebook",
-        token=ft)
+        token=fabric_token())
     jid = hdrs["Location"].rstrip("/").rsplit("/", 1)[-1]
     log(f"submitted RunNotebook job {jid}")
 
@@ -361,7 +426,7 @@ def writer() -> WriteClaim:
     # one reason: the harness gave up first. A timeout that reads as five
     # defects is worse than a slow run.
     for _ in range(900):
-        status = req("GET", base, token=ft)[2].get("status")
+        status = req("GET", base, token=fabric_token())[2].get("status")
         if status in ("Completed", "Failed", "Cancelled", "Deduped"):
             break
         time.sleep(1)
@@ -369,7 +434,7 @@ def writer() -> WriteClaim:
         # The run detail says which cell died. Logging it is not confirmation —
         # confirmation is the reader's listing.
         try:
-            detail = req("GET", f"{base}/notebookRun", token=ft)[2]
+            detail = req("GET", f"{base}/notebookRun", token=fabric_token())[2]
             for c in sorted(detail.get("cells", []), key=lambda c: c["index"]):
                 log(f"cell {c['index']} {c['status']}: "
                     f"{c.get('error') or c.get('output', '')[:300]}")
@@ -377,11 +442,11 @@ def writer() -> WriteClaim:
             log(f"could not fetch run detail: {exc}")
         return WriteClaim(ok=False, error=f"job status = {status}")
     log(f"job reached {status}")
-    _remember_output(base, ft)
+    _remember_output(base, fabric_token())
     return WriteClaim(ok=True)
 
 
-def _remember_output(base: str, ft: str) -> None:
+def _remember_output(base: str, token: str) -> None:
     """Keep the cells' stdout so a later contract can quote its own failure.
 
     Fetched on SUCCESS as well as failure: contract 1's cell is guarded so it
@@ -389,7 +454,7 @@ def _remember_output(base: str, ft: str) -> None:
     """
     global _said
     try:
-        detail = req("GET", f"{base}/notebookRun", token=ft)[2]
+        detail = req("GET", f"{base}/notebookRun", token=fabric_token())[2]
         _said = "\n".join(c.get("output", "") for c in detail.get("cells", []))
     except Exception as exc:  # noqa: BLE001 — diagnostics, never the verdict
         log(f"could not fetch run detail: {exc}")
@@ -440,8 +505,9 @@ def session_context() -> ContextClaim:
     global _sigs_seen, _runtime_seen
     _sigs_seen = found.get("notebook_signatures")
     _runtime_seen = found.get("runtime")
-    global _fall_seen
+    global _fall_seen, _cred_seen
     _fall_seen = found.get("fall_through")
+    _cred_seen = found.get("credential")
     log(f"context findings: { {k: v for k, v in found.items() if k != 'notebook_signatures'} }")
     log(f"notebook signatures reported: {len(_sigs_seen or {})} callables")
     return ContextClaim(
@@ -497,7 +563,6 @@ def fan_out() -> dict[str, str]:
     Returns marker -> the notebook id the control plane issued, which is what
     the probe compares each child's own belief against.
     """
-    ft = fabric_token()
     expected, jobs = {}, []
     for i in range(FANOUT_N):
         marker = f"child{i}"
@@ -509,13 +574,13 @@ def fan_out() -> dict[str, str]:
                 "definition": {"parts": [{
                     "path": "notebook-content.py", "payloadType": "InlineBase64",
                     "payload": base64.b64encode(body.encode()).decode()}]}},
-            token=ft)
+            token=fabric_token())
         opid = headers.get("x-ms-operation-id")
         nb = None
         for _ in range(60):
-            op = req("GET", f"{FABRIC}/v1/operations/{opid}", token=ft)[2]
+            op = req("GET", f"{FABRIC}/v1/operations/{opid}", token=fabric_token())[2]
             if op.get("status") == "Succeeded":
-                nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=ft)[2]["id"]
+                nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=fabric_token())[2]["id"]
                 break
             time.sleep(1)
         if not nb:
@@ -525,7 +590,7 @@ def fan_out() -> dict[str, str]:
         _, hdrs, _ = req(
             "POST",
             f"{FABRIC}/v1/workspaces/{_ws}/items/{nb}/jobs/instances?jobType=RunNotebook",
-            token=ft)
+            token=fabric_token())
         jobs.append((marker, nb, hdrs["Location"].rstrip("/").rsplit("/", 1)[-1]))
     log(f"submitted {len(jobs)} concurrent RunNotebook jobs")
 
@@ -534,7 +599,7 @@ def fan_out() -> dict[str, str]:
     while pending and time.monotonic() < deadline:
         for jid, (marker, nb) in list(pending.items()):
             base = f"{FABRIC}/v1/workspaces/{_ws}/items/{nb}/jobs/instances/{jid}"
-            status = req("GET", base, token=ft)[2].get("status")
+            status = req("GET", base, token=fabric_token())[2].get("status")
             if status in ("Completed", "Failed", "Cancelled", "Deduped"):
                 log(f"{marker}: {status}")
                 pending.pop(jid)
@@ -593,6 +658,29 @@ def session_fall_through() -> FallThroughClaim:
     )
 
 
+def session_credential() -> CredentialClaim:
+    """Contract 7 reads the same artifact contracts 1-3 and 6 already fetched."""
+    if _cred_seen is None:
+        return CredentialClaim(
+            ok=False,
+            error="no credential results in the findings artifact — "
+                  "the session did not get as far as the two reads")
+    if _cred_seen.get("skipped"):
+        return CredentialClaim(
+            ok=False,
+            error="not run: CONFORMANCE_TOKEN_LIFETIME was not set, so the "
+                  "session had no lifetime to outlive")
+    return CredentialClaim(
+        ok=True,
+        lifetime=int(_cred_seen.get("lifetime") or 0),
+        slept=float(_cred_seen.get("slept") or 0),
+        before_ok=bool(_cred_seen.get("before_ok")),
+        before_error=_cred_seen.get("before_error", ""),
+        after_ok=bool(_cred_seen.get("after_ok")),
+        after_error=_cred_seen.get("after_error", ""),
+    )
+
+
 def main() -> int:
     backend = os.environ.get("BACKEND", "")
     if backend not in ("sail", "jvm"):
@@ -629,7 +717,9 @@ def main() -> int:
     fall = fall_through(session=session_fall_through, backend=backend,
                         control=(6, backend) in CONTROL)
     rows = record(backend,
-                  live={1: ctx, 2: sig, 3: floor, 4: result, 5: iso, 6: fall})
+                  live={1: ctx, 2: sig, 3: floor, 4: result, 5: iso, 6: fall,
+                        7: credential_lifetime(session=session_credential,
+                                               backend=backend)})
     out = DIR / "out"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{backend}.json"
@@ -639,6 +729,8 @@ def main() -> int:
     log(f"wrote {path} contract 3={floor.status} {floor.error}".rstrip())
     log(f"wrote {path} contract 5={iso.status} {iso.error}".rstrip())
     log(f"wrote {path} contract 6={fall.status} {fall.error}".rstrip())
+    seven = next(r for r in rows if r["id"] == "7")
+    log(f"wrote {path} contract 7={seven['status']} {seven.get('error', '')}".rstrip())
     log(f"wrote {path} contract 4={result.status} {result.error}".rstrip())
     return 0
 
