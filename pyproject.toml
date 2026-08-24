@@ -393,7 +393,11 @@ fail_under = 92
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["e2e/*/target", "website"]
+# third_party is somebody else's artifact, pinned. Linting it would report
+# style in code we must not touch — the sha256 in each PROVENANCE.md describes
+# the file as upstream ships it, and a ruff --fix would break that on the one
+# field whose whole job is to be exact.
+extend-exclude = ["e2e/*/target", "website", "third_party"]
 
 [tool.ruff.lint]
 # Deliberately not the kitchen sink. Each family here has caught something in

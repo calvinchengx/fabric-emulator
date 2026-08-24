@@ -71,6 +71,54 @@ source page and that page's own last-updated date.
 
 Graded by contract 2 on both lakehouse backends, every run.
 
+### A second source, and the two Microsoft sources disagree
+
+The table above is transcribed: a person read Learn pages and wrote signatures
+down, with a source URL and read-date per entry. That is the strongest form of
+transcription and it is still transcription, which has two failure modes it
+cannot see past — it cannot notice surface the page does not tabulate, and it
+cannot notice when Microsoft's own implementation says something else.
+
+So Axis A now carries a **second source**, pinned in
+[`third_party/notebookutils-stubs/`](https://github.com/calvinchengx/fabric-emulator/tree/main/third_party/notebookutils-stubs):
+`dummy-notebookutils`, the MIT-licensed stub package Microsoft publishes so
+notebook code can be developed off-cluster. Every function, every parameter
+name, empty bodies. `scripts/check_notebookutils_surface.py` holds all three
+descriptions — the documentation, the stub, and our shim — and runs offline in
+`make check` and the `witnesses` job.
+
+**They disagree, in ten places.** A sample:
+
+| Member | Microsoft's stub | Fabric's docs |
+|---|---|---|
+| `fs.ls` | `dir` | `path` |
+| `fs.exists` | `file` | `path` |
+| `fs.unmount` | `extraOptions` | `extraConfigs` |
+| `notebook.run` | `workspaceId` | `workspace` |
+| `credentials.getToken` | `(audience, name)` | `(audience)` |
+
+The shim follows the documentation, which is right: the stub is Synapse-lineage
+and the pages are Fabric's own. But *right* was not a decision anyone made,
+because the disagreement was invisible. The arbitration is now derived rather
+than declared: where ours matches the docs and the stub differs, the checker
+says so without anyone maintaining a list, so it cannot go stale.
+
+**What only the stub knew.** Fifteen members Microsoft ships that no page
+yielded to transcription, now listed as gaps with reasons. The largest is
+`help()`, which exists on every module of the real package and on none of ours
+— and which Fabric's own `fs` page documents in its opening lines, as prose
+rather than as a row in the method table, which is exactly why a careful
+reading missed it. The rest: `runtime.getCurrentWorkspaceId`, `udf.run`,
+`lakehouse.getDefinition` / `updateDefinition`, `fs.nbResPath` (notebook
+resources, which Axis C lists as absent too), `fs.refreshMounts`.
+
+**Scope needs both sources.** The stub is broader than Fabric: `conf`,
+`connections`, `data` and `fabricClient` are absent from Fabric's module list,
+and Fabric's page says `fabricClient` and `PBIClient` "aren't supported yet".
+Taking the stub alone would have manufactured about twenty phantom gaps. A
+module present in the stub and classified in neither list fails the build
+rather than being guessed at.
+
 ### The eight that existed and would have failed anyway
 
 The finding worth Phase 0, and the reason Phase 2 was not just "write the

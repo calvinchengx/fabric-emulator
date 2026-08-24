@@ -53,6 +53,13 @@ the golden truth is reviewable. Never let a reference float.
   corpus (CC-BY-4.0, pinned by reference). Golden reference for the XMLA
   protocol, rowset encodings, schema rowsets, and the TMSL/TMDL model formats.
 
+- [`notebookutils-stubs/`](notebookutils-stubs/) — Microsoft's own
+  `dummy-notebookutils` wheel, the stub package they publish so notebook code
+  can be developed off-cluster. It states the `notebookutils.*` surface in a
+  machine-readable form, which is what `scripts/check_notebookutils_surface.py`
+  holds our shim to. Synapse-lineage and therefore broader than Fabric, so the
+  checker carries Fabric's module list as a second source.
+
 See [docs/18-semantic-model-references.md](../docs/18-semantic-model-references.md)
 for how these map onto the (as-yet-unbuilt) semantic-model engine and the DAX
 oracle strategy.
