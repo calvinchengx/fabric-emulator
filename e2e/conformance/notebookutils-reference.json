@@ -20,8 +20,11 @@
     "",
     "CITED IS NOT GRADED, and the two must not be confused. Every module below",
     "has a citation; `graded_by_contract_2` names the ones the live probe",
-    "actually asserts, which is fewer. Reading a citation as a check is how a",
-    "partial reference gets mistaken for coverage."
+    "actually asserts. Since Phase 1 those sets are EQUAL -- but they are still",
+    "two different claims, and the field went stale saying one module for eight",
+    "while its test only checked for a subset. It now has to equal what live.py",
+    "grades. Reading a citation as a check is how a partial reference gets",
+    "mistaken for coverage."
   ],
   "modules": {
     "notebookutils.notebook": {

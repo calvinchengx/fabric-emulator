@@ -26,16 +26,19 @@ outage.
 That is a meaningful bar — it is the bar that catches false greens. It is a bar
 about **failure classes**, not about surface coverage.
 
-Two limits are load-bearing:
+One limit is load-bearing, and a second one was:
 
 - **Contract 2 is titled "the API shape is the contract, independent of
   behaviour."** A method can carry every documented parameter, in the right
-  order, and do entirely the wrong thing. That cell stays green.
-- **Contract 2 grades one module.** `notebookutils-reference.json` now cites
-  all eight documented namespaces (Phase 0), but `graded_by_contract_2` names
-  the single one the live probe actually asserts. Cited is not graded, and
-  reading a citation as a check is how a partial reference gets mistaken for
-  coverage.
+  order, and do entirely the wrong thing. That cell stays green. This limit is
+  permanent — it is what Axis B exists to answer.
+- **Contract 2 used to grade one module.** Phase 0 cited all eight documented
+  namespaces while the live probe asserted only `notebookutils.notebook`;
+  Phase 1 widened the probe to grade all eight, and it has done so on both
+  lakehouse backends since. The lesson outlived the gap: **cited is not
+  graded**, and reading a citation as a check is how a partial reference gets
+  mistaken for coverage. The field that records the difference went stale for
+  exactly that reason and its test now pins it to what `live.py` grades.
 
 ## Parity is four axes, not one
 
@@ -159,10 +162,11 @@ wrong in both directions:
   that: one surface, two names, nothing extra to keep in step when the old name
   goes away.
 
-The file now separates the two things that field conflated: every module is
-**cited**, and `graded_by_contract_2` names the far smaller set the live probe
-actually asserts. Reading a citation as a check is how a partial reference gets
-mistaken for coverage.
+The file keeps the two things that field conflated apart: every module is
+**cited**, and `graded_by_contract_2` names what the live probe actually
+asserts. Since Phase 1 those sets are equal, and the test says so by comparing
+against `live.py` rather than a second hand-kept list — while it only checked
+for a subset, the field claimed one module for eight and stayed green.
 
 ## Axis B — behaviour
 
