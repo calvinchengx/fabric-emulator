@@ -28,9 +28,9 @@ and the same code path works against real Fabric.
 """
 import base64
 import json
-import time
+import sys as _sys
 
-from . import credentials
+from . import _help, _lro, credentials
 from ._config import config, session_workspace_id
 from ._http import request
 
@@ -85,27 +85,8 @@ def _definition_parts(item_id):
     status, headers, payload = request(
         "POST", f"{base}/items/{item_id}/getDefinition", token=_tok(), raw=True
     )
-    if status != 202:
-        body = json.loads(payload) if payload else {}
-        return body.get("definition", {}).get("parts", [])
-
-    op = headers.get("x-ms-operation-id") or headers.get("X-Ms-Operation-Id")
-    location = headers.get("Location") or headers.get("location")
-    if not op and not location:
-        raise VariableLibraryError("getDefinition returned 202 with no operation to follow")
-    op_url = location or f"{config().fabric_url}/v1/operations/{op}"
-    deadline = time.monotonic() + 120
-    while True:
-        state = request("GET", op_url, token=_tok())
-        st = state.get("status")
-        if st == "Succeeded":
-            break
-        if st == "Failed":
-            raise VariableLibraryError(f"getDefinition operation failed: {state.get('error')}")
-        if time.monotonic() > deadline:
-            raise VariableLibraryError("getDefinition operation did not complete")
-        time.sleep(0.2)
-    body = request("GET", op_url.rstrip("/") + "/result", token=_tok())
+    body = _lro.follow(status, headers, payload, what="getDefinition",
+                       token=_tok(), send=request, error=VariableLibraryError)
     return body.get("definition", {}).get("parts", [])
 
 
@@ -302,3 +283,13 @@ class _Variables:
 
     def __repr__(self):
         return f"Variables({sorted(self._library)})"
+
+
+def getHelpString(funcName="", namespace=""):  # noqa: N802,N803 - Microsoft's spelling
+    """This module's help text as a string.
+
+    No `help()` beside it, deliberately: Microsoft's stub gives this module
+    `getHelpString` and no `help`, and inventing the missing half would be this
+    shim's shape rather than Fabric's.
+    """
+    return _help.help_string(_sys.modules[__name__], funcName or None)

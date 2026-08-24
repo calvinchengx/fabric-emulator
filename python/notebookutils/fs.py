@@ -12,9 +12,10 @@ not DNS, so no /etc/hosts trickery is needed from Python.
 """
 import errno
 import os
+import sys as _sys
 import urllib.parse
 
-from . import credentials
+from . import _help, credentials
 from ._config import config
 from ._http import HttpError, request
 
@@ -393,3 +394,48 @@ def getMountPath(mountPoint, scope=""):  # noqa: N802,N803 - documented spelling
             f"{mountPoint} is not mounted — mount it first, or check "
             "notebookutils.fs.mounts()")
     return info.localPath
+
+
+def nbResPath():
+    """The root notebook's `builtin/` folder, as a path.
+
+    THE SAME VALUE AS `notebookutils.nbResPath`, WHICH IS AN ATTRIBUTE. The two
+    Microsoft sources disagree about the shape: the documentation presents a
+    value a notebook reads, and the stub carries a function on `fs`. Both are
+    offered because both are real to somebody's code, and both resolve through
+    the same module — one answer, two spellings, rather than two answers.
+    """
+    from . import nbresources
+
+    return nbresources.nb_res_path()
+
+
+def refreshMounts():  # noqa: N802 - Microsoft's spelling
+    """Re-materialise every mount point from its source.
+
+    A Fabric mount is blobfuse-backed and LIVE; this one is a point-in-time
+    copy taken at mount (see the mount section above). `refreshMounts` is the
+    documented way to see what has changed since, and here it does the only
+    thing that can mean: take the copy again. That closes the gap for the case
+    a notebook actually uses it for — read data written by something else —
+    without pretending the mount became live.
+
+    Returns True, as the other mount calls do.
+    """
+    for entry in list(_MOUNTS.values()):
+        # `_materialise`, not `mount`: mount REFUSES an existing point on
+        # purpose, and unmount-then-mount would delete the local tree and leave
+        # a window where an open path is gone. Re-copying in place is what a
+        # refresh means.
+        _materialise(entry.source, entry.localPath)
+    return True
+
+
+def help(method_name=None):  # noqa: A001 - Fabric's own spelling, on every module
+    """List this module's methods, or document one of them.
+
+    Fabric's `fs` page opens by documenting `notebookutils.fs.help()` as the
+    discovery mechanism, and the stubs carry it on every module. Shadows the
+    builtin inside this module only, exactly as Microsoft's package does.
+    """
+    _help.emit(_sys.modules[__name__], method_name)

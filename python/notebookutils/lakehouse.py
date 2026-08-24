@@ -12,8 +12,9 @@ and callers pass both — but a name is what resolves first.
 """
 import os
 import re
+import sys as _sys
 
-from . import credentials
+from . import _help, _lro, credentials
 from ._config import config, session_workspace_id
 from ._http import request
 
@@ -178,3 +179,44 @@ def loadTable(loadOption, table, lakehouse="", workspaceId=""):  # noqa: N802,N8
         "spark.read.format(...).load(path).write.format('delta')"
         ".saveAsTable(table) — see docs/56."
     )
+
+
+def getDefinition(name, workspaceId=""):  # noqa: N802,N803 - Microsoft's spelling
+    """The lakehouse item's definition parts.
+
+    Straight onto the typed collection's documented `getDefinition`, following
+    the 200-or-202 outcome rather than reading the 202's body — a client that
+    reads it gets `null` and reports an empty definition instead of an error,
+    which is the failure `FABRIC_FORCE_LRO` exists to make reachable.
+    """
+    # `_resolve_id`, not `get()`: the id is all this needs, and fetching the
+    # whole item first is a round trip for a field already resolvable.
+    item_id = _resolve_id(name, workspaceId)
+    token = credentials.getToken("fabric")
+    status, headers, payload = request(
+        "POST", f"{_base(workspaceId)}/{item_id}/getDefinition",
+        token=token, raw=True)
+    return _lro.follow(status, headers, payload,
+                       what="getDefinition", token=token, send=request)
+
+
+def updateDefinition(name, definition, workspaceId=""):  # noqa: N802,N803
+    """Replace the lakehouse item's definition. True on success."""
+    item_id = _resolve_id(name, workspaceId)
+    token = credentials.getToken("fabric")
+    status, headers, payload = request(
+        "POST", f"{_base(workspaceId)}/{item_id}/updateDefinition",
+        token=token, body={"definition": definition}, raw=True)
+    _lro.follow(status, headers, payload, what="updateDefinition",
+                token=token, send=request, want_result=False)
+    return True
+
+
+def help(method_name=None):  # noqa: A001 - Fabric's own spelling, on every module
+    """List this module's methods, or document one of them.
+
+    Fabric's `fs` page opens by documenting `notebookutils.fs.help()` as the
+    discovery mechanism, and the stubs carry it on every module. Shadows the
+    builtin inside this module only, exactly as Microsoft's package does.
+    """
+    _help.emit(_sys.modules[__name__], method_name)

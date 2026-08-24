@@ -14,11 +14,12 @@ is nothing to wait for.
 """
 import base64
 import json
+import sys as _sys
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 
-from . import credentials, runtime
+from . import _help, _lro, credentials, runtime
 from ._config import config, session_workspace_id
 from ._http import request
 from .common.exceptions import RunMultipleFailedException
@@ -88,39 +89,17 @@ class Artifact:
 
 
 def _follow(status, headers, payload, *, what, want_result=True):
-    """Resolve the 200-or-202 outcome the items API is documented to have.
+    """The items API's 200-or-202 outcome, with this module's error type.
 
-    BOTH ARE LEGAL and a real tenant answers 202, so a client that reads the
-    202 body gets `null` and reports an empty result rather than an error. The
-    emulator can be told to always answer 202 (FABRIC_FORCE_LRO) precisely so
-    this path is exercised locally instead of only in production.
-
-    `want_result` is False for operations that have no result document — real
-    Fabric's updateDefinition is one, and polling `/result` for it would 404 on
-    a success.
+    The loop itself lives in `_lro`: `variableLibrary` had a second copy and
+    `lakehouse.getDefinition` needed a third, which is one rule written three
+    times. What genuinely differs per module is the exception a caller catches
+    and the token audience — so those are the arguments, and the protocol is
+    not.
     """
-    if status != 202:
-        return json.loads(payload) if payload else {}
-    op = headers.get("x-ms-operation-id") or headers.get("X-Ms-Operation-Id")
-    location = headers.get("Location") or headers.get("location")
-    if not op and not location:
-        raise NotebookError(f"{what} returned 202 with no operation to follow")
-    op_url = location or f"{config().fabric_url}/v1/operations/{op}"
-    deadline = time.monotonic() + 120
-    while True:
-        state = request("GET", op_url, token=credentials.getToken("pbi"))
-        st = state.get("status")
-        if st == "Succeeded":
-            break
-        if st == "Failed":
-            raise NotebookError(f"{what} operation failed: {state.get('error')}")
-        if time.monotonic() > deadline:
-            raise NotebookError(f"{what} operation did not complete")
-        time.sleep(0.2)
-    if not want_result:
-        return {}
-    return request("GET", op_url.rstrip("/") + "/result",
-                   token=credentials.getToken("pbi"))
+    return _lro.follow(status, headers, payload, what=what,
+                       token=credentials.getToken("pbi"), send=request,
+                       error=NotebookError, want_result=want_result)
 
 
 def _ws(workspaceId):
@@ -812,3 +791,13 @@ class _Exit(Exception):
 def exit(value=""):
     """Signal the notebook's exit value (as notebookutils.notebook.exit does)."""
     raise _Exit(value)
+
+
+def help(method_name=None):  # noqa: A001 - Fabric's own spelling, on every module
+    """List this module's methods, or document one of them.
+
+    Fabric's `fs` page opens by documenting `notebookutils.fs.help()` as the
+    discovery mechanism, and the stubs carry it on every module. Shadows the
+    builtin inside this module only, exactly as Microsoft's package does.
+    """
+    _help.emit(_sys.modules[__name__], method_name)

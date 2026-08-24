@@ -8,8 +8,10 @@ managed identity, or AZURE_* env vars) against real Entra. Either way
 getSecret then reads Key Vault with a vault-audience token — the same
 identity-brokered path Fabric uses.
 """
+import sys as _sys
 import urllib.parse
 
+from . import _help
 from ._config import config
 from ._http import request
 
@@ -153,3 +155,13 @@ def isValidToken(token):  # noqa: N802 - documented spelling
         # refuses a token without one rather than treating it as eternal.
         return False
     return time.time() < float(exp)
+
+
+def help(method_name=None):  # noqa: A001 - Fabric's own spelling, on every module
+    """List this module's methods, or document one of them.
+
+    Fabric's `fs` page opens by documenting `notebookutils.fs.help()` as the
+    discovery mechanism, and the stubs carry it on every module. Shadows the
+    builtin inside this module only, exactly as Microsoft's package does.
+    """
+    _help.emit(_sys.modules[__name__], method_name)

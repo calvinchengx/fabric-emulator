@@ -31,8 +31,9 @@ places, which is most of what a notebook calls a UDF for.
 """
 import base64
 import json
+import sys as _sys
 
-from . import credentials
+from . import _help, credentials
 from ._config import config, session_workspace_id
 from ._http import request
 
@@ -197,3 +198,44 @@ def _run_script(script):
                 sys.modules.pop(key, None)
             else:
                 sys.modules[key] = value
+
+
+def run(artifactId, functionName, parameters=None, workspaceId="",  # noqa: N803
+        capacityId=""):  # noqa: N803 - Microsoft's spelling throughout
+    """Invoke one function of a User Data Function item and return its result.
+
+    A THIN WRAPPER OVER `getFunctions`, not a second execution path. That is
+    what makes it implementable at all: `getFunctions` already resolves the
+    item, reads its real definition parts and runs its real `function_app.py`,
+    so `run` is the one-call spelling of the same thing. The waiver this
+    replaces said "the UDF item type has no engine here", which stopped being
+    true when getFunctions started executing the item's own code.
+
+    `capacityId` is accepted and ignored: it selects hardware, and there is one
+    session here with nothing to select. The same rule contract 2 states for a
+    parameter with nothing to switch.
+    """
+    functions = getFunctions(artifactId, workspaceId)
+    target = getattr(functions, functionName)
+    return target(**(parameters or {}))
+
+
+def getHelpString(funcName="", namespace=""):  # noqa: N802,N803 - Microsoft's spelling
+    """This module's help text as a STRING rather than printed.
+
+    `namespace` is in Microsoft's signature and has nothing to select here:
+    this module is one namespace. Accepted and ignored, which is what contract 2
+    calls correct when there is nothing to switch.
+    """
+    return _help.help_string(_sys.modules[__name__], funcName or None)
+
+
+def help(method=None):  # noqa: A001 - Fabric's spelling
+    """List this module's methods, or document one of them.
+
+    The parameter is `method`, not `method_name`: every other module in
+    Microsoft's stubs spells it `method_name` and `udf` does not. Following the
+    stub rather than tidying it — a caller passing it by keyword is the whole
+    reason parameter names are contract 2's subject.
+    """
+    print(getHelpString(method or ""))

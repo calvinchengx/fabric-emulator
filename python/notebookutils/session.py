@@ -16,8 +16,10 @@ reachable — a plain `python` importing the shim — they say so rather than
 pretending to have stopped something.
 """
 import os
+import sys as _sys
 from contextvars import ContextVar
 
+from . import _help
 from ._http import request
 
 # BOUND PER STATEMENT, NOT READ FROM THE ENVIRONMENT. The agent is one process
@@ -99,3 +101,13 @@ def restartPython():  # noqa: N802 - documented spelling
     engine handle alone.
     """
     _ask_agent("/restart-python", {"session": _session_id()})
+
+
+def help(method_name=None):  # noqa: A001 - Fabric's own spelling, on every module
+    """List this module's methods, or document one of them.
+
+    Fabric's `fs` page opens by documenting `notebookutils.fs.help()` as the
+    discovery mechanism, and the stubs carry it on every module. Shadows the
+    builtin inside this module only, exactly as Microsoft's package does.
+    """
+    _help.emit(_sys.modules[__name__], method_name)
