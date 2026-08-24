@@ -414,18 +414,55 @@ minutes it is refused, and the two measurements together — `-60` accepted,
 `-600` refused — are what show the leg discriminates rather than merely
 returning the answer that was wanted.
 
-**An open question this contract surfaced and did not answer.** The second
-operation was originally a re-read of the table cell 0 wrote. It failed with
-`AnalysisException: Table not found: [TABLE_OR_VIEW_NOT_FOUND]` while the read
-*before* the wait succeeded — the catalog entry a `saveAsTable` created was gone
-75 seconds later, in the same session and the same cell, on **sail**. Whether a
-session is being recycled underneath the cell or a catalog entry is expiring is
-not established. It is not what §7 is about — a credential dying, not a catalog
-forgetting a name — so the probe writes to a fresh table instead, which needs
-the engine's credential and nothing that must survive the wait. **The
-observation is recorded here rather than routed around silently**, because a
-notebook that cannot see its own table after a minute would matter to anyone
-running something long.
+**A finding this contract surfaced, now explained — and it contradicts a claim
+in the tree.** The second operation was originally a re-read of the table cell 0
+wrote. It failed with `TABLE_OR_VIEW_NOT_FOUND` while the read *before* the wait
+succeeded: a `saveAsTable` catalog entry gone 75 seconds later, in the same
+session, on **sail**. That was recorded here as unexplained. The log says what
+happens:
+
+```
+[07:50:47Z] creating session 30c97a1b-…
+            launcher: restarting with fresh Storage token … (expires_in=60s, refresh in 59s)
+[07:51:43Z] Starting the Spark Connect server on 0.0.0.0:50051…
+[07:52:02Z] creating session 30c97a1b-…        <-- same id, new engine process
+```
+
+(The launcher line carries no timestamp of its own; it is printed by the
+supervisor immediately before it re-execs sail.)
+
+**Sail's credential refresh is implemented by restarting the engine.** The token
+enters sail only through startup env, so re-minting requires a new process
+(`docker/sail/launcher.py` explains exactly this, and the resident supervisor is
+the right fix for the 401-after-an-hour defect it was written for). The restart
+discards the engine's session state. Sail then re-creates the session under the
+*same id* on the next statement, so the client never sees a lost session — it
+sees a session that has forgotten its own table.
+
+That last part is why it was hard to read, and why it matters more than a
+missing table. `python/spark_agent/session_recovery.py` exists precisely to stop
+this: it detects a dropped engine session and **refuses to rebind silently**,
+because *"a 'transparent' reconnect hands the user a notebook that has quietly
+forgotten its temp views — the same failure wearing a friendlier face, and
+harder to diagnose than the error it replaced."* A launcher restart never trips
+those markers, because nothing reports the session as not running. The loss goes
+through unannounced, which is the outcome that module was written to prevent.
+
+The two claims cannot both be true. `launcher.py` states that *"Sail holds no
+state a restart loses that the control plane does not re-establish — the Spark
+agent re-registers catalog entries per session"*; `session_recovery.py` states
+that rebinding costs temp views, cached DataFrames and session-scoped conf. The
+measurement is on the second module's side.
+
+**Scope, honestly.** With the default 3600s lifetime this happens once an hour
+rather than once a minute, which is why nothing had caught it; the conformance
+stack's 60s token is what made it visible in a single run. Contract 7 still
+passes and passes fairly — the probe writes a *fresh* table, which needs the
+engine's credential and nothing that must survive the wait, so it measures the
+credential rather than the catalog. **The catalog behaviour is a separate defect
+and is not fixed here**, but it is now located rather than open: either the
+refresh must not restart the engine, or the restart must re-establish what the
+session had.
 
 ---
 
