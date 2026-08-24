@@ -10,12 +10,13 @@ The DFS surface is host-routed, so every request carries the OneLake Host
 header while connecting to the emulator's address — the emulator routes on Host,
 not DNS, so no /etc/hosts trickery is needed from Python.
 """
+import errno
 import os
 import urllib.parse
 
 from . import credentials
 from ._config import config
-from ._http import request
+from ._http import HttpError, request
 
 # OneLake authorizes with a Storage-audience token, minted once for the
 # notebook identity and reused across fs calls (as the real driver does).
@@ -261,11 +262,27 @@ def _is_dir(path):
 
 
 def rm(path, recurse=False):
+    """Remove a file, or a directory and optionally its contents.
+
+    `recurse` is IGNORED for a file and REQUIRED for a non-empty directory —
+    ADLS answers 409 DirectoryNotEmpty otherwise, which is the whole safety of
+    a bare `rm`. Translated to OSError/ENOTEMPTY rather than surfaced as an
+    HTTP error, for the same reason `mv` raises FileExistsError: a notebook
+    author catches filesystem exceptions, and the mapping here is exact — this
+    is what `os.rmdir` raises for the identical situation.
+    """
     fs, sub = _resolve(path)
     url = _url(fs, sub)
     if recurse:
         url += "?recursive=true"
-    request("DELETE", url, headers=_headers())
+    try:
+        request("DELETE", url, headers=_headers())
+    except HttpError as e:
+        if e.status == 409:
+            raise OSError(errno.ENOTEMPTY,
+                          f"{path} is a non-empty directory — pass recurse=True "
+                          f"to remove it and its contents") from None
+        raise
     return True
 
 

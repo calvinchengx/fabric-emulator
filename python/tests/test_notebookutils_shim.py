@@ -13,6 +13,7 @@ WHAT IS UNDER TEST is the shim's own logic — path resolution, URL shape, the
 Host header the emulator routes on, ranged reads, the create/append/flush write
 dance. Not whether OneLake answers; that is the e2e's job and it keeps it.
 """
+import errno
 import json
 import pathlib
 import sys
@@ -22,6 +23,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from notebookutils import credentials, env, fs, lakehouse, runtime, session, udf  # noqa: E402
+from notebookutils._http import HttpError  # noqa: E402
 
 WS = "11111111-1111-1111-1111-111111111111"
 LH = "22222222-2222-2222-2222-222222222222"
@@ -940,6 +942,66 @@ def test_rm_of_a_directory_is_recursive_only_when_asked(http):
     assert "recursive=true" not in http.last()["url"]
     fs.rm("Files/dir", recurse=True)
     assert "recursive=true" in http.last()["url"]
+
+
+def test_the_bound_session_wins_over_the_environment(monkeypatch):
+    """The agent binds per statement; os.environ is process-wide.
+
+    That ordering IS the isolation. One agent serves many concurrent sessions,
+    so an environment variable would hand every one of them the same id and
+    `stop()` in one notebook would end another's session — the shared-agent
+    leak in its most destructive form. The environment stays as the fallback
+    for someone driving the agent directly, and nothing more.
+    """
+    monkeypatch.setenv("SPARK_AGENT_URL", "http://process-wide:1")
+    monkeypatch.setenv("FABRIC_SESSION_ID", "the-wrong-session")
+    token = session.bind("http://this-statement:8099/", "the-right-session")
+    try:
+        assert session._agent_url() == "http://this-statement:8099"
+        assert session._session_id() == "the-right-session"
+    finally:
+        session.unbind(token)
+    # ...and once unbound, the environment is what is left.
+    assert session._agent_url() == "http://process-wide:1"
+    assert session._session_id() == "the-wrong-session"
+
+
+def test_an_empty_binding_falls_through_to_the_environment(monkeypatch):
+    """A bind with nothing in it is not an answer. An agent that has no URL to
+    offer must not shadow an operator who set one."""
+    monkeypatch.setenv("SPARK_AGENT_URL", "http://from-the-env:1")
+    monkeypatch.setenv("FABRIC_SESSION_ID", "env-session")
+    token = session.bind("", "")
+    try:
+        assert session._agent_url() == "http://from-the-env:1"
+        assert session._session_id() == "env-session"
+    finally:
+        session.unbind(token)
+
+
+def test_rm_of_a_non_empty_directory_raises_the_filesystem_error(http):
+    """ADLS answers 409 DirectoryNotEmpty; a notebook author catches OSError.
+
+    Translated rather than surfaced as an HTTP error for the same reason `mv`
+    raises FileExistsError: the mapping is exact — `os.rmdir` raises ENOTEMPTY
+    for this identical situation — and a notebook that catches OSError around a
+    delete is ordinary code that should not need to know a REST status.
+    """
+    http.push(HttpError(409, "DirectoryNotEmpty", "u"))
+    with pytest.raises(OSError) as caught:
+        fs.rm("Files/dir")
+    assert caught.value.errno == errno.ENOTEMPTY
+    assert "recurse=True" in str(caught.value)
+
+
+def test_rm_does_not_swallow_other_http_failures(http):
+    """The 409 branch must not become a catch-all: a 403 is not an empty
+    directory, and reporting it as one would send the caller to the wrong fix.
+    """
+    http.push(HttpError(403, "AuthorizationFailure", "u"))
+    with pytest.raises(HttpError) as caught:
+        fs.rm("Files/dir")
+    assert caught.value.status == 403
 
 
 def test_mv_of_a_directory_copies_the_tree(http, monkeypatch):

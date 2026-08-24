@@ -730,6 +730,27 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		// `recursive` is not decoration. ADLS Gen2 refuses to delete a
+		// non-empty DIRECTORY unless it is true, and answers 409
+		// DirectoryNotEmpty when it is not (rest/api/storageservices/
+		// datalakestoragegen2/path/delete, read 2026-08-24) — which is what
+		// `notebookutils.fs.rm(path, recurse=False)` relies on to be a safe
+		// call. This handler ignored the parameter entirely, so a bare `rm`
+		// on a directory took the whole tree with it: the one filesystem
+		// mistake that has no undo, and the emulator was more destructive
+		// than the thing it emulates. Found by giving fs.rm an e2e.
+		//
+		// The check is for CHILDREN, not for the is_dir flag: a path with
+		// descendants is a directory whatever it is recorded as, and an
+		// empty directory is legally deletable either way.
+		if !strings.EqualFold(r.URL.Query().Get("recursive"), "true") {
+			kids, err := s.Store.ListOneLakePaths(it.ID, rel, true)
+			if err == nil && len(kids) > 0 {
+				writeDFSErr(w, dfsError{"DirectoryNotEmpty", http.StatusConflict,
+					"The recursive query parameter value must be true to delete a non-empty directory."})
+				return
+			}
+		}
 		if err := s.Store.DeleteOneLakePath(it.ID, rel); err != nil {
 			writeDFSErr(w, dfsError{"PathNotFound", http.StatusNotFound, "The path does not exist."})
 			return

@@ -344,7 +344,11 @@ func (a *API) getOperation(w http.ResponseWriter, r *http.Request, p *auth.Princ
 	// appears only while there is still something to wait for; the completed
 	// sample carries none, and sending one would tell a finished client to sleep.
 	w.Header().Set("x-ms-operation-id", op.ID)
-	base := "https://" + r.Host + "/v1/operations/" + op.ID
+	// externalBase, not a hardcoded https: the emulator also runs with
+	// -disable-tls, and a client following Location — the documented way to
+	// reach the result — then dialled TLS at a plaintext port and got
+	// WRONG_VERSION_NUMBER. Every documented path has to work in both modes.
+	base := externalBase(r) + "/v1/operations/" + op.ID
 	switch {
 	case body.Status == store.OpSucceeded && op.ResultRef != "":
 		w.Header().Set("Location", base+"/result")

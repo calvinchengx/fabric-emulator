@@ -409,11 +409,21 @@ func TestFileCRUD(t *testing.T) {
 		}
 	}
 
-	// Deleting a directory removes its subtree.
+	// A non-empty directory needs ?recursive=true, as ADLS Gen2 requires. The
+	// refusal is the half that matters: without it a bare rm takes the tree.
 	sub := dir + "/b.txt"
 	f.do("PUT", sub, f.token, []byte("x"))
-	if w := f.do("DELETE", dir, f.token, nil); w.Code != http.StatusOK {
-		t.Fatalf("delete dir = %d", w.Code)
+	if w := f.do("DELETE", dir, f.token, nil); w.Code != http.StatusConflict ||
+		errCode(t, w) != "DirectoryNotEmpty" {
+		t.Fatalf("delete non-empty dir = %d %s; want 409 DirectoryNotEmpty",
+			w.Code, errCode(t, w))
+	}
+	if w := f.do("GET", sub, f.token, nil); w.Code != http.StatusOK {
+		t.Fatalf("a refused delete removed the child anyway = %d", w.Code)
+	}
+	// ...and with it, the subtree goes.
+	if w := f.do("DELETE", dir+"?recursive=true", f.token, nil); w.Code != http.StatusOK {
+		t.Fatalf("recursive delete dir = %d", w.Code)
 	}
 	if w := f.do("GET", sub, f.token, nil); w.Code != http.StatusNotFound {
 		t.Fatalf("file survived dir delete = %d", w.Code)

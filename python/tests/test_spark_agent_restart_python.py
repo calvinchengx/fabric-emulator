@@ -4,11 +4,14 @@ That distinction is the entire method. A `pip install` in one cell is not
 importable in the next until the interpreter restarts; tearing down the engine
 as well would cost every cached DataFrame and temp view for no reason at all.
 
-WHY THIS IS TESTED HERE AND NOT IN AN E2E. The notebookutils e2e is a single
+WHY THIS IS TESTED HERE AS WELL AS IN AN E2E. The notebookutils e2e is a single
 script running INSIDE the namespace this clears — calling it mid-script is
-self-destructive, so that suite cannot prove it. The logic lives in a function
-the agent exposes, and that function is importable without Spark, which is what
-makes the property assertable at all.
+self-destructive, so that suite cannot prove it, and this file was the only
+evidence for a long time. e2e/livy CAN prove it: a Livy session is a persistent
+REPL, so one statement restarts the session and the NEXT one reports what
+survived. These unit tests stay because they reach the branches an e2e cannot
+enumerate cheaply — a runtime with no mssparkutils, a session that does not
+exist — and because they run without Spark.
 
 `agent.py` needs a live engine to import, so the function under test is loaded
 in isolation with the module-level globals it reads.
@@ -36,6 +39,13 @@ def _restart_python():
     module = types.ModuleType("agent_restart_slice")
     module.namespaces = {}
     module._notebookutils = lambda: None
+    # The notebook BUILTINS the restart puts back. Named here rather than
+    # imported so the slice still needs no engine, and recognisable in an
+    # assertion so a restart that dropped one would be visible.
+    module.run_magic = types.SimpleNamespace(HELPER="__nbrun__")
+    module.notebook_display = types.SimpleNamespace(
+        display="display-fn", displayHTML="displayHTML-fn")
+    module._make_run_helper = lambda g: "run-helper-for-this-namespace"
     exec(compile(source[start:end], "agent.py", "exec"), module.__dict__)  # noqa: S102
     return module
 
