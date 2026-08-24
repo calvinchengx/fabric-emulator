@@ -116,80 +116,20 @@ function convert(name) {
   return frontmatter + body;
 }
 
-function writeOverview() {
-  // NO COUNTS HERE, deliberately. This page carried "113 supported capability
-  // claims" long after the number was 120: a figure hardcoded in a generator
-  // is a claim nothing checks, on the one page most likely to be read and
-  // least likely to be re-read. The parity map owns the number and is
-  // regenerated with it; this page owns the invitation to go and look.
-  const body = rewriteLinks(
-    `A local **Microsoft Fabric**: the control plane, OneLake, and engines that ` +
-      `genuinely run your code. Workspaces, items and their CI/CD definitions, ` +
-      `workspace RBAC, git integration, jobs and the 202/poll long-running-` +
-      `operation contract — validating Microsoft Entra bearer tokens against ` +
-      `[entra-emulator](https://calvinchengx.github.io/entra-emulator/) exactly ` +
-      `as real Fabric validates against Entra. The same pipeline runs unmodified ` +
-      `here and against a real tenant (\`FABRIC_TARGET\`).\n\n` +
-      `**It computes.** \`docker compose up\` attaches Sail and a SQL Server ` +
-      `sidecar: a notebook runs on Spark and writes Delta to OneLake, a warehouse ` +
-      `query executes over a real TDS connection, and KQL runs on Microsoft's own ` +
-      `Kusto engine. Microsoft's own tools drive it — \`fabric-cicd\`, the Fabric ` +
-      `CLI, \`dbt-fabric\`, the Terraform provider, the VS Code extension — with ` +
-      `no capacity and no cloud tenant.\n\n` +
-      `:::caution\n**Local development tool only** — intentionally insecure (no ` +
-      `real authorization boundary, self-signed TLS, seeded credentials). Run it ` +
-      `on \`localhost\` only.\n:::\n\n` +
-      `## The gap this is built around\n\n` +
-      `Testing Fabric work against Fabric means a tenant, a capacity and a `+
-      `cloud round trip for every iteration. A capacity is shared and always `+
-      `on, so a pull request cannot have one of its own, and a workspace is `+
-      `shared state, so one run's cleanup is another run's broken fixture. `+
-      `The usual outcome is that the Fabric-specific parts (the deployment `+
-      `pipeline, the OneLake writes, the notebook that only fails on real `+
-      `data) are the parts nobody tests until they break in someone else's `+
-      `run.\n\n` +
-      `This puts the whole tenant on a laptop: up in seconds, offline, torn `+
-      `down and recreated per test. What it cannot do is *assert* that it `+
-      `behaves like Fabric, which is why every supported claim below names `+
-      `the test that witnesses it, and the known differences are `+
-      `[written down](37-runtime-fidelity-gaps.md) rather than left to be `+
-      `discovered.\n\n` +
-      `## Start here\n\n` +
-      `- [Quickstart](01-quickstart.md) — compose up the family, mint a token, create a workspace, write to OneLake\n` +
-      `- [Installation](02-installation.md) — brew, winget, \`go install\`, Docker, compose\n` +
-      `- [Tutorial](28-tutorial-end-to-end.md) — a medallion pipeline end to end, bronze through gold\n` +
-      `- [Running modes](27-running-modes.md) — default stack, lite, JVM overlay, profiles, optional DAX oracle\n` +
-      `- [Architecture](03-architecture.md) — the emulator family, token acceptance, the LRO engine\n\n` +
-      `## What it runs\n\n` +
-      `- [Real compute](14-real-compute.md) — what actually executes, and what is still only a contract\n` +
-      `- [Notebooks and Spark](20-lakesail-engine.md) — Sail as the default engine, JVM Spark as an optional oracle\n` +
-      `- [Warehouse and T-SQL](16-warehouse-tds.md) — a real TDS endpoint over SQL Server, and its [T-SQL parity](29-tsql-parity.md)\n` +
-      `- [OneLake](08-onelake.md) — the ADLS and Blob surfaces, shortcuts, Delta, and [OneLake security](54-onelake-security.md)\n` +
-      `- [Control-plane API](07-control-plane-api.md) — every emulated endpoint, including Fabric Core MCP\n` +
-      `- [Real-Time Intelligence](25-rti-kusto.md) and [Eventstream](51-eventstream-kafka.md) — KQL eventhouses and a Kafka broker\n` +
-      `- [Deployment pipelines](23-deployment-pipelines.md) and [git integration](11-testing-with-fabric-cicd.md) — CI/CD against a local tenant\n\n` +
-      `## How the claims are checked\n\n` +
-      `Parity here is not self-assessed. Every supported capability names the ` +
-      `test that witnesses it, CI fails if one loses its witness, and the ` +
-      `strongest witnesses are third-party clients rather than our own tests.\n\n` +
-      `- [Parity map](parity.md) — every claim, graded, with the witness that holds it\n` +
-      `- [Ecosystem conformance](38-framework-conformance.md) — real vendor and OSS clients driving the emulator in CI\n` +
-      `- [Runtime fidelity gaps](37-runtime-fidelity-gaps.md) — where it still differs from Fabric, stated rather than discovered\n` +
-      `- [Testing](10-testing.md) — freeze the clock, inject faults, force LRO outcomes\n` +
-      `- [Parity history](parity-history.md) — how the map moved, release by release\n\n` +
-      `## Going further\n\n` +
-      `- [Configuration](04-configuration.md) and [TLS and hosts](05-tls-and-hosts.md)\n` +
-      `- [Real Fabric toggle](21-real-fabric-toggle.md) — point the same code at a real tenant\n` +
-      `- [OpenMetadata](22-openmetadata.md) — catalog the emulated estate\n` +
-      `- [Roadmap](13-roadmap.md) — phases P0–P3, R0–R5, S, and what landed after\n`,
-  );
-  // Synthesized here (no /docs source), so it has no "Edit this page"
-  // target. This is the docs OVERVIEW, at /overview/ and first in the
-  // sidebar; the site root is the landing page in src/pages/index.astro.
-  const frontmatter =
-    `---\ntitle: Overview\ndescription: A local Microsoft Fabric — control plane, OneLake, and engines that actually compute — validating real Entra tokens, with every supported claim tied to a named witness.\neditUrl: false\n---\n\n`;
-  writeFileSync(join(OUT, 'overview.md'), frontmatter + body);
-}
+// NO writeOverview() ANY MORE, and this note is here so its absence reads as a
+// decision rather than an omission.
+//
+// The docs site had two homes. `/docs/` is src/pages/index.astro and `/docs/
+// overview/` was synthesized here, and the two said the same thing in two
+// formats: 81 shared ten-word runs, a sidebar whose first entry sent a reader
+// straight from one to the other, and no single place to edit either. The
+// overview's own contribution was a curated index, so those links moved onto
+// the docs root rather than being deleted with it.
+//
+// `/overview/` still resolves — astro.config.mjs redirects it and
+// assemble_site.py keeps the site-root stub, because published-routes.txt
+// records that the route was once served and the assembler fails if a
+// published route would 404.
 
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
@@ -197,7 +137,6 @@ const names = readdirSync(DOCS_SRC).filter((n) => DOC_RE.test(n)).sort();
 for (const name of names) {
   writeFileSync(join(OUT, name), convert(name));
 }
-writeOverview();
 const info = writeParityHistory(OUT, PARITY, { convertBody });
 // The right-sidebar picker is an Astro component and can't shell out to git, so
 // hand it the same points as a build-time manifest.
@@ -248,7 +187,7 @@ try {
 writeFileSync(join(DATA, 'site-stats.json'), JSON.stringify(stats, null, 2) + '\n');
 
 console.log(
-  `sync-docs: wrote ${names.length} docs + overview to src/content/docs/ ` +
+  `sync-docs: wrote ${names.length} docs to src/content/docs/ ` +
     `(parity ${info.version}; ${info.snapshots.length} tagged snapshot(s); ` +
     `${stats.parity.real} real of ${stats.parity.total} rows)`,
 );

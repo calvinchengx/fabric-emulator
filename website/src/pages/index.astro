@@ -169,7 +169,7 @@ footer a{text-decoration:none}
       <a href="#checked">Evidence</a>
       <a href="#start">Run it</a>
       <a href={repo}>GitHub</a>
-      <a class="strong" href={`${base}overview/`}>Documentation &rarr;</a>
+      <a class="strong" href={`${base}01-quickstart/`}>Documentation &rarr;</a>
     </div>
   </div>
 </nav>
@@ -195,7 +195,7 @@ footer a{text-decoration:none}
       says which.</p>
     <div class="cta">
       <a class="btn primary" href={`${base}01-quickstart/`}>Quickstart</a>
-      <a class="btn ghost" href={`${base}overview/`}>Read the docs</a>
+      <a class="btn ghost" href={`${base}01-quickstart/`}>Read the docs</a>
       <a class="btn ghost" href={repo}>Source on GitHub</a>
       <a class="btn ghost" href={`${base}parity/`}>The parity map</a>
     </div>
@@ -251,7 +251,11 @@ footer a{text-decoration:none}
     <h2>How it fits together</h2>
     <p class="lede">One Go binary is the control plane and OneLake. The engines beside it are
       real, unmodified software: Sail for Spark, SQL Server for T-SQL, Microsoft's own Kusto
-      container for KQL, Apache Kafka for Eventstream. No client knows it is not Fabric.</p>
+      container for KQL, Apache Kafka for Eventstream. No client knows it is not Fabric.{' '}
+      <a href={`${base}03-architecture/`}>Architecture</a> takes the same picture apart — the
+      emulator family, how a token is accepted, and the long-running-operation engine — and{' '}
+      <a href={`${base}14-real-compute/`}>real compute</a> separates what genuinely executes from
+      what is still only a contract.</p>
     <figure>
       <svg viewBox="0 0 940 380" width="100%" role="img" aria-label="Architecture: Microsoft's own clients authenticate against entra-emulator, then call the fabric-emulator binary, which serves the control plane, OneLake and the Livy and TDS front doors, and dispatches work to Sail, SQL Server, Kusto and Kafka.">
         <rect class="bx" x="8" y="120" width="150" height="112" rx="10"/>
@@ -425,6 +429,10 @@ footer a{text-decoration:none}
         <a href={`${base}parity-history/`}>history</a> shows how every row moved release by
         release, and <a href={`${base}38-framework-conformance/`}>ecosystem conformance</a>{' '}
         lists the real clients driving it in CI.</p>
+      <p class="lede">To drive the checks yourself: <a href={`${base}10-testing/`}>testing</a>{' '}
+        freezes the clock, injects faults and forces LRO outcomes, and{' '}
+        <a href={`${base}11-testing-with-fabric-cicd/`}>testing with fabric-cicd</a> runs
+        Microsoft's own deployment tool against a local tenant.</p>
     </div>
   </div>
 </section>
@@ -467,7 +475,10 @@ go install {`github.com/calvinchengx/fabric-emulator/cmd/fabric-emulator@latest`
 docker pull ghcr.io/calvinchengx/fabric-emulator:latest</code></pre>
     <p class="lede" style="margin-top:24px">Every option, including the archives and the compose
       files, is in <a href={`${base}02-installation/`}>installation</a>. What each running mode
-      costs in memory and startup time is in <a href={`${base}27-running-modes/`}>running modes</a>.</p>
+      costs in memory and startup time is in <a href={`${base}27-running-modes/`}>running modes</a>.{' '}
+      <a href={`${base}04-configuration/`}>Configuration</a> lists every setting, and{' '}
+      <a href={`${base}05-tls-and-hosts/`}>TLS and hosts</a> covers the certificate and the
+      hostnames clients resolve.</p>
   </div>
 </section>
 
@@ -498,7 +509,7 @@ docker compose up          # or: make up, which adds OpenMetadata and Airflow</c
     <p>Third-party engines and clients are used as published and never modified. Where one has a
       bug, it is logged upstream and routed around rather than patched here, so what passes
       locally is what passes against the real thing.</p>
-    <p><a href={`${base}overview/`}>Documentation</a> ·
+    <p><a href={`${base}01-quickstart/`}>Documentation</a> ·
       <a href={`${base}parity/`}>Parity map</a> ·
       <a href={`${base}13-roadmap/`}>Roadmap</a> ·
       <a href="https://calvinchengx.github.io/entra-emulator/">entra-emulator</a> ·

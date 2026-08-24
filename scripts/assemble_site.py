@@ -54,7 +54,14 @@ BASE = "/fabric-emulator/docs/"
 # and now serves the landing page. It is deliberately absent from the oracle
 # below: it does not 404, it shows a different page, which is the point of the
 # change.
-ALIASES: dict[str, str] = {}
+# Old published routes with no doc behind them any more. The empty target
+# means the docs root.
+#
+# `overview` was the docs site's second home until the docs root absorbed it.
+# published-routes.txt records that the route was served, and the oracle below
+# fails the build if a published route would 404 — so it is redirected rather
+# than dropped.
+ALIASES: dict[str, str] = {"overview": ""}
 
 STUB = """<!doctype html>
 <html lang="en">

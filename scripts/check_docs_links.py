@@ -51,19 +51,20 @@ SIDEBAR_SLUG = re.compile(r"slug:\s*'([^']+)'")
 # checker then reported a page that was fine and exempted one that no longer
 # existed, both silently. Derived from the generator instead, so it cannot
 # disagree with what is actually written.
-_SYNTHESIZED = re.compile(r"writeFileSync\(join\(OUT, '([a-z0-9-]+)\.md'\)")
 
 
-def synthesized() -> set[str]:
-    if not SYNC_DOCS.exists():
-        raise SystemExit(f"docs-links: {SYNC_DOCS} not found; cannot derive the synthesized set")
-    found = set(_SYNTHESIZED.findall(SYNC_DOCS.read_text()))
-    if not found:
-        raise SystemExit(
-            f"docs-links: {SYNC_DOCS} synthesizes no page by literal name any more. If that is "
-            "deliberate, remove this derivation; do not leave it matching nothing."
-        )
-    return found
+# NO SYNTHESIZED SET ANY MORE, and its own error message asked for this:
+# "If that is deliberate, remove this derivation; do not leave it matching
+# nothing."
+#
+# sync-docs.mjs used to write one page with no file behind it -- the docs
+# overview -- so a sidebar entry for it had to be exempted from the
+# has-a-page check. The docs root absorbed that page, nothing is synthesized
+# by literal name, and an exemption matching nothing is worse than none: it
+# would pass whatever a future sidebar listed.
+#
+# A page generated in FAMILIES rather than by name is still covered, by the
+# parity-versions rule just below.
 
 # Routes the site GENERATES rather than reads from docs/. `parity-versions.mjs`
 # writes a `parity-history/` index, a `parity-history/changelog`, and one page
@@ -112,11 +113,8 @@ def problems() -> list[str]:
         return found
 
     slugs = set(SIDEBAR_SLUG.findall(CONFIG.read_text()))
-    exempt = synthesized()
     generated = PARITY_VERSIONS.exists()
     for slug in sorted(slugs):
-        if slug in exempt:
-            continue
         if generated and (slug == GENERATED_PREFIX or slug.startswith(GENERATED_PREFIX + "/")):
             continue
         if not (DOCS / f"{slug}.md").exists():
@@ -124,7 +122,7 @@ def problems() -> list[str]:
 
     published = [p for p in sorted(DOCS.glob("*.md")) if published_re.match(p.name)]
     for page in published:
-        if page.stem in exempt or page.stem in slugs:
+        if page.stem in slugs:
             continue
         found.append(f"{page.name} is not in the sidebar, so nothing on the site links to it")
 
