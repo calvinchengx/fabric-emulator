@@ -13,6 +13,7 @@ WHAT IS UNDER TEST is the shim's own logic — path resolution, URL shape, the
 Host header the emulator routes on, ranged reads, the create/append/flush write
 dance. Not whether OneLake answers; that is the e2e's job and it keeps it.
 """
+import json
 import pathlib
 import sys
 
@@ -685,59 +686,140 @@ def test_session_outside_a_notebook_says_so(http, monkeypatch):
 
 
 UDF_ITEM = {"id": "33333333-3333-3333-3333-333333333333", "displayName": "Validators"}
-UDF_FUNCS = [{"Name": "validate", "Parameters": [{"Name": "schema"}, {"Name": "path"}]}]
+
+# The documented definition parts, verbatim in shape:
+# rest/api/fabric/articles/item-management/definitions/user-data-function-definition
+UDF_SCRIPT = """
+import fabric.functions as fn
+
+udf = fn.UserDataFunctions()
+
+@udf.function()
+def validate(schema: str, path: str = "default.csv") -> str:
+    return f"{schema}:{path}"
+"""
+
+UDF_DEFINITION = {
+    "runtime": "PYTHON",
+    "connectedDataSources": [
+        {"alias": "lh1", "artifactType": "Lakehouse", "artifactId": "a-lake"},
+    ],
+    "functions": [{"name": "validate", "description": "checks a schema"}],
+}
+
+UDF_METADATA = {
+    "runtime": "PYTHON",
+    "functionsMetadata": [{
+        "name": "validate",
+        "scriptFile": "function_app.py",
+        "bindings": [
+            {"type": "HttpTrigger", "name": "req", "direction": "In"},
+            {"type": "FabricItem", "alias": "lh1", "name": "myLakehouse",
+             "direction": "In"},
+        ],
+        "fabricProperties": {
+            "fabricFunctionParameters": [{"name": "schema", "dataType": "str"},
+                                         {"name": "path", "dataType": "str"}],
+            "fabricFunctionReturnType": "str",
+        },
+    }],
+}
 
 
-def test_getFunctions_returns_callables_named_by_the_item(http):
+def _b64(text):
+    import base64
+    return base64.b64encode(text.encode()).decode()
+
+
+def _udf_definition_response():
+    return {"definition": {"parts": [
+        {"path": "definition.json", "payload": _b64(json.dumps(UDF_DEFINITION))},
+        {"path": "resources/functions.json", "payload": _b64(json.dumps(UDF_METADATA))},
+        {"path": "function_app.py", "payload": _b64(UDF_SCRIPT)},
+    ]}}
+
+
+def _load_udf(http):
     http.push({"value": [UDF_ITEM]})
-    http.push({"value": UDF_FUNCS})
-    fns = udf.getFunctions("Validators")
-    http.push({"result": "ok"})
-    assert fns.validate(schema="s", path="p") == {"result": "ok"}
-    assert http.last()["url"].endswith("/functions/validate/invoke")
-    assert http.last()["body"] == {"parameters": {"schema": "s", "path": "p"}}
+    http.push(_udf_definition_response())
+    return udf.getFunctions("Validators")
+
+
+def test_getFunctions_reads_the_items_real_definition(http):
+    """Not an invoke endpoint that does not exist — the item's DEFINITION is
+    the documented source of its functions."""
+    fns = _load_udf(http)
+    assert http.calls[-1]["url"].endswith("/getDefinition")
+    assert [f["Name"] for f in fns.functionDetails] == ["validate"]
+
+
+def test_a_function_runs_its_own_code(http):
+    """The item's real `function_app.py`, executed. A shim that returned a
+    placeholder would be a plausible success — the exact failure mode
+    `loadTable` refuses rather than commit."""
+    fns = _load_udf(http)
+    assert fns.validate(schema="sales", path="a.csv") == "sales:a.csv"
 
 
 def test_positional_arguments_are_matched_to_the_declared_order(http):
-    """Scala and R can only pass positional, so the item's own signature is
-    what resolves them."""
-    http.push({"value": [UDF_ITEM]})
-    http.push({"value": UDF_FUNCS})
-    fns = udf.getFunctions("Validators")
-    http.push({})
-    fns.validate("sales", "Files/a.csv")
-    assert http.last()["body"]["parameters"] == {"schema": "sales", "path": "Files/a.csv"}
+    """Scala and R can only pass positional, so the item's own parameter list
+    is what resolves them."""
+    fns = _load_udf(http)
+    assert fns.validate("sales", "a.csv") == "sales:a.csv"
 
 
-def test_omitting_an_optional_parameter_is_a_legal_call(http):
+def test_omitting_a_defaulted_parameter_is_a_legal_call(http):
     """The page documents that a parameter with a default may be omitted, so
     fewer args than declared is a legal call, not a length mismatch."""
+    fns = _load_udf(http)
+    assert fns.validate("sales") == "sales:default.csv"
+
+
+def test_function_details_carry_parameters_return_type_and_connections(http):
+    """Fabric documents all four, and its own examples read them to decide
+    whether to call at all."""
+    fns = _load_udf(http)
+    detail = fns.functionDetails[0]
+    assert [p["name"] for p in detail["Parameters"]] == ["schema", "path"]
+    assert detail["FunctionReturnType"] == "str"
+    assert detail["Description"] == "checks a schema"
+    assert detail["DataSourceConnections"][0]["artifactType"] == "Lakehouse"
+
+
+def test_item_details_carry_the_documented_keys(http):
+    fns = _load_udf(http)
+    assert fns.itemDetails["Name"] == "Validators"
+    assert fns.itemDetails["Id"] == UDF_ITEM["id"]
+    assert "WorkspaceId" in fns.itemDetails
+
+
+def test_the_registration_decorators_are_honoured_not_faked(http):
+    """`@udf.function()` and `@udf.connection(...)` are REGISTRATION on Fabric,
+    not behaviour — returning the function unchanged is a faithful stand-in.
+    If the stub dropped the decorated function, this call would not resolve."""
+    fns = _load_udf(http)
+    assert callable(fns.validate)
+
+
+def test_a_function_declared_but_not_implemented_says_which(http):
+    """definition.json can name a function `function_app.py` never defines —
+    the docs say so explicitly ("you must implement them here")."""
     http.push({"value": [UDF_ITEM]})
-    http.push({"value": UDF_FUNCS})
+    resp = _udf_definition_response()
+    resp["definition"]["parts"][0]["payload"] = _b64(json.dumps({
+        "functions": [{"name": "ghost", "description": ""}]}))
+    http.push(resp)
     fns = udf.getFunctions("Validators")
-    http.push({})
-    fns.validate("sales")
-    assert http.last()["body"]["parameters"] == {"schema": "sales"}
+    with pytest.raises(AttributeError, match=r"function_app\.py defines no such function"):
+        fns.ghost()
 
 
 def test_a_function_the_item_does_not_have_names_the_ones_it_does(http):
     """Fabric's own example checks `functionDetails` before invoking; the error
-    should tell you the same thing that check would have."""
-    http.push({"value": [UDF_ITEM]})
-    http.push({"value": UDF_FUNCS})
-    fns = udf.getFunctions("Validators")
+    should tell you what that check would have."""
+    fns = _load_udf(http)
     with pytest.raises(AttributeError, match="validate"):
         fns.noSuchFunction()
-
-
-def test_item_and_function_details_are_readable(http):
-    """A shim returning a bare callable would break the `functionDetails` guard
-    Fabric's examples recommend."""
-    http.push({"value": [UDF_ITEM]})
-    http.push({"value": UDF_FUNCS})
-    fns = udf.getFunctions("Validators")
-    assert fns.itemDetails["Name"] == "Validators"
-    assert [f["Name"] for f in fns.functionDetails] == ["validate"]
 
 
 def test_an_unknown_udf_item_is_named_in_the_error(http):
@@ -746,7 +828,111 @@ def test_an_unknown_udf_item_is_named_in_the_error(http):
         udf.getFunctions("Missing")
 
 
-# --- the remaining branches ---------------------------------------------------
+def test_a_udf_object_says_what_it_holds(http):
+    fns = _load_udf(http)
+    assert "Validators" in repr(fns) and "1 function" in repr(fns)
+
+
+def test_running_a_udf_does_not_leave_fabric_functions_installed(http):
+    """The stub is scoped to the call. Leaving `fabric.functions` in
+    sys.modules would let a notebook's own `import fabric.functions` silently
+    resolve to a stand-in that does nothing."""
+    import sys
+    before = sys.modules.get("fabric.functions")
+    fns = _load_udf(http)
+    fns.validate("s")
+    assert sys.modules.get("fabric.functions") is before
+
+
+def test_mkdirs_creates_a_directory_resource(http):
+    fs.mkdirs("Files/new/deep")
+    assert http.last()["url"].endswith("?resource=directory")
+    assert http.last()["method"] == "PUT"
+
+
+def test_a_scope_that_is_already_a_scope_is_not_suffixed_twice():
+    """`storage` becomes `https://storage.azure.com/.default`; a caller who
+    passed the full scope must not get `/.default/.default`."""
+    assert credentials._scope("https://vault.azure.net/.default").endswith("/.default")
+    assert credentials._scope("https://vault.azure.net/.default").count("/.default") == 1
+
+
+def test_a_vault_passed_as_a_full_url_is_used_as_given(monkeypatch):
+    """Fabric's own examples pass `https://<name>.vault.azure.net/`, and a
+    shim that appended the DNS suffix to that would build a nonsense host."""
+    no_override = type("C", (), {"vault_url": None})()
+    monkeypatch.setattr(credentials, "config", lambda: no_override)
+    assert credentials._vault_url("https://mine.vault.azure.net/") == \
+        "https://mine.vault.azure.net"
+    assert credentials._vault_url("mine") == "https://mine.vault.azure.net"
+
+
+def test_a_connection_decorated_function_is_still_registered(http):
+    """`@udf.connection(...)` wraps `@udf.function()`. If the stub's
+    `connection` dropped the function, a lakehouse-bound UDF would vanish from
+    the item — the shape most real UDFs have."""
+    http.push({"value": [UDF_ITEM]})
+    resp = _udf_definition_response()
+    resp["definition"]["parts"][2]["payload"] = _b64('''
+import fabric.functions as fn
+udf = fn.UserDataFunctions()
+
+@udf.connection(argName="myLakehouse", alias="lh1")
+@udf.function()
+def validate(schema: str, path: str = "d.csv") -> str:
+    return "bound:" + schema
+''')
+    http.push(resp)
+    fns = udf.getFunctions("Validators")
+    assert fns.validate("sales") == "bound:sales"
+
+
+def test_a_definition_missing_a_part_does_not_crash_the_read(http):
+    """An item with no metadata part still lists its functions — the parts are
+    documented as separately required, and a missing one should narrow what is
+    known, not fail the read."""
+    http.push({"value": [UDF_ITEM]})
+    http.push({"definition": {"parts": [
+        {"path": "definition.json", "payload": _b64(json.dumps(UDF_DEFINITION))},
+        {"path": "function_app.py", "payload": _b64(UDF_SCRIPT)},
+    ]}})
+    fns = udf.getFunctions("Validators")
+    assert fns.functionDetails[0]["Parameters"] == []
+    assert fns.validate(schema="s", path="p") == "s:p"
+
+
+def test_udf_restores_a_real_fabric_functions_module_if_one_was_installed(http, monkeypatch):
+    """A caller that genuinely has `fabric.functions` installed must get theirs
+    back — the stub is borrowed for the call, not substituted for the process."""
+    import sys
+    import types
+    real = types.ModuleType("fabric.functions")
+    monkeypatch.setitem(sys.modules, "fabric.functions", real)
+    fns = _load_udf(http)
+    fns.validate("s")
+    assert sys.modules["fabric.functions"] is real
+
+
+def test_a_missing_workspace_is_named_rather_than_guessed(monkeypatch):
+    """Every module that can default a workspace says so when it cannot —
+    rather than building a URL with an empty segment and failing at the far
+    end, where the cause is no longer visible."""
+    empty = type("C", (), {"workspace_id": None, "lakehouse_id": None})()
+    monkeypatch.setattr(lakehouse, "config", lambda: empty)
+    monkeypatch.setattr(udf, "config", lambda: empty)
+    with pytest.raises(RuntimeError, match="no workspace"):
+        lakehouse.list()
+    with pytest.raises(RuntimeError, match="no workspace"):
+        udf.getFunctions("anything")
+
+
+def test_no_name_and_no_attached_lakehouse_says_which_is_missing(http, monkeypatch):
+    no_lake = type("C", (), {"workspace_id": WS, "lakehouse_id": None,
+                             "fabric_url": "https://localhost:9443"})()
+    monkeypatch.setattr(lakehouse, "config", lambda: no_lake)
+    monkeypatch.delenv("NOTEBOOKUTILS_LAKEHOUSE_ID", raising=False)
+    with pytest.raises(RuntimeError, match="no default lakehouse is attached"):
+        lakehouse.get()
 
 
 def test_rm_of_a_directory_is_recursive_only_when_asked(http):
@@ -802,13 +988,6 @@ def test_mount_entries_and_tables_are_readable_at_a_glance():
     assert "events" in repr(t) and "delta" in repr(t)
 
 
-def test_a_udf_object_says_what_it_holds(http):
-    http.push({"value": [UDF_ITEM]})
-    http.push({"value": UDF_FUNCS})
-    fns = udf.getFunctions("Validators")
-    assert "Validators" in repr(fns) and "1 function" in repr(fns)
-
-
 def test_materialise_recurses_into_subdirectories(
         http, monkeypatch, clean_mounts, tmp_path):
     tree = {
@@ -828,46 +1007,3 @@ def test_getWithProperties_is_a_read_of_the_same_item(http):
     because Fabric documents the two as different reads."""
     http.push({"id": LH, "properties": {"sqlEndpointProperties": {}}})
     assert lakehouse.getWithProperties(LH)["id"] == LH
-
-
-def test_a_missing_workspace_is_named_rather_than_guessed(monkeypatch):
-    """Every module that can default a workspace says so when it cannot."""
-    empty = type("C", (), {"workspace_id": None, "lakehouse_id": None})()
-    monkeypatch.setattr(lakehouse, "config", lambda: empty)
-    monkeypatch.setattr(udf, "config", lambda: empty)
-    with pytest.raises(RuntimeError, match="no workspace"):
-        lakehouse.list()
-    with pytest.raises(RuntimeError, match="no workspace"):
-        udf.getFunctions("anything")
-
-
-def test_no_name_and_no_attached_lakehouse_says_which_is_missing(http, monkeypatch):
-    no_lake = type("C", (), {"workspace_id": WS, "lakehouse_id": None,
-                             "fabric_url": "https://localhost:9443"})()
-    monkeypatch.setattr(lakehouse, "config", lambda: no_lake)
-    monkeypatch.delenv("NOTEBOOKUTILS_LAKEHOUSE_ID", raising=False)
-    with pytest.raises(RuntimeError, match="no default lakehouse is attached"):
-        lakehouse.get()
-
-
-def test_mkdirs_creates_a_directory_resource(http):
-    fs.mkdirs("Files/new/deep")
-    assert http.last()["url"].endswith("?resource=directory")
-    assert http.last()["method"] == "PUT"
-
-
-def test_a_scope_that_is_already_a_scope_is_not_suffixed_twice():
-    """`storage` becomes `https://storage.azure.com/.default`; a caller who
-    passed the full scope must not get `/.default/.default`."""
-    assert credentials._scope("https://vault.azure.net/.default").endswith("/.default")
-    assert credentials._scope("https://vault.azure.net/.default").count("/.default") == 1
-
-
-def test_a_vault_passed_as_a_full_url_is_used_as_given(monkeypatch):
-    """Fabric's own examples pass `https://<name>.vault.azure.net/`, and a
-    shim that appended the DNS suffix to that would build a nonsense host."""
-    no_override = type("C", (), {"vault_url": None})()
-    monkeypatch.setattr(credentials, "config", lambda: no_override)
-    assert credentials._vault_url("https://mine.vault.azure.net/") == \
-        "https://mine.vault.azure.net"
-    assert credentials._vault_url("mine") == "https://mine.vault.azure.net"

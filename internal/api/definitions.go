@@ -130,6 +130,16 @@ var typedCollections = map[string]string{
 	// reference page rather than generated.
 	"GraphQLApis":       "GraphQLApi",
 	"variableLibraries": "VariableLibrary",
+	// UserDataFunction had the item TYPE and no collection, so
+	// `notebookutils.udf.getFunctions` — which must read the item's
+	// definition to find its functions at all — had nothing to call. The
+	// segment is `userDataFunctions`, taken from the REST reference's own
+	// URLs rather than derived: `GET /v1/workspaces/{workspaceId}/
+	// userDataFunctions/{userDataFunctionId}` and the matching
+	// `.../getDefinition` (rest/api/fabric/userdatafunction/items, read
+	// 2026-08-24). Note the docs PATH is singular while the URL segment is
+	// plural — one more reason this map is cited and not generated.
+	"userDataFunctions": "UserDataFunction",
 }
 
 // collectionSpellings returns the path segments a real client may send for a
