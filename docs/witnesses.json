@@ -1,7 +1,7 @@
 {
   "row-level-security-t-sql-create-security-policy-filter-predicate": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "Row-level security (T-SQL) \u2014 CREATE SECURITY POLICY \u2026 FILTER PREDICATE",
+    "claim": "Row-level security (T-SQL) — CREATE SECURITY POLICY … FILTER PREDICATE",
     "witnesses": [
       "ci:warehouse-tds",
       "go:TestRelayEnforcesRowLevelSecurity",
@@ -10,7 +10,7 @@
   },
   "column-level-security-t-sql-grant-select-on-t-col": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "Column-level security (T-SQL) \u2014 GRANT SELECT ON t(col)",
+    "claim": "Column-level security (T-SQL) — GRANT SELECT ON t(col)",
     "witnesses": [
       "ci:warehouse-tds",
       "go:TestRelayEnforcesColumnLevelSecurity"
@@ -18,7 +18,7 @@
   },
   "dynamic-data-masking-alter-table-masked-with": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "Dynamic data masking \u2014 ALTER TABLE \u2026 MASKED WITH",
+    "claim": "Dynamic data masking — ALTER TABLE … MASKED WITH",
     "witnesses": [
       "ci:warehouse-tds",
       "go:TestRelayEnforcesDynamicDataMasking"
@@ -26,7 +26,7 @@
   },
   "abfss-onelake-dfs-fabric-microsoft-com-production-paths": {
     "section": "Data Engineering (`data-engineering/`)",
-    "claim": "`abfss://\u2026@onelake.dfs.fabric.microsoft.com/\u2026` production paths",
+    "claim": "`abfss://…@onelake.dfs.fabric.microsoft.com/…` production paths",
     "witnesses": [
       "ci:sail"
     ]
@@ -61,7 +61,7 @@
   },
   "adls-gen2-dfs-surface-create-append-flush-ranged-read-list": {
     "section": "OneLake (`onelake/`)",
-    "claim": "ADLS Gen2 DFS surface (create \u2192 append \u2192 flush, ranged read, list)",
+    "claim": "ADLS Gen2 DFS surface (create → append → flush, ranged read, list)",
     "witnesses": [
       "ci:adls-sdk",
       "ci:azcopy"
@@ -92,7 +92,7 @@
   },
   "capacity-tenant-setting-overrides-get-v1-admin-capacities-delegatedtenantsettingoverrides-post-capacityid-delegatedtenantsettingoverrides-name-update": {
     "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Capacity tenant-setting overrides** (`GET /v1/admin/capacities/delegatedTenantSettingOverrides`, `POST \u2026/{capacityId}/delegatedTenantSettingOverrides/{name}/update`)",
+    "claim": "**Capacity tenant-setting overrides** (`GET /v1/admin/capacities/delegatedTenantSettingOverrides`, `POST …/{capacityId}/delegatedTenantSettingOverrides/{name}/update`)",
     "witnesses": [
       "ci:az-rest",
       "go:TestCapacityOverridesRoundTrip",
@@ -132,7 +132,7 @@
       "go:TestCheckStrictCorpus",
       "go:TestStrictCorpusCoversEveryFeature",
       "go:TestStrictModeGatesClassBConstructs",
-      "boundary:indexed ('materialized') views and FOR JSON in a subquery are not enforced \u2014 a lexer cannot see them (docs/29-tsql-parity.md, T7)"
+      "boundary:indexed ('materialized') views and FOR JSON in a subquery are not enforced — a lexer cannot see them (docs/29-tsql-parity.md, T7)"
     ]
   },
   "concurrent-delta-overwrite-writers": {
@@ -153,14 +153,14 @@
   },
   "copy-activity-onelake-onelake": {
     "section": "Data Factory (`data-factory/`)",
-    "claim": "Copy activity \u2014 **OneLake \u2192 OneLake**",
+    "claim": "Copy activity — **OneLake → OneLake**",
     "witnesses": [
       "ci:medallion",
       "go:TestPipelineCopyActivityRealBytes",
       "go:TestPipelineCopyDirectory",
       "go:TestPipelineCopyByName"
     ],
-    "note": "ci:medallion runs examples/medallion-pyspark, whose bronze pipeline Copy moves CSV in Files/ into Tables/bronze_customers and asserts rowsCopied plus the table contents \u2014 OneLake to OneLake, driven by the example rather than a Go client."
+    "note": "ci:medallion runs examples/medallion-pyspark, whose bronze pipeline Copy moves CSV in Files/ into Tables/bronze_customers and asserts rowsCopied plus the table contents — OneLake to OneLake, driven by the example rather than a Go client."
   },
   "createdataframe-localrows": {
     "section": "Data Engineering (`data-engineering/`)",
@@ -171,7 +171,7 @@
   },
   "ctas-create-table-as-select": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**CTAS** (`CREATE TABLE \u2026 AS SELECT`)",
+    "claim": "**CTAS** (`CREATE TABLE … AS SELECT`)",
     "witnesses": [
       "ci:medallion",
       "go:TestRewriteCTASCorpus",
@@ -192,7 +192,7 @@
   },
   "data-science-ml-models-experiments-mlflow-data-science": {
     "section": "Item types present, engine absent",
-    "claim": "Data Science \u2014 ML models / experiments / MLflow (`data-science/`)",
+    "claim": "Data Science — ML models / experiments / MLflow (`data-science/`)",
     "witnesses": [
       "ci:data-science-loop",
       "go:TestMLflowProxyContract"
@@ -215,7 +215,7 @@
   },
   "deployment-pipelines-model-assignment-item-pairing-deploy-stage-content-d0-d2": {
     "section": "CI/CD (`cicd/`)",
-    "claim": "Deployment pipelines \u2014 model, assignment, **item pairing**, **Deploy Stage Content** (D0\u2013D2)",
+    "claim": "Deployment pipelines — model, assignment, **item pairing**, **Deploy Stage Content** (D0–D2)",
     "witnesses": [
       "ci:deployment-pipelines-ps",
       "go:TestDeploymentPipelineRoleAssignments"
@@ -223,7 +223,7 @@
   },
   "deployment-pipelines-role-assignment-crud-d3": {
     "section": "CI/CD (`cicd/`)",
-    "claim": "Deployment pipelines \u2014 role-assignment CRUD (D3)",
+    "claim": "Deployment pipelines — role-assignment CRUD (D3)",
     "witnesses": [
       "ci:deployment-pipelines-ps",
       "go:TestDeploymentPipelineRoleAssignments"
@@ -239,7 +239,7 @@
   },
   "event-triggers-reflex-data-activator-on-onelake-events": {
     "section": "Item types present, engine absent",
-    "claim": "**Event triggers** \u2014 `Reflex` (Data Activator) on OneLake events",
+    "claim": "**Event triggers** — `Reflex` (Data Activator) on OneLake events",
     "witnesses": [
       "go:TestEventTriggerFiresFromARealOneLakeUpload",
       "go:TestOneLakeWriteFiresTheTriggeredPipeline",
@@ -256,7 +256,7 @@
   },
   "real-time-intelligence-eventhouse-kql-database-real-time-intelligence": {
     "section": "Item types present, engine absent",
-    "claim": "Real-Time Intelligence \u2014 Eventhouse / KQL Database (`real-time-intelligence/`)",
+    "claim": "Real-Time Intelligence — Eventhouse / KQL Database (`real-time-intelligence/`)",
     "witnesses": [
       "ci:rti",
       "go:TestKustoWithoutEngineIs501",
@@ -265,7 +265,7 @@
   },
   "real-time-intelligence-eventstream-real-time-intelligence-event-streams": {
     "section": "Item types present, engine absent",
-    "claim": "Real-Time Intelligence \u2014 Eventstream (`real-time-intelligence/event-streams/`)",
+    "claim": "Real-Time Intelligence — Eventstream (`real-time-intelligence/event-streams/`)",
     "witnesses": [
       "ci:eventstream-sail",
       "ci:spark-jvm",
@@ -293,7 +293,7 @@
   },
   "eventstream-lakehouse-destination": {
     "section": "Item types present, engine absent",
-    "claim": "Eventstream \u2014 Lakehouse destination",
+    "claim": "Eventstream — Lakehouse destination",
     "witnesses": [
       "ci:eventstream-sail",
       "go:TestEventstreamDestinationRefusesByName",
@@ -311,7 +311,7 @@
   },
   "eventstream-reflex-destination": {
     "section": "Item types present, engine absent",
-    "claim": "Eventstream \u2014 Reflex destination",
+    "claim": "Eventstream — Reflex destination",
     "witnesses": [
       "ci:eventstream-sail",
       "go:TestEventstreamBindReflexDestination",
@@ -340,7 +340,7 @@
   },
   "eventstream-eventhouse-destination": {
     "section": "Item types present, engine absent",
-    "claim": "Eventstream \u2014 Eventhouse destination",
+    "claim": "Eventstream — Eventhouse destination",
     "witnesses": [
       "go:TestEventstreamBindEventhouseDestination",
       "go:TestEventstreamBindEventhouseValidation",
@@ -359,12 +359,12 @@
       "go:TestEventstreamDrainEventhouseNoopAndClosed",
       "go:TestEventstreamKustoMgmtAndIngest",
       "go:TestEventstreamDestinationRefusesByName",
-      "boundary:same as eventstream-operators \u2014 the destination binding has no public client. The INGEST half is separately witnessed against real Kusto (kustainer) in the ADX command activity work; what stays own-only is the eventstream-to-eventhouse binding, not the KQL (docs/24-parity-completion.md)"
+      "boundary:same as eventstream-operators — the destination binding has no public client. The INGEST half is separately witnessed against real Kusto (kustainer) in the ADX command activity work; what stays own-only is the eventstream-to-eventhouse binding, not the KQL (docs/24-parity-completion.md)"
     ]
   },
   "eventstream-operators": {
     "section": "Item types present, engine absent",
-    "claim": "Eventstream \u2014 operators",
+    "claim": "Eventstream — operators",
     "witnesses": [
       "go:TestEventstreamFilterDropsNonMatching",
       "go:TestEventstreamFilterOps",
@@ -379,7 +379,7 @@
       "go:TestEventstreamStoredOperatorFailsOnProduce",
       "go:TestEventstreamLoadPersistOperators",
       "go:TestEventstreamOperatorHelpers",
-      "boundary:no packaged third-party client speaks this surface \u2014 filter/groupBy/window operators are bound through Fabric's own portal and the internal Eventstream authoring API, and no released SDK or CLI exposes them, so a ci: witness cannot exist rather than not existing yet (docs/24-parity-completion.md)"
+      "boundary:no packaged third-party client speaks this surface — filter/groupBy/window operators are bound through Fabric's own portal and the internal Eventstream authoring API, and no released SDK or CLI exposes them, so a ci: witness cannot exist rather than not existing yet (docs/24-parity-completion.md)"
     ]
   },
   "fabric-cicd-tool-publishing": {
@@ -403,7 +403,7 @@
   },
   "fabric-sql-database-database-oltp-onelake-mirror": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**Fabric SQL Database (`database/`)** \u2014 OLTP + OneLake mirror",
+    "claim": "**Fabric SQL Database (`database/`)** — OLTP + OneLake mirror",
     "witnesses": [
       "ci:warehouse-tds",
       "sdk:TestSQLDatabaseMirror"
@@ -431,7 +431,7 @@
   },
   "getmetadata-activity-onelake-path": {
     "section": "Data Factory (`data-factory/`)",
-    "claim": "GetMetadata activity \u2014 **OneLake path**",
+    "claim": "GetMetadata activity — **OneLake path**",
     "witnesses": [
       "go:TestPipelineGetMetadataFile",
       "go:TestPipelineGetMetadataDir",
@@ -493,7 +493,7 @@
   },
   "item-job-scheduler-items-id-jobs-jobtype-schedules": {
     "section": "Platform / fundamentals",
-    "claim": "**Item Job Scheduler** (`\u2026/items/{id}/jobs/{jobType}/schedules`)",
+    "claim": "**Item Job Scheduler** (`…/items/{id}/jobs/{jobType}/schedules`)",
     "witnesses": [
       "ci:az-rest",
       "go:TestJobSchedulerAPIEndToEnd",
@@ -536,7 +536,7 @@
   },
   "lakehouse-sql-analytics-endpoint-delta-engine": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**Lakehouse SQL analytics endpoint \u2014 Delta \u2192 engine**",
+    "claim": "**Lakehouse SQL analytics endpoint — Delta → engine**",
     "witnesses": [
       "ci:warehouse-tds",
       "sdk:TestWarehouseDeltaReflectionE2E",
@@ -552,7 +552,7 @@
   },
   "list-item-job-instances-get-jobs-instances": {
     "section": "Platform / fundamentals",
-    "claim": "**List Item Job Instances** (`GET \u2026/jobs/instances`)",
+    "claim": "**List Item Job Instances** (`GET …/jobs/instances`)",
     "witnesses": [
       "ci:az-rest",
       "go:TestListItemJobInstances",
@@ -582,7 +582,7 @@
   },
   "lookup-activity-onelake-csv-json-parquet-delta": {
     "section": "Data Factory (`data-factory/`)",
-    "claim": "Lookup activity \u2014 **OneLake CSV/JSON/Parquet/Delta**",
+    "claim": "Lookup activity — **OneLake CSV/JSON/Parquet/Delta**",
     "witnesses": [
       "go:TestLookupFormat",
       "ci:pipeline-activities"
@@ -599,7 +599,7 @@
   },
   "mirroring-mirrored-database-mirroring": {
     "section": "Item types present, engine absent",
-    "claim": "Mirroring \u2014 Mirrored Database (`mirroring/`)",
+    "claim": "Mirroring — Mirrored Database (`mirroring/`)",
     "witnesses": [
       "ci:warehouse-tds",
       "sdk:TestRefreshMirroredDatabaseE2E",
@@ -608,7 +608,7 @@
   },
   "nested-ctes-with-x-as-with-y-as": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**Nested CTEs** (`WITH x AS (WITH y AS \u2026)`)",
+    "claim": "**Nested CTEs** (`WITH x AS (WITH y AS …)`)",
     "witnesses": [
       "ci:medallion",
       "go:TestGoldenCorpus",
@@ -643,7 +643,7 @@
   },
   "notebookutils-notebook-run-exit-values": {
     "section": "Data Engineering (`data-engineering/`)",
-    "claim": "`notebookutils.notebook.run` \u2014 exit values",
+    "claim": "`notebookutils.notebook.run` — exit values",
     "witnesses": [
       "py:test_notebook_run",
       "ci:notebookutils"
@@ -651,15 +651,15 @@
   },
   "notebookutils-notebook-run-exit-values-over-rest": {
     "section": "Data Engineering (`data-engineering/`)",
-    "claim": "**`notebookutils.notebook.run` \u2014 exit values OVER REST**",
+    "claim": "**`notebookutils.notebook.run` — exit values OVER REST**",
     "witnesses": [
       "py:test_notebook_run",
-      "boundary:real Fabric 404s this path, so no third-party client can exercise it BY CONSTRUCTION \u2014 the row is a shim convenience the service does not offer, and the in-notebook contract it shadows is the row above, which is green on its own evidence (docs/24-parity-completion.md)"
+      "boundary:real Fabric 404s this path, so no third-party client can exercise it BY CONSTRUCTION — the row is a shim convenience the service does not offer, and the in-notebook contract it shadows is the row above, which is green on its own evidence (docs/24-parity-completion.md)"
     ]
   },
   "notebookutils-notebook-runmultiple-dag-structure-and-ordering": {
     "section": "Data Engineering (`data-engineering/`)",
-    "claim": "`notebookutils.notebook.runMultiple` \u2014 DAG structure and ordering",
+    "claim": "`notebookutils.notebook.runMultiple` — DAG structure and ordering",
     "witnesses": [
       "py:test_notebook_run_multiple",
       "ci:notebookutils"
@@ -674,7 +674,7 @@
   },
   "per-activity-policy-retry-backoff-timeout": {
     "section": "Data Factory (`data-factory/`)",
-    "claim": "Per-activity **policy \u2014 retry + backoff + timeout**",
+    "claim": "Per-activity **policy — retry + backoff + timeout**",
     "witnesses": [
       "go:TestPipelineRetryPolicyJob",
       "go:TestRetryBackoffAccumulates",
@@ -710,7 +710,7 @@
   },
   "pipeline-notebook-activity-tridentnotebook": {
     "section": "Data Factory (`data-factory/`)",
-    "claim": "Pipeline \u2192 notebook activity (TridentNotebook)",
+    "claim": "Pipeline → notebook activity (TridentNotebook)",
     "witnesses": [
       "ci:medallion",
       "go:TestNotebookBinding",
@@ -720,7 +720,7 @@
   },
   "power-bi-semantic-model-query-executequeries": {
     "section": "Item types present, engine absent",
-    "claim": "Power BI \u2014 Semantic Model **query** (`executeQueries`)",
+    "claim": "Power BI — Semantic Model **query** (`executeQueries`)",
     "witnesses": [
       "ci:semantic-model",
       "go:TestExecuteQueriesE2E",
@@ -731,7 +731,7 @@
   },
   "power-bi-sempy-semantic-link-labs-over-xmla": {
     "section": "Item types present, engine absent",
-    "claim": "Power BI \u2014 **SemPy / semantic-link-labs over XMLA**",
+    "claim": "Power BI — **SemPy / semantic-link-labs over XMLA**",
     "witnesses": [
       "ci:sempy",
       "go:TestTheHandshakeCarriesTheCapsHeaderSessionAndTrailingByte",
@@ -761,7 +761,7 @@
   },
   "rbac-sql-permissions": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "RBAC \u2192 SQL permissions",
+    "claim": "RBAC → SQL permissions",
     "witnesses": [
       "ci:warehouse-tds",
       "sdk:TestWarehouseTDSEndpointE2E"
@@ -814,14 +814,14 @@
   },
   "runmultiple-failure-contract": {
     "section": "Data Engineering (`data-engineering/`)",
-    "claim": "`runMultiple` \u2014 failure contract",
+    "claim": "`runMultiple` — failure contract",
     "witnesses": [
       "py:test_a_failure_raises_and_the_results_ride_on_the_exception"
     ]
   },
   "runmultiple-retry-and-timeouts": {
     "section": "Data Engineering (`data-engineering/`)",
-    "claim": "`runMultiple` \u2014 retry and timeouts",
+    "claim": "`runMultiple` — retry and timeouts",
     "witnesses": [
       "py:test_exhausted_retries_report_the_last_error",
       "py:test_a_per_cell_budget_is_multiplied_by_the_real_cell_count"
@@ -839,14 +839,14 @@
   },
   "sensitivity-labels-catalog": {
     "section": "Identity & security (`security/`, `admin/`)",
-    "claim": "**Sensitivity labels \u2192 catalog**",
+    "claim": "**Sensitivity labels → catalog**",
     "witnesses": [
       "ci:governance"
     ]
   },
   "shortcuts-onelake-onelake": {
     "section": "OneLake (`onelake/`)",
-    "claim": "Shortcuts (OneLake \u2192 OneLake)",
+    "claim": "Shortcuts (OneLake → OneLake)",
     "witnesses": [
       "ci:governance",
       "go:TestShortcutResolution",
@@ -942,7 +942,7 @@
   },
   "time-travel-dataframe-option-and-sql-version-as-of": {
     "section": "Data Engineering (`data-engineering/`)",
-    "claim": "Time travel \u2014 DataFrame option **and** SQL `VERSION AS OF`",
+    "claim": "Time travel — DataFrame option **and** SQL `VERSION AS OF`",
     "witnesses": [
       "ci:sail",
       "ci:engine-matrix"
@@ -954,11 +954,11 @@
     "witnesses": [
       "ci:dbt-fabric"
     ],
-    "note": "fabric-cicd was credited here first and does NOT cover it \u2014 that suite publishes Notebooks only. Caught by the over-credit report in scripts/check_witnesses.py."
+    "note": "fabric-cicd was credited here first and does NOT cover it — that suite publishes Notebooks only. Caught by the over-credit report in scripts/check_witnesses.py."
   },
   "warehouse-read-write-t-sql": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "**Warehouse \u2014 read-write T-SQL**",
+    "claim": "**Warehouse — read-write T-SQL**",
     "witnesses": [
       "ci:warehouse-tds",
       "ci:dbt-fabric"
@@ -983,7 +983,7 @@
     ]
   },
   "rest-connector-restsource-and-restsink-in-a-copy-with-pagination": {
-    "claim": "**REST connector** \u2014 `RestSource` and `RestSink` in a Copy, with pagination",
+    "claim": "**REST connector** — `RestSource` and `RestSink` in a Copy, with pagination",
     "section": "Data Factory (`data-factory/`)",
     "witnesses": [
       "go:TestRestSourceReallyCallsAndShapesRows",
@@ -1013,7 +1013,7 @@
     ]
   },
   "salesforce-salesforcev2source-and-salesforcev2sink-in-a-copy": {
-    "claim": "**Salesforce** \u2014 `SalesforceV2Source` and `SalesforceV2Sink` in a Copy",
+    "claim": "**Salesforce** — `SalesforceV2Source` and `SalesforceV2Sink` in a Copy",
     "section": "Data Factory (`data-factory/`)",
     "witnesses": [
       "go:TestSalesforceRunsTheWholeJobLifecycle",
@@ -1158,7 +1158,7 @@
   },
   "power-bi-report-items": {
     "section": "Item types present, engine absent",
-    "claim": "Power BI \u2014 **Report items**",
+    "claim": "Power BI — **Report items**",
     "witnesses": [
       "ci:az-rest",
       "go:TestReportDefinitionRoundTripsByteForByte",
@@ -1302,7 +1302,7 @@
   },
   "framework-conformance-runtime-contracts": {
     "section": "Runtime contracts (`docs/38`)",
-    "claim": "Framework conformance kit \u2014 write landing first",
+    "claim": "Framework conformance kit — write landing first",
     "witnesses": [
       "ci:conformance-sail",
       "ci:conformance-jvm",
@@ -1332,7 +1332,7 @@
   },
   "two-context-execution-the-user-context-holds-no-service-credential": {
     "section": "OneLake (`onelake/`)",
-    "claim": "Two-context execution \u2014 the user context holds no service credential",
+    "claim": "Two-context execution — the user context holds no service credential",
     "witnesses": [
       "ci:two-context",
       "py:test_user_context",
@@ -1352,19 +1352,19 @@
     ]
   },
   "_gated": {
-    "go:TestRelayEnforcesRowLevelSecurity": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestSQLServerRestrictsTheProvisionedCaller": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestMirrorSnapshotsBaseTables": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestPipelineSQLActivitiesE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestReflectDecimalColumn": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "sdk:TestRefreshMirroredDatabaseE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "sdk:TestSQLDatabaseMirror": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "sdk:TestWarehouseDeltaReflectionE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestWarehouseRouter": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "sdk:TestWarehouseSQLServerRelayE2E": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "sdk:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
-    "go:TestRelayEnforcesColumnLevelSecurity": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestRelayEnforcesDynamicDataMasking": "WAREHOUSE_MSSQL_DSN \u2014 needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+    "go:TestRelayEnforcesRowLevelSecurity": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestSQLServerRestrictsTheProvisionedCaller": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestMirrorSnapshotsBaseTables": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestPipelineSQLActivitiesE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestReflectDecimalColumn": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "sdk:TestRefreshMirroredDatabaseE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "sdk:TestSQLDatabaseMirror": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "sdk:TestWarehouseDeltaReflectionE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestWarehouseRouter": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "sdk:TestWarehouseSQLServerRelayE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "sdk:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestRelayEnforcesColumnLevelSecurity": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestRelayEnforcesDynamicDataMasking": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",
@@ -1382,7 +1382,32 @@
       "go:TestCreateNotebookFromIPYNBDerivesTheExecutablePart",
       "go:TestCreateNotebookWithBothPartsDoesNotRederive",
       "go:TestNotebookExecutablePartsScope",
-      "boundary:no packaged third-party client speaks this surface \u2014 it is the in-notebook `notebookutils` API, not a REST endpoint an SDK wraps, so a `ci:` witness cannot exist rather than not existing yet. The REST it drives is separately witnessed by the items API rows"
+      "boundary:no packaged third-party client speaks this surface — it is the in-notebook `notebookutils` API, not a REST endpoint an SDK wraps, so a `ci:` witness cannot exist rather than not existing yet. The REST it drives is separately witnessed by the items API rows"
+    ]
+  },
+  "notebookutils-mssparkutils-the-whole-documented-surface": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`notebookutils` / `mssparkutils` — the whole documented surface",
+    "witnesses": [
+      "ci:conformance-sail",
+      "ci:conformance-jvm"
+    ]
+  },
+  "notebook-cell-languages-sql-pyspark-configure-html-markdown-spark": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "Notebook cell languages (%%sql, %%pyspark, %%configure, %%html, %%markdown, %%spark)",
+    "witnesses": [
+      "go:TestUnsupportedLanguagesAreNamedNotMisExecuted",
+      "go:TestConfigureIsIgnoredOutLoud",
+      "go:TestMarkupIsRenderedNotExecuted",
+      "go:TestAnUnknownLanguageFallsBackToPython"
+    ]
+  },
+  "run": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "`%run` — splices another notebook's code into this session",
+    "witnesses": [
+      "ci:conformance-sail"
     ]
   }
 }

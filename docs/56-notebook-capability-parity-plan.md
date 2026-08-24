@@ -1,19 +1,18 @@
-# Notebook capability parity — the plan
+# Notebook capability parity
 
-> **Status: Phases 0, 1 and 2 delivered.** Axis A is complete and graded: 44
-> documented members, all present with the documented signatures, checked on
-> every run by contract 2 on both lakehouse backends. Axis B (behaviour) and
-> Axis C (execution model) are the remaining work. Axis C rows below are still
-> search results, not probe results, and each needs measuring before it becomes
-> a claim. Companion to
+> **Status: all six phases delivered, except that Phase 5 has no tenant.**
+> Axes A–C are complete and every row below is measured rather than searched.
+> Phase 5's differential is written and green on the emulator leg; until a
+> parity row cites a real-tenant run, the honest phrasing is *"conforms to the
+> published contract"*. Companion to
 > [38-framework-conformance.md](38-framework-conformance.md) and
 > [39-run-multiple-parity-plan.md](39-run-multiple-parity-plan.md), whose
 > "what done buys, precisely" convention this follows.
 
 The runtime conformance matrix is **18 of 18**. That proves seven structural
 contracts on three backends, and it is **not** capability parity with real
-Fabric. This document is the distance between the two, and the order it would
-have to be closed in.
+Fabric. This document was the distance between the two; it is now the record of
+closing it, and of what closing it turned up.
 
 ## What 18 of 18 licenses you to say
 
@@ -257,94 +256,34 @@ reason). Each was written from a real measurement and then generalised one step
 past what the measurement supported. All three survived because **nothing failed
 while they were wrong.**
 
-## The plan
+## The phases, and what each one found
 
-Phases are numbered because they genuinely sequence: each is unbuildable, or
-merely decorative, without the one above it.
+Delivered. Numbered because they genuinely sequenced — each was unbuildable, or
+merely decorative, without the one above it. Kept as a record rather than
+rewritten into a summary, because in every phase the *finding* mattered more
+than the work.
 
-### Phase 0 — Cite the surface
+| | Phase | What it did | What it found |
+|---|---|---|---|
+| **0** | Cite the surface | `notebookutils-reference.json` from one module to eight, every member carrying its source page and read date | A denominator: **44 members, 25 wrong** |
+| **1** | Grade every module | Contract 2 across all eight, with the module list substituted in *from the reference* | Went red on both backends, naming all 25 |
+| **2** | Close the absences | 17 members written, 8 signatures corrected | Correcting `head` exposed a live truncation bug |
+| **3** | Behaviour contracts | Executed on the real stack, confirmed out of band | `listTables` first passed **vacuously** |
+| **4** | Execution model | Cell dispositions, `%run`, `display()`, `nbResPath` | The magics were *recognised then run as Python* |
+| **5** | Differential | The surface's REST endpoints, either target, no branching | A harness that had never been re-runnable |
 
-*Blocks 1–4.*
+**Phase 0 was the cheapest and the one most likely to be skipped**, and it is
+the reason the rest was possible: without a denominator there was no way to be
+wrong.
 
-Extend `notebookutils-reference.json` from one module to all ten, every member
-carrying its source page and that page's own last-updated date — the discipline
-the file already applies to `notebook`.
+**Phase 1 going red was the job, not a setback.** Two cells had been green
+because they were not asking.
 
-First because without it there is no denominator and every later phase is
-guesswork wearing a number. Also the cheapest phase, and the one most likely to
-be skipped.
-
-**What it buys.** A defensible target. Nothing about behaviour and no new
-capability — but every subsequent claim becomes checkable, and a stale citation
-becomes findable without re-reading every page.
-
-### Phase 1 — Grade shape across every module
-
-*Needs 0.*
-
-Contract 2 runs against all ten modules instead of one. Missing members fail;
-extra members pass — the asymmetry is the contract, because a framework
-introspects a signature and declines to run when a parameter is absent, without
-ever calling anything.
-
-**What it buys.** Every absent member becomes a red cell instead of an unasked
-question. Still says nothing about behaviour. Expect this to go red on first
-run — that is its job.
-
-### Phase 2 — Close the absences
-
-*Needs 1.*
-
-Implement what Phase 1 turned red: `session`, `udf`, the missing `fs` members,
-the rest of `env` and `lakehouse` — and the `mssparkutils` alias, which real
-notebooks still import and which this tree does not have at all.
-
-**What it buys.** A framework that introspects the surface stops declining to
-run. A notebook that *calls* these still gets whatever the shim does, which is
-Phase 3.
-
-### Phase 3 — Behaviour contracts
-
-*Needs 2. Largest phase.*
-
-The step from "the method exists" to "the method is right", and the only one
-that cannot be done by enumeration. Each member needs an assertion in the shape
-contract 4 established: execute through the real path, then **verify out of
-band** — the component that acted is never the one that confirms.
-
-Scope by blast radius rather than alphabetically. `fs` and `credentials` touch
-storage and identity, where a wrong answer is silent and expensive; `env`
-returns strings a pipeline branches on.
-
-**What it buys.** The first honest claim of the form "this behaves like
-Fabric's" — bounded to the members actually covered, and only as true as the
-citations from Phase 0.
-
-### Phase 4 — The execution model
-
-*Independent of 1–3; shares no code and no reviewer.*
-
-`%%configure`, `%run`, the remaining language cells, notebook resources, and a
-decision on the single-mount divergence — either close 2c′ or promote it from a
-gap to a documented, permanent difference. Both are legitimate; leaving it
-undecided is not.
-
-**What it buys.** Notebooks that are authored normally stop needing to be
-written specially. The axis most visible to someone trying the emulator for the
-first time.
-
-### Phase 5 — Differential against a real tenant
-
-*Converts every phase above.*
-
-Run the same probes against real Fabric and diff. The workflow already exists
-and is secret-gated; what is missing is a parity row that *cites* it.
-
-Until this runs, everything above is conformance to a published contract. This
-is the only phase that converts it into parity, and it is also the phase that
-will find the places the documentation is wrong — the failures worth the most.
-
-**What it buys.** The word "parity", used accurately. Nothing else earns it.
+**Phase 5 is the only one still incomplete**, and only for a reason outside the
+code: it needs a tenant. The suite runs against emulator or tenant with no
+branching and is green on the emulator leg. Until a parity row *cites* a
+real-tenant run, the accurate phrasing stays *"conforms to the published
+contract"*, never *"matches Fabric"*.
 
 ## What must NOT be done
 
