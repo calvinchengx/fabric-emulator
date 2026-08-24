@@ -167,21 +167,73 @@ mistaken for coverage.
 
 ## Axis C — the execution model
 
-What the cell parser handles today, read from `internal/notebook/parse.go`.
-"Absent" means no handler was found by search, **not** that it was tried and
-failed — each row needs a probe before it becomes a claim.
+**Every row here has now been probed, and the original table was wrong three
+times — twice in the worse direction.** It was built from `grep`, and said so:
+*"'Absent' means no handler was found by search, not that it was tried and
+failed."* That caveat earned its place.
 
-| Capability | State | Note |
-|---|---|---|
-| `%%sql` / `%%pyspark` / `%%lang` | parsed | Recognised by the cell parser. |
-| parameters cell | parsed | Position handled; behaviour has its own tests. |
-| `%%configure` | absent | Session sizing and conf at cell scope. |
-| `%run` | absent | Distinct from `notebook.run` — shares the caller's session. |
-| `%%spark` (Scala) / `%%sparkr` | absent | Language cells other than Python and SQL. |
-| `%%html` / `%%markdown` | absent | Output-shaping magics. |
-| notebook resources (`builtin/`) | absent | Per-notebook file storage. |
-| `display()` / `displayHTML()` | unverified | No hit in the shim; needs measuring before it is claimed either way. |
-| Files mount | divergent | One mount point, refuses a second lakehouse rather than switching — 2c′ in [37-runtime-fidelity-gaps.md](37-runtime-fidelity-gaps.md). |
+| Capability | Was recorded | Measured | Now |
+|---|---|---|---|
+| `%%sql` / `%%pyspark` / `%%lang` | parsed | parsed | unchanged |
+| parameters cell | parsed | parsed | unchanged |
+| `%%configure` | absent | **recognised, then executed as Python** | accepted and ignored, out loud |
+| `%%spark` (Scala) / `%%sparkr` | absent | **recognised, then executed as Python** | refused by name |
+| `%%html` / `%%markdown` | absent | **recognised, then executed as Python** | rendered, not executed |
+| `%run` | absent | absent | implemented |
+| notebook resources (`builtin/`) | absent | absent | `nbResPath`, root-notebook semantics |
+| `display()` / `displayHTML()` | *unverified* | **absent — `NameError`** | implemented |
+| Files mount (one point) | "decision needed" | **already decided in docs/37** | no action; see below |
+
+### Absent would have been better than what was there
+
+The parser *recognises* `%%configure`, `%%spark`, `%%html` and `%%markdown` —
+and the run loop then sent everything that was not `sql` to the **Python
+executor**. So correct Scala came back as a Python `SyntaxError` pointing at the
+user's own code, and a `%%configure` block of JSON failed the same way. That is
+not a missing feature. It is a wrong answer, and it is the reason "no handler
+found by search" is a claim about the search rather than about the system.
+
+`internal/notebook/celllang.go` now gives a cell four dispositions, and the two
+in the middle carry the judgement:
+
+- **`%%configure` is accepted and IGNORED, never silently.** The cell records
+  that it changed nothing and that the requested executors, memory and conf were
+  not applied. Refusing would be *worse*: `%%configure` must be the first cell
+  on Fabric, so a refusal makes every notebook carrying one unrunnable here —
+  and the results it would produce are correct, just not on the requested
+  hardware. One session, nothing to size, nothing to switch: contract 2's own
+  definition of correct emulation.
+- **Scala, R and C# are named**, with what to do instead, and explicitly *"Real
+  Fabric runs it"* so the message cannot be misread as "your cell is invalid".
+
+An unknown magic still falls back to Python. Fabric adds magics, and refusing
+every one this build has not heard of would break notebooks on upgrade.
+
+### `display()` was absent, not merely unverified
+
+One of the most common lines in any Fabric notebook raised
+`NameError: name 'display' is not defined`. Not a fidelity nuance — a notebook
+written the ordinary way did not run. `display` and `displayHTML` are
+**builtins** on Fabric, not imports, so they are bound in the session namespace.
+
+`summary=True` is honoured rather than accepted-and-ignored, and the split from
+`%%configure` is deliberate: Fabric documents summary as column name, type,
+unique values and missing values — a data *quality* read a notebook branches on,
+so there **is** something to switch. `%%configure` asks for hardware this
+emulator does not have; that genuinely has nothing to switch.
+
+What is *not* emulated is stated in the module: Fabric renders an interactive
+table with charts and an inspect panel; this renders text. Same data, same
+shape, no interactivity.
+
+### The mount divergence was not an open decision
+
+This document asked to "either close 2c′ or promote it to a documented,
+permanent difference", and called leaving it undecided illegitimate.
+[37-runtime-fidelity-gaps.md](37-runtime-fidelity-gaps.md) had already decided
+it: **refuse, do not switch**, with the deeper fix deferred for a stated reason
+— one agent container per session touches the whole compute model. **The item
+was mine, not the system's**, and it is withdrawn rather than answered.
 
 ## The part that makes all of it provisional
 
