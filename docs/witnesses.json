@@ -1412,5 +1412,14 @@
     "witnesses": [
       "ci:conformance-sail"
     ]
+  },
+  "notebook-resources-notebookutils-nbrespath-builtin": {
+    "section": "Data Engineering (`data-engineering/`)",
+    "claim": "**Notebook resources** (`notebookutils.nbResPath`, `builtin/`)",
+    "witnesses": [
+      "ci:conformance-sail",
+      "go:TestTheRootNotebookReachesTheChildsStatements",
+      "go:TestADirectSubmissionCarriesNoRoot"
+    ]
   }
 }

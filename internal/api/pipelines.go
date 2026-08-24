@@ -182,7 +182,8 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 		// external engine's callback, which is the original contract and the
 		// only honest answer when nothing can execute the cells.
 		if e.a.runsNotebooksItself() && len(run.Cells) > 0 {
-			e.a.driveNotebookRun(nbWID, nb.ID, j.ID, run, nbParams, true)
+			// A pipeline-driven notebook IS the root: nothing referenced it.
+			e.a.driveNotebookRun(nbWID, nb.ID, j.ID, run, nbParams, true, referenceRoot{})
 			status, runJSON, err := e.a.Store.GetNotebookRun(j.ID)
 			if err != nil {
 				return nil, fmt.Errorf("notebook activity %q: run detail lost: %v", act.Name, err)

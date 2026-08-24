@@ -122,6 +122,35 @@ def run_scaled(n):
 # Every cell below is chosen so that EXECUTING IT AS PYTHON FAILS. That is what
 # makes this non-vacuous: if the run loop regressed to the old behaviour, these
 # notebooks would not quietly pass, they would break.
+# --- notebook resources -------------------------------------------------------
+#
+# `builtin/` is the ROOT notebook's folder, never the running one. The child
+# below carries a resource of the SAME NAME with DIFFERENT content, so the file
+# it reads says which notebook it resolved against — a negative control rather
+# than an assertion that something non-empty came back.
+RES_ROOT_BODY = """# Fabric notebook source
+
+# CELL ********************
+import notebookutils as _nbu
+
+print("root sees:", open(_nbu.nbResPath + "/data.txt").read())
+_nbu.notebook.run("res-child-nb")
+"""
+
+RES_CHILD_BODY = """# Fabric notebook source
+
+# CELL ********************
+import json as _json
+
+import notebookutils as _nbu
+
+_seen = open(_nbu.nbResPath + "/data.txt").read()
+_nbu.fs.put(
+    "abfss://__WS__@onelake.dfs.fabric.microsoft.com/__DIR__/resources.json",
+    _json.dumps({"seen": _seen}), True)
+print("child sees:", _seen)
+"""
+
 CELL_LANGUAGES_BODY = """# Fabric notebook source
 
 # CELL ********************
@@ -814,16 +843,26 @@ def fan_out() -> dict[str, str]:
 LANGUAGES_DIR = "lake.Lakehouse/Files/conformance/languages"
 
 
-def _publish(name: str, body: str) -> str:
-    """Publish a notebook and return its id, following the 200-or-202 outcome."""
+def _publish(name: str, body: str, resources: dict | None = None) -> str:
+    """Publish a notebook and return its id, following the 200-or-202 outcome.
+
+    `resources` become `builtin/…` definition parts — which is what a notebook
+    resource IS on Fabric, so the folder travels with the item rather than
+    being staged by this harness.
+    """
+    parts = [{
+        "path": "notebook-content.py", "payloadType": "InlineBase64",
+        "payload": base64.b64encode(
+            body.replace("__WS__", _ws)
+                .replace("__DIR__", LANGUAGES_DIR).encode()).decode()}]
+    for relative, content in (resources or {}).items():
+        parts.append({
+            "path": "builtin/" + relative, "payloadType": "InlineBase64",
+            "payload": base64.b64encode(content.encode()).decode()})
     _, headers, _ = req(
         "POST", f"{FABRIC}/v1/workspaces/{_ws}/items", {
             "displayName": name, "type": "Notebook",
-            "definition": {"parts": [{
-                "path": "notebook-content.py", "payloadType": "InlineBase64",
-                "payload": base64.b64encode(
-                    body.replace("__WS__", _ws)
-                        .replace("__DIR__", LANGUAGES_DIR).encode()).decode()}]}},
+            "definition": {"parts": parts}},
         token=fabric_token())
     opid = headers.get("x-ms-operation-id")
     for _ in range(60):
@@ -852,16 +891,20 @@ def _run_to_completion(nb: str):
     return status, sorted(detail.get("cells", []), key=lambda c: c["index"])
 
 
-def _marker_exists(name: str) -> bool:
-    """Read a marker over DFS. Not Spark, not the job record."""
+def _read_marker(name: str):
+    """A marker's bytes over DFS, or None. Not Spark, not the job record."""
     r = urllib.request.Request(
         f"http://{ACCT}/{_ws}/{urllib.parse.quote(LANGUAGES_DIR)}/{name}",
         headers={"Authorization": "Bearer " + storage_token(), "Host": DFS_HOST})
     try:
         with urllib.request.urlopen(r, timeout=60) as resp:
-            return resp.status == 200
+            return resp.read() if resp.status == 200 else None
     except Exception:  # noqa: BLE001 — absence is an answer here, not a failure
-        return False
+        return None
+
+
+def _marker_exists(name: str) -> bool:
+    return _read_marker(name) is not None
 
 
 def cell_languages() -> dict:
@@ -928,6 +971,45 @@ def cell_languages() -> dict:
                     "error": "the run continued past a cell it refused"}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"scala notebook: {type(exc).__name__}: {exc}"}
+    return {"ok": True, "error": ""}
+
+
+def notebook_resources() -> dict:
+    """`builtin/` resolves to the ROOT notebook, through a real reference run.
+
+    NOT A CONTRACT CELL — gated like `%run` and the cell languages: the matrix
+    is unchanged, a regression fails the leg.
+
+    THE NEGATIVE CONTROL IS THE POINT. Both notebooks ship `builtin/data.txt`
+    with different content, so the child's answer names which folder it
+    resolved against. Asserting merely that a file was found would pass on the
+    wrong one.
+    """
+    try:
+        root_text = "from the ROOT notebook"
+        child_text = "from the CHILD notebook"
+        _publish("res-child-nb", RES_CHILD_BODY, {"data.txt": child_text})
+        nb = _publish("res-root-nb", RES_ROOT_BODY, {"data.txt": root_text})
+        status, cells = _run_to_completion(nb)
+        if status != "Completed":
+            return {"ok": False,
+                    "error": f"the resources notebook ended {status}: "
+                             + "; ".join(f"cell {c['index']} {c['status']} "
+                                         f"{c.get('error') or ''}" for c in cells)}
+        # OUT OF BAND: the child's finding is read over DFS, not from the job
+        # record of the run that produced it.
+        raw = _read_marker("resources.json")
+        if raw is None:
+            return {"ok": False, "error": "the child notebook left no finding"}
+        seen = json.loads(raw).get("seen", "")
+        if seen == child_text:
+            return {"ok": False,
+                    "error": "the child resolved builtin/ to ITS OWN folder; "
+                             "a referenced notebook must see the root's"}
+        if seen != root_text:
+            return {"ok": False, "error": f"the child read something else: {seen!r}"}
+    except Exception as exc:  # noqa: BLE001 — the reason is the finding
+        return {"ok": False, "error": f"resources: {type(exc).__name__}: {exc}"}
     return {"ok": True, "error": ""}
 
 
@@ -1092,6 +1174,14 @@ def main() -> int:
         return 1
     log("cell languages: configure ignored out loud, markup rendered, "
         "Scala refused by name and the run stopped")
+
+    # Notebook resources — same gate again.
+    resources = notebook_resources()
+    if not resources["ok"]:
+        log(f"notebook resources FAILED: {resources['error']}")
+        return 1
+    log("notebook resources: a referenced child read the ROOT's builtin/, "
+        "not its own")
     return 0
 
 

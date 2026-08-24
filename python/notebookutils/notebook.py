@@ -18,7 +18,7 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 
-from . import credentials
+from . import credentials, runtime
 from ._config import config, session_workspace_id
 from ._http import request
 from .common.exceptions import RunMultipleFailedException
@@ -434,6 +434,25 @@ def _execution_data(arguments):
         exec_data["parentLakehouseId"] = parent
     if bypass:
         exec_data["useRootDefaultLakehouse"] = True
+    # THE ROOT NOTEBOOK, FORWARDED RATHER THAN REPLACED. `builtin/` means the
+    # resource folder of the notebook a human started — Microsoft's guidance is
+    # that it "will always point to the root notebook's built-in folder" — so a
+    # parent that is ITSELF a child passes on the root it was given, not its own
+    # id. Reading `currentNotebookId` here unconditionally would make every
+    # generation its own root and break exactly the case the rule exists for.
+    #
+    # Nothing sent this before, so `rootNotebookId` was never set anywhere in
+    # the tree and a referenced child resolved `nbResPath` to its own folder —
+    # the divergence notebookutils/nbresources.py is written to prevent, and
+    # could not, because its unit test supplied the context the product never
+    # produced.
+    ctx = runtime.context
+    root_nb = ctx.get("rootNotebookId") or ctx.get("currentNotebookId") or ""
+    if root_nb:
+        exec_data["rootNotebookId"] = root_nb
+        root_ws = ctx.get("rootWorkspaceId") or ctx.get("currentWorkspaceId") or ""
+        if root_ws:
+            exec_data["rootWorkspaceId"] = root_ws
     return {"executionData": exec_data} if exec_data else None
 
 

@@ -37,7 +37,7 @@ func TestANotebookRunAppliesItsBoundEnvironment(t *testing.T) {
 			{Index: 0, Kind: "code", Language: "python", Source: "import cowsay", Status: "Pending"},
 		},
 	}
-	a.driveNotebookRun(ws.ID, "item-1", "job-1", run, nil, false)
+	a.driveNotebookRun(ws.ID, "item-1", "job-1", run, nil, false, referenceRoot{})
 
 	var envPost *agentPostRecord
 	firstStatement := -1
@@ -91,7 +91,7 @@ func TestANotebookWithNoEnvironmentPostsNone(t *testing.T) {
 			{Index: 0, Kind: "code", Language: "python", Source: "1", Status: "Pending"},
 		},
 	}
-	a.driveNotebookRun(ws.ID, "item-1", "job-2", run, nil, false)
+	a.driveNotebookRun(ws.ID, "item-1", "job-2", run, nil, false, referenceRoot{})
 
 	for _, rec := range stub.recorded() {
 		if rec.path == "/environment" {

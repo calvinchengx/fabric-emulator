@@ -179,3 +179,36 @@ func TestReferenceRunLakehouseCodeUnit(t *testing.T) {
 		})
 	}
 }
+
+// `builtin/` means the ROOT notebook's resource folder, never the running
+// one, so the root has to reach the child's statements. Nothing sent one
+// before, and `notebookutils.nbResPath` then resolved to the child's own
+// folder — a notebook reading different files depending on how it was started.
+func TestTheRootNotebookReachesTheChildsStatements(t *testing.T) {
+	root := referenceRootOf(map[string]any{
+		"rootNotebookId": "nb-root", "rootWorkspaceId": "ws-root",
+	})
+	m := notebookStatement("s", "code", "", "ws-child", "nb-child", "job", notebookRun{}, false, nil, root)
+	if m["rootNotebookId"] != "nb-root" || m["rootWorkspaceId"] != "ws-root" {
+		t.Fatalf("root did not reach the statement: %v", m)
+	}
+	// ...and the running notebook is still reported as itself. Overwriting
+	// `notebookId` with the root would hide which notebook is executing.
+	if m["notebookId"] != "nb-child" {
+		t.Fatalf("the running notebook was replaced by the root: %v", m)
+	}
+}
+
+// A DIRECT submission is its own root, so it sends none — the shim falls back
+// to the current notebook. Emitting an empty key instead would make every
+// direct run look like a reference run with a missing root.
+func TestADirectSubmissionCarriesNoRoot(t *testing.T) {
+	m := notebookStatement("s", "code", "", "ws", "nb", "job", notebookRun{}, false, nil,
+		referenceRootOf(map[string]any{}))
+	if _, ok := m["rootNotebookId"]; ok {
+		t.Fatalf("a direct submission claimed a root: %v", m)
+	}
+	if _, ok := m["rootWorkspaceId"]; ok {
+		t.Fatalf("a direct submission claimed a root workspace: %v", m)
+	}
+}

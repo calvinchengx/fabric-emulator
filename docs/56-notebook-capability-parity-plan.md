@@ -222,7 +222,7 @@ failed."* That caveat earned its place.
 | `%%spark` (Scala) / `%%sparkr` | absent | **recognised, then executed as Python** | refused by name |
 | `%%html` / `%%markdown` | absent | **recognised, then executed as Python** | rendered, not executed |
 | `%run` | absent | absent | implemented |
-| notebook resources (`builtin/`) | absent | absent | `nbResPath`, root-notebook semantics |
+| notebook resources (`builtin/`) | absent | absent | `nbResPath`, root-notebook semantics — and the root was never sent |
 | `display()` / `displayHTML()` | *unverified* | **absent — `NameError`** | implemented |
 | Files mount (one point) | "decision needed" | **already decided in docs/37** | no action; see below |
 
@@ -278,6 +278,24 @@ emulator does not have; that genuinely has nothing to switch.
 What is *not* emulated is stated in the module: Fabric renders an interactive
 table with charts and an inspect panel; this renders text. Same data, same
 shape, no interactivity.
+
+### The root notebook was never sent
+
+`nbResPath` resolves `builtin/` against the ROOT notebook — the one a human
+started — and shipped with a unit test proving it. That test set
+`rootNotebookId` on a stubbed context. **Nothing in the tree ever produced
+one**, so in a real reference run the key was absent and a child resolved to
+its own folder: the precise divergence the module was written to prevent.
+
+The test was not wrong about the semantics; it constructed the condition it was
+checking. Found by writing the end-to-end witness, which is the only thing that
+could have found it.
+
+`notebook.run` / `runMultiple` now forward the root — **forward, not replace**,
+so a parent that is itself a child passes on the root it was given rather than
+becoming one. The e2e's negative control is what makes it an assertion: both
+notebooks carry a `builtin/data.txt` with different content, so the child's
+answer names which folder it resolved against.
 
 ### The mount divergence was not an open decision
 

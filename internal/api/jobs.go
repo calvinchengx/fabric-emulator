@@ -93,6 +93,18 @@ func jobFailureMessage(code string) string {
 //
 // `parentLakehouseId` is absent for a direct job submission, which is not a
 // reference run and is not subject to the rule.
+// referenceRootOf reads the ROOT notebook a reference run names.
+//
+// Sent by `notebookutils.notebook.run` / `runMultiple`, and FORWARDED rather
+// than replaced when the parent was itself a child: `builtin/` means the
+// notebook a human started, however deep the chain. Empty for a direct job
+// submission, which is its own root.
+func referenceRootOf(exec map[string]any) referenceRoot {
+	nb, _ := exec["rootNotebookId"].(string)
+	ws, _ := exec["rootWorkspaceId"].(string)
+	return referenceRoot{NotebookID: nb, WorkspaceID: ws}
+}
+
 func referenceRunLakehouseCode(exec map[string]any, childLakehouse string) string {
 	parent, _ := exec["parentLakehouseId"].(string)
 	if parent == "" {
@@ -245,7 +257,8 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 			// stays open for a callback, which is the original contract and the
 			// only honest thing to do when there is no engine to run anything.
 			nbParams, _ := exec["parameters"].(map[string]any)
-			go a.driveNotebookRun(wid, it.ID, j.ID, *nbRun, nbParams, false)
+			go a.driveNotebookRun(wid, it.ID, j.ID, *nbRun, nbParams, false,
+				referenceRootOf(exec))
 		}
 	}
 	if sjdRun != nil {
@@ -422,7 +435,8 @@ func (a *API) dispatchExisting(wid string, it *store.Item, j *store.JobInstance)
 			a.Store.PublishJobEvent(wid, it.ID, j.ID, j.JobType, j.InvokeType, store.JobFailed, code)
 		} else if len(nbRun.Cells) > 0 && a.runsNotebooksItself() {
 			nbParams, _ := exec["parameters"].(map[string]any)
-			go a.driveNotebookRun(wid, it.ID, j.ID, nbRun, nbParams, false)
+			go a.driveNotebookRun(wid, it.ID, j.ID, nbRun, nbParams, false,
+				referenceRootOf(exec))
 		}
 		return
 	}
