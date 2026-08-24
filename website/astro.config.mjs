@@ -17,6 +17,9 @@ export default defineConfig({
     // The parity map dropped its reading-order number (it's a living
     // reference, not a chapter) and now lives at /parity/.
     '/17-parity/': '/fabric-emulator/docs/parity/',
+    // The docs overview WAS this site's second home; the docs root is the
+    // overview now, so the old URL lands there rather than 404ing.
+    '/overview/': '/fabric-emulator/docs/',
   },
   // remarkMermaid turns ```mermaid fences into <pre class="mermaid"> before
   // Expressive Code sees them; src/components/Head.astro renders them client-side.
@@ -52,7 +55,6 @@ export default defineConfig({
         {
           label: 'Getting started',
           items: [
-            { slug: 'overview' },
             { slug: '01-quickstart' },
             { slug: '02-installation' },
             { slug: '26-platform-setup' },
