@@ -20,7 +20,7 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from notebookutils import credentials, env, fs, lakehouse, runtime  # noqa: E402
+from notebookutils import credentials, env, fs, lakehouse, runtime, session, udf  # noqa: E402
 
 WS = "11111111-1111-1111-1111-111111111111"
 LH = "22222222-2222-2222-2222-222222222222"
@@ -58,7 +58,7 @@ class Recorder:
 def http(monkeypatch):
     """Stub the one HTTP chokepoint in every shim module that uses it."""
     rec = Recorder()
-    for mod in (fs, lakehouse, credentials):
+    for mod in (fs, lakehouse, credentials, session, udf):
         monkeypatch.setattr(mod, "request", rec, raising=False)
     monkeypatch.setattr(credentials, "getToken", lambda audience: f"tok-{audience}")
     monkeypatch.setattr(fs, "_token", None)  # the module caches one
@@ -71,7 +71,7 @@ def http(monkeypatch):
         "vault_url": "https://localhost:8444",
         "is_real": False,
     })()
-    for mod in (fs, lakehouse, credentials, runtime):
+    for mod in (fs, lakehouse, credentials, runtime, udf):
         monkeypatch.setattr(mod, "config", lambda: cfg, raising=False)
     return rec
 
@@ -302,3 +302,572 @@ def test_runtime_context_bind_isolates_concurrent_statements():
         runtime.unbind(token)
 
     assert seen == {"this": WS, "other": "other-ws"}
+
+
+# =============================================================================
+# Phase 2 (docs/56): the documented surface, member by member.
+#
+# Every test below covers something a framework introspects or a notebook
+# calls, and that did not exist — or existed under a name Fabric does not use —
+# before the surface was cited.
+# =============================================================================
+
+# --- fs: the corrected spellings ---------------------------------------------
+
+
+def test_fs_members_take_the_documented_parameter_names(http):
+    """THE DEFECT PHASE 0 FOUND. `put(file=...)` is what a caller writes from
+    the page; the shim used to take `path=` and raise TypeError before reaching
+    the body — a framework introspecting it declines without ever calling."""
+    fs.put(file="Files/a.txt", content="x")
+    http.push((200, {}, b"hello"))
+    fs.head(file="Files/a.txt", max_bytes=5)
+    fs.rm(path="Files/a.txt", recurse=True)
+    http.push((200, {}, b"hello"))
+    fs.cp(src="Files/a.txt", dest="Files/b.txt", recurse=False)
+    assert http.calls, "the documented spellings must reach the body"
+
+
+def test_head_truncates_at_the_documented_default(http):
+    """`head` is a PREVIEW. The default is 1024 * 100 exactly as the page
+    writes it, and it is part of the meaning: a caller wanting every byte
+    wants `read`."""
+    http.push((200, {}, b"x" * 10))
+    fs.head("Files/a.txt")
+    assert fs.HEAD_DEFAULT_MAX_BYTES == 1024 * 100
+    assert http.last()["headers"]["Range"] == f"bytes=0-{1024 * 100 - 1}"
+
+
+def test_head_with_an_explicit_none_reads_the_whole_file(http):
+    http.push((200, {}, b"hello"))
+    assert fs.head("Files/a.txt", None) == "hello"
+    assert "Range" not in http.last()["headers"]
+
+
+# --- fs: append and its create flag ------------------------------------------
+
+
+def test_append_to_a_missing_file_refuses_unless_told_to_create(http):
+    """The flag is the whole difference between "append to a file" and "start
+    one", and Fabric makes the caller say which they meant."""
+    missing = Exception("no such file")
+    missing.status = 404
+    http.push(missing)
+    with pytest.raises(Exception, match="no such file"):
+        fs.append("Files/new.txt", "x")
+
+
+def test_append_creates_the_file_when_asked(http):
+    missing = Exception("no such file")
+    missing.status = 404
+    http.push(missing)
+    fs.append("Files/new.txt", "x", createFileIfNotExists=True)
+    urls = http.urls()
+    assert any("resource=file" in u for u in urls), "it must create the file"
+    assert any("action=append&position=0" in u for u in urls), "then append at 0"
+
+
+def test_append_does_not_swallow_a_non_404(http):
+    """A permission failure is not a missing file, and creating one in response
+    would turn a 403 into a silent empty write."""
+    denied = Exception("forbidden")
+    denied.status = 403
+    http.push(denied)
+    with pytest.raises(Exception, match="forbidden"):
+        fs.append("Files/a.txt", "x", createFileIfNotExists=True)
+
+
+# --- fs: recursion, move, properties -----------------------------------------
+
+
+def _entry(path, name, is_dir):
+    return fs.FileInfo(path, name, 0, is_dir)
+
+
+def test_cp_without_recurse_copies_one_file(http, monkeypatch):
+    seen = []
+    monkeypatch.setattr(fs, "read", lambda p: b"data")
+    monkeypatch.setattr(fs, "put", lambda f, c, overwrite=False: seen.append(f))
+    fs.cp("Files/a.txt", "Files/b.txt")
+    assert seen == ["Files/b.txt"]
+
+
+def test_cp_with_recurse_walks_the_tree(http, monkeypatch):
+    """`recurse` is the caller's opt-in on `cp`, and defaults the other way on
+    `fastcp` — so a tree copy that silently copied one file would be the
+    difference between the two going unnoticed."""
+    tree = {
+        "Files/src": [_entry("Files/src/sub", "sub", True),
+                      _entry("Files/src/a.txt", "a.txt", False)],
+        "Files/src/sub": [_entry("Files/src/sub/b.txt", "b.txt", False)],
+    }
+    monkeypatch.setattr(fs, "ls", lambda p: tree.get(p, []))
+    monkeypatch.setattr(fs, "read", lambda p: b"data")
+    made, put = [], []
+    monkeypatch.setattr(fs, "mkdirs", lambda p: made.append(p))
+    monkeypatch.setattr(fs, "put", lambda f, c, overwrite=False: put.append(f))
+    fs.cp("Files/src", "Files/dst", recurse=True)
+    assert put == ["Files/dst/sub/b.txt", "Files/dst/a.txt"]
+    assert "Files/dst" in made and "Files/dst/sub" in made
+
+
+def test_fastcp_keeps_fabrics_recursive_default(http, monkeypatch):
+    """The copy is the same code — there is no azcopy here and nothing to gain
+    from one at notebook scale — but the DEFAULTS are Fabric's, because a
+    caller relying on fastcp's recursive-by-default and getting cp's would
+    silently copy one file instead of a tree."""
+    calls = []
+    monkeypatch.setattr(fs, "cp", lambda src, dest, recurse=False: calls.append(recurse))
+    fs.fastcp("Files/src", "Files/dst")
+    assert calls == [True]
+
+
+def test_mv_refuses_to_clobber_unless_overwrite(http, monkeypatch):
+    monkeypatch.setattr(fs, "exists", lambda p: True)
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        fs.mv("Files/a.txt", "Files/b.txt")
+
+
+def test_mv_copies_then_removes_the_source(http, monkeypatch):
+    monkeypatch.setattr(fs, "exists", lambda p: False)
+    monkeypatch.setattr(fs, "_is_dir", lambda p: False)
+    monkeypatch.setattr(fs, "read", lambda p: b"data")
+    order = []
+    monkeypatch.setattr(fs, "put", lambda f, c, overwrite=False: order.append(("put", f)))
+    monkeypatch.setattr(fs, "mkdirs", lambda p: order.append(("mkdirs", p)))
+    monkeypatch.setattr(fs, "rm", lambda p, recurse=False: order.append(("rm", p)))
+    fs.mv("Files/a.txt", "Files/sub/b.txt")
+    assert ("mkdirs", "Files/sub") in order
+    assert order.index(("put", "Files/sub/b.txt")) < order.index(("rm", "Files/a.txt"))
+
+
+def test_getProperties_returns_the_response_headers(http):
+    http.push((200, {"Content-Length": "12", "x-ms-resource-type": "file"}, b""))
+    assert fs.getProperties("Files/a.txt")["x-ms-resource-type"] == "file"
+
+
+# --- fs: mount ----------------------------------------------------------------
+
+
+@pytest.fixture
+def clean_mounts():
+    fs._MOUNTS.clear()
+    yield
+    fs._MOUNTS.clear()
+
+
+def test_mount_materialises_the_source_and_hands_back_a_local_path(
+        http, monkeypatch, clean_mounts, tmp_path):
+    """WHAT A MOUNT IS FOR: a local path that reaches remote data, so code
+    expecting a filesystem works unchanged. That observable contract is what is
+    emulated — the copy, not blobfuse."""
+    monkeypatch.setattr(fs, "_mount_root", lambda mp: str(tmp_path / mp.lstrip("/")))
+    monkeypatch.setattr(fs, "ls", lambda p: [_entry(p + "/a.txt", "a.txt", False)])
+    monkeypatch.setattr(fs, "read", lambda p: b"payload")
+    assert fs.mount("abfss://ws@host/c", "/mydata") is True
+    local = fs.getMountPath("/mydata")
+    with open(local + "/a.txt", "rb") as fh:
+        assert fh.read() == b"payload"
+
+
+def test_mounting_the_same_point_twice_is_refused(http, monkeypatch, clean_mounts, tmp_path):
+    """Fabric's own guidance is to check `mounts()` first; re-mounting is the
+    caller's error, not something to silently redo."""
+    monkeypatch.setattr(fs, "_mount_root", lambda mp: str(tmp_path / mp.lstrip("/")))
+    monkeypatch.setattr(fs, "ls", lambda p: [])
+    fs.mount("abfss://ws@host/c", "/mydata")
+    with pytest.raises(ValueError, match="already mounted"):
+        fs.mount("abfss://ws@host/other", "/mydata")
+
+
+def test_mounts_lists_what_is_mounted_with_fabrics_attribute_names(
+        http, monkeypatch, clean_mounts, tmp_path):
+    """Fabric's example loops `any(m.mountPoint == p for m in mounts())`, so
+    the attribute name is part of the contract."""
+    monkeypatch.setattr(fs, "_mount_root", lambda mp: str(tmp_path / mp.lstrip("/")))
+    monkeypatch.setattr(fs, "ls", lambda p: [])
+    fs.mount("abfss://ws@host/c", "/mydata")
+    entries = fs.mounts()
+    assert [m.mountPoint for m in entries] == ["/mydata"]
+    assert entries[0].source == "abfss://ws@host/c"
+
+
+def test_unmount_removes_the_point_and_reports_whether_there_was_one(
+        http, monkeypatch, clean_mounts, tmp_path):
+    monkeypatch.setattr(fs, "_mount_root", lambda mp: str(tmp_path / mp.lstrip("/")))
+    monkeypatch.setattr(fs, "ls", lambda p: [])
+    fs.mount("abfss://ws@host/c", "/mydata")
+    assert fs.unmount("/mydata") is True
+    assert fs.mounts() == []
+    assert fs.unmount("/mydata") is False, "unmounting nothing is False, not an error"
+
+
+def test_getMountPath_on_an_unmounted_point_says_so(clean_mounts):
+    with pytest.raises(KeyError, match="not mounted"):
+        fs.getMountPath("/nope")
+
+
+def test_a_single_file_source_mounts_as_that_file(
+        http, monkeypatch, clean_mounts, tmp_path):
+    def ls_fails(_p):
+        raise RuntimeError("not a directory")
+
+    monkeypatch.setattr(fs, "_mount_root", lambda mp: str(tmp_path / mp.lstrip("/")))
+    monkeypatch.setattr(fs, "ls", ls_fails)
+    monkeypatch.setattr(fs, "read", lambda p: b"one")
+    fs.mount("abfss://ws@host/c/solo.txt", "/single")
+    with open(fs.getMountPath("/single") + "/solo.txt", "rb") as fh:
+        assert fh.read() == b"one"
+
+
+def test_mount_roots_are_per_session(monkeypatch):
+    """Two sessions in one agent must not share a mount directory — the same
+    isolation contract 5 asserts for catalogs, applied to the filesystem."""
+    monkeypatch.setenv("FABRIC_JOB_ID", "job-a")
+    a = fs._mount_root("/m")
+    monkeypatch.setenv("FABRIC_JOB_ID", "job-b")
+    assert fs._mount_root("/m") != a
+
+
+# --- lakehouse ----------------------------------------------------------------
+
+
+def test_lakehouse_get_resolves_a_name_through_the_listing(http):
+    """The documented lookup is BY NAME. The shim took `lakehouseId`, which is
+    both the wrong parameter name and the wrong lookup."""
+    http.push({"value": [{"id": LH, "displayName": "sales"}]})
+    http.push({"id": LH})
+    lakehouse.get("sales")
+    assert http.last()["url"].endswith(f"/lakehouses/{LH}")
+
+
+def test_lakehouse_get_with_no_name_uses_the_attached_lakehouse(http):
+    http.push({"id": LH})
+    lakehouse.get()
+    assert http.last()["url"].endswith(f"/lakehouses/{LH}")
+
+
+def test_an_unknown_lakehouse_name_is_named_in_the_error(http):
+    http.push({"value": [{"id": LH, "displayName": "sales"}]})
+    with pytest.raises(KeyError, match="marketing"):
+        lakehouse.get("marketing")
+
+
+def test_lakehouse_create_passes_the_schema_definition_through(http):
+    lakehouse.create("lake", "desc", {"enableSchemas": True})
+    assert http.last()["body"]["creationPayload"] == {"enableSchemas": True}
+
+
+def test_lakehouse_list_honours_maxResults(http):
+    http.push({"value": [{"id": str(n)} for n in range(10)]})
+    assert len(lakehouse.list(maxResults=3)) == 3
+
+
+def test_lakehouse_update_renames(http):
+    http.push({"id": LH})
+    lakehouse.update(LH, "newname", "why")
+    assert http.last()["method"] == "PATCH"
+    assert http.last()["body"] == {"displayName": "newname", "description": "why"}
+
+
+def test_lakehouse_delete_reports_success(http):
+    assert lakehouse.delete(LH) is True
+    assert http.last()["method"] == "DELETE"
+
+
+def test_listTables_reads_the_Tables_folder_not_a_metastore(http, monkeypatch):
+    """Nothing in this stack holds a metastore — the lakehouse's Tables/ folder
+    IS the table list, which is what livy_catalog enumerates on bind."""
+    monkeypatch.setattr(fs, "ls", lambda p: [
+        _entry(p + "/events", "events", True),
+        _entry(p + "/_stray.txt", "_stray.txt", False),
+    ])
+    tables = lakehouse.listTables(LH)
+    assert [t.name for t in tables] == ["events"], "a loose file is not a table"
+
+
+def test_loadTable_refuses_by_name_rather_than_faking_a_load(http):
+    """The plausible shortcut — read the CSV here, write a Delta table from the
+    client — would be a DIFFERENT operation wearing the same name: no job, no
+    server-side schema inference, and a silent success for options it never
+    applied."""
+    with pytest.raises(NotImplementedError) as exc:
+        lakehouse.loadTable({"relativePath": "Files/x.csv"}, "t")
+    assert "saveAsTable" in str(exc.value), "a refusal must name the way through"
+
+
+# --- credentials: the write half, and the clock -------------------------------
+
+
+def test_putSecret_writes_to_the_vault(http):
+    """`getSecret` has been here since the shim started and this had not — the
+    shape of gap contract 2 finds: a framework that manages its own secrets
+    introspects for `putSecret`, sees nothing, and declines."""
+    http.push({"value": "s3cret"})
+    assert credentials.putSecret("myvault", "api-key", "s3cret") == "s3cret"
+    call = http.last()
+    assert call["method"] == "PUT"
+    assert call["url"].endswith("/secrets/api-key?api-version=7.4")
+    assert call["body"] == {"value": "s3cret"}
+
+
+def _jwt(exp):
+    import base64
+    import json
+
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).rstrip(b"=")
+    return "hdr." + payload.decode() + ".sig"
+
+
+def test_isValidToken_reads_the_clock():
+    import time
+
+    assert credentials.isValidToken(_jwt(time.time() + 600)) is True
+    assert credentials.isValidToken(_jwt(time.time() - 600)) is False
+
+
+def test_an_unparseable_token_is_not_valid():
+    """Unreadable is a "no": the caller's next move on False — mint a fresh
+    one — is the safe one."""
+    assert credentials.isValidToken("not-a-jwt") is False
+    assert credentials.isValidToken("") is False
+    assert credentials.isValidToken("a.!!!.c") is False
+
+
+def test_a_token_without_exp_is_not_valid():
+    """Real Entra always mints `exp`. Treating its absence as eternal is what
+    internal/auth refuses to do, for the same reason."""
+    import base64
+    import json
+
+    payload = base64.urlsafe_b64encode(json.dumps({"sub": "x"}).encode()).rstrip(b"=")
+    assert credentials.isValidToken("h." + payload.decode() + ".s") is False
+
+
+# --- session ------------------------------------------------------------------
+
+
+def test_session_stop_asks_the_agent_rather_than_exiting(http, monkeypatch):
+    """A sys.exit() here would take every other live notebook down with it —
+    the shared-agent leak contract 5 exists to catch, in its worst form."""
+    monkeypatch.setenv("SPARK_AGENT_URL", "http://agent:8099")
+    monkeypatch.setenv("FABRIC_SESSION_ID", "sess-1")
+    session.stop()
+    assert http.last()["url"] == "http://agent:8099/close"
+    assert http.last()["body"] == {"session": "sess-1", "detach": True}
+
+
+def test_session_stop_passes_detach_through(http, monkeypatch):
+    """In a high-concurrency session `detach` decides whether this notebook
+    leaves or the shared session dies under its siblings."""
+    monkeypatch.setenv("SPARK_AGENT_URL", "http://agent:8099")
+    session.stop(detach=False)
+    assert http.last()["body"]["detach"] is False
+
+
+def test_restartPython_keeps_the_spark_context(http, monkeypatch):
+    """The distinction is the point: restarting the engine too would cost every
+    cached DataFrame and temp view for no reason."""
+    monkeypatch.setenv("SPARK_AGENT_URL", "http://agent:8099")
+    session.restartPython()
+    assert http.last()["url"].endswith("/restart-python")
+
+
+def test_session_outside_a_notebook_says_so(http, monkeypatch):
+    """Rather than pretending to have stopped something."""
+    monkeypatch.delenv("SPARK_AGENT_URL", raising=False)
+    monkeypatch.delenv("NOTEBOOKUTILS_AGENT_URL", raising=False)
+    with pytest.raises(RuntimeError, match="outside a notebook session"):
+        session.stop()
+
+
+# --- udf ----------------------------------------------------------------------
+
+
+UDF_ITEM = {"id": "33333333-3333-3333-3333-333333333333", "displayName": "Validators"}
+UDF_FUNCS = [{"Name": "validate", "Parameters": [{"Name": "schema"}, {"Name": "path"}]}]
+
+
+def test_getFunctions_returns_callables_named_by_the_item(http):
+    http.push({"value": [UDF_ITEM]})
+    http.push({"value": UDF_FUNCS})
+    fns = udf.getFunctions("Validators")
+    http.push({"result": "ok"})
+    assert fns.validate(schema="s", path="p") == {"result": "ok"}
+    assert http.last()["url"].endswith("/functions/validate/invoke")
+    assert http.last()["body"] == {"parameters": {"schema": "s", "path": "p"}}
+
+
+def test_positional_arguments_are_matched_to_the_declared_order(http):
+    """Scala and R can only pass positional, so the item's own signature is
+    what resolves them."""
+    http.push({"value": [UDF_ITEM]})
+    http.push({"value": UDF_FUNCS})
+    fns = udf.getFunctions("Validators")
+    http.push({})
+    fns.validate("sales", "Files/a.csv")
+    assert http.last()["body"]["parameters"] == {"schema": "sales", "path": "Files/a.csv"}
+
+
+def test_omitting_an_optional_parameter_is_a_legal_call(http):
+    """The page documents that a parameter with a default may be omitted, so
+    fewer args than declared is a legal call, not a length mismatch."""
+    http.push({"value": [UDF_ITEM]})
+    http.push({"value": UDF_FUNCS})
+    fns = udf.getFunctions("Validators")
+    http.push({})
+    fns.validate("sales")
+    assert http.last()["body"]["parameters"] == {"schema": "sales"}
+
+
+def test_a_function_the_item_does_not_have_names_the_ones_it_does(http):
+    """Fabric's own example checks `functionDetails` before invoking; the error
+    should tell you the same thing that check would have."""
+    http.push({"value": [UDF_ITEM]})
+    http.push({"value": UDF_FUNCS})
+    fns = udf.getFunctions("Validators")
+    with pytest.raises(AttributeError, match="validate"):
+        fns.noSuchFunction()
+
+
+def test_item_and_function_details_are_readable(http):
+    """A shim returning a bare callable would break the `functionDetails` guard
+    Fabric's examples recommend."""
+    http.push({"value": [UDF_ITEM]})
+    http.push({"value": UDF_FUNCS})
+    fns = udf.getFunctions("Validators")
+    assert fns.itemDetails["Name"] == "Validators"
+    assert [f["Name"] for f in fns.functionDetails] == ["validate"]
+
+
+def test_an_unknown_udf_item_is_named_in_the_error(http):
+    http.push({"value": []})
+    with pytest.raises(KeyError, match="Missing"):
+        udf.getFunctions("Missing")
+
+
+# --- the remaining branches ---------------------------------------------------
+
+
+def test_rm_of_a_directory_is_recursive_only_when_asked(http):
+    fs.rm("Files/dir")
+    assert "recursive=true" not in http.last()["url"]
+    fs.rm("Files/dir", recurse=True)
+    assert "recursive=true" in http.last()["url"]
+
+
+def test_mv_of_a_directory_copies_the_tree(http, monkeypatch):
+    monkeypatch.setattr(fs, "exists", lambda p: False)
+    monkeypatch.setattr(fs, "_is_dir", lambda p: True)
+    seen = {}
+    monkeypatch.setattr(fs, "cp",
+                        lambda src, dest, recurse=False: seen.update(recurse=recurse))
+    monkeypatch.setattr(fs, "mkdirs", lambda p: None)
+    monkeypatch.setattr(fs, "rm", lambda p, recurse=False: None)
+    fs.mv("Files/src", "Files/dst")
+    assert seen == {"recurse": True}, "a directory move must take the whole tree"
+
+
+def test_is_dir_reads_the_resource_type_header(http):
+    http.push((200, {"x-ms-resource-type": "directory"}, b""))
+    assert fs._is_dir("Files/d") is True
+    http.push((200, {"x-ms-resource-type": "file"}, b""))
+    assert fs._is_dir("Files/a.txt") is False
+
+
+def test_is_dir_treats_unreadable_as_not_a_directory(http):
+    """Unreadable is not evidence of a directory — and guessing "yes" would
+    send `mv` down the tree-copy path against a single file."""
+    boom = Exception("denied")
+    boom.status = 403
+    http.push(boom)
+    assert fs._is_dir("Files/a.txt") is False
+
+
+def test_cell_context_tags_io_only_inside_a_notebook_run(monkeypatch):
+    """Observed lineage with no parsing of user code — and absent outside a
+    run, where there is no cell to attribute anything to."""
+    monkeypatch.setenv("FABRIC_JOB_ID", "job-1")
+    monkeypatch.setenv("FABRIC_CELL_INDEX", "3")
+    assert fs._cell_context() == {"x-ms-fabric-job-id": "job-1",
+                                  "x-ms-fabric-cell-index": "3"}
+    monkeypatch.delenv("FABRIC_CELL_INDEX")
+    assert fs._cell_context() == {}
+
+
+def test_mount_entries_and_tables_are_readable_at_a_glance():
+    m = fs.MountPointInfo("abfss://ws@host/c", "/mydata", "/tmp/x")
+    assert "/mydata" in repr(m) and "abfss://ws@host/c" in repr(m)
+    t = lakehouse.Table("events", "abfss://ws@host/lh/Tables/events")
+    assert "events" in repr(t) and "delta" in repr(t)
+
+
+def test_a_udf_object_says_what_it_holds(http):
+    http.push({"value": [UDF_ITEM]})
+    http.push({"value": UDF_FUNCS})
+    fns = udf.getFunctions("Validators")
+    assert "Validators" in repr(fns) and "1 function" in repr(fns)
+
+
+def test_materialise_recurses_into_subdirectories(
+        http, monkeypatch, clean_mounts, tmp_path):
+    tree = {
+        "abfss://ws@host/c": [_entry("abfss://ws@host/c/sub", "sub", True)],
+        "abfss://ws@host/c/sub": [_entry("abfss://ws@host/c/sub/deep.txt", "deep.txt", False)],
+    }
+    monkeypatch.setattr(fs, "_mount_root", lambda mp: str(tmp_path / mp.lstrip("/")))
+    monkeypatch.setattr(fs, "ls", lambda p: tree.get(p, []))
+    monkeypatch.setattr(fs, "read", lambda p: b"deep")
+    fs.mount("abfss://ws@host/c", "/m")
+    with open(fs.getMountPath("/m") + "/sub/deep.txt", "rb") as fh:
+        assert fh.read() == b"deep"
+
+
+def test_getWithProperties_is_a_read_of_the_same_item(http):
+    """Kept as a separate member because a framework introspects for it, and
+    because Fabric documents the two as different reads."""
+    http.push({"id": LH, "properties": {"sqlEndpointProperties": {}}})
+    assert lakehouse.getWithProperties(LH)["id"] == LH
+
+
+def test_a_missing_workspace_is_named_rather_than_guessed(monkeypatch):
+    """Every module that can default a workspace says so when it cannot."""
+    empty = type("C", (), {"workspace_id": None, "lakehouse_id": None})()
+    monkeypatch.setattr(lakehouse, "config", lambda: empty)
+    monkeypatch.setattr(udf, "config", lambda: empty)
+    with pytest.raises(RuntimeError, match="no workspace"):
+        lakehouse.list()
+    with pytest.raises(RuntimeError, match="no workspace"):
+        udf.getFunctions("anything")
+
+
+def test_no_name_and_no_attached_lakehouse_says_which_is_missing(http, monkeypatch):
+    no_lake = type("C", (), {"workspace_id": WS, "lakehouse_id": None,
+                             "fabric_url": "https://localhost:9443"})()
+    monkeypatch.setattr(lakehouse, "config", lambda: no_lake)
+    monkeypatch.delenv("NOTEBOOKUTILS_LAKEHOUSE_ID", raising=False)
+    with pytest.raises(RuntimeError, match="no default lakehouse is attached"):
+        lakehouse.get()
+
+
+def test_mkdirs_creates_a_directory_resource(http):
+    fs.mkdirs("Files/new/deep")
+    assert http.last()["url"].endswith("?resource=directory")
+    assert http.last()["method"] == "PUT"
+
+
+def test_a_scope_that_is_already_a_scope_is_not_suffixed_twice():
+    """`storage` becomes `https://storage.azure.com/.default`; a caller who
+    passed the full scope must not get `/.default/.default`."""
+    assert credentials._scope("https://vault.azure.net/.default").endswith("/.default")
+    assert credentials._scope("https://vault.azure.net/.default").count("/.default") == 1
+
+
+def test_a_vault_passed_as_a_full_url_is_used_as_given(monkeypatch):
+    """Fabric's own examples pass `https://<name>.vault.azure.net/`, and a
+    shim that appended the DNS suffix to that would build a nonsense host."""
+    no_override = type("C", (), {"vault_url": None})()
+    monkeypatch.setattr(credentials, "config", lambda: no_override)
+    assert credentials._vault_url("https://mine.vault.azure.net/") == \
+        "https://mine.vault.azure.net"
+    assert credentials._vault_url("mine") == "https://mine.vault.azure.net"

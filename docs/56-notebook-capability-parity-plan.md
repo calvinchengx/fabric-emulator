@@ -1,9 +1,11 @@
 # Notebook capability parity — the plan
 
-> **Status: Phase 0 delivered; the rest is a draft for discussion.** Axis A is
-> now measured against a cited reference rather than estimated — 44 documented
-> members, 25 of them wrong or missing. Axis C rows are still search results,
-> not probe results, and each needs measuring before it becomes a claim. Companion to
+> **Status: Phases 0, 1 and 2 delivered.** Axis A is complete and graded: 44
+> documented members, all present with the documented signatures, checked on
+> every run by contract 2 on both lakehouse backends. Axis B (behaviour) and
+> Axis C (execution model) are the remaining work. Axis C rows below are still
+> search results, not probe results, and each needs measuring before it becomes
+> a claim. Companion to
 > [38-framework-conformance.md](38-framework-conformance.md) and
 > [39-run-multiple-parity-plan.md](39-run-multiple-parity-plan.md), whose
 > "what done buys, precisely" convention this follows.
@@ -50,41 +52,34 @@ different owner, a different kind of evidence, and a different failure mode.
 
 ## Axis A — the surface, measured
 
-**Phase 0 is done, so this table now has a denominator.** The module list is
-not ours: it is the table on the [NotebookUtils overview
-page](https://learn.microsoft.com/en-us/fabric/data-engineering/notebook-utilities),
-read 2026-08-04, which is what lets it name a module nobody here thought to look
-for. Every member in `notebookutils-reference.json` carries its source page and
-that page's own last-updated date.
-
-**44 documented members. 19 are correct. 17 are absent and 8 more exist with the
-wrong parameter names.**
+**Phases 0–2 are delivered, so this table has a denominator and it reads
+zero.** The module list is not ours: it is the table on the [NotebookUtils
+overview page](https://learn.microsoft.com/en-us/fabric/data-engineering/notebook-utilities),
+read 2026-08-04. Every member in `notebookutils-reference.json` carries its
+source page and that page's own last-updated date.
 
 | Module | Documented | Present | Absent | Signature mismatches |
 |---|---:|---:|---:|---:|
 | `notebook` | 11 | 11 | 0 | 0 |
-| `fs` | 15 | 8 | 7 | 5 |
-| `lakehouse` | 8 | 3 | 5 | 3 |
-| `credentials` | 4 | 2 | 2 | 0 |
-| `session` | 2 | — | 2 | — |
-| `udf` | 1 | — | 1 | — |
+| `fs` | 15 | 15 | 0 | 0 |
+| `lakehouse` | 8 | 8 | 0 | 0 |
+| `credentials` | 4 | 4 | 0 | 0 |
+| `session` | 2 | 2 | 0 | 0 |
+| `udf` | 1 | 1 | 0 | 0 |
 | `runtime` | 1 | 1 | 0 | 0 |
 | `variableLibrary` | 2 | 2 | 0 | 0 |
-| **Total** | **44** | **27** | **17** | **8** |
+| **Total** | **44** | **44** | **0** | **0** |
 
-Absent: `fs.fastcp`, `fs.mv`, `fs.getProperties`, `fs.mount`, `fs.unmount`,
-`fs.mounts`, `fs.getMountPath`, `lakehouse.update`, `lakehouse.delete`,
-`lakehouse.getWithProperties`, `lakehouse.listTables`, `lakehouse.loadTable`,
-`credentials.putSecret`, `credentials.isValidToken`, and the whole of
-`session` and `udf`.
+Graded by contract 2 on both lakehouse backends, every run.
 
-### The eight that exist and would fail anyway
+### The eight that existed and would have failed anyway
 
-This is the finding worth the phase. These methods are shipped, work, and are
-used — and a framework that introspects them **declines to run**, because
-contract 2's asymmetry is about names, not count:
+The finding worth Phase 0, and the reason Phase 2 was not just "write the
+missing methods". These were shipped, worked, and were used — and a framework
+introspecting them **declined to run**, because contract 2's asymmetry is about
+names, not counts:
 
-| Member | Documented | Shipped |
+| Member | Documented | Was shipped as |
 |---|---|---|
 | `fs.put` | `(file, content, overwrite)` | `(path, content, overwrite)` |
 | `fs.head` | `(file, max_bytes)` | `(path, maxBytes)` |
@@ -92,16 +87,39 @@ contract 2's asymmetry is about names, not count:
 | `fs.cp` | `(src, dest, recurse)` | `(src, dst)` |
 | `fs.rm` | `(path, recurse)` | `(path, recursive)` |
 | `lakehouse.get` | `(name, workspaceId)` | `(lakehouseId, workspaceId)` |
-| `lakehouse.create` | `(name, description, definition, workspaceId)` | `(name, description, workspaceId)` |
-| `lakehouse.list` | `(workspaceId, maxResults)` | `(workspaceId)` |
+| `lakehouse.create` | `…, definition, workspaceId` | `definition` absent |
+| `lakehouse.list` | `(workspaceId, maxResults)` | `maxResults` absent |
 
 `dst` for `dest`, `recursive` for `recurse`, `maxBytes` for `max_bytes`,
-`lakehouseId` for `name` — each is the reasonable spelling somebody would pick
-writing the method from its description rather than from the page. Which is
+`lakehouseId` for `name` — each is the reasonable spelling somebody picks
+writing a method from its description rather than from the page. Which is
 precisely how this reference came to be needed.
 
-**None of these is caught today**, because contract 2 grades one module and
-`fs`/`lakehouse` are not it. Phase 1 is what turns all 25 into red cells.
+### Correcting `head` found a live bug
+
+`head` is a PREVIEW — the first `max_bytes`, 100 KB by default — and the shim
+defaulted to the whole file. `python/spark_agent/json_multiline.py` called
+`fs.head(path)` to parse JSON, **depending on that divergence**. Once `head`
+matched the page, any document over 100 KB would have been truncated mid-parse,
+or worse parsed as a shorter valid one. It now calls `read()`, and the
+regression guard is a 20,000-record body a `head`-shaped reader cannot pass.
+
+### Three refusals and emulations, stated rather than discovered
+
+- **`lakehouse.loadTable` refuses, by name.** Fabric runs a server-side
+  ingestion job — schema inference, format options, load modes. The plausible
+  shortcut (read the CSV client-side, write Delta) is a *different operation
+  wearing the same name*, succeeding silently for options it never applied. The
+  member exists so introspection passes; calling it raises, and the error names
+  the `spark.read…saveAsTable` one-liner that does the real work.
+- **`fs.mount` is emulated, not faked.** Fabric's is blobfuse-backed and live;
+  this is a point-in-time copy to a per-session local directory.
+  `fileCacheTimeout` and `timeout` are accepted and ignored — correct emulation
+  when there is nothing to switch — and that divergence is written here rather
+  than left to be found at 2am.
+- **`session.stop()` asks the agent.** A `sys.exit()` would end the process and
+  take every other live notebook with it: contract 5's shared-agent leak in its
+  most destructive form. The agent decides what "this session" means.
 
 ### What the old scope field got right, and what it hid
 

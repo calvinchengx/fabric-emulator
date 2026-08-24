@@ -524,68 +524,67 @@ def register_tables(session, schema, tables, schemas=None):
 
 
 def _table_should_exist(name):
-    """Is `name` a table that EXISTS, which the engine has nonetheless lost?
+    """Thin glue: hand session_recovery this agent's three registries.
 
-    The half of the forgotten-table test that keeps a typo a typo, and the
-    ordering below is the whole design. Three oracles, cheapest first, any one
-    sufficient:
-
-      1. `delta_ops` has a location for it — registered or derived earlier in
-         this process;
-      2. the control plane declared it in this session's /register payload;
-      3. THE LAKEHOUSE ITSELF has it.
-
-    THE THIRD IS THE ONE THAT MATTERS, and leaving it out made this miss the
-    exact case it was written for. A notebook's `saveAsTable("events")` on a
-    fresh lakehouse is in NEITHER of the first two: `register()` enumerated the
-    lakehouse before the write happened, and a DataFrameWriter call is not a
-    statement the agent's `sql` wrapper ever sees. The first draft of this
-    therefore answered "no" for precisely the table whose disappearance
-    prompted the fix.
-
-    Asking storage is also the semantically right question. "The table is in the
-    lakehouse and the engine cannot see it" IS the forgotten-session condition,
-    stated directly rather than inferred from bookkeeping. A typo is not in the
-    lakehouse either, so it still answers no and is still left alone.
-
-    The agent process does not restart when sail does, so oracles 1 and 2
-    survive the event being detected; oracle 3 does not depend on surviving
-    anything.
+    The DECISION is in session_recovery.table_exists_somewhere, which is
+    importable without Spark and therefore actually tested. What stays here is
+    only the wiring — which registries this process happens to have.
     """
-    bare = (name or "").replace("`", "").strip().lower().rsplit(".", 1)[-1]
-    if not bare:
-        return False
-    # try/except/else rather than rebinding the module name to None: `ty`
-    # refuses `delta_ops = None` because the name is already the module, and
-    # the else-branch says the same thing without the assignment.
-    try:
+    def recorded(bare):
         import delta_ops
-    except Exception:  # noqa: BLE001 - no registry is not evidence either way
-        pass
-    else:
-        try:
-            if delta_ops.known_location(bare):
-                return True
-        except Exception:  # noqa: BLE001
-            pass
-    for _schema, tables, _schemas in session_registration.values():
-        for t in tables or []:
-            if str(t.get("name", "")).strip().lower() == bare:
-                return True
-    if delta_ops is not None:
-        try:
-            import storage
 
-            # Ambiguity raises here, and that is not an answer to THIS question:
-            # a name in two lakehouses is still a name the engine should have
-            # been able to resolve, so it counts as existing.
-            try:
-                return bool(delta_ops.derive_location(bare, storage.options))
-            except delta_ops.DeltaOpError:
-                return True
-        except Exception:  # noqa: BLE001 - unreadable storage is not evidence
-            return False
-    return False
+        return delta_ops.known_location(bare)
+
+    def declared():
+        for _schema, tables, _schemas in session_registration.values():
+            for t in tables or []:
+                yield t.get("name", "")
+
+    def in_storage(bare):
+        import delta_ops
+        import storage
+
+        try:
+            return delta_ops.derive_location(bare, storage.options)
+        except delta_ops.DeltaOpError:
+            # Ambiguity is not an answer to THIS question: a name in two
+            # lakehouses is still one the engine should have resolved.
+            return True
+
+    return session_recovery.table_exists_somewhere(
+        name, recorded_location=recorded, declared_tables=declared,
+        in_storage=in_storage)
+
+
+def restart_python(session):
+    """Rebuild this session's namespace, keeping its engine handle.
+
+    What a Python restart costs on Fabric is the interpreter's STATE: imported
+    modules, user variables, anything held in memory. What it keeps is the
+    Spark context. So the engine handle is carried across and everything else
+    is dropped — and the caller is told what went, because a restart that
+    quietly preserved half the namespace would be harder to reason about than
+    one that cleared it all.
+    """
+    g = namespaces.get(session)
+    if g is None:
+        return {"restarted": False, "reason": f"no live session {session!r}"}
+    keep = {k: g[k] for k in ("spark", "sc") if k in g}
+    dropped = sorted(k for k in g
+                     if not k.startswith("__") and k not in keep)
+    g.clear()
+    g.update(keep)
+    # THE NAMESPACE IS NOT REBUILT BY ns(), deliberately. Popping it and
+    # letting ns() run again would build a NEW isolated engine session — which
+    # is precisely what this method must not do. So the globals a fresh
+    # namespace gets are re-bound here around the engine handle that survived.
+    nbu = _notebookutils()
+    if nbu is not None:
+        g["notebookutils"] = nbu
+        mssparkutils = getattr(nbu, "mssparkutils", None)
+        if mssparkutils is not None:
+            g["mssparkutils"] = mssparkutils
+    return {"restarted": True, "kept": sorted(keep), "dropped": dropped}
 
 
 def recover_forgotten_session(session):
@@ -833,6 +832,18 @@ class Handler(BaseHTTPRequestHandler):
                                  "error": traceback.format_exc().splitlines()[-1]})
         elif self.path == "/environment":
             self._send(200, apply_environment(req))
+        elif self.path == "/restart-python":
+            # notebookutils.session.restartPython(). THE SPARK CONTEXT SURVIVES,
+            # and that distinction is the whole method: a `pip install` in one
+            # cell is not importable in the next until the interpreter restarts,
+            # and tearing down the engine as well would cost every cached
+            # DataFrame and temp view for no reason at all.
+            #
+            # A restart here is this SESSION'S namespace, not the process. The
+            # agent is shared (docs/38 §5), so restarting the interpreter really
+            # would end every other live notebook — the same reason /close drops
+            # one namespace rather than exiting.
+            self._send(200, restart_python(req.get("session", "default")))
         elif self.path == "/close":
             try:
                 import files_mount

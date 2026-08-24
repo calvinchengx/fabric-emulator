@@ -1151,3 +1151,37 @@ def test_derive_treats_unreadable_storage_as_no_answer(monkeypatch):
 def test_derive_is_a_no_op_when_no_schema_was_ever_stated():
     d.forget_all()
     assert d.derive_location("events") is None
+
+
+# The empty-name guards. Cheap, and each is a real path: `resolve()` is handed
+# whatever the regex captured, and a name that is only backticks or whitespace
+# must answer "unknown" rather than deriving `<schema>/` — a location that is
+# the SCHEMA ROOT, which OPTIMIZE would then happily compact.
+
+
+def test_an_empty_name_resolves_to_nothing_everywhere():
+    d.forget_all()
+    d.remember_schema("lake", "abfs://ws@host/lh/Tables")
+    assert d.known_location("") is None
+    assert d.known_schema_location("") is None
+    assert d.derive_location("") is None
+
+
+@needs_delta_rs
+def test_a_name_that_is_only_backticks_does_not_derive_the_schema_root(monkeypatch):
+    """`<schema>/` + "" is the Tables root. Deriving it would hand OPTIMIZE a
+    directory of tables instead of a table."""
+    d.forget_all()
+    d.remember_schema("lake", "abfs://ws@host/lh/Tables")
+    monkeypatch.setattr(d, "_resolve_options", lambda _o: {})
+    monkeypatch.setattr(_deltalake.DeltaTable, "is_deltatable",
+                        staticmethod(lambda *_a, **_k: True))
+    assert d.derive_location("``") is None
+    assert d.derive_location("   ") is None
+
+
+def test_remember_stated_schema_location_ignores_a_non_string():
+    d.forget_all()
+    d.remember_stated_schema_location(None)
+    d.remember_stated_schema_location(12345)
+    assert d.known_schema_location("lake") is None

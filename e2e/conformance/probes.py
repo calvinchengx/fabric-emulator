@@ -221,16 +221,25 @@ def context_chain(
 
 @dataclass(frozen=True)
 class SignatureClaim:
-    """The signatures one notebook session reported for a module.
+    """The signatures one notebook session reported, per module.
 
-    `seen` maps method name to its ordered parameter list. A method the
-    session could not find at all is simply absent, which is the case that
-    matters most: omission is what a framework reads.
+    `seen` maps module short name to {member: ordered parameter list}. A member
+    the session could not find is simply absent, which is the case that matters
+    most: omission is what a framework reads.
+
+    A MODULE THAT WOULD NOT IMPORT IS NOT AN EMPTY MODULE, and the two must not
+    collapse. The session reports the failure as the sentinel member
+    `__import_error__`, so a namespace that does not exist reads as absent
+    rather than as a surface that happens to expose nothing.
     """
 
     ok: bool
-    seen: dict[str, list[str]] | None = None
+    seen: dict[str, dict] | None = None
     error: str = ""
+
+
+# The sentinel a session uses to say "this module would not import".
+IMPORT_ERROR = "__import_error__"
 
 
 def signature_shape(
@@ -252,6 +261,17 @@ def signature_shape(
     positional (`run("Sample1", 90, {"input": 20})`). A runtime with the right
     names in the wrong order accepts that call and does something else with it,
     which is worse than refusing it.
+
+    NAMES ARE PART OF IT TOO, and that is the half this grew to catch. Phase 0
+    found eight members that exist, work, and would still be declined: `dst`
+    for `dest`, `recursive` for `recurse`, `maxBytes` for `max_bytes` -- each
+    the reasonable spelling of somebody writing the method from its description
+    rather than from the page.
+
+    ALL DOCUMENTED MODULES, not one. `reference` maps module short name to its
+    members, and the module list is Microsoft's own overview table (see
+    notebookutils-reference.json). Grading a single module was how twenty-five
+    defects stayed invisible while the cell was green.
     """
     title = CONTRACTS[1][1]
     pointer = CONTRACTS[1][2]
@@ -262,28 +282,38 @@ def signature_shape(
                       pointer=pointer)
 
     seen = claim.seen or {}
-    missing_methods, wrong = [], []
-    for method, spec in sorted(reference.items()):
-        if method not in seen:
-            missing_methods.append(method)
-            continue
-        want = spec["params"]
-        got = seen[method]
-        # Extra trailing parameters are allowed; the documented ones must be
-        # present, in order, at the front.
-        if got[:len(want)] != want:
-            missing = [p for p in want if p not in got]
-            if missing:
-                wrong.append(f"{method} is missing {', '.join(missing)}")
-            else:
-                wrong.append(f"{method} has {want} out of order: {got[:len(want)]}")
-
     problems = []
-    if missing_methods:
-        problems.append(
-            f"{len(missing_methods)} documented method(s) absent: "
-            + ", ".join(missing_methods))
-    problems.extend(wrong)
+    for module, members in sorted(reference.items()):
+        got_module = seen.get(module)
+        if got_module is None:
+            problems.append(f"{module}: not reported by the session at all")
+            continue
+        if IMPORT_ERROR in got_module:
+            why = (got_module[IMPORT_ERROR] or [""])[0]
+            problems.append(f"{module}: absent — the session could not import it ({why[:80]})")
+            continue
+        missing_members, wrong = [], []
+        for member, spec in sorted(members.items()):
+            if member not in got_module:
+                missing_members.append(member)
+                continue
+            want = spec["params"]
+            got = got_module[member]
+            # Extra trailing parameters are allowed; the documented ones must
+            # be present, in order, at the front.
+            if got[:len(want)] != want:
+                absent = [q for q in want if q not in got]
+                if absent:
+                    wrong.append(f"{member} is missing {', '.join(absent)}")
+                else:
+                    wrong.append(f"{member} has {want} out of order: {got[:len(want)]}")
+        if missing_members:
+            problems.append(
+                f"{module}: {len(missing_members)} documented member(s) absent: "
+                + ", ".join(missing_members))
+        for w in wrong:
+            problems.append(f"{module}.{w}")
+
     if problems:
         return Result(id="2", contract=title, backend=backend, status="fail",
                       error="; ".join(problems), pointer=pointer)

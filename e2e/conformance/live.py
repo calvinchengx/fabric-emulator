@@ -23,6 +23,17 @@ from pathlib import Path
 
 DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(DIR))
+
+# The cited surface (Phase 0, docs/56). Loaded here rather than at the call
+# site because the notebook body needs the MODULE LIST substituted into it:
+# the names a session introspects have to come from Microsoft's own overview
+# table, not from a list in this file, or the probe rebuilds the blind spot
+# the citation removed.
+REFERENCE = json.loads(
+    (Path(__file__).resolve().parent / "notebookutils-reference.json")
+    .read_text(encoding="utf-8"))
+REFERENCE_MODULES = {m.split(".")[-1]: methods
+                     for m, methods in REFERENCE["modules"].items()}
 from probes import (  # noqa: E402
     CONTROL,
     Artifact,
@@ -158,24 +169,47 @@ try:
     # than from the client's own import -- the client runs a different
     # interpreter with a different package set, and asserting on that would
     # prove something about the harness.
+    import importlib as _importlib
     import inspect as _inspect
 
+    # EVERY DOCUMENTED MODULE, and the list comes from the reference rather
+    # than from this file. `__MODULES__` is substituted by the client from
+    # notebookutils-reference.json, whose module list is Microsoft's own
+    # overview table -- so a module nobody here thought of still gets probed.
+    # Hardcoding the names would rebuild the exact blind spot Phase 0 removed.
     _sigs = {}
-    for _name in dir(_nbu.notebook):
-        if _name.startswith("_"):
-            continue
-        _fn = getattr(_nbu.notebook, _name, None)
-        if not callable(_fn):
-            continue
+    for _mod in __MODULES__:
         try:
-            _sigs[_name] = [p.name for p in
-                            _inspect.signature(_fn).parameters.values()
-                            if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
-        except (TypeError, ValueError):
-            # A builtin with no introspectable signature is not "absent"; say so
-            # rather than letting it read as a missing method.
-            _sigs[_name] = ["<no signature>"]
-    _findings["notebook_signatures"] = _sigs
+            _m = _importlib.import_module("notebookutils." + _mod)
+        except Exception as _mod_err:  # noqa: BLE001
+            # A module that will not import is NOT an empty module. Recorded as
+            # an explicit error so the probe can say "absent" rather than
+            # reading zero members as a surface with nothing in it.
+            _sigs[_mod] = {"__import_error__": [str(_mod_err)[:200]]}
+            continue
+        _members = {}
+        for _name in dir(_m):
+            if _name.startswith("_"):
+                continue
+            _fn = getattr(_m, _name, None)
+            if _fn is None:
+                continue
+            if not callable(_fn):
+                # A PROPERTY IS PART OF THE SURFACE. `runtime.context` is the
+                # whole of its module and is not callable; skipping
+                # non-callables would report that module as empty.
+                _members[_name] = []
+                continue
+            try:
+                _members[_name] = [p.name for p in
+                                   _inspect.signature(_fn).parameters.values()
+                                   if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
+            except (TypeError, ValueError):
+                # A builtin with no introspectable signature is not "absent";
+                # say so rather than letting it read as a missing method.
+                _members[_name] = ["<no signature>"]
+        _sigs[_mod] = _members
+    _findings["module_signatures"] = _sigs
     # Contract 3. Read from the SESSION's own interpreter, because that is the
     # one a notebook's imports resolve against — reading the client's would
     # describe the harness. `spark.version` is recorded, not asserted: whether
@@ -446,7 +480,9 @@ def writer() -> WriteClaim:
         "definition": {"parts": [{
             "path": "notebook-content.py", "payloadType": "InlineBase64",
             "payload": base64.b64encode(
-                (NOTEBOOK_BODY.replace("__WS__", ws).replace("__FINDINGS__", FINDINGS_PATH)
+                (NOTEBOOK_BODY.replace("__WS__", ws)
+                 .replace("__FINDINGS__", FINDINGS_PATH)
+                 .replace("__MODULES__", json.dumps(sorted(REFERENCE_MODULES)))
                  + meta).encode()).decode()}]}},
         token=fabric_token())
     opid = headers.get("x-ms-operation-id")
@@ -553,13 +589,14 @@ def session_context() -> ContextClaim:
             ok=False,
             error=f"no context findings at {FINDINGS_PATH}: {exc}{why}")
     global _sigs_seen, _runtime_seen
-    _sigs_seen = found.get("notebook_signatures")
+    _sigs_seen = found.get("module_signatures")
     _runtime_seen = found.get("runtime")
     global _fall_seen, _cred_seen
     _fall_seen = found.get("fall_through")
     _cred_seen = found.get("credential")
-    log(f"context findings: { {k: v for k, v in found.items() if k != 'notebook_signatures'} }")
-    log(f"notebook signatures reported: {len(_sigs_seen or {})} callables")
+    log(f"context findings: { {k: v for k, v in found.items() if k != 'module_signatures'} }")
+    log("module signatures reported: "
+        + ", ".join(f"{m}={len(v)}" for m, v in sorted((_sigs_seen or {}).items())))
     return ContextClaim(
         ok=True,
         env_workspace=found.get("env_workspace", ""),
@@ -754,9 +791,8 @@ def main() -> int:
         expected_lakehouse=_lake,
         backend=backend,
     )
-    ref = json.loads((DIR / "notebookutils-reference.json").read_text(
-        encoding="utf-8"))["modules"]["notebookutils.notebook"]
-    sig = signature_shape(session=session_signatures, reference=ref, backend=backend)
+    sig = signature_shape(session=session_signatures,
+                          reference=REFERENCE_MODULES, backend=backend)
     runtimes = json.loads((DIR / "fabric-runtimes.json").read_text(
         encoding="utf-8"))["runtimes"]
     floor = runtime_floor(session=session_runtime, runtimes=runtimes, backend=backend)
