@@ -51,12 +51,19 @@ CLIENT_SECRET = "daemon-app-secret"
 # THE DFS SURFACE, ADDRESSED BY CONTAINER AND ROUTED BY HOST HEADER.
 #
 # The emulator decides OneLake-vs-control-plane from the Host header, so the
-# hostname in the URL is not load-bearing — and it must not be, because on the
-# jvm leg `onelake.dfs.fabric.microsoft.com` now resolves to a TLS terminator
-# that exists for hadoop's benefit (`abfss://` forces TLS). Pointing these plain
-# reads at that alias broke every one of them at once: contract 1 reported
-# `<urlopen error>`, and 2, 3, 5 and 6 reported "the session did not get as far
-# as..." — one unreachable reader wearing five different failures.
+# hostname in the URL is not load-bearing — and it must not be, because what
+# that alias points at is not settled. A TLS terminator was put behind it on
+# the jvm leg (`abfss://` forces TLS, so hadoop cannot reach a plaintext
+# stack), and pointing these plain reads at the alias broke every one of them
+# at once: contract 1 reported `<urlopen error>`, and 2, 3, 5 and 6 reported
+# "the session did not get as far as..." — one unreachable reader wearing five
+# different failures.
+#
+# THE TERMINATOR IS NOT IN THE TREE — it regressed contract 4 and was reverted,
+# see docs/38 §6. This decoupling stays regardless: it is what let the
+# terminator be tried at all without taking five cells down with it, and it is
+# what will let a working one land. A reader that had to be re-pointed every
+# time the alias moved would make each attempt cost five false reds.
 #
 # This process is still an out-of-band reader: a different container, a token it
 # minted itself, and no Spark. Which hostname it dials is not part of that claim.
@@ -181,25 +188,33 @@ try:
     # first proves the interception is installed at all; the second is the
     # contract. Both outcomes are recorded, never asserted here — the harness
     # decides, and it decides differently for the control engine.
-    # RUN ONLY WHERE THE STACK CAN ANSWER. Contract 6's statements address the
-    # table by `abfss://`, and hadoop's ABFS driver forces TLS for that scheme —
-    # `fs.azure.always.use.https=false` downgrades `abfs://` and nothing else. On
-    # the JVM overlay against a plaintext stack every request fails at the socket
-    # with status 0, hadoop-azure treats that as retryable, and the notebook
-    # hangs: measured as five threads parked in AbfsRestOperation.completeExecute
-    # for 324s-864s, one per statement, accumulating and never exiting.
+    # THE SCHEME IS `abfs://`, AND THAT IS THE WHOLE OF THE JVM STORY.
     #
-    # A HANG IS WORSE THAN A RED, which is why this is gated rather than left to
-    # fail. The statements share a notebook with contracts 1, 2, 3 and 4, so one
-    # hang takes five cells down and reports the harness's own timeout as five
-    # separate defects. Gating keeps those four honest and leaves contract 6
-    # recording a gap with the reason above.
+    # This probe used to hardcode `abfss://`. Hadoop's ABFS driver forces TLS
+    # for that scheme — `fs.azure.always.use.https=false` downgrades `abfs://`
+    # and nothing else — so against a plaintext stack every request failed at
+    # the socket with status 0, hadoop-azure retried forever, and the notebook
+    # HUNG: five threads parked in AbfsRestOperation.completeExecute for
+    # 324s-864s. That was read as "the JVM overlay cannot reach OneLake by
+    # path", and a TLS terminator was built to fix it.
     #
-    # A TLS terminator in front of the OneLake alias DOES fix the statements
-    # (4.6s / 2.8s / 1.5s / 2.5s where they previously hung), and is not here:
-    # it also regressed cell 0's write to the local read-only Spark warehouse,
-    # for a reason not yet understood. Shipping a fix that trades one red for
-    # another is not a fix.
+    # It is not what was happening. The JVM overlay reaches OneLake by path on
+    # every single run: cell 0's `saveAsTable` commits its Delta log to
+    # `abfs://…@onelake.dfs.fabric.microsoft.com/…/Tables/events/_delta_log`,
+    # which is what contract 4 confirms out of band. ONE STATEMENT IN THIS FILE
+    # was spelling the scheme differently from everything else in the stack —
+    # `bindDefaultLakehouse`, `livy_catalog` and `mlv.go` all emit `abfs://`,
+    # commented there as "the same string a user would have written".
+    #
+    # So the fix is to stop being the outlier, not to terminate TLS. Real
+    # Fabric serves `abfss://` and `e2e/livy` proves the path form against it;
+    # `abfs://` is that same path spelled for a stack that serves plaintext,
+    # and it is the spelling this emulator hands every engine.
+    #
+    # The gate stays. A HANG IS WORSE THAN A RED — these statements share a
+    # notebook with contracts 1, 2, 3 and 4, so one hang takes five cells down
+    # and reports the harness's own timeout as five separate defects, which
+    # happened twice. A backend opts in when its compose says it can answer.
     if _os.environ.get("CONFORMANCE_FALL_THROUGH") == "1":
         # PATH-ADDRESSED, not by catalog name. The delta-rs interception resolves
         # a NAME through the emulator's registration, and a table written by
@@ -207,14 +222,13 @@ try:
         # events` fails with `cannot resolve 'events' to a table location: it was
         # not registered through the emulator`. Measured, twice, on this probe's
         # first two runs. The path form is what `e2e/livy` proves against a real
-        # abfss OneLake table, so it is the shape a notebook author is told to
-        # use.
+        # OneLake table, so it is the shape a notebook author is told to use.
         #
         # On `events`, the table cell 0 already wrote. The coupling with contract
         # 4 is one-way and harmless: OPTIMIZE compacts and the MERGE deletes at
         # most one row, while contract 4's reader asserts only that OneLake lists
         # paths under the table, which both leave true.
-        _tbl = ("abfss://__WS__@onelake.dfs.fabric.microsoft.com"
+        _tbl = ("abfs://__WS__@onelake.dfs.fabric.microsoft.com"
                 "/lake.Lakehouse/Tables/events")
         _rec, _rec_err = _try(lambda: spark.sql(f"OPTIMIZE delta.`{_tbl}`").collect())
         _unrec, _unrec_err = _try(lambda: spark.sql(
@@ -238,9 +252,9 @@ try:
     # EntraTokenProvider), and the shim mints its own. `spark.read` on the table
     # cell 0 wrote exercises exactly that.
     #
-    # BY CATALOG NAME, deliberately — an `abfss://` path is unreachable on the
-    # JVM overlay (see the fall-through gate above), and this contract has
-    # nothing to do with that limitation.
+    # BY CATALOG NAME, deliberately — this contract is about a credential, and
+    # addressing the table by path would drag in the scheme question the
+    # fall-through gate above deals with. One contract, one variable.
     _life = int(_os.environ.get("CONFORMANCE_TOKEN_LIFETIME", "0") or 0)
     if _life > 0:
         # THE SECOND OPERATION IS A WRITE TO A FRESH TABLE, NOT A RE-READ.

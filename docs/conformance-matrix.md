@@ -26,5 +26,5 @@ wrote. A ✅ is that out-of-band reader, never the writer's own catalog.
 | 3 | Runtime floor | ✅ | ✅ | — |
 | 4 | Write landing | ✅ | ✅ | ✅ |
 | 5 | Concurrent isolation | ✅ | ✅ | ✅ |
-| 6 | Rewrite fall-through | ✅ | ❌ not run on this backend: the statements address the table by `abfss:// ([§6](38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract)) | ✅ |
+| 6 | Rewrite fall-through | ✅ | ✅ | ✅ |
 | 7 | Credential lifetime | ✅ | ✅ | ✅ |

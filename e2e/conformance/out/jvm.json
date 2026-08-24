@@ -43,9 +43,9 @@
     "id": "6",
     "contract": "Rewrite fall-through",
     "backend": "jvm",
-    "status": "fail",
-    "error": "not run on this backend: the statements address the table by `abfss://`, hadoop forces TLS for that scheme, and this stack serves plaintext \u2014 every request fails at the socket and hadoop-azure retries forever, hanging the notebook and taking contracts 1-4 down with it. Measured: five threads parked in AbfsRestOperation.completeExecute for 324s-864s",
-    "pointer": "38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "7",

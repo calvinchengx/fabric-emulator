@@ -283,30 +283,55 @@ ad-hoc interceptors. It is the Spark-side sibling of what `internal/tsql` does
 for T-SQL on the wire, and it deserves the same treatment: a documented grammar,
 and a test that an unrecognised shape reaches the engine unmodified.
 
-**Asserted on sail, and NOT RUN on jvm — which is a finding, not a shortcut.**
-The statements address the table by `abfss://`, and hadoop's ABFS driver forces
-TLS for that scheme: `fs.azure.always.use.https=false` downgrades `abfs://` and
-nothing else. Against a plaintext stack every request therefore fails at the
-socket with status `0`, hadoop-azure treats that as retryable, and the notebook
-**hangs** — measured as five threads parked in
-`AbfsRestOperation.completeExecute` for 324s to 864s, one per statement,
-accumulating and never exiting.
+**Asserted on both engines — after a retracted finding.** This section
+previously said the jvm cell could not be run, and concluded: *"the JVM overlay
+cannot reach OneLake by path today."* **That was wrong, and it is worth keeping
+the correction visible, because the wrong version was more interesting than the
+right one and that is exactly what made it stick.**
 
-A hang is worse than a red. Contract 6's statements share a notebook with 1, 2,
-3 and 4, so one hang takes five cells down and reports the harness's own timeout
-as five separate defects — which is exactly what happened twice before this was
-gated. The jvm cell now records the measurement instead.
+What was real is the hang. The probe addressed the table by `abfss://`, and
+hadoop's ABFS driver forces TLS for that scheme — `fs.azure.always.use.https=false`
+downgrades `abfs://` and nothing else. Against a plaintext stack every request
+failed at the socket with status `0`, hadoop-azure treated that as retryable, and
+the notebook **hung**: five threads parked in `AbfsRestOperation.completeExecute`
+for 324s to 864s, one per statement, accumulating and never exiting.
 
-**A TLS terminator in front of the OneLake alias fixes the statements** — 4.6s /
-2.8s / 1.5s / 2.5s for write, read, OPTIMIZE and MERGE, where they had hung
-indefinitely — and is deliberately not in the tree: it also regressed cell 0's
-write into the local read-only Spark warehouse
-(`Mkdirs failed to create file:/opt/spark/work-dir/spark-warehouse/events`) for
-a reason not yet understood. Trading one red for another is not a fix. **So the
-JVM overlay cannot reach OneLake by path today**, and that limitation had never
-surfaced because the engine matrix probes local paths — its own text says
-credentials are out of scope there — and no notebook had addressed OneLake by
-`abfss://` on that engine.
+What was not real is the conclusion drawn from it. **The JVM overlay reaches
+OneLake by path on every run, and always has.** Cell 0's `saveAsTable` commits
+its Delta log to
+`abfs://…@onelake.dfs.fabric.microsoft.com/…/Tables/events/_delta_log` — that is
+what contract 4 confirms out of band, on this same backend, in the same
+notebook. A single statement in `live.py` was spelling the scheme differently
+from the rest of the stack. `bindDefaultLakehouse`, `livy_catalog` and `mlv.go`
+all emit `abfs://`, commented in the source as *"the same string a user would
+have written"*. The probe was the only outlier in the tree.
+
+**A TLS terminator was then built to fix the wrong problem, and its failure was
+the clue.** It did make the statements run — 4.6s / 2.8s / 1.5s / 2.5s where they
+had hung — and it also regressed cell 0's write into the local read-only Spark
+warehouse, for a reason that was never established. That unexplained second
+failure was read as *"the fix has a further problem"*, and the fix was correctly
+held back. It should have been read as *"the diagnosis is wrong"*: a repair that
+breaks something it has no business touching is usually aimed at the wrong
+target. The terminator is not in the tree and is not needed; nothing about the
+topology, the compose files, or TLS had to change.
+
+The correction is one string. With `abfs://`, contract 6 on jvm runs in seconds
+and passes, and the engine's own log names the witness:
+`MergeIntoCommand: DELTA: MERGE operation - Rewriting 1 files` — **Spark's**
+Delta planner, not the agent's interception, which is the control column doing
+precisely what it is here for. Zero retries in `AbfsRestOperation`.
+
+**The gate stays.** `CONFORMANCE_FALL_THROUGH` is still opt-in per compose, and
+for the reason it always was: a hang is worse than a red. These statements share
+a notebook with contracts 1, 2, 3 and 4, so one hang takes five cells down and
+reports the harness's own timeout as five separate defects, which happened
+twice. What changed is which backends can answer, not whether the protection is
+warranted.
+
+**`OPTIMIZE <name>` still cannot resolve a table a notebook wrote**, and that
+gap is unaffected by any of the above — see below. It is the reason the probe is
+path-addressed in the first place.
 
 **Asserted on the warehouse too, by a different witness — because that surface
 has only one engine.** The JVM column is what makes the lakehouse cell provable:

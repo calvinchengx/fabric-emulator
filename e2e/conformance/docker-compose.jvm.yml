@@ -58,6 +58,12 @@ services:
       # The same number the notebook is told, so contract 7 can assert that the
       # wait exceeded the lifetime rather than assuming it did.
       CONFORMANCE_TOKEN_LIFETIME: "60"
+      # CONTRACT 6 RUNS HERE NOW. It was gated off because its statements
+      # hardcoded `abfss://`, which hadoop forces TLS for, against a plaintext
+      # stack — the notebook hung. The probe now uses `abfs://`, the same
+      # spelling `bindDefaultLakehouse` and `livy_catalog` already hand every
+      # engine, and which cell 0's own Delta commit has always used here.
+      CONFORMANCE_FALL_THROUGH: "1"
       # THE SHIM NEEDS ENDPOINTS, and no compose in this repo gave the agent
       # any. Its default is 127.0.0.1:19080, which inside this container is
       # nothing — so `notebookutils.fs` raised `Connection refused` from a

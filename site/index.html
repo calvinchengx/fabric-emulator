@@ -207,7 +207,7 @@ footer p{max-width:78ch}
       <div class="ev">the conformance suite has been run against a real tenant from a developer machine; the CI leg is secret-gated and has not. <a href="docs/21-real-fabric-toggle/">docs/21</a></div></div>
 
     <div class="card"><h3>Runtime conformance <span class="tag t-wip" id="conformance-tag">&mdash;</span></h3>
-      <p>Seven contracts a Fabric notebook runtime should hold, checked on each backend and confirmed out of band, so the engine that wrote is never the one that confirms. <b id="conformance-proven">&mdash;</b> of <b id="conformance-applicable">&mdash;</b> applicable cells are proven by a live run &mdash; notebooks on the two Spark backends, T-SQL over the TDS relay on the warehouse. The one that is not is recorded red with the measurement that explains it, not skipped quietly.</p>
+      <p>Seven contracts a Fabric notebook runtime should hold, checked on each backend and confirmed out of band, so the engine that wrote is never the one that confirms. <b id="conformance-proven">&mdash;</b> of <b id="conformance-applicable">&mdash;</b> applicable cells are proven by a live run &mdash; notebooks on the two Spark backends, T-SQL over the TDS relay on the warehouse. A gap is recorded red with the measurement that explains it, never skipped quietly; the matrix is generated from those runs, so a cell cannot drift from the evidence that produced it.</p>
       <div class="ev">the <a href="docs/38-framework-conformance/">matrix</a> is generated; a gap points at the prose that closes it</div></div>
 
     <div class="card"><h3>Deliberately not implemented <span class="tag t-none">honest 501</span></h3>
