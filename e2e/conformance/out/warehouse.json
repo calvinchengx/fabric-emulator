@@ -44,7 +44,7 @@
     "contract": "Rewrite fall-through",
     "backend": "warehouse",
     "status": "gap",
-    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
+    "error": "no live statements recorded \u2014 fall-through is a property of a running engine",
     "pointer": "38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract"
   },
   {
