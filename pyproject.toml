@@ -456,6 +456,13 @@ ignore = [
 "docker/**" = ["B007", "SIM115", "RUF005"]
 
 [tool.ty.src]
+# third_party is somebody else's artifact, pinned, and it does not type-check:
+# Microsoft's own notebookutils stub annotates a parameter `parameters: {}`,
+# which is not a valid type expression. That is a fact about their package, not
+# a defect in ours, and the sha256 in its PROVENANCE.md describes the file as
+# they ship it — so it is excluded rather than corrected. ruff excludes it for
+# the same reason (see [tool.ruff]).
+exclude = ["third_party"]
 # PEP 723 uv-script drivers carry their own dependency block and are run with
 # `uv run --script`. Checking them against the lint/test venv reports
 # unresolved imports for packages that exist only in that block (this PR:
