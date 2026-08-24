@@ -639,7 +639,8 @@
     "section": "Data Engineering (`data-engineering/`)",
     "claim": "`notebookutils` / `mssparkutils` (fs, credentials, getSecret, lakehouse, runtime)",
     "witnesses": [
-      "ci:notebookutils"
+      "ci:notebookutils",
+      "ci:jupyter"
     ]
   },
   "notebookutils-notebook-run-exit-values": {
