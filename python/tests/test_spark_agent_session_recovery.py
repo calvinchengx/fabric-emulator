@@ -281,3 +281,84 @@ def test_the_note_still_names_the_cause_when_nothing_could_be_re_registered():
     note = session_recovery.forgotten_table_note("events", None)
     assert "restarted to refresh" in note
     assert "re-registered" not in note
+
+
+# ---------------------------------------------------------------------------
+# The oracle. It lives in this module rather than agent.py precisely so it can
+# be tested: agent.py needs a Spark session to import and is omitted from the
+# coverage gate, and this decides whether a user is told "the engine restarted"
+# or left reading "table not found" as their own mistake.
+
+def _oracle(recorded=None, declared=(), storage=None):
+    return dict(
+        recorded_location=recorded or (lambda _n: None),
+        declared_tables=lambda: declared,
+        in_storage=storage or (lambda _n: None),
+    )
+
+
+def test_a_recorded_location_is_sufficient():
+    assert session_recovery.table_exists_somewhere(
+        "events", **_oracle(recorded=lambda n: "abfs://ws@h/lh/Tables/events")) is True
+
+
+def test_a_control_plane_declaration_is_sufficient():
+    assert session_recovery.table_exists_somewhere(
+        "events", **_oracle(declared=["orders", "events"])) is True
+
+
+def test_storage_is_sufficient_and_is_the_case_that_matters():
+    """A notebook's saveAsTable on a fresh lakehouse is in NEITHER registry:
+    register() ran before the write, and a DataFrameWriter call is not a
+    statement the sql wrapper sees. Storage is the only oracle that sees it."""
+    assert session_recovery.table_exists_somewhere(
+        "events", **_oracle(storage=lambda n: "abfs://ws@h/lh/Tables/events")) is True
+
+
+def test_a_name_no_oracle_knows_is_a_typo_and_left_alone():
+    assert session_recovery.table_exists_somewhere("evnets", **_oracle()) is False
+
+
+def test_an_empty_name_is_never_a_forgotten_table():
+    assert session_recovery.table_exists_somewhere("", **_oracle()) is False
+    assert session_recovery.table_exists_somewhere("``", **_oracle()) is False
+    assert session_recovery.table_exists_somewhere(None, **_oracle()) is False
+
+
+def test_a_qualified_name_matches_on_its_last_component():
+    assert session_recovery.table_exists_somewhere(
+        "`lake`.`events`", **_oracle(declared=["events"])) is True
+
+
+def test_matching_is_case_insensitive():
+    assert session_recovery.table_exists_somewhere(
+        "EVENTS", **_oracle(declared=["events"])) is True
+
+
+def test_a_registry_that_raises_is_not_evidence_and_the_next_one_still_runs():
+    """Treating an unreadable registry as 'absent' would turn a credential
+    problem into a silent typo verdict."""
+    def boom(_n):
+        raise RuntimeError("delta_ops unavailable")
+
+    assert session_recovery.table_exists_somewhere(
+        "events", **_oracle(recorded=boom, declared=["events"])) is True
+
+
+def test_a_declared_tables_source_that_raises_is_survived():
+    def boom():
+        raise RuntimeError("no registrations")
+
+    assert session_recovery.table_exists_somewhere(
+        "events",
+        recorded_location=lambda _n: None,
+        declared_tables=boom,
+        in_storage=lambda _n: "abfs://ws@h/lh/Tables/events") is True
+
+
+def test_unreadable_storage_answers_no_rather_than_guessing():
+    def boom(_n):
+        raise OSError("Account must be specified")
+
+    assert session_recovery.table_exists_somewhere(
+        "events", **_oracle(storage=boom)) is False

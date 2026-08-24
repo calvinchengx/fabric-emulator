@@ -177,6 +177,62 @@ def forgotten_table_in(result, was_registered):
     return None
 
 
+def table_exists_somewhere(name, *, recorded_location, declared_tables, in_storage):
+    """Is `name` a table that EXISTS, which the engine has nonetheless lost?
+
+    The oracle half of `forgotten_table_in`, and the half that keeps a typo a
+    typo. It lives here rather than in agent.py because agent.py needs a Spark
+    session to import and is therefore omitted from the coverage gate — this
+    decides whether a user is told "the engine restarted" or left reading
+    "table not found" as their own mistake, which is far too load-bearing to be
+    reachable only through an end-to-end run. Same reasoning that put catalog
+    registration and jvm conf in their own modules.
+
+    THREE ORACLES, cheapest first, any one sufficient:
+
+      1. `recorded_location(name)` — delta_ops has a location for it, recorded
+         or derived earlier in this process;
+      2. `declared_tables()` — the control plane named it in a /register
+         payload;
+      3. `in_storage(name)` — THE LAKEHOUSE ITSELF has it.
+
+    THE THIRD IS THE ONE THAT MATTERS, and leaving it out made a first draft of
+    this miss the exact case it was written for. A notebook's
+    `saveAsTable("events")` on a fresh lakehouse is in NEITHER of the first
+    two: `register()` enumerated the lakehouse before the write happened, and a
+    DataFrameWriter call is not a statement the agent's `sql` wrapper ever
+    sees. So it answered "no" for precisely the table whose disappearance
+    prompted the fix.
+
+    Asking storage is also the semantically right question. "The table is in
+    the lakehouse and the engine cannot see it" IS the forgotten-session
+    condition, stated directly rather than inferred from bookkeeping. A typo is
+    not in the lakehouse either, so it still answers no.
+
+    Every oracle is allowed to fail. A registry that raises is not evidence
+    either way, and treating an unreadable one as "absent" would turn a
+    credential problem into a silent typo verdict.
+    """
+    bare = (name or "").replace("`", "").strip().lower().rsplit(".", 1)[-1]
+    if not bare:
+        return False
+    try:
+        if recorded_location(bare):
+            return True
+    except Exception:  # noqa: BLE001 - a registry that cannot answer is not evidence
+        pass
+    try:
+        for declared in declared_tables():
+            if str(declared or "").strip().lower() == bare:
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        return bool(in_storage(bare))
+    except Exception:  # noqa: BLE001 - unreadable storage is not evidence
+        return False
+
+
 def forgotten_table_note(name, reregistered):
     """What to tell the user after re-establishing a forgotten session.
 

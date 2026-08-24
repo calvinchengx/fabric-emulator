@@ -87,11 +87,19 @@ def _list_abfss(path: str) -> list[str]:
 
 
 def _read_text(path: str) -> str:
+    """The WHOLE file, which is `read` and not `head`.
+
+    This used to call `fs.head(path)`, and it worked only because the shim's
+    `head` diverged from Fabric's: real `head` returns the first `max_bytes`
+    (100 KB by default) and is a PREVIEW, while this needs every byte to parse
+    JSON. Once `head` was corrected to the documented default, a JSON file over
+    100 KB would have been truncated mid-document and failed to parse — or
+    worse, parsed as a shorter valid document. Found while citing the surface
+    (docs/56 Phase 0).
+    """
     if path.startswith(("abfss://", "abfs://")):
         from notebookutils import fs
 
-        if hasattr(fs, "head"):
-            return fs.head(path)
         return fs.read(path).decode("utf-8")
     return Path(path).read_text(encoding="utf-8")
 

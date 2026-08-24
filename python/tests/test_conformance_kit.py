@@ -253,12 +253,14 @@ def test_committed_json_names_every_contract_on_every_backend():
 
 
 def _sig(**kw):
-    seen = {"run": ["path", "timeout_seconds", "arguments", "workspace"]}
-    seen.update(kw)
-    return probes.SignatureClaim(ok=True, seen=seen)
+    """A session's report, keyed by MODULE — the shape Phase 1 introduced."""
+    members = {"run": ["path", "timeout_seconds", "arguments", "workspace"]}
+    members.update(kw)
+    return probes.SignatureClaim(ok=True, seen={"notebook": members})
 
 
-REF = {"run": {"params": ["path", "timeout_seconds", "arguments", "workspace"]}}
+REF = {"notebook": {
+    "run": {"params": ["path", "timeout_seconds", "arguments", "workspace"]}}}
 
 
 def test_signature_shape_passes_when_every_documented_parameter_is_present():
@@ -287,10 +289,63 @@ def test_signature_shape_fails_on_a_missing_parameter():
 def test_signature_shape_fails_on_a_missing_method():
     """Absence is the case that matters most: a framework reads it and stops."""
     r = probes.signature_shape(
-        session=lambda: probes.SignatureClaim(ok=True, seen={}),
+        session=lambda: probes.SignatureClaim(ok=True, seen={"notebook": {}}),
         reference=REF, backend="sail")
     assert r.status == "fail"
     assert "absent" in r.error and "run" in r.error
+
+
+def test_signature_shape_grades_every_module_not_just_one():
+    """Grading a single module is how twenty-five defects stayed invisible
+    behind a green cell (docs/56 Phase 0)."""
+    ref = {**REF, "fs": {"put": {"params": ["file", "content", "overwrite"]}}}
+    r = probes.signature_shape(
+        session=lambda: probes.SignatureClaim(ok=True, seen={
+            "notebook": {"run": ["path", "timeout_seconds", "arguments", "workspace"]},
+            "fs": {"put": ["path", "content", "overwrite"]},
+        }),
+        reference=ref, backend="sail")
+    assert r.status == "fail"
+    assert "fs.put is missing file" in r.error
+
+
+def test_a_module_that_would_not_import_is_not_an_empty_module():
+    """The two must not collapse. A namespace that does not exist has to read
+    as absent, not as a surface that happens to expose nothing — otherwise
+    `session` and `udf` would be indistinguishable from modules that are there
+    and empty."""
+    ref = {"session": {"stop": {"params": []}}}
+    r = probes.signature_shape(
+        session=lambda: probes.SignatureClaim(ok=True, seen={
+            "session": {probes.IMPORT_ERROR: ["No module named 'notebookutils.session'"]}}),
+        reference=ref, backend="sail")
+    assert r.status == "fail"
+    assert "session: absent" in r.error
+    assert "could not import" in r.error
+
+
+def test_a_module_the_session_never_mentioned_is_reported_as_such():
+    """Silence is not evidence of anything. A module missing from the report
+    means the probe did not look, which is a different failure from a module
+    that was looked at and found wanting."""
+    ref = {**REF, "udf": {"getFunctions": {"params": ["udf", "workspaceId"]}}}
+    r = probes.signature_shape(session=lambda: _sig(), reference=ref, backend="sail")
+    assert r.status == "fail"
+    assert "udf: not reported by the session at all" in r.error
+
+
+def test_a_zero_parameter_member_is_graded_on_presence():
+    """`session.stop()` takes none. Requiring a parameter would have meant
+    inventing one to satisfy the check."""
+    ref = {"session": {"stop": {"params": []}}}
+    ok = probes.signature_shape(
+        session=lambda: probes.SignatureClaim(ok=True, seen={"session": {"stop": []}}),
+        reference=ref, backend="sail")
+    assert ok.status == "pass"
+    gone = probes.signature_shape(
+        session=lambda: probes.SignatureClaim(ok=True, seen={"session": {}}),
+        reference=ref, backend="sail")
+    assert gone.status == "fail"
 
 
 def test_signature_shape_fails_when_documented_parameters_are_out_of_order():
@@ -313,19 +368,39 @@ def test_signature_shape_reports_the_sessions_own_error():
 
 def test_every_reference_entry_cites_a_source():
     """A reference assembled from memory is the same defect one tier up: a claim
-    about Fabric with nothing behind it."""
+    about Fabric with nothing behind it.
+
+    The scope assertion changed shape in Phase 0 (docs/56) and the reason is
+    worth keeping. It used to require a non-empty `modules_not_yet_covered`,
+    which was the right check while one module was cited and eight were not.
+    Now every DOCUMENTED module is cited, so that field would be empty — and an
+    empty list is exactly what the old assertion was written to forbid. What
+    still has to be declared is the thing that is still partial: which modules
+    the live probe actually GRADES, plus the surface decisions taken
+    deliberately rather than by omission.
+    """
     ref = json.loads(
         (REPO / "e2e" / "conformance" / "notebookutils-reference.json")
         .read_text(encoding="utf-8"))
-    assert ref["modules_not_yet_covered"], "the scope must be declared, not implied"
+    assert ref["graded_by_contract_2"], "grading scope must be declared, not implied"
+    assert ref["surface_notes"], "deliberate exclusions must be recorded, not silent"
+    assert set(ref["graded_by_contract_2"]) <= set(ref["modules"]), \
+        "a module cannot be graded against a reference it does not have"
     for module, methods in ref["modules"].items():
         assert methods, module
         for name, spec in methods.items():
             assert spec["source"].startswith("https://learn.microsoft.com/"), name
             assert spec["read"], name
-            assert spec["params"], name
+            # params may be EMPTY: `session.stop()` and `session.restartPython()`
+            # genuinely take none, and requiring one would have meant inventing
+            # a parameter to satisfy a test.
+            assert isinstance(spec["params"], list), name
             # The verbatim line is what a reviewer checks the params against.
-            assert spec["verbatim"].startswith(f"{name}("), name
+            # A property is not spelled `name(`, so it is checked as itself.
+            if spec.get("kind") == "property":
+                assert spec["verbatim"].endswith(name), name
+            else:
+                assert spec["verbatim"].startswith(f"{name}("), name
 
 
 RUNTIMES = {"1.3": {"python": "3.11", "spark": "3.5"}}
@@ -667,3 +742,92 @@ def test_fall_through_does_not_invent_a_name_form_verdict_for_a_surface_without_
         session=lambda: _ft(echo_sent=sent, echo_got=sent, name_form_ok=None),
         backend="warehouse", control=False)
     assert r.status == "pass"
+
+
+def test_runtime_floor_reports_the_sessions_own_error():
+    """A session that could not answer at all is a different failure from one
+    that answered with a runtime below the floor."""
+    r = probes.runtime_floor(
+        session=lambda: probes.RuntimeClaim(ok=False, error="the cell never ran"),
+        runtimes=RUNTIMES, backend="sail")
+    assert r.status == "fail"
+    assert "the cell never ran" in r.error
+
+
+def test_runtime_floor_refuses_a_session_that_reported_no_python_version():
+    """Declaring a runtime and then not saying what you run is unprovable, not
+    a pass: the floor is a claim about the interpreter, and there isn't one."""
+    r = probes.runtime_floor(session=lambda: _rt(python=""),
+                             runtimes=RUNTIMES, backend="sail")
+    assert r.status == "fail"
+    assert "no Python version" in r.error
+
+
+# ---------------------------------------------------------------------------
+# The warehouse leg records each cell from its OWN verdict, not from the
+# process exit code. Reading the exit code would turn one red cell into four —
+# the same collapse the jvm hang produced before contract 6 was gated.
+
+TRANSCRIPT = """=== RUN   TestConformanceWriteLanding
+--- PASS: TestConformanceWriteLanding (0.79s)
+=== RUN   TestConformanceConcurrentIsolation
+--- FAIL: TestConformanceConcurrentIsolation (1.41s)
+=== RUN   TestConformanceFallThrough
+--- SKIP: TestConformanceFallThrough (0.00s)
+FAIL
+"""
+
+
+def test_verdicts_are_parsed_per_test():
+    v = run.parse_go_verdicts(TRANSCRIPT)
+    assert v == {"TestConformanceWriteLanding": "PASS",
+                 "TestConformanceConcurrentIsolation": "FAIL",
+                 "TestConformanceFallThrough": "SKIP"}
+
+
+def test_an_empty_transcript_yields_no_verdicts():
+    assert run.parse_go_verdicts("") == {}
+
+
+def test_one_failure_does_not_fail_the_other_cells():
+    """THE POINT of per-test verdicts. `go test` exits non-zero if any test
+    fails; reading that as 'the warehouse failed' would turn one red into
+    four."""
+    live, failed = run.warehouse_results(run.parse_go_verdicts(TRANSCRIPT), 1)
+    assert failed is True
+    assert live[4].status == "pass"
+    assert live[5].status == "fail"
+
+
+def test_a_skip_is_recorded_as_a_gap_never_a_pass():
+    """Without -v a skipped test exits 0 and is indistinguishable from a green,
+    which is a writer-confirmed nothing."""
+    live, _ = run.warehouse_results(run.parse_go_verdicts(TRANSCRIPT), 1)
+    assert live[6].status == "fail"
+    assert "skipped" in live[6].error
+    assert live[6].pointer, "a gap must point at the prose that closes it"
+
+
+def test_a_test_that_never_reported_is_not_recorded_as_a_failed_assertion():
+    """The process died before reaching it. Claiming the contract failed would
+    say an assertion ran when none did."""
+    live, failed = run.warehouse_results({}, 2)
+    assert failed is True
+    assert all(r.status == "fail" for r in live.values())
+    assert "produced no verdict (go test exited 2)" in live[7].error
+
+
+def test_all_passing_reports_no_failure():
+    verdicts = {t: "PASS" for t in run.WAREHOUSE_TESTS.values()}
+    live, failed = run.warehouse_results(verdicts, 0)
+    assert failed is False
+    assert {n: r.status for n, r in live.items()} == {4: "pass", 5: "pass",
+                                                     6: "pass", 7: "pass"}
+    assert all(r.error == "" for r in live.values())
+
+
+def test_every_warehouse_test_maps_to_an_applicable_contract():
+    """A cell that is n/a on this backend cannot be proven by a Go test, and
+    mapping one to it would record a pass the applicability table forbids."""
+    for num in run.WAREHOUSE_TESTS:
+        assert (num, "warehouse") not in probes.NOT_APPLICABLE

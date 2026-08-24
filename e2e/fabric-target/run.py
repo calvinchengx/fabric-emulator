@@ -102,10 +102,24 @@ try:
     wait_healthy(f"https://localhost:{ENTRA_PORT}/health")
 
     log(f"starting fabric-emulator on :{FABRIC_PORT}")
+    # FABRIC_DATA_DIR="" — IN MEMORY, and the empty string is load-bearing.
+    #
+    # The emulator persists by DEFAULT, to `./data`, and deliberately: an
+    # emulator that forgets its workspaces on restart is a surprise
+    # (internal/config.DefaultDataDir). This harness is a throwaway stack, and
+    # without this it wrote data/fabric-emulator.db into the working tree and
+    # kept it — so the SECOND local run died on
+    # `409 WorkspaceNameAlreadyExists` creating `target-e2e`, before reaching a
+    # single assertion. CI never saw it because CI always starts from a fresh
+    # checkout; anyone running this twice on a laptop saw nothing else.
+    #
+    # `envDefault` distinguishes unset from set-empty precisely for this, and
+    # the docker composes already use the empty form for the same reason.
     procs.append(subprocess.Popen(
         [fabric_bin, "-addr", f"127.0.0.1:{FABRIC_PORT}",
          "-entra-issuer", f"https://localhost:{ENTRA_PORT}/{TENANT}/v2.0",
          "-entra-tls-insecure"],
+        env={**os.environ, "FABRIC_DATA_DIR": ""},
         stdout=open(os.path.join(WORK, "fabric.log"), "w"), stderr=subprocess.STDOUT))
     wait_healthy(f"https://localhost:{FABRIC_PORT}/health")
 

@@ -115,3 +115,41 @@ def reset():
     """Drop the cached profile — for tests and kernels that re-point mid-session."""
     global _cfg
     _cfg = None
+
+
+def session_workspace_id(fallback=None):
+    """The workspace this session is in — CONTEXT FIRST, `fallback` second.
+
+    THE ORDER IS THE POINT, and getting it backwards made every
+    `notebookutils.notebook.*` call that needs a workspace fail inside a
+    correct Fabric session.
+
+    A real session's workspace comes from the CONTROL PLANE, which
+    `runtime.context` answers with. `NOTEBOOKUTILS_WORKSPACE_ID` is the
+    environment FALLBACK — the one docs/38 contract 1 requires to be UNSET,
+    because a fallback that can answer hides a broken context. So a shim
+    reading only the env variable works exactly where the contract is not
+    honoured, and fails where it is.
+
+    Found by the `%run` e2e: seven contracts green and `%run` dead with "no
+    workspace", in the one stack that deliberately leaves the fallback unset.
+    Nothing else caught it because contract 2 grades SIGNATURES, and every
+    call that would have exercised it lives in a suite that sets the variable.
+
+    THE FALLBACK IS PASSED IN, not read here, and that is not a style choice:
+    each module resolves its own `config()`, and tests stub it per module. A
+    helper that called `config()` from THIS module's namespace would silently
+    bypass every one of those stubs — which it did, and 35 tests said so.
+
+    `runtime` is imported lazily: it imports this module, so a top-level
+    import would be a cycle.
+    """
+    try:
+        from . import runtime
+
+        current = runtime.context.get("currentWorkspaceId")
+        if current:
+            return current
+    except Exception:  # noqa: BLE001 - no context is not an error, just no answer
+        pass
+    return fallback

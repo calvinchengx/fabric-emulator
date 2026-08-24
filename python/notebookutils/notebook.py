@@ -19,7 +19,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 from . import credentials
-from ._config import config
+from ._config import config, session_workspace_id
 from ._http import request
 from .common.exceptions import RunMultipleFailedException
 
@@ -50,7 +50,7 @@ class NotebookError(Exception):
 
 def _resolve_item(name, workspaceId, token):
     """Find the notebook item id by displayName within the workspace."""
-    ws = workspaceId or config().workspace_id
+    ws = workspaceId or session_workspace_id(config().workspace_id)
     resp = request("GET", f"{config().fabric_url}/v1/workspaces/{ws}/items?type=Notebook", token=token)
     for it in resp.get("value", []):
         if it.get("displayName") == name:
@@ -124,7 +124,7 @@ def _follow(status, headers, payload, *, what, want_result=True):
 
 
 def _ws(workspaceId):
-    ws = workspaceId or config().workspace_id
+    ws = workspaceId or session_workspace_id(config().workspace_id)
     if not ws:
         raise NotebookError(
             "no workspace: pass workspaceId, or run inside a notebook whose "

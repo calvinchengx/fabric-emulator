@@ -23,6 +23,17 @@ from pathlib import Path
 
 DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(DIR))
+
+# The cited surface (Phase 0, docs/56). Loaded here rather than at the call
+# site because the notebook body needs the MODULE LIST substituted into it:
+# the names a session introspects have to come from Microsoft's own overview
+# table, not from a list in this file, or the probe rebuilds the blind spot
+# the citation removed.
+REFERENCE = json.loads(
+    (Path(__file__).resolve().parent / "notebookutils-reference.json")
+    .read_text(encoding="utf-8"))
+REFERENCE_MODULES = {m.split(".")[-1]: methods
+                     for m, methods in REFERENCE["modules"].items()}
 from probes import (  # noqa: E402
     CONTROL,
     Artifact,
@@ -83,6 +94,22 @@ FANOUT_N = 3
 # One cell, parameterised by the marker the harness bakes in. Its whole job is
 # to say WHICH notebook it believes it is — the identity a shared agent could
 # leak — alongside the marker only this child was given.
+# The notebook `%run` pulls in. Deliberately more than one code cell, plus a
+# markdown cell: `%run` must splice every CODE cell in order and skip the prose.
+RUN_HELPER_BODY = """# Fabric notebook source
+
+# MARKDOWN ********************
+# MAGIC %md
+# MAGIC ## helpers — prose, and must NOT be spliced
+
+# CELL ********************
+run_label = "from-helpers"
+
+# CELL ********************
+def run_scaled(n):
+    return n * run_scale
+"""
+
 CHILD_BODY = """# Fabric notebook source
 
 # CELL ********************
@@ -158,24 +185,47 @@ try:
     # than from the client's own import -- the client runs a different
     # interpreter with a different package set, and asserting on that would
     # prove something about the harness.
+    import importlib as _importlib
     import inspect as _inspect
 
+    # EVERY DOCUMENTED MODULE, and the list comes from the reference rather
+    # than from this file. `__MODULES__` is substituted by the client from
+    # notebookutils-reference.json, whose module list is Microsoft's own
+    # overview table -- so a module nobody here thought of still gets probed.
+    # Hardcoding the names would rebuild the exact blind spot Phase 0 removed.
     _sigs = {}
-    for _name in dir(_nbu.notebook):
-        if _name.startswith("_"):
-            continue
-        _fn = getattr(_nbu.notebook, _name, None)
-        if not callable(_fn):
-            continue
+    for _mod in __MODULES__:
         try:
-            _sigs[_name] = [p.name for p in
-                            _inspect.signature(_fn).parameters.values()
-                            if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
-        except (TypeError, ValueError):
-            # A builtin with no introspectable signature is not "absent"; say so
-            # rather than letting it read as a missing method.
-            _sigs[_name] = ["<no signature>"]
-    _findings["notebook_signatures"] = _sigs
+            _m = _importlib.import_module("notebookutils." + _mod)
+        except Exception as _mod_err:  # noqa: BLE001
+            # A module that will not import is NOT an empty module. Recorded as
+            # an explicit error so the probe can say "absent" rather than
+            # reading zero members as a surface with nothing in it.
+            _sigs[_mod] = {"__import_error__": [str(_mod_err)[:200]]}
+            continue
+        _members = {}
+        for _name in dir(_m):
+            if _name.startswith("_"):
+                continue
+            _fn = getattr(_m, _name, None)
+            if _fn is None:
+                continue
+            if not callable(_fn):
+                # A PROPERTY IS PART OF THE SURFACE. `runtime.context` is the
+                # whole of its module and is not callable; skipping
+                # non-callables would report that module as empty.
+                _members[_name] = []
+                continue
+            try:
+                _members[_name] = [p.name for p in
+                                   _inspect.signature(_fn).parameters.values()
+                                   if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
+            except (TypeError, ValueError):
+                # A builtin with no introspectable signature is not "absent";
+                # say so rather than letting it read as a missing method.
+                _members[_name] = ["<no signature>"]
+        _sigs[_mod] = _members
+    _findings["module_signatures"] = _sigs
     # Contract 3. Read from the SESSION's own interpreter, because that is the
     # one a notebook's imports resolve against — reading the client's would
     # describe the harness. `spark.version` is recorded, not asserted: whether
@@ -321,6 +371,27 @@ try:
     else:
         _findings["credential"] = {"skipped": True}
 
+    # `%run` — an AGENT-SIDE REWRITE, which is why it can only be proven here.
+    # The notebookutils e2e runs its notebook as a plain script and
+    # e2e/notebook-run's runner is itself the engine (it execs cells locally),
+    # so neither ever reaches the agent's run_code where the rewrite happens.
+    # This stack does: the emulator drives the real spark-agent.
+    #
+    # The proof is that what `helpers` defines is usable HERE, in this
+    # namespace — that is the whole difference from notebook.run, which starts
+    # a separate session and hands back an exit value.
+    # A REAL LINE, not exec() of a string: the rewrite is applied by the agent
+    # to the CELL SOURCE, so a `%run` hidden inside a string literal is exactly
+    # what run_magic refuses to touch (and has a test saying so). Indented,
+    # because this cell body is inside a try — which the rewrite preserves.
+    _run_ok, _run_err = False, ""
+    try:
+        %run run-helpers {"run_scale": 10}
+        _run_ok = (run_scaled(4) == 40 and run_label == "from-helpers")  # noqa: F821
+    except Exception as _exc:  # noqa: BLE001
+        _run_err = f"{type(_exc).__name__}: {_exc}"
+    _findings["run_magic"] = {"ok": _run_ok, "error": _run_err}
+
     _findings["runtime"] = {
         "declared": _os.environ.get("FABRIC_RUNTIME", ""),
         "python": ".".join(str(n) for n in _sys.version_info[:3]),
@@ -348,6 +419,7 @@ _said = ""
 # Contract 2's half of the same findings file, kept beside the contract-1 half
 # so one DFS read serves both.
 _sigs_seen = None
+_run_magic_seen = None
 _runtime_seen = None
 _fall_seen = None
 _cred_seen = None
@@ -441,12 +513,25 @@ def writer() -> WriteClaim:
     meta = "# METADATA ********************\n" + "\n".join(
         "# META " + line for line in json.dumps(metadata, indent=2).splitlines()) + "\n"
 
+    # The notebook `%run` references. Published FIRST, and with the same
+    # lakehouse metadata: a referenced child bound to a different default
+    # lakehouse is refused by the emulator exactly as Fabric refuses it.
+    req("POST", f"{FABRIC}/v1/workspaces/{ws}/items", {
+        "displayName": "run-helpers", "type": "Notebook",
+        "definition": {"parts": [{
+            "path": "notebook-content.py", "payloadType": "InlineBase64",
+            "payload": base64.b64encode(
+                (RUN_HELPER_BODY + meta).encode()).decode()}]}},
+        token=fabric_token())
+
     _, headers, _ = req("POST", f"{FABRIC}/v1/workspaces/{ws}/items", {
         "displayName": "etl-nb", "type": "Notebook",
         "definition": {"parts": [{
             "path": "notebook-content.py", "payloadType": "InlineBase64",
             "payload": base64.b64encode(
-                (NOTEBOOK_BODY.replace("__WS__", ws).replace("__FINDINGS__", FINDINGS_PATH)
+                (NOTEBOOK_BODY.replace("__WS__", ws)
+                 .replace("__FINDINGS__", FINDINGS_PATH)
+                 .replace("__MODULES__", json.dumps(sorted(REFERENCE_MODULES)))
                  + meta).encode()).decode()}]}},
         token=fabric_token())
     opid = headers.get("x-ms-operation-id")
@@ -553,13 +638,16 @@ def session_context() -> ContextClaim:
             ok=False,
             error=f"no context findings at {FINDINGS_PATH}: {exc}{why}")
     global _sigs_seen, _runtime_seen
-    _sigs_seen = found.get("notebook_signatures")
+    _sigs_seen = found.get("module_signatures")
     _runtime_seen = found.get("runtime")
     global _fall_seen, _cred_seen
     _fall_seen = found.get("fall_through")
     _cred_seen = found.get("credential")
-    log(f"context findings: { {k: v for k, v in found.items() if k != 'notebook_signatures'} }")
-    log(f"notebook signatures reported: {len(_sigs_seen or {})} callables")
+    log(f"context findings: { {k: v for k, v in found.items() if k != 'module_signatures'} }")
+    global _run_magic_seen
+    _run_magic_seen = found.get("run_magic")
+    log("module signatures reported: "
+        + ", ".join(f"{m}={len(v)}" for m, v in sorted((_sigs_seen or {}).items())))
     return ContextClaim(
         ok=True,
         env_workspace=found.get("env_workspace", ""),
@@ -754,9 +842,8 @@ def main() -> int:
         expected_lakehouse=_lake,
         backend=backend,
     )
-    ref = json.loads((DIR / "notebookutils-reference.json").read_text(
-        encoding="utf-8"))["modules"]["notebookutils.notebook"]
-    sig = signature_shape(session=session_signatures, reference=ref, backend=backend)
+    sig = signature_shape(session=session_signatures,
+                          reference=REFERENCE_MODULES, backend=backend)
     runtimes = json.loads((DIR / "fabric-runtimes.json").read_text(
         encoding="utf-8"))["runtimes"]
     floor = runtime_floor(session=session_runtime, runtimes=runtimes, backend=backend)
@@ -785,6 +872,26 @@ def main() -> int:
     seven = next(r for r in rows if r["id"] == "7")
     log(f"wrote {path} contract 7={seven['status']} {seven.get('error', '')}".rstrip())
     log(f"wrote {path} contract 4={result.status} {result.error}".rstrip())
+
+    # `%run` — NOT a contract cell, and gated anyway.
+    #
+    # It is not one of docs/38's seven, so it does not belong in the matrix.
+    # But recording it without grading it is how a number becomes a memory —
+    # which is exactly what happened to `OPTIMIZE <name>` and cost a session
+    # and a half. So it fails the RUN instead: the matrix is unchanged, and a
+    # regression still stops the leg.
+    #
+    # This is the only harness that can prove it. The notebookutils e2e runs
+    # its notebook as a plain script, and e2e/notebook-run's runner is itself
+    # the engine — neither reaches the agent's run_code, where the rewrite
+    # lives.
+    if _run_magic_seen is None:
+        log("%run: NOT REPORTED — the cell never ran")
+        return 1
+    if not _run_magic_seen.get("ok"):
+        log(f"%run FAILED: {_run_magic_seen.get('error') or 'no reason given'}")
+        return 1
+    log("%run: helpers spliced into this session — run_scaled/run_label usable")
     return 0
 
 

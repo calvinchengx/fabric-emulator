@@ -329,7 +329,12 @@ markers = [
 # surface in the repo contributed nothing to the gate. Its low-coverage members
 # (fs, _http) are witnessed by e2e rather than unit tests, the same way the
 # omitted spark_agent files are.
-source = ["scripts", "python/spark_agent", "python/notebookutils", "docker/sail"]
+# e2e/conformance carries the NORMATIVE logic of the conformance kit —
+# probes.py is where every contract in docs/38 is actually decided, and it was
+# outside this list, so the file the whole matrix rests on contributed nothing
+# to the gate. Same reasoning that brought notebookutils in.
+source = ["scripts", "python/spark_agent", "python/notebookutils", "docker/sail",
+          "e2e/conformance"]
 omit = [
     # Run inside the Spark image, witnessed by e2e/notebook-run and e2e/sail.
     #
@@ -353,6 +358,13 @@ omit = [
     # `make check`, and python/tests/test_check_capture_redaction.py drives the
     # same cases plus the two mutations (a leaky redactor, an over-zealous one).
     "scripts/capture_definition_shape.py",
+    # The conformance harness itself: it publishes notebooks, drives
+    # RunNotebook and reads OneLake, so it cannot run without the compose
+    # stack it exists to drive. Its DECISIONS are not here — probes.py grades
+    # every contract and run.py's verdict parsing was extracted precisely so
+    # both are testable without docker. What is omitted is the plumbing
+    # between them.
+    "e2e/conformance/live.py",
     "*/tests/*",
 ]
 

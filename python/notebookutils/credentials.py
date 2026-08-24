@@ -108,3 +108,48 @@ def getSecret(akvName, secret, linkedService=None):
 def getSecretWithLS(linkedService, secret):
     """Compatibility alias for the linked-service overload."""
     return getSecret(linkedService, secret)
+
+
+def putSecret(akvName, secretName, secretValue):  # noqa: N802,N803 - documented spelling
+    """Store `secretValue` at `secretName` in the Key Vault `akvName`.
+
+    The write half of the pair. `getSecret` has been here since the shim
+    started and this had not — which is the shape of gap contract 2 exists to
+    find: a framework that manages its own secrets introspects for `putSecret`,
+    sees nothing, and declines without ever calling anything.
+    """
+    token = getToken("keyvault")
+    url = f"{_vault_url(akvName)}/secrets/{secretName}?api-version=7.4"
+    return request("PUT", url, token=token, body={"value": secretValue}).get("value")
+
+
+def isValidToken(token):  # noqa: N802 - documented spelling
+    """Is `token` a JWT that has not expired?
+
+    READ, NOT VERIFIED, and the difference matters enough to state. Fabric's
+    own description is "valid and not expired", and its documented use is a
+    caller deciding whether to re-mint before a long operation — a question
+    about the clock, not about trust. Signature verification belongs to
+    whatever accepts the token, and doing it here would need the issuer's JWKS
+    and would still not make the answer authoritative.
+
+    A token that cannot be parsed is not valid: unreadable is a "no", because
+    the caller's next move on False (mint a fresh one) is the safe one.
+    """
+    import base64
+    import json
+    import time
+
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:  # noqa: BLE001 - anything unparseable is not a valid token
+        return False
+    exp = claims.get("exp")
+    if not isinstance(exp, (int, float)):
+        # Real Entra always mints `exp`; its absence means this is not a token
+        # this method can answer for. Same reasoning as internal/auth, which
+        # refuses a token without one rather than treating it as eternal.
+        return False
+    return time.time() < float(exp)

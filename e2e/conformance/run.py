@@ -161,6 +161,57 @@ WAREHOUSE_TESTS: dict[int, str] = {
 }
 
 
+def parse_go_verdicts(transcript: str) -> dict[str, str]:
+    """Per-test PASS/FAIL/SKIP from a `go test -v` transcript.
+
+    Pure, and separate from the subprocess, because this is where a skip could
+    be mistaken for a pass and that decision has to be testable without a SQL
+    Server. `--- PASS: TestX (0.5s)` -> {"TestX": "PASS"}.
+    """
+    out: dict[str, str] = {}
+    for line in transcript.splitlines():
+        stripped = line.strip()
+        for word in ("PASS", "FAIL", "SKIP"):
+            prefix = f"--- {word}: "
+            if stripped.startswith(prefix):
+                out[stripped[len(prefix):].split(" ")[0]] = word
+    return out
+
+
+def warehouse_results(verdicts: dict[str, str],
+                      returncode: int) -> tuple[dict[int, Result], bool]:
+    """One Result per warehouse contract, and whether any of them failed.
+
+    A SKIP IS A GAP, NEVER A PASS. Without -v a skipped test exits 0 and is
+    indistinguishable from a green, which is a writer-confirmed nothing.
+
+    NO VERDICT IS ITS OWN CASE. A test the transcript never mentions did not
+    report — the process died before reaching it — and that is not the same as
+    the contract failing. Recording it as a plain failure would claim an
+    assertion ran when none did.
+    """
+    live: dict[int, Result] = {}
+    failed = False
+    for num, test in WAREHOUSE_TESTS.items():
+        title = CONTRACTS[num - 1][1]
+        pointer = CONTRACTS[num - 1][2]
+        verdict = verdicts.get(test)
+        if verdict == "PASS":
+            live[num] = Result(id=str(num), contract=title,
+                               backend="warehouse", status="pass")
+            continue
+        failed = True
+        if verdict == "SKIP":
+            error = f"{test} skipped — set WAREHOUSE_MSSQL_DSN"
+        elif verdict == "FAIL":
+            error = f"{test} failed — see the go test transcript"
+        else:
+            error = f"{test} produced no verdict (go test exited {returncode})"
+        live[num] = Result(id=str(num), contract=title, backend="warehouse",
+                           status="fail", error=error, pointer=pointer)
+    return live, failed
+
+
 def run_warehouse_live() -> int:
     """Run the warehouse contracts and record each cell from its own verdict.
 
@@ -185,38 +236,8 @@ def run_warehouse_live() -> int:
     proc = subprocess.run(cmd, cwd=REPO, text=True, capture_output=True)
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
-    transcript = proc.stdout + proc.stderr
-
-    verdicts: dict[str, str] = {}
-    for line in transcript.splitlines():
-        stripped = line.strip()
-        for word in ("PASS", "FAIL", "SKIP"):
-            prefix = f"--- {word}: "
-            if stripped.startswith(prefix):
-                verdicts[stripped[len(prefix):].split(" ")[0]] = word
-
-    live: dict[int, Result] = {}
-    failed = False
-    for num, test in WAREHOUSE_TESTS.items():
-        title = CONTRACTS[num - 1][1]
-        pointer = CONTRACTS[num - 1][2]
-        verdict = verdicts.get(test)
-        if verdict == "PASS":
-            live[num] = Result(id=str(num), contract=title,
-                               backend="warehouse", status="pass")
-            continue
-        failed = True
-        if verdict == "SKIP":
-            error = f"{test} skipped — set WAREHOUSE_MSSQL_DSN"
-        elif verdict == "FAIL":
-            error = f"{test} failed — see the go test transcript"
-        else:
-            # No verdict at all: the process died before this test reported,
-            # which is not the same as the contract failing and must not be
-            # recorded as though the assertion had run.
-            error = f"{test} produced no verdict (go test exited {proc.returncode})"
-        live[num] = Result(id=str(num), contract=title, backend="warehouse",
-                           status="fail", error=error, pointer=pointer)
+    verdicts = parse_go_verdicts(proc.stdout + proc.stderr)
+    live, failed = warehouse_results(verdicts, proc.returncode)
     write_backend("warehouse", record("warehouse", live=live))
     return (proc.returncode or 1) if failed else 0
 

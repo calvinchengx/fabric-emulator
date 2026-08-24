@@ -139,7 +139,6 @@ def test_records_from_abfss_uses_notebookutils_fs(monkeypatch):
 
     fake_fs = types.SimpleNamespace(
         ls=ls,
-        head=lambda p, maxBytes=None: body[p],
         read=lambda p: body[p].encode(),
     )
     monkeypatch.setitem(sys.modules, "notebookutils", types.SimpleNamespace(fs=fake_fs))
@@ -250,21 +249,34 @@ def test_abfss_ls_failure_treats_the_path_as_a_file(monkeypatch):
 
     fake_fs = types.SimpleNamespace(
         ls=ls,
-        head=lambda p, maxBytes=None: body[p],
+        read=lambda p: body[p].encode(),
     )
     monkeypatch.setitem(sys.modules, "notebookutils", types.SimpleNamespace(fs=fake_fs))
     monkeypatch.setitem(sys.modules, "notebookutils.fs", fake_fs)
     assert jm.records_from_path("abfss://ws@host/t.json") == [{"id": 1}]
 
 
-def test_abfss_read_falls_back_when_head_is_absent(monkeypatch):
+def test_a_whole_file_is_read_not_previewed(monkeypatch):
+    """`head` is a PREVIEW — first `max_bytes`, 100 KB by default. This reader
+    parses JSON and needs every byte, so it calls `read`.
+
+    It used to call `head` and worked only because the shim's `head` diverged
+    from Fabric's by returning the whole file. Once corrected (docs/56 Phase 2)
+    a document over 100 KB would have been truncated mid-parse — or worse,
+    parsed as a shorter valid one. The oversized body here is the regression
+    guard: a `head`-shaped reader cannot pass it."""
+    big = "[" + ", ".join(f'{{"id": {i}}}' for i in range(20000)) + "]"
+    assert len(big) > 100 * 1024, "the body must exceed head's default to bite"
     fake_fs = types.SimpleNamespace(
         ls=lambda p: (_ for _ in ()).throw(RuntimeError("file")),
-        read=lambda p: b'{"id": 3}',
+        read=lambda p: big.encode(),
+        head=lambda f, max_bytes=1024 * 100: big[:max_bytes],
     )
     monkeypatch.setitem(sys.modules, "notebookutils", types.SimpleNamespace(fs=fake_fs))
     monkeypatch.setitem(sys.modules, "notebookutils.fs", fake_fs)
-    assert jm.records_from_path("abfs://ws@host/one.json") == [{"id": 3}]
+    got = jm.records_from_path("abfs://ws@host/one.json")
+    assert len(got) == 20000
+    assert got[-1] == {"id": 19999}
 
 
 def test_patch_is_idempotent(tmp_path):
