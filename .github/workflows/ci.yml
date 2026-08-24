@@ -542,6 +542,13 @@ jobs:
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python scripts/check_witnesses.py --strict
+      # Axis A of docs/56, derived rather than transcribed: our notebookutils
+      # shim against Microsoft's OWN pinned stubs
+      # (third_party/notebookutils-stubs). Every difference is allowed and each
+      # carries a reason; none may be silent. Catches the case nothing else
+      # would — Microsoft renaming a parameter, which turns a keyword call
+      # written for Fabric into a TypeError here.
+      - run: uv run --frozen --no-sync python scripts/check_notebookutils_surface.py --strict
       # Cheap guard for the constraint the governance e2e discovers the
       # expensive way: a column OpenMetadata refuses costs the whole table.
       - run: uv run --frozen --no-sync python scripts/check_govern_types.py
