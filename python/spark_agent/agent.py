@@ -206,6 +206,7 @@ _install_custom_wheels()
 
 import catalog  # noqa: E402 — after the engine is up; see catalog.py for why it is split out
 import rddfacade  # noqa: E402 — same split: importable with no session, and unit-tested
+import run_magic  # noqa: E402 — a pure source rewrite, tested without an engine
 import sqlrun  # noqa: E402 — same split, same reason: importable without a session
 
 # The Environment item this process has installed, if any: id -> the request that
@@ -385,7 +386,26 @@ def ns(session):
             mssparkutils = getattr(nbu, "mssparkutils", None)
             if mssparkutils is not None:
                 namespaces[session]["mssparkutils"] = mssparkutils
+        # `%run` splices another notebook's code into THIS namespace, so the
+        # helper it rewrites to has to close over this namespace specifically.
+        namespaces[session][run_magic.HELPER] = _make_run_helper(
+            namespaces[session])
     return namespaces[session]
+
+
+def _make_run_helper(g):
+    """Bind `%run`'s callable to this namespace. The SEMANTIC is in
+    run_magic.make_runner, which is importable without an engine and therefore
+    tested; what stays here is only the notebookutils lookup."""
+    def get_definition(name):
+        nbu = _notebookutils()
+        if nbu is None:
+            raise RuntimeError(
+                "%run needs notebookutils to fetch the referenced notebook, "
+                "and it is not importable in this session")
+        return nbu.notebook.getDefinition(name)
+
+    return run_magic.make_runner(g, get_definition)
 
 
 def recover_lost_session():
@@ -458,6 +478,10 @@ def run_code(code, g):
     """Exec the block; if its last statement is an expression, eval that and
     return its repr as the REPL result (Livy semantics). Capture stdout too."""
     out = io.StringIO()
+    # `%run` is a LINE magic inside an ordinary Python cell, so the cell parser
+    # correctly leaves it alone — but it is a syntax error to Python, and has
+    # to become a call before ast.parse sees it. See run_magic.py.
+    code = run_magic.expand(code)
     try:
         tree = ast.parse(code, mode="exec")
     except SyntaxError:
