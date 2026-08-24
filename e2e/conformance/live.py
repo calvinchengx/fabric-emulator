@@ -687,12 +687,12 @@ def session_fall_through() -> FallThroughClaim:
     if _fall_seen.get("skipped"):
         return FallThroughClaim(
             ok=False,
-            error=("not run on this backend: the statements address the table by "
-                   "`abfss://`, hadoop forces TLS for that scheme, and this stack "
-                   "serves plaintext — every request fails at the socket and "
-                   "hadoop-azure retries forever, hanging the notebook and taking "
-                   "contracts 1-4 down with it. Measured: five threads parked in "
-                   "AbfsRestOperation.completeExecute for 324s-864s"))
+            error=("not run on this backend: CONFORMANCE_FALL_THROUGH is not set "
+                   "in its compose. The gate exists because a statement that "
+                   "hangs takes contracts 1-4 down with it and reports the "
+                   "harness's own timeout as five separate defects — measured "
+                   "twice, when this probe still spelled the table `abfss://` "
+                   "and hadoop forced TLS against a plaintext stack"))
     if _fall_seen.get("table_error"):
         return FallThroughClaim(
             ok=False,
@@ -705,6 +705,9 @@ def session_fall_through() -> FallThroughClaim:
         recognised_error=_fall_seen.get("recognised_error", ""),
         unrecognised_ok=bool(_fall_seen.get("unrecognised_ok")),
         unrecognised_error=_fall_seen.get("unrecognised_error", ""),
+        name_form_ok=(None if "name_form_ok" not in _fall_seen
+                      else bool(_fall_seen.get("name_form_ok"))),
+        name_form_error=_fall_seen.get("name_form_error", ""),
     )
 
 

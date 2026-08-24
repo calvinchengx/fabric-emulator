@@ -638,3 +638,32 @@ def test_credential_lifetime_grades_a_surface_that_cannot_check_expiry_on_the_wa
         session=lambda: _cred(expiry_checked=False, expiry_accepted=True),
         backend="sail")
     assert r.status == "pass"
+
+
+def test_fall_through_grades_the_catalog_name_form_when_offered():
+    """`OPTIMIZE delta.`<uri>`` is what the probe can always spell; `OPTIMIZE
+    events` is what an author types. A hatch that needs a URI is not the hatch
+    this contract claims — and this stayed a 'recorded gap' for exactly as long
+    as it went ungraded."""
+    r = probes.fall_through(
+        session=lambda: _ft(name_form_ok=True), backend="sail", control=False)
+    assert r.status == "pass"
+
+
+def test_fall_through_fails_when_only_the_path_form_works():
+    r = probes.fall_through(
+        session=lambda: _ft(name_form_ok=False,
+                            name_form_error="cannot resolve 'events'"),
+        backend="sail", control=False)
+    assert r.status == "fail"
+    assert "NOT by catalog name" in r.error
+
+
+def test_fall_through_does_not_invent_a_name_form_verdict_for_a_surface_without_one():
+    """None is 'not offered', and must not be graded as either outcome. The
+    warehouse leg asserts in Go and has no catalog-name analogue."""
+    sent = "SELECT 1"
+    r = probes.fall_through(
+        session=lambda: _ft(echo_sent=sent, echo_got=sent, name_form_ok=None),
+        backend="warehouse", control=False)
+    assert r.status == "pass"

@@ -407,8 +407,17 @@ hand a notebook another lakehouse's data under its own table name — the
 cross-lakehouse leak `catalog.Claims` guards the unqualified path against. Two
 hits raise and tell the author to qualify.
 
-The probe still records both engines' numbers every run, so the claim stays a
-measurement rather than reverting to a memory.
+**And it is now ASSERTED, not merely recorded.** A number nobody reads is how
+this became a product-wide claim it never was: measured twice on one engine,
+written down, and then carried forward as prose. `fall_through` now grades the
+name form as part of contract 6 — `OPTIMIZE delta.`<uri>`` is what a probe can
+always spell, `OPTIMIZE events` is what an author types, and an escape hatch
+that only works when the table is addressed by URI is not the hatch this
+contract claims. A surface with no catalog-name analogue reports `None` and is
+not graded either way, so the warehouse leg is unaffected.
+
+This does not add a cell. Contract 6's two lakehouse cells now assert more; the
+matrix is still 18.
 
 ### 7. Credentials must outlive the run
 

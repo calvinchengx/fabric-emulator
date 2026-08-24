@@ -471,6 +471,11 @@ class FallThroughClaim:
     unrecognised_error: str = ""
     echo_sent: str = ""
     echo_got: str = ""
+    # None means the surface does not offer a name form to grade (the warehouse
+    # leg asserts in Go and has no catalog-name analogue of this). True/False
+    # are graded; absence is not silently treated as a pass.
+    name_form_ok: bool | None = None
+    name_form_error: str = ""
     error: str = ""
 
 
@@ -516,6 +521,14 @@ def fall_through(
     When `echo_sent` is set it REPLACES the control contrast, because the two
     are alternative answers to the same question and requiring both would make
     the single-engine surface unprovable rather than proven differently.
+
+    THE NAME FORM IS PART OF THE SAME CONTRACT, not a separate one. `OPTIMIZE
+    delta.`<uri>`` is what the probe can always spell; `OPTIMIZE events` is what
+    an author actually types, and an escape hatch that only works when the table
+    is addressed by URI is not the escape hatch this contract claims. It was a
+    recorded gap for exactly as long as it went ungraded — measured twice, then
+    generalised into a product-wide limitation it never was. So it is asserted
+    here rather than left as an observation someone has to read.
     """
     title = CONTRACTS[5][1]
     pointer = CONTRACTS[5][2]
@@ -555,6 +568,11 @@ def fall_through(
                 "so the statement did not reach the engine unmodified")
         if not claim.unrecognised_error.strip():
             problems.append("the statement failed with no error text to attribute")
+    if claim.name_form_ok is False:
+        problems.append(
+            "the recognised statement works by path but NOT by catalog name "
+            f"({claim.name_form_error[:160]}) — an author writes the name, so a "
+            "hatch that needs a URI is not the one this contract claims")
     if problems:
         return Result(id="6", contract=title, backend=backend, status="fail",
                       error="; ".join(problems), pointer=pointer)
