@@ -35,9 +35,9 @@
     "id": "5",
     "contract": "Concurrent isolation",
     "backend": "sail",
-    "status": "gap",
-    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
-    "pointer": "38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case"
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   },
   {
     "id": "6",

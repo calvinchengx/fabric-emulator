@@ -26,9 +26,11 @@ sys.path.insert(0, str(DIR))
 from probes import (  # noqa: E402
     Artifact,
     ContextClaim,
+    IsolationClaim,
     RuntimeClaim,
     SignatureClaim,
     WriteClaim,
+    concurrent_isolation,
     context_chain,
     record,
     runtime_floor,
@@ -47,6 +49,35 @@ TABLE_DIR = "lake.Lakehouse/Tables/events"
 # out-of-band reader is then a single DFS GET with no Parquet parser, and the
 # file is what a Fabric notebook can write with one documented call.
 FINDINGS_PATH = "lake.Lakehouse/Files/conformance/context.json"
+# Contract 5's children write one file each, keyed by the marker they were
+# given, so a child that wrote another child's file is visible as a mismatch
+# rather than as an overwrite nobody can see.
+FANOUT_DIR = "lake.Lakehouse/Files/conformance/fanout"
+FANOUT_N = 3
+
+# One cell, parameterised by the marker the harness bakes in. Its whole job is
+# to say WHICH notebook it believes it is — the identity a shared agent could
+# leak — alongside the marker only this child was given.
+CHILD_BODY = """# Fabric notebook source
+
+# CELL ********************
+import json as _json
+
+try:
+    import notebookutils as _nbu
+
+    _ctx = dict(_nbu.runtime.context)
+    _nbu.fs.put(
+        "abfss://__WS__@onelake.dfs.fabric.microsoft.com/__DIR__/__MARKER__.json",
+        _json.dumps({
+            "marker": "__MARKER__",
+            "notebook": _ctx.get("currentNotebookId", ""),
+            "workspace": _ctx.get("currentWorkspaceId", ""),
+        }), True)
+    print("child __MARKER__ wrote its findings")
+except Exception as _exc:  # noqa: BLE001
+    print("child __MARKER__ NOT written:", type(_exc).__name__, _exc)
+"""
 
 # The notebook-driven write path, and only that path: unqualified
 # saveAsTable("events"). No CTAS, MERGE, mount, or qualified name — those
@@ -375,6 +406,81 @@ def session_runtime() -> RuntimeClaim:
     )
 
 
+def fan_out() -> dict[str, str]:
+    """Publish N notebooks, submit them AT ONCE, and wait for all of them.
+
+    Submitting serially would prove nothing: the leak contract 5 is about only
+    exists while two sessions are live in the same agent at the same time. So
+    every job is submitted before any is polled.
+
+    Returns marker -> the notebook id the control plane issued, which is what
+    the probe compares each child's own belief against.
+    """
+    ft = fabric_token()
+    expected, jobs = {}, []
+    for i in range(FANOUT_N):
+        marker = f"child{i}"
+        body = (CHILD_BODY.replace("__WS__", _ws)
+                .replace("__DIR__", FANOUT_DIR).replace("__MARKER__", marker))
+        _, headers, _ = req(
+            "POST", f"{FABRIC}/v1/workspaces/{_ws}/items", {
+                "displayName": f"fanout-{marker}", "type": "Notebook",
+                "definition": {"parts": [{
+                    "path": "notebook-content.py", "payloadType": "InlineBase64",
+                    "payload": base64.b64encode(body.encode()).decode()}]}},
+            token=ft)
+        opid = headers.get("x-ms-operation-id")
+        nb = None
+        for _ in range(60):
+            op = req("GET", f"{FABRIC}/v1/operations/{opid}", token=ft)[2]
+            if op.get("status") == "Succeeded":
+                nb = req("GET", f"{FABRIC}/v1/operations/{opid}/result", token=ft)[2]["id"]
+                break
+            time.sleep(1)
+        if not nb:
+            log(f"{marker}: notebook never finished creating")
+            continue
+        expected[marker] = nb
+        _, hdrs, _ = req(
+            "POST",
+            f"{FABRIC}/v1/workspaces/{_ws}/items/{nb}/jobs/instances?jobType=RunNotebook",
+            token=ft)
+        jobs.append((marker, nb, hdrs["Location"].rstrip("/").rsplit("/", 1)[-1]))
+    log(f"submitted {len(jobs)} concurrent RunNotebook jobs")
+
+    deadline = time.monotonic() + 300
+    pending = {j: (m, nb) for m, nb, j in jobs}
+    while pending and time.monotonic() < deadline:
+        for jid, (marker, nb) in list(pending.items()):
+            base = f"{FABRIC}/v1/workspaces/{_ws}/items/{nb}/jobs/instances/{jid}"
+            status = req("GET", base, token=ft)[2].get("status")
+            if status in ("Completed", "Failed", "Cancelled", "Deduped"):
+                log(f"{marker}: {status}")
+                pending.pop(jid)
+        if pending:
+            time.sleep(1)
+    return expected
+
+
+def session_isolation(expected: dict) -> IsolationClaim:
+    """Read every child's artifact over DFS. Not Spark, not any of the writers."""
+    if not expected:
+        return IsolationClaim(ok=False, error="no children were created")
+    sft = storage_token()
+    seen = {}
+    for marker in expected:
+        try:
+            r = urllib.request.Request(
+                f"http://{ACCT}/{_ws}/{urllib.parse.quote(FANOUT_DIR)}/{marker}.json",
+                headers={"Authorization": "Bearer " + sft})
+            with urllib.request.urlopen(r, timeout=60) as resp:
+                seen[marker] = json.loads(resp.read())
+        except Exception as exc:  # noqa: BLE001 — a missing child is the finding
+            log(f"{marker}: no findings ({exc})")
+    log(f"fan-out artifacts read: {len(seen)}/{len(expected)}")
+    return IsolationClaim(ok=True, seen=seen)
+
+
 def main() -> int:
     backend = os.environ.get("BACKEND", "")
     if backend not in ("sail", "jvm"):
@@ -401,7 +507,11 @@ def main() -> int:
     runtimes = json.loads((DIR / "fabric-runtimes.json").read_text(
         encoding="utf-8"))["runtimes"]
     floor = runtime_floor(session=session_runtime, runtimes=runtimes, backend=backend)
-    rows = record(backend, live={1: ctx, 2: sig, 3: floor, 4: result})
+    expected = fan_out()
+    iso = concurrent_isolation(
+        session=lambda: session_isolation(expected),
+        expected=expected, backend=backend)
+    rows = record(backend, live={1: ctx, 2: sig, 3: floor, 4: result, 5: iso})
     out = DIR / "out"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{backend}.json"
@@ -409,6 +519,7 @@ def main() -> int:
     log(f"wrote {path} contract 1={ctx.status} {ctx.error}".rstrip())
     log(f"wrote {path} contract 2={sig.status} {sig.error}".rstrip())
     log(f"wrote {path} contract 3={floor.status} {floor.error}".rstrip())
+    log(f"wrote {path} contract 5={iso.status} {iso.error}".rstrip())
     log(f"wrote {path} contract 4={result.status} {result.error}".rstrip())
     return 0
 

@@ -1,6 +1,6 @@
 # 38 — Framework conformance: what a Fabric product assumes, and how to test it
 
-**Status: contracts 1–4 are live and GREEN ON EVERY APPLICABLE BACKEND. 9 of 18 cells.** Contract 4 is ✅ on all three
+**Status: contracts 1–5 are live. 11 of 18 cells.** Contract 4 is ✅ on all three
 backends — a write through the emulator path, confirmed out of band (OneLake
 DFS on sail/jvm; a fresh TDS connection on warehouse). The engine that wrote
 is never the one that confirms. **Contract 1 is ✅ on sail and ❌ on jvm**,
@@ -10,8 +10,11 @@ import the surface this repo grades 🟢 Real. **Both are now ✅ on both
 backends**: the seven missing `notebookutils.notebook` methods are implemented,
 and the JVM overlay has an interpreter that can import the shim at all.
 **Contract 3 is now asserted too**, and green: both images declare the Fabric
-Runtime they target and both meet its Python floor. Contracts 5–7 stay known
-gaps. The offline half (`docs/conformance-matrix.md`,
+Runtime they target and both meet its Python floor. **Contract 5 is green on
+sail and jvm** — three notebooks submitted at once, each writing its own
+artifact, each knowing only its own identity — and stays ❌ on warehouse, where
+concurrent TDS sessions need a Go leg this kit does not have yet. Contracts 6–7
+stay known gaps. The offline half (`docs/conformance-matrix.md`,
 `check_conformance.py --strict`) still gates `make check`.
 
 **Two defects came out of contract 1's first run, and neither was visible to
@@ -227,6 +230,19 @@ boundaries and refuses a second lakehouse rather than switching; the single
 **The rule.** Every piece of agent state is session-scoped unless it is proven
 shared. The shared-agent model is a legitimate emulator choice; letting it leak
 is not.
+
+**Now proven, on both engines.** Three notebooks are published, **all submitted
+before any is polled** — serial submission would prove nothing, because the leak
+only exists while two sessions are live in the same agent at once — and each
+writes its own file under `Files/conformance/fanout/`. The probe compares each
+child's reported notebook id against the id **the control plane issued that
+child**, not against what another child said: two children that had leaked into
+each other would agree with each other and disagree with the harness.
+
+Markers and ids both, because they answer different questions. A marker proves a
+child ran; the id proves it knew WHICH child it was. A child reporting another
+child's identity is the leak, and it is invisible to any assertion that only
+counts successes.
 
 ### 6. Engine gaps need a bounded-rewrite escape hatch, with a stated contract
 

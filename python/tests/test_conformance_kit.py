@@ -393,3 +393,65 @@ def test_both_images_declare_the_runtime_they_target():
     for path in ("docker/spark-agent/Dockerfile", "docker/spark-runtime/Dockerfile"):
         text = (REPO / path).read_text(encoding="utf-8")
         assert "ENV FABRIC_RUNTIME=" in text, path
+
+
+EXPECTED_CHILDREN = {"child0": "nb-0", "child1": "nb-1", "child2": "nb-2"}
+
+
+def _iso(seen):
+    return probes.IsolationClaim(ok=True, seen=seen)
+
+
+def _clean():
+    return {m: {"marker": m, "notebook": nb} for m, nb in EXPECTED_CHILDREN.items()}
+
+
+def test_concurrent_isolation_passes_when_each_child_knows_only_itself():
+    r = probes.concurrent_isolation(session=lambda: _iso(_clean()),
+                                    expected=EXPECTED_CHILDREN, backend="sail")
+    assert r.status == "pass"
+
+
+def test_concurrent_isolation_catches_a_child_reporting_another_childs_identity():
+    """The leak this contract exists for. One long-lived agent with a namespace
+    per session means anything process-global crosses concurrent runs."""
+    seen = _clean()
+    seen["child1"]["notebook"] = "nb-0"
+    r = probes.concurrent_isolation(session=lambda: _iso(seen),
+                                    expected=EXPECTED_CHILDREN, backend="sail")
+    assert r.status == "fail"
+    assert "believes it is notebook nb-0" in r.error
+
+
+def test_concurrent_isolation_names_a_shared_identity_as_such():
+    """N children all reporting one id is already caught per-child; saying it
+    once names the leak instead of listing N mismatches."""
+    seen = {m: {"marker": m, "notebook": "nb-0"} for m in EXPECTED_CHILDREN}
+    r = probes.concurrent_isolation(session=lambda: _iso(seen),
+                                    expected=EXPECTED_CHILDREN, backend="sail")
+    assert "share a notebook identity" in r.error
+
+
+def test_concurrent_isolation_catches_a_child_writing_another_childs_file():
+    seen = _clean()
+    seen["child2"]["marker"] = "child1"
+    r = probes.concurrent_isolation(session=lambda: _iso(seen),
+                                    expected=EXPECTED_CHILDREN, backend="sail")
+    assert r.status == "fail"
+    assert "wrote another child's file" in r.error
+
+
+def test_concurrent_isolation_reports_children_that_wrote_nothing():
+    """A fan-out where two of three vanished must not read as isolation."""
+    seen = {"child0": {"marker": "child0", "notebook": "nb-0"}}
+    r = probes.concurrent_isolation(session=lambda: _iso(seen),
+                                    expected=EXPECTED_CHILDREN, backend="sail")
+    assert r.status == "fail"
+    assert "2 of 3 children wrote no findings" in r.error
+
+
+def test_concurrent_isolation_refuses_a_fan_out_that_never_happened():
+    r = probes.concurrent_isolation(
+        session=lambda: probes.IsolationClaim(ok=False, error="no children were created"),
+        expected={}, backend="sail")
+    assert r.status == "fail"

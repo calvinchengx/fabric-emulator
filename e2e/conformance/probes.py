@@ -58,7 +58,7 @@ GAP_REASON = {
     2: "no live session recorded — the offline path cannot read a live signature",
     3: "no live session recorded — a runtime floor is a property of the running image",
     4: "live backends not yet recorded",
-    5: "not yet asserted — same harness as write landing, different notebooks",
+    5: "no live fan-out recorded — isolation is a property of concurrent sessions",
     6: "not yet asserted — same harness as write landing, different notebooks",
     7: "not yet asserted — same harness as write landing, different notebooks",
 }
@@ -368,6 +368,80 @@ def runtime_floor(
                    f"{spec['python']}) and runs Python {claim.python}"),
             pointer=pointer)
     return Result(id="3", contract=title, backend=backend, status="pass")
+
+
+@dataclass(frozen=True)
+class IsolationClaim:
+    """What a fan-out of concurrent notebooks reported, one entry each.
+
+    `seen` maps the marker a notebook was given to what it wrote back:
+    `{"marker": ..., "notebook": <id it believes it is>}`. A notebook that
+    wrote nothing is absent, which is itself a finding.
+    """
+
+    ok: bool
+    seen: dict[str, dict] | None = None
+    error: str = ""
+
+
+def concurrent_isolation(
+    *,
+    session: Callable[[], IsolationClaim],
+    expected: dict[str, str],
+    backend: str,
+) -> Result:
+    """Contract 5: N children at once, each seeing only its own identity.
+
+    `expected` maps each child's marker to the notebook id the CONTROL PLANE
+    issued it, so the comparison is against what the harness created rather
+    than against what another child reported. Two children that leaked into
+    each other would agree with each other and disagree with this.
+
+    WHY MARKERS AND IDS BOTH. A marker alone proves a child ran; the id proves
+    it knew WHICH child it was. The emulator runs one long-lived agent with a
+    namespace per session, so everything process-global leaks across concurrent
+    runs — the prelude's exit-value global did exactly that once, and a
+    `runtime.context` built at import would do it again. A child reporting
+    another child's notebook id is that leak, and it is invisible to any
+    assertion that only counts successes.
+    """
+    title = CONTRACTS[4][1]
+    pointer = CONTRACTS[4][2]
+    claim = session()
+    if not claim.ok:
+        return Result(id="5", contract=title, backend=backend, status="fail",
+                      error=claim.error or "the fan-out reported nothing",
+                      pointer=pointer)
+    seen = claim.seen or {}
+    problems = []
+    missing = sorted(set(expected) - set(seen))
+    if missing:
+        problems.append(
+            f"{len(missing)} of {len(expected)} children wrote no findings: "
+            + ", ".join(missing))
+    for marker, want in sorted(expected.items()):
+        got = seen.get(marker)
+        if got is None:
+            continue
+        if got.get("marker") != marker:
+            problems.append(
+                f"the artifact for {marker} carries marker "
+                f"{got.get('marker')!r} — a child wrote another child's file")
+        if got.get("notebook") != want:
+            problems.append(
+                f"{marker} believes it is notebook {got.get('notebook') or '<empty>'}; "
+                f"the control plane issued it {want}")
+    # Distinct ids, stated separately: N children all reporting the SAME id
+    # would already be caught above, but saying it this way names the leak
+    # rather than listing N mismatches.
+    ids = [v.get("notebook") for v in seen.values() if v.get("notebook")]
+    if ids and len(set(ids)) != len(ids):
+        problems.append(
+            f"children share a notebook identity: {sorted(ids)}")
+    if problems:
+        return Result(id="5", contract=title, backend=backend, status="fail",
+                      error="; ".join(problems), pointer=pointer)
+    return Result(id="5", contract=title, backend=backend, status="pass")
 
 
 def record(backend: str, live: dict[int, Result] | None = None) -> list[dict]:

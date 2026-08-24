@@ -36,7 +36,7 @@
     "contract": "Concurrent isolation",
     "backend": "warehouse",
     "status": "gap",
-    "error": "not yet asserted \u2014 same harness as write landing, different notebooks",
+    "error": "no live fan-out recorded \u2014 isolation is a property of concurrent sessions",
     "pointer": "38-framework-conformance.md#5-concurrency-is-the-default-case-not-the-edge-case"
   },
   {
