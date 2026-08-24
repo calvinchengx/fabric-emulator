@@ -12,101 +12,604 @@
     "own last-updated date, so a stale entry can be found without re-reading",
     "every page.",
     "",
-    "SCOPE IS DECLARED, NOT IMPLIED. This covers `notebookutils.notebook` only.",
-    "fs, credentials, env, runtime, lakehouse, session, udf and variableLibrary",
-    "are listed in `modules_not_yet_covered` so the file cannot be mistaken for",
-    "the whole surface — a partial reference read as complete would turn absent",
-    "checks into apparent passes."
-  ],
-  "modules_not_yet_covered": [
-    "notebookutils.fs",
-    "notebookutils.credentials",
-    "notebookutils.env",
-    "notebookutils.runtime",
-    "notebookutils.lakehouse",
-    "notebookutils.session",
-    "notebookutils.udf",
-    "notebookutils.variableLibrary"
+    "SCOPE IS NOW THE WHOLE DOCUMENTED SURFACE (docs/56 Phase 0). The module",
+    "list is not ours: it is the table on the NotebookUtils overview page, so",
+    "it can name a module nobody here thought to look for. That is the point --",
+    "the previous `modules_not_yet_covered` field was an honest record of KNOWN",
+    "absences and, by construction, could not list an unknown one.",
+    "",
+    "CITED IS NOT GRADED, and the two must not be confused. Every module below",
+    "has a citation; `graded_by_contract_2` names the ones the live probe",
+    "actually asserts, which is fewer. Reading a citation as a check is how a",
+    "partial reference gets mistaken for coverage."
   ],
   "modules": {
     "notebookutils.notebook": {
       "run": {
-        "params": ["path", "timeout_seconds", "arguments", "workspace"],
-        "defaults": {"timeout_seconds": 90, "arguments": null, "workspace": ""},
+        "params": [
+          "path",
+          "timeout_seconds",
+          "arguments",
+          "workspace"
+        ],
+        "defaults": {
+          "timeout_seconds": 90,
+          "arguments": null,
+          "workspace": ""
+        },
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-run",
         "read": "2026-04-02",
         "verbatim": "run(path: str, timeout_seconds: int = 90, arguments: dict = None, workspace: str = \"\"): str"
       },
       "runMultiple": {
-        "params": ["dag", "config"],
-        "defaults": {"config": null},
+        "params": [
+          "dag",
+          "config"
+        ],
+        "defaults": {
+          "config": null
+        },
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-run",
         "read": "2026-04-02",
         "verbatim": "runMultiple(dag: Any, config: dict = None): dict[str, dict[str, Any]]"
       },
       "validateDAG": {
-        "params": ["dag"],
+        "params": [
+          "dag"
+        ],
         "defaults": {},
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-run",
         "read": "2026-04-02",
         "verbatim": "validateDAG(dag: Any): bool"
       },
       "exit": {
-        "params": ["value"],
+        "params": [
+          "value"
+        ],
         "defaults": {},
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-run",
         "read": "2026-04-02",
         "verbatim": "exit(value: str): None"
       },
       "create": {
-        "params": ["name", "description", "content", "defaultLakehouse", "defaultLakehouseWorkspace", "workspaceId"],
+        "params": [
+          "name",
+          "description",
+          "content",
+          "defaultLakehouse",
+          "defaultLakehouseWorkspace",
+          "workspaceId"
+        ],
         "defaults": {},
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
         "read": "2026-08-04",
         "verbatim": "create(name, description, content, defaultLakehouse, defaultLakehouseWorkspace, workspaceId): Artifact"
       },
       "get": {
-        "params": ["name", "workspaceId"],
+        "params": [
+          "name",
+          "workspaceId"
+        ],
         "defaults": {},
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
         "read": "2026-08-04",
         "verbatim": "get(name, workspaceId): Artifact"
       },
       "getDefinition": {
-        "params": ["name", "workspaceId", "format"],
-        "defaults": {"format": "ipynb"},
+        "params": [
+          "name",
+          "workspaceId",
+          "format"
+        ],
+        "defaults": {
+          "format": "ipynb"
+        },
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
         "read": "2026-08-04",
         "verbatim": "getDefinition(name, workspaceId, format): String"
       },
       "update": {
-        "params": ["name", "newName", "description", "workspaceId"],
+        "params": [
+          "name",
+          "newName",
+          "description",
+          "workspaceId"
+        ],
         "defaults": {},
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
         "read": "2026-08-04",
         "verbatim": "update(name, newName, description, workspaceId): Artifact"
       },
       "updateDefinition": {
-        "params": ["name", "content", "defaultLakehouse", "defaultLakehouseWorkspace", "workspaceId", "environmentId", "environmentWorkspaceId"],
+        "params": [
+          "name",
+          "content",
+          "defaultLakehouse",
+          "defaultLakehouseWorkspace",
+          "workspaceId",
+          "environmentId",
+          "environmentWorkspaceId"
+        ],
         "defaults": {},
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
         "read": "2026-08-04",
         "verbatim": "updateDefinition(name, content, defaultLakehouse, defaultLakehouseWorkspace, workspaceId, environmentId, environmentWorkspaceId): bool"
       },
       "delete": {
-        "params": ["name", "workspaceId"],
+        "params": [
+          "name",
+          "workspaceId"
+        ],
         "defaults": {},
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
         "read": "2026-08-04",
         "verbatim": "delete(name, workspaceId): Boolean"
       },
       "list": {
-        "params": ["workspaceId", "maxResults"],
-        "defaults": {"maxResults": 1000},
+        "params": [
+          "workspaceId",
+          "maxResults"
+        ],
+        "defaults": {
+          "maxResults": 1000
+        },
         "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-notebook-management",
         "read": "2026-08-04",
         "verbatim": "list(workspaceId, maxResults): Array[Artifact]"
       }
+    },
+    "notebookutils.fs": {
+      "ls": {
+        "params": [
+          "path"
+        ],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "ls(path: String): Array"
+      },
+      "mkdirs": {
+        "params": [
+          "path"
+        ],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "mkdirs(path: String): Boolean"
+      },
+      "cp": {
+        "params": [
+          "src",
+          "dest",
+          "recurse"
+        ],
+        "defaults": {
+          "recurse": false
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "cp(src: String, dest: String, recurse: Boolean = false): Boolean"
+      },
+      "fastcp": {
+        "params": [
+          "src",
+          "dest",
+          "recurse",
+          "extraConfigs"
+        ],
+        "defaults": {
+          "recurse": true,
+          "extraConfigs": null
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "fastcp(src: String, dest: String, recurse: Boolean = true, extraConfigs: Map = None): Boolean"
+      },
+      "mv": {
+        "params": [
+          "src",
+          "dest",
+          "create_path",
+          "overwrite"
+        ],
+        "defaults": {
+          "overwrite": false
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "mv(src: String, dest: String, create_path: Boolean, overwrite: Boolean = false): Boolean"
+      },
+      "put": {
+        "params": [
+          "file",
+          "content",
+          "overwrite"
+        ],
+        "defaults": {
+          "overwrite": false
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "put(file: String, content: String, overwrite: Boolean = false): Boolean"
+      },
+      "head": {
+        "params": [
+          "file",
+          "max_bytes"
+        ],
+        "defaults": {
+          "max_bytes": 102400
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "head(file: String, max_bytes: int = 1024 * 100): String"
+      },
+      "append": {
+        "params": [
+          "file",
+          "content",
+          "createFileIfNotExists"
+        ],
+        "defaults": {
+          "createFileIfNotExists": false
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "append(file: String, content: String, createFileIfNotExists: Boolean = false): Boolean"
+      },
+      "rm": {
+        "params": [
+          "path",
+          "recurse"
+        ],
+        "defaults": {
+          "recurse": false
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "rm(path: String, recurse: Boolean = false): Boolean"
+      },
+      "exists": {
+        "params": [
+          "path"
+        ],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "exists(path: String): Boolean"
+      },
+      "getProperties": {
+        "params": [
+          "path"
+        ],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-file-system",
+        "read": "2026-08-04",
+        "verbatim": "getProperties(path: String): Map"
+      },
+      "mount": {
+        "params": [
+          "source",
+          "mountPoint",
+          "extraConfigs"
+        ],
+        "defaults": {
+          "extraConfigs": null
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-mount",
+        "read": "2026-08-04",
+        "verbatim": "mount(source: String, mountPoint: String, extraConfigs: Map[String, Any] = None): Boolean"
+      },
+      "unmount": {
+        "params": [
+          "mountPoint",
+          "extraConfigs"
+        ],
+        "defaults": {
+          "extraConfigs": null
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-mount",
+        "read": "2026-08-04",
+        "verbatim": "unmount(mountPoint: String, extraConfigs: Map[String, Any] = None): Boolean"
+      },
+      "mounts": {
+        "params": [
+          "extraOptions"
+        ],
+        "defaults": {
+          "extraOptions": null
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-mount",
+        "read": "2026-08-04",
+        "verbatim": "mounts(extraOptions: Map[String, Any] = None): Array[MountPointInfo]"
+      },
+      "getMountPath": {
+        "params": [
+          "mountPoint",
+          "scope"
+        ],
+        "defaults": {
+          "scope": ""
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-mount",
+        "read": "2026-08-04",
+        "verbatim": "getMountPath(mountPoint: String, scope: String = \"\"): String"
+      }
+    },
+    "notebookutils.credentials": {
+      "getToken": {
+        "params": [
+          "audience"
+        ],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-credentials",
+        "read": "2026-08-04",
+        "verbatim": "getToken(audience: String): String"
+      },
+      "getSecret": {
+        "params": [
+          "akvName",
+          "secret"
+        ],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-credentials",
+        "read": "2026-08-04",
+        "verbatim": "getSecret(akvName: String, secret: String): String"
+      },
+      "putSecret": {
+        "params": [
+          "akvName",
+          "secretName",
+          "secretValue"
+        ],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-credentials",
+        "read": "2026-08-04",
+        "verbatim": "putSecret(akvName: String, secretName: String, secretValue: String): String"
+      },
+      "isValidToken": {
+        "params": [
+          "token"
+        ],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-credentials",
+        "read": "2026-08-04",
+        "verbatim": "isValidToken(token: String): Boolean"
+      }
+    },
+    "notebookutils.lakehouse": {
+      "create": {
+        "params": [
+          "name",
+          "description",
+          "definition",
+          "workspaceId"
+        ],
+        "defaults": {
+          "description": "",
+          "definition": {},
+          "workspaceId": ""
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-lakehouse",
+        "read": "2026-08-04",
+        "verbatim": "create(name: String, description: String = \"\", definition: Object = {}, workspaceId: String = \"\"): Artifact"
+      },
+      "get": {
+        "params": [
+          "name",
+          "workspaceId"
+        ],
+        "defaults": {
+          "name": "",
+          "workspaceId": ""
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-lakehouse",
+        "read": "2026-08-04",
+        "verbatim": "get(name: String = \"\", workspaceId: String = \"\"): Artifact"
+      },
+      "getWithProperties": {
+        "params": [
+          "name",
+          "workspaceId"
+        ],
+        "defaults": {
+          "workspaceId": ""
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-lakehouse",
+        "read": "2026-08-04",
+        "verbatim": "getWithProperties(name: String, workspaceId: String = \"\"): Artifact"
+      },
+      "update": {
+        "params": [
+          "name",
+          "newName",
+          "description",
+          "workspaceId"
+        ],
+        "defaults": {
+          "description": "",
+          "workspaceId": ""
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-lakehouse",
+        "read": "2026-08-04",
+        "verbatim": "update(name: String, newName: String, description: String = \"\", workspaceId: String = \"\"): Artifact"
+      },
+      "delete": {
+        "params": [
+          "name",
+          "workspaceId"
+        ],
+        "defaults": {
+          "workspaceId": ""
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-lakehouse",
+        "read": "2026-08-04",
+        "verbatim": "delete(name: String, workspaceId: String = \"\"): Boolean"
+      },
+      "list": {
+        "params": [
+          "workspaceId",
+          "maxResults"
+        ],
+        "defaults": {
+          "workspaceId": "",
+          "maxResults": 1000
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-lakehouse",
+        "read": "2026-08-04",
+        "verbatim": "list(workspaceId: String = \"\", maxResults: Int = 1000): Array[Artifact]"
+      },
+      "listTables": {
+        "params": [
+          "lakehouse",
+          "workspaceId",
+          "maxResults"
+        ],
+        "defaults": {
+          "lakehouse": "",
+          "workspaceId": "",
+          "maxResults": 1000
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-lakehouse",
+        "read": "2026-08-04",
+        "verbatim": "listTables(lakehouse: String = \"\", workspaceId: String = \"\", maxResults: Int = 1000): Array[Table]"
+      },
+      "loadTable": {
+        "params": [
+          "loadOption",
+          "table",
+          "lakehouse",
+          "workspaceId"
+        ],
+        "defaults": {
+          "lakehouse": "",
+          "workspaceId": ""
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-lakehouse",
+        "read": "2026-08-04",
+        "verbatim": "loadTable(loadOption: Object, table: String, lakehouse: String = \"\", workspaceId: String = \"\"): Boolean"
+      }
+    },
+    "notebookutils.session": {
+      "stop": {
+        "params": [],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-session-management",
+        "read": "2026-04-02",
+        "verbatim": "stop(): void"
+      },
+      "restartPython": {
+        "params": [],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-session-management",
+        "read": "2026-04-02",
+        "verbatim": "restartPython(): void"
+      }
+    },
+    "notebookutils.udf": {
+      "getFunctions": {
+        "params": [
+          "udf",
+          "workspaceId"
+        ],
+        "defaults": {
+          "workspaceId": ""
+        },
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-user-data-function",
+        "read": "2026-04-26",
+        "verbatim": "getFunctions(udf: String, workspaceId: String = \"\"): UDF"
+      }
+    },
+    "notebookutils.variableLibrary": {
+      "getLibrary": {
+        "params": [
+          "variableLibraryName"
+        ],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-variable-library",
+        "read": "2026-04-02",
+        "verbatim": "getLibrary(variableLibraryName: String): VariableLibrary"
+      },
+      "get": {
+        "params": [
+          "variableReference"
+        ],
+        "defaults": {},
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-variable-library",
+        "read": "2026-04-02",
+        "verbatim": "get(variableReference: String): Any"
+      }
+    },
+    "notebookutils.runtime": {
+      "context": {
+        "params": [],
+        "defaults": {},
+        "kind": "property",
+        "source": "https://learn.microsoft.com/en-us/fabric/data-engineering/notebookutils/notebookutils-runtime",
+        "read": "2026-08-13",
+        "verbatim": "notebookutils.runtime.context",
+        "keys": [
+          "currentNotebookName",
+          "currentNotebookId",
+          "currentWorkspaceName",
+          "currentWorkspaceId",
+          "defaultLakehouseName",
+          "defaultLakehouseId",
+          "defaultLakehouseWorkspaceName",
+          "defaultLakehouseWorkspaceId",
+          "currentRunId",
+          "parentRunId",
+          "rootRunId",
+          "isForPipeline",
+          "isForInteractive",
+          "isReferenceRun",
+          "referenceTreePath",
+          "rootNotebookId",
+          "rootNotebookName",
+          "rootWorkspaceId",
+          "rootWorkspaceName",
+          "activityId",
+          "hcReplId",
+          "clusterId",
+          "poolName",
+          "environmentId",
+          "environmentWorkspaceId",
+          "userId",
+          "userName",
+          "currentKernel",
+          "productType"
+        ]
+      }
     }
+  },
+  "graded_by_contract_2": [
+    "notebookutils.notebook"
+  ],
+  "surface_notes": {
+    "notebookutils.env": [
+      "NOT A DOCUMENTED MODULE, and the previous scope list was wrong to name",
+      "one. The overview page's module table has eight namespaces and `env` is",
+      "not among them; what it used to answer (workspace id, lakehouse id) are",
+      "keys on `notebookutils.runtime.context`. It is an mssparkutils-era",
+      "holdover that this shim still ships. Keeping it is harmless -- contract 2",
+      "allows extra surface -- but it must not be counted as parity, and nothing",
+      "should be built against it."
+    ],
+    "mssparkutils": [
+      "The legacy alias. The overview page states the rename is complete, that",
+      "existing code stays backward compatible, and that the namespace WILL BE",
+      "RETIRED. It has its own page (microsoft-spark-utilities) which is not",
+      "transcribed here: emulating a namespace Microsoft is retiring is a",
+      "different decision from emulating the current one, and it should be made",
+      "deliberately rather than by transcription. This tree ships no",
+      "`mssparkutils` module at all today."
+    ],
+    "language_variants": [
+      "Signatures here are the PYTHON spelling. The pages note that Scala uses",
+      "camelCase for some parameters (`createPath` for `create_path`,",
+      "`maxBytes` for `max_bytes`) and that `head`'s default differs in R",
+      "(65535 rather than 102400). Contract 2 probes a Python session, so the",
+      "Python spelling is the one that can be checked here."
+    ]
   }
 }

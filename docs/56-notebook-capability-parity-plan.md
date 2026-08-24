@@ -1,8 +1,9 @@
 # Notebook capability parity — the plan
 
-> **Status: draft for discussion.** Surface counts are measured from the tree;
-> execution-model rows are search results, not probe results, and each needs
-> measuring before it becomes a claim. Companion to
+> **Status: Phase 0 delivered; the rest is a draft for discussion.** Axis A is
+> now measured against a cited reference rather than estimated — 44 documented
+> members, 25 of them wrong or missing. Axis C rows are still search results,
+> not probe results, and each needs measuring before it becomes a claim. Companion to
 > [38-framework-conformance.md](38-framework-conformance.md) and
 > [39-run-multiple-parity-plan.md](39-run-multiple-parity-plan.md), whose
 > "what done buys, precisely" convention this follows.
@@ -29,9 +30,11 @@ Two limits are load-bearing:
 - **Contract 2 is titled "the API shape is the contract, independent of
   behaviour."** A method can carry every documented parameter, in the right
   order, and do entirely the wrong thing. That cell stays green.
-- **Contract 2 covers one module.** `notebookutils-reference.json` lists eight
-  more in `modules_not_yet_covered`, precisely so the file cannot be read as the
-  whole surface.
+- **Contract 2 grades one module.** `notebookutils-reference.json` now cites
+  all eight documented namespaces (Phase 0), but `graded_by_contract_2` names
+  the single one the live probe actually asserts. Cited is not graded, and
+  reading a citation as a check is how a partial reference gets mistaken for
+  coverage.
 
 ## Parity is four axes, not one
 
@@ -47,34 +50,65 @@ different owner, a different kind of evidence, and a different failure mode.
 
 ## Axis A — the surface, measured
 
-Counted from `python/notebookutils/` in the tree. There is deliberately **no
-"documented by Microsoft" column**: writing that from memory is the exact defect
-the reference file exists to prevent — *"a reference assembled from memory would
-be the same defect one tier up: a claim about Fabric with nothing behind it."*
-Establishing it, with citations, is Phase 0.
+**Phase 0 is done, so this table now has a denominator.** The module list is
+not ours: it is the table on the [NotebookUtils overview
+page](https://learn.microsoft.com/en-us/fabric/data-engineering/notebook-utilities),
+read 2026-08-04, which is what lets it name a module nobody here thought to look
+for. Every member in `notebookutils-reference.json` carries its source page and
+that page's own last-updated date.
 
-| Module | Public members | In tree | Graded by contract 2 | Cited reference |
-|---|---:|---|---|---|
-| `notebook` | 11 | ✅ | ✅ | ✅ |
-| `fs` | 9 | ✅ | ❌ | ❌ |
-| `credentials` | 3 | ✅ | ❌ | ❌ |
-| `env` | 2 | ✅ | ❌ | ❌ |
-| `lakehouse` | 3 | ✅ | ❌ | ❌ |
-| `runtime` | 1 | ✅ | ❌ | ❌ |
-| `variableLibrary` | 2 | ✅ | ❌ | ❌ |
-| `session` | 0 | ❌ | ❌ | ❌ |
-| `udf` | 0 | ❌ | ❌ | ❌ |
-| `mssparkutils` | 0 | ❌ | ❌ | ❌ |
+**44 documented members. 19 are correct. 17 are absent and 8 more exist with the
+wrong parameter names.**
 
-**This is not a coverage percentage.** Nine of ten modules have no cited
-reference, so there is no denominator, and inventing one produces a number that
-looks like progress and measures nothing.
+| Module | Documented | Present | Absent | Signature mismatches |
+|---|---:|---:|---:|---:|
+| `notebook` | 11 | 11 | 0 | 0 |
+| `fs` | 15 | 8 | 7 | 5 |
+| `lakehouse` | 8 | 3 | 5 | 3 |
+| `credentials` | 4 | 2 | 2 | 0 |
+| `session` | 2 | — | 2 | — |
+| `udf` | 1 | — | 1 | — |
+| `runtime` | 1 | 1 | 0 | 0 |
+| `variableLibrary` | 2 | 2 | 0 | 0 |
+| **Total** | **44** | **27** | **17** | **8** |
 
-### Reading `modules_not_yet_covered` correctly
+Absent: `fs.fastcp`, `fs.mv`, `fs.getProperties`, `fs.mount`, `fs.unmount`,
+`fs.mounts`, `fs.getMountPath`, `lakehouse.update`, `lakehouse.delete`,
+`lakehouse.getWithProperties`, `lakehouse.listTables`, `lakehouse.loadTable`,
+`credentials.putSecret`, `credentials.isValidToken`, and the whole of
+`session` and `udf`.
 
-The reference file declares its own scope in one field, and it is the most
-useful line in it. It also flattens a distinction that decides how much work
-each entry is:
+### The eight that exist and would fail anyway
+
+This is the finding worth the phase. These methods are shipped, work, and are
+used — and a framework that introspects them **declines to run**, because
+contract 2's asymmetry is about names, not count:
+
+| Member | Documented | Shipped |
+|---|---|---|
+| `fs.put` | `(file, content, overwrite)` | `(path, content, overwrite)` |
+| `fs.head` | `(file, max_bytes)` | `(path, maxBytes)` |
+| `fs.append` | `(file, content, createFileIfNotExists)` | `(path, content)` |
+| `fs.cp` | `(src, dest, recurse)` | `(src, dst)` |
+| `fs.rm` | `(path, recurse)` | `(path, recursive)` |
+| `lakehouse.get` | `(name, workspaceId)` | `(lakehouseId, workspaceId)` |
+| `lakehouse.create` | `(name, description, definition, workspaceId)` | `(name, description, workspaceId)` |
+| `lakehouse.list` | `(workspaceId, maxResults)` | `(workspaceId)` |
+
+`dst` for `dest`, `recursive` for `recurse`, `maxBytes` for `max_bytes`,
+`lakehouseId` for `name` — each is the reasonable spelling somebody would pick
+writing the method from its description rather than from the page. Which is
+precisely how this reference came to be needed.
+
+**None of these is caught today**, because contract 2 grades one module and
+`fs`/`lakehouse` are not it. Phase 1 is what turns all 25 into red cells.
+
+### What the old scope field got right, and what it hid
+
+Before Phase 0 the reference declared its scope in one field,
+`modules_not_yet_covered` — eight modules contract 2 did not grade. It was the
+most useful line in the file, and it flattened a distinction that decides how
+much work each entry is:
 
 | Declared uncovered | Actual state | What the entry means |
 |---|---|---|
@@ -82,15 +116,30 @@ each entry is:
 | `session`, `udf` | does not exist | Not written. Work is **go and build**. Same list, different order of magnitude. |
 | `mssparkutils` | on neither | Absent from the tree *and* absent from the list of known absences. |
 
-The deeper limit is structural: **the list is bounded by what its author knew to
-list.** It is an honest record of known absences and by construction cannot name
-a module nobody thought of. `mssparkutils` is the proof — missing from the tree,
-missing from the record of what is missing, and still referenced by the shim's
-own docstrings.
+The deeper limit was structural: **the list was bounded by what its author knew
+to list.** An honest record of known absences, and by construction unable to
+name a module nobody thought of.
 
-That is the whole argument for Phase 0. Reading the surface from Microsoft's own
-pages converts *"modules we know we have not covered"* into *"modules Fabric
-has"*, and only the second one can be complete.
+Reading the surface from Microsoft's own pages settled it, and the list was
+wrong in both directions:
+
+- **`env` is not a documented module.** The overview table has eight
+  namespaces and `env` is not among them. What it answered — workspace id,
+  lakehouse id — are keys on `notebookutils.runtime.context`. It is an
+  mssparkutils-era holdover this shim still ships. Harmless (contract 2 allows
+  extra surface) but it must not be counted as parity, and nothing should be
+  built against it.
+- **`mssparkutils` was missing from the record of what is missing** — absent
+  from the tree and absent from the list, while the shim's own docstrings
+  reference it. The overview states the rename is complete, that old code stays
+  backward compatible, and that **the namespace will be retired**. Emulating a
+  namespace Microsoft is retiring is a different decision from emulating the
+  current one, and it is now recorded as a decision rather than an oversight.
+
+The file now separates the two things that field conflated: every module is
+**cited**, and `graded_by_contract_2` names the far smaller set the live probe
+actually asserts. Reading a citation as a check is how a partial reference gets
+mistaken for coverage.
 
 ## Axis C — the execution model
 

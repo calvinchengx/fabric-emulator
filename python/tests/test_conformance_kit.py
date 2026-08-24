@@ -313,19 +313,39 @@ def test_signature_shape_reports_the_sessions_own_error():
 
 def test_every_reference_entry_cites_a_source():
     """A reference assembled from memory is the same defect one tier up: a claim
-    about Fabric with nothing behind it."""
+    about Fabric with nothing behind it.
+
+    The scope assertion changed shape in Phase 0 (docs/56) and the reason is
+    worth keeping. It used to require a non-empty `modules_not_yet_covered`,
+    which was the right check while one module was cited and eight were not.
+    Now every DOCUMENTED module is cited, so that field would be empty — and an
+    empty list is exactly what the old assertion was written to forbid. What
+    still has to be declared is the thing that is still partial: which modules
+    the live probe actually GRADES, plus the surface decisions taken
+    deliberately rather than by omission.
+    """
     ref = json.loads(
         (REPO / "e2e" / "conformance" / "notebookutils-reference.json")
         .read_text(encoding="utf-8"))
-    assert ref["modules_not_yet_covered"], "the scope must be declared, not implied"
+    assert ref["graded_by_contract_2"], "grading scope must be declared, not implied"
+    assert ref["surface_notes"], "deliberate exclusions must be recorded, not silent"
+    assert set(ref["graded_by_contract_2"]) <= set(ref["modules"]), \
+        "a module cannot be graded against a reference it does not have"
     for module, methods in ref["modules"].items():
         assert methods, module
         for name, spec in methods.items():
             assert spec["source"].startswith("https://learn.microsoft.com/"), name
             assert spec["read"], name
-            assert spec["params"], name
+            # params may be EMPTY: `session.stop()` and `session.restartPython()`
+            # genuinely take none, and requiring one would have meant inventing
+            # a parameter to satisfy a test.
+            assert isinstance(spec["params"], list), name
             # The verbatim line is what a reviewer checks the params against.
-            assert spec["verbatim"].startswith(f"{name}("), name
+            # A property is not spelled `name(`, so it is checked as itself.
+            if spec.get("kind") == "property":
+                assert spec["verbatim"].endswith(name), name
+            else:
+                assert spec["verbatim"].startswith(f"{name}("), name
 
 
 RUNTIMES = {"1.3": {"python": "3.11", "spark": "3.5"}}
