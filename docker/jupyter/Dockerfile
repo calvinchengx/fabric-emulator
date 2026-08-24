@@ -16,8 +16,16 @@ RUN uv sync --frozen --no-install-project --group jupyter
 
 ENV PATH="/app/.venv/bin:${PATH}"
 # The shim is importable as `notebookutils`, exactly as it is in a Fabric
-# notebook, so a notebook authored here runs unmodified there.
-ENV PYTHONPATH="/app/python"
+# notebook, so a notebook authored here runs unmodified there. `spark_agent` is
+# a directory of modules rather than a package (the agent adds its own dir to
+# sys.path), so it is named too — that is where the notebook builtins live.
+ENV PYTHONPATH="/app/python:/app/python/spark_agent"
+
+# `display` / `displayHTML` are RUNTIME-PROVIDED on Fabric, so a kernel that
+# left IPython's in place would render a different thing for the same line.
+# An IPython startup file applies to every kernel this image starts.
+COPY docker/jupyter/fabric_builtins.py \
+     /root/.ipython/profile_default/startup/00-fabric-builtins.py
 
 WORKDIR /notebooks
 EXPOSE 8888

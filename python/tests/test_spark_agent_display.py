@@ -213,3 +213,191 @@ def test_a_spark_summary_of_a_frame_with_no_columns_still_renders_a_header(fake_
     df.agg = lambda *a: types.SimpleNamespace(collect=lambda: [{}])
     out = notebook_display.render(df, summary=True)
     assert "column" in out and "missing" in out
+
+
+# --- rich output --------------------------------------------------------------
+#
+# The agent has no kernel, so these exercise the branch e2e/notebook-display
+# proves end to end, plus the fallbacks that e2e cannot reach without breaking
+# the environment it runs in.
+
+def test_without_a_kernel_display_still_prints(monkeypatch, capsys):
+    """The agent's RunNotebook path has no IPython, and its output is what the
+    conformance suite asserts on. A rich-output path that stopped printing
+    there would take every stdout assertion with it."""
+    monkeypatch.setattr(notebook_display, "_kernel", lambda: None)
+    notebook_display.display(FakeSparkFrame(["id"], [(1,)]))
+    assert "id" in capsys.readouterr().out
+
+
+def test_with_a_kernel_display_publishes_html_and_text(monkeypatch):
+    published = {}
+    monkeypatch.setattr(notebook_display, "_publish",
+                        lambda bundle: published.update(bundle) or True)
+    notebook_display.display(FakeSparkFrame(["id"], [(1,)]))
+    assert "<th>id</th>" in published["text/html"]
+    # The plain alternative rides along: a front end without HTML still shows
+    # the data, and it must be the SAME data rather than a second rendering.
+    assert "id" in published["text/plain"]
+
+
+def test_a_front_end_that_refuses_does_not_lose_the_output(monkeypatch, capsys):
+    """publish_display_data raising must not swallow the cell's output. Losing
+    it would make the call look successful and produce nothing.
+
+    `_publisher` is patched, not `_kernel` alone: this environment has no
+    IPython, so patching the kernel would leave the import failing and the test
+    would pass on that instead of on the branch it names.
+    """
+    def boom(_bundle):
+        raise RuntimeError("no front end")
+
+    monkeypatch.setattr(notebook_display, "_kernel", lambda: object())
+    monkeypatch.setattr(notebook_display, "_publisher", lambda: boom)
+    notebook_display.display(FakeSparkFrame(["id"], [(1,)]))
+    assert "id" in capsys.readouterr().out
+
+
+def test_a_kernel_with_no_publisher_still_prints(monkeypatch, capsys):
+    """A shell without IPython's display machinery is the agent's own case."""
+    monkeypatch.setattr(notebook_display, "_kernel", lambda: object())
+    monkeypatch.setattr(notebook_display, "_publisher", lambda: None)
+    notebook_display.display(FakeSparkFrame(["id"], [(1,)]))
+    assert "id" in capsys.readouterr().out
+
+
+def test_the_bundle_reaches_the_publisher(monkeypatch):
+    """The real path, with both halves patched: a kernel and a publisher."""
+    seen = {}
+    monkeypatch.setattr(notebook_display, "_kernel", lambda: object())
+    monkeypatch.setattr(notebook_display, "_publisher", lambda: seen.update)
+    notebook_display.display(FakeSparkFrame(["id"], [(1,)]))
+    assert "<th>id</th>" in seen["text/html"]
+
+
+def test_data_is_escaped_because_a_column_can_hold_markup():
+    """Cell values are arbitrary. A table that emitted them raw would let a
+    stored value execute in whatever renders this output."""
+    html = notebook_display.render_html(
+        FakeSparkFrame(["danger"], [("<script>x</script>",)]))
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_a_column_name_is_escaped_too():
+    """A column name comes from user data as surely as a cell does."""
+    html = notebook_display.render_html(FakeSparkFrame(["<b>id</b>"], []))
+    assert "<b>id</b>" not in html
+    assert "&lt;b&gt;id&lt;/b&gt;" in html
+
+
+def test_a_scalar_renders_as_preformatted_text():
+    """Nothing tabular to build a table from, so the value is shown as-is —
+    escaped, because `str(obj)` is no safer than a cell value."""
+    assert notebook_display.render_html("<i>hi</i>") == "<pre>&lt;i&gt;hi&lt;/i&gt;</pre>"
+
+
+def test_displayhtml_publishes_its_markup_unescaped(monkeypatch):
+    """The one place markup must NOT be escaped: the caller asked for HTML."""
+    published = {}
+    monkeypatch.setattr(notebook_display, "_publish",
+                        lambda bundle: published.update(bundle) or True)
+    notebook_display.displayHTML("<b>hi</b>")
+    assert published["text/html"] == "<b>hi</b>"
+
+
+def test_displayhtml_without_a_kernel_prints(monkeypatch, capsys):
+    monkeypatch.setattr(notebook_display, "_kernel", lambda: None)
+    notebook_display.displayHTML("<b>hi</b>")
+    assert "<b>hi</b>" in capsys.readouterr().out
+
+
+def test_the_summary_table_carries_fabrics_four_fields():
+    headers, _rows = notebook_display.table(
+        FakePandasFrame("x"), summary=True) or ([], [])
+    assert headers == list(notebook_display.SUMMARY_HEADERS)
+
+
+def _fake_ipython(monkeypatch, shell, publisher):
+    """Install a stand-in `IPython` so the import branches run.
+
+    This environment ships no IPython — the agent needs none — so without a
+    stand-in `_kernel` and `_publisher` can only ever be observed FAILING to
+    import, and the branch that matters under a real kernel goes unexecuted.
+    """
+    import sys
+    import types
+
+    root = types.ModuleType("IPython")
+    root.get_ipython = lambda: shell
+    display_mod = types.ModuleType("IPython.display")
+    display_mod.publish_display_data = publisher
+    monkeypatch.setitem(sys.modules, "IPython", root)
+    monkeypatch.setitem(sys.modules, "IPython.display", display_mod)
+
+
+def test_a_real_kernel_and_publisher_are_found_by_import(monkeypatch):
+    sent = {}
+    _fake_ipython(monkeypatch, shell=object(), publisher=sent.update)
+    assert notebook_display._kernel() is not None
+    assert notebook_display._publisher() is not None
+    notebook_display.display(FakeSparkFrame(["id"], [(1,)]))
+    assert "<th>id</th>" in sent["text/html"]
+
+
+def test_no_kernel_running_means_no_publish(monkeypatch, capsys):
+    """IPython importable but no shell — an ordinary `python -c` with IPython
+    installed. Publishing there would raise, so it must print."""
+    _fake_ipython(monkeypatch, shell=None, publisher=lambda _b: None)
+    notebook_display.display(FakeSparkFrame(["id"], [(1,)]))
+    assert "id" in capsys.readouterr().out
+
+
+class FakeHtmlFrame:
+    """A pandas-shaped frame that renders itself, as the real one does."""
+
+    def __init__(self):
+        self.columns = ["id"]
+
+    def to_string(self):
+        return "  id\n0  1"
+
+    def to_html(self):
+        return "<table><tr><td>1</td></tr></table>"
+
+
+def test_pandas_renders_itself_rather_than_a_generic_grid():
+    assert notebook_display.render_html(FakeHtmlFrame()) == FakeHtmlFrame().to_html()
+
+
+def test_no_ipython_at_all_is_not_an_error(monkeypatch):
+    """The agent's own case, asserted rather than assumed: it ships no IPython,
+    and both lookups must answer None instead of raising into a user's cell."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def refuse(name, *a, **k):
+        if name.startswith("IPython"):
+            raise ImportError("no IPython here")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", refuse)
+    assert notebook_display._kernel() is None
+    assert notebook_display._publisher() is None
+
+
+def test_a_shell_lookup_that_raises_is_not_an_error(monkeypatch):
+    """get_ipython() itself can raise in a half-initialised environment. A
+    display call must not become that traceback."""
+    import sys
+    import types
+
+    root = types.ModuleType("IPython")
+
+    def boom():
+        raise RuntimeError("half a shell")
+
+    root.get_ipython = boom
+    monkeypatch.setitem(sys.modules, "IPython", root)
+    assert notebook_display._kernel() is None

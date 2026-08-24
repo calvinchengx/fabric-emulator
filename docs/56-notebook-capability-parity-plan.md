@@ -223,7 +223,7 @@ failed."* That caveat earned its place.
 | `%%html` / `%%markdown` | absent | **recognised, then executed as Python** | rendered, not executed |
 | `%run` | absent | absent | implemented |
 | notebook resources (`builtin/`) | absent | absent | `nbResPath`, root-notebook semantics — and the root was never sent |
-| `display()` / `displayHTML()` | *unverified* | **absent — `NameError`** | implemented |
+| `display()` / `displayHTML()` | *unverified* | **absent — `NameError`** | implemented, and rich under a kernel |
 | Files mount (one point) | "decision needed" | **already decided in docs/37** | no action; see below |
 
 ### Absent would have been better than what was there
@@ -275,9 +275,29 @@ unique values and missing values — a data *quality* read a notebook branches o
 so there **is** something to switch. `%%configure` asks for hardware this
 emulator does not have; that genuinely has nothing to switch.
 
-What is *not* emulated is stated in the module: Fabric renders an interactive
-table with charts and an inspect panel; this renders text. Same data, same
-shape, no interactivity.
+**"Nothing here to render into" was true of the agent and false of the
+repository.** The `jupyter` compose profile ships a real JupyterLab against this
+same stack, so there IS a front end — and printing text into it throws away the
+one thing a front end can use. `display` now publishes a MIME bundle
+(`text/html` plus a `text/plain` alternative, both from one description of the
+data) when a kernel is present, and prints when it is not, which is what every
+stdout-reading suite asserts on.
+
+That image's kernel also had to bind **Fabric's** `display`, not IPython's. The
+two are not interchangeable: IPython's renders a DataFrame's repr and answers
+`display(df, summary=True)` with a TypeError, so a notebook authored against a
+stock kernel behaves differently on Fabric.
+
+`ci:notebook-display` runs nbclient against the kernel from that same image and
+reads the notebook's own outputs — the only harness here that can tell a
+published bundle from a print, which is precisely why this row went unevidenced
+for so long while every other suite read stdout.
+
+What is *still* not emulated, and what no local front end can settle: Fabric's
+`display` is a proprietary widget with chart views, sorting and an inspect
+panel. A correct HTML table is not that widget. The gap narrows from "text only"
+to "the data and its shape, in the form a front end renders"; the interactivity
+remains a stated divergence.
 
 ### The root notebook was never sent
 
