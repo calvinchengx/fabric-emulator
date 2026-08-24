@@ -384,6 +384,18 @@ def test_every_reference_entry_cites_a_source():
         .read_text(encoding="utf-8"))
     assert ref["graded_by_contract_2"], "grading scope must be declared, not implied"
     assert ref["surface_notes"], "deliberate exclusions must be recorded, not silent"
+    # EQUALITY, not a subset. The subset form let this field go stale and stay
+    # green: Phase 1 widened contract 2 to grade every documented module, the
+    # field kept naming one, and nothing failed — the parity ledger said the
+    # probe checked one namespace while it checked eight. The authority is
+    # live.py, which grades exactly REFERENCE_MODULES, so that is what this
+    # compares against rather than a second hand-maintained list.
+    live = _load(REPO / "e2e" / "conformance" / "live.py", "conformance_live")
+    reference_modules = live.REFERENCE_MODULES
+    graded = {m.split(".")[-1] for m in ref["graded_by_contract_2"]}
+    assert graded == set(reference_modules), (
+        "graded_by_contract_2 must name exactly the modules live.py grades; "
+        f"declared {sorted(graded)}, graded {sorted(reference_modules)}")
     assert set(ref["graded_by_contract_2"]) <= set(ref["modules"]), \
         "a module cannot be graded against a reference it does not have"
     for module, methods in ref["modules"].items():

@@ -583,7 +583,14 @@
     }
   },
   "graded_by_contract_2": [
-    "notebookutils.notebook"
+    "notebookutils.credentials",
+    "notebookutils.fs",
+    "notebookutils.lakehouse",
+    "notebookutils.notebook",
+    "notebookutils.runtime",
+    "notebookutils.session",
+    "notebookutils.udf",
+    "notebookutils.variableLibrary"
   ],
   "surface_notes": {
     "notebookutils.env": [
