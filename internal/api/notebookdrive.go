@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/compute"
+	"github.com/calvinchengx/fabric-emulator/internal/notebook"
 )
 
 // notebookPrelude installs the one thing a Fabric notebook has that a bare REPL
@@ -254,8 +255,29 @@ func (a *API) driveNotebookRun(wid, iid, jid string, run notebookRun, params map
 	}
 
 	for i, cell := range run.Cells {
+		// THE PARSER ALREADY READ THE MAGIC; this used to ignore the answer and
+		// send everything that was not `sql` to the Python executor. A Scala
+		// cell then failed with a Python SyntaxError pointing at correct Scala,
+		// and a `%%configure` block failed the same way. See
+		// internal/notebook/celllang.go.
+		disposition, note := notebook.Disposition(cell.Language)
+		if disposition == notebook.Render || disposition == notebook.Ignored {
+			// Not code, or a directive honoured by doing nothing. The cell is
+			// finished either way — executing it is the old bug. It is still
+			// RECORDED, carrying the note: a cell that vanished from the run
+			// record would be its own kind of silence.
+			body.Cells = append(body.Cells, notebookCellResult{
+				Index: cell.Index, Status: "Succeeded", Output: note})
+			continue
+		}
+		if disposition == notebook.Unsupported {
+			body.Status = "Failed"
+			body.Cells = append(body.Cells, notebookCellResult{
+				Index: cell.Index, Status: "Failed", Error: note})
+			break
+		}
 		kind := "python"
-		if strings.EqualFold(cell.Language, "sql") {
+		if disposition == notebook.RunSQL {
 			kind = "sql"
 		}
 		// jobId/cellIndex are the cell's IDENTITY, and they travel with every
