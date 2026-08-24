@@ -31,7 +31,7 @@ import json
 import time
 
 from . import credentials
-from ._config import config
+from ._config import config, session_workspace_id
 from ._http import request
 
 
@@ -40,7 +40,7 @@ class VariableLibraryError(Exception):
 
 
 def _ws():
-    ws = config().workspace_id
+    ws = session_workspace_id(config().workspace_id)
     if not ws:
         raise VariableLibraryError(
             "no workspace: set NOTEBOOKUTILS_WORKSPACE_ID. Variable libraries "

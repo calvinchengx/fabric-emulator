@@ -1007,3 +1007,63 @@ def test_getWithProperties_is_a_read_of_the_same_item(http):
     because Fabric documents the two as different reads."""
     http.push({"id": LH, "properties": {"sqlEndpointProperties": {}}})
     assert lakehouse.getWithProperties(LH)["id"] == LH
+
+
+# --- where a session's workspace comes from ----------------------------------
+#
+# THE ORDER IS THE BUG THAT WAS THERE. Every `_ws` read the environment
+# fallback and nothing else, so every notebook.* / lakehouse.* / udf.* /
+# variableLibrary call needing a workspace failed inside a CORRECT Fabric
+# session — the one where docs/38 contract 1 requires that fallback to be
+# UNSET, because a fallback that can answer hides a broken context.
+#
+# Found by the %run e2e: seven contracts green, %run dead with "no workspace".
+# Contract 2 grades signatures, so it could never have caught this.
+
+
+def test_the_context_answers_before_the_environment_fallback(monkeypatch):
+    from notebookutils import _config
+    monkeypatch.setattr(_config.runtime if hasattr(_config, "runtime") else runtime,
+                        "context", {"currentWorkspaceId": "from-context"},
+                        raising=False)
+    monkeypatch.setattr(runtime, "context", {"currentWorkspaceId": "from-context"},
+                        raising=False)
+    assert _config.session_workspace_id("from-env") == "from-context"
+
+
+def test_the_fallback_answers_when_there_is_no_context(monkeypatch):
+    """Outside a notebook there is no context, and the env variable is then the
+    only thing that can say — which is what it is for."""
+    from notebookutils import _config
+    monkeypatch.setattr(runtime, "context", {}, raising=False)
+    assert _config.session_workspace_id("from-env") == "from-env"
+
+
+def test_an_unreadable_context_is_not_an_error_just_no_answer(monkeypatch):
+    """A context that raises must not take down a call the fallback could have
+    served."""
+    from notebookutils import _config
+
+    class Boom:
+        def get(self, _k):
+            raise RuntimeError("no session")
+
+    monkeypatch.setattr(runtime, "context", Boom(), raising=False)
+    assert _config.session_workspace_id("from-env") == "from-env"
+
+
+def test_notebook_resolves_its_workspace_from_the_context(http, monkeypatch):
+    """The end the %run e2e actually hit: a notebook call with the env
+    fallback absent, which is the correct-session case."""
+    from notebookutils import notebook
+    no_env = type("C", (), {"fabric_url": "https://localhost:9443",
+                            "workspace_id": None})()
+    monkeypatch.setattr(notebook, "config", lambda: no_env)
+    # `notebook` is not in the shared fixture's stub list; stub it here rather
+    # than widening a fixture every other test depends on.
+    monkeypatch.setattr(notebook, "request", http)
+    monkeypatch.setattr(runtime, "context", {"currentWorkspaceId": WS},
+                        raising=False)
+    http.push({"value": []})
+    notebook.list()
+    assert f"/workspaces/{WS}/" in http.last()["url"], http.last()["url"]

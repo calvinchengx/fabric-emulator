@@ -33,7 +33,7 @@ import base64
 import json
 
 from . import credentials
-from ._config import config
+from ._config import config, session_workspace_id
 from ._http import request
 
 _DEFINITION = "definition.json"
@@ -71,7 +71,7 @@ class UDF:
 
 
 def _ws(workspaceId):  # noqa: N803 - documented spelling
-    ws = workspaceId or config().workspace_id
+    ws = workspaceId or session_workspace_id(config().workspace_id)
     if not ws:
         raise RuntimeError("no workspace: pass workspaceId or set NOTEBOOKUTILS_WORKSPACE_ID")
     return ws

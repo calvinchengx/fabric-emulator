@@ -94,6 +94,22 @@ FANOUT_N = 3
 # One cell, parameterised by the marker the harness bakes in. Its whole job is
 # to say WHICH notebook it believes it is — the identity a shared agent could
 # leak — alongside the marker only this child was given.
+# The notebook `%run` pulls in. Deliberately more than one code cell, plus a
+# markdown cell: `%run` must splice every CODE cell in order and skip the prose.
+RUN_HELPER_BODY = """# Fabric notebook source
+
+# MARKDOWN ********************
+# MAGIC %md
+# MAGIC ## helpers — prose, and must NOT be spliced
+
+# CELL ********************
+run_label = "from-helpers"
+
+# CELL ********************
+def run_scaled(n):
+    return n * run_scale
+"""
+
 CHILD_BODY = """# Fabric notebook source
 
 # CELL ********************
@@ -355,6 +371,27 @@ try:
     else:
         _findings["credential"] = {"skipped": True}
 
+    # `%run` — an AGENT-SIDE REWRITE, which is why it can only be proven here.
+    # The notebookutils e2e runs its notebook as a plain script and
+    # e2e/notebook-run's runner is itself the engine (it execs cells locally),
+    # so neither ever reaches the agent's run_code where the rewrite happens.
+    # This stack does: the emulator drives the real spark-agent.
+    #
+    # The proof is that what `helpers` defines is usable HERE, in this
+    # namespace — that is the whole difference from notebook.run, which starts
+    # a separate session and hands back an exit value.
+    # A REAL LINE, not exec() of a string: the rewrite is applied by the agent
+    # to the CELL SOURCE, so a `%run` hidden inside a string literal is exactly
+    # what run_magic refuses to touch (and has a test saying so). Indented,
+    # because this cell body is inside a try — which the rewrite preserves.
+    _run_ok, _run_err = False, ""
+    try:
+        %run run-helpers {"run_scale": 10}
+        _run_ok = (run_scaled(4) == 40 and run_label == "from-helpers")  # noqa: F821
+    except Exception as _exc:  # noqa: BLE001
+        _run_err = f"{type(_exc).__name__}: {_exc}"
+    _findings["run_magic"] = {"ok": _run_ok, "error": _run_err}
+
     _findings["runtime"] = {
         "declared": _os.environ.get("FABRIC_RUNTIME", ""),
         "python": ".".join(str(n) for n in _sys.version_info[:3]),
@@ -382,6 +419,7 @@ _said = ""
 # Contract 2's half of the same findings file, kept beside the contract-1 half
 # so one DFS read serves both.
 _sigs_seen = None
+_run_magic_seen = None
 _runtime_seen = None
 _fall_seen = None
 _cred_seen = None
@@ -474,6 +512,17 @@ def writer() -> WriteClaim:
     }
     meta = "# METADATA ********************\n" + "\n".join(
         "# META " + line for line in json.dumps(metadata, indent=2).splitlines()) + "\n"
+
+    # The notebook `%run` references. Published FIRST, and with the same
+    # lakehouse metadata: a referenced child bound to a different default
+    # lakehouse is refused by the emulator exactly as Fabric refuses it.
+    req("POST", f"{FABRIC}/v1/workspaces/{ws}/items", {
+        "displayName": "run-helpers", "type": "Notebook",
+        "definition": {"parts": [{
+            "path": "notebook-content.py", "payloadType": "InlineBase64",
+            "payload": base64.b64encode(
+                (RUN_HELPER_BODY + meta).encode()).decode()}]}},
+        token=fabric_token())
 
     _, headers, _ = req("POST", f"{FABRIC}/v1/workspaces/{ws}/items", {
         "displayName": "etl-nb", "type": "Notebook",
@@ -595,6 +644,8 @@ def session_context() -> ContextClaim:
     _fall_seen = found.get("fall_through")
     _cred_seen = found.get("credential")
     log(f"context findings: { {k: v for k, v in found.items() if k != 'module_signatures'} }")
+    global _run_magic_seen
+    _run_magic_seen = found.get("run_magic")
     log("module signatures reported: "
         + ", ".join(f"{m}={len(v)}" for m, v in sorted((_sigs_seen or {}).items())))
     return ContextClaim(
@@ -821,6 +872,26 @@ def main() -> int:
     seven = next(r for r in rows if r["id"] == "7")
     log(f"wrote {path} contract 7={seven['status']} {seven.get('error', '')}".rstrip())
     log(f"wrote {path} contract 4={result.status} {result.error}".rstrip())
+
+    # `%run` — NOT a contract cell, and gated anyway.
+    #
+    # It is not one of docs/38's seven, so it does not belong in the matrix.
+    # But recording it without grading it is how a number becomes a memory —
+    # which is exactly what happened to `OPTIMIZE <name>` and cost a session
+    # and a half. So it fails the RUN instead: the matrix is unchanged, and a
+    # regression still stops the leg.
+    #
+    # This is the only harness that can prove it. The notebookutils e2e runs
+    # its notebook as a plain script, and e2e/notebook-run's runner is itself
+    # the engine — neither reaches the agent's run_code, where the rewrite
+    # lives.
+    if _run_magic_seen is None:
+        log("%run: NOT REPORTED — the cell never ran")
+        return 1
+    if not _run_magic_seen.get("ok"):
+        log(f"%run FAILED: {_run_magic_seen.get('error') or 'no reason given'}")
+        return 1
+    log("%run: helpers spliced into this session — run_scaled/run_label usable")
     return 0
 
 
