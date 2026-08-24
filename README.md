@@ -212,8 +212,8 @@ identities), so it could equally point at a real Entra tenant.
 
 | Command | You get |
 |---|---|
-| `docker compose up` | both emulators **plus real engines** — a Spark agent and a SQL Server sidecar, via the auto-loaded [override](docker-compose.override.yml). Livy sessions, notebook cells and the T-SQL/TDS warehouse run for real |
-| `docker compose -f docker-compose.yml up` | the lite, contract-only pair — honest `501`s on the engine surfaces |
+| `docker compose up` | seven services — the emulators **plus real engines**: [Sail](docs/20-lakesail-engine.md) behind the Livy statement agent, and a SQL Server sidecar, via the auto-loaded [override](docker-compose.override.yml). Livy sessions, notebook cells and the T-SQL/TDS warehouse run for real |
+| `docker compose -f docker-compose.yml up` | the lite, contract-only four — honest `501`s on the engine surfaces. Naming the base file is what makes Compose skip the override |
 | `--profile rti` | Microsoft's own KQL engine behind Eventhouse / KQL Database ([docs/25](docs/25-rti-kusto.md)) |
 | `--profile eventstream` | Apache Kafka KRaft behind Eventstream items — needs `-f docker-compose.eventstream.yml` ([docs/51](docs/51-eventstream-kafka.md)). Custom HTTP produce, Lakehouse Delta dest, Reflex job dest. Works on Sail (default) and the JVM overlay |
 | `FABRIC_DAX_URL` | Optional pump in front of `msmdsrv` on a machine you own — not a compose profile ([docs/52](docs/52-msmdsrv-hosts.md)) |
@@ -222,16 +222,17 @@ identities), so it could equally point at a real Entra tenant.
 | `-f docker-compose.spark-jvm.yml` | **swaps** Sail for JVM Spark, buying the RDD API, structured streaming, `OPTIMIZE`/`VACUUM` and Java/Scala UDFs at the cost of image size ([docs/20](docs/20-lakesail-engine.md)) |
 
 Profiles pull nothing unless asked for — but **`make up` asks for `governance`
-on your behalf**, so it starts 12 services rather than 6. `make up PROFILE=`
-gives the lean stack.
+and `airflow` on your behalf**, so it starts 15 services rather than 7.
+`make up PROFILE=` gives the lean stack. (Counts are what `docker compose
+config --services` resolves, not an estimate.)
 
 **How much machine you need.** Give the container runtime **8 GB** for the
-default six, **13 GB** with governance and Airflow, **2 GB** for the lite pair,
-**17 GB** for everything at once. Four cores is ample; six to eight if you run
+default seven, **13 GB** with governance and Airflow, **2 GB** for the
+contract-only four, **17 GB** for everything at once. Four cores is ample; six to eight if you run
 PySpark or warehouse queries.
 
 Those numbers are for *working*, and idle is nowhere near them — a freshly booted
-lite stack is 65 MB, and the whole default six is about 1 GB. The spread is the
+lite stack is 65 MB, and the whole default set about 1 GB. The spread is the
 work, not the container count: Sail costs 36 MB to start and ~1.9 GB to run
 PySpark through. So starting an engine you do not drive is nearly free, and
 [the per-service measurements](docs/27-running-modes.md#what-it-costs-to-run)
@@ -239,11 +240,27 @@ are what to size against.
 
 ## Getting started on Linux, macOS or Windows
 
-The workflow is the same on all three — only the prerequisites differ:
+**Docker is how you run this.** Clone the repo and bring the stack up — the
+compose files *are* the wiring, so the clone is the install:
+
+```bash
+git clone https://github.com/calvinchengx/fabric-emulator
+cd fabric-emulator
+docker compose up
+```
+
+That is seven services with **Sail already attached** — the auto-loaded
+[override](docker-compose.override.yml) gives you a real Spark engine and the
+T-SQL warehouse without a flag. A container runtime with Compose v2 is the
+entire prerequisite list. Then open <https://localhost:9443>.
+
+The `make` targets wrap exactly those commands; they are a convenience, not a
+second way to run things. The workflow is the same on all three platforms —
+only the prerequisites differ:
 
 ```bash
 make doctor   # toolchain, docker context, memory, ports — run this first
-make up       # 12 services incl. OpenMetadata + Airflow; `make up PROFILE=` for the lean 6
+make up       # 15 services incl. OpenMetadata + Airflow; `make up PROFILE=` for the lean 7
 make status   # "stack OK" is the real verdict; `make up` only means containers exist
 ```
 
@@ -264,8 +281,9 @@ make restart  # clean, then up
 make test     # go build, vet and unit tests
 ```
 
-Install the prerequisites once (a container runtime with Compose v2, plus GNU
-Make; Python 3 is optional and only used by `make spark` / `make seed`):
+Install the prerequisites once. Only the container runtime is required —
+GNU Make buys you the targets above, and Python 3 is optional (`make spark`,
+`make seed`):
 
 ```bash
 # Linux
