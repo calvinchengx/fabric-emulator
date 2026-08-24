@@ -59,7 +59,7 @@ GAP_REASON = {
     3: "no live session recorded — a runtime floor is a property of the running image",
     4: "live backends not yet recorded",
     5: "no live fan-out recorded — isolation is a property of concurrent sessions",
-    6: "not yet asserted — same harness as write landing, different notebooks",
+    6: "no live statements recorded — fall-through is a property of a running engine",
     7: "not yet asserted — same harness as write landing, different notebooks",
 }
 
@@ -442,6 +442,85 @@ def concurrent_isolation(
         return Result(id="5", contract=title, backend=backend, status="fail",
                       error="; ".join(problems), pointer=pointer)
     return Result(id="5", contract=title, backend=backend, status="pass")
+
+
+@dataclass(frozen=True)
+class FallThroughClaim:
+    """Two statements run in one session: one the grammar knows, one it does not."""
+
+    ok: bool
+    recognised_ok: bool = False
+    recognised_error: str = ""
+    unrecognised_ok: bool = False
+    unrecognised_error: str = ""
+    error: str = ""
+
+
+# Text the agent's own interceptors produce. An unrecognised statement whose
+# failure quotes one of these did not fall through — it was rewritten and the
+# rewrite failed, which is a different defect wearing the same red.
+_INTERCEPTOR_MARKERS = ("delta-rs", "delta_ops", "intercept", "rewrite",
+                        "unsupported by the grammar")
+
+
+def fall_through(
+    *,
+    session: Callable[[], FallThroughClaim],
+    backend: str,
+    control: bool,
+) -> Result:
+    """Contract 6: what the grammar does not know reaches the engine unchanged.
+
+    TWO STATEMENTS, AND BOTH MATTER. The recognised one must SUCCEED, or the
+    interception is not installed at all and "it fell through" is vacuous —
+    everything falls through when nothing is intercepting. The unrecognised one
+    is the contract itself.
+
+    THE CONTROL COLUMN IS WHAT MAKES THIS PROVABLE. On the default engine the
+    unrecognised statement must fail, because Sail cannot plan it; on the JVM
+    overlay the SAME statement must succeed, because Spark can. A single-engine
+    suite cannot tell "the grammar stayed out of the way" from "the grammar
+    fired and happened to work" — two engines and one statement can.
+
+    A failure that quotes the agent's own interceptors is refused rather than
+    counted: that is a rewrite that failed, not a fall-through.
+    """
+    title = CONTRACTS[5][1]
+    pointer = CONTRACTS[5][2]
+    claim = session()
+    if not claim.ok:
+        return Result(id="6", contract=title, backend=backend, status="fail",
+                      error=claim.error or "the session ran neither statement",
+                      pointer=pointer)
+    problems = []
+    if not claim.recognised_ok:
+        problems.append(
+            "the statement the grammar DOES recognise failed "
+            f"({claim.recognised_error[:160]}) — with nothing intercepting, "
+            "fall-through proves nothing")
+    if control:
+        if not claim.unrecognised_ok:
+            problems.append(
+                "the control engine could not run the unrecognised statement "
+                f"({claim.unrecognised_error[:160]}); with nothing to contrast, "
+                "a pass on the default engine cannot be read as fall-through")
+    elif claim.unrecognised_ok:
+        problems.append(
+            "the unrecognised statement SUCCEEDED on the default engine, which "
+            "this engine cannot plan — so something rewrote it")
+    else:
+        low = claim.unrecognised_error.lower()
+        hit = [m for m in _INTERCEPTOR_MARKERS if m in low]
+        if hit:
+            problems.append(
+                f"the failure names the agent's own rewriting ({', '.join(hit)}), "
+                "so the statement did not reach the engine unmodified")
+        if not claim.unrecognised_error.strip():
+            problems.append("the statement failed with no error text to attribute")
+    if problems:
+        return Result(id="6", contract=title, backend=backend, status="fail",
+                      error="; ".join(problems), pointer=pointer)
+    return Result(id="6", contract=title, backend=backend, status="pass")
 
 
 def record(backend: str, live: dict[int, Result] | None = None) -> list[dict]:

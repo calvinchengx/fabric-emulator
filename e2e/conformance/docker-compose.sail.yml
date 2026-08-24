@@ -67,6 +67,11 @@ services:
       sail:
         condition: service_started
     environment:
+      # Contract 6 runs only here. Sail reaches OneLake through the agent's
+      # delta-rs interception, which addresses the store over http; the JVM
+      # overlay goes through hadoop's ABFS driver, which forces TLS for
+      # `abfss://` and cannot reach a plaintext stack at all. See live.py.
+      CONFORMANCE_FALL_THROUGH: "1"
       # THE SHIM NEEDS ENDPOINTS, and no compose in this repo gave the agent
       # any. Its default is 127.0.0.1:19080, which inside this container is
       # nothing — so `notebookutils.fs` raised `Connection refused` from a

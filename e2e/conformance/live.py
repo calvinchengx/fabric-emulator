@@ -24,14 +24,17 @@ from pathlib import Path
 DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(DIR))
 from probes import (  # noqa: E402
+    CONTROL,
     Artifact,
     ContextClaim,
+    FallThroughClaim,
     IsolationClaim,
     RuntimeClaim,
     SignatureClaim,
     WriteClaim,
     concurrent_isolation,
     context_chain,
+    fall_through,
     record,
     runtime_floor,
     signature_shape,
@@ -43,7 +46,20 @@ FABRIC = "http://api.fabric.microsoft.com"
 TENANT = "6f89cf12-978b-4d23-ac18-9ef0c127cf87"
 CLIENT_ID = "00d88624-f0d7-46f6-a641-6232c2608928"
 CLIENT_SECRET = "daemon-app-secret"
-ACCT = "onelake.dfs.fabric.microsoft.com"
+# THE DFS SURFACE, ADDRESSED BY CONTAINER AND ROUTED BY HOST HEADER.
+#
+# The emulator decides OneLake-vs-control-plane from the Host header, so the
+# hostname in the URL is not load-bearing — and it must not be, because on the
+# jvm leg `onelake.dfs.fabric.microsoft.com` now resolves to a TLS terminator
+# that exists for hadoop's benefit (`abfss://` forces TLS). Pointing these plain
+# reads at that alias broke every one of them at once: contract 1 reported
+# `<urlopen error>`, and 2, 3, 5 and 6 reported "the session did not get as far
+# as..." — one unreachable reader wearing five different failures.
+#
+# This process is still an out-of-band reader: a different container, a token it
+# minted itself, and no Spark. Which hostname it dials is not part of that claim.
+ACCT = "fabric-emulator"
+DFS_HOST = "onelake.dfs.fabric.microsoft.com"
 TABLE_DIR = "lake.Lakehouse/Tables/events"
 # Contract 1's findings, as a plain JSON file rather than a Delta table: the
 # out-of-band reader is then a single DFS GET with no Parquet parser, and the
@@ -157,6 +173,61 @@ try:
     # the engine behaves like Spark 3.5 is the engine matrix's question.
     import sys as _sys
 
+    # Contract 6. Two statements against one small Delta table: OPTIMIZE, which
+    # the agent's grammar recognises and routes to delta-rs, and a MERGE with
+    # `WHEN MATCHED THEN DELETE`, which it deliberately does NOT intercept. The
+    # first proves the interception is installed at all; the second is the
+    # contract. Both outcomes are recorded, never asserted here — the harness
+    # decides, and it decides differently for the control engine.
+    # RUN ONLY WHERE THE STACK CAN ANSWER. Contract 6's statements address the
+    # table by `abfss://`, and hadoop's ABFS driver forces TLS for that scheme —
+    # `fs.azure.always.use.https=false` downgrades `abfs://` and nothing else. On
+    # the JVM overlay against a plaintext stack every request fails at the socket
+    # with status 0, hadoop-azure treats that as retryable, and the notebook
+    # hangs: measured as five threads parked in AbfsRestOperation.completeExecute
+    # for 324s-864s, one per statement, accumulating and never exiting.
+    #
+    # A HANG IS WORSE THAN A RED, which is why this is gated rather than left to
+    # fail. The statements share a notebook with contracts 1, 2, 3 and 4, so one
+    # hang takes five cells down and reports the harness's own timeout as five
+    # separate defects. Gating keeps those four honest and leaves contract 6
+    # recording a gap with the reason above.
+    #
+    # A TLS terminator in front of the OneLake alias DOES fix the statements
+    # (4.6s / 2.8s / 1.5s / 2.5s where they previously hung), and is not here:
+    # it also regressed cell 0's write to the local read-only Spark warehouse,
+    # for a reason not yet understood. Shipping a fix that trades one red for
+    # another is not a fix.
+    if _os.environ.get("CONFORMANCE_FALL_THROUGH") == "1":
+        # PATH-ADDRESSED, not by catalog name. The delta-rs interception resolves
+        # a NAME through the emulator's registration, and a table written by
+        # `saveAsTable` inside a notebook is not registered that way — `OPTIMIZE
+        # events` fails with `cannot resolve 'events' to a table location: it was
+        # not registered through the emulator`. Measured, twice, on this probe's
+        # first two runs. The path form is what `e2e/livy` proves against a real
+        # abfss OneLake table, so it is the shape a notebook author is told to
+        # use.
+        #
+        # On `events`, the table cell 0 already wrote. The coupling with contract
+        # 4 is one-way and harmless: OPTIMIZE compacts and the MERGE deletes at
+        # most one row, while contract 4's reader asserts only that OneLake lists
+        # paths under the table, which both leave true.
+        _tbl = ("abfss://__WS__@onelake.dfs.fabric.microsoft.com"
+                "/lake.Lakehouse/Tables/events")
+        _rec, _rec_err = _try(lambda: spark.sql(f"OPTIMIZE delta.`{_tbl}`").collect())
+        _unrec, _unrec_err = _try(lambda: spark.sql(
+            f"MERGE INTO delta.`{_tbl}` t USING (SELECT 1 AS id) s "
+            "ON t.id = s.id WHEN MATCHED THEN DELETE").collect())
+        _findings["fall_through"] = {
+            "table_error": "",
+            "recognised_ok": not _rec_err,
+            "recognised_error": _rec_err,
+            "unrecognised_ok": not _unrec_err,
+            "unrecognised_error": _unrec_err,
+        }
+    else:
+        _findings["fall_through"] = {"skipped": True}
+
     _findings["runtime"] = {
         "declared": _os.environ.get("FABRIC_RUNTIME", ""),
         "python": ".".join(str(n) for n in _sys.version_info[:3]),
@@ -185,14 +256,15 @@ _said = ""
 # so one DFS read serves both.
 _sigs_seen = None
 _runtime_seen = None
+_fall_seen = None
 
 
 def log(msg: str) -> None:
     print(f"==> {msg}", flush=True)
 
 
-def req(method, url, body=None, token=None, form=False):
-    data, headers = None, {}
+def req(method, url, body=None, token=None, form=False, headers=None):
+    data, headers = None, dict(headers or {})
     if body is not None:
         if form:
             data = urllib.parse.urlencode(body).encode()
@@ -282,7 +354,13 @@ def writer() -> WriteClaim:
 
     base = f"{FABRIC}/v1/workspaces/{ws}/items/{nb}/jobs/instances/{jid}"
     status = None
-    for _ in range(180):
+    # GENEROUS ON PURPOSE. This notebook now carries contracts 1, 2, 3, 4 and 6,
+    # and contract 6 runs OPTIMIZE and MERGE against an abfss table — seconds on
+    # Sail, minutes on the JVM overlay. At 180s the jvm leg reported
+    # `job status = InProgress` and every contract in the artifact failed for
+    # one reason: the harness gave up first. A timeout that reads as five
+    # defects is worse than a slow run.
+    for _ in range(900):
         status = req("GET", base, token=ft)[2].get("status")
         if status in ("Completed", "Failed", "Cancelled", "Deduped"):
             break
@@ -325,7 +403,8 @@ def reader() -> Artifact:
     sft = storage_token()
     try:
         listing = req("GET", f"http://{ACCT}/{_ws}?resource=filesystem&recursive=true"
-                             f"&directory={urllib.parse.quote(TABLE_DIR)}", token=sft)[2]
+                             f"&directory={urllib.parse.quote(TABLE_DIR)}",
+                      token=sft, headers={"Host": DFS_HOST})[2]
     except Exception as exc:  # noqa: BLE001 — a missing table is found=False
         log(f"reader listing failed: {exc}")
         return Artifact(found=False, location=TABLE_DIR)
@@ -348,7 +427,7 @@ def session_context() -> ContextClaim:
         sft = storage_token()
         r = urllib.request.Request(
             f"http://{ACCT}/{_ws}/{urllib.parse.quote(FINDINGS_PATH)}",
-            headers={"Authorization": "Bearer " + sft})
+            headers={"Authorization": "Bearer " + sft, "Host": DFS_HOST})
         with urllib.request.urlopen(r, timeout=60) as resp:
             found = json.loads(resp.read())
     except Exception as exc:  # noqa: BLE001 — a missing artifact is the finding
@@ -361,6 +440,8 @@ def session_context() -> ContextClaim:
     global _sigs_seen, _runtime_seen
     _sigs_seen = found.get("notebook_signatures")
     _runtime_seen = found.get("runtime")
+    global _fall_seen
+    _fall_seen = found.get("fall_through")
     log(f"context findings: { {k: v for k, v in found.items() if k != 'notebook_signatures'} }")
     log(f"notebook signatures reported: {len(_sigs_seen or {})} callables")
     return ContextClaim(
@@ -472,13 +553,44 @@ def session_isolation(expected: dict) -> IsolationClaim:
         try:
             r = urllib.request.Request(
                 f"http://{ACCT}/{_ws}/{urllib.parse.quote(FANOUT_DIR)}/{marker}.json",
-                headers={"Authorization": "Bearer " + sft})
+                headers={"Authorization": "Bearer " + sft, "Host": DFS_HOST})
             with urllib.request.urlopen(r, timeout=60) as resp:
                 seen[marker] = json.loads(resp.read())
         except Exception as exc:  # noqa: BLE001 — a missing child is the finding
             log(f"{marker}: no findings ({exc})")
     log(f"fan-out artifacts read: {len(seen)}/{len(expected)}")
     return IsolationClaim(ok=True, seen=seen)
+
+
+def session_fall_through() -> FallThroughClaim:
+    """Contract 6 reads the same artifact contracts 1-3 already fetched."""
+    if _fall_seen is None:
+        return FallThroughClaim(
+            ok=False,
+            error="no fall-through results in the findings artifact — "
+                  "the session did not get as far as running the statements")
+    if _fall_seen.get("skipped"):
+        return FallThroughClaim(
+            ok=False,
+            error=("not run on this backend: the statements address the table by "
+                   "`abfss://`, hadoop forces TLS for that scheme, and this stack "
+                   "serves plaintext — every request fails at the socket and "
+                   "hadoop-azure retries forever, hanging the notebook and taking "
+                   "contracts 1-4 down with it. Measured: five threads parked in "
+                   "AbfsRestOperation.completeExecute for 324s-864s"))
+    if _fall_seen.get("table_error"):
+        return FallThroughClaim(
+            ok=False,
+            error=("the probe table could not be created "
+                   f"({_fall_seen['table_error'][:160]}), so neither statement "
+                   "says anything about the grammar"))
+    return FallThroughClaim(
+        ok=True,
+        recognised_ok=bool(_fall_seen.get("recognised_ok")),
+        recognised_error=_fall_seen.get("recognised_error", ""),
+        unrecognised_ok=bool(_fall_seen.get("unrecognised_ok")),
+        unrecognised_error=_fall_seen.get("unrecognised_error", ""),
+    )
 
 
 def main() -> int:
@@ -511,7 +623,13 @@ def main() -> int:
     iso = concurrent_isolation(
         session=lambda: session_isolation(expected),
         expected=expected, backend=backend)
-    rows = record(backend, live={1: ctx, 2: sig, 3: floor, 4: result, 5: iso})
+    # `control` comes from the applicability table, not from a backend name:
+    # the jvm column is `control` for this contract and required for the rest,
+    # and the doc is the authority on which is which.
+    fall = fall_through(session=session_fall_through, backend=backend,
+                        control=(6, backend) in CONTROL)
+    rows = record(backend,
+                  live={1: ctx, 2: sig, 3: floor, 4: result, 5: iso, 6: fall})
     out = DIR / "out"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{backend}.json"
@@ -520,6 +638,7 @@ def main() -> int:
     log(f"wrote {path} contract 2={sig.status} {sig.error}".rstrip())
     log(f"wrote {path} contract 3={floor.status} {floor.error}".rstrip())
     log(f"wrote {path} contract 5={iso.status} {iso.error}".rstrip())
+    log(f"wrote {path} contract 6={fall.status} {fall.error}".rstrip())
     log(f"wrote {path} contract 4={result.status} {result.error}".rstrip())
     return 0
 

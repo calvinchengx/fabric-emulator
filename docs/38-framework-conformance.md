@@ -1,6 +1,6 @@
 # 38 — Framework conformance: what a Fabric product assumes, and how to test it
 
-**Status: contracts 1–5 are live. 11 of 18 cells.** Contract 4 is ✅ on all three
+**Status: contracts 1–6 are live. 12 of 18 cells.** Contract 4 is ✅ on all three
 backends — a write through the emulator path, confirmed out of band (OneLake
 DFS on sail/jvm; a fresh TDS connection on warehouse). The engine that wrote
 is never the one that confirms. **Contract 1 is ✅ on sail and ❌ on jvm**,
@@ -13,8 +13,8 @@ and the JVM overlay has an interpreter that can import the shim at all.
 Runtime they target and both meet its Python floor. **Contract 5 is green on
 sail and jvm** — three notebooks submitted at once, each writing its own
 artifact, each knowing only its own identity — and stays ❌ on warehouse, where
-concurrent TDS sessions need a Go leg this kit does not have yet. Contracts 6–7
-stay known gaps. The offline half (`docs/conformance-matrix.md`,
+concurrent TDS sessions need a Go leg this kit does not have yet. **Contract 6 is green on sail** and records a gap on jvm for a reason worth its
+own paragraph below. Contract 7 stays a known gap. The offline half (`docs/conformance-matrix.md`,
 `check_conformance.py --strict`) still gates `make check`.
 
 **Two defects came out of contract 1's first run, and neither was visible to
@@ -262,6 +262,39 @@ strict grammar, honest fall-through, no silent approximation — rather than thr
 ad-hoc interceptors. It is the Spark-side sibling of what `internal/tsql` does
 for T-SQL on the wire, and it deserves the same treatment: a documented grammar,
 and a test that an unrecognised shape reaches the engine unmodified.
+
+**Asserted on sail, and NOT RUN on jvm — which is a finding, not a shortcut.**
+The statements address the table by `abfss://`, and hadoop's ABFS driver forces
+TLS for that scheme: `fs.azure.always.use.https=false` downgrades `abfs://` and
+nothing else. Against a plaintext stack every request therefore fails at the
+socket with status `0`, hadoop-azure treats that as retryable, and the notebook
+**hangs** — measured as five threads parked in
+`AbfsRestOperation.completeExecute` for 324s to 864s, one per statement,
+accumulating and never exiting.
+
+A hang is worse than a red. Contract 6's statements share a notebook with 1, 2,
+3 and 4, so one hang takes five cells down and reports the harness's own timeout
+as five separate defects — which is exactly what happened twice before this was
+gated. The jvm cell now records the measurement instead.
+
+**A TLS terminator in front of the OneLake alias fixes the statements** — 4.6s /
+2.8s / 1.5s / 2.5s for write, read, OPTIMIZE and MERGE, where they had hung
+indefinitely — and is deliberately not in the tree: it also regressed cell 0's
+write into the local read-only Spark warehouse
+(`Mkdirs failed to create file:/opt/spark/work-dir/spark-warehouse/events`) for
+a reason not yet understood. Trading one red for another is not a fix. **So the
+JVM overlay cannot reach OneLake by path today**, and that limitation had never
+surfaced because the engine matrix probes local paths — its own text says
+credentials are out of scope there — and no notebook had addressed OneLake by
+`abfss://` on that engine.
+
+**`OPTIMIZE <name>` cannot resolve a table a notebook wrote.** The delta-rs
+interception resolves a NAME through the emulator's registration, and
+`saveAsTable` inside a notebook does not register it that way: `OPTIMIZE events`
+fails with `cannot resolve 'events' to a table location: it was not registered
+through the emulator`. Measured twice. The probe uses the path form, which is
+what `e2e/livy` proves against a real OneLake table — but the name is what a
+notebook author would type, so this is a gap rather than a preference.
 
 ### 7. Credentials must outlive the run
 
