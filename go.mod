@@ -7,7 +7,7 @@ require (
 	github.com/microsoft/go-mssqldb v1.10.0
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/segmentio/kafka-go v0.4.51
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
