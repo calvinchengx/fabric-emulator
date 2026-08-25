@@ -16,6 +16,38 @@ work out of the box. What stays 🟠 is the narrower set that needs a *different
 engine — the JVM overlay, or an opt-in profile (`rti`, `eventstream`) — and what cannot be done
 honestly at all is stubbed.
 
+## What the denominator is
+
+**This table measures completeness against a self-selected surface, not against
+Fabric.** The rows below are the surfaces the emulator implements, chosen the
+way [07](07-architecture.md) describes — an endpoint-frequency scan of
+`fabric-docs`, keeping what SDKs, `fabric-cicd`, git integration and
+deployment-pipeline automation actually call. That is a deliberate engineering
+choice and a good one; the ratio it produces is not a coverage figure.
+
+For scale: Fabric's REST reference publishes on the order of **880 operations
+across ~57 workload groups**. A green count here says the chosen surface is
+complete and proven, never that Fabric is covered.
+
+**Fabric-era workloads this map does not grade at all** — absent rather than
+red, so probing is the only way to discover them otherwise: external data
+shares, managed private endpoints, Digital Twin Builder, Data Agent, Org Apps,
+Graph models, Anomaly Detector, Ontology, Operations Agent, Datamart,
+paginated reports, Snowflake and Cosmos DB mirroring, Databricks catalog
+mirroring, and the Spark settings and Livy-monitoring endpoints.
+
+**Their ITEMS exist; their WORKLOADS do not.** Every one of Fabric's 50
+documented `ItemType` values creates, reads, updates, deletes and round-trips
+its definition here, through the generic item surface and through the typed
+collection the reference prints for it. That is item CRUD and nothing more: a
+Data Agent does not answer questions, an Ontology models nothing, and
+`sqlEndpoints/{id}/refreshMetadata` is unimplemented. A client doing CI/CD over
+these items works; a client doing the workload's own job does not.
+
+The [Scope boundary](#scope-boundary-fabric-not-the-predecessor-azure-products)
+section below covers *predecessor* products (Synapse, U-SQL, ADLS Gen1). This
+paragraph is its Fabric-era equivalent.
+
 **"Real via our own wire-protocol implementation."** A row is 🟢 **Real** not
 only when an external engine/client does the work, but also when the emulator
 *itself* implements Fabric's wire protocol and the logic behind it — so a real,

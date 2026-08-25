@@ -140,6 +140,49 @@ var typedCollections = map[string]string{
 	// 2026-08-24). Note the docs PATH is singular while the URL segment is
 	// plural — one more reason this map is cited and not generated.
 	"userDataFunctions": "UserDataFunction",
+	// The REMAINING documented collections, which returned 404 while the generic
+	// item surface happily created every one of their types. A bare 404 is the
+	// wrong shape for that: it is indistinguishable from a typo in the caller's
+	// URL, so a client written from Microsoft's reference learned nothing about
+	// why the documented URL did not answer.
+	//
+	// THESE ARE ITEM CRUD, NOT WORKLOAD SUPPORT. Aliasing a segment makes
+	// create/get/list/update/delete and the definition round trip work at the
+	// URL the reference prints, because the generic implementation already
+	// handles the type. It does NOT bring the workload behind it: a Data Agent
+	// does not answer questions here, and `sqlEndpoints/{id}/refreshMetadata` is
+	// still unimplemented. docs/parity.md states that boundary rather than
+	// leaving the working CRUD to imply the rest.
+	//
+	// Every type is taken from internal/store/itemtypes.go and every segment
+	// from its own reference page: the spellings are not derivable from the type
+	// name (`GraphQLApis` is capitalised, `variableLibraries` is not, and
+	// `cosmosDbDatabases` lowercases a D that `CosmosDBDatabase` capitalises).
+	"anomalyDetectors":                "AnomalyDetector",
+	"appBackends":                     "AppBackend",
+	"azureDatabricksStorages":         "AzureDatabricksStorage",
+	"cosmosDbDatabases":               "CosmosDBDatabase",
+	"dashboards":                      "Dashboard",
+	"dataAgents":                      "DataAgent",
+	"dataBuildToolJobs":               "DataBuildToolJob",
+	"datamarts":                       "Datamart",
+	"digitalTwinBuilderFlows":         "DigitalTwinBuilderFlow",
+	"digitalTwinBuilders":             "DigitalTwinBuilder",
+	"eventSchemaSets":                 "EventSchemaSet",
+	"graphModels":                     "GraphModel",
+	"graphQuerySets":                  "GraphQuerySet",
+	"maps":                            "Map",
+	"mirroredAzureDatabricksCatalogs": "MirroredAzureDatabricksCatalog",
+	"mirroredCatalogs":                "MirroredCatalog",
+	"mirroredWarehouses":              "MirroredWarehouse",
+	"mountedDataFactories":            "MountedDataFactory",
+	"ontologies":                      "Ontology",
+	"operationsAgents":                "OperationsAgent",
+	"orgAppAudiences":                 "OrgAppAudience",
+	"orgApps":                         "OrgApp",
+	"paginatedReports":                "PaginatedReport",
+	"snowflakeDatabases":              "SnowflakeDatabase",
+	"sqlEndpoints":                    "SQLEndpoint",
 }
 
 // collectionSpellings returns the path segments a real client may send for a

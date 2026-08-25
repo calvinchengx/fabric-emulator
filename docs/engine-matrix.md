@@ -18,6 +18,24 @@ for every Sail session ([20-lakesail-engine.md](20-lakesail-engine.md)).
 The middle column runs the agent's own module, not a re-implementation,
 so it cannot drift from the runtime it describes.
 
+## The JVM column is OSS Spark, not Fabric's Spark
+
+**This matrix has no Fabric in it.** The JVM column is upstream
+Apache Spark; Fabric ships a Microsoft distribution with its own
+runtime additions, and nothing here has ever been compared against
+it. So a row where Sail matches JVM says *matches open-source
+Spark* — a weaker statement than this table's placement beside
+the parity map suggests.
+
+The probe count is also a thin slice of what a real notebook
+touches. It grew from remembered gaps rather than from measured
+usage, so a capability nobody here thought to probe is absent
+rather than red — the same denominator problem
+[parity.md](parity.md) states for its own rows.
+
+The only oracle that could settle either point is
+`.github/workflows/real-fabric.yml`, against a tenant.
+
 ## How to read a cell
 
 A ✅ means *this probe passed on this engine* — nothing wider. A ❌ is
@@ -117,7 +135,7 @@ buy capabilities most tests never touch.
 | Time travel — `option("versionAsOf")` | ✅ | ✅ | ✅ |
 | Time travel — SQL `VERSION AS OF` | ✅ | ✅ | ✅ |
 | `MERGE INTO` a registered table at a **local path** ᵃ | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ✅ | ✅ |
-| `MERGE INTO delta.`path`` (path target) | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ✅ | ✅ |
+| `MERGE INTO delta.`path`` (path target) | ❌ `Table not found: [TABLE_OR_VIEW_NOT_FOUND] Table or view not found: /tmp/probe/t_merge_pat` | ✅ | ✅ |
 | `OPTIMIZE` | ❌ `invalid argument: found OPTIMIZE at 0:8 expected something else, ';', statement, or end of` | ✅ | ✅ |
 | `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ✅ | ✅ |
 | Change Data Feed (must not be inert) ᵇ | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ | ✅ |

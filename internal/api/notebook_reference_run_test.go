@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -210,5 +212,53 @@ func TestADirectSubmissionCarriesNoRoot(t *testing.T) {
 	}
 	if _, ok := m["rootWorkspaceId"]; ok {
 		t.Fatalf("a direct submission claimed a root workspace: %v", m)
+	}
+}
+
+// Every documented typed collection routes, and an undocumented one does not.
+//
+// 25 of Fabric's documented collections answered 404 while the GENERIC item
+// surface created every one of their types happily: `typedCollections` was a
+// fixed map over a surface that already handled all of them, so an unlisted
+// segment simply never registered and net/http answered 404. A client written
+// from Microsoft's reference then got a 404 at the exact URL that reference
+// prints — indistinguishable from a typo in its own URL, which is the wrong
+// shape for a project where everything else fails loudly and says why.
+//
+// The negative control is the half that makes this an assertion: a segment
+// nobody documents must still 404, or "routes" would mean "the mux matches
+// anything" and the test would pass over a catch-all.
+func TestEveryTypedCollectionRoutesAndNothingElseDoes(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	mux := http.NewServeMux()
+	a.registerTyped(mux)
+
+	if len(typedCollections) < 50 {
+		t.Fatalf("only %d typed collections registered; the map lost entries",
+			len(typedCollections))
+	}
+	for collection, itemType := range typedCollections {
+		for _, verb := range []string{"GET", "POST"} {
+			url := "/v1/workspaces/" + ws.ID + "/" + collection
+			_, pattern := mux.Handler(httptest.NewRequest(verb, url, nil))
+			if pattern == "" {
+				t.Errorf("%s %s (%s) does not route; Fabric serves it",
+					verb, collection, itemType)
+			}
+		}
+	}
+	// ...and the definition routes the per-item-type reference prints.
+	for _, suffix := range []string{"/getDefinition", "/updateDefinition"} {
+		url := "/v1/workspaces/" + ws.ID + "/dataAgents/some-id" + suffix
+		if _, pattern := mux.Handler(httptest.NewRequest("POST", url, nil)); pattern == "" {
+			t.Errorf("POST dataAgents%s does not route", suffix)
+		}
+	}
+	// THE NEGATIVE CONTROL.
+	url := "/v1/workspaces/" + ws.ID + "/notAFabricCollection"
+	if _, pattern := mux.Handler(httptest.NewRequest("GET", url, nil)); pattern != "" {
+		t.Fatalf("an undocumented collection routed to %q; the mux matches anything",
+			pattern)
 	}
 }
