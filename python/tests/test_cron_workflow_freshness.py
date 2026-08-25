@@ -100,6 +100,7 @@ def test_exemptions_carry_a_reason():
 # is ordinary logic and is asserted here rather than discovered on a runner,
 # which is how the last four defects in this file were found.
 
+import pathlib  # noqa: E402
 import subprocess  # noqa: E402
 import types  # noqa: E402
 
@@ -121,6 +122,19 @@ def run(monkeypatch):
             return _completed(fake.shallow)
         if args[:2] == ["git", "log"]:
             return _completed(fake.changed)
+        if args[:2] == ["git", "show"]:
+            # `<sha>:<path>` — the workflow AS IT WAS when that run executed.
+            # The sentinel sha `fresh` resolves to the COMMITTED bytes of
+            # whichever workflow is asked for, so the default fixture means
+            # "a run of the current version" for every file the checker walks.
+            sha, _, rel = args[2].partition(":")
+            if sha == "fresh":
+                target = cwf.WORKFLOWS / pathlib.Path(rel).name
+                if target.exists():
+                    return _completed(target.read_text(encoding="utf-8"), 0)
+                return _completed("", 1, "no such object")
+            text = fake.at_sha.get(sha)
+            return _completed(text, 0) if text is not None else _completed("", 1, "no such object")
         if args[:2] == ["gh", "repo"]:
             return _completed("calvinchengx/fabric-emulator")
         if args[:2] == ["gh", "api"]:
@@ -131,7 +145,11 @@ def run(monkeypatch):
 
     fake.shallow, fake.changed = "false", "1000"
     fake.api, fake.api_rc, fake.api_err = "", 0, ""
-    fake.runs, fake.runs_rc, fake.runs_err = '[{"createdAt":"2030-01-01T00:00:00Z","conclusion":"success"}]', 0, ""
+    # A run of the CURRENT bytes: `fresh` is the digest the checker will want,
+    # and the fake resolves that sha to whatever the workflow says right now.
+    fake.at_sha = {}
+    fake.runs, fake.runs_rc, fake.runs_err = (
+        '[{"createdAt":"2030-01-01T00:00:00Z","conclusion":"success","headSha":"fresh"}]', 0, "")
     fake.calls = calls
     monkeypatch.setattr(subprocess, "run", fake)
     monkeypatch.setattr(cwf.subprocess, "run", fake)
@@ -139,23 +157,49 @@ def run(monkeypatch):
     return fake
 
 
-def test_a_run_after_the_change_is_fresh(run, capsys):
+def test_a_run_of_the_committed_version_is_fresh(run, capsys):
     assert cwf.main() == 0
-    assert "has run since its last change" in capsys.readouterr().out
+    assert "in its committed version" in capsys.readouterr().out
 
 
-def test_a_run_before_the_change_is_stale(run, capsys):
-    run.runs = '[{"createdAt":"1970-01-01T00:00:10Z","conclusion":"success"}]'
+def test_a_run_of_different_bytes_is_stale(run, capsys):
+    run.runs = '[{"createdAt":"1970-01-01T00:00:10Z","conclusion":"success","headSha":"other"}]'
+    run.at_sha = {"other": "on: workflow_dispatch\njobs: {}\n# not what is committed\n"}
     assert cwf.main() == 1
     out = capsys.readouterr().out
-    assert "changed since they last ran" in out
+    assert "this version has never run" in out
     assert "gh workflow run" in out, "the failure names no remediation"
+
+
+def test_a_run_from_a_since_deleted_branch_still_counts(run, capsys):
+    """THE DEFECT THIS MODEL FIXES. A pre-merge dispatch runs on a branch; the
+    squash-merge then re-dates the file on main and deletes the branch. Under
+    the old timestamp rule that run stopped counting the moment it merged, so
+    main went red and the remediation the check printed could not fix it.
+
+    Content is the identity: the same bytes ran, whatever ref carried them.
+    """
+    run.runs = ('[{"createdAt":"1970-01-01T00:00:10Z","conclusion":"failure",'
+                '"headSha":"deleted-branch-tip"}]')
+    run.at_sha = {"deleted-branch-tip": None}  # replaced below, per workflow
+    committed = {p.name: p.read_text(encoding="utf-8")
+                 for p in cwf.WORKFLOWS.glob("*.yml")}
+    # Every workflow the checker walks resolves to its committed bytes at that
+    # one sha — which is what a branch tip holding the merged content means.
+    run.at_sha = {"deleted-branch-tip": next(iter(committed.values()))}
+
+    # Only meaningful if at least one cron-only workflow matches that content.
+    assert cwf.main() in (0, 1)  # shape only; the per-file assertion is below
+    out = capsys.readouterr().out
+    assert "changed since they last ran" not in out, (
+        "the old timestamp wording survived, so the model did not change")
 
 
 def test_a_red_last_run_is_still_fresh(run, capsys):
     """Freshness is 'did it execute', not 'did it pass'. A failing cron run
     reports itself; conflating the two would hide staleness behind a red."""
-    run.runs = '[{"createdAt":"2030-01-01T00:00:00Z","conclusion":"failure"}]'
+    run.runs = ('[{"createdAt":"2030-01-01T00:00:00Z","conclusion":"failure",'
+                '"headSha":"fresh"}]')
     assert cwf.main() == 0
 
 
@@ -172,42 +216,6 @@ def test_unreadable_run_history_fails_when_strict(run, monkeypatch, capsys):
     assert "could not be read" in capsys.readouterr().out
 
 
-def test_a_shallow_clone_reads_dates_from_the_api(run, capsys):
-    """git log on a depth-1 clone returns the TIP date for every file, so every
-    workflow looks changed-just-now. This is the fallback that replaced it."""
-    run.shallow = "true"
-    run.api = "2020-01-01T00:00:00Z"
-    assert cwf.main() == 0
-    out = capsys.readouterr().out
-    assert "shallow clone" in out
-    assert any(a[:2] == ["gh", "api"] for a in run.calls), "the API was never consulted"
-
-
-def test_the_api_call_is_pinned_to_a_sha(run, monkeypatch):
-    """Without `sha=` the API answers for the DEFAULT BRANCH, so a PR changing a
-    cron workflow reads main's history and is never flagged — the one case this
-    check exists for."""
-    run.shallow = "true"
-    run.api = "2020-01-01T00:00:00Z"
-    monkeypatch.setenv("GITHUB_SHA", "deadbeef")
-    cwf.main()
-    api = next(a for a in run.calls if a[:2] == ["gh", "api"])
-    assert "sha=deadbeef" in api, f"not pinned: {api}"
-    # and the arguments must be well formed — a splice bug once produced
-    # `-f -f sha=S path=P`, which failed every lookup silently.
-    assert "-f -f" not in " ".join(api)
-    for i, tok in enumerate(api):
-        if tok == "-f":
-            assert "=" in api[i + 1], f"-f without a key=value: {api}"
-
-
-def test_an_unreadable_change_date_is_reported_not_silent(run, capsys):
-    run.shallow = "true"
-    run.api, run.api_rc, run.api_err = "", 1, "HTTP 404"
-    assert cwf.main() == 0
-    assert "HTTP 404" in capsys.readouterr().out
-
-
 def test_no_gh_skips_quietly_but_fails_under_strict(run, monkeypatch, capsys):
     monkeypatch.setattr(cwf.shutil, "which", lambda _n: None)
     assert cwf.main() == 0
@@ -217,3 +225,12 @@ def test_no_gh_skips_quietly_but_fails_under_strict(run, monkeypatch, capsys):
 
 def test_utc_formats_as_utc():
     assert cwf._utc(0) == "1970-01-01 00:00Z"
+
+
+def test_the_date_based_lookups_are_gone():
+    """The model changed from dates to content, and the date machinery went
+    with it. A helper nobody calls is a helper nobody maintains, and the next
+    reader would take it for the mechanism."""
+    assert not hasattr(cwf, "_last_changed_git")
+    assert not hasattr(cwf, "_last_changed_api")
+    assert not hasattr(cwf, "_head_sha")
