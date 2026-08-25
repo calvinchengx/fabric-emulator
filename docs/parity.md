@@ -20,7 +20,7 @@ honestly at all is stubbed.
 
 **This table measures completeness against a self-selected surface, not against
 Fabric.** The rows below are the surfaces the emulator implements, chosen the
-way [07](07-architecture.md) describes — an endpoint-frequency scan of
+way [07](07-control-plane-api.md) describes — an endpoint-frequency scan of
 `fabric-docs`, keeping what SDKs, `fabric-cicd`, git integration and
 deployment-pipeline automation actually call. That is a deliberate engineering
 choice and a good one; the ratio it produces is not a coverage figure.

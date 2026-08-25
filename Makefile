@@ -153,6 +153,11 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_notebookutils_surface.py --strict
 	@$(PY) scripts/check_runtime_wiring.py --strict
 	@$(PY) scripts/check_e2e_matrix.py --strict
+	@# Also run by docs-build, which is where it gates the site build. Here
+	@# too because a broken docs link is a repo invariant, and `make check`
+	@# is what someone runs before pushing: without it the only signal is
+	@# the docs job in CI, a full cycle later. Cost is a few hundred ms.
+	@$(PY) scripts/check_docs_links.py --strict
 	@$(PY) scripts/check_govern_types.py
 	@$(PY) scripts/check_example_parity.py
 	@$(PY) scripts/check_example_portability.py
