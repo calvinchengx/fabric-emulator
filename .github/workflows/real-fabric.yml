@@ -224,6 +224,21 @@ jobs:
         env:
           FABRIC_TEST_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
         run: uv run --frozen --group fabric-target python e2e/notebook-run/real_fabric.py
+      # THE ENGINE PROBES, ON FABRIC'S OWN SPARK. docs/engine-matrix.md compares
+      # Sail against upstream Apache Spark, which is not Fabric's distribution,
+      # so nothing in this repository has ever compared an engine capability
+      # against the thing being emulated. This runs the same probes.py inside a
+      # published notebook and writes out/fabric.json — the only way that
+      # column can ever hold a measurement rather than a dash.
+      #
+      # The emulator leg of the same script runs on every push (CI job
+      # `engine-probes-notebook`), so the mechanism is exercised even while
+      # this one cannot run.
+      - name: Engine probes on Fabric's Spark
+        env:
+          FABRIC_TARGET: real
+          FABRIC_WORKSPACE: ${{ secrets.FABRIC_TEST_WORKSPACE }}
+        run: uv run --frozen --group fabric-target python e2e/engine-matrix/tenant.py
       # THE EXAMPLE'S OWN CODE against real Fabric — the other half of T3 in
       # e2e/fabric-target/run.py, which runs this same step with
       # FABRIC_TARGET=emulator. Until both legs existed, "the same code runs
