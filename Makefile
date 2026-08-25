@@ -152,6 +152,7 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_witnesses.py --strict
 	@$(PY) scripts/check_notebookutils_surface.py --strict
 	@$(PY) scripts/check_runtime_wiring.py --strict
+	@$(PY) scripts/check_e2e_matrix.py --strict
 	@$(PY) scripts/check_govern_types.py
 	@$(PY) scripts/check_example_parity.py
 	@$(PY) scripts/check_example_portability.py

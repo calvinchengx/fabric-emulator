@@ -554,6 +554,9 @@ jobs:
       # non-functional, because the test supplied what the product never
       # produced.
       - run: uv run --frozen --no-sync python scripts/check_runtime_wiring.py --strict
+      # An index that silently omits is worse than none: the table reads
+      # as complete, so a missing suite says the proof does not exist.
+      - run: uv run --frozen --no-sync python scripts/check_e2e_matrix.py --strict
       # Cheap guard for the constraint the governance e2e discovers the
       # expensive way: a column OpenMetadata refuses costs the whole table.
       - run: uv run --frozen --no-sync python scripts/check_govern_types.py
