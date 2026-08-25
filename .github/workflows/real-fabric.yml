@@ -5,7 +5,11 @@ name: Real Fabric conformance
 # REAL Microsoft Fabric — FABRIC_TARGET is the only difference. Divergences
 # found here are parity-map material: this workflow is the fidelity oracle.
 #
-# Opt-in by secrets; without them the run skips loudly instead of failing.
+# Opt-in by secrets; WITHOUT THEM THIS FAILS rather than skipping. It used
+# to skip, and every run since the workflow was added was green in exactly
+# that way — gate succeeded, conformance never ran. A green that means
+# "did not execute" is worse here than anywhere else in the repo, because
+# this is the only thing that compares the emulator against Fabric itself.
 # No parity claim cites this workflow until the secrets are set and a
 # conformance job has actually completed — a skipped run is not evidence.
 #
@@ -127,9 +131,28 @@ jobs:
           [ "$HAVE_TENANT_ID" = "true" ] || missing="$missing AZURE_TENANT_ID"
           [ "$HAVE_WORKSPACE" = "true" ] || missing="$missing FABRIC_TEST_WORKSPACE"
           if [ -n "$missing" ]; then
-            echo "::notice::real-Fabric credentials incomplete — missing:$missing. The conformance job will SKIP (see the workflow header)."
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            # FAIL, do not skip. This workflow is the project's only oracle for
+            # whether the emulator behaves as Fabric does, and every run since
+            # it was added has been green in exactly one way: the gate passed
+            # and `conformance` never executed. A workflow that is green
+            # because it did not run is the defect this repository keeps
+            # finding in its own instruments, and it was sitting in the
+            # instrument that carries the most weight.
+            #
+            # THIS BLOCKS RELEASES, DELIBERATELY. release.yml makes every
+            # publishing job `needs: fabric-qualification`, so a tag cannot
+            # ship while the oracle is unwired. That is the honest state: a
+            # release qualified by a job that skipped is not qualified. Setting
+            # the two secrets below is a one-time action and unblocks it.
+            echo "::error::real-Fabric credentials incomplete — missing:$missing"
+            echo "The tenant oracle cannot run, so nothing here has been" >&2
+            echo "compared against Fabric. Set the missing repository secrets:" >&2
+            echo "  AZURE_CLIENT_ID        app registration (public, not a secret value)" >&2
+            echo "  AZURE_TENANT_ID        directory id (public)" >&2
+            echo "  FABRIC_TEST_WORKSPACE  display name of a DEDICATED throwaway workspace" >&2
+            echo "OIDC needs no client secret; see this file's header for the" >&2
+            echo "federated-credential setup." >&2
+            exit 1
           fi
           if [ "$HAVE_CLIENT_SECRET" = "true" ]; then
             mode=secret

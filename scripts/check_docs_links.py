@@ -79,7 +79,13 @@ def published_pattern() -> re.Pattern[str]:
     """Compile the site's own DOC_RE, so this guards exactly its set."""
     if not SYNC_DOCS.exists():
         raise SystemExit(f"docs-links: {SYNC_DOCS} not found; cannot derive the published set")
-    match = _DOC_RE_DECL.search(SYNC_DOCS.read_text())
+    # encoding="utf-8" EVERYWHERE IN THIS FILE, not the platform default.
+    # `read_text()` decodes as cp1252 on Windows, and these docs are full of
+    # em dashes and arrows — so every call here raised UnicodeDecodeError
+    # there. It went unnoticed because this script only ran in `docs-build`,
+    # a Linux-only job; it surfaced the moment `make check` began running it
+    # on the three-OS matrix.
+    match = _DOC_RE_DECL.search(SYNC_DOCS.read_text(encoding="utf-8"))
     if not match:
         raise SystemExit(
             f"docs-links: {SYNC_DOCS} no longer declares `const DOC_RE = /…/;`, so the "
@@ -98,13 +104,13 @@ def problems() -> list[str]:
     published_re = published_pattern()
 
     for page in sorted(DOCS.glob("*.md")):
-        for match in DOC_LINK.finditer(page.read_text()):
+        for match in DOC_LINK.finditer(page.read_text(encoding="utf-8")):
             if not (DOCS / match.group(1)).exists():
                 found.append(f"{page.name} links to {match.group(1)}, which does not exist")
 
     readme = ROOT / "README.md"
     if readme.exists():
-        for match in README_LINK.finditer(readme.read_text()):
+        for match in README_LINK.finditer(readme.read_text(encoding="utf-8")):
             if not (DOCS / match.group(1)).exists():
                 found.append(f"README.md links to docs/{match.group(1)}, which does not exist")
 
@@ -112,7 +118,7 @@ def problems() -> list[str]:
         found.append(f"{CONFIG} not found; the sidebar cannot be checked")
         return found
 
-    slugs = set(SIDEBAR_SLUG.findall(CONFIG.read_text()))
+    slugs = set(SIDEBAR_SLUG.findall(CONFIG.read_text(encoding="utf-8")))
     generated = PARITY_VERSIONS.exists()
     for slug in sorted(slugs):
         if generated and (slug == GENERATED_PREFIX or slug.startswith(GENERATED_PREFIX + "/")):
