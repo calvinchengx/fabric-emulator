@@ -20,8 +20,22 @@ none had executed:
 
 Nothing in the diffs separated the sound changes from the broken one. Review
 cannot see it; only execution can. So the question this asks is not "is the
-workflow correct" — it is the cheaper, checkable one: **has anyone run it since
-it last changed?**
+workflow correct" — it is the cheaper, checkable one: **has anyone run THIS
+VERSION of it?**
+
+IT COMPARES CONTENT, NOT DATES, and the difference is not academic. The first
+version asked "did a run happen after the file's last-changed timestamp", and
+its own remediation told you to dispatch on the branch that changed the
+workflow. Following that advice could not satisfy it: **merging re-dates the
+file**, so a squash commit is always newer than the pre-merge run, and main
+went red immediately after every such merge. The person who did exactly what
+the message asked was the person who broke main — twice, in this repository,
+before anyone noticed the shape of it.
+
+A run proves a VERSION of the workflow, and a version is its bytes. So this
+hashes the workflow as it stands and asks whether any recent run executed the
+same bytes. A merge that moves a file without changing it now counts, because
+what ran and what is committed are the same workflow.
 
 WHAT IT DELIBERATELY DOES NOT DO. It does not fail on a workflow that has never
 run at all when the repository has no runs to read (a fresh clone, a fork), and
@@ -33,7 +47,9 @@ is unavailable or unauthenticated rather than failing a laptop that has neither.
 A check that cannot run is not a check that failed, and saying which is the
 difference between a signal and noise.
 """
+import base64
 import datetime
+import hashlib
 import json
 import os
 import pathlib
@@ -43,6 +59,8 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+UNREADABLE = object()
+
 WORKFLOWS = ROOT / ".github" / "workflows"
 
 # Workflows exempt from freshness, WITH A REASON so an exemption is a decision
@@ -94,60 +112,6 @@ def _is_shallow() -> bool:
     return out == "true"
 
 
-def _last_changed_git(path: pathlib.Path) -> int:
-    """Committer epoch seconds of the last commit touching this file.
-
-    Epoch, NOT an ISO string: `%cI` carries a local offset (`+08:00`) while the
-    API returns UTC `Z`, and comparing those two as text reported drift that did
-    not exist and hid drift that did. That mistake was made while writing this.
-    """
-    out = subprocess.run(
-        ["git", "log", "-1", "--format=%ct", "--", str(path)],
-        cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
-    return int(out) if out else 0
-
-
-def _head_sha() -> str:
-    """The commit under test. For a PR, GITHUB_SHA is the merge commit, whose
-    first parent history includes the branch — either resolves the PR's own
-    change, which the default branch would not."""
-    env = os.environ.get("GITHUB_SHA")
-    if env:
-        return env
-    r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
-                       capture_output=True, text=True)
-    return r.stdout.strip() if r.returncode == 0 else ""
-
-
-def _last_changed_api(repo: str, rel: str, sha: str) -> int:
-    """Same answer from the forge, for a SHALLOW clone.
-
-    `actions/checkout` fetches depth 1, so `git log -- <path>` has no history to
-    search and returns the TIP commit's date for every file. Every workflow then
-    looks changed-just-now and the check fails all of them — which is exactly
-    what it did on its first CI run. A shallow clone does not report an error
-    here; it reports a plausible wrong number, so the fallback is chosen by
-    detecting the clone, not by catching a failure.
-    """
-    # `sha` IS LOAD-BEARING. Without it the API answers for the DEFAULT BRANCH,
-    # so a PR that changes a cron workflow — the one case this check exists for —
-    # reads main's history and is never flagged. Verified against a real shallow
-    # clone: the default-branch query reported "fresh" for a workflow the branch
-    # had just modified.
-    args = ["gh", "api", f"repos/{repo}/commits", "-X", "GET",
-            "-f", f"path={rel}", "-f", "per_page=1"]
-    if sha:
-        args += ["-f", f"sha={sha}"]
-    args += ["--jq", ".[0].commit.committer.date"]
-    r = subprocess.run(args, cwd=ROOT, capture_output=True, text=True)
-    if r.returncode != 0 or not r.stdout.strip():
-        why = (r.stderr or "").strip().replace("\n", " ")[:200]
-        print(f"    {rel}: last-changed unreadable — {why or 'no output'}")
-        return 0
-    when = r.stdout.strip().replace("Z", "+00:00")
-    return int(datetime.datetime.fromisoformat(when).timestamp())
-
-
 def _repo_slug() -> str:
     r = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner",
                         "--jq", ".nameWithOwner"],
@@ -155,11 +119,58 @@ def _repo_slug() -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def _last_run(stem: str):
-    """(epoch, conclusion) of the newest run, or None when unknown."""
+def _digest(text: str) -> str:
+    """A workflow version's identity.
+
+    Line endings are normalised first: a Windows checkout holds CRLF where git
+    stores LF, and hashing raw bytes would report every workflow stale on one
+    of the three CI platforms.
+    """
+    return hashlib.sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+
+
+_AT_SHA: dict = {}
+
+
+def _digest_at(sha: str, rel: str, slug: str):
+    """The workflow's digest as of `sha`, or None when it cannot be read.
+
+    Local git first — in a full clone the object is usually right there, and it
+    costs no API call. The API is the fallback for a shallow checkout, and for
+    a run whose branch has since been deleted: GitHub keeps the commit even
+    when the ref is gone, which is exactly the case after a squash-merge.
+    """
+    if (sha, rel) in _AT_SHA:
+        return _AT_SHA[(sha, rel)]
+    text = None
+    local = subprocess.run(["git", "show", f"{sha}:{rel}"],
+                           cwd=ROOT, capture_output=True, text=True)
+    if local.returncode == 0:
+        text = local.stdout
+    elif slug:
+        api = subprocess.run(
+            ["gh", "api", f"repos/{slug}/contents/{rel}?ref={sha}", "--jq", ".content"],
+            cwd=ROOT, capture_output=True, text=True)
+        if api.returncode == 0 and api.stdout.strip():
+            try:
+                text = base64.b64decode(api.stdout.strip()).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                text = None
+    result = _digest(text) if text is not None else None
+    _AT_SHA[(sha, rel)] = result
+    return result
+
+
+def _run_of_this_version(stem: str, rel: str, want: str, slug: str):
+    """(epoch, conclusion) of a run that executed the CURRENT bytes, or None.
+
+    Returns the sentinel `UNREADABLE` when runs exist but none of their
+    versions could be resolved — that is not evidence of staleness, and
+    reporting it as such would fail a job that merely lost `contents: read`.
+    """
     r = subprocess.run(
-        ["gh", "run", "list", "--workflow", f"{stem}.yml", "--limit", "1",
-         "--json", "createdAt,conclusion"],
+        ["gh", "run", "list", "--workflow", f"{stem}.yml", "--limit", "20",
+         "--json", "createdAt,conclusion,headSha"],
         cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
         # Say WHY. Swallowing this is what made the first CI failure a guessing
@@ -174,8 +185,24 @@ def _last_run(stem: str):
     runs = json.loads(r.stdout)
     if not runs:
         return None
-    created = runs[0]["createdAt"].replace("Z", "+00:00")
-    return int(datetime.datetime.fromisoformat(created).timestamp()), runs[0].get("conclusion")
+    resolved = 0
+    for run in runs:
+        got = _digest_at(run.get("headSha", ""), rel, slug)
+        if got is None:
+            continue
+        resolved += 1
+        if got == want:
+            created = run["createdAt"].replace("Z", "+00:00")
+            return (int(datetime.datetime.fromisoformat(created).timestamp()),
+                    run.get("conclusion"))
+    if resolved == 0:
+        print(f"    {stem}: no run's workflow version could be read")
+        return UNREADABLE
+    # Runs exist and none of them ran these bytes: genuinely stale. The newest
+    # is reported, because "what DID run last" is what a reader needs next.
+    newest = runs[0]["createdAt"].replace("Z", "+00:00")
+    return (int(datetime.datetime.fromisoformat(newest).timestamp()),
+            runs[0].get("conclusion"), "stale")
 
 
 def main() -> int:
@@ -196,16 +223,15 @@ def main() -> int:
     shallow = _is_shallow()
     slug = _repo_slug() if shallow else ""
     if shallow and not slug:
-        msg = ("shallow clone and the repository slug is unreadable, so "
-               "last-changed dates cannot be determined")
+        msg = ("shallow clone and the repository slug is unreadable, so the "
+               "version a run executed cannot be determined")
         if strict:
             print(f"FAIL: {msg}.")
             return 1
         print(f"check_cron_workflow_freshness: SKIPPED — {msg}")
         return 0
-    head = _head_sha() if shallow else ""
     if shallow:
-        print(f"shallow clone — last-changed dates from {slug}@{head[:7] or '?'} via the API")
+        print(f"shallow clone — workflow versions resolved from {slug} via the API")
 
     cron_only, stale, unknown = [], [], []
     for path in sorted(WORKFLOWS.glob("*.yml")):
@@ -215,17 +241,17 @@ def main() -> int:
             continue
         cron_only.append(path.stem)
         rel = path.relative_to(ROOT).as_posix()
-        changed = _last_changed_api(slug, rel, head) if shallow else _last_changed_git(path)
-        if not changed:
+        want = _digest(path.read_text(encoding="utf-8"))
+        # `slug` is only resolved for a shallow clone above, but the API
+        # fallback needs it whenever a run's commit is not in the local object
+        # store — which is the ordinary case for a deleted branch.
+        run = _run_of_this_version(path.stem, rel, want, slug or _repo_slug())
+        if run is None or run is UNREADABLE:
             unknown.append(path.stem)
             continue
-        run = _last_run(path.stem)
-        if run is None:
-            unknown.append(path.stem)
-            continue
-        ran, conclusion = run
-        if ran < changed:
-            stale.append((path.stem, changed, ran, conclusion))
+        if len(run) == 3:
+            ran, conclusion, _ = run
+            stale.append((path.stem, ran, conclusion))
 
     if not cron_only:
         print("FAIL: no cron-only workflows found — the trigger parse is broken,")
@@ -246,15 +272,16 @@ def main() -> int:
             return 1
 
     if stale:
-        print("\nFAIL: changed since they last ran, so the change is unverified.")
+        print("\nFAIL: this version has never run, so the change is unverified.")
         print("These never run on push, so nothing else will catch it:\n")
-        for stem, changed, ran, conclusion in stale:
+        for stem, ran, conclusion in stale:
             print(f"  {stem}")
-            print(f"      changed {_utc(changed)}   last run {_utc(ran)} ({conclusion})")
-            print(f"      gh workflow run {stem}.yml --ref <the branch that changed it>")
+            print(f"      no run has executed the committed workflow; the most "
+                  f"recent run was {_utc(ran)} ({conclusion}) of a different version")
+            print(f"      gh workflow run {stem}.yml --ref <a branch holding these bytes>")
         return 1
 
-    print("every cron-only workflow has run since its last change")
+    print("every cron-only workflow has been run in its committed version")
     return 0
 
 
