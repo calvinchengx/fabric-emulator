@@ -1441,6 +1441,24 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/notebook-display/run.py
 
+  engine-probes-notebook:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: Engine probes run as a notebook (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # The EMULATOR leg of e2e/engine-matrix/tenant.py. Its real leg runs the
+      # same script against a tenant from real-fabric.yml; only FABRIC_TARGET
+      # differs. This proves the mechanism — publish a notebook carrying
+      # probes.py, execute it, read the findings back over OneLake — so the
+      # tenant runner is not code nobody has run.
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/engine-matrix/run-tenant.py
+
   two-context:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'

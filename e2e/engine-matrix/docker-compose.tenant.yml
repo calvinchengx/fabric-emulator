@@ -1,0 +1,150 @@
+# The engine probes, run as a NOTEBOOK against the emulator.
+#
+# The EMULATOR LEG of e2e/engine-matrix/tenant.py, whose real leg runs the same
+# script against a tenant from real-fabric.yml. Only FABRIC_TARGET differs.
+#
+# Why the leg exists at all: the tenant column cannot be exercised until
+# somebody sets AZURE_CLIENT_ID and FABRIC_TEST_WORKSPACE (#384), and shipping a
+# runner nobody has run is the defect this repository keeps finding in its own
+# instruments. This proves the MECHANISM — publish a notebook carrying
+# probes.py, execute it, read the findings back over OneLake with a separate
+# token — without claiming anything about Fabric.
+#
+# Stack copied from e2e/conformance/docker-compose.sail.yml: entra, fabric with
+# FABRIC_SPARK_AGENT_URL, sail, and the published spark-agent, because a
+# RunNotebook job needs an engine to execute it.
+services:
+  entra-emulator:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.9.0}
+    environment:
+      # CONTRACT 7 NEEDS A TOKEN THAT CAN EXPIRE INSIDE A TEST. The default is
+      # 3600s and the defect it guards took an hour to appear in production —
+      # so the clock is made cheap rather than the test made slow. One setting
+      # covers every audience, which is why live.py caches and re-mints: a
+      # client that minted once and polled for minutes would 401 partway and
+      # report a broken pipeline instead of a short token.
+      TOKEN_LIFETIME_ACCESS_SECONDS: "60"
+      ORIGIN_MODE: compat
+      TLS_ENABLED: "false"
+      PORT: "8443"
+      PUBLIC_ORIGIN: "http://entra-emulator:8443"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/entra-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  fabric-emulator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      entra-emulator:
+        condition: service_healthy
+    environment:
+      FABRIC_ADDR: ":80"
+      FABRIC_DATA_DIR: "" # in-memory; the e2e needs no persistence
+      FABRIC_DISABLE_TLS: "true"
+      FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
+    networks:
+      default:
+        aliases:
+          - onelake.dfs.fabric.microsoft.com
+          - api.fabric.microsoft.com
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  sail:
+    build:
+      context: ../..
+      dockerfile: docker/sail/Dockerfile
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+    environment:
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+      SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
+      RUST_LOG: "info"
+
+  spark-agent:
+    build:
+      context: ../..
+      dockerfile: docker/spark-agent/Dockerfile
+    depends_on:
+      sail:
+        condition: service_started
+    environment:
+      # The same number the notebook is told, so contract 7 can assert that the
+      # wait exceeded the lifetime rather than assuming it did.
+      CONFORMANCE_TOKEN_LIFETIME: "60"
+      # Contract 6 runs only here. Sail reaches OneLake through the agent's
+      # delta-rs interception, which addresses the store over http; the JVM
+      # overlay goes through hadoop's ABFS driver, which forces TLS for
+      # `abfss://` and cannot reach a plaintext stack at all. See live.py.
+      CONFORMANCE_FALL_THROUGH: "1"
+      # THE SHIM NEEDS ENDPOINTS, and no compose in this repo gave the agent
+      # any. Its default is 127.0.0.1:19080, which inside this container is
+      # nothing — so `notebookutils.fs` raised `Connection refused` from a
+      # RunNotebook cell. Measured by the contract-1 probe on its first run,
+      # which is the first thing that ever called notebookutils from inside a
+      # notebook job here. See the PR: the SHIPPED composes have the same gap.
+      #
+      # NOT workspace/lakehouse ids: those are the environment fallback that
+      # contract 1 must never be able to answer through, and setting them here
+      # would make the cell unprovable rather than green.
+      NOTEBOOKUTILS_FABRIC_URL: "http://fabric-emulator"
+      NOTEBOOKUTILS_ENTRA_URL: "http://entra-emulator:8443"
+      NOTEBOOKUTILS_INSECURE: "1"
+      SPARK_REMOTE: "sc://sail:50051"
+      ENTRA_TOKEN_URL: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/oauth2/v2.0/token"
+      ENTRA_CLIENT_ID: "00d88624-f0d7-46f6-a641-6232c2608928"
+      ENTRA_CLIENT_SECRET: "daemon-app-secret"
+      AZURE_STORAGE_ACCOUNT_NAME: "onelake"
+      AZURE_STORAGE_ENDPOINT: "http://fabric-emulator/onelake"
+      AZURE_ALLOW_HTTP: "true"
+    # `started` is not `listening`. The agent builds a Spark session before it
+    # binds, so a client that submits a job the moment the container exists gets
+    # `connection refused` on cell 0 — which the emulator correctly reports as a
+    # failed run, making a startup race look like a broken feature.
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/health', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  client:
+    build:
+      context: ../..
+      dockerfile: docker/python-runtime/Dockerfile
+      args: { UV_GROUP: fabric-target }
+    depends_on:
+      fabric-emulator:
+        condition: service_healthy
+      spark-agent:
+        condition: service_healthy
+    environment:
+      # THE EMULATOR LEG of e2e/engine-matrix/tenant.py. The same script runs
+      # against a tenant from real-fabric.yml with FABRIC_TARGET=real; only the
+      # target differs, which is the whole point of the fabric_target toggle.
+      #
+      # This leg exists so the mechanism — publish a notebook carrying probes.py,
+      # run it, read the findings back over OneLake — is EXERCISED before any
+      # tenant credential exists. Shipping a tenant runner nobody has run would
+      # be the same defect this repository keeps finding in its own instruments.
+      FABRIC_TARGET: emulator
+      FABRIC_EMULATOR_URL: "http://fabric-emulator"
+      ENTRA_EMULATOR_URL: "http://entra-emulator:8443"
+      FABRIC_WORKSPACE: engine-probe-ws
+    volumes:
+      - .:/engine-matrix:ro
+    command: python /engine-matrix/tenant.py
