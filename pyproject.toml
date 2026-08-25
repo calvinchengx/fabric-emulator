@@ -41,10 +41,10 @@ test = [
     "pyjks>=20,<22",
     # 49.0.0 is the first release that closes the three open wheel and
     # path-building advisories; held below 50 so a major cannot land unreviewed.
-    "cryptography>=42,<50",
+    "cryptography>=42,<51",
 ]
 lint = [
-    "ruff>=0.14,<0.16",
+    "ruff>=0.14,<0.17",
     # Astral's type checker. Pre-1.0, so pinned tight: a minor bump can change
     # which inferences it makes, and a type checker that changes its mind
     # between runs is a broken build nobody caused.
@@ -176,7 +176,7 @@ sail-delta = [
     "kafka-python>=2.0.2,<4",
     # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
     "pyjks>=20,<22",
-    "cryptography>=42,<50",
+    "cryptography>=42,<51",
     # GSSAPI handshake: kafka-python imports this at connect time.
     "gssapi>=1.8,<2",
 ]
@@ -225,7 +225,7 @@ spark-connect = [
     "kafka-python>=2.0.2,<4",
     # JKS/P12 → PEM so kafka-python can honour Spark's Java truststore options.
     "pyjks>=20,<22",
-    "cryptography>=42,<50",
+    "cryptography>=42,<51",
     # GSSAPI handshake: kafka-python imports this at connect time.
     "gssapi>=1.8,<2",
 ]
@@ -247,7 +247,7 @@ dbt-duckdb = [
 ]
 mlflow = ["mlflow>=3.1,<4"]
 rti = [
-    "azure-kusto-data>=5,<6",
+    "azure-kusto-data>=5,<7",
     "requests>=2.32,<3",
 ]
 data-science-loop = [
