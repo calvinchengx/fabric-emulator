@@ -28,3 +28,4 @@ wrote. A ✅ is that out-of-band reader, never the writer's own catalog.
 | 5 | Concurrent isolation | ✅ | ✅ | ✅ |
 | 6 | Rewrite fall-through | ✅ | ✅ | ✅ |
 | 7 | Credential lifetime | ✅ | ✅ | ✅ |
+| 8 | Refusal fidelity | ✅ | ✅ | ✅ |

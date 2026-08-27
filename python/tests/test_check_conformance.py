@@ -91,11 +91,15 @@ def test_the_actual_repo_passes_strict():
 
 
 def test_the_actual_repo_defines_every_contract_it_promises():
-    """Seven contracts, and none of them n/a everywhere."""
+    """Eight contracts, and none of them n/a everywhere."""
     cc.DOC = REPO / "docs" / "38-framework-conformance.md"
     table, errors = cc.load_applicability()
     assert errors == []
-    assert len(table) == 7
+    assert len(table) == 8
+    # Contract 8 is required everywhere: the refusals differ per surface —
+    # OneLake's on the lakehouse, Class B strict on the warehouse — but no
+    # surface is without one, so n/a would be a decision rather than a fact.
+    assert set(table[8].values()) == {"required"}
     assert set(table[4]) == {"sail", "jvm", "warehouse"}
     # Contract 6 is the one the JVM column exists to make provable.
     assert table[6]["jvm"] == "control"

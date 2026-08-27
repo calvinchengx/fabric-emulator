@@ -41,6 +41,8 @@ from probes import (  # noqa: E402
     CredentialClaim,
     FallThroughClaim,
     IsolationClaim,
+    RefusalCase,
+    RefusalClaim,
     RuntimeClaim,
     SignatureClaim,
     WriteClaim,
@@ -49,6 +51,7 @@ from probes import (  # noqa: E402
     credential_lifetime,
     fall_through,
     record,
+    refusal_fidelity,
     runtime_floor,
     signature_shape,
     write_landing,
@@ -85,6 +88,9 @@ TABLE_DIR = "lake.Lakehouse/Tables/events"
 # out-of-band reader is then a single DFS GET with no Parquet parser, and the
 # file is what a Fabric notebook can write with one documented call.
 FINDINGS_PATH = "lake.Lakehouse/Files/conformance/context.json"
+# Contract 8 works under its own directory so a refusal case that leaves a
+# file behind cannot disturb what another contract reads.
+REFUSALS_DIR = "lake.Lakehouse/Files/conformance/refusals"
 # Contract 5's children write one file each, keyed by the marker they were
 # given, so a child that wrote another child's file is visible as a mismatch
 # rather than as an overwrite nobody can see.
@@ -486,6 +492,93 @@ try:
         _run_err = f"{type(_exc).__name__}: {_exc}"
     _findings["run_magic"] = {"ok": _run_ok, "error": _run_err}
 
+    # Contract 8. Two operations the service refuses, each attempted in the
+    # form real Fabric REJECTS and again in the form it PERMITS.
+    #
+    # THE PERMITTED FORM IS HALF THE CASE, and skipping it is how this probe
+    # would grade a broken filesystem green: an `fs.rm` that raised on every
+    # path refuses the non-recursive form too. The control is the same device
+    # contract 7 uses for the read before the wait.
+    #
+    # NOT loadTable, which also refuses by name: it refuses in EVERY form,
+    # because it is unimplemented. There is no permitted form to be the
+    # control, so it is an honest 501 rather than a refusal this contract can
+    # grade -- and the rule caught that before the case was written.
+    #
+    # THE CODE, NOT THE MESSAGE. `fs.rm` raises OSError, and so does half the
+    # standard library -- grading the class alone would accept a connection
+    # reset as a correct refusal. `rm`'s own docstring says the errno is the
+    # contract ("the mapping here is exact -- this is what `os.rmdir` raises
+    # for the identical situation"), so the errno NAME is what gets reported.
+    import errno as _errno
+
+    def _refuse(fn):
+        try:
+            fn()
+            return False, ""
+        except OSError as exc:
+            name = _errno.errorcode.get(getattr(exc, "errno", None), "")
+            return True, f"{type(exc).__name__}/{name}".rstrip("/")
+        except Exception as exc:  # noqa: BLE001
+            return True, type(exc).__name__
+
+    _ref = {}
+    _base = "abfss://__WS__@onelake.dfs.fabric.microsoft.com/__REFUSALS__"
+    try:
+        # TWO IDENTICAL TREES, not one used twice. If the bare `rm` wrongly
+        # SUCCEEDS, a control pointed at the same path has nothing left to
+        # delete and fails for a reason that has nothing to do with recurse --
+        # so the run would report a broken fixture instead of the data loss.
+        _nbu.fs.put(_base + "/tree/leaf.txt", "leaf", True)
+        _nbu.fs.put(_base + "/tree-control/leaf.txt", "leaf", True)
+        # rm on a non-empty directory: ADLS Gen2 answers 409 DirectoryNotEmpty,
+        # so a bare rm is SAFE on Fabric. Here it deleted the subtree for a
+        # release (v0.33.0), which is why this contract exists.
+        _rm_refused, _rm_code = _refuse(lambda: _nbu.fs.rm(_base + "/tree"))
+        _rm_ctl_ok, _rm_ctl_err = _try(
+            lambda: _nbu.fs.rm(_base + "/tree-control", True))
+        _ref["rm-non-empty-without-recurse"] = {
+            "refused": _rm_refused, "code": _rm_code,
+            # `recurse=True` must really have removed it -- a call that
+            # returned True while leaving the tree in place would be the
+            # writer confirming its own write.
+            "control_ok": (bool(_rm_ctl_ok)
+                           and not _nbu.fs.exists(_base + "/tree-control")),
+            "control_error": _rm_ctl_err,
+        }
+        # Two sources for the same reason as the two trees above: a clobber
+        # that wrongly succeeds consumes the source, and the control would
+        # then fail because there was nothing to move.
+        _nbu.fs.put(_base + "/src.txt", "src", True)
+        _nbu.fs.put(_base + "/src-control.txt", "src", True)
+        _nbu.fs.put(_base + "/dst.txt", "dst", True)
+        _nbu.fs.put(_base + "/dst-control.txt", "dst", True)
+        _mv_refused, _mv_code = _refuse(
+            lambda: _nbu.fs.mv(_base + "/src.txt", _base + "/dst.txt"))
+        _mv_ctl_ok, _mv_ctl_err = _try(
+            lambda: _nbu.fs.mv(_base + "/src-control.txt",
+                               _base + "/dst-control.txt", True, True))
+        _ref["mv-onto-existing-without-overwrite"] = {
+            "refused": _mv_refused, "code": _mv_code,
+            # The overwrite really happened: the destination now holds the
+            # SOURCE bytes, and the source is gone.
+            "control_ok": (bool(_mv_ctl_ok)
+                           and _nbu.fs.head(_base + "/dst-control.txt") == "src"
+                           and not _nbu.fs.exists(_base + "/src-control.txt")),
+            "control_error": _mv_ctl_err,
+        }
+        # Seed the fixtures for the WIRE case the harness runs. The operation
+        # under test there is the DELETE, and that is what stays out of band;
+        # creating the tree here uses the one writer this session has already
+        # proven works, instead of a second one in the harness that can fail
+        # for its own reasons and report the result as a product defect.
+        _nbu.fs.put(_base + "/wire/leaf.txt", "leaf", True)
+        _nbu.fs.put(_base + "/wire-control/leaf.txt", "leaf", True)
+        _findings["refusals"] = _ref
+    except Exception as _exc:  # noqa: BLE001
+        _findings["refusals"] = {
+            "setup_error": f"{type(_exc).__name__}: {_exc}"}
+
     _findings["runtime"] = {
         "declared": _os.environ.get("FABRIC_RUNTIME", ""),
         "python": ".".join(str(n) for n in _sys.version_info[:3]),
@@ -517,6 +610,7 @@ _run_magic_seen = None
 _runtime_seen = None
 _fall_seen = None
 _cred_seen = None
+_refusals_seen = None
 
 
 def log(msg: str) -> None:
@@ -625,6 +719,7 @@ def writer() -> WriteClaim:
             "payload": base64.b64encode(
                 (NOTEBOOK_BODY.replace("__WS__", ws)
                  .replace("__FINDINGS__", FINDINGS_PATH)
+                 .replace("__REFUSALS__", REFUSALS_DIR)
                  .replace("__MODULES__", json.dumps(sorted(REFERENCE_MODULES)))
                  + meta).encode()).decode()}]}},
         token=fabric_token())
@@ -734,9 +829,10 @@ def session_context() -> ContextClaim:
     global _sigs_seen, _runtime_seen
     _sigs_seen = found.get("module_signatures")
     _runtime_seen = found.get("runtime")
-    global _fall_seen, _cred_seen
+    global _fall_seen, _cred_seen, _refusals_seen
     _fall_seen = found.get("fall_through")
     _cred_seen = found.get("credential")
+    _refusals_seen = found.get("refusals")
     log(f"context findings: { {k: v for k, v in found.items() if k != 'module_signatures'} }")
     global _run_magic_seen
     _run_magic_seen = found.get("run_magic")
@@ -1089,6 +1185,102 @@ def session_credential() -> CredentialClaim:
     )
 
 
+# The documented refusals contract 8 grades on a lakehouse. Each key names the
+# error a caller must be able to branch on -- the ADLS Gen2 code on the wire,
+# and the exception type on the shim, because a notebook author catches
+# filesystem exceptions and `fs.rm`'s own docstring says the mapping to
+# `os.rmdir`'s errno is the point.
+REFUSAL_EXPECTATIONS = {
+    "rm-non-empty-without-recurse": "OSError/ENOTEMPTY",
+    "mv-onto-existing-without-overwrite": "FileExistsError",
+    "dfs-delete-non-empty-directory": "409 DirectoryNotEmpty",
+}
+
+
+def _dfs_delete_case() -> RefusalCase:
+    """The wire half, run by the HARNESS rather than by the notebook.
+
+    The shim's two cases above prove `notebookutils` refuses. This proves the
+    thing underneath it does -- and the defect that produced this contract was
+    exactly there: OneLake's DELETE ignored `?recursive=` completely, so the
+    shim was faithfully reporting a success that should never have been
+    available to it. A probe that only asked the shim would have passed on the
+    day the tree was deleted, because the shim did nothing wrong.
+
+    Out of band by construction: this process never ran inside the session. The
+    FIXTURE is seeded by the notebook, deliberately -- what has to be out of
+    band is the operation under test, and a second writer here would be one
+    more thing that can fail and be reported as a product defect.
+    """
+    name = "dfs-delete-non-empty-directory"
+    root = f"http://{ACCT}/{_ws}/{urllib.parse.quote(REFUSALS_DIR)}"
+    token = storage_token()
+    # The Host header is what selects the DFS data plane -- the emulator is
+    # host-routed like real Fabric, and without it this reaches the control
+    # plane's catch-all instead. Omitting it cost a run: the bare 404 that
+    # came back carried NO `x-ms-error-code`, which is the tell that no OneLake
+    # handler ever saw the request. The contract's own control rule is what
+    # surfaced it, rather than the harness bug being reported as a product one.
+    hdrs = {"Host": DFS_HOST}
+    code = ""
+    try:
+        req("DELETE", f"{root}/wire", token=token, headers=hdrs)
+        refused = False
+    except urllib.error.HTTPError as exc:
+        refused = True
+        # `x-ms-error-code` is where ADLS Gen2 puts it, and where a client
+        # reads it. str(HTTPError) is "HTTP Error 409: Conflict" and names no
+        # code at all, so grading that would accept any 409 the emulator ever
+        # returns for any reason.
+        code = f"{exc.status} {exc.headers.get('x-ms-error-code', '')}".strip()
+    except Exception as exc:  # noqa: BLE001
+        refused = True
+        code = f"not an HTTP response: {type(exc).__name__}: {exc}"
+    control_ok, control_error = False, ""
+    try:
+        req("DELETE", f"{root}/wire-control?recursive=true", token=token,
+            headers=hdrs)
+        control_ok = True
+    except urllib.error.HTTPError as exc:
+        # THE CODE FIRST, then the path. A red truncated to its URL prefix says
+        # only "something about this path", which is where the first run of
+        # this probe left a reader.
+        control_error = (f"{exc.status} "
+                         f"{exc.headers.get('x-ms-error-code', '')} on "
+                         f"DELETE {REFUSALS_DIR}/wire-control?recursive=true")
+    except Exception as exc:  # noqa: BLE001
+        control_error = (f"{type(exc).__name__}: {exc} on "
+                         f"DELETE {REFUSALS_DIR}/wire-control?recursive=true")
+    return RefusalCase(name=name, refused=refused, code=code,
+                       control_ok=control_ok, control_error=control_error)
+
+
+def session_refusals() -> RefusalClaim:
+    """Contract 8 reads the same artifact contracts 1-3, 6 and 7 already fetched,
+    and adds the one case the notebook cannot make -- the raw DFS DELETE."""
+    if _refusals_seen is None:
+        return RefusalClaim(
+            ok=False,
+            error="no refusal results in the findings artifact — the session "
+                  "did not get as far as attempting the operations")
+    if _refusals_seen.get("setup_error"):
+        return RefusalClaim(
+            ok=False,
+            error=("the refusal fixtures could not be created "
+                   f"({_refusals_seen['setup_error'][:160]}), so neither the "
+                   "refused form nor the permitted one says anything"))
+    cases = [
+        RefusalCase(name=name,
+                    refused=bool(rec.get("refused")),
+                    code=rec.get("code", ""),
+                    control_ok=bool(rec.get("control_ok")),
+                    control_error=rec.get("control_error", ""))
+        for name, rec in sorted(_refusals_seen.items())
+    ]
+    cases.append(_dfs_delete_case())
+    return RefusalClaim(ok=True, cases=tuple(cases))
+
+
 def main() -> int:
     backend = os.environ.get("BACKEND", "")
     if backend not in ("sail", "jvm"):
@@ -1123,10 +1315,13 @@ def main() -> int:
     # and the doc is the authority on which is which.
     fall = fall_through(session=session_fall_through, backend=backend,
                         control=(6, backend) in CONTROL)
+    refusals = refusal_fidelity(session=session_refusals,
+                                expected=REFUSAL_EXPECTATIONS, backend=backend)
     rows = record(backend,
                   live={1: ctx, 2: sig, 3: floor, 4: result, 5: iso, 6: fall,
                         7: credential_lifetime(session=session_credential,
-                                               backend=backend)})
+                                               backend=backend),
+                        8: refusals})
     out = DIR / "out"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{backend}.json"
@@ -1136,6 +1331,7 @@ def main() -> int:
     log(f"wrote {path} contract 3={floor.status} {floor.error}".rstrip())
     log(f"wrote {path} contract 5={iso.status} {iso.error}".rstrip())
     log(f"wrote {path} contract 6={fall.status} {fall.error}".rstrip())
+    log(f"wrote {path} contract 8={refusals.status} {refusals.error}".rstrip())
     seven = next(r for r in rows if r["id"] == "7")
     log(f"wrote {path} contract 7={seven['status']} {seven.get('error', '')}".rstrip())
     log(f"wrote {path} contract 4={result.status} {result.error}".rstrip())

@@ -585,15 +585,68 @@ assumed from the fact that the behaviour is covered.
 
 ---
 
+### 8. A refusal the service makes must be made here
+
+`notebookutils.fs.rm(path)` on a directory **deleted the entire subtree**.
+OneLake's DELETE ignored `?recursive=` completely, so a bare `rm` that ADLS
+Gen2 answers `409 DirectoryNotEmpty` succeeded here and took the tree with it.
+It shipped in v0.33.0.
+
+This document already states the rule, one level up, under
+[What must NOT be done](#what-must-not-be-done):
+
+> Being more permissive than the thing being emulated is the one direction that
+> actively misleads: it passes here and fails there.
+
+It says that about **signature parameters**, and `check_notebookutils_surface.py`
+grades those — three divergences are recorded in `EXTRA_PARAMS` with reasons.
+Nothing applied it to **behaviour**, and nothing graded it. `fs.rm` is that rule
+violated one level down, with a worse failure direction than the sentence
+describes: here it did not merely pass, it succeeded and destroyed data.
+
+**The generalisation.** Where the service refuses, the emulator refuses, with
+the documented code. This is the only contract in this document whose failure
+mode is a *green* — every other one catches a wrong answer, and a wrong answer
+is at least visible. Over-permissiveness is invisible locally by construction:
+the local run is the one that passes, and the tenant is where you find out.
+
+**A refusal alone is not the assertion, and this is the part worth getting
+right.** An operation that is simply broken refuses everything, including what
+Fabric permits — an `fs.rm` raising on every path would satisfy a probe that
+only checked the refusal, while being more wrong than the over-permissiveness
+it was written to catch. So every case carries a **control**: the same
+operation in the form the service *permits* must succeed. `rm` without
+`recurse` is refused **and** `rm` with `recurse=True` deletes. The control is
+the same device contract 7 uses for the read before the wait, for the same
+reason — a probe with no baseline grades a surface that never worked.
+
+**The code is graded, not just the refusal.** `DirectoryNotEmpty` and a bare
+500 are both "it did not delete"; only one of them tells a caller to pass
+`recurse`. A client branches on the code, so the code is the contract.
+
+**A case the session never attempted fails.** A probe whose case list can
+silently shrink grades whatever survived and reports green for it.
+
+**The ceiling, stated rather than implied.** Like the other seven, this
+contract's expectations come from Microsoft's documentation, so it says
+*conforms to the published contract* and never *matches Fabric*. Where the
+docs are silent about a refusal, this cannot invent one — and the differential
+leg ([#384](https://github.com/calvinchengx/fabric-emulator/issues/384)) is
+still the only oracle that could.
+
+---
+
 ## The conformance kit
 
-**Status: built; contracts 4 and 1 are live.** The harness, the committed
-matrix, and the offline checker are in tree. Sail, JVM, and warehouse each
-write through the emulator path and an out-of-band reader confirms the
-artifact. Items 3 and 5–7 are still individually tractable. The reason
-they existed for months is that nothing exercised them, and that is the
-gap worth closing first — a new framework will find a new one next week
-otherwise. Contract 1 found two on its first run, and contract 2 a third.
+**Status: built; contracts 1–7 are live, and 8 is the newest row.** The
+harness, the committed matrix, and the offline checker are in tree. Sail,
+JVM, and warehouse each write through the emulator path and an out-of-band
+reader confirms the artifact. The reason these contracts went unproven for
+months is that nothing exercised them, and each one added has found
+something: contract 1 found two defects on its first run, and contract 2 a
+third. **Contract 8 was added last and for the opposite reason** — not
+because a probe found a wrong answer, but because a *green* hid one, and
+`fs.rm` deleted a user's directory tree for a release before anybody looked.
 
 **Contracts share a run but must not share a failure.** Contract 1 rides the
 same notebook as contract 4, which costs nothing and describes one session
@@ -627,6 +680,7 @@ correctly when probed.
 | 5 | Concurrent isolation | N sessions live at once, each reporting its own identity: notebook children each see their own context; TDS sessions each answer with their own warehouse and principal |
 | 6 | Fall-through | A statement the rewrite grammar does not recognise reaches the engine unmodified — proven by a second engine that *can* plan it, or, where there is only one, by the engine echoing the bytes back |
 | 7 | Credential lifetime | A run that outlives the token lifetime keeps working, on a surface that still refuses an expired credential |
+| 8 | Refusal fidelity | An operation the service refuses is refused here with the documented code — and the *permitted* form of the same operation succeeds, so a broken operation cannot pass by refusing everything |
 
 ### Every contract proves real execution, on a real backend
 
@@ -660,6 +714,7 @@ inventing anything.
 | 5 | Concurrent isolation | required | required | required |
 | 6 | Rewrite fall-through | required | control | required |
 | 7 | Credential lifetime | required | required | required |
+| 8 | Refusal fidelity | required | required | required |
 
 <!-- APPLICABILITY:END -->
 

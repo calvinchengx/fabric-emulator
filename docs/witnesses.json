@@ -1305,7 +1305,7 @@
   },
   "framework-conformance-runtime-contracts": {
     "section": "Runtime contracts (`docs/38`)",
-    "claim": "Framework conformance kit — write landing first",
+    "claim": "Framework conformance kit — eight runtime contracts, graded per backend",
     "witnesses": [
       "ci:conformance-sail",
       "ci:conformance-jvm",
