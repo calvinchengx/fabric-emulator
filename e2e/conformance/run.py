@@ -158,6 +158,15 @@ WAREHOUSE_TESTS: dict[int, str] = {
     5: "TestConformanceConcurrentIsolation",
     6: "TestConformanceFallThrough",
     7: "TestConformanceCredentialLifetime",
+    # Contract 8 reuses a test written before the contract existed, rather than
+    # adding a near-copy beside it. It already has the shape docs/38 §8
+    # requires and says so in its own comments: a refusal a real client
+    # receives over real TDS, naming the documented feature; the same statement
+    # succeeding with the toggle OFF; and a Class A statement succeeding with
+    # it ON, because "a version that refused everything would pass the refusal
+    # assertions". Wiring it is what makes that a graded cell instead of a test
+    # nobody counted.
+    8: "TestWarehouseStrictModeRefusesClassBOverRealTDS",
 }
 
 

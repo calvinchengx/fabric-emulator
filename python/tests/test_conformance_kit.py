@@ -834,7 +834,8 @@ def test_all_passing_reports_no_failure():
     live, failed = run.warehouse_results(verdicts, 0)
     assert failed is False
     assert {n: r.status for n, r in live.items()} == {4: "pass", 5: "pass",
-                                                     6: "pass", 7: "pass"}
+                                                     6: "pass", 7: "pass",
+                                                     8: "pass"}
     assert all(r.error == "" for r in live.values())
 
 
@@ -843,3 +844,124 @@ def test_every_warehouse_test_maps_to_an_applicable_contract():
     mapping one to it would record a pass the applicability table forbids."""
     for num in run.WAREHOUSE_TESTS:
         assert (num, "warehouse") not in probes.NOT_APPLICABLE
+
+
+# --- contract 8: refusal fidelity ---------------------------------------------
+#
+# The direction this contract exists for is the PERMISSIVE one, so the test
+# that matters most is the one where the emulator succeeded.
+
+_RM = "rm-non-empty-without-recurse"
+_MV = "mv-onto-existing-without-overwrite"
+_EXPECTED = {_RM: "DirectoryNotEmpty", _MV: "AlreadyExists"}
+
+
+def _refusals(*cases):
+    return lambda: probes.RefusalClaim(ok=True, cases=tuple(cases))
+
+
+def _refused_case(name, code):
+    return probes.RefusalCase(name=name, refused=True, code=code, control_ok=True)
+
+
+def test_refusal_fidelity_passes_when_every_case_is_refused_with_its_code():
+    result = probes.refusal_fidelity(
+        session=_refusals(_refused_case(_RM, "409 DirectoryNotEmpty"),
+                       _refused_case(_MV, "AlreadyExists")),
+        expected=_EXPECTED, backend="sail")
+    assert result.status == "pass", result.error
+
+
+def test_an_operation_the_emulator_ALLOWED_is_the_failure_this_contract_exists_for():
+    """`fs.rm` deleting a directory tree, in the shape that shipped."""
+    result = probes.refusal_fidelity(
+        session=_refusals(probes.RefusalCase(name=_RM, refused=False, control_ok=True),
+                       _refused_case(_MV, "AlreadyExists")),
+        expected=_EXPECTED, backend="sail")
+    assert result.status == "fail"
+    assert "ALLOWED" in result.error
+    assert "passes here and fails there" in result.error
+
+
+def test_a_refusal_with_the_wrong_code_fails_because_a_client_branches_on_it():
+    result = probes.refusal_fidelity(
+        session=_refusals(_refused_case(_RM, "500 InternalError"),
+                       _refused_case(_MV, "AlreadyExists")),
+        expected=_EXPECTED, backend="sail")
+    assert result.status == "fail"
+    assert "not the documented" in result.error
+
+
+def test_a_broken_operation_cannot_pass_by_refusing_everything():
+    """The control half. An `fs.rm` that raises on every path refuses the
+    non-recursive form too, and a refusal-only probe would call that green."""
+    result = probes.refusal_fidelity(
+        session=_refusals(probes.RefusalCase(name=_RM, refused=True,
+                                          code="409 DirectoryNotEmpty",
+                                          control_ok=False,
+                                          control_error="recurse=True also raised"),
+                       _refused_case(_MV, "AlreadyExists")),
+        expected=_EXPECTED, backend="sail")
+    assert result.status == "fail"
+    assert "PERMITTED form" in result.error
+    assert "refuses everything" in result.error
+
+
+def test_a_case_the_session_never_attempted_is_a_failure_not_an_omission():
+    result = probes.refusal_fidelity(
+        session=_refusals(_refused_case(_MV, "AlreadyExists")),
+        expected=_EXPECTED, backend="sail")
+    assert result.status == "fail"
+    assert "not reported" in result.error
+
+
+def test_a_case_with_no_documented_expectation_is_reported_rather_than_graded():
+    result = probes.refusal_fidelity(
+        session=_refusals(_refused_case(_RM, "409 DirectoryNotEmpty"),
+                       _refused_case(_MV, "AlreadyExists"),
+                       _refused_case("invented", "Whatever")),
+        expected=_EXPECTED, backend="sail")
+    assert result.status == "fail"
+    assert "no documented expectation" in result.error
+
+
+def test_a_session_that_ran_nothing_fails_with_its_own_reason():
+    result = probes.refusal_fidelity(
+        session=lambda: probes.RefusalClaim(ok=False, error="no lakehouse bound"),
+        expected=_EXPECTED, backend="jvm")
+    assert result.status == "fail"
+    assert "no lakehouse bound" in result.error
+
+
+def test_an_empty_expectation_set_is_refused_rather_than_passing_vacuously():
+    with pytest.raises(ValueError, match="attempted nothing"):
+        probes.refusal_fidelity(session=_refusals(), expected={}, backend="sail")
+
+
+def test_contract_8_is_required_on_every_backend():
+    """n/a would make it unprovable; the refusals differ per surface but each
+    surface has some."""
+    for backend in probes.BACKENDS:
+        assert (8, backend) not in probes.NOT_APPLICABLE
+        rows = {r["id"]: r for r in probes.record(backend)}
+        assert rows["8"]["status"] == "gap"
+        assert rows["8"]["pointer"]
+
+
+def test_an_allowed_operation_is_reported_as_allowed_even_when_its_control_also_failed():
+    """The ordering rule, and the reason it is a rule.
+
+    An `fs.rm` that wrongly deletes the tree leaves the recursive control
+    nothing to delete, so BOTH halves come back bad. Leading with the control
+    would report the data-loss defect as a broken fixture — which is how the
+    probe written to catch it would have hidden it.
+    """
+    result = probes.refusal_fidelity(
+        session=_refusals(
+            probes.RefusalCase(name=_RM, refused=False, control_ok=False,
+                               control_error="404: the tree is already gone"),
+            _refused_case(_MV, "AlreadyExists")),
+        expected=_EXPECTED, backend="sail")
+    assert result.status == "fail"
+    assert "ALLOWED" in result.error
+    assert "404" not in result.error

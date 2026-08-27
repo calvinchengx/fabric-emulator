@@ -54,5 +54,13 @@
     "status": "pass",
     "error": "",
     "pointer": ""
+  },
+  {
+    "id": "8",
+    "contract": "Refusal fidelity",
+    "backend": "warehouse",
+    "status": "pass",
+    "error": "",
+    "pointer": ""
   }
 ]

@@ -47,6 +47,8 @@ CONTRACTS: tuple[tuple[int, str, str], ...] = (
      "38-framework-conformance.md#6-engine-gaps-need-a-bounded-rewrite-escape-hatch-with-a-stated-contract"),
     (7, "Credential lifetime",
      "38-framework-conformance.md#7-credentials-must-outlive-the-run"),
+    (8, "Refusal fidelity",
+     "38-framework-conformance.md#8-a-refusal-the-service-makes-must-be-made-here"),
 )
 
 # Mirrors the APPLICABILITY table. Duplicated here so a probe run does not
@@ -69,6 +71,7 @@ GAP_REASON = {
     5: "no live fan-out recorded — isolation is a property of concurrent sessions",
     6: "no live statements recorded — fall-through is a property of a running engine",
     7: "no live run recorded — outliving a token needs a session that outlived one",
+    8: "no live run recorded — a refusal is a property of an operation attempted",
 }
 
 
@@ -694,6 +697,125 @@ def credential_lifetime(
                    "is checking expiry at all"),
             pointer=pointer)
     return Result(id="7", contract=title, backend=backend, status="pass")
+
+
+@dataclass(frozen=True)
+class RefusalCase:
+    """One operation the service refuses, and the permitted form of the same one.
+
+    `refused` / `code` describe what happened when the operation was attempted
+    in the form real Fabric rejects. `control_ok` describes the SAME operation
+    in the form real Fabric permits.
+
+    THE CONTROL IS NOT OPTIONAL, and it is the whole reason this dataclass has
+    four fields instead of two. "The operation was refused" and "the operation
+    is broken" produce the identical green on a probe that only checks the
+    refusal — and a broken operation refuses everything, including what Fabric
+    allows. `fs.rm` that raises on every path would pass a refusal-only test
+    while being far more wrong than the over-permissiveness it was written to
+    catch.
+    """
+
+    name: str
+    refused: bool = False
+    code: str = ""
+    error: str = ""
+    control_ok: bool = False
+    control_error: str = ""
+
+
+@dataclass(frozen=True)
+class RefusalClaim:
+    """What one session reported after attempting every refusal case."""
+
+    ok: bool
+    cases: tuple[RefusalCase, ...] = ()
+    error: str = ""
+
+
+def refusal_fidelity(
+    *,
+    session: Callable[[], RefusalClaim],
+    expected: dict[str, str],
+    backend: str,
+) -> Result:
+    """Contract 8: a refusal the service makes must be made here, with its code.
+
+    `expected` maps a case name to the error code real Fabric answers with —
+    `409 DirectoryNotEmpty`, `NotebookLakehouseMismatch`. It comes from
+    Microsoft's documentation, which is this contract's ceiling and is stated
+    as one in docs/38: it says *conforms to the published contract*, never
+    *matches Fabric*.
+
+    THE FAILURE DIRECTION THIS EXISTS FOR IS THE PERMISSIVE ONE. Every other
+    contract here catches the emulator answering wrongly and loudly. This one
+    catches it answering *successfully* where the service would have stopped
+    you — which is invisible locally by construction, because the local run is
+    the one that passes. `notebookutils.fs.rm` deleted whole directory trees
+    for a release under exactly that shape: ADLS Gen2 answers
+    `409 DirectoryNotEmpty`, so a bare `rm` is safe on Fabric and destructive
+    here.
+
+    A CASE THE SESSION NEVER REPORTED IS A FAILURE, not an omission. A probe
+    whose case list can silently shrink grades whatever survived, and reports
+    green for it — the vacuity hole that makes a suite an ornament.
+
+    THE CODE IS GRADED, NOT JUST THE REFUSAL. A client branches on the code:
+    `DirectoryNotEmpty` and a bare 500 are both "it did not delete", and only
+    one of them tells a caller to pass `recurse`.
+    """
+    title = CONTRACTS[7][1]
+    pointer = CONTRACTS[7][2]
+    if not expected:
+        raise ValueError(
+            "refusal_fidelity needs at least one expected case; an empty "
+            "expectation set passes for any session, including one that "
+            "attempted nothing")
+    claim = session()
+    if not claim.ok:
+        return Result(id="8", contract=title, backend=backend, status="fail",
+                      error=claim.error or "the session attempted no operations",
+                      pointer=pointer)
+
+    seen = {case.name: case for case in claim.cases}
+    problems: list[str] = []
+    for name in sorted(expected):
+        case = seen.get(name)
+        if case is None:
+            problems.append(
+                f"{name}: not reported — the session did not attempt it, so "
+                f"nothing here says whether the refusal is made")
+            continue
+        # ORDER MATTERS, and getting it backwards is how this probe would have
+        # reported the defect it exists for as a broken fixture. When the
+        # operation was ALLOWED, that is the finding — the control may well
+        # have failed too, as a CONSEQUENCE (an `rm` that already deleted the
+        # tree leaves the recursive form nothing to delete), and leading with
+        # that reads as "your harness is wrong" rather than "the emulator
+        # destroyed the directory".
+        if not case.refused:
+            problems.append(
+                f"{name}: ALLOWED — real Fabric answers {expected[name]}, so "
+                f"this passes here and fails there")
+            continue
+        if not case.control_ok:
+            problems.append(
+                f"{name}: the PERMITTED form of the same operation failed "
+                f"({case.control_error[:200] or 'no reason given'}) — a broken "
+                f"operation refuses everything, so its refusal proves nothing")
+            continue
+        if expected[name] not in case.code:
+            problems.append(
+                f"{name}: refused with {case.code or 'no code'!r}, not the "
+                f"documented {expected[name]!r} — a client branches on the code")
+    extra = sorted(set(seen) - set(expected))
+    if extra:
+        problems.append(
+            f"reported case(s) with no documented expectation: {', '.join(extra)}")
+    if problems:
+        return Result(id="8", contract=title, backend=backend, status="fail",
+                      error="; ".join(problems), pointer=pointer)
+    return Result(id="8", contract=title, backend=backend, status="pass")
 
 
 def record(backend: str, live: dict[int, Result] | None = None) -> list[dict]:

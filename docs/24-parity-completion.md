@@ -57,14 +57,22 @@ for real; today its `conformance` job is `skipped` in every run, because
 `AZURE_CLIENT_ID` and `FABRIC_TEST_WORKSPACE` are unset (`AZURE_TENANT_ID` is
 set, and OIDC needs no client secret).
 
-**Convertible today — one row, and it is the interesting one.** Class B strict
-mode (`-tsql-strict`) looks emulator-only because the *toggle* is ours. What the
-toggle produces is a **refusal over TDS**, and `ci:warehouse-tds` already drives
-that surface with a real client. This is exactly the shape of `FABRIC_FORCE_LRO`,
-which was own-only for the same mistaken reason until a real client's poll loop
-was pointed at it: separate "the engine is internal" from "the contract is
-internal". The oracle for *which* constructs Fabric rejects stays the reference
-(docs/29), the same as it is today.
+**Converted, and it was the interesting one.** Class B strict mode
+(`-tsql-strict`) looked emulator-only because the *toggle* is ours. What the
+toggle produces is a **refusal over TDS**, and a real client either receives it
+or does not: `TestWarehouseStrictModeRefusesClassBOverRealTDS` now drives it
+with go-mssqldb in the `warehouse-tds` job, and the claim left this list. Same
+shape as `FABRIC_FORCE_LRO`, which was own-only for the same mistaken reason
+until a real client's poll loop was pointed at it — separate "the engine is
+internal" from "the contract is internal". The oracle for *which* constructs
+Fabric rejects stays the reference (docs/29).
+
+That same test is now also the **warehouse leg of contract 8**
+([38](38-framework-conformance.md#8-a-refusal-the-service-makes-must-be-made-here)),
+which was written afterwards and independently arrived at its shape: a refusal
+naming the documented feature, plus the permitted form of the same statement
+succeeding, because a build that refused everything would pass the refusal
+assertions. It was wired rather than copied.
 
 ## Tier 1 — Control plane only (no engine, no research risk)
 
@@ -79,9 +87,9 @@ Pure CRUD + RBAC in patterns the repo has executed a dozen times.
 | ~~Sensitivity labels~~ ✅ | bulkSetLabels/bulkRemoveLabels + documented label-change audit events. 🟢 (taxonomy is emulator-provided: Purview is not attachable) | M |
 | Dataflow Gen2 **management** completeness | Finish the non-engine surface; execution stays 501 | S |
 | **Runtime divergences** (Environment items, Files mount, `input_file_name()` in SQL, inline pipeline jobs) | Four analogs the code states rather than hides. Environments and the Files mount (write-back + per-statement refresh + refuse a second lakehouse) are done; `input_file_name()` in SQL remains. Pipelines are the last job type that does not use the repo's own async pattern. Scoped in [37-runtime-fidelity-gaps.md](37-runtime-fidelity-gaps.md) | XS–M remaining |
-| **Framework conformance kit** | The runtime contracts a Fabric framework depends on and the REST reference does not describe: the context fallback chain, signature introspection, the runtime version floor, write-landing verification, concurrent session isolation, rewrite fall-through, credential lifetime. Every defect in this class was found by driving a real product while the parity map, the witness system and four medallion examples stayed green. Notebooks, assertions and one CI job — no engine work. Scoped in [38-framework-conformance.md](38-framework-conformance.md) | M |
+| **Framework conformance kit** | The runtime contracts a Fabric framework depends on and the REST reference does not describe: the context fallback chain, signature introspection, the runtime version floor, write-landing verification, concurrent session isolation, rewrite fall-through, credential lifetime, and **refusal fidelity** — the emulator must not be more permissive than Fabric, which is the only one of the eight whose failure mode is a green. Every defect in this class was found by driving a real product while the parity map, the witness system and four medallion examples stayed green. Notebooks, assertions and one CI job — no engine work. Scoped in [38-framework-conformance.md](38-framework-conformance.md) | M |
 | ~~Capacity **job queueing** and throttling~~ ✅ | Per-capacity concurrent-job ceiling (default 999). Manual submits against a full capacity are `430 CapacityNotAvailable` with `Retry-After`; scheduled and event-triggered jobs enter `Queued` and are admitted FIFO on the same clock/list levers that fire schedules. Same-item jobs are not serialised. [36-capacity-job-queueing.md](36-capacity-job-queueing.md) | M |
-| **`runMultiple` full parity** (exit values, per-cell timeout, lakehouse inheritance, concurrency, retry) | The DAG semantics are real; what's missing includes two wrong answers shipping today — `exitVal` hardcoded `""`, and `timeoutPerCellInSeconds` applied as a whole-notebook deadline. Also a latent agent bug: catalog state is process-wide across concurrent Livy sessions. Scoped in [39-run-multiple-parity-plan.md](39-run-multiple-parity-plan.md) | S–M each |
+| ~~**`runMultiple` full parity**~~ ✅ | **Both wrong answers this row was written for are fixed, and this entry said otherwise for months** — which is its own small lesson about a planning doc nothing checks. `exitVal` carries the child's real exit value, and `timeoutPerCellInSeconds` is multiplied by the notebook's real cell count where that count is readable, falling back to a whole-notebook ceiling on a tenant (`…/notebookRun` 404s there). Concurrency, retry and the failure contract are graded rows in [parity.md](parity.md). What is NOT closed is the differential half: `runmultiple-failure-contract` and `runmultiple-retry-and-timeouts` are two of the three claims still waiting on the tenant oracle. Scoped in [39-run-multiple-parity-plan.md](39-run-multiple-parity-plan.md) | — |
 
 ## Tier 2 — Attach a real engine that exists
 
