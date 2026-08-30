@@ -367,6 +367,12 @@ omit = [
     # log — is NOT unwitnessed: scripts/check_capture_redaction.py asserts it in
     # `make check`, and python/tests/test_check_capture_redaction.py drives the
     # same cases plus the two mutations (a leaky redactor, an over-zealous one).
+    # Fetch-and-write with a truncation guard, and nothing else: the ADF
+    # schema is one file at one commit, so there is no parsing to get wrong —
+    # unlike vendor_fabric_activity_types.py, whose HTML extraction IS the
+    # load-bearing part and is now tested (test_vendor_fabric_activity_types.py)
+    # rather than exempted. Omitted for what it is, not for convenience.
+    "scripts/vendor_adf_pipeline_schema.py",
     "scripts/capture_definition_shape.py",
     # The conformance harness itself: it publishes notebooks, drives
     # RunNotebook and reads OneLake, so it cannot run without the compose

@@ -97,3 +97,27 @@ def test_all_three_handling_routes_count(sandbox):
     assert "Copy" in handled            # dispatch
     assert "ForEach" in handled         # interpreter
     assert "HDInsightHive" in handled   # refused by name
+
+
+def test_a_missing_input_fails_rather_than_passing_vacuously(sandbox, capsys):
+    """If the schema is gone, the type set is empty and every check trivially
+    'passes'. The guard exists so an absent oracle is a failure, not a green."""
+    sandbox["SCHEMA"].unlink()
+    assert c.main() == 1
+    assert "missing" in capsys.readouterr().out
+
+
+def test_provenance_without_a_hash_fails(sandbox, capsys):
+    """third_party/README.md requires the sha256; a provenance file that has
+    lost it cannot be an integrity check."""
+    sandbox["PROVENANCE"].write_text("# no hash here\n", encoding="utf-8")
+    assert c.main() == 1
+    assert "records no sha256" in capsys.readouterr().out
+
+
+def test_non_dict_definitions_do_not_break_the_walk():
+    """Swagger allows non-object members; the walk must skip them rather than
+    raise, or a future schema shape takes the whole checker down."""
+    got = c.concrete_types({"definitions": {"ok": {"x-ms-discriminator-value": "Copy"},
+                                            "weird": "a string, not an object"}})
+    assert got == {"Copy": "ok"}
