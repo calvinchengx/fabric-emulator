@@ -101,7 +101,15 @@ func TestTheStubStillAnswersForConnectorLeaves(t *testing.T) {
 }
 
 // TestUnrunnableRefusalsCoverTheDiff pins the SET, not just its members. The
-// list came from diffing ADF's discriminators against the dispatch; if someone
+// list came from diffing ADF's discriminators against the dispatch;
+//
+// NOTE, now that both halves of that diff are DERIVED rather than typed:
+// scripts/check_adf_activity_types.py and scripts/check_fabric_activity_types.py
+// walk the vendored schemas, so a name missing from the dispatch already fails a
+// check without this map. What this map still adds is the reverse direction with
+// a REASON attached — it forces a deliberate edit, and its comments record why
+// each entry is here and when two of them left. Worth revisiting whether that is
+// enough to keep it. if someone
 // later implements one of these for real they must remove it from the map, and
 // if someone adds a type string here it must be a real discriminator. The
 // names are asserted literally because a typo would silently un-refuse an
@@ -123,6 +131,13 @@ func TestUnrunnableRefusalsCoverTheDiff(t *testing.T) {
 		"Teams": true, "MicrosoftTeams": true, "Office365Email": true, "Email": true,
 
 		"PBISemanticModelRefresh": true,
+
+		// Synapse's spark-job activity. Found by the ADF half of the same
+		// method — scripts/check_adf_activity_types.py, which walks the
+		// VENDORED ADF schema rather than a list anyone typed. It was reaching
+		// the stub: the only ADF discriminator still unhandled when that
+		// checker was written.
+		"SparkJob": true,
 
 		// SparkJobDefinition and InvokeCopyJob WERE here, marked temporary
 		// because the emulator already ran both item types and only the
