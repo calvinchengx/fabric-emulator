@@ -573,6 +573,11 @@ jobs:
       # reminds anyone to redraw, so the roster is asserted instead.
       - run: uv run --frozen --no-sync python scripts/check_arch_services.py
       - run: uv run --frozen --no-sync python scripts/check_image_digests.py
+      # `fabricActivityTypes` is the oracle the dispatch is checked against, and
+      # it was transcribed by hand: a type Fabric adds or renames stayed invisible
+      # until someone re-read the article. Twelve of them once fell to the success
+      # stub for exactly that reason. Held to the vendored table instead.
+      - run: uv run --frozen --no-sync python scripts/check_fabric_activity_types.py
       # Starlight's sidebar is an explicit list — no autogenerate. A doc left
       # out still builds and still has a URL, but nothing links to it, so it is
       # published and unreachable. Same drift, same guard.

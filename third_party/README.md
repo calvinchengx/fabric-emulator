@@ -53,6 +53,16 @@ the golden truth is reviewable. Never let a reference float.
   corpus (CC-BY-4.0, pinned by reference). Golden reference for the XMLA
   protocol, rowset encodings, schema rowsets, and the TMSL/TMDL model formats.
 
+- [`fabric-activity-types/`](fabric-activity-types/) — Microsoft's own
+  `DataPipelineActivityTypes` table, the list of data-pipeline activity
+  discriminators Fabric documents. Pinned by **content hash rather than a
+  commit SHA**, because the article is a REST-API reference published only as
+  generated HTML and no public repo carries it — the exception is argued in its
+  `PROVENANCE.md`. Golden reference for `internal/api/fabricActivityTypes`,
+  which `scripts/check_fabric_activity_types.py` holds to it; that list is what
+  `TestEveryDocumentedFabricActivityTypeIsHandled` walks, so a type Fabric adds
+  becomes a failing check instead of a fabricated success.
+
 - [`notebookutils-stubs/`](notebookutils-stubs/) — Microsoft's own
   `dummy-notebookutils` wheel, the stub package they publish so notebook code
   can be developed off-cluster. It states the `notebookutils.*` surface in a
