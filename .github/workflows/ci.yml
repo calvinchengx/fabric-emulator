@@ -578,6 +578,11 @@ jobs:
       # until someone re-read the article. Twelve of them once fell to the success
       # stub for exactly that reason. Held to the vendored table instead.
       - run: uv run --frozen --no-sync python scripts/check_fabric_activity_types.py
+      # The ADF half of the same guard: the emulator accepts ADF's activity
+      # vocabulary as a compatibility surface, so an ADF type it does not
+      # recognise reaches the same success stub. Found SparkJob doing exactly
+      # that when it was written.
+      - run: uv run --frozen --no-sync python scripts/check_adf_activity_types.py
       # Starlight's sidebar is an explicit list — no autogenerate. A doc left
       # out still builds and still has a URL, but nothing links to it, so it is
       # published and unreachable. Same drift, same guard.

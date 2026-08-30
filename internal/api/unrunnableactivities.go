@@ -67,6 +67,14 @@ var unrunnableActivities = map[string]string{
 		"here — a mapper/reducer pair is not a command the caller wrote (that is the Custom " +
 		"activity), it is a MapReduce runtime the emulator would have to supply around it",
 
+	"SparkJob": "submits a Spark job definition held in a SYNAPSE workspace, named by a " +
+		"SparkJobDefinitionReference plus args. The emulator models no Synapse workspace, " +
+		"so there is no artifact to resolve that reference against. Fabric's own " +
+		"SparkJobDefinition activity IS implemented and is the modelled route — but it " +
+		"names a Fabric item by sparkJobDefinitionId + workspaceId" + ", so treating the two as one would mean resolving a " +
+		"Synapse artifact reference against Fabric items: a mapping nobody wrote, and the " +
+		"same objection that refuses a dbfs: path in the Databricks activity",
+
 	"DataLakeAnalyticsU-SQL": dataLakeAnalyticsCause,
 
 	"ExecuteSSISPackage": "runs an SSIS package on an Azure-SSIS integration runtime, named " +

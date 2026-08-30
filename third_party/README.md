@@ -53,6 +53,14 @@ the golden truth is reviewable. Never let a reference float.
   corpus (CC-BY-4.0, pinned by reference). Golden reference for the XMLA
   protocol, rowset encodings, schema rowsets, and the TMSL/TMDL model formats.
 
+- [`adf-pipeline-schema/`](adf-pipeline-schema/) — ADF/Synapse's published
+  `entityTypes/Pipeline.json` (MIT, copied in full, pinned to a commit SHA).
+  Golden reference for the ADF activity vocabulary the emulator accepts beside
+  Fabric's own; `scripts/check_adf_activity_types.py` asserts every CONCRETE
+  discriminator in it is handled — dispatch, interpreter, or refused by name —
+  and never the success stub. Abstract base classes are excluded by walking the
+  schema's `allOf` graph, not by an exemption list.
+
 - [`fabric-activity-types/`](fabric-activity-types/) — Microsoft's own
   `DataPipelineActivityTypes` table, the list of data-pipeline activity
   discriminators Fabric documents. Pinned by **content hash rather than a
