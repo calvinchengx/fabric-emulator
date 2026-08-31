@@ -1,10 +1,12 @@
 package tds
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -318,5 +320,120 @@ func TestEnsurePrincipalReportsEngineFailures(t *testing.T) {
 	bad := strings.Repeat("x", 200)
 	if err := EnsurePrincipal(ctx, master, target, bad, RoleWriter); err == nil {
 		t.Fatal("an unusable principal name was reported as provisioned")
+	}
+}
+
+// TestCrossDatabaseNeedsAUserInBoth is the regression this whole grant set
+// exists for, run against a REAL engine because SQL Server is the only thing
+// that can answer it: error 916 comes from the engine, mid-statement, on a
+// login that already succeeded.
+//
+// Gold is a Warehouse that reads silver out of a Lakehouse by three-part name.
+// Provisioning the caller only in the database they connected to made that
+// statement fail with "not able to access the database under the current
+// security context", and it stayed hidden for a week because one cell happens
+// to open a TDS connection to its lakehouse earlier, which provisioned the
+// principal there as an undeclared side effect.
+//
+// The first half of this test is the bug. If it ever stops failing, the second
+// half proves nothing.
+func TestCrossDatabaseNeedsAUserInBoth(t *testing.T) {
+	dsn := os.Getenv("WAREHOUSE_MSSQL_DSN")
+	if dsn == "" {
+		t.Skip("set WAREHOUSE_MSSQL_DSN (a reachable SQL Server) to run this")
+	}
+	master, err := sql.Open("sqlserver", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	if err := master.Ping(); err != nil {
+		t.Skipf("WAREHOUSE_MSSQL_DSN set but unreachable: %v", err)
+	}
+
+	suffix := make([]byte, 6)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatal(err)
+	}
+	tag := hex.EncodeToString(suffix)
+	warehouse, lakehouse := "wh_"+tag, "lh_"+tag
+	oid := "oid-" + tag
+
+	for _, db := range []string{warehouse, lakehouse} {
+		if _, err := master.Exec(fmt.Sprintf("CREATE DATABASE [%s]", db)); err != nil {
+			t.Fatalf("creating %s: %v", db, err)
+		}
+		defer master.Exec(fmt.Sprintf("ALTER DATABASE [%s] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [%s]", db, db))
+	}
+	defer master.Exec(fmt.Sprintf("DROP LOGIN [%s]", oid))
+
+	lakeDSN := dsn
+	if strings.Contains(dsn, "?") {
+		lakeDSN = dsn + "&database=" + lakehouse
+	} else {
+		lakeDSN = dsn + "?database=" + lakehouse
+	}
+	lake, err := sql.Open("sqlserver", lakeDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lake.Close()
+	if _, err := lake.Exec("CREATE TABLE dbo.silver_customers(id INT); INSERT INTO dbo.silver_customers VALUES (1),(2)"); err != nil {
+		t.Fatalf("seeding silver: %v", err)
+	}
+
+	whDSN := dsn
+	if strings.Contains(dsn, "?") {
+		whDSN = dsn + "&database=" + warehouse
+	} else {
+		whDSN = dsn + "?database=" + warehouse
+	}
+	wh, err := sql.Open("sqlserver", whDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wh.Close()
+
+	// THE OLD BEHAVIOUR: a user in the connect database only.
+	if err := EnsurePrincipal(context.Background(), master, wh, oid, RoleOwner); err != nil {
+		t.Fatalf("provisioning in the warehouse: %v", err)
+	}
+	asCaller := func() *sql.DB {
+		u := strings.Replace(whDSN, "//sa:", "//"+oid+":", 1)
+		// Rebuild the credential half rather than editing it: the DSN's own
+		// user and password are the service account's.
+		u = fmt.Sprintf("sqlserver://%s:%s@%s", url.QueryEscape(oid),
+			url.QueryEscape(principalPassword(oid)), whDSN[strings.Index(whDSN, "@")+1:])
+		db, err := sql.Open("sqlserver", u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return db
+	}
+
+	caller := asCaller()
+	defer caller.Close()
+	var n int
+	err = caller.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM [%s].dbo.silver_customers", lakehouse)).Scan(&n)
+	if err == nil {
+		t.Fatal("a caller with no user in the lakehouse read it anyway — " +
+			"this test can no longer detect the defect it exists for")
+	}
+	if !strings.Contains(err.Error(), "916") && !strings.Contains(err.Error(), "not able to access the database") {
+		t.Fatalf("expected SQL 916 for the cross-database read, got: %v", err)
+	}
+	t.Logf("as shipped: %v", err)
+
+	// THE FIX: the same caller, also provisioned in the lakehouse.
+	if err := EnsurePrincipal(context.Background(), master, lake, oid, RoleReader); err != nil {
+		t.Fatalf("provisioning in the lakehouse: %v", err)
+	}
+	fixed := asCaller()
+	defer fixed.Close()
+	if err := fixed.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM [%s].dbo.silver_customers", lakehouse)).Scan(&n); err != nil {
+		t.Fatalf("cross-database read still fails after provisioning both: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("read %d rows across databases, want 2", n)
 	}
 }

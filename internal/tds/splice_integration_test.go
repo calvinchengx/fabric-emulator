@@ -27,7 +27,15 @@ func (f *fakeSpliceBackend) Query(context.Context, string) (*Result, error) {
 	return nil, fmt.Errorf("unused")
 }
 
-func (f *fakeSpliceBackend) Dial(context.Context, string, string, Role) (net.Conn, []byte, error) {
+// A COMPILE-TIME ASSERTION, because the runtime one is silent. The server
+// reaches the splice path through `s.Backend.(SpliceBackend)`, so a fake whose
+// Dial signature has drifted does not fail to build: it stops satisfying the
+// interface, the assertion returns false, and every session quietly falls into
+// the re-encode relay. That is how a signature change here turned two passing
+// tests into "mssql: unused" and a relay that should never have run.
+var _ SpliceBackend = (*fakeSpliceBackend)(nil)
+
+func (f *fakeSpliceBackend) Dial(context.Context, string, string, []Grant) (net.Conn, []byte, error) {
 	if f.dialErr != nil {
 		return nil, nil, f.dialErr
 	}
@@ -362,7 +370,9 @@ func (c *countingSpliceBackend) Query(_ context.Context, q string) (*Result, err
 	return &Result{Columns: []Column{{Name: "x", Type: ColInt}}, Rows: [][]any{{int64(1)}}}, nil
 }
 
-func (c *countingSpliceBackend) Dial(context.Context, string, string, Role) (net.Conn, []byte, error) {
+var _ SpliceBackend = (*countingSpliceBackend)(nil)
+
+func (c *countingSpliceBackend) Dial(context.Context, string, string, []Grant) (net.Conn, []byte, error) {
 	c.mu.Lock()
 	c.dialed++
 	c.mu.Unlock()

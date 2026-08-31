@@ -259,3 +259,70 @@ func forgeTokenAs(t *testing.T, emu *entra.Emulator, audience, oid string) strin
 	}
 	return tok.Token
 }
+
+// A workspace role reaches every SQL item in the workspace, not only the one
+// named on the connection.
+//
+// THE SHAPE THAT BROKE. Gold is a Warehouse that reads silver out of a
+// Lakehouse by three-part name. The caller was provisioned in the database
+// they connected to and nowhere else, so the first cross-database statement
+// came back 916, "not able to access the database under the current security
+// context" — from inside a statement, on a login that had already succeeded,
+// which is why it read as a data error rather than an access one.
+//
+// It survived a week of daily runs because one cell hid it: that cell opens a
+// TDS connection to its lakehouse first, to trigger reflection, and that
+// connect provisioned the principal there as a side effect nothing declared.
+// The cell without that step was the only one failing, so the emulator looked
+// innocent and the cell looked broken.
+func TestWorkspaceRoleReachesEverySQLItem(t *testing.T) {
+	f := newSecFixture(t)
+
+	lh := &store.Item{WorkspaceID: f.ws.ID, Type: "Lakehouse", DisplayName: "lake"}
+	if err := f.srv.Store.CreateItem(lh, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seed the lakehouse's database the way EnsureDatabase and the analytics
+	// endpoint's refresh leave it: the database exists and holds silver. Done
+	// with the service credential because this test is about who may READ
+	// across, not about how the tables got there.
+	dsn := os.Getenv("WAREHOUSE_MSSQL_DSN")
+	master, err := sql.Open("sqlserver", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	if _, err := master.Exec(fmt.Sprintf("CREATE DATABASE [%s]", lh.ID)); err != nil {
+		t.Fatalf("creating the lakehouse database: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = master.Exec(fmt.Sprintf(
+			"ALTER DATABASE [%s] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [%s]", lh.ID, lh.ID))
+	})
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	lake, err := sql.Open("sqlserver", dsn+sep+"database="+lh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lake.Close()
+	if _, err := lake.Exec("CREATE TABLE dbo.silver_customers(id INT); INSERT INTO dbo.silver_customers VALUES (1),(2)"); err != nil {
+		t.Fatalf("seeding silver: %v", err)
+	}
+
+	// A Contributor connects to the WAREHOUSE and reads the LAKEHOUSE, which is
+	// exactly what gold does.
+	caller := f.connectAs(t, "22222222-2222-2222-2222-222222222222", store.RoleContributor)
+	var n int
+	if err := caller.QueryRow(fmt.Sprintf(
+		"SELECT COUNT(*) FROM [%s].dbo.silver_customers", lh.ID)).Scan(&n); err != nil {
+		t.Fatalf("a workspace Contributor could not read a sibling item's SQL endpoint "+
+			"from the warehouse it connected to: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("read %d rows across databases, want 2", n)
+	}
+}

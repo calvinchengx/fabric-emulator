@@ -152,12 +152,63 @@ func (b *sqlServerBackend) Query(ctx context.Context, query string) (*Result, er
 	return materialize(rows)
 }
 
+// grantsFor splits the grant list into the connection's own database and the
+// rest, deduplicated.
+//
+// Split rather than returned as one list because the two have different
+// guarantees: the target's database is already prepared, a sibling's may not
+// exist yet. A backend with no store behind it (the fakes) passes no grants at
+// all, so the target is synthesised when absent and the sibling list is empty,
+// which is the behaviour that shipped before any of this.
+func grantsFor(database string, grants []Grant) (target Grant, siblings []Grant) {
+	// Reader when nothing vouched for it: OnConnect is what normally sets the
+	// rung, and a caller that reached here without one gets the lowest.
+	target = Grant{Database: database, Role: RoleReader}
+	seen := map[string]bool{database: false}
+	for _, g := range grants {
+		if g.Database == "" {
+			continue
+		}
+		if g.Database == database {
+			if !seen[database] {
+				target, seen[database] = g, true
+			}
+			continue
+		}
+		if seen[g.Database] {
+			continue
+		}
+		seen[g.Database] = true
+		siblings = append(siblings, g)
+	}
+	return target, siblings
+}
+
+// existingDatabases names the databases the engine actually has, so
+// provisioning can skip an item whose database has not been created yet.
+func (b *sqlServerBackend) existingDatabases(ctx context.Context) (map[string]bool, error) {
+	rows, err := b.pool("").QueryContext(ctx, "SELECT name FROM sys.databases")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out[n] = true
+	}
+	return out, rows.Err()
+}
+
 // Dial opens a raw TCP connection to the SQL Server backend and completes a
 // SQL-auth TDS login into the item's database, returning the connection ready
 // for post-login traffic. The server splices the client's session onto it, so
 // SQL Server itself produces every response token (full fidelity). The service
 // credential and address come from the base DSN.
-func (b *sqlServerBackend) Dial(ctx context.Context, database, principal string, role Role) (net.Conn, []byte, error) {
+func (b *sqlServerBackend) Dial(ctx context.Context, database, principal string, grants []Grant) (net.Conn, []byte, error) {
 	if b.base == nil {
 		return nil, nil, fmt.Errorf("no backend DSN configured for splicing")
 	}
@@ -173,8 +224,45 @@ func (b *sqlServerBackend) Dial(ctx context.Context, database, principal string,
 	// worked.
 	user, password := b.base.User, b.base.Password
 	if principal != "" {
-		if err := EnsurePrincipal(ctx, b.pool(""), b.pool(database), principal, role); err != nil {
+		// EVERY DATABASE THE WORKSPACE ROLE REACHES, not just the one named on
+		// the connection. See Connection.Grants: a warehouse that reads a
+		// lakehouse by three-part name gets SQL 916 mid-statement otherwise,
+		// because the login succeeded and the second database has no user.
+		//
+		// Skipped where the database does not exist yet. Provisioning does not
+		// create item databases: EnsureDatabase does, on connect or on the
+		// endpoint refresh, and creating one here would invent an item.
+		target, siblings := grantsFor(database, grants)
+		if err := EnsurePrincipal(ctx, b.pool(""), b.pool(database), principal, target.Role); err != nil {
 			return nil, nil, fmt.Errorf("provisioning %s: %w", principal, err)
+		}
+		// THE TARGET IS PROVISIONED UNCONDITIONALLY, above, exactly as it always
+		// was: OnConnect has already run EnsureDatabase on it, so it is there.
+		//
+		// A SIBLING HAS NO SUCH GUARANTEE. Its item exists in the store, but its
+		// database is created lazily, on first connect or on the analytics
+		// endpoint's refresh, so the workspace sweep routinely names databases
+		// the engine does not have yet. Asking first, rather than provisioning
+		// and ignoring the error, keeps a real provisioning failure loud.
+		//
+		// Only asked when there ARE siblings. Querying unconditionally made the
+		// single-database path depend on an engine that answers
+		// `SELECT name FROM sys.databases`, which the fake listeners in these
+		// tests do not: two of them went from passing to a session silently
+		// demoted into the re-encode relay.
+		if len(siblings) > 0 {
+			present, err := b.existingDatabases(ctx)
+			if err != nil {
+				return nil, nil, fmt.Errorf("listing databases: %w", err)
+			}
+			for _, g := range siblings {
+				if !present[g.Database] {
+					continue
+				}
+				if err := EnsurePrincipal(ctx, b.pool(""), b.pool(g.Database), principal, g.Role); err != nil {
+					return nil, nil, fmt.Errorf("provisioning %s in %s: %w", principal, g.Database, err)
+				}
+			}
 		}
 		user, password = principal, principalPassword(principal)
 	}
