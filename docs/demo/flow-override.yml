@@ -3,8 +3,8 @@
 # Builds the emulator from THIS tree, and remaps every published port so the
 # recording never collides with a dev stack — or with a sibling project holding
 # 9443, which is what prompted the remap. The example is pointed at these ports
-# through its own environment variables (`FABRIC_REST_URL` and friends, see
-# examples/contoso-fixtures/common.py), so nothing is hard-coded twice.
+# through its own environment variables (`FABRIC_EMULATOR_URL` and friends --
+# the names python/fabric-target reads), so nothing is hard-coded twice.
 services:
   fabric-emulator:
     build:
