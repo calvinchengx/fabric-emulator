@@ -16,8 +16,8 @@ run it under the runner's exact shell flags -- GitHub invokes `shell: bash` as
 import pathlib
 import subprocess
 
-import yaml
 import pytest
+import yaml
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "real-fabric.yml"
@@ -100,7 +100,7 @@ def test_a_complete_configuration_runs(tmp_path):
 
 
 def test_a_client_secret_selects_secret_mode(tmp_path):
-    r, outputs, _ = _run(tmp_path, client_id=True, tenant_id=True, workspace=True, client_secret=True)
+    _, outputs, _ = _run(tmp_path, client_id=True, tenant_id=True, workspace=True, client_secret=True)
     assert outputs["run"] == "true"
     assert outputs["mode"] == "secret"
 
