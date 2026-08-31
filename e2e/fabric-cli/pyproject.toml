@@ -1,0 +1,35 @@
+# A PROJECT OF ITS OWN, deliberately, and the reason is a resolution one.
+#
+# `ms-fabric-cli` pins `pyyaml==6.0.2` EXACTLY and unconditionally. While this
+# lived as a `fabric-cli` dependency group in the root workspace, that pin took
+# part in the root's universal resolution, so nothing else in the repository
+# could move pyyaml: Dependabot's `pyyaml 6.0.2 -> 6.0.3` bump failed with
+# `Because ms-fabric-cli>=1.2.0 depends on pyyaml==6.0.2`, and the `uv` job had
+# been red since 25 August. Measured: emptying the group flipped that bump from
+# exit 1 to exit 0 and nothing else changed.
+#
+# NOT A 3.14 PROBLEM, which is what it looked like. Every error carried a
+# `python_full_version >= '3.14'` marker, and 6.0.2 does lack a cp314 wheel, but
+# capping the root's `requires-python` at `<3.14` failed identically with the
+# same ms-fabric-cli line. The pin is unconditional; the marker was incidental.
+#
+# NOTHING IS LOST BY MOVING IT. The group was never installed into the repo
+# venv: its only consumer is e2e/fabric-cli/Dockerfile, which syncs it with
+# `--no-install-project` inside a container. A dependency that exists solely for
+# one containerised test was constraining the whole workspace.
+#
+# Still watched: .github/dependabot.yml lists this directory under the `uv`
+# ecosystem, so ms-fabric-cli keeps getting updates here instead of silently
+# falling out of Dependabot's view.
+[project]
+name = "fabric-cli-e2e"
+version = "0.0.0"
+description = "Microsoft's Fabric CLI (fab), driven against the emulator. Container-only."
+# ms-fabric-cli's own floor. Kept narrow on purpose: this project exists to
+# install one tool into one image, not to be portable.
+requires-python = ">=3.12"
+dependencies = ["ms-fabric-cli>=1.2"]
+
+[tool.uv]
+# There is no package here to build; this file is a lockfile anchor.
+package = false
