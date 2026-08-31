@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/calvinchengx/entra-emulator v0.9.0
-	github.com/microsoft/go-mssqldb v1.10.0
+	github.com/microsoft/go-mssqldb v1.11.0
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/segmentio/kafka-go v0.4.51
 	modernc.org/sqlite v1.57.0
