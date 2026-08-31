@@ -13,7 +13,7 @@
 # drift. Duplicated deliberately rather than factored out: a base image would
 # have to be built and pushed before this one, which is a release-ordering
 # constraint for six lines.
-FROM python:3.12-slim
+FROM python:3.14-slim
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 
 WORKDIR /app

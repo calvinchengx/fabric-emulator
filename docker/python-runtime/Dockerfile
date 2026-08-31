@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 
 ARG UV_GROUP
