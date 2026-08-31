@@ -13,7 +13,9 @@ run it under the runner's exact shell flags -- GitHub invokes `shell: bash` as
 `bash --noprofile --norc -e -o pipefail`, so -e is on before the script's own
 `set` line and a bare failing assignment would end the step early.
 """
+import os
 import pathlib
+import shutil
 import subprocess
 
 import pytest
@@ -32,17 +34,59 @@ def _gate_script() -> str:
     raise AssertionError("the gate has no step with id 'check'")
 
 
+def _working_bash():
+    """A bash that actually executes a script, or None.
+
+    NOT `shutil.which("bash")` alone. On windows-latest that resolves to
+    System32\\bash.exe, the WSL launcher, which has no installed distribution
+    and answers every invocation with "Windows Subsystem for Linux has no
+    installed distributions" on stdout and a non-zero status. Every assertion
+    in this file then failed against that banner rather than against the gate.
+    Probing beats trusting the name: whatever is found has to run a script
+    before it is used.
+
+    Git Bash is tried first by absolute path because it is the interpreter
+    Windows runners actually have and `which` does not find it first.
+    """
+    candidates = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+    ]
+    found = shutil.which("bash")
+    if found:
+        candidates.append(found)
+    for c in candidates:
+        if not pathlib.Path(c).exists():
+            continue
+        try:
+            r = subprocess.run([c, "-c", "printf ok"], capture_output=True, text=True, timeout=30)
+        except OSError:
+            continue
+        if r.returncode == 0 and r.stdout.strip() == "ok":
+            return c
+    return None
+
+
 def _run(tmp_path, *, client_id, tenant_id, workspace, client_secret=False):
+    # THE ENVIRONMENT IS INHERITED, not pinned to a minimal one. The first
+    # version passed `PATH=/usr/bin:/bin`, which is a POSIX path list, so the
+    # whole file died on windows-latest where the suite also runs. The four
+    # HAVE_* and the two GITHUB_* below are overridden explicitly, which is
+    # what the isolation actually needs: a real GITHUB_OUTPUT in CI must not
+    # be written to, and a stray HAVE_* must not leak in.
+    bash = _working_bash()
+    if bash is None:
+        pytest.skip("no usable bash; the gate is a bash step and runs on ubuntu-latest")
     script = tmp_path / "gate.sh"
     script.write_text(_gate_script(), encoding="utf-8")
     out, summary = tmp_path / "out", tmp_path / "summary"
     out.touch()
     summary.touch()
     r = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", str(script)],
+        [bash, "--noprofile", "--norc", "-e", "-o", "pipefail", str(script)],
         capture_output=True, text=True,
         env={
-            "PATH": "/usr/bin:/bin",
+            **os.environ,
             "HAVE_CLIENT_ID": str(client_id).lower(),
             "HAVE_TENANT_ID": str(tenant_id).lower(),
             "HAVE_WORKSPACE": str(workspace).lower(),
