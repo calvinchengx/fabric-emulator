@@ -31,6 +31,30 @@ type Connection struct {
 	// because "may write" and "may author security policy" are different
 	// questions, and collapsing them left nobody able to define a policy at all.
 	Role Role
+	// Grants is every database this caller must exist in, not just the one
+	// they connected to.
+	//
+	// A WORKSPACE ROLE IS WORKSPACE-WIDE, and provisioning only the connect
+	// target quietly turned it into a per-database grant. Gold is a Warehouse
+	// that reads silver out of a Lakehouse by three-part name, so the very
+	// first cross-database statement got SQL 916, "not able to access the
+	// database under the current security context" — mid-statement, long after
+	// a login that had already succeeded.
+	//
+	// It looked cell-specific because one cell hid it: that cell opens a TDS
+	// connection to the lakehouse earlier, to trigger reflection, and the
+	// connect provisioned the principal there as a side effect nothing
+	// declared. The cell without that step was the only one red.
+	//
+	// Empty means "just TargetDB", which is what a backend with no store
+	// behind it (the fakes) can say.
+	Grants []Grant
+}
+
+// Grant is one database this caller may reach, and the rung they get there.
+type Grant struct {
+	Database string
+	Role     Role
 }
 
 // SpliceBackend is a Backend that can open a raw, already-authenticated
@@ -49,7 +73,7 @@ type SpliceBackend interface {
 	// than as the relay's own account — which is what gives the engine's RLS,
 	// CLS and masking somebody to restrict (docs/55-tsql-security.md). Empty
 	// means internal work with no caller, and keeps the DSN account.
-	Dial(ctx context.Context, database, principal string, role Role) (net.Conn, []byte, error)
+	Dial(ctx context.Context, database, principal string, grants []Grant) (net.Conn, []byte, error)
 }
 
 // ColType is the wire type a result column is encoded as. Integer/float/bit

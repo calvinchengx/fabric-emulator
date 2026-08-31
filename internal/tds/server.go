@@ -105,6 +105,7 @@ func (s *Server) handle(conn net.Conn) error {
 	targetDB := login.Database
 	principal := ""
 	dbRole := RoleReader
+	var grants []Grant
 	if s.OnConnect != nil {
 		// An empty database is REJECTED, not waved through. OnConnect is the only
 		// place a TDS connection's workspace role and read-only-ness are decided,
@@ -124,6 +125,7 @@ func (s *Server) handle(conn net.Conn) error {
 			return s.reject(conn, err.Error())
 		}
 		targetDB, readOnly, principal, dbRole = got.TargetDB, got.ReadOnly, got.Principal, got.Role
+		grants = got.Grants
 	}
 	// Full-fidelity path: if the backend can open a raw authenticated connection
 	// to the real engine, splice the client's post-login session straight to it
@@ -132,7 +134,11 @@ func (s *Server) handle(conn net.Conn) error {
 	// which the Microsoft ODBC/JDBC driver family requires. Dial before acking so
 	// a backend failure can still reject the login cleanly.
 	if sb, ok := s.Backend.(SpliceBackend); ok && targetDB != "" {
-		backendConn, backendLogin, err := sb.Dial(context.Background(), targetDB, principal, dbRole)
+		// The target FIRST, carrying the rung OnConnect decided for it. Dial
+		// dedupes by first occurrence, so this is what wins if the workspace
+		// sweep also lists it.
+		grants = append([]Grant{{Database: targetDB, Role: dbRole}}, grants...)
+		backendConn, backendLogin, err := sb.Dial(context.Background(), targetDB, principal, grants)
 		if err != nil {
 			return s.reject(conn, "backend connect failed: "+err.Error())
 		}

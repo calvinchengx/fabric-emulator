@@ -25,7 +25,7 @@ func TestDialSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conn, login, err := be.Dial(context.Background(), "itemdb", "", RoleReader)
+	conn, login, err := be.Dial(context.Background(), "itemdb", "", []Grant{{Database: "itemdb", Role: RoleReader}})
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestBackendPerDatabase(t *testing.T) {
 
 	// Dial reaches the backend login handshake (which errors — no server — but the
 	// dial+login path is covered).
-	if _, _, err := be.Dial(context.Background(), "item-1", "", RoleReader); err == nil {
+	if _, _, err := be.Dial(context.Background(), "item-1", "", []Grant{{Database: "item-1", Role: RoleReader}}); err == nil {
 		t.Error("expected a connect/login error from Dial with no server")
 	}
 	// A DSN with no explicit port exercises Dial's default-1433 branch (still
@@ -75,7 +75,7 @@ func TestBackendPerDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := noPort.Dial(context.Background(), "item", "", RoleReader); err == nil {
+	if _, _, err := noPort.Dial(context.Background(), "item", "", []Grant{{Database: "item", Role: RoleReader}}); err == nil {
 		t.Error("expected a connect error dialing the default port with no server")
 	}
 
@@ -88,7 +88,7 @@ func TestBackendPerDatabase(t *testing.T) {
 		t.Error("test-backend DB should be the (nil) default")
 	}
 	// Dial on a backend with no base DSN is a clear error, not a panic.
-	if _, _, err := tb.Dial(context.Background(), "x", "", RoleReader); err == nil {
+	if _, _, err := tb.Dial(context.Background(), "x", "", []Grant{{Database: "x", Role: RoleReader}}); err == nil {
 		t.Error("Dial without a base DSN should error")
 	}
 }
@@ -133,7 +133,7 @@ func TestDialRefusesWhenTheCallerCannotBeProvisioned(t *testing.T) {
 	}
 	// A name SQL Server will not accept as a principal.
 	bad := strings.Repeat("x", 200)
-	if _, _, err := be.Dial(context.Background(), "master", bad, RoleWriter); err == nil {
+	if _, _, err := be.Dial(context.Background(), "master", bad, []Grant{{Database: "master", Role: RoleWriter}}); err == nil {
 		t.Fatal("an unprovisionable caller was dialed anyway")
 	} else if !strings.Contains(err.Error(), "provisioning") {
 		t.Fatalf("error = %v; want it to name provisioning, so the cause is readable", err)

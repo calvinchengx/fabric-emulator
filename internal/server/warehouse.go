@@ -70,14 +70,11 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 			// policy that constrains them. Admin and Member own the item in Fabric's
 			// model — "can edit OneLake security roles" is exactly those two — so they
 			// are the ones who can author here too.
-			dbRole := tds.RoleReader
-			switch {
-			case store.RoleRank(role) >= store.RoleRank(store.RoleMember):
-				dbRole = tds.RoleOwner
-			case !readOnly:
-				dbRole = tds.RoleWriter
-			}
-			return tds.Connection{TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole}, nil
+			dbRole := dbRung(role, readOnly)
+			return tds.Connection{
+				TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole,
+				Grants: workspaceGrants(st, it.WorkspaceID, role),
+			}, nil
 		case "Warehouse", "SQLDatabase":
 			// A Warehouse and a Fabric SQL Database are both read-write T-SQL over
 			// their own SQL Server database (the SQL Database is OLTP and also mirrors
@@ -87,18 +84,70 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 			// policy that constrains them. Admin and Member own the item in Fabric's
 			// model — "can edit OneLake security roles" is exactly those two — so they
 			// are the ones who can author here too.
-			dbRole := tds.RoleReader
-			switch {
-			case store.RoleRank(role) >= store.RoleRank(store.RoleMember):
-				dbRole = tds.RoleOwner
-			case !readOnly:
-				dbRole = tds.RoleWriter
-			}
-			return tds.Connection{TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole}, nil
+			dbRole := dbRung(role, readOnly)
+			return tds.Connection{
+				TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole,
+				Grants: workspaceGrants(st, it.WorkspaceID, role),
+			}, nil
 		default:
 			return tds.Connection{}, fmt.Errorf("item %q (type %s) has no SQL endpoint", database, it.Type)
 		}
 	}
+}
+
+// sqlAddressable are the item types that have a T-SQL endpoint. A workspace
+// role reaches all of them, which is what workspaceGrants encodes.
+var sqlAddressable = []string{"Lakehouse", "Warehouse", "SQLDatabase"}
+
+// dbRung is the database rung a workspace role implies on one item.
+//
+// NOT the same question as read-only: a Contributor may write but must not be
+// able to rewrite the security policy that constrains them. Admin and Member
+// own the item in Fabric's model, "can edit OneLake security roles" is exactly
+// those two, so they are the ones who can author here too.
+func dbRung(role string, readOnly bool) tds.Role {
+	switch {
+	case store.RoleRank(role) >= store.RoleRank(store.RoleMember):
+		return tds.RoleOwner
+	case !readOnly:
+		return tds.RoleWriter
+	default:
+		return tds.RoleReader
+	}
+}
+
+// workspaceGrants is every SQL-addressable item in the workspace, with the rung
+// this caller gets on each.
+//
+// WHY THE WHOLE WORKSPACE AND NOT JUST THE ONE CONNECTED TO. Gold is a
+// Warehouse that reads silver out of a Lakehouse by three-part name. That
+// crosses databases, and SQL Server needs the caller to exist in BOTH: with a
+// user in only the connect target it answers 916, "not able to access the
+// database under the current security context", from inside a statement on a
+// login that already succeeded. Fabric grants by workspace role, so having
+// access to one item's endpoint and not its neighbour's is not a shape the real
+// service has.
+//
+// Best effort by design: a store error here means no extra grants, never a
+// refused login. The connection's own database is added by the TDS layer
+// regardless, so the worst case is exactly the behaviour that shipped before.
+func workspaceGrants(st *store.Store, workspaceID, role string) []tds.Grant {
+	var out []tds.Grant
+	for _, t := range sqlAddressable {
+		items, err := st.ListItems(workspaceID, t)
+		if err != nil {
+			continue
+		}
+		for _, it := range items {
+			// A lakehouse endpoint is read-only whatever the role; a warehouse
+			// follows the role. Same rule the target uses.
+			out = append(out, tds.Grant{
+				Database: it.ID,
+				Role:     dbRung(role, t == "Lakehouse" || store.RoleRank(role) < store.RoleRank(store.RoleContributor)),
+			})
+		}
+	}
+	return out
 }
 
 // mirrorItem builds the control-plane mirror hook: ensure the item's SQL Server
