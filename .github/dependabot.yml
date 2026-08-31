@@ -61,12 +61,30 @@ updates:
       python:
         patterns: ['*']
 
-  # The published image's base layers.
+  # The published imageS' base layers, plural. `directory: /` watched exactly
+  # one file, ./Dockerfile, and this repository has twelve. The two that matter
+  # most were among the eleven unwatched: docker/sail and docker/spark-agent are
+  # PUBLISHED to GHCR by the release workflow and pulled by every platform in
+  # the family, and both build `FROM python:3.12-slim` with nothing tracking it.
+  # The runtimes beside them (spark-runtime on apache/spark:3.5.5,
+  # python-runtime, jupyter) were unwatched for the same reason.
+  #
+  # E2E HARNESS IMAGES ARE DELIBERATELY OUT: e2e/*/Dockerfile and
+  # examples/fab-driven exist only inside CI runs, are never published and never
+  # reachable, so a base bump there is noise against the same PR budget the
+  # shipped images compete for. Add `/e2e/*` here if that judgement changes.
   - package-ecosystem: docker
-    directory: /
+    directories:
+      - /
+      - /docker/*
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+    groups:
+      # One PR for the four runtimes that share `python:3.12-slim`, rather than
+      # four identical ones.
+      docker:
+        patterns: ['*']
 
   - package-ecosystem: github-actions
     directory: /
