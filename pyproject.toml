@@ -305,6 +305,21 @@ conflicts = [
         { group = "spark-agent-dbt" },
         { group = "databricks-sdk" },
     ],
+    # ms-fabric-cli pins `pyyaml==6.0.2` exactly, and 6.0.2 has no cp314 wheel
+    # at all while 6.0.3 has eighteen. So `fabric-cli` holds pyyaml at a version
+    # that cannot be built for 3.14, and any other group taking 6.0.3 becomes
+    # irreconcilable with it. That is what has been failing Dependabot's `uv`
+    # update here since 25 August, behind four green sibling jobs in the same
+    # batch: the pyyaml bump it proposes cannot resolve while both groups must
+    # hold one version between them.
+    #
+    # Never installed together, checked rather than assumed: `governance` is
+    # installed by two e2e steps in ci.yml and `fabric-cli` by its own job, and
+    # no command in the workflows or the Makefile names both.
+    [
+        { group = "fabric-cli" },
+        { group = "governance" },
+    ],
 ]
 
 [tool.uv.sources]
