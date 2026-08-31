@@ -28,6 +28,7 @@ import (
 
 	entra "github.com/calvinchengx/entra-emulator/emulator"
 	mssql "github.com/microsoft/go-mssqldb"
+	"github.com/microsoft/go-mssqldb/msdsn"
 
 	"github.com/calvinchengx/fabric-emulator/internal/config"
 	"github.com/calvinchengx/fabric-emulator/internal/server"
@@ -300,14 +301,15 @@ func TestWorkspaceRoleReachesEverySQLItem(t *testing.T) {
 		_, _ = master.Exec(fmt.Sprintf(
 			"ALTER DATABASE [%s] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [%s]", lh.ID, lh.ID))
 	})
-	sep := "?"
-	if strings.Contains(dsn, "?") {
-		sep = "&"
-	}
-	lake, err := sql.Open("sqlserver", dsn+sep+"database="+lh.ID)
+	// THE DSN IS PARSED, NOT CONCATENATED. CI passes the semicolon form
+	// (`server=localhost,1433;user id=sa;…`), so appending `?database=` builds a
+	// string that only works against a URL-shaped DSN.
+	cfg, err := msdsn.Parse(dsn)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("parsing WAREHOUSE_MSSQL_DSN: %v", err)
 	}
+	cfg.Database = lh.ID
+	lake := sql.OpenDB(mssql.NewConnectorConfig(cfg))
 	defer lake.Close()
 	if _, err := lake.Exec("CREATE TABLE dbo.silver_customers(id INT); INSERT INTO dbo.silver_customers VALUES (1),(2)"); err != nil {
 		t.Fatalf("seeding silver: %v", err)

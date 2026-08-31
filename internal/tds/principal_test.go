@@ -6,12 +6,12 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"testing"
 
-	_ "github.com/microsoft/go-mssqldb"
+	mssql "github.com/microsoft/go-mssqldb"
+	"github.com/microsoft/go-mssqldb/msdsn"
 )
 
 // The pieces that decide WHO a caller is, unit-tested without an engine. The
@@ -323,6 +323,25 @@ func TestEnsurePrincipalReportsEngineFailures(t *testing.T) {
 	}
 }
 
+// openAs opens a pool on `database` as `user`, from the DSN in whatever form
+// the environment supplied it. Empty user keeps the DSN's own credential.
+//
+// msdsn.Parse rather than string surgery: the local sidecar is addressed with a
+// URL and CI with the semicolon form, and a test that only understands one of
+// them passes on a laptop and fails on a runner.
+func openAs(t *testing.T, dsn, database, user, password string) *sql.DB {
+	t.Helper()
+	cfg, err := msdsn.Parse(dsn)
+	if err != nil {
+		t.Fatalf("parsing WAREHOUSE_MSSQL_DSN: %v", err)
+	}
+	cfg.Database = database
+	if user != "" {
+		cfg.User, cfg.Password = user, password
+	}
+	return sql.OpenDB(mssql.NewConnectorConfig(cfg))
+}
+
 // TestCrossDatabaseNeedsAUserInBoth is the regression this whole grant set
 // exists for, run against a REAL engine because SQL Server is the only thing
 // that can answer it: error 916 comes from the engine, mid-statement, on a
@@ -363,35 +382,25 @@ func TestCrossDatabaseNeedsAUserInBoth(t *testing.T) {
 		if _, err := master.Exec(fmt.Sprintf("CREATE DATABASE [%s]", db)); err != nil {
 			t.Fatalf("creating %s: %v", db, err)
 		}
-		defer master.Exec(fmt.Sprintf("ALTER DATABASE [%s] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [%s]", db, db))
+		db := db
+		t.Cleanup(func() {
+			_, _ = master.Exec(fmt.Sprintf(
+				"ALTER DATABASE [%s] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [%s]", db, db))
+		})
 	}
-	defer master.Exec(fmt.Sprintf("DROP LOGIN [%s]", oid))
+	t.Cleanup(func() { _, _ = master.Exec(fmt.Sprintf("DROP LOGIN [%s]", oid)) })
 
-	lakeDSN := dsn
-	if strings.Contains(dsn, "?") {
-		lakeDSN = dsn + "&database=" + lakehouse
-	} else {
-		lakeDSN = dsn + "?database=" + lakehouse
-	}
-	lake, err := sql.Open("sqlserver", lakeDSN)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// THE DSN IS PARSED, NOT CONCATENATED. CI passes the semicolon form
+	// (`server=localhost,1433;user id=sa;…`), so appending `?database=` builds
+	// a string that only works against a URL-shaped DSN. This is the same
+	// mechanism sqlServerBackend.pool uses.
+	lake := openAs(t, dsn, lakehouse, "", "")
 	defer lake.Close()
 	if _, err := lake.Exec("CREATE TABLE dbo.silver_customers(id INT); INSERT INTO dbo.silver_customers VALUES (1),(2)"); err != nil {
 		t.Fatalf("seeding silver: %v", err)
 	}
 
-	whDSN := dsn
-	if strings.Contains(dsn, "?") {
-		whDSN = dsn + "&database=" + warehouse
-	} else {
-		whDSN = dsn + "?database=" + warehouse
-	}
-	wh, err := sql.Open("sqlserver", whDSN)
-	if err != nil {
-		t.Fatal(err)
-	}
+	wh := openAs(t, dsn, warehouse, "", "")
 	defer wh.Close()
 
 	// THE OLD BEHAVIOUR: a user in the connect database only.
@@ -399,16 +408,7 @@ func TestCrossDatabaseNeedsAUserInBoth(t *testing.T) {
 		t.Fatalf("provisioning in the warehouse: %v", err)
 	}
 	asCaller := func() *sql.DB {
-		u := strings.Replace(whDSN, "//sa:", "//"+oid+":", 1)
-		// Rebuild the credential half rather than editing it: the DSN's own
-		// user and password are the service account's.
-		u = fmt.Sprintf("sqlserver://%s:%s@%s", url.QueryEscape(oid),
-			url.QueryEscape(principalPassword(oid)), whDSN[strings.Index(whDSN, "@")+1:])
-		db, err := sql.Open("sqlserver", u)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return db
+		return openAs(t, dsn, warehouse, oid, principalPassword(oid))
 	}
 
 	caller := asCaller()
