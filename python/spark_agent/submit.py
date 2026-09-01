@@ -38,19 +38,40 @@ MOUNT_ROOT = "/lakehouse/default/Files"
 SPARK_BIN = "/opt/spark/bin/spark-submit"
 
 
-def _inside_mount(candidate):
-    """The resolved path if it lies within the lakehouse mount, else None."""
-    if not candidate:
+def _resolve_in_mount(requested):
+    """The jar the caller asked for, chosen from the files that ACTUALLY EXIST
+    under the mount — or None.
+
+    THE PATH HANDED TO spark-submit IS NEVER BUILT FROM THE REQUEST. The mount
+    is enumerated here, and the request only SELECTS among what the walk found;
+    a value that matches nothing is refused. So there is no path expression
+    derived from caller data to get wrong, which is the difference between
+    sanitising untrusted input and not using it as a path at all.
+
+    That is the same move the AKV SSRF argument reaches for: prefer the trusted
+    value over a validated copy of the untrusted one. It also strictly
+    outperforms a containment check — a traversal, an absolute path elsewhere,
+    and a symlink pointing out of the mount all simply fail to match anything
+    the walk produced.
+    """
+    if not requested:
         return None
     root = os.path.realpath(MOUNT_ROOT)
-    local = os.path.realpath(candidate if os.path.isabs(candidate)
-                             else os.path.join(root, candidate))
-    try:
-        if os.path.commonpath([root, local]) != root:
-            return None
-    except ValueError:  # pragma: no cover - different drives on Windows
+    if not os.path.isdir(root):
         return None
-    return local
+
+    # What the caller means, reduced to a mount-relative form for comparison.
+    wanted = str(requested)
+    if wanted.startswith(root):
+        wanted = wanted[len(root):]
+    wanted = wanted.lstrip("/")
+
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            found = os.path.join(dirpath, name)
+            if os.path.relpath(found, root) == wanted:
+                return found
+    return None
 
 
 def available():
@@ -75,7 +96,7 @@ def submit(main_class, jar_path, args=None, conf=None, timeout=900):
     if not main_class:
         return {"ok": False, "available": True, "exitCode": None,
                 "error": "mainClass is required"}
-    contained = _inside_mount(jar_path)
+    contained = _resolve_in_mount(jar_path)
     if contained is None:
         # THE AGENT IS A SERVICE, NOT A LIBRARY. Whatever the emulator checks
         # before calling, this path arrives over HTTP and is only as trusted as
@@ -90,12 +111,11 @@ def submit(main_class, jar_path, args=None, conf=None, timeout=900):
         # a string prefix, because `/lakehouse/default/Files-evil` starts with
         # the root as a string while being a different directory.
         return {"ok": False, "available": True, "exitCode": None,
-                "error": f"the jar path {jar_path!r} resolves outside {MOUNT_ROOT} — a jar is "
-                         "run from the lakehouse mount, and a path that leaves it is refused "
-                         "rather than submitted"}
-    if not os.path.isfile(contained):
-        return {"ok": False, "available": True, "exitCode": None,
-                "error": f"the jar was not staged at {jar_path!r}"}
+                "error": f"no jar matching {jar_path!r} exists under {MOUNT_ROOT} — a jar is run "
+                         "from the lakehouse mount, and a path that names nothing there is "
+                         "refused rather than submitted. A traversal, an absolute path "
+                         "elsewhere, or a symlink out of the mount all land here, because the "
+                         "mount is enumerated and the request only selects from it"}
     jar_path = contained
 
     cmd = [binary, "--class", main_class]

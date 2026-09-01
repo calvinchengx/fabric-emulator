@@ -60,13 +60,13 @@ def test_a_missing_main_class_is_refused_before_launching(has_submit, monkeypatc
 
 
 def test_a_missing_jar_is_refused_before_launching(has_submit, monkeypatch):
-    """Inside the mount, but not there — a different refusal from the traversal
-    one, and it must not be reported as a containment failure."""
+    """A name the enumeration does not produce. Under the new shape this is the
+    SAME fact as a traversal — the walk found nothing matching — and saying so
+    once is more honest than two messages for one cause."""
     called = []
     monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: called.append(a) or FakeProc(0))
     out = s.submit("com.acme.Job", s.MOUNT_ROOT + "/jobs/absent.jar")
-    assert out["ok"] is False and "was not staged" in out["error"]
-    assert "resolves outside" not in out["error"]
+    assert out["ok"] is False and "no jar matching" in out["error"]
     assert not called
 
 
@@ -127,27 +127,27 @@ def test_a_path_that_leaves_the_mount_is_refused(has_submit, monkeypatch):
     called = []
     monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: called.append(a) or FakeProc(0))
     out = s.submit("com.acme.Job", s.MOUNT_ROOT + "/../../opt/evil.jar")
-    assert out["ok"] is False and "resolves outside" in out["error"]
+    assert out["ok"] is False and "no jar matching" in out["error"]
     assert not called, "spark-submit was handed a path outside the mount"
 
 
 def test_an_absolute_path_elsewhere_is_refused(has_submit, monkeypatch):
     monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: FakeProc(0))
     out = s.submit("com.acme.Job", "/etc/passwd")
-    assert out["ok"] is False and "resolves outside" in out["error"]
+    assert out["ok"] is False and "no jar matching" in out["error"]
 
 
 def test_a_sibling_directory_sharing_the_prefix_is_refused(tmp_path, monkeypatch):
     """`/lakehouse/default/Files-evil` starts with the root AS A STRING while
-    being a different directory — which is why this compares commonpath rather
-    than prefixes."""
+    being a different directory. The enumeration never produces it, so the
+    prefix trap cannot be fallen into rather than being guarded against."""
     root = tmp_path / "Files"
     root.mkdir()
     evil = tmp_path / "Files-evil"
     evil.mkdir()
     (evil / "x.jar").write_text("nope")
     monkeypatch.setattr(s, "MOUNT_ROOT", str(root))
-    assert s._inside_mount(str(evil / "x.jar")) is None
+    assert s._resolve_in_mount(str(evil / "x.jar")) is None
 
 
 def test_a_jar_inside_the_mount_is_accepted(tmp_path, monkeypatch):
@@ -156,7 +156,7 @@ def test_a_jar_inside_the_mount_is_accepted(tmp_path, monkeypatch):
     jar = root / "jobs" / "etl.jar"
     jar.write_text("PK")
     monkeypatch.setattr(s, "MOUNT_ROOT", str(root))
-    assert s._inside_mount(str(jar)) == str(jar.resolve())
+    assert s._resolve_in_mount(str(jar)) == str(jar.resolve())
     # ...and the guard is not simply refusing everything.
     monkeypatch.setattr(s.shutil, "which", lambda _: "/usr/bin/spark-submit")
     monkeypatch.setattr(s.os.path, "isfile", lambda p: True)
