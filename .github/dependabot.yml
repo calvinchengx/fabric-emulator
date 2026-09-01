@@ -50,10 +50,16 @@ updates:
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
 
-  # Python: uv-managed, one lockfile at the root covering the dependency
-  # groups. Dependabot reads pyproject.toml + uv.lock together.
+  # Python: uv-managed. TWO lockfiles, and the second is not optional.
+  # e2e/fabric-cli is its own project because ms-fabric-cli pins
+  # `pyyaml==6.0.2` exactly and that pin, held in a root dependency group, kept
+  # the whole workspace from moving pyyaml. Moving it out must not also move it
+  # out of Dependabot's view, so the directory is listed here: ms-fabric-cli
+  # keeps getting updates, it just no longer constrains anything else.
   - package-ecosystem: uv
-    directory: /
+    directories:
+      - /
+      - /e2e/fabric-cli
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -85,6 +91,21 @@ updates:
       # four identical ones.
       docker:
         patterns: ['*']
+    # apache/spark's tag is a FIDELITY CLAIM, not a dependency to keep current.
+    #
+    # docs/engine-matrix.md states it outright: "Real Fabric Runtime 1.3 *is*
+    # JVM Spark 3.5.5 + Delta 3.2 + Java 11", and docs/parity.md and
+    # docs/20 repeat it. Bumping the tag does not update the oracle, it stops
+    # the oracle being the thing it claims to emulate — and silently, because
+    # the image still builds.
+    #
+    # Not theoretical: the 3.5.9 bump turned every Delta overwrite into
+    # `AnalysisException: Table events does not support truncate in batch
+    # mode` — Spark 3.5.9's V2 write path against the Delta 3.2.0 jars that
+    # Runtime 1.3 pins. The fix is not a newer Delta (that breaks the claim
+    # from the other side); it is not taking the bump.
+    ignore:
+      - dependency-name: apache/spark
 
   - package-ecosystem: github-actions
     directory: /
