@@ -91,6 +91,21 @@ updates:
       # four identical ones.
       docker:
         patterns: ['*']
+    # apache/spark's tag is a FIDELITY CLAIM, not a dependency to keep current.
+    #
+    # docs/engine-matrix.md states it outright: "Real Fabric Runtime 1.3 *is*
+    # JVM Spark 3.5.5 + Delta 3.2 + Java 11", and docs/parity.md and
+    # docs/20 repeat it. Bumping the tag does not update the oracle, it stops
+    # the oracle being the thing it claims to emulate — and silently, because
+    # the image still builds.
+    #
+    # Not theoretical: the 3.5.9 bump turned every Delta overwrite into
+    # `AnalysisException: Table events does not support truncate in batch
+    # mode` — Spark 3.5.9's V2 write path against the Delta 3.2.0 jars that
+    # Runtime 1.3 pins. The fix is not a newer Delta (that breaks the claim
+    # from the other side); it is not taking the bump.
+    ignore:
+      - dependency-name: apache/spark
 
   - package-ecosystem: github-actions
     directory: /
