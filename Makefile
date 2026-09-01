@@ -163,6 +163,7 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_example_portability.py
 	@$(PY) scripts/check_conformance.py --strict
 	@$(PY) scripts/check_arch_services.py
+	@uv run --frozen --group adls-sdk python scripts/check_refusal_expectations.py
 	@$(PY) scripts/check_endpoint_env_names.py
 	@$(PY) scripts/check_mlflow_unpublished.py
 	@$(PY) scripts/check_fabric_activity_types.py

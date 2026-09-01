@@ -572,6 +572,7 @@ jobs:
       # right, the cast of services had drifted. Nothing about adding a service
       # reminds anyone to redraw, so the roster is asserted instead.
       - run: uv run --frozen --no-sync python scripts/check_arch_services.py
+      - run: uv run --frozen --group adls-sdk python scripts/check_refusal_expectations.py
       - run: uv run --frozen --no-sync python scripts/check_endpoint_env_names.py
       - run: uv run --frozen --no-sync python scripts/check_mlflow_unpublished.py
       - run: uv run --frozen --no-sync python scripts/check_image_digests.py
