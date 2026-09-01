@@ -19,8 +19,12 @@ gaps. The same move is available here and costs no new dependency.
 WHAT BACKS EACH CASE, and the honest answer differs per case:
 
   * the ADLS Gen2 wire code is enumerated by Microsoft's own SDK.
-    `azure.storage.blob.StorageErrorCode` carries 165 codes including
-    `DirectoryNotEmpty`, and it is ALREADY a dependency of this repository.
+    `StorageErrorCode` carries 165 codes including `DirectoryNotEmpty`. It is
+    read from `third_party/azure-storage-error-codes/` rather than imported:
+    every guard here runs under $(PY), which is standard library only, and the
+    first CI job without uv on PATH failed on this check rather than on what it
+    checks. Vendoring is also what makes the pin auditable -- PROVENANCE.md
+    carries the version and the hash of the bytes parsed.
     Azurite would have been the better witness -- it is Microsoft's storage
     implementation -- but it serves Blob/Queue/Table and NOT ADLS Gen2, which
     e2e/azurite-shortcut's own compose says in its header. A DFS-specific
@@ -49,6 +53,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LIVE = ROOT / "e2e" / "conformance" / "live.py"
+VENDORED = ROOT / "third_party" / "azure-storage-error-codes" / "models.py"
 
 # Cases whose expectation this check cannot corroborate, WITH THE REASON. An
 # entry here is a decision someone wrote down, not a gap nobody saw.
@@ -77,6 +82,30 @@ def expectations() -> dict[str, str]:
     raise SystemExit(f"REFUSAL_EXPECTATIONS not found in {LIVE}")
 
 
+def storage_error_codes() -> set[str]:
+    """The codes Microsoft enumerates, parsed from the vendored SDK file.
+
+    `ast` rather than `import`: see the module docstring and PROVENANCE.md.
+    The enum is `class StorageErrorCode(str, Enum)` with `NAME = "Value"`
+    members, and it is the VALUES that go on the wire.
+    """
+    if not VENDORED.is_file():
+        raise SystemExit(
+            f"{VENDORED} is missing — contract 8's second source is vendored, "
+            "not installed; see its PROVENANCE.md")
+    tree = ast.parse(VENDORED.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "StorageErrorCode":
+            return {
+                stmt.value.value
+                for stmt in node.body
+                if isinstance(stmt, ast.Assign)
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str)
+            }
+    return set()
+
+
 def posix_rmdir_errno() -> str:
     """What CPython ACTUALLY raises removing a non-empty directory."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -97,13 +126,13 @@ def main() -> int:
     # 1. The wire code, against Microsoft's enumeration.
     wire = "dfs-delete-non-empty-directory"
     if wire in exp:
-        try:
-            from azure.storage.blob import StorageErrorCode
-        except ImportError as exc:
-            problems.append(f"{wire}: the second source is unavailable ({exc}); "
-                            "the expectation is unchecked rather than confirmed")
+        codes = storage_error_codes()
+        if not codes:
+            problems.append(
+                f"{wire}: no codes parsed from {VENDORED.name} — the second "
+                "source is unreadable, so the expectation is unchecked rather "
+                "than confirmed")
         else:
-            codes = {c.value for c in StorageErrorCode}
             code = exp[wire].split()[-1]
             if code not in codes:
                 problems.append(
