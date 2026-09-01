@@ -39,10 +39,16 @@ SERVICES_TO_LOG = ["fabric-emulator", "spark-agent", "sqlserver",
 # TLS. KV_INTERNAL_URL is the one that differs in kind — Fabric resolves an
 # AzureKeyVaultReference server-side, so the vault URI it STORES must be
 # reachable from the fabric container, not from here.
+# THE NAMES fabric-target READS. Endpoint resolution moved into that package
+# (python/fabric-target), and these were left spelling the pre-move names:
+# FABRIC_REST_URL and KV_URL are read by NOTHING on this path, so both fell
+# back to their defaults. That was invisible here because the defaults are the
+# ports this stack publishes -- the override only mattered for a stack that
+# remapped them, which is the case nobody ran.
 ENDPOINTS = {
     "ENTRA_URL": "https://localhost:8443",
-    "KV_URL": "https://localhost:8444",
-    "FABRIC_REST_URL": "https://localhost:9443",
+    "VAULT_EMULATOR_URL": "https://localhost:8444",
+    "FABRIC_EMULATOR_URL": "https://localhost:9443",
     # TDS_SERVER is deliberately NOT set: unset means the example discovers the
     # SQL address from the item's own properties, which is the only form that can
     # work against real Fabric. Setting it here would leave that path unexercised
