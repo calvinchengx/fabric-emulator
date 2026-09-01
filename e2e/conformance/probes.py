@@ -504,6 +504,7 @@ class FallThroughClaim:
     unrecognised_error: str = ""
     echo_sent: str = ""
     echo_got: str = ""
+    echo_error: str = ""
     # None means the surface does not offer a name form to grade (the warehouse
     # leg asserts in Go and has no catalog-name analogue of this). True/False
     # are graded; absence is not silently treated as a pass.
@@ -577,7 +578,16 @@ def fall_through(
             f"({claim.recognised_error[:160]}) — with nothing intercepting, "
             "fall-through proves nothing")
     if claim.echo_sent:
-        if claim.echo_got != claim.echo_sent:
+        # THE ECHO IS PRIMARY where it exists, because it does not depend on the
+        # engine staying incapable. See the note beside it in live.py: pysail
+        # 0.7.1 learned to plan the unrecognised statement, and the contrast
+        # below then read an honest success as a rewrite.
+        if claim.echo_error:
+            problems.append(
+                "the echo statement itself failed "
+                f"({claim.echo_error[:160]}), so the witness is absent rather "
+                "than clean and fall-through is unproven either way")
+        elif claim.echo_got != claim.echo_sent:
             problems.append(
                 "the engine echoed back text the session did not send — "
                 f"sent {claim.echo_sent!r}, got {claim.echo_got!r}; something "
@@ -589,9 +599,17 @@ def fall_through(
                 f"({claim.unrecognised_error[:160]}); with nothing to contrast, "
                 "a pass on the default engine cannot be read as fall-through")
     elif claim.unrecognised_ok:
+        # THE PREMISE IS PART OF THE CLAIM. This branch used to assert a
+        # rewrite outright, and that inference is only as good as "this engine
+        # cannot plan it" -- which an engine release can falsify without
+        # touching this repository, and pysail 0.7.1 did. Naming both causes
+        # costs nothing and stops a capability gain being reported as a defect
+        # in the emulator.
         problems.append(
-            "the unrecognised statement SUCCEEDED on the default engine, which "
-            "this engine cannot plan — so something rewrote it")
+            "the unrecognised statement SUCCEEDED on the default engine. "
+            "Either something rewrote it, or this engine can now plan it and "
+            "this probe's premise is stale — the echo witness tells those "
+            "apart and is absent on this surface, so neither can be ruled out")
     else:
         low = claim.unrecognised_error.lower()
         hit = [m for m in _INTERCEPTOR_MARKERS if m in low]
