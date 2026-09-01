@@ -15,14 +15,30 @@
 --     attribute ObjectName([Identifier("_rn")]) is missing from the schema
 --
 -- This was first attributed to Sail resolving WHERE against the projected
--- schema. That attribution was WRONG: a probe ran this exact shape against Sail
--- over Spark Connect, including wrapped in a view, and every form passed. The
--- fault lies somewhere on the Livy path or in dbt's generated SQL and is not
--- yet localised.
+-- schema. That attribution was WRONG -- and the correction that replaced it,
+-- "the fault lies somewhere on the Livy path or in dbt's generated SQL and is
+-- not yet localised", is now wrong too. IT IS LOCALISED, AND IT IS GONE.
 --
--- The rewrite stays regardless. Standard SQL evaluates WHERE before projection,
--- so both forms are legal; this one keeps `_rn` in scope at the point it is
--- filtered, which is portable and costs nothing.
+-- Measured by rebuilding the one-CTE shape against a current stack, with the
+-- column names taken the way this file now takes them (`limit 0`) rather than
+-- through DESCRIBE:
+--
+--   * over LIVY, the path that failed: builds, 2,500 rows, and the symmetric
+--     difference against this model is 0 + 0 rows -- identical output;
+--   * over Spark Connect via dbt-spark `method: session` (silver_session.py):
+--     builds, same rows.
+--
+-- So the failure was almost certainly the EMPTY COLUMN LIST, not the shape.
+-- `adapter.get_columns_in_relation` issues DESCRIBE, Sail answers it with the
+-- right schema and zero rows, and the loop below then emitted nothing -- which
+-- is what the block beneath this one exists to avoid. Fixing that fixed this;
+-- `_rn` was a symptom wearing the cause's name.
+--
+-- The rewrite stays anyway, on its own merits rather than as a workaround.
+-- Standard SQL evaluates WHERE before projection, so both forms are legal;
+-- this one keeps `_rn` in scope at the point it is filtered, which is portable
+-- and costs nothing. What changed is that it is no longer load-bearing, so
+-- nobody needs to preserve it out of fear.
 {% set src = source('bronze', 'bronze_orders') %}
 {#
   Column names WITHOUT `describe`.
