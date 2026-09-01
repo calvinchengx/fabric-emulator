@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "Advisories dismissed on this repository, and what would make each one",
+    "wrong again. A Dependabot dismissal is FINAL: the alert never returns, no",
+    "matter what upstream does. Dismissing 'tolerable risk' with no fix",
+    "available is therefore a promise to come back, and nothing in GitHub keeps",
+    "it -- which is what this file and scripts/check_dismissed_advisories.py",
+    "are for.",
+    "",
+    "An entry is removed when the alert is re-opened and the finding actually",
+    "dealt with, not when somebody decides it no longer matters."
+  ],
+  "dismissed": [
+    {
+      "ghsa": "GHSA-h7x2-h6g9-p789",
+      "alert": 56,
+      "ecosystem": "pip",
+      "package": "mlflow",
+      "reason": "tolerable_risk",
+      "dismissed": "2026-09-01",
+      "why": "No fixed release exists: the range is >= 3.13.0, <= 3.15.2 and 3.15.2 IS the newest. Downgrading is closed off too -- the 3.15 floor exists because resolving below it dropped --disable-security-middleware and the container would not start. Nothing here touches the AI Gateway, and the e2e MLflow server runs only inside a compose network publishing no host port, which scripts/check_mlflow_unpublished.py asserts.",
+      "revisit_when": "first_patched_version stops being null"
+    }
+  ]
+}

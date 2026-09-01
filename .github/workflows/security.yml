@@ -68,3 +68,28 @@ jobs:
       # Reports only vulnerabilities the code can actually REACH, so a finding
       # here is a call path rather than a dependency-tree coincidence.
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  # A DISMISSED ALERT NEVER COMES BACK. Dependabot 56 was dismissed as
+  # tolerable risk because the MLflow advisory had no fixed release -- true
+  # when it was written and only until upstream ships one. Nothing in GitHub
+  # re-raises it then, so the dismissal quietly becomes permanent on the
+  # strength of a temporary fact.
+  #
+  # Here rather than in a cron-only workflow of its own: this file already
+  # runs on push, pull_request, a weekly cron and dispatch, so the question
+  # gets asked on every change as well as on a schedule. Its own header states
+  # the rule -- a scanner nobody runs is a scanner that finds nothing.
+  dismissed-advisories:
+    name: Dismissed advisories are still unfixed upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python3 scripts/check_dismissed_advisories.py
+        env:
+          # The endpoint is public; the token only lifts the 60/hour
+          # unauthenticated rate limit that a busy runner IP can hit.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
