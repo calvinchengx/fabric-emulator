@@ -29,7 +29,7 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
-    "@lucide/svelte": "^1.35.0",
+    "@lucide/svelte": "^1.37.0",
     "bits-ui": "^2.19.0",
     "clsx": "^2.1.1",
     "tailwind-merge": "^3.6.0",
