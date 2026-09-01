@@ -47,9 +47,14 @@ def test_exactly_at_the_limit_still_passes():
 def test_the_failure_names_the_page_and_the_floor_to_re_check():
     """A stale-date failure is useless without saying what to go and read."""
     read = TODAY - dt.timedelta(days=400)
-    msg = c.problems(_rt(read=read.isoformat()), TODAY)[0]
-    assert "learn.microsoft.com" in msg
-    assert "3.11" in msg
+    entry = _rt(read=read.isoformat())
+    msg = c.problems(entry, TODAY)[0]
+    # The WHOLE cited URL, not a substring of its host: `"host" in url` is the
+    # shape CodeQL flags as incomplete URL sanitisation, and it is a weaker
+    # assertion anyway -- what matters is that the exact page recorded in the
+    # entry is the one the failure tells you to re-read.
+    assert entry["1.3"]["source"] in msg
+    assert entry["1.3"]["python"] in msg
 
 
 def test_a_missing_source_fails():
