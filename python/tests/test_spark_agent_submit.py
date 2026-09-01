@@ -163,3 +163,17 @@ def test_a_jar_inside_the_mount_is_accepted(tmp_path, monkeypatch):
     monkeypatch.setattr(s.os, "access", lambda *_: True)
     monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: FakeProc(0, "ok\n"))
     assert s.submit("com.acme.Job", str(jar))["ok"] is True
+
+
+def test_a_backslash_request_matches_the_same_jar(tmp_path, monkeypatch):
+    """The Windows failure, pinned. `os.path.relpath` yields `jobs\\etl.jar`
+    there while the request carries `jobs/etl.jar`; a comparison that depends
+    on the host's separator made every jar look absent on one runner and not
+    the other."""
+    root = tmp_path / "Files"
+    (root / "jobs").mkdir(parents=True)
+    jar = root / "jobs" / "etl.jar"
+    jar.write_text("PK")
+    monkeypatch.setattr(s, "MOUNT_ROOT", str(root))
+    for form in ("jobs/etl.jar", "jobs\\etl.jar", str(jar), str(jar).replace("/", "\\")):
+        assert s._resolve_in_mount(form) == str(jar.resolve()), form

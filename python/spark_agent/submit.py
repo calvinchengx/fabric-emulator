@@ -61,15 +61,25 @@ def _resolve_in_mount(requested):
         return None
 
     # What the caller means, reduced to a mount-relative form for comparison.
-    wanted = str(requested)
-    if wanted.startswith(root):
-        wanted = wanted[len(root):]
-    wanted = wanted.lstrip("/")
+    #
+    # SEPARATORS ARE NORMALISED ON BOTH SIDES. The agent only ever runs in a
+    # Linux container, but its tests run on the Windows runner too, and there
+    # `os.path.relpath` returns `jobs\etl.jar` while the request carries
+    # `jobs/etl.jar` — so the walk matched nothing and every jar looked absent.
+    # A comparison that depends on the host's separator is wrong even where it
+    # happens to work.
+    def rel(path):
+        return path.replace("\\", "/").strip("/")
+
+    wanted = rel(str(requested))
+    root_rel = rel(root)
+    if wanted.startswith(root_rel + "/"):
+        wanted = wanted[len(root_rel) + 1:]
 
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:
             found = os.path.join(dirpath, name)
-            if os.path.relpath(found, root) == wanted:
+            if rel(os.path.relpath(found, root)) == wanted:
                 return found
     return None
 
