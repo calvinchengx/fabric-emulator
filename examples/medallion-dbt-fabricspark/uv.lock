@@ -542,6 +542,21 @@ wheels = [
 ]
 
 [[package]]
+name = "dbt-spark"
+version = "1.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dbt-adapters" },
+    { name = "dbt-common" },
+    { name = "dbt-core" },
+    { name = "sqlparams" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d4/9b/5f6e07aef31f89e1dd7f3e0fe959013052efc15ea28f6157c239e30f5d48/dbt_spark-1.11.0.tar.gz", hash = "sha256:436aa57d662ebad8e56f606863e02045f73116566f85a600b9fa890a763f8c37", size = 83739, upload-time = "2026-07-16T17:03:55.317Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/77/f0163101e23650ad4f0905c426e3e1c7fc613c215be40164d74b175b9c48/dbt_spark-1.11.0-py3-none-any.whl", hash = "sha256:00d9c9cd3e13473df05b90740fddd8c3082083c45971aaba2fae7b01ab82f4f5", size = 51733, upload-time = "2026-07-16T17:03:53.614Z" },
+]
+
+[[package]]
 name = "deepdiff"
 version = "8.6.2"
 source = { registry = "https://pypi.org/simple" }
@@ -591,6 +606,7 @@ dependencies = [
     { name = "contoso-fixtures" },
     { name = "dbt-fabric" },
     { name = "dbt-fabricspark" },
+    { name = "dbt-spark" },
     { name = "deltalake" },
     { name = "pyarrow" },
     { name = "pyodbc" },
@@ -603,10 +619,12 @@ requires-dist = [
     { name = "contoso-fixtures", editable = "../contoso-fixtures" },
     { name = "dbt-fabric", specifier = ">=1.11" },
     { name = "dbt-fabricspark", specifier = ">=1.13" },
+    { name = "dbt-spark", specifier = ">=1.11" },
     { name = "deltalake", specifier = ">=0.23,<2" },
     { name = "pyarrow", specifier = ">=18,<24" },
     { name = "pyodbc", specifier = ">=5.2,<6" },
     { name = "pyspark-client", specifier = "==4.1.1" },
+    { name = "pyspark-client", specifier = ">=4.1" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 
@@ -1695,6 +1713,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/3a/cd/39a94f0f98076ee8e7c7c38fd4bba8d7845b0c629ff967057c64ef2c0989/sqlglot-30.14.0.tar.gz", hash = "sha256:df2ef5d2b8ca814313781f4ff35bf63e58f821ef517eeddbd523c19a61fa9bb9", size = 5944410, upload-time = "2026-07-27T11:23:30.698Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/ec/a729883ceda22dcd9117ce182f64d884bf494e72c4dfce00c2ad0a5978e1/sqlglot-30.14.0-py3-none-any.whl", hash = "sha256:fc768e24889d63a5e1237dea7ad305e5ffb4356a98b0bed828f89591ebcd3636", size = 719007, upload-time = "2026-07-27T11:23:28.637Z" },
+]
+
+[[package]]
+name = "sqlparams"
+version = "6.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/ec/5d6a5ca217ecd7b08d404b7dc2025c752bdb393c9b34fcc6d48e1f70bb7e/sqlparams-6.2.0.tar.gz", hash = "sha256:3744a2ad16f71293db6505b21fd5229b4757489a9b09f3553656a1ae97ba7ca5", size = 34932, upload-time = "2025-01-25T16:21:59.646Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/97/e2/f1355629bb1eeb274babc947e2ba4e2e49250e934c86adcce3e54943bc8a/sqlparams-6.2.0-py3-none-any.whl", hash = "sha256:63b32ed9051bdc52e7e8b38bc4f78aed51796cdd9135e730f4c6a7db1048dedf", size = 17629, upload-time = "2025-01-25T16:21:58.272Z" },
 ]
 
 [[package]]

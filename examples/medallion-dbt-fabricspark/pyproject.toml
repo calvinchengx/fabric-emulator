@@ -3,10 +3,23 @@
 #
 #   uv sync --frozen && uv run python pipeline.py
 #
-# BOTH dbt adapters are here, and that is the shape of the example rather than
+# THREE dbt adapters are here, and that is the shape of the example rather than
 # an accident: dbt-fabricspark builds bronze -> silver in the Lakehouse over
 # Livy, and dbt-fabric builds silver -> gold in the Warehouse over TDS. Gold is
 # a Warehouse, and fabricspark cannot write to one.
+#
+# dbt-spark is the third, and it is not a second way to do the same thing.
+# dbt-fabricspark speaks ONLY Livy -- its one connection method is
+# FabricSparkConnectionMethod.LIVY -- so `method: session`, the shape a Fabric
+# notebook takes when it runs dbtRunner on the driver, cannot be expressed with
+# it at all. silver_session.py builds the SAME models that way, over Spark
+# Connect to the same Sail, and exists to separate a defect on the Livy path
+# from one in the SQL. See its docstring.
+#
+# NOT dbt-spark[session], which pulls full pyspark for the JVM. `pyspark-client`
+# already provides the `pyspark` namespace and resolves SPARK_REMOTE to a
+# Connect session, which is measured: getOrCreate() returns
+# pyspark.sql.connect.session and Sail answers it.
 [project]
 name = "fabric-emulator-example-medallion-dbt-fabricspark"
 version = "0.1.0"
@@ -16,6 +29,8 @@ dependencies = [
     "contoso-fixtures",
     "dbt-fabric>=1.11",
     "dbt-fabricspark>=1.13",
+    "dbt-spark>=1.11",
+    "pyspark-client>=4.1",
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",
     "pyodbc>=5.2,<6",
