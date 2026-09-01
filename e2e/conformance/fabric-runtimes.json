@@ -10,7 +10,20 @@
     "needs >= 3.9, so a notebook could not import the surface at all. The",
     "other versions are RECORDED so a drift is visible, and not asserted,",
     "because whether the engine behaves like Spark 3.5 is the engine matrix's",
-    "question and it answers it row by row rather than by a version string."
+    "question and it answers it row by row rather than by a version string.",
+    "",
+    "SINGLE SOURCED, deliberately and not comfortably. Contracts 2 and 8 hold",
+    "their premises against machine-readable Microsoft artefacts vendored under",
+    "third_party/ -- the dummy-notebookutils wheel, the StorageErrorCode enum.",
+    "Fabric publishes its runtime versions as documentation pages and nothing",
+    "else, so this table is a transcription with nobody to check it against.",
+    "",
+    "Contract 3's comparison is MONOTONE -- an upgrade keeps passing -- so a",
+    "raised floor upstream would leave this number stale and the contract green",
+    "forever. scripts/check_runtime_floor_freshness.py bounds that in time",
+    "instead: every entry must cite its page and the date it was read, and the",
+    "reading expires. That check WILL fail on its own one day, which is the",
+    "design and not a defect."
   ],
   "runtimes": {
     "1.3": {
