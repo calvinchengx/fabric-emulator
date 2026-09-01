@@ -56,11 +56,20 @@ var unrunnableActivities = map[string]string{
 		"dataflow language, not SQL and not Python, and nothing in the emulator interprets " +
 		"it — there is no engine here to be approximately right",
 
-	"HDInsightMapReduce": "submits a MapReduce job by className and jarFilePath. That asks " +
-		"the emulator to EXECUTE A NAMED JAVA MAIN CLASS, and the Spark agent has no " +
-		"submission path for one — the same boundary the Databricks JAR task is refused at, " +
-		"and it holds on both engines (a JAR *library* attaching on the JVM overlay is a " +
-		"different capability from running a main class)",
+	// THE STATED CAUSE CHANGED WHEN THE JAR TASK STARTED RUNNING. It used to
+	// read "the Spark agent has no submission path for a main class — the same
+	// boundary the Databricks JAR task is refused at". That boundary moved:
+	// the agent now submits main classes through spark-submit on the JVM
+	// overlay (jarsubmit.go), and leaving this text in place would refuse an
+	// activity for a limitation the emulator no longer has. The refusal
+	// survives on a DIFFERENT and narrower ground, which is the honest one.
+	"HDInsightMapReduce": "submits a MapReduce job by className and jarFilePath. The emulator " +
+		"CAN now execute a named Java main class — the Databricks JAR task does exactly that " +
+		"on the JVM overlay — so that is no longer the obstacle. What is missing is the " +
+		"RUNTIME: a MapReduce job is a mapper/reducer contract executed by Hadoop, and " +
+		"`spark-submit` is a different execution model. Running the jar through it would " +
+		"execute something else and report it under this activity's name, which is worse " +
+		"than refusing. A Hadoop runtime is what this needs, and the emulator hosts none",
 
 	"HDInsightStreaming": "runs Hadoop Streaming with a mapper and reducer executed as " +
 		"processes over stdin/stdout on cluster nodes. There is no Hadoop Streaming harness " +

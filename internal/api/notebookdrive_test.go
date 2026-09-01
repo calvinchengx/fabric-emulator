@@ -38,6 +38,10 @@ type fakeAgent struct {
 	// exit is what the notebook exited WITH; empty means it never called
 	// notebook_exit. The probe is answered as JSON, like the real agent.
 	exit string
+	// onPost lets a test answer a route this fake does not model (e.g.
+	// /submit). Returning false falls through to the default handling, so
+	// adding a hook cannot silently change an existing test's agent.
+	onPost func(path string, body map[string]any) (map[string]any, bool)
 }
 
 func newFakeAgent(t *testing.T, a *API) *fakeAgent {
@@ -64,6 +68,14 @@ func newFakeAgent(t *testing.T, a *API) *fakeAgent {
 
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.onPost != nil {
+			var generic map[string]any
+			_ = json.Unmarshal(body, &generic)
+			if out, handled := f.onPost(r.URL.Path, generic); handled {
+				writeJSON(w, 200, out)
+				return
+			}
+		}
 		switch r.URL.Path {
 		case "/statements":
 			if strings.Contains(req.Code, "__nb_exit__ is not None") {

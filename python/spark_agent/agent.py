@@ -906,6 +906,21 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001 - a failed mount must not kill a session bind
                 self._send(200, {"mounted": False,
                                  "error": traceback.format_exc().splitlines()[-1]})
+        elif self.path == "/submit":
+            # A Java/Scala MAIN CLASS, submitted the way a JAR task means it —
+            # spark-submit on the engine we already run. Refused, not faked,
+            # where there is no spark-submit: see submit.py for why the two
+            # engines answer differently and why MapReduce is still refused
+            # even though its shape looks identical.
+            try:
+                import submit as _submit
+                self._send(200, _submit.submit(
+                    req.get("mainClass", ""), req.get("jar", ""),
+                    req.get("args") or [], req.get("conf") or {},
+                    int(req.get("timeout") or 900)))
+            except Exception:  # noqa: BLE001 - report the failure, never a success
+                self._send(200, {"ok": False, "available": True, "exitCode": None,
+                                 "error": traceback.format_exc().splitlines()[-1]})
         elif self.path == "/environment":
             self._send(200, apply_environment(req))
         elif self.path == "/restart-python":

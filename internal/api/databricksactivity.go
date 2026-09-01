@@ -19,14 +19,19 @@ import (
 //	DatabricksSparkPython  pythonFile    + parameters     + libraries
 //	DatabricksSparkJar     mainClassName + parameters     + libraries
 //
-// WHY THE JAR VARIANT IS REFUSED AND THE OTHER TWO ARE NOT. A Databricks JAR
-// task names a Java/Scala main class to EXECUTE. The agent's statement endpoint
-// runs Python, and nothing here submits a main class — on Sail or on the JVM
-// overlay. That is a narrower claim than "no JVM": a JAR *library* does attach
-// on the overlay (the Spark-Job-Definition path probes for it with
-// `agentHasJVM`), so the two boundaries must not be described as one, or the
-// rows contradict each other about the same constraint. Notebook and Python
-// tasks are Python, which the agent runs for real.
+// THE JAR VARIANT RUNS ON THE OVERLAY AND IS REFUSED ON SAIL, which is a
+// narrower boundary than the one that used to be recorded here. It read: "the
+// agent's statement endpoint runs Python, and nothing here submits a main
+// class — on Sail or on the JVM overlay". The first clause is still true; the
+// second was a GAP rather than a law, because the overlay image is Apache
+// Spark and ships spark-submit. It is now wired up (jarsubmit.go), and which
+// engine answers is decided by asking it, not by assuming.
+//
+// The distinction that made the old note careful still holds and is still worth
+// keeping: attaching a JAR *library* and EXECUTING a main class are different
+// capabilities. The Spark-Job-Definition path probes for the first with
+// `agentHasJVM`; this path needs the second, and the agent reports it as
+// `available` from the presence of spark-submit rather than from the JVM.
 //
 // PATH ADDRESSING. Databricks addresses a workspace path (`/Shared/etl`) or
 // DBFS (`dbfs:/jobs/etl.py`). Without FABRIC_DATABRICKS_URL the emulator has
@@ -60,19 +65,13 @@ func (e *pipelineExecutor) databricksActivity(
 	case "DatabricksSparkPython":
 		spec = databricksSpec{kind: "python", pathKey: "pythonFile", paramKey: "parameters"}
 	case "DatabricksSparkJar":
-		// Refused before anything else: there is no JVM to load a main class
-		// into, and running the wrong thing would be worse than refusing.
-		name := ""
-		if raw, ok := tp["mainClassName"]; ok && len(raw) > 0 {
-			if v, err := resolve(raw); err == nil && v != nil {
-				name = fmt.Sprint(v)
-			}
-		}
-		return nil, fmt.Errorf("databricks activity %q: a Spark JAR task (mainClassName %q) asks the "+
-			"emulator to EXECUTE a Java/Scala main class, and its Spark agent runs Python "+
-			"statements — there is no submission path for one on either engine. (A JAR library "+
-			"attaches on the JVM overlay; executing a main class is a different capability.) "+
-			"Use a DatabricksSparkPython or DatabricksNotebook task", act.Name, name)
+		// RUNS NOW, on the engine that can. This was refused with the cause
+		// "nothing here submits a main class, on either engine" — true of the
+		// agent's statement endpoint, and a gap rather than a law: the JVM
+		// overlay ships spark-submit. The refusal survives where it is still
+		// true (Sail has none), decided by PROBING the engine rather than
+		// assuming. See jarsubmit.go.
+		return e.databricksJarActivity(act, tp, resolve)
 	default:
 		return nil, fmt.Errorf("databricks activity %q: unknown type %q", act.Name, act.Type)
 	}
