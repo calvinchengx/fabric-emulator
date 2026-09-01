@@ -101,7 +101,7 @@ def main():
     #
     # It is also the shape being demonstrated: a Fabric notebook runs dbtRunner
     # on the driver, which is the whole point of the session method.
-    os.environ.update({k: v for k, v in env.items() if k not in os.environ or True})
+    os.environ.update(env)
     from dbt.cli.main import dbtRunner
 
     res = dbtRunner().invoke(["build", "--project-dir", str(PROJECT)])
