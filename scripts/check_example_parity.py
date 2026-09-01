@@ -81,6 +81,13 @@ PAIRS = [
             # job; the dbt half's silver is a dbt project run over Livy. That is
             # the axis these two examples exist to compare.
             "definitions/silver.Notebook": "PySpark only: silver as a Notebook definition",
+            # A THIRD way to build the same silver, and it belongs only to the
+            # dbt half because it is that half's transport that is in question.
+            # dbt-fabricspark speaks only Livy; this runs the same models over
+            # Spark Connect instead, so a defect on the Livy path can be told
+            # apart from one in the SQL. The pyspark half has no Livy hop to
+            # remove, so a mirrored copy there would compare nothing.
+            "silver_session.py": "dbt-fabricspark only: the same models without the Livy hop",
         },
         # `compare` is a real extra step, not a drifted one. Named here so the
         # sequence check still compares everything else in order.
