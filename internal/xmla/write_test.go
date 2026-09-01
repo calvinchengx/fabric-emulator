@@ -444,3 +444,114 @@ func TestParseWriteBatchSurfacesTruncationAtEveryDepth(t *testing.T) {
 		}
 	}
 }
+
+// createExpressionBatch is the payload semantic-link-labs actually sent,
+// captured 2026-09-01 from `tom.add_expression("DatabaseQuery", ...)` and
+// trimmed to the Expressions set. The xs:schema block is omitted because
+// ParseWriteBatch skips it; everything else is verbatim, including the absence
+// of an <ID> — which is what distinguishes a Create row from an Alter row.
+const createExpressionBatch = `<Batch Transaction="true" ` +
+	`xmlns="http://schemas.microsoft.com/analysisservices/2003/engine">` +
+	`<Create xmlns="http://schemas.microsoft.com/analysisservices/2014/engine">` +
+	`<DatabaseID>567b1b42-d15d-49e7-ad22-a30afce0b7f3</DatabaseID>` +
+	`<Expressions>` +
+	`<row xmlns="urn:schemas-microsoft-com:xml-analysis:rowset">` +
+	`<Name>DatabaseQuery</Name><Kind>0</Kind>` +
+	`<Expression>let x = 1 in x</Expression>` +
+	`<LineageTag>b9573c30-0e9a-4e89-8e9e-044f41d7667d</LineageTag>` +
+	`</row></Expressions></Create></Batch>`
+
+// TestApplyWriteCreatesASharedExpression pins the first gate of the
+// import-to-Direct-Lake migration. TOM refuses add_entity_partition
+// client-side until DatabaseQuery exists, so nothing downstream is reachable
+// without this.
+func TestApplyWriteCreatesASharedExpression(t *testing.T) {
+	cmds, err := ParseWriteBatch(createExpressionBatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bim := []byte(`{"model":{"tables":[{"name":"Sales"}]}}`)
+	out, err := ApplyWrite(bim, cmds)
+	if err != nil {
+		t.Fatalf("ApplyWrite: %v", err)
+	}
+	var doc struct {
+		Model struct {
+			Expressions []struct {
+				Name       string `json:"name"`
+				Kind       string `json:"kind"`
+				Expression string `json:"expression"`
+				LineageTag string `json:"lineageTag"`
+			} `json:"expressions"`
+		} `json:"model"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Model.Expressions) != 1 {
+		t.Fatalf("want 1 expression, got %d", len(doc.Model.Expressions))
+	}
+	got := doc.Model.Expressions[0]
+	// Asserting the STORED shape, not just presence: the reader keys
+	// DirectLakePartition.ExpressionSource by name and resolves the M text, so
+	// an expression stored under the wrong key or with an empty body would be
+	// present and useless.
+	if got.Name != "DatabaseQuery" || got.Expression != "let x = 1 in x" {
+		t.Errorf("stored %+v, want name=DatabaseQuery expression='let x = 1 in x'", got)
+	}
+	if got.Kind != "m" {
+		t.Errorf("kind = %q, want \"m\" (TOM Kind 0 is ExpressionKind.M)", got.Kind)
+	}
+	if got.LineageTag != "b9573c30-0e9a-4e89-8e9e-044f41d7667d" {
+		t.Errorf("lineageTag = %q, want the one TOM sent", got.LineageTag)
+	}
+}
+
+// TestApplyWriteRefusesExpressionsItCannotRepresent covers the three ways this
+// can go wrong quietly. Each must be an ERROR rather than a skip: TOM reports
+// SaveChanges as successful whenever the server answers, so a dropped row
+// loses the edit while telling the user it landed.
+func TestApplyWriteRefusesExpressionsItCannotRepresent(t *testing.T) {
+	for _, tc := range []struct{ name, batch, want string }{
+		{"a non-M kind is refused by number",
+			strings.Replace(createExpressionBatch, "<Kind>0</Kind>", "<Kind>1</Kind>", 1),
+			"Kind 1 is not implemented"},
+		{"a nameless row is refused",
+			strings.Replace(createExpressionBatch,
+				"<Name>DatabaseQuery</Name>", "<Name></Name>", 1),
+			"carries no Name"},
+		{"Alter of Expressions stays refused, its shape is unmeasured",
+			strings.Replace(strings.Replace(createExpressionBatch,
+				"<Create ", "<Alter ", 1), "</Create>", "</Alter>", 1),
+			"Alter of Expressions is not implemented"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmds, err := ParseWriteBatch(tc.batch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = ApplyWrite([]byte(`{"model":{"tables":[{"name":"Sales"}]}}`), cmds)
+			if err == nil {
+				t.Fatal("want an error, got nil — a dropped row reads as success")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestApplyWriteWillNotSilentlyReplaceAnExpression: a same-named expression is
+// a conflict, not an overwrite. The client cannot see the difference.
+func TestApplyWriteWillNotSilentlyReplaceAnExpression(t *testing.T) {
+	cmds, err := ParseWriteBatch(createExpressionBatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bim := []byte(`{"model":{"tables":[{"name":"Sales"}],` +
+		`"expressions":[{"name":"DatabaseQuery","kind":"m","expression":"let mine = 1 in mine"}]}}`)
+	if _, err := ApplyWrite(bim, cmds); err == nil ||
+		!strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("want an already-exists refusal, got %v", err)
+	}
+}
