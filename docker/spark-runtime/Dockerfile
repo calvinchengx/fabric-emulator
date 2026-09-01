@@ -20,7 +20,7 @@
 #
 # Copying a JDK from the Temurin image instead has no package manager in it to
 # disagree with anything, and the compiler never reaches the runtime image.
-FROM apache/spark:3.5.9-scala2.12-java11-python3-ubuntu AS build
+FROM apache/spark:3.5.5-scala2.12-java11-python3-ubuntu AS build
 USER root
 COPY --from=eclipse-temurin:11-jdk /opt/java/openjdk /opt/jdk
 
@@ -64,7 +64,7 @@ RUN /opt/jdk/bin/javac -cp "/opt/spark/jars/*" -d /tmp/classes \
     && rm -rf /tmp/src /tmp/classes
 
 # --------------------------------------------------------------- runtime stage
-FROM apache/spark:3.5.9-scala2.12-java11-python3-ubuntu
+FROM apache/spark:3.5.5-scala2.12-java11-python3-ubuntu
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 USER root
 # The jars, including the compiled token provider. No compiler, no apt, no
@@ -146,11 +146,14 @@ ENV PYSPARK_PYTHON=/opt/nbenv/bin/python \
 # files_mount.py mirrors a lakehouse at /lakehouse/default/Files, which means
 # creating /lakehouse — a directory at the filesystem ROOT. The image runs as
 # `spark`, and whether a non-root user may write to / is the BASE IMAGE's
-# choice, not ours: it worked on apache/spark 3.5.5 and stopped on 3.5.9, so
-# every notebook lost its mount with `PermissionError: [Errno 13] ... '/lakehouse'`
-# and the JVM conformance suite went red on a version bump that changed nothing
-# of ours. Owning the directory at build time removes the dependency on that
-# choice entirely.
+# choice, not ours. 3.5.5 allows it and 3.5.9 does not — found when dependabot
+# proposed that bump and every notebook lost its mount with
+# `PermissionError: [Errno 13] ... '/lakehouse'`. That bump was REJECTED for a
+# separate reason (the tag is a Runtime 1.3 fidelity claim, see
+# .github/dependabot.yml), so this is not load-bearing today. It stays because
+# the latent dependency was real: owning the directory at build time means a
+# future base image's permission policy cannot silently unmount every
+# notebook's Files.
 RUN mkdir -p /lakehouse/default && chown -R spark:spark /lakehouse
 
 ENV FABRIC_RUNTIME=1.3
