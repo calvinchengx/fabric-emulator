@@ -1130,7 +1130,13 @@
       "go:TestDatabricksRemoteImportsLakehouseFile",
       "go:TestDatabricksRemoteFailureFailsTheActivity",
       "go:TestDatabricksRemoteStillRefusesJAR",
-      "ci:databricks-chain"
+      "ci:databricks-chain",
+      "go:TestDatabricksJarRunsOnAnEngineThatCanSubmit",
+      "go:TestDatabricksJarRefusedWhereThereIsNoSubmit",
+      "go:TestDatabricksJarNonZeroExitFails",
+      "go:TestDatabricksJarInputSurface",
+      "go:TestDatabricksJarNoAgentIsHonest",
+      "go:TestJarMountPathDoesNotPrefixTheItemTwice"
     ]
   },
   "azure-batch-activity-adf-custom": {

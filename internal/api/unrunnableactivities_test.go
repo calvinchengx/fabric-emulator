@@ -50,7 +50,11 @@ func TestUnrunnableActivitiesNameTheirCause(t *testing.T) {
 	}{
 		{"HDInsightHive", []string{"HiveQL", "Spark SQL", "not the same as the guarantee"}},
 		{"HDInsightPig", []string{"Pig Latin", "nothing in the emulator interprets"}},
-		{"HDInsightMapReduce", []string{"NAMED JAVA MAIN CLASS", "both engines"}},
+		// The cause moved when the JAR task started running: executing a main
+		// class is no longer the obstacle, so asserting the old words would
+		// pin a limitation the emulator has since removed. What must survive
+		// is the RUNTIME argument.
+		{"HDInsightMapReduce", []string{"mapper/reducer contract", "Hadoop", "different execution model"}},
 		{"HDInsightStreaming", []string{"mapper and reducer", "no Hadoop Streaming harness"}},
 		{"DataLakeAnalyticsU-SQL", []string{"U-SQL", "RETIRED THE SERVICE"}},
 		{"ExecuteSSISPackage", []string{"integration runtime", "defined inside the package"}},
