@@ -371,6 +371,11 @@ omit = [
     # unlike vendor_fabric_activity_types.py, whose HTML extraction IS the
     # load-bearing part and is now tested (test_vendor_fabric_activity_types.py)
     # rather than exempted. Omitted for what it is, not for convenience.
+    # Needs pysail AND a running Sail server, so it cannot execute in the unit
+    # suite at all — it is a MEASUREMENT tool, run by hand on a dependency bump
+    # to re-test the claim delta_ops.py's MERGE intercept rests on. Its output
+    # is a verdict for a human, not a code path anything imports.
+    "scripts/probe_sail_merge_premise.py",
     "scripts/vendor_adf_pipeline_schema.py",
     "scripts/capture_definition_shape.py",
     # The conformance harness itself: it publishes notebooks, drives
