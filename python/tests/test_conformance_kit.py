@@ -647,6 +647,44 @@ def test_fall_through_fails_when_the_default_engine_ran_what_it_cannot_plan():
         backend="sail", control=False)
     assert r.status == "fail"
     assert "something rewrote it" in r.error
+    # AND it must not assert that as the only cause. pysail 0.7.1 learned to
+    # plan the statement 0.7.0 refused, which turned an honest success into a
+    # reported rewrite; the premise is part of the claim and has to be named.
+    assert "premise is stale" in r.error
+
+
+def test_a_clean_echo_proves_fall_through_without_the_capability_contrast():
+    """The echo does not go stale when the engine gains a capability.
+
+    unrecognised_ok=True here is the pysail 0.7.1 case: the statement the probe
+    assumes cannot be planned now plans. With the echo clean that is a
+    capability gain and NOT a rewrite, and the contract still holds."""
+    sent = "OPTIMIZE delta.`/tmp/t`"
+    r = probes.fall_through(
+        session=lambda: _ft(unrecognised_ok=True, unrecognised_error="",
+                            echo_sent=sent, echo_got=sent),
+        backend="sail", control=False)
+    assert r.status == "pass"
+
+
+def test_a_mangled_echo_is_a_rewrite_whatever_the_engine_can_plan():
+    sent = "OPTIMIZE delta.`/tmp/t`"
+    r = probes.fall_through(
+        session=lambda: _ft(echo_sent=sent, echo_got="OPTIMIZE delta.'/tmp/t'"),
+        backend="sail", control=False)
+    assert r.status == "fail"
+    assert "echoed back text the session did not send" in r.error
+
+
+def test_an_echo_that_did_not_run_is_absent_rather_than_clean():
+    """The dangerous shape: echo_got == echo_sent == "" would compare equal and
+    read as proof. A failed echo has to say so."""
+    r = probes.fall_through(
+        session=lambda: _ft(echo_sent="OPTIMIZE delta.`/tmp/t`", echo_got="",
+                            echo_error="connection reset"),
+        backend="sail", control=False)
+    assert r.status == "fail"
+    assert "witness is absent" in r.error
 
 
 def test_fall_through_control_engine_must_run_the_statement():
