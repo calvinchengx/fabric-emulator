@@ -134,8 +134,8 @@ buy capabilities most tests never touch.
 | Delta append | ✅ | ✅ | ✅ |
 | Time travel — `option("versionAsOf")` | ✅ | ✅ | ✅ |
 | Time travel — SQL `VERSION AS OF` | ✅ | ✅ | ✅ |
-| `MERGE INTO` a registered table at a **local path** ᵃ | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ✅ | ✅ |
-| `MERGE INTO delta.`path`` (path target) | ❌ `attribute ObjectName([Identifier("#0")]) is missing from the schema: cannot resolve attrib` | ✅ | ✅ |
+| `MERGE INTO` a registered table at a **local path** ᵃ | ✅ | ✅ | ✅ |
+| `MERGE INTO delta.`path`` (path target) | ✅ | ✅ | ✅ |
 | `OPTIMIZE` | ❌ `invalid argument: found OPTIMIZE at 0:8 expected something else, ';', statement, or end of` | ✅ | ✅ |
 | `VACUUM` | ❌ `invalid argument: found VACUUM at 0:6 expected something else, ';', statement, or end of i` | ✅ | ✅ |
 | Change Data Feed (must not be inert) ᵇ | ❌ `Table features must be specified, please specify: ChangeDataFeed` | ✅ | ✅ |

@@ -396,12 +396,33 @@ try:
         # is a separate limitation that happens to be cheap to observe from
         # the same cell.
         _name_ok, _name_err = _try(lambda: spark.sql("OPTIMIZE events").collect())
+        # THE ECHO, and it is the witness that does not rot. The two statements
+        # above prove fall-through by CONTRAST: the unrecognised one must fail
+        # here and succeed on the JVM. That reasoning holds only while the
+        # engine stays incapable, and engines do not. pysail 0.7.1 learned to
+        # plan `MERGE ... WHEN MATCHED THEN DELETE` -- measured against a bare
+        # Sail with no emulator and no agent in the path, 0.7.0 refusing it and
+        # 0.7.1 running it -- so the statement succeeded honestly and the probe
+        # read that as "something rewrote it".
+        #
+        # A string literal cannot go stale that way. The payload contains the
+        # exact construct the rewriter DOES recognise; a rewriter that tokenises
+        # the statement text and acts on what it finds changes these bytes, and
+        # one that stays out of the way cannot. The engine returns the proof and
+        # the emulator cannot forge it without reproducing its own input.
+        _echo_sent = f"OPTIMIZE delta.`{_tbl}`"
+        _echo_rows, _echo_err = _try(lambda: spark.sql(
+            "SELECT '" + _echo_sent.replace("'", "''") + "' AS echo").collect())
+        _echo_got = "" if _echo_err else (_echo_rows[0][0] if _echo_rows else "")
         _findings["fall_through"] = {
             "table_error": "",
             "recognised_ok": not _rec_err,
             "recognised_error": _rec_err,
             "unrecognised_ok": not _unrec_err,
             "unrecognised_error": _unrec_err,
+            "echo_sent": _echo_sent,
+            "echo_got": _echo_got,
+            "echo_error": _echo_err,
             "name_form_ok": not _name_err,
             "name_form_error": _name_err,
         }
@@ -1156,6 +1177,9 @@ def session_fall_through() -> FallThroughClaim:
         recognised_error=_fall_seen.get("recognised_error", ""),
         unrecognised_ok=bool(_fall_seen.get("unrecognised_ok")),
         unrecognised_error=_fall_seen.get("unrecognised_error", ""),
+        echo_sent=_fall_seen.get("echo_sent", ""),
+        echo_got=_fall_seen.get("echo_got", ""),
+        echo_error=_fall_seen.get("echo_error", ""),
         name_form_ok=(None if "name_form_ok" not in _fall_seen
                       else bool(_fall_seen.get("name_form_ok"))),
         name_form_error=_fall_seen.get("name_form_error", ""),
