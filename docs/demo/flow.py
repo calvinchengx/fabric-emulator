@@ -116,9 +116,13 @@ def run_example():
     """
     env = {
         **os.environ,
-        "FABRIC_REST_URL": f"https://localhost:{FABRIC_PORT}",
+        # fabric-target's names. This used to say FABRIC_REST_URL and KV_URL,
+        # which it does not read -- so the recording asked for port 9843 and
+        # then talked to whatever held 9443, which is the very collision the
+        # remap in flow-override.yml was written to avoid.
+        "FABRIC_EMULATOR_URL": f"https://localhost:{FABRIC_PORT}",
         "ENTRA_URL": f"https://localhost:{ENTRA_PORT}",
-        "KV_URL": f"https://localhost:{KV_PORT}",
+        "VAULT_EMULATOR_URL": f"https://localhost:{KV_PORT}",
         "TDS_SERVER": f"localhost,{TDS_PORT}",
         "SPARK_REMOTE": f"sc://localhost:{SPARK_PORT}",
         "OM_URL": f"http://localhost:{OM_PORT}",
