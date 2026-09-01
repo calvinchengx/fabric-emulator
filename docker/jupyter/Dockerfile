@@ -6,7 +6,7 @@
 # one place that doctrine is weak — a newcomer running `make up` cannot touch a
 # notebook without installing something first. This closes that the way
 # OpenMetadata closes the catalog UI: attach the real thing.
-FROM python:3.12-slim
+FROM python:3.14-slim
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 
 WORKDIR /app

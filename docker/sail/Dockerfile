@@ -2,7 +2,7 @@
 # There is no official Sail image; pysail ships prebuilt manylinux wheels.
 # pyspark-client is installed alongside because the server imports
 # pyspark.__version__ to select its client-compat config table.
-FROM python:3.12-slim
+FROM python:3.14-slim
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 WORKDIR /app
 COPY pyproject.toml uv.lock ./

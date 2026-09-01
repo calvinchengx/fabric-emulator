@@ -71,7 +71,27 @@ lakehouse_name = st["lakehouse_name"]
       lakehouseid: "{st['lakehouse']}"
       lakehouse: "{lakehouse_name}"
       schema: "{lakehouse_name}"
-      threads: 1
+      # FOUR, not one. These three models depend only on sources -- no `ref`
+      # between them -- so dbt can build all three at once, and the emulator
+      # does not serialise them: it terminates Livy itself and each statement
+      # reaches Sail independently.
+      #
+      # Measured on this example, one stack, same data, same 12/12 result:
+      # at `threads: 1` the models START 26s and 15s apart and the step takes
+      # 96.0s; at 3 they all start in the SAME SECOND and it takes 44.2s. The
+      # start timestamps are the evidence -- a wall-clock delta could be noise,
+      # simultaneous starts cannot be.
+      #
+      # Four rather than three is headroom: with three independent models dbt
+      # runs min(threads, ready nodes), so it behaves identically today and a
+      # fourth model does not need this line revisited.
+      #
+      # It is NOT linear scaling. All three then report the same duration
+      # rather than finishing at their own pace, which is what three queries
+      # contending for one Sail engine looks like. The gold projects here keep
+      # `threads: 1`: they run through dbt-fabric over TDS, a different adapter
+      # and engine, and nothing above was measured against them.
+      threads: 4
       connect_retries: 3
       connect_timeout: 60
       spark_config:

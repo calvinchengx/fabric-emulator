@@ -140,5 +140,21 @@ ENV PYSPARK_PYTHON=/opt/nbenv/bin/python \
 # This declares the FLOOR the image targets -- interpreter and library
 # versions -- not that its engine is Spark. Whether the engine behaves like
 # Spark is the engine matrix's question, and it answers it row by row.
+
+# The Files mount point, created HERE rather than at runtime.
+#
+# files_mount.py mirrors a lakehouse at /lakehouse/default/Files, which means
+# creating /lakehouse — a directory at the filesystem ROOT. The image runs as
+# `spark`, and whether a non-root user may write to / is the BASE IMAGE's
+# choice, not ours. 3.5.5 allows it and 3.5.9 does not — found when dependabot
+# proposed that bump and every notebook lost its mount with
+# `PermissionError: [Errno 13] ... '/lakehouse'`. That bump was REJECTED for a
+# separate reason (the tag is a Runtime 1.3 fidelity claim, see
+# .github/dependabot.yml), so this is not load-bearing today. It stays because
+# the latent dependency was real: owning the directory at build time means a
+# future base image's permission policy cannot silently unmount every
+# notebook's Files.
+RUN mkdir -p /lakehouse/default && chown -R spark:spark /lakehouse
+
 ENV FABRIC_RUNTIME=1.3
 USER spark
