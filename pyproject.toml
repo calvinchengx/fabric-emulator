@@ -154,7 +154,7 @@ spark-client = [
     "pyspark-client==4.2.0",
 ]
 sail = [
-    "pysail==0.7.0",
+    "pysail==0.7.1",
     { include-group = "spark-client" },
 ]
 # The Sail statement agent also runs Delta maintenance (OPTIMIZE/VACUUM/CDF)
@@ -200,7 +200,7 @@ spark-agent-dbt = [
     # one shared server (docs/54). Same pin as the `sail` group: two Sails of
     # different versions in one stack would make a parity result depend on which
     # one answered.
-    "pysail==0.7.0",
+    "pysail==0.7.1",
 ]
 # requests: user notebook code (and libraries it imports) routinely calls HTTP
 # APIs, and the statement agent is where that code executes.
