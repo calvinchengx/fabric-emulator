@@ -208,10 +208,31 @@ a hand-edit, not a helper the notebook does not call.
 
 Today that column is **23 / 25**. Two stay red.
 
+ᵐ **The MERGE rows are closed by an intercept whose reason has expired.** They
+were written because Sail's plan resolver failed on any Delta target holding a
+date or timestamp column — true through pysail 0.7.0. Measured again on
+**0.7.1** (2026-09-01, local path, with a passing control): the plain table,
+the audit-columned table, and the full medallion `UPDATE` + `INSERT *` shape
+all succeed **unaided**. The engine matrix reported it first — both MERGE rows
+flipped from that error to ✅ on the same bump.
+
+The intercept nevertheless **still fires**, because it matches the statement
+before the engine sees it. So this row is honest about the mechanism and stale
+about the motive, and the distinction matters: *"Sail can do it"* and *"our
+rewrite is off the path"* are different claims, and only the second licenses
+deleting the code.
+
+What that measurement does **not** settle is the case the emulator actually
+runs: it merged against a **local path**, while the emulator uses `az://`
+OneLake URLs — and the matrix's own note records the storage URL as exactly
+what separates the two behaviours here. Retiring the intercept needs that
+proven under `e2e/sail` and the medallion suites. Until then this footnote is
+the record, so the next reader does not have to re-derive it from a green row.
+
 | Probe | Closable on this seam? | Why |
 |---|---|---|
-| `MERGE INTO` registered (local path) | **Done** | Subquery source + `INSERT *` intercept |
-| `MERGE INTO delta.\`path\`` | **Done** | Same change; path URI is taken from the statement |
+| `MERGE INTO` registered (local path) | **Done** ᵐ | Subquery source + `INSERT *` intercept |
+| `MERGE INTO delta.\`path\`` | **Done** ᵐ | Same change; path URI is taken from the statement |
 | Change Data Feed | **Done** | Writer + reader wrapped, announced, materialised |
 | `read.json(multiLine=True)` | **Done** | Named option wrapped, announced, materialised |
 | Streaming sinks (memory / parquet / delta) | **Done** | One `limit(n).collect()` + batch write; announced; no checkpoint |

@@ -295,10 +295,40 @@ _CTAS = re.compile(
 #   [WHEN MATCHED [AND <cond>] THEN UPDATE SET <assignments>]
 #   [WHEN NOT MATCHED THEN INSERT * | INSERT (<cols>) VALUES (<vals>)]
 #
-# Sail parses MERGE but its plan resolver fails on any Delta TARGET holding a
-# date or timestamp column ("attribute #N is missing from the schema"),
-# reproduced minimally and unchanged in pysail 0.7.0 — which makes every
-# audit-columned table unmergeable, i.e. practically all of them.
+# WHY THIS EXISTS, AND WHY THAT REASON IS NOW STALE.
+#
+# The original justification: Sail parses MERGE but its plan resolver fails on
+# any Delta TARGET holding a date or timestamp column ("attribute #N is missing
+# from the schema"), reproduced minimally and unchanged in pysail 0.7.0 — which
+# made every audit-columned table unmergeable, i.e. practically all of them.
+#
+# MEASURED AGAIN ON pysail 0.7.1 (2026-09-01), against a local path, with a
+# passing control so the run could distinguish a real change from a broken
+# probe:
+#
+#     control: plain table, update-only   SUCCEEDS
+#     audit cols, update-only             SUCCEEDS
+#     audit cols, UPDATE + INSERT *       SUCCEEDS (the row was inserted)
+#
+# So the premise above is FALSE on 0.7.1: the engine now plans the exact shape
+# this intercept was written for. The engine matrix said so first — both MERGE
+# rows flipped from that error to ✅ on the same bump — and nobody connected
+# that row to this code, which is why it is written down here now.
+#
+# THE INTERCEPT STILL FIRES REGARDLESS: _MERGE matches before the engine sees
+# the statement, so the rewrite runs whether or not the engine could have
+# handled it. "Sail can do it" and "our rewrite is off the path" are different
+# claims, and only the second licenses deleting this.
+#
+# WHAT WOULD RETIRE IT, and what this measurement does NOT establish: the probe
+# above used a LOCAL PATH. The emulator merges against `az://` OneLake URLs,
+# and the engine matrix's own note records that the storage URL is exactly what
+# separates the two behaviours for MERGE. Retiring this needs that case proven
+# under e2e/sail and the medallion suites, not a laptop probe — so it is a
+# deliberate change, not a deletion folded into something else.
+#
+# THE SIGNAL TO WATCH: when the engine-matrix MERGE rows read ✅, this
+# justification is dead and the only question left is the az:// one above.
 #
 # The SELECT in a subquery source runs on the ENGINE (arbitrary SQL is its
 # job); only the upsert is redirected through delta-rs. That is the same split
