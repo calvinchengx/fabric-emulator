@@ -66,6 +66,46 @@ updates:
     groups:
       python:
         patterns: ['*']
+    # THREE PACKAGES ARE CAPPED BY TOOLS WE PIN, NOT BY US. Each entry names
+    # the constraint from the capping package's own published metadata, so the
+    # claim can be rechecked rather than taken on trust, and each says what to
+    # watch for before lifting it. Minor and patch updates keep flowing for all
+    # three; only the majors that cannot resolve are held.
+    #
+    # These were the last three failures in this job. Verified by rewriting the
+    # declared constraint the way Dependabot does and re-locking: pandas and
+    # cryptography reproduce with the mlflow line below, and databricks-sdk
+    # fails in Dependabot with the dbt-databricks line.
+    ignore:
+      # mlflow 3.15.1 `requires_dist`: `cryptography<50,>=43.0.0`.
+      # Our own range is `>=42,<51`, so WE permit 50 and mlflow forbids it.
+      # This is the one with a real cost: cryptography is security-relevant and
+      # 49.x carries no open advisory today, but that could change while the
+      # ceiling holds.
+      #
+      # LIFT THIS when mlflow's `requires_dist` admits cryptography 50.
+      - dependency-name: cryptography
+        update-types: ['version-update:semver-major']
+      # mlflow 3.15.1 `requires_dist`: `pandas<3`.
+      # Our main dependencies already say `pandas>=2,<3`; the `<4` in the
+      # great-expectations group and the range in sail-delta are what let uv
+      # consider pandas 3 at all, and neither can be satisfied while mlflow is
+      # in the workspace. Tightening one of them is not enough, measured: the
+      # other still pulls 3 into the resolution.
+      #
+      # LIFT THIS when mlflow admits pandas 3.
+      - dependency-name: pandas
+        update-types: ['version-update:semver-major']
+      # dbt-databricks 1.12.4 `requires_dist`:
+      # `databricks-sdk<0.118.0,>=0.68.0`, while our `databricks-sdk` group
+      # pins `>=0.130,<1`. That is precisely why the two are already declared
+      # conflicting in pyproject.toml; the conflict keeps them resolvable side
+      # by side but does not stop Dependabot proposing a bump that is
+      # unsatisfiable inside the dbt fork. The same package fails the same way
+      # in contoso-data-product-databricks-jobs, held there for the same reason.
+      #
+      # LIFT THIS when dbt-databricks raises its databricks-sdk ceiling.
+      - dependency-name: databricks-sdk
 
   # The published imageS' base layers, plural. `directory: /` watched exactly
   # one file, ./Dockerfile, and this repository has twelve. The two that matter
