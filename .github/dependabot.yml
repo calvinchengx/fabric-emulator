@@ -50,10 +50,16 @@ updates:
       - dependency-name: typescript
         update-types: ['version-update:semver-major']
 
-  # Python: uv-managed, one lockfile at the root covering the dependency
-  # groups. Dependabot reads pyproject.toml + uv.lock together.
+  # Python: uv-managed. TWO lockfiles, and the second is not optional.
+  # e2e/fabric-cli is its own project because ms-fabric-cli pins
+  # `pyyaml==6.0.2` exactly and that pin, held in a root dependency group, kept
+  # the whole workspace from moving pyyaml. Moving it out must not also move it
+  # out of Dependabot's view, so the directory is listed here: ms-fabric-cli
+  # keeps getting updates, it just no longer constrains anything else.
   - package-ecosystem: uv
-    directory: /
+    directories:
+      - /
+      - /e2e/fabric-cli
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
