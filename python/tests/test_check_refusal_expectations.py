@@ -48,7 +48,8 @@ def wired(tmp_path, monkeypatch):
     return _go
 
 
-def test_it_passes_when_both_sources_agree(wired, capsys):
+def test_it_passes_when_both_sources_agree(wired, monkeypatch, capsys):
+    monkeypatch.setattr(c.os, "name", "posix")
     wired({"dfs-delete-non-empty-directory": "409 DirectoryNotEmpty",
            "rm-non-empty-without-recurse": c.posix_rmdir_errno()})
     assert c.main() == 0
@@ -61,7 +62,14 @@ def test_a_code_microsoft_does_not_define_fails(wired, capsys):
     assert "not among the" in capsys.readouterr().err
 
 
-def test_an_errno_cpython_does_not_raise_fails(wired, capsys):
+def test_an_errno_cpython_does_not_raise_fails(wired, monkeypatch, capsys):
+    """Forced onto the POSIX path so the comparison is exercised everywhere.
+
+    `main()` SKIPS this corroboration off POSIX, which is deliberate — the
+    errno differs on Windows. Without the monkeypatch this test asserted a
+    failure the Windows runner never produced, and it passed on two platforms
+    of three while proving nothing on the third."""
+    monkeypatch.setattr(c.os, "name", "posix")
     wired({"rm-non-empty-without-recurse": "OSError/EACCES"})
     assert c.main() == 1
     assert "CPython raises" in capsys.readouterr().err
