@@ -34,27 +34,39 @@ def test_an_engine_without_spark_submit_reports_unavailable(monkeypatch):
 
 @pytest.fixture
 def has_submit(monkeypatch, tmp_path):
-    monkeypatch.setattr(s.os.path, "isfile", lambda p: True)
-    monkeypatch.setattr(s.os, "access", lambda *_: True)
-    return tmp_path
+    """An engine with spark-submit and a real jar inside the mount.
+
+    A REAL path, not a stub: the containment guard resolves what it is given,
+    so a fixture handing out `/x.jar` would exercise the guard rather than the
+    behaviour each test is about. Returns the jar's path.
+    """
+    root = tmp_path / "Files"
+    (root / "jobs").mkdir(parents=True)
+    jar = root / "jobs" / "etl.jar"
+    jar.write_text("PK")
+    monkeypatch.setattr(s, "MOUNT_ROOT", str(root))
+    monkeypatch.setattr(s, "SPARK_BIN", str(tmp_path / "spark-submit"))
+    (tmp_path / "spark-submit").write_text("#!/bin/sh\n")
+    (tmp_path / "spark-submit").chmod(0o755)
+    return str(jar)
 
 
 def test_a_missing_main_class_is_refused_before_launching(has_submit, monkeypatch):
     called = []
     monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: called.append(a) or FakeProc(0))
-    out = s.submit("", "/x.jar")
+    out = s.submit("", has_submit)
     assert out["ok"] is False and "mainClass is required" in out["error"]
     assert not called, "spark-submit was launched for a task with no class to run"
 
 
-def test_a_missing_jar_is_refused_before_launching(monkeypatch):
-    monkeypatch.setattr(s.shutil, "which", lambda _: "/usr/bin/spark-submit")
-    monkeypatch.setattr(s.os.path, "isfile", lambda p: p != "/nope.jar")
-    monkeypatch.setattr(s.os, "access", lambda *_: True)
+def test_a_missing_jar_is_refused_before_launching(has_submit, monkeypatch):
+    """Inside the mount, but not there — a different refusal from the traversal
+    one, and it must not be reported as a containment failure."""
     called = []
     monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: called.append(a) or FakeProc(0))
-    out = s.submit("com.acme.Job", "/nope.jar")
+    out = s.submit("com.acme.Job", s.MOUNT_ROOT + "/jobs/absent.jar")
     assert out["ok"] is False and "was not staged" in out["error"]
+    assert "resolves outside" not in out["error"]
     assert not called
 
 
@@ -63,14 +75,14 @@ def test_the_exit_code_decides_not_the_absence_of_an_exception(has_submit, monke
     still a failure; reporting success there is the fabrication this repo
     exists to avoid."""
     monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: FakeProc(2, "", "boom"))
-    out = s.submit("com.acme.Job", "/x.jar")
+    out = s.submit("com.acme.Job", has_submit)
     assert out["ok"] is False and out["exitCode"] == 2
     assert "exited 2" in out["error"] and out["stderr"] == "boom"
 
 
 def test_a_zero_exit_succeeds_and_carries_the_output(has_submit, monkeypatch):
     monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: FakeProc(0, "rows=3\n", ""))
-    out = s.submit("com.acme.Job", "/x.jar")
+    out = s.submit("com.acme.Job", has_submit)
     assert out["ok"] is True and out["exitCode"] == 0 and out["stdout"] == "rows=3\n"
     assert out["error"] == ""
 
@@ -83,12 +95,12 @@ def test_the_command_carries_class_conf_and_argv(has_submit, monkeypatch):
         return FakeProc(0)
 
     monkeypatch.setattr(s.subprocess, "run", fake_run)
-    s.submit("com.acme.Job", "/x.jar", args=["--full", 7], conf={"spark.a": "b"})
+    s.submit("com.acme.Job", has_submit, args=["--full", 7], conf={"spark.a": "b"})
     cmd = seen["cmd"]
     assert "--class" in cmd and "com.acme.Job" in cmd
     assert "spark.a=b" in cmd
     # argv follows the jar, as spark-submit requires, and non-strings survive.
-    assert cmd[cmd.index("/x.jar") + 1:] == ["--full", "7"]
+    assert cmd[cmd.index(has_submit) + 1:] == ["--full", "7"]
 
 
 def test_a_timeout_is_reported_not_swallowed(has_submit, monkeypatch):
@@ -96,7 +108,7 @@ def test_a_timeout_is_reported_not_swallowed(has_submit, monkeypatch):
         raise subprocess.TimeoutExpired(cmd="spark-submit", timeout=1)
 
     monkeypatch.setattr(s.subprocess, "run", boom)
-    out = s.submit("com.acme.Job", "/x.jar", timeout=1)
+    out = s.submit("com.acme.Job", has_submit, timeout=1)
     assert out["ok"] is False and out["exitCode"] is None
     assert "did not finish within" in out["error"]
 
@@ -104,5 +116,50 @@ def test_a_timeout_is_reported_not_swallowed(has_submit, monkeypatch):
 def test_output_is_bounded(has_submit, monkeypatch):
     """A submit that prints a gigabyte must not put it in an activity output."""
     monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: FakeProc(0, "x" * 50000, "y" * 50000))
-    out = s.submit("com.acme.Job", "/x.jar")
+    out = s.submit("com.acme.Job", has_submit)
     assert len(out["stdout"]) == 8192 and len(out["stderr"]) == 8192
+
+
+def test_a_path_that_leaves_the_mount_is_refused(has_submit, monkeypatch):
+    """CodeQL's py/path-injection, and it was right: the agent is a service, so
+    this path is only as trusted as the port it arrived on. Traversal out of the
+    lakehouse mount must be refused, not handed to spark-submit."""
+    called = []
+    monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: called.append(a) or FakeProc(0))
+    out = s.submit("com.acme.Job", s.MOUNT_ROOT + "/../../opt/evil.jar")
+    assert out["ok"] is False and "resolves outside" in out["error"]
+    assert not called, "spark-submit was handed a path outside the mount"
+
+
+def test_an_absolute_path_elsewhere_is_refused(has_submit, monkeypatch):
+    monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: FakeProc(0))
+    out = s.submit("com.acme.Job", "/etc/passwd")
+    assert out["ok"] is False and "resolves outside" in out["error"]
+
+
+def test_a_sibling_directory_sharing_the_prefix_is_refused(tmp_path, monkeypatch):
+    """`/lakehouse/default/Files-evil` starts with the root AS A STRING while
+    being a different directory — which is why this compares commonpath rather
+    than prefixes."""
+    root = tmp_path / "Files"
+    root.mkdir()
+    evil = tmp_path / "Files-evil"
+    evil.mkdir()
+    (evil / "x.jar").write_text("nope")
+    monkeypatch.setattr(s, "MOUNT_ROOT", str(root))
+    assert s._inside_mount(str(evil / "x.jar")) is None
+
+
+def test_a_jar_inside_the_mount_is_accepted(tmp_path, monkeypatch):
+    root = tmp_path / "Files"
+    (root / "jobs").mkdir(parents=True)
+    jar = root / "jobs" / "etl.jar"
+    jar.write_text("PK")
+    monkeypatch.setattr(s, "MOUNT_ROOT", str(root))
+    assert s._inside_mount(str(jar)) == str(jar.resolve())
+    # ...and the guard is not simply refusing everything.
+    monkeypatch.setattr(s.shutil, "which", lambda _: "/usr/bin/spark-submit")
+    monkeypatch.setattr(s.os.path, "isfile", lambda p: True)
+    monkeypatch.setattr(s.os, "access", lambda *_: True)
+    monkeypatch.setattr(s.subprocess, "run", lambda *a, **k: FakeProc(0, "ok\n"))
+    assert s.submit("com.acme.Job", str(jar))["ok"] is True

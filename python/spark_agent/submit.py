@@ -25,10 +25,9 @@ import os
 import shutil
 import subprocess
 
-# Where a submitted jar is staged. Inside the agent's container, beside the
-# lakehouse mount rather than in /tmp, so a jar and the data it reads are on
-# the same filesystem the notebook sees.
-STAGE = "/lakehouse/default/.submit"
+# The only directory a jar may be run from: the lakehouse mount, which is where
+# the emulator puts it and the one place the agent can justify reading.
+MOUNT_ROOT = "/lakehouse/default/Files"
 
 
 # Where the overlay image puts spark-submit. A literal rather than
@@ -37,6 +36,21 @@ STAGE = "/lakehouse/default/.submit"
 # is the only path anyone travels — which is what check_env_documented caught
 # when this file first read it.
 SPARK_BIN = "/opt/spark/bin/spark-submit"
+
+
+def _inside_mount(candidate):
+    """The resolved path if it lies within the lakehouse mount, else None."""
+    if not candidate:
+        return None
+    root = os.path.realpath(MOUNT_ROOT)
+    local = os.path.realpath(candidate if os.path.isabs(candidate)
+                             else os.path.join(root, candidate))
+    try:
+        if os.path.commonpath([root, local]) != root:
+            return None
+    except ValueError:  # pragma: no cover - different drives on Windows
+        return None
+    return local
 
 
 def available():
@@ -61,9 +75,28 @@ def submit(main_class, jar_path, args=None, conf=None, timeout=900):
     if not main_class:
         return {"ok": False, "available": True, "exitCode": None,
                 "error": "mainClass is required"}
-    if not jar_path or not os.path.isfile(jar_path):
+    contained = _inside_mount(jar_path)
+    if contained is None:
+        # THE AGENT IS A SERVICE, NOT A LIBRARY. Whatever the emulator checks
+        # before calling, this path arrives over HTTP and is only as trusted as
+        # the port. Without this, `jar: "/lakehouse/default/Files/../../opt/x.jar"`
+        # — or any absolute path — would be handed to spark-submit, which would
+        # happily load a jar from anywhere in the container. CodeQL called it
+        # py/path-injection and was right.
+        #
+        # Same containment files_mount.py applies to writes, for the same
+        # reason and by the same means: realpath first, so a symlink already
+        # inside the mount is not an escape either, and commonpath rather than
+        # a string prefix, because `/lakehouse/default/Files-evil` starts with
+        # the root as a string while being a different directory.
+        return {"ok": False, "available": True, "exitCode": None,
+                "error": f"the jar path {jar_path!r} resolves outside {MOUNT_ROOT} — a jar is "
+                         "run from the lakehouse mount, and a path that leaves it is refused "
+                         "rather than submitted"}
+    if not os.path.isfile(contained):
         return {"ok": False, "available": True, "exitCode": None,
                 "error": f"the jar was not staged at {jar_path!r}"}
+    jar_path = contained
 
     cmd = [binary, "--class", main_class]
     for key, value in (conf or {}).items():
