@@ -49,7 +49,7 @@ def wired(tmp_path, monkeypatch):
 
 
 def test_it_passes_when_both_sources_agree(wired, monkeypatch, capsys):
-    monkeypatch.setattr(c.os, "name", "posix")
+    monkeypatch.setattr(c, "POSIX", True)
     wired({"dfs-delete-non-empty-directory": "409 DirectoryNotEmpty",
            "rm-non-empty-without-recurse": c.posix_rmdir_errno()})
     assert c.main() == 0
@@ -66,10 +66,14 @@ def test_an_errno_cpython_does_not_raise_fails(wired, monkeypatch, capsys):
     """Forced onto the POSIX path so the comparison is exercised everywhere.
 
     `main()` SKIPS this corroboration off POSIX, which is deliberate — the
-    errno differs on Windows. Without the monkeypatch this test asserted a
-    failure the Windows runner never produced, and it passed on two platforms
-    of three while proving nothing on the third."""
-    monkeypatch.setattr(c.os, "name", "posix")
+    errno differs on Windows. Without forcing it this test asserted a failure
+    the Windows runner never produced, and it passed on two platforms of three
+    while proving nothing on the third.
+
+    Forced through the module's own flag, NOT by patching `os.name`: pathlib
+    reads that to choose PosixPath over WindowsPath, and patching it made every
+    `Path()` on the Windows runner raise NotImplementedError."""
+    monkeypatch.setattr(c, "POSIX", True)
     wired({"rm-non-empty-without-recurse": "OSError/EACCES"})
     assert c.main() == 1
     assert "CPython raises" in capsys.readouterr().err
@@ -134,6 +138,6 @@ def test_the_posix_corroboration_is_skipped_not_faked_off_posix(wired, monkeypat
     """On Windows the errno differs, so the check reports the corroboration as
     SKIPPED. It must not quietly pass as though CPython had agreed."""
     wired({"rm-non-empty-without-recurse": "OSError/ENOTEMPTY"})
-    monkeypatch.setattr(c.os, "name", "nt")
+    monkeypatch.setattr(c, "POSIX", False)
     assert c.main() == 0
     assert "corroboration skipped" in capsys.readouterr().out

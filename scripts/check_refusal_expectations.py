@@ -55,6 +55,15 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 LIVE = ROOT / "e2e" / "conformance" / "live.py"
 VENDORED = ROOT / "third_party" / "azure-storage-error-codes" / "models.py"
 
+# Whether the CPython corroboration applies, as a module-level flag rather than
+# a bare `os.name` check at the point of use. A test needs to force this branch
+# on every runner -- the comparison is the thing worth exercising -- and
+# patching `os.name` to do it is a trap: pathlib reads `os.name` to decide
+# between PosixPath and WindowsPath, so forcing it made every `Path()` on the
+# Windows runner raise `NotImplementedError: cannot instantiate 'PosixPath'`.
+# One name owned by this module has no such reach.
+POSIX = os.name == "posix"
+
 # Cases whose expectation this check cannot corroborate, WITH THE REASON. An
 # entry here is a decision someone wrote down, not a gap nobody saw.
 SINGLE_SOURCED = {
@@ -146,7 +155,7 @@ def main() -> int:
     # 2. The errno, against CPython.
     rm = "rm-non-empty-without-recurse"
     if rm in exp:
-        if os.name != "posix":
+        if not POSIX:
             notes.append(f"{rm}: POSIX corroboration skipped on {os.name}")
         else:
             got = posix_rmdir_errno()
