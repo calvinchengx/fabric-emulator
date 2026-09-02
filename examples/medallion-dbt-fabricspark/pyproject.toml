@@ -32,9 +32,9 @@ dependencies = [
     "dbt-spark>=1.11",
     "pyspark-client>=4.1",
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "pyodbc>=5.2,<6",
-    "pyspark-client==4.1.1",
+    "pyspark-client==4.2.0",
     "requests>=2.32,<3",
 ]
 

@@ -15,7 +15,7 @@ description = "Web-store and ERP source fixtures for the advanced medallion exam
 requires-python = ">=3.12"
 dependencies = [
     "contoso-fixtures",
-    "pyarrow>=18,<24",  # the ERP feed is Parquet, as a columnar source would be
+    "pyarrow>=18,<26",  # the ERP feed is Parquet, as a columnar source would be
 ]
 
 # Flat modules for the same reason as contoso-fixtures: `import web_store as web`

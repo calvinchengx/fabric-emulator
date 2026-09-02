@@ -16,11 +16,11 @@ dependencies = [
     "contoso-fixtures",
     "dbt-fabric>=1.11",
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "pyodbc>=5.2,<6",
     # Drives notebook cells and the silver transform onto Sail over Spark
     # Connect (no JVM).
-    "pyspark-client==4.1.1",
+    "pyspark-client==4.2.0",
     "requests>=2.32,<3",
 ]
 
