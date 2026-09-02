@@ -25,7 +25,7 @@ dependencies = [
     "pyodbc>=5.2,<6",
     # Drives notebook cells and the silver transform onto Sail over Spark
     # Connect (no JVM).
-    "pyspark-client==4.1.1",
+    "pyspark-client==4.2.0",
     "requests>=2.32,<3",
 ]
 
