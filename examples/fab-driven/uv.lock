@@ -197,7 +197,7 @@ dev = [
 requires-dist = [
     { name = "contoso-fixtures", editable = "../contoso-fixtures" },
     { name = "deltalake", specifier = ">=0.23,<2" },
-    { name = "pyarrow", specifier = ">=18,<24" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "requests", specifier = ">=2.32,<3" },
 ]
 

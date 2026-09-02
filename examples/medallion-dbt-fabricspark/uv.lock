@@ -621,7 +621,7 @@ requires-dist = [
     { name = "dbt-fabricspark", specifier = ">=1.13" },
     { name = "dbt-spark", specifier = ">=1.11" },
     { name = "deltalake", specifier = ">=0.23,<2" },
-    { name = "pyarrow", specifier = ">=18,<24" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyodbc", specifier = ">=5.2,<6" },
     { name = "pyspark-client", specifier = "==4.1.1" },
     { name = "pyspark-client", specifier = ">=4.1" },

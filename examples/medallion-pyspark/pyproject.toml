@@ -16,7 +16,12 @@ dependencies = [
     "contoso-fixtures",
     "dbt-fabric>=1.11",
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    # MATCHES THE ROOT's RANGE. The ceiling was `<24` while the root asks for
+    # `>=23.0.1,<26`, so a pyarrow 25 bump makes this project unsatisfiable;
+    # the floor was `>=18`, which permits 18 through 22, inside
+    # GHSA-rgxp-2hwp-jwgg (vulnerable >=15.0.0,<23.0.1) that the root was
+    # floored to 23.0.1 for. Examples are what people copy.
+    "pyarrow>=23.0.1,<26",
     "pyodbc>=5.2,<6",
     # Drives notebook cells and the silver transform onto Sail over Spark
     # Connect (no JVM).

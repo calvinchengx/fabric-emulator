@@ -101,7 +101,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "contoso-fixtures", editable = "../contoso-fixtures" },
-    { name = "pyarrow", specifier = ">=18,<24" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
 ]
 
 [[package]]
