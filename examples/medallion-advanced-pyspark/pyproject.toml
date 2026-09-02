@@ -36,7 +36,7 @@ dependencies = [
     # because examples are what people copy.
     "pyarrow>=23.0.1,<26",
     "pyodbc>=5.2,<6",
-    "pyspark-client==4.1.1",
+    "pyspark-client==4.2.0",
     "requests>=2.32,<3",
     # contract_gates.py compiles the ODCS `library` rules in contracts/ into
     # Expectation Suites. Pinned <1 to match the emulator's own
