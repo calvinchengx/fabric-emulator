@@ -110,3 +110,7 @@ obj/
 # kind of thing that lands unnoticed because nothing fails.
 /fabric-emulator
 /fabric-emulator.exe
+
+# Fetched by scripts/fetch_connect_client_jars.py, derived from one pinned
+# Maven coordinate — never committed.
+e2e/sail-jvm-client/jars/
