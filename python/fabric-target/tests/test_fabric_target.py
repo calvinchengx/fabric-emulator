@@ -22,7 +22,10 @@ def clean_env(monkeypatch):
               "FABRIC_URL", "ENTRA_URL", "AZURE_KEY_VAULT_URL",
               "AZURE_CLIENT_ID"):
         monkeypatch.delenv(k, raising=False)
-    fabric_target._cached = None
+    # setattr so the cache is restored on the way OUT as well as cleared on the
+    # way in. `target(fresh=True)` still writes _cached, so this file leaked a
+    # resolved target into whatever ran after it.
+    monkeypatch.setattr(fabric_target, "_cached", None)
 
 
 def test_emulator_defaults_are_zero_config():

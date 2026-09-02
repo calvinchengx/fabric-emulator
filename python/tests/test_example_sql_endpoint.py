@@ -75,7 +75,11 @@ def load_common(monkeypatch, tmp_path, target_name, **env):
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     monkeypatch.setattr(fabric_target, "_az_logged_in", lambda: True)
-    fabric_target._cached = None
+    # setattr, not a bare assignment: `common` resolves a target AT IMPORT, which
+    # populates fabric_target._cached, and a raw write here has no undo. The
+    # resolved target would outlive the test the same way its NOTEBOOKUTILS_*
+    # keys did (python/tests/conftest.py).
+    monkeypatch.setattr(fabric_target, "_cached", None)
     sys.modules.pop("common", None)
     common = importlib.import_module("common")
     (tmp_path / "state.json").write_text('{"workspace": "ws-1"}')
