@@ -21,7 +21,21 @@ dependencies = [
     "dbt-fabric>=1.11",
     "dbt-fabricspark>=1.13",
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    # MATCHES THE ROOT's RANGE, and both halves of it matter.
+    #
+    # The ceiling was `<24` while every group in the root pyproject asks for
+    # `>=23.0.1,<26`, so the moment Dependabot proposed pyarrow 25.0.1 this
+    # project became unsatisfiable:
+    #
+    #   Because your project depends on pyarrow>=18,<24 and pyarrow==25.0.1,
+    #   we can conclude that your project's requirements are unsatisfiable.
+    #
+    # The floor was `>=18`, which permits 18 through 22 -- inside
+    # GHSA-rgxp-2hwp-jwgg (use-after-free reading an IPC file with
+    # pre-buffering, vulnerable >=15.0.0,<23.0.1), the advisory the root was
+    # floored to 23.0.1 for. An example is the last place to leave that open,
+    # because examples are what people copy.
+    "pyarrow>=23.0.1,<26",
     "pyodbc>=5.2,<6",
     "pyspark-client==4.1.1",
     "requests>=2.32,<3",

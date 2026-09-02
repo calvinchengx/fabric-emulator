@@ -585,7 +585,7 @@ requires-dist = [
     { name = "contoso-fixtures", editable = "../contoso-fixtures" },
     { name = "dbt-fabric", specifier = ">=1.11" },
     { name = "deltalake", specifier = ">=0.23,<2" },
-    { name = "pyarrow", specifier = ">=18,<24" },
+    { name = "pyarrow", specifier = ">=23.0.1,<26" },
     { name = "pyodbc", specifier = ">=5.2,<6" },
     { name = "pyspark-client", specifier = "==4.1.1" },
     { name = "requests", specifier = ">=2.32,<3" },
