@@ -127,6 +127,37 @@ updates:
       #
       # LIFT THIS when dbt-databricks raises its databricks-sdk ceiling.
       - dependency-name: databricks-sdk
+      # great-expectations 1.0 REPLACED the validation API, so this is a
+      # rewrite rather than a bump. `contract_gate.py` in both advanced
+      # medallion examples builds its validator as
+      #
+      #   ctx.sources.add_pandas(...) -> add_dataframe_asset ->
+      #   build_batch_request -> ctx.get_validator(...)
+      #
+      # and 1.x has none of those: `sources` is `data_sources`, batch requests
+      # became batch definitions, and `get_validator` is gone in favour of
+      # ValidationDefinition. Ten call sites across seven expectation types
+      # (`expect_column_values_to_not_be_null`, `..._to_be_unique`,
+      # `..._to_be_in_set`, `expect_compound_columns_to_be_unique`,
+      # `expect_table_row_count_to_equal`, `..._to_be_between`,
+      # `expect_table_column_count_to_equal`) each change shape and each
+      # returns a different result object.
+      #
+      # HELD BECAUSE THESE GATES ARE A WITNESS SURFACE, not because the work is
+      # large. The examples run the ODCS contracts as gates and prove they can
+      # fail, deliberately breaking a rule and requiring the failure. Rewriting
+      # how they assert as a side effect of a dependency bump would change what
+      # that evidence means, quietly. It earns its own change, with the
+      # deliberate-failure case re-proved on the new API.
+      #
+      # The widening arrived as `great-expectations>=0.18,<1` -> `<2` and broke
+      # both advanced medallion e2es with
+      # `AttributeError: 'EphemeralDataContext' object has no attribute 'sources'`.
+      #
+      # LIFT THIS by doing the migration; there is no upstream change to wait
+      # for. Minor and patch updates inside 0.18 keep flowing.
+      - dependency-name: great-expectations
+        update-types: ['version-update:semver-major']
 
   # The published imageS' base layers, plural. `directory: /` watched exactly
   # one file, ./Dockerfile, and this repository has twelve. The two that matter
