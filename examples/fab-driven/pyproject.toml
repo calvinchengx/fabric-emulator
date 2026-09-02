@@ -22,7 +22,7 @@ dependencies = [
     # Reads the Delta bytes back independently of anything fab said — the
     # second opinion readback.py is built on.
     "deltalake>=0.23,<2",
-    "pyarrow>=18,<24",
+    "pyarrow>=18,<26",
     "requests>=2.32,<3",
 ]
 

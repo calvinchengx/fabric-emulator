@@ -23,13 +23,13 @@ dependencies = [
     "deltalake>=0.23,<2",
     "pyarrow>=18,<24",
     "pyodbc>=5.2,<6",
-    "pyspark-client==4.1.1",
+    "pyspark-client==4.2.0",
     "requests>=2.32,<3",
     # contract_gates.py compiles the ODCS `library` rules in contracts/ into
     # Expectation Suites. Pinned <1 to match the emulator's own
     # great-expectations extra, so the two demonstrations cannot drift onto
     # different major versions of the API.
-    "great-expectations>=0.18,<1",
+    "great-expectations>=0.18,<2",
     # contract_gate.py reads the ODCS YAML.
     "pyyaml>=6,<7",
 ]
