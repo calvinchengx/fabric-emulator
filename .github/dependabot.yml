@@ -80,6 +80,21 @@ updates:
     directories:
       - /
       - /e2e/fabric-cli
+      # THE EXAMPLES, all seven, each its own project with its own lockfile and
+      # until now watched by nothing. They are the code readers copy, so a
+      # stale pin here is advice rather than an internal detail.
+      #
+      # Found via a stale SECURITY alert, which is the part worth recording:
+      # alert #67 reports tornado against `examples/medallion/uv.lock`, a path
+      # that has not existed since the medallion examples were split into the
+      # four `medallion-*` directories. Security updates follow the dependency
+      # graph and ignore this file, so Dependabot kept trying to update a
+      # deleted manifest and failed at file fetching every run:
+      #   "Repo must contain a requirements.txt, uv.lock, ..."
+      # Every lockfile that actually carries tornado is already on 6.5.8, the
+      # fixed version, so nothing was ever vulnerable -- the alert outlived the
+      # directory it named. Listing the real directories is what lets the graph
+      # be rebuilt from paths that exist.
       - /examples/*
     schedule:
       interval: weekly
