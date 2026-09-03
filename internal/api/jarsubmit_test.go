@@ -108,6 +108,36 @@ func TestDatabricksJarRunsOnAnEngineThatCanSubmit(t *testing.T) {
 	}
 }
 
+// TestDatabricksJarParametersAreResolved: argv is evaluated against the
+// pipeline scope, the same way a Python task's parameters are. Unmarshal-and-
+// Sprint would submit the literal "@pipeline().parameters.since" — which is
+// what Fabric evaluates and this path used to skip.
+func TestDatabricksJarParametersAreResolved(t *testing.T) {
+	a, st := newAPI(t)
+	j := newJarAgent(t, a, true, 0)
+	ws := seedWorkspace(t, st)
+	_, ref := seedJar(t, st, ws.ID)
+
+	pl := createPipeline(t, st, ws.ID, `{"properties":{
+      "parameters":{"since":{"type":"String","defaultValue":"2026-01-01"}},
+      "activities":[{"name":"Jar","type":"DatabricksSparkJar","typeProperties":{
+        "mainClassName":"com.acme.Etl",
+        "libraries":[{"jar":"`+ref+`"}],
+        "parameters":["--since","@pipeline().parameters.since"]}}]}}`)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+		t.Fatalf("job = %s; runs=%+v", s, runs)
+	}
+	args, _ := json.Marshal(j.seen["args"])
+	if !strings.Contains(string(args), "2026-01-01") {
+		t.Fatalf("argv %s did not receive the resolved parameter", args)
+	}
+	if strings.Contains(string(args), "@pipeline()") {
+		t.Fatalf("argv %s submitted the unevaluated expression", args)
+	}
+}
+
 func TestDatabricksJarRefusesWhenTheFilesMountDidNotBind(t *testing.T) {
 	a, st := newAPI(t)
 	j := newJarAgent(t, a, true, 0)
@@ -195,6 +225,8 @@ func TestDatabricksJarInputSurface(t *testing.T) {
 			"no jar at"},
 		{"main class expr", `"mainClassName":"@nope(1)","libraries":[{"jar":"LH/Files/jobs/etl.jar"}]`,
 			"mainClassName"},
+		{"parameters expr", `"mainClassName":"c.A","libraries":[{"jar":"LH/Files/jobs/etl.jar"}],"parameters":["@nope(1)"]`,
+			"parameter 0"},
 		{"parameters not an array", `"mainClassName":"c.A","libraries":[{"jar":"LH/Files/jobs/etl.jar"}],"parameters":{}`,
 			"parameters must be an array"},
 	} {
