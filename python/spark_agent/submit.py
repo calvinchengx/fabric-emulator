@@ -79,8 +79,17 @@ def _resolve_in_mount(requested):
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:
             found = os.path.join(dirpath, name)
-            if rel(os.path.relpath(found, root)) == wanted:
-                return found
+            if rel(os.path.relpath(found, root)) != wanted:
+                continue
+            if os.path.islink(found):
+                return None
+            resolved = os.path.realpath(found)
+            try:
+                if os.path.commonpath([root, resolved]) != root:
+                    return None
+            except ValueError:  # pragma: no cover - different drives on Windows
+                return None
+            return resolved
     return None
 
 

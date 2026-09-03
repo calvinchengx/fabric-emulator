@@ -90,7 +90,8 @@ def load_common(monkeypatch, tmp_path):
     monkeypatch.setenv("FABRIC_TARGET", "emulator")
     monkeypatch.setenv("PIPELINE_STATE", str(tmp_path / "state.json"))
     monkeypatch.setattr(fabric_target, "_az_logged_in", lambda: True)
-    fabric_target._cached = None
+    # setattr, not a bare assignment — see test_example_sql_endpoint.load_common.
+    monkeypatch.setattr(fabric_target, "_cached", None)
     sys.modules.pop("common", None)
     common = importlib.import_module("common")
     (tmp_path / "state.json").write_text('{"workspace": "ws-1"}')

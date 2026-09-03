@@ -137,6 +137,19 @@ def test_an_absolute_path_elsewhere_is_refused(has_submit, monkeypatch):
     assert out["ok"] is False and "no jar matching" in out["error"]
 
 
+def test_a_symlink_out_of_the_mount_is_refused(tmp_path, monkeypatch):
+    root = tmp_path / "Files"
+    (root / "jobs").mkdir(parents=True)
+    outside = tmp_path / "outside.jar"
+    outside.write_text("outside")
+    try:
+        (root / "jobs" / "etl.jar").symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlinks are unavailable on this runner: {exc}")
+    monkeypatch.setattr(s, "MOUNT_ROOT", str(root))
+    assert s._resolve_in_mount("jobs/etl.jar") is None
+
+
 def test_a_sibling_directory_sharing_the_prefix_is_refused(tmp_path, monkeypatch):
     """`/lakehouse/default/Files-evil` starts with the root AS A STRING while
     being a different directory. The enumeration never produces it, so the

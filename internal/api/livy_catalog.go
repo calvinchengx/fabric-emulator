@@ -94,16 +94,9 @@ func (a *API) registerLakehouseTables(session, wid, lid string) {
 	// deliberately says nothing when there are no tables). Best-effort like the
 	// rest of this function; an agent predating /mount answers 404 and the
 	// notebook keeps whatever was staged by hand.
-	if out, err := a.agentPost("/mount", map[string]any{
-		"session": session, "workspace": wid, "lakehouse": lid}); err != nil {
-		log.Printf("livy: mounting lakehouse %s Files for session %s: %v", lid, session, err)
-	} else if mounted, _ := out["mounted"].(bool); !mounted {
-		// The agent answers 200 with mounted:false when it could not mirror
-		// (its error rides in the body). Treating that as success is how a
-		// missing mount stayed invisible until a notebook hit
-		// FileNotFoundError; the cause belongs in THIS log, at bind time.
+	if err := a.mountLakehouseFiles(session, wid, lid); err != nil {
 		log.Printf("livy: lakehouse %s Files did NOT mount for session %s: %v",
-			lid, session, out["error"])
+			lid, session, err)
 	}
 	dirs, err := a.Store.ListOneLakePaths(lid, "Tables", false)
 	if err != nil {
@@ -179,6 +172,22 @@ func (a *API) registerLakehouseTables(session, wid, lid string) {
 		log.Printf("livy: %d of %d table(s) of lakehouse %s did not register: %v",
 			len(skipped), len(tables), it.DisplayName, skipped)
 	}
+}
+
+func (a *API) mountLakehouseFiles(session, wid, lid string) error {
+	out, err := a.agentPost("/mount", map[string]any{
+		"session": session, "workspace": wid, "lakehouse": lid})
+	if err != nil {
+		return fmt.Errorf("mounting lakehouse Files: %w", err)
+	}
+	if mounted, _ := out["mounted"].(bool); !mounted {
+		// The agent answers 200 with mounted:false when it could not mirror
+		// (its error rides in the body). Treating that as success is how a
+		// missing mount stayed invisible until the code using /lakehouse hit
+		// FileNotFoundError; the cause belongs at bind time.
+		return fmt.Errorf("%v", out["error"])
+	}
+	return nil
 }
 
 // applyEnvironment hands a session's Environment to the agent: the packages to
