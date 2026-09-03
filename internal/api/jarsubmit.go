@@ -248,6 +248,11 @@ func (e *pipelineExecutor) databricksJarActivity(
 	defer func() { _, _ = e.a.agentPost("/close", map[string]any{"session": session}) }()
 	// Mounts the lakehouse's Files/ at /lakehouse/default/Files, which is how
 	// the submitted process reaches the jar and anything it reads.
+	if err := e.a.mountLakehouseFiles(session, e.wid, itemID); err != nil {
+		return nil, fmt.Errorf("%s %q: the lakehouse Files mount for item %q is not available, "+
+			"so submitting %q would risk running a stale or wrong jar: %v",
+			label, act.Name, itemID, mainClass, err)
+	}
 	e.a.registerLakehouseTables(session, e.wid, itemID)
 
 	return e.submitMainClass(label, act, session, mainClass, jarMountPath(base), argv, nil)

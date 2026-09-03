@@ -14,14 +14,22 @@ type jarAgent struct {
 	agent     *fakeAgent
 	available bool
 	exit      int
+	mountOK   bool
 	seen      map[string]any
 }
 
 func newJarAgent(t *testing.T, a *API, available bool, exit int) *jarAgent {
 	t.Helper()
-	j := &jarAgent{available: available, exit: exit}
+	j := &jarAgent{available: available, exit: exit, mountOK: true}
 	j.agent = newFakeAgent(t, a)
 	j.agent.onPost = func(path string, body map[string]any) (map[string]any, bool) {
+		if path == "/mount" {
+			if !j.mountOK {
+				return map[string]any{"mounted": false,
+					"error": "this agent already has lakehouse old mounted"}, true
+			}
+			return map[string]any{"mounted": true}, true
+		}
 		if path != "/submit" {
 			return nil, false
 		}
@@ -97,6 +105,29 @@ func TestDatabricksJarRunsOnAnEngineThatCanSubmit(t *testing.T) {
 	}
 	if s, _ := out["executedBy"].(string); !strings.Contains(s, "not a Databricks cluster") {
 		t.Fatalf("output does not say which engine answered: %+v", out)
+	}
+}
+
+func TestDatabricksJarRefusesWhenTheFilesMountDidNotBind(t *testing.T) {
+	a, st := newAPI(t)
+	j := newJarAgent(t, a, true, 0)
+	j.mountOK = false
+	ws := seedWorkspace(t, st)
+	_, ref := seedJar(t, st, ws.ID)
+
+	pl := createPipeline(t, st, ws.ID, jarPipeline(
+		`"mainClassName":"com.acme.Etl","libraries":[{"jar":"`+ref+`"}]`))
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job = %s, want Failed when the Files mount refuses", s)
+	}
+	if j.seen != nil {
+		t.Fatalf("submitted despite a failed Files mount: %+v", j.seen)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	e, _ := runs[0]["error"].(string)
+	if !strings.Contains(e, "Files mount") || !strings.Contains(e, "stale or wrong jar") {
+		t.Fatalf("error %q does not name the mount risk", e)
 	}
 }
 
