@@ -9,6 +9,7 @@ those with it.
 import pathlib
 import subprocess
 import sys
+import threading
 
 import pytest
 
@@ -190,3 +191,23 @@ def test_a_backslash_request_matches_the_same_jar(tmp_path, monkeypatch):
     monkeypatch.setattr(s, "MOUNT_ROOT", str(root))
     for form in ("jobs/etl.jar", "jobs\\etl.jar", str(jar), str(jar).replace("/", "\\")):
         assert s._resolve_in_mount(form) == str(jar.resolve()), form
+
+
+def test_submit_holds_the_mount_lock_while_the_jvm_runs(has_submit, monkeypatch):
+    """A statement refresh must wait, not rewrite Files/ under spark-submit."""
+    import files_mount
+    blocked = []
+    waiter = []
+
+    def run(*_a, **_k):
+        t = threading.Thread(target=files_mount.refresh)
+        waiter.append(t)
+        t.start()
+        t.join(0.15)
+        blocked.append(t.is_alive())
+        return FakeProc(0, "ok\n")
+
+    monkeypatch.setattr(s.subprocess, "run", run)
+    assert s.submit("com.acme.Job", has_submit)["ok"] is True
+    assert blocked == [True], "refresh ran while spark-submit held the mount"
+    waiter[0].join(2)
