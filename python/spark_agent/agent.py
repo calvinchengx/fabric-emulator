@@ -270,7 +270,13 @@ def apply_environment(req):
               f"classpath is fixed at engine start, so they are NOT applied "
               f"(docs/37)", file=sys.stderr, flush=True)
 
-    _environment_applied[env_id] = {"session": session, "packages": packages}
+    # Record only a SUCCESS. Remembering a failed pip is how a retry Completes
+    # with the Environment listed and nothing installed — the first bind
+    # correctly reports applied:false, the second claims "already installed".
+    # It also occupies the one-environment slot, so a later different
+    # Environment is refused as a conflict even though nothing was installed.
+    if ok:
+        _environment_applied[env_id] = {"session": session, "packages": packages}
     return {"applied": ok, "reason": detail, "packages": packages,
             "sparkConfig": applied_config, "jarsSkipped": len(jars)}
 

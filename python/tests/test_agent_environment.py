@@ -105,13 +105,43 @@ def test_jars_are_reported_as_skipped_rather_than_silently_dropped(agent):
 
 
 def test_a_failed_install_is_reported_not_raised(agent, monkeypatch):
+    attempts = []
+
     def failing(specs, source):
+        attempts.append(list(specs))
         return False, "no matching distribution"
 
     monkeypatch.setitem(agent.__dict__, "_install_packages", failing)
-    out = agent.apply_environment({
-        "session": "s1", "environment": "env-bad", "packages": ["nope==9.9.9"]})
+    req = {"session": "s1", "environment": "env-bad", "packages": ["nope==9.9.9"]}
+    out = agent.apply_environment(req)
     # A session bind must not die because a package failed; the caller logs it
     # and the notebook meets a clear ModuleNotFoundError later.
     assert out["applied"] is False
     assert "no matching distribution" in out["reason"]
+
+    # Recording the failed attempt is how a retry Completes with the
+    # Environment listed and nothing installed. A second bind of the same id
+    # must try again, not claim "already installed".
+    retry = agent.apply_environment({**req, "session": "s2"})
+    assert retry["applied"] is False
+    assert "already installed" not in retry["reason"]
+    assert "no matching distribution" in retry["reason"]
+    assert len(attempts) == 2
+
+
+def test_a_failed_install_does_not_occupy_the_agent(agent, monkeypatch):
+    def install(specs, source):
+        if specs == ["nope==9.9.9"]:
+            return False, "no matching distribution"
+        return True, f"installed {len(specs)} package(s)"
+
+    monkeypatch.setitem(agent.__dict__, "_install_packages", install)
+    assert agent.apply_environment({
+        "session": "s1", "environment": "env-bad", "packages": ["nope==9.9.9"],
+    })["applied"] is False
+    # Nothing was installed, so a later bind of a different Environment is
+    # still allowed — recording the failure would refuse it as a conflict.
+    out = agent.apply_environment({
+        "session": "s2", "environment": "env-good", "packages": ["anytree"],
+    })
+    assert out["applied"] is True
