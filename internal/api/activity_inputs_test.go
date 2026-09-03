@@ -43,6 +43,8 @@ func TestActivityInputsFailLoudlyPerField(t *testing.T) {
 			`"pythonFile":"%s/Files/j/e.py","parameters":["@nope(1)"]`, "parameter 0"},
 		{"hdinsight rootPath expr", "HDInsightSpark",
 			`"rootPath":"@nope(1)","entryFilePath":"e.py"`, "rootPath"},
+		{"hdinsight className expr", "HDInsightSpark",
+			`"rootPath":"%s/Files/j","entryFilePath":"e.jar","className":"@nope(1)"`, "className"},
 		{"hdinsight argument expr", "HDInsightSpark",
 			`"rootPath":"%s/Files/j","entryFilePath":"e.py","arguments":["@nope(1)"]`, "argument 0"},
 		{"hdinsight sparkConfig expr", "HDInsightSpark",
