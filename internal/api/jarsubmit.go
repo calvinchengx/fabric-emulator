@@ -230,11 +230,15 @@ func (e *pipelineExecutor) databricksJarActivity(
 
 	var argv []string
 	if raw, ok := tp["parameters"]; ok && len(raw) > 0 {
-		var vals []any
-		if json.Unmarshal(raw, &vals) != nil {
+		var items []json.RawMessage
+		if json.Unmarshal(raw, &items) != nil {
 			return nil, fmt.Errorf("%s %q: parameters must be an array", label, act.Name)
 		}
-		for _, v := range vals {
+		for i, iraw := range items {
+			v, perr := resolve(iraw)
+			if perr != nil {
+				return nil, fmt.Errorf("%s %q: parameter %d: %w", label, act.Name, i, perr)
+			}
 			argv = append(argv, fmt.Sprint(v))
 		}
 	}
