@@ -22,6 +22,11 @@ DIVERGENCES FROM REAL FABRIC, stated rather than hidden:
   - One mount point. Sessions bound to DIFFERENT lakehouses share
     /lakehouse/default; a second bind of a different lakehouse is refused
     (docs/37 §2c) rather than silently replacing the first session's files.
+  - Statement refresh and spark-submit share one lock. The agent is a
+    ThreadingHTTPServer, so /statements and /submit run at once; without the
+    lock a refresh rewrites Files/ under a 900s submit, or `_state["seen"]`
+    tears and a later flush skips a write. A submit can therefore stall a
+    statement for up to that timeout — stated, not hidden.
 """
 from __future__ import annotations
 

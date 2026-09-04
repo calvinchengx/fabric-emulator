@@ -208,6 +208,9 @@ def test_submit_holds_the_mount_lock_while_the_jvm_runs(has_submit, monkeypatch)
         return FakeProc(0, "ok\n")
 
     monkeypatch.setattr(s.subprocess, "run", run)
-    assert s.submit("com.acme.Job", has_submit)["ok"] is True
-    assert blocked == [True], "refresh ran while spark-submit held the mount"
-    waiter[0].join(2)
+    try:
+        assert s.submit("com.acme.Job", has_submit)["ok"] is True
+        assert blocked == [True], "refresh ran while spark-submit held the mount"
+    finally:
+        if waiter:
+            waiter[0].join(2)
