@@ -10,6 +10,7 @@ first session's files left intact (docs/37 §2).
 
 import os
 import sys
+import threading
 import types
 from pathlib import Path
 
@@ -345,3 +346,80 @@ def test_the_agent_refreshes_the_mount_around_statements():
     close = src.split('elif self.path == "/close":', 1)[1]
     close = close.split("else:", 1)[0]
     assert "files_mount.flush()" in close
+
+
+def test_hold_blocks_refresh_until_released(mount, monkeypatch):
+    """spark-submit holds this lock; a statement refresh must wait, not tear."""
+    _assert_hold_blocks(mount, monkeypatch, lambda: files_mount.refresh())
+
+
+def test_hold_blocks_flush_until_released(mount, monkeypatch):
+    """/close flushes; that must wait too, or it rewrites Files/ under submit."""
+    _assert_hold_blocks(mount, monkeypatch, lambda: files_mount.flush())
+
+
+def test_hold_blocks_sync_until_released(mount, monkeypatch):
+    """/mount during a submit must wait rather than replace the tree being read."""
+    _assert_hold_blocks(mount, monkeypatch, lambda: files_mount.sync("ws", "lh"))
+
+
+def _assert_hold_blocks(_mount, monkeypatch, op):
+    base = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Files"
+    tree = FakeFS()
+    tree.blobs[f"{base}/ok.txt"] = b"ok"
+    install_tree(monkeypatch, tree)
+    files_mount.sync("ws", "lh")
+
+    entered = threading.Event()
+    release = threading.Event()
+    finished = []
+
+    def holder():
+        with files_mount.hold():
+            entered.set()
+            release.wait(2)
+
+    def mutator():
+        entered.wait(2)
+        op()
+        finished.append(True)
+
+    t1 = threading.Thread(target=holder)
+    t2 = threading.Thread(target=mutator)
+    t1.start()
+    t2.start()
+    assert entered.wait(1)
+    t2.join(0.15)
+    assert t2.is_alive() and finished == [], "mount mutation ran while hold() was held"
+    release.set()
+    t1.join(2)
+    t2.join(2)
+    assert finished == [True]
+
+
+def test_concurrent_refresh_and_flush_leave_a_coherent_seen(mount, monkeypatch):
+    base = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Files"
+    tree = FakeFS()
+    tree.blobs[f"{base}/ok.txt"] = b"ok"
+    install_tree(monkeypatch, tree)
+    files_mount.sync("ws", "lh")
+    (mount / "local.txt").write_bytes(b"x")
+
+    errors = []
+
+    def hammer():
+        try:
+            for _ in range(15):
+                files_mount.refresh()
+                files_mount.flush()
+        except Exception as exc:  # noqa: BLE001 - collect, then assert empty
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    with files_mount.hold():
+        assert files_mount._state["seen"] == files_mount._snapshot()

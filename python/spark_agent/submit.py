@@ -115,6 +115,14 @@ def submit(main_class, jar_path, args=None, conf=None, timeout=900):
     if not main_class:
         return {"ok": False, "available": True, "exitCode": None,
                 "error": "mainClass is required"}
+    # Pause statement refresh for the walk and the JVM: ThreadingHTTPServer
+    # will otherwise rewrite Files/ under spark-submit (files_mount.hold).
+    import files_mount
+    with files_mount.hold():
+        return _submit_locked(binary, main_class, jar_path, args, conf, timeout)
+
+
+def _submit_locked(binary, main_class, jar_path, args, conf, timeout):
     contained = _resolve_in_mount(jar_path)
     if contained is None:
         # THE AGENT IS A SERVICE, NOT A LIBRARY. Whatever the emulator checks

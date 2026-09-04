@@ -22,11 +22,17 @@ DIVERGENCES FROM REAL FABRIC, stated rather than hidden:
   - One mount point. Sessions bound to DIFFERENT lakehouses share
     /lakehouse/default; a second bind of a different lakehouse is refused
     (docs/37 §2c) rather than silently replacing the first session's files.
+  - Statement refresh and spark-submit share one lock. The agent is a
+    ThreadingHTTPServer, so /statements and /submit run at once; without the
+    lock a refresh rewrites Files/ under a 900s submit, or `_state["seen"]`
+    tears and a later flush skips a write. A submit can therefore stall a
+    statement for up to that timeout — stated, not hidden.
 """
 from __future__ import annotations
 
 import os
 import posixpath
+import threading
 from typing import TypedDict
 
 
@@ -38,6 +44,17 @@ class _MountState(TypedDict):
 
 MOUNT_ROOT = "/lakehouse/default/Files"
 _state: _MountState = {"workspace": None, "lakehouse": None, "seen": {}}
+# ThreadingHTTPServer serves /statements and /submit at once. refresh/flush/sync
+# mutate this snapshot, and spark-submit reads the tree for up to 900s. Without
+# a lock a torn `_state["seen"]` skips a flush or a submit reads a half-pulled
+# tree. hold() is the same lock, held across a submit so a statement refresh
+# waits rather than rewriting Files/ under spark-submit.
+_lock = threading.RLock()
+
+
+def hold():
+    """Held while spark-submit reads the mount. Same lock as sync/refresh/flush."""
+    return _lock
 
 
 def _under_mount(rel: str):
@@ -178,13 +195,14 @@ def flush() -> dict:
     No-op when nothing is mounted. Failures are counted, not raised: a single
     bad put must not fail the statement that produced the file.
     """
-    workspace, lakehouse = _state["workspace"], _state["lakehouse"]
-    if not workspace or not lakehouse:
-        return {"flushed": 0, "flush_failed": 0}
-    fs = _import_fs()
-    if fs is None:
-        return {"flushed": 0, "flush_failed": 0, "error": "notebookutils unavailable"}
-    return _flush(fs, workspace, lakehouse)
+    with _lock:
+        workspace, lakehouse = _state["workspace"], _state["lakehouse"]
+        if not workspace or not lakehouse:
+            return {"flushed": 0, "flush_failed": 0}
+        fs = _import_fs()
+        if fs is None:
+            return {"flushed": 0, "flush_failed": 0, "error": "notebookutils unavailable"}
+        return _flush(fs, workspace, lakehouse)
 
 
 def _flush(fs, workspace: str, lakehouse: str) -> dict:
@@ -220,16 +238,17 @@ def refresh() -> dict:
     This is "fresh at every statement", not live FUSE. No-op until /mount has
     bound a lakehouse.
     """
-    workspace, lakehouse = _state["workspace"], _state["lakehouse"]
-    if not workspace or not lakehouse:
-        return {"refreshed": False}
-    fs = _import_fs()
-    if fs is None:
-        return {"refreshed": False, "error": "notebookutils unavailable"}
-    out = _flush(fs, workspace, lakehouse)
-    pulled = _pull(fs, workspace, lakehouse)
-    _state["seen"] = _snapshot()
-    return {"refreshed": True, "lakehouse": lakehouse, **out, **pulled}
+    with _lock:
+        workspace, lakehouse = _state["workspace"], _state["lakehouse"]
+        if not workspace or not lakehouse:
+            return {"refreshed": False}
+        fs = _import_fs()
+        if fs is None:
+            return {"refreshed": False, "error": "notebookutils unavailable"}
+        out = _flush(fs, workspace, lakehouse)
+        pulled = _pull(fs, workspace, lakehouse)
+        _state["seen"] = _snapshot()
+        return {"refreshed": True, "lakehouse": lakehouse, **out, **pulled}
 
 
 def sync(workspace: str, lakehouse: str) -> dict:
@@ -242,28 +261,29 @@ def sync(workspace: str, lakehouse: str) -> dict:
     A second bind of a *different* lakehouse is refused and leaves the first
     mount untouched. Re-binding the same lakehouse flushes then re-pulls.
     """
-    fs = _import_fs()
-    if fs is None:
-        return {"mounted": False, "error": "notebookutils unavailable"}
+    with _lock:
+        fs = _import_fs()
+        if fs is None:
+            return {"mounted": False, "error": "notebookutils unavailable"}
 
-    if _state["lakehouse"] not in (None, lakehouse):
-        refused = _conflict(lakehouse)
-        print(f"files_mount: {refused['error']}", flush=True)
-        return refused
+        if _state["lakehouse"] not in (None, lakehouse):
+            refused = _conflict(lakehouse)
+            print(f"files_mount: {refused['error']}", flush=True)
+            return refused
 
-    if _state["lakehouse"] == lakehouse:
-        # Re-bind of the same lakehouse (every notebook run): flush first so
-        # in-flight local writes are not clobbered by the pull.
-        flushed = _flush(fs, workspace, lakehouse)
-    else:
-        flushed = {"flushed": 0, "flush_failed": 0}
+        if _state["lakehouse"] == lakehouse:
+            # Re-bind of the same lakehouse (every notebook run): flush first so
+            # in-flight local writes are not clobbered by the pull.
+            flushed = _flush(fs, workspace, lakehouse)
+        else:
+            flushed = {"flushed": 0, "flush_failed": 0}
 
-    _state["workspace"] = workspace
-    _state["lakehouse"] = lakehouse
-    pulled = _pull(fs, workspace, lakehouse)
-    _state["seen"] = _snapshot()
-    summary = {"mounted": True, "lakehouse": lakehouse, **pulled, **flushed}
-    print(f"files_mount: {lakehouse} -> {MOUNT_ROOT} "
-          f"(copied={pulled['copied']} kept={pulled['kept']} "
-          f"failed={pulled['failed']})", flush=True)
-    return summary
+        _state["workspace"] = workspace
+        _state["lakehouse"] = lakehouse
+        pulled = _pull(fs, workspace, lakehouse)
+        _state["seen"] = _snapshot()
+        summary = {"mounted": True, "lakehouse": lakehouse, **pulled, **flushed}
+        print(f"files_mount: {lakehouse} -> {MOUNT_ROOT} "
+              f"(copied={pulled['copied']} kept={pulled['kept']} "
+              f"failed={pulled['failed']})", flush=True)
+        return summary
