@@ -350,6 +350,20 @@ def test_the_agent_refreshes_the_mount_around_statements():
 
 def test_hold_blocks_refresh_until_released(mount, monkeypatch):
     """spark-submit holds this lock; a statement refresh must wait, not tear."""
+    _assert_hold_blocks(mount, monkeypatch, lambda: files_mount.refresh())
+
+
+def test_hold_blocks_flush_until_released(mount, monkeypatch):
+    """/close flushes; that must wait too, or it rewrites Files/ under submit."""
+    _assert_hold_blocks(mount, monkeypatch, lambda: files_mount.flush())
+
+
+def test_hold_blocks_sync_until_released(mount, monkeypatch):
+    """/mount during a submit must wait rather than replace the tree being read."""
+    _assert_hold_blocks(mount, monkeypatch, lambda: files_mount.sync("ws", "lh"))
+
+
+def _assert_hold_blocks(_mount, monkeypatch, op):
     base = "abfss://ws@onelake.dfs.fabric.microsoft.com/lh/Files"
     tree = FakeFS()
     tree.blobs[f"{base}/ok.txt"] = b"ok"
@@ -365,18 +379,18 @@ def test_hold_blocks_refresh_until_released(mount, monkeypatch):
             entered.set()
             release.wait(2)
 
-    def refresher():
+    def mutator():
         entered.wait(2)
-        files_mount.refresh()
+        op()
         finished.append(True)
 
     t1 = threading.Thread(target=holder)
-    t2 = threading.Thread(target=refresher)
+    t2 = threading.Thread(target=mutator)
     t1.start()
     t2.start()
     assert entered.wait(1)
-    assert t2.join(0.15) is None and finished == [], (
-        "refresh ran while hold() was held")
+    t2.join(0.15)
+    assert t2.is_alive() and finished == [], "mount mutation ran while hold() was held"
     release.set()
     t1.join(2)
     t2.join(2)
