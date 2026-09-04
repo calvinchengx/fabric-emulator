@@ -31,13 +31,14 @@ import (
 //     EXECUTED by the Spark agent, with `arguments` visible to it as `sys.argv`
 //     — the same shape a Spark Job Definition's main file gets, because it is
 //     the same engine and the same statement endpoint.
-//   - `className` is REFUSED BY NAME, on BOTH engines, and the message must not
-//     promise otherwise. A JAR *library* attaches on the JVM overlay — that is
-//     what the Spark-Job-Definition path probes for with `agentHasJVM` — but
-//     EXECUTING a named Java main class is a different thing: the agent's
-//     statement endpoint runs Python, and nothing here submits a main class on
-//     either engine. Saying "use the JVM overlay" would point at a remedy that
-//     does not remedy, which is the overclaim this repo keeps paying for.
+//   - `className` is SUBMITTED, the same way a Databricks JAR task is: the
+//     entry file is the jar, `spark-submit --class` runs it on the JVM overlay,
+//     and the engine's exit code decides the activity. On Sail the probe
+//     answers available:false — refused by asking, not by assuming the agent
+//     still has no path. THE OLD CAUSE ("no path that submits a Java/Scala
+//     main class — on either engine") became false when jarsubmit.go landed.
+//     MapReduce keeps its refusal on different ground: it is a Hadoop
+//     mapper/reducer contract, not a Spark main class.
 //   - `sparkJobLinkedService` is REFUSED BY NAME when it names an external
 //     store: the emulator models no connections, and silently reading OneLake
 //     while a definition names Azure Blob would be the permissive direction.
@@ -68,11 +69,12 @@ func (e *pipelineExecutor) hdinsightSparkActivity(
 		return strings.TrimSpace(fmt.Sprint(v)), nil
 	}
 
+	className, err := str("className")
+	if err != nil {
+		return nil, err
+	}
+
 	for _, unsupported := range []struct{ key, why string }{
-		{"className", "the emulator's Spark agent executes Python statements and has no " +
-			"path that submits a Java/Scala main class — on either engine. (A JAR " +
-			"LIBRARY does attach on the JVM overlay, which is a different capability: " +
-			"see the Spark Job Definition row.) Use a Python entryFilePath"},
 		{"proxyUser", "the emulator has no impersonation model, and accepting this would " +
 			"certify an authorization behaviour it does not implement"},
 	} {
@@ -159,6 +161,10 @@ func (e *pipelineExecutor) hdinsightSparkActivity(
 			"nothing to execute the entry file — start the stack with a Spark engine", act.Name)
 	}
 
+	if className != "" {
+		return e.hdinsightSparkMainClass(act, itemID, rootPath, entryFilePath, full, className, args, sparkConf)
+	}
+
 	session := "hdinsight-" + e.jobID + "-" + act.Name
 	defer func() { _, _ = e.a.agentPost("/close", map[string]any{"session": session}) }()
 
@@ -192,6 +198,44 @@ func (e *pipelineExecutor) hdinsightSparkActivity(
 		// the same instinct as the Web activity's `stubbed: true`.
 		"executedBy": "the emulator's Spark engine, not an HDInsight cluster",
 	}, nil
+}
+
+// hdinsightSparkMainClass submits the entry file as a jar. className is a
+// Spark main class, which is what jarsubmit.go already runs; leaving the old
+// "no path" refusal in place would send authors to a Python workaround for a
+// gap that no longer exists.
+func (e *pipelineExecutor) hdinsightSparkMainClass(
+	act pipeline.Activity,
+	itemID, rootPath, entryFilePath, full, className string,
+	args []string,
+	sparkConf map[string]any,
+) (map[string]any, error) {
+	conf := map[string]string{}
+	for k, v := range sparkConf {
+		conf[k] = fmt.Sprint(v)
+	}
+
+	session := "hdinsight-" + e.jobID + "-" + act.Name
+	defer func() { _, _ = e.a.agentPost("/close", map[string]any{"session": session}) }()
+	if err := e.a.mountLakehouseFiles(session, e.wid, itemID); err != nil {
+		return nil, fmt.Errorf("hdinsight activity %q: the lakehouse Files mount for item %q is not available, "+
+			"so submitting %q would risk running a stale or wrong jar: %v",
+			act.Name, itemID, className, err)
+	}
+	e.a.registerLakehouseTables(session, e.wid, itemID)
+
+	out, err := e.submitMainClass("hdinsight Spark", act, session, className, jarMountPath(full), args, conf)
+	if err != nil {
+		return nil, err
+	}
+	out["entryFilePath"] = entryFilePath
+	out["rootPath"] = rootPath
+	out["className"] = className
+	out["arguments"] = args
+	// submitMainClass names a Databricks cluster because that is who first
+	// asked; this activity must not inherit that sentence.
+	out["executedBy"] = "spark-submit on the emulator's JVM overlay, not an HDInsight cluster"
+	return out, nil
 }
 
 // splitRootPath splits "<itemId>/<folder...>" into its parts. The folder may
