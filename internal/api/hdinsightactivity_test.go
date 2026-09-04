@@ -118,7 +118,8 @@ func TestHDInsightSparkClassNameSubmitsTheJar(t *testing.T) {
 
 	pl := createPipeline(t, st, ws.ID, hdiPipeline(
 		`"rootPath":"`+lh.ID+`/Files/jobs","entryFilePath":"etl.jar",
-         "className":"com.acme.Etl","arguments":["--date","2026-01-01"]`))
+         "className":"com.acme.Etl","arguments":["--date","2026-01-01"],
+         "sparkConfig":{"spark.executor.memory":"1g"}`))
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
 		_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
@@ -138,6 +139,10 @@ func TestHDInsightSparkClassNameSubmitsTheJar(t *testing.T) {
 		if !strings.Contains(string(args), want) {
 			t.Fatalf("argv %s is missing %q", args, want)
 		}
+	}
+	conf, _ := json.Marshal(j.seen["conf"])
+	if !strings.Contains(string(conf), "spark.executor.memory") || !strings.Contains(string(conf), "1g") {
+		t.Fatalf("sparkConfig never reached /submit: %s", conf)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 	out := outputOf(runs, "Spark")
@@ -170,8 +175,11 @@ func TestHDInsightSparkClassNameAsksTheEngine(t *testing.T) {
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 	e, _ := runs[0]["error"].(string)
-	if !strings.Contains(e, "no spark-submit") {
-		t.Fatalf("error %q does not carry the engine's answer", e)
+	if !strings.Contains(e, "no spark-submit") || !strings.Contains(e, "JVM overlay") {
+		t.Fatalf("refusal %q does not name the limit or where the capability lives", e)
+	}
+	if !strings.Contains(e, "Probed, not assumed") {
+		t.Fatalf("refusal %q does not say the engine was asked", e)
 	}
 	if strings.Contains(e, "no path that submits") {
 		t.Fatalf("error still uses the stale cause: %q", e)
@@ -195,6 +203,35 @@ func TestHDInsightSparkClassNameNeedsTheMount(t *testing.T) {
 	}
 	if j.seen != nil {
 		t.Fatalf("submitted despite a failed Files mount: %+v", j.seen)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	e, _ := runs[0]["error"].(string)
+	if !strings.Contains(e, "Files mount") || !strings.Contains(e, "stale or wrong jar") {
+		t.Fatalf("error %q does not name the mount risk", e)
+	}
+}
+
+// TestHDInsightSparkClassNameNonZeroExitFails: the JVM's exit code decides.
+// A submit that fails while the HTTP call succeeds is the case a naive
+// implementation reports green.
+func TestHDInsightSparkClassNameNonZeroExitFails(t *testing.T) {
+	a, st := newAPI(t)
+	newJarAgent(t, a, true, 2)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	seedFile(t, st, ws.ID, lh.ID, "Files/jobs/etl.jar", []byte("PK\x03\x04"))
+
+	pl := createPipeline(t, st, ws.ID, hdiPipeline(
+		`"rootPath":"`+lh.ID+`/Files/jobs","entryFilePath":"etl.jar",
+         "className":"com.acme.Etl"`))
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job = %s, want Failed on a non-zero exit", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	e, _ := runs[0]["error"].(string)
+	if !strings.Contains(e, "exited 2") || !strings.Contains(e, "NoClassDefFoundError") {
+		t.Fatalf("error %q carries neither the exit code nor the JVM's own output", e)
 	}
 }
 

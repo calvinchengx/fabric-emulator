@@ -203,7 +203,7 @@ later steps consume. That distinction is what splits the nine:
 | `Validation` | 🟢 real | OneLake paths, real sizes, the virtual clock |
 | `SqlPoolStoredProcedure` | 🟢 real | the Synapse spelling of an activity already implemented |
 | `AzureDataExplorerCommand` | 🟢 real | the Kusto engine behind Eventhouse already runs |
-| `HDInsightHive` / `Pig` / `MapReduce` / `Streaming` | 🔴 refused by name | no Hive/Pig/MapReduce runtime; a main class has no submission path |
+| `HDInsightHive` / `Pig` / `MapReduce` / `Streaming` | 🔴 refused by name | no Hive/Pig/MapReduce runtime; a Spark main class is a different activity (`HDInsightSpark` `className`) |
 | `DataLakeAnalyticsU-SQL` | 🔴 refused by name | U-SQL is its own language; the service is retired |
 | `ExecuteSSISPackage` | 🔴 refused by name | no integration runtime, and the work is inside the package |
 
