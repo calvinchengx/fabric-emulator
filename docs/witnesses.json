@@ -1132,6 +1132,7 @@
       "go:TestDatabricksRemoteStillRefusesJAR",
       "ci:databricks-chain",
       "go:TestDatabricksJarRunsOnAnEngineThatCanSubmit",
+      "go:TestDatabricksJarParametersAreResolved",
       "go:TestDatabricksJarRefusedWhereThereIsNoSubmit",
       "go:TestDatabricksJarNonZeroExitFails",
       "go:TestDatabricksJarInputSurface",
