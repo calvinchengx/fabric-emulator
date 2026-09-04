@@ -3,9 +3,10 @@
 
 The landing page states six totals. Every one of them moves, and a number typed
 into a page has no idea a row was added: this repo's own docs site carried
-"113 supported capability claims" long after the figure was 120, and the README
-still states a green-row count as a literal bound to nothing. The landing page
-is the front door, so it gets the check the prose never had.
+"113 supported capability claims" long after the figure was 120. The landing
+page interpolates; `check_witnesses.py --strict` now fails when README's Real
+cell is not the same count. The landing page is the front door, so it keeps
+the interpolation check of its own.
 
 So the page reads its totals at run time from JSON copied beside it, and this
 script FAILS when the page carries a literal where a placeholder belongs, or
@@ -245,8 +246,9 @@ def check_page(page: pathlib.Path) -> tuple[int, str]:
 
     What Astro does NOT prevent is somebody typing `139` where `{num(p.real)}`
     belongs, and that is the failure this ever existed for -- these docs once
-    said "113 supported capability claims" long after the number was 120. So
-    the check moves to the source and asks the same question of it.
+    said "113 supported capability claims" long after the number was 120.
+    README's glance table is the same class of literal; the witness checker
+    binds that one. This check still asks the question of the landing page.
     """
     if not page.exists():
         return 1, f"FAIL: {page} does not exist."

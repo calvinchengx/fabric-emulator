@@ -40,6 +40,16 @@ def repo(tmp_path, monkeypatch):
         monkeypatch.setattr(w, "PARITY", p)
         monkeypatch.setattr(w, "MANIFEST", m)
         monkeypatch.setattr(w, "CI", c)
+        # The glance table is bound to the claim count. Leaving README on the
+        # real repo made every one-claim fixture fail --strict against 124 —
+        # the live case that opened this, inverted.
+        n_real = sum(1 for _, verdict in rows if "🟢" in verdict)
+        readme = tmp_path / "README.md"
+        readme.write_text(
+            f"| 🟢 **Real** | **{n_real}** | Witnessed |\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(w, "README", readme)
         # Go-test discovery walks the real repo; pin it so a claim's witness is
         # decided by the manifest under test rather than by whatever exists.
         monkeypatch.setattr(w, "go_test_names", lambda: {"TestReal", "TestGated"})
@@ -65,7 +75,26 @@ def test_a_green_claim_with_a_real_witness_passes(repo, capsys):
          {"widgets": {"section": "Platform / fundamentals", "claim": "Widgets",
                       "witnesses": ["go:TestReal"]}})
     assert run() == 0
-    assert "supported capability claims: 1" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "supported capability claims: 1" in out
+    assert "README Real count" in out and "matches" in out
+
+
+def test_a_readme_count_that_does_not_match_the_map_fails(repo, capsys):
+    """The fixture writes a matching glance table; this is the case it hid.
+
+    A helper that only runs against the real README still leaves these
+    verdicts green, and the live failure was exactly a synthetic map
+    graded against the committed table.
+    """
+    repo([("Widgets", "🟢 Real")],
+         {"widgets": {"section": "Platform / fundamentals", "claim": "Widgets",
+                      "witnesses": ["go:TestReal"]}})
+    w.README.write_text("| 🟢 **Real** | **113** | Witnessed |\n", encoding="utf-8")
+    assert run() == 1
+    out = capsys.readouterr().out
+    assert "113" in out
+    assert "README.md's 🟢 Real count must match" in out
 
 
 def test_a_non_green_row_is_not_required_to_have_a_witness(repo):

@@ -67,8 +67,9 @@ nothing while still exiting 0.
 
 Usage:
     check_witnesses.py            report the mapping and exit 0
-    check_witnesses.py --strict   also fail on TODO, dangling refs, or an
-                                  undeclared/stale gate
+    check_witnesses.py --strict   also fail on TODO, dangling refs, an
+                                  undeclared/stale gate, or a README Real
+                                  count that is not the number this prints
 """
 import json
 import pathlib
@@ -87,6 +88,20 @@ if hasattr(sys.stdout, "reconfigure"):
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PARITY = ROOT / "docs" / "parity.md"
 MANIFEST = ROOT / "docs" / "witnesses.json"
+README = ROOT / "README.md"
+
+# README's glance table types the same figure this script prints. The landing
+# page interpolates it; the README was the last typed copy, and it sat at 113
+# after the checker had moved to 124. Bound here so a new row cannot leave the
+# front page stating a number nothing checks.
+#
+# The row is MATCHED, not the surrounding sentence: rewriting the Meaning cell
+# must not disable the check, and deleting the table must fail rather than
+# silently unbind the count.
+README_REAL = re.compile(
+    r"^\|\s*🟢\s+\*\*Real\*\*\s+\|\s+\*\*(\d+)\*\*\s+\|",
+    re.M,
+)
 
 # The ecosystem-conformance section is SKIPPED by the claim scanner below, and
 # correctly: its rows are clients, not capabilities. But that left its 🟢 marks
@@ -351,6 +366,34 @@ def ecosystem_suites() -> list[str]:
     return sorted(set(suites))
 
 
+def readme_real_mismatch(claimed: int, text: str) -> str | None:
+    """None when README's 🟢 Real cell equals `claimed`; otherwise why not.
+
+    Driven from the failing side in the tests: a checker over a README that
+    currently matches passes whether or not this function looks at it.
+    """
+    hits = README_REAL.findall(text)
+    if not hits:
+        return (
+            "README.md has no `| 🟢 **Real** | **N** |` row. The glance table "
+            "is a literal bound to the count this checker prints; if the table "
+            "is rewritten, this regex has to move with it."
+        )
+    if len(hits) > 1:
+        return (
+            f"README.md has {len(hits)} `| 🟢 **Real** | **N** |` rows; "
+            "there must be one."
+        )
+    stated = int(hits[0])
+    if stated != claimed:
+        return (
+            f"README.md says 🟢 Real **{stated}**; this checker counted "
+            f"{claimed} supported claims. The landing page interpolates the "
+            "same figure; the README was the last typed copy."
+        )
+    return None
+
+
 def ecosystem_gaps(manifest: dict) -> list[str]:
     """Every real-client suite in the ecosystem table must back a claim.
 
@@ -462,6 +505,16 @@ def main() -> int:
         return 1
 
     print(f"supported capability claims: {len(claims)}")
+    try:
+        readme_text = README.read_text(encoding="utf-8")
+    except OSError as exc:
+        readme_problem = f"README.md could not be read: {exc}"
+    else:
+        readme_problem = readme_real_mismatch(len(claims), readme_text)
+    if readme_problem:
+        print(f"  README Real count                       : {readme_problem}")
+    else:
+        print(f"  README Real count                       : {len(claims)} (matches)")
     print(f"  witnessed by a real external client (ci:) : {kinds.get('ci', 0)}")
     print(f"  witnessed by Microsoft's own clients (sdk:): {kinds.get('sdk', 0)}")
     print(f"  witnessed by our own Go tests (go:)       : {kinds.get('go', 0)}")
@@ -554,6 +607,10 @@ def main() -> int:
         print("\nFAIL: a client named in the ecosystem-conformance table must be the")
         print("witness for something. That table is the only place several real-client")
         print("suites are recorded, and nothing reconciled it against the manifest.")
+        failed = True
+    if strict and readme_problem:
+        print("\nFAIL: README.md's 🟢 Real count must match the number this checker")
+        print("prints. The glance table is a typed copy of a figure that moves.")
         failed = True
     return 1 if failed else 0
 
