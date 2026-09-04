@@ -1118,6 +1118,10 @@
       "go:TestHDInsightSparkClassNameAsksTheEngine",
       "go:TestHDInsightSparkClassNameNeedsTheMount",
       "go:TestHDInsightSparkClassNameNonZeroExitFails",
+      "go:TestHDInsightSparkClassNameResolvesAgainstThePipelineScope",
+      "go:TestHDInsightSparkClassNameNoAgentIsHonest",
+      "go:TestHDInsightSparkClassNameInputSurface",
+      "go:TestHDInsightSparkNullClassNameRunsThePythonEntry",
       "go:TestAzureHDInsightSparkClassNameIsTheSamePath",
       "ci:engine-activities"
     ]

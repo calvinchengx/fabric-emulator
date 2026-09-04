@@ -152,6 +152,15 @@ func TestHDInsightSparkClassNameSubmitsTheJar(t *testing.T) {
 	if strings.Contains(fmt.Sprint(out["executedBy"]), "Databricks") {
 		t.Fatalf("HDInsight inherited the Databricks executedBy: %+v", out)
 	}
+	if out["className"] != "com.acme.Etl" {
+		t.Fatalf("output does not name the class: %+v", out)
+	}
+	if out["stdout"] != "rows=3\n" {
+		t.Fatalf("the engine's output did not surface: %+v", out)
+	}
+	if fmt.Sprint(out["exitCode"]) != "0" {
+		t.Fatalf("exitCode = %v, want 0", out["exitCode"])
+	}
 }
 
 // TestHDInsightSparkClassNameAsksTheEngine: Sail answers available:false;
@@ -235,6 +244,95 @@ func TestHDInsightSparkClassNameNonZeroExitFails(t *testing.T) {
 	}
 }
 
+// TestHDInsightSparkClassNameResolvesAgainstThePipelineScope: argv and
+// sparkConfig are evaluated, the same way a Python entry's arguments are.
+// Sprint-the-JSON-value would submit the literal "@pipeline().parameters.since".
+func TestHDInsightSparkClassNameResolvesAgainstThePipelineScope(t *testing.T) {
+	a, st := newAPI(t)
+	j := newJarAgent(t, a, true, 0)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	seedFile(t, st, ws.ID, lh.ID, "Files/jobs/etl.jar", []byte("PK\x03\x04"))
+
+	pl := createPipeline(t, st, ws.ID, `{"properties":{
+      "parameters":{
+        "since":{"type":"String","defaultValue":"2026-01-01"},
+        "mem":{"type":"String","defaultValue":"1g"}},
+      "activities":[{"name":"Spark","type":"HDInsightSpark","typeProperties":{
+        "rootPath":"`+lh.ID+`/Files/jobs","entryFilePath":"etl.jar",
+        "className":"com.acme.Etl",
+        "arguments":["--since","@pipeline().parameters.since"],
+        "sparkConfig":{"spark.executor.memory":"@pipeline().parameters.mem"}}}]}}`)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+		t.Fatalf("job = %s; runs=%+v", s, runs)
+	}
+	args, _ := json.Marshal(j.seen["args"])
+	if !strings.Contains(string(args), "2026-01-01") {
+		t.Fatalf("argv %s did not receive the resolved parameter", args)
+	}
+	if strings.Contains(string(args), "@pipeline()") {
+		t.Fatalf("argv %s submitted the unevaluated expression", args)
+	}
+	conf, _ := json.Marshal(j.seen["conf"])
+	if !strings.Contains(string(conf), "1g") || strings.Contains(string(conf), "@pipeline()") {
+		t.Fatalf("sparkConfig %s did not receive the resolved parameter", conf)
+	}
+}
+
+// TestHDInsightSparkClassNameNoAgentIsHonest: className must not skip the
+// engine check. A missing agent with a jar in OneLake is still nothing to
+// submit to.
+func TestHDInsightSparkClassNameNoAgentIsHonest(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	seedFile(t, st, ws.ID, lh.ID, "Files/jobs/etl.jar", []byte("PK\x03\x04"))
+
+	pl := createPipeline(t, st, ws.ID, hdiPipeline(
+		`"rootPath":"`+lh.ID+`/Files/jobs","entryFilePath":"etl.jar",
+         "className":"com.acme.Etl"`))
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job = %s, want Failed with no engine attached", s)
+	}
+	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if e, _ := runs[0]["error"].(string); !strings.Contains(e, "no Spark agent is configured") {
+		t.Fatalf("error %q does not name the missing engine", e)
+	}
+}
+
+func TestHDInsightSparkClassNameInputSurface(t *testing.T) {
+	for _, tc := range []struct{ name, tp, wantErr string }{
+		{"missing jar", `"entryFilePath":"nope.jar","className":"com.acme.Etl"`, "no entry file"},
+		{"entryFilePath expr", `"entryFilePath":"@nope(1)","className":"com.acme.Etl"`, "entryFilePath"},
+		{"proxyUser expr", `"entryFilePath":"etl.jar","className":"com.acme.Etl","proxyUser":"@nope(1)"`, "proxyUser"},
+		{"arguments not an array", `"entryFilePath":"etl.jar","className":"com.acme.Etl","arguments":{}`,
+			"arguments must be an array"},
+		{"sparkConfig not an object", `"entryFilePath":"etl.jar","className":"com.acme.Etl","sparkConfig":[]`,
+			"sparkConfig must be an object"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, st := newAPI(t)
+			newJarAgent(t, a, true, 0)
+			ws := seedWorkspace(t, st)
+			lh := seedLakehouse(t, st, ws.ID, "lake")
+			seedFile(t, st, ws.ID, lh.ID, "Files/jobs/etl.jar", []byte("PK\x03\x04"))
+			pl := createPipeline(t, st, ws.ID, hdiPipeline(
+				`"rootPath":"`+lh.ID+`/Files/jobs",`+tc.tp))
+			_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+			if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+				t.Fatalf("%s = %s, want Failed", tc.name, s)
+			}
+			_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+			if e, _ := runs[0]["error"].(string); !strings.Contains(e, tc.wantErr) {
+				t.Errorf("error %q does not carry %q", e, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestAzureHDInsightSparkClassNameIsTheSamePath: Fabric's merged type must
 // not keep the stale ADF refusal when program=spark names a class.
 func TestAzureHDInsightSparkClassNameIsTheSamePath(t *testing.T) {
@@ -305,5 +403,43 @@ func TestHDInsightSparkMissingEntryFile(t *testing.T) {
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
 	if e, _ := runs[0]["error"].(string); !strings.Contains(e, "Files/jobs/nope.py") {
 		t.Fatalf("error %q does not name the missing entry file", e)
+	}
+}
+
+// TestHDInsightSparkNullClassNameRunsThePythonEntry: JSON null is absence, not
+// a main class. Resolving it as a name would send a Python file to spark-submit.
+func TestHDInsightSparkNullClassNameRunsThePythonEntry(t *testing.T) {
+	a, st := newAPI(t)
+	agent := newFakeAgent(t, a)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	seedFile(t, st, ws.ID, lh.ID, "Files/jobs/etl.py", []byte("print('python')\n"))
+
+	pl := createPipeline(t, st, ws.ID, hdiPipeline(
+		`"rootPath":"`+lh.ID+`/Files/jobs","entryFilePath":"etl.py","className":null`))
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+		t.Fatalf("job = %s; runs=%+v", s, runs)
+	}
+	if !strings.Contains(strings.Join(agent.statements(), "\n"), "print('python')") {
+		t.Fatal("null className did not take the Python entry path")
+	}
+}
+
+func TestSplitRootPath(t *testing.T) {
+	if _, _, ok := splitRootPath(""); ok {
+		t.Fatal("empty rootPath must not split")
+	}
+	if _, _, ok := splitRootPath("///"); ok {
+		t.Fatal("slashes-only rootPath must not split")
+	}
+	id, base, ok := splitRootPath("item")
+	if !ok || id != "item" || base != "" {
+		t.Fatalf("bare item = %q %q %v", id, base, ok)
+	}
+	id, base, ok = splitRootPath("/lh/Files/jobs/")
+	if !ok || id != "lh" || base != "Files/jobs" {
+		t.Fatalf("folder = %q %q %v", id, base, ok)
 	}
 }

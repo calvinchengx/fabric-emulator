@@ -49,6 +49,16 @@ func TestActivityInputsFailLoudlyPerField(t *testing.T) {
 			`"rootPath":"%s/Files/j","entryFilePath":"e.py","arguments":["@nope(1)"]`, "argument 0"},
 		{"hdinsight sparkConfig expr", "HDInsightSpark",
 			`"rootPath":"%s/Files/j","entryFilePath":"e.py","sparkConfig":{"k":"@nope(1)"}`, "sparkConfig \"k\""},
+		{"hdinsight className argument expr", "HDInsightSpark",
+			`"rootPath":"%s/Files/j","entryFilePath":"e.jar","className":"c.A","arguments":["@nope(1)"]`,
+			"argument 0"},
+		{"hdinsight className sparkConfig expr", "HDInsightSpark",
+			`"rootPath":"%s/Files/j","entryFilePath":"e.jar","className":"c.A","sparkConfig":{"k":"@nope(1)"}`,
+			"sparkConfig \"k\""},
+		{"hdinsight entryFilePath expr", "HDInsightSpark",
+			`"rootPath":"%s/Files/j","entryFilePath":"@nope(1)"`, "entryFilePath"},
+		{"hdinsight proxyUser expr", "HDInsightSpark",
+			`"rootPath":"%s/Files/j","entryFilePath":"e.py","proxyUser":"@nope(1)"`, "proxyUser"},
 		{"functions functionName expr", "AzureFunctionActivity",
 			`"functionAppUrl":"http://x","functionName":"@nope(1)","method":"GET"`, "functionName"},
 		{"functions header expr", "AzureFunctionActivity",
@@ -88,6 +98,7 @@ func TestActivityInputsFailLoudlyPerField(t *testing.T) {
 			// assert a not-found error and never reach the field under test.
 			lh := seedLakehouse(t, st, ws.ID, "lake")
 			seedFile(t, st, ws.ID, lh.ID, "Files/j/e.py", []byte("x = 1\n"))
+			seedFile(t, st, ws.ID, lh.ID, "Files/j/e.jar", []byte("PK"))
 			tp := strings.ReplaceAll(tc.tp, "%s", lh.ID)
 			pl := createPipeline(t, st, ws.ID,
 				`{"properties":{"activities":[{"name":"A","type":"`+tc.actType+
