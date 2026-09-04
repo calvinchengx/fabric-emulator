@@ -197,7 +197,7 @@ the [parity map](docs/parity.md).
 
 | | Claims | Meaning |
 |---|---|---|
-| 🟢 **Real** | **113** | Witnessed — `check_witnesses.py --strict` fails CI if a supported claim loses its witness. Genuine work: real signed JWTs, real bytes, a real engine or client computes |
+| 🟢 **Real** | **124** | Witnessed — `check_witnesses.py --strict` fails CI if a supported claim loses its witness. Genuine work: real signed JWTs, real bytes, a real engine or client computes |
 | 🟡 **Emulated** | management / clock | Faithful API contract and persisted state, but no engine — LROs and generic item jobs on purpose |
 | 🟠 **Non-default engine** | JVM overlay or a profile | Real on the JVM Spark overlay, `--profile rti`, or `--profile eventstream` — *not* "bring your own": `docker compose up` already starts Sail and the SQL Server sidecar |
 | 🔴 **Not implemented** | honest 501 | Deliberately out of scope — Dataflow exec, Purview system classifiers, Fabric Eventhouse streaming ingest / queued `Kusto.Ingest`. The parity map argues where the boundary sits and why |

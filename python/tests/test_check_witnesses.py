@@ -211,8 +211,82 @@ def test_the_actual_repo_passes_strict():
     cw.PARITY = REPO / "docs" / "parity.md"
     cw.MANIFEST = REPO / "docs" / "witnesses.json"
     cw.CI = REPO / ".github" / "workflows" / "ci.yml"
+    cw.README = REPO / "README.md"
     sys.argv = ["check_witnesses.py", "--strict"]
     assert cw.main() == 0
+
+
+# --- README glance table ---------------------------------------------------
+#
+# The landing page interpolates the Real count; README typed it, and the typed
+# copy sat at 113 after the checker had moved. --strict now fails that. The
+# tests below drive the mismatch from the failing side: a checker over a
+# README that currently matches passes whether or not it looks at the cell.
+
+
+def test_readme_real_count_matches():
+    text = "| 🟢 **Real** | **7** | Witnessed |\n"
+    assert cw.readme_real_mismatch(7, text) is None
+
+
+def test_readme_real_count_mismatch_is_the_bug_this_binds():
+    """The live case: glance table 113, checker 124."""
+    text = "| 🟢 **Real** | **113** | Witnessed |\n"
+    msg = cw.readme_real_mismatch(124, text)
+    assert msg is not None
+    assert "113" in msg
+    assert "124" in msg
+
+
+def test_readme_real_count_missing_row_is_reported():
+    """Deleting the table must fail, not silently unbind the count."""
+    msg = cw.readme_real_mismatch(124, "# Parity\n\nNo glance table.\n")
+    assert msg is not None
+    assert "no" in msg.lower()
+
+
+def test_readme_real_count_unbolded_number_does_not_match():
+    """`| 🟢 **Real** | 124 |` is a rewrite this regex does not see."""
+    text = "| 🟢 **Real** | 124 | Witnessed |\n"
+    msg = cw.readme_real_mismatch(124, text)
+    assert msg is not None
+
+
+def test_readme_real_count_duplicate_rows_are_reported():
+    text = "| 🟢 **Real** | **1** | a |\n| 🟢 **Real** | **2** | b |\n"
+    msg = cw.readme_real_mismatch(1, text)
+    assert msg is not None
+    assert "2" in msg
+
+
+def test_strict_fails_when_readme_count_is_stale(tmp_path, capsys):
+    """Wiring: a helper that is never called still leaves --strict green."""
+    stale = tmp_path / "README.md"
+    stale.write_text("| 🟢 **Real** | **113** | Witnessed |\n", encoding="utf-8")
+    cw.ROOT = REPO
+    cw.PARITY = REPO / "docs" / "parity.md"
+    cw.MANIFEST = REPO / "docs" / "witnesses.json"
+    cw.CI = REPO / ".github" / "workflows" / "ci.yml"
+    cw.README = stale
+    sys.argv = ["check_witnesses.py", "--strict"]
+    assert cw.main() == 1
+    out = capsys.readouterr().out
+    assert "113" in out
+    assert "README" in out
+    assert "FAIL:" in out
+
+
+def test_non_strict_reports_a_stale_readme_without_failing(tmp_path, capsys):
+    stale = tmp_path / "README.md"
+    stale.write_text("| 🟢 **Real** | **113** | Witnessed |\n", encoding="utf-8")
+    cw.ROOT = REPO
+    cw.PARITY = REPO / "docs" / "parity.md"
+    cw.MANIFEST = REPO / "docs" / "witnesses.json"
+    cw.CI = REPO / ".github" / "workflows" / "ci.yml"
+    cw.README = stale
+    sys.argv = ["check_witnesses.py"]
+    assert cw.main() == 0
+    assert "113" in capsys.readouterr().out
 
 
 # --- the ecosystem-conformance table -----------------------------------------
@@ -234,7 +308,8 @@ def _restore_module_globals():
     only reason it was safe to leave.
     """
     saved = {name: getattr(cw, name)
-             for name in ("PARITY", "MANIFEST", "ROOT", "CI", "JOB_FOR", "UNCREDITED")
+             for name in ("PARITY", "MANIFEST", "ROOT", "CI", "README",
+                          "JOB_FOR", "UNCREDITED")
              if hasattr(cw, name)}
     yield
     for name, value in saved.items():

@@ -34,13 +34,13 @@ cannot.
 
 ---
 
-## 1. Environment items: the parse exists, the effect does not
+## 1. Environment items: the parse existed, the effect did not — **DONE**
 
 **What Fabric does.** An Environment item's custom libraries, public packages,
 and Spark properties are installed and applied to the runtime before any user
 code runs. It is where a framework package comes from.
 
-**What the emulator does.** It parses the item correctly and then discards the
+**What the emulator did.** It parsed the item correctly and then discarded the
 answer. `compute.ParseEnvironment` (`internal/compute/definition.go`) resolves
 `requirements.txt`, `*.jar`, and the JSON `sparkProperties` / `pythonLibraries`
 keys into `Environment{PythonPackages, JARs, SparkConfig}`.
@@ -48,22 +48,27 @@ keys into `Environment{PythonPackages, JARs, SparkConfig}`.
 on a missing or wrong-typed Environment item, and stores the result on the run as
 `environment`.
 
-**Nothing reads those three fields.** `PythonPackages`, `SparkConfig`, and
-`JARs` have no consumer anywhere in `internal/` outside the parser and its own
-test. The run *reports* an Environment; the session never *receives* one. The
-working substitute is `_install_custom_wheels` in `python/spark_agent/agent.py`,
+**Nothing read those three fields.** `PythonPackages`, `SparkConfig`, and
+`JARs` had no consumer anywhere in `internal/` outside the parser and its own
+test. The run *reported* an Environment; the session never *received* one. The
+working substitute was `_install_custom_wheels` in `python/spark_agent/agent.py`,
 which installs whatever a consumer bind-mounts at `/opt/wheels` — generic on
 purpose, and explicitly documented as the analog.
 
-**The fix, which is plumbing rather than design.** The front half is built; what
-is missing is the wire between it and the agent:
+That gap is closed. The wire, the conflict rule, and the witness are under
+[Delivered](#delivered-the-wire-and-now-the-proof). The problem is kept here
+because the isolation constraint it named is still why a second Environment is
+refused rather than last-bind-wins.
+
+**The fix, which is plumbing rather than design.** The front half was built; what
+was missing was the wire between it and the agent:
 
 1. Carry the resolved `Environment` in the session bind, beside the `/mount`
    call `registerLakehouseTables` already makes (`internal/api/livy_catalog.go`),
    or as a sibling `/environment` endpoint on the same best-effort contract.
 2. Generalise `_install_custom_wheels` to take a package list instead of only
    globbing `/opt/wheels/*.whl`. The installer, the `uv` path, and the
-   loud-but-not-fatal failure handling already exist.
+   loud-but-not-fatal failure handling already existed.
 3. Apply `SparkConfig` at session setup, where the runtime presets are already
    applied.
 4. `/opt/wheels` demotes from *the* mechanism to the fallback it should be: an

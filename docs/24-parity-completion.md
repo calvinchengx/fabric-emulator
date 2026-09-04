@@ -16,7 +16,8 @@ preceded its code).
 
 Graded from `docs/parity.md` at the time of writing: **60 🟢, 7 🟡, 7 🟠, 14 🔴**
 across 8 areas (a row may carry two marks). **Those counts are historical.**
-`check_witnesses.py --strict` now reports **113** supported (🟢) claims.
+`check_witnesses.py --strict` prints the live supported (🟢) count; README's
+glance table is required to match it.
 CI/CD, Data Warehouse, Platform, and OneLake are effectively complete; Data
 Engineering holds the largest cluster of non-green marks, and "item types,
 engine absent" holds the rest.
