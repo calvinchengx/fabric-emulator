@@ -45,6 +45,16 @@ and a non-string value became Go's default formatting. They now go through
 
 ## The rest
 
+**README's 🟢 Real count is bound to the checker.** `check_witnesses.py
+--strict` now FAILS when README's glance table does not state the supported-claim
+count the checker prints, so adding a 🟢 parity row without touching README is a
+red build rather than a silently stale front page. It had sat at 113 while the
+checker counted 124. Deleting or rewriting the `| 🟢 **Real** | **N** |` row
+fails too, rather than quietly unbinding the number — if the table moves, the
+regex in `scripts/check_witnesses.py` moves with it. The landing page keeps its
+own interpolation check; docs/24's figures are prose and are deliberately no
+longer typed.
+
 **The MERGE intercept's reason had expired (#437).** pysail 0.7.1 plans the
 shape the rewrite was written for, control included. The intercept still fires
 until the `az://` case is proven; the justification now says what is true.
