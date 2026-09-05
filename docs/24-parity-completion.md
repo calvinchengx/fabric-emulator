@@ -32,8 +32,12 @@ engine absent" holds the rest.
 
 ## The seven own-only rows, split by whether they CAN be converted
 
-`family_parity.py fabric` reports **106 of 113** green claims independently
-evidenced, and the remaining seven read like a backlog. They are not one list.
+`family_parity.py fabric` reports the live count of green claims that are
+independently evidenced; the seven below are the remainder, and they read like a
+backlog. **The pair of numbers is deliberately not typed here** — it moved from
+106/113 to 117/124 while this sentence sat unchanged, which is the same drift
+`check_witnesses.py --strict` now refuses for README's glance table. Nothing
+binds a figure in this file, so run the tool. They are not one list.
 Sorted by what would actually close them — which is the only sort that tells a
 maintainer where to start:
 
@@ -45,10 +49,15 @@ than not existing yet:
 |---|---|
 | Eventstream operators | filter / groupBy / window are bound through Fabric's own portal and the internal authoring API; no released SDK or CLI exposes them |
 | Eventstream Eventhouse destination | same — the binding has no public client. The *ingest* half is separately witnessed against real Kusto (kustainer); what stays own-only is the eventstream-to-eventhouse binding, not the KQL |
+| `notebookutils` notebook management (create / get / getDefinition / update / updateDefinition / delete / list) | the in-notebook `notebookutils` API, not a REST endpoint an SDK wraps, so no packaged client can speak it. The REST it drives is separately witnessed by the items API rows |
 | `notebookutils.notebook.run` exit values OVER REST | real Fabric **404s this path**. It is a shim convenience the service does not offer, so there is nothing for a real client to agree with. The in-notebook contract it shadows is its own row, green on its own evidence |
 
-So the honest denominator is **110, not 113**, and 106/110 is a floor rather than
-a score with three items of debt hiding in it.
+That is **four** rows, not three — the notebook-management row carried a
+`boundary:` witness in the manifest and was missing from this table. Four of the
+seven can never earn a `ci:` witness, so they belong OUT of the denominator
+rather than in a backlog: the honest denominator is the green count minus four,
+and against it the evidenced share is a floor rather than a score with
+impossible items hiding in it. Only the three gated rows below are real debt.
 
 **Gated on the real-Fabric differential leg — three rows.** Reference-run
 lakehouse rule, `runMultiple` failure contract, `runMultiple` retry and timeouts.
