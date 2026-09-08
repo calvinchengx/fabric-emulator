@@ -1,8 +1,12 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/calvinchengx/fabric-emulator/internal/pipeline"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
@@ -215,5 +219,120 @@ func TestNotebookActivityOutputShape(t *testing.T) {
 	// No engine ran this notebook, so claiming a Spark session would invent one.
 	if _, present := result["sessionId"]; present {
 		t.Errorf("output.result reports a sessionId for a run no engine executed: %+v", result)
+	}
+}
+
+// --- notebookActivity, extracted from Execute --------------------------------
+//
+// Splitting the 134-line notebook arm out of Execute's switch turned one
+// misleading number into two honest ones: Execute went 78.8% -> 100% (the
+// dispatch really is fully exercised) and the notebook logic appeared at 69.5%,
+// which is what the arm had always been. These close the reachable half of that
+// gap. They use a bare executor and a resolver that fails on demand, because
+// every path below is reached BEFORE the store is touched.
+
+// TestNotebookActivityWorkspaceIDResolveFailurePropagates.
+//
+// workspaceId is an expression like any other, and an unresolvable one must
+// fail the activity. Swallowing it would fall back to the pipeline's own
+// workspace and report "no notebook %q in this workspace" -- blaming the id for
+// a property that was supplied, correct, and simply not evaluated. That is the
+// exact misdiagnosis the comment above this code was written to prevent.
+func TestNotebookActivityWorkspaceIDResolveFailurePropagates(t *testing.T) {
+	e := &pipelineExecutor{wid: "ws-1"}
+	resolve := func(raw json.RawMessage) (any, error) {
+		if strings.Contains(string(raw), "nb-1") {
+			return "nb-1", nil
+		}
+		return nil, fmt.Errorf("unresolved")
+	}
+	_, err := e.notebookActivity(
+		pipeline.Activity{Name: "RunNb", Type: "TridentNotebook"},
+		map[string]json.RawMessage{
+			"notebookId":  json.RawMessage(`"nb-1"`),
+			"workspaceId": json.RawMessage(`"@pipeline().parameters.ws"`),
+		}, resolve)
+	if err == nil {
+		t.Fatal("an unresolvable workspaceId was swallowed")
+	}
+	if !strings.Contains(err.Error(), "workspaceId") {
+		t.Errorf("error = %q, want it to name workspaceId so the author knows "+
+			"which property failed", err)
+	}
+}
+
+// TestNotebookActivityRequiresANotebookID pins the guard that runs first.
+// `nil` and empty are distinct failures upstream but the same failure here,
+// and both must refuse rather than look up the empty id.
+func TestNotebookActivityRequiresANotebookID(t *testing.T) {
+	e := &pipelineExecutor{wid: "ws-1"}
+	for name, resolve := range map[string]func(json.RawMessage) (any, error){
+		"nil":     func(json.RawMessage) (any, error) { return nil, nil },
+		"empty":   func(json.RawMessage) (any, error) { return "", nil },
+		"failing": func(json.RawMessage) (any, error) { return nil, fmt.Errorf("boom") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := e.notebookActivity(
+				pipeline.Activity{Name: "RunNb", Type: "TridentNotebook"},
+				map[string]json.RawMessage{"notebookId": json.RawMessage(`""`)}, resolve)
+			if err == nil {
+				t.Fatal("a missing notebookId was accepted")
+			}
+			if !strings.Contains(err.Error(), "notebookId is required") {
+				t.Errorf("error = %q, want it to name notebookId", err)
+			}
+		})
+	}
+}
+
+// TestNotebookActivityReportsWhatTheEngineDid drives the branch that only
+// exists when an engine is attached: `runsNotebooksItself()`, i.e. a Livy agent
+// is configured, so the run is executed rather than parked at Pending.
+//
+// Without an agent the activity returns Pending and the whole block below is
+// skipped -- which is why it stayed uncovered while every other notebook test
+// passed. An agent stub is enough: the branch is about whether the emulator
+// OWNS the execution, not about Spark actually running.
+//
+// The assertion is on the ACTIVITY's verdict, not on the run's. Either outcome
+// exercises the block; what must not happen is an activity reporting success
+// for a run that did not complete, which is the failure this whole file exists
+// to prevent (see the twelve activity types that "succeeded having run
+// nothing").
+func TestNotebookActivityReportsWhatTheEngineDid(t *testing.T) {
+	a, st := newAPI(t)
+	newAgentStub(t, a)
+	if !a.runsNotebooksItself() {
+		t.Fatal("the stub did not attach: this test would silently assert the " +
+			"no-engine path instead of the engine one")
+	}
+	ws := seedWorkspace(t, st)
+	nb := seedNotebookIn(t, st, ws.ID, "child", "print('hi')\n")
+	content := `{"properties":{"activities":[
+        {"name":"RunNb","type":"TridentNotebook","typeProperties":{"notebookId":"` + nb.ID + `"}}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "")
+	jobStatus := awaitJob(t, a, ws.ID, pl.ID, jid)
+
+	status, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
+	if len(runs) != 1 {
+		t.Fatalf("expected one activity run, got %+v", runs)
+	}
+	// The activity's verdict and the job's must agree. A Succeeded activity
+	// under a Failed job is precisely the false green this code guards against.
+	//
+	// They agree in MEANING, not in spelling: a job reports Completed/Failed and
+	// an activity Succeeded/Failed, so comparing the strings asserts they differ
+	// -- which this test did on its first run, and reported as a disagreement
+	// when there was none.
+	jobOK := jobStatus == "Completed" || jobStatus == "Succeeded"
+	actOK := runs[0]["status"] == "Succeeded"
+	if jobOK != actOK {
+		t.Errorf("job %s but activity %v -- an activity must not disagree with "+
+			"the job it is the only member of", jobStatus, runs[0]["status"])
+	}
+	if status == "" {
+		t.Error("activity runs reported no status at all")
 	}
 }
