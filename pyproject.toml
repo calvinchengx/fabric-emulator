@@ -193,7 +193,7 @@ sail-delta = [
 # task fails naming this image, which is honest and still unusable.
 spark-agent-dbt = [
     { include-group = "sail-delta" },
-    "dbt-databricks==1.12.4",
+    "dbt-databricks==1.12.5",
     # The engine, in the AGENT image. Fabric starts a Spark session per notebook
     # and shares one only within a single-user boundary, so the agent needs to
     # be able to start an engine per user rather than route every caller through
