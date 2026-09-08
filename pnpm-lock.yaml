@@ -16,8 +16,8 @@ importers:
   portal:
     dependencies:
       '@lucide/svelte':
-        specifier: ^1.37.0
-        version: 1.37.0(svelte@5.57.0)
+        specifier: ^1.41.0
+        version: 1.41.0(svelte@5.57.0)
       bits-ui:
         specifier: ^2.19.0
         version: 2.19.0(@internationalized/date@3.12.3)(svelte@5.57.0)
@@ -795,8 +795,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@lucide/svelte@1.37.0':
-    resolution: {integrity: sha512-AxaiSxeuErlt4fNmmN28oaL5R7yVoQLsfSeiAONxCEK+l0/SrLAjRktQ0DkTQpomv1oRzOA3hohWY0ZHTZCMmw==}
+  '@lucide/svelte@1.41.0':
+    resolution: {integrity: sha512-N5dInvHWGxNcnu3VJvbO2zOJA832Uy4he6qGwcqd8i3m8iYGlLoebp+e+X8NfncXXLnXkYvru5BnkUVdNdo1xg==}
     peerDependencies:
       svelte: ^5
 
@@ -4007,7 +4007,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@lucide/svelte@1.37.0(svelte@5.57.0)':
+  '@lucide/svelte@1.41.0(svelte@5.57.0)':
     dependencies:
       svelte: 5.57.0
 
