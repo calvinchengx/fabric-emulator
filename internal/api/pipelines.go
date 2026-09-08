@@ -690,14 +690,15 @@ var copyAllowedValues = map[string][]string{
 //
 // Every field resolves as an expression first, so @pipeline().parameters work
 // throughout.
-func (e *pipelineExecutor) resolveLoc(side string, raw json.RawMessage, resolve func(json.RawMessage) (any, error)) (oneLakeLoc, error) {
-	var obj map[string]json.RawMessage
-	if len(raw) == 0 || json.Unmarshal(raw, &obj) != nil {
-		return oneLakeLoc{}, fmt.Errorf("missing %s", side)
-	}
-
-	// Flatten the shapes into one lookup, innermost last so an explicit nested
-	// value wins over an outer one.
+// locScopes flattens a Copy side's nested shapes into ONE lookup chain,
+// innermost last so an explicit nested value wins over an outer one.
+//
+// Fabric writes the same address several ways -- top level, `datasetSettings`,
+// its `linkedService.properties.typeProperties`, `typeProperties.location`, or
+// `storeSettings` -- and one side may use any mixture. Collecting them in
+// precedence order is what lets a caller ask for a key without knowing which
+// shape supplied it.
+func locScopes(obj map[string]json.RawMessage) []map[string]json.RawMessage {
 	scopes := []map[string]json.RawMessage{obj}
 	descend := func(m map[string]json.RawMessage, keys ...string) map[string]json.RawMessage {
 		cur := m
@@ -732,39 +733,96 @@ func (e *pipelineExecutor) resolveLoc(side string, raw json.RawMessage, resolve 
 	if st := descend(obj, "storeSettings"); st != nil {
 		scopes = append(scopes, st)
 	}
+	return scopes
+}
 
-	lookup := func(k string) (json.RawMessage, bool) {
-		for i := len(scopes) - 1; i >= 0; i-- {
-			if v, ok := scopes[i][k]; ok {
-				return v, true
-			}
-		}
-		return nil, false
-	}
-	field := func(k string) (string, error) {
-		raw, ok := lookup(k)
-		if !ok {
-			return "", nil
-		}
-		v, err := resolve(raw)
-		if err != nil || v == nil {
-			return "", err
-		}
-		// Only a SCALAR addresses anything. Fabric's dataset model reuses names
-		// this lookup wants for things that are not names: `datasetSettings.schema`
-		// is a COLUMN LIST, not a namespace, and `annotations`/`structure` are
-		// arrays too. Flattening the scopes puts them in reach, and fmt.Sprint
-		// would happily render `[]` — which is how a tenant-shaped Copy landed its
-		// bytes at `Tables/[]/bronze_customers` and still reported Succeeded.
-		// A composite here means "this key does not mean what the caller thinks",
-		// so it reads as absent rather than as the string "[]".
-		switch v.(type) {
-		case []any, map[string]any:
-			return "", nil
-		}
-		return fmt.Sprint(v), nil
-	}
+// locFields reads one key out of a flattened scope chain, resolving whatever
+// expression it finds there.
+//
+// These were two closures inside resolveLoc, which is most of why that function
+// carried the highest cognitive complexity in this file: flattening, reading,
+// refusing and addressing were one 141-line body. Same precedence, same
+// composite rule, same absent-vs-error distinction -- only the scope changed.
+type locFields struct {
+	scopes  []map[string]json.RawMessage
+	resolve func(json.RawMessage) (any, error)
+}
 
+// lookup returns the innermost scope's value for k.
+func (f locFields) lookup(k string) (json.RawMessage, bool) {
+	for i := len(f.scopes) - 1; i >= 0; i-- {
+		if v, ok := f.scopes[i][k]; ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+// field resolves k to a scalar string. An absent key and a COMPOSITE value are
+// both reported as absent with no error; only a failing resolve is an error.
+func (f locFields) field(k string) (string, error) {
+	raw, ok := f.lookup(k)
+	if !ok {
+		return "", nil
+	}
+	v, err := f.resolve(raw)
+	if err != nil || v == nil {
+		return "", err
+	}
+	// Only a SCALAR addresses anything. Fabric's dataset model reuses names
+	// this lookup wants for things that are not names: `datasetSettings.schema`
+	// is a COLUMN LIST, not a namespace, and `annotations`/`structure` are
+	// arrays too. Flattening the scopes puts them in reach, and fmt.Sprint
+	// would happily render `[]` — which is how a tenant-shaped Copy landed its
+	// bytes at `Tables/[]/bronze_customers` and still reported Succeeded.
+	// A composite here means "this key does not mean what the caller thinks",
+	// so it reads as absent rather than as the string "[]".
+	switch v.(type) {
+	case []any, map[string]any:
+		return "", nil
+	}
+	return fmt.Sprint(v), nil
+}
+
+// refuseUnsupportedCopy rejects a Copy side the emulator cannot honour: an
+// unknown side type, an option it does not implement, or an option value
+// outside what it supports.
+//
+// SEPARATE FROM THE ADDRESSING because these checks must run BEFORE any
+// location is built. Accepting a side and then quietly ignoring an option is
+// how a Copy reports Succeeded having written the wrong thing -- which the
+// tables it consults were each added in response to.
+func refuseUnsupportedCopy(side, sideType string, f locFields) error {
+	if !copySideTypes[sideType] {
+		return fmt.Errorf("%s type %q is not supported by the emulator", side, sideType)
+	}
+	for _, opt := range copyUnsupportedOpts {
+		if _, ok := f.lookup(opt.key); ok {
+			return fmt.Errorf("%s option %q: %s", side, opt.key, opt.why)
+		}
+	}
+	for key, allowed := range copyAllowedValues {
+		got, err := f.field(key)
+		if err != nil {
+			return err
+		}
+		if got == "" {
+			continue
+		}
+		if !slices.ContainsFunc(allowed, func(a string) bool { return strings.EqualFold(a, got) }) {
+			return fmt.Errorf("%s option %s=%q is not supported by the emulator (supported: %s)",
+				side, key, got, strings.Join(allowed, ", "))
+		}
+	}
+	return nil
+}
+
+func (e *pipelineExecutor) resolveLoc(side string, raw json.RawMessage, resolve func(json.RawMessage) (any, error)) (oneLakeLoc, error) {
+	var obj map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &obj) != nil {
+		return oneLakeLoc{}, fmt.Errorf("missing %s", side)
+	}
+	f := locFields{scopes: locScopes(obj), resolve: resolve}
 	// The discriminator is the side's own `type`, never an inner one: nested
 	// objects carry their own (`datasetSettings.type` is a *dataset* type like
 	// "LakehouseTable", `location.type` a store type like "LakehouseLocation").
@@ -778,43 +836,25 @@ func (e *pipelineExecutor) resolveLoc(side string, raw json.RawMessage, resolve 
 			sideType = fmt.Sprint(v)
 		}
 	}
-	if !copySideTypes[sideType] {
-		return oneLakeLoc{}, fmt.Errorf("%s type %q is not supported by the emulator", side, sideType)
-	}
-	for _, opt := range copyUnsupportedOpts {
-		if _, ok := lookup(opt.key); ok {
-			return oneLakeLoc{}, fmt.Errorf("%s option %q: %s", side, opt.key, opt.why)
-		}
-	}
-	for key, allowed := range copyAllowedValues {
-		got, err := field(key)
-		if err != nil {
-			return oneLakeLoc{}, err
-		}
-		if got == "" {
-			continue
-		}
-		if !slices.ContainsFunc(allowed, func(a string) bool { return strings.EqualFold(a, got) }) {
-			return oneLakeLoc{}, fmt.Errorf("%s option %s=%q is not supported by the emulator (supported: %s)",
-				side, key, got, strings.Join(allowed, ", "))
-		}
+	if err := refuseUnsupportedCopy(side, sideType, f); err != nil {
+		return oneLakeLoc{}, err
 	}
 
-	wsRef, err := field("workspaceId")
+	wsRef, err := f.field("workspaceId")
 	if err != nil {
 		return oneLakeLoc{}, err
 	}
-	itemRef, err := field("itemId")
+	itemRef, err := f.field("itemId")
 	if err != nil {
 		return oneLakeLoc{}, err
 	}
 	if itemRef == "" {
 		// Fabric's linkedService names the lakehouse "artifactId".
-		if itemRef, err = field("artifactId"); err != nil {
+		if itemRef, err = f.field("artifactId"); err != nil {
 			return oneLakeLoc{}, err
 		}
 	}
-	path, err := e.copyPath(field)
+	path, err := e.copyPath(f.field)
 	if err != nil {
 		return oneLakeLoc{}, err
 	}
