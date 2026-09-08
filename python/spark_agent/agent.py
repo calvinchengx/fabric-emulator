@@ -13,8 +13,6 @@ Stdlib-only HTTP + pyspark. Endpoints (private, emulator-internal):
   POST /statements {session,code} -> {"status":"ok","data":{"text/plain":...}}
   POST /close      {session}    -> drop a session's namespace
 """
-import ast
-import io
 import json
 
 # SPARK_REMOTE (e.g. sc://sail:50051) makes this a Spark Connect client —
@@ -205,6 +203,7 @@ def _install_custom_wheels():
 _install_custom_wheels()
 
 import catalog  # noqa: E402 — after the engine is up; see catalog.py for why it is split out
+import codeexec  # noqa: E402 — run_code lives here; see codeexec.py for why it moved
 import notebook_display  # noqa: E402 — pure rendering, tested without an engine
 import rddfacade  # noqa: E402 — same split: importable with no session, and unit-tested
 import run_magic  # noqa: E402 — a pure source rewrite, tested without an engine
@@ -509,56 +508,6 @@ def runtime_scope(session, req):
             sunbind(stoken)
 
 
-def run_code(code, g):
-    """Exec the block; if its last statement is an expression, eval that and
-    return its repr as the REPL result (Livy semantics). Capture stdout too."""
-    out = io.StringIO()
-    # `%run` is a LINE magic inside an ordinary Python cell, so the cell parser
-    # correctly leaves it alone — but it is a syntax error to Python, and has
-    # to become a call before ast.parse sees it. See run_magic.py.
-    code = run_magic.expand(code)
-    try:
-        tree = ast.parse(code, mode="exec")
-    except SyntaxError:
-        return {"status": "error", "ename": "SyntaxError",
-                "evalue": "invalid syntax", "traceback": traceback.format_exc().splitlines()}
-    last_expr = None
-    if tree.body and isinstance(tree.body[-1], ast.Expr):
-        last_expr = ast.Expression(tree.body.pop().value)
-    try:
-        # NOT redirect_stdout. That assigns `sys.stdout`, one attribute on one
-        # module per interpreter, and this server runs statements concurrently:
-        # measured (#346), one task's response carried another's output and two
-        # came back empty. `task_scope.capturing` binds the buffer in a
-        # ContextVar instead, so each statement resolves its own and neither
-        # restores over the other.
-        with task_scope.capturing(out):
-            if tree.body:
-                exec(compile(tree, "<statement>", "exec"), g)
-            result = eval(compile(last_expr, "<statement>", "eval"), g) if last_expr is not None else None
-        text = out.getvalue()
-        if result is not None:
-            text += repr(result)
-        return {"status": "ok", "execution_count": 0, "data": {"text/plain": text}}
-    except Exception as exc:
-        # A graceful notebook exit surfaces here as an exception named
-        # _NotebookExit (raised by the driver prelude's patched
-        # notebookutils.notebook.exit). Stash its value in THIS session's
-        # globals, the prelude cannot: each session's prelude re-patches the
-        # one shared notebookutils module, so under concurrent notebook runs
-        # the raising function belongs to whichever session ran its prelude
-        # last, and its `global __nb_exit__` writes into that session's
-        # namespace, not the caller's. Observed both ways: SUCCESS exits
-        # recorded Failed, and the dual, a real failure inheriting another
-        # run's exit value, would read as a false green. Matching by type
-        # NAME, not identity, for the same reason: every session defines its
-        # own _NotebookExit class.
-        if type(exc).__name__ == "_NotebookExit":
-            g["__nb_exit__"] = str(exc)
-        tb = traceback.format_exc().splitlines()
-        return {"status": "error", "ename": "Error", "evalue": tb[-1] if tb else "error", "traceback": tb}
-
-
 # The last /register payload per session, kept so a catalog the ENGINE lost can
 # be rebuilt without asking the control plane again. Sail's credential refresh
 # restarts the engine (docker/sail/launcher.py) and the restart takes the
@@ -851,7 +800,7 @@ class Handler(BaseHTTPRequestHandler):
                             elif (req.get("kind") or "").lower() == "sql":
                                 result = sqlrun.run_sql(req.get("code", ""), ns(session))
                             else:
-                                result = run_code(req.get("code", ""), ns(session))
+                                result = codeexec.run_code(req.get("code", ""), ns(session))
                         # The engine dropping our session is not this statement's
                         # fault and, until #312, was permanent: nothing re-ran
                         # getOrCreate(), so every later statement failed the same

@@ -11,6 +11,7 @@ Real subprocesses where the behaviour IS the process (scrubbing, death), and
 injected fakes where it is the protocol. A suite that spawned an interpreter for
 every case would be slow and would still not prove the loop.
 """
+import ast
 import io
 import json
 import os
@@ -718,3 +719,50 @@ def test_a_statement_with_no_context_still_runs():
         assert ctx.run("2 + 2")["data"]["text/plain"] == "4"
     finally:
         ctx.close()
+
+
+# --- the child entry point is a SIBLING FILE ---------------------------------
+#
+# usercontext.py used to be both the library agent imports AND the script the
+# child runs, and being both is what made the module import agent back -- the
+# repository's only import cycle. The entry point moved to
+# usercontext_child.py; these pin the parts that would break silently if it
+# moved again, since a wrong default argv fails only when a real child spawns.
+
+
+def test_the_default_child_argv_points_at_the_child_entry_point():
+    ctx = uc.UserContext()
+    assert ctx.argv[0] == sys.executable
+    assert os.path.basename(ctx.argv[1]) == "usercontext_child.py"
+    assert os.path.isfile(ctx.argv[1]), "the spawned file must exist on disk"
+
+
+def test_the_child_entry_point_sits_beside_the_library():
+    """Running it by PATH puts its own directory on sys.path[0], which is what
+    lets the child `import agent` and `import usercontext` the way the parent
+    does. A child in another directory would import neither."""
+    assert os.path.dirname(os.path.abspath(uc.__file__)) == \
+        os.path.dirname(uc.UserContext().argv[1])
+
+
+def test_the_library_no_longer_imports_agent():
+    """The cycle, asserted rather than described.
+
+    agent imports usercontext at module scope. If usercontext imports agent
+    back -- at module scope OR deferred inside a function -- the pair is
+    mutually dependent again and only call order keeps it working.
+    """
+    tree = ast.parse(Path(uc.__file__).read_text(encoding="utf-8"))
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            offenders += [f"line {node.lineno}: import {a.name}"
+                          for a in node.names if a.name == "agent"]
+        elif isinstance(node, ast.ImportFrom) and node.module == "agent":
+            offenders.append(f"line {node.lineno}: from agent import ...")
+    assert offenders == [], (
+        "usercontext.py imports agent again; the cycle is back:\n  "
+        + "\n  ".join(offenders)
+        + "\nThe child entry point belongs in usercontext_child.py, which "
+          "nothing imports."
+    )
