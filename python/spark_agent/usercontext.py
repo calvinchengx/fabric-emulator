@@ -62,6 +62,19 @@ import sys
 import urllib.parse
 import urllib.request
 
+# Module scope, not deferred inside _dispatch. This used to be `import agent`
+# inside the function, which is how a cycle hides rather than how one is
+# broken: agent imports this module at ITS module scope, so the pair was
+# mutually dependent and only the call order kept it working. codeexec holds
+# run_code and imports neither of us, so the edge is gone rather than delayed.
+import codeexec
+
+# The child entry point is a SIBLING FILE, not this module. Running this one
+# would import agent from inside a library that agent itself imports, which
+# is the cycle that split was made to remove.
+_CHILD_ENTRY = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "usercontext_child.py")
+
 # Names whose VALUE is a key. Scrubbed from the child's environment: the token
 # is the thing being escalated, and the client secret is worse, because a secret
 # mints fresh tokens for as long as it is valid.
@@ -188,7 +201,7 @@ class UserContext:
         # the image with "No module named 'spark_agent'" — measured. Running the
         # file also puts its own directory on sys.path[0], which is what lets
         # the child `import agent` the same way the parent does.
-        self.argv = argv or [sys.executable, os.path.abspath(__file__)]
+        self.argv = argv or [sys.executable, _CHILD_ENTRY]
         self.env = env
         # Applied AFTER scrubbing, so the child can be given the caller's own
         # token by the same name the scrub removed the service one under.
@@ -362,14 +375,12 @@ def _dispatch(code, g, kind, context=None, identity=None):  # pragma: no cover -
     else, so a notebook reading its own identity got a different answer purely
     because its item had a policy on it.
     """
-    import agent
-
     def _run():
         if (kind or "").lower() == "sql":
             import sqlrun
 
             return sqlrun.run_sql(code, g)
-        return agent.run_code(code, g)
+        return codeexec.run_code(code, g)
 
     nbu = g.get("notebookutils")
     bind = getattr(getattr(nbu, "runtime", None), "bind", None)
@@ -600,18 +611,3 @@ def close_session(session):
     # still connected would take the engine out from under a live statement.
     if _engines is not None:
         _engines.release(session)
-
-
-def main():  # pragma: no cover - exercised as a subprocess, not in-process
-    # Opened BEFORE importing agent, which brings up Spark: the descriptor must
-    # be claimed while we still know it is ours, not after a library has had a
-    # chance to touch the table.
-    responses = protocol_stream()
-    import agent
-
-    with responses:
-        serve(sys.stdin.buffer, responses, _dispatch, lambda: agent.ns("child"))
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()
