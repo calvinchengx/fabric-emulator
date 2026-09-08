@@ -1,6 +1,7 @@
 package semanticmodel
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -844,8 +845,41 @@ func dstr(v any) string {
 	return fmt.Sprint(v)
 }
 
+// errUnknownDAXFunc is what a family evaluator returns when the name is not one
+// of ITS names. It is a routing signal, never a user-facing error: evalFunc
+// swallows it and only reports "unsupported DAX function" once every family has
+// declined. A family that returned a plain error here would stop the walk and
+// hide the functions defined after it.
+var errUnknownDAXFunc = errors.New("dax: function not in this family")
+
+// evalFunc dispatches one DAX call to whichever family defines it.
+//
+// This was a single 873-line switch with 49 arms -- the highest cognitive
+// complexity in the repository by a wide margin (227). The arms never shared
+// state, never fell through and each returned, so the split is by name only:
+// the families below hold the SAME arms, in the same order, with the same
+// bodies. Behaviour is unchanged, including the error text for a name nobody
+// claims.
 func (e *evalr) evalFunc(fc funcCall) (any, error) {
-	switch strings.ToUpper(fc.name) {
+	name := strings.ToUpper(fc.name)
+	for _, family := range []func(string, funcCall) (any, error){
+		e.evalAggregate, e.evalMath, e.evalTrig, e.evalDateTime, e.evalLogical,
+	} {
+		v, err := family(name, fc)
+		if !errors.Is(err, errUnknownDAXFunc) {
+			return v, err
+		}
+	}
+	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
+}
+
+// evalAggregate evaluates DAX column and row aggregations: they resolve a column and walk the
+// filtered rows, so they are the only family that touches the model.
+//
+// Returns errUnknownDAXFunc for any name it does not define, so evalFunc
+// can try the next family.
+func (e *evalr) evalAggregate(name string, fc funcCall) (any, error) {
+	switch name {
 	case "SUM":
 		// The arity check comes first: `SUM()` parses fine into an empty arg
 		// list, so indexing before checking panics on a query a client can send.
@@ -878,54 +912,6 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			s += f
 		}
 		return s, nil
-	case "DIVIDE":
-		// DIVIDE(numerator, denominator [, alternateResult]) — the third
-		// argument is what a zero denominator returns, defaulting to BLANK.
-		// The guard was `< 2`, which ACCEPTED a third argument and then never
-		// read it: `DIVIDE(x, 0, 0)` answered BLANK where Fabric answers 0, with
-		// no error to notice locally. Accepting an argument you ignore is worse
-		// than rejecting it — the query looks supported and quietly disagrees.
-		if len(fc.args) < 2 || len(fc.args) > 3 {
-			return nil, fmt.Errorf("DIVIDE expects 2 arguments")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		b, err := e.scalar(fc.args[1])
-		if err != nil {
-			return nil, err
-		}
-		num, err := arithNum(a, "DIVIDE")
-		if err != nil {
-			return nil, err
-		}
-		den, err := arithNum(b, "DIVIDE")
-		if err != nil {
-			return nil, err
-		}
-		if den == 0 {
-			if len(fc.args) == 3 {
-				return e.scalar(fc.args[2])
-			}
-			return nil, nil // DAX DIVIDE → blank on divide-by-zero
-		}
-		return num / den, nil
-	case "IF":
-		if len(fc.args) < 2 {
-			return nil, fmt.Errorf("IF expects a condition and a value")
-		}
-		cond, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		if truthy(cond) {
-			return e.scalar(fc.args[1])
-		}
-		if len(fc.args) > 2 {
-			return e.scalar(fc.args[2])
-		}
-		return nil, nil // omitted else branch → blank
 	case "COUNTROWS":
 		if len(fc.args) < 1 {
 			return nil, fmt.Errorf("COUNTROWS expects a table")
@@ -1022,22 +1008,49 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		return float64(n), nil
 	case "SELECTEDVALUE":
 		return e.selectedValue(fc)
-	case "ACOS":
-		if len(fc.args) != 1 {
-			return nil, fmt.Errorf("ACOS expects 1 argument")
+	}
+	return nil, errUnknownDAXFunc
+}
+
+// evalMath evaluates DAX scalar arithmetic.
+//
+// Returns errUnknownDAXFunc for any name it does not define, so evalFunc
+// can try the next family.
+func (e *evalr) evalMath(name string, fc funcCall) (any, error) {
+	switch name {
+	case "DIVIDE":
+		// DIVIDE(numerator, denominator [, alternateResult]) — the third
+		// argument is what a zero denominator returns, defaulting to BLANK.
+		// The guard was `< 2`, which ACCEPTED a third argument and then never
+		// read it: `DIVIDE(x, 0, 0)` answered BLANK where Fabric answers 0, with
+		// no error to notice locally. Accepting an argument you ignore is worse
+		// than rejecting it — the query looks supported and quietly disagrees.
+		if len(fc.args) < 2 || len(fc.args) > 3 {
+			return nil, fmt.Errorf("DIVIDE expects 2 arguments")
 		}
 		a, err := e.scalar(fc.args[0])
 		if err != nil {
 			return nil, err
 		}
-		f, err := arithNum(a, "ACOS")
+		b, err := e.scalar(fc.args[1])
 		if err != nil {
 			return nil, err
 		}
-		if f < -1 || f > 1 {
-			return nil, fmt.Errorf("ACOS argument must be between -1 and 1")
+		num, err := arithNum(a, "DIVIDE")
+		if err != nil {
+			return nil, err
 		}
-		return math.Acos(f), nil
+		den, err := arithNum(b, "DIVIDE")
+		if err != nil {
+			return nil, err
+		}
+		if den == 0 {
+			if len(fc.args) == 3 {
+				return e.scalar(fc.args[2])
+			}
+			return nil, nil // DAX DIVIDE → blank on divide-by-zero
+		}
+		return num / den, nil
 	case "ABS":
 		if len(fc.args) != 1 {
 			return nil, fmt.Errorf("ABS expects 1 argument")
@@ -1214,210 +1227,11 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		default:
 			return 0.0, nil
 		}
-	case "ASIN":
-		if len(fc.args) != 1 {
-			return nil, fmt.Errorf("ASIN expects 1 argument")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		// Desktop ASIN(BLANK()) is BLANK. arithNum would make ASIN(0)=0.
-		if a == nil {
-			return nil, nil
-		}
-		f, err := arithNum(a, "ASIN")
-		if err != nil {
-			return nil, err
-		}
-		if f < -1 || f > 1 {
-			return nil, fmt.Errorf("ASIN argument must be between -1 and 1")
-		}
-		return math.Asin(f), nil
-	case "ATAN":
-		if len(fc.args) != 1 {
-			return nil, fmt.Errorf("ATAN expects 1 argument")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		// Desktop ATAN(BLANK()) is BLANK. arithNum would make ATAN(0)=0.
-		if a == nil {
-			return nil, nil
-		}
-		f, err := arithNum(a, "ATAN")
-		if err != nil {
-			return nil, err
-		}
-		return math.Atan(f), nil
 	case "PI":
 		if len(fc.args) != 0 {
 			return nil, fmt.Errorf("PI expects 0 arguments")
 		}
 		return math.Pi, nil
-	case "SIN":
-		if len(fc.args) != 1 {
-			return nil, fmt.Errorf("SIN expects 1 argument")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		// Desktop SIN(BLANK()) is BLANK. arithNum would make SIN(0)=0.
-		if a == nil {
-			return nil, nil
-		}
-		f, err := arithNum(a, "SIN")
-		if err != nil {
-			return nil, err
-		}
-		return math.Sin(f), nil
-	case "COS":
-		if len(fc.args) != 1 {
-			return nil, fmt.Errorf("COS expects 1 argument")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		// Desktop COS(BLANK()) = 1 — BLANK coerces to 0. Do not return BLANK.
-		f, err := arithNum(a, "COS")
-		if err != nil {
-			return nil, err
-		}
-		return math.Cos(f), nil
-	case "TAN":
-		if len(fc.args) != 1 {
-			return nil, fmt.Errorf("TAN expects 1 argument")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		// Desktop TAN(BLANK()) is BLANK. arithNum would make TAN(0)=0.
-		if a == nil {
-			return nil, nil
-		}
-		f, err := arithNum(a, "TAN")
-		if err != nil {
-			return nil, err
-		}
-		out := math.Tan(f)
-		// Desktop TAN(PI()/2) is "Division by zero", not a huge IEEE finite.
-		if math.IsNaN(out) || math.IsInf(out, 0) {
-			return nil, fmt.Errorf("TAN division by zero")
-		}
-		return out, nil
-	case "DEGREES":
-		if len(fc.args) != 1 {
-			return nil, fmt.Errorf("DEGREES expects 1 argument")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		// Desktop DEGREES(BLANK()) is BLANK. arithNum would make 0.
-		if a == nil {
-			return nil, nil
-		}
-		f, err := arithNum(a, "DEGREES")
-		if err != nil {
-			return nil, err
-		}
-		return f * 180 / math.Pi, nil
-	case "RADIANS":
-		if len(fc.args) != 1 {
-			return nil, fmt.Errorf("RADIANS expects 1 argument")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		// Desktop RADIANS(BLANK()) is BLANK. arithNum would make 0.
-		if a == nil {
-			return nil, nil
-		}
-		f, err := arithNum(a, "RADIANS")
-		if err != nil {
-			return nil, err
-		}
-		return f * math.Pi / 180, nil
-	case "DATE":
-		if len(fc.args) != 3 {
-			return nil, fmt.Errorf("DATE expects 3 arguments")
-		}
-		yv, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		mv, err := e.scalar(fc.args[1])
-		if err != nil {
-			return nil, err
-		}
-		dv, err := e.scalar(fc.args[2])
-		if err != nil {
-			return nil, err
-		}
-		// BLANK year/month coerce to 0 (year 0 → 2000; month 0 overflows).
-		// BLANK day becomes 0 and errors — Desktop DATE(2024, 1, BLANK()) errors.
-		y, err := arithNum(yv, "DATE")
-		if err != nil {
-			return nil, err
-		}
-		m, err := arithNum(mv, "DATE")
-		if err != nil {
-			return nil, err
-		}
-		d, err := arithNum(dv, "DATE")
-		if err != nil {
-			return nil, err
-		}
-		return daxDate(y, m, d)
-	case "YEAR":
-		return e.datePart(fc, "YEAR", func(t time.Time) float64 { return float64(t.Year()) })
-	case "MONTH":
-		return e.datePart(fc, "MONTH", func(t time.Time) float64 { return float64(t.Month()) })
-	case "DAY":
-		return e.datePart(fc, "DAY", func(t time.Time) float64 { return float64(t.Day()) })
-	case "TIME":
-		if len(fc.args) != 3 {
-			return nil, fmt.Errorf("TIME expects 3 arguments")
-		}
-		hv, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		mv, err := e.scalar(fc.args[1])
-		if err != nil {
-			return nil, err
-		}
-		sv, err := e.scalar(fc.args[2])
-		if err != nil {
-			return nil, err
-		}
-		// Desktop TIME(BLANK(), …) coerces BLANK to 0. TIME(-1, 0, 0) errors.
-		h, err := arithNum(hv, "TIME")
-		if err != nil {
-			return nil, err
-		}
-		m, err := arithNum(mv, "TIME")
-		if err != nil {
-			return nil, err
-		}
-		s, err := arithNum(sv, "TIME")
-		if err != nil {
-			return nil, err
-		}
-		return daxTime(h, m, s)
-	case "HOUR":
-		return e.datePart(fc, "HOUR", func(t time.Time) float64 { return float64(t.Hour()) })
-	case "MINUTE":
-		return e.datePart(fc, "MINUTE", func(t time.Time) float64 { return float64(t.Minute()) })
-	case "SECOND":
-		return e.datePart(fc, "SECOND", func(t time.Time) float64 { return float64(t.Second()) })
-	case "SWITCH":
-		return e.evalSwitch(fc)
 	case "SQRT":
 		if len(fc.args) != 1 {
 			return nil, fmt.Errorf("SQRT expects 1 argument")
@@ -1553,6 +1367,294 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, fmt.Errorf("EXP result is not a number")
 		}
 		return out, nil
+	case "TRUNC":
+		if len(fc.args) < 1 || len(fc.args) > 2 {
+			return nil, fmt.Errorf("TRUNC expects 1 or 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil
+		}
+		n, err := arithNum(a, "TRUNC")
+		if err != nil {
+			return nil, err
+		}
+		digits := 0.0
+		if len(fc.args) == 2 {
+			b, err := e.scalar(fc.args[1])
+			if err != nil {
+				return nil, err
+			}
+			digits, err = arithNum(b, "TRUNC")
+			if err != nil {
+				return nil, err
+			}
+		}
+		return daxTrunc(n, roundHalfAwayInt(digits)), nil
+	case "QUOTIENT":
+		if len(fc.args) != 2 {
+			return nil, fmt.Errorf("QUOTIENT expects 2 arguments")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil // QUOTIENT(BLANK, n) is BLANK
+		}
+		n, err := arithNum(a, "QUOTIENT")
+		if err != nil {
+			return nil, err
+		}
+		b, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		d, err := arithNum(b, "QUOTIENT")
+		if err != nil {
+			return nil, err
+		}
+		if d == 0 {
+			return nil, fmt.Errorf("QUOTIENT division by zero")
+		}
+		// Toward zero, unlike INT/FLOOR. QUOTIENT(-10, 3) = -3.
+		return float64(int(n / d)), nil
+	}
+	return nil, errUnknownDAXFunc
+}
+
+// evalTrig evaluates DAX trigonometry, in RADIANS unless the name says otherwise.
+//
+// Returns errUnknownDAXFunc for any name it does not define, so evalFunc
+// can try the next family.
+func (e *evalr) evalTrig(name string, fc funcCall) (any, error) {
+	switch name {
+	case "ACOS":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("ACOS expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		f, err := arithNum(a, "ACOS")
+		if err != nil {
+			return nil, err
+		}
+		if f < -1 || f > 1 {
+			return nil, fmt.Errorf("ACOS argument must be between -1 and 1")
+		}
+		return math.Acos(f), nil
+	case "ASIN":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("ASIN expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop ASIN(BLANK()) is BLANK. arithNum would make ASIN(0)=0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "ASIN")
+		if err != nil {
+			return nil, err
+		}
+		if f < -1 || f > 1 {
+			return nil, fmt.Errorf("ASIN argument must be between -1 and 1")
+		}
+		return math.Asin(f), nil
+	case "ATAN":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("ATAN expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop ATAN(BLANK()) is BLANK. arithNum would make ATAN(0)=0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "ATAN")
+		if err != nil {
+			return nil, err
+		}
+		return math.Atan(f), nil
+	case "SIN":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("SIN expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop SIN(BLANK()) is BLANK. arithNum would make SIN(0)=0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "SIN")
+		if err != nil {
+			return nil, err
+		}
+		return math.Sin(f), nil
+	case "COS":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("COS expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop COS(BLANK()) = 1 — BLANK coerces to 0. Do not return BLANK.
+		f, err := arithNum(a, "COS")
+		if err != nil {
+			return nil, err
+		}
+		return math.Cos(f), nil
+	case "TAN":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("TAN expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop TAN(BLANK()) is BLANK. arithNum would make TAN(0)=0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "TAN")
+		if err != nil {
+			return nil, err
+		}
+		out := math.Tan(f)
+		// Desktop TAN(PI()/2) is "Division by zero", not a huge IEEE finite.
+		if math.IsNaN(out) || math.IsInf(out, 0) {
+			return nil, fmt.Errorf("TAN division by zero")
+		}
+		return out, nil
+	case "DEGREES":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("DEGREES expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop DEGREES(BLANK()) is BLANK. arithNum would make 0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "DEGREES")
+		if err != nil {
+			return nil, err
+		}
+		return f * 180 / math.Pi, nil
+	case "RADIANS":
+		if len(fc.args) != 1 {
+			return nil, fmt.Errorf("RADIANS expects 1 argument")
+		}
+		a, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop RADIANS(BLANK()) is BLANK. arithNum would make 0.
+		if a == nil {
+			return nil, nil
+		}
+		f, err := arithNum(a, "RADIANS")
+		if err != nil {
+			return nil, err
+		}
+		return f * math.Pi / 180, nil
+	}
+	return nil, errUnknownDAXFunc
+}
+
+// evalDateTime evaluates DAX date and time construction and extraction.
+//
+// Returns errUnknownDAXFunc for any name it does not define, so evalFunc
+// can try the next family.
+func (e *evalr) evalDateTime(name string, fc funcCall) (any, error) {
+	switch name {
+	case "DATE":
+		if len(fc.args) != 3 {
+			return nil, fmt.Errorf("DATE expects 3 arguments")
+		}
+		yv, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		mv, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		dv, err := e.scalar(fc.args[2])
+		if err != nil {
+			return nil, err
+		}
+		// BLANK year/month coerce to 0 (year 0 → 2000; month 0 overflows).
+		// BLANK day becomes 0 and errors — Desktop DATE(2024, 1, BLANK()) errors.
+		y, err := arithNum(yv, "DATE")
+		if err != nil {
+			return nil, err
+		}
+		m, err := arithNum(mv, "DATE")
+		if err != nil {
+			return nil, err
+		}
+		d, err := arithNum(dv, "DATE")
+		if err != nil {
+			return nil, err
+		}
+		return daxDate(y, m, d)
+	case "YEAR":
+		return e.datePart(fc, "YEAR", func(t time.Time) float64 { return float64(t.Year()) })
+	case "MONTH":
+		return e.datePart(fc, "MONTH", func(t time.Time) float64 { return float64(t.Month()) })
+	case "DAY":
+		return e.datePart(fc, "DAY", func(t time.Time) float64 { return float64(t.Day()) })
+	case "TIME":
+		if len(fc.args) != 3 {
+			return nil, fmt.Errorf("TIME expects 3 arguments")
+		}
+		hv, err := e.scalar(fc.args[0])
+		if err != nil {
+			return nil, err
+		}
+		mv, err := e.scalar(fc.args[1])
+		if err != nil {
+			return nil, err
+		}
+		sv, err := e.scalar(fc.args[2])
+		if err != nil {
+			return nil, err
+		}
+		// Desktop TIME(BLANK(), …) coerces BLANK to 0. TIME(-1, 0, 0) errors.
+		h, err := arithNum(hv, "TIME")
+		if err != nil {
+			return nil, err
+		}
+		m, err := arithNum(mv, "TIME")
+		if err != nil {
+			return nil, err
+		}
+		s, err := arithNum(sv, "TIME")
+		if err != nil {
+			return nil, err
+		}
+		return daxTime(h, m, s)
+	case "HOUR":
+		return e.datePart(fc, "HOUR", func(t time.Time) float64 { return float64(t.Hour()) })
+	case "MINUTE":
+		return e.datePart(fc, "MINUTE", func(t time.Time) float64 { return float64(t.Minute()) })
+	case "SECOND":
+		return e.datePart(fc, "SECOND", func(t time.Time) float64 { return float64(t.Second()) })
 	case "WEEKDAY":
 		t, err := e.dateArg(fc, "WEEKDAY")
 		if err != nil {
@@ -1643,61 +1745,33 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 			return nil, err
 		}
 		return daxEdate(t, roundHalfAwayInt(months)), nil
-	case "TRUNC":
-		if len(fc.args) < 1 || len(fc.args) > 2 {
-			return nil, fmt.Errorf("TRUNC expects 1 or 2 arguments")
+	}
+	return nil, errUnknownDAXFunc
+}
+
+// evalLogical evaluates DAX branching and blankness.
+//
+// Returns errUnknownDAXFunc for any name it does not define, so evalFunc
+// can try the next family.
+func (e *evalr) evalLogical(name string, fc funcCall) (any, error) {
+	switch name {
+	case "IF":
+		if len(fc.args) < 2 {
+			return nil, fmt.Errorf("IF expects a condition and a value")
 		}
-		a, err := e.scalar(fc.args[0])
+		cond, err := e.scalar(fc.args[0])
 		if err != nil {
 			return nil, err
 		}
-		if a == nil {
-			return nil, nil
+		if truthy(cond) {
+			return e.scalar(fc.args[1])
 		}
-		n, err := arithNum(a, "TRUNC")
-		if err != nil {
-			return nil, err
+		if len(fc.args) > 2 {
+			return e.scalar(fc.args[2])
 		}
-		digits := 0.0
-		if len(fc.args) == 2 {
-			b, err := e.scalar(fc.args[1])
-			if err != nil {
-				return nil, err
-			}
-			digits, err = arithNum(b, "TRUNC")
-			if err != nil {
-				return nil, err
-			}
-		}
-		return daxTrunc(n, roundHalfAwayInt(digits)), nil
-	case "QUOTIENT":
-		if len(fc.args) != 2 {
-			return nil, fmt.Errorf("QUOTIENT expects 2 arguments")
-		}
-		a, err := e.scalar(fc.args[0])
-		if err != nil {
-			return nil, err
-		}
-		if a == nil {
-			return nil, nil // QUOTIENT(BLANK, n) is BLANK
-		}
-		n, err := arithNum(a, "QUOTIENT")
-		if err != nil {
-			return nil, err
-		}
-		b, err := e.scalar(fc.args[1])
-		if err != nil {
-			return nil, err
-		}
-		d, err := arithNum(b, "QUOTIENT")
-		if err != nil {
-			return nil, err
-		}
-		if d == 0 {
-			return nil, fmt.Errorf("QUOTIENT division by zero")
-		}
-		// Toward zero, unlike INT/FLOOR. QUOTIENT(-10, 3) = -3.
-		return float64(int(n / d)), nil
+		return nil, nil // omitted else branch → blank
+	case "SWITCH":
+		return e.evalSwitch(fc)
 	case "BLANK":
 		if len(fc.args) != 0 {
 			return nil, fmt.Errorf("BLANK expects 0 arguments")
@@ -1714,7 +1788,7 @@ func (e *evalr) evalFunc(fc funcCall) (any, error) {
 		// Desktop ISBLANK("") is false. Only true BLANK (nil) is blank.
 		return a == nil, nil
 	}
-	return nil, fmt.Errorf("unsupported DAX function %q", fc.name)
+	return nil, errUnknownDAXFunc
 }
 
 func (e *evalr) dateArg(fc funcCall, fn string) (*time.Time, error) {
