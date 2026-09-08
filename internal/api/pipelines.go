@@ -74,140 +74,7 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 
 	switch act.Type {
 	case "TridentNotebook", "SynapseNotebook", "RunNotebook":
-		// Resolve the referenced notebook and submit a real RunNotebook job —
-		// the pipeline → jobs → notebook chain, end to end.
-		idv, err := resolve(tp["notebookId"])
-		if err != nil || idv == nil || fmt.Sprint(idv) == "" {
-			return nil, fmt.Errorf("notebook activity %q: notebookId is required", act.Name)
-		}
-		nbID := fmt.Sprint(idv)
-		// workspaceId says WHICH workspace holds the notebook, and Fabric marks
-		// it required alongside notebookId precisely because the notebook need
-		// not live beside the pipeline. Ignoring it and always reading the
-		// pipeline's own workspace turns a legitimate cross-workspace activity
-		// into "no notebook %q in this workspace", which blames the id for a
-		// property that was in fact supplied and correct. Absent, it defaults to
-		// the pipeline's workspace, which is the single-workspace shape.
-		nbWID := e.wid
-		if raw, ok := tp["workspaceId"]; ok && len(raw) > 0 {
-			wv, werr := resolve(raw)
-			if werr != nil {
-				return nil, fmt.Errorf("notebook activity %q: workspaceId: %v", act.Name, werr)
-			}
-			// The zero GUID is Fabric's own sentinel for "this pipeline's
-			// workspace" (it is what a same-workspace activity carries in Git),
-			// so it must resolve to e.wid rather than be looked up literally.
-			if s := fmt.Sprint(wv); wv != nil && s != "" && s != "00000000-0000-0000-0000-000000000000" {
-				nbWID = s
-			}
-		}
-		nb, err := e.a.Store.GetItem(nbWID, nbID)
-		if err != nil || nb.Type != "Notebook" {
-			if nbWID != e.wid {
-				return nil, fmt.Errorf("notebook activity %q: no notebook %q in workspace %q", act.Name, nbID, nbWID)
-			}
-			return nil, fmt.Errorf("notebook activity %q: no notebook %q in this workspace", act.Name, nbID)
-		}
-		// The activity's parameters become the run's parameter overrides — the
-		// whole point of a pipeline driving a parameterised notebook. Fabric's
-		// shape is {name: {value, type}}; the value may itself be an
-		// expression (@pipeline().parameters.X), so it resolves against the
-		// pipeline scope before it is handed to the notebook.
-		nbParams := map[string]any{}
-		if raw, ok := tp["parameters"]; ok && len(raw) > 0 {
-			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &fields); err != nil {
-				return nil, fmt.Errorf("notebook activity %q: parameters are not an object", act.Name)
-			}
-			for name, vraw := range fields {
-				target := vraw
-				var pv struct {
-					Value json.RawMessage `json:"value"`
-				}
-				if json.Unmarshal(vraw, &pv) == nil && len(pv.Value) > 0 {
-					target = pv.Value
-				}
-				v, err := resolve(target)
-				if err != nil {
-					return nil, fmt.Errorf("notebook activity %q parameter %q: %v", act.Name, name, err)
-				}
-				// Fabric takes "simple types such as int, float, bool, and
-				// string"; "complex types such as list and dict aren't yet
-				// supported". Rendering one anyway would be the emulator being
-				// MORE permissive than the thing it emulates, which is the one
-				// direction that actively misleads: the pipeline passes here and
-				// fails in Fabric, so the emulator has certified something it
-				// cannot vouch for. Refuse it here, where the activity contract
-				// lives, before the notebook runs.
-				switch v.(type) {
-				case []any, map[string]any:
-					return nil, fmt.Errorf(
-						"notebook activity %q parameter %q: Fabric notebook parameters support only int, float, bool and string; list and dict are not supported",
-						act.Name, name)
-				}
-				nbParams[name] = v
-			}
-		}
-		// Parse for real, exactly as a direct RunNotebook job POST does
-		// (jobs.go): the Go parser splits the notebook into cells and the
-		// compute binding is resolved, so an engine can execute it and report
-		// back. Without this the activity fabricated a completed job with no
-		// run behind it — nothing to execute, and nothing for lineage or the
-		// notebookRunResult callback to attach to.
-		//
-		// The parse comes FIRST because it decides the job's completion time,
-		// for the reason spelled out in jobs.go: a job the clock completes says
-		// "Completed" while every cell is still Pending. Cells outstanding =>
-		// only the engine finishes this job.
-		run, code := e.a.parseNotebookRun(nb)
-		j := &store.JobInstance{ItemID: nb.ID, JobType: "RunNotebook", InvokeType: "Pipeline"}
-		j.CompleteAt = e.a.Store.Now()
-		if code == "" && len(run.Cells) > 0 {
-			j.CompleteAt = math.MaxInt64
-		}
-		if err := e.a.Store.CreateJobInstance(j); err != nil {
-			return nil, fmt.Errorf("notebook activity %q: %v", act.Name, err)
-		}
-		e.a.saveNotebookRun(j.ID, run)
-		if code != "" {
-			_ = e.a.Store.FinalizeJob(nb.ID, j.ID, code)
-			return nil, fmt.Errorf("notebook activity %q: %s", act.Name, code)
-		}
-		// Fabric's notebook activity is SYNCHRONOUS: the pipeline gates on the
-		// notebook's outcome. With a Spark agent configured the emulator is the
-		// pool (same contract as jobs.go), so drive the run here — in this
-		// goroutine, because the activity must not report before the notebook
-		// finishes — and let the activity succeed or fail on the run's actual
-		// terminal state. Without an agent the run stays Pending for an
-		// external engine's callback, which is the original contract and the
-		// only honest answer when nothing can execute the cells.
-		if e.a.runsNotebooksItself() && len(run.Cells) > 0 {
-			// A pipeline-driven notebook IS the root: nothing referenced it.
-			e.a.driveNotebookRun(nbWID, nb.ID, j.ID, run, nbParams, true, referenceRoot{})
-			status, runJSON, err := e.a.Store.GetNotebookRun(j.ID)
-			if err != nil {
-				return nil, fmt.Errorf("notebook activity %q: run detail lost: %v", act.Name, err)
-			}
-			var detail struct {
-				ExitValue string `json:"exitValue"`
-			}
-			_ = json.Unmarshal([]byte(runJSON), &detail)
-			if status != "Completed" {
-				if jb, err := e.a.Store.GetJobInstance(nb.ID, j.ID); err == nil && jb.FailWith != "" {
-					return nil, fmt.Errorf("notebook activity %q: %s", act.Name, jb.FailWith)
-				}
-				return nil, fmt.Errorf("notebook activity %q: notebook run ended %s", act.Name, status)
-			}
-			return notebookActivityOutput(j.ID, nb.ID, status, detail.ExitValue, notebookSessionID(j.ID)), nil
-		}
-		// No engine: the run is Pending until one executes the cells and
-		// reports back; say that rather than claiming a completion that has
-		// not happened.
-		status, _, err := e.a.Store.GetNotebookRun(j.ID)
-		if err != nil || status == "" {
-			status = "Pending"
-		}
-		return notebookActivityOutput(j.ID, nb.ID, status, "", ""), nil
+		return e.notebookActivity(act, tp, resolve)
 
 	case "ExecutePipeline", "InvokePipeline":
 		// Invoke pipeline: resolve the referenced DataPipeline and run it for
@@ -504,6 +371,159 @@ type oneLakeLoc struct {
 // carry a `location` object {workspaceId?, itemId, path} (workspaceId defaults
 // to the pipeline's workspace; ids accept a GUID or a name). A file copies to
 // the sink path; a directory copies its whole subtree under the sink path.
+// notebookActivity submits a real RunNotebook job for the notebook a pipeline
+// activity references: the pipeline -> jobs -> notebook chain, end to end.
+//
+// EXTRACTED FROM Execute, WHERE IT WAS 134 OF THAT SWITCH'S 292 LINES -- one
+// arm larger than the twenty-one after it combined. `copyActivity` had already
+// established the shape in this file; this arm simply never followed it, and
+// Execute grew around it.
+//
+// The distinction matters here more than in most files. This switch gains arms
+// steadily -- "twelve Fabric activity types were reporting success having run
+// nothing", "nine activity types that silently succeeded" -- so what a reader
+// needs from Execute is the LIST of types it dispatches, and a 134-line arm at
+// the top is the thing that hides it.
+//
+// Behaviour is unchanged: the body is the arm verbatim, and act/tp/resolve are
+// exactly what it already closed over.
+func (e *pipelineExecutor) notebookActivity(act pipeline.Activity, tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error)) (map[string]any, error) {
+	// Resolve the referenced notebook and submit a real RunNotebook job —
+	// the pipeline → jobs → notebook chain, end to end.
+	idv, err := resolve(tp["notebookId"])
+	if err != nil || idv == nil || fmt.Sprint(idv) == "" {
+		return nil, fmt.Errorf("notebook activity %q: notebookId is required", act.Name)
+	}
+	nbID := fmt.Sprint(idv)
+	// workspaceId says WHICH workspace holds the notebook, and Fabric marks
+	// it required alongside notebookId precisely because the notebook need
+	// not live beside the pipeline. Ignoring it and always reading the
+	// pipeline's own workspace turns a legitimate cross-workspace activity
+	// into "no notebook %q in this workspace", which blames the id for a
+	// property that was in fact supplied and correct. Absent, it defaults to
+	// the pipeline's workspace, which is the single-workspace shape.
+	nbWID := e.wid
+	if raw, ok := tp["workspaceId"]; ok && len(raw) > 0 {
+		wv, werr := resolve(raw)
+		if werr != nil {
+			return nil, fmt.Errorf("notebook activity %q: workspaceId: %v", act.Name, werr)
+		}
+		// The zero GUID is Fabric's own sentinel for "this pipeline's
+		// workspace" (it is what a same-workspace activity carries in Git),
+		// so it must resolve to e.wid rather than be looked up literally.
+		if s := fmt.Sprint(wv); wv != nil && s != "" && s != "00000000-0000-0000-0000-000000000000" {
+			nbWID = s
+		}
+	}
+	nb, err := e.a.Store.GetItem(nbWID, nbID)
+	if err != nil || nb.Type != "Notebook" {
+		if nbWID != e.wid {
+			return nil, fmt.Errorf("notebook activity %q: no notebook %q in workspace %q", act.Name, nbID, nbWID)
+		}
+		return nil, fmt.Errorf("notebook activity %q: no notebook %q in this workspace", act.Name, nbID)
+	}
+	// The activity's parameters become the run's parameter overrides — the
+	// whole point of a pipeline driving a parameterised notebook. Fabric's
+	// shape is {name: {value, type}}; the value may itself be an
+	// expression (@pipeline().parameters.X), so it resolves against the
+	// pipeline scope before it is handed to the notebook.
+	nbParams := map[string]any{}
+	if raw, ok := tp["parameters"]; ok && len(raw) > 0 {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return nil, fmt.Errorf("notebook activity %q: parameters are not an object", act.Name)
+		}
+		for name, vraw := range fields {
+			target := vraw
+			var pv struct {
+				Value json.RawMessage `json:"value"`
+			}
+			if json.Unmarshal(vraw, &pv) == nil && len(pv.Value) > 0 {
+				target = pv.Value
+			}
+			v, err := resolve(target)
+			if err != nil {
+				return nil, fmt.Errorf("notebook activity %q parameter %q: %v", act.Name, name, err)
+			}
+			// Fabric takes "simple types such as int, float, bool, and
+			// string"; "complex types such as list and dict aren't yet
+			// supported". Rendering one anyway would be the emulator being
+			// MORE permissive than the thing it emulates, which is the one
+			// direction that actively misleads: the pipeline passes here and
+			// fails in Fabric, so the emulator has certified something it
+			// cannot vouch for. Refuse it here, where the activity contract
+			// lives, before the notebook runs.
+			switch v.(type) {
+			case []any, map[string]any:
+				return nil, fmt.Errorf(
+					"notebook activity %q parameter %q: Fabric notebook parameters support only int, float, bool and string; list and dict are not supported",
+					act.Name, name)
+			}
+			nbParams[name] = v
+		}
+	}
+	// Parse for real, exactly as a direct RunNotebook job POST does
+	// (jobs.go): the Go parser splits the notebook into cells and the
+	// compute binding is resolved, so an engine can execute it and report
+	// back. Without this the activity fabricated a completed job with no
+	// run behind it — nothing to execute, and nothing for lineage or the
+	// notebookRunResult callback to attach to.
+	//
+	// The parse comes FIRST because it decides the job's completion time,
+	// for the reason spelled out in jobs.go: a job the clock completes says
+	// "Completed" while every cell is still Pending. Cells outstanding =>
+	// only the engine finishes this job.
+	run, code := e.a.parseNotebookRun(nb)
+	j := &store.JobInstance{ItemID: nb.ID, JobType: "RunNotebook", InvokeType: "Pipeline"}
+	j.CompleteAt = e.a.Store.Now()
+	if code == "" && len(run.Cells) > 0 {
+		j.CompleteAt = math.MaxInt64
+	}
+	if err := e.a.Store.CreateJobInstance(j); err != nil {
+		return nil, fmt.Errorf("notebook activity %q: %v", act.Name, err)
+	}
+	e.a.saveNotebookRun(j.ID, run)
+	if code != "" {
+		_ = e.a.Store.FinalizeJob(nb.ID, j.ID, code)
+		return nil, fmt.Errorf("notebook activity %q: %s", act.Name, code)
+	}
+	// Fabric's notebook activity is SYNCHRONOUS: the pipeline gates on the
+	// notebook's outcome. With a Spark agent configured the emulator is the
+	// pool (same contract as jobs.go), so drive the run here — in this
+	// goroutine, because the activity must not report before the notebook
+	// finishes — and let the activity succeed or fail on the run's actual
+	// terminal state. Without an agent the run stays Pending for an
+	// external engine's callback, which is the original contract and the
+	// only honest answer when nothing can execute the cells.
+	if e.a.runsNotebooksItself() && len(run.Cells) > 0 {
+		// A pipeline-driven notebook IS the root: nothing referenced it.
+		e.a.driveNotebookRun(nbWID, nb.ID, j.ID, run, nbParams, true, referenceRoot{})
+		status, runJSON, err := e.a.Store.GetNotebookRun(j.ID)
+		if err != nil {
+			return nil, fmt.Errorf("notebook activity %q: run detail lost: %v", act.Name, err)
+		}
+		var detail struct {
+			ExitValue string `json:"exitValue"`
+		}
+		_ = json.Unmarshal([]byte(runJSON), &detail)
+		if status != "Completed" {
+			if jb, err := e.a.Store.GetJobInstance(nb.ID, j.ID); err == nil && jb.FailWith != "" {
+				return nil, fmt.Errorf("notebook activity %q: %s", act.Name, jb.FailWith)
+			}
+			return nil, fmt.Errorf("notebook activity %q: notebook run ended %s", act.Name, status)
+		}
+		return notebookActivityOutput(j.ID, nb.ID, status, detail.ExitValue, notebookSessionID(j.ID)), nil
+	}
+	// No engine: the run is Pending until one executes the cells and
+	// reports back; say that rather than claiming a completion that has
+	// not happened.
+	status, _, err := e.a.Store.GetNotebookRun(j.ID)
+	if err != nil || status == "" {
+		status = "Pending"
+	}
+	return notebookActivityOutput(j.ID, nb.ID, status, "", ""), nil
+}
+
 func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]json.RawMessage, resolve func(json.RawMessage) (any, error)) (map[string]any, error) {
 	// A REST source is not a OneLake location, so it dispatches BEFORE
 	// resolveLoc — which exists to resolve one. See restconnector.go.
