@@ -2230,6 +2230,25 @@ jobs:
           go-version-file: go.mod
           cache: true
       # Gated at zero. See .golangci.yml for what is excluded and why.
+      # THE CACHE KEY IS BUSTED DELIBERATELY. golangci-lint caches per-package
+      # analysis FACTS, and a stale set produced 22 phantom SA5011 findings on
+      # 2026-09-10 -- every one the same shape:
+      #
+      #   if x == nil { t.Fatalf(...) }
+      #   if x.Field ...            <- "possible nil pointer dereference"
+      #
+      # which is only a finding if staticcheck has lost the fact that
+      # `t.Fatalf` does not return. It reproduced twice in CI on a lockfile-only
+      # change, and NOT ONCE locally with the same linter (v2.12.2), the same Go
+      # (1.26.6 from go.mod), the same GOOS/GOARCH, and a cleaned cache. The
+      # only difference was `Restored cache for golangci-lint`, and
+      # `skip-cache: true` made the same code pass.
+      #
+      # `cache-invalidation-interval: 1` re-keys the cache daily instead of the
+      # default 7 days, so a poisoned set expires in a day rather than a week.
+      # NOT `skip-cache: true`: that pays the full analysis cost on every run
+      # forever to route around one bad artifact.
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
+          cache-invalidation-interval: 1
