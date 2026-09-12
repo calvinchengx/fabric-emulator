@@ -217,3 +217,97 @@ func TestPolicyFailuresAreNotReportedAsAbsence(t *testing.T) {
 		t.Errorf("GET with no items table = %d, want 500 (%s)", w.Code, w.Body)
 	}
 }
+
+// The item-type rule. OneLake security roles live on lakehouses and mirrored
+// items; a Warehouse is secured by T-SQL and nothing else, so accepting a role
+// on one would let a consumer author a policy that this emulator honours and a
+// tenant ignores. Both halves are asserted in one place on purpose: a handler
+// that refused EVERY item type would pass the refusal on its own.
+
+func typedItem(t *testing.T, st *store.Store, ws *store.Workspace, typ string) *store.Item {
+	t.Helper()
+	it := &store.Item{WorkspaceID: ws.ID, DisplayName: "it-" + typ, Type: typ}
+	if err := st.CreateItem(it, nil); err != nil {
+		t.Fatal(err)
+	}
+	return it
+}
+
+func TestDataAccessRolesRefusedOnItemTypesThatDoNotCarryThem(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+
+	// Warehouse is the case that matters; the other two guard the edges — a
+	// mirrored type the supported-items table does not name, and an item type
+	// with no data plane at all.
+	for _, typ := range []string{"Warehouse", "MirroredWarehouse", "Notebook"} {
+		it := typedItem(t, st, ws, typ)
+		w := do(a.putDataAccessRoles, admin, "PUT", `{"value":[`+roleBody+`]}`, secPV(ws, it))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("PUT on a %s = %d, want 400 (%s)", typ, w.Code, w.Body)
+			continue
+		}
+		var body struct {
+			ErrorCode string `json:"errorCode"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.ErrorCode != "DataAccessRolesNotSupported" {
+			t.Errorf("PUT on a %s: errorCode = %q", typ, body.ErrorCode)
+		}
+		if h := w.Header().Get("x-ms-public-api-error-code"); h != "DataAccessRolesNotSupported" {
+			t.Errorf("PUT on a %s: header code = %q", typ, h)
+		}
+		// The refusal must not have written anything on its way out.
+		roles, err := st.ListOneLakeRoles(it.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(roles) != 0 {
+			t.Errorf("PUT on a %s stored %d roles despite refusing", typ, len(roles))
+		}
+	}
+}
+
+func TestDataAccessRolesAcceptedOnEverySupportedItemType(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+
+	for _, typ := range []string{"Lakehouse", "MirroredDatabase", "MirroredAzureDatabricksCatalog"} {
+		it := typedItem(t, st, ws, typ)
+		if w := do(a.putDataAccessRoles, admin, "PUT", `{"value":[`+roleBody+`]}`, secPV(ws, it)); w.Code != http.StatusOK {
+			t.Errorf("PUT on a %s = %d, want 200 (%s)", typ, w.Code, w.Body)
+			continue
+		}
+		roles, err := st.ListOneLakeRoles(it.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(roles) != 1 {
+			t.Errorf("PUT on a %s stored %d roles", typ, len(roles))
+		}
+	}
+}
+
+// The read path is deliberately NOT gated, and that is a decision rather than
+// an oversight: the vendored docs say what may carry a role, and do not say
+// what a GET against an item that may not answers. Pinning the current
+// behaviour here means a later change to it is somebody's decision too.
+func TestDataAccessRolesReadStillAnswersOnAnUnsupportedItem(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	it := typedItem(t, st, ws, "Warehouse")
+
+	w := do(a.listDataAccessRoles, admin, "GET", "", secPV(ws, it))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET on a Warehouse = %d, want 200 (%s)", w.Code, w.Body)
+	}
+	var body struct{ Value []json.RawMessage }
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Value) != 0 {
+		t.Errorf("GET on a Warehouse returned %d roles; nothing can put one there", len(body.Value))
+	}
+}

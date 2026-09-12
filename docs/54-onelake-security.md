@@ -292,6 +292,16 @@ without anyone noticing.
 - **DENY rules** — the model defines a `Type` of GRANT or DENY, and then says
   "only GRANT type roles are supported". We implement what the product does,
   and refuse DENY rather than accepting one we would silently ignore.
+- **Which items may carry a role** — enforced on the write, not assumed. The
+  supported-items table names `Lakehouse`, `MirroredDatabase` and
+  `MirroredAzureDatabricksCatalog`; a PUT against anything else is
+  `DataAccessRolesNotSupported`. A **Warehouse** is the case this protects: its
+  data is secured by T-SQL ([55](55-tsql-security.md)), so a role stored on one
+  is a policy the emulator would honour and a tenant would ignore — the
+  divergence that costs the most, because it fails only in production. The
+  **read** is deliberately left open: the docs say what may carry a role and
+  not what a GET against an item that may not returns, and inventing that
+  refusal would be the same guess in the other direction.
 - **Metadata security** — `Read` is documented as equivalent to both
   `VIEW_DEFINITION` and `SELECT`. Hiding a table's *existence* from a user with
   no role on it is part of the contract, not a nicety, and needs its own

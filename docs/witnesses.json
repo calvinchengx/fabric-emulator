@@ -1355,7 +1355,10 @@
       "ci:livy-native",
       "go:TestAOneLakeRoleGrantsAViewerOnePath",
       "go:TestARoleDoesNotNarrowContributorsAndAbove",
-      "go:TestAStrangerIsNotAdmittedByAnItemRole"
+      "go:TestAStrangerIsNotAdmittedByAnItemRole",
+      "go:TestDataAccessRolesRefusedOnItemTypesThatDoNotCarryThem",
+      "go:TestDataAccessRolesAcceptedOnEverySupportedItemType",
+      "go:TestDataAccessRolesReadStillAnswersOnAnUnsupportedItem"
     ]
   },
   "row-and-column-level-security-applied-by-the-engine": {
