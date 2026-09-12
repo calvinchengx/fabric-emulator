@@ -292,6 +292,17 @@ without anyone noticing.
 - **DENY rules** — the model defines a `Type` of GRANT or DENY, and then says
   "only GRANT type roles are supported". We implement what the product does,
   and refuse DENY rather than accepting one we would silently ignore.
+- **The Direct Lake query path** — enforced, and it had to be enforced *here*
+  rather than inherited. Direct Lake does not read through a SQL analytics
+  endpoint, so no engine upstream has already applied the rules: "Direct Lake on
+  OneLake doesn't use a SQL analytics endpoint to check permissions. It uses
+  OneLake security." A table no role grants will not resolve and a column
+  outside the projection is reported missing **by name**, which is the product's
+  own shape for it rather than a 403. The **row filter** is the one piece not
+  applied: Fabric filters and returns what the predicate admits, and evaluating
+  a predicate needs an engine — the Spark path hands its filter to Spark SQL,
+  and the Direct Lake read is pure Go over Delta with no counterpart. It is
+  refused, loudly, until a bounded predicate evaluator exists.
 - **Which items may carry a role** — enforced on the write, not assumed. The
   supported-items table names `Lakehouse`, `MirroredDatabase` and
   `MirroredAzureDatabricksCatalog`; a PUT against anything else is

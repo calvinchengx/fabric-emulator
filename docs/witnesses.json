@@ -751,6 +751,19 @@
       "go:TestDirectLakeWarehouseWithoutSQLIsHonest"
     ]
   },
+  "power-bi-direct-lake-security-table-and-column": {
+    "section": "Item types present, engine absent",
+    "claim": "Power BI — Direct Lake **security**: table and column",
+    "witnesses": [
+      "go:TestDirectLakeRefusesATableNoRoleGrants",
+      "go:TestDirectLakeRefusesAColumnOutsideTheProjection",
+      "go:TestDirectLakeServesAProjectionThatCoversTheModel",
+      "go:TestDirectLakeServesAnUnnarrowedGrant",
+      "go:TestDirectLakeProjectionHonoursTheSourceColumnFallback",
+      "go:TestDirectLakeWithoutRolesKeepsTheWorkspaceRoleGate",
+      "go:TestDirectLakeFailsWhenThePolicyCannotBeRead"
+    ]
+  },
   "power-bi-sempy-semantic-link-labs-over-xmla": {
     "section": "Item types present, engine absent",
     "claim": "Power BI — **SemPy / semantic-link-labs over XMLA**",
