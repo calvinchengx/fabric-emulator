@@ -727,8 +727,28 @@
       "ci:semantic-model",
       "go:TestExecuteQueriesE2E",
       "go:TestExecuteQueriesGolden",
-      "go:TestExecuteQueriesEveryPublishedMeasureAnswers",
-      "go:TestExecuteQueriesDirectLakeReadsCurrentDelta"
+      "go:TestExecuteQueriesEveryPublishedMeasureAnswers"
+    ]
+  },
+  "power-bi-direct-lake-binding-model-on-onelake": {
+    "section": "Item types present, engine absent",
+    "claim": "Power BI — **Direct Lake** binding (model on OneLake)",
+    "witnesses": [
+      "ci:semantic-model",
+      "go:TestExecuteQueriesDirectLakeReadsCurrentDelta",
+      "go:TestParseDirectLakeModel",
+      "go:TestParseTMDLDirectLakePartition",
+      "go:TestDirectLakeDefinitionRecordsALineageEdge",
+      "go:TestDirectLakeSchemaQualifiedTableFallback"
+    ]
+  },
+  "power-bi-direct-lake-over-a-warehouse-source": {
+    "section": "Item types present, engine absent",
+    "claim": "Power BI — Direct Lake over a **Warehouse** source",
+    "witnesses": [
+      "go:TestDirectLakeOverAWarehouseReadsItsTables",
+      "go:TestDirectLakeWarehouseRefusesAnUnsafeEntityName",
+      "go:TestDirectLakeWarehouseWithoutSQLIsHonest"
     ]
   },
   "power-bi-sempy-semantic-link-labs-over-xmla": {
@@ -1383,7 +1403,8 @@
     "sdk:TestWarehouseSQLServerRelayE2E": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "sdk:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "go:TestRelayEnforcesColumnLevelSecurity": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestRelayEnforcesDynamicDataMasking": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+    "go:TestRelayEnforcesDynamicDataMasking": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestDirectLakeOverAWarehouseReadsItsTables": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",
