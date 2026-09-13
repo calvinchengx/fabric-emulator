@@ -22,6 +22,9 @@ import (
 
 // API bundles the dependencies of the /v1 surface.
 type API struct {
+	// mwc holds the MWC tokens issued for XMLA, each bound to its principal.
+	mwc mwcTokens
+
 	Store *store.Store
 	Auth  *auth.Validator
 	// PBIAuth validates the Power BI-audience tokens the executeQueries endpoint
