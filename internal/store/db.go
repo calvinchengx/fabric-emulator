@@ -485,6 +485,16 @@ CREATE TABLE IF NOT EXISTS deployment_pipeline_operations (
 	created_at INTEGER NOT NULL,
 	detail TEXT NOT NULL           -- JSON: [{sourceItemId,targetItemId,outcome,…}]
 );
+CREATE TABLE IF NOT EXISTS item_access (
+	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+	principal_id TEXT NOT NULL,
+	principal_type TEXT NOT NULL,
+	-- Direct grants only. Access a workspace role implies is computed, never
+	-- stored, so a role change cannot leave a stale copy of it behind.
+	permissions TEXT NOT NULL,             -- JSON: ItemPermissions, e.g. ["Read","Reshare"]
+	additional_permissions TEXT NOT NULL,  -- JSON: e.g. ["ReadAll","ReadData"]
+	PRIMARY KEY (item_id, principal_id)
+);
 CREATE TABLE IF NOT EXISTS onelake_roles (
 	item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
 	name TEXT NOT NULL,
