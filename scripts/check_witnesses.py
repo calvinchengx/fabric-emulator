@@ -74,7 +74,6 @@ Usage:
 import json
 import pathlib
 import re
-import subprocess
 import sys
 
 # Windows stdout is cp1252, and this prints text taken from the parity map —
@@ -211,9 +210,14 @@ SKIP_RE = re.compile(r"\.Skipf?\(")
 
 
 def go_func_bodies() -> dict:
-    """name -> list of (signature, body) for every Go func under internal/."""
+    """name -> list of (signature, body) for every Go func under GO_ROOTS.
+
+    Scans the same roots as go_test_names. A test found by one and not the other
+    would be creditable while its gate went undetected — a witness allowed to
+    skip without being declared, which is the drift the gate map exists to stop.
+    """
     out: dict[str, list] = {}
-    for path in (ROOT / "internal").rglob("*.go"):
+    for path in (p for root in GO_ROOTS for p in (ROOT / root).rglob("*.go")):
         src = path.read_text(errors="ignore")
         for m in FUNC_RE.finditer(src):
             tail = src[m.end():]
@@ -249,12 +253,20 @@ def gated_go_tests() -> dict:
     return {n: why for n, why in gated.items() if n.startswith("Test")}
 
 
+# Where Go witnesses live. `pkg/` is here because docs/54 put the OneLake security
+# evaluator there on purpose — so a future module can import it — and a checker
+# that scanned only `internal/` made every test of that evaluator uncreditable:
+# the witness existed, ran, and was reported as dangling.
+GO_ROOTS = ("internal", "pkg")
+
+
 def go_test_names() -> set:
-    out = subprocess.run(
-        ["grep", "-rhoE", r"^func (Test[A-Za-z0-9_]+)", "--include=*_test.go", str(ROOT / "internal")],
-        capture_output=True, text=True,
-    )
-    return {line.split()[1] for line in out.stdout.splitlines() if line.startswith("func ")}
+    names: set = set()
+    for root in GO_ROOTS:
+        for path in (ROOT / root).rglob("*_test.go"):
+            names.update(re.findall(r"^func (Test[A-Za-z0-9_]+)",
+                                    path.read_text(encoding="utf-8", errors="ignore"), re.M))
+    return names
 
 
 def py_test_names() -> set:
