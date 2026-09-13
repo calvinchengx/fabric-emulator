@@ -284,7 +284,7 @@ func TestSubjectAccessSurfacesAStoreFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Service{Store: st}
-	if _, err := s.subjectAccess("ws", "subject", "Tables", nil); err == nil {
+	if _, err := s.subjectAccess(&store.Item{ID: "item", WorkspaceID: "ws", Type: "Lakehouse"}, "subject", "Tables"); err == nil {
 		t.Fatal("an unreadable role assignment was reported as no access")
 	}
 }

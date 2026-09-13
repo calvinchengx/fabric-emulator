@@ -284,6 +284,10 @@ func (s *Store) EvaluatableRoles(itemID string) ([]onelakesec.Role, error) {
 		return nil, err
 	}
 	out := make([]onelakesec.Role, 0, len(stored))
+	// The item is looked up only if a role needs it — to check a
+	// fabricItemMembers sourcePath — so evaluating a policy with none costs no
+	// extra query.
+	var self string
 	for _, r := range stored {
 		var d dataAccessRole
 		if err := json.Unmarshal(r.Body, &d); err != nil {
@@ -299,15 +303,36 @@ func (s *Store) EvaluatableRoles(itemID string) ([]onelakesec.Role, error) {
 			role.Members.Entra = append(role.Members.Entra, m.ObjectID)
 		}
 		// fabricItemMembers is how a default role includes everyone holding a
-		// permission, without storing them. The item path is not consulted yet:
-		// roles are scoped to their own item, so the permissions are what
-		// decides membership.
+		// permission, without storing them. Its sourcePath names the item whose
+		// permissions confer membership, as <workspaceId>/<itemId>.
+		//
+		// ONLY THIS ITEM'S PATH COUNTS. The evaluator is told what a principal
+		// holds on the item being read; a member entry naming ANOTHER item asks
+		// about access somewhere else, and matching it against access here would
+		// admit anyone holding ReadAll on this item to a role written for holders
+		// of ReadAll on that one. Such an entry confers nothing — fail closed —
+		// until membership through another item is modelled.
 		for _, m := range d.Members.FabricItemMembers {
-			role.Members.ItemAccess = append(role.Members.ItemAccess, m.ItemAccess...)
+			if self == "" {
+				it, err := s.GetItemByID(itemID)
+				if err != nil {
+					return nil, err
+				}
+				self = strings.ToLower(it.WorkspaceID + "/" + it.ID)
+			}
+			if normaliseSourcePath(m.SourcePath) == self {
+				role.Members.ItemAccess = append(role.Members.ItemAccess, m.ItemAccess...)
+			}
 		}
 		out = append(out, role)
 	}
 	return out, nil
+}
+
+// normaliseSourcePath lowercases a <workspaceId>/<itemId> path and strips the
+// braces the reference's pattern allows around each GUID.
+func normaliseSourcePath(p string) string {
+	return strings.ToLower(strings.NewReplacer("{", "", "}", "").Replace(strings.Trim(strings.TrimSpace(p), "/")))
 }
 
 // DeleteOneLakeRoles drops every role on an item. Item deletion cascades, so

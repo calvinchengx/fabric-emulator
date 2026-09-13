@@ -209,6 +209,21 @@ func TestAuthorizeViewerRefusesWhenThePolicyCannotBeRead(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	s := &Service{Store: st}
+	// A real Viewer on a real item: the policy is only consulted for somebody
+	// who may reach the item at all, so a principal with no access would be
+	// refused before the unreadable table was ever touched.
+	ws := &store.Workspace{DisplayName: "w"}
+	if err := st.CreateWorkspace(ws, store.Principal{ID: "owner", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateRoleAssignment(&store.RoleAssignment{WorkspaceID: ws.ID,
+		Principal: store.Principal{ID: "viewer-1", Type: "User"}, Role: store.RoleViewer}); err != nil {
+		t.Fatal(err)
+	}
+	it := &store.Item{WorkspaceID: ws.ID, DisplayName: "lake", Type: "Lakehouse"}
+	if err := st.CreateItem(it, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	// A second connection drops the table out from under the service, the way
 	// api_failure_test.go reaches its 500 branches.
@@ -221,7 +236,7 @@ func TestAuthorizeViewerRefusesWhenThePolicyCannotBeRead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	derr := s.authorizeViewer("some-item", "Tables/dbo/T", "viewer-1", http.MethodGet)
+	derr := s.authorizeViewer(it, "Tables/dbo/T", "viewer-1", http.MethodGet)
 	if derr == nil {
 		t.Fatal("an unreadable policy was treated as a decision")
 	}

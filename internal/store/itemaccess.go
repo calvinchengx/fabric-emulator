@@ -16,6 +16,8 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+
+	"github.com/calvinchengx/fabric-emulator/pkg/onelakesec"
 )
 
 // Item permission names — the ItemPermissions enum of the REST reference.
@@ -229,4 +231,59 @@ func sortedSet(xs []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// OneLakeRead is what a principal may read of one item's OneLake data.
+type OneLakeRead struct {
+	// Allowed: the principal may reach the item's data at all.
+	Allowed bool
+	// Full: everything, unfiltered. When false and Allowed, Entries decides.
+	Full bool
+	// Entries are the effective OneLake security grants, when the item has roles.
+	Entries []onelakesec.AccessEntry
+	// RolesOn reports that the item has OneLake security roles, so an
+	// unreadable path was refused by policy rather than for want of ReadAll.
+	RolesOn bool
+}
+
+// OneLakeReadAccess is THE decision for reading an item's OneLake data, and
+// every surface that reads it asks this one function — DFS, Blob, the listing
+// filter, principalAccess and Direct Lake. Five callers deciding separately is
+// how two of them came to disagree about the same policy once already.
+//
+//   - No Read on the item: nothing. Workspace permissions and item permissions are
+//     the first boundary; a OneLake role narrows within an item a principal can
+//     already reach, it does not admit a stranger.
+//   - Contributor and above: everything. Their Write "overrides any OneLake
+//     security Read permissions".
+//   - An item with NO OneLake security roles: OneLake access is ReadAll — "If
+//     OneLake security isn't on, Direct Lake on OneLake needs the effective
+//     identity to have Read and ReadAll" — whether that comes from a role or a
+//     grant.
+//   - An item WITH roles: the roles decide, and the principal's item access is
+//     handed to the evaluator so fabricItemMembers can match. That is how
+//     DefaultReader admits ReadAll holders, and why ReadAll alone no longer
+//     reads a secured item whose DefaultReader was removed.
+func (s *Store) OneLakeReadAccess(it *Item, principalID, input string) (OneLakeRead, error) {
+	access, err := s.EffectiveItemAccess(it, principalID)
+	if err != nil {
+		return OneLakeRead{}, err
+	}
+	if !access.Has(PermRead) {
+		return OneLakeRead{}, nil
+	}
+	if RoleRank(access.Role) >= RoleRank(RoleContributor) {
+		return OneLakeRead{Allowed: true, Full: true}, nil
+	}
+	roles, err := s.EvaluatableRoles(it.ID)
+	if err != nil {
+		return OneLakeRead{}, err
+	}
+	if len(roles) == 0 {
+		readAll := access.Has(PermReadAll)
+		return OneLakeRead{Allowed: readAll, Full: readAll}, nil
+	}
+	held := append(append([]string{}, access.Permissions...), access.Additional...)
+	return OneLakeRead{Allowed: true, RolesOn: true,
+		Entries: onelakesec.Effective(roles, onelakesec.Principal{ObjectID: principalID, ItemAccess: held}, input)}, nil
 }

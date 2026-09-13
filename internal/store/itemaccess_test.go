@@ -255,3 +255,90 @@ func TestHasLooksAtBothHalves(t *testing.T) {
 		t.Fatalf("Has is wrong on %+v", a)
 	}
 }
+
+// ---- OneLakeReadAccess: the one decision every OneLake reader shares -----------
+
+func TestOneLakeReadAccessBranches(t *testing.T) {
+	s := newTestStore(t)
+	ws, it := sharedItem(t, s, "Lakehouse")
+	role := func(id, r string) {
+		t.Helper()
+		if err := s.CreateRoleAssignment(&RoleAssignment{WorkspaceID: ws.ID,
+			Principal: Principal{ID: id, Type: "User"}, Role: r}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	decide := func(id string) OneLakeRead {
+		t.Helper()
+		r, err := s.OneLakeReadAccess(it, id, "Tables")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	role("contrib", RoleContributor)
+	role("viewer", RoleViewer)
+
+	if r := decide("stranger"); r.Allowed || r.Full {
+		t.Errorf("no Read = %+v, want nothing", r)
+	}
+	if r := decide("contrib"); !r.Full {
+		t.Errorf("a Contributor = %+v, want everything", r)
+	}
+	// No roles on the item: ReadAll decides.
+	if r := decide("viewer"); r.Allowed {
+		t.Errorf("a Viewer without ReadAll, no roles = %+v, want nothing", r)
+	}
+	if err := s.PutItemAccess(ItemAccess{ItemID: it.ID, PrincipalID: "viewer", PrincipalType: "User",
+		Permissions: []string{PermRead}, Additional: []string{PermReadAll}}); err != nil {
+		t.Fatal(err)
+	}
+	if r := decide("viewer"); !r.Full || r.RolesOn {
+		t.Errorf("a Viewer with ReadAll, no roles = %+v, want everything", r)
+	}
+	// Roles on: the roles decide, with the principal's item access in hand.
+	body := `{"name":"DefaultReader","decisionRules":[{"effect":"Permit","permission":[
+	  {"attributeName":"Path","attributeValueIncludedIn":["*"]},
+	  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]}],
+	  "members":{"fabricItemMembers":[{"sourcePath":"` + ws.ID + "/" + it.ID + `","itemAccess":["ReadAll"]}]}}`
+	if err := s.PutOneLakeRoles(it.ID, []OneLakeRole{{Name: "DefaultReader", Body: []byte(body)}}); err != nil {
+		t.Fatal(err)
+	}
+	r := decide("viewer")
+	if !r.Allowed || r.Full || !r.RolesOn || len(r.Entries) != 1 {
+		t.Errorf("a ReadAll Viewer under DefaultReader = %+v, want one entry from the role", r)
+	}
+	if err := s.DeleteItemAccess(it.ID, "viewer"); err != nil {
+		t.Fatal(err)
+	}
+	if r := decide("viewer"); !r.Allowed || len(r.Entries) != 0 {
+		t.Errorf("a Viewer without ReadAll under DefaultReader = %+v, want reachable but granted nothing", r)
+	}
+}
+
+func TestOneLakeReadAccessReportsStoreFailures(t *testing.T) {
+	t.Run("access", func(t *testing.T) {
+		s := newTestStore(t)
+		_, it := sharedItem(t, s, "Lakehouse")
+		if _, err := s.db.Exec(`DROP TABLE role_assignments`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.OneLakeReadAccess(it, "p", "Tables"); err == nil {
+			t.Fatal("an unreadable role was read as no access")
+		}
+	})
+	t.Run("roles", func(t *testing.T) {
+		s := newTestStore(t)
+		ws, it := sharedItem(t, s, "Lakehouse")
+		if err := s.CreateRoleAssignment(&RoleAssignment{WorkspaceID: ws.ID,
+			Principal: Principal{ID: "viewer", Type: "User"}, Role: RoleViewer}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.db.Exec(`DROP TABLE onelake_roles`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.OneLakeReadAccess(it, "viewer", "Tables"); err == nil {
+			t.Fatal("an unreadable policy was read as no policy")
+		}
+	})
+}

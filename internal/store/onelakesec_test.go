@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/pkg/onelakesec"
@@ -133,10 +134,67 @@ func TestProjectionMapsPathAndActionAttributes(t *testing.T) {
 func TestProjectionCarriesVirtualMembership(t *testing.T) {
 	s := newTestStore(t)
 	it := lakehouse(t, s)
+	holder := onelakesec.Principal{ObjectID: "anyone", ItemAccess: []string{"ReadAll"}}
+
+	// The reference's own sourcePath shape — this item — in both spellings its
+	// pattern allows, braces and case included.
+	for _, source := range []string{
+		it.WorkspaceID + "/" + it.ID,
+		"{" + strings.ToUpper(it.WorkspaceID) + "}/{" + it.ID + "}",
+	} {
+		roles := defaultReader(t, s, it, source)
+		if got := onelakesec.Effective(roles, holder, onelakesec.InputTables); len(got) != 1 {
+			t.Fatalf("sourcePath %q: a ReadAll holder was not admitted by DefaultReader: %v", source, got)
+		}
+		if got := onelakesec.Effective(roles, onelakesec.Principal{ObjectID: "anyone"},
+			onelakesec.InputTables); len(got) != 0 {
+			t.Fatalf("virtual membership admitted someone holding nothing: %v", got)
+		}
+	}
+}
+
+// A member entry naming ANOTHER item asks about access there. Matching it
+// against what the principal holds on THIS item would admit every ReadAll
+// holder here to a role written for holders of ReadAll on that one — which is
+// what reading members without their sourcePath did.
+func TestAMemberEntryForAnotherItemConfersNothing(t *testing.T) {
+	s := newTestStore(t)
+	it := lakehouse(t, s)
+	holder := onelakesec.Principal{ObjectID: "anyone", ItemAccess: []string{"ReadAll"}}
+	for _, source := range []string{
+		it.WorkspaceID + "/99999999-9999-9999-9999-999999999999",
+		"/",
+		"",
+	} {
+		roles := defaultReader(t, s, it, source)
+		if got := onelakesec.Effective(roles, holder, onelakesec.InputTables); len(got) != 0 {
+			t.Errorf("sourcePath %q admitted a ReadAll holder of this item: %v", source, got)
+		}
+	}
+}
+
+// The item is read only to check a sourcePath; if it cannot be read, the policy
+// cannot be evaluated, and that is an error rather than a role without members.
+func TestAnUnreadableItemFailsMembershipEvaluation(t *testing.T) {
+	s := newTestStore(t)
+	it := lakehouse(t, s)
+	defaultReader(t, s, it, it.WorkspaceID+"/"+it.ID)
+	// Renamed, not dropped: a DROP deletes every row first, and the cascade
+	// would take the roles with it, so no lookup would ever happen.
+	if _, err := s.db.Exec(`ALTER TABLE items RENAME TO items_elsewhere`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EvaluatableRoles(it.ID); err == nil {
+		t.Fatal("a sourcePath was checked against an item that could not be read")
+	}
+}
+
+func defaultReader(t *testing.T, s *Store, it *Item, source string) []onelakesec.Role {
+	t.Helper()
 	body := `{"name":"DefaultReader","decisionRules":[{"effect":"Permit","permission":[
       {"attributeName":"Path","attributeValueIncludedIn":["*"]},
       {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]}],
-      "members":{"fabricItemMembers":[{"sourcePath":"/","itemAccess":["ReadAll"]}]}}`
+      "members":{"fabricItemMembers":[{"sourcePath":"` + source + `","itemAccess":["ReadAll"]}]}}`
 	if err := s.PutOneLakeRoles(it.ID, []OneLakeRole{
 		{Name: "DefaultReader", Body: json.RawMessage(body)}}); err != nil {
 		t.Fatal(err)
@@ -145,14 +203,7 @@ func TestProjectionCarriesVirtualMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	holder := onelakesec.Principal{ObjectID: "anyone", ItemAccess: []string{"ReadAll"}}
-	if got := onelakesec.Effective(roles, holder, onelakesec.InputTables); len(got) != 1 {
-		t.Fatalf("a ReadAll holder was not admitted by DefaultReader: %v", got)
-	}
-	if got := onelakesec.Effective(roles, onelakesec.Principal{ObjectID: "anyone"},
-		onelakesec.InputTables); len(got) != 0 {
-		t.Fatalf("virtual membership admitted someone holding nothing: %v", got)
-	}
+	return roles
 }
 
 // A malformed role must not make the item unreadable, and must not grant

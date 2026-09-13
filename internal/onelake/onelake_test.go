@@ -67,6 +67,13 @@ type fixture struct {
 // admin-1 owns a workspace "datalake-ws" containing a Lakehouse "lake".
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newFixtureIn(t, "")
+}
+
+// newFixtureIn is newFixture over a store in dir, so a second connection can
+// break a table out from under the service. An empty dir is in-memory.
+func newFixtureIn(t *testing.T, dir string) *fixture {
+	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +90,7 @@ func newFixture(t *testing.T) *fixture {
 	v := auth.New(testIssuer, srv.URL, false, func() int64 { return 1000 }, srv.Client())
 	v.Audiences = StorageAudience
 
-	st, err := store.Open("", clock.New())
+	st, err := store.Open(dir, clock.New())
 	if err != nil {
 		t.Fatal(err)
 	}
