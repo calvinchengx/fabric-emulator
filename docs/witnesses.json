@@ -1531,7 +1531,6 @@
       "go:TestRowSecurityCoversTheXMLALoader",
       "go:TestATMDLModelsRolesApplyToo",
       "go:TestRowSecurityRefusesWhatItCannotApply",
-      "go:TestAnotherRolesObjectSecurityDoesNotRefuseTheCaller",
       "go:TestImpersonationOnASecuredModelIsRefused",
       "go:TestARestrictedCallerIsNotRelayedToTheDAXEngine",
       "go:TestThePortalRunnerRefusesASecuredModel",
@@ -1547,7 +1546,18 @@
       "go:TestADimensionFilterReachesTheFactsOneWay",
       "go:TestFiltersPropagateTransitively",
       "go:TestRelationshipSecurityPropertiesAreParsed",
-      "go:TestApplyRowSecurityRefusesWhatItCannotApply"
+      "go:TestApplyRowSecurityRefusesWhatItCannotApply",
+      "go:TestAHiddenColumnDoesNotExistForTheRestricted",
+      "go:TestAHiddenTableDoesNotExistForTheRestricted",
+      "go:TestObjectSecurityFollowsTheCallersRoles",
+      "go:TestAChainBreakingSecuredTableIsRefusedForEveryone",
+      "go:TestAHiddenTableDoesNotExist",
+      "go:TestAHiddenColumnDoesNotExist",
+      "go:TestAHiddenKeyColumnStillJoins",
+      "go:TestObjectSecurityAcrossRoles",
+      "go:TestRowAndObjectSecurityFromDifferentRolesIsAnError",
+      "go:TestATableBetweenTwoOthersCannotBeSecured",
+      "go:TestAMissingColumnIsAnErrorNotABlank"
     ]
   }
 }

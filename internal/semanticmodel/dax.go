@@ -571,9 +571,12 @@ func (e *evalr) groupCombos(groups []columnRef) ([]filterCtx, error) {
 	byTable := map[string][]string{}
 	var order []string
 	for _, g := range groups {
-		tn := strings.Trim(g.table, "'")
-		if e.model.Table(tn) == nil {
-			return nil, fmt.Errorf("no table %q", tn)
+		// A group column that does not exist is an error, not a BLANK group: every
+		// row would read nil for it and fold into one confident blank row. A
+		// column object-level security hides must fail the same way.
+		tn, err := e.resolveColumn("SUMMARIZECOLUMNS", g)
+		if err != nil {
+			return nil, err
 		}
 		if _, ok := byTable[tn]; !ok {
 			order = append(order, tn)
@@ -668,13 +671,14 @@ func (e *evalr) scalar(expr scalarExpr) (any, error) {
 		// SUM is offered only for a column that can actually be summed, since
 		// following that advice on a text column is how someone ends up with a
 		// label reading "FY0".
-		tbl := strings.Trim(x.table, "'")
+		tbl, err := e.resolveColumn("column reference", x)
+		if err != nil {
+			return nil, err
+		}
 		fix := fmt.Sprintf("read its one value with SELECTEDVALUE(%s[%s]), or group by %s[%s] to return it as its own column",
 			tbl, x.col, tbl, x.col)
-		if t := e.model.Table(tbl); t != nil {
-			if c := t.Column(x.col); c != nil && summableType(c.DataType) {
-				fix += fmt.Sprintf(", or aggregate it (SUM(%s[%s]))", tbl, x.col)
-			}
+		if summableType(e.model.Table(tbl).Column(x.col).DataType) {
+			fix += fmt.Sprintf(", or aggregate it (SUM(%s[%s]))", tbl, x.col)
 		}
 		return nil, fmt.Errorf("column %s[%s] has no single value in this context: %s", tbl, x.col, fix)
 	}

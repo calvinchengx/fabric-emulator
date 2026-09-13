@@ -86,7 +86,7 @@ The SQL witnesses run through the real relay against a real SQL Server, and were
 mutation-checked: with memberships only added, or `CONNECT` left in place, they
 fail. [docs/57](../57-item-permissions.md)
 
-## Semantic-model roles apply row-level security, where they were silently ignored
+## Semantic-model roles apply row-level and object-level security, where they were silently ignored
 
 Neither the TMSL nor the TMDL parser read a model's `roles`, so a model built to
 show a Viewer one region evaluated for them over every region. Roles are now
@@ -98,14 +98,20 @@ without Write — on REST `executeQueries` and every XMLA route:
 - Filters are evaluated per row over a bounded DAX subset; roles are additive; a
   principal in no role gets empty tables; filters travel active relationships
   one → many, transitively.
+- Tables and columns a caller's roles hide do not exist for them, in queries or
+  in TMSCHEMA rowsets; a hidden key column still joins; measures reading a
+  hidden object are hidden. An object is hidden only when every role of the
+  caller's hides it.
 - Refused by name, for restricted callers: filters outside the subset,
-  `bothDirections` and many-to-many relationships, service principals, any role
-  of theirs that hides a table or column (object-level security is not applied
-  yet), and relaying them to an attached msmdsrv. `impersonatedUserName` on a
+  `bothDirections` and many-to-many relationships, service principals, row and
+  object security from different roles, and relaying them to an attached
+  msmdsrv. A secured table between two others is refused for everyone. `impersonatedUserName` on a
   secured model is refused for everyone.
 - The portal runner has no principal and refuses a secured model.
 
-Write holders are unaffected. [docs/58](../58-semantic-model-roles.md)
+Write holders are unaffected. Separately, a `SUMMARIZECOLUMNS` group column that
+does not exist now errors instead of returning one BLANK group.
+[docs/58](../58-semantic-model-roles.md)
 
 ## Direct Lake applies OneLake security
 

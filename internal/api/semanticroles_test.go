@@ -13,6 +13,7 @@ import (
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/xmla"
 )
 
 // Semantic-model roles, applied. Every restricted answer is paired with a Write
@@ -182,11 +183,6 @@ func TestRowSecurityRefusesWhatItCannotApply(t *testing.T) {
 		want  string
 	}{
 		"a service principal below Write": {westRoles, app, "service principals cannot be role members"},
-		"object-level security in the caller's role": {`"roles":[{"name":"Hide","members":[{"memberId":"viewer-1"}],
-		  "tablePermissions":[{"name":"Store","columnPermissions":[{"name":"PostalCode","metadataPermission":"none"}]}]}],`,
-			viewer, `hides objects in table \"Store\"`},
-		"a table hidden in the caller's role": {`"roles":[{"name":"Hide","members":[{"memberId":"viewer-1"}],
-		  "tablePermissions":[{"name":"Time","metadataPermission":"None"}]}],`, viewer, "object-level security"},
 		"a filter outside the subset": {`"roles":[{"name":"Lookup","members":[{"memberId":"viewer-1"}],
 		  "tablePermissions":[{"name":"Store","filterExpression":"LOOKUPVALUE('Store'[Store], 'Store'[StoreId], 1) = \"x\""}]}],`,
 			viewer, "LOOKUPVALUE is not supported"},
@@ -210,16 +206,114 @@ func TestRowSecurityRefusesWhatItCannotApply(t *testing.T) {
 	}
 }
 
-// Object-level security in a role the caller is NOT in does not concern them.
-func TestAnotherRolesObjectSecurityDoesNotRefuseTheCaller(t *testing.T) {
+// Object-level security: for a restricted member a hidden column does not exist
+// — not in the rows, not in a query, not in the XMLA schema — while a Write
+// holder reads it in the same run.
+func TestAHiddenColumnDoesNotExistForTheRestricted(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	model := securedRetailWith(t, st, ws.ID, `"roles":[{"name":"NoPostcode","members":[{"memberId":"viewer-1"}],
+	  "tablePermissions":[{"name":"Store","columnPermissions":[{"name":"PostalCode","metadataPermission":"none"}]}]}],`)
+	grantBuild(t, st, model, viewer.ID)
+	pv := map[string]string{"datasetId": model.ID}
+
+	if w := do(a.executeQueries, viewer, "POST", storeQuery, pv); w.Code != http.StatusOK ||
+		strings.Contains(w.Body.String(), "PostalCode") || !strings.Contains(w.Body.String(), "Territory") {
+		t.Errorf("viewer rows = %d %s, want Store without PostalCode", w.Code, w.Body)
+	}
+	if w := do(a.executeQueries, admin, "POST", storeQuery, pv); !strings.Contains(w.Body.String(), "PostalCode") {
+		t.Errorf("admin (Write) rows = %s, want PostalCode", w.Body)
+	}
+	grouped := `{"queries":[{"query":"EVALUATE SUMMARIZECOLUMNS('Store'[PostalCode])"}]}`
+	if w := do(a.executeQueries, viewer, "POST", grouped, pv); w.Code != http.StatusBadRequest ||
+		!strings.Contains(w.Body.String(), "no column") {
+		t.Errorf("viewer grouping by it = %d %s, want the column not found", w.Code, w.Body)
+	}
+	if w := do(a.executeQueries, admin, "POST", grouped, pv); w.Code != http.StatusOK {
+		t.Errorf("admin grouping by it = %d %s", w.Code, w.Body)
+	}
+
+	// The XMLA routes read the same loader, so the schema rowsets agree.
+	for _, tc := range []struct {
+		who  *auth.Principal
+		want bool
+	}{{viewer, false}, {admin, true}} {
+		m, d, err := a.loadSemanticModel(t.Context(), model.ID, tc.who)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rs, err := xmla.DiscoverRowset(m, d, "TMSCHEMA_COLUMNS")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(string(rs.DiscoverResponse()), "PostalCode"); got != tc.want {
+			t.Errorf("%s TMSCHEMA_COLUMNS lists PostalCode = %v, want %v", tc.who.ID, got, tc.want)
+		}
+	}
+}
+
+// A hidden table is gone, while a filter from the same role still reaches the
+// facts: row and object security from ONE role combine.
+func TestAHiddenTableDoesNotExistForTheRestricted(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	model := securedRetailWith(t, st, ws.ID, `"roles":[{"name":"NoTime","members":[{"memberId":"viewer-1"}],
+	  "tablePermissions":[{"name":"Time","metadataPermission":"none"},
+	                      {"name":"Store","filterExpression":"[Territory] = \"West\""}]}],`)
+	grantBuild(t, st, model, viewer.ID)
+	pv := map[string]string{"datasetId": model.ID}
+	timeQuery := `{"queries":[{"query":"EVALUATE 'Time'"}]}`
+	if w := do(a.executeQueries, viewer, "POST", timeQuery, pv); w.Code != http.StatusBadRequest ||
+		!strings.Contains(w.Body.String(), "no table") {
+		t.Errorf("viewer Time = %d %s, want the table not found", w.Code, w.Body)
+	}
+	if got := queryColumn(t, a, viewer, model, salesRowsQuery, "Sales[StoreId]"); !equal(got, []string{"1", "1", "4", "4"}) {
+		t.Errorf("viewer Sales = %v, want the West rows", got)
+	}
+	if w := do(a.executeQueries, admin, "POST", timeQuery, pv); w.Code != http.StatusOK {
+		t.Errorf("admin Time = %d %s", w.Code, w.Body)
+	}
+}
+
+// Object-level security in a role the caller is NOT in does not concern them;
+// row and object security from two roles the caller IS in is the product's
+// query-time error.
+func TestObjectSecurityFollowsTheCallersRoles(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
 	model := securedRetailWith(t, st, ws.ID, `"roles":[
-	  {"name":"West","members":[{"memberId":"viewer-1"}],"tablePermissions":[{"name":"Store","filterExpression":"[Territory] = \"West\""}]},
-	  {"name":"Hide","members":[{"memberId":"someone-else"}],"tablePermissions":[{"name":"Time","metadataPermission":"none"}]}],`)
+	  {"name":"West","members":[{"memberId":"viewer-1"},{"memberId":"stranger-1"}],"tablePermissions":[{"name":"Store","filterExpression":"[Territory] = \"West\""}]},
+	  {"name":"Hide","members":[{"memberId":"stranger-1"}],"tablePermissions":[{"name":"Time","metadataPermission":"none"}]}],`)
 	grantBuild(t, st, model, viewer.ID)
+	grantBuild(t, st, model, stranger.ID)
 	if got := queryColumn(t, a, viewer, model, storeQuery, "Store[StoreId]"); !equal(got, []string{"1", "4"}) {
-		t.Fatalf("viewer = %v", got)
+		t.Errorf("viewer = %v", got)
+	}
+	if w := do(a.executeQueries, stranger, "POST", storeQuery, map[string]string{"datasetId": model.ID}); w.Code != http.StatusBadRequest ||
+		!strings.Contains(w.Body.String(), "cannot be combined") {
+		t.Errorf("stranger in both roles = %d %s, want the combination error", w.Code, w.Body)
+	}
+}
+
+// Securing a table between two others cannot be saved in the service, so the
+// model is refused for everyone — Write holders included.
+func TestAChainBreakingSecuredTableIsRefusedForEveryone(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	bim := `{"name":"Chain","compatibilityLevel":1567,"model":{
+	  "tables":[{"name":"Region","columns":[{"name":"RegionId","dataType":"int64"}]},
+	            {"name":"Store","columns":[{"name":"StoreId","dataType":"int64"},{"name":"RegionId","dataType":"int64"}]},
+	            {"name":"Sales","columns":[{"name":"StoreId","dataType":"int64"}]}],
+	  "relationships":[{"name":"Sales_Store","fromTable":"Sales","fromColumn":"StoreId","toTable":"Store","toColumn":"StoreId"},
+	                   {"name":"Store_Region","fromTable":"Store","fromColumn":"RegionId","toTable":"Region","toColumn":"RegionId"}],
+	  "roles":[{"name":"NoStore","tablePermissions":[{"name":"Store","metadataPermission":"none"}]}]}}`
+	it := &store.Item{WorkspaceID: ws.ID, Type: "SemanticModel", DisplayName: "Chain"}
+	if err := st.CreateItem(it, []store.DefinitionPart{{Path: "model.bim", PayloadType: "InlineBase64",
+		Payload: base64.StdEncoding.EncodeToString([]byte(bim))}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.loadSemanticModel(t.Context(), it.ID, admin); err == nil || !strings.Contains(err.Error(), "breaks the relationship chain") {
+		t.Fatalf("admin load = %v, want the chain refusal", err)
 	}
 }
 

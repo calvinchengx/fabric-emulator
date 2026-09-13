@@ -1,7 +1,7 @@
 # 58 — Semantic-model roles: row-level and object-level security
 
-**Status: stages 1–3 built — row-level security is applied; object-level
-security is refused by name until stage 4.**
+**Status: all four stages built — row-level and object-level security are
+applied to the principals the product applies them to.**
 
 **Decision: apply a model's roles in the loader every row-returning path shares,
 for the principals the product applies them to, and refuse by name anything the
@@ -53,8 +53,8 @@ The TMSL shape is the Roles object: `name`, `modelPermission`
 |---|---|---|
 | 1 ✅ | Roles parsed from TMSL and TMDL. A principal without Write on a model with roles is refused on every row-returning path: REST `executeQueries`, the XMLA loader, the portal runner | **Never serves unfiltered rows to a principal a role restricts** |
 | 2 ✅ | `Principal.UPN` from `preferred_username`/`upn`; membership by `memberId` or `memberName`↔UPN; groups match nobody; service principals below Write refused, as documented | Membership resolves the way the service resolves it |
-| **3 ✅** | A bounded DAX row-predicate evaluator; filters unioned per table across a principal's roles; no role, no rows; propagation one-to-many, transitively; applied in the shared loader for REST and XMLA | Filtered rows on REST and XMLA |
-| 4 | Tables and columns pruned for restricted principals, hidden keys still joinable; dependent measures hidden; `SUMMARIZECOLUMNS` errors on a missing column instead of returning a BLANK group; RLS+OLS across roles and chain-breaking tables error | Secured objects do not exist in DAX or the TMSCHEMA rowsets |
+| 3 ✅ | A bounded DAX row-predicate evaluator; filters unioned per table across a principal's roles; no role, no rows; propagation one-to-many, transitively; applied in the shared loader for REST and XMLA | Filtered rows on REST and XMLA |
+| **4 ✅** | Tables and columns pruned for restricted principals, hidden keys still joinable; dependent measures hidden; `SUMMARIZECOLUMNS` errors on a missing column instead of returning a BLANK group; RLS+OLS across roles and chain-breaking tables error | Secured objects do not exist in DAX or the TMSCHEMA rowsets |
 
 ### Stage 1 in detail
 
@@ -94,14 +94,43 @@ same model is unaffected:
 - an active relationship with `securityFilteringBehavior: bothDirections`, and a
   many-to-many relationship, whose filtering this evaluator does not model;
 - a **service principal**, which "can't be added to an RLS role";
-- **any role of the caller's that sets `metadataPermission: none`** on a table or
-  column. OLS in a role the caller is not in does not concern them;
 - a filter outside the subset, or one DAX would reject at evaluation (text
   compared with a number) — an error, never a quiet FALSE;
 - `impersonatedUserName` on any secured model, whoever asks;
 - relaying a restricted caller to an attached msmdsrv (`FABRIC_DAX_URL`): its
   catalog is deployed per item without roles, so filtered rows would overwrite
   another caller's catalog. The engine is never contacted for them.
+
+### Stage 4 in detail
+
+After the row filters, `ApplyObjectSecurity` returns a **copy** of the model and
+data with what the caller's roles hide removed, so the evaluator and every
+TMSCHEMA rowset — both read that copy — answer as if it never existed:
+
+- A hidden table leaves the model, the data, its relationships and its
+  measures. Referencing it is the evaluator's ordinary "no table" error.
+- A hidden column leaves the model. It stays in the rows only when a remaining
+  relationship joins on it: "relationships that reference a secured column work
+  provided the table the column is in is not secured".
+- A measure that names a hidden table or column, or a hidden measure, is hidden
+  ("dynamic calculations … are automatically restricted"). The scan reads
+  tokens, so it over-hides rather than under-hides: a bare `[Name]` matching any
+  hidden column counts, and an expression that does not lex is hidden.
+- **Across roles, an object is hidden only if every one of the caller's roles
+  hides it.** *Inferred*: the product documents no combination rule for OLS
+  alone. `metadataPermission` defaults to read, so a role that does not mention
+  an object grants it, and roles are additive.
+- Row filters and hidden objects **from different roles** of the caller are the
+  product's query-time error. From one role they combine.
+- Securing a table that sits **between two others** — the "many" side of one
+  relationship and the "one" side of another — is refused for every caller, Write
+  holders included: the product rejects it at design time, so such a model could
+  not exist in the service.
+
+Two evaluator gaps closed with it, since OLS depends on a missing name failing:
+a `SUMMARIZECOLUMNS` group column that does not exist returned one BLANK group,
+and a bare column reference that does not exist was reported as having "no
+single value". Both are now the missing-column error.
 
 ## The DAX filter subset (stage 3)
 
@@ -145,3 +174,17 @@ Contributor every row, in the same run; covers the XMLA loader, a TMDL model,
 additive roles, each refusal, impersonation and the relay. With the filter
 skipped, six fail; with the exemption applied to everyone, six fail; each
 refusal disabled on its own fails its witness.
+
+Stage 4: `internal/semanticmodel/objectsecurity_test.go` covers a hidden table
+(model, data, relationships, measures, queries), a hidden column, a hidden key
+that still joins, the combination across roles, `read` hiding nothing, the
+mixed-roles error, the chain rule and the missing-column fixes, and covers
+`objectsecurity.go` fully. `internal/api/semanticroles_test.go` shows a Viewer
+the Store rows without PostalCode, refuses grouping by it and omits it from
+`TMSCHEMA_COLUMNS`, while an Admin reads it in the same run; hides a table while
+the same role's filter still narrows the facts; shows OLS in a role the caller
+is not in leaving them alone and the mixed-roles error for one who is in both;
+and refuses a chain-breaking model to an Admin. Each of eight mutations — OLS
+not applied, the chain check skipped, any role hiding instead of every role,
+measures kept, hidden columns kept in rows, a hidden key stripped, mixed roles
+allowed, group columns unchecked — fails at least one witness.

@@ -197,6 +197,11 @@ func (a *API) loadSemanticModel(ctx context.Context, itemID string, p *auth.Prin
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(m.Roles) > 0 {
+		if err := semanticmodel.CheckObjectSecurityChains(m); err != nil {
+			return nil, nil, err
+		}
+	}
 	restricted, err := a.rolesRestrict(itemID, m, p)
 	if err != nil {
 		return nil, nil, err
@@ -218,6 +223,9 @@ func (a *API) loadSemanticModel(ctx context.Context, itemID string, p *auth.Prin
 	}
 	if restricted {
 		if data, err = semanticmodel.ApplyRowSecurity(m, data, roles, semanticmodel.SecurityEnv{UPN: p.UPN}); err != nil {
+			return nil, nil, err
+		}
+		if m, data, err = semanticmodel.ApplyObjectSecurity(m, data, roles); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -258,27 +266,12 @@ func (a *API) rolesRestrict(itemID string, m *semanticmodel.Model, p *auth.Princ
 }
 
 // admittingRoles resolves the roles a restricted principal belongs to, refusing
-// what cannot be applied yet: a service principal, which no role can admit, and
-// object-level security, which stage 4 of docs/58 builds. Refusing OLS names the
-// gap; serving the object would show exactly what the role hides.
+// a service principal, which no role can admit.
 func admittingRoles(m *semanticmodel.Model, p *auth.Principal) ([]semanticmodel.Role, error) {
 	if p.Type == "ServicePrincipal" {
 		return nil, errServicePrincipalOnRLSModel
 	}
-	roles := m.RolesFor(p.ID, p.UPN)
-	for _, r := range roles {
-		for _, tp := range r.TablePermissions {
-			hidden := strings.EqualFold(tp.MetadataPermission, "none")
-			for _, cp := range tp.ColumnPermissions {
-				hidden = hidden || strings.EqualFold(cp.MetadataPermission, "none")
-			}
-			if hidden {
-				return nil, fmt.Errorf("role %q hides objects in table %q (object-level security), which this "+
-					"emulator does not apply yet; serving the model would show what the role hides", r.Name, tp.Table)
-			}
-		}
-	}
-	return roles, nil
+	return m.RolesFor(p.ID, p.UPN), nil
 }
 
 // parseModelDefinition reads the item's definition and parses whichever model
