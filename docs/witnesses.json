@@ -805,7 +805,9 @@
     "claim": "RBAC → SQL permissions",
     "witnesses": [
       "ci:warehouse-tds",
-      "sdk:TestWarehouseTDSEndpointE2E"
+      "sdk:TestWarehouseTDSEndpointE2E",
+      "go:TestRelayDemotionTakesTheOldRungAway",
+      "go:TestDBRungFromRoleAndItemAccess"
     ]
   },
   "read-json-multiline-true": {
@@ -1384,6 +1386,32 @@
       "go:TestOnlyTheUnreadableRuleIsDropped"
     ]
   },
+  "item-permissions-sharing-one-item-without-the-workspace": {
+    "section": "OneLake (`onelake/`)",
+    "claim": "**Item permissions** — sharing one item without the workspace",
+    "witnesses": [
+      "ci:warehouse-tds",
+      "go:TestRelayAdmitsAStrangerSharedAWarehouse",
+      "go:TestRelayReadAloneConnectsButCannotSelect",
+      "go:TestRelayARevokedGrantStopsWorkingAcrossDatabases",
+      "go:TestRelayDemotionTakesTheOldRungAway",
+      "go:TestAReadAllGrantAdmitsAStrangerToOneItem",
+      "go:TestAStrangerListsInsideTheGrantedItemOnly",
+      "go:TestAReadAllGrantAdmitsAViewerToAnItemWithoutRoles",
+      "go:TestWithRolesOnReadAllReadsThroughDefaultReaderOnly",
+      "go:TestPrincipalAccessAnswersForAGrantee",
+      "go:TestExecuteQueriesRequiresReadAndBuildFromAnySource",
+      "go:TestAGrantOnTheSourceReachesAcrossWorkspaces",
+      "go:TestAnOwnerSharesALakehouseWithAStranger",
+      "go:TestAResharerGrantsOnlyWhatTheyHold",
+      "go:TestRevokingAGrantLeavesTheRole",
+      "go:TestDatasetUsersListInheritedAndDirectAccess",
+      "go:TestPostAddsPutReplacesNoneRemoves",
+      "go:TestAdminItemUsersReportsEffectiveAccess",
+      "go:TestWorkspaceGrantsListsNoAccessToo",
+      "go:TestTheRouterFailsClosedOnAccessErrors"
+    ]
+  },
   "row-and-column-level-security-applied-by-the-engine": {
     "section": "OneLake (`onelake/`)",
     "claim": "Row- and column-level security, applied by the engine",
@@ -1434,7 +1462,11 @@
     "sdk:TestWarehouseTwoSurfaces": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
     "go:TestRelayEnforcesColumnLevelSecurity": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestRelayEnforcesDynamicDataMasking": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestDirectLakeOverAWarehouseReadsItsTables": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml)."
+    "go:TestDirectLakeOverAWarehouseReadsItsTables": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `build` job, which runs a SQL Server service on ubuntu and windows (.github/workflows/ci.yml).",
+    "go:TestRelayAdmitsAStrangerSharedAWarehouse": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestRelayReadAloneConnectsButCannotSelect": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestRelayARevokedGrantStopsWorkingAcrossDatabases": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestRelayDemotionTakesTheOldRungAway": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",

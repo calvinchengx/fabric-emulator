@@ -1,5 +1,7 @@
 # 57 — Item permissions: sharing one item without the workspace
 
+**Status: all four stages built and witnessed.**
+
 **Decision: model item permissions as a store the control plane writes and four
 data surfaces read — through Power BI's documented dataset-users API for
 semantic models, and an authenticated emulator-native surface for every other
@@ -181,3 +183,18 @@ not permission.
 - **Item metadata** (`GET …/items/{id}`) for a principal with a grant but no
   workspace role is not opened up here: the control-plane item surface stays
   workspace-scoped.
+
+## What measurement found while building it
+
+- **`REVOKE CONNECT` is load-bearing, not tidiness.** With the revoke replaced by
+  dropping role memberships alone, `TestRelayARevokedGrantStopsWorkingAcrossDatabases`
+  fails with *"after revoking B, a three-part name from A still read 3 rows"*: an
+  owner's explicit `GRANT SELECT` still carried the principal in.
+- **The sync is load-bearing too.** With memberships only ever added, a demoted
+  Contributor keeps its writer roles and `TestRelayDemotionTakesTheOldRungAway`
+  fails. That bug predates item permissions; it surfaced because revoking needed
+  the same fix.
+- **Five of the six OneLake witnesses fail with grants ignored.** The sixth is
+  about a store failure, and passes either way, as it should.
+- The SQL witnesses ran against SQL Server 2022 under emulation on arm64, the same
+  image `ci:warehouse-tds` runs.

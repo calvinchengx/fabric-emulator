@@ -6,11 +6,13 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/tds"
 	"github.com/parquet-go/parquet-go"
 )
 
@@ -365,4 +367,169 @@ func TestResolveSQLItem(t *testing.T) {
 			t.Error("want an error for an unknown workspace")
 		}
 	})
+}
+
+// ---- item permissions at the router ----------------------------------------------
+
+func TestDBRungFromRoleAndItemAccess(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		role     string
+		access   store.Access
+		readOnly bool
+		want     tds.Role
+	}{
+		{"a Member owns", store.RoleMember, store.Access{}, true, tds.RoleOwner},
+		{"a Contributor on a warehouse writes", store.RoleContributor, store.Access{}, false, tds.RoleWriter},
+		{"ReadData reads", "", store.Access{Permissions: []string{"Read"}, Additional: []string{"ReadData"}}, true, tds.RoleReader},
+		{"Read alone connects", "", store.Access{Permissions: []string{"Read"}}, true, tds.RoleConnect},
+		{"nothing is no access", "", store.Access{}, true, tds.RoleNone},
+	} {
+		if got := dbRung(tc.role, tc.access, tc.readOnly); got != tc.want {
+			t.Errorf("%s: rung = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// Every SQL item in the workspace is listed with the caller's rung on it —
+// including RoleNone where it has no access, so a lingering user can lose CONNECT.
+func TestWorkspaceGrantsListsNoAccessToo(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	ws := &store.Workspace{DisplayName: "w"}
+	if err := st.CreateWorkspace(ws, store.Principal{ID: "owner", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	shared := &store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "shared"}
+	unshared := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "unshared"}
+	for _, it := range []*store.Item{shared, unshared} {
+		if err := st.CreateItem(it, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.PutItemAccess(store.ItemAccess{ItemID: shared.ID, PrincipalID: "stranger", PrincipalType: "User",
+		Permissions: []string{"Read"}, Additional: []string{"ReadData"}}); err != nil {
+		t.Fatal(err)
+	}
+	grants, err := workspaceGrants(st, ws.ID, "stranger", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rung := map[string]tds.Role{}
+	for _, g := range grants {
+		rung[g.Database] = g.Role
+	}
+	if rung[shared.ID] != tds.RoleReader || rung[unshared.ID] != tds.RoleNone || len(rung) != 2 {
+		t.Fatalf("grants = %+v, want Reader on the shared item and None on the other", grants)
+	}
+}
+
+// Fails closed: now that grants also REMOVE access, a store error that skipped an
+// item would leave a revoked grant working.
+func TestWorkspaceGrantsFailsClosed(t *testing.T) {
+	t.Run("listing items", func(t *testing.T) {
+		st, err := store.Open("", clock.New())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.Close()
+		if _, err := workspaceGrants(st, "ws", "p", ""); err == nil {
+			t.Fatal("a failed item listing produced grants")
+		}
+	})
+	t.Run("reading a grant", func(t *testing.T) {
+		st, ws, dir := diskStoreWithWarehouse(t)
+		corruptGrant(t, st, dir, ws, "p")
+		if _, err := workspaceGrants(st, ws.ID, "p", ""); err == nil {
+			t.Fatal("an unreadable grant produced grants")
+		}
+	})
+}
+
+// The router refuses on either store failure rather than guessing a rung.
+func TestTheRouterFailsClosedOnAccessErrors(t *testing.T) {
+	ctx := context.Background()
+	idOf := func(tok string) (string, error) { return tok, nil }
+	t.Run("the caller's access", func(t *testing.T) {
+		st, ws, dir := diskStoreWithWarehouse(t)
+		items, _ := st.ListItems(ws.ID, "Warehouse")
+		execOn(t, dir, `ALTER TABLE role_assignments RENAME TO ra_elsewhere`)
+		if _, err := warehouseRouter(st, &fakeWH{}, idOf)(ctx, "", items[0].ID, "owner"); err == nil ||
+			!strings.Contains(err.Error(), "checking access") {
+			t.Fatalf("err = %v, want an access-check failure", err)
+		}
+	})
+	t.Run("the workspace grants", func(t *testing.T) {
+		st, ws, dir := diskStoreWithWarehouse(t)
+		items, _ := st.ListItems(ws.ID, "Warehouse")
+		// A second item whose grant for the owner is corrupt: the target's own
+		// access resolves, the sweep across the workspace does not.
+		other := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "other"}
+		if err := st.CreateItem(other, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.PutItemAccess(store.ItemAccess{ItemID: other.ID, PrincipalID: "owner", PrincipalType: "User",
+			Permissions: []string{"Read"}}); err != nil {
+			t.Fatal(err)
+		}
+		execOn(t, dir, `UPDATE item_access SET permissions = 'not json' WHERE item_id = '`+other.ID+`'`)
+		if _, err := warehouseRouter(st, &fakeWH{}, idOf)(ctx, "", items[0].ID, "owner"); err == nil ||
+			!strings.Contains(err.Error(), "checking access") {
+			t.Fatalf("err = %v, want the sweep's failure", err)
+		}
+	})
+	t.Run("no Read", func(t *testing.T) {
+		st, ws, _ := diskStoreWithWarehouse(t)
+		items, _ := st.ListItems(ws.ID, "Warehouse")
+		if _, err := warehouseRouter(st, &fakeWH{}, idOf)(ctx, "", items[0].ID, "stranger"); err == nil ||
+			!strings.Contains(err.Error(), "access denied") {
+			t.Fatalf("err = %v, want access denied", err)
+		}
+	})
+}
+
+func diskStoreWithWarehouse(t *testing.T) (*store.Store, *store.Workspace, string) {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := store.Open(dir, clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ws := &store.Workspace{DisplayName: "w"}
+	if err := st.CreateWorkspace(ws, store.Principal{ID: "owner", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateItem(&store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "wh"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	return st, ws, dir
+}
+
+func corruptGrant(t *testing.T, st *store.Store, dir string, ws *store.Workspace, principal string) {
+	t.Helper()
+	items, err := st.ListItems(ws.ID, "Warehouse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutItemAccess(store.ItemAccess{ItemID: items[0].ID, PrincipalID: principal, PrincipalType: "User",
+		Permissions: []string{"Read"}}); err != nil {
+		t.Fatal(err)
+	}
+	execOn(t, dir, `UPDATE item_access SET permissions = 'not json'`)
+}
+
+func execOn(t *testing.T, dir, stmt string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "fabric-emulator.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(stmt); err != nil {
+		t.Fatalf("%s: %v", stmt, err)
+	}
 }
