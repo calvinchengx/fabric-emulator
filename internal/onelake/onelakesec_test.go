@@ -410,6 +410,26 @@ func TestTheFilterStaysClosedAfterAFailure(t *testing.T) {
 // would pass the first assertion and be useless, so each case below names both
 // who is stopped and who is not.
 
+// narrowingConstraints is the documented `constraints` object for one table:
+// row and column restrictions keyed by `tablePath`, as the REST reference
+// spells them. Nil when there is nothing to restrict.
+func narrowingConstraints(path, rows string, cols []string) map[string]any {
+	c := map[string]any{}
+	if rows != "" {
+		c["rows"] = []map[string]any{{"tablePath": "/" + path, "value": rows}}
+	}
+	if len(cols) > 0 {
+		c["columns"] = []map[string]any{{
+			"tablePath": "/" + path, "columnNames": cols,
+			"columnEffect": "Permit", "columnAction": []string{"Read"},
+		}}
+	}
+	if len(c) == 0 {
+		return nil
+	}
+	return c
+}
+
 // putNarrowingRole installs a role that grants a path AND restricts it.
 func putNarrowingRole(t *testing.T, f *fixture, principal, path, rows string, cols []string) {
 	t.Helper()
@@ -420,11 +440,8 @@ func putNarrowingRole(t *testing.T, f *fixture, principal, path, rows string, co
 			{"attributeName": "Action", "attributeValueIncludedIn": []string{"Read"}},
 		},
 	}
-	if rows != "" {
-		rule["rows"] = rows
-	}
-	if len(cols) > 0 {
-		rule["columns"] = cols
+	if c := narrowingConstraints(path, rows, cols); c != nil {
+		rule["constraints"] = c
 	}
 	body, err := json.Marshal(map[string]any{
 		"name": "narrowed", "decisionRules": []map[string]any{rule},
@@ -517,8 +534,16 @@ func TestTheBlockCoversTheBlobSurfaceToo(t *testing.T) {
 	if w := f.do("GET", path, tok, nil); w.Code != http.StatusForbidden {
 		t.Fatalf("dfs = %d, want 403", w.Code)
 	}
-	if w := f.doBlob("GET", path, tok, nil, nil); w.Code != http.StatusForbidden {
+	w := f.doBlob("GET", path, tok, nil, nil)
+	if w.Code != http.StatusForbidden {
 		t.Fatalf("blob = %d, want 403 (%s)", w.Code, w.Body)
+	}
+	// The REASON is pinned as well as the status. A viewer the policy simply
+	// failed to grant is also refused 403, so a status-only check passes on a
+	// policy that never narrowed anything — which is how this test stayed green
+	// while the constraints it authored were being ignored.
+	if !strings.Contains(w.Body.String(), "row-level security") {
+		t.Fatalf("blob refused for the wrong reason: %s", w.Body)
 	}
 }
 
@@ -535,8 +560,8 @@ func TestAnUnrestrictedGrantSurvivesANarrowingOne(t *testing.T) {
 	narrowed, err := json.Marshal(map[string]any{
 		"name": "narrowed",
 		"decisionRules": []map[string]any{{
-			"effect": "Permit",
-			"rows":   "SELECT * FROM Customers WHERE region = 1",
+			"effect":      "Permit",
+			"constraints": narrowingConstraints("Tables/dbo/Customers", "SELECT * FROM Customers WHERE region = 1", nil),
 			"permission": []map[string]any{
 				{"attributeName": "Path", "attributeValueIncludedIn": []string{"Tables/dbo/Customers"}},
 				{"attributeName": "Action", "attributeValueIncludedIn": []string{"Read"}},
@@ -565,14 +590,29 @@ func TestAnUnrestrictedGrantSurvivesANarrowingOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	base := "/" + f.ws.ID + "/" + f.it.ID + "/"
+
+	// The narrowing role on its own must narrow. Without this half the test
+	// passes against a parser that ignores the constraint — the unrestricted
+	// role would admit the read either way — which is exactly how it stayed
+	// green while constraints were being read from the wrong fields.
+	if err := f.st.PutOneLakeRoles(f.it.ID, []store.OneLakeRole{
+		{ItemID: f.it.ID, Name: "narrowed", Body: narrowed},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if w := f.do("GET", base+"Tables/dbo/Customers/part-0.parquet",
+		f.storageToken("viewer-1"), nil); w.Code != http.StatusForbidden ||
+		!strings.Contains(w.Body.String(), "row-level security") {
+		t.Fatalf("the narrowing role alone = %d (%s), want a row-level refusal", w.Code, w.Body)
+	}
+
 	if err := f.st.PutOneLakeRoles(f.it.ID, []store.OneLakeRole{
 		{ItemID: f.it.ID, Name: "narrowed", Body: narrowed},
 		{ItemID: f.it.ID, Name: "readers", Body: full},
 	}); err != nil {
 		t.Fatal(err)
 	}
-
-	base := "/" + f.ws.ID + "/" + f.it.ID + "/"
 	if w := f.do("GET", base+"Tables/dbo/Customers/part-0.parquet",
 		f.storageToken("viewer-1"), nil); w.Code != http.StatusOK {
 		t.Fatalf("an unrestricted grant did not survive a narrowing one: %d (%s)", w.Code, w.Body)
@@ -595,8 +635,9 @@ func TestANarrowedViewerCannotReadAScratchPathInTheSameItem(t *testing.T) {
 	base := "/" + f.ws.ID + "/" + f.it.ID + "/"
 	tok := f.storageToken("viewer-1")
 	// The control: the narrowed table itself is refused (stage A).
-	if w := f.do("GET", base+"Tables/dbo/Customers/part-0.parquet", tok, nil); w.Code != http.StatusForbidden {
-		t.Fatalf("the narrowed table = %d, want 403", w.Code)
+	if w := f.do("GET", base+"Tables/dbo/Customers/part-0.parquet", tok, nil); w.Code != http.StatusForbidden ||
+		!strings.Contains(w.Body.String(), "row-level security") {
+		t.Fatalf("the narrowed table = %d (%s), want a row-level refusal", w.Code, w.Body)
 	}
 	if w := f.do("GET", base+"Files/_scratch/viewer-1/Customers/part-0.parquet",
 		tok, nil); w.Code != http.StatusForbidden {

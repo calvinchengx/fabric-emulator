@@ -16,8 +16,18 @@ import (
 const alice = "11111111-1111-1111-1111-111111111111"
 const bob = "22222222-2222-2222-2222-222222222222"
 
+// permit grants paths, narrowing EACH of them by rows and cols when given — the
+// common case of a constraint on exactly the table a rule grants. Rules whose
+// constraints differ from their paths are built explicitly where tested.
 func permit(paths []string, rows string, cols []string) DecisionRule {
-	return DecisionRule{Effect: EffectPermit, Paths: paths, Actions: []string{AccessRead}, Rows: rows, Columns: cols}
+	r := DecisionRule{Effect: EffectPermit, Paths: paths, Actions: []string{AccessRead}}
+	if rows == "" && cols == nil {
+		return r
+	}
+	for _, path := range paths {
+		r.Constraints = append(r.Constraints, Constraint{Table: path, Rows: rows, Columns: cols})
+	}
+	return r
 }
 
 func pathsOf(es []AccessEntry) []string {
@@ -397,21 +407,27 @@ func TestAnUnrestrictedGrantIsNotNarrowing(t *testing.T) {
 	}
 }
 
-func TestAnUnrestrictedGrantAtAnotherPathStillWins(t *testing.T) {
-	// `Tables` and `Tables/sales` both cover the target. Roles union, so the
-	// unrestricted one decides — checking only the first covering entry would
-	// make the answer depend on sort order.
+func TestTheMostSpecificEntryDecides(t *testing.T) {
+	// `Tables` and `Tables/sales` both cover the target. Effective has already
+	// folded every grant into each entry, so this pair means "the whole half,
+	// except sales" — and letting the broader one win would erase the very
+	// restriction the pair describes.
 	entries := []AccessEntry{
 		{Path: "Tables", Access: []string{"Read"}},
 		{Path: "Tables/sales", Rows: "SELECT * FROM sales WHERE r = 1"},
 	}
-	if got := Narrowing(entries, "Tables/sales/part-0.parquet"); got != nil {
-		t.Fatalf("a broader unrestricted grant was ignored: %+v", got)
+	if got := Narrowing(entries, "Tables/sales/part-0.parquet"); got == nil || got.Path != "Tables/sales" {
+		t.Fatalf("the broader unrestricted entry erased the table's own: %+v", got)
 	}
-	// ...and the same set in the other order gives the same answer.
+	// ...the same set in the other order gives the same answer, since depth
+	// decides rather than position...
 	entries[0], entries[1] = entries[1], entries[0]
-	if got := Narrowing(entries, "Tables/sales/part-0.parquet"); got != nil {
+	if got := Narrowing(entries, "Tables/sales/part-0.parquet"); got == nil || got.Path != "Tables/sales" {
 		t.Fatalf("order changed the answer: %+v", got)
+	}
+	// ...and a table with no entry of its own is decided by the half.
+	if got := Narrowing(entries, "Tables/users/part-0.parquet"); got != nil {
+		t.Fatalf("an unconstrained table was narrowed: %+v", got)
 	}
 }
 
@@ -447,5 +463,122 @@ func TestWhyOnAnUnrestrictedEntryIsEmpty(t *testing.T) {
 	e := AccessEntry{Path: "Tables/sales", Access: []string{"Read"}}
 	if e.Why() != "" {
 		t.Fatalf("Why() on an unrestricted entry = %q", e.Why())
+	}
+}
+
+// --- Per-table constraints -----------------------------------------------------
+//
+// The documented payload narrows a TABLE inside a rule, not the rule. These are
+// the cases a rows/columns-per-rule model got wrong — each of them in the
+// direction of granting more than the policy says.
+
+func TestAConstraintNarrowsOnlyItsTableWithinABroadGrant(t *testing.T) {
+	filter := "SELECT * FROM sales WHERE region = 'us'"
+	roles := []Role{{
+		Name: "everything-but-sales-is-whole",
+		DecisionRules: []DecisionRule{{
+			Effect: EffectPermit, Paths: []string{"*"}, Actions: []string{AccessRead},
+			Constraints: []Constraint{{Table: "/Tables/sales", Rows: filter}},
+		}},
+		Members: Members{Entra: []string{alice}},
+	}}
+	got := Effective(roles, Principal{ObjectID: alice}, InputTables)
+	if want := []string{"Tables", "Tables/sales"}; !reflect.DeepEqual(pathsOf(got), want) {
+		t.Fatalf("paths = %v, want %v", pathsOf(got), want)
+	}
+	// The grant's own table is filtered — the over-grant this model fixes.
+	if n := Narrowing(got, "Tables/sales/part-0.parquet"); n == nil || n.Rows != filter {
+		t.Fatalf("sales = %+v, want its filter", n)
+	}
+	// And the rest of the half is not.
+	if n := Narrowing(got, "Tables/users/part-0.parquet"); n != nil {
+		t.Fatalf("users = %+v, want unrestricted", n)
+	}
+	if !Allows(got, "Tables/users/part-0.parquet") {
+		t.Fatal("the broad grant stopped granting")
+	}
+}
+
+func TestAnotherRolesUnrestrictedGrantStillWinsOverAConstraint(t *testing.T) {
+	// The union survives the move to per-table constraints: a second role that
+	// grants sales without a filter still means unrestricted sales.
+	roles := []Role{
+		{Name: "filtered", DecisionRules: []DecisionRule{{
+			Effect: EffectPermit, Paths: []string{"*"}, Actions: []string{AccessRead},
+			Constraints: []Constraint{{Table: "Tables/sales", Rows: "SELECT 1", Columns: []string{"id"}}},
+		}}, Members: Members{Entra: []string{alice}}},
+		{Name: "whole", DecisionRules: []DecisionRule{permit([]string{"*"}, "", nil)},
+			Members: Members{Entra: []string{alice}}},
+	}
+	got := Effective(roles, Principal{ObjectID: alice}, InputTables)
+	if n := Narrowing(got, "Tables/sales/part-0.parquet"); n != nil {
+		t.Fatalf("an unrestricted grant from another role did not win: %+v", n)
+	}
+	// A principal holding only the filtered role is still narrowed.
+	onlyFiltered := Effective(roles[:1], Principal{ObjectID: alice}, InputTables)
+	if Narrowing(onlyFiltered, "Tables/sales/part-0.parquet") == nil {
+		t.Fatal("the filtered role alone did not narrow")
+	}
+}
+
+func TestAColumnOnlyConstraintLeavesRowsOpen(t *testing.T) {
+	roles := []Role{{Name: "cols", DecisionRules: []DecisionRule{{
+		Effect: EffectPermit, Paths: []string{"Tables/sales"}, Actions: []string{AccessRead},
+		Constraints: []Constraint{{Table: "Tables/sales", Columns: []string{"region"}}},
+	}}, Members: Members{Entra: []string{alice}}}}
+	e := entry(t, Effective(roles, Principal{ObjectID: alice}, InputTables), "Tables/sales")
+	if e.Rows != "" || !reflect.DeepEqual(e.Columns, []string{"region"}) {
+		t.Fatalf("entry = %+v, want columns narrowed and rows open", e)
+	}
+	if got := e.Why(); got != "column-level security" {
+		t.Fatalf("Why() = %q", got)
+	}
+}
+
+func TestAConstraintOutsideTheGrantGrantsNothing(t *testing.T) {
+	// A constraint names a table the rule does not grant. It must not become a
+	// grant of that table: the documented rule is that its table "must be a
+	// table included in the PermissionScope".
+	roles := []Role{{Name: "users-only", DecisionRules: []DecisionRule{{
+		Effect: EffectPermit, Paths: []string{"Tables/users"}, Actions: []string{AccessRead},
+		Constraints: []Constraint{{Table: "Tables/sales", Rows: "SELECT 1"}},
+	}}, Members: Members{Entra: []string{alice}}}}
+	got := Effective(roles, Principal{ObjectID: alice}, InputTables)
+	if want := []string{"Tables/users"}; !reflect.DeepEqual(pathsOf(got), want) {
+		t.Fatalf("paths = %v, want %v", pathsOf(got), want)
+	}
+	if Allows(got, "Tables/sales") {
+		t.Fatal("a constraint outside the grant granted its table")
+	}
+}
+
+func TestTheDeeperConstraintDecides(t *testing.T) {
+	// Two constraints in one rule both cover the sales table; the one on the
+	// table itself decides, whichever order they were written in.
+	outer := Constraint{Table: "Tables/dbo", Rows: "SELECT * FROM dbo WHERE a = 1"}
+	inner := Constraint{Table: "Tables/dbo/sales", Rows: "SELECT * FROM sales WHERE b = 2"}
+	for _, order := range [][]Constraint{{outer, inner}, {inner, outer}} {
+		roles := []Role{{Name: "r", DecisionRules: []DecisionRule{{
+			Effect: EffectPermit, Paths: []string{"*"}, Actions: []string{AccessRead},
+			Constraints: order,
+		}}, Members: Members{Entra: []string{alice}}}}
+		e := entry(t, Effective(roles, Principal{ObjectID: alice}, InputTables), "Tables/dbo/sales")
+		if e.Rows != inner.Rows {
+			t.Fatalf("rows = %q, want the table's own constraint", e.Rows)
+		}
+	}
+}
+
+func TestTableConstraintsDoNotAnswerAFilesQuestion(t *testing.T) {
+	roles := []Role{{Name: "r", DecisionRules: []DecisionRule{{
+		Effect: EffectPermit, Paths: []string{"*"}, Actions: []string{AccessRead},
+		Constraints: []Constraint{{Table: "/Tables/sales", Rows: "SELECT 1"}},
+	}}, Members: Members{Entra: []string{alice}}}}
+	got := Effective(roles, Principal{ObjectID: alice}, InputFiles)
+	if want := []string{"Files"}; !reflect.DeepEqual(pathsOf(got), want) {
+		t.Fatalf("paths = %v, want %v", pathsOf(got), want)
+	}
+	if Narrowing(got, "Files/raw/x.csv") != nil {
+		t.Fatal("a table constraint narrowed a file")
 	}
 }

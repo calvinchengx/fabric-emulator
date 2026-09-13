@@ -1371,7 +1371,11 @@
       "go:TestAStrangerIsNotAdmittedByAnItemRole",
       "go:TestDataAccessRolesRefusedOnItemTypesThatDoNotCarryThem",
       "go:TestDataAccessRolesAcceptedOnEverySupportedItemType",
-      "go:TestDataAccessRolesReadStillAnswersOnAnUnsupportedItem"
+      "go:TestDataAccessRolesReadStillAnswersOnAnUnsupportedItem",
+      "go:TestTheReferenceConstraintsSampleNarrows",
+      "go:TestTheReferenceUnconstrainedSamplesStillGrant",
+      "go:TestAConstraintThisParserCannotReadFailsClosed",
+      "go:TestOnlyTheUnreadableRuleIsDropped"
     ]
   },
   "row-and-column-level-security-applied-by-the-engine": {
@@ -1382,7 +1386,11 @@
       "ci:two-context",
       "py:test_onelake_security",
       "go:TestRowLevelSecurityBlocksTheDirectPathRead",
-      "go:TestColumnLevelSecurityBlocksTheDirectPathRead"
+      "go:TestColumnLevelSecurityBlocksTheDirectPathRead",
+      "ci:duckdb",
+      "go:TestAConstraintNarrowsOnlyItsTableWithinABroadGrant",
+      "go:TestAnotherRolesUnrestrictedGrantStillWinsOverAConstraint",
+      "go:TestTheMostSpecificEntryDecides"
     ]
   },
   "two-context-execution-the-user-context-holds-no-service-credential": {

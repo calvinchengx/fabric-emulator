@@ -132,7 +132,7 @@ func TestDirectLakeRefusesAColumnOutsideTheProjection(t *testing.T) {
 	  "permission":[
 	    {"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},
 	    {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
-	  "columns":["region"]}],
+	  "constraints":{"columns":[{"tablePath":"/Tables/sales","columnNames":["region"],"columnEffect":"Permit","columnAction":["Read"]}]}}],
 	  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, viewer.ID))
 	assertPolicyNarrows(t, st, lake.ID, viewer.ID, true)
 
@@ -164,7 +164,7 @@ func TestDirectLakeServesAProjectionThatCoversTheModel(t *testing.T) {
 	  "permission":[
 	    {"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},
 	    {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
-	  "columns":["region","amount"]}],
+	  "constraints":{"columns":[{"tablePath":"/Tables/sales","columnNames":["region","amount"],"columnEffect":"Permit","columnAction":["Read"]}]}}],
 	  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, viewer.ID))
 	assertPolicyNarrows(t, st, lake.ID, viewer.ID, true)
 
@@ -194,7 +194,7 @@ func TestDirectLakeRefusesARowFilterItCannotApply(t *testing.T) {
 	  "permission":[
 	    {"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},
 	    {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
-	  "rows":"region = 'us'"}],
+	  "constraints":{"rows":[{"tablePath":"/Tables/sales","value":"SELECT * FROM sales WHERE region = 'us'"}]}}],
 	  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, viewer.ID))
 	assertPolicyNarrows(t, st, lake.ID, viewer.ID, true)
 
@@ -299,7 +299,7 @@ func TestDirectLakeProjectionHonoursTheSourceColumnFallback(t *testing.T) {
 	  "permission":[
 	    {"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},
 	    {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
-	  "columns":["region"]}],
+	  "constraints":{"columns":[{"tablePath":"/Tables/sales","columnNames":["region"],"columnEffect":"Permit","columnAction":["Read"]}]}}],
 	  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, viewer.ID))
 	assertPolicyNarrows(t, st, lake.ID, viewer.ID, true)
 

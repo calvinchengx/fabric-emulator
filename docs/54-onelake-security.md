@@ -95,7 +95,10 @@ Three pieces. Only the middle one knows the rules.
                                           // attributeValueIncludedIn[]
 
 Keyed by item and versioned by ETag, because both endpoints trade in `If-Match`
-and `If-None-Match`. Rows and columns hang off the rule.
+and `If-None-Match`. Rows and columns hang off the rule's **`constraints`**,
+keyed by `tablePath` — not off the rule itself, which is what this sentence
+originally said and what the implementation then did; see
+[the correction](#the-authoring-payload-was-the-wrong-shape-and-every-witness-spoke-it).
 
 ### 2. `pkg/onelakesec` — a pure evaluator
 
@@ -145,6 +148,10 @@ serves the same evaluation to engines, filters included:
 Note what `rows` is: **SQL text, not rows**. OneLake decides, the engine
 applies. That single fact is why the layer can be decoupled at all, and it is
 the contract the design has to preserve.
+
+That flat `rows` / `columns` pair is the **response** an engine reads. It is not
+the shape a policy is *authored* in, and treating the two as one was a real bug
+— see [the authoring payload was the wrong shape](#the-authoring-payload-was-the-wrong-shape-and-every-witness-spoke-it).
 
 ## Building directly on OneLake
 
@@ -785,3 +792,136 @@ rather than by pinning an old image.
 Measured with the default on: `livy-native` passes, including the owner still
 seeing all 3 rows and both columns through an engine of their own, and
 `two-context` passes with the path read refused.
+
+## The authoring payload was the wrong shape, and every witness spoke it
+
+**A policy written the way Microsoft documents it was enforced as no policy at
+all.** Found on 2026-09-13 while grounding item permissions against the REST
+reference; fixed in the same change.
+
+### What the reference says
+
+`PUT …/items/{id}/dataAccessRoles` carries row and column security inside the
+decision rule's **`constraints`** object, keyed by table:
+
+```json
+"constraints": {
+  "rows":    [{ "tablePath": "/Tables/industrytable",
+                "value": "select * from Industrytable where Industry=\"Green\"" }],
+  "columns": [{ "tablePath": "/Tables/industrytable", "columnNames": ["Industry"],
+                "columnEffect": "Permit", "columnAction": ["Read"] }]
+}
+```
+
+### What the emulator read
+
+Flat `rows` and `columns` fields directly on the decision rule — which is the
+[principalAccess](#shape) *response* shape, carried over to the *authoring*
+payload where it never existed. A rule carrying `constraints` therefore parsed as
+a rule with no restriction. Measured, same policy, both shapes, a Viewer on
+`Tables/sales`:
+
+| payload | allows | narrowed |
+|---|---|---|
+| the reference's `constraints` | true | **false — the whole table** |
+| the emulator's flat fields | true | true |
+
+Every consumer of the plane inherited it: the DFS and Blob surfaces, the Spark
+two-context split, `principalAccess`, and the Direct Lake query path.
+
+### Why nothing caught it
+
+Because **every witness authored policy in the emulator's own dialect.** The
+enforcement suites — `ci:two-context`, `ci:livy-native`, `ci:duckdb` — all
+wrote flat `rows`/`columns`, so they proved the emulator agreed with itself. The
+one witness driven by a Microsoft client, `ci:fabric-cli`, round-trips a role
+through `fab` and carries no constraints at all, so it proved the bytes survive
+without ever asking what they mean.
+
+The same shape as the Environments mis-grade in
+[37](37-runtime-fidelity-gaps.md): a green row whose witness could not have
+failed for the reason that mattered. **A witness has to author its input the way
+the product's clients do**, or it tests a private contract.
+
+Two unit tests stayed green through it for a quieter reason, and are pinned
+now: they asserted a `403` without asserting *why*. A viewer the policy failed to
+grant is also refused `403`, so a status-only check passes on a policy that never
+narrowed anything.
+
+### The fix: read the documented shape, and refuse to guess at any other
+
+Reading the right fields would close this instance. It would not close the
+class — the next field the reference adds would be ignored the same way. So the
+decision rule and everything beneath it are decoded **strictly**, and a
+restriction the parser cannot read with certainty **drops the rule**:
+
+- any field the reference does not define, at the rule, the `constraints`
+  object, or a row or column constraint — **including the old flat
+  `rows`/`columns`**;
+- a permission `attributeName` other than `Path` or `Action`;
+- an empty `tablePath`, or an empty row `value`;
+- `columnNames: []`, which would mean "no columns" and which the evaluator's
+  "no restriction" cannot say;
+- a `columnEffect` other than `Permit` or a `columnAction` other than `Read` —
+  the only values the reference allows;
+- two row constraints, or two column constraints, on one table in one rule,
+  which leave open whether they union or intersect.
+
+**Dropping a rule is always safe**, and that is what makes failing closed here
+cheap rather than dangerous: a constraint narrows only the rule it is written in,
+so removing the rule can take access away but never add it. The role is still
+read leniently — `id`, `kind` and any future role-level field pass through —
+because restrictions do not live there.
+
+`columnNames: ["*"]` is "all columns", as the reference defines it.
+
+### Constraints are per table, which changed the evaluator
+
+The old evaluator carried one `Rows` and one `Columns` for a whole rule, applied
+to every path the rule granted. The documented model attaches them to a
+`tablePath`, so one rule can grant `*` and filter only `Tables/sales`.
+
+The tempting translation — split that rule into an unrestricted grant of `*` and
+a narrowed grant of `Tables/sales` — **reproduces the over-grant**: consolidation
+is a union, so the unrestricted half erases the restriction written beside it.
+A constraint narrows the rule it belongs to; it is not a second grant.
+
+So `pkg/onelakesec` models `DecisionRule.Constraints` directly, and `Effective`
+computes each entry from every grant that covers it: entries are the grant paths
+plus each constrained table beneath them, and a grant's restriction on an entry
+is its most specific covering constraint. The cross-role union is unchanged — a
+second role granting `sales` unfiltered still means unfiltered `sales`.
+
+**`Narrowing` now takes the most specific covering entry**, where it used to let
+any unrestricted covering entry win. Under the per-table model the old rule is
+the bug: `Tables` unrestricted beside `Tables/sales` filtered means "the whole
+half except sales", and letting `Tables` win erases the filter. It also settles a
+disagreement nobody had noticed: the Python engine side already read the most
+specific entry (`access.get(name, unrestricted)`), so on overlapping grants the
+two halves of the family answered the same policy differently.
+
+### Upgrading
+
+A role stored with flat `rows`/`columns` on a decision rule now **denies** that
+rule's scope instead of narrowing it — fail closed, on purpose. Rewrite such
+roles into `constraints` as above. Anything authored through the documented
+payload (the portal, `fab`, the REST reference's samples) was being
+under-enforced and is now enforced.
+
+### Witnesses
+
+- **The reference's own samples**, byte for byte where it gives one:
+  `TestTheReferenceConstraintsSampleNarrows`,
+  `TestTheReferenceUnconstrainedSamplesStillGrant` (strictness must not cost a
+  policy with nothing to be strict about).
+- **Every fail-closed case**, each checked against a readable twin in the same
+  test, since a parser that dropped *every* constrained rule would pass the
+  refusals alone: `TestAConstraintThisParserCannotReadFailsClosed`,
+  `TestOnlyTheUnreadableRuleIsDropped`.
+- **Per-table semantics** in `pkg/onelakesec`:
+  `TestAConstraintNarrowsOnlyItsTableWithinABroadGrant`,
+  `TestAnotherRolesUnrestrictedGrantStillWinsOverAConstraint`,
+  `TestTheMostSpecificEntryDecides`.
+- **The e2e suites now author the documented shape**: `ci:duckdb` (measured
+  locally: DuckDB applied the `constraints`-authored filter, 1 row of 2),
+  `ci:two-context`, `ci:livy-native`.
