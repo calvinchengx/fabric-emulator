@@ -727,7 +727,9 @@
       "ci:semantic-model",
       "go:TestExecuteQueriesE2E",
       "go:TestExecuteQueriesGolden",
-      "go:TestExecuteQueriesEveryPublishedMeasureAnswers"
+      "go:TestExecuteQueriesEveryPublishedMeasureAnswers",
+      "go:TestExecuteQueriesRequiresReadAndBuildFromAnySource",
+      "go:TestExecuteQueriesFailsWhenAccessCannotBeRead"
     ]
   },
   "power-bi-direct-lake-binding-model-on-onelake": {
@@ -760,8 +762,12 @@
       "go:TestDirectLakeServesAProjectionThatCoversTheModel",
       "go:TestDirectLakeServesAnUnnarrowedGrant",
       "go:TestDirectLakeProjectionHonoursTheSourceColumnFallback",
-      "go:TestDirectLakeWithoutRolesKeepsTheWorkspaceRoleGate",
-      "go:TestDirectLakeFailsWhenThePolicyCannotBeRead"
+      "go:TestDirectLakeWithoutRolesRequiresReadAll",
+      "go:TestDirectLakeFailsWhenThePolicyCannotBeRead",
+      "go:TestAGrantOnTheSourceReachesAcrossWorkspaces",
+      "go:TestAWarehouseSourceRequiresReadAll",
+      "go:TestAnUnresolvableSourceDisclosesOnlyToARoleHolder",
+      "go:TestDirectLakeFailsWhenSourceAccessCannotBeRead"
     ]
   },
   "power-bi-sempy-semantic-link-labs-over-xmla": {

@@ -34,13 +34,28 @@ func (a *API) loadDirectLakeData(ctx context.Context, model *semanticmodel.Model
 		if err != nil {
 			return fmt.Errorf("Direct Lake table %q: workspace is not available", table.Name)
 		}
-		role, err := a.Store.RoleOf(ws.ID, principal.ID)
-		if err != nil || store.RoleRank(role) < store.RoleRank(store.RoleViewer) {
-			return fmt.Errorf("Direct Lake table %q: caller cannot read source workspace", table.Name)
-		}
 		source, err := a.resolveDirectLakeSource(ws.ID, lakehouseRef)
 		if err != nil {
+			// Somebody with no role in the source workspace learns only that they
+			// cannot read it — not whether an item of that name exists.
+			if role, rerr := a.Store.RoleOf(ws.ID, principal.ID); rerr == nil && role == "" {
+				return fmt.Errorf("Direct Lake table %q: caller cannot read the source", table.Name)
+			}
 			return fmt.Errorf("Direct Lake table %q: %w", table.Name, err)
+		}
+		// The same decision every OneLake reader asks, so Direct Lake can never
+		// admit what the storage surface would refuse. "If OneLake security isn't
+		// on, Direct Lake on OneLake needs the effective identity to have Read and
+		// ReadAll"; when it is on, the roles decide. Either can come from a grant
+		// on the source, which is how a model reaches a lakehouse in a workspace
+		// its reader has no role in.
+		read, err := a.Store.OneLakeReadAccess(source, principal.ID, onelakesec.InputTables)
+		if err != nil {
+			return fmt.Errorf("Direct Lake table %q: %w", table.Name, err)
+		}
+		if !read.Allowed {
+			return fmt.Errorf("Direct Lake table %q: caller cannot read the source: Direct Lake on OneLake "+
+				"needs Read and ReadAll on it, or a OneLake security role", table.Name)
 		}
 		var delta *warehouse.Table
 		if source.Type == "Lakehouse" {
@@ -51,7 +66,7 @@ func (a *API) loadDirectLakeData(ctx context.Context, model *semanticmodel.Model
 				delta, err = warehouse.ReadDeltaTable(a.Store, source.ID, entity)
 			}
 			if err == nil {
-				delta, err = a.secureDirectLakeTable(source, principal, role, entity, &table, delta)
+				delta, err = secureDirectLakeTable(read, entity, &table, delta)
 			}
 		} else {
 			// A WAREHOUSE source. On real Fabric a warehouse persists to OneLake as
@@ -69,6 +84,9 @@ func (a *API) loadDirectLakeData(ctx context.Context, model *semanticmodel.Model
 			// carry its rows inline in a `data.json` part, which real Fabric has no
 			// concept of. So the one artifact a BI consumer actually reads was the
 			// one thing in the examples that could not be deployed to a tenant.
+			//
+			// A warehouse carries no OneLake security roles, so an allowed reader
+			// here always reads it whole: ReadAll is the whole of the decision.
 			delta, err = a.readWarehouseTable(ctx, source, table.DirectLake)
 		}
 		if err != nil {
@@ -83,8 +101,8 @@ func (a *API) loadDirectLakeData(ctx context.Context, model *semanticmodel.Model
 	return nil
 }
 
-// secureDirectLakeTable applies the source item's OneLake security roles to one
-// Direct Lake table, for the identity asking the question.
+// secureDirectLakeTable narrows one Direct Lake table to what the reader's
+// OneLake access allows. read must be Allowed: the caller has checked.
 //
 // WHY THIS IS THE QUERY PATH'S JOB. Direct Lake does not read through the SQL
 // analytics endpoint, so no engine upstream has already filtered: "Direct Lake
@@ -101,38 +119,17 @@ func (a *API) loadDirectLakeData(ctx context.Context, model *semanticmodel.Model
 // after applying OneLake security roles". A secured object is absent from the
 // namespace rather than present and forbidden, so that is how it is reported
 // here, and the evaluator's existing unresolved-name error carries the rest.
-func (a *API) secureDirectLakeTable(source *store.Item, principal *auth.Principal,
-	role, entity string, modelTable *semanticmodel.Table, delta *warehouse.Table,
+func secureDirectLakeTable(read store.OneLakeRead, entity string, modelTable *semanticmodel.Table,
+	delta *warehouse.Table,
 ) (*warehouse.Table, error) {
-	// Contributor and above hold Read and ReadAll and are never narrowed — the
-	// same rule internal/onelake applies on the DFS surface, and the product's:
-	// "OneLake security lets members of the Workspace Admin and Workspace Member
-	// roles define granular role-based security for users in the Viewer role."
-	if store.RoleRank(role) >= store.RoleRank(store.RoleContributor) {
+	if read.Full {
 		return delta, nil
 	}
-	roles, err := a.Store.EvaluatableRoles(source.ID)
-	if err != nil {
-		return nil, err
-	}
-	// OneLake security is not ON for this item. Fabric then requires the caller
-	// to hold Read AND ReadAll, which a Viewer does not have by role — it comes
-	// from item-level sharing, which this emulator does not model yet
-	// (07-control-plane-api.md). Tightening the gate here without that would
-	// refuse every Viewer, including ones a tenant would admit, so the
-	// pre-existing workspace-role check stands and the stricter rule lands with
-	// item permissions.
-	if len(roles) == 0 {
-		return delta, nil
-	}
-
 	rel := path.Join("Tables", entity)
-	entries := onelakesec.Effective(roles,
-		onelakesec.Principal{ObjectID: principal.ID}, onelakesec.InputFor(rel))
-	if !onelakesec.Allows(entries, rel) {
+	if !onelakesec.Allows(read.Entries, rel) {
 		return nil, fmt.Errorf("can't be found: no OneLake security role grants this principal access to it")
 	}
-	narrowing := onelakesec.Narrowing(entries, rel)
+	narrowing := onelakesec.Narrowing(read.Entries, rel)
 	if narrowing == nil {
 		return delta, nil
 	}

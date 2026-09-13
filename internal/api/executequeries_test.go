@@ -215,9 +215,14 @@ func TestExecuteQueriesErrorsAndRBAC(t *testing.T) {
 	ds := createSemanticModel(t, st, ws.ID)
 	q := `{"queries":[{"query":"EVALUATE 'Store'"}]}`
 
-	// Viewer (seeded) can query; ungranted 403.
+	// A Viewer inherits Read but not Build, so is refused until Build is granted;
+	// ungranted 403.
+	if w := do(a.executeQueries, viewer, "POST", q, map[string]string{"datasetId": ds.ID}); w.Code != 403 {
+		t.Fatalf("viewer without Build = %d, want 403", w.Code)
+	}
+	grantBuild(t, st, ds, viewer.ID)
 	if w := do(a.executeQueries, viewer, "POST", q, map[string]string{"datasetId": ds.ID}); w.Code != 200 {
-		t.Fatalf("viewer query = %d", w.Code)
+		t.Fatalf("viewer with Build = %d", w.Code)
 	}
 	if w := do(a.executeQueries, &authNobody, "POST", q, map[string]string{"datasetId": ds.ID}); w.Code != 403 {
 		t.Fatalf("ungranted = %d; want 403", w.Code)
@@ -358,7 +363,8 @@ func TestDirectLakeErrorsAndSourceRBAC(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := `{"queries":[{"query":"EVALUATE Sales"}]}`
-	if w := do(a.executeQueries, viewer, "POST", q, map[string]string{"datasetId": model.ID}); w.Code != 400 || !bytes.Contains(w.Body.Bytes(), []byte("cannot read source workspace")) {
+	grantBuild(t, st, model, viewer.ID)
+	if w := do(a.executeQueries, viewer, "POST", q, map[string]string{"datasetId": model.ID}); w.Code != 400 || !bytes.Contains(w.Body.Bytes(), []byte("cannot read the source")) {
 		t.Fatalf("source RBAC=%d %s", w.Code, w.Body.String())
 	}
 

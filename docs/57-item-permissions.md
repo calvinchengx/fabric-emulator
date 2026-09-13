@@ -103,7 +103,7 @@ list to measure.
 |---|---|---|
 | 1 | `item_access` store; effective access = role-implied ∪ direct; the three surfaces | grants are stored, validated and reported; **nothing is enforced** |
 | 2 | OneLake DFS and Blob honour `ReadAll`; `fabricItemMembers` matches on real item access and its `sourcePath` | a shared lakehouse is readable through OneLake; `DefaultReader` works |
-| 3 | Direct Lake requires Read + ReadAll when an item has no OneLake roles; a grant reaches a source in another workspace | the Direct Lake boundary docs/parity names is closed |
+| 3 | Direct Lake requires Read + ReadAll when an item has no OneLake roles; a grant reaches a source in another workspace; `executeQueries` requires Read + Build | the Direct Lake boundary docs/parity names is closed |
 | 4 | TDS: `Read` connects, `ReadData` reads; database memberships are **synced**, not only added | a shared endpoint is queryable, and a revoked grant stops working |
 
 ### Stage 2 in detail
@@ -124,6 +124,27 @@ membership, as `<workspaceId>/<itemId>`. The store ignored it, so a role naming
 counts only when `sourcePath` names the role's own item; a foreign path confers
 nothing — fail closed, since resolving access on an arbitrary other item is a
 separate question from this one.
+
+### Stage 3 in detail
+
+`executeQueries` states its own requirement: "The user must have dataset read
+and build permissions." Build is `Explore`, and a workspace Viewer inherits only
+`Read` on a semantic model — so a bare Viewer is refused, where the emulator used
+to admit anyone with a workspace role. Contributor and above inherit `Explore`;
+anyone else needs it granted through the dataset-users API.
+
+Direct Lake reads its source through `store.OneLakeReadAccess`, the decision the
+storage surface asks, so it cannot admit what DFS would refuse. That replaces the
+looser rule the Direct Lake gate kept for an item with no roles — any workspace
+role would do — with Fabric's: Read and ReadAll.
+
+A reader with no role in the source workspace is told only that they cannot read
+the source, never whether an item of that name exists there.
+
+**Boundary: the XMLA endpoint keeps its workspace-role gate.** This increment
+applies Build to the REST query path, whose reference states the requirement.
+What XMLA read access requires was not checked here, so it is left as it was
+rather than changed on an assumption.
 
 ### Stage 4 in detail
 

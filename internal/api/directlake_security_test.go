@@ -45,7 +45,20 @@ func securedLakehouse(t *testing.T, st *store.Store) (*store.Workspace, *store.I
 	if err := st.CreateItem(model, parts); err != nil {
 		t.Fatal(err)
 	}
+	// Querying needs Build on the model, which a Viewer does not inherit. These
+	// tests are about what the SOURCE lets the viewer read, so Build is granted
+	// here and tested on its own in executequeries_test.go.
+	grantBuild(t, st, model, viewer.ID)
 	return ws, lake, model
+}
+
+// grantBuild shares a semantic model for Read and Build (Explore).
+func grantBuild(t *testing.T, st *store.Store, model *store.Item, principalID string) {
+	t.Helper()
+	if err := st.PutItemAccess(store.ItemAccess{ItemID: model.ID, PrincipalID: principalID, PrincipalType: "User",
+		Permissions: []string{store.PermRead, store.PermExplore}}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // putRole stores one role verbatim, the way the authoring handler would.
@@ -217,11 +230,15 @@ func TestDirectLakeRefusesARowFilterItCannotApply(t *testing.T) {
 	}
 }
 
-// An item with no roles at all keeps the pre-existing behaviour. Fabric would
-// require Read AND ReadAll here, which is item-level sharing this emulator does
-// not model; tightening the gate without it would refuse Viewers a tenant
-// admits. Pinned so that the looser rule is a decision, not an oversight.
-func TestDirectLakeWithoutRolesKeepsTheWorkspaceRoleGate(t *testing.T) {
+// An item with NO OneLake security roles is ReadAll's to open: "If OneLake
+// security isn't on, Direct Lake on OneLake needs the effective identity to have
+// Read and ReadAll." A Viewer inherits Read but not ReadAll, so is refused until
+// ReadAll is granted — and refused again when it is revoked.
+//
+// This test replaced one that pinned the looser rule on purpose, so that
+// tightening it would be a decision and not an accident. It was a decision:
+// docs/57, stage 3.
+func TestDirectLakeWithoutRolesRequiresReadAll(t *testing.T) {
 	a, st := newAPI(t)
 	_, lake, model := securedLakehouse(t, st)
 
@@ -232,9 +249,29 @@ func TestDirectLakeWithoutRolesKeepsTheWorkspaceRoleGate(t *testing.T) {
 	if len(roles) != 0 {
 		t.Fatal("fixture has roles; this test is about an item with none")
 	}
+	if code, body := query(t, a, viewer, model); code != 400 ||
+		!bytes.Contains([]byte(body), []byte("cannot read the source")) {
+		t.Fatalf("a Viewer without ReadAll = %d %s, want the source refused", code, body)
+	}
+	// The owner reads it in the same run: the refusal is the rule, not the table.
+	if code, body := query(t, a, admin, model); code != 200 {
+		t.Fatalf("owner = %d %s", code, body)
+	}
+
+	if err := st.PutItemAccess(store.ItemAccess{ItemID: lake.ID, PrincipalID: viewer.ID, PrincipalType: "User",
+		Permissions: []string{store.PermRead}, Additional: []string{store.PermReadAll}}); err != nil {
+		t.Fatal(err)
+	}
 	if code, body := query(t, a, viewer, model); code != 200 ||
 		!bytes.Contains([]byte(body), []byte(`"Sales[Region]":"us"`)) {
-		t.Errorf("viewer = %d %s, want the unsecured item to read as before", code, body)
+		t.Fatalf("a Viewer granted ReadAll = %d %s, want every row", code, body)
+	}
+
+	if err := st.DeleteItemAccess(lake.ID, viewer.ID); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := query(t, a, viewer, model); code != 400 {
+		t.Fatalf("after the revoke = %d, want the source refused again", code)
 	}
 }
 
@@ -294,6 +331,7 @@ func TestDirectLakeProjectionHonoursTheSourceColumnFallback(t *testing.T) {
 	if err := st.CreateItem(model, parts); err != nil {
 		t.Fatal(err)
 	}
+	grantBuild(t, st, model, viewer.ID)
 
 	putRole(t, st, lake.ID, "region-only", fmt.Sprintf(`{"name":"region-only","decisionRules":[{"effect":"Permit",
 	  "permission":[
@@ -334,6 +372,7 @@ func TestDirectLakeFailsWhenThePolicyCannotBeRead(t *testing.T) {
 	if err := st.CreateItem(model, parts); err != nil {
 		t.Fatal(err)
 	}
+	grantBuild(t, st, model, viewer.ID)
 
 	dropTable(t, dir, "onelake_roles")
 	if code, body := query(t, a, viewer, model); code == 200 {
