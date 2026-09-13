@@ -26,13 +26,15 @@ import (
 // expression` binds an expression, which may continue across the following
 // MORE-indented lines (that is how a multi-line DAX measure is written).
 //
-// What this parser covers is what the emulator's evaluator can act on: tables,
-// columns, measures, Direct Lake partitions and relationships. It deliberately
-// does NOT cover the rest of the surface — perspectives, roles, cultures,
-// calculation groups, annotations, hierarchies — and it ignores those blocks
-// rather than failing, because a real .pbip carries them and refusing to load a
-// model over a perspective the evaluator would never consult would be
-// obstructive. That is a subset, and callers should read it as one.
+// What this parser covers is what the emulator acts on: tables, columns,
+// measures, Direct Lake partitions, relationships — and roles, which are read
+// rather than skipped because a role that silently vanished would leave a
+// secured model looking unsecured to the principals it restricts. It does NOT
+// cover the rest of the surface — perspectives, cultures, calculation groups,
+// annotations, hierarchies — and it ignores those blocks rather than failing,
+// because a real .pbip carries them and refusing to load a model over a
+// perspective the evaluator would never consult would be obstructive. That is a
+// subset, and callers should read it as one.
 //
 // Reference: docs/18-semantic-model-references.md ("Model format (TMSL/TMDL)").
 
@@ -148,12 +150,111 @@ func parseTMDLBlock(m *Model, lines []tmdlLine, i int) (int, error) {
 		} else {
 			m.Expressions[name] = joinBody(body)
 		}
+	case "role":
+		// One file per role under roles/, in real TMDL folders. Parsed, never
+		// skipped: a role that silently vanished would leave the model looking
+		// unsecured to everyone it was written to restrict.
+		m.Roles = append(m.Roles, parseTMDLRole(name, body))
 	default:
-		// database, perspective, role, culture, annotation, ref … — carried by
-		// real .pbip projects and irrelevant to the evaluator. Skipped, not an
+		// database, perspective, culture, annotation, ref … — carried by real
+		// .pbip projects and irrelevant to the evaluator. Skipped, not an
 		// error: see the package note above.
 	}
 	return span, nil
+}
+
+// parseTMDLRole reads a role block:
+//
+//	role 'Store 1'
+//	    modelPermission: read
+//	    member 'ada@contoso.com' = user
+//	        memberId: 0000…
+//	    tablePermission Store = 'Store'[Store Code] IN {1,10}
+//	    tablePermission Customers
+//	        metadataPermission: none
+//	    tablePermission Employees
+//	        columnPermission 'Base Rate' = none
+//
+// A tablePermission's filter is its default property, so it follows `=` and may
+// continue on more-indented lines. A columnPermission's default property is its
+// metadataPermission, which may equally be written as a child property. TMDL
+// keywords are case-insensitive on read.
+func parseTMDLRole(name string, body []tmdlLine) Role {
+	r := Role{Name: unquote(name)}
+	for i := 0; i < len(body); {
+		sub, span := blockAt(body, i)
+		line := body[i].text
+		kw, decl := splitDecl(line)
+		switch {
+		case strings.EqualFold(kw, "tablePermission"):
+			r.TablePermissions = append(r.TablePermissions, parseTMDLTablePermission(line, decl, sub))
+		case strings.EqualFold(kw, "member"):
+			mb := RoleMember{Name: unquote(decl)}
+			if _, t, ok := splitAssign(line); ok {
+				mb.Type = unquote(t)
+			}
+			for _, l := range sub {
+				if k, v, ok := splitProp(l.text); ok {
+					switch {
+					case strings.EqualFold(k, "memberId"):
+						mb.ID = unquote(v)
+					case strings.EqualFold(k, "identityProvider"):
+						mb.IdentityProvider = unquote(v)
+					case strings.EqualFold(k, "memberType"):
+						mb.Type = unquote(v)
+					}
+				}
+			}
+			r.Members = append(r.Members, mb)
+		default:
+			if k, v, ok := splitProp(line); ok && strings.EqualFold(k, "modelPermission") {
+				r.ModelPermission = unquote(v)
+			}
+		}
+		i += span
+	}
+	return r
+}
+
+func parseTMDLTablePermission(line, decl string, body []tmdlLine) TablePermission {
+	tp := TablePermission{Table: unquote(decl)}
+	var filter []string
+	if _, expr, ok := splitAssign(line); ok && strings.TrimSpace(expr) != "" {
+		filter = append(filter, strings.TrimSpace(expr))
+	}
+	for i := 0; i < len(body); {
+		sub, span := blockAt(body, i)
+		text := body[i].text
+		kw, cdecl := splitDecl(text)
+		switch {
+		case strings.EqualFold(kw, "columnPermission"):
+			cp := ColumnPermission{Column: unquote(cdecl)}
+			if _, v, ok := splitAssign(text); ok {
+				cp.MetadataPermission = unquote(v)
+			}
+			for _, l := range sub {
+				if k, v, ok := splitProp(l.text); ok && strings.EqualFold(k, "metadataPermission") {
+					cp.MetadataPermission = unquote(v)
+				}
+			}
+			tp.ColumnPermissions = append(tp.ColumnPermissions, cp)
+		default:
+			if k, v, ok := splitProp(text); ok {
+				if strings.EqualFold(k, "metadataPermission") {
+					tp.MetadataPermission = unquote(v)
+				}
+			} else {
+				// The filter's continuation, and anything nested under it.
+				filter = append(filter, text)
+				for _, l := range sub {
+					filter = append(filter, l.text)
+				}
+			}
+		}
+		i += span
+	}
+	tp.FilterExpression = strings.TrimSpace(strings.Join(filter, "\n"))
+	return tp
 }
 
 func parseTMDLTable(name string, body []tmdlLine) (*Table, error) {

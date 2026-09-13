@@ -86,6 +86,15 @@ The SQL witnesses run through the real relay against a real SQL Server, and were
 mutation-checked: with memberships only added, or `CONNECT` left in place, they
 fail. [docs/57](../57-item-permissions.md)
 
+## Semantic-model roles are refused, where they were silently ignored
+
+Neither the TMSL nor the TMDL parser read a model's `roles`, so a model built to
+show a Viewer one region evaluated for them over every region. Roles are now
+parsed, and a principal without Write on a model with any role — the only
+principals roles apply to — is refused on REST `executeQueries`, the XMLA loader
+and the portal runner, with a reason naming the roles. Write holders are
+unaffected. Applying the filters is staged in [docs/58](../58-semantic-model-roles.md).
+
 ## Direct Lake applies OneLake security
 
 A Direct Lake query checked only that the caller held some workspace role, then
@@ -145,6 +154,9 @@ gated: the docs do not say what it returns for an unsupported item.
   Contributor or above.
 - **Direct Lake over an item with no OneLake security roles requires ReadAll.** A
   Viewer is refused until ReadAll is granted on the source item.
+- **A model with security roles refuses principals without Write.** A Viewer, or
+  a principal granted Read and Build, querying such a model is refused until role
+  evaluation lands; Admin, Member and Contributor read as before.
 - **SQL endpoint database roles now follow the current rung.** A principal demoted
   below its old role loses the database roles that role gave, at its next connect.
 - **`PUT dataAccessRoles` on a Warehouse** now returns `400`.

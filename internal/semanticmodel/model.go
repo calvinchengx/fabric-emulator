@@ -56,6 +56,45 @@ type Model struct {
 	Tables             []Table
 	Relationships      []Relationship
 	Expressions        map[string]string
+	// Roles are the model's security roles: row-level filters and object-level
+	// visibility, for the principals they name. A model with ANY role is
+	// secured — a principal they apply to who is in none of them sees nothing.
+	Roles []Role
+}
+
+// Role is one model role. Its rules apply only to principals without Write
+// permission on the model: "RLS only restricts data access for users with
+// Viewer permissions. It doesn't apply to workspace Admin, Member, or
+// Contributor roles."
+type Role struct {
+	Name             string
+	ModelPermission  string
+	Members          []RoleMember
+	TablePermissions []TablePermission
+}
+
+// RoleMember names a principal in a role: by UPN (Name) and, where given, by
+// object id (ID). Type is TOM's RoleMemberType — auto, user or group.
+type RoleMember struct {
+	Name             string
+	ID               string
+	IdentityProvider string
+	Type             string
+}
+
+// TablePermission narrows one table for a role: a DAX row filter, the table's
+// own visibility, and its columns' visibility.
+type TablePermission struct {
+	Table              string
+	FilterExpression   string
+	MetadataPermission string
+	ColumnPermissions  []ColumnPermission
+}
+
+// ColumnPermission is one column's visibility for a role.
+type ColumnPermission struct {
+	Column             string
+	MetadataPermission string
 }
 
 // tmsl mirrors the model.bim shape we consume (unknown keys, like the "//"
@@ -96,6 +135,27 @@ type tmsl struct {
 			ToTable    string `json:"toTable"`
 			ToColumn   string `json:"toColumn"`
 		} `json:"relationships"`
+		// The Roles object (TMSL reference), with OLS's metadataPermission and
+		// columnPermissions from compatibility level 1400.
+		Roles []struct {
+			Name            string `json:"name"`
+			ModelPermission string `json:"modelPermission"`
+			Members         []struct {
+				MemberName       string `json:"memberName"`
+				MemberID         string `json:"memberId"`
+				IdentityProvider string `json:"identityProvider"`
+				MemberType       string `json:"memberType"`
+			} `json:"members"`
+			TablePermissions []struct {
+				Name               string          `json:"name"`
+				FilterExpression   json.RawMessage `json:"filterExpression"`
+				MetadataPermission string          `json:"metadataPermission"`
+				ColumnPermissions  []struct {
+					Name               string `json:"name"`
+					MetadataPermission string `json:"metadataPermission"`
+				} `json:"columnPermissions"`
+			} `json:"tablePermissions"`
+		} `json:"roles"`
 	} `json:"model"`
 }
 
@@ -148,6 +208,29 @@ func ParseTMSL(b []byte) (*Model, error) {
 			Name: r.Name, FromTable: r.FromTable, FromColumn: r.FromColumn,
 			ToTable: r.ToTable, ToColumn: r.ToColumn,
 		})
+	}
+	for _, r := range t.Model.Roles {
+		role := Role{Name: r.Name, ModelPermission: r.ModelPermission}
+		for _, mb := range r.Members {
+			role.Members = append(role.Members, RoleMember{Name: mb.MemberName, ID: mb.MemberID,
+				IdentityProvider: mb.IdentityProvider, Type: mb.MemberType})
+		}
+		for _, tp := range r.TablePermissions {
+			perm := TablePermission{Table: tp.Name, MetadataPermission: tp.MetadataPermission}
+			if len(tp.FilterExpression) > 0 && string(tp.FilterExpression) != "null" {
+				text, err := expressionText(tp.FilterExpression)
+				if err != nil {
+					return nil, fmt.Errorf("role %q table permission %q filterExpression: %w", r.Name, tp.Name, err)
+				}
+				perm.FilterExpression = text
+			}
+			for _, cp := range tp.ColumnPermissions {
+				perm.ColumnPermissions = append(perm.ColumnPermissions,
+					ColumnPermission{Column: cp.Name, MetadataPermission: cp.MetadataPermission})
+			}
+			role.TablePermissions = append(role.TablePermissions, perm)
+		}
+		m.Roles = append(m.Roles, role)
 	}
 	return m, nil
 }

@@ -177,6 +177,9 @@ func (a *API) loadSemanticModel(ctx context.Context, itemID string, p *auth.Prin
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := a.refuseUnappliedRoles(itemID, m, p); err != nil {
+		return nil, nil, err
+	}
 	data := semanticmodel.Data{}
 	if raw, err := a.definitionPart(itemID, "data.json"); err == nil {
 		if d, err := semanticmodel.ParseData(raw); err == nil {
@@ -187,6 +190,42 @@ func (a *API) loadSemanticModel(ctx context.Context, itemID string, p *auth.Prin
 		return nil, nil, err
 	}
 	return m, data, nil
+}
+
+// errRolesNotApplied is the refusal for a principal a model's security roles
+// apply to, while this emulator does not yet evaluate them.
+var errRolesNotApplied = errors.New("this semantic model defines security roles, which apply to principals " +
+	"without Write permission on it; this emulator does not apply them yet, and serving the model " +
+	"unfiltered would be the wrong answer rather than a missing one")
+
+// refuseUnappliedRoles stops a model's rows reaching anyone its roles restrict.
+//
+// ROLES WERE DROPPED, SILENTLY. Neither parser read them, so a model built to
+// show a Viewer one region evaluated for them over every region, and nothing
+// failed. The refusal is the honest first step: it names what is missing instead
+// of answering wrongly, and it applies at the one loader every row-returning
+// path — REST executeQueries and each XMLA route — goes through.
+//
+// Write holders are unaffected, because the product exempts them: RLS and OLS
+// "only apply to Viewers … Workspace members assigned Admin, Member, or
+// Contributor roles have Edit permission for the semantic model and, therefore,
+// OLS doesn't apply to them."
+func (a *API) refuseUnappliedRoles(itemID string, m *semanticmodel.Model, p *auth.Principal) error {
+	if len(m.Roles) == 0 {
+		return nil
+	}
+	it, err := a.Store.GetItemByID(itemID)
+	if err != nil {
+		return err
+	}
+	access, err := a.Store.EffectiveItemAccess(it, p.ID)
+	if err != nil {
+		return err
+	}
+	if access.Has(store.PermWrite) {
+		return nil
+	}
+	return errRolesNotApplied
 }
 
 // parseModelDefinition reads the item's definition and parses whichever model
@@ -260,6 +299,12 @@ func (a *API) QueryModelUnauthenticated(itemID, query string) ([]map[string]any,
 	m, err := a.parseModelDefinition(itemID)
 	if err != nil {
 		return nil, err
+	}
+	// The portal runs as nobody in particular, so it cannot be anybody a role
+	// admits — and nothing here would apply the role if it were.
+	if len(m.Roles) > 0 {
+		return nil, fmt.Errorf("this model defines security roles; the portal runner has no principal to apply " +
+			"them to — use executeQueries with a Power BI token")
 	}
 	for _, t := range m.Tables {
 		if t.DirectLake != nil {
