@@ -133,7 +133,7 @@ func TestAModelWithoutRolesHasNone(t *testing.T) {
 func TestATMDLFilterKeepsDeeperIndentedContinuation(t *testing.T) {
 	m, err := ParseTMDL(map[string][]byte{
 		"definition/tables/Store.tmdl": []byte("table Store\n\tcolumn Territory\n\t\tdataType: string\n"),
-		"definition/roles/R.tmdl": []byte("role R\n\ttablePermission Store =\n\t\t\t'Store'[Territory] = \"NC\"\n\t\t\t\t|| 'Store'[Territory] = \"SC\"\n"),
+		"definition/roles/R.tmdl":      []byte("role R\n\ttablePermission Store =\n\t\t\t'Store'[Territory] = \"NC\"\n\t\t\t\t|| 'Store'[Territory] = \"SC\"\n"),
 	})
 	if err != nil {
 		t.Fatal(err)

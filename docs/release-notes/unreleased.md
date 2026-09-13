@@ -86,14 +86,26 @@ The SQL witnesses run through the real relay against a real SQL Server, and were
 mutation-checked: with memberships only added, or `CONNECT` left in place, they
 fail. [docs/57](../57-item-permissions.md)
 
-## Semantic-model roles are refused, where they were silently ignored
+## Semantic-model roles apply row-level security, where they were silently ignored
 
 Neither the TMSL nor the TMDL parser read a model's `roles`, so a model built to
 show a Viewer one region evaluated for them over every region. Roles are now
-parsed, and a principal without Write on a model with any role — the only
-principals roles apply to — is refused on REST `executeQueries`, the XMLA loader
-and the portal runner, with a reason naming the roles. Write holders are
-unaffected. Applying the filters is staged in [docs/58](../58-semantic-model-roles.md).
+parsed and applied to the principals the product applies them to — those
+without Write — on REST `executeQueries` and every XMLA route:
+
+- Members are matched by `memberId`, or by `memberName` against the token's UPN
+  (`preferred_username`, else `upn`). Groups match nobody.
+- Filters are evaluated per row over a bounded DAX subset; roles are additive; a
+  principal in no role gets empty tables; filters travel active relationships
+  one → many, transitively.
+- Refused by name, for restricted callers: filters outside the subset,
+  `bothDirections` and many-to-many relationships, service principals, any role
+  of theirs that hides a table or column (object-level security is not applied
+  yet), and relaying them to an attached msmdsrv. `impersonatedUserName` on a
+  secured model is refused for everyone.
+- The portal runner has no principal and refuses a secured model.
+
+Write holders are unaffected. [docs/58](../58-semantic-model-roles.md)
 
 ## Direct Lake applies OneLake security
 

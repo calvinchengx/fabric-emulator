@@ -1521,5 +1521,33 @@
       "go:TestTheRootNotebookReachesTheChildsStatements",
       "go:TestADirectSubmissionCarriesNoRoot"
     ]
+  },
+  "power-bi-semantic-model-roles-rls-and-ols": {
+    "section": "CI/CD (`cicd/`)",
+    "claim": "Power BI — **semantic-model roles** (RLS and OLS)",
+    "witnesses": [
+      "go:TestARoleFiltersRowsForTheMembersItAdmits",
+      "go:TestRolesAreAdditiveOverTheWire",
+      "go:TestRowSecurityCoversTheXMLALoader",
+      "go:TestATMDLModelsRolesApplyToo",
+      "go:TestRowSecurityRefusesWhatItCannotApply",
+      "go:TestAnotherRolesObjectSecurityDoesNotRefuseTheCaller",
+      "go:TestImpersonationOnASecuredModelIsRefused",
+      "go:TestARestrictedCallerIsNotRelayedToTheDAXEngine",
+      "go:TestThePortalRunnerRefusesASecuredModel",
+      "go:TestTheRolesCheckFailsClosed",
+      "go:TestTMSLRolesAreParsed",
+      "go:TestRoleMembership",
+      "go:TestRolesForUnionsEveryAdmittingRole",
+      "go:TestTheUPNComesFromTheTokenForUsersOnly",
+      "go:TestRowFilterEvaluation",
+      "go:TestRowFilterCompileRefusals",
+      "go:TestRowFilterEvaluationErrors",
+      "go:TestNoRoleSeesNoRows",
+      "go:TestADimensionFilterReachesTheFactsOneWay",
+      "go:TestFiltersPropagateTransitively",
+      "go:TestRelationshipSecurityPropertiesAreParsed",
+      "go:TestApplyRowSecurityRefusesWhatItCannotApply"
+    ]
   }
 }

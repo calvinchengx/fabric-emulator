@@ -39,6 +39,15 @@ type Measure struct {
 type Relationship struct {
 	Name                                     string
 	FromTable, FromColumn, ToTable, ToColumn string
+	// FromCardinality and ToCardinality are TOM's "one" or "many"; empty is the
+	// default, many-to-one from the "from" side.
+	FromCardinality, ToCardinality string
+	// Inactive marks a relationship declared isActive: false. Security filters
+	// travel active relationships only.
+	Inactive bool
+	// SecurityFilteringBehavior is "oneDirection" (the default when empty),
+	// "bothDirections" or "none".
+	SecurityFilteringBehavior string
 }
 
 // Table is a model table with its columns and measures.
@@ -129,11 +138,15 @@ type tmsl struct {
 			} `json:"partitions"`
 		} `json:"tables"`
 		Relationships []struct {
-			Name       string `json:"name"`
-			FromTable  string `json:"fromTable"`
-			FromColumn string `json:"fromColumn"`
-			ToTable    string `json:"toTable"`
-			ToColumn   string `json:"toColumn"`
+			Name                      string `json:"name"`
+			FromTable                 string `json:"fromTable"`
+			FromColumn                string `json:"fromColumn"`
+			ToTable                   string `json:"toTable"`
+			ToColumn                  string `json:"toColumn"`
+			FromCardinality           string `json:"fromCardinality"`
+			ToCardinality             string `json:"toCardinality"`
+			IsActive                  *bool  `json:"isActive"`
+			SecurityFilteringBehavior string `json:"securityFilteringBehavior"`
 		} `json:"relationships"`
 		// The Roles object (TMSL reference), with OLS's metadataPermission and
 		// columnPermissions from compatibility level 1400.
@@ -207,6 +220,9 @@ func ParseTMSL(b []byte) (*Model, error) {
 		m.Relationships = append(m.Relationships, Relationship{
 			Name: r.Name, FromTable: r.FromTable, FromColumn: r.FromColumn,
 			ToTable: r.ToTable, ToColumn: r.ToColumn,
+			FromCardinality: r.FromCardinality, ToCardinality: r.ToCardinality,
+			Inactive:                  r.IsActive != nil && !*r.IsActive,
+			SecurityFilteringBehavior: r.SecurityFilteringBehavior,
 		})
 	}
 	for _, r := range t.Model.Roles {

@@ -343,6 +343,14 @@ func parseTMDLRelationship(name string, body []tmdlLine) Relationship {
 			r.FromTable = unquote(v)
 		case "toTable":
 			r.ToTable = unquote(v)
+		case "fromCardinality":
+			r.FromCardinality = unquote(v)
+		case "toCardinality":
+			r.ToCardinality = unquote(v)
+		case "isActive":
+			r.Inactive = strings.EqualFold(unquote(v), "false")
+		case "securityFilteringBehavior":
+			r.SecurityFilteringBehavior = unquote(v)
 		}
 	}
 	return r

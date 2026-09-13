@@ -83,15 +83,22 @@ func lex(s string) ([]dtok, error) {
 			kind := map[byte]tkind{'\'': tqTable, '"': tString, '[': tBracket}[c]
 			out = append(out, dtok{kind, s[i+1 : j]})
 			i = j + 1
-		case c == '(' || c == ')' || c == ',':
+		case c == '(' || c == ')' || c == ',' || c == '{' || c == '}':
+			// Braces delimit a table constructor, which a row-level security
+			// filter's `IN { … }` uses. The query grammar has no use for them
+			// and reports one as an unexpected token.
 			out = append(out, dtok{tPunct, string(c)})
 			i++
+		case c == '|' && i+1 < len(s) && s[i+1] == '|':
+			out = append(out, dtok{tOp, "||"})
+			i += 2
 		case strings.IndexByte(opChars, c) >= 0:
 			// `-` is always an operator, never the sign of a literal: making it
 			// part of the number would lex `[A] -1` as two operands and leave
 			// the parser no subtraction to see. Negation is the parser's job.
 			op := string(c)
-			if i+1 < len(s) && (c == '<' && (s[i+1] == '=' || s[i+1] == '>') || c == '>' && s[i+1] == '=') {
+			if i+1 < len(s) && (c == '<' && (s[i+1] == '=' || s[i+1] == '>') || c == '>' && s[i+1] == '=' ||
+				c == '&' && s[i+1] == '&') {
 				op = s[i : i+2]
 			}
 			out = append(out, dtok{tOp, op})
