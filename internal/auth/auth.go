@@ -32,6 +32,11 @@ type Principal struct {
 	ID   string // oid claim (falls back to sub)
 	Type string // "User" | "ServicePrincipal"
 	App  string // appid claim when present
+	// UPN is the user's sign-in name, from preferred_username (v2 tokens) or upn
+	// (v1). Empty for a service principal: in the service, USERPRINCIPALNAME()
+	// for an app "returns the service principal's application ID or an empty
+	// string — not an end user's identity", and an app cannot be a role member.
+	UPN string
 	// JobID/CellIndex attribute a request to the notebook cell that caused it,
 	// when the token was minted for one. Engines whose storage client cannot
 	// set request headers (Rust object_store behind delta-rs and Sail) carry
@@ -129,6 +134,10 @@ func (v *Validator) Validate(token string) (*Principal, error) {
 		Sub   string          `json:"sub"`
 		AppID string          `json:"appid"`
 		IdTyp string          `json:"idtyp"`
+		// The user's sign-in name. Real Entra v2 access tokens carry it as
+		// preferred_username, v1 as upn; entra-emulator mints the former.
+		PreferredUsername string `json:"preferred_username"`
+		UPN               string `json:"upn"`
 		// Fabric notebook attribution, minted via entra's extraClaims.
 		JobID     string `json:"fabric_job_id"`
 		CellIndex string `json:"fabric_cell_index"`
@@ -172,6 +181,12 @@ func (v *Validator) Validate(token string) (*Principal, error) {
 	// appid with no user oid.
 	if claims.IdTyp == "app" || (claims.Oid == "" && claims.AppID != "") {
 		p.Type = "ServicePrincipal"
+	}
+	if p.Type == "User" {
+		p.UPN = claims.PreferredUsername
+		if p.UPN == "" {
+			p.UPN = claims.UPN
+		}
 	}
 	if p.ID == "" {
 		return nil, fmt.Errorf("%w: no principal claim", ErrBadToken)

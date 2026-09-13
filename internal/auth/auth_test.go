@@ -25,6 +25,9 @@ type mintOpts struct {
 	appid string
 	idtyp string
 	kid   string
+	// preferredUsername and upn are the two spellings of a user's sign-in name.
+	preferredUsername string
+	upn               string
 }
 
 func b64(v any) string {
@@ -36,7 +39,8 @@ func mint(t *testing.T, key *rsa.PrivateKey, o mintOpts) string {
 	t.Helper()
 	head := map[string]string{"alg": "RS256", "typ": "JWT", "kid": o.kid}
 	claims := map[string]any{"iss": o.iss, "aud": o.aud, "exp": o.exp, "nbf": o.nbf}
-	for k, v := range map[string]string{"oid": o.oid, "sub": o.sub, "appid": o.appid, "idtyp": o.idtyp} {
+	for k, v := range map[string]string{"oid": o.oid, "sub": o.sub, "appid": o.appid, "idtyp": o.idtyp,
+		"preferred_username": o.preferredUsername, "upn": o.upn} {
 		if v != "" {
 			claims[k] = v
 		}
@@ -168,5 +172,34 @@ func TestValidateRequest(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+tok)
 	if _, err := v.ValidateRequest(r); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A user's sign-in name reaches the principal from either spelling Entra uses,
+// preferring v2's preferred_username; a service principal carries none, as in
+// the service, where USERPRINCIPALNAME() for an app is not a user's identity.
+func TestTheUPNComesFromTheTokenForUsersOnly(t *testing.T) {
+	v, key := newFixture(t, 1000)
+	base := mintOpts{iss: testIssuer, aud: ControlPlaneAudiences[0], exp: 2000, kid: "test-key"}
+	for name, tc := range map[string]struct {
+		opts mintOpts
+		want string
+	}{
+		"v2 preferred_username": {mintOpts{oid: "u", preferredUsername: "ada@contoso.com"}, "ada@contoso.com"},
+		"v1 upn":                {mintOpts{oid: "u", upn: "grace@contoso.com"}, "grace@contoso.com"},
+		"both, v2 wins":         {mintOpts{oid: "u", preferredUsername: "ada@contoso.com", upn: "old@contoso.com"}, "ada@contoso.com"},
+		"neither":               {mintOpts{oid: "u"}, ""},
+		"a service principal":   {mintOpts{appid: "app", idtyp: "app", sub: "app", preferredUsername: "not-a-user@contoso.com"}, ""},
+	} {
+		o := base
+		o.oid, o.sub, o.appid, o.idtyp = tc.opts.oid, tc.opts.sub, tc.opts.appid, tc.opts.idtyp
+		o.preferredUsername, o.upn = tc.opts.preferredUsername, tc.opts.upn
+		p, err := v.Validate(mint(t, key, o))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if p.UPN != tc.want {
+			t.Errorf("%s: UPN = %q, want %q", name, p.UPN, tc.want)
+		}
 	}
 }
