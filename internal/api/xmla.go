@@ -1,7 +1,9 @@
 package api
 
 import (
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"net/http"
@@ -83,31 +85,83 @@ func (a *API) registerXMLA(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1.0/myorg/groups", a.withPBIAuth(a.listPBIGroups))
 }
 
-// mwcToken is what generateastoken issues and what the client presents
-// afterwards. It is not a credential: nothing outside this process mints or
-// validates it, and it carries no claims. It exists because the client's flow
-// requires a token to come back and be usable.
-const mwcToken = "fabric-emulator-mwc-token"
+// mwcTTL is how long a minted MWC token authorises calls. The client fetches a
+// token PER CONNECTION (measured, docs/32), and the token's contents are the
+// emulator's to choose, so the lifetime is too: long enough for a connection's
+// work, short enough that a leaked token stops working on its own.
+const mwcTTL = int64(3600)
 
-// mwcHolder is the principal that obtained the MWC token. The token must carry
-// an identity or the calls it authorises can see nothing: a fabricated
-// principal owns no workspace, so `list_measures` would return an EMPTY frame
-// rather than an error — well formed, never failing, and wrong. Recording who
-// asked keeps the answer attributable.
-var (
-	mwcMu     sync.RWMutex
-	mwcHolder *auth.Principal
-)
+// mwcTokenBytes is the entropy in a minted token.
+const mwcTokenBytes = 32
 
-// withXMLAAuth accepts EITHER an AAD Power BI token or the MWC token this
-// server issued. The principal for an MWC-token call is the one that obtained
-// it — modelled here as the caller of record, since a single-tenant emulator
-// has no separate service identity to attribute it to.
+// mwcRand fills a token's bytes. A variable so a test can make it fail; a token
+// that could not be made random must not be issued at all.
+var mwcRand = rand.Read
+
+// mwcTokens maps each token generateastoken issued to the principal who
+// exchanged for it.
+//
+// A TOKEN IS A CREDENTIAL, AND EACH ONE NAMES ITS OWN PRINCIPAL. This used to be
+// a single fixed string, compiled into the binary, attributed to whoever had
+// exchanged most recently. So once anyone had connected over XMLA, a caller with
+// no Entra token at all could send that string and act as them; and two real
+// callers traded identities — an Admin's next call ran as whichever Viewer had
+// connected since. The fixed string was documented as "not a credential", and
+// every XMLA call after the exchange used it as one.
+//
+// The zero value is ready to use; the map is made on first issue.
+type mwcTokens struct {
+	mu     sync.Mutex
+	issued map[string]mwcSession
+}
+
+type mwcSession struct {
+	principal *auth.Principal
+	expires   int64
+}
+
+// issue mints a token for p, valid until now+mwcTTL, pruning expired tokens so
+// the map is bounded by the tokens live at once.
+func (m *mwcTokens) issue(p *auth.Principal, now int64) (string, error) {
+	b := make([]byte, mwcTokenBytes)
+	if _, err := mwcRand(b); err != nil {
+		return "", err
+	}
+	tok := "mwc_" + hex.EncodeToString(b)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.issued == nil {
+		m.issued = map[string]mwcSession{}
+	}
+	for t, sess := range m.issued {
+		if sess.expires <= now {
+			delete(m.issued, t)
+		}
+	}
+	m.issued[tok] = mwcSession{principal: p, expires: now + mwcTTL}
+	return tok, nil
+}
+
+// principal is the identity a token was issued to, or nil for a token this
+// process never issued or one that has expired.
+func (m *mwcTokens) principal(tok string, now int64) *auth.Principal {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.issued[tok]
+	if !ok || sess.expires <= now {
+		return nil
+	}
+	return sess.principal
+}
+
+// withXMLAAuth accepts EITHER an AAD Power BI token or an MWC token this server
+// issued. An MWC-token call runs as the principal that token was issued to — and
+// only that one.
 func (a *API) withXMLAAuth(h handler) http.HandlerFunc {
 	pbi := a.withPBIAuth(h)
 	return func(w http.ResponseWriter, r *http.Request) {
 		// The scheme is `MwcToken`, NOT `Bearer` — measured off the wire:
-		//     Authorization: MwcToken fabric-emulator-mwc-token
+		//     Authorization: MwcToken <token>
 		// Stripping only "Bearer " leaves the whole header unmatched, the
 		// request falls through to AAD validation, and a correct client is
 		// refused with `missing bearer token`.
@@ -119,25 +173,14 @@ func (a *API) withXMLAAuth(h handler) http.HandlerFunc {
 				break
 			}
 		}
-		if tok == mwcToken && a.xmlaMWCPrincipal() != nil {
-			// Attribute to the workspace owner rather than inventing an
-			// anonymous principal: an unattributed write would be worse than a
-			// slightly generous read.
-			h(w, r, a.xmlaMWCPrincipal())
+		if p := a.mwc.principal(tok, a.Store.Clock.Now()); p != nil {
+			h(w, r, p)
 			return
 		}
+		// Anything else — an AAD token, or an MWC token that is unknown or
+		// expired — is validated as an AAD token, and refused if it is not one.
 		pbi(w, r)
 	}
-}
-
-// xmlaMWCPrincipal is the identity an MWC-token call runs as: whoever exchanged
-// an AAD token for it. Nil until that exchange happens, and a nil principal is
-// refused rather than defaulted — a token nobody asked for should not authorise
-// anything.
-func (a *API) xmlaMWCPrincipal() *auth.Principal {
-	mwcMu.RLock()
-	defer mwcMu.RUnlock()
-	return mwcHolder
 }
 
 // listPBIGroups answers the Power BI `groups` shape: an OData-style envelope,
@@ -214,10 +257,12 @@ const workspaceRoutingID = "00000000-0000-0000-0000-000000000001"
 // xmlaToken answers the MWC token exchange. The contract is a single `Token`
 // member, read off ADOMD.NET's own DataContract rather than guessed.
 func (a *API) xmlaToken(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
-	mwcMu.Lock()
-	mwcHolder = p
-	mwcMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]string{"Token": mwcToken})
+	tok, err := a.mwc.issue(p, a.Store.Clock.Now())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", "could not mint a token: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"Token": tok})
 }
 
 // xmlaDatabaseName resolves a dataset name to the database the XMLA connection
