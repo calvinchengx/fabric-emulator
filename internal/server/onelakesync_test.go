@@ -7,6 +7,7 @@ package server_test
 // identity, where the roles do not apply.
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"testing"
 
 	entra "github.com/calvinchengx/entra-emulator/emulator"
+	"github.com/parquet-go/parquet-go"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
@@ -61,7 +63,11 @@ func TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint(t *testing.T) {
 	bob := "bbbb2222-0000-0000-0000-00000000015b"   // Viewer, may read hr
 	carol := "cccc3333-0000-0000-0000-00000000015c" // Viewer, in no role
 	dave := "dddd4444-0000-0000-0000-00000000015d"  // Contributor, in no role
-	for oid, role := range map[string]string{alice: store.RoleViewer, bob: store.RoleViewer, carol: store.RoleViewer, dave: store.RoleContributor} {
+	erin := "eeee5555-0000-0000-0000-00000000015e"  // Contributor, in the row-filtered role
+	frank := "ffff6666-0000-0000-0000-00000000015f" // Contributor, in a role whose filter is not OneLake's grammar
+	gina := "99997777-0000-0000-0000-000000000160"  // Viewer, in a role with two filtering rules on hr and a WHERE TRUE on sales
+	for oid, role := range map[string]string{alice: store.RoleViewer, bob: store.RoleViewer, carol: store.RoleViewer,
+		dave: store.RoleContributor, erin: store.RoleContributor, frank: store.RoleContributor, gina: store.RoleViewer} {
 		f.grantRole(t, oid, role)
 	}
 	svc, err := f.srv.API.LakehouseDB(context.Background(), lake.ID)
@@ -72,18 +78,36 @@ func TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint(t *testing.T) {
 		`CREATE TABLE dbo.sales (region varchar(10), amount int, secret varchar(10))`,
 		`INSERT INTO dbo.sales VALUES ('west', 1, 's')`,
 		`CREATE TABLE dbo.hr (name varchar(10))`,
-		`INSERT INTO dbo.hr VALUES ('ada')`)
-	// Beside the two roles under test: one filtering hr's rows for carol, which
-	// is not synced until row filters are (stage 3), and one naming a column
-	// sales does not have for bob, which grants nothing on sales — neither may
-	// read as no restriction at all.
-	filtered := store.OneLakeRole{Name: "FilteredHR", Body: []byte(fmt.Sprintf(`{"name":"FilteredHR","decisionRules":[{"effect":"Permit","permission":[
-	  {"attributeName":"Path","attributeValueIncludedIn":["Tables/hr"]},
-	  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
-	  "constraints":{"rows":[{"tablePath":"/Tables/hr","value":"SELECT * FROM hr WHERE name = 'ada'"}]}}],
-	  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, carol))}
+		`INSERT INTO dbo.hr VALUES ('ada'), ('bob')`)
+	// Beside the two roles under test: one filtering hr's rows to ADA (text
+	// compares case-insensitively) for carol and erin; one whose filter is not
+	// OneLake's grammar, for frank; and one naming a column sales does not
+	// have, for bob. None may read as no restriction at all.
+	rowRole := func(name, table, filter string, members ...string) store.OneLakeRole {
+		var ms []string
+		for _, m := range members {
+			ms = append(ms, fmt.Sprintf(`{"objectId":%q}`, m))
+		}
+		return store.OneLakeRole{Name: name, Body: []byte(fmt.Sprintf(`{"name":%q,"decisionRules":[{"effect":"Permit","permission":[
+		  {"attributeName":"Path","attributeValueIncludedIn":["Tables/%s"]},
+		  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
+		  "constraints":{"rows":[{"tablePath":"/Tables/%s","value":%q}]}}],
+		  "members":{"microsoftEntraMembers":[%s]}}`, name, table, table, filter, strings.Join(ms, ",")))}
+	}
 	roles := []store.OneLakeRole{oneLakeRole("SalesReaders", "sales", alice, "region", "amount"), oneLakeRole("HR", "hr", bob),
-		filtered, oneLakeRole("Renamed", "sales", bob, "region", "no_such_column")}
+		rowRole("FilteredHR", "hr", "SELECT * FROM hr WHERE name = 'ADA'", carol, erin),
+		rowRole("Dynamic", "hr", "SELECT * FROM hr WHERE name = USER_NAME()", frank),
+		oneLakeRole("Renamed", "sales", bob, "region", "no_such_column"),
+		// Two rules filtering one table in one role arrive joined by UNION and
+		// read as either; a filter reading no column still filters.
+		{Name: "TwoRules", Body: []byte(fmt.Sprintf(`{"name":"TwoRules","decisionRules":[
+		  {"effect":"Permit","permission":[{"attributeName":"Path","attributeValueIncludedIn":["Tables/hr"]},{"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
+		   "constraints":{"rows":[{"tablePath":"/Tables/hr","value":"SELECT * FROM hr WHERE name = 'ada'"}]}},
+		  {"effect":"Permit","permission":[{"attributeName":"Path","attributeValueIncludedIn":["Tables/hr"]},{"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
+		   "constraints":{"rows":[{"tablePath":"/Tables/hr","value":"SELECT * FROM hr WHERE name = 'bob'"}]}},
+		  {"effect":"Permit","permission":[{"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},{"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
+		   "constraints":{"rows":[{"tablePath":"/Tables/sales","value":"SELECT * FROM sales WHERE TRUE"}]}}],
+		  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, gina))}}
 	for i := range roles {
 		roles[i].ItemID = lake.ID
 	}
@@ -126,7 +150,7 @@ func TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint(t *testing.T) {
 			t.Errorf("a write on the endpoint (%q): %v", write, err)
 		}
 	}
-	if n := scalar(t, svc, `SELECT COUNT(*) FROM dbo.hr`); n != 1 {
+	if n := scalar(t, svc, `SELECT COUNT(*) FROM dbo.hr`); n != 2 {
 		t.Fatalf("the endpoint's table was written: %d rows", n)
 	}
 
@@ -146,9 +170,24 @@ func TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint(t *testing.T) {
 	expect("user identity", map[string][]bool{
 		alice: {true, false, false},
 		bob:   {false, false, true},
-		carol: {false, false, false},
+		carol: {false, false, true},
 		dave:  {true, true, true},
+		erin:  {true, true, true},
+		frank: {true, true, true},
+		gina:  {true, true, true},
 	})
+	// Rows: a filtered Viewer and a filtered Contributor see ada only; a
+	// Contributor whose role's filter is invalid sees no rows; a Contributor in
+	// no role and a Viewer whose role grants hr whole see both.
+	for oid, want := range map[string]int{carol: 1, erin: 1, frank: 0, dave: 2, bob: 2, gina: 2} {
+		db, err := f.open(t, oid, lake.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := scalar(t, db, `SELECT COUNT(*) FROM dbo.hr`); n != want {
+			t.Errorf("%s sees %d hr row(s), want %d", oid[:8], n, want)
+		}
+	}
 
 	// The same holds by three-part name from the warehouse beside it: the
 	// memberships travel with the caller into every database they reach.
@@ -176,18 +215,21 @@ func TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint(t *testing.T) {
 
 	// Membership moves with the OneLake role on the next connection: the role
 	// stays, alice leaves it, carol joins it.
-	moved := []store.OneLakeRole{oneLakeRole("SalesReaders", "sales", carol, "region", "amount"), roles[1]}
+	moved := []store.OneLakeRole{oneLakeRole("SalesReaders", "sales", carol, "region", "amount"), roles[1], roles[2]}
 	moved[0].ItemID = lake.ID
 	if err := f.srv.Store.PutOneLakeRoles(lake.ID, moved); err != nil {
 		t.Fatal(err)
 	}
-	expect("after the role moves to carol", map[string][]bool{alice: {false, false, false}, carol: {true, false, false}})
+	expect("after the role moves to carol", map[string][]bool{alice: {false, false, false}, carol: {true, false, true}})
 
 	// A role that is removed is gone from the endpoint too.
 	if err := f.srv.Store.PutOneLakeRoles(lake.ID, roles[1:2]); err != nil {
 		t.Fatal(err)
 	}
-	expect("after the role is removed", map[string][]bool{carol: {false, false, false}, bob: {false, false, true}})
+	expect("after the role is removed", map[string][]bool{carol: {false, false, false}, bob: {false, false, true}, erin: {true, true, true}})
+	if db, err := f.open(t, erin, lake.ID); err != nil || scalar(t, db, `SELECT COUNT(*) FROM dbo.hr`) != 2 {
+		t.Errorf("erin, no longer in a filtering role, does not see every row: %v", err)
+	}
 
 	// Back to delegated: the synced roles are gone, a Viewer reads every table
 	// again, and the DENY set aside is enforced again.
@@ -231,4 +273,78 @@ func TestAOneLakeSyncThatFailsRefusesTheConnection(t *testing.T) {
 	if _, err := f.open(t, entra.DaemonClientID, lake.ID); err == nil || !strings.Contains(err.Error(), "syncing OneLake security") {
 		t.Errorf("a sync the engine refuses: %v", err)
 	}
+}
+
+// A reflected Delta table keeps its row filter across a change to the Delta:
+// reflection drops the synced policy to recreate the table, and the sync that
+// follows puts it back — while an unchanged sync touches nothing.
+func TestARowFilterSurvivesReflection(t *testing.T) {
+	f := newSecFixture(t)
+	web := httptest.NewServer(f.srv.Handler())
+	t.Cleanup(web.Close)
+	lake, endpoint := f.lakehouse(t)
+	viewer := "aaaa1111-0000-0000-0000-0000000re7f1"
+	f.grantRole(t, viewer, store.RoleViewer)
+	commit := func(version int, rows []whRow) {
+		t.Helper()
+		var buf bytes.Buffer
+		pw := parquet.NewGenericWriter[whRow](&buf)
+		if _, err := pw.Write(rows); err != nil {
+			t.Fatal(err)
+		}
+		_ = pw.Close()
+		part := fmt.Sprintf("part-%d.parquet", version)
+		for rel, content := range map[string][]byte{
+			"Tables/sales/" + part: buf.Bytes(),
+			fmt.Sprintf("Tables/sales/_delta_log/%020d.json", version): []byte(fmt.Sprintf(`{"add":{"path":%q}}`, part)),
+		} {
+			if err := f.srv.Store.CreateOneLakePath(&store.OneLakePath{WorkspaceID: f.ws.ID, ItemID: lake.ID, RelPath: rel, Content: content}, false); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	commit(0, []whRow{{"us", 80}, {"eu", 60}})
+	role := store.OneLakeRole{ItemID: lake.ID, Name: "US", Body: []byte(fmt.Sprintf(`{"name":"US","decisionRules":[{"effect":"Permit","permission":[
+	  {"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},
+	  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
+	  "constraints":{"rows":[{"tablePath":"/Tables/sales","value":"SELECT * FROM sales WHERE region = 'US'"}]}}],
+	  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, viewer))}
+	if err := f.srv.Store.PutOneLakeRoles(lake.ID, []store.OneLakeRole{role}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := f.switchMode(t, web, endpoint, entra.DaemonClientID, "UserIdentity"); code != http.StatusOK {
+		t.Fatalf("switch = %d %s", code, body)
+	}
+	count := func(phase string, want int) {
+		t.Helper()
+		db, err := f.open(t, viewer, lake.ID)
+		if err != nil {
+			t.Fatalf("%s: %v", phase, err)
+		}
+		if n := scalar(t, db, `SELECT COUNT(*) FROM dbo.sales`); n != want {
+			t.Errorf("%s: the viewer sees %d row(s), want %d", phase, n, want)
+		}
+	}
+	count("first reflection", 1)
+
+	svc, err := f.srv.API.LakehouseDB(context.Background(), lake.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyID := scalar(t, svc, `SELECT object_id FROM sys.security_policies WHERE name LIKE 'OLS[_]rls[_]%'`)
+	count("an unchanged reconnect", 1)
+	if again := scalar(t, svc, `SELECT object_id FROM sys.security_policies WHERE name LIKE 'OLS[_]rls[_]%'`); again != policyID {
+		t.Error("an unchanged sync rebuilt the row policy")
+	}
+
+	commit(1, []whRow{{"us", 1}, {"us", 2}, {"eu", 3}})
+	count("after the Delta changed", 3)
+
+	if code, body := f.switchMode(t, web, endpoint, entra.DaemonClientID, "DelegatedIdentity"); code != http.StatusOK {
+		t.Fatalf("switch back = %d %s", code, body)
+	}
+	if n := scalar(t, svc, `SELECT COUNT(*) FROM sys.objects WHERE name LIKE 'OLS[_]%'`); n != 0 {
+		t.Errorf("%d synced object(s) survived the switch back", n)
+	}
+	count("delegated", 5)
 }

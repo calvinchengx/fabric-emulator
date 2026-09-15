@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -96,36 +98,61 @@ func oneLakeGrant(st *store.Store, lake *store.Item, principal, role string, acc
 	return g, nil
 }
 
-// syncOneLakeRoles brings the endpoint's OLS_ roles in line with the
-// lakehouse's OneLake security: one role per OneLake role, holding SELECT on the
-// tables it grants — on its permitted columns when it narrows them — and no
-// other object permission; roles whose OneLake role is gone are emptied and
-// dropped; the guard trigger is in place. Memberships are not set here: they
-// travel with each principal's grant into provisioning.
+// syncOneLakeRoles brings the endpoint's OLS_ objects in line with the
+// lakehouse's OneLake security:
 //
-// A column list naming a column the table does not have grants nothing on that
-// table: "Renaming or removing an allowed column invalidates the security rule
-// … denying all access to the resource". A table the role filters by rows is
-// not granted until row filters are synced (stage 3), so a filter is never
-// served as no filter.
+//   - one database role per OneLake role, holding SELECT on exactly the tables
+//     it grants — on the permitted columns when it narrows them — and no other
+//     object permission; a role whose OneLake role is gone is emptied and
+//     dropped;
+//   - for each table some role filters by rows, one security policy,
+//     OLS_rls_<table hash>, over one predicate function, OLS_rlsfn_<table hash>, admitting a row when the reader is
+//     in a role that filters it and the filter holds, or in a role that grants
+//     the table unfiltered, or in no role that grants it at all — so filters
+//     union across roles as OneLake's do, and a Contributor or above in no
+//     filtering role reads the table whole (docs/60: inferred);
+//   - the guard trigger.
+//
+// Memberships are not set here: they travel with each principal's grant into
+// provisioning.
+//
+// A restriction is never served as none. A column list naming a column the table
+// lacks grants nothing on that table ("denying all access to the resource"), and
+// so does a row filter outside OneLake's grammar or not matching the table ("no
+// rows being shown to users").
+//
+// ONE TRANSACTION, AND ONLY WHEN SOMETHING CHANGED. The batch replaces policies,
+// and a reader must never see the moment between dropping one and creating the
+// next; so it runs under XACT_ABORT in a transaction. Its hash — which covers the
+// tables' object ids, so a table reflection recreated counts as a change — is
+// kept as a database extended property, and an unchanged sync does nothing.
 func syncOneLakeRoles(ctx context.Context, db *sql.DB, st *store.Store, lake *store.Item) error {
 	roles, err := st.EvaluatableRoles(lake.ID)
 	if err != nil {
 		return err
 	}
-	columns, err := endpointColumns(ctx, db)
+	endpoint, err := endpointColumns(ctx, db)
 	if err != nil {
 		return err
 	}
-	tables := make([]string, 0, len(columns))
-	for t := range columns {
+	tables := make([]string, 0, len(endpoint.columns))
+	for t := range endpoint.columns {
 		tables = append(tables, t)
 	}
 	sort.Strings(tables)
 
+	type tableAccess struct {
+		filtered   []roleFilter
+		unfiltered []string // role name literals granting the table whole
+		used       []string // columns the filters read
+	}
+	access := map[string]*tableAccess{}
+
 	var b strings.Builder
+	b.WriteString("SET XACT_ABORT ON;\nBEGIN TRANSACTION;\n")
 	b.WriteString("IF NOT EXISTS (SELECT 1 FROM sys.triggers WHERE parent_class = 0 AND name = N'OLS_guard') EXEC(N'" +
 		strings.ReplaceAll(syncGuard, "'", "''") + "');\n")
+	b.WriteString(dropRowPolicies)
 	keep := []string{"N''"}
 	for _, r := range roles {
 		name, err := oneLakeRoleName(r.Name)
@@ -148,27 +175,57 @@ EXEC sp_executesql @revoke_%[1]d;
 				continue
 			}
 			n := onelakesec.Narrowing(entries, path)
+			var grantCols []string
+			if n != nil && len(n.Columns) > 0 {
+				for _, c := range n.Columns {
+					actual, ok := endpoint.columns[t][strings.ToLower(c)]
+					if !ok {
+						grantCols = nil
+						break
+					}
+					grantCols = append(grantCols, sqlIdent(actual.Name))
+				}
+				if grantCols == nil {
+					continue
+				}
+			}
+			ta := access[t]
+			if ta == nil {
+				ta = &tableAccess{}
+				access[t] = ta
+			}
 			if n != nil && n.Rows != "" {
-				continue
+				filter, cols, err := translateRowFilters(n.Rows, t, endpoint.columns[t])
+				if err != nil {
+					// No rows for any member: a Contributor in the role reads none, and
+					// a Viewer is not granted the table at all, so their query errors
+					// as the SQL analytics endpoint's does.
+					ta.filtered = append(ta.filtered, roleFilter{role: lit, expr: "(1 = 0)"})
+					continue
+				}
+				ta.filtered = append(ta.filtered, roleFilter{role: lit, expr: filter})
+				for _, c := range cols {
+					if !containsString(ta.used, c) {
+						ta.used = append(ta.used, c)
+					}
+				}
+			} else {
+				ta.unfiltered = append(ta.unfiltered, lit)
 			}
 			on := "[dbo]." + sqlIdent(t)
-			if n == nil || len(n.Columns) == 0 {
+			if grantCols == nil {
 				fmt.Fprintf(&b, "GRANT SELECT ON %s TO %s;\n", on, ident)
-				continue
-			}
-			var cols []string
-			for _, c := range n.Columns {
-				actual, ok := columns[t][strings.ToLower(c)]
-				if !ok {
-					cols = nil
-					break
-				}
-				cols = append(cols, sqlIdent(actual))
-			}
-			if cols != nil {
-				fmt.Fprintf(&b, "GRANT SELECT ON %s (%s) TO %s;\n", on, strings.Join(cols, ", "), ident)
+			} else {
+				fmt.Fprintf(&b, "GRANT SELECT ON %s (%s) TO %s;\n", on, strings.Join(grantCols, ", "), ident)
 			}
 		}
+	}
+	for _, t := range tables {
+		ta := access[t]
+		if ta == nil || len(ta.filtered) == 0 {
+			continue
+		}
+		b.WriteString(rowPolicy(t, ta.filtered, ta.unfiltered, ta.used, endpoint.columns[t]))
 	}
 	fmt.Fprintf(&b, `DECLARE @stale nvarchar(max) = N'';
 SELECT @stale += N'ALTER ROLE ' + QUOTENAME(r.name) + N' DROP MEMBER ' + QUOTENAME(m.name) + N';'
@@ -178,30 +235,146 @@ JOIN sys.database_principals m ON m.principal_id = rm.member_principal_id
 WHERE r.name LIKE 'OLS[_]%%' AND r.name NOT IN (%[1]s);
 SELECT @stale += N'DROP ROLE ' + QUOTENAME(name) + N';'
 FROM sys.database_principals WHERE type = 'R' AND name LIKE 'OLS[_]%%' AND name NOT IN (%[1]s);
-EXEC sp_executesql @stale;`, strings.Join(keep, ", "))
+EXEC sp_executesql @stale;
+`, strings.Join(keep, ", "))
+
+	sum := sha256.Sum256([]byte(b.String() + "\x00" + endpoint.shape))
+	hash := hex.EncodeToString(sum[:])
+	if endpoint.synced == hash {
+		return nil
+	}
+	fmt.Fprintf(&b, `IF EXISTS (SELECT 1 FROM sys.extended_properties WHERE class = 0 AND name = N'OLS_sync')
+  EXEC sp_updateextendedproperty @name = N'OLS_sync', @value = N'%[1]s';
+ELSE
+  EXEC sp_addextendedproperty @name = N'OLS_sync', @value = N'%[1]s';
+COMMIT;`, hash)
 	if _, err := db.ExecContext(ctx, b.String()); err != nil {
 		return fmt.Errorf("syncing OneLake security into the SQL analytics endpoint: %w", err)
 	}
 	return nil
 }
 
-// endpointColumns lists the endpoint's dbo tables and their columns, keyed by
-// table name and then by lower-cased column name. One aggregated row, so there
-// is one way for it to fail.
-func endpointColumns(ctx context.Context, db *sql.DB) (map[string]map[string]string, error) {
-	var agg sql.NullString
-	if err := db.QueryRowContext(ctx, `SELECT STRING_AGG(CAST(t.name + NCHAR(2) + c.name AS nvarchar(max)), NCHAR(1))
-		FROM sys.tables t JOIN sys.columns c ON c.object_id = t.object_id
-		WHERE t.schema_id = SCHEMA_ID('dbo') AND t.is_ms_shipped = 0`).Scan(&agg); err != nil {
-		return nil, fmt.Errorf("listing the endpoint's tables: %w", err)
-	}
-	out := map[string]map[string]string{}
-	for _, pair := range splitAgg(agg) {
-		t, c, _ := strings.Cut(pair, "\x02")
-		if out[t] == nil {
-			out[t] = map[string]string{}
+// dropRowPolicies removes every synced row policy and its predicate function.
+const dropRowPolicies = `DECLARE @rls nvarchar(max) = N'';
+SELECT @rls += N'DROP SECURITY POLICY ' + QUOTENAME(SCHEMA_NAME(schema_id)) + N'.' + QUOTENAME(name) + N';'
+FROM sys.security_policies WHERE name LIKE 'OLS[_]rls[_]%';
+SELECT @rls += N'DROP FUNCTION ' + QUOTENAME(SCHEMA_NAME(schema_id)) + N'.' + QUOTENAME(name) + N';'
+FROM sys.objects WHERE type IN ('IF', 'TF', 'FN') AND name LIKE 'OLS[_]rlsfn[_]%';
+EXEC sp_executesql @rls;
+`
+
+// roleFilter is one role's translated row filter on a table, with the role as a
+// SQL literal.
+type roleFilter struct {
+	role, expr string
+}
+
+// rowPolicy creates one table's predicate function and security policy.
+func rowPolicy(table string, filtered []roleFilter, unfiltered, used []string, columns map[string]endpointColumn) string {
+	sum := sha256.Sum256([]byte(table))
+	name := "OLS_rls_" + hex.EncodeToString(sum[:8])
+	fnName := "OLS_rlsfn_" + hex.EncodeToString(sum[:8])
+	if len(used) == 0 {
+		// A filter reading no column still needs one to attach to.
+		for _, c := range columns {
+			if len(used) == 0 || c.Name < used[0] {
+				used = []string{c.Name}
+			}
 		}
-		out[t][strings.ToLower(c)] = c
+	}
+	var params, projections, args []string
+	for i, c := range used {
+		col := columns[strings.ToLower(c)]
+		params = append(params, fmt.Sprintf("@p%d %s", i, col.Type))
+		projections = append(projections, fmt.Sprintf("@p%d AS %s", i, sqlIdent(col.Name)))
+		args = append(args, sqlIdent(col.Name))
+	}
+	var terms, none []string
+	for _, f := range filtered {
+		terms = append(terms, "(IS_MEMBER("+f.role+") = 1 AND "+f.expr+")")
+		none = append(none, "IS_MEMBER("+f.role+") = 0")
+	}
+	for _, u := range unfiltered {
+		terms = append(terms, "IS_MEMBER("+u+") = 1")
+		none = append(none, "IS_MEMBER("+u+") = 0")
+	}
+	terms = append(terms, "("+strings.Join(none, " AND ")+")")
+	fn := fmt.Sprintf("CREATE FUNCTION [dbo].%s(%s) RETURNS TABLE AS RETURN SELECT 1 AS ok FROM (SELECT %s) AS r WHERE %s",
+		sqlIdent(fnName), strings.Join(params, ", "), strings.Join(projections, ", "), strings.Join(terms, " OR "))
+	policy := fmt.Sprintf("CREATE SECURITY POLICY [dbo].%s ADD FILTER PREDICATE [dbo].%s(%s) ON [dbo].%s WITH (STATE = ON, SCHEMABINDING = OFF)",
+		sqlIdent(name), sqlIdent(fnName), strings.Join(args, ", "), sqlIdent(table))
+	return fmt.Sprintf("EXEC(N'%s');\nEXEC(N'%s');\nGRANT SELECT ON [dbo].%s TO [public];\n",
+		strings.ReplaceAll(fn, "'", "''"), strings.ReplaceAll(policy, "'", "''"), sqlIdent(fnName))
+}
+
+// translateRowFilters translates a role's row filter for one table. Several
+// rules filtering the same table arrive joined by " UNION ", as OneLake's
+// consolidation writes them, and become an OR.
+func translateRowFilters(rows, table string, columns map[string]endpointColumn) (string, []string, error) {
+	var exprs, used []string
+	for _, part := range strings.Split(rows, " UNION ") {
+		f, err := translateRowFilter(part, table, columns)
+		if err != nil {
+			return "", nil, err
+		}
+		exprs = append(exprs, f.Expr)
+		for _, c := range f.Columns {
+			if !containsString(used, c) {
+				used = append(used, c)
+			}
+		}
+	}
+	return "(" + strings.Join(exprs, " OR ") + ")", used, nil
+}
+
+func containsString(xs []string, v string) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// endpointState is what the sync reads from the endpoint: each dbo table's
+// columns, keyed by lower-cased name; the tables' shape (names and object ids),
+// which changes when reflection recreates one; and the hash of the last sync.
+type endpointState struct {
+	columns map[string]map[string]endpointColumn
+	shape   string
+	synced  string
+}
+
+// endpointColumns reads the endpoint's state in one aggregated row, so there is
+// one way for it to fail.
+func endpointColumns(ctx context.Context, db *sql.DB) (endpointState, error) {
+	var agg, synced sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT
+  (SELECT STRING_AGG(CAST(t.name + NCHAR(2) + c.name + NCHAR(2)
+      + CASE
+          WHEN ty.name IN ('varchar', 'char', 'varbinary', 'binary') THEN ty.name + '(' + CASE WHEN c.max_length = -1 THEN 'max' ELSE CAST(c.max_length AS varchar(10)) END + ')'
+          WHEN ty.name IN ('nvarchar', 'nchar') THEN ty.name + '(' + CASE WHEN c.max_length = -1 THEN 'max' ELSE CAST(c.max_length / 2 AS varchar(10)) END + ')'
+          WHEN ty.name IN ('decimal', 'numeric') THEN ty.name + '(' + CAST(c.precision AS varchar(10)) + ',' + CAST(c.scale AS varchar(10)) + ')'
+          WHEN ty.name IN ('datetime2', 'time', 'datetimeoffset') THEN ty.name + '(' + CAST(c.scale AS varchar(10)) + ')'
+          ELSE ty.name END
+      + NCHAR(2) + CAST(t.object_id AS nvarchar(20)) AS nvarchar(max)), NCHAR(1))
+     WITHIN GROUP (ORDER BY t.name, c.column_id)
+   FROM sys.tables t
+   JOIN sys.columns c ON c.object_id = t.object_id
+   JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+   WHERE t.schema_id = SCHEMA_ID('dbo') AND t.is_ms_shipped = 0),
+  (SELECT CAST(value AS nvarchar(100)) FROM sys.extended_properties WHERE class = 0 AND name = N'OLS_sync')`).Scan(&agg, &synced); err != nil {
+		return endpointState{}, fmt.Errorf("listing the endpoint's tables: %w", err)
+	}
+	out := endpointState{columns: map[string]map[string]endpointColumn{}, shape: agg.String, synced: synced.String}
+	for _, row := range splitAgg(agg) {
+		f := strings.Split(row, "\x02")
+		t, c, typ := f[0], f[1], f[2]
+		if out.columns[t] == nil {
+			out.columns[t] = map[string]endpointColumn{}
+		}
+		out.columns[t][strings.ToLower(c)] = endpointColumn{Name: c, Type: typ,
+			Text: strings.Contains(typ, "char")}
 	}
 	return out, nil
 }

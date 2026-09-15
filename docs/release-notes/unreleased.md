@@ -12,8 +12,10 @@ the emulator-native `…/sqlEndpoints/{id}/_emulator/dataAccessMode` (Fabric off
 no API), and the switch applies Fabric's documented effects: the workspace's SQL
 sessions end, and SQL roles, security policies and functions change as the mode
 requires. In user identity mode, the lakehouse's OneLake security roles are
-synced into the endpoint as `OLS_` database roles: a Viewer reads only the tables
-and columns their roles grant, and T-SQL cannot grant tables around them.
+synced into the endpoint as `OLS_` database roles and row policies: a Viewer
+reads only the tables, columns and rows their roles grant, a role member of any
+workspace role is held to its row filter, and T-SQL cannot grant tables around
+them.
 
 The endpoint also accepts the SQL objects and security authored on it — views,
 functions, roles, grants, security policies, masks — which the relay refused as

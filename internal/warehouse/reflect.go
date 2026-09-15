@@ -223,6 +223,17 @@ func deltaFingerprint(st *store.Store, itemID, name string) (string, error) {
 // that existed solely to serve it.
 func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table) error {
 	q := quoteIdent(name)
+	// A synced OneLake row policy (docs/60) holds the table even without schema
+	// binding, so DROP TABLE would fail. It is dropped with the table's grants;
+	// the security sync that runs after reflection recreates both, and until it
+	// does a reader restricted by them has no SELECT on the new table.
+	if _, err := db.ExecContext(ctx, `DECLARE @rls nvarchar(max) = N'';
+SELECT @rls += N'DROP SECURITY POLICY ' + QUOTENAME(SCHEMA_NAME(p.schema_id)) + N'.' + QUOTENAME(p.name) + N';'
+FROM sys.security_policies p JOIN sys.security_predicates sp ON sp.object_id = p.object_id
+WHERE sp.target_object_id = OBJECT_ID(@table) AND p.name LIKE 'OLS[_]rls[_]%';
+EXEC sp_executesql @rls;`, sql.Named("table", q)); err != nil {
+		return err
+	}
 	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS "+q); err != nil {
 		return err
 	}

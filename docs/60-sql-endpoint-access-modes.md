@@ -1,9 +1,9 @@
 # 60 — SQL analytics endpoint access modes: user identity and delegated identity
 
-**Status: stages 1–2 built — the mode is switchable with its effects, and in user
-identity mode a lakehouse's OneLake table and column security is synced into its
-SQL analytics endpoint and enforced by SQL Server.** Row filters (stage 3) and
-the knock-on effects (stage 4) follow.
+**Status: stages 1–3 built — the mode is switchable with its effects, and in user
+identity mode a lakehouse's OneLake table, column and row security is synced
+into its SQL analytics endpoint and enforced by SQL Server.** The knock-on
+effects (stage 4) follow.
 
 **Decision: model both modes the way Fabric's own security sync does — by
 translating a lakehouse's OneLake security roles into real SQL Server objects on
@@ -36,8 +36,8 @@ never reached T-SQL.
 | Stage | Build | May claim |
 |---|---|---|
 | 1 ✅ | The mode per SQL analytics endpoint, delegated by default, switched through an authenticated emulator-native API by Admin or Member; the switch closes the workspace's live sessions, turns off and remembers SQL security policies and drops custom roles on the way in, re-enables the remembered policies on the way out, and drops unbound functions either way. Until stage 2, an endpoint in user identity mode refuses connections, and a neighbour's three-part name cannot reach it | The mode is a real, switchable state with its documented effects |
-| **2 ✅** | Security sync on connect: each OneLake role becomes an `OLS_<role>` database role granted SELECT on its tables or column list; memberships travel with each caller into provisioning; below Contributor, table access comes only through those roles; a DDL trigger refuses table GRANT/DENY/REVOKE and security policies; explicit table permissions are set aside on the switch in and restored on the way out. Prerequisite found on the way: the endpoint accepts the SQL objects and security authored on it, still refusing data writes — past comments and later statements in a batch | **Tables and columns follow OneLake security** |
-| 3 | Row filters: each role's filter SQL wrapped in an inline function exposing the row's columns under their own names; one `OLS_` security policy per table ORs the roles' filters; members only — a Contributor+ in no filtering role reads unfiltered (inferred) | Rows follow OneLake security |
+| 2 ✅ | Security sync on connect: each OneLake role becomes an `OLS_<role>` database role granted SELECT on its tables or column list; memberships travel with each caller into provisioning; below Contributor, table access comes only through those roles; a DDL trigger refuses table GRANT/DENY/REVOKE and security policies; explicit table permissions are set aside on the switch in and restored on the way out. Prerequisite found on the way: the endpoint accepts the SQL objects and security authored on it, still refusing data writes — past comments and later statements in a batch | Tables and columns follow OneLake security |
+| **3 ✅** | Row filters: each role's filter validated against OneLake's documented grammar and translated into an inline predicate function exposing the row's columns under their own names; one `OLS_` security policy per table ORs the roles' filters; members only — a Contributor+ in no filtering role reads unfiltered (inferred); rebuilt in one transaction, only when something changed; reflection drops a table's synced policy before recreating it | **Rows follow OneLake security** |
 | 4 | Knock-on effects and grading: under Direct Lake on SQL (docs/59), `directLakeOnly` sees the synced policy as a fallback cause | End-to-end witnesses |
 
 ### Stage 1 in detail
@@ -118,6 +118,40 @@ A sync the engine cannot apply fails the connection: a OneLake role name that
 cannot become a SQL role name ("role names cannot exceed 124 characters;
 otherwise … synchronization fails"), or a hand-made `OLS_` role it cannot drop.
 
+### Stage 3 in detail
+
+**The grammar is Microsoft's.** A OneLake row filter is `SELECT * FROM
+[dbo.]<table> WHERE …` with columns compared to static values by `=`, `<>`, `>`,
+`>=`, `<`, `<=`, `[NOT] IN (…)`, `IS [NOT] NULL|BLANK`, joined by `AND`/`OR`/`NOT`
+with `TRUE`/`FALSE`, up to 1000 characters. `translateRowFilter` tokenizes it with
+the repo's T-SQL tokenizer, accepts exactly that, and emits a predicate over
+`r.[column]`, comparing text in `Latin1_General_100_CI_AS_KS_WS_SC_UTF8` as
+OneLake does. The table must match exactly; a column must exist. A function call,
+another table, a subquery or `UNION`-ed SQL is refused. `IS BLANK` is read as NULL
+or empty text — undocumented further, so inferred. Several rules filtering one
+table in one role, which OneLake consolidates with ` UNION `, become an OR.
+
+**One policy per filtered table.** `OLS_rls_<hash>` filters the table through
+`OLS_rlsfn_<hash>(cols)`, which admits a row when the reader is in a role whose
+filter holds, in a role granting the table whole, or in no role granting the
+table — the last term being how a Contributor or above in no filtering role reads
+everything, while one who is a member is filtered, as "RLS … in user identity
+mode … enforced for all users" says of role members (decided 2026-09-15:
+inferred). A filter outside the grammar reads as `1 = 0` for its role: a
+Contributor member sees no rows, and a Viewer member is not granted the table, so
+their query errors — "no rows being shown to users, or query errors in the SQL
+analytics endpoint".
+
+**Consistency.** The whole sync runs under `XACT_ABORT` in one transaction, so a
+reader never sees a policy dropped and not yet recreated; and it runs only when
+its content — including the tables' object ids — differs from the last sync,
+recorded as the `OLS_sync` database extended property. A security policy holds
+its table even without schema binding, so reflection now drops a table's synced
+`OLS_rls_` policy before recreating it; the table's grants go with it, so a
+reader restricted by the policy has no SELECT until the sync after reflection
+restores both — Fabric's "until synchronization completes" window, closed rather
+than opened.
+
 ## Boundaries
 
 - **Sync timing**: Fabric syncs within "up to 5 minutes"; the emulator syncs a
@@ -126,6 +160,8 @@ otherwise … synchronization fails"), or a hand-made `OLS_` role it cannot drop
 - **Fixed database roles**: an Admin or Member, who is `db_owner`, can still add
   a Viewer to `db_datareader`; the guard covers permission statements, not role
   membership.
+- **RLS and CLS from different roles** for one user: OneLake refuses the
+  combination with query errors; the emulator applies both.
 - **Masks** stay in force in user identity mode; Fabric says DDM is "not
   supported in OneLake security" without saying what happens to existing ones.
 - **EXEC** stays refused on the endpoint, as before.
@@ -169,3 +205,16 @@ their reader rung, memberships not synced, columns ignored, no guard, permission
 not set aside, permissions not restored, stale memberships kept — fails it.
 `internal/tds/writeguard_test.go` covers the endpoint guard's statements,
 comments and batches.
+
+Stage 3: in the same witness, a Viewer and a Contributor in a role filtering hr to
+`'ADA'` see the one `ada` row (case-insensitively), a Contributor in a role
+whose filter calls a function sees none, a Contributor in no role and a Viewer
+granted hr whole see both, and a Viewer whose role has two filtering rules on hr
+and a `WHERE TRUE` on sales sees both rules' rows. `TestARowFilterSurvivesReflection`
+reflects a real Delta table under a row filter, reconnects without the policy
+being rebuilt, commits new Delta so reflection recreates the table, and still
+sees only the filtered rows; switching back leaves no `OLS_` object.
+`internal/server/rowfilter_test.go` covers the grammar and every refusal. Each of
+seven mutations — no policy, no in-no-role term, no case-insensitive collation,
+an invalid filter read as none, reflection keeping the policy, rebuilding every
+sync, delegated keeping the policies — fails a witness.

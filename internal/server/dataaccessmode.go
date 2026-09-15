@@ -178,8 +178,8 @@ func splitAgg(v sql.NullString) []string {
 	return strings.Split(v.String, "\x01")
 }
 
-// enterDelegated removes what the security sync put in — the guard trigger and
-// the OLS_ roles — drops unbound functions, restores the table permissions the
+// enterDelegated removes what the security sync put in — the guard trigger, the
+// OLS_ roles and row policies, and its record of the last sync — drops unbound functions, restores the table permissions the
 // switch in revoked and turns the remembered policies back on. A permission
 // whose grantee or table no longer exists is skipped, not fatal: the rest are
 // still restored.
@@ -195,7 +195,10 @@ JOIN sys.database_principals m ON m.principal_id = rm.member_principal_id
 WHERE r.name LIKE 'OLS[_]%';
 SELECT @ols += N'DROP ROLE ' + QUOTENAME(name) + N';'
 FROM sys.database_principals WHERE type = 'R' AND name LIKE 'OLS[_]%';
-EXEC sp_executesql @ols;`)
+EXEC sp_executesql @ols;
+IF EXISTS (SELECT 1 FROM sys.extended_properties WHERE class = 0 AND name = N'OLS_sync') EXEC sp_dropextendedproperty @name = N'OLS_sync';
+`)
+	b.WriteString(dropRowPolicies)
 	b.WriteString(dropFunctions)
 	for _, stmt := range permissions {
 		fmt.Fprintf(&b, "\nBEGIN TRY EXEC (N'%s'); END TRY BEGIN CATCH END CATCH;", strings.ReplaceAll(stmt, "'", "''"))
