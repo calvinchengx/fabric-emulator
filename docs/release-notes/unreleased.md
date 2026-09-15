@@ -166,6 +166,15 @@ refused. The reply shape and the per-connection flow are unchanged, so
 SemPy, semantic-link-labs and ADOMD.NET need nothing.
 [docs/32](../32-xmla-plan.md#correction-2026-09-14-the-mwc-token-became-a-credential-in-production-not-just-in-the-screens)
 
+## Direct Lake on SQL is named, not mistaken for a broken OneLake model
+
+A semantic model whose shared expression is `Sql.Database(...)` — Direct Lake on
+SQL analytics endpoints — failed with *shared expression must contain an
+onelake.dfs.fabric.microsoft.com workspace/lakehouse URL*. It is now recognised
+and refused as Direct Lake on SQL, which is not served yet. Models that mix both
+flavours, or name more than one SQL source, are refused by name, and
+`directLakeBehavior` is parsed. [docs/59](../59-direct-lake-on-sql.md)
+
 ## Upgrading
 
 - **OneLake security roles with flat `rows` / `columns` on a decision rule now

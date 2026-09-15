@@ -69,6 +69,10 @@ type Model struct {
 	// visibility, for the principals they name. A model with ANY role is
 	// secured — a principal they apply to who is in none of them sees nothing.
 	Roles []Role
+	// DirectLakeBehavior is automatic (the default), directLakeOnly or
+	// directQueryOnly: whether a Direct Lake on SQL table may fall back to
+	// DirectQuery. It "only applies to Direct Lake on SQL analytics endpoints".
+	DirectLakeBehavior string
 }
 
 // Role is one model role. Its rules apply only to principals without Write
@@ -112,7 +116,8 @@ type tmsl struct {
 	Name               string `json:"name"`
 	CompatibilityLevel int    `json:"compatibilityLevel"`
 	Model              struct {
-		Expressions []struct {
+		DirectLakeBehavior string `json:"directLakeBehavior"`
+		Expressions        []struct {
 			Name       string          `json:"name"`
 			Expression json.RawMessage `json:"expression"`
 		} `json:"expressions"`
@@ -182,6 +187,11 @@ func ParseTMSL(b []byte) (*Model, error) {
 		return nil, fmt.Errorf("model has no tables")
 	}
 	m := &Model{Name: t.Name, CompatibilityLevel: t.CompatibilityLevel, Expressions: map[string]string{}}
+	behavior, err := directLakeBehavior(t.Model.DirectLakeBehavior)
+	if err != nil {
+		return nil, err
+	}
+	m.DirectLakeBehavior = behavior
 	for _, expression := range t.Model.Expressions {
 		text, err := expressionText(expression.Expression)
 		if err != nil {
