@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"unicode/utf16"
 )
 
@@ -40,6 +41,50 @@ type Server struct {
 	// with the resolved target database. It is how a warehouse build (dbt over
 	// TDS) reaches the lineage graph — see observe.go.
 	Observe Observer
+
+	// sessions are the live client connections, by the backend database they
+	// were routed to, so CloseSessions can end them.
+	sessionsMu sync.Mutex
+	sessions   map[string]map[net.Conn]struct{}
+}
+
+// CloseSessions ends every live session routed to one of the databases and
+// reports how many it closed. A client whose connection is closed sees its
+// running query cancelled, as Fabric does to "all running and queued queries at
+// all SQL analytics endpoints in that workspace" when an access mode changes.
+func (s *Server) CloseSessions(databases ...string) int {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	n := 0
+	for _, db := range databases {
+		for c := range s.sessions[db] {
+			_ = c.Close()
+			n++
+		}
+		delete(s.sessions, db)
+	}
+	return n
+}
+
+// track registers a routed session until the returned func is called.
+func (s *Server) track(database string, conn net.Conn) func() {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	if s.sessions == nil {
+		s.sessions = map[string]map[net.Conn]struct{}{}
+	}
+	if s.sessions[database] == nil {
+		s.sessions[database] = map[net.Conn]struct{}{}
+	}
+	s.sessions[database][conn] = struct{}{}
+	return func() {
+		s.sessionsMu.Lock()
+		defer s.sessionsMu.Unlock()
+		delete(s.sessions[database], conn)
+		if len(s.sessions[database]) == 0 {
+			delete(s.sessions, database)
+		}
+	}
 }
 
 // Serve accepts and handles connections until l errors.
@@ -126,6 +171,9 @@ func (s *Server) handle(conn net.Conn) error {
 		}
 		targetDB, readOnly, principal, dbRole = got.TargetDB, got.ReadOnly, got.Principal, got.Role
 		grants = got.Grants
+	}
+	if targetDB != "" {
+		defer s.track(targetDB, conn)()
 	}
 	// Full-fidelity path: if the backend can open a raw authenticated connection
 	// to the real engine, splice the client's post-login session straight to it

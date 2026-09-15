@@ -110,12 +110,27 @@ func sqlAccess(st *store.Store, it *store.Item, principal string) (store.Access,
 		return store.Access{}, nil, fmt.Errorf("access denied: the principal has no role on the workspace of %q "+
 			"and no Read permission on it", it.DisplayName)
 	}
+	if it.Type == "Lakehouse" {
+		mode, err := st.DataAccessMode(it)
+		if err != nil {
+			return store.Access{}, nil, fmt.Errorf("checking access: %w", err)
+		}
+		if mode == store.AccessModeUserIdentity {
+			return store.Access{}, nil, errUserIdentityNotServed
+		}
+	}
 	grants, err := workspaceGrants(st, it.WorkspaceID, principal, access.Role)
 	if err != nil {
 		return store.Access{}, nil, fmt.Errorf("checking access: %w", err)
 	}
 	return access, grants, nil
 }
+
+// errUserIdentityNotServed refuses an endpoint switched to user identity until
+// OneLake security is synced into it (docs/60): serving it under SQL permissions
+// would be delegated identity under another name.
+var errUserIdentityNotServed = errors.New("this SQL analytics endpoint is in user identity access mode, " +
+	"which this emulator does not serve yet; switch it back to delegated identity to query it")
 
 // sqlAddressable are the item types that have a T-SQL endpoint. A workspace
 // role reaches all of them, which is what workspaceGrants encodes.
@@ -183,6 +198,18 @@ func workspaceGrants(st *store.Store, workspaceID, principalID, role string) ([]
 				return nil, err
 			}
 			access := store.MergeAccess(role, it.Type, g)
+			// A lakehouse in user identity mode is refused at the endpoint, so a
+			// three-part name from a neighbour must not reach it either.
+			if t == "Lakehouse" {
+				mode, err := st.DataAccessMode(it)
+				if err != nil {
+					return nil, err
+				}
+				if mode == store.AccessModeUserIdentity {
+					out = append(out, tds.Grant{Database: it.ID, Role: tds.RoleNone})
+					continue
+				}
+			}
 			// A lakehouse endpoint is read-only whatever the role; a warehouse
 			// follows the role. Same rule the target uses.
 			readOnly := t == "Lakehouse" || store.RoleRank(role) < store.RoleRank(store.RoleContributor)

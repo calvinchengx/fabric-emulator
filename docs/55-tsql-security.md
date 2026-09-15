@@ -124,4 +124,4 @@ Every stage needs the unrestricted caller asserted in the same run.
 - **Lakehouse SQL analytics endpoint.** The same T-SQL features apply there in
   the product, and its OneLake-security interaction is mode-dependent (user
   identity vs delegated identity). This increment covers the Warehouse; the
-  endpoint's dual-mode behaviour is its own question.
+  endpoint's dual-mode behaviour is [docs/60](60-sql-endpoint-access-modes.md).

@@ -108,6 +108,10 @@ type API struct {
 	// way a relayed connection is (docs/59). The caller closes it. nil → Direct
 	// Lake on SQL is refused by name.
 	SQLDBAs func(ctx context.Context, itemID, principalID string) (*sql.DB, error)
+	// SwitchDataAccessMode applies a SQL analytics endpoint's change of data
+	// access mode to the engine and records it (docs/60). nil → no SQL engine is
+	// attached, and the mode is only recorded.
+	SwitchDataAccessMode func(ctx context.Context, endpoint, lakehouse *store.Item, to string) error
 	// refreshes is per-dataset refresh history for the Power BI refresh
 	// endpoints. In memory on purpose — see refreshes.go.
 	refreshes refreshLog
@@ -212,6 +216,12 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.getItem))
 	mux.HandleFunc("POST /v1/workspaces/{wid}/sqlEndpoints/{epid}/refreshMetadata",
 		a.withAuth(a.refreshSQLEndpointMetadata))
+	// Emulator-native: Fabric switches data access mode only in the portal
+	// (docs/60), so this is authenticated and gated as the portal is.
+	mux.HandleFunc("GET /v1/workspaces/{wid}/sqlEndpoints/{epid}/_emulator/dataAccessMode",
+		a.withAuth(a.getDataAccessMode))
+	mux.HandleFunc("PUT /v1/workspaces/{wid}/sqlEndpoints/{epid}/_emulator/dataAccessMode",
+		a.withAuth(a.putDataAccessMode))
 	mux.HandleFunc("PATCH /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.updateItem))
 	mux.HandleFunc("DELETE /v1/workspaces/{wid}/items/{iid}", a.withAuth(a.deleteItem))
 
