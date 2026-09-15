@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -14,12 +13,19 @@ import (
 	"github.com/calvinchengx/fabric-emulator/pkg/onelakesec"
 )
 
-func (a *API) loadDirectLakeData(ctx context.Context, model *semanticmodel.Model, data semanticmodel.Data, principal *auth.Principal) error {
+func (a *API) loadDirectLakeData(ctx context.Context, modelItemID string, model *semanticmodel.Model, data semanticmodel.Data, principal *auth.Principal) error {
 	binding, err := directLakeBinding(model)
 	if err != nil {
 		return err
 	}
 	if binding.flavor == semanticmodel.DirectLakeOnSQL {
+		source, err := a.resolveDirectLakeSQLSource(modelItemID, binding.sql, principal)
+		if err != nil {
+			return err
+		}
+		if err := a.directLakeSQLEngine(source); err != nil {
+			return err
+		}
 		return errDirectLakeOnSQLNotServed
 	}
 	for _, table := range model.Tables {
@@ -183,11 +189,6 @@ func projectDirectLakeColumns(modelTable *semanticmodel.Table, granted []string,
 	}
 	return out, nil
 }
-
-// errDirectLakeOnSQLNotServed names the flavour instead of failing to find a
-// OneLake URL in it, which is what a Sql.Database expression used to read as.
-var errDirectLakeOnSQLNotServed = errors.New("Direct Lake on SQL (Sql.Database) is recognised but not served " +
-	"by this emulator yet; Direct Lake on OneLake (a onelake.dfs.fabric.microsoft.com URL) is")
 
 // directLakeBinding classifies every Direct Lake table's shared expression and
 // refuses the combinations Fabric does not hold: tables of both flavours in one

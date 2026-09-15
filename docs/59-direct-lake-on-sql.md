@@ -1,7 +1,7 @@
 # 59 — Direct Lake on SQL: `Sql.Database` over a SQL analytics endpoint
 
-**Status: stage 1 built — the flavour is recognised and refused by name.**
-Stages 2–4 follow.
+**Status: stages 1–2 built — the flavour is recognised, its source resolved and
+Read required; rows are not served yet.** Stages 3–4 follow.
 
 **Decision: serve a Direct Lake on SQL table by reading through the SQL endpoint
 as the calling identity, so SELECT, column security, row security and masking
@@ -33,8 +33,8 @@ the other flavour.
 
 | Stage | Build | May claim |
 |---|---|---|
-| **1 ✅** | Every shared expression classified: OneLake URL, `Sql.Database` with two text arguments, or neither — each named. `directLakeBehavior` parsed from TMSL and TMDL. Refused: both flavours in one model, more than one SQL source, `Sql.Database` options, and — until stage 2 — the SQL flavour itself | **A SQL-flavour model is named as one** |
-| 2 | The database argument resolves to a SQL analytics endpoint or warehouse by GUID, or by display name in the model's workspace; Read on the source required; no SQL engine refused by name | Source resolution and item permission |
+| 1 ✅ | Every shared expression classified: OneLake URL, `Sql.Database` with two text arguments, or neither — each named. `directLakeBehavior` parsed from TMSL and TMDL. Refused: both flavours in one model, more than one SQL source, `Sql.Database` options, and — until stage 2 — the SQL flavour itself | **A SQL-flavour model is named as one** |
+| **2 ✅** | The database argument resolves to a SQL analytics endpoint or warehouse by GUID, or by display name in the model's workspace; Read on the source required; no SQL engine refused by name | Source resolution and item permission |
 | 3 | Rows read through the SQL endpoint **as the caller's own login**, after the relay's membership sync, selecting the model's columns by name | SELECT and column security are the engine's |
 | 4 | Endpoint RLS, masking and views detected per table: `directLakeOnly` errors naming the cause; `automatic` and `directQueryOnly` serve what the engine returns the caller | Fallback semantics |
 
@@ -52,6 +52,24 @@ The **server argument is not checked** (decided 2026-09-15). The emulator's SQL
 address depends on the host a caller used, so no tenant host could match it;
 the database argument alone decides, and a model exported from a tenant loads
 unchanged. A stated divergence.
+
+### Stage 2 in detail
+
+`resolveDirectLakeSQLSource` looks the database argument up by id anywhere, else
+by display name among the SQL analytics endpoints and warehouses of the model's
+own workspace — which workspace a name means is not documented, and the model's
+is the inference. A name both kinds carry is refused as ambiguous rather than
+picked. An endpoint resolves to the lakehouse it serves (its
+`parentLakehouseItemId`), because the lakehouse is what a share grants Read on.
+
+**Read is decided before anything about the item is described.** A caller
+without it — including for a GUID that names nothing — gets one message, *caller
+cannot read the source*, so a stranger learns neither whether an id exists nor
+what it is. A reader is told what is wrong with what they named: a lakehouse's
+own id instead of its endpoint's (a mistake the two ids invite), or an item that
+is no SQL source. With no SQL engine attached the source is refused by name, as
+Direct Lake over a warehouse already is. What still follows, for everyone who
+passes, is the stage 1 refusal: reading is stage 3.
 
 ## Boundaries
 
@@ -72,3 +90,13 @@ unknown value. `internal/api/directlake_sql_test.go` refuses, over
 expression of neither flavour and a missing expression — never with the old
 OneLake-URL message — and shows the datasources endpoint and lineage refusing
 to report a SQL model as a OneLake source.
+
+Stage 2: `internal/api/directlake_sql_test.go` resolves an endpoint and a
+warehouse by GUID and by name, and refuses a lakehouse id, a notebook, a name
+nothing carries and an ambiguous name; refuses a stranger identically for an
+endpoint, a lakehouse and a notebook, admits them with Read on the lakehouse and
+refuses them again on revoke, beside a Viewer who holds Read by role; refuses
+each source type with no engine attached; and fails closed on an orphaned
+endpoint, unreadable access, unreadable endpoint properties and an unknown
+model. With the Read check, the lakehouse-id refusal, the ambiguity refusal or
+the engine check disabled, a witness fails.

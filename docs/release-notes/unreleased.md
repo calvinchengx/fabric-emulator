@@ -173,7 +173,9 @@ SQL analytics endpoints — failed with *shared expression must contain an
 onelake.dfs.fabric.microsoft.com workspace/lakehouse URL*. It is now recognised
 and refused as Direct Lake on SQL, which is not served yet. Models that mix both
 flavours, or name more than one SQL source, are refused by name, and
-`directLakeBehavior` is parsed. [docs/59](../59-direct-lake-on-sql.md)
+`directLakeBehavior` is parsed. The source is resolved from the database
+argument, and a caller without Read on it is refused before anything about it is
+described. [docs/59](../59-direct-lake-on-sql.md)
 
 ## Upgrading
 
