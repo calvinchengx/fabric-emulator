@@ -2,10 +2,9 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
-	"net/url"
 	"path"
-	"regexp"
 	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
@@ -15,21 +14,19 @@ import (
 	"github.com/calvinchengx/fabric-emulator/pkg/onelakesec"
 )
 
-var directLakeURL = regexp.MustCompile(`(?i)https://onelake\.dfs\.fabric\.microsoft\.com/([^/"?]+?)/([^/"?]+)`)
-
-func (a *API) loadDirectLakeData(ctx context.Context, model *semanticmodel.Model, data semanticmodel.Data, principal *auth.Principal) error {
+func (a *API) loadDirectLakeData(ctx context.Context, modelItemID string, model *semanticmodel.Model, data semanticmodel.Data, principal *auth.Principal) error {
+	binding, err := directLakeBinding(model)
+	if err != nil {
+		return err
+	}
+	if binding.flavor == semanticmodel.DirectLakeOnSQL {
+		return a.loadDirectLakeSQLData(ctx, modelItemID, model, binding, data, principal)
+	}
 	for _, table := range model.Tables {
 		if table.DirectLake == nil {
 			continue
 		}
-		expression, ok := model.Expressions[table.DirectLake.ExpressionSource]
-		if !ok {
-			return fmt.Errorf("Direct Lake table %q references missing expression %q", table.Name, table.DirectLake.ExpressionSource)
-		}
-		workspaceRef, lakehouseRef, err := parseDirectLakeLocation(expression)
-		if err != nil {
-			return fmt.Errorf("Direct Lake table %q: %w", table.Name, err)
-		}
+		workspaceRef, lakehouseRef := binding.tables[table.Name].Workspace, binding.tables[table.Name].Item
 		ws, err := a.resolveDirectLakeWorkspace(workspaceRef)
 		if err != nil {
 			return fmt.Errorf("Direct Lake table %q: workspace is not available", table.Name)
@@ -187,20 +184,62 @@ func projectDirectLakeColumns(modelTable *semanticmodel.Table, granted []string,
 	return out, nil
 }
 
+// directLakeBinding classifies every Direct Lake table's shared expression and
+// refuses the combinations Fabric does not hold: tables of both flavours in one
+// model, and Direct Lake on SQL over more than one source — it "can use the data
+// from a single Fabric data source". The SQL source is returned when there is
+// one; a model with no Direct Lake table has flavour zero.
+func directLakeBinding(m *semanticmodel.Model) (directLakeSources, error) {
+	b := directLakeSources{tables: map[string]semanticmodel.DirectLakeSource{}}
+	for _, table := range m.Tables {
+		if table.DirectLake == nil {
+			continue
+		}
+		expression, ok := m.Expressions[table.DirectLake.ExpressionSource]
+		if !ok {
+			return directLakeSources{}, fmt.Errorf("Direct Lake table %q references missing expression %q", table.Name, table.DirectLake.ExpressionSource)
+		}
+		src, err := semanticmodel.ParseDirectLakeSource(expression)
+		if err != nil {
+			return directLakeSources{}, fmt.Errorf("Direct Lake table %q: %w", table.Name, err)
+		}
+		if b.flavor != 0 && b.flavor != src.Flavor {
+			return directLakeSources{}, fmt.Errorf("Direct Lake table %q: the model mixes Direct Lake on OneLake and Direct Lake "+
+				"on SQL tables, which one semantic model cannot hold", table.Name)
+		}
+		b.flavor = src.Flavor
+		b.tables[table.Name] = src
+		if src.Flavor != semanticmodel.DirectLakeOnSQL {
+			continue
+		}
+		if b.sql != nil && !strings.EqualFold(b.sql.Database, src.Database) {
+			return directLakeSources{}, fmt.Errorf("Direct Lake table %q: Direct Lake on SQL uses a single source, and this model "+
+				"names both %q and %q", table.Name, b.sql.Database, src.Database)
+		}
+		b.sql = &src
+	}
+	return b, nil
+}
+
+// directLakeSources is a model's Direct Lake binding: its one flavour, each
+// table's source, and the single SQL source when the flavour is SQL.
+type directLakeSources struct {
+	flavor semanticmodel.DirectLakeFlavor
+	tables map[string]semanticmodel.DirectLakeSource
+	sql    *semanticmodel.DirectLakeSource
+}
+
+// parseDirectLakeLocation reads a Direct Lake on OneLake expression's workspace
+// and item. A Direct Lake on SQL expression is refused by name.
 func parseDirectLakeLocation(expression string) (string, string, error) {
-	match := directLakeURL.FindStringSubmatch(expression)
-	if len(match) != 3 {
-		return "", "", fmt.Errorf("shared expression must contain an onelake.dfs.fabric.microsoft.com workspace/lakehouse URL")
-	}
-	workspace, err := url.PathUnescape(match[1])
+	src, err := semanticmodel.ParseDirectLakeSource(expression)
 	if err != nil {
-		return "", "", fmt.Errorf("invalid workspace path")
+		return "", "", err
 	}
-	lakehouse, err := url.PathUnescape(match[2])
-	if err != nil {
-		return "", "", fmt.Errorf("invalid lakehouse path")
+	if src.Flavor != semanticmodel.DirectLakeOnOneLake {
+		return "", "", errNoOneLakeLocation
 	}
-	return workspace, lakehouse, nil
+	return src.Workspace, src.Item, nil
 }
 
 func (a *API) resolveDirectLakeWorkspace(ref string) (*store.Workspace, error) {
@@ -260,6 +299,12 @@ func (a *API) readWarehouseTable(ctx context.Context, item *store.Item, dl *sema
 	if err != nil {
 		return nil, err
 	}
+	return scanSQLTable(rows)
+}
+
+// scanSQLTable materialises a result set as the same shape a Delta read
+// produces, so directLakeRows cannot tell them apart.
+func scanSQLTable(rows *sql.Rows) (*warehouse.Table, error) {
 	defer rows.Close()
 	cols, err := rows.Columns()
 	if err != nil {

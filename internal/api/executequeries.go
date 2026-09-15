@@ -218,7 +218,7 @@ func (a *API) loadSemanticModel(ctx context.Context, itemID string, p *auth.Prin
 			data = d
 		}
 	}
-	if err := a.loadDirectLakeData(ctx, m, data, p); err != nil {
+	if err := a.loadDirectLakeData(ctx, itemID, m, data, p); err != nil {
 		return nil, nil, err
 	}
 	if restricted {

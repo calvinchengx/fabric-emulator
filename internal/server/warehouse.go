@@ -47,23 +47,11 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 		if err != nil {
 			return tds.Connection{}, err
 		}
-		// Access to the endpoint is Read on the item, from a workspace role or a
-		// grant: sharing a lakehouse "also grants access to the SQL analytics
-		// endpoint", and Read is what lets a principal "connect to the Warehouse
-		// or SQL analytics endpoint".
-		access, err := st.EffectiveItemAccess(it, principal)
+		access, grants, err := sqlAccess(st, it, principal)
 		if err != nil {
-			return tds.Connection{}, fmt.Errorf("checking access: %w", err)
-		}
-		if !access.Has(store.PermRead) {
-			return tds.Connection{}, fmt.Errorf("access denied: the principal has no role on the workspace of %q "+
-				"and no Read permission on it", database)
+			return tds.Connection{}, err
 		}
 		role := access.Role
-		grants, err := workspaceGrants(st, it.WorkspaceID, principal, role)
-		if err != nil {
-			return tds.Connection{}, fmt.Errorf("checking access: %w", err)
-		}
 		if err := be.EnsureDatabase(ctx, it.ID); err != nil {
 			return tds.Connection{}, fmt.Errorf("preparing database: %w", err)
 		}
@@ -103,6 +91,30 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 			return tds.Connection{}, fmt.Errorf("item %q (type %s) has no SQL endpoint", database, it.Type)
 		}
 	}
+}
+
+// sqlAccess is a principal's access to one SQL item and the rung it gets in every
+// database its workspace reaches. It is the one decision behind both a relayed
+// connection and a server-side read on the caller's behalf (sqlDBAsFor).
+//
+// Access to the endpoint is Read on the item, from a workspace role or a grant:
+// sharing a lakehouse "also grants access to the SQL analytics endpoint", and
+// Read is what lets a principal "connect to the Warehouse or SQL analytics
+// endpoint".
+func sqlAccess(st *store.Store, it *store.Item, principal string) (store.Access, []tds.Grant, error) {
+	access, err := st.EffectiveItemAccess(it, principal)
+	if err != nil {
+		return store.Access{}, nil, fmt.Errorf("checking access: %w", err)
+	}
+	if !access.Has(store.PermRead) {
+		return store.Access{}, nil, fmt.Errorf("access denied: the principal has no role on the workspace of %q "+
+			"and no Read permission on it", it.DisplayName)
+	}
+	grants, err := workspaceGrants(st, it.WorkspaceID, principal, access.Role)
+	if err != nil {
+		return store.Access{}, nil, fmt.Errorf("checking access: %w", err)
+	}
+	return access, grants, nil
 }
 
 // sqlAddressable are the item types that have a T-SQL endpoint. A workspace
@@ -297,5 +309,43 @@ func lakehouseDBFor(be warehouseBackend, st *store.Store) func(ctx context.Conte
 			return nil, fmt.Errorf("preparing database: %w", err)
 		}
 		return be.DB(itemID), nil
+	}
+}
+
+// principalBackend is a backend that can log in as a caller, not only as the
+// service account. The SQL Server backend is one; the router's fakes are not.
+type principalBackend interface {
+	warehouseBackend
+	DBAs(ctx context.Context, database, principal string, grants []tds.Grant) (*sql.DB, error)
+}
+
+// sqlDBAsFor builds the hook Direct Lake on SQL reads through (docs/59): the
+// item's database, logged into AS the caller after the same access decision and
+// provisioning a relayed connection gets, so SELECT grants, row-level security,
+// column denials and masking all apply to the read. A lakehouse's analytics
+// endpoint is reflected first, as a connection to it is.
+func sqlDBAsFor(be principalBackend, st *store.Store) func(ctx context.Context, itemID, principal string) (*sql.DB, error) {
+	reflector := &warehouse.Reflector{}
+	return func(ctx context.Context, itemID, principal string) (*sql.DB, error) {
+		it, err := st.GetItemByID(itemID)
+		if err != nil {
+			return nil, fmt.Errorf("item %q not found", itemID)
+		}
+		if it.Type != "Lakehouse" && it.Type != "Warehouse" && it.Type != "SQLDatabase" {
+			return nil, fmt.Errorf("item %q (type %s) has no SQL endpoint", itemID, it.Type)
+		}
+		_, grants, err := sqlAccess(st, it, principal)
+		if err != nil {
+			return nil, err
+		}
+		if err := be.EnsureDatabase(ctx, it.ID); err != nil {
+			return nil, fmt.Errorf("preparing database: %w", err)
+		}
+		if it.Type == "Lakehouse" {
+			if _, err := reflector.Reflect(ctx, be.DB(it.ID), st, it.ID); err != nil {
+				return nil, fmt.Errorf("reflecting lakehouse: %w", err)
+			}
+		}
+		return be.DBAs(ctx, it.ID, principal, grants)
 	}
 }

@@ -74,6 +74,7 @@ export default defineConfig({
             { slug: '55-tsql-security' },
             { slug: '57-item-permissions' },
             { slug: '58-semantic-model-roles' },
+            { slug: '59-direct-lake-on-sql' },
             { slug: '09-identity-handshake' },
           ],
         },

@@ -63,7 +63,7 @@ func ParseTMDL(parts map[string][]byte) (*Model, error) {
 	}
 	sort.Strings(paths)
 
-	m := &Model{Expressions: map[string]string{}}
+	m := &Model{Expressions: map[string]string{}, DirectLakeBehavior: DirectLakeAutomatic}
 	for _, p := range paths {
 		lines := tmdlLines(p, parts[p])
 		for i := 0; i < len(lines); {
@@ -127,8 +127,16 @@ func parseTMDLBlock(m *Model, lines []tmdlLine, i int) (int, error) {
 	switch kw {
 	case "model":
 		for _, l := range body {
-			if k, v, ok := splitProp(l.text); ok && k == "compatibilityLevel" {
+			k, v, ok := splitProp(l.text)
+			switch {
+			case ok && k == "compatibilityLevel":
 				m.CompatibilityLevel, _ = strconv.Atoi(v)
+			case ok && k == "directLakeBehavior":
+				behavior, err := directLakeBehavior(unquote(v))
+				if err != nil {
+					return span, fmt.Errorf("tmdl: %w", err)
+				}
+				m.DirectLakeBehavior = behavior
 			}
 		}
 		if name != "" && m.Name == "" {

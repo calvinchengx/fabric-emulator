@@ -166,6 +166,21 @@ refused. The reply shape and the per-connection flow are unchanged, so
 SemPy, semantic-link-labs and ADOMD.NET need nothing.
 [docs/32](../32-xmla-plan.md#correction-2026-09-14-the-mwc-token-became-a-credential-in-production-not-just-in-the-screens)
 
+## Direct Lake on SQL is served
+
+A semantic model whose shared expression is `Sql.Database(...)` — Direct Lake on
+SQL analytics endpoints — failed with *shared expression must contain an
+onelake.dfs.fabric.microsoft.com workspace/lakehouse URL*. It is now served: its
+tables are read through the lakehouse's or warehouse's SQL analytics endpoint
+**as the caller**, so the endpoint's SELECT grants, column denials, row-level
+security and masking apply to what each caller gets. `directLakeBehavior` is honoured:
+under `directLakeOnly`, a table whose endpoint enforces row-level security,
+masks a column or is a view fails instead of being served. Models that mix both
+flavours, or name more than one SQL source, are refused by name, and
+`directLakeBehavior` is parsed. The source is resolved from the database
+argument, and a caller without Read on it is refused before anything about it is
+described. [docs/59](../59-direct-lake-on-sql.md)
+
 ## Upgrading
 
 - **OneLake security roles with flat `rows` / `columns` on a decision rule now

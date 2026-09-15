@@ -77,7 +77,8 @@ func ApplyObjectSecurity(m *Model, d Data, roles []Role) (*Model, Data, error) {
 		}
 	}
 
-	out := &Model{Name: m.Name, CompatibilityLevel: m.CompatibilityLevel, Expressions: m.Expressions, Roles: m.Roles}
+	out := &Model{Name: m.Name, CompatibilityLevel: m.CompatibilityLevel, Expressions: m.Expressions, Roles: m.Roles,
+		DirectLakeBehavior: m.DirectLakeBehavior}
 	keys := map[string]bool{} // hidden columns that relationships still join on
 	for _, r := range m.Relationships {
 		if hiddenTable[strings.ToLower(r.FromTable)] || hiddenTable[strings.ToLower(r.ToTable)] {
