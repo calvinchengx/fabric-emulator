@@ -65,18 +65,35 @@ type Role struct {
 	Members       Members
 }
 
-// DecisionRule grants an Access on a set of paths, optionally narrowed to
-// particular rows or columns.
+// DecisionRule grants an Access on a set of paths, optionally narrowed per
+// table by Constraints.
 //
 // Paths carry the API's wildcard: `*` means everything under the input path.
+//
+// CONSTRAINTS ARE PER TABLE, NOT PER RULE. The documented payload attaches row
+// and column restrictions to a `tablePath` inside the rule, so one rule can grant
+// `*` and filter `Tables/sales` while leaving `Tables/users` whole. A single
+// rows/columns pair for the whole rule cannot say that, and the obvious way to
+// make it say that — splitting the rule into one unrestricted grant plus one
+// narrowed grant — is wrong: consolidation is a union, so the unrestricted half
+// would erase the restriction written beside it. A constraint narrows the rule
+// it belongs to; it is not a second grant.
 type DecisionRule struct {
-	Effect  Effect
-	Paths   []string
-	Actions []string
+	Effect      Effect
+	Paths       []string
+	Actions     []string
+	Constraints []Constraint
+}
+
+// Constraint narrows one table within a rule's grant.
+type Constraint struct {
+	// Table is the table's path, e.g. `Tables/dbo/Customers`.
+	Table string
 	// Rows is a SQL predicate expressed as the API expresses it: a SELECT the
-	// engine runs, not rows we filter. Empty means unrestricted.
+	// engine runs, not rows we filter. Empty means no row restriction.
 	Rows string
-	// Columns, when non-empty, is the permitted set. Empty means all columns.
+	// Columns, when non-nil, is the permitted set. Nil means all columns; the
+	// payload's `*` arrives here as nil.
 	Columns []string
 }
 
@@ -115,21 +132,30 @@ type AccessEntry struct {
 //
 // CONSOLIDATION IS A UNION, and that is the semantics the API describes — "this
 // API consolidates a principal's permissions across roles, providing an
-// effective access view". Two roles granting the same path therefore combine
+// effective access view". Two grants reaching the same path therefore combine
 // rather than compete, which matters most for the restrictions:
 //
-//   - ROW filters union. Being in a role with no row filter means unrestricted
-//     rows, because the union of "some rows" and "all rows" is all rows.
-//     Intersecting instead would let adding a role take access away, which the
-//     Permit-only model cannot express.
-//   - COLUMN sets union for the same reason, and an unrestricted grant clears
-//     any narrowing from another role.
+//   - ROW filters union. Holding any grant that does not filter a path's rows
+//     means unrestricted rows, because the union of "some rows" and "all rows"
+//     is all rows. Intersecting instead would let adding a role take access
+//     away, which the Permit-only model cannot express.
+//   - COLUMN sets union for the same reason, and a grant that does not narrow
+//     columns clears any narrowing from another.
+//
+// EACH ENTRY CARRIES ITS OWN ANSWER. Entries are the grant paths plus every
+// constrained table beneath them, and each is computed from every grant that
+// covers it — so `Tables` can be unrestricted while `Tables/sales` beneath it is
+// filtered, and a reader takes the most specific entry. That is also how the
+// engine side reads this response, which is what keeps the two halves of the
+// family from disagreeing about the same policy.
 func Effective(roles []Role, p Principal, input string) []AccessEntry {
-	byPath := map[string]*AccessEntry{}
-	// unrestrictedRows/Cols track whether ANY matching rule granted the path
-	// without a restriction, which erases restrictions from the others.
-	unrestrictedRows := map[string]bool{}
-	unrestrictedCols := map[string]bool{}
+	type grant struct {
+		path        string
+		actions     []string
+		constraints []Constraint
+	}
+	var grants []grant
+	paths := map[string]bool{}
 
 	for _, role := range roles {
 		if !isMember(role.Members, p) {
@@ -144,43 +170,77 @@ func Effective(roles []Role, p Principal, input string) []AccessEntry {
 				if !ok {
 					continue
 				}
-				e := byPath[path]
-				if e == nil {
-					e = &AccessEntry{Path: path, Effect: EffectPermit}
-					byPath[path] = e
-				}
-				for _, a := range rule.Actions {
-					e.Access = addOnce(e.Access, a)
-				}
-				if rule.Rows == "" {
-					unrestrictedRows[path] = true
-				} else {
-					e.Rows = unionRows(e.Rows, rule.Rows)
-				}
-				if len(rule.Columns) == 0 {
-					unrestrictedCols[path] = true
-				} else {
-					for _, c := range rule.Columns {
-						e.Columns = addOnce(e.Columns, c)
+				g := grant{path: path, actions: rule.Actions}
+				for _, c := range rule.Constraints {
+					table, ok := normalisePath(c.Table, input)
+					// A constraint outside this grant's scope narrows nothing it
+					// grants, so it contributes nothing here.
+					if !ok || !Covers(path, table) {
+						continue
 					}
+					c.Table = table
+					g.constraints = append(g.constraints, c)
+					paths[table] = true
 				}
+				grants = append(grants, g)
+				paths[path] = true
 			}
 		}
 	}
 
-	out := make([]AccessEntry, 0, len(byPath))
-	for path, e := range byPath {
-		if unrestrictedRows[path] {
+	out := make([]AccessEntry, 0, len(paths))
+	for path := range paths {
+		e := AccessEntry{Path: path, Effect: EffectPermit}
+		openRows, openCols := false, false
+		for _, g := range grants {
+			if !Covers(g.path, path) {
+				continue
+			}
+			for _, a := range g.actions {
+				e.Access = addOnce(e.Access, a)
+			}
+			c := mostSpecific(g.constraints, path)
+			if c == nil || c.Rows == "" {
+				openRows = true
+			} else {
+				e.Rows = unionRows(e.Rows, c.Rows)
+			}
+			if c == nil || c.Columns == nil {
+				openCols = true
+			} else {
+				for _, col := range c.Columns {
+					e.Columns = addOnce(e.Columns, col)
+				}
+			}
+		}
+		if openRows {
 			e.Rows = ""
 		}
-		if unrestrictedCols[path] {
+		if openCols {
 			e.Columns = nil
 		}
 		sort.Strings(e.Access)
-		out = append(out, *e)
+		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
+}
+
+// mostSpecific is the constraint in cs that decides path: the one on the
+// deepest table covering it. A constraint on `Tables/sales` decides the sales
+// table and its files, not a sibling and not the half above it.
+func mostSpecific(cs []Constraint, path string) *Constraint {
+	var best *Constraint
+	for i := range cs {
+		c := &cs[i]
+		if !Covers(c.Table, path) {
+			continue
+		}
+		if best == nil || len(c.Table) > len(best.Table) {
+			best = c
+		}
+	}
+	return best
 }
 
 // isMember: explicit Entra membership OR a virtual membership conferred by an
@@ -304,27 +364,28 @@ func InputFor(rel string) string {
 // the query is blocked if the user requesting access isn't permitted to see all
 // the rows or columns in that table" — and this is the question it asks first.
 //
-// AN UNRESTRICTED COVERING GRANT WINS, exactly as it does in Effective. Roles
-// union rather than compete, so a principal who reaches this table through any
-// grant that narrows nothing is permitted to see all of it, and a narrowing
-// grant elsewhere must not take that away. Covering grants can differ in path
-// as well as role — `Tables` and `Tables/sales` both cover `Tables/sales/x` —
-// which is why this scans them all rather than trusting one entry.
+// THE MOST SPECIFIC COVERING ENTRY DECIDES. Effective has already folded every
+// grant into each entry, so `Tables` unrestricted beside `Tables/sales` filtered
+// means exactly that: the whole half, except the sales table. Letting the
+// broader entry win instead would let a rule that grants `*` erase the
+// constraint written in the same rule on one of its tables — which is the
+// over-grant per-table constraints exist to prevent. Specificity is by path
+// depth, so the answer does not depend on the order entries arrive in.
 func Narrowing(entries []AccessEntry, target string) *AccessEntry {
-	var found *AccessEntry
+	var best *AccessEntry
 	for i := range entries {
 		e := &entries[i]
 		if !Covers(e.Path, target) {
 			continue
 		}
-		if e.Rows == "" && len(e.Columns) == 0 {
-			return nil
-		}
-		if found == nil {
-			found = e
+		if best == nil || len(strings.Trim(e.Path, "/")) > len(strings.Trim(best.Path, "/")) {
+			best = e
 		}
 	}
-	return found
+	if best == nil || (best.Rows == "" && len(best.Columns) == 0) {
+		return nil
+	}
+	return best
 }
 
 // Why describes a narrowing in one clause, for an error a caller can act on.

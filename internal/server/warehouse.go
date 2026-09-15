@@ -47,12 +47,22 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 		if err != nil {
 			return tds.Connection{}, err
 		}
-		role, err := st.RoleOf(it.WorkspaceID, principal)
+		// Access to the endpoint is Read on the item, from a workspace role or a
+		// grant: sharing a lakehouse "also grants access to the SQL analytics
+		// endpoint", and Read is what lets a principal "connect to the Warehouse
+		// or SQL analytics endpoint".
+		access, err := st.EffectiveItemAccess(it, principal)
 		if err != nil {
 			return tds.Connection{}, fmt.Errorf("checking access: %w", err)
 		}
-		if role == "" {
-			return tds.Connection{}, fmt.Errorf("access denied: the principal has no role on the workspace of %q", database)
+		if !access.Has(store.PermRead) {
+			return tds.Connection{}, fmt.Errorf("access denied: the principal has no role on the workspace of %q "+
+				"and no Read permission on it", database)
+		}
+		role := access.Role
+		grants, err := workspaceGrants(st, it.WorkspaceID, principal, role)
+		if err != nil {
+			return tds.Connection{}, fmt.Errorf("checking access: %w", err)
 		}
 		if err := be.EnsureDatabase(ctx, it.ID); err != nil {
 			return tds.Connection{}, fmt.Errorf("preparing database: %w", err)
@@ -70,10 +80,10 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 			// policy that constrains them. Admin and Member own the item in Fabric's
 			// model — "can edit OneLake security roles" is exactly those two — so they
 			// are the ones who can author here too.
-			dbRole := dbRung(role, readOnly)
+			dbRole := dbRung(role, access, readOnly)
 			return tds.Connection{
 				TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole,
-				Grants: workspaceGrants(st, it.WorkspaceID, role),
+				Grants: grants,
 			}, nil
 		case "Warehouse", "SQLDatabase":
 			// A Warehouse and a Fabric SQL Database are both read-write T-SQL over
@@ -84,10 +94,10 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 			// policy that constrains them. Admin and Member own the item in Fabric's
 			// model — "can edit OneLake security roles" is exactly those two — so they
 			// are the ones who can author here too.
-			dbRole := dbRung(role, readOnly)
+			dbRole := dbRung(role, access, readOnly)
 			return tds.Connection{
 				TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole,
-				Grants: workspaceGrants(st, it.WorkspaceID, role),
+				Grants: grants,
 			}, nil
 		default:
 			return tds.Connection{}, fmt.Errorf("item %q (type %s) has no SQL endpoint", database, it.Type)
@@ -99,25 +109,35 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 // role reaches all of them, which is what workspaceGrants encodes.
 var sqlAddressable = []string{"Lakehouse", "Warehouse", "SQLDatabase"}
 
-// dbRung is the database rung a workspace role implies on one item.
+// dbRung is the database rung a principal gets on one item, from its workspace
+// role and its effective access to the item.
 //
 // NOT the same question as read-only: a Contributor may write but must not be
 // able to rewrite the security policy that constrains them. Admin and Member
 // own the item in Fabric's model, "can edit OneLake security roles" is exactly
 // those two, so they are the ones who can author here too.
-func dbRung(role string, readOnly bool) tds.Role {
+//
+// Below Contributor the rung is the item permission: ReadData reads ("read data
+// through T-SQL"), Read alone only connects, and without Read there is no access
+// to the database at all — which is what makes a revoked grant stop working
+// rather than lingering in a database the principal was once provisioned in.
+func dbRung(role string, access store.Access, readOnly bool) tds.Role {
 	switch {
 	case store.RoleRank(role) >= store.RoleRank(store.RoleMember):
 		return tds.RoleOwner
 	case !readOnly:
 		return tds.RoleWriter
-	default:
+	case access.Has(store.PermReadData):
 		return tds.RoleReader
+	case access.Has(store.PermRead):
+		return tds.RoleConnect
+	default:
+		return tds.RoleNone
 	}
 }
 
 // workspaceGrants is every SQL-addressable item in the workspace, with the rung
-// this caller gets on each.
+// this caller gets on each — including RoleNone for items it may not reach.
 //
 // WHY THE WHOLE WORKSPACE AND NOT JUST THE ONE CONNECTED TO. Gold is a
 // Warehouse that reads silver out of a Lakehouse by three-part name. That
@@ -126,28 +146,38 @@ func dbRung(role string, readOnly bool) tds.Role {
 // database under the current security context", from inside a statement on a
 // login that already succeeded. Fabric grants by workspace role, so having
 // access to one item's endpoint and not its neighbour's is not a shape the real
-// service has.
+// service has — except through item permissions, which is why each item's rung
+// is decided separately.
 //
-// Best effort by design: a store error here means no extra grants, never a
-// refused login. The connection's own database is added by the TDS layer
-// regardless, so the worst case is exactly the behaviour that shipped before.
-func workspaceGrants(st *store.Store, workspaceID, role string) []tds.Grant {
+// WHY RoleNone IS LISTED RATHER THAN OMITTED. A principal shared two warehouses
+// who loses one keeps a database user in it, and a three-part name from the one
+// it still holds would reach straight in. Naming the lost item lets the
+// provisioner take CONNECT away there.
+//
+// FAILS CLOSED. This used to be best effort, which was safe while it only ever
+// added access. It now also removes access, and a store error that silently
+// skipped an item would leave a revoked grant working — so the error refuses the
+// connection instead.
+func workspaceGrants(st *store.Store, workspaceID, principalID, role string) ([]tds.Grant, error) {
 	var out []tds.Grant
 	for _, t := range sqlAddressable {
 		items, err := st.ListItems(workspaceID, t)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		for _, it := range items {
+			g, err := st.GetItemAccess(it.ID, principalID)
+			if err != nil {
+				return nil, err
+			}
+			access := store.MergeAccess(role, it.Type, g)
 			// A lakehouse endpoint is read-only whatever the role; a warehouse
 			// follows the role. Same rule the target uses.
-			out = append(out, tds.Grant{
-				Database: it.ID,
-				Role:     dbRung(role, t == "Lakehouse" || store.RoleRank(role) < store.RoleRank(store.RoleContributor)),
-			})
+			readOnly := t == "Lakehouse" || store.RoleRank(role) < store.RoleRank(store.RoleContributor)
+			out = append(out, tds.Grant{Database: it.ID, Role: dbRung(role, access, readOnly)})
 		}
 	}
-	return out
+	return out, nil
 }
 
 // mirrorItem builds the control-plane mirror hook: ensure the item's SQL Server

@@ -97,14 +97,26 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		writeErr(w, http.StatusNotFound, "DatasetNotFound", "The dataset was not found.")
 		return
 	}
-	// groupId, if given, must be the item's workspace; either way authorize the
-	// caller as at least Viewer there (querying is a read).
+	// groupId, if given, must be the item's workspace.
 	wid := it.WorkspaceID
 	if g := r.PathValue("groupId"); g != "" && g != wid {
 		writeErr(w, http.StatusNotFound, "DatasetNotFound", "The dataset is not in this workspace.")
 		return
 	}
-	if _, _, ok := a.requireRole(w, wid, p, store.RoleViewer); !ok {
+	// "The user must have dataset read and build permissions." Build is
+	// Explore, and a workspace role is NOT sufficient on its own: a Viewer
+	// inherits only Read on a semantic model, so querying needs Build granted.
+	// Contributor and above inherit Explore. A principal with no workspace role
+	// at all may query a model shared with them for Read and Build.
+	access, err := a.Store.EffectiveItemAccess(it, p.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	if !access.Has(store.PermRead) || !access.Has(store.PermExplore) {
+		writeErr(w, http.StatusForbidden, "InsufficientPrivileges",
+			"Executing queries requires Read and Build (Explore) permission on the dataset; "+
+				"a workspace Viewer inherits Read only, so Build must be granted.")
 		return
 	}
 

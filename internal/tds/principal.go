@@ -78,10 +78,17 @@ func principalRights(role Role) []string {
 		return []string{"db_owner"}
 	case RoleWriter:
 		return []string{"db_datareader", "db_datawriter", "db_ddladmin"}
+	case RoleConnect, RoleNone:
+		return nil
 	default:
 		return []string{"db_datareader"}
 	}
 }
+
+// fixedRoles are every fixed database role a rung can grant. Syncing a
+// principal means checking each: the ones its rung includes are added, and the
+// ones it does not are REMOVED — see EnsurePrincipal.
+var fixedRoles = []string{"db_datareader", "db_datawriter", "db_ddladmin", "db_owner"}
 
 // Role is the database-side rung a workspace role maps to.
 type Role int
@@ -93,36 +100,86 @@ const (
 	RoleWriter
 	// RoleOwner can additionally author security policies, masks and grants.
 	RoleOwner
+	// RoleConnect is a database user with no role: Read on an item without
+	// ReadData. "Connect to the Warehouse or SQL analytics endpoint" is what Read
+	// grants, and nothing more — SQL Server refuses a SELECT unless a T-SQL GRANT
+	// allows it.
+	RoleConnect
+	// RoleNone is no access to this database. The principal is never created
+	// here, and where it already exists it loses CONNECT — which also takes away
+	// any explicit GRANT an owner once authored for it, since a principal that
+	// cannot enter a database cannot use what is granted inside it. Appended
+	// after the existing rungs so their values do not move.
+	RoleNone
 )
 
-// EnsurePrincipal makes the caller's login and database user exist, with the
-// rights its workspace role implies. Idempotent: a reconnect is the normal case.
+// EnsurePrincipal makes the caller's login and database user match the rung it
+// holds NOW. Idempotent: a reconnect is the normal case.
+//
+// SYNCED, NOT ONLY ADDED. This used to add role memberships and never remove
+// one, so a Contributor demoted to Viewer kept db_datawriter, and a revoked
+// ReadData grant would have kept db_datareader — access that outlived the
+// permission granting it, in the direction that matters. Every fixed role the
+// rung does not include is now dropped, and CONNECT is granted back explicitly
+// in case a previous RoleNone revoked it.
 func EnsurePrincipal(ctx context.Context, master, target *sql.DB, objectID string, role Role) error {
 	if objectID == "" {
 		return fmt.Errorf("no principal to provision")
 	}
 	name := principalName(objectID)
+	quotedID := strings.ReplaceAll(objectID, "'", "''")
+	if role == RoleNone {
+		return revokePrincipal(ctx, target, quotedID, name)
+	}
 	pw := strings.ReplaceAll(principalPassword(objectID), "'", "''")
 
 	// Server-level login, created once per engine.
 	if _, err := master.ExecContext(ctx, fmt.Sprintf(`
 IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'%s')
     CREATE LOGIN [%s] WITH PASSWORD = '%s', CHECK_POLICY = OFF;`,
-		strings.ReplaceAll(objectID, "'", "''"), name, pw)); err != nil {
+		quotedID, name, pw)); err != nil {
 		return fmt.Errorf("create login for %s: %w", objectID, err)
 	}
 
-	// Database user, created once per database, plus its role memberships.
+	// Database user, created once per database; CONNECT restored; memberships
+	// made exactly the rung's.
+	want := map[string]bool{}
+	for _, r := range principalRights(role) {
+		want[r] = true
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, `
 IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'%s')
-    CREATE USER [%s] FOR LOGIN [%s];`,
-		strings.ReplaceAll(objectID, "'", "''"), name, name)
-	for _, r := range principalRights(role) {
-		fmt.Fprintf(&b, "\nALTER ROLE [%s] ADD MEMBER [%s];", r, name)
+    CREATE USER [%s] FOR LOGIN [%s];
+GRANT CONNECT TO [%s];`,
+		quotedID, name, name, name)
+	for _, r := range fixedRoles {
+		if want[r] {
+			fmt.Fprintf(&b, "\nALTER ROLE [%s] ADD MEMBER [%s];", r, name)
+		} else {
+			fmt.Fprintf(&b, "\nIF IS_ROLEMEMBER(N'%s', N'%s') = 1 ALTER ROLE [%s] DROP MEMBER [%s];", r, quotedID, r, name)
+		}
 	}
 	if _, err := target.ExecContext(ctx, b.String()); err != nil {
 		return fmt.Errorf("create user for %s: %w", objectID, err)
+	}
+	return nil
+}
+
+// revokePrincipal takes a principal's access to one database away, if it has
+// any. Nothing is created: a principal that never had access needs no user in
+// order not to have it. The user is kept rather than dropped, because DROP USER
+// fails on a user that owns objects, and a revoke that can fail is a revoke that
+// sometimes does not happen.
+func revokePrincipal(ctx context.Context, target *sql.DB, quotedID, name string) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'%s')\nBEGIN", quotedID)
+	for _, r := range fixedRoles {
+		fmt.Fprintf(&b, "\n    IF IS_ROLEMEMBER(N'%s', N'%s') = 1 ALTER ROLE [%s] DROP MEMBER [%s];", r, quotedID, r, name)
+	}
+	fmt.Fprintf(&b, "\n    REVOKE CONNECT FROM [%s];\nEND", name)
+	if _, err := target.ExecContext(ctx, b.String()); err != nil {
+		return fmt.Errorf("revoke access for %s: %w", quotedID, err)
 	}
 	return nil
 }

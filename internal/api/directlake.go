@@ -12,6 +12,7 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/semanticmodel"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
+	"github.com/calvinchengx/fabric-emulator/pkg/onelakesec"
 )
 
 var directLakeURL = regexp.MustCompile(`(?i)https://onelake\.dfs\.fabric\.microsoft\.com/([^/"?]+?)/([^/"?]+)`)
@@ -33,20 +34,39 @@ func (a *API) loadDirectLakeData(ctx context.Context, model *semanticmodel.Model
 		if err != nil {
 			return fmt.Errorf("Direct Lake table %q: workspace is not available", table.Name)
 		}
-		role, err := a.Store.RoleOf(ws.ID, principal.ID)
-		if err != nil || store.RoleRank(role) < store.RoleRank(store.RoleViewer) {
-			return fmt.Errorf("Direct Lake table %q: caller cannot read source workspace", table.Name)
-		}
 		source, err := a.resolveDirectLakeSource(ws.ID, lakehouseRef)
+		if err != nil {
+			// Somebody with no role in the source workspace learns only that they
+			// cannot read it — not whether an item of that name exists.
+			if role, rerr := a.Store.RoleOf(ws.ID, principal.ID); rerr == nil && role == "" {
+				return fmt.Errorf("Direct Lake table %q: caller cannot read the source", table.Name)
+			}
+			return fmt.Errorf("Direct Lake table %q: %w", table.Name, err)
+		}
+		// The same decision every OneLake reader asks, so Direct Lake can never
+		// admit what the storage surface would refuse. "If OneLake security isn't
+		// on, Direct Lake on OneLake needs the effective identity to have Read and
+		// ReadAll"; when it is on, the roles decide. Either can come from a grant
+		// on the source, which is how a model reaches a lakehouse in a workspace
+		// its reader has no role in.
+		read, err := a.Store.OneLakeReadAccess(source, principal.ID, onelakesec.InputTables)
 		if err != nil {
 			return fmt.Errorf("Direct Lake table %q: %w", table.Name, err)
 		}
+		if !read.Allowed {
+			return fmt.Errorf("Direct Lake table %q: caller cannot read the source: Direct Lake on OneLake "+
+				"needs Read and ReadAll on it, or a OneLake security role", table.Name)
+		}
 		var delta *warehouse.Table
 		if source.Type == "Lakehouse" {
-			delta, err = warehouse.ReadDeltaTable(a.Store, source.ID, table.DirectLake.EntityName)
+			entity := table.DirectLake.EntityName
+			delta, err = warehouse.ReadDeltaTable(a.Store, source.ID, entity)
 			if err != nil && table.DirectLake.SchemaName != "" {
-				delta, err = warehouse.ReadDeltaTable(a.Store, source.ID,
-					path.Join(table.DirectLake.SchemaName, table.DirectLake.EntityName))
+				entity = path.Join(table.DirectLake.SchemaName, table.DirectLake.EntityName)
+				delta, err = warehouse.ReadDeltaTable(a.Store, source.ID, entity)
+			}
+			if err == nil {
+				delta, err = secureDirectLakeTable(read, entity, &table, delta)
 			}
 		} else {
 			// A WAREHOUSE source. On real Fabric a warehouse persists to OneLake as
@@ -64,6 +84,9 @@ func (a *API) loadDirectLakeData(ctx context.Context, model *semanticmodel.Model
 			// carry its rows inline in a `data.json` part, which real Fabric has no
 			// concept of. So the one artifact a BI consumer actually reads was the
 			// one thing in the examples that could not be deployed to a tenant.
+			//
+			// A warehouse carries no OneLake security roles, so an allowed reader
+			// here always reads it whole: ReadAll is the whole of the decision.
 			delta, err = a.readWarehouseTable(ctx, source, table.DirectLake)
 		}
 		if err != nil {
@@ -76,6 +99,92 @@ func (a *API) loadDirectLakeData(ctx context.Context, model *semanticmodel.Model
 		data[table.Name] = rows
 	}
 	return nil
+}
+
+// secureDirectLakeTable narrows one Direct Lake table to what the reader's
+// OneLake access allows. read must be Allowed: the caller has checked.
+//
+// WHY THIS IS THE QUERY PATH'S JOB. Direct Lake does not read through the SQL
+// analytics endpoint, so no engine upstream has already filtered: "Direct Lake
+// on OneLake doesn't use a SQL analytics endpoint to check permissions. It uses
+// OneLake security. When OneLake security is on, Direct Lake on OneLake uses the
+// current user (or fixed identity) to figure out OneLake security roles and
+// enforce OLS and RLS on the target Fabric item." A query path that skipped this
+// would hand a Viewer every row of a table a policy narrows, which is the one
+// failure this whole family exists to prevent.
+//
+// THE SHAPE OF A REFUSAL IS NAME RESOLUTION, NOT AUTHORIZATION. The product's
+// own troubleshooting list for this case is "Can't find table", "Column can't be
+// found", "Failed to resolve name" — errors "when object permissions are missing
+// after applying OneLake security roles". A secured object is absent from the
+// namespace rather than present and forbidden, so that is how it is reported
+// here, and the evaluator's existing unresolved-name error carries the rest.
+func secureDirectLakeTable(read store.OneLakeRead, entity string, modelTable *semanticmodel.Table,
+	delta *warehouse.Table,
+) (*warehouse.Table, error) {
+	if read.Full {
+		return delta, nil
+	}
+	rel := path.Join("Tables", entity)
+	if !onelakesec.Allows(read.Entries, rel) {
+		return nil, fmt.Errorf("can't be found: no OneLake security role grants this principal access to it")
+	}
+	narrowing := onelakesec.Narrowing(read.Entries, rel)
+	if narrowing == nil {
+		return delta, nil
+	}
+	// ROW FILTERS ARE REFUSED, AND THAT IS A DIVERGENCE THIS NAMES RATHER THAN
+	// HIDES. Fabric filters: a narrowed identity gets the rows the predicate
+	// admits, and an empty result is documented as expected. Applying the
+	// predicate needs an engine to apply it with, and the Direct Lake read is
+	// pure Go over Delta with none — so the choice is between wrong rows and no
+	// rows, and this repo does not fake compute. A bounded predicate evaluator,
+	// on the same terms as the DAX engine (answer the pinned subset, error
+	// outside it), is what closes this.
+	if narrowing.Rows != "" {
+		return nil, fmt.Errorf("can't be served: it is subject to %s, which this emulator cannot apply "+
+			"on the Direct Lake path. Real Fabric filters the rows; serving them unfiltered would be "+
+			"the wrong answer rather than a missing one", narrowing.Why())
+	}
+	// `Narrowing` answers non-nil only for a grant that restricts rows or
+	// columns, and rows are handled above, so what is left is a projection.
+	return projectDirectLakeColumns(modelTable, narrowing.Columns, delta)
+}
+
+// projectDirectLakeColumns keeps only the granted columns. A model column whose
+// source is not among them cannot be answered, and the product reports that as
+// the column not existing rather than as a denial.
+func projectDirectLakeColumns(modelTable *semanticmodel.Table, granted []string, delta *warehouse.Table) (*warehouse.Table, error) {
+	allowed := make(map[string]bool, len(granted))
+	for _, c := range granted {
+		allowed[strings.ToLower(c)] = true
+	}
+	for _, column := range modelTable.Columns {
+		source := column.SourceColumn
+		if source == "" {
+			source = column.Name
+		}
+		if !allowed[strings.ToLower(source)] {
+			return nil, fmt.Errorf("column %q can't be found: no OneLake security role grants "+
+				"this principal access to it", column.Name)
+		}
+	}
+	out := &warehouse.Table{}
+	keep := make([]int, 0, len(delta.Columns))
+	for i, name := range delta.Columns {
+		if allowed[strings.ToLower(name)] {
+			keep = append(keep, i)
+			out.Columns = append(out.Columns, name)
+		}
+	}
+	for _, row := range delta.Rows {
+		projected := make([]any, 0, len(keep))
+		for _, i := range keep {
+			projected = append(projected, row[i])
+		}
+		out.Rows = append(out.Rows, projected)
+	}
+	return out, nil
 }
 
 func parseDirectLakeLocation(expression string) (string, string, error) {

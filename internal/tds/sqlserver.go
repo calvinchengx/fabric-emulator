@@ -233,6 +233,13 @@ func (b *sqlServerBackend) Dial(ctx context.Context, database, principal string,
 		// create item databases: EnsureDatabase does, on connect or on the
 		// endpoint refresh, and creating one here would invent an item.
 		target, siblings := grantsFor(database, grants)
+		// The router refuses a caller with no access to the database it names,
+		// so a RoleNone target means a caller of this function skipped it.
+		// Refuse rather than provision: splicing in a principal whose access was
+		// just revoked would be a session with no business existing.
+		if target.Role == RoleNone {
+			return nil, nil, fmt.Errorf("provisioning %s: no access to %s", principal, database)
+		}
 		if err := EnsurePrincipal(ctx, b.pool(""), b.pool(database), principal, target.Role); err != nil {
 			return nil, nil, fmt.Errorf("provisioning %s: %w", principal, err)
 		}
