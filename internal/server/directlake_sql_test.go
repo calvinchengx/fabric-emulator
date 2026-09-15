@@ -31,13 +31,20 @@ const powerBIAudience = "https://analysis.windows.net/powerbi/api"
 // under the given directLakeBehavior ("" for the default).
 func (f *secFixture) sqlFlavourModel(t *testing.T, name, entity, behavior string, columns ...string) *store.Item {
 	t.Helper()
+	return f.sqlFlavourModelOver(t, f.wh.ID, name, entity, behavior, columns...)
+}
+
+// sqlFlavourModelOver is sqlFlavourModel over any SQL source: a warehouse or a
+// lakehouse's SQL analytics endpoint, by id.
+func (f *secFixture) sqlFlavourModelOver(t *testing.T, source, name, entity, behavior string, columns ...string) *store.Item {
+	t.Helper()
 	var cols []map[string]string
 	for _, c := range columns {
 		cols = append(cols, map[string]string{"name": c, "dataType": "string", "sourceColumn": c})
 	}
 	model := map[string]any{
 		"expressions": []map[string]string{{"name": "DL", "kind": "m",
-			"expression": fmt.Sprintf(`let database = Sql.Database("tenant.datawarehouse.fabric.microsoft.com", "%s") in database`, f.wh.ID)}},
+			"expression": fmt.Sprintf(`let database = Sql.Database("tenant.datawarehouse.fabric.microsoft.com", "%s") in database`, source)}},
 		"tables": []map[string]any{{"name": "Sales", "columns": cols, "partitions": []map[string]any{{
 			"name": "p", "mode": "directLake",
 			"source": map[string]string{"type": "entity", "entityName": entity, "schemaName": "dbo", "expressionSource": "DL"}}}}},

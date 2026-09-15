@@ -1481,7 +1481,8 @@
     "go:TestSwitchingTheDataAccessModeAppliesItsEffects": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestAOneLakeSyncThatFailsRefusesTheConnection": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestARowFilterSurvivesReflection": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+    "go:TestARowFilterSurvivesReflection": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestDirectLakeOnSQLOverAUserIdentityEndpoint": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",
@@ -1601,7 +1602,9 @@
     "witnesses": [
       "go:TestDirectLakeBehaviorIsParsed",
       "go:TestDirectLakeOnlyRefusesWhatWouldFallBack",
-      "go:TestDirectLakeOnlyFailsWhereTheEndpointWouldFallBack"
+      "go:TestDirectLakeOnlyFailsWhereTheEndpointWouldFallBack",
+      "go:TestDirectLakeOnlyOverAUserIdentityEndpoint",
+      "go:TestDirectLakeOnlyFailsClosedOnAnUnreadableAccessMode"
     ]
   },
   "microsoftpowerbimgmt-1-3-84-contract-microsoft": {
@@ -1646,7 +1649,9 @@
       "go:TestCloseSessionsEndsOnlyTheNamedDatabases",
       "go:TestIsEndpointWrite",
       "go:TestDataAccessMode",
-      "go:TestSyncOneLakeMembershipsRefusesWhatItCannotSync"
+      "go:TestSyncOneLakeMembershipsRefusesWhatItCannotSync",
+      "go:TestDirectLakeOnSQLOverAUserIdentityEndpoint",
+      "go:TestDirectLakeOnlyOverAUserIdentityEndpoint"
     ]
   }
 }

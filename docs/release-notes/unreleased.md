@@ -15,7 +15,8 @@ requires. In user identity mode, the lakehouse's OneLake security roles are
 synced into the endpoint as `OLS_` database roles and row policies: a Viewer
 reads only the tables, columns and rows their roles grant, a role member of any
 workspace role is held to its row filter, and T-SQL cannot grant tables around
-them.
+them. Direct Lake on SQL over such an endpoint returns each caller the same
+rows, and `directLakeOnly` fails there, as Fabric's always falls back.
 
 The endpoint also accepts the SQL objects and security authored on it — views,
 functions, roles, grants, security policies, masks — which the relay refused as

@@ -1,9 +1,9 @@
 # 60 — SQL analytics endpoint access modes: user identity and delegated identity
 
-**Status: stages 1–3 built — the mode is switchable with its effects, and in user
-identity mode a lakehouse's OneLake table, column and row security is synced
-into its SQL analytics endpoint and enforced by SQL Server.** The knock-on
-effects (stage 4) follow.
+**Status: all four stages built — the mode is switchable with its effects; in
+user identity mode a lakehouse's OneLake table, column and row security is synced
+into its SQL analytics endpoint and enforced by SQL Server, including for Direct
+Lake on SQL.**
 
 **Decision: model both modes the way Fabric's own security sync does — by
 translating a lakehouse's OneLake security roles into real SQL Server objects on
@@ -37,8 +37,8 @@ never reached T-SQL.
 |---|---|---|
 | 1 ✅ | The mode per SQL analytics endpoint, delegated by default, switched through an authenticated emulator-native API by Admin or Member; the switch closes the workspace's live sessions, turns off and remembers SQL security policies and drops custom roles on the way in, re-enables the remembered policies on the way out, and drops unbound functions either way. Until stage 2, an endpoint in user identity mode refuses connections, and a neighbour's three-part name cannot reach it | The mode is a real, switchable state with its documented effects |
 | 2 ✅ | Security sync on connect: each OneLake role becomes an `OLS_<role>` database role granted SELECT on its tables or column list; memberships travel with each caller into provisioning; below Contributor, table access comes only through those roles; a DDL trigger refuses table GRANT/DENY/REVOKE and security policies; explicit table permissions are set aside on the switch in and restored on the way out. Prerequisite found on the way: the endpoint accepts the SQL objects and security authored on it, still refusing data writes — past comments and later statements in a batch | Tables and columns follow OneLake security |
-| **3 ✅** | Row filters: each role's filter validated against OneLake's documented grammar and translated into an inline predicate function exposing the row's columns under their own names; one `OLS_` security policy per table ORs the roles' filters; members only — a Contributor+ in no filtering role reads unfiltered (inferred); rebuilt in one transaction, only when something changed; reflection drops a table's synced policy before recreating it | **Rows follow OneLake security** |
-| 4 | Knock-on effects and grading: under Direct Lake on SQL (docs/59), `directLakeOnly` sees the synced policy as a fallback cause | End-to-end witnesses |
+| 3 ✅ | Row filters: each role's filter validated against OneLake's documented grammar and translated into an inline predicate function exposing the row's columns under their own names; one `OLS_` security policy per table ORs the roles' filters; members only — a Contributor+ in no filtering role reads unfiltered (inferred); rebuilt in one transaction, only when something changed; reflection drops a table's synced policy before recreating it | Rows follow OneLake security |
+| **4 ✅** | Direct Lake on SQL (docs/59) over an endpoint in user identity mode reads through the synced endpoint as the caller, and `directLakeOnly` fails every table there | **Direct Lake on SQL agrees with the endpoint** |
 
 ### Stage 1 in detail
 
@@ -152,6 +152,17 @@ reader restricted by the policy has no SELECT until the sync after reflection
 restores both — Fabric's "until synchronization completes" window, closed rather
 than opened.
 
+### Stage 4 in detail
+
+Direct Lake on SQL reads through `sqlDBAsFor`, which runs the same access
+decision and sync as a relayed connection, so a model over an endpoint in user
+identity mode returns each caller what OneLake security gives them. And "the SQL
+analytics endpoint can be changed to SSO. When this happens, OneLake security
+roles are added as SQL granular access control rules … At this point, Direct Lake
+on SQL falls back to DirectQuery 100% of the time" — so under `directLakeOnly`
+every table over such an endpoint fails, naming the mode, before the catalog is
+asked.
+
 ## Boundaries
 
 - **Sync timing**: Fabric syncs within "up to 5 minutes"; the emulator syncs a
@@ -218,3 +229,9 @@ sees only the filtered rows; switching back leaves no `OLS_` object.
 seven mutations — no policy, no in-no-role term, no case-insensitive collation,
 an invalid filter read as none, reflection keeping the policy, rebuilding every
 sync, delegated keeping the policies — fails a witness.
+
+Stage 4: `TestDirectLakeOnSQLOverAUserIdentityEndpoint` runs `executeQueries`
+over a model bound to a user identity endpoint: a Viewer in a role filtered to
+`west` gets only west, a Viewer in no role is refused by the endpoint, the owner
+gets every row, and the same model under `directLakeOnly` fails naming the mode.
+Without the sync on that read, or without the mode as a fallback cause, it fails.

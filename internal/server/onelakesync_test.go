@@ -348,3 +348,55 @@ func TestARowFilterSurvivesReflection(t *testing.T) {
 	}
 	count("delegated", 5)
 }
+
+// Direct Lake on SQL over an endpoint in user identity mode: each caller's rows
+// are what OneLake security gives them, read through the synced endpoint — and
+// directLakeOnly fails, since such an endpoint "falls back to DirectQuery 100% of
+// the time".
+func TestDirectLakeOnSQLOverAUserIdentityEndpoint(t *testing.T) {
+	f := newSecFixture(t)
+	web := httptest.NewServer(f.srv.Handler())
+	t.Cleanup(web.Close)
+	lake, endpoint := f.lakehouse(t)
+	west := "aaaa1111-0000-0000-0000-0000000d1e01" // Viewer, filtered to west
+	none := "bbbb2222-0000-0000-0000-0000000d1e02" // Viewer, in no role
+	for _, oid := range []string{west, none} {
+		f.grantRole(t, oid, store.RoleViewer)
+	}
+	svc, err := f.srv.API.LakehouseDB(context.Background(), lake.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, svc, `CREATE TABLE dbo.dls (region varchar(10))`, `INSERT INTO dbo.dls VALUES ('west'), ('east')`)
+	role := store.OneLakeRole{ItemID: lake.ID, Name: "West", Body: []byte(fmt.Sprintf(`{"name":"West","decisionRules":[{"effect":"Permit","permission":[
+	  {"attributeName":"Path","attributeValueIncludedIn":["Tables/dls"]},
+	  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
+	  "constraints":{"rows":[{"tablePath":"/Tables/dls","value":"SELECT * FROM dls WHERE region = 'west'"}]}}],
+	  "members":{"microsoftEntraMembers":[{"objectId":%q}]}}`, west))}
+	if err := f.srv.Store.PutOneLakeRoles(lake.ID, []store.OneLakeRole{role}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := f.switchMode(t, web, endpoint, entra.DaemonClientID, "UserIdentity"); code != http.StatusOK {
+		t.Fatalf("switch = %d %s", code, body)
+	}
+	model := f.sqlFlavourModelOver(t, endpoint.ID, "OverUserIdentity", "dls", "automatic", "region")
+	for _, oid := range []string{west, none} {
+		if err := f.srv.Store.PutItemAccess(store.ItemAccess{ItemID: model.ID, PrincipalID: oid, PrincipalType: "User",
+			Permissions: []string{store.PermRead, store.PermExplore}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if code, body := f.dax(t, web, west, model); code != http.StatusOK || !strings.Contains(body, `"west"`) || strings.Contains(body, `"east"`) {
+		t.Errorf("the west Viewer = %d %s, want only west", code, body)
+	}
+	if code, body := f.dax(t, web, none, model); code != http.StatusBadRequest || !strings.Contains(body, "refused the read") {
+		t.Errorf("a Viewer in no role = %d %s, want the endpoint's refusal", code, body)
+	}
+	if code, body := f.dax(t, web, entra.DaemonClientID, model); code != http.StatusOK || !strings.Contains(body, `"east"`) {
+		t.Errorf("the owner = %d %s, want every row", code, body)
+	}
+	strict := f.sqlFlavourModelOver(t, endpoint.ID, "StrictOverUserIdentity", "dls", "directLakeOnly", "region")
+	if code, body := f.dax(t, web, entra.DaemonClientID, strict); code != http.StatusBadRequest || !strings.Contains(body, "user identity access mode") {
+		t.Errorf("directLakeOnly = %d %s, want the fallback refusal", code, body)
+	}
+}
