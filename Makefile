@@ -170,6 +170,10 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_fabric_activity_types.py
 	@$(PY) scripts/check_adf_activity_types.py
 	@$(PY) scripts/check_docs_sidebar.py
+	@# Prose is the one artifact here with nothing underneath it: a rename
+	@# breaks a Go import loudly and the same rename in a sentence breaks
+	@# nothing at all. Three had already drifted when this landed.
+	@$(PY) scripts/check_doc_drift.py --strict
 	@$(PY) scripts/check_workflow_concurrency.py
 	@$(PY) scripts/check_cron_workflow_freshness.py
 	@$(PY) scripts/gen_event_kinds.py --check

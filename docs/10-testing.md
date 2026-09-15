@@ -230,6 +230,48 @@ for the two places that genuinely discard what they read, and a second test
 pinning the exemption list so the escape hatch cannot quietly widen. Fixing nine
 sites is a day's work that lasts until someone writes the tenth.
 
+**Twelve: PROSE that lies about code.** Every item above is code lying about
+code. This one is documentation, and it is the cheapest of the twelve to
+produce: a renamed directory breaks a Go import and CI goes red, while the same
+rename inside a sentence breaks nothing at all, so the sentence keeps its
+confident tone and quietly starts lying. Three had drifted before anyone looked.
+docs/31 pointed at the medallion example's common.py for the failure reporting
+that motivates the entire document — the file had moved into the contoso
+fixtures, so the paragraph explaining WHY the feature exists pointed at nothing.
+docs/38 named the warehouse reader as an e2e directory; that reader is real and
+runs on every push, but it is a `go test` job and no such directory has ever
+existed for anyone to go look in. docs/13 named a file that exists — in the
+SIBLING entra-emulator repo, read here as one of ours.
+
+None of the three is a typo. Each is a fact that expired, and the only thing
+that would ever have caught them is somebody happening to click.
+
+`scripts/check_doc_drift.py` now asserts three things across the prose, in
+`make check` and in the `witnesses` job: a backticked repo path exists, a
+`make <target>` names a target the Makefile defines, and a documented
+FABRIC_/ENTRA_-style variable is read by some non-Markdown file. Only the first
+class had live drift. The other two land as regression guards — and because a
+check that always passes is indistinguishable from a check that is working,
+both are tested against synthetic drift rather than trusted on the strength of a
+green tree. That is item Eight's lesson applied to the fix for item Twelve.
+
+It is tuned for **precision over recall**, because a checker that cries wolf
+gets muted, and a muted check is item Eight again. `make` is read only from
+command-shaped code spans: the naive bare-word regex returns 13 hits on this
+tree and all 13 are English prose ("make the", "make it", "make every"). A dot
+that is not a known file extension means "not a path", so the Go symbol
+`internal/tsql.DataFlows` is left alone. `docs/24` is this repo's shorthand for
+a NUMBERED DOCUMENT and never a path. Release notes are skipped outright: a
+v0.16 note naming a since-renamed file is correct about the tree at that tag,
+and editing it to please a checker would be falsifying a historical record.
+
+A document may legitimately name something not built yet. That gets an `EXEMPT`
+entry carrying a written reason — docs/30's planned contracts checker, docs/54's
+task-parameters suite — rather than an edit that waters true prose down into
+vague prose. A forward reference is a claim about intent, and recording it is
+what keeps it reviewable instead of invisible. A test asserts every exemption is
+still doing work, so the escape hatch cannot quietly widen into a silencer.
+
 ### What actually caught them
 
 Not review, and not more assertions. In every case it was **looking at what the

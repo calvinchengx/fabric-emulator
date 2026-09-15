@@ -106,11 +106,12 @@ Makes `fabric-cicd`, git integration, and deployment pipelines run offline.
 
 The "works seamlessly with entra-emulator" payoff. Its dependency —
 entra-emulator roadmap #16 — **has already shipped**: the workspace-identity
-object (`internal/store/fabric.go`, states `Active/Provisioning/Failed/
-Deprovisioning`, name-follows-workspace, cascade delete), admin CRUD at
-`/admin/api/workspace-identities`, internal token minting at
-`GET /fabric/workspaceidentities/{id}/token`, and acceptance of both Fabric
-audiences. P2 can start any time; it consumes those endpoints over HTTP.
+object (entra-emulator's `internal/store/fabric.go`, states
+`Active/Provisioning/Failed/Deprovisioning`, name-follows-workspace, cascade
+delete), admin CRUD at `/admin/api/workspace-identities`, internal token
+minting at `GET /fabric/workspaceidentities/{id}/token`, and acceptance of
+both Fabric audiences. P2 can start any time; it consumes those endpoints
+over HTTP.
 
 - [x] Workspace-identity lifecycle: `POST /v1/workspaces/{id}/provisionIdentity`
       / `deprovisionIdentity` (202 LRO) drive entra's admin API over HTTP
