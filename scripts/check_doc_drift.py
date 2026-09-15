@@ -130,13 +130,24 @@ def scan_lines(text):
     The distinction is the whole basis of class 2's precision: a fenced line is
     a command, a prose line is a sentence, and `make` means different things in
     each.
+
+    The marker that OPENS a fence is the only one that closes it. Toggling on
+    ``` and ~~~ interchangeably means a ``` quoted inside a ~~~ block inverts the
+    state for the whole REST of the file, silently swapping which lines are read
+    as prose and which as commands -- and it fails silently in both directions,
+    so neither a miss nor a false positive would point at the cause.
     """
-    in_fence = False
+    opener = None
     for lineno, line in enumerate(text.splitlines(), 1):
-        if _FENCE.match(line):
-            in_fence = not in_fence
+        match = _FENCE.match(line)
+        if match:
+            if opener is None:
+                opener = match.group(1)
+                continue
+            if match.group(1) == opener:
+                opener = None
             continue
-        yield lineno, line, in_fence
+        yield lineno, line, opener is not None
 
 
 def inline_spans(text):
@@ -159,14 +170,30 @@ _LINE_SUFFIX = re.compile(r":\d+(?:-\d+)?$")
 _UNPATHLIKE = set(" \t*?<>{}$|\\\"'()[]")
 
 
-def top_level_dirs():
-    """Tracked top-level directories, read from git rather than listed here.
+def tracked_index():
+    """(top-level dirs, every tracked path incl. ancestor dirs) -- from git.
 
     Derived so a new top-level package is covered the day it lands, and so
     untracked build output (`_site/`, `node_modules/`) is never a candidate
     prefix in the first place.
+
+    The second set is what existence is decided against, rather than
+    `(ROOT / candidate).exists()`. A filesystem answer is CASE-INSENSITIVE on a
+    default macOS APFS volume and case-sensitive on the Linux CI runner, so a
+    reference with the wrong case passes `make check` on a laptop and fails in
+    CI -- the checker disagreeing with itself across platforms, which is the
+    one failure that makes a guard untrustworthy rather than merely wrong.
+    Asking git is exact everywhere, and it is the same list the other two
+    classes already read.
     """
-    return {path.split("/", 1)[0] for path in tracked_files() if "/" in path}
+    paths = tracked_files()
+    tops = {path.split("/", 1)[0] for path in paths if "/" in path}
+    known = set(paths)
+    for path in paths:
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            known.add("/".join(parts[:depth]))
+    return tops, known
 
 
 def path_candidate(token):
@@ -195,21 +222,25 @@ def path_candidate(token):
     return token
 
 
-def dead_paths(doc, text, tops):
+def dead_paths(doc, text, index):
+    tops, known = index
     for lineno, token in inline_spans(text):
         candidate = path_candidate(token)
         if candidate is None:
             continue
         if candidate.split("/", 1)[0] not in tops:
             continue
-        if (ROOT / candidate).exists():
+        if candidate in known:
             continue
         yield lineno, token, candidate
 
 
 # --- class 2: dead make targets -----------------------------------------------
 
-_TARGET = re.compile(r"^([A-Za-z0-9_.-]+):(?!=)")
+# A rule may name SEVERAL targets (`foo bar:`), so the whole left-hand side is
+# captured and split. `(?!=)` keeps `VAR := x` and `VAR ?= x` out; the `$`-free
+# class keeps `$(GEN)/thing:` out, which is a computed name this cannot resolve.
+_TARGET = re.compile(r"^([A-Za-z0-9_.\- ]+):(?!=)")
 _MAKE_CMD = re.compile(r"^\$?\s*make\s+(\S+)")
 
 
@@ -222,8 +253,11 @@ def make_targets():
     names = set()
     for line in MAKEFILE.read_text(encoding="utf-8").splitlines():
         match = _TARGET.match(line)
-        if match and not match.group(1).startswith("."):
-            names.add(match.group(1))
+        if not match:
+            continue
+        for name in match.group(1).split():
+            if not name.startswith("."):
+                names.add(name)
     return names
 
 
@@ -243,7 +277,12 @@ def make_invocations(text):
                 yield lineno, match.group(1)
 
 
-_TARGET_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
+# A hyphen is legal INSIDE a target name (`e2e-run`, `up-jvm`) and never at the
+# front, where it starts a flag. The character class is therefore split rather
+# than written `[A-Za-z0-9_.-]+`: that single class admits a leading hyphen, so
+# `make -j4` was captured as a target named `-j4` and reported as undefined --
+# the comment below promised the opposite, and the code did not hold it.
+_TARGET_NAME = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]*$")
 
 
 def dead_targets(doc, text, defined):
@@ -332,13 +371,13 @@ def docs():
 
 def findings():
     """Every drift in the tree, as (kind, doc, lineno, shown, key)."""
-    tops = top_level_dirs()
+    index = tracked_index()
     targets = make_targets()
     env_defined = env_names_in_code()
     found = []
     for rel, path in docs():
         text = path.read_text(encoding="utf-8")
-        for kind, produce, arg in (("path", dead_paths, tops),
+        for kind, produce, arg in (("path", dead_paths, index),
                                    ("make", dead_targets, targets),
                                    ("env", unread_env, env_defined)):
             for lineno, shown, key in produce(rel, text, arg):

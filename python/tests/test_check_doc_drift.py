@@ -135,6 +135,27 @@ def test_a_path_inside_a_fenced_block_is_not_read(tree):
     assert c.findings() == []
 
 
+def test_a_wrong_case_path_fails_on_every_platform(tree):
+    # Existence is decided against git, not the filesystem, because a default
+    # macOS APFS volume answers `.exists()` case-INSENSITIVELY while the Linux
+    # CI runner does not. Under the filesystem answer this test passes on a
+    # laptop and fails in CI -- the checker disagreeing with itself by platform.
+    tree({"docs/a.md": "see `internal/store/Real.go` for it\n"},
+         files=["internal/store/real.go"])
+    found = c.findings()
+    assert kinds(found) == ["path"]
+    assert found[0][3] == "internal/store/Real.go"
+
+
+def test_an_intermediate_directory_counts_as_existing(tree):
+    # The ancestor set is what keeps the git-backed lookup from regressing
+    # `test_a_directory_counts_as_existing`: git tracks FILES, so a cited
+    # directory is only known through the ancestors derived from them.
+    tree({"docs/a.md": "the suite lives in `e2e/delta-rs`\n"},
+         files=["e2e/delta-rs/harness/run.py"])
+    assert c.findings() == []
+
+
 # --- class 2: dead make targets -----------------------------------------------
 
 def test_a_dead_make_target_fails(tree):
@@ -177,6 +198,36 @@ def test_a_variable_override_is_not_a_target(tree):
     assert c.findings() == []
 
 
+def test_a_flag_is_not_a_target(tree):
+    # The sibling of the override case above, and the one that got this wrong:
+    # `-` inside the name character class also matched it at the FRONT, so
+    # `make -j4` was reported as "invokes a target the Makefile does not
+    # define". No doc in the tree writes a make flag today, which is exactly why
+    # a green tree proved nothing -- this checker gates `make check` and CI, so
+    # the first doc to write `make -j4 test` would have hard-failed the build on
+    # a legitimate edit. Both documented forms, because `-C` takes an argument
+    # and so reaches the guard with a different shape from `-j4`.
+    tree({"docs/a.md": "run `make -j4 test` or `make -C portal build`\n"},
+         files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_a_hyphen_inside_a_target_name_is_still_a_target(tree):
+    # The other direction, which is what makes the fix above a fix rather than a
+    # mute: hyphens are legal INSIDE a target name, so narrowing the class must
+    # not cost `up-jvm`/`docs-build`. A checker that stopped reading hyphenated
+    # targets would pass this tree by seeing nothing at all.
+    tree({"docs/a.md": "run `make docs-build` then `make no-such-target`\n"},
+         files=["docs/a.md"],
+         makefile=MAKEFILE + "docs-build: ## Build the site\n\t@echo building\n")
+    assert "docs-build" in c.make_targets()
+    # Exactly one finding: the hyphenated target that IS defined is not
+    # reported, and the hyphenated one that is not still is.
+    found = c.findings()
+    assert kinds(found) == ["make"]
+    assert found[0][3] == "make no-such-target"
+
+
 def test_phony_is_not_counted_as_a_target(tree):
     # `.PHONY` is a directive whose VALUE is the target list; counting it would
     # make `make .PHONY` look defined and, worse, admit its whole value list.
@@ -187,6 +238,35 @@ def test_phony_is_not_counted_as_a_target(tree):
 def test_targets_are_parsed_but_variable_assignment_is_not(tree):
     tree({"docs/a.md": "x\n"}, files=["docs/a.md"])
     assert c.make_targets() == {"help", "check", "lint"}
+
+
+def test_a_rule_naming_several_targets_defines_all_of_them(tree):
+    # `foo bar:` is one rule and two targets. Capturing only the first would
+    # report `make bar` as undefined -- a false "target not defined" on a target
+    # the Makefile plainly declares.
+    tree({"docs/a.md": "run `make alpha` then `make beta`\n"},
+         files=["docs/a.md"],
+         makefile=MAKEFILE + "alpha beta:\n\t@echo both\n")
+    assert {"alpha", "beta"} <= c.make_targets()
+    assert c.findings() == []
+
+
+def test_a_tilde_fence_is_not_closed_by_a_backtick_fence(tree):
+    # A ``` quoted INSIDE a ~~~ block must not close it. Toggling on either
+    # marker inverts the state for the rest of the file, so the prose after the
+    # block would be read as commands -- here that would surface as `make it`
+    # being reported as an undefined target.
+    # The nesting must be at the START of a line to reach the toggle at all --
+    # a first version of this test quoted ``` mid-line, where the anchored
+    # `_FENCE` never matches, and so passed with the bug still in place.
+    tree({"docs/a.md":
+          "~~~\n```bash\n~~~\n"
+          "make the documentation say what the code does\n"},
+         files=["docs/a.md"])
+    # Under the toggle-on-either bug the ~~~ block never closes in the right
+    # place, the state inverts, and the PROSE line below it is read as a shell
+    # command -- reporting a target named `the`.
+    assert c.findings() == []
 
 
 # --- class 3: env vars nothing reads ------------------------------------------

@@ -265,6 +265,12 @@ a NUMBERED DOCUMENT and never a path. Release notes are skipped outright: a
 v0.16 note naming a since-renamed file is correct about the tree at that tag,
 and editing it to please a checker would be falsifying a historical record.
 
+Existence is asked of **git**, never of the filesystem. `Path.exists()` answers
+case-INSENSITIVELY on a default macOS volume and case-sensitively on the Linux
+runner, so a wrong-case path would pass `make check` on a laptop and fail in CI
+— a guard that disagrees with itself by platform is worse than one that is
+merely wrong, because the disagreement is what teaches people to distrust it.
+
 A document may legitimately name something not built yet. That gets an `EXEMPT`
 entry carrying a written reason — docs/30's planned contracts checker, docs/54's
 task-parameters suite — rather than an edit that waters true prose down into
