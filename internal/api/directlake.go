@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path"
 	"strings"
@@ -19,14 +20,7 @@ func (a *API) loadDirectLakeData(ctx context.Context, modelItemID string, model 
 		return err
 	}
 	if binding.flavor == semanticmodel.DirectLakeOnSQL {
-		source, err := a.resolveDirectLakeSQLSource(modelItemID, binding.sql, principal)
-		if err != nil {
-			return err
-		}
-		if err := a.directLakeSQLEngine(source); err != nil {
-			return err
-		}
-		return errDirectLakeOnSQLNotServed
+		return a.loadDirectLakeSQLData(ctx, modelItemID, model, binding, data, principal)
 	}
 	for _, table := range model.Tables {
 		if table.DirectLake == nil {
@@ -243,7 +237,7 @@ func parseDirectLakeLocation(expression string) (string, string, error) {
 		return "", "", err
 	}
 	if src.Flavor != semanticmodel.DirectLakeOnOneLake {
-		return "", "", errDirectLakeOnSQLNotServed
+		return "", "", errNoOneLakeLocation
 	}
 	return src.Workspace, src.Item, nil
 }
@@ -305,6 +299,12 @@ func (a *API) readWarehouseTable(ctx context.Context, item *store.Item, dl *sema
 	if err != nil {
 		return nil, err
 	}
+	return scanSQLTable(rows)
+}
+
+// scanSQLTable materialises a result set as the same shape a Delta read
+// produces, so directLakeRows cannot tell them apart.
+func scanSQLTable(rows *sql.Rows) (*warehouse.Table, error) {
 	defer rows.Close()
 	cols, err := rows.Columns()
 	if err != nil {

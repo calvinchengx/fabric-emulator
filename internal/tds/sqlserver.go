@@ -224,52 +224,8 @@ func (b *sqlServerBackend) Dial(ctx context.Context, database, principal string,
 	// worked.
 	user, password := b.base.User, b.base.Password
 	if principal != "" {
-		// EVERY DATABASE THE WORKSPACE ROLE REACHES, not just the one named on
-		// the connection. See Connection.Grants: a warehouse that reads a
-		// lakehouse by three-part name gets SQL 916 mid-statement otherwise,
-		// because the login succeeded and the second database has no user.
-		//
-		// Skipped where the database does not exist yet. Provisioning does not
-		// create item databases: EnsureDatabase does, on connect or on the
-		// endpoint refresh, and creating one here would invent an item.
-		target, siblings := grantsFor(database, grants)
-		// The router refuses a caller with no access to the database it names,
-		// so a RoleNone target means a caller of this function skipped it.
-		// Refuse rather than provision: splicing in a principal whose access was
-		// just revoked would be a session with no business existing.
-		if target.Role == RoleNone {
-			return nil, nil, fmt.Errorf("provisioning %s: no access to %s", principal, database)
-		}
-		if err := EnsurePrincipal(ctx, b.pool(""), b.pool(database), principal, target.Role); err != nil {
-			return nil, nil, fmt.Errorf("provisioning %s: %w", principal, err)
-		}
-		// THE TARGET IS PROVISIONED UNCONDITIONALLY, above, exactly as it always
-		// was: OnConnect has already run EnsureDatabase on it, so it is there.
-		//
-		// A SIBLING HAS NO SUCH GUARANTEE. Its item exists in the store, but its
-		// database is created lazily, on first connect or on the analytics
-		// endpoint's refresh, so the workspace sweep routinely names databases
-		// the engine does not have yet. Asking first, rather than provisioning
-		// and ignoring the error, keeps a real provisioning failure loud.
-		//
-		// Only asked when there ARE siblings. Querying unconditionally made the
-		// single-database path depend on an engine that answers
-		// `SELECT name FROM sys.databases`, which the fake listeners in these
-		// tests do not: two of them went from passing to a session silently
-		// demoted into the re-encode relay.
-		if len(siblings) > 0 {
-			present, err := b.existingDatabases(ctx)
-			if err != nil {
-				return nil, nil, fmt.Errorf("listing databases: %w", err)
-			}
-			for _, g := range siblings {
-				if !present[g.Database] {
-					continue
-				}
-				if err := EnsurePrincipal(ctx, b.pool(""), b.pool(g.Database), principal, g.Role); err != nil {
-					return nil, nil, fmt.Errorf("provisioning %s in %s: %w", principal, g.Database, err)
-				}
-			}
+		if err := b.provision(ctx, database, principal, grants); err != nil {
+			return nil, nil, err
 		}
 		user, password = principal, principalPassword(principal)
 	}
@@ -287,6 +243,83 @@ func (b *sqlServerBackend) Dial(ctx context.Context, database, principal string,
 		return nil, nil, err
 	}
 	return conn, loginResp, nil
+}
+
+// provision makes the caller's login and database users match their access
+// NOW, in the database they address and every sibling the workspace reaches. It
+// is the one provisioning path: the relay's splice and DBAs both call it, so a
+// caller cannot hold different rights depending on which door they came in by.
+func (b *sqlServerBackend) provision(ctx context.Context, database, principal string, grants []Grant) error {
+	// EVERY DATABASE THE WORKSPACE ROLE REACHES, not just the one named on
+	// the connection. See Connection.Grants: a warehouse that reads a
+	// lakehouse by three-part name gets SQL 916 mid-statement otherwise,
+	// because the login succeeded and the second database has no user.
+	//
+	// Skipped where the database does not exist yet. Provisioning does not
+	// create item databases: EnsureDatabase does, on connect or on the
+	// endpoint refresh, and creating one here would invent an item.
+	target, siblings := grantsFor(database, grants)
+	// The router refuses a caller with no access to the database it names,
+	// so a RoleNone target means a caller of this function skipped it.
+	// Refuse rather than provision: splicing in a principal whose access was
+	// just revoked would be a session with no business existing.
+	if target.Role == RoleNone {
+		return fmt.Errorf("provisioning %s: no access to %s", principal, database)
+	}
+	if err := EnsurePrincipal(ctx, b.pool(""), b.pool(database), principal, target.Role); err != nil {
+		return fmt.Errorf("provisioning %s: %w", principal, err)
+	}
+	// THE TARGET IS PROVISIONED UNCONDITIONALLY, above, exactly as it always
+	// was: OnConnect has already run EnsureDatabase on it, so it is there.
+	//
+	// A SIBLING HAS NO SUCH GUARANTEE. Its item exists in the store, but its
+	// database is created lazily, on first connect or on the analytics
+	// endpoint's refresh, so the workspace sweep routinely names databases
+	// the engine does not have yet. Asking first, rather than provisioning
+	// and ignoring the error, keeps a real provisioning failure loud.
+	//
+	// Only asked when there ARE siblings. Querying unconditionally made the
+	// single-database path depend on an engine that answers
+	// `SELECT name FROM sys.databases`, which the fake listeners in these
+	// tests do not: two of them went from passing to a session silently
+	// demoted into the re-encode relay.
+	if len(siblings) > 0 {
+		present, err := b.existingDatabases(ctx)
+		if err != nil {
+			return fmt.Errorf("listing databases: %w", err)
+		}
+		for _, g := range siblings {
+			if !present[g.Database] {
+				continue
+			}
+			if err := EnsurePrincipal(ctx, b.pool(""), b.pool(g.Database), principal, g.Role); err != nil {
+				return fmt.Errorf("provisioning %s in %s: %w", principal, g.Database, err)
+			}
+		}
+	}
+	return nil
+}
+
+// DBAs returns a connection pool that logs into the item's database AS the
+// principal, provisioned first exactly as a relayed client is. Every statement
+// on it is subject to the engine's own GRANTs, row-level security, column
+// denials and masking for that caller — which is the point: a server-side read
+// on someone's behalf must not see what they could not. The caller closes it; a
+// pool is not cached, so a revoke takes effect on the next read rather than
+// lingering on an idle connection.
+func (b *sqlServerBackend) DBAs(ctx context.Context, database, principal string, grants []Grant) (*sql.DB, error) {
+	if b.base == nil {
+		return nil, fmt.Errorf("no backend DSN configured to log in as a caller")
+	}
+	if principal == "" {
+		return nil, fmt.Errorf("no principal to log in as")
+	}
+	if err := b.provision(ctx, database, principal, grants); err != nil {
+		return nil, err
+	}
+	cfg := *b.base
+	cfg.Database, cfg.User, cfg.Password = database, principal, principalPassword(principal)
+	return sql.OpenDB(mssql.NewConnectorConfig(cfg)), nil
 }
 
 // dialBackend opens a raw connection to the backend over whichever protocol the

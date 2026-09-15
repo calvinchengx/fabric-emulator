@@ -103,6 +103,11 @@ type API struct {
 	// which refuses a Lakehouse on purpose (see lakehouseDBFor). nil → the
 	// refreshMetadata route answers an honest 501.
 	LakehouseDB func(ctx context.Context, itemID string) (*sql.DB, error)
+	// SQLDBAs returns a Lakehouse's analytics endpoint or a Warehouse's
+	// database logged into AS the principal, provisioned and access-checked the
+	// way a relayed connection is (docs/59). The caller closes it. nil → Direct
+	// Lake on SQL is refused by name.
+	SQLDBAs func(ctx context.Context, itemID, principalID string) (*sql.DB, error)
 	// refreshes is per-dataset refresh history for the Power BI refresh
 	// endpoints. In memory on purpose — see refreshes.go.
 	refreshes refreshLog

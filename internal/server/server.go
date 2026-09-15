@@ -197,6 +197,8 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 			// The pipeline Script/StoredProcedure activities run real T-SQL against a
 			// Warehouse/SQLDatabase item's own database, on the same backend.
 			a.SQLDB = sqlDBFor(be, st)
+			// Direct Lake on SQL reads as the caller, never as the service account.
+			a.SQLDBAs = sqlDBAsFor(be, st)
 		}
 	}
 

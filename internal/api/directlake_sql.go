@@ -1,20 +1,24 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/semanticmodel"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 )
 
 // Direct Lake on SQL analytics endpoints (docs/59).
 
-// errDirectLakeOnSQLNotServed names the flavour instead of failing to find a
-// OneLake URL in it, which is what a Sql.Database expression used to read as.
-var errDirectLakeOnSQLNotServed = errors.New("Direct Lake on SQL (Sql.Database) is recognised but not served " +
-	"by this emulator yet; Direct Lake on OneLake (a onelake.dfs.fabric.microsoft.com URL) is")
+// errNoOneLakeLocation is a Direct Lake on SQL expression asked for a OneLake
+// location, which it does not have: it names a SQL analytics endpoint.
+var errNoOneLakeLocation = errors.New("Direct Lake on SQL (Sql.Database) names a SQL analytics endpoint, " +
+	"not a OneLake location")
 
 // errCannotReadSQLSource is every way a caller fails to reach the source, alike:
 // no such item, an item they hold no Read on. Somebody who cannot read it learns
@@ -97,11 +101,100 @@ func (a *API) directLakeSQLItem(modelItemID, database string) (*store.Item, erro
 		"workspace; name the source by its GUID", database)
 }
 
-// directLakeSQLEngine refuses by name when nothing serves the source's SQL.
-func (a *API) directLakeSQLEngine(source *store.Item) error {
-	if (source.Type == "Lakehouse" && a.LakehouseDB == nil) || (source.Type == "Warehouse" && a.SQLDB == nil) {
+// loadDirectLakeSQLData serves every table of a Direct Lake on SQL model by
+// reading through its SQL analytics endpoint AS THE CALLER.
+//
+// Fabric's own read is Delta through OneLake, under the model's permission, once
+// the endpoint has vouched for the caller — or, when the endpoint enforces RLS,
+// masking or object security, a DirectQuery fallback that queries it as the
+// caller. Reading as the caller gives the second answer always, and it equals
+// the first wherever the endpoint secures nothing: the rows are the same Delta
+// either way. What it buys is that every permission decision stays SQL Server's
+// — SELECT, column denials, predicates, masks — rather than a re-implementation
+// of them here.
+func (a *API) loadDirectLakeSQLData(ctx context.Context, modelItemID string, model *semanticmodel.Model,
+	binding directLakeSources, data semanticmodel.Data, p *auth.Principal) error {
+	source, err := a.resolveDirectLakeSQLSource(modelItemID, binding.sql, p)
+	if err != nil {
+		return err
+	}
+	if a.SQLDBAs == nil {
 		return fmt.Errorf("this emulator serves no SQL: Direct Lake on SQL reads through the SQL analytics " +
 			"endpoint, so it needs one attached")
 	}
+	db, err := a.SQLDBAs(ctx, source.ID, p.ID)
+	if err != nil {
+		return fmt.Errorf("Direct Lake on SQL: %w", err)
+	}
+	defer db.Close()
+	for i := range model.Tables {
+		table := &model.Tables[i]
+		if table.DirectLake == nil {
+			continue
+		}
+		read, err := readDirectLakeSQLTable(ctx, db, table)
+		if err != nil {
+			return fmt.Errorf("Direct Lake table %q: the SQL analytics endpoint refused the read: %w", table.Name, err)
+		}
+		// Positional: the SELECT named the model's columns in order.
+		rows := make([]semanticmodel.Row, 0, len(read.Rows))
+		for _, cells := range read.Rows {
+			row := semanticmodel.Row{}
+			for j, c := range table.Columns {
+				row[c.Name] = cells[j]
+			}
+			rows = append(rows, row)
+		}
+		data[table.Name] = rows
+	}
 	return nil
+}
+
+// readDirectLakeSQLTable selects a model table's source columns BY NAME, so a
+// column the endpoint denies the caller fails the read the way it fails a query
+// in Fabric, rather than being skipped by a SELECT * that never asked for it.
+func readDirectLakeSQLTable(ctx context.Context, db *sql.DB, table *semanticmodel.Table) (*warehouse.Table, error) {
+	schema := table.DirectLake.SchemaName
+	if schema == "" {
+		schema = "dbo"
+	}
+	from, err := quoteSQLNames(schema, table.DirectLake.EntityName)
+	if err != nil {
+		return nil, err
+	}
+	var sources []string
+	for _, c := range table.Columns {
+		source := c.SourceColumn
+		if source == "" {
+			source = c.Name
+		}
+		sources = append(sources, source)
+	}
+	if len(sources) == 0 {
+		return nil, fmt.Errorf("the model table has no columns to read")
+	}
+	cols, err := quoteSQLNames(sources...)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx, "SELECT "+strings.Join(cols, ", ")+" FROM "+strings.Join(from, "."))
+	if err != nil {
+		return nil, err
+	}
+	return scanSQLTable(rows)
+}
+
+// quoteSQLNames bracket-quotes identifiers. SQL has no placeholder for a name;
+// doubling the one character that closes a bracket makes any printable name
+// safe, and a name that could not exist in Fabric — empty, over 128 characters,
+// or carrying a control character — is refused rather than quoted.
+func quoteSQLNames(names ...string) ([]string, error) {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if n == "" || len(n) > 128 || strings.ContainsFunc(n, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+			return nil, fmt.Errorf("unusable SQL name %q", n)
+		}
+		out = append(out, "["+strings.ReplaceAll(n, "]", "]]")+"]")
+	}
+	return out, nil
 }

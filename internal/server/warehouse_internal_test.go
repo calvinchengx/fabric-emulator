@@ -22,6 +22,7 @@ import (
 type fakeWH struct {
 	db        *sql.DB
 	ensureErr error
+	asCalls   []dbAsCall
 }
 
 func (f *fakeWH) EnsureDatabase(context.Context, string) error { return f.ensureErr }
@@ -532,4 +533,105 @@ func execOn(t *testing.T, dir, stmt string) {
 	if _, err := db.Exec(stmt); err != nil {
 		t.Fatalf("%s: %v", stmt, err)
 	}
+}
+
+// DBAs records what a server-side read on a caller's behalf asked the backend
+// for, and hands back the fake's database.
+func (f *fakeWH) DBAs(_ context.Context, database, principal string, grants []tds.Grant) (*sql.DB, error) {
+	f.asCalls = append(f.asCalls, dbAsCall{database, principal, grants})
+	return f.db, nil
+}
+
+type dbAsCall struct {
+	database, principal string
+	grants              []tds.Grant
+}
+
+// sqlDBAsFor is the hook Direct Lake on SQL reads through: the same access
+// decision as a relayed connection, the item's database prepared, a lakehouse
+// reflected, and the backend asked to log in AS the caller with the rungs the
+// workspace gives them.
+func TestSQLDBAsFor(t *testing.T) {
+	st, err := store.Open("", clock.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	ws := &store.Workspace{DisplayName: "w"}
+	if err := st.CreateWorkspace(ws, store.Principal{ID: "u", Type: "User"}); err != nil {
+		t.Fatal(err)
+	}
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "lake"}
+	wh := &store.Item{WorkspaceID: ws.ID, Type: "Warehouse", DisplayName: "wh"}
+	nb := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "nb"}
+	for _, it := range []*store.Item{lake, wh, nb} {
+		if err := st.CreateItem(it, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	pw := parquet.NewGenericWriter[metricRow](&buf)
+	if _, err := pw.Write([]metricRow{{1, 10.5}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = pw.Close()
+	for rel, content := range map[string][]byte{
+		"Tables/dlm/part-0.parquet":                       buf.Bytes(),
+		"Tables/dlm/_delta_log/00000000000000000000.json": []byte(`{"add":{"path":"part-0.parquet"}}`),
+	} {
+		if err := st.CreateOneLakePath(&store.OneLakePath{WorkspaceID: ws.ID, ItemID: lake.ID, RelPath: rel, Content: content}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db := testsupport.OpenMSSQL(t)
+	ctx := context.Background()
+
+	be := &fakeWH{db: db}
+	open := sqlDBAsFor(be, st)
+	for _, it := range []*store.Item{lake, wh} {
+		got, err := open(ctx, it.ID, "u")
+		if err != nil || got != db {
+			t.Fatalf("%s: %v, %v", it.Type, got, err)
+		}
+	}
+	if len(be.asCalls) != 2 || be.asCalls[0].database != lake.ID || be.asCalls[1].database != wh.ID || be.asCalls[1].principal != "u" {
+		t.Fatalf("backend calls = %+v", be.asCalls)
+	}
+	// The rungs are the workspace's, the same list a relayed connection carries:
+	// the Admin owns both items.
+	for _, g := range be.asCalls[1].grants {
+		if g.Role != tds.RoleOwner {
+			t.Errorf("grant %+v, want owner", g)
+		}
+	}
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM [dlm]").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("the lakehouse was not reflected before the read: %d, %v", n, err)
+	}
+	t.Cleanup(func() { _, _ = db.Exec("DROP TABLE IF EXISTS [dlm]") })
+
+	for name, tc := range map[string]struct {
+		open      func(context.Context, string, string) (*sql.DB, error)
+		item, who string
+	}{
+		"an unknown item":                 {open, "does-not-exist", "u"},
+		"an item with no SQL endpoint":    {open, nb.ID, "u"},
+		"a principal without Read":        {open, wh.ID, "stranger"},
+		"a database that cannot be ready": {sqlDBAsFor(&fakeWH{db: db, ensureErr: fmt.Errorf("boom")}, st), wh.ID, "u"},
+		"a lakehouse that cannot reflect": {sqlDBAsFor(&fakeWH{db: closedDB(t)}, st), lake.ID, "u"},
+	} {
+		if _, err := tc.open(ctx, tc.item, tc.who); err == nil {
+			t.Errorf("%s: opened", name)
+		}
+	}
+}
+
+func closedDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "closed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	return db
 }

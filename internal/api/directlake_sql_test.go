@@ -114,13 +114,14 @@ func TestDirectLakeOnSQLIsNotReportedAsAOneLakeSource(t *testing.T) {
 // analytics endpoint, or to a warehouse, for a caller holding Read on it.
 
 // sqlSources is a workspace with a lakehouse, its SQL analytics endpoint, a
-// warehouse and a notebook, with SQL engines stubbed as attached: resolution
-// never opens them.
+// warehouse and a notebook, with a stub engine that reports which item a read
+// reached — so a test can see resolution land on the right one.
 func sqlSources(t *testing.T) (*API, *store.Store, *store.Workspace, map[string]*store.Item) {
 	t.Helper()
 	a, st := newAPI(t)
-	a.LakehouseDB = func(context.Context, string) (*sql.DB, error) { return nil, errors.New("not opened by resolution") }
-	a.SQLDB = a.LakehouseDB
+	a.SQLDBAs = func(_ context.Context, itemID, _ string) (*sql.DB, error) {
+		return nil, errors.New("engine reached for " + itemID)
+	}
 	ws := seedWorkspace(t, st)
 	items := map[string]*store.Item{}
 	for _, it := range []*store.Item{
@@ -156,10 +157,10 @@ func TestDirectLakeOnSQLResolvesItsSource(t *testing.T) {
 		database string
 		want     string
 	}{
-		"a lakehouse's endpoint by GUID":        {items["SQLEndpoint"].ID, "recognised but not served"},
-		"a warehouse by GUID":                   {items["Warehouse"].ID, "recognised but not served"},
-		"a warehouse by name":                   {"dw", "recognised but not served"},
-		"an endpoint by name":                   {"lake", "recognised but not served"},
+		"a lakehouse's endpoint by GUID":        {items["SQLEndpoint"].ID, "engine reached for " + items["Lakehouse"].ID},
+		"a warehouse by GUID":                   {items["Warehouse"].ID, "engine reached for " + items["Warehouse"].ID},
+		"a warehouse by name":                   {"dw", "engine reached for " + items["Warehouse"].ID},
+		"an endpoint by name":                   {"lake", "engine reached for " + items["Lakehouse"].ID},
 		"the lakehouse instead of its endpoint": {items["Lakehouse"].ID, "is a lakehouse; Sql.Database names its SQL analytics endpoint"},
 		"an item that is no SQL source":         {items["Notebook"].ID, "is a Notebook"},
 		"a name nothing carries":                {"nowhere", "caller cannot read the source"},
@@ -202,7 +203,7 @@ func TestDirectLakeOnSQLNeedsReadOnTheSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []*auth.Principal{stranger, viewer} {
-		if _, body := queryDL(a, p, model); !strings.Contains(body, "recognised but not served") {
+		if _, body := queryDL(a, p, model); !strings.Contains(body, "engine reached for "+lake.ID) {
 			t.Errorf("%s with Read: %s", p.ID, body)
 		}
 	}
@@ -216,7 +217,7 @@ func TestDirectLakeOnSQLNeedsReadOnTheSource(t *testing.T) {
 
 func TestDirectLakeOnSQLWithoutAnEngineIsRefusedByName(t *testing.T) {
 	a, st, ws, items := sqlSources(t)
-	a.LakehouseDB, a.SQLDB = nil, nil
+	a.SQLDBAs = nil
 	for _, target := range []*store.Item{items["SQLEndpoint"], items["Warehouse"]} {
 		if _, body := queryDL(a, admin, dlModel(t, st, ws.ID, sqlExpr(target.ID))); !strings.Contains(body, "serves no SQL") {
 			t.Errorf("%s without an engine: %s", target.Type, body)
@@ -244,7 +245,7 @@ func TestDirectLakeOnSQLResolutionFailsClosed(t *testing.T) {
 		}
 		model := dlModel(t, st, ws.ID, sqlExpr(wh.ID))
 		dropTable(t, dir, "role_assignments")
-		if _, _, err := a.loadSemanticModel(t.Context(), model.ID, admin); err == nil || strings.Contains(err.Error(), "not served") {
+		if _, _, err := a.loadSemanticModel(t.Context(), model.ID, admin); err == nil || strings.Contains(err.Error(), "engine reached") {
 			t.Fatalf("an unreadable role reached the source: %v", err)
 		}
 	})
@@ -258,7 +259,7 @@ func TestDirectLakeOnSQLResolutionFailsClosed(t *testing.T) {
 		epID := a.ensureSQLEndpointItem(lake)
 		model := dlModel(t, st, ws.ID, sqlExpr(epID))
 		dropTable(t, dir, "item_properties")
-		if _, _, err := a.loadSemanticModel(t.Context(), model.ID, admin); err == nil || strings.Contains(err.Error(), "not served") {
+		if _, _, err := a.loadSemanticModel(t.Context(), model.ID, admin); err == nil || strings.Contains(err.Error(), "engine reached") {
 			t.Fatalf("unreadable endpoint properties reached the source: %v", err)
 		}
 	})
@@ -269,4 +270,181 @@ func TestDirectLakeOnSQLResolutionFailsClosed(t *testing.T) {
 			t.Fatal("a name was resolved without the model's workspace")
 		}
 	})
+}
+
+// Stage 3: the rows are read through the endpoint, by name, from the database
+// the hook opened for the caller. Here the hook opens SQLite with a dbo schema;
+// what the engine decides for a real caller is witnessed against SQL Server in
+// internal/server/directlake_sql_test.go.
+
+func sqliteEndpoint(t *testing.T, stmts ...string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1) // ATTACH is per connection
+	t.Cleanup(func() { _ = db.Close() })
+	for _, s := range append([]string{`ATTACH DATABASE ':memory:' AS dbo`, `ATTACH DATABASE ':memory:' AS gold`}, stmts...) {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatalf("%s: %v", s, err)
+		}
+	}
+	return db
+}
+
+// sqlModel is a Direct Lake on SQL model over a warehouse, one table with a
+// source column whose name needs quoting.
+func sqlModel(t *testing.T, st *store.Store, wsID, warehouseID, schema, entity string, columns ...[2]string) *store.Item {
+	t.Helper()
+	var cols []map[string]string
+	for _, c := range columns {
+		col := map[string]string{"name": c[0], "dataType": "string"}
+		if c[1] != "" {
+			col["sourceColumn"] = c[1]
+		}
+		cols = append(cols, col)
+	}
+	source := map[string]string{"type": "entity", "entityName": entity, "expressionSource": "DL"}
+	if schema != "" {
+		source["schemaName"] = schema
+	}
+	bim, err := json.Marshal(map[string]any{"name": "DLSQL", "compatibilityLevel": 1604, "model": map[string]any{
+		"expressions": []map[string]string{{"name": "DL", "kind": "m", "expression": sqlExpr(warehouseID)}},
+		"tables": []map[string]any{{"name": "Sales", "columns": cols,
+			"measures":   []map[string]string{{"name": "Rows", "expression": "COUNTROWS(Sales)"}},
+			"partitions": []map[string]any{{"name": "p", "mode": "directLake", "source": source}}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	it := &store.Item{WorkspaceID: wsID, Type: "SemanticModel", DisplayName: fmt.Sprintf("DLSQL%d", dlModels.Add(1))}
+	if err := st.CreateItem(it, []store.DefinitionPart{{Path: "model.bim", PayloadType: "InlineBase64",
+		Payload: base64.StdEncoding.EncodeToString(bim)}}); err != nil {
+		t.Fatal(err)
+	}
+	return it
+}
+
+func TestDirectLakeOnSQLReadsThroughTheEndpointAsTheCaller(t *testing.T) {
+	a, st, ws, items := sqlSources(t)
+	var opened []string
+	var handles []*sql.DB
+	a.SQLDBAs = func(_ context.Context, itemID, principalID string) (*sql.DB, error) {
+		opened = append(opened, itemID+" as "+principalID)
+		db := sqliteEndpoint(t, `CREATE TABLE dbo.sales ([region code] TEXT, [amount] TEXT, [secret] TEXT)`,
+			`INSERT INTO dbo.sales VALUES ('us', CAST('10' AS BLOB), 'x'), ('eu', '20', 'y')`, // a driver may hand text back as bytes
+			`CREATE TABLE gold.sales ([region code] TEXT, [amount] TEXT)`, `INSERT INTO gold.sales VALUES ('apac', '5')`)
+		handles = append(handles, db)
+		return db, nil
+	}
+	wh := items["Warehouse"]
+	model := sqlModel(t, st, ws.ID, wh.ID, "", "sales", [2]string{"Region", "region code"}, [2]string{"Amount", "amount"})
+	grantBuild(t, st, model, viewer.ID)
+	w := do(a.executeQueries, viewer, "POST", `{"queries":[{"query":"EVALUATE 'Sales'"}]}`, map[string]string{"datasetId": model.ID})
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"Sales[Region]":"us"`) ||
+		!strings.Contains(w.Body.String(), `"Sales[Amount]":"20"`) || strings.Contains(w.Body.String(), "secret") {
+		t.Fatalf("viewer = %d %s", w.Code, w.Body)
+	}
+	if len(opened) != 1 || opened[0] != wh.ID+" as "+viewer.ID {
+		t.Errorf("the hook opened %v, want the warehouse once as the viewer", opened)
+	}
+
+	// A column with no sourceColumn is read by its own name, and a table that is
+	// not Direct Lake is left to its own data.
+	byName := sqlModel(t, st, ws.ID, wh.ID, "", "sales", [2]string{"amount", ""})
+	if err := st.SetDefinition(byName.ID, append(mustParts(t, st, byName.ID), store.DefinitionPart{Path: "data.json",
+		PayloadType: "InlineBase64", Payload: base64.StdEncoding.EncodeToString([]byte(`{"Notes":[{"Text":"kept"}]}`))})); err != nil {
+		t.Fatal(err)
+	}
+	withImport(t, st, byName.ID)
+	w = do(a.executeQueries, admin, "POST", `{"queries":[{"query":"EVALUATE 'Sales'"},{"query":"EVALUATE 'Notes'"}]}`, map[string]string{"datasetId": byName.ID})
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"Sales[amount]":"10"`) || !strings.Contains(w.Body.String(), `"kept"`) {
+		t.Errorf("by name, beside an import table = %d %s", w.Code, w.Body)
+	}
+
+	// A schema other than dbo is read from that schema.
+	gold := sqlModel(t, st, ws.ID, wh.ID, "gold", "sales", [2]string{"Region", "region code"})
+	if w := do(a.executeQueries, admin, "POST", `{"queries":[{"query":"EVALUATE 'Sales'"}]}`, map[string]string{"datasetId": gold.ID}); !strings.Contains(w.Body.String(), `"apac"`) {
+		t.Errorf("gold schema = %s", w.Body)
+	}
+	// Each read's handle is closed: a pool kept open would outlive a revoke.
+	for i, h := range handles {
+		if err := h.Ping(); err == nil {
+			t.Errorf("handle %d was left open", i)
+		}
+	}
+}
+
+func TestDirectLakeOnSQLReadRefusals(t *testing.T) {
+	a, st, ws, items := sqlSources(t)
+	a.SQLDBAs = func(context.Context, string, string) (*sql.DB, error) {
+		return sqliteEndpoint(t, `CREATE TABLE dbo.sales ([amount] TEXT)`, `INSERT INTO dbo.sales VALUES ('1')`), nil
+	}
+	wh := items["Warehouse"].ID
+	for name, tc := range map[string]struct {
+		model *store.Item
+		want  string
+	}{
+		// A column the endpoint cannot give the caller fails the read, not the row.
+		"a column the endpoint does not return": {sqlModel(t, st, ws.ID, wh, "", "sales", [2]string{"Amount", "amount"}, [2]string{"Hidden", "salary"}),
+			"the SQL analytics endpoint refused the read"},
+		"a table the endpoint does not have": {sqlModel(t, st, ws.ID, wh, "", "missing", [2]string{"Amount", "amount"}),
+			"the SQL analytics endpoint refused the read"},
+		"a name no Fabric table can carry": {sqlModel(t, st, ws.ID, wh, "", "bad\nname", [2]string{"Amount", "amount"}),
+			"unusable SQL name"},
+		"a column name no Fabric column can carry": {sqlModel(t, st, ws.ID, wh, "", "sales", [2]string{"Amount", strings.Repeat("a", 129)}),
+			"unusable SQL name"},
+		"a table with no columns": {sqlModel(t, st, ws.ID, wh, "", "sales"), "has no columns to read"},
+	} {
+		if code, body := queryDL(a, admin, tc.model); code != http.StatusBadRequest || !strings.Contains(body, tc.want) {
+			t.Errorf("%s: %d %s, want %q", name, code, body, tc.want)
+		}
+	}
+
+	// The hook's own refusal — the caller's access, decided by the server — is
+	// reported as Direct Lake on SQL's.
+	a.SQLDBAs = func(context.Context, string, string) (*sql.DB, error) { return nil, errors.New("access denied") }
+	if _, body := queryDL(a, admin, sqlModel(t, st, ws.ID, wh, "", "sales", [2]string{"Amount", "amount"})); !strings.Contains(body, "Direct Lake on SQL: access denied") {
+		t.Errorf("hook refusal = %s", body)
+	}
+}
+
+func mustParts(t *testing.T, st *store.Store, itemID string) []store.DefinitionPart {
+	t.Helper()
+	parts, err := st.GetDefinition(itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parts
+}
+
+// withImport adds an import table, Notes, to a model's model.bim.
+func withImport(t *testing.T, st *store.Store, itemID string) {
+	t.Helper()
+	parts := mustParts(t, st, itemID)
+	for i, p := range parts {
+		if p.Path != "model.bim" {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(p.Payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var bim map[string]any
+		if err := json.Unmarshal(raw, &bim); err != nil {
+			t.Fatal(err)
+		}
+		model := bim["model"].(map[string]any)
+		model["tables"] = append(model["tables"].([]any), map[string]any{"name": "Notes",
+			"columns": []map[string]string{{"name": "Text", "dataType": "string"}}})
+		out, err := json.Marshal(bim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts[i].Payload = base64.StdEncoding.EncodeToString(out)
+	}
+	if err := st.SetDefinition(itemID, parts); err != nil {
+		t.Fatal(err)
+	}
 }

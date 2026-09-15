@@ -1,7 +1,8 @@
 # 59 — Direct Lake on SQL: `Sql.Database` over a SQL analytics endpoint
 
-**Status: stages 1–2 built — the flavour is recognised, its source resolved and
-Read required; rows are not served yet.** Stages 3–4 follow.
+**Status: stages 1–3 built — a Direct Lake on SQL model is served, read through
+the SQL analytics endpoint as the caller.** Stage 4, `directLakeBehavior`,
+follows.
 
 **Decision: serve a Direct Lake on SQL table by reading through the SQL endpoint
 as the calling identity, so SELECT, column security, row security and masking
@@ -34,8 +35,8 @@ the other flavour.
 | Stage | Build | May claim |
 |---|---|---|
 | 1 ✅ | Every shared expression classified: OneLake URL, `Sql.Database` with two text arguments, or neither — each named. `directLakeBehavior` parsed from TMSL and TMDL. Refused: both flavours in one model, more than one SQL source, `Sql.Database` options, and — until stage 2 — the SQL flavour itself | **A SQL-flavour model is named as one** |
-| **2 ✅** | The database argument resolves to a SQL analytics endpoint or warehouse by GUID, or by display name in the model's workspace; Read on the source required; no SQL engine refused by name | Source resolution and item permission |
-| 3 | Rows read through the SQL endpoint **as the caller's own login**, after the relay's membership sync, selecting the model's columns by name | SELECT and column security are the engine's |
+| 2 ✅ | The database argument resolves to a SQL analytics endpoint or warehouse by GUID, or by display name in the model's workspace; Read on the source required; no SQL engine refused by name | Source resolution and item permission |
+| **3 ✅** | Rows read through the SQL endpoint **as the caller's own login**, after the relay's membership sync, selecting the model's columns by name | SELECT and column security are the engine's |
 | 4 | Endpoint RLS, masking and views detected per table: `directLakeOnly` errors naming the cause; `automatic` and `directQueryOnly` serve what the engine returns the caller | Fallback semantics |
 
 ### Stage 1 in detail
@@ -71,10 +72,41 @@ is no SQL source. With no SQL engine attached the source is refused by name, as
 Direct Lake over a warehouse already is. What still follows, for everyone who
 passes, is the stage 1 refusal: reading is stage 3.
 
+### Stage 3 in detail
+
+The read goes through `API.SQLDBAs`, which the server wires to `sqlDBAsFor`: the
+item's database, logged into **as the caller**. It runs the same decision a
+relayed TDS connection runs — `sqlAccess`, shared with the router, so Read on the
+item and every rung the workspace gives the caller come from one place — then
+prepares the database, reflects a lakehouse's Delta into its analytics endpoint,
+and asks the backend's `DBAs` for a login. `DBAs` provisions through the same
+`provision` the relay's splice now calls, so a caller holds identical rights
+whichever door they use, and a failure refuses rather than falling back to the
+service account. The handle is closed after each read: a pooled login kept open
+would outlive a revoke.
+
+Each Direct Lake table is read with `SELECT [col], … FROM [schema].[entity]`,
+naming the model's source columns, so a column the endpoint denies the caller
+fails the read (SQL Server's error 230) as a query touching it fails in Fabric.
+Names are bracket-quoted with `]` doubled; a name no Fabric object can carry is
+refused.
+
+**What that makes true, and why it is the product's answer.** SQL Server applies
+the caller's SELECT grants, column denials, row-level security predicates and
+masks. Where the endpoint enforces none of those, the rows equal the Delta that
+Direct Lake would load. Where it enforces RLS or masking, Fabric falls back to
+DirectQuery — which is exactly a query to the endpoint as the caller — under the
+default `automatic` behaviour. What stage 3 does not do is fail when fallback is
+disabled: that is stage 4.
+
 ## Boundaries
 
 - **Fixed identity**: cloud connections are not modelled; the effective identity
   is always the caller, Fabric's default.
+- **The whole table is read**: the emulator loads every model column of a Direct
+  Lake table per query, so a column the endpoint denies fails every query over
+  that table, where Fabric fails only queries touching it — a refusal in excess,
+  never a leak.
 - **Framing**: Direct Lake serves the Delta as of the last refresh; reading the
   endpoint serves its current rows.
 - **The owner's framing check** and **capacity guardrails** are not modelled.
@@ -100,3 +132,18 @@ each source type with no engine attached; and fails closed on an orphaned
 endpoint, unreadable access, unreadable endpoint properties and an unknown
 model. With the Read check, the lakehouse-id refusal, the ambiguity refusal or
 the engine check disabled, a witness fails.
+
+Stage 3, against a real SQL Server (gated on `WAREHOUSE_MSSQL_DSN`):
+`internal/server/directlake_sql_test.go` runs `executeQueries` with real Entra
+tokens over a warehouse whose endpoint carries a security policy and a column
+DENY — two callers get their own row from one model while the owner gets both,
+and the denied caller's model over the column fails while the other's is served
+— and shows a principal shared the warehouse for Read alone refused by the
+endpoint until the owner grants SELECT, then refused at the source once Read is
+revoked. With the hook reading as the service account, or selecting `*` instead
+of the model's columns, those witnesses fail. `TestSQLDBAsFor` covers the hook's
+lakehouse reflection, rungs and refusals; `TestDBAsRefusesWhatItCannotLogInAs`
+covers the backend refusing rather than falling back. Without an engine,
+`internal/api/directlake_sql_test.go` reads positionally over SQLite for the
+caller the hook was opened for, in a non-dbo schema, by column name, beside an
+import table, closing each handle, and names every read refusal.
