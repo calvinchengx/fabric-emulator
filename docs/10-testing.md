@@ -265,6 +265,21 @@ a NUMBERED DOCUMENT and never a path. Release notes are skipped outright: a
 v0.16 note naming a since-renamed file is correct about the tree at that tag,
 and editing it to please a checker would be falsifying a historical record.
 
+The prose it reads is every `docs/` page, the root readme, and **every
+per-directory README** — beside an example, a suite, a package. That last group
+was missing from the first version, and it is the prose most likely to cite a
+path inside its own directory: adding it immediately turned up a fourth stale
+reference: `e2e/dbt-fabric/README.md` sent the reader to a parity document
+under a number that document has never carried — it is `docs/parity.md`. (The
+dead name is written without backticks here on purpose. Quoting it as a code
+span makes this paragraph itself a finding, which is how the first draft of it
+failed the check.) The list is intersected with what git tracks rather than
+taken from the glob alone, because a working tree holds a great deal that is not
+this repo's prose — a `.venv/` under an example, `node_modules/`, a worktree
+copy of everything — and drift reported inside a vendored README is somebody
+else's documentation, which is the fastest possible way to teach a reader to
+skim past this check.
+
 Existence is asked of **git**, never of the filesystem. `Path.exists()` answers
 case-INSENSITIVELY on a default macOS volume and case-sensitively on the Linux
 runner, so a wrong-case path would pass `make check` on a laptop and fail in CI

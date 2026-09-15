@@ -69,7 +69,15 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAKEFILE = ROOT / "Makefile"
 
 # The prose. Everything else tracked is either code, generated, or vendored.
-DOC_GLOBS = ("README.md", "docs/*.md", "docs/**/*.md", "examples/README.md")
+#
+# The per-directory READMEs earn their place: a README beside an example or a
+# suite is the prose MOST likely to cite a path inside its own directory, and
+# the first version of this list skipped them all in favour of the one at
+# `examples/README.md`. Measured when they were added, `e2e/dbt-fabric/README.md`
+# was citing `docs/17-parity.md` -- a document that has never existed under that
+# name -- so the gap was not hypothetical.
+DOC_GLOBS = ("README.md", "docs/*.md", "docs/**/*.md", "examples/README.md",
+             "examples/*/README.md", "e2e/**/README.md", "python/**/README.md")
 
 # Historical snapshots: correct about a tree that no longer exists. See the
 # docstring -- this is the exclusion that keeps the check honest rather than
@@ -97,6 +105,10 @@ ENV_PREFIXES = ("FABRIC_", "ENTRA_", "EMULATOR_", "ONELAKE_", "VAULT_",
 _ENV_ALT = "|".join(ENV_PREFIXES)
 ENV_RE = re.compile(rf"^(?:{_ENV_ALT})[A-Z0-9_]+$")
 
+# This checker and its own test. See env_names_in_code: a name written here is
+# an argument to the check, never something the product reads.
+SELF = ("scripts/check_doc_drift.py", "python/tests/test_check_doc_drift.py")
+
 # Binary-ish files the env scan need not decode.
 BINARY_EXTS = {".gif", ".png", ".jpg", ".jpeg", ".ico", ".woff", ".woff2",
                ".parquet", ".zip", ".gz", ".pdf", ".ttf", ".otf", ".webp"}
@@ -120,7 +132,7 @@ EXEMPT = {
 
 # --- extraction ---------------------------------------------------------------
 
-_FENCE = re.compile(r"^\s*(```|~~~)")
+_FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 _INLINE = re.compile(r"`([^`\n]+)`")
 
 
@@ -131,20 +143,33 @@ def scan_lines(text):
     a command, a prose line is a sentence, and `make` means different things in
     each.
 
-    The marker that OPENS a fence is the only one that closes it. Toggling on
-    ``` and ~~~ interchangeably means a ``` quoted inside a ~~~ block inverts the
-    state for the whole REST of the file, silently swapping which lines are read
-    as prose and which as commands -- and it fails silently in both directions,
-    so neither a miss nor a false positive would point at the cause.
+    THE MARKER THAT OPENS A FENCE IS THE ONLY ONE THAT CLOSES IT, and a marker
+    is its CHARACTER AND ITS LENGTH, not its character alone. Both halves are
+    load-bearing and the failure is identical either way -- the state inverts
+    for the whole REST of the file, silently swapping which lines are read as
+    prose and which as commands, so neither the miss nor the false positive
+    that follows points anywhere near the cause:
+
+      * a ``` quoted inside a ~~~ block would close it, if the CHARACTER were
+        ignored;
+      * a ``` quoted inside a ```` block would close it, if the LENGTH were --
+        which is exactly how a document explaining this checker\'s own Markdown
+        handling would break it, since four-backtick fences exist to quote
+        three-backtick ones.
+
+    CommonMark\'s rule is what is implemented: a closing fence uses the
+    opener\'s character and is at least as long, so a longer run inside a block
+    is content and a shorter one cannot end it.
     """
     opener = None
     for lineno, line in enumerate(text.splitlines(), 1):
         match = _FENCE.match(line)
         if match:
+            marker = match.group(1)
             if opener is None:
-                opener = match.group(1)
+                opener = marker
                 continue
-            if match.group(1) == opener:
+            if marker[0] == opener[0] and len(marker) >= len(opener):
                 opener = None
             continue
         yield lineno, line, opener is not None
@@ -240,7 +265,16 @@ def dead_paths(doc, text, index):
 # A rule may name SEVERAL targets (`foo bar:`), so the whole left-hand side is
 # captured and split. `(?!=)` keeps `VAR := x` and `VAR ?= x` out; the `$`-free
 # class keeps `$(GEN)/thing:` out, which is a computed name this cannot resolve.
-_TARGET = re.compile(r"^([A-Za-z0-9_.\- ]+):(?!=)")
+#
+# The names are spelled as a first name plus repeats rather than as one class
+# with a space in it. `[A-Za-z0-9_.\- ]+` reads the same and is not: a class
+# containing a space matches a LEADING space too, so an INDENTED line carrying a
+# colon parses as a rule. ` Targets: check lint` inside a `define` block would
+# register a target called `Targets`, and a phantom name is the quiet direction
+# of wrong -- it makes `make Targets` look defined and mutes a real finding
+# instead of inventing one. This form cannot start with whitespace at all, which
+# also excludes recipe lines (tab-indented by construction).
+_TARGET = re.compile(r"^([A-Za-z0-9_.-]+(?:[ \t]+[A-Za-z0-9_.-]+)*)[ \t]*:(?!=)")
 _MAKE_CMD = re.compile(r"^\$?\s*make\s+(\S+)")
 
 
@@ -294,6 +328,17 @@ def dead_targets(doc, text, defined):
         # captured whole (`\S+`) so the guard can see the `=` -- an earlier
         # version captured `[A-Za-z0-9_.-]+`, which stopped AT the `=` and
         # handed the guard a plausible-looking "PROFILE" to flag.
+        #
+        # THE RECALL COST, STATED. Only the first word is looked at, so
+        # rejecting it abandons the real target BEHIND it: `make -j4 test` and
+        # `make -C portal build` are skipped entirely rather than resolved to
+        # `test` and `build`. Walking past the flags is not free -- `-j4` takes
+        # no argument and `-C` takes the next word, so a version that skipped
+        # flags blindly would read `portal` as a target and report the false
+        # positive this guard exists to prevent. Knowing which make flags
+        # consume an argument is a second list to keep current, for a form no
+        # doc in this tree writes; the one invocation the guard skips today is
+        # the `make <target>` placeholder in docs/10.
         if not _TARGET_NAME.match(word) or word in defined:
             continue
         yield lineno, f"make {word}", word
@@ -321,11 +366,22 @@ def env_names_in_code():
     The .md exclusion is by extension and never by directory: `docs/demo/flow.py`
     and `docs/demo/flow-override.yml` are code, and skipping `docs/` wholesale
     reports `DEMO_FABRIC_PORT` as read by nothing.
+
+    A CHECKER MAY NOT CREDIT ITSELF. This file and its test are tracked .py
+    files, so without SELF are scanned like any other -- and a name appearing
+    in either is a LITERAL IN AN ARGUMENT, never a reader. That is a real
+    weakening rather than a tidiness point: the test names `FABRIC_FORCE_LRO`
+    and `DEMO_FABRIC_PORT`, both of which the product genuinely reads today, so
+    if the last real reader of one were deleted the doc reference would keep
+    passing on the strength of a test fixture. Excluded, the answer comes only
+    from code that would actually break.
     """
     pattern = re.compile(rf"\b(?:{_ENV_ALT})[A-Z0-9_]+\b")
     names = set()
     for rel in tracked_files():
         if rel.endswith(".md") or rel.startswith(SKIP_PREFIXES):
+            continue
+        if rel in SELF:
             continue
         if pathlib.PurePosixPath(rel).suffix.lower() in BINARY_EXTS:
             continue
@@ -359,12 +415,27 @@ CLASSES = (
 
 
 def docs():
-    """The prose files in scope, deduplicated and ordered."""
+    """The prose files in scope, deduplicated and ordered.
+
+    INTERSECTED WITH WHAT GIT TRACKS, for the same reason `tracked_index` asks
+    git rather than the filesystem. A glob walks whatever is on disk, and a
+    working tree holds a great deal that is not this repo's prose: a
+    `.venv/` under an example, `node_modules/`, a `.claude/worktrees/` copy of
+    the whole tree. Measured on this machine, widening the globs to the
+    per-directory READMEs without this pulled in 763 files and reported drift in
+    a vendored `dompurify` README -- findings about somebody else's
+    documentation, which is the fastest way to teach a reader to skim past this
+    check. Tracked-only also means a doc is in scope exactly when it is
+    reviewable.
+    """
+    tracked = set(tracked_files())
     seen = {}
     for pattern in DOC_GLOBS:
         for path in ROOT.glob(pattern):
             rel = str(path.relative_to(ROOT)).replace("\\", "/")
-            if path.is_file() and not rel.startswith(SKIP_DIRS):
+            if not path.is_file() or rel not in tracked:
+                continue
+            if not rel.startswith(SKIP_DIRS):
                 seen[rel] = path
     return sorted(seen.items())
 

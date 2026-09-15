@@ -269,6 +269,44 @@ def test_a_tilde_fence_is_not_closed_by_a_backtick_fence(tree):
     assert c.findings() == []
 
 
+def test_a_longer_fence_is_not_closed_by_a_shorter_one(tree):
+    # THE SIBLING OF THE CASE ABOVE, and the half the first fix missed: a fence
+    # marker is its CHARACTER AND ITS LENGTH. A ```` block exists precisely to
+    # quote a ``` one -- which is what a document explaining this checker's own
+    # Markdown handling would write -- and matching on the character alone lets
+    # the inner ``` close the outer block. The state then inverts for the rest of
+    # the file, in both directions at once: the prose below is read as a command
+    # (a target named `the`) AND the backticked path after it silently stops
+    # being checked at all.
+    tree({"docs/a.md":
+          "````\n```\n````\n"
+          "make the documentation say what the code does,\n"
+          "including `internal/store/gone.go`\n"},
+         files=["docs/a.md", "internal/server/real.go"])
+    found = c.findings()
+    # The prose is prose...
+    assert "make" not in kinds(found)
+    # ...and the checking did not stop at the block.
+    assert kinds(found) == ["path"]
+    assert found[0][3] == "internal/store/gone.go"
+
+
+def test_an_indented_line_with_a_colon_is_not_a_rule(tree):
+    # Makefile rules start at column zero. Spelling the left-hand side as one
+    # character class containing a space -- `[A-Za-z0-9_.\- ]+:` -- reads the
+    # same and is not, because that class matches a LEADING space too, so a
+    # `define` block's indented prose registers as a rule. The direction of the
+    # error is what makes it worth a test: a phantom target MUTES a real
+    # finding rather than inventing one, so nothing would ever go red.
+    tree({"docs/a.md": "run `make Targets`\n"},
+         files=["docs/a.md"],
+         makefile=MAKEFILE + "define BANNER\n  Targets: check lint\nendef\n")
+    assert "Targets" not in c.make_targets()
+    found = c.findings()
+    assert kinds(found) == ["make"]
+    assert found[0][3] == "make Targets"
+
+
 # --- class 3: env vars nothing reads ------------------------------------------
 
 def test_an_env_var_no_code_reads_fails(tree):
@@ -296,6 +334,35 @@ def test_code_under_docs_counts_as_code(tree, tmp_path):
     assert c.findings() == []
 
 
+def test_the_checker_and_its_own_test_do_not_credit_a_name(tree, tmp_path):
+    # A CHECKER MAY NOT CREDIT ITSELF. Both files are tracked .py, so without
+    # the exclusion a name written HERE as a test literal counts as "code reads
+    # it" -- and the two files below are the only readers in this fixture. The
+    # real cost is not the synthetic names: the suite also writes
+    # `FABRIC_FORCE_LRO` and `DEMO_FABRIC_PORT`, which the product genuinely
+    # reads today, so deleting their last real reader would leave the doc
+    # reference passing on the strength of a fixture.
+    tree({"docs/a.md": "set `FABRIC_ONLY_THE_TEST_SAYS_SO`\n"},
+         files=list(c.SELF))
+    for rel in c.SELF:
+        (tmp_path / rel).write_text('x = "FABRIC_ONLY_THE_TEST_SAYS_SO"\n')
+    assert "FABRIC_ONLY_THE_TEST_SAYS_SO" not in c.env_names_in_code()
+    found = c.findings()
+    assert kinds(found) == ["env"]
+    assert found[0][3] == "FABRIC_ONLY_THE_TEST_SAYS_SO"
+
+
+def test_any_other_python_file_does_credit_a_name(tree, tmp_path):
+    # The control for the test above. An exclusion that quietly widened to every
+    # .py file would pass that assertion by crediting nothing at all, and class
+    # 3 would report every documented variable in the repo.
+    tree({"docs/a.md": "set `FABRIC_ONLY_THE_TEST_SAYS_SO`\n"},
+         files=["scripts/check_something_else.py"])
+    (tmp_path / "scripts/check_something_else.py").write_text(
+        'os.environ["FABRIC_ONLY_THE_TEST_SAYS_SO"]\n')
+    assert c.findings() == []
+
+
 def test_a_variable_outside_the_projects_prefixes_is_ignored(tree):
     tree({"docs/a.md": "your `PATH` and `HOME` are yours\n"}, files=["docs/a.md"])
     assert c.findings() == []
@@ -308,6 +375,36 @@ def test_release_notes_are_skipped(tree):
     # that tag; editing it would falsify a historical record.
     tree({"docs/release-notes/v0.16.0.md": "shipped `internal/store/gone.go`\n"},
          files=["docs/a.md"])
+    assert c.findings() == []
+
+
+def test_a_per_directory_readme_is_in_scope(tree):
+    # The scope gap the first version shipped with: `examples/README.md` was
+    # read and `examples/<one>/README.md` was not -- and a README beside an
+    # example is the prose MOST likely to cite a path inside its own directory.
+    # Widening this found `e2e/dbt-fabric/README.md` citing `docs/17-parity.md`,
+    # a document that has never existed under that name.
+    tree({"examples/medallion-pyspark/README.md": "see `examples/gone/common.py`\n",
+          "e2e/dbt-fabric/README.md": "see `docs/17-parity.md`\n"},
+         files=["examples/medallion-pyspark/common.py", "docs/parity.md"])
+    found = c.findings()
+    assert kinds(found) == ["path", "path"]
+    assert sorted(f[1] for f in found) == ["e2e/dbt-fabric/README.md",
+                                           "examples/medallion-pyspark/README.md"]
+
+
+def test_an_untracked_file_matching_a_glob_is_not_a_doc(tree, tmp_path):
+    # The globs walk the FILESYSTEM, and a working tree holds a great deal that
+    # is not this repo's prose -- a `.venv/` under an example, `node_modules/`,
+    # a `.claude/worktrees/` copy of the whole tree. Measured before this was
+    # intersected with git: 763 files in scope and drift reported inside a
+    # vendored `dompurify` README. Findings about somebody else's documentation
+    # are the fastest way to teach a reader to skim past this check.
+    tree({"README.md": "x\n"}, files=["README.md"])
+    stray = tmp_path / "python" / "vendored" / "README.md"
+    stray.parent.mkdir(parents=True, exist_ok=True)
+    stray.write_text("see `internal/store/gone.go`\n")
+    assert [rel for rel, _ in c.docs()] == ["README.md"]
     assert c.findings() == []
 
 
