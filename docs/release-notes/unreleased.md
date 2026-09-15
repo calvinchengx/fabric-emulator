@@ -11,5 +11,12 @@ identity by default — what it always did. An Admin or Member switches it throu
 the emulator-native `…/sqlEndpoints/{id}/_emulator/dataAccessMode` (Fabric offers
 no API), and the switch applies Fabric's documented effects: the workspace's SQL
 sessions end, and SQL roles, security policies and functions change as the mode
-requires. User identity mode is refused by name until OneLake security is synced
-into the endpoint. [docs/60](../60-sql-endpoint-access-modes.md)
+requires. In user identity mode, the lakehouse's OneLake security roles are
+synced into the endpoint as `OLS_` database roles: a Viewer reads only the tables
+and columns their roles grant, and T-SQL cannot grant tables around them.
+
+The endpoint also accepts the SQL objects and security authored on it — views,
+functions, roles, grants, security policies, masks — which the relay refused as
+writes before; data writes stay refused, now including one after a leading
+block comment or after another statement in the batch.
+[docs/60](../60-sql-endpoint-access-modes.md)

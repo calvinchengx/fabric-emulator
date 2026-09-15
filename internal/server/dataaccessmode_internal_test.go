@@ -80,7 +80,7 @@ func TestDataAccessModeSwitchFailures(t *testing.T) {
 			if err := st.SetItemProperties(ep.ID, map[string]string{propDisabledPolicies: "not json"}); err != nil {
 				t.Fatal(err)
 			}
-		}, "reading the policies a switch turned off"},
+		}, "reading what the switch to user identity set aside"},
 	} {
 		tc.prep()
 		err := dataAccessModeSwitch(tc.be, st, closer)(ctx, ep, lake, tc.to)
@@ -110,36 +110,106 @@ func TestDataAccessModeSwitchFailures(t *testing.T) {
 	}
 }
 
-// The access decision refuses a lakehouse in user identity mode — at the
-// endpoint and as a neighbour's three-part name — and fails closed when the
-// mode cannot be read. No SQL Server needed: it decides before the engine.
+// In user identity mode a lakehouse's grant comes from OneLake security: below
+// Contributor the rung is CONNECT with the principal's OLS_ memberships, and a
+// principal without Read gets none — the same whether the lakehouse is the
+// target or a sibling. Decided before the engine, so no SQL Server is needed.
 func TestSQLAccessInUserIdentityMode(t *testing.T) {
 	st, raw, lake, ep, wh := modeStore(t)
 	if err := st.SetItemProperties(ep.ID, map[string]string{store.PropDataAccessMode: store.AccessModeUserIdentity}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := sqlAccess(st, lake, "u"); !errors.Is(err, errUserIdentityNotServed) {
-		t.Errorf("lakehouse in user identity = %v", err)
+	if err := st.PutOneLakeRoles(lake.ID, []store.OneLakeRole{{ItemID: lake.ID, Name: "readers", Body: []byte(
+		`{"name":"readers","decisionRules":[{"effect":"Permit","permission":[
+		  {"attributeName":"Path","attributeValueIncludedIn":["Tables/sales"]},
+		  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]}],
+		  "members":{"microsoftEntraMembers":[{"objectId":"v"}]}}`)}}); err != nil {
+		t.Fatal(err)
 	}
-	_, grants, err := sqlAccess(st, wh, "u")
+	for id, role := range map[string]string{"v": store.RoleViewer, "c": store.RoleContributor} {
+		if err := st.CreateRoleAssignment(&store.RoleAssignment{WorkspaceID: lake.WorkspaceID,
+			Principal: store.Principal{ID: id, Type: "User"}, Role: role}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for who, want := range map[string]tds.Grant{
+		"u": {Database: lake.ID, Role: tds.RoleOwner, OneLake: true},
+		"c": {Database: lake.ID, Role: tds.RoleReader, OneLake: true},
+		"v": {Database: lake.ID, Role: tds.RoleConnect, OneLake: true, OneLakeRoles: []string{"OLS_readers"}},
+	} {
+		for _, target := range []*store.Item{lake, wh} {
+			_, grants, err := sqlAccess(st, target, who)
+			if err != nil {
+				t.Fatalf("%s to %s: %v", who, target.Type, err)
+			}
+			got := targetGrant(grants, lake.ID)
+			if got.Role != want.Role || !got.OneLake || strings.Join(got.OneLakeRoles, ",") != strings.Join(want.OneLakeRoles, ",") {
+				t.Errorf("%s via %s: lakehouse grant %+v, want %+v", who, target.Type, got, want)
+			}
+		}
+	}
+	// No Read on the lakehouse: none, even listed as a sibling.
+	grants, err := workspaceGrants(st, lake.WorkspaceID, "stranger", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, g := range grants {
-		if g.Database == lake.ID && g.Role != tds.RoleNone {
-			t.Errorf("the lakehouse sibling's rung = %v, want none", g.Role)
+	if g := targetGrant(grants, lake.ID); g.Role != tds.RoleNone {
+		t.Errorf("a stranger's lakehouse grant = %+v", g)
+	}
+	if g := targetGrant(nil, "missing"); g.Role != tds.RoleNone {
+		t.Errorf("a database the sweep does not list = %+v", g)
+	}
+	if err := st.PutOneLakeRoles(lake.ID, []store.OneLakeRole{{ItemID: lake.ID, Name: strings.Repeat("r", 130), Body: []byte(
+		`{"name":"x","decisionRules":[{"effect":"Permit","permission":[
+		  {"attributeName":"Path","attributeValueIncludedIn":["*"]},
+		  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]}],
+		  "members":{"microsoftEntraMembers":[{"objectId":"v"}]}}`)}}); err == nil {
+		grants, _ = workspaceGrants(st, lake.WorkspaceID, "v", store.RoleViewer)
+		if g := targetGrant(grants, lake.ID); len(g.OneLakeRoles) != 0 {
+			t.Errorf("a role name no SQL role can carry was synced: %+v", g)
 		}
-		if g.Database == wh.ID && g.Role != tds.RoleOwner {
-			t.Errorf("the warehouse's rung = %v", g.Role)
-		}
+	}
+
+	if _, err := raw.Exec(`DROP TABLE onelake_roles`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := sqlAccess(st, wh, "u"); err == nil {
+		t.Error("unreadable OneLake roles were granted")
 	}
 	if _, err := raw.Exec(`DROP TABLE item_properties`); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := sqlAccess(st, lake, "u"); err == nil || errors.Is(err, errUserIdentityNotServed) {
-		t.Errorf("an unreadable mode at the endpoint = %v", err)
-	}
 	if _, err := workspaceGrants(st, lake.WorkspaceID, "u", store.RoleAdmin); err == nil {
 		t.Error("an unreadable mode for a sibling was granted")
+	}
+}
+
+// The sync fails closed when the store cannot answer.
+func TestOneLakeSyncFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	st, raw, lake, ep, _ := modeStore(t)
+	sqlite, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlite.Close() })
+	if err := st.SetItemProperties(ep.ID, map[string]string{store.PropDataAccessMode: store.AccessModeUserIdentity}); err != nil {
+		t.Fatal(err)
+	}
+	// SQLite has no sys.tables: the endpoint cannot be listed.
+	if err := syncOneLakeRoles(ctx, sqlite, st, lake); err == nil || !strings.Contains(err.Error(), "listing the endpoint's tables") {
+		t.Errorf("an endpoint that cannot be listed: %v", err)
+	}
+	if _, err := raw.Exec(`DROP TABLE onelake_roles`); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncOneLakeRoles(ctx, sqlite, st, lake); err == nil {
+		t.Error("unreadable OneLake roles synced")
+	}
+	if _, err := raw.Exec(`DROP TABLE item_properties`); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncIfUserIdentity(ctx, &fakeWH{db: sqlite}, st, lake); err == nil {
+		t.Error("an unreadable access mode skipped the sync")
 	}
 }

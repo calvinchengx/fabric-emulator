@@ -183,3 +183,35 @@ func revokePrincipal(ctx context.Context, target *sql.DB, quotedID, name string)
 	}
 	return nil
 }
+
+// SyncOneLakeMemberships makes a principal's OLS_ role memberships in one
+// database exactly roles (docs/60): each listed role that exists is joined, and
+// every other OLS_ role is left. A listed role the security sync has not
+// created is skipped rather than failing the login — it grants nothing until it
+// exists. The user must already exist, which EnsurePrincipal sees to.
+func SyncOneLakeMemberships(ctx context.Context, target *sql.DB, objectID string, roles []string) error {
+	if objectID == "" {
+		return fmt.Errorf("no principal to sync")
+	}
+	quotedID := strings.ReplaceAll(objectID, "'", "''")
+	name := principalName(objectID)
+	var b strings.Builder
+	keep := "N''"
+	for _, r := range roles {
+		qr := strings.ReplaceAll(r, "'", "''")
+		fmt.Fprintf(&b, "IF DATABASE_PRINCIPAL_ID(N'%s') IS NOT NULL AND IS_ROLEMEMBER(N'%s', N'%s') = 0 ALTER ROLE [%s] ADD MEMBER [%s];\n",
+			qr, qr, quotedID, strings.ReplaceAll(r, "]", "]]"), name)
+		keep += ", N'" + qr + "'"
+	}
+	fmt.Fprintf(&b, `DECLARE @leave nvarchar(max) = N'';
+SELECT @leave += N'ALTER ROLE ' + QUOTENAME(r.name) + N' DROP MEMBER ' + QUOTENAME(m.name) + N';'
+FROM sys.database_role_members rm
+JOIN sys.database_principals r ON r.principal_id = rm.role_principal_id
+JOIN sys.database_principals m ON m.principal_id = rm.member_principal_id
+WHERE m.name = N'%s' AND r.name LIKE 'OLS[_]%%' AND r.name NOT IN (%s);
+EXEC sp_executesql @leave;`, quotedID, keep)
+	if _, err := target.ExecContext(ctx, b.String()); err != nil {
+		return fmt.Errorf("sync OneLake role memberships for %s: %w", objectID, err)
+	}
+	return nil
+}

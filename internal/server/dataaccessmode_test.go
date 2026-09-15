@@ -1,9 +1,8 @@
 package server_test
 
 // Switching a SQL analytics endpoint's data access mode against a real SQL
-// Server (docs/60): the workspace's sessions end, the documented SQL objects go,
-// and — until OneLake security is synced in — an endpoint in user identity mode
-// refuses connections rather than serving SQL permissions under the wrong name.
+// Server (docs/60): the workspace's sessions end, and the documented SQL objects
+// go and come back.
 
 import (
 	"bytes"
@@ -14,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	entra "github.com/calvinchengx/entra-emulator/emulator"
@@ -147,17 +145,10 @@ func TestSwitchingTheDataAccessModeAppliesItsEffects(t *testing.T) {
 		t.Error("the SQL security policy is still enforced in user identity mode")
 	}
 
-	// Refused, by name, until OneLake security reaches the endpoint — and a
-	// three-part name from the warehouse does not reach it either.
-	if _, err := f.open(t, alice, lake.ID); err == nil || !strings.Contains(err.Error(), "user identity access mode") {
+	// In user identity mode the endpoint serves again — table access from
+	// OneLake security, which internal/server/onelakesync_test.go witnesses.
+	if _, err := f.open(t, alice, lake.ID); err != nil {
 		t.Errorf("connecting in user identity mode: %v", err)
-	}
-	onWarehouse, err = f.open(t, alice, f.wh.ID)
-	if err != nil {
-		t.Fatalf("the warehouse after the switch: %v", err)
-	}
-	if _, err := onWarehouse.QueryContext(context.Background(), `SELECT * FROM [`+lake.ID+`].dbo.dam_sales`); err == nil {
-		t.Error("a three-part name reached the lakehouse in user identity mode")
 	}
 
 	// Back to delegated: the policy it turned off is enforced again, and the

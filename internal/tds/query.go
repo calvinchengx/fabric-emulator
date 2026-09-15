@@ -24,9 +24,13 @@ type Backend interface {
 // and then run every client as the relay's own account, which is precisely the
 // bug docs/55 exists to close. A named field is harder to drop by accident.
 type Connection struct {
-	TargetDB  string
-	ReadOnly  bool
-	Principal string
+	TargetDB string
+	ReadOnly bool
+	// AnalyticsEndpoint marks a lakehouse's SQL analytics endpoint: read-only
+	// for data, but forwarding the SQL objects and security authored on it
+	// (isEndpointWrite).
+	AnalyticsEndpoint bool
+	Principal         string
 	// Role is the database rung this caller gets. Separate from ReadOnly
 	// because "may write" and "may author security policy" are different
 	// questions, and collapsing them left nobody able to define a policy at all.
@@ -55,6 +59,12 @@ type Connection struct {
 type Grant struct {
 	Database string
 	Role     Role
+	// OneLake marks a lakehouse endpoint in user identity access mode, whose
+	// table access comes from OneLake security synced in as OLS_ database roles
+	// (docs/60). OneLakeRoles are the ones this principal belongs to; every
+	// other OLS_ membership it holds there is dropped.
+	OneLake      bool
+	OneLakeRoles []string
 }
 
 // SpliceBackend is a Backend that can open a raw, already-authenticated

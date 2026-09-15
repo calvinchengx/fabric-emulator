@@ -1,8 +1,9 @@
 # 60 — SQL analytics endpoint access modes: user identity and delegated identity
 
-**Status: stage 1 built — the mode is switchable and its side effects applied;
-user identity mode is refused by name until OneLake security is synced in.**
-Stages 2–4 follow.
+**Status: stages 1–2 built — the mode is switchable with its effects, and in user
+identity mode a lakehouse's OneLake table and column security is synced into its
+SQL analytics endpoint and enforced by SQL Server.** Row filters (stage 3) and
+the knock-on effects (stage 4) follow.
 
 **Decision: model both modes the way Fabric's own security sync does — by
 translating a lakehouse's OneLake security roles into real SQL Server objects on
@@ -34,8 +35,8 @@ never reached T-SQL.
 
 | Stage | Build | May claim |
 |---|---|---|
-| **1 ✅** | The mode per SQL analytics endpoint, delegated by default, switched through an authenticated emulator-native API by Admin or Member; the switch closes the workspace's live sessions, turns off and remembers SQL security policies and drops custom roles on the way in, re-enables the remembered policies on the way out, and drops unbound functions either way. Until stage 2, an endpoint in user identity mode refuses connections, and a neighbour's three-part name cannot reach it | **The mode is a real, switchable state with its documented effects** |
-| 2 | Security sync on connect: each OneLake role becomes an `OLS_<role>` database role whose members are the principals it names holding Read on the lakehouse, granted SELECT on its tables or column list; Viewer-level table access only through those roles; a DDL trigger refuses table GRANT/DENY/REVOKE and `CREATE SECURITY POLICY` | Tables and columns follow OneLake security |
+| 1 ✅ | The mode per SQL analytics endpoint, delegated by default, switched through an authenticated emulator-native API by Admin or Member; the switch closes the workspace's live sessions, turns off and remembers SQL security policies and drops custom roles on the way in, re-enables the remembered policies on the way out, and drops unbound functions either way. Until stage 2, an endpoint in user identity mode refuses connections, and a neighbour's three-part name cannot reach it | The mode is a real, switchable state with its documented effects |
+| **2 ✅** | Security sync on connect: each OneLake role becomes an `OLS_<role>` database role granted SELECT on its tables or column list; memberships travel with each caller into provisioning; below Contributor, table access comes only through those roles; a DDL trigger refuses table GRANT/DENY/REVOKE and security policies; explicit table permissions are set aside on the switch in and restored on the way out. Prerequisite found on the way: the endpoint accepts the SQL objects and security authored on it, still refusing data writes — past comments and later statements in a batch | **Tables and columns follow OneLake security** |
 | 3 | Row filters: each role's filter SQL wrapped in an inline function exposing the row's columns under their own names; one `OLS_` security policy per table ORs the roles' filters; members only — a Contributor+ in no filtering role reads unfiltered (inferred) | Rows follow OneLake security |
 | 4 | Knock-on effects and grading: under Direct Lake on SQL (docs/59), `directLakeOnly` sees the synced policy as a fallback cause | End-to-end witnesses |
 
@@ -68,15 +69,66 @@ nothing else to do.
 Dropping it would destroy the policy that "becomes active" again on the way back,
 and Fabric documents both effects without saying how they combine.
 
-**Refused until stage 2.** `sqlAccess`, the one decision behind a relayed
-connection and a Direct Lake on SQL read, refuses a lakehouse in user identity
-mode by name; `workspaceGrants` gives it `RoleNone` as a sibling, so its CONNECT
-is revoked and a three-part name from a warehouse cannot reach it.
+*Stage 1 refused connections to an endpoint in user identity mode until stage 2;
+that refusal is gone now that the mode is served.*
+
+### Stage 2 in detail
+
+**The endpoint accepts what is authored on it.** The relay treated a lakehouse
+endpoint as read-only for every statement that began with a write keyword, so
+`GRANT`, `CREATE VIEW` and `CREATE SECURITY POLICY` never reached SQL Server —
+delegated identity's "full control using SQL `GRANT`/`REVOKE`" could not be
+exercised. A lakehouse connection now uses `isEndpointWrite`: GRANT/REVOKE/DENY
+and CREATE/ALTER/DROP of views, functions, procedures, schemas, roles, users and
+security policies, and `ALTER TABLE … ALTER COLUMN … ADD|DROP MASKED`, are
+forwarded, and SQL Server's permissions decide who may run them; data changes,
+other table DDL and EXEC are refused. The batch is tokenized and every statement
+judged, since T-SQL needs no semicolons: `GRANT … INSERT …` is refused. Doing so
+closed two holes the first-keyword check had on this surface — a write after a
+leading `/* comment */`, and a write after a statement it forwards.
+
+**The sync** (`syncOneLakeRoles`) runs on every connection and every Direct Lake
+on SQL read of an endpoint in user identity mode, after reflection. For each
+OneLake role it keeps an `OLS_<role>` database role holding SELECT on exactly the
+tables the role grants — on the permitted columns when it narrows them — and no
+other object permission; an `OLS_` role whose OneLake role is gone is emptied and
+dropped. It reuses `pkg/onelakesec`, so the tables and columns are the ones every
+other OneLake reader computes. Two cases grant nothing, so a restriction is never
+served as none: a column list naming a column the table lacks ("denying all
+access to the resource" until fixed), and a row filter, until stage 3.
+
+**Memberships** are carried with each caller's grant — `Grant.OneLake` and
+`OneLakeRoles` — into the one provisioning path, which creates the database user
+first and then joins exactly those `OLS_` roles and leaves the rest. They follow
+the caller into a sibling lakehouse reached by three-part name too.
+
+**The rung** below Contributor is CONNECT: "only users with Viewer permissions or
+shared read-only access are governed by OneLake security", so a Viewer reads
+tables only through their roles. Contributor and above keep their rung.
+
+**T-SQL cannot author table security** in this mode: a database DDL trigger,
+`OLS_guard`, rolls back GRANT/DENY/REVOKE on a table, SELECT or CONTROL on a
+schema or the database, and `CREATE`/`ALTER SECURITY POLICY`, naming why — for
+anyone but the service account the sync runs as. A view's GRANT passes, as
+Fabric allows. The switch in records and revokes users' explicit table
+permissions ("table-level permissions are ignored"); the switch out drops the
+trigger and every `OLS_` role and restores them.
+
+A sync the engine cannot apply fails the connection: a OneLake role name that
+cannot become a SQL role name ("role names cannot exceed 124 characters;
+otherwise … synchronization fails"), or a hand-made `OLS_` role it cannot drop.
 
 ## Boundaries
 
-- **Sync timing**: Fabric syncs within "up to 5 minutes"; the emulator will sync
-  on connect.
+- **Sync timing**: Fabric syncs within "up to 5 minutes"; the emulator syncs a
+  lakehouse on each connection to it and each read through it. A sibling reached
+  by three-part name uses that lakehouse's last sync.
+- **Fixed database roles**: an Admin or Member, who is `db_owner`, can still add
+  a Viewer to `db_datareader`; the guard covers permission statements, not role
+  membership.
+- **Masks** stay in force in user identity mode; Fabric says DDM is "not
+  supported in OneLake security" without saying what happens to existing ones.
+- **EXEC** stays refused on the endpoint, as before.
 - **Shortcuts**, ownership chaining, and the security-sync error states are not
   modelled.
 - **The owner's OneLake access** in delegated mode — "the item owner must have
@@ -99,3 +151,21 @@ refusals, no-op switch, failure and no-engine paths;
 the access refusal without an engine; `internal/tds/sessions_test.go` the session
 registry closing only the named databases; `internal/store/sqlendpoint_test.go`
 the stored mode.
+
+Stage 2: `internal/server/onelakesync_test.go` against a real SQL Server over the
+relay: an owner authors a view and a grant on the endpoint while four disguised
+writes are refused and the table is untouched; under delegated identity two
+Viewers read every table; after the switch, a Viewer reads only her role's two
+columns of one table, another only his table, a Viewer in no role and in a
+row-filtered role nothing, a Viewer whose role names a missing column nothing on
+that table, and a Contributor everything despite a DENY set aside; the same by
+three-part name from the warehouse; a table GRANT is refused naming OneLake
+security; a role moving from one Viewer to another moves access on the next
+connection, and a removed role is gone; back under delegated identity the `OLS_`
+roles are gone, Viewers read everything and the DENY is enforced again.
+`TestAOneLakeSyncThatFailsRefusesTheConnection` covers an unsyncable role name
+and a hand-made `OLS_` role. Each of eight mutations — no sync, Viewers keeping
+their reader rung, memberships not synced, columns ignored, no guard, permissions
+not set aside, permissions not restored, stale memberships kept — fails it.
+`internal/tds/writeguard_test.go` covers the endpoint guard's statements,
+comments and batches.

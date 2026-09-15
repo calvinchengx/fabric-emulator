@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf16"
+
+	"github.com/calvinchengx/fabric-emulator/internal/tsql"
 )
 
 // Authenticator validates the Entra access token presented in the FedAuth
@@ -146,7 +148,7 @@ func (s *Server) handle(conn net.Conn) error {
 	// and learn whether it is a read-only surface. OnConnect returns the resolved
 	// backend database — the item id to route queries to — which differs from
 	// login.Database when the client connected by display name.
-	readOnly := false
+	readOnly, analyticsEndpoint := false, false
 	targetDB := login.Database
 	principal := ""
 	dbRole := RoleReader
@@ -170,10 +172,21 @@ func (s *Server) handle(conn net.Conn) error {
 			return s.reject(conn, err.Error())
 		}
 		targetDB, readOnly, principal, dbRole = got.TargetDB, got.ReadOnly, got.Principal, got.Role
+		analyticsEndpoint = got.AnalyticsEndpoint
 		grants = got.Grants
 	}
 	if targetDB != "" {
 		defer s.track(targetDB, conn)()
+	}
+	// What a read-only surface refuses. A lakehouse's SQL analytics endpoint is
+	// read-only for DATA but is where its security is authored, so it forwards
+	// what a warehouse Viewer's read-only session does not.
+	var refuse func(string) bool
+	switch {
+	case analyticsEndpoint:
+		refuse = isEndpointWrite
+	case readOnly:
+		refuse = isWriteStatement
 	}
 	// Full-fidelity path: if the backend can open a raw authenticated connection
 	// to the real engine, splice the client's post-login session straight to it
@@ -185,7 +198,14 @@ func (s *Server) handle(conn net.Conn) error {
 		// The target FIRST, carrying the rung OnConnect decided for it. Dial
 		// dedupes by first occurrence, so this is what wins if the workspace
 		// sweep also lists it.
-		grants = append([]Grant{{Database: targetDB, Role: dbRole}}, grants...)
+		target := Grant{Database: targetDB, Role: dbRole}
+		for _, g := range grants {
+			if g.Database == targetDB {
+				target.OneLake, target.OneLakeRoles = g.OneLake, g.OneLakeRoles
+				break
+			}
+		}
+		grants = append([]Grant{target}, grants...)
 		backendConn, backendLogin, err := sb.Dial(context.Background(), targetDB, principal, grants)
 		if err != nil {
 			return s.reject(conn, "backend connect failed: "+err.Error())
@@ -197,7 +217,7 @@ func (s *Server) handle(conn net.Conn) error {
 		if err := WriteMessage(conn, PktTabular, spliceLoginResponse(backendLogin)); err != nil {
 			return err
 		}
-		return spliceSession(conn, backendConn, readOnly, s.Strict, s.Observe, targetDB)
+		return spliceSession(conn, backendConn, refuse, s.Strict, s.Observe, targetDB)
 	}
 
 	// Fallback re-encode relay: fake test backends and the no-engine stub. Each
@@ -224,7 +244,7 @@ func (s *Server) handle(conn net.Conn) error {
 		query := sqlBatchQuery(data)
 		// A lakehouse SQL analytics endpoint is read-only; reject writes as
 		// real Fabric does, rather than mutating the reflected mirror.
-		if readOnly && isWriteStatement(query) {
+		if refuse != nil && refuse(query) {
 			if err := WriteMessage(conn, PktTabular, readOnlyReject()); err != nil {
 				return err
 			}
@@ -300,9 +320,15 @@ func (s *Server) runQuery(database, query string) []byte {
 // isWriteStatement reports whether a batch's first keyword is a write (DDL/DML),
 // used to enforce read-only on the lakehouse endpoint. A conservative denylist:
 // anything not clearly a write is allowed through to the engine.
+//
+// The keyword is read past block comments too: `/* note */ INSERT …` began with
+// "/*" as far as a line-comment-only scan could tell, and reached the engine.
 func isWriteStatement(query string) bool {
-	kw := firstKeyword(query)
-	switch kw {
+	words := keywords(query, 1)
+	if len(words) == 0 {
+		return false
+	}
+	switch words[0] {
 	case "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP",
 		"TRUNCATE", "GRANT", "REVOKE", "DENY", "EXEC", "EXECUTE":
 		return true
@@ -310,29 +336,137 @@ func isWriteStatement(query string) bool {
 	return false
 }
 
-// firstKeyword returns the upper-cased first SQL token, skipping leading
-// whitespace and -- line comments.
-func firstKeyword(query string) string {
-	for {
-		query = strings.TrimLeft(query, " \t\r\n")
-		if strings.HasPrefix(query, "--") {
-			if i := strings.IndexByte(query, '\n'); i >= 0 {
-				query = query[i+1:]
-				continue
+// isEndpointWrite is the read-only guard of a lakehouse's SQL analytics
+// endpoint. Its tables are read-only — they are the reflected Delta, and a write
+// would diverge from the lake — but it is where the endpoint's own SQL objects
+// and security live: views, functions and procedures, schemas, roles and users,
+// GRANT/REVOKE/DENY, security policies, and masks. Those are forwarded, and the
+// engine's permissions decide who may run them.
+//
+// EVERY STATEMENT IN THE BATCH, not the first. T-SQL needs no semicolon between
+// statements, so `GRANT … ON v TO u INSERT INTO t …` is one batch that begins
+// with a statement this surface forwards; judging it by its first keyword would
+// forward the INSERT too. The batch is tokenized (strings, bracketed names and
+// comments are not words) and refused if any word begins a data change, table
+// DDL other than a mask, or EXEC. A batch that does not tokenize is refused.
+func isEndpointWrite(query string) bool {
+	toks, err := tsql.Tokenize(query)
+	if err != nil {
+		return true
+	}
+	// The significant tokens: words upper-cased; a quoted name, a string and a
+	// punctuation mark each kept as a marker, so none can be read as a keyword.
+	var sig []string
+	for _, t := range toks {
+		switch t.Kind {
+		case tsql.Word:
+			sig = append(sig, strings.ToUpper(t.Text))
+		case tsql.QuotedIdent:
+			sig = append(sig, "[name]")
+		case tsql.String:
+			sig = append(sig, "'text'")
+		case tsql.Punct:
+			sig = append(sig, t.Text)
+		}
+	}
+	at := func(k int) string {
+		if k < len(sig) {
+			return sig[k]
+		}
+		return ""
+	}
+	for i := 0; i < len(sig); i++ {
+		w := sig[i]
+		switch w {
+		case "INSERT", "UPDATE", "DELETE", "MERGE", "TRUNCATE", "EXEC", "EXECUTE", "BULK":
+			return true
+		case "CREATE", "ALTER", "DROP":
+			k := i + 1
+			if at(k) == "OR" && at(k+1) == "ALTER" {
+				k += 2
 			}
-			return ""
+			switch at(k) {
+			case "VIEW", "FUNCTION", "PROC", "PROCEDURE", "SCHEMA", "ROLE", "USER", "SECURITY":
+			case "COLUMN":
+				// Only inside ALTER TABLE, which judges it.
+			case "TABLE":
+				n := maskChange(sig[k+1:])
+				if w != "ALTER" || n == 0 {
+					return true
+				}
+				// Past the mask clause, so its ADD/DROP MASKED is not read as a
+				// statement of its own.
+				i = k + n
+			default:
+				return true
+			}
 		}
-		break
 	}
-	i := 0
-	for i < len(query) {
-		c := query[i]
-		if c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '(' || c == ';' {
-			break
+	return false
+}
+
+// maskChange reports whether what follows ALTER TABLE is a table name and then
+// ALTER COLUMN <column> ADD|DROP MASKED — a mask, which adds or drops nothing —
+// returning how many tokens that takes, or 0 when it is not one.
+func maskChange(rest []string) int {
+	k := 0
+	name := func() bool {
+		if k < len(rest) && rest[k] != "." && rest[k] != "(" && rest[k] != ";" {
+			k++
+			return true
 		}
-		i++
+		return false
 	}
-	return strings.ToUpper(query[:i])
+	if !name() {
+		return 0
+	}
+	for k < len(rest) && rest[k] == "." {
+		k++
+		if !name() {
+			return 0
+		}
+	}
+	if k+4 >= len(rest) || rest[k] != "ALTER" || rest[k+1] != "COLUMN" ||
+		(rest[k+3] != "ADD" && rest[k+3] != "DROP") || rest[k+4] != "MASKED" {
+		return 0
+	}
+	return k + 5
+}
+
+// keywords returns up to n upper-cased leading tokens, skipping whitespace, --
+// line comments and /* */ block comments between them — so a word inside a
+// comment can never be read as the statement's.
+func keywords(query string, n int) []string {
+	var out []string
+	for len(out) < n {
+		query = strings.TrimLeft(query, " \t\r\n;(")
+		switch {
+		case strings.HasPrefix(query, "--"):
+			i := strings.IndexByte(query, '\n')
+			if i < 0 {
+				return out
+			}
+			query = query[i+1:]
+			continue
+		case strings.HasPrefix(query, "/*"):
+			i := strings.Index(query, "*/")
+			if i < 0 {
+				return out
+			}
+			query = query[i+2:]
+			continue
+		}
+		end := strings.IndexAny(query, " \t\r\n;(/-")
+		if end < 0 {
+			end = len(query)
+		}
+		if end == 0 {
+			return out
+		}
+		out = append(out, strings.ToUpper(query[:end]))
+		query = query[end:]
+	}
+	return out
 }
 
 // --- response token builders (MS-TDS 2.2.7) ---

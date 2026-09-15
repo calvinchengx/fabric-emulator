@@ -16,14 +16,14 @@ import "net"
 // observe, when set, is told about each write the backend accepted, so the
 // warehouse half of a data flow is recorded (see observe.go). It is called
 // after the client already has its response, so watching cannot slow a query.
-func spliceSession(client, backend net.Conn, readOnly, strict bool, obs Observer, database string) error {
+func spliceSession(client, backend net.Conn, refuse func(string) bool, strict bool, obs Observer, database string) error {
 	for {
 		typ, data, err := ReadMessage(client)
 		if err != nil {
 			return nil // client closed the connection
 		}
 		traceRequest(typ, data)
-		if readOnly && typ == PktSQLBatch && isWriteStatement(sqlBatchQuery(data)) {
+		if refuse != nil && typ == PktSQLBatch && refuse(sqlBatchQuery(data)) {
 			if err := WriteMessage(client, PktTabular, readOnlyReject()); err != nil {
 				return err
 			}

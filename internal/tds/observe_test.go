@@ -70,7 +70,7 @@ func TestSpliceObservesAcceptedWrite(t *testing.T) {
 	backendA, backendB := net.Pipe()
 	seen := make(chan string, 4)
 	go func() {
-		_ = spliceSession(clientA, backendA, false, false,
+		_ = spliceSession(clientA, backendA, nil, false,
 			func(db string, flows []tsql.Flow) {
 				for _, f := range flows {
 					seen <- db + "|" + f.Kind + "|" + strings.Join(f.Target, ".") +
