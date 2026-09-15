@@ -905,3 +905,38 @@ can move underneath us.
   reach queries it cannot answer, and the honest failure there is a fault the
   client can read — not an empty rowset, which reads as "no data" and is the
   same class of lie a clock-derived job status was.
+
+## Correction, 2026-09-14: the MWC token became a credential in production, not just in the screens
+
+The screens above served one fixed token, and for measuring the client that was
+right: the question was what ADOMD.NET does with *a* token it accepts. The
+implementation kept the fixed string — `fabric-emulator-mwc-token`, compiled into
+the binary — and documented it as "not a credential", attributing every call
+that carried it to **whoever had exchanged most recently**.
+
+Every XMLA call after the exchange used it as a credential anyway, so:
+
+- **Authentication was bypassable.** Once anyone had connected over XMLA, a
+  caller with no Entra token at all could send `Authorization: MwcToken
+  fabric-emulator-mwc-token` and act as that person — an Admin, if an Admin was
+  last.
+- **Callers traded identities.** An Admin's next call ran as whichever Viewer had
+  connected since, and the other way round.
+
+It was found while planning semantic-model row-level security, which would have
+been meaningless on top of it: RLS decides by caller, and XMLA did not know who
+the caller was.
+
+**Fixed.** `generateastoken` mints a random 32-byte token per exchange, mapped to
+the principal who exchanged, valid for an hour on the emulator's clock. An MWC
+token runs as the principal it was issued to and only that one; an unknown or
+expired one is validated as an AAD token and refused if it is not. The token set
+is held per server, not per process. The measured contract is unchanged — the
+reply is still `{"Token":"<string>"}`, fetched per connection, and its contents
+were always the emulator's to choose.
+
+Witnessed by `internal/api/xmla_token_test.go`, which fails against the fixed
+token on every case: a mutation re-attributing live tokens to the latest
+exchanger fails with *"token issued to admin-1 ran as viewer-1"*. The real
+clients that use the exchange are `ci:sempy` and `ci:xmla`, dispatched against
+the change.
