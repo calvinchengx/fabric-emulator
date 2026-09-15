@@ -83,15 +83,22 @@ func lex(s string) ([]dtok, error) {
 			kind := map[byte]tkind{'\'': tqTable, '"': tString, '[': tBracket}[c]
 			out = append(out, dtok{kind, s[i+1 : j]})
 			i = j + 1
-		case c == '(' || c == ')' || c == ',':
+		case c == '(' || c == ')' || c == ',' || c == '{' || c == '}':
+			// Braces delimit a table constructor, which a row-level security
+			// filter's `IN { … }` uses. The query grammar has no use for them
+			// and reports one as an unexpected token.
 			out = append(out, dtok{tPunct, string(c)})
 			i++
+		case c == '|' && i+1 < len(s) && s[i+1] == '|':
+			out = append(out, dtok{tOp, "||"})
+			i += 2
 		case strings.IndexByte(opChars, c) >= 0:
 			// `-` is always an operator, never the sign of a literal: making it
 			// part of the number would lex `[A] -1` as two operands and leave
 			// the parser no subtraction to see. Negation is the parser's job.
 			op := string(c)
-			if i+1 < len(s) && (c == '<' && (s[i+1] == '=' || s[i+1] == '>') || c == '>' && s[i+1] == '=') {
+			if i+1 < len(s) && (c == '<' && (s[i+1] == '=' || s[i+1] == '>') || c == '>' && s[i+1] == '=' ||
+				c == '&' && s[i+1] == '&') {
 				op = s[i : i+2]
 			}
 			out = append(out, dtok{tOp, op})
@@ -564,9 +571,12 @@ func (e *evalr) groupCombos(groups []columnRef) ([]filterCtx, error) {
 	byTable := map[string][]string{}
 	var order []string
 	for _, g := range groups {
-		tn := strings.Trim(g.table, "'")
-		if e.model.Table(tn) == nil {
-			return nil, fmt.Errorf("no table %q", tn)
+		// A group column that does not exist is an error, not a BLANK group: every
+		// row would read nil for it and fold into one confident blank row. A
+		// column object-level security hides must fail the same way.
+		tn, err := e.resolveColumn("SUMMARIZECOLUMNS", g)
+		if err != nil {
+			return nil, err
 		}
 		if _, ok := byTable[tn]; !ok {
 			order = append(order, tn)
@@ -661,13 +671,14 @@ func (e *evalr) scalar(expr scalarExpr) (any, error) {
 		// SUM is offered only for a column that can actually be summed, since
 		// following that advice on a text column is how someone ends up with a
 		// label reading "FY0".
-		tbl := strings.Trim(x.table, "'")
+		tbl, err := e.resolveColumn("column reference", x)
+		if err != nil {
+			return nil, err
+		}
 		fix := fmt.Sprintf("read its one value with SELECTEDVALUE(%s[%s]), or group by %s[%s] to return it as its own column",
 			tbl, x.col, tbl, x.col)
-		if t := e.model.Table(tbl); t != nil {
-			if c := t.Column(x.col); c != nil && summableType(c.DataType) {
-				fix += fmt.Sprintf(", or aggregate it (SUM(%s[%s]))", tbl, x.col)
-			}
+		if summableType(e.model.Table(tbl).Column(x.col).DataType) {
+			fix += fmt.Sprintf(", or aggregate it (SUM(%s[%s]))", tbl, x.col)
 		}
 		return nil, fmt.Errorf("column %s[%s] has no single value in this context: %s", tbl, x.col, fix)
 	}

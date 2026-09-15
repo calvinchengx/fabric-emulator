@@ -86,6 +86,33 @@ The SQL witnesses run through the real relay against a real SQL Server, and were
 mutation-checked: with memberships only added, or `CONNECT` left in place, they
 fail. [docs/57](../57-item-permissions.md)
 
+## Semantic-model roles apply row-level and object-level security, where they were silently ignored
+
+Neither the TMSL nor the TMDL parser read a model's `roles`, so a model built to
+show a Viewer one region evaluated for them over every region. Roles are now
+parsed and applied to the principals the product applies them to — those
+without Write — on REST `executeQueries` and every XMLA route:
+
+- Members are matched by `memberId`, or by `memberName` against the token's UPN
+  (`preferred_username`, else `upn`). Groups match nobody.
+- Filters are evaluated per row over a bounded DAX subset; roles are additive; a
+  principal in no role gets empty tables; filters travel active relationships
+  one → many, transitively.
+- Tables and columns a caller's roles hide do not exist for them, in queries or
+  in TMSCHEMA rowsets; a hidden key column still joins; measures reading a
+  hidden object are hidden. An object is hidden only when every role of the
+  caller's hides it.
+- Refused by name, for restricted callers: filters outside the subset,
+  `bothDirections` and many-to-many relationships, service principals, row and
+  object security from different roles, and relaying them to an attached
+  msmdsrv. A secured table between two others is refused for everyone, and so
+  is `impersonatedUserName` on a secured model.
+- The portal runner has no principal and refuses a secured model.
+
+Write holders are unaffected. Separately, a `SUMMARIZECOLUMNS` group column that
+does not exist now errors instead of returning one BLANK group.
+[docs/58](../58-semantic-model-roles.md)
+
 ## Direct Lake applies OneLake security
 
 A Direct Lake query checked only that the caller held some workspace role, then
@@ -162,6 +189,12 @@ SemPy, semantic-link-labs and ADOMD.NET need nothing.
   Contributor or above.
 - **Direct Lake over an item with no OneLake security roles requires ReadAll.** A
   Viewer is refused until ReadAll is granted on the source item.
+- **A model with security roles now filters and hides for principals without
+  Write.** A Viewer, or a principal granted Read and Build, sees only what the
+  model's roles give them — nothing, if they are in no role. Admin, Member and
+  Contributor read as before. A service principal below Write, `bothDirections`
+  or many-to-many relationships, and `impersonatedUserName` on such a model are
+  refused.
 - **SQL endpoint database roles now follow the current rung.** A principal demoted
   below its old role loses the database roles that role gave, at its next connect.
 - **`PUT dataAccessRoles` on a Warehouse** now returns `400`.

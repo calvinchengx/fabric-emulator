@@ -133,10 +133,30 @@ func (a *API) executeQueries(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		SerializerSettings struct {
 			IncludeNulls bool `json:"includeNulls"`
 		} `json:"serializerSettings"`
+		ImpersonatedUserName string `json:"impersonatedUserName"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Queries) == 0 {
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "queries is required.")
 		return
+	}
+	if len(model.Roles) > 0 {
+		// Impersonation evaluates the roles as someone else. Who may do that is not
+		// sourced, and ignoring the field would answer with the caller's own view
+		// under a request that asked for another's.
+		if body.ImpersonatedUserName != "" {
+			writeErr(w, http.StatusBadRequest, "ImpersonationNotSupported",
+				"impersonatedUserName is not supported by this emulator on a semantic model with security roles.")
+			return
+		}
+		// The msmdsrv catalog is deployed per item, without roles, from whatever
+		// data the loader returned; a restricted caller's filtered rows would
+		// replace another caller's catalog under the same name.
+		if a.DAXURL != nil && !access.Has(store.PermWrite) {
+			writeErr(w, http.StatusNotImplemented, "RowLevelSecurityNotRelayed",
+				"The attached DAX engine does not apply security roles, so a principal they restrict is not served "+
+					"through it.")
+			return
+		}
 	}
 
 	results := make([]map[string]any, 0, len(body.Queries))
@@ -177,6 +197,21 @@ func (a *API) loadSemanticModel(ctx context.Context, itemID string, p *auth.Prin
 	if err != nil {
 		return nil, nil, err
 	}
+	if len(m.Roles) > 0 {
+		if err := semanticmodel.CheckObjectSecurityChains(m); err != nil {
+			return nil, nil, err
+		}
+	}
+	restricted, err := a.rolesRestrict(itemID, m, p)
+	if err != nil {
+		return nil, nil, err
+	}
+	var roles []semanticmodel.Role
+	if restricted {
+		if roles, err = admittingRoles(m, p); err != nil {
+			return nil, nil, err
+		}
+	}
 	data := semanticmodel.Data{}
 	if raw, err := a.definitionPart(itemID, "data.json"); err == nil {
 		if d, err := semanticmodel.ParseData(raw); err == nil {
@@ -186,7 +221,57 @@ func (a *API) loadSemanticModel(ctx context.Context, itemID string, p *auth.Prin
 	if err := a.loadDirectLakeData(ctx, m, data, p); err != nil {
 		return nil, nil, err
 	}
+	if restricted {
+		if data, err = semanticmodel.ApplyRowSecurity(m, data, roles, semanticmodel.SecurityEnv{UPN: p.UPN}); err != nil {
+			return nil, nil, err
+		}
+		if m, data, err = semanticmodel.ApplyObjectSecurity(m, data, roles); err != nil {
+			return nil, nil, err
+		}
+	}
 	return m, data, nil
+}
+
+// errServicePrincipalOnRLSModel is the product's own limitation: "Service
+// principals can't be added to an RLS role", so an app a role would restrict has
+// no role to be admitted by, and executeQueries does not support one.
+var errServicePrincipalOnRLSModel = errors.New("this semantic model defines security roles; service principals " +
+	"cannot be role members and are not supported below Write permission on a model with row-level security")
+
+// rolesRestrict reports whether the model's roles apply to this principal.
+//
+// ROLES WERE DROPPED, SILENTLY. Neither parser read them, so a model built to
+// show a Viewer one region evaluated for them over every region, and nothing
+// failed. The decision is made at the one loader every row-returning path —
+// REST executeQueries and each XMLA route — goes through, so no protocol reaches
+// the rows around it.
+//
+// Write holders are unaffected, because the product exempts them: RLS and OLS
+// "only apply to Viewers … Workspace members assigned Admin, Member, or
+// Contributor roles have Edit permission for the semantic model and, therefore,
+// OLS doesn't apply to them."
+func (a *API) rolesRestrict(itemID string, m *semanticmodel.Model, p *auth.Principal) (bool, error) {
+	if len(m.Roles) == 0 {
+		return false, nil
+	}
+	it, err := a.Store.GetItemByID(itemID)
+	if err != nil {
+		return false, err
+	}
+	access, err := a.Store.EffectiveItemAccess(it, p.ID)
+	if err != nil {
+		return false, err
+	}
+	return !access.Has(store.PermWrite), nil
+}
+
+// admittingRoles resolves the roles a restricted principal belongs to, refusing
+// a service principal, which no role can admit.
+func admittingRoles(m *semanticmodel.Model, p *auth.Principal) ([]semanticmodel.Role, error) {
+	if p.Type == "ServicePrincipal" {
+		return nil, errServicePrincipalOnRLSModel
+	}
+	return m.RolesFor(p.ID, p.UPN), nil
 }
 
 // parseModelDefinition reads the item's definition and parses whichever model
@@ -260,6 +345,12 @@ func (a *API) QueryModelUnauthenticated(itemID, query string) ([]map[string]any,
 	m, err := a.parseModelDefinition(itemID)
 	if err != nil {
 		return nil, err
+	}
+	// The portal runs as nobody in particular, so it cannot be anybody a role
+	// admits — and nothing here would apply the role if it were.
+	if len(m.Roles) > 0 {
+		return nil, fmt.Errorf("this model defines security roles; the portal runner has no principal to apply " +
+			"them to — use executeQueries with a Power BI token")
 	}
 	for _, t := range m.Tables {
 		if t.DirectLake != nil {
