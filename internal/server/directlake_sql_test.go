@@ -27,20 +27,25 @@ import (
 const powerBIAudience = "https://analysis.windows.net/powerbi/api"
 
 // sqlFlavourModel creates a Direct Lake on SQL model over the fixture's
-// warehouse: one table over dbo.dl_sales with the given source columns.
-func (f *secFixture) sqlFlavourModel(t *testing.T, name string, columns ...string) *store.Item {
+// warehouse: one table, Sales, over dbo.<entity> with the given source columns,
+// under the given directLakeBehavior ("" for the default).
+func (f *secFixture) sqlFlavourModel(t *testing.T, name, entity, behavior string, columns ...string) *store.Item {
 	t.Helper()
 	var cols []map[string]string
 	for _, c := range columns {
 		cols = append(cols, map[string]string{"name": c, "dataType": "string", "sourceColumn": c})
 	}
-	bim, err := json.Marshal(map[string]any{"name": name, "compatibilityLevel": 1604, "model": map[string]any{
+	model := map[string]any{
 		"expressions": []map[string]string{{"name": "DL", "kind": "m",
 			"expression": fmt.Sprintf(`let database = Sql.Database("tenant.datawarehouse.fabric.microsoft.com", "%s") in database`, f.wh.ID)}},
 		"tables": []map[string]any{{"name": "Sales", "columns": cols, "partitions": []map[string]any{{
 			"name": "p", "mode": "directLake",
-			"source": map[string]string{"type": "entity", "entityName": "dl_sales", "schemaName": "dbo", "expressionSource": "DL"}}}}},
-	}})
+			"source": map[string]string{"type": "entity", "entityName": entity, "schemaName": "dbo", "expressionSource": "DL"}}}}},
+	}
+	if behavior != "" {
+		model["directLakeBehavior"] = behavior
+	}
+	bim, err := json.Marshal(map[string]any{"name": name, "compatibilityLevel": 1604, "model": model})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +97,7 @@ func TestDirectLakeOnSQLAppliesTheEndpointsSecurityToTheCaller(t *testing.T) {
 
 	// ROW-LEVEL SECURITY: one model, one query, each caller their own row — and
 	// the owner, whom the predicate exempts, both.
-	regions := f.sqlFlavourModel(t, "Regions", "owner_name", "region")
+	regions := f.sqlFlavourModel(t, "Regions", "dl_sales", "", "owner_name", "region")
 	for who, want := range map[string]string{alice: "west", bob: "east"} {
 		code, body := f.dax(t, web, who, regions)
 		other := map[string]string{"west": "east", "east": "west"}[want]
@@ -107,7 +112,7 @@ func TestDirectLakeOnSQLAppliesTheEndpointsSecurityToTheCaller(t *testing.T) {
 
 	// COLUMN SECURITY: a model reading the denied column fails for the caller
 	// it is denied to, and serves the caller it is not.
-	margins := f.sqlFlavourModel(t, "Margins", "region", "margin")
+	margins := f.sqlFlavourModel(t, "Margins", "dl_sales", "", "region", "margin")
 	if code, body := f.dax(t, web, alice, margins); code != http.StatusBadRequest || !strings.Contains(body, "refused the read") {
 		t.Errorf("CLS: alice = %d %s, want the endpoint's refusal", code, body)
 	}
@@ -128,7 +133,7 @@ func TestDirectLakeOnSQLNeedsSelectThroughTheEndpoint(t *testing.T) {
 	mustExec(t, owner,
 		`CREATE TABLE dbo.dl_sales (owner_name sysname, region varchar(10))`,
 		`INSERT INTO dbo.dl_sales VALUES (N'x', 'west')`)
-	model := f.sqlFlavourModel(t, "Shared", "region")
+	model := f.sqlFlavourModel(t, "Shared", "dl_sales", "", "region")
 	share := func(itemID string, perms ...string) {
 		t.Helper()
 		if err := f.srv.Store.PutItemAccess(store.ItemAccess{ItemID: itemID, PrincipalID: carol, PrincipalType: "User",
@@ -154,5 +159,51 @@ func TestDirectLakeOnSQLNeedsSelectThroughTheEndpoint(t *testing.T) {
 	}
 	if code, body := f.dax(t, web, carol, model); code != http.StatusBadRequest || !strings.Contains(body, "caller cannot read the source") {
 		t.Fatalf("after revoking Read = %d %s", code, body)
+	}
+}
+
+// directLakeBehavior against a real catalog: under directLakeOnly, each thing
+// Fabric falls back to DirectQuery for fails — row-level security, masking, a
+// view — while a plain table is served; under automatic every one is served, as
+// the caller, which is what the fallback returns.
+func TestDirectLakeOnlyFailsWhereTheEndpointWouldFallBack(t *testing.T) {
+	f := newSecFixture(t)
+	web := httptest.NewServer(f.srv.Handler())
+	t.Cleanup(web.Close)
+	owner := f.connectAs(t, entra.DaemonClientID, store.RoleAdmin)
+	dana := "dddd4444-0000-0000-0000-0000000d1a54"
+	f.connectAs(t, dana, store.RoleContributor)
+	mustExec(t, owner,
+		`CREATE TABLE dbo.dl_plain (region varchar(10))`,
+		`INSERT INTO dbo.dl_plain VALUES ('west')`,
+		`CREATE TABLE dbo.dl_rls (owner_name sysname, region varchar(10))`,
+		`INSERT INTO dbo.dl_rls VALUES (N'`+dana+`', 'west'), (N'x', 'east')`,
+		`CREATE SCHEMA dlonly`,
+		`CREATE FUNCTION dlonly.fn(@owner sysname) RETURNS TABLE WITH SCHEMABINDING AS RETURN SELECT 1 AS ok WHERE @owner = USER_NAME()`,
+		`CREATE SECURITY POLICY dlonly.p ADD FILTER PREDICATE dlonly.fn(owner_name) ON dbo.dl_rls WITH (STATE = ON)`,
+		`CREATE TABLE dbo.dl_masked (email varchar(40) MASKED WITH (FUNCTION = 'email()'))`,
+		`INSERT INTO dbo.dl_masked VALUES ('dana@example.test')`,
+		`CREATE VIEW dbo.dl_view AS SELECT region FROM dbo.dl_plain`)
+
+	for _, tc := range []struct {
+		entity, column, cause, servedAs string
+	}{
+		{"dl_plain", "region", "", `"west"`},
+		{"dl_rls", "region", "enforces row-level security on [dbo].[dl_rls]", `"west"`},
+		{"dl_masked", "email", "masks columns of [dbo].[dl_masked]", `XXX`},
+		{"dl_view", "region", "[dbo].[dl_view] is a SQL view", `"west"`},
+	} {
+		only := f.sqlFlavourModel(t, "only-"+tc.entity, tc.entity, "directLakeOnly", tc.column)
+		code, body := f.dax(t, web, dana, only)
+		switch {
+		case tc.cause == "" && (code != http.StatusOK || !strings.Contains(body, tc.servedAs)):
+			t.Errorf("directLakeOnly over %s = %d %s, want served", tc.entity, code, body)
+		case tc.cause != "" && (code != http.StatusBadRequest || !strings.Contains(body, tc.cause)):
+			t.Errorf("directLakeOnly over %s = %d %s, want a refusal naming %q", tc.entity, code, body, tc.cause)
+		}
+		auto := f.sqlFlavourModel(t, "auto-"+tc.entity, tc.entity, "automatic", tc.column)
+		if code, body := f.dax(t, web, dana, auto); code != http.StatusOK || !strings.Contains(body, tc.servedAs) || strings.Contains(body, `"east"`) {
+			t.Errorf("automatic over %s = %d %s, want what the endpoint returns dana (%s)", tc.entity, code, body, tc.servedAs)
+		}
 	}
 }

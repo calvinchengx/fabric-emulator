@@ -132,9 +132,18 @@ func (a *API) loadDirectLakeSQLData(ctx context.Context, modelItemID string, mod
 		if table.DirectLake == nil {
 			continue
 		}
-		read, err := readDirectLakeSQLTable(ctx, db, table)
+		object, err := sqlObjectName(table)
+		if err != nil {
+			return fmt.Errorf("Direct Lake table %q: %w", table.Name, err)
+		}
+		read, err := readDirectLakeSQLTable(ctx, db, table, object)
 		if err != nil {
 			return fmt.Errorf("Direct Lake table %q: the SQL analytics endpoint refused the read: %w", table.Name, err)
+		}
+		if model.DirectLakeBehavior == semanticmodel.DirectLakeOnly {
+			if err := a.refuseDirectQueryFallback(ctx, source, table, object); err != nil {
+				return err
+			}
 		}
 		// Positional: the SELECT named the model's columns in order.
 		rows := make([]semanticmodel.Row, 0, len(read.Rows))
@@ -153,15 +162,7 @@ func (a *API) loadDirectLakeSQLData(ctx context.Context, modelItemID string, mod
 // readDirectLakeSQLTable selects a model table's source columns BY NAME, so a
 // column the endpoint denies the caller fails the read the way it fails a query
 // in Fabric, rather than being skipped by a SELECT * that never asked for it.
-func readDirectLakeSQLTable(ctx context.Context, db *sql.DB, table *semanticmodel.Table) (*warehouse.Table, error) {
-	schema := table.DirectLake.SchemaName
-	if schema == "" {
-		schema = "dbo"
-	}
-	from, err := quoteSQLNames(schema, table.DirectLake.EntityName)
-	if err != nil {
-		return nil, err
-	}
+func readDirectLakeSQLTable(ctx context.Context, db *sql.DB, table *semanticmodel.Table, object string) (*warehouse.Table, error) {
 	var sources []string
 	for _, c := range table.Columns {
 		source := c.SourceColumn
@@ -177,11 +178,25 @@ func readDirectLakeSQLTable(ctx context.Context, db *sql.DB, table *semanticmode
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.QueryContext(ctx, "SELECT "+strings.Join(cols, ", ")+" FROM "+strings.Join(from, "."))
+	rows, err := db.QueryContext(ctx, "SELECT "+strings.Join(cols, ", ")+" FROM "+object)
 	if err != nil {
 		return nil, err
 	}
 	return scanSQLTable(rows)
+}
+
+// sqlObjectName is a Direct Lake table's entity as a quoted two-part name,
+// schema dbo when the partition names none.
+func sqlObjectName(table *semanticmodel.Table) (string, error) {
+	schema := table.DirectLake.SchemaName
+	if schema == "" {
+		schema = "dbo"
+	}
+	names, err := quoteSQLNames(schema, table.DirectLake.EntityName)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(names, "."), nil
 }
 
 // quoteSQLNames bracket-quotes identifiers. SQL has no placeholder for a name;
@@ -197,4 +212,73 @@ func quoteSQLNames(names ...string) ([]string, error) {
 		out = append(out, "["+strings.ReplaceAll(n, "]", "]]")+"]")
 	}
 	return out, nil
+}
+
+// refuseDirectQueryFallback is directLakeBehavior directLakeOnly: "if conditions
+// aren't met, the query fails with an error". The conditions checked are the
+// ones a table carries at the endpoint — row-level security, dynamic data
+// masking, or being a view — each of which makes Fabric fall back to
+// DirectQuery under automatic. The column- and table-level denials that fail a
+// query under every behaviour have already failed the caller's read, which runs
+// first, in the order Fabric evaluates them. Guardrails and framing are not
+// modelled (docs/59), so neither can trigger a fallback here.
+//
+// Asked through the service connection, not the caller's: a caller the policy
+// restricts is exactly the one who may not be allowed to see the policy, and
+// reading "no policy" from their view of the catalog would serve a table the
+// author asked to fail. It reads the catalog only, never a row.
+func (a *API) refuseDirectQueryFallback(ctx context.Context, source *store.Item, table *semanticmodel.Table, object string) error {
+	open := a.SQLDB
+	if source.Type == "Lakehouse" {
+		open = a.LakehouseDB
+	}
+	if open == nil {
+		return fmt.Errorf("Direct Lake table %q: directLakeOnly needs the endpoint's catalog, and this emulator "+
+			"serves no service connection to read it", table.Name)
+	}
+	db, err := open(ctx, source.ID)
+	if err != nil {
+		return fmt.Errorf("Direct Lake table %q: reading the endpoint's catalog: %w", table.Name, err)
+	}
+	causes, err := directQueryFallbackCauses(ctx, db, object)
+	if err != nil {
+		return fmt.Errorf("Direct Lake table %q: reading the endpoint's catalog: %w", table.Name, err)
+	}
+	if len(causes) > 0 {
+		return fmt.Errorf("Direct Lake table %q cannot stay in Direct Lake mode and directLakeBehavior is "+
+			"directLakeOnly, which disables DirectQuery fallback: %s", table.Name, strings.Join(causes, "; "))
+	}
+	return nil
+}
+
+// directQueryFallbackCauses names what at the endpoint would send a table to
+// DirectQuery: "tables that have SQL row-level security (RLS) defined", "tables
+// that have SQL dynamic data masking (DDM) defined", and "tables based on
+// unmaterialized SQL views". A variable so the API tests, which have no SQL
+// Server, can stand in for the catalog; the real query is witnessed in
+// internal/server/directlake_sql_test.go.
+var directQueryFallbackCauses = func(ctx context.Context, db *sql.DB, object string) ([]string, error) {
+	var rls, ddm, view int
+	err := db.QueryRowContext(ctx, `
+SELECT
+  (SELECT COUNT(*) FROM sys.security_predicates sp
+     JOIN sys.security_policies p ON p.object_id = sp.object_id
+    WHERE sp.target_object_id = OBJECT_ID(@object) AND p.is_enabled = 1),
+  (SELECT COUNT(*) FROM sys.masked_columns WHERE object_id = OBJECT_ID(@object)),
+  (SELECT COUNT(*) FROM sys.views WHERE object_id = OBJECT_ID(@object))`,
+		sql.Named("object", object)).Scan(&rls, &ddm, &view)
+	if err != nil {
+		return nil, err
+	}
+	var causes []string
+	if rls > 0 {
+		causes = append(causes, "the SQL analytics endpoint enforces row-level security on "+object)
+	}
+	if ddm > 0 {
+		causes = append(causes, "the SQL analytics endpoint masks columns of "+object)
+	}
+	if view > 0 {
+		causes = append(causes, object+" is a SQL view")
+	}
+	return causes, nil
 }

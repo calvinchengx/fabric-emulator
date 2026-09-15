@@ -1,8 +1,8 @@
 # 59 — Direct Lake on SQL: `Sql.Database` over a SQL analytics endpoint
 
-**Status: stages 1–3 built — a Direct Lake on SQL model is served, read through
-the SQL analytics endpoint as the caller.** Stage 4, `directLakeBehavior`,
-follows.
+**Status: all four stages built — a Direct Lake on SQL model is served through
+the SQL analytics endpoint as the caller, and `directLakeBehavior` decides
+whether what would fall back to DirectQuery fails.**
 
 **Decision: serve a Direct Lake on SQL table by reading through the SQL endpoint
 as the calling identity, so SELECT, column security, row security and masking
@@ -36,8 +36,8 @@ the other flavour.
 |---|---|---|
 | 1 ✅ | Every shared expression classified: OneLake URL, `Sql.Database` with two text arguments, or neither — each named. `directLakeBehavior` parsed from TMSL and TMDL. Refused: both flavours in one model, more than one SQL source, `Sql.Database` options, and — until stage 2 — the SQL flavour itself | **A SQL-flavour model is named as one** |
 | 2 ✅ | The database argument resolves to a SQL analytics endpoint or warehouse by GUID, or by display name in the model's workspace; Read on the source required; no SQL engine refused by name | Source resolution and item permission |
-| **3 ✅** | Rows read through the SQL endpoint **as the caller's own login**, after the relay's membership sync, selecting the model's columns by name | SELECT and column security are the engine's |
-| 4 | Endpoint RLS, masking and views detected per table: `directLakeOnly` errors naming the cause; `automatic` and `directQueryOnly` serve what the engine returns the caller | Fallback semantics |
+| 3 ✅ | Rows read through the SQL endpoint **as the caller's own login**, after the relay's membership sync, selecting the model's columns by name | SELECT and column security are the engine's |
+| **4 ✅** | Endpoint RLS, masking and views detected per table: `directLakeOnly` errors naming the cause; `automatic` and `directQueryOnly` serve what the engine returns the caller | Fallback semantics |
 
 ### Stage 1 in detail
 
@@ -99,6 +99,26 @@ DirectQuery — which is exactly a query to the endpoint as the caller — under
 default `automatic` behaviour. What stage 3 does not do is fail when fallback is
 disabled: that is stage 4.
 
+### Stage 4 in detail
+
+Under `directLakeOnly`, after the caller's read succeeds — so a denied column or
+table has already failed first, in Fabric's order — each table's endpoint catalog
+is asked what would send it to DirectQuery: an enabled security policy predicate
+on it, a masked column, or its being a view. Any of those fails the query, naming
+the cause. `automatic` (the default) and `directQueryOnly` never ask: both return
+what the endpoint gives the caller, which is the DirectQuery answer.
+
+The catalog is read through the **service connection**, not the caller's. A
+caller a policy restricts may lack the right to see the policy, and "no policy"
+read from their view of the catalog would serve a table the author asked to
+fail. Only the catalog is read that way; rows are always the caller's. The error
+text is the emulator's own — Microsoft documents that the query "fails with an
+error" but not the message.
+
+Guardrails and framing, the other documented fallback causes, are not modelled,
+so they cannot trigger it; `TMSCHEMA_DELTA_TABLE_METADATA_STORAGES` still
+refuses `FallbackReason`, and `TABLETRAITS()` is not implemented.
+
 ## Boundaries
 
 - **Fixed identity**: cloud connections are not modelled; the effective identity
@@ -147,3 +167,14 @@ covers the backend refusing rather than falling back. Without an engine,
 `internal/api/directlake_sql_test.go` reads positionally over SQLite for the
 caller the hook was opened for, in a non-dbo schema, by column name, beside an
 import table, closing each handle, and names every read refusal.
+
+Stage 4: `TestDirectLakeOnlyFailsWhereTheEndpointWouldFallBack` builds a
+security policy, a masked column, a view and a plain table on a real SQL Server;
+under `directLakeOnly` the first three fail naming their cause and the plain
+table is served, while under `automatic` all four are served as the caller —
+the policy's row only, the mask applied. `TestDirectLakeOnlyRefusesWhatWouldFallBack`
+shows `automatic` and `directQueryOnly` never consulting the catalog, the
+catalog read through the warehouse's and the lakehouse's service connections,
+and a catalog or connection failure failing the query. Dropping any one cause,
+refusing under `directQueryOnly`, or reading the catalog as the caller fails a
+witness.

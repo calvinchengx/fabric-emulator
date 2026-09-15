@@ -448,3 +448,103 @@ func withImport(t *testing.T, st *store.Store, itemID string) {
 		t.Fatal(err)
 	}
 }
+
+// Stage 4: directLakeBehavior. Under directLakeOnly a table the endpoint would
+// send to DirectQuery fails; under automatic and directQueryOnly it is served as
+// the caller, and the catalog is not even asked.
+
+// setBehavior rewrites a model's directLakeBehavior.
+func setBehavior(t *testing.T, st *store.Store, itemID, behavior string) {
+	t.Helper()
+	parts := mustParts(t, st, itemID)
+	for i, p := range parts {
+		if p.Path != "model.bim" {
+			continue
+		}
+		raw, _ := base64.StdEncoding.DecodeString(p.Payload)
+		var bim map[string]any
+		if err := json.Unmarshal(raw, &bim); err != nil {
+			t.Fatal(err)
+		}
+		bim["model"].(map[string]any)["directLakeBehavior"] = behavior
+		out, _ := json.Marshal(bim)
+		parts[i].Payload = base64.StdEncoding.EncodeToString(out)
+	}
+	if err := st.SetDefinition(itemID, parts); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDirectLakeOnlyRefusesWhatWouldFallBack(t *testing.T) {
+	a, st, ws, items := sqlSources(t)
+	a.SQLDBAs = func(context.Context, string, string) (*sql.DB, error) {
+		return sqliteEndpoint(t, `CREATE TABLE dbo.sales ([amount] TEXT)`, `INSERT INTO dbo.sales VALUES ('1')`), nil
+	}
+	catalog := sqliteEndpoint(t)
+	var catalogFor []string
+	a.SQLDB = func(_ context.Context, id string) (*sql.DB, error) {
+		catalogFor = append(catalogFor, "warehouse "+id)
+		return catalog, nil
+	}
+	a.LakehouseDB = func(_ context.Context, id string) (*sql.DB, error) {
+		catalogFor = append(catalogFor, "lakehouse "+id)
+		return catalog, nil
+	}
+	causes := []string{"the SQL analytics endpoint enforces row-level security on [dbo].[sales]"}
+	var asked []string
+	orig := directQueryFallbackCauses
+	t.Cleanup(func() { directQueryFallbackCauses = orig })
+	directQueryFallbackCauses = func(_ context.Context, db *sql.DB, object string) ([]string, error) {
+		if db != catalog {
+			t.Error("the catalog was not read through the service connection")
+		}
+		asked = append(asked, object)
+		return causes, nil
+	}
+
+	for _, target := range []*store.Item{items["Warehouse"], items["SQLEndpoint"]} {
+		model := sqlModel(t, st, ws.ID, target.ID, "", "sales", [2]string{"Amount", "amount"})
+		for behavior, wantOK := range map[string]bool{"automatic": true, "directQueryOnly": true, "directLakeOnly": false} {
+			setBehavior(t, st, model.ID, behavior)
+			asked = nil
+			code, body := querySales(a, admin, model)
+			if wantOK && (code != http.StatusOK || len(asked) != 0) {
+				t.Errorf("%s over a %s: %d %s, asked %v; want served without asking", behavior, target.Type, code, body, asked)
+			}
+			if !wantOK && (code != http.StatusBadRequest || !strings.Contains(body, "directLakeOnly, which disables DirectQuery fallback") ||
+				!strings.Contains(body, "row-level security on [dbo].[sales]") || len(asked) != 1 || asked[0] != "[dbo].[sales]") {
+				t.Errorf("%s over a %s: %d %s, asked %v; want the refusal", behavior, target.Type, code, body, asked)
+			}
+		}
+	}
+	if len(catalogFor) != 2 || catalogFor[0] != "warehouse "+items["Warehouse"].ID || catalogFor[1] != "lakehouse "+items["Lakehouse"].ID {
+		t.Errorf("catalog connections = %v, want the warehouse's then the lakehouse's", catalogFor)
+	}
+
+	// Nothing to fall back from: served under directLakeOnly too.
+	causes = nil
+	model := sqlModel(t, st, ws.ID, items["Warehouse"].ID, "", "sales", [2]string{"Amount", "amount"})
+	setBehavior(t, st, model.ID, "directLakeOnly")
+	if code, body := querySales(a, admin, model); code != http.StatusOK {
+		t.Errorf("directLakeOnly with nothing to fall back from = %d %s", code, body)
+	}
+
+	// Failing to read the catalog fails the query rather than serving it.
+	directQueryFallbackCauses = func(context.Context, *sql.DB, string) ([]string, error) { return nil, errors.New("catalog down") }
+	if _, body := querySales(a, admin, model); !strings.Contains(body, "reading the endpoint's catalog: catalog down") {
+		t.Errorf("catalog failure = %s", body)
+	}
+	a.SQLDB = func(context.Context, string) (*sql.DB, error) { return nil, errors.New("no service login") }
+	if _, body := querySales(a, admin, model); !strings.Contains(body, "reading the endpoint's catalog: no service login") {
+		t.Errorf("service connection failure = %s", body)
+	}
+	a.SQLDB = nil
+	if _, body := querySales(a, admin, model); !strings.Contains(body, "serves no service connection") {
+		t.Errorf("no service connection = %s", body)
+	}
+}
+
+func querySales(a *API, p *auth.Principal, model *store.Item) (int, string) {
+	w := do(a.executeQueries, p, "POST", `{"queries":[{"query":"EVALUATE 'Sales'"}]}`, map[string]string{"datasetId": model.ID})
+	return w.Code, w.Body.String()
+}

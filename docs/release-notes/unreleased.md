@@ -173,7 +173,9 @@ SQL analytics endpoints — failed with *shared expression must contain an
 onelake.dfs.fabric.microsoft.com workspace/lakehouse URL*. It is now served: its
 tables are read through the lakehouse's or warehouse's SQL analytics endpoint
 **as the caller**, so the endpoint's SELECT grants, column denials, row-level
-security and masking apply to what each caller gets. Models that mix both
+security and masking apply to what each caller gets. `directLakeBehavior` is honoured:
+under `directLakeOnly`, a table whose endpoint enforces row-level security,
+masks a column or is a view fails instead of being served. Models that mix both
 flavours, or name more than one SQL source, are refused by name, and
 `directLakeBehavior` is parsed. The source is resolved from the database
 argument, and a caller without Read on it is refused before anything about it is

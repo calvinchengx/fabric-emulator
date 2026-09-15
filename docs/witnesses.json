@@ -1466,7 +1466,11 @@
     "go:TestRelayAdmitsAStrangerSharedAWarehouse": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestRelayReadAloneConnectsButCannotSelect": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestRelayARevokedGrantStopsWorkingAcrossDatabases": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestRelayDemotionTakesTheOldRungAway": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+    "go:TestRelayDemotionTakesTheOldRungAway": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestDirectLakeOnSQLAppliesTheEndpointsSecurityToTheCaller": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestDirectLakeOnSQLNeedsSelectThroughTheEndpoint": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestDirectLakeOnlyFailsWhereTheEndpointWouldFallBack": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestSQLDBAsFor": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",
@@ -1558,6 +1562,35 @@
       "go:TestRowAndObjectSecurityFromDifferentRolesIsAnError",
       "go:TestATableBetweenTwoOthersCannotBeSecured",
       "go:TestAMissingColumnIsAnErrorNotABlank"
+    ]
+  },
+  "power-bi-direct-lake-on-sql-sql-database-over-the-sql-analytics-endpoint": {
+    "section": "Item types present, engine absent",
+    "claim": "Power BI — Direct Lake **on SQL** (`Sql.Database` over the SQL analytics endpoint)",
+    "witnesses": [
+      "go:TestParseDirectLakeSource",
+      "go:TestParseDirectLakeSourceRefusals",
+      "go:TestDirectLakeOnSQLIsRecognisedAndRefusedByName",
+      "go:TestDirectLakeOnSQLIsNotReportedAsAOneLakeSource",
+      "go:TestDirectLakeOnSQLResolvesItsSource",
+      "go:TestDirectLakeOnSQLNeedsReadOnTheSource",
+      "go:TestDirectLakeOnSQLWithoutAnEngineIsRefusedByName",
+      "go:TestDirectLakeOnSQLResolutionFailsClosed",
+      "go:TestDirectLakeOnSQLReadsThroughTheEndpointAsTheCaller",
+      "go:TestDirectLakeOnSQLReadRefusals",
+      "go:TestDirectLakeOnSQLAppliesTheEndpointsSecurityToTheCaller",
+      "go:TestDirectLakeOnSQLNeedsSelectThroughTheEndpoint",
+      "go:TestSQLDBAsFor",
+      "go:TestDBAsRefusesWhatItCannotLogInAs"
+    ]
+  },
+  "power-bi-direct-lake-directquery-fallback": {
+    "section": "Item types present, engine absent",
+    "claim": "Power BI — Direct Lake **DirectQuery fallback**",
+    "witnesses": [
+      "go:TestDirectLakeBehaviorIsParsed",
+      "go:TestDirectLakeOnlyRefusesWhatWouldFallBack",
+      "go:TestDirectLakeOnlyFailsWhereTheEndpointWouldFallBack"
     ]
   }
 }
