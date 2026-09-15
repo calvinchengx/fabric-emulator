@@ -438,3 +438,37 @@ def test_the_committed_map_credits_dbt_fabricspark(tmp_path):
     cites = {w for entry in manifest.values() if isinstance(entry, dict)
              for w in entry.get("witnesses", [])}
     assert "ci:dbt-fabricspark" in cites
+
+
+# --- Go roots ----------------------------------------------------------------
+
+def test_a_test_under_pkg_is_a_witness(tmp_path):
+    """docs/54 put the OneLake security evaluator in `pkg/` so another module
+    can import it. Scanning only `internal/` made every one of its tests an
+    uncreditable, 'dangling' witness while they ran green."""
+    for root, name in (("internal", "TestInInternal"), ("pkg", "TestInPkg")):
+        d = tmp_path / root / "x"
+        d.mkdir(parents=True)
+        (d / "a_test.go").write_text(f"package x\n\nfunc {name}(t *testing.T) {{}}\n", encoding="utf-8")
+    cw.ROOT = tmp_path
+    assert {"TestInInternal", "TestInPkg"} <= cw.go_test_names()
+
+
+def test_a_gate_under_pkg_is_detected(tmp_path):
+    """The two scans must cover the same roots: a pkg/ test that was creditable
+    but whose skip went unseen would be an undeclared gate on a green row."""
+    d = tmp_path / "pkg" / "x"
+    d.mkdir(parents=True)
+    (d / "a_test.go").write_text(DIRECT, encoding="utf-8")
+    cw.ROOT = tmp_path
+    assert cw.gated_go_tests()["TestDirect"] == "its own t.Skip"
+
+
+def test_a_name_that_only_appears_in_prose_is_not_a_test(tmp_path):
+    """The match is anchored to a func declaration, so a test name in a comment
+    or string cannot vouch for a witness that does not exist."""
+    d = tmp_path / "pkg" / "x"
+    d.mkdir(parents=True)
+    (d / "a_test.go").write_text('package x\n\n// see TestGhost\nvar s = "func TestAlsoGhost"\n', encoding="utf-8")
+    cw.ROOT = tmp_path
+    assert not {"TestGhost", "TestAlsoGhost"} & cw.go_test_names()

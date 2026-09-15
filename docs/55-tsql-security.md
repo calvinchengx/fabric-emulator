@@ -99,6 +99,15 @@ Every stage needs the unrestricted caller asserted in the same run.
 
 ## Boundaries
 
+- **Memberships are synced, not only added** — corrected 2026-09-13. Provisioning
+  used to add the rung's database roles and never remove one, so a Contributor
+  demoted to Viewer kept `db_datawriter`. Every fixed role outside the current
+  rung is now dropped on connect. Two rungs joined for item permissions
+  ([57](57-item-permissions.md)): **connect** (a user with no role — Read without
+  ReadData) and **none**, which revokes `CONNECT` rather than merely dropping
+  roles, because an explicit `GRANT` authored for the principal would otherwise
+  still reach the database by three-part name.
+
 - **Not Entra-backed principals.** Real Fabric maps Entra identities to
   database principals through its own control plane; we create contained
   database users named for the object id. The observable contract — different

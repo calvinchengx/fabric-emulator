@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/calvinchengx/fabric-emulator/pkg/onelakesec"
@@ -133,10 +134,67 @@ func TestProjectionMapsPathAndActionAttributes(t *testing.T) {
 func TestProjectionCarriesVirtualMembership(t *testing.T) {
 	s := newTestStore(t)
 	it := lakehouse(t, s)
+	holder := onelakesec.Principal{ObjectID: "anyone", ItemAccess: []string{"ReadAll"}}
+
+	// The reference's own sourcePath shape — this item — in both spellings its
+	// pattern allows, braces and case included.
+	for _, source := range []string{
+		it.WorkspaceID + "/" + it.ID,
+		"{" + strings.ToUpper(it.WorkspaceID) + "}/{" + it.ID + "}",
+	} {
+		roles := defaultReader(t, s, it, source)
+		if got := onelakesec.Effective(roles, holder, onelakesec.InputTables); len(got) != 1 {
+			t.Fatalf("sourcePath %q: a ReadAll holder was not admitted by DefaultReader: %v", source, got)
+		}
+		if got := onelakesec.Effective(roles, onelakesec.Principal{ObjectID: "anyone"},
+			onelakesec.InputTables); len(got) != 0 {
+			t.Fatalf("virtual membership admitted someone holding nothing: %v", got)
+		}
+	}
+}
+
+// A member entry naming ANOTHER item asks about access there. Matching it
+// against what the principal holds on THIS item would admit every ReadAll
+// holder here to a role written for holders of ReadAll on that one — which is
+// what reading members without their sourcePath did.
+func TestAMemberEntryForAnotherItemConfersNothing(t *testing.T) {
+	s := newTestStore(t)
+	it := lakehouse(t, s)
+	holder := onelakesec.Principal{ObjectID: "anyone", ItemAccess: []string{"ReadAll"}}
+	for _, source := range []string{
+		it.WorkspaceID + "/99999999-9999-9999-9999-999999999999",
+		"/",
+		"",
+	} {
+		roles := defaultReader(t, s, it, source)
+		if got := onelakesec.Effective(roles, holder, onelakesec.InputTables); len(got) != 0 {
+			t.Errorf("sourcePath %q admitted a ReadAll holder of this item: %v", source, got)
+		}
+	}
+}
+
+// The item is read only to check a sourcePath; if it cannot be read, the policy
+// cannot be evaluated, and that is an error rather than a role without members.
+func TestAnUnreadableItemFailsMembershipEvaluation(t *testing.T) {
+	s := newTestStore(t)
+	it := lakehouse(t, s)
+	defaultReader(t, s, it, it.WorkspaceID+"/"+it.ID)
+	// Renamed, not dropped: a DROP deletes every row first, and the cascade
+	// would take the roles with it, so no lookup would ever happen.
+	if _, err := s.db.Exec(`ALTER TABLE items RENAME TO items_elsewhere`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.EvaluatableRoles(it.ID); err == nil {
+		t.Fatal("a sourcePath was checked against an item that could not be read")
+	}
+}
+
+func defaultReader(t *testing.T, s *Store, it *Item, source string) []onelakesec.Role {
+	t.Helper()
 	body := `{"name":"DefaultReader","decisionRules":[{"effect":"Permit","permission":[
       {"attributeName":"Path","attributeValueIncludedIn":["*"]},
       {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]}],
-      "members":{"fabricItemMembers":[{"sourcePath":"/","itemAccess":["ReadAll"]}]}}`
+      "members":{"fabricItemMembers":[{"sourcePath":"` + source + `","itemAccess":["ReadAll"]}]}}`
 	if err := s.PutOneLakeRoles(it.ID, []OneLakeRole{
 		{Name: "DefaultReader", Body: json.RawMessage(body)}}); err != nil {
 		t.Fatal(err)
@@ -145,14 +203,7 @@ func TestProjectionCarriesVirtualMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	holder := onelakesec.Principal{ObjectID: "anyone", ItemAccess: []string{"ReadAll"}}
-	if got := onelakesec.Effective(roles, holder, onelakesec.InputTables); len(got) != 1 {
-		t.Fatalf("a ReadAll holder was not admitted by DefaultReader: %v", got)
-	}
-	if got := onelakesec.Effective(roles, onelakesec.Principal{ObjectID: "anyone"},
-		onelakesec.InputTables); len(got) != 0 {
-		t.Fatalf("virtual membership admitted someone holding nothing: %v", got)
-	}
+	return roles
 }
 
 // A malformed role must not make the item unreadable, and must not grant
@@ -311,5 +362,207 @@ func TestAnUnreadableRowFailsTheRead(t *testing.T) {
 	// returning an empty (deny-everything) policy that looks authored.
 	if _, err := s.EvaluatableRoles(it.ID); err == nil {
 		t.Fatal("EvaluatableRoles turned an unreadable row into an empty policy")
+	}
+}
+
+// --- The documented constraints shape ------------------------------------------
+//
+// Row and column security arrive inside `decisionRules[].constraints`, keyed by
+// table. This layer used to read flat `rows` / `columns` off the rule instead —
+// a shape the reference never had — so a policy authored the documented way was
+// evaluated as unrestricted. These tests author policy the way Microsoft's REST
+// reference does, byte for byte where the reference gives a sample.
+
+// evaluate stores one role body and returns the effective access for alice.
+func evaluate(t *testing.T, body string) []onelakesec.AccessEntry {
+	t.Helper()
+	s := newTestStore(t)
+	it := lakehouse(t, s)
+	if err := s.PutOneLakeRoles(it.ID, []OneLakeRole{{Name: "r", Body: json.RawMessage(body)}}); err != nil {
+		t.Fatal(err)
+	}
+	roles, err := s.EvaluatableRoles(it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return onelakesec.Effective(roles, onelakesec.Principal{ObjectID: aliceID}, onelakesec.InputTables)
+}
+
+const aliceID = "11111111-1111-1111-1111-111111111111"
+
+// role wraps decision rules in a role naming alice.
+func role(rules string) string {
+	return `{"name":"r","decisionRules":[` + rules + `],
+	  "members":{"microsoftEntraMembers":[{"objectId":"` + aliceID + `"}]}}`
+}
+
+const readAll = `{"attributeName":"Path","attributeValueIncludedIn":["*"]},
+	  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}`
+
+// The reference's "with constraints" sample, verbatim apart from membership:
+// the sample admits members through fabricItemMembers, which this test is not
+// about, so alice is named instead.
+func TestTheReferenceConstraintsSampleNarrows(t *testing.T) {
+	got := evaluate(t, `{
+  "name": "default_role_1",
+  "decisionRules": [
+    {
+      "effect": "Permit",
+      "permission": [
+        {"attributeName": "Path", "attributeValueIncludedIn": ["*"]},
+        {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}
+      ],
+      "constraints": {
+        "columns": [
+          {
+            "tablePath": "/Tables/industrytable",
+            "columnNames": ["Industry"],
+            "columnEffect": "Permit",
+            "columnAction": ["Read"]
+          }
+        ],
+        "rows": [
+          {
+            "tablePath": "/Tables/industrytable",
+            "value": "select * from Industrytable where Industry=\"Green\""
+          }
+        ]
+      }
+    }
+  ],
+  "members": {"microsoftEntraMembers": [{"objectId": "`+aliceID+`"}]}
+}`)
+	n := onelakesec.Narrowing(got, "Tables/industrytable/part-0.parquet")
+	if n == nil {
+		t.Fatalf("the documented constraint did not narrow: %+v", got)
+	}
+	if n.Rows != `select * from Industrytable where Industry="Green"` {
+		t.Errorf("rows = %q", n.Rows)
+	}
+	if len(n.Columns) != 1 || n.Columns[0] != "Industry" {
+		t.Errorf("columns = %v", n.Columns)
+	}
+	// The rule grants `*`; only the constrained table is narrowed.
+	if onelakesec.Narrowing(got, "Tables/other/part-0.parquet") != nil {
+		t.Error("a table the sample does not constrain was narrowed")
+	}
+}
+
+// The reference's unconstrained and tables-path samples keep granting: strictness
+// must not cost a policy that has nothing in it to be strict about.
+func TestTheReferenceUnconstrainedSamplesStillGrant(t *testing.T) {
+	for name, perm := range map[string]string{
+		"default":     `{"attributeName":"Path","attributeValueIncludedIn":["*"]}`,
+		"tables-path": `{"attributeName":"Path","attributeValueIncludedIn":["/Tables/sales","/Tables/users"]}`,
+	} {
+		got := evaluate(t, role(`{"effect":"Permit","permission":[`+perm+`,
+		  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]}`))
+		if !onelakesec.Allows(got, "Tables/sales/part-0.parquet") {
+			t.Errorf("%s: the sample stopped granting: %+v", name, got)
+		}
+		if onelakesec.Narrowing(got, "Tables/sales/part-0.parquet") != nil {
+			t.Errorf("%s: an unconstrained sample was narrowed", name)
+		}
+	}
+}
+
+// `columnNames: ["*"]` is "all columns", and a row constraint beside it still
+// applies.
+func TestAStarColumnConstraintKeepsAllColumns(t *testing.T) {
+	got := evaluate(t, role(`{"effect":"Permit","permission":[`+readAll+`],
+	  "constraints":{
+	    "rows":[{"tablePath":"/Tables/sales","value":"select * from sales where r = 1"}],
+	    "columns":[{"tablePath":"/Tables/sales","columnNames":["*"],"columnEffect":"Permit","columnAction":["Read"]}]}}`))
+	n := onelakesec.Narrowing(got, "Tables/sales")
+	if n == nil || n.Columns != nil || n.Rows == "" {
+		t.Fatalf("narrowing = %+v, want rows filtered and every column", n)
+	}
+}
+
+// Every refusal is checked against a readable twin in the same test: a parser
+// that dropped EVERY constrained rule would pass the refusals alone, and would
+// be a different bug — one that denies policies the product enforces.
+func TestAConstraintThisParserCannotReadFailsClosed(t *testing.T) {
+	const good = `{"tablePath":"/Tables/sales","columnNames":["region"],"columnEffect":"Permit","columnAction":["Read"]}`
+	readable := role(`{"effect":"Permit","permission":[` + readAll + `],
+	  "constraints":{"columns":[` + good + `]}}`)
+	if got := evaluate(t, readable); !onelakesec.Allows(got, "Tables/sales") ||
+		onelakesec.Narrowing(got, "Tables/sales") == nil {
+		t.Fatalf("the readable twin did not grant-and-narrow: %+v", got)
+	}
+
+	for name, rule := range map[string]string{
+		// The flat shape this layer used to read. It is not the reference's,
+		// and reading it would keep a dialect no Microsoft client emits.
+		"flat rows on the rule": `{"effect":"Permit","permission":[` + readAll + `],
+		  "rows":"select * from sales where r = 1"}`,
+		"flat columns on the rule": `{"effect":"Permit","permission":[` + readAll + `],
+		  "columns":["region"]}`,
+		"an unknown key on the rule": `{"effect":"Permit","permission":[` + readAll + `],
+		  "filter":"anything"}`,
+		"an unknown attribute": `{"effect":"Permit","permission":[` + readAll + `,
+		  {"attributeName":"Region","attributeValueIncludedIn":["us"]}]}`,
+		"an unknown key in a permission": `{"effect":"Permit","permission":[
+		  {"attributeName":"Path","attributeValueIncludedIn":["*"],"scope":"x"},
+		  {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]}`,
+		"constraints that are not an object": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":"rows"}`,
+		"an unknown key in constraints": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"cells":[]}}`,
+		"an unknown key in a row constraint": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"rows":[{"tablePath":"/Tables/sales","value":"select 1","mode":"x"}]}}`,
+		"a row constraint with no value": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"rows":[{"tablePath":"/Tables/sales","value":" "}]}}`,
+		"a row constraint with no table": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"rows":[{"tablePath":"/","value":"select 1"}]}}`,
+		"two row constraints on one table": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"rows":[{"tablePath":"/Tables/sales","value":"select 1"},
+		                         {"tablePath":"Tables/SALES","value":"select 2"}]}}`,
+		"an unknown key in a column constraint": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"columns":[{"tablePath":"/Tables/sales","columnNames":["region"],"columnEffect":"Permit","columnAction":["Read"],"mask":true}]}}`,
+		"a column constraint with no table": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"columns":[{"tablePath":"","columnNames":["region"],"columnEffect":"Permit","columnAction":["Read"]}]}}`,
+		"an empty column list": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"columns":[{"tablePath":"/Tables/sales","columnNames":[],"columnEffect":"Permit","columnAction":["Read"]}]}}`,
+		"a non-Permit column effect": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"columns":[{"tablePath":"/Tables/sales","columnNames":["region"],"columnEffect":"Deny","columnAction":["Read"]}]}}`,
+		"no column action": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"columns":[{"tablePath":"/Tables/sales","columnNames":["region"],"columnEffect":"Permit","columnAction":[]}]}}`,
+		"a column action other than Read": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"columns":[{"tablePath":"/Tables/sales","columnNames":["region"],"columnEffect":"Permit","columnAction":["Read","Write"]}]}}`,
+		"two column constraints on one table": `{"effect":"Permit","permission":[` + readAll + `],
+		  "constraints":{"columns":[` + good + `,` + good + `]}}`,
+	} {
+		if got := evaluate(t, role(rule)); onelakesec.Allows(got, "Tables/sales") {
+			t.Errorf("%s: granted %+v — an unreadable restriction must deny", name, got)
+		}
+	}
+}
+
+// Dropping the unreadable rule leaves the role's other rules standing. That is
+// safe because a constraint narrows only its own rule: the principal held
+// whatever the other rules grant without this one.
+func TestOnlyTheUnreadableRuleIsDropped(t *testing.T) {
+	got := evaluate(t, role(`
+	  {"effect":"Permit","permission":[
+	    {"attributeName":"Path","attributeValueIncludedIn":["/Tables/users"]},
+	    {"attributeName":"Action","attributeValueIncludedIn":["Read"]}]},
+	  {"effect":"Permit","permission":[
+	    {"attributeName":"Path","attributeValueIncludedIn":["/Tables/sales"]},
+	    {"attributeName":"Action","attributeValueIncludedIn":["Read"]}],
+	   "rows":"select * from sales where r = 1"}`))
+	if !onelakesec.Allows(got, "Tables/users") {
+		t.Error("a readable rule was dropped with its unreadable neighbour")
+	}
+	if onelakesec.Allows(got, "Tables/sales") {
+		t.Error("the unreadable rule still granted its table")
+	}
+}
+
+// An explicit `"constraints": null` is no constraints, not an unreadable one.
+func TestANullConstraintsObjectIsNoConstraint(t *testing.T) {
+	got := evaluate(t, role(`{"effect":"Permit","permission":[`+readAll+`],"constraints":null}`))
+	if !onelakesec.Allows(got, "Tables/sales") || onelakesec.Narrowing(got, "Tables/sales") != nil {
+		t.Fatalf("got %+v, want an unrestricted grant", got)
 	}
 }

@@ -38,6 +38,30 @@ type roleName struct {
 	Name string `json:"name"`
 }
 
+// onelakeSecItems is the set of item types that carry OneLake security roles.
+//
+// The product's supported-items table names three, and a Warehouse is
+// conspicuously not among them: warehouse data is secured by T-SQL and nothing
+// else ([55-tsql-security.md]). Storing a role on an item whose engines never
+// consult it is the expensive kind of divergence — a consumer authors a policy
+// here, watches the emulator honour it, and ships it to a tenant that ignores
+// it. The refusal has to happen at the door, because by the time anything reads
+// the role the item it belongs to is no longer in the frame.
+//
+// Two neighbouring enum members are deliberately absent. MirroredWarehouse and
+// MirroredCatalog are plausible on the docs' broader "lakehouses and mirrored
+// items" phrasing, but the supported-items table lists neither by name, and a
+// type we admit on inference is one nothing would ever correct. A wrong refusal
+// arrives as a bug report naming the type; a wrong acceptance arrives as a
+// policy that did not hold in production.
+//
+// [55-tsql-security.md]: ../../docs/55-tsql-security.md
+var onelakeSecItems = map[string]bool{
+	"Lakehouse":                      true,
+	"MirroredDatabase":               true,
+	"MirroredAzureDatabricksCatalog": true,
+}
+
 // item resolves the item and enforces the workspace role this surface needs.
 func (a *API) onelakeSecItem(w http.ResponseWriter, r *http.Request, p *auth.Principal, write bool) (*store.Item, bool) {
 	wid := r.PathValue("wid")
@@ -62,6 +86,23 @@ func (a *API) onelakeSecItem(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return nil, false
+	}
+	// The item-type rule gates the WRITE only. Authoring a role on an item type
+	// the product does not secure this way is the harm; what Fabric answers to a
+	// GET against such an item is not something the vendored docs say, and this
+	// repo does not invent a refusal it cannot source. A read therefore keeps
+	// answering, which for any item outside the supported set means an empty
+	// set, since nothing can put a role there any more.
+	if write {
+		canonical, _ := store.CanonicalItemType(it.Type)
+		if !onelakeSecItems[canonical] {
+			writeErr(w, http.StatusBadRequest, "DataAccessRolesNotSupported",
+				"OneLake security roles are not supported on item type "+it.Type+
+					". Supported types are Lakehouse, MirroredDatabase and "+
+					"MirroredAzureDatabricksCatalog; a Warehouse is secured by T-SQL "+
+					"(GRANT, CREATE SECURITY POLICY, MASKED WITH) instead.")
+			return nil, false
+		}
 	}
 	return it, true
 }

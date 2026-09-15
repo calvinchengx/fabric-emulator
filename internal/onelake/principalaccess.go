@@ -123,7 +123,7 @@ func (s *Service) principalAccess(w http.ResponseWriter, r *http.Request, p *aut
 		writeDFSErr(w, dfsError{"InternalError", http.StatusInternalServerError, err.Error()})
 		return
 	}
-	entries, err := s.subjectAccess(ws.ID, req.AADObjectID, input, roles)
+	entries, err := s.subjectAccess(it, req.AADObjectID, input)
 	if err != nil {
 		writeDFSErr(w, dfsError{"InternalError", http.StatusInternalServerError, err.Error()})
 		return
@@ -163,33 +163,28 @@ func etagOf(salt string, v any) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// subjectAccess is what the subject may see, which is not the same question as
-// what their item roles say.
+// subjectAccess is what the subject may see, decided by the same
+// store.OneLakeReadAccess every reading surface uses — so an engine is never told
+// something the storage surface would contradict.
 //
-//   - ReadAll (Contributor and above) sees the whole half. Those roles
-//     "override any OneLake security Read permissions", so reporting whatever
-//     roles happen to name them would tell an engine to filter rows away from
-//     someone entitled to all of them.
-//   - A Viewer sees exactly what the item's roles grant.
-//   - No workspace role at all sees nothing, whatever an item role says:
-//     workspace permissions are the first boundary. That is an empty list, not
-//     an error — "no access" is a real answer, and an engine acts on it by
-//     returning no rows.
-func (s *Service) subjectAccess(wsID, subject, input string, roles []onelakesec.Role) ([]onelakesec.AccessEntry, error) {
-	subjectRole, err := s.Store.RoleOf(wsID, subject)
+//   - ReadAll through Contributor or above, or an item with no roles and a
+//     ReadAll grant: the whole half. Reporting whatever roles happen to name such
+//     a subject would tell an engine to filter rows from someone entitled to all.
+//   - Otherwise, exactly what the item's roles grant — with the subject's item
+//     access in hand, so DefaultReader's virtual membership resolves.
+//   - No Read on the item at all: nothing. That is an empty list, not an error —
+//     "no access" is a real answer, and an engine acts on it by returning no rows.
+func (s *Service) subjectAccess(it *store.Item, subject, input string) ([]onelakesec.AccessEntry, error) {
+	read, err := s.Store.OneLakeReadAccess(it, subject, input)
 	if err != nil {
 		return nil, err
 	}
-	switch {
-	case store.RoleRank(subjectRole) >= store.RoleRank(store.RoleContributor):
+	if read.Full {
 		return []onelakesec.AccessEntry{{
 			Path: input, Access: []string{onelakesec.AccessRead}, Effect: onelakesec.EffectPermit,
 		}}, nil
-	case subjectRole == "":
-		return nil, nil
-	default:
-		return onelakesec.Effective(roles, onelakesec.Principal{ObjectID: subject}, input), nil
 	}
+	return read.Entries, nil
 }
 
 // isPrincipalAccessPath matches the security API's own URL shape, which both

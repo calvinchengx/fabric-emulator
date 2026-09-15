@@ -107,8 +107,15 @@ def main():
                "name": "region1_only",
                "decisionRules": [{
                    "effect": "Permit",
-                   "rows": "SELECT * FROM sales WHERE region_id = 1",
-                   "columns": ["region_id"],
+                   # The documented shape: row and column security live in `constraints`,
+                   # keyed by table. Flat `rows`/`columns` on the rule are not in the REST
+                   # reference, and the emulator now fails closed on them (docs/54).
+                   "constraints": {
+                       "rows": [{"tablePath": "/Tables/sales",
+                                 "value": "SELECT * FROM sales WHERE region_id = 1"}],
+                       "columns": [{"tablePath": "/Tables/sales", "columnNames": ["region_id"],
+                                    "columnEffect": "Permit", "columnAction": ["Read"]}]
+                   },
                    "permission": [
                        {"attributeName": "Path",
                         "attributeValueIncludedIn": ["Tables/sales"]},

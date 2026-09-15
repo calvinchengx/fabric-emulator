@@ -196,9 +196,17 @@ clock**:
 
 ## Non-goals
 
-Capacity/SKU **billing**, Power BI semantic-model evaluation, Purview audit, and
-real network/firewall enforcement. Emulating engine *internals* or KQL execution
-is also out of scope.
+Capacity/SKU **billing**, Purview audit, and real network/firewall enforcement.
+Emulating engine *internals* is also out of scope.
+
+Two entries left this list, because the paragraph below overtook them and a
+non-goal that shipped is worse than one never written down: **Power BI
+semantic-model evaluation** is a bounded DAX engine, measured against Power BI
+Desktop itself; **KQL execution** runs on Microsoft's own Kusto engine behind an
+opt-in profile. What stays out of scope is narrower than either heading was —
+full DAX, where the evaluator errors rather than mis-evaluates outside its
+pinned subset, and semantic-model *permissions*, since TMSL `roles` /
+`tablePermissions` are not modelled ([07](07-control-plane-api.md)).
 
 **Not a non-goal (any more): real compute.** The core Go binary stays a contract
 emulator, but real engines attach as **opt-in sidecars** — so notebooks and

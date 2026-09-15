@@ -554,10 +554,23 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// permissions are "the first security boundary", and OneLake security
 	// narrows within an item rather than admitting a stranger to the tenant.
 	viewerOnly := store.RoleRank(role) < store.RoleRank(store.RoleContributor)
-	if viewerOnly && role == "" {
-		writeDFSErr(w, dfsError{"AuthorizationFailure", http.StatusForbidden,
-			"OneLake API access requires ReadAll (the Contributor role or above), or a OneLake security role granting the path."})
-		return
+	// A principal with no workspace role reaches only an item it holds a grant
+	// on. At the container that means listing inside such an item and nothing
+	// else; below it, authorizeViewer decides like it does for a Viewer.
+	if viewerOnly && role == "" && len(segs) == 1 {
+		ok, err := false, error(nil)
+		if r.Method == http.MethodGet && r.URL.Query().Get("resource") == "filesystem" {
+			ok, err = s.strangerMayList(ws.ID, p.ID, r.URL.Query().Get("directory"))
+		}
+		if err != nil {
+			writeDFSErr(w, dfsError{"InternalError", http.StatusInternalServerError, err.Error()})
+			return
+		}
+		if !ok {
+			writeDFSErr(w, dfsError{"AuthorizationFailure", http.StatusForbidden,
+				"OneLake API access requires ReadAll (the Contributor role or above), or a OneLake security role granting the path."})
+			return
+		}
 	}
 	// A Viewer may LIST, filtered to what a role covers — an engine enumerates
 	// a table before reading it. Everything else at the workspace level stays
@@ -600,7 +613,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// permission "overrides any OneLake security Read permissions", so a role
 	// cannot take away what the workspace already gave.
 	if viewerOnly {
-		if derr := s.authorizeViewer(it.ID, rel, p.ID, r.Method); derr != nil {
+		if derr := s.authorizeViewer(it, rel, p.ID, r.Method); derr != nil {
 			writeDFSErr(w, *derr)
 			return
 		}
@@ -945,28 +958,36 @@ func (t *traceWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// authorizeViewer decides whether a Viewer — who has no ReadAll — may touch one
-// path, on the strength of the item's OneLake security roles.
+// authorizeViewer decides whether a principal below Contributor — a Viewer, or
+// someone with no workspace role holding a grant on the item — may touch one
+// path. What they may read comes from store.OneLakeReadAccess, the single
+// decision every OneLake-reading surface shares.
 //
 // READ ONLY, DELIBERATELY. The model defines a ReadWrite permission, and a
 // Viewer holding one could legitimately write. This increment implements Read
 // and refuses the rest rather than accepting a ReadWrite grant it would then
 // half-honour: a write allowed here but not scoped elsewhere is worse than a
 // write refused. docs/54-onelake-security.md records the boundary.
-func (s *Service) authorizeViewer(itemID, rel, principalID, method string) *dfsError {
+func (s *Service) authorizeViewer(it *store.Item, rel, principalID, method string) *dfsError {
 	if method != http.MethodGet && method != http.MethodHead {
 		return &dfsError{"AuthorizationFailure", http.StatusForbidden,
 			"A OneLake security role grants Read; writing requires the Contributor role or above."}
 	}
-	roles, err := s.Store.EvaluatableRoles(itemID)
+	read, err := s.Store.OneLakeReadAccess(it, principalID, onelakesec.InputFor(rel))
 	if err != nil {
 		return &dfsError{"InternalError", http.StatusInternalServerError, err.Error()}
 	}
-	// Deny by default: no roles is a decision, not a reason to fall through to
-	// some looser check.
-	entries := onelakesec.Effective(roles,
-		onelakesec.Principal{ObjectID: principalID}, onelakesec.InputFor(rel))
-	if !onelakesec.Allows(entries, rel) {
+	if read.Full {
+		return nil
+	}
+	if !read.Allowed {
+		return &dfsError{"AuthorizationFailure", http.StatusForbidden,
+			"OneLake API access requires ReadAll — the Contributor role or above, or a ReadAll grant on the item — " +
+				"or a OneLake security role granting the path."}
+	}
+	// Deny by default: no covering role is a decision, not a reason to fall
+	// through to some looser check.
+	if !onelakesec.Allows(read.Entries, rel) {
 		return &dfsError{"AuthorizationFailure", http.StatusForbidden,
 			"No OneLake security role grants this principal access to the path."}
 	}
@@ -983,13 +1004,34 @@ func (s *Service) authorizeViewer(itemID, rel, principalID, method string) *dfsE
 	// own identity and applies the filter in its compute. That is why this
 	// refusal reaches only principals whose grant narrows something — an
 	// engine's identity is Contributor or above and never arrives here.
-	if narrowing := onelakesec.Narrowing(entries, rel); narrowing != nil {
+	if narrowing := onelakesec.Narrowing(read.Entries, rel); narrowing != nil {
 		return &dfsError{"AuthorizationFailure", http.StatusForbidden,
 			"This principal is subject to " + narrowing.Why() + " on this table, " +
 				"which storage-level reads cannot apply, so direct path access is blocked. " +
 				"Read it through a Fabric engine, or through securityPolicy/principalAccess."}
 	}
 	return nil
+}
+
+// strangerMayList reports whether a principal with NO workspace role may list
+// under a container-level path. Only inside an item it holds Read on: a grant
+// is scoped to its item and "confers nothing above it", so enumerating the
+// workspace stays refused. Without this, someone shared a single lakehouse
+// could not list its tables, and a Delta reader lists before it reads.
+func (s *Service) strangerMayList(wsID, principalID, under string) (bool, error) {
+	first := strings.SplitN(strings.Trim(under, "/"), "/", 2)[0]
+	if first == "" {
+		return false, nil
+	}
+	it, derr := s.resolveItem(wsID, first)
+	if derr != nil {
+		return false, nil
+	}
+	access, err := s.Store.EffectiveItemAccess(it, principalID)
+	if err != nil {
+		return false, err
+	}
+	return access.Has(store.PermRead), nil
 }
 
 // viewerFilter decides which listing entries a Viewer may see, from that
@@ -1012,16 +1054,16 @@ func (s *Service) authorizeViewer(itemID, rel, principalID, method string) *dfsE
 type viewerFilter struct {
 	svc         *Service
 	principalID string
-	cache       map[string][]onelakesec.AccessEntry
+	cache       map[string]store.OneLakeRead
 	err         error
 }
 
-// newViewerFilter builds a filter. Roles are fetched once per item and input
-// half, because a workspace listing crosses every item in it and re-reading per
+// newViewerFilter builds a filter. Access is decided once per item and input
+// half, because a workspace listing crosses every item in it and re-deciding per
 // path would turn one listing into an N-query scan.
 func (s *Service) newViewerFilter(principalID string) *viewerFilter {
 	return &viewerFilter{svc: s, principalID: principalID,
-		cache: map[string][]onelakesec.AccessEntry{}}
+		cache: map[string]store.OneLakeRead{}}
 }
 
 func (f *viewerFilter) allows(itemID, rel string) bool {
@@ -1033,18 +1075,24 @@ func (f *viewerFilter) allows(itemID, rel string) bool {
 	}
 	input := onelakesec.InputFor(rel)
 	key := itemID + "|" + input
-	entries, ok := f.cache[key]
+	read, ok := f.cache[key]
 	if !ok {
-		roles, err := f.svc.Store.EvaluatableRoles(itemID)
+		it, err := f.svc.Store.GetItemByID(itemID)
 		if err != nil {
 			f.err = err
 			return false
 		}
-		entries = onelakesec.Effective(roles,
-			onelakesec.Principal{ObjectID: f.principalID}, input)
-		f.cache[key] = entries
+		read, err = f.svc.Store.OneLakeReadAccess(it, f.principalID, input)
+		if err != nil {
+			f.err = err
+			return false
+		}
+		f.cache[key] = read
 	}
-	return onelakesec.Allows(entries, rel)
+	if read.Full {
+		return true
+	}
+	return read.Allowed && onelakesec.Allows(read.Entries, rel)
 }
 
 // Err reports a failure to read policy during filtering.

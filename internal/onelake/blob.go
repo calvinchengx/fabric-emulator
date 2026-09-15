@@ -219,10 +219,22 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 	// known. The two surfaces must agree — a policy honoured on dfs and ignored
 	// on blob is a bypass, and the SDKs pick a surface by URL shape alone.
 	viewerOnly := store.RoleRank(role) < store.RoleRank(store.RoleContributor)
-	if viewerOnly && role == "" {
-		writeBlobErr(w, http.StatusForbidden, "AuthorizationFailure",
-			"OneLake API access requires ReadAll (Contributor or above), or a OneLake security role granting the path.")
-		return
+	// As on dfs: no workspace role reaches only an item held by grant — at the
+	// container, only a listing whose prefix is inside such an item.
+	if viewerOnly && role == "" && len(segs) == 1 {
+		ok, err := false, error(nil)
+		if r.Method == http.MethodGet && r.URL.Query().Get("comp") == "list" {
+			ok, err = s.strangerMayList(ws.ID, p.ID, r.URL.Query().Get("prefix"))
+		}
+		if err != nil {
+			writeBlobErr(w, http.StatusInternalServerError, "InternalError", err.Error())
+			return
+		}
+		if !ok {
+			writeBlobErr(w, http.StatusForbidden, "AuthorizationFailure",
+				"OneLake API access requires ReadAll (Contributor or above), or a OneLake security role granting the path.")
+			return
+		}
 	}
 	// A Viewer may LIST — a Delta reader enumerates a table before reading it —
 	// but sees only what a role covers. Anything else at the container level
@@ -258,7 +270,7 @@ func (s *Service) ServeBlob(w http.ResponseWriter, r *http.Request) {
 	}
 	rel := strings.Join(segs[2:], "/")
 	if viewerOnly {
-		if derr := s.authorizeViewer(it.ID, rel, p.ID, r.Method); derr != nil {
+		if derr := s.authorizeViewer(it, rel, p.ID, r.Method); derr != nil {
 			writeBlobErr(w, derr.status, derr.code, derr.msg)
 			return
 		}

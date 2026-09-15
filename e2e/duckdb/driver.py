@@ -125,7 +125,13 @@ req(f"{FABRIC}/v1/workspaces/{ws['id']}/items/{lake_id}/dataAccessRoles", "PUT",
     "name": "region1_only",
     "decisionRules": [{
         "effect": "Permit",
-        "rows": "SELECT * FROM sales WHERE region_id = 1",
+        # The documented shape: row and column security live in `constraints`,
+        # keyed by table. Flat `rows`/`columns` on the rule are not in the REST
+        # reference, and the emulator now fails closed on them (docs/54).
+        "constraints": {
+            "rows": [{"tablePath": "/Tables/sales",
+                      "value": "SELECT * FROM sales WHERE region_id = 1"}]
+        },
         "permission": [
             {"attributeName": "Path", "attributeValueIncludedIn": ["Tables/sales"]},
             {"attributeName": "Action", "attributeValueIncludedIn": ["Read"]}]}],

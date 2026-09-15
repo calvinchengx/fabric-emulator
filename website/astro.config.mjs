@@ -72,6 +72,7 @@ export default defineConfig({
             { slug: '08-onelake' },
             { slug: '54-onelake-security' },
             { slug: '55-tsql-security' },
+            { slug: '57-item-permissions' },
             { slug: '09-identity-handshake' },
           ],
         },
