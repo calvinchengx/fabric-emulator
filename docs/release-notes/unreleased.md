@@ -105,8 +105,8 @@ without Write — on REST `executeQueries` and every XMLA route:
 - Refused by name, for restricted callers: filters outside the subset,
   `bothDirections` and many-to-many relationships, service principals, row and
   object security from different roles, and relaying them to an attached
-  msmdsrv. A secured table between two others is refused for everyone. `impersonatedUserName` on a
-  secured model is refused for everyone.
+  msmdsrv. A secured table between two others is refused for everyone, and so
+  is `impersonatedUserName` on a secured model.
 - The portal runner has no principal and refuses a secured model.
 
 Write holders are unaffected. Separately, a `SUMMARIZECOLUMNS` group column that
@@ -189,9 +189,12 @@ SemPy, semantic-link-labs and ADOMD.NET need nothing.
   Contributor or above.
 - **Direct Lake over an item with no OneLake security roles requires ReadAll.** A
   Viewer is refused until ReadAll is granted on the source item.
-- **A model with security roles refuses principals without Write.** A Viewer, or
-  a principal granted Read and Build, querying such a model is refused until role
-  evaluation lands; Admin, Member and Contributor read as before.
+- **A model with security roles now filters and hides for principals without
+  Write.** A Viewer, or a principal granted Read and Build, sees only what the
+  model's roles give them — nothing, if they are in no role. Admin, Member and
+  Contributor read as before. A service principal below Write, `bothDirections`
+  or many-to-many relationships, and `impersonatedUserName` on such a model are
+  refused.
 - **SQL endpoint database roles now follow the current rung.** A principal demoted
   below its old role loses the database roles that role gave, at its next connect.
 - **`PUT dataAccessRoles` on a Warehouse** now returns `400`.
