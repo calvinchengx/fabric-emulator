@@ -700,8 +700,8 @@ each assertion has two halves: execute through the emulator's real path
 (RunNotebook for Lakehouse, TDS for Warehouse), then **verify out of band** —
 read the Delta back through delta-rs / the OneLake DFS API, and read the
 Warehouse table through a fresh TDS connection. Both readers already exist as CI
-jobs (`e2e/delta-rs`, `e2e/warehouse-tds`); this composes them rather than
-inventing anything.
+jobs (`e2e/delta-rs`, and the `warehouse-tds` Go test); this composes them
+rather than inventing anything.
 
 <!-- APPLICABILITY:BEGIN (scripts/check_conformance.py parses this table) -->
 

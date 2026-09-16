@@ -595,6 +595,12 @@ jobs:
       # exits 0 and publishes a 404. Nor can it see a page missing from the
       # sidebar, which is published but unreachable by navigation.
       - run: uv run --frozen --no-sync python scripts/check_docs_links.py --strict
+      # A renamed directory breaks a Go import and this workflow goes red;
+      # the same rename inside a sentence breaks nothing, so the sentence
+      # keeps its confident tone and quietly starts lying. Three had
+      # drifted when this landed -- including one pointing at a sibling
+      # repo's file as though it were ours.
+      - run: uv run --frozen --no-sync python scripts/check_doc_drift.py --strict
       # THE ONE `make check` RAN AND CI DID NOT. Every example must resolve its
       # target through the `fabric-target` contract — no pinned seed principal,
       # no localhost endpoint outside the resolver, no emulator-only lever, and
