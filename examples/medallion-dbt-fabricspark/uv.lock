@@ -514,7 +514,7 @@ wheels = [
 
 [[package]]
 name = "dbt-fabricspark"
-version = "1.13.4"
+version = "1.13.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "azure-core" },
@@ -524,9 +524,9 @@ dependencies = [
     { name = "dbt-core" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2c/92/c9c9c9f097ea45648fb07f37776c60b81aeb6da6d8f2f604d58001e487c2/dbt_fabricspark-1.13.4.tar.gz", hash = "sha256:c675f2a9cecaa77f6fd34e6845b19bd6556b06e26efd4ea808999ca56e473a6e", size = 507494, upload-time = "2026-09-02T00:05:32.086Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/68/d7/4640de6a53849e564f66ee25b7c415622dcf389d14637c1a5a94f589abae/dbt_fabricspark-1.13.5.tar.gz", hash = "sha256:658cb8bef0b09b2d89c9f1d6fd4f0af05511cb772bb1c2b3167d2a9b0f13bae1", size = 508238, upload-time = "2026-09-11T21:08:01.861Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/99/b72af46b6983f73685b339d46a62244ed70e826cbf87b4817579b30bc56e/dbt_fabricspark-1.13.4-py3-none-any.whl", hash = "sha256:cfc210661a4fe18fe3ed8726f91ce7bb2889e3925e1e2ec67293876b5307dd49", size = 124484, upload-time = "2026-09-02T00:05:33.226Z" },
+    { url = "https://files.pythonhosted.org/packages/85/43/e17fe5ddb9926aee74df6b70538a0ccdf022d8f38eeffd45256bb6e518ed/dbt_fabricspark-1.13.5-py3-none-any.whl", hash = "sha256:a3983f03572612ac68b3b5c906abd472bec187e5e58f4b86ecf36896c0a20a60", size = 124688, upload-time = "2026-09-11T21:08:00.419Z" },
 ]
 
 [[package]]
