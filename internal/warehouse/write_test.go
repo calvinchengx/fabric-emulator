@@ -33,7 +33,7 @@ func TestWriteDeltaTableAppendAndOverwrite(t *testing.T) {
 	}
 
 	first := &Table{Columns: []string{"id", "name"}, Rows: [][]any{{int64(1), "ada"}}}
-	if err := WriteDeltaTable(st, ws.ID, lh.ID, "orders", WriteOverwrite, first); err != nil {
+	if err := WriteDeltaTableAs(store.Attribution{}, st, ws.ID, lh.ID, "orders", WriteOverwrite, first); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	got, err := ReadDeltaTable(st, lh.ID, "orders")
@@ -42,7 +42,7 @@ func TestWriteDeltaTableAppendAndOverwrite(t *testing.T) {
 	}
 
 	second := &Table{Columns: []string{"id", "name"}, Rows: [][]any{{int64(2), "grace"}}}
-	if err := WriteDeltaTable(st, ws.ID, lh.ID, "orders", WriteAppend, second); err != nil {
+	if err := WriteDeltaTableAs(store.Attribution{}, st, ws.ID, lh.ID, "orders", WriteAppend, second); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	got, err = ReadDeltaTable(st, lh.ID, "orders")
@@ -54,7 +54,7 @@ func TestWriteDeltaTableAppendAndOverwrite(t *testing.T) {
 	}
 
 	third := &Table{Columns: []string{"id", "name"}, Rows: [][]any{{int64(9), "only"}}}
-	if err := WriteDeltaTable(st, ws.ID, lh.ID, "orders", WriteOverwrite, third); err != nil {
+	if err := WriteDeltaTableAs(store.Attribution{}, st, ws.ID, lh.ID, "orders", WriteOverwrite, third); err != nil {
 		t.Fatalf("overwrite: %v", err)
 	}
 	got, err = ReadDeltaTable(st, lh.ID, "orders")
@@ -68,10 +68,10 @@ func TestWriteDeltaTableAppendAndOverwrite(t *testing.T) {
 
 func TestWriteDeltaTableRejectsBadInput(t *testing.T) {
 	st := writeStore(t)
-	if err := WriteDeltaTable(st, "w", "i", "t", WriteAppend, nil); err == nil {
+	if err := WriteDeltaTableAs(store.Attribution{}, st, "w", "i", "t", WriteAppend, nil); err == nil {
 		t.Fatal("nil table should error")
 	}
-	if err := WriteDeltaTable(st, "w", "i", "t", "merge", &Table{Columns: []string{"a"}}); err == nil {
+	if err := WriteDeltaTableAs(store.Attribution{}, st, "w", "i", "t", "merge", &Table{Columns: []string{"a"}}); err == nil {
 		t.Fatal("unknown mode should error")
 	}
 }
@@ -89,7 +89,7 @@ func TestNextCommitVersionIgnoresNonCommits(t *testing.T) {
 		t.Fatal(err)
 	}
 	tbl := &Table{Columns: []string{"a"}, Rows: [][]any{{"x"}}}
-	if err := WriteDeltaTable(st, ws.ID, lh.ID, "t", WriteOverwrite, tbl); err != nil {
+	if err := WriteDeltaTableAs(store.Attribution{}, st, ws.ID, lh.ID, "t", WriteOverwrite, tbl); err != nil {
 		t.Fatal(err)
 	}
 	for _, noise := range []string{"_last_checkpoint", "00000000000000000000.checkpoint.parquet", "00000000000000000000.crc"} {
@@ -100,7 +100,7 @@ func TestNextCommitVersionIgnoresNonCommits(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := WriteDeltaTable(st, ws.ID, lh.ID, "t", WriteAppend, tbl); err != nil {
+	if err := WriteDeltaTableAs(store.Attribution{}, st, ws.ID, lh.ID, "t", WriteAppend, tbl); err != nil {
 		t.Fatalf("append after noise: %v", err)
 	}
 	got, err := ReadDeltaTable(st, lh.ID, "t")
@@ -122,7 +122,7 @@ func TestWriteDeltaTableTypedColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	tbl := &Table{Columns: []string{"n", "f", "b", "s"}, Rows: [][]any{{int64(7), 1.5, true, "x"}}}
-	if err := WriteDeltaTable(st, ws.ID, lh.ID, "typed", WriteOverwrite, tbl); err != nil {
+	if err := WriteDeltaTableAs(store.Attribution{}, st, ws.ID, lh.ID, "typed", WriteOverwrite, tbl); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReadDeltaTable(st, lh.ID, "typed")
@@ -158,7 +158,7 @@ func TestReadDeltaTableUsesSchemaOrderNotParquetOrder(t *testing.T) {
 	}
 	// Declared order is deliberately anti-alphabetical.
 	tbl := &Table{Columns: []string{"zebra", "apple", "mango"}, Rows: [][]any{{"z", "a", "m"}}}
-	if err := WriteDeltaTable(st, ws.ID, lh.ID, "ord", WriteOverwrite, tbl); err != nil {
+	if err := WriteDeltaTableAs(store.Attribution{}, st, ws.ID, lh.ID, "ord", WriteOverwrite, tbl); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReadDeltaTable(st, lh.ID, "ord")
@@ -186,7 +186,7 @@ func TestWriteDeltaTableAllNullColumn(t *testing.T) {
 		t.Fatal(err)
 	}
 	tbl := &Table{Columns: []string{"a", "b"}, Rows: [][]any{{nil, "x"}}}
-	if err := WriteDeltaTable(st, ws.ID, lh.ID, "nulls", WriteOverwrite, tbl); err != nil {
+	if err := WriteDeltaTableAs(store.Attribution{}, st, ws.ID, lh.ID, "nulls", WriteOverwrite, tbl); err != nil {
 		t.Fatalf("all-null column: %v", err)
 	}
 	if _, err := ReadDeltaTable(st, lh.ID, "nulls"); err != nil {

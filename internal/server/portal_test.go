@@ -524,7 +524,7 @@ func TestPortalTable(t *testing.T) {
 		Columns: []string{"id", "name"},
 		Rows:    [][]any{{int64(1), "ada"}, {int64(2), "grace"}, {int64(3), "edsger"}},
 	}
-	if err := warehouse.WriteDeltaTable(f.srv.Store, ws.ID, lake, "bronze_customers",
+	if err := warehouse.WriteDeltaTableAs(store.Attribution{}, f.srv.Store, ws.ID, lake, "bronze_customers",
 		warehouse.WriteOverwrite, tbl); err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +560,7 @@ func TestPortalTable(t *testing.T) {
 
 	// A second write moves the version, which is what makes the inspector
 	// useful next to a stream reporting v1, v2, v3.
-	if err := warehouse.WriteDeltaTable(f.srv.Store, ws.ID, lake, "bronze_customers",
+	if err := warehouse.WriteDeltaTableAs(store.Attribution{}, f.srv.Store, ws.ID, lake, "bronze_customers",
 		warehouse.WriteAppend, tbl); err != nil {
 		t.Fatal(err)
 	}

@@ -70,17 +70,6 @@ const BasePath = "/datamap/api"
 // Register mounts the Data Map routes on mux.
 func (s *Service) Register(mux *http.ServeMux) { s.register(mux, s.withAuth) }
 
-// registerForTest mounts the same routes with authentication bypassed, so unit
-// tests exercise Atlas semantics without minting a token per request. The route
-// TABLE is shared with Register — a route reachable in tests and unmounted in
-// production is the map-vs-route gap, and one list is how it stays impossible.
-// Token handling has its own test and the server suite drives it end to end.
-func (s *Service) registerForTest(mux *http.ServeMux) {
-	s.register(mux, func(h handler) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) { h(w, r, nil) }
-	})
-}
-
 func (s *Service) register(mux *http.ServeMux, wrap func(handler) http.HandlerFunc) {
 	h := func(p string, fn handler) {
 		method, rest, _ := strings.Cut(p, " ")

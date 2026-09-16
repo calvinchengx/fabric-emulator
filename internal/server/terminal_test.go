@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -20,6 +21,14 @@ func terminalServer(t *testing.T, cfg *config.Config) *Server {
 	s := &Server{Cfg: cfg, mux: http.NewServeMux()}
 	s.registerTerminal()
 	return s
+}
+
+func decodeTerminalStatus(r io.Reader) (terminalJSON, error) {
+	var out terminalJSON
+	if err := json.NewDecoder(r).Decode(&out); err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
 // fakeTTYD is a listener that accepts and records what the proxy forwarded.

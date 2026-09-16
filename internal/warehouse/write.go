@@ -16,13 +16,15 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
-// Write modes for WriteDeltaTable.
+// Write modes for Delta table writes.
 const (
 	WriteAppend    = "append"
 	WriteOverwrite = "overwrite"
 )
 
-// WriteDeltaTable lands tbl in the item's Tables/<name> as a Delta commit.
+// WriteDeltaTableAs lands tbl in the item's Tables/<name> as a Delta commit.
+// The attribution identifies which unit of work is writing — a Copy activity,
+// say — so the resulting file and table events can name it.
 //
 // Append adds a data file and leaves earlier ones active. Overwrite adds the
 // new file and marks every previously-active file removed in the same commit,
@@ -31,13 +33,6 @@ const (
 //
 // The table is created on first write, so the caller need not distinguish
 // create from append.
-func WriteDeltaTable(st *store.Store, wsID, itemID, name, mode string, tbl *Table) error {
-	return WriteDeltaTableAs(store.Attribution{}, st, wsID, itemID, name, mode, tbl)
-}
-
-// WriteDeltaTableAs is WriteDeltaTable for a caller that knows which unit of
-// work is writing — a Copy activity, say — so the resulting file and table
-// events can name it.
 func WriteDeltaTableAs(attr store.Attribution, st *store.Store, wsID, itemID, name, mode string, tbl *Table) error {
 	if tbl == nil || len(tbl.Columns) == 0 {
 		return fmt.Errorf("delta write %q: no columns", name)

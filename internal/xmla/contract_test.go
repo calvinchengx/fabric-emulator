@@ -17,7 +17,7 @@ func TestEveryDiscoverRowsetCarriesAVersionColumnTypedLong(t *testing.T) {
 	// unsignedLong parses, fails the type test, and surfaces as a bare
 	// `TomInternalException` naming nothing.
 	m := &semanticmodel.Model{}
-	for _, rt := range TOMBatchRequestTypes() {
+	for _, rt := range tomBatchRequestTypesForTest() {
 		rs, err := DiscoverRowset(m, nil, rt)
 		if err != nil {
 			t.Fatalf("%s: %v", rt, err)
@@ -57,7 +57,7 @@ func TestEveryRowsetIsNamedOnTheRootElement(t *testing.T) {
 	// AmoDataAdapter renames DataSet tables from <root name="...">; without it
 	// `Tables["Model"]` is null and TOM reports a MODEL problem.
 	m := &semanticmodel.Model{}
-	for _, rt := range TOMBatchRequestTypes() {
+	for _, rt := range tomBatchRequestTypesForTest() {
 		rs, err := DiscoverRowset(m, nil, rt)
 		if err != nil {
 			t.Fatalf("%s: %v", rt, err)

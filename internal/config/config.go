@@ -264,12 +264,6 @@ type Config struct {
 	Commit  string
 }
 
-// FromEnv builds a validated Config from FABRIC_* environment variables.
-func FromEnv() (*Config, error) {
-	c := FromEnvPartial()
-	return c, c.Finish()
-}
-
 // FromEnvPartial reads the environment without validating — cmd applies flag
 // overrides first, then calls Finish.
 func FromEnvPartial() *Config {
