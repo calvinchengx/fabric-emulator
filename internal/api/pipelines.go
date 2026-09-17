@@ -208,13 +208,15 @@ func (e *pipelineExecutor) Execute(act pipeline.Activity, resolve func(json.RawM
 			return nil, unrunnableRefusal(act, cause)
 		}
 
-		// External connectors only: a Salesforce or ServiceNow leaf needs a
-		// vendor SDK and credentials the emulator has neither of, so it records
-		// that the orchestration reached the leaf without claiming the effect
-		// ran. Web used to be swept in here too, which meant a pipeline
-		// branching on a response got a fabricated success — see
-		// webactivity.go.
-		return map[string]any{"status": "Succeeded", "activityType": act.Type}, nil
+		// Nothing documented reaches here any more, so nothing passes through.
+		// This used to answer {"status":"Succeeded"} for any unrecognised type,
+		// justified as an external-connector leaf — a justification that
+		// described something neither oracle has: a connector is the `type` of
+		// a Copy source or sink, not an activity type, and copyActivity refuses
+		// the ones it cannot run by name. What measurably reached this default
+		// was typos (`TridentNotebok` was reported as a notebook that ran) and
+		// the empty string. See unknownactivity.go.
+		return nil, unknownActivityRefusal(act)
 	}
 }
 

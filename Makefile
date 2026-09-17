@@ -162,6 +162,10 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_example_parity.py
 	@$(PY) scripts/check_example_portability.py
 	@$(PY) scripts/check_conformance.py --strict
+	@# Doc 24 summarises the sub-plans in one row each, and three of those
+	@# rows went stale before anything checked them — each pointing a
+	@# maintainer at work already finished.
+	@$(PY) scripts/check_plan_freshness.py --strict
 	@$(PY) scripts/check_arch_services.py
 	@$(PY) scripts/check_refusal_expectations.py
 	@$(PY) scripts/check_runtime_floor_freshness.py

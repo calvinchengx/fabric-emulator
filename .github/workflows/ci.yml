@@ -567,6 +567,12 @@ jobs:
       # and every ❌ has a pointer. --strict: the matrix has landed, so its
       # absence is now a failure.
       - run: uv run --frozen --no-sync python scripts/check_conformance.py --strict
+      # docs/24 is the map a maintainer reads to pick work, and its rows are
+      # copies of the sub-plans. Three had gone stale — the runMultiple row
+      # advertised two answers fixed months earlier, and the runtime-
+      # divergences row asked for two things docs/37 marked DONE. A row that
+      # outlives the plan it summarises now fails the build.
+      - run: uv run --frozen --no-sync python scripts/check_plan_freshness.py --strict
       # docs/03's diagram described a two-system model for as long as
       # keyvault-emulator had been a default compose service — the topology was
       # right, the cast of services had drifted. Nothing about adding a service
