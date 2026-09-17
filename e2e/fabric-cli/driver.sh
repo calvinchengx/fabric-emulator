@@ -13,7 +13,8 @@ wait_tls() { local hp=$1 h=${1%:*}; for i in $(seq 1 90); do
   openssl s_client -connect "$hp" -servername "$h" </dev/null 2>/dev/null | grep -q "BEGIN CERTIFICATE" && return 0; sleep 1; done; return 1; }
 fail() { echo "FABRIC-CLI E2E: FAIL ($1)"; exit 1; }
 
-echo "==> waiting for entra + fabric TLS"; wait_tls "$ENTRA" && wait_tls "$FABRIC" || fail "servers never came up"
+echo "==> waiting for entra + fabric TLS"
+if ! wait_tls "$ENTRA" || ! wait_tls "$FABRIC"; then fail "servers never came up"; fi
 openssl s_client -connect "$ENTRA"  -servername login.microsoftonline.com </dev/null 2>/dev/null | openssl x509 >  /tmp/ca.pem
 openssl s_client -connect "$FABRIC" -servername api.fabric.microsoft.com   </dev/null 2>/dev/null | openssl x509 >> /tmp/ca.pem
 export REQUESTS_CA_BUNDLE=/tmp/ca.pem SSL_CERT_FILE=/tmp/ca.pem
@@ -261,7 +262,7 @@ for it in nb.Notebook model.SemanticModel rpt.Report pipe.DataPipeline lake.Lake
   IID=$(fab get "$WS/$it" -q id | guid); [ -n "$IID" ] || fail "id for $it"
   echo "$UNIQ" | grep -q "$IID" || fail "paging lost $it ($IID)"
 done
-echo "    paged $PAGES pages, $(echo $UNIQ | wc -w | tr -d ' ') distinct items, no duplicates or gaps"
+echo "    paged $PAGES pages, $(wc -w <<<"$UNIQ" | tr -d ' ') distinct items, no duplicates or gaps"
 
 echo "==> continuationUri is an absolute URL, as real Fabric returns"
 fab api "workspaces/$WSID/items?maxPageSize=2" | python3 -c '
