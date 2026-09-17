@@ -902,12 +902,6 @@
   .filters {
     @apply flex flex-wrap items-center gap-4;
   }
-  .filters label {
-    @apply m-0 inline-flex items-center gap-1.5 font-normal;
-  }
-  .filters input[type='checkbox'] {
-    @apply m-0 h-4 w-4;
-  }
   .chip.file {
     @apply bg-muted text-muted-foreground border-transparent;
   }
@@ -919,8 +913,5 @@
   }
   .chip.job {
     @apply bg-accent text-accent-foreground border-transparent;
-  }
-  .failed-row td {
-    @apply bg-[var(--danger-bg)];
   }
 </style>
