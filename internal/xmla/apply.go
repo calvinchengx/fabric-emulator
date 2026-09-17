@@ -2,6 +2,7 @@ package xmla
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -46,6 +47,19 @@ func ApplyWrite(bim []byte, cmds []WriteCommand) ([]byte, error) {
 				err = applyToColumns(tables, set.Rows)
 			case "Annotations":
 				err = applyAnnotations(model, set.Rows)
+			case "Expressions":
+				// Create and Alter of the SAME object carry DIFFERENT row shapes: a
+				// created object has no id yet (Name, no ID), an altered one is keyed
+				// by the id this server handed out (ID, no Name). Dispatching on the
+				// object type alone is what made `Create` of Tables fail with
+				// `table id "" is not a number` — it was read as an update of a table
+				// whose id was empty. Alter of Expressions is UNMEASURED, so it keeps
+				// the honest refusal rather than guessing a shape.
+				if cmd.Kind != "Create" {
+					err = fmt.Errorf("%s of %s is not implemented", cmd.Kind, set.Object)
+					break
+				}
+				err = createExpressions(model, set.Rows)
 			default:
 				err = fmt.Errorf("%s of %s is not implemented", cmd.Kind, set.Object)
 			}
@@ -214,5 +228,61 @@ func setKnown(obj map[string]any, row map[string]string, key string,
 		}
 		obj[k] = v
 	}
+	return nil
+}
+
+// createExpressions appends shared M expressions to the model.
+//
+// MEASURED 2026-09-01 by driving `tom.add_expression("DatabaseQuery", ...)`
+// from semantic-link-labs against this server and capturing the payload:
+//
+//	<Create><Expressions>
+//	  <row><Name>DatabaseQuery</Name><Kind>0</Kind>
+//	       <Expression>let x = 1 in x</Expression>
+//	       <LineageTag>b9573c30-…</LineageTag></row>
+//	</Expressions></Create>
+//
+// This is the first gate of the import-to-Direct-Lake migration: TOM refuses
+// `add_entity_partition` CLIENT-SIDE with "An object with name 'DatabaseQuery'
+// does not exist in the collection" until the expression is present, so the
+// shared expression has to land before a Direct Lake partition can bind to it.
+//
+// Kind 0 is TOM's ExpressionKind.M, which TMSL serialises as "m". Any other
+// Kind is refused by number rather than assumed to be M: a DAX or calculated
+// expression stored as M would round-trip into a model that reads back wrong.
+func createExpressions(model map[string]any, rows []map[string]string) error {
+	exprs, _ := model["expressions"].([]any)
+	for _, row := range rows {
+		name := strings.TrimSpace(row["Name"])
+		if name == "" {
+			return errors.New("an Expressions row in a Create carries no Name")
+		}
+		if k := strings.TrimSpace(row["Kind"]); k != "" && k != "0" {
+			return fmt.Errorf("expression %q: Kind %s is not implemented "+
+				"(only 0, M, is)", name, k)
+		}
+		for _, e := range exprs {
+			m, ok := e.(map[string]any)
+			if !ok {
+				continue
+			}
+			if s, _ := m["name"].(string); s == name {
+				// Not a silent overwrite: TOM reports SaveChanges as successful
+				// whenever the server answers, so replacing a user's expression
+				// with a same-named one would be invisible at the client.
+				return fmt.Errorf("expression %q already exists", name)
+			}
+		}
+		obj := map[string]any{
+			"name":       name,
+			"kind":       "m",
+			"expression": row["Expression"],
+		}
+		if lt := strings.TrimSpace(row["LineageTag"]); lt != "" {
+			obj["lineageTag"] = lt
+		}
+		exprs = append(exprs, obj)
+	}
+	model["expressions"] = exprs
 	return nil
 }
