@@ -14,27 +14,41 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
-// TestPipelineLeafPassthrough: an inexecutable leaf (an external connector)
-// records that orchestration reached it without running any effect.
-func TestPipelineLeafPassthrough(t *testing.T) {
-	// An EXTERNAL CONNECTOR leaf, not a Web activity. This used to use
-	// WebActivity, back when Web was passed through too — and that is exactly
-	// what made a pipeline calling a URL go green without calling it. Web now
-	// performs the request (see webactivity.go and webactivity_test.go); what
-	// still passes through is a connector needing a vendor SDK the emulator
-	// does not have.
+// TestASalesforceConnectorIsReachedThroughCopy, not through an activity type.
+//
+// This replaces TestPipelineLeafPassthrough, which ran an ACTIVITY of type
+// "SalesforceSource" and required it to pass through with a fabricated
+// Succeeded. SalesforceSource is a Copy source type; no authoring surface
+// emits it as an activity type, so the test was manufacturing the input that
+// reached the stub and then asserting the stub.
+//
+// The real route is asserted instead: as a Copy source the name is recognised
+// and dispatched to the Salesforce lifecycle, and as an activity type it is
+// refused like any other string neither oracle documents.
+func TestASalesforceConnectorIsReachedThroughCopy(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
 	pl := createPipeline(t, st, ws.ID, `{"properties":{"activities":[
         {"name":"Hit","type":"SalesforceSource","typeProperties":{"object":"Account"}}
       ]}}`)
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
-	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
-		t.Fatalf("pass-through leaf = %s, want Completed", s)
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("SalesforceSource as an activity type = %s, want Failed", s)
 	}
 	_, runs := activityRuns(t, a, ws.ID, pl.ID, jid)
-	if out := outputOf(runs, "Hit"); out["activityType"] != "SalesforceSource" {
-		t.Fatalf("pass-through output = %+v", out)
+	if out := outputOf(runs, "Hit"); out["activityType"] != nil {
+		t.Fatalf("the stub answered for a connector name: %+v", out)
+	}
+	// The real names are Fabric's, and "SalesforceSource" is not among them —
+	// the replaced test was asserting a stub against a string that exists in
+	// no oracle at all, as an activity type OR as a source type.
+	if salesforceSourceTypes["SalesforceSource"] {
+		t.Error("SalesforceSource should not be a recognised Copy source type")
+	}
+	for _, real := range []string{"SalesforceV2Source", "SalesforceServiceCloudV2Source"} {
+		if !salesforceSourceTypes[real] {
+			t.Errorf("%s is not recognised as a Copy source type", real)
+		}
 	}
 }
 

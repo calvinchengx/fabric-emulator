@@ -279,6 +279,12 @@ countable number of these.
 - Split the `External-connector leaves` row again. `RestSource`/`RestSink` become
   **🟢 Real**; named vendor connectors (Salesforce, ServiceNow) stay **🟡** with
   the REST route documented as the answer.
+  - **Since regraded 🔴 Refused by name.** The 🟡 assumed a connector leaf that
+    reached the dispatch and was stubbed. Measured, no such activity type
+    exists in either oracle — a connector is the `type` of a `Copy` source or
+    sink, and `Copy` already refused the ones it cannot run. The REST route
+    remains the answer; what changed is that the alternative is now an honest
+    refusal rather than a fabricated success.
 - Register `rest-connector` in [witnesses.json](witnesses.json) under
   ``Data Factory (`data-factory/`)``, with `go:` witnesses for the pagination
   loop, the bounds, and the sink batching — the three claims a reader is most

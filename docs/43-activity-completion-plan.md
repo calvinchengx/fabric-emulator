@@ -193,10 +193,16 @@ found **nine type strings in neither** — and every one of them fell to the
 dispatch default, which returns `{"status":"Succeeded"}`. They had been
 counted as "not in the plan"; they were in fact being reported as done.
 
-The default is right for a **connector leaf** — a ServiceNow source really was
-reached in `dependsOn` order with its inputs resolved, and the emulator says
-so. It is wrong for a **compute activity**, whose whole point is an effect
-later steps consume. That distinction is what splits the nine:
+The default was taken to be right for a **connector leaf** — a ServiceNow
+source really is reached in `dependsOn` order with its inputs resolved — and
+wrong for a **compute activity**, whose whole point is an effect later steps
+consume. That distinction is what split the nine below, and **the leaf half
+of it was later measured and found to be a fiction**: no oracle has a
+connector activity type, a connector is the `type` of a `Copy` source or
+sink, and `Copy` already refused those by name. What the default actually
+answered for was undocumented strings — `TridentNotebok` reported as a
+notebook that ran, and an activity with no `type` at all. It now refuses.
+The split still explains the nine:
 
 | Type | Outcome | Why |
 |---|---|---|
