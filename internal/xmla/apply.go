@@ -2,6 +2,7 @@ package xmla
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -254,7 +255,7 @@ func createExpressions(model map[string]any, rows []map[string]string) error {
 	for _, row := range rows {
 		name := strings.TrimSpace(row["Name"])
 		if name == "" {
-			return fmt.Errorf("Create of Expressions: a row carries no Name")
+			return errors.New("an Expressions row in a Create carries no Name")
 		}
 		if k := strings.TrimSpace(row["Kind"]); k != "" && k != "0" {
 			return fmt.Errorf("expression %q: Kind %s is not implemented "+
