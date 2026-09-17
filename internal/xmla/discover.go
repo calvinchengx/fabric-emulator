@@ -39,11 +39,6 @@ var tomBatchRequestTypes = []string{
 	"TMSCHEMA_CHANGED_PROPERTIES",
 }
 
-// TOMBatchRequestTypes returns the captured batch, for a handler to iterate.
-func TOMBatchRequestTypes() []string {
-	return append([]string(nil), tomBatchRequestTypes...)
-}
-
 // discoverColumns are the columns emitted per request type. Unlike the sempy
 // SELECT path — where the client names the columns it wants and we project
 // them — a Discover names only the rowset, so the SHAPE is ours to declare.

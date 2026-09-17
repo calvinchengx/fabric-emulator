@@ -5,11 +5,15 @@ import (
 	"testing"
 )
 
+func tomBatchRequestTypesForTest() []string {
+	return append([]string(nil), tomBatchRequestTypes...)
+}
+
 // Every type TOM asks for in its batch must get an answer, not an error — an
 // error on one of 35 would fail the whole materialisation.
 func TestEveryTOMBatchTypeIsAnswerable(t *testing.T) {
 	m, d := goldenModel(t), goldenData(t)
-	types := TOMBatchRequestTypes()
+	types := tomBatchRequestTypesForTest()
 	if len(types) != 35 {
 		t.Fatalf("captured batch has %d types, want the 35 observed on the wire", len(types))
 	}
@@ -206,7 +210,7 @@ func TestDiscoverPropagatesProjectionErrors(t *testing.T) {
 // request string. If it ever fails, the fix is a measured entry in
 // tomObjectName, never a fallback that echoes the caller.
 func TestEveryBatchTypeHasATOMObjectName(t *testing.T) {
-	for _, rt := range TOMBatchRequestTypes() {
+	for _, rt := range tomBatchRequestTypesForTest() {
 		if tomObjectName[rt] == "" {
 			t.Errorf("%s is in TOM's batch but has no <root name>", rt)
 		}

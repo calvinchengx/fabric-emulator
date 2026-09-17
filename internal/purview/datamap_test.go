@@ -41,8 +41,14 @@ func newService(t *testing.T) (*Service, *http.ServeMux) {
 	mux := http.NewServeMux()
 	// Register without the auth wrapper: s.Auth is nil here, and a nil
 	// validator would panic before any assertion ran.
-	s.registerForTest(mux)
+	registerForTest(s, mux)
 	return s, mux
+}
+
+func registerForTest(s *Service, mux *http.ServeMux) {
+	s.register(mux, func(h handler) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { h(w, r, nil) }
+	})
 }
 
 func do(t *testing.T, mux *http.ServeMux, method, target, body string) *httptest.ResponseRecorder {

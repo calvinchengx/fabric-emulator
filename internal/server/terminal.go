@@ -11,7 +11,6 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -216,17 +215,8 @@ func (s *Server) terminalAuthorised(r *http.Request) bool {
 	return r.URL.Query().Get("token") == want
 }
 
-// terminalJSON is here so the status shape has one definition; the portal reads
-// it and the tests assert on it.
+// terminalJSON is here so the status shape has one definition; the portal reads it.
 type terminalJSON struct {
 	Available bool   `json:"available"`
 	Reason    string `json:"reason,omitempty"`
-}
-
-func decodeTerminalStatus(r io.Reader) (terminalJSON, error) {
-	var out terminalJSON
-	if err := json.NewDecoder(r).Decode(&out); err != nil {
-		return out, err
-	}
-	return out, nil
 }

@@ -2,6 +2,12 @@ package config
 
 import "testing"
 
+func fromEnvForTest(t *testing.T) (*Config, error) {
+	t.Helper()
+	c := FromEnvPartial()
+	return c, c.Finish()
+}
+
 func TestDeriveJWKSURL(t *testing.T) {
 	cases := map[string]string{
 		"https://host:8443/tid/v2.0":                 "https://host:8443/tid/discovery/v2.0/keys",
@@ -48,7 +54,7 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("FABRIC_DATABRICKS_URL", "https://databricks-emulator:8447")
 	t.Setenv("FABRIC_DATABRICKS_TOKEN", "dapi-test")
 	t.Setenv("FABRIC_DATABRICKS_TLS_INSECURE", "true")
-	c, err := FromEnv()
+	c, err := fromEnvForTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +84,7 @@ func TestFromEnv(t *testing.T) {
 func TestDatabricksURLDefaultsOff(t *testing.T) {
 	t.Setenv("FABRIC_ENTRA_ISSUER", "https://e:1/t/v2.0")
 	t.Setenv("FABRIC_DATABRICKS_URL", "")
-	c, err := FromEnv()
+	c, err := fromEnvForTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +98,7 @@ func TestDatabricksURLDefaultsOff(t *testing.T) {
 func TestKQLURLDefaultsOff(t *testing.T) {
 	t.Setenv("FABRIC_ENTRA_ISSUER", "https://e:1/t/v2.0")
 	t.Setenv("FABRIC_KQL_URL", "")
-	c, err := FromEnv()
+	c, err := fromEnvForTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +110,7 @@ func TestKQLURLDefaultsOff(t *testing.T) {
 func TestDAXURLDefaultsOff(t *testing.T) {
 	t.Setenv("FABRIC_ENTRA_ISSUER", "https://e:1/t/v2.0")
 	t.Setenv("FABRIC_DAX_URL", "")
-	c, err := FromEnv()
+	c, err := fromEnvForTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +122,7 @@ func TestDAXURLDefaultsOff(t *testing.T) {
 func TestKafkaBootstrapDefaultsOff(t *testing.T) {
 	t.Setenv("FABRIC_ENTRA_ISSUER", "https://e:1/t/v2.0")
 	t.Setenv("FABRIC_KAFKA_BOOTSTRAP", "")
-	c, err := FromEnv()
+	c, err := fromEnvForTest(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +133,7 @@ func TestKafkaBootstrapDefaultsOff(t *testing.T) {
 
 func TestFromEnvMissingIssuer(t *testing.T) {
 	t.Setenv("FABRIC_ENTRA_ISSUER", "")
-	if _, err := FromEnv(); err == nil {
+	if _, err := fromEnvForTest(t); err == nil {
 		t.Fatal("FromEnv without issuer succeeded; want error")
 	}
 }
