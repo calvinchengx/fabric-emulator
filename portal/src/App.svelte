@@ -194,9 +194,4 @@
   main.wide {
     @apply max-w-none;
   }
-  .nav-toggle {
-    @apply -ml-1 flex h-8 w-8 items-center justify-center rounded-md border
-      bg-transparent text-base leading-none text-muted-foreground
-      transition-colors hover:bg-muted;
-  }
 </style>

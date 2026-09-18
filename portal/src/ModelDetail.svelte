@@ -232,36 +232,12 @@
 
 <style>
   .query-box { padding-bottom: 10px; }
-  .dax-input {
-    width: 100%; box-sizing: border-box; margin-top: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
-    padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
-    background: transparent; color: inherit; resize: vertical;
-  }
   .query-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-  .run {
-    font: inherit; padding: 4px 14px; border: 1px solid var(--border);
-    border-radius: 6px; background: transparent; color: inherit; cursor: pointer;
-  }
-  .run:disabled { opacity: 0.5; cursor: default; }
-  .query-result { margin-top: 8px; }
-  .model { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
-  .model-head {
-    display: flex; align-items: center; gap: 10px; width: 100%;
-    padding: 10px 12px; background: none; border: 0; cursor: pointer;
-    font: inherit; color: inherit; text-align: left;
-  }
-  .caret { display: inline-block; transition: transform 0.12s; color: var(--muted); }
-  .caret.open { transform: rotate(90deg); }
-  .summary { margin-left: auto; }
   .detail { padding: 0 12px 12px 12px; }
   .meta { display: flex; gap: 14px; align-items: baseline; margin: 2px 0 12px 22px; }
   .mono { font-family: ui-monospace, monospace; font-size: 11px; }
   .tbl { margin: 0 0 14px 22px; }
   .tbl-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
   .binding { font-size: 12px; }
-  .chip.directlake { background: color-mix(in srgb, var(--accent) 18%, transparent); }
-  .measures { margin-top: 6px; }
   .dax { white-space: pre-wrap; word-break: break-word; }
-  table { width: 100%; }
 </style>
