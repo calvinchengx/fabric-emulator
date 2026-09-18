@@ -293,6 +293,57 @@ vague prose. A forward reference is a claim about intent, and recording it is
 what keeps it reviewable instead of invisible. A test asserts every exemption is
 still doing work, so the escape hatch cannot quietly widen into a silencer.
 
+### The same decay, one directory over
+
+Both checkers above stop at `docs/`. A Go comment is where this repo keeps its
+reasoning — the cause of a refusal, the oracle a list came from, the precedent
+an activity was allowed under — and nothing read one until
+`scripts/check_comment_drift.py` landed.
+
+The motivating failure is the same shape as the three above. #490 measured the
+leaf/compute distinction and retired it: no oracle carries a connector activity
+type, so the dispatch default was refusing nothing on behalf of a leaf that does
+not exist. `docs/parity.md` and docs/43 were corrected in that change; two
+source comments were not, and went on teaching the retired justification in the
+PRESENT TENSE for a week — one of them asserting the default "is right for a
+CONNECTOR LEAF", directly beside the code that had stopped doing that.
+
+Three classes, on the same precision-over-recall argument. A repo-rooted path
+must exist, and a docs/NN reference — written as a bare number, the way this
+repo's comments write it — must name a document that does. (That shorthand is
+deliberately not a code span here: quoting it as one makes this very paragraph
+a finding, which is how the first draft of it failed the check.) Both are clean today
+and land as regression guards — 113 paths and 140 doc references resolve, and
+the doc reference is the one Go comments make most, so a renumbered document
+would break every one of them silently. The narrowing is what makes them usable:
+the naive form of the path class was measured first and returned **84 findings,
+every one a false positive** — Microsoft Learn slugs like
+`onelake/onelake-access-api.md`, payload filenames like `data.json` that belong
+to the caller's data rather than to this tree, and foreign paths like ADF's
+`entityTypes/Pipeline.json`. Rooting the class at a tracked top-level directory
+took it to nought, and the citations it gave up were never a drift checker's to
+make. Comments are found by a hand-walked scanner over Go's four states rather
+than by a regex, because `"https://learn.microsoft.com/..."` contains `//`: the
+regex form reads the second half of every documentation URL in the tree as a
+comment.
+
+The third class is a **pin on retired vocabulary**. A term recorded in `RETIRED`
+carries the reason it was retired and the count of occurrences the tree is known
+to hold, all of which are past-tense records that the idea was held and dropped.
+A further occurrence fails, and is either another such record — raise the pin in
+the same commit, and the raise is the review — or the idea creeping back.
+Counts rather than line numbers, because a line number moves whenever anything
+above it is edited, and a check that fails for an unrelated edit is one people
+learn to re-baseline without reading.
+
+**What it cannot do is the interesting part, so it is written down rather than
+implied.** It catches a retired term being reintroduced. It cannot catch a
+justification written today going stale tomorrow, because nothing mechanical
+separates a true `is` from a false one — the stale comment above read "the run
+really DID reach the leaf", so even a past-tense heuristic would have waved it
+through. Retiring a concept is a deliberate act; this asks only that the act be
+recorded once so the tree cannot drift back to it.
+
 ### What actually caught them
 
 Not review, and not more assertions. In every case it was **looking at what the

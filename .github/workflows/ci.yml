@@ -607,6 +607,12 @@ jobs:
       # drifted when this landed -- including one pointing at a sibling
       # repo's file as though it were ours.
       - run: uv run --frozen --no-sync python scripts/check_doc_drift.py --strict
+      # Go comments carry this repo's reasoning -- the cause of a refusal,
+      # the oracle a list came from -- and nothing read one until this
+      # landed. #490 retired the connector-leaf justification; two source
+      # comments went on asserting it in the present tense for a week,
+      # while parity.md and docs/43 had already been corrected.
+      - run: uv run --frozen --no-sync python scripts/check_comment_drift.py --strict
       # THE ONE `make check` RAN AND CI DID NOT. Every example must resolve its
       # target through the `fabric-target` contract — no pinned seed principal,
       # no localhost endpoint outside the resolver, no emulator-only lever, and
