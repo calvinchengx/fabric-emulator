@@ -142,6 +142,20 @@ TYPES = {
     "boolean": bool, "array": list, "object": dict,
 }
 
+# Statuses never reported as undocumented.
+#
+# AUTHENTICATION IS NOT A ROUTE'S BUSINESS. A 401 or 403 is the same answer
+# everywhere and specs enumerate it globally rather than per operation, so
+# flagging it would fire on any suite that exercises an auth failure -- which
+# is a thing suites SHOULD do. Measured: medallion drives executeQueries
+# without a token and the emulator correctly answers 401, which read as
+# "answered 401, spec documents ['200']".
+#
+# 404 IS DELIBERATELY NOT HERE. A 404 where the spec documents a 200 is the
+# "not implemented" signal, and it is worth seeing: the Power BI routes pinned
+# in KNOWN are exactly that, recorded rather than hidden.
+AUTH_STATUSES = frozenset({401, 403})
+
 # How many entries of an array to validate. The whole point of an array
 # response is that its entries share a schema, so the tenth is evidence of
 # little the first did not give -- and a 5,000-row list would dominate the run
@@ -278,8 +292,9 @@ def conformance(entries, specs):
             documented = None
         if documented is None:
             # `default` covers the error shape for most routes; a status the
-            # spec does not list at all is the finding.
-            if "default" not in responses:
+            # spec does not list at all is the finding -- unless it is an auth
+            # outcome, which no route documents and every route can give.
+            if "default" not in responses and entry["status"] not in AUTH_STATUSES:
                 found.append(
                     f"{entry['method']} {template}: answered {entry['status']}, "
                     f"spec documents {sorted(responses)}")

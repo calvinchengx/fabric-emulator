@@ -117,6 +117,11 @@ services:
       # emulator terminates that protocol and hands statements to this agent.
       # Without it, `HC session acquire` fails.
       FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
+      # Record this suite's responses for OpenAPI conformance; the traffic
+      # exists either way. See internal/server/record.go (no headers).
+      FABRIC_RECORD_RESPONSES: "/recording/responses.jsonl"
+    volumes:
+      - ./recording:/recording
     healthcheck:
       test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
       interval: 3s

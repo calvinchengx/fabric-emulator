@@ -2005,6 +2005,24 @@ jobs:
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/${{ matrix.harness }}/run.py
+      # Feeds the aggregate `openapi-conformance` job. KEPT BECAUSE IT WAS
+      # MEASURED: this suite reaches four routes no other recording suite
+      # does -- connections, job-instance detail, notebookRun and
+      # notebookRunResult. deployment-pipelines and engine-activities were
+      # enabled at the same time and reverted, because both drive only routes
+      # the others already cover: they would have cost an artifact and a
+      # `needs:` entry for nothing.
+      #
+      # Named per matrix leg. Four legs run this step and an artifact name is
+      # unique per workflow run, so a fixed name would have them collide; only
+      # the `medallion` harness records, and the rest upload nothing under
+      # if-no-files-found: warn.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: recording-${{ matrix.harness }}
+          path: e2e/${{ matrix.harness }}/recording/responses.jsonl
+          if-no-files-found: warn
       # Each leg's silver summary, so the comparison below can have BOTH halves.
       # A leg cannot compare itself: the counterpart is built by a different
       # example on a different runner, which is why compare.py skips when run
@@ -2344,7 +2362,7 @@ jobs:
           cache-invalidation-interval: 1
 
   openapi-conformance:
-    needs: [changes, fabric-cli, az-rest, pipeline-activities, terraform-fabric, powerbi-ps]
+    needs: [changes, fabric-cli, az-rest, pipeline-activities, terraform-fabric, powerbi-ps, medallion]
     if: needs.changes.outputs.docs_only != 'true'
     name: Responses conform to Microsoft's OpenAPI, and route coverage only ratchets
     runs-on: ubuntu-latest

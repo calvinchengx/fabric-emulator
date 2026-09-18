@@ -339,3 +339,25 @@ def test_the_committed_pins_are_all_still_documented():
     """Every pin carries a written reason; a bare entry is a silencer."""
     for pin, reason in c.KNOWN.items():
         assert reason.strip(), pin
+
+
+def test_an_auth_status_is_not_reported_as_undocumented(specs):
+    """401 and 403 are the same answer on every route.
+
+    Specs enumerate them globally rather than per operation, so flagging them
+    would fire on any suite that exercises an auth failure — which suites
+    should do. Measured: medallion drives executeQueries without a token, the
+    emulator correctly answers 401, and that read as a disagreement.
+    """
+    for status in (401, 403):
+        found, _, _ = check(specs, [{"method": "GET", "path": "/v1/sprockets",
+                                     "status": status, "body": {}}])
+        assert found == [], f"{status} should not be a finding"
+
+
+def test_a_404_is_still_reported(specs):
+    """The `not implemented` signal stays visible: it is how an unserved route
+    announces itself, and the Power BI pins in KNOWN are exactly that."""
+    found, _, _ = check(specs, [{"method": "GET", "path": "/v1/sprockets",
+                                 "status": 404, "body": {}}])
+    assert len(found) == 1 and "answered 404" in found[0]
