@@ -203,7 +203,14 @@ func (a *API) gitStatus(w http.ResponseWriter, r *http.Request, p *auth.Principa
 		} `json:"itemMetadata"`
 		WorkspaceChange string `json:"workspaceChange,omitempty"`
 		RemoteChange    string `json:"remoteChange,omitempty"`
-		ConflictType    string `json:"conflictType,omitempty"`
+		// NOT omitempty: the spec marks conflictType required on ItemChange
+		// and gives ConflictType a `None` member, so a change without a
+		// conflict reports None rather than omitting the field. Omitting it
+		// left a typed client deserialising the documented shape without a
+		// required property -- found by OpenAPI conformance over the az-rest
+		// recording, which drives git status where the fabric-cli suite does
+		// not.
+		ConflictType string `json:"conflictType"`
 	}
 	key := func(t, n string) string { return t + "\x00" + n }
 	remoteBy := map[string]*store.RemoteItem{}
@@ -211,11 +218,14 @@ func (a *API) gitStatus(w http.ResponseWriter, r *http.Request, p *auth.Principa
 		remoteBy[key(ri.Type, ri.DisplayName)] = ri
 	}
 	var changes []change
+	// Every change reports a conflict type, and `None` is the documented value
+	// for the ordinary case; see the field's comment above.
+	newChange := func() change { return change{ConflictType: "None"} }
 	seen := map[string]bool{}
 	for _, it := range items {
 		k := key(it.Type, it.DisplayName)
 		seen[k] = true
-		c := change{}
+		c := newChange()
 		c.ItemMetadata.ItemType, c.ItemMetadata.DisplayName = it.Type, it.DisplayName
 		c.ItemMetadata.ItemIdentifier.ObjectID = it.ID
 		ri := remoteBy[k]
@@ -239,7 +249,8 @@ func (a *API) gitStatus(w http.ResponseWriter, r *http.Request, p *auth.Principa
 		if seen[key(ri.Type, ri.DisplayName)] {
 			continue
 		}
-		c := change{RemoteChange: "Added"}
+		c := newChange()
+		c.RemoteChange = "Added"
 		c.ItemMetadata.ItemType, c.ItemMetadata.DisplayName = ri.Type, ri.DisplayName
 		c.ItemMetadata.ItemIdentifier.LogicalID = ri.LogicalID
 		changes = append(changes, c)

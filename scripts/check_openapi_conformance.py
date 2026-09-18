@@ -236,20 +236,24 @@ def conformance(entries, specs):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("recording", type=pathlib.Path,
-                        help="JSONL written by FABRIC_RECORD_RESPONSES")
+    parser.add_argument("recordings", nargs="+", type=pathlib.Path,
+                        help="one or more JSONL files written by FABRIC_RECORD_RESPONSES")
     parser.add_argument("--strict", action="store_true",
                         help="exit non-zero on any finding")
     arguments = parser.parse_args()
 
-    if not arguments.recording.is_file():
-        print(f"check_openapi_conformance: no recording at {arguments.recording}. "
-              f"Set FABRIC_RECORD_RESPONSES on the emulator and re-run the suite.",
+    present = [r for r in arguments.recordings if r.is_file()]
+    if not present:
+        print(f"check_openapi_conformance: no recording at "
+              f"{', '.join(str(r) for r in arguments.recordings)}. Set "
+              f"FABRIC_RECORD_RESPONSES on the emulator and re-run the suite.",
               file=sys.stderr)
         return 1
 
     specs = Specs()
-    entries = read_recording(arguments.recording)
+    # THE UNION, because each suite drives a slice of the surface and a
+    # disagreement is a disagreement whichever suite happened to provoke it.
+    entries = [e for r in present for e in read_recording(r)]
     if not entries:
         print("check_openapi_conformance: the recording is empty. A suite that "
               "records nothing proves nothing, so this is a failure rather "
@@ -268,8 +272,9 @@ def main() -> int:
     found = [f for f in occurrences if not is_known(f)]
     pinned = sum(n for f, n in occurrences.items() if is_known(f))
 
-    print(f"check_openapi_conformance: {len(entries)} recorded responses, "
-          f"{matched} matched to one of {len(specs.routes)} documented routes")
+    print(f"check_openapi_conformance: {len(entries)} recorded responses from "
+          f"{len(present)} recording(s), {matched} matched to one of "
+          f"{len(specs.routes)} documented routes")
     if pinned:
         print(f"  {pinned} known disagreement(s) pinned in KNOWN, not counted")
     if unmatched:
