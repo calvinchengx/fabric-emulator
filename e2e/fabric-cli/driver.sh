@@ -52,7 +52,9 @@ echo "==> fab api passthrough (raw /v1)"
 fab api workspaces >/dev/null || fail "api passthrough"
 
 # ---------------------------------------------------------------------------
-# Deployment pipelines (docs/23). fab 1.6.1 has no deployment-pipeline verbs,
+# Deployment pipelines (docs/23). fab 1.7.0 -- the latest release, and the one
+# this suite pins -- still has no deployment-pipeline verbs (`fab deploy` is
+# config-file ITEM deployment; the package contains no deploymentPipeline route),
 # so this drives them through `fab api` — still Microsoft's client, its MSAL
 # auth and its HTTP stack, just without a typed wrapper.
 #
@@ -330,6 +332,94 @@ for k in ("text","body","result"):
 if isinstance(d,str): d=json.loads(d)
 assert d["value"]==[], f"a replacing PUT left roles behind: {d}"
 print("    an empty PUT revoked the role")' || fail "dataAccessRoles replace"
+
+# ---------------------------------------------------------------------------
+# TYPED VERBS, not `fab api`. Everything above this point that touches the Job
+# Scheduler or role assignments would go through the passthrough, which is fab's
+# MSAL and HTTP stack around a URL this script wrote -- closer to `az rest` than
+# to a client with opinions.
+#
+# `fab job run-sch`, `fab job run-list` and `fab acl` are different: fab builds
+# the request body, picks the route and parses the reply itself. A field the
+# emulator names differently, or a shape it returns wrongly, fails inside
+# Microsoft's client rather than inside an assertion here. That is the whole
+# reason these claims wanted a second witness -- `ci:az-rest` was the only CI
+# witness for the Job Scheduler and for job instances, and az rest models
+# nothing.
+# ---------------------------------------------------------------------------
+echo "==> job scheduler: fab builds the schedule body (typed verb)"
+fab job run-sch "$WS/pipe.DataPipeline" --type cron --interval 10 \
+  --start 2026-01-01T09:00:00 --end 2026-12-31T10:00:00 --enable \
+  || fail "job run-sch"
+
+echo "==> the schedule is listed back, by fab, from the emulator"
+SCH=$(fab api "workspaces/$(fab get "$WS" -q id | guid)/items/$(fab get "$WS/pipe.DataPipeline" -q id | guid)/jobs/Pipeline/schedules") \
+  || fail "list schedules"
+echo "$SCH" | grep -qi cron || fail "the schedule fab created is not listed back: $SCH"
+
+echo "==> job run-list: the item's job instances, parsed by fab"
+# An item that has never run has an empty list, and that is the correct answer.
+# What is witnessed is that fab PARSES the envelope -- a wrong shape throws in
+# its code, not here.
+fab job run-list "$WS/pipe.DataPipeline" >/dev/null || fail "job run-list"
+
+echo "==> acl: role assignments read through fab's own verb"
+fab acl ls "$WS" >/dev/null || fail "acl ls"
+fab acl get "$WS" >/dev/null 2>&1 || true   # detail view is optional on a bare workspace
+
+echo "==> sensitivity labels: fab's verb really posts to bulkSetLabels"
+# `fab label list-local` reads the CLI's OWN configuration, which is why this
+# looked at first like a client-side feature not worth witnessing. It is not:
+# `label set` and `label rm` post to admin/items/bulkSetLabels and
+# bulkRemoveLabels. The local file only maps a label NAME to an id, which is
+# the same indirection a tenant admin has, because Purview owns the ids.
+#
+# THE MAP IS BUILT FROM THE EMULATOR'S OWN /v1/admin/labels, so the taxonomy
+# the emulator serves and the name fab sends have to agree. A hardcoded id
+# would let the two drift apart and still pass.
+fab api "admin/labels" | python3 -c '
+import json,sys
+d=json.loads(sys.stdin.read())
+for k in ("text","body","result"):
+    if isinstance(d,dict) and k in d and isinstance(d[k],(dict,list)): d=d[k]
+if isinstance(d,str): d=json.loads(d)
+labels=[{"name":l["name"],"id":l["id"]} for l in d["labels"]]
+assert any(l["name"]=="Confidential" for l in labels), labels
+json.dump({"labels":labels}, open("/tmp/labeldefs.json","w"))
+print(f"    {len(labels)} labels from the emulator")' || fail "read label taxonomy"
+fab config set local_definition_labels /tmp/labeldefs.json >/dev/null || fail "label config"
+fab label set "$WS/pipe.DataPipeline" --name Confidential -f || fail "label set"
+fab label rm "$WS/pipe.DataPipeline" -f || fail "label rm"
+
+echo "==> governance domains: a virtual workspace fab creates and lists"
+fab mkdir ".domains/clidomain.Domain" || fail "mkdir domain"
+fab ls .domains | grep -qi clidomain || fail "the domain fab created is not listed back"
+
+echo "==> workspace managed identity: fab cannot read the result, and that is pinned"
+# A GAP THIS WITNESS FOUND, asserted rather than skipped.
+#
+# fab provisions, follows the operation to completion, and then reads
+# `servicePrincipalId` out of the result document:
+#
+#     data = json.loads(response.text)
+#     managed_identity._id = data["servicePrincipalId"]
+#
+# The emulator starts the LRO with an EMPTY resultRef -- see provisionIdentity
+# in internal/api -- so the operation completes and /v1/operations/{id}/result
+# serves nothing. fab gets an empty body and fails with
+# "Expecting value: line 1 column 1 (char 0)".
+#
+# `az rest` prints the empty body and moves on, which is why the claim looked
+# witnessed. A typed client cannot: it needs the field. The emulator provisions
+# correctly -- the identity really is created and granted Admin -- what is
+# missing is the result document a caller reads it back from.
+#
+# Pinned so the gap cannot close unnoticed: when the LRO learns to serve its
+# result this assertion fails, which is the reminder to credit the claim.
+if fab mkdir "$WS/.managedidentities/ignored.ManagedIdentity" 2>/dev/null; then
+  fail "provision identity now returns a readable result -- credit ci:fabric-cli for the managed-identity claim and delete this pin"
+fi
+echo "    refused as expected: the LRO serves no result document"
 
 echo "==> rm an item, then the workspace"
 fab rm "$WS/nb.Notebook" -f || fail "rm item"

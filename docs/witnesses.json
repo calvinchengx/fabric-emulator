@@ -456,6 +456,7 @@
     "claim": "**Governance domains** (`/v1/admin/domains`)",
     "witnesses": [
       "ci:az-rest",
+      "ci:fabric-cli",
       "go:TestAdminDomains",
       "go:TestEveryAdminRouteIsGatedOnTheRegisteredMux",
       "go:TestAdminWriteRefusesAServicePrincipalThatIsNotAnAdministrator",
@@ -497,6 +498,7 @@
     "claim": "**Item Job Scheduler** (`…/items/{id}/jobs/{jobType}/schedules`)",
     "witnesses": [
       "ci:az-rest",
+      "ci:fabric-cli",
       "go:TestJobSchedulerAPIEndToEnd",
       "go:TestScheduleWithPastStartTriggersInstantly",
       "go:TestScheduleLimitAndValidationOverHTTP",
@@ -556,6 +558,7 @@
     "claim": "**List Item Job Instances** (`GET …/jobs/instances`)",
     "witnesses": [
       "ci:az-rest",
+      "ci:fabric-cli",
       "go:TestListItemJobInstances",
       "go:TestJobSchedulerAPIEndToEnd"
     ]
@@ -850,6 +853,7 @@
     "claim": "Role assignments / workspace RBAC",
     "witnesses": [
       "ci:az-rest",
+      "ci:fabric-cli",
       "ci:terraform-fabric",
       "go:TestListWorkspacesAndRoleAssignments",
       "go:TestItemUpdateAndRoleAssignmentLifecycle",
@@ -876,6 +880,7 @@
     "claim": "**Sensitivity labels** (`bulkSetLabels` / `bulkRemoveLabels`)",
     "witnesses": [
       "ci:az-rest",
+      "ci:fabric-cli",
       "go:TestBulkLabelsApplyReplaceAndRemove",
       "go:TestBulkLabelsPartialFailureAndValidation",
       "go:TestLabelChangesAuditWithDocumentedSchema"
