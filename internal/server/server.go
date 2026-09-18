@@ -41,6 +41,10 @@ type Server struct {
 	// TDS is the warehouse SQL endpoint (nil when SQLTDSAddr is unset). main
 	// starts its TCP listener; it authenticates FedAuth logins against entra.
 	TDS *tds.Server
+	// rec appends documented-surface responses when FABRIC_RECORD_RESPONSES
+	// names a file, for OpenAPI conformance. Nil on every ordinary run; see
+	// record.go for what is recorded and what is deliberately not.
+	rec *recorder
 	// EventKeepalive overrides how often the flow stream emits a keepalive
 	// comment; 0 uses DefaultEventKeepalive. Tests lower it so teardown does
 	// not wait out a full interval (see events.go for why it must wait at all).
@@ -217,6 +221,8 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 		s.armStop = make(chan struct{})
 		go src.Run(s.armStop)
 	}
+	// Off unless FABRIC_RECORD_RESPONSES names a file; see record.go.
+	s.rec = newRecorder()
 	return s, nil
 }
 
@@ -228,7 +234,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 // any host — the account name is always the literal "onelake", as
 // documented.
 func (s *Server) Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.record(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.Host, "onelake.blob."):
 			s.OneLake.ServeBlob(w, r)
@@ -241,7 +247,7 @@ func (s *Server) Handler() http.Handler {
 		default:
 			s.mux.ServeHTTP(w, r)
 		}
-	})
+	}))
 }
 
 // Close releases resources.

@@ -24,8 +24,16 @@ services:
       # Force tiny pages so every list exercises the continuation-token loop —
       # the pagination equivalent of the controllable clock (docs/parity.md).
       FABRIC_LIST_PAGE_SIZE: "2"
+      # Record every documented-surface response for OpenAPI conformance.
+      # The suite generates the traffic either way; this only writes down
+      # what came back, so the conformance check validates real answers
+      # rather than a bespoke script's idea of them. See
+      # internal/server/record.go for what is recorded (no headers, ever).
+      FABRIC_RECORD_RESPONSES: "/recording/responses.jsonl"
       FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
       FABRIC_ENTRA_TLS_INSECURE: "true"
+    volumes:
+      - ./recording:/recording
     networks:
       default:
         aliases: ["api.fabric.microsoft.com"]
