@@ -1,0 +1,440 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "version": "v1",
+        "title": "Eventstream common data types"
+    },
+    "paths": {},
+    "definitions": {
+        "CompatibilityLevel": {
+            "type": "string",
+            "description": "Represents the compatibility level of the Eventstream topology. Additional compatibility levels may be added over time.",
+            "enum": [
+                "1.0"
+            ],
+            "x-ms-enum": {
+                "name": "CompatibilityLevel",
+                "modelAsString": true,
+                "values": [
+                    {
+                        "value": "1.0",
+                        "description": "The compatibility level of the Eventstream topology is 1.0."
+                    }
+                ]
+            }
+        },
+        "NodeReference": {
+            "type": "object",
+            "description": "Represents a reference to a node using its unique name.",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The unique name of the node."
+                }
+            }
+        },
+        "RuntimeInformation": {
+            "type": "object",
+            "description": "Represents the runtime information of a node.",
+            "required": [
+                "status"
+            ],
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "description": "The status of the node. Additional node status may be added over time.",
+                    "enum": [
+                        "Unknown",
+                        "Creating",
+                        "Created",
+                        "Updating",
+                        "Running",
+                        "Paused",
+                        "Failed",
+                        "Warning",
+                        "Deleting",
+                        "Pausing",
+                        "Resuming",
+                        "External"
+                    ],
+                    "x-ms-enum": {
+                        "name": "NodeStatus",
+                        "modelAsString": true,
+                        "values": [
+                            {
+                                "value": "Unknown",
+                                "description": "The status of the node is unknown."
+                            },
+                            {
+                                "value": "Creating",
+                                "description": "The node is being created."
+                            },
+                            {
+                                "value": "Created",
+                                "description": "The node has been created."
+                            },
+                            {
+                                "value": "Updating",
+                                "description": "The node is being updated."
+                            },
+                            {
+                                "value": "Running",
+                                "description": "The node is running."
+                            },
+                            {
+                                "value": "Paused",
+                                "description": "The node is paused."
+                            },
+                            {
+                                "value": "Failed",
+                                "description": "The node has failed."
+                            },
+                            {
+                                "value": "Warning",
+                                "description": "The node has a warning."
+                            },
+                            {
+                                "value": "Deleting",
+                                "description": "The node is being deleted."
+                            },
+                            {
+                                "value": "Pausing",
+                                "description": "The node is being paused."
+                            },
+                            {
+                                "value": "Resuming",
+                                "description": "The node is being resumed."
+                            },
+                            {
+                                "value": "External",
+                                "description": "The node status depends on an external service."
+                            }
+                        ]
+                    }
+                },
+                "error": {
+                    "$ref": "#/definitions/ErrorInfo",
+                    "description": "The error information."
+                }
+            }
+        },
+        "ErrorInfo": {
+            "type": "object",
+            "description": "Represents the error information.",
+            "required": [
+                "errorMessage"
+            ],
+            "properties": {
+                "errorCode": {
+                    "type": "string",
+                    "description": "The error code."
+                },
+                "errorMessage": {
+                    "type": "string",
+                    "description": "The error message."
+                },
+                "errorDetails": {
+                    "type": "array",
+                    "description": "The error details.",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "EndpointConnectionType": {
+            "type": "string",
+            "description": "The endpoint connection shape. Additional endpoint connection types may be added over time.",
+            "enum": [
+                "CustomEndpoint",
+                "KafkaEndpoint"
+            ],
+            "x-ms-enum": {
+                "name": "EndpointConnectionType",
+                "modelAsString": true,
+                "values": [
+                    {
+                        "value": "CustomEndpoint",
+                        "description": "The custom endpoint connection shape."
+                    },
+                    {
+                        "value": "KafkaEndpoint",
+                        "description": "The Kafka endpoint connection shape."
+                    }
+                ]
+            }
+        },
+        "EndpointConnection": {
+            "type": "object",
+            "description": "Represents the connection information for an eventstream source or destination endpoint.",
+            "discriminator": "type",
+            "required": [
+                "type"
+            ],
+            "properties": {
+                "type": {
+                    "description": "The endpoint connection shape.",
+                    "$ref": "#/definitions/EndpointConnectionType"
+                }
+            }
+        },
+        "CustomEndpointConnection": {
+            "type": "object",
+            "description": "Represents a custom endpoint connection.",
+            "x-ms-discriminator-value": "CustomEndpoint",
+            "properties": {
+                "fullyQualifiedNamespace": {
+                    "type": "string",
+                    "description": "The fully qualified namespace of the Event Hub."
+                },
+                "eventHubName": {
+                    "type": "string",
+                    "description": "The name of the Event Hub."
+                },
+                "consumerGroupName": {
+                    "type": "string",
+                    "description": "The consumer group name."
+                },
+                "accessKeys": {
+                    "$ref": "#/definitions/AccessKeys",
+                    "description": "The access keys."
+                }
+            },
+            "allOf": [
+                {
+                    "$ref": "#/definitions/EndpointConnection"
+                }
+            ]
+        },
+        "KafkaEndpointConnection": {
+            "type": "object",
+            "description": "Represents a Kafka endpoint connection.",
+            "x-ms-discriminator-value": "KafkaEndpoint",
+            "properties": {
+                "bootstrapServer": {
+                    "type": "string",
+                    "description": "The Kafka bootstrap server address, including port."
+                },
+                "topicName": {
+                    "type": "string",
+                    "description": "The Kafka topic name."
+                },
+                "securityProtocol": {
+                    "type": "string",
+                    "description": "The Kafka security protocol.",
+                    "enum": [
+                        "SASL_PLAINTEXT",
+                        "PLAINTEXT",
+                        "SASL_SSL",
+                        "SSL"
+                    ],
+                    "x-ms-enum": {
+                        "name": "SecurityProtocol",
+                        "modelAsString": true,
+                        "values": [
+                            {
+                                "value": "SASL_PLAINTEXT",
+                                "description": "The security protocol is SASL_PLAINTEXT."
+                            },
+                            {
+                                "value": "PLAINTEXT",
+                                "description": "The security protocol is PLAINTEXT."
+                            },
+                            {
+                                "value": "SASL_SSL",
+                                "description": "The security protocol is SASL_SSL."
+                            },
+                            {
+                                "value": "SSL",
+                                "description": "The security protocol is SSL."
+                            }
+                        ]
+                    }
+                },
+                "authentications": {
+                    "type": "array",
+                    "description": "The available authentication mechanisms.",
+                    "items": {
+                        "$ref": "#/definitions/EndpointAuthentication"
+                    }
+                }
+            },
+            "allOf": [
+                {
+                    "$ref": "#/definitions/EndpointConnection"
+                }
+            ]
+        },
+        "AccessKeys": {
+            "type": "object",
+            "description": "The access keys.",
+            "required": [
+                "primaryKey",
+                "secondaryKey",
+                "primaryConnectionString",
+                "secondaryConnectionString"
+            ],
+            "properties": {
+                "primaryKey": {
+                    "type": "string",
+                    "description": "The primary key."
+                },
+                "secondaryKey": {
+                    "type": "string",
+                    "description": "The secondary key."
+                },
+                "primaryConnectionString": {
+                    "type": "string",
+                    "description": "The primary connection string."
+                },
+                "secondaryConnectionString": {
+                    "type": "string",
+                    "description": "The secondary connection string."
+                }
+            }
+        },
+        "EndpointAuthentication": {
+            "type": "object",
+            "description": "The base authentication mechanism for an endpoint connection. The concrete type is indicated by the `saslMechanism` discriminator.",
+            "discriminator": "saslMechanism",
+            "required": [
+                "saslMechanism"
+            ],
+            "properties": {
+                "saslMechanism": {
+                    "type": "string",
+                    "description": "The SASL authentication mechanism. Additional authentication mechanisms may be added over time.",
+                    "enum": [
+                        "OAuthBearer",
+                        "Plain"
+                    ],
+                    "x-ms-enum": {
+                        "name": "AuthenticationMechanism",
+                        "modelAsString": true,
+                        "values": [
+                            {
+                                "value": "OAuthBearer",
+                                "description": "The OAuthBearer SASL mechanism."
+                            },
+                            {
+                                "value": "Plain",
+                                "description": "The Plain SASL mechanism."
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        "OAuthBearerAuthentication": {
+            "type": "object",
+            "description": "Represents the OAuthBearer SASL authentication mechanism.",
+            "x-ms-discriminator-value": "OAuthBearer",
+            "allOf": [
+                {
+                    "$ref": "#/definitions/EndpointAuthentication"
+                }
+            ],
+            "required": [
+                "scope"
+            ],
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "description": "The OAuth scope."
+                }
+            }
+        },
+        "PlainAuthentication": {
+            "type": "object",
+            "description": "Represents the Plain SASL authentication mechanism.",
+            "x-ms-discriminator-value": "Plain",
+            "allOf": [
+                {
+                    "$ref": "#/definitions/EndpointAuthentication"
+                }
+            ],
+            "required": [
+                "primaryConnectionString"
+            ],
+            "properties": {
+                "primaryConnectionString": {
+                    "type": "string",
+                    "description": "The primary connection string."
+                },
+                "secondaryConnectionString": {
+                    "type": "string",
+                    "description": "The secondary connection string for key rotation."
+                },
+                "saslJaasConfig": {
+                    "type": "string",
+                    "description": "The SASL JAAS configuration string."
+                }
+            }
+        },
+        "DataSourceStartType": {
+            "type": "string",
+            "description": "Represents the start type of the data source. Additional start types may be added over time.",
+            "enum": [
+                "Now",
+                "WhenLastStopped",
+                "CustomTime"
+            ],
+            "x-ms-enum": {
+                "name": "DataSourceStartType",
+                "modelAsString": true,
+                "values": [
+                    {
+                        "value": "Now",
+                        "description": "The data source starts now."
+                    },
+                    {
+                        "value": "WhenLastStopped",
+                        "description": "The data source starts when it was last stopped."
+                    },
+                    {
+                        "value": "CustomTime",
+                        "description": "The data source starts at a custom time."
+                    }
+                ]
+            }
+        },
+        "DataSourceStartRequest": {
+            "type": "object",
+            "description": "Represents the request to start a data source.",
+            "required": [
+                "startType"
+            ],
+            "properties": {
+                "startType": {
+                    "$ref": "#/definitions/DataSourceStartType",
+                    "description": "The start type of the data source."
+                },
+                "customStartDateTime": {
+                    "type": "string",
+                    "description": "The custom start time of the data source in UTC, using the YYYY-MM-DDTHH:mm:ssZ format.",
+                    "format": "date-time"
+                }
+            }
+        },
+        "KeyStringValuePair": {
+            "type": "object",
+            "required": [
+                "key",
+                "value"
+            ],
+            "properties": {
+                "key": {
+                    "type": "string",
+                    "description": "The key."
+                },
+                "value": {
+                    "type": "string",
+                    "description": "The value."
+                }
+            }
+        }
+    }
+}

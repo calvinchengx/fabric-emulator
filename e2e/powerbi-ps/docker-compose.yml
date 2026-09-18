@@ -31,6 +31,12 @@ services:
       FABRIC_DATA_DIR: "/data"
       FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
       FABRIC_ENTRA_TLS_INSECURE: "true"
+      # Record this suite's responses for OpenAPI conformance. The traffic
+      # exists either way; recording only writes down what came back. See
+      # internal/server/record.go (no headers, ever).
+      FABRIC_RECORD_RESPONSES: "/recording/responses.jsonl"
+    volumes:
+      - ./recording:/recording
     networks:
       default:
         aliases: ["api.fabric.microsoft.com", "api.powerbi.com"]

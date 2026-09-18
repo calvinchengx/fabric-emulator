@@ -186,7 +186,12 @@ for k in ("text","body","result"):
 if isinstance(d,str): d=json.loads(d)
 ops=d["value"]
 assert len(ops)==2, f"want 2 deployments, got {len(ops)}: {ops}"
-assert ops[1].get("note")=="via fab", f"oldest deployment lost its note: {ops[1]}"
+# note is the spec\x27s DeploymentPipelineOperationNote object, not a bare
+# string: it has room for isTruncated, which a string cannot carry. The shape
+# changed when OpenAPI conformance read this response against
+# DeploymentPipelineOperation and found the emulator under-answering.
+assert ops[1].get("note",{}).get("content")=="via fab", f"oldest deployment lost its note: {ops[1]}"
+assert ops[0]["type"]=="Deploy" and ops[0]["status"]=="Succeeded", f"operation is missing its documented type/status: {ops[0]}"
 assert ops[0]["items"][0]["outcome"]=="Updated", f"newest is not the re-deploy: {ops[0]}"
 assert ops[1]["items"][0]["outcome"]=="Created", f"oldest is not the first deploy: {ops[1]}"
 print("history ok")' || fail "deployment operations history"

@@ -41,6 +41,10 @@ type Server struct {
 	// TDS is the warehouse SQL endpoint (nil when SQLTDSAddr is unset). main
 	// starts its TCP listener; it authenticates FedAuth logins against entra.
 	TDS *tds.Server
+	// rec appends documented-surface responses when FABRIC_RECORD_RESPONSES
+	// names a file, for OpenAPI conformance. Nil on every ordinary run; see
+	// record.go for what is recorded and what is deliberately not.
+	rec *recorder
 	// EventKeepalive overrides how often the flow stream emits a keepalive
 	// comment; 0 uses DefaultEventKeepalive. Tests lower it so teardown does
 	// not wait out a full interval (see events.go for why it must wait at all).
@@ -217,6 +221,8 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 		s.armStop = make(chan struct{})
 		go src.Run(s.armStop)
 	}
+	// Off unless FABRIC_RECORD_RESPONSES names a file; see record.go.
+	s.rec = newRecorder()
 	return s, nil
 }
 
@@ -228,6 +234,16 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 // any host — the account name is always the literal "onelake", as
 // documented.
 func (s *Server) Handler() http.Handler {
+	// RECORDING WRAPS ONLY THE CONTROL PLANE, not the OneLake data plane.
+	//
+	// recordable() already refuses /onelake, so wrapping the host-routed
+	// branches below achieved nothing except putting a second ResponseWriter
+	// in front of every byte of a Delta file. Scoping it to the mux keeps this
+	// code off the data plane's response path entirely, which is both cheaper
+	// and a smaller blast radius for a wrapper whose only job is diagnostics.
+	recorded := s.record(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mux.ServeHTTP(w, r)
+	}))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.Host, "onelake.blob."):
@@ -239,7 +255,7 @@ func (s *Server) Handler() http.Handler {
 			r2.URL.Path = strings.TrimPrefix(r.URL.Path, "/onelake")
 			s.OneLake.ServeBlob(w, r2)
 		default:
-			s.mux.ServeHTTP(w, r)
+			recorded.ServeHTTP(w, r)
 		}
 	})
 }
@@ -249,6 +265,9 @@ func (s *Server) Close() error {
 	if s.armStop != nil {
 		close(s.armStop)
 		s.armStop = nil
+	}
+	if err := s.rec.Close(); err != nil {
+		log.Printf("closing the response recording: %v", err)
 	}
 	return s.Store.Close()
 }

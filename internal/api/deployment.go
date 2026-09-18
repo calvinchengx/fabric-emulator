@@ -93,7 +93,32 @@ func (a *API) createDeploymentPipeline(w http.ResponseWriter, r *http.Request, p
 		writeErr(w, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, pl)
+	// CREATE ANSWERS WITH THE STAGES IT CREATED. The spec's response is
+	// DeploymentPipelineExtendedInfo, which marks `stages` required, and this
+	// call had been returning the pipeline alone -- so a caller that wanted a
+	// stage id had to follow up with a list, and a typed client deserialising
+	// the documented shape found a required field missing. The stages are
+	// right here; not reporting them was under-answering, not a gap.
+	//
+	// Read back rather than echoed from the slice above, because the store is
+	// what assigns ids and order.
+	writeJSON(w, http.StatusCreated, a.pipelineWithStages(pl))
+}
+
+// pipelineWithStages is the documented DeploymentPipelineExtendedInfo: the
+// pipeline plus its ordered stages.
+func (a *API) pipelineWithStages(pl *store.DeploymentPipeline) any {
+	stages, err := a.Store.ListDeploymentStages(pl.ID)
+	if err != nil || stages == nil {
+		// An empty slice rather than null: the field is required, and a client
+		// deserialising into a list should get an empty one rather than a nil
+		// it may not expect.
+		stages = []*store.DeploymentStage{}
+	}
+	return struct {
+		*store.DeploymentPipeline
+		Stages []*store.DeploymentStage `json:"stages"`
+	}{pl, stages}
 }
 
 func (a *API) getDeploymentPipeline(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
@@ -414,7 +439,7 @@ func (a *API) deployStageContent(w http.ResponseWriter, r *http.Request, p *auth
 	// agree on it, then let startOperation write the 202 envelope.
 	opID := store.NewID()
 	if _, err := a.Store.DeployStageContent(pl.ID, body.SourceStageID, body.TargetStageID,
-		opID, body.Note, p.ID, selected); err != nil {
+		opID, body.Note, p.ID, p.Type, selected); err != nil {
 		switch {
 		case errors.Is(err, store.ErrStagesNotAdjacent):
 			writeErr(w, http.StatusBadRequest, "InvalidRequest",

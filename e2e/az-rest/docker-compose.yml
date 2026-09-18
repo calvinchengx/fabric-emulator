@@ -31,6 +31,12 @@ services:
       FABRIC_ENTRA_TLS_INSECURE: "true"
       FABRIC_TENANT_ADMINS: "00d88624-f0d7-46f6-a641-6232c2608928"
       FABRIC_NAME_RESERVATION: "1h"
+      # Record this suite's responses for OpenAPI conformance. The traffic
+      # exists either way; recording only writes down what came back. See
+      # internal/server/record.go (no headers, ever).
+      FABRIC_RECORD_RESPONSES: "/recording/responses.jsonl"
+    volumes:
+      - ./recording:/recording
     networks:
       default:
         # onelake.dfs is the SAME container on the same port, and it is here for

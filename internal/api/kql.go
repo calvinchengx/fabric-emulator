@@ -446,6 +446,19 @@ func (a *API) typedItemProperties(r *http.Request, it *store.Item) map[string]an
 			// "New" is the only mode these examples exercise; restore-from-backup
 			// is not modelled, so reporting anything else would be a claim.
 			"creationMode": "New",
+			// REQUIRED by WarehouseProperties, and absent until OpenAPI
+			// conformance read a create response against it.
+			//
+			// lastUpdatedTime IS THE CREATION TIME, and that is a limitation
+			// written down rather than hidden: the items table carries
+			// created_at and nothing else, so this emulator does not know when
+			// an item last changed. A caller diffing the two fields to detect
+			// an edit will not see one. The alternative was omitting a
+			// required field, which breaks every client that reads the
+			// documented shape rather than only the ones that compare
+			// timestamps.
+			"createdDate":     store.FormatTime(it.CreatedAt),
+			"lastUpdatedTime": store.FormatTime(it.CreatedAt),
 		}
 		if cs := a.warehouseConnectionString(r); cs != "" {
 			props["connectionString"] = cs
