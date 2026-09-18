@@ -234,7 +234,17 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 // any host — the account name is always the literal "onelake", as
 // documented.
 func (s *Server) Handler() http.Handler {
-	return s.record(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// RECORDING WRAPS ONLY THE CONTROL PLANE, not the OneLake data plane.
+	//
+	// recordable() already refuses /onelake, so wrapping the host-routed
+	// branches below achieved nothing except putting a second ResponseWriter
+	// in front of every byte of a Delta file. Scoping it to the mux keeps this
+	// code off the data plane's response path entirely, which is both cheaper
+	// and a smaller blast radius for a wrapper whose only job is diagnostics.
+	recorded := s.record(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mux.ServeHTTP(w, r)
+	}))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.Host, "onelake.blob."):
 			s.OneLake.ServeBlob(w, r)
@@ -245,9 +255,9 @@ func (s *Server) Handler() http.Handler {
 			r2.URL.Path = strings.TrimPrefix(r.URL.Path, "/onelake")
 			s.OneLake.ServeBlob(w, r2)
 		default:
-			s.mux.ServeHTTP(w, r)
+			recorded.ServeHTTP(w, r)
 		}
-	}))
+	})
 }
 
 // Close releases resources.
@@ -255,6 +265,9 @@ func (s *Server) Close() error {
 	if s.armStop != nil {
 		close(s.armStop)
 		s.armStop = nil
+	}
+	if err := s.rec.Close(); err != nil {
+		log.Printf("closing the response recording: %v", err)
 	}
 	return s.Store.Close()
 }

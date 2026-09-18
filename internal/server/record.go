@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -69,9 +70,37 @@ func newRecorder() *recorder {
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
+		// LOUD, THOUGH STILL NOT FATAL. Staying silent here cost a full CI
+		// round trip: on a Linux runner the medallion stack runs the emulator
+		// as a non-root user (it binds 9443, not 443, so it needs no root),
+		// the bind-mounted directory belongs to the runner, the open failed,
+		// and the suite passed having recorded nothing. The aggregate
+		// conformance job noticed -- seven routes it had covered went
+		// missing -- but that is a long way from the cause.
+		log.Printf("FABRIC_RECORD_RESPONSES=%s could not be opened, so nothing "+
+			"will be recorded: %v", path, err)
 		return nil
 	}
 	return &recorder{file: f}
+}
+
+// Close releases the file.
+//
+// WINDOWS CANNOT DELETE AN OPEN FILE, which is why this exists at all: a test
+// that writes a recording into t.TempDir() and leaves the handle open fails in
+// cleanup with "The process cannot access the file because it is being used by
+// another process". On Unix the same code is silently fine, so the whole class
+// is invisible until the Windows leg runs -- which is the argument for having
+// that leg.
+func (rec *recorder) Close() error {
+	if rec == nil || rec.file == nil {
+		return nil
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	err := rec.file.Close()
+	rec.file = nil
+	return err
 }
 
 func (rec *recorder) write(entry recorded) {
@@ -81,6 +110,9 @@ func (rec *recorder) write(entry recorded) {
 	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
+	if rec.file == nil {
+		return // closed; a late write is dropped rather than panicking
+	}
 	_, _ = rec.file.Write(append(line, '\n'))
 }
 

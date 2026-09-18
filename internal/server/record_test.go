@@ -24,6 +24,9 @@ func recorderFor(t *testing.T) (*Server, string) {
 	if s.rec == nil {
 		t.Fatal("newRecorder returned nil with the variable set")
 	}
+	// Windows cannot delete an open file, so t.TempDir()'s cleanup fails if
+	// the handle is still held. See recorder.Close.
+	t.Cleanup(func() { _ = s.rec.Close() })
 	return s, path
 }
 

@@ -83,6 +83,25 @@ def run(example=EXAMPLE, label="medallion", profiles=()):
     them "a fourfold slowdown in lakehouse reflection" (ece5e17). Measured on CI
     when the legs were switched over: 5m -> 5m and 9m -> 10m. The fourfold cost
     was the `_rn` projection bug fixed in that same commit, not the agent."""
+    # THE RECORDING DIRECTORY MUST BE WRITABLE BY A CONTAINER THAT IS NOT ROOT.
+    # This stack binds 9443 rather than 443, so unlike the other recording
+    # suites its emulator needs no root and runs as the image's user. On Linux
+    # a bind mount belongs to the host user, so without this the container
+    # cannot create the file, the emulator starts anyway -- recording is
+    # diagnostic and never fatal -- and the suite passes having recorded
+    # nothing. MEASURED: exactly that happened on the CI runner, while macOS,
+    # whose bind mounts are permissive about uid, showed nothing wrong.
+    #
+    # Cleared as well, because the recorder appends and the mount outlives the
+    # stack: a second local run would otherwise validate the first run's
+    # traffic too.
+    recording_dir = os.path.join(DIR, "recording")
+    os.makedirs(recording_dir, exist_ok=True)
+    os.chmod(recording_dir, 0o777)
+    responses = os.path.join(recording_dir, "responses.jsonl")
+    if os.path.exists(responses):
+        os.remove(responses)
+
     try:
         # --wait blocks until every healthcheck passes, so the example never
         # races a backend that is still booting.
