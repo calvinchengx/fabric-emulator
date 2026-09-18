@@ -1,0 +1,40 @@
+# MicrosoftPowerBIMgmt authenticates through MSAL, so the family must look like
+# real Azure to it. The same two measured constraints as
+# e2e/deployment-pipelines (docs/23):
+#
+#   1. MSAL refuses a non-HTTPS authority outright.
+#   2. MSAL DROPS a non-443 port from the authority, so entra must answer on
+#      :443 with no port in the URL.
+#
+# The third alias is this suite's own: the module's stock `Public` environment
+# resolves to https://api.powerbi.com, which it does not let a caller override.
+# That is the point rather than an obstacle -- the module is driven exactly as
+# a tenant would drive it, with nothing reconfigured to suit the emulator.
+services:
+  entra:
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:-0.9.0}
+    user: "0:0"                       # bind privileged :443 (authority has no port)
+    environment:
+      PUBLIC_ORIGIN: "https://login.microsoftonline.com"
+      LOCAL_DOMAINS: "login.microsoftonline.com"
+      PORT: "443"
+      TLS_ENABLED: "true"
+    networks:
+      default:
+        aliases: ["login.microsoftonline.com"]
+
+  fabric:
+    build: { context: ../.., dockerfile: Dockerfile }
+    user: "0:0"
+    environment:
+      FABRIC_ADDR: ":443"
+      FABRIC_DATA_DIR: "/data"
+      FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
+      FABRIC_ENTRA_TLS_INSECURE: "true"
+    networks:
+      default:
+        aliases: ["api.fabric.microsoft.com", "api.powerbi.com"]
+
+  client:
+    build: { context: ., dockerfile: Dockerfile }
+    depends_on: [entra, fabric]

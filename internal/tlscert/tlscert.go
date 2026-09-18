@@ -20,9 +20,23 @@ import (
 
 // Hosts the certificate covers — local addressing plus the real Fabric host
 // names so /etc/hosts-style redirection works.
+//
+// api.powerbi.com IS ONE OF THEM, and its absence was a real defect rather
+// than an omission of something unused: the emulator has served that alias
+// since the VS Code extension contract landed, and `docs/parity.md` grades the
+// surface behind it. A name this emulator answers to and does not present in
+// its certificate fails EVERY client that validates TLS, at the handshake —
+// before any API it is being pointed at. MicrosoftPowerBIMgmt found it that
+// way: `Connect-PowerBIServiceAccount` reported "Failed to populate
+// environments in settings", which names the discovery call and not the
+// handshake underneath it.
+//
+// Clients that skip verification never notice, which is why it survived: the
+// suites already driving this alias do not validate.
 var Hosts = []string{
 	"localhost", "fabric-emulator",
-	"api.fabric.microsoft.com", "onelake.dfs.fabric.microsoft.com", "onelake.blob.fabric.microsoft.com",
+	"api.fabric.microsoft.com", "api.powerbi.com",
+	"onelake.dfs.fabric.microsoft.com", "onelake.blob.fabric.microsoft.com",
 }
 
 // Load returns a certificate, generating (and persisting when dataDir is
