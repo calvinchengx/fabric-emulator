@@ -24,10 +24,40 @@ type Domain struct {
 // Domain role names. A subdomain has no admins of its own — the docs are
 // explicit that its admins are its parent's — so DomainRoleAdmin is only ever
 // stored against a root domain.
+//
+// MICROSOFT DOCUMENTS TWO SPELLINGS, ON ONE PAGE, AND THEY DISAGREE.
+// rest/api/fabric/admin/domains/role-assignments-bulk-assign gives a
+// `DomainRole` enumeration table of "Admin" and "Contributor", and its own
+// worked examples immediately below post `"type": "Admins"` and
+// `"type": "Contributors"`. The vendored swagger agrees with the table; this
+// emulator was written from the examples.
+//
+// WHICH ONE THE SERVICE ACCEPTS CANNOT BE SETTLED FROM HERE — it needs a
+// tenant, which is #384's whole argument. So both are accepted and the
+// SCHEMA'S form is what gets stored and reported: a caller following either
+// half of the page works, and the response validates against the enum a
+// generated client will check it with. Found by OpenAPI conformance, which
+// read a roleAssignments response against DomainRole and rejected the plural.
 const (
-	DomainRoleAdmin       = "Admins"
-	DomainRoleContributor = "Contributors"
+	DomainRoleAdmin       = "Admin"
+	DomainRoleContributor = "Contributor"
+
+	// The examples' spellings, accepted on input and normalised away.
+	domainRoleAdminsAlias       = "Admins"
+	domainRoleContributorsAlias = "Contributors"
 )
+
+// CanonicalDomainRole maps either documented spelling to the schema's, and
+// returns false for anything Microsoft documents nowhere.
+func CanonicalDomainRole(role string) (string, bool) {
+	switch role {
+	case DomainRoleAdmin, domainRoleAdminsAlias:
+		return DomainRoleAdmin, true
+	case DomainRoleContributor, domainRoleContributorsAlias:
+		return DomainRoleContributor, true
+	}
+	return "", false
+}
 
 // ContributorsScope values: who may assign workspaces to the domain.
 const (

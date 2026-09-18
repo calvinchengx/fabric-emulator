@@ -226,13 +226,16 @@ func parseDomainRole(w http.ResponseWriter, r *http.Request) (*domainRoleBody, b
 		writeErr(w, http.StatusBadRequest, "InvalidRequest", "principals is required.")
 		return nil, false
 	}
-	switch body.Type {
-	case store.DomainRoleAdmin, store.DomainRoleContributor:
-	default:
+	// Either documented spelling in, the schema's spelling stored. See
+	// store.CanonicalDomainRole for why there are two.
+	canonical, ok := store.CanonicalDomainRole(body.Type)
+	if !ok {
 		writeErr(w, http.StatusBadRequest, "InvalidRequest",
-			`type must be "Admins" or "Contributors".`)
+			`type must be "Admin" or "Contributor" (the enumeration), or the `+
+				`"Admins"/"Contributors" spelling the same page's examples use.`)
 		return nil, false
 	}
+	body.Type = canonical
 	for _, pr := range body.Principals {
 		if pr.ID == "" {
 			writeErr(w, http.StatusBadRequest, "InvalidRequest", "Each principal needs an id.")

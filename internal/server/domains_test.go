@@ -148,13 +148,44 @@ func TestAdminDomains(t *testing.T) {
 	}
 	f.mustStatus(f.call("GET", "/v1/admin/domains/"+finance.ID+"/roleAssignments", f.token, nil, &roles),
 		http.StatusOK, "list roles")
-	if len(roles.Value) != 1 || roles.Value[0].Role != "Admins" {
+	// THE SCHEMA'S SPELLING IS WHAT COMES BACK, whichever went in. Microsoft
+	// documents two on one page -- the DomainRole enumeration says "Admin" and
+	// the examples immediately below post "Admins" -- and the vendored swagger
+	// agrees with the enumeration, so that is what a generated client will
+	// validate this response against. OpenAPI conformance caught the plural.
+	if len(roles.Value) != 1 || roles.Value[0].Role != "Admin" {
 		t.Fatalf("roles = %+v", roles.Value)
 	}
-	// An unknown role name is refused.
+	// An unknown role name is refused. Accepting BOTH documented spellings is
+	// handling an ambiguity Microsoft published; accepting a third would be
+	// the over-permissiveness this repository exists to refuse.
 	f.mustStatus(f.call("POST", "/v1/admin/domains/"+finance.ID+"/roleAssignments/bulkAssign", f.token,
 		map[string]any{"type": "Owners", "principals": principals}, nil),
 		http.StatusBadRequest, "bad role name")
+
+	// The enumeration's spelling is accepted too, and normalises to itself.
+	f.mustStatus(f.call("POST", "/v1/admin/domains/"+finance.ID+"/roleAssignments/bulkAssign", f.token,
+		map[string]any{"type": "Contributor", "principals": principals}, nil),
+		http.StatusOK, "the enumeration spelling is accepted")
+	roles.Value = nil
+	f.mustStatus(f.call("GET", "/v1/admin/domains/"+finance.ID+"/roleAssignments", f.token, nil, &roles),
+		http.StatusOK, "list roles after the singular assign")
+	var sawContributor bool
+	for _, r := range roles.Value {
+		if r.Role == "Contributor" {
+			sawContributor = true
+		}
+		if r.Role == "Contributors" || r.Role == "Admins" {
+			t.Errorf("a response carried the examples' spelling %q, which the enum rejects", r.Role)
+		}
+	}
+	if !sawContributor {
+		t.Errorf("the Contributor assignment is not listed: %+v", roles.Value)
+	}
+	f.mustStatus(f.call("POST", "/v1/admin/domains/"+finance.ID+"/roleAssignments/bulkUnassign", f.token,
+		map[string]any{"type": "Contributor", "principals": principals}, nil),
+		http.StatusOK, "unassign the Contributor")
+	roles.Value = nil
 	f.mustStatus(f.call("POST", "/v1/admin/domains/"+finance.ID+"/roleAssignments/bulkUnassign", f.token,
 		map[string]any{"type": "Admins", "principals": principals}, nil), http.StatusOK, "bulkUnassign")
 	roles.Value = nil
