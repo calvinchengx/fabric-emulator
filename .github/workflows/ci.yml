@@ -1749,6 +1749,31 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/deployment-pipelines/run.py
 
+  powerbi-ps:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: MicrosoftPowerBIMgmt drives the Power BI admin surfaces (containerized)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      # A TYPED client where there was only a transport. Six admin and tenant
+      # claims had `ci:az-rest` as their sole CI witness, and `az rest` sends
+      # the URL the script wrote and hands back the body — it carries no model
+      # of Power BI, so a wrong shape is caught only if the script happens to
+      # assert on it. These cmdlets deserialise into .NET types the module
+      # ships, and fail inside Microsoft's code before any assertion runs.
+      #
+      # Wiring it up found three defects no existing witness could reach:
+      # global-service discovery was unimplemented (so the module could not
+      # connect at all), api.powerbi.com was missing from the TLS certificate
+      # although the emulator has served that alias for releases, and an
+      # unrouted /v1.0/myorg path answers HTML rather than a JSON 404.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.11.32"
+      - run: uv run --frozen --no-sync python e2e/powerbi-ps/run.py
+
   dbt-fabricspark:
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
