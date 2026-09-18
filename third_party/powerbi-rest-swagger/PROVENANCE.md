@@ -17,6 +17,19 @@ XMLA/DAX layers (paper specs only, no bundleable engine — see
 `../bi-shared-docs/PROVENANCE.md`), this contract is plain HTTP+JSON, so a real
 client + this schema can continuously gate the implementation.
 
+## It is executed against now, not only read
+
+For most of its life here this file was a REFERENCE: quoted in Go comments,
+consulted by people, never compared against a response. That is the gap this
+repository keeps finding elsewhere — a claim with nothing underneath it.
+
+`scripts/check_openapi_conformance.py` loads it alongside
+`../fabric-rest-api-specs/` and validates what the emulator actually answered
+on the `/v1.0/myorg` surface. Without it every Power BI response landed in "no
+documented route", which is not a finding and therefore was not checked at all:
+the quietest way for a surface to go unvalidated. Loading it took the matched
+count from 449 to 458 responses and the route table from 729 to 1016.
+
 ## Provenance
 
 - **Upstream:** https://github.com/microsoft/PowerBI-CSharp — `sdk/swaggers/swagger.json`

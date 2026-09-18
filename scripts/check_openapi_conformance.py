@@ -58,7 +58,20 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SPECS = ROOT / "third_party" / "fabric-rest-api-specs"
+
+# TWO SPEC TREES, because Fabric and Power BI are two products with two
+# published definitions and the emulator serves both surfaces. Without the
+# second, every /v1.0/myorg response landed in "no documented route" -- not a
+# finding, and therefore not checked at all, which is the quietest way for a
+# surface to go unvalidated.
+#
+# powerbi-rest-swagger was already vendored here as a "golden reference" and
+# had only ever been READ: cited in Go comments, never compared against a
+# response. It is executed against now.
+SPEC_ROOTS = (
+    ROOT / "third_party" / "fabric-rest-api-specs",
+    ROOT / "third_party" / "powerbi-rest-swagger",
+)
 
 # Disagreements this tree still has, pinned so a NEW one fails.
 #
@@ -74,6 +87,24 @@ SPECS = ROOT / "third_party" / "fabric-rest-api-specs"
 # disagreement is known and unadjudicated; the list is auditable and it shrinks
 # -- it has already gone from eleven to one.
 KNOWN = {
+    # NOT IMPLEMENTED, and the 404 is the honest answer rather than a wrong
+    # shape. Each is graded in docs/parity.md and asserted as refused by
+    # e2e/powerbi-ps, which pins the gap so it cannot close unnoticed. They are
+    # here because the spec documents only a 200 for them, so an unimplemented
+    # route reads to this checker as a status disagreement.
+    "GET /v1.0/myorg/reports: answered 404":
+        "Power BI Report items over the /v1.0 surface are not served.",
+    "GET /v1.0/myorg/groups/{groupId}/reports: answered 404": "as above.",
+    "GET /v1.0/myorg/capacities: answered 404":
+        "the Power BI spelling of capacities is not served; the Fabric "
+        "spelling /v1/capacities is.",
+    "GET /v1.0/myorg/admin/groups: answered 404":
+        "the Power BI spelling of tenant-wide workspace admin is not served; "
+        "the Fabric spelling /v1/admin/workspaces is, and is what the claim "
+        "in docs/witnesses.json is about.",
+    "POST /v1.0/myorg/groups: answered 404":
+        "New-PowerBIWorkspace has no route here; creation goes through the "
+        "Fabric surface.",
     "microsoftEntraMembers[0]: MISSING required property 'tenantId'":
         "NOT the emulator inventing a shape: OneLake roles are stored as the "
         "raw body the caller PUT and echoed back, so this is a test fixture's "
@@ -87,6 +118,24 @@ KNOWN = {
 
 def is_known(finding):
     return any(pin in finding for pin in KNOWN)
+
+
+def stale_pins(raw):
+    """Entries in KNOWN that no finding matches any more.
+
+    A PIN THAT MATCHES NOTHING IS A DEAD LINE: it reads as a known problem
+    while describing one that no longer exists, and it hides the good news,
+    because a pin goes stale exactly when somebody fixes the thing.
+
+    REPORTED, NEVER FATAL, and that distinction was wrong in the first draft.
+    Staleness is a claim about THIS run, not about the tree: a pin is silent
+    when its route was not exercised, which happens whenever a suite fails and
+    uploads no recording, or when somebody runs one suite locally. Failing on
+    it would turn an unrelated failure into a second, more confusing one --
+    the exact thing the aggregate job's comment says it is avoiding. So this
+    prints, and a human decides whether the entry has outlived its defect.
+    """
+    return sorted(pin for pin in KNOWN if not any(pin in f for f in raw))
 
 TYPES = {
     "string": str, "integer": int, "number": (int, float),
@@ -103,13 +152,21 @@ ARRAY_SAMPLE = 5
 class Specs:
     """Microsoft's swagger, indexed by (method, path) with refs resolvable."""
 
-    def __init__(self, root=SPECS):
-        self.root = root
+    def __init__(self, roots=SPEC_ROOTS):
+        self.roots = tuple(roots)
         self.docs = {}
         self.routes = []
-        for swagger in sorted(root.rglob("swagger.json")):
+        for root in self.roots:
+            for swagger in sorted(root.rglob("swagger.json")):
+                self._load_paths(swagger)
+
+    def _load_paths(self, swagger):
             doc = self.load(swagger)
-            base = doc.get("basePath", "")
+            # `or ""` rather than a default: the Power BI document has no
+            # basePath at all and its paths already carry /v1.0/myorg, while
+            # Fabric's factors /v1 out. A None default would concatenate onto
+            # None and take the whole run down on the first path.
+            base = doc.get("basePath") or ""
             for template, operations in doc.get("paths", {}).items():
                 # See the module docstring: the query half of a path key names
                 # a variant of the same route, not a different route.
@@ -277,6 +334,15 @@ def main() -> int:
           f"{len(specs.routes)} documented routes")
     if pinned:
         print(f"  {pinned} known disagreement(s) pinned in KNOWN, not counted")
+
+    stale = stale_pins(raw)
+    if stale:
+        print(f"\n  {len(stale)} pinned disagreement(s) did not occur in this "
+              f"run. Not a failure — a pin is silent when its route was not\n"
+              f"  exercised — but if the defect is genuinely gone, delete the "
+              f"entry rather than leaving history in the file:")
+        for pin in stale:
+            print(f"    - {pin}")
     if unmatched:
         # NOT a finding. The emulator serves surfaces Microsoft's swagger does
         # not cover (its own _emulator routes are excluded already, but Power

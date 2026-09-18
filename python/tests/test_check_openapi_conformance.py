@@ -78,7 +78,7 @@ def specs(tmp_path):
     (tmp_path / "surface" / "definitions.json").write_text(json.dumps(DEFINITIONS))
     (tmp_path / "surface" / "common").mkdir()
     (tmp_path / "surface" / "common" / "shared.json").write_text(json.dumps(SHARED))
-    return c.Specs(tmp_path)
+    return c.Specs((tmp_path,))
 
 
 def check(specs, entries):
@@ -128,8 +128,13 @@ def test_the_vendored_specs_load_and_are_not_empty():
     documented route", which is not a finding, and the checker would pass
     forever while validating nothing.
     """
-    assert c.SPECS.is_dir(), f"{c.SPECS} is missing"
-    assert len(c.Specs().routes) > 400
+    for root in c.SPEC_ROOTS:
+        assert root.is_dir(), f"{root} is missing"
+    # Both trees: Fabric's alone is ~729, and Power BI's adds the /v1.0/myorg
+    # surface. A regression to one tree would halve the routes and quietly
+    # send every /v1.0 response to "no documented route", which is not a
+    # finding and therefore not checked.
+    assert len(c.Specs().routes) > 900
 
 
 # --- validation ----------------------------------------------------------------
@@ -303,3 +308,34 @@ def test_main_says_how_many_known_disagreements_were_pinned(tmp_path, tiny_specs
     monkeypatch.setattr(sys, "argv", ["check_openapi_conformance.py", str(rec), "--strict"])
     assert c.main() == 0
     assert "1 known disagreement" in capsys.readouterr().out
+
+
+# --- pins must stay live -------------------------------------------------------
+
+def test_a_pin_that_matches_nothing_is_reported_stale():
+    """A pin goes stale exactly when somebody fixes the thing."""
+    assert c.stale_pins([]) == sorted(c.KNOWN)
+    live = next(iter(c.KNOWN))
+    assert live not in c.stale_pins([f"GET /v1/x: {live}"])
+
+
+def test_a_stale_pin_is_not_fatal(tmp_path, tiny_specs, monkeypatch, capsys):
+    """Reported, never fatal, and the distinction was wrong in the first draft.
+
+    Staleness is a claim about THIS run: a pin is silent when its route was
+    not exercised, which happens whenever a suite fails and uploads no
+    recording. Failing on it would turn an unrelated failure into a second,
+    more confusing one.
+    """
+    rec = recording_of(tmp_path, [widget()])
+    monkeypatch.setattr(sys, "argv", ["check_openapi_conformance.py", str(rec), "--strict"])
+    assert c.main() == 0
+    out = capsys.readouterr().out
+    assert "did not occur in this run" in out
+    assert "Not a failure" in out
+
+
+def test_the_committed_pins_are_all_still_documented():
+    """Every pin carries a written reason; a bare entry is a silencer."""
+    for pin, reason in c.KNOWN.items():
+        assert reason.strip(), pin
