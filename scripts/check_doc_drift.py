@@ -20,7 +20,7 @@ same shape -- a reference that was true when it was typed:
 None of these is a typo. Each is a fact that expired, and the only thing that
 would ever have caught them is somebody happening to click.
 
-WHAT THIS CHECKS. Three classes of doc/code drift across the prose docs:
+WHAT THIS CHECKS. Four classes of doc/code drift across the prose docs:
 
   1. DEAD REPO PATHS   -- a backticked `dir/path` under a tracked top-level
                           directory that no longer exists on disk.
@@ -29,10 +29,13 @@ WHAT THIS CHECKS. Three classes of doc/code drift across the prose docs:
   3. UNREAD ENV VARS   -- a backticked FABRIC_/ENTRA_/... name that no
                           non-Markdown file in the repo reads, i.e. documented
                           but wired to nothing.
+  4. DEAD GO SYMBOLS   -- a backticked `internal/pkg.Name`/`cmd/tool.main`
+                          reference whose tracked Go package directory or
+                          top-level declaration no longer exists.
 
 PRECISION OVER RECALL, deliberately, because a checker that cries wolf gets
 muted and then it is a check that does not run (docs/10 has the full account of
-what that costs). Three concessions buy it:
+what that costs). Four concessions buy it:
 
   * MAKE TARGETS ARE ANCHORED TO CODE SPANS. The naive `make \w+` regex was
     measured against this tree: 13 hits, every one of them English prose --
@@ -40,6 +43,11 @@ what that costs). Three concessions buy it:
     an inline code span or a fenced-block line that reads like a COMMAND.
   * A DOT THAT IS NOT A FILE EXTENSION IS NOT A PATH, so the Go symbol
     `internal/tsql.DataFlows` is left alone while `internal/api/livy.go` is not.
+  * GO SYMBOL DETECTION IS NARROWER THAN A PARSER. It indexes tracked `.go`
+    files by package directory and obvious top-level `func`/`type`/`var`/`const`
+    declarations from source text. It deliberately does not resolve imports,
+    aliases, methods, generated symbols, build tags, or selector expressions
+    without a repo-relative package directory prefix.
   * RELEASE NOTES ARE OUT OF SCOPE. docs/release-notes/** describes the repo as
     it was at a tag. A v0.16 note naming a since-renamed file is CORRECT, and
     editing it would be falsifying a historical record to please a checker.
@@ -401,6 +409,106 @@ def unread_env(doc, text, defined):
         yield lineno, name, name
 
 
+# --- class 4: dead Go package/symbol references -------------------------------
+
+_GO_REF = re.compile(r"^([A-Za-z0-9_./-]+)\.([A-Za-z_][A-Za-z0-9_]*)$")
+_GO_TOP_FUNC = re.compile(r"^\s*func\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_GO_TOP_DECL = re.compile(r"^\s*(?:type|var|const)\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+_GO_GROUP_START = re.compile(r"^\s*(type|var|const)\s*\(\s*(?://.*)?$")
+_GO_GROUP_NAME = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\b")
+
+
+def go_symbol_index():
+    """Known Go package directories and obvious top-level symbols.
+
+    This is intentionally a text index, not a Go parser. It covers the forms
+    docs usually name (`func Name`, `type Name`, package vars/consts), while
+    avoiding the review-found false negative where `func (r T) Method` was
+    counted as a package-level `pkg.Method`.
+    """
+    packages = set()
+    symbols = {}
+    for rel in tracked_files():
+        if not rel.endswith(".go") or rel.startswith(SKIP_PREFIXES):
+            continue
+        package_dir = rel.rsplit("/", 1)[0] if "/" in rel else "."
+        packages.add(package_dir)
+        names = symbols.setdefault(package_dir, set())
+        try:
+            lines = (ROOT / rel).read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            continue
+
+        group = None
+        group_depth = 0
+        for line in lines:
+            code = line.split("//", 1)[0]
+            stripped = code.strip()
+            if group is not None:
+                if group_depth == 0 and stripped.startswith(")"):
+                    group = None
+                    continue
+                if not stripped:
+                    continue
+                if group_depth == 0:
+                    match = _GO_GROUP_NAME.match(code)
+                    if match:
+                        names.add(match.group(1))
+                group_depth = max(0, group_depth + code.count("{") - code.count("}"))
+                continue
+
+            match = _GO_GROUP_START.match(code)
+            if match:
+                group = match.group(1)
+                group_depth = 0
+                continue
+            match = _GO_TOP_FUNC.match(code)
+            if match:
+                names.add(match.group(1))
+                continue
+            match = _GO_TOP_DECL.match(code)
+            if match:
+                names.add(match.group(1))
+    package_tops = {package.split("/", 1)[0] for package in packages if package != "."}
+    return packages, symbols, package_tops
+
+
+def go_symbol_candidate(token):
+    """Return (package_dir, symbol) for a repo-qualified Go reference."""
+    token = token.strip()
+    token = _LINE_SUFFIX.sub("", token)
+    token = token.rstrip(".,;:]}>'\"")
+    if token.endswith("()"):
+        token = token[:-2]
+    token = token.rstrip(".,;:)]}>'\"")
+    if path_candidate(token) is not None:
+        return None
+    if "/" not in token:
+        return None
+    if _UNPATHLIKE & set(token):
+        return None
+    match = _GO_REF.match(token)
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+def dead_go_symbols(doc, text, index):
+    packages, symbols, package_tops = index
+    for lineno, token in inline_spans(text):
+        candidate = go_symbol_candidate(token)
+        if candidate is None:
+            continue
+        package_dir, symbol = candidate
+        if package_dir.split("/", 1)[0] not in package_tops:
+            continue
+        if package_dir not in packages:
+            yield lineno, token, f"{package_dir}.{symbol}"
+            continue
+        if symbol not in symbols.get(package_dir, set()):
+            yield lineno, token, f"{package_dir}.{symbol}"
+
+
 # --- reporting ----------------------------------------------------------------
 
 CLASSES = (
@@ -411,6 +519,9 @@ CLASSES = (
      "use a defined target, or add the target to the Makefile"),
     ("env", "documents a variable no non-Markdown file reads",
      "wire it up, or correct the name to the one the code actually reads"),
+    ("go", "names a Go package or symbol that does not exist",
+     "point it at the package/symbol the tracked Go files define, or add an "
+     "EXEMPT entry for an intentional forward reference"),
 )
 
 
@@ -445,12 +556,14 @@ def findings():
     index = tracked_index()
     targets = make_targets()
     env_defined = env_names_in_code()
+    go_defined = go_symbol_index()
     found = []
     for rel, path in docs():
         text = path.read_text(encoding="utf-8")
         for kind, produce, arg in (("path", dead_paths, index),
                                    ("make", dead_targets, targets),
-                                   ("env", unread_env, env_defined)):
+                                   ("env", unread_env, env_defined),
+                                   ("go", dead_go_symbols, go_defined)):
             for lineno, shown, key in produce(rel, text, arg):
                 if (rel, key) in EXEMPT:
                     continue

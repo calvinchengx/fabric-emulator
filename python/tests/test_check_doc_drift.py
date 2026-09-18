@@ -20,7 +20,7 @@ finding anything:
 So the tests that matter most are the ones asserting each class FAILS on a dead
 reference. A checker that always passes is indistinguishable from a checker that
 is working, which is the exact failure docs/10 catalogues at length -- and the
-reason the two currently-clean classes (make, env) are tested against synthetic
+reason the currently-clean classes (make, env, go) are tested against synthetic
 drift rather than trusted because the tree is green.
 """
 import pathlib
@@ -91,11 +91,13 @@ def test_a_live_path_passes(tree):
     assert c.findings() == []
 
 
-def test_a_go_symbol_is_not_treated_as_a_path(tree):
+def test_a_go_symbol_is_not_treated_as_a_path(tree, tmp_path):
     # `internal/tsql.DataFlows` is prose ABOUT code, not a pointer to a file.
     # Flagging it would be the false positive that gets the check muted.
     tree({"docs/a.md": "recorded by `internal/tsql.DataFlows` on the way past\n"},
          files=["internal/tsql/flows.go"])
+    (tmp_path / "internal/tsql/flows.go").write_text(
+        "package tsql\n\ntype DataFlows struct{}\n")
     assert c.findings() == []
 
 
@@ -365,6 +367,95 @@ def test_any_other_python_file_does_credit_a_name(tree, tmp_path):
 
 def test_a_variable_outside_the_projects_prefixes_is_ignored(tree):
     tree({"docs/a.md": "your `PATH` and `HOME` are yours\n"}, files=["docs/a.md"])
+    assert c.findings() == []
+
+
+# --- class 4: dead Go package/symbol references -------------------------------
+
+def test_a_dead_go_package_symbol_reference_fails(tree, tmp_path):
+    tree({"docs/a.md": "handled by `internal/api.Gone` now\n"},
+         files=["internal/api/live.go"])
+    (tmp_path / "internal/api/live.go").write_text("package api\n\ntype Live struct{}\n")
+    found = c.findings()
+    assert kinds(found) == ["go"]
+    assert found[0][3] == "internal/api.Gone"
+
+
+def test_a_live_go_symbol_reference_passes(tree, tmp_path):
+    tree({"docs/a.md": "handled by `internal/api.Live` and `cmd/fabric-emulator.main`\n"},
+         files=["internal/api/live.go", "cmd/fabric-emulator/main.go"])
+    (tmp_path / "internal/api/live.go").write_text(
+        "package api\n\nconst Live = true\n")
+    (tmp_path / "cmd/fabric-emulator/main.go").write_text(
+        "package main\n\nfunc main() {}\n")
+    assert c.findings() == []
+
+
+def test_a_method_does_not_satisfy_a_package_level_go_symbol(tree, tmp_path):
+    # The review-found bug: a method named Serve is not a package-level
+    # `internal/api.Serve`, and counting it would hide a stale doc reference.
+    tree({"docs/a.md": "call `internal/api.Serve` from there\n"},
+         files=["internal/api/server.go"])
+    (tmp_path / "internal/api/server.go").write_text(
+        "package api\n\n"
+        "type Server struct{}\n"
+        "func (s Server) Serve() {}\n")
+    found = c.findings()
+    assert kinds(found) == ["go"]
+    assert found[0][3] == "internal/api.Serve"
+
+
+def test_a_grouped_type_field_does_not_become_a_go_symbol(tree, tmp_path):
+    tree({"docs/a.md": "call `internal/api.Field` from there\n"},
+         files=["internal/api/types.go"])
+    (tmp_path / "internal/api/types.go").write_text(
+        "package api\n\n"
+        "type (\n"
+        "    Record struct {\n"
+        "        Field string\n"
+        "    }\n"
+        ")\n")
+    found = c.findings()
+    assert kinds(found) == ["go"]
+    assert found[0][3] == "internal/api.Field"
+
+
+def test_a_go_symbol_reference_with_call_punctuation_passes(tree, tmp_path):
+    tree({"docs/a.md": "call `internal/api.Build(),` from there\n"},
+         files=["internal/api/build.go"])
+    (tmp_path / "internal/api/build.go").write_text(
+        "package api\n\nfunc Build() {}\n")
+    assert c.findings() == []
+
+
+def test_a_go_file_path_is_still_handled_by_the_path_class(tree, tmp_path):
+    tree({"docs/a.md": "see `internal/api/livy.go` for it\n"},
+         files=["internal/api/live.go"])
+    (tmp_path / "internal/api/live.go").write_text("package api\n")
+    found = c.findings()
+    assert kinds(found) == ["path"]
+    assert found[0][3] == "internal/api/livy.go"
+
+
+def test_a_go_symbol_inside_a_fenced_block_is_not_read(tree, tmp_path):
+    tree({"docs/a.md": "```go\n`internal/api.Gone`\n```\n"},
+         files=["internal/api/live.go"])
+    (tmp_path / "internal/api/live.go").write_text("package api\n")
+    assert c.findings() == []
+
+
+def test_a_non_repo_or_non_go_qualified_name_is_ignored(tree, tmp_path):
+    tree({"docs/a.md": "`net/http.Client`, `pipeline.ActivityRun`, `json.Decoder`\n"},
+         files=["internal/api/live.go"])
+    (tmp_path / "internal/api/live.go").write_text("package api\n")
+    assert c.findings() == []
+
+
+def test_an_exempt_go_symbol_forward_reference_is_skipped(tree, tmp_path):
+    tree({"docs/a.md": "planned: `internal/api.FutureThing`\n"},
+         files=["internal/api/live.go"],
+         exempt={("docs/a.md", "internal/api.FutureThing"): "planned, not built"})
+    (tmp_path / "internal/api/live.go").write_text("package api\n")
     assert c.findings() == []
 
 
