@@ -24,6 +24,18 @@ services:
       # Force tiny pages so every list exercises the continuation-token loop —
       # the pagination equivalent of the controllable clock (docs/parity.md).
       FABRIC_LIST_PAGE_SIZE: "2"
+      # Admin WRITES -- creating a domain, setting a sensitivity label --
+      # are legal only for a declared administrator: a service principal
+      # may READ /v1/admin/* and may not change it. Without this the
+      # emulator answers InsufficientPrivileges, which is correct, and the
+      # typed verbs below never reach the routes they are meant to witness.
+      # Same value and same reason as e2e/az-rest.
+      #
+      # THE REFUSAL IS NOT LOST BY GRANTING IT HERE: that a non-admin
+      # service principal is refused an admin write is witnessed by
+      # go:TestAdminWriteRefusesAServicePrincipalThatIsNotAnAdministrator,
+      # which this suite does not and need not duplicate.
+      FABRIC_TENANT_ADMINS: "00d88624-f0d7-46f6-a641-6232c2608928"
       FABRIC_ENTRA_ISSUER: "https://login.microsoftonline.com/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
       FABRIC_ENTRA_TLS_INSECURE: "true"
     networks:
