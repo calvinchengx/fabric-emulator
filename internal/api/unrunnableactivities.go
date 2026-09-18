@@ -12,11 +12,15 @@ import (
 // HOW THIS SET WAS FOUND, because the method matters more than the list: the
 // 41 discriminators in ADF's published schema were diffed against what the
 // dispatch switch and the pipeline interpreter actually handle. Nine were in
-// neither, and every one of them fell to the dispatch default — which returns
-// {"status":"Succeeded"}. The default is right for a CONNECTOR LEAF (a
-// ServiceNow source needs a vendor SDK, and the run really did reach the leaf
-// in dependsOn order with its inputs resolved), but these are not leaves: they
-// are compute activities whose whole point is an effect other steps consume.
+// neither, and every one of them fell to the dispatch default — which at the
+// time returned {"status":"Succeeded"}. That default was justified as a
+// CONNECTOR LEAF (a ServiceNow source needs a vendor SDK, and the run had
+// reached the leaf in dependsOn order with its inputs resolved). The
+// justification was later measured and retired: no authoring surface emits a
+// type string that reaches the default, so the leaf it described never
+// existed, and the default now refuses (unknownactivity.go). The types here
+// were never leaves in any case: they are compute activities whose whole point
+// is an effect other steps consume.
 //
 // Three of the nine had real compute already in the building and now run for
 // real — Validation over OneLake, SqlPoolStoredProcedure on the same SQL Server

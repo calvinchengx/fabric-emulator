@@ -20,12 +20,12 @@ import (
 //
 // THE REFUSAL IS THE IMPLEMENTATION, AND IT IS A CORRECTION RATHER THAN A GAP.
 // These three type strings were not in the dispatch switch, so they fell to its
-// default — which returns {"status":"Succeeded"}. A pipeline that scored a
-// model through one of these activities was reported as having done so, and a
-// downstream step then read a scored output that was never written. That is the
-// false green this repo exists to hunt, and it is worse here than for a
-// connector leaf precisely because an ML pipeline run HAS a result other
-// activities consume.
+// default — which at the time returned {"status":"Succeeded"} (it now refuses;
+// see unknownactivity.go). A pipeline that scored a model through one of these
+// activities was reported as having done so, and a downstream step then read a
+// scored output that was never written. That is the false green this repo
+// exists to hunt, and it is especially damaging here because an ML pipeline
+// run HAS a result other activities consume.
 //
 // WHY THESE DIFFER FROM HDINSIGHT / DATABRICKS / AZURE BATCH, all of which do
 // run. Each of those activities names A THING TO EXECUTE that the emulator can
