@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Deployment outcomes recorded per item.
@@ -48,14 +49,99 @@ type DeployedItem struct {
 // DeploymentOperation is the record behind Get/List Deployment Pipeline
 // Operations, and the body served from the LRO's /result.
 type DeploymentOperation struct {
-	ID            string         `json:"id"`
-	PipelineID    string         `json:"-"`
-	SourceStageID string         `json:"sourceStageId"`
-	TargetStageID string         `json:"targetStageId"`
-	Note          string         `json:"note,omitempty"`
-	PerformedBy   string         `json:"performedBy,omitempty"`
-	CreatedAt     int64          `json:"-"`
-	Items         []DeployedItem `json:"items"`
+	ID            string `json:"id"`
+	PipelineID    string `json:"-"`
+	SourceStageID string `json:"sourceStageId"`
+	TargetStageID string `json:"targetStageId"`
+	// STORED AS STRINGS, REPORTED AS OBJECTS. These are columns, and a column
+	// holds a scalar; the spec's shapes are built in MarshalJSON below rather
+	// than by changing what the database binds.
+	Note            string         `json:"-"`
+	PerformedBy     string         `json:"-"`
+	PerformedByType string         `json:"-"`
+	CreatedAt       int64          `json:"-"`
+	Items           []DeployedItem `json:"items"`
+
+	// THE THREE THE SPEC MARKS REQUIRED, and which this type answered without
+	// until the OpenAPI conformance check read a real response against
+	// DeploymentPipelineOperation. Every value was already known here — the
+	// kind of operation, that it had finished, and when — so the list was
+	// under-reporting rather than lacking the data.
+	//
+	// `Type` is "Deploy": it is the only operation this pipeline records.
+	// `Status` is the terminal state, never Running, because the operation is
+	// written once it has finished.
+	// LastUpdatedTime is CreatedAt in the RFC 3339 spelling the spec uses;
+	// CreatedAt stays unexported because a caller reads the timestamp under
+	// the documented name or not at all.
+}
+
+// The operation's documented vocabulary. Only one kind of operation is
+// recorded here, and it is recorded after it has finished, so the two values
+// are constants rather than fields somebody has to remember to set.
+const (
+	OperationTypeDeploy      = "Deploy"
+	OperationStatusSucceeded = "Succeeded"
+)
+
+// FormatTime renders an emulator timestamp the way the spec spells one.
+//
+// Seconds, UTC, RFC 3339 with the Z. The clock is virtual and its zero value
+// is a real instant, so this never has to guard against an absent time.
+func FormatTime(unix int64) string {
+	return time.Unix(unix, 0).UTC().Format(time.RFC3339)
+}
+
+// OperationNote is the note a deploy carries. An object rather than a string
+// because the spec's DeploymentPipelineOperationNote is one: it has room for
+// `isTruncated`, which a bare string cannot express.
+type OperationNote struct {
+	Content     string `json:"content"`
+	IsTruncated bool   `json:"isTruncated,omitempty"`
+}
+
+// MarshalJSON emits the documented DeploymentPipelineOperation.
+//
+// The type's own fields are what the table holds; the wire shape is built
+// here, so a column stays a scalar and the response stays the spec's. Both
+// object-valued fields are omitted when empty rather than sent as an empty
+// object: the spec marks neither required, and `"note":{"content":""}` would
+// assert a note that was never written.
+func (o DeploymentOperation) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		ID              string         `json:"id"`
+		Type            string         `json:"type"`
+		Status          string         `json:"status"`
+		LastUpdatedTime string         `json:"lastUpdatedTime"`
+		SourceStageID   string         `json:"sourceStageId"`
+		TargetStageID   string         `json:"targetStageId"`
+		Note            *OperationNote `json:"note,omitempty"`
+		PerformedBy     *Principal     `json:"performedBy,omitempty"`
+		Items           []DeployedItem `json:"items"`
+	}
+	// DERIVED, NOT STORED. The kind is the only kind this pipeline records and
+	// the status is terminal because the row is written once the deploy has
+	// finished, so neither is a column somebody could forget to set — which is
+	// exactly what happened when they were fields: a row read back from the
+	// table answered with empty strings and the spec's enums rejected them.
+	out := wire{
+		ID: o.ID, Type: OperationTypeDeploy, Status: OperationStatusSucceeded,
+		LastUpdatedTime: FormatTime(o.CreatedAt),
+		SourceStageID:   o.SourceStageID, TargetStageID: o.TargetStageID, Items: o.Items,
+	}
+	if o.Note != "" {
+		out.Note = &OperationNote{Content: o.Note}
+	}
+	if o.PerformedBy != "" {
+		// The column defaults to User for rows written before it existed, so
+		// this is never the empty string the spec's enum rejects.
+		kind := o.PerformedByType
+		if kind == "" {
+			kind = "User"
+		}
+		out.PerformedBy = &Principal{ID: o.PerformedBy, Type: kind}
+	}
+	return json.Marshal(out)
 }
 
 // ItemSelector names one item to deploy. An empty selection deploys
@@ -70,7 +156,7 @@ type ItemSelector struct {
 //
 // opID ties the record to the LRO the caller already started, so
 // /operations/{id}/result can serve the detail.
-func (s *Store) DeployStageContent(pipelineID, sourceStageID, targetStageID, opID, note, performedBy string,
+func (s *Store) DeployStageContent(pipelineID, sourceStageID, targetStageID, opID, note, performedBy, performedByType string,
 	selected []ItemSelector) (*DeploymentOperation, error) {
 
 	source, err := s.GetDeploymentStage(pipelineID, sourceStageID)
@@ -125,12 +211,13 @@ func (s *Store) DeployStageContent(pipelineID, sourceStageID, targetStageID, opI
 		}
 	}
 
+	now := s.Now()
 	op := &DeploymentOperation{
 		ID: opID, PipelineID: pipelineID,
 		SourceStageID: sourceStageID, TargetStageID: targetStageID,
-		Note: note, PerformedBy: performedBy, CreatedAt: s.Now(),
-		Items: []DeployedItem{},
+		CreatedAt: now, Items: []DeployedItem{},
 	}
+	op.Note, op.PerformedBy, op.PerformedByType = note, performedBy, performedByType
 
 	for _, src := range items {
 		parts, err := s.GetDefinition(src.ID)
@@ -208,20 +295,20 @@ func (s *Store) recordDeployment(op *DeploymentOperation) error {
 	}
 	_, err = s.db.Exec(`
 INSERT INTO deployment_pipeline_operations
-  (id, pipeline_id, source_stage_id, target_stage_id, note, performed_by, created_at, detail)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  (id, pipeline_id, source_stage_id, target_stage_id, note, performed_by, performed_by_type, created_at, detail)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		op.ID, op.PipelineID, op.SourceStageID, op.TargetStageID,
-		op.Note, op.PerformedBy, op.CreatedAt, string(detail))
+		op.Note, op.PerformedBy, op.PerformedByType, op.CreatedAt, string(detail))
 	return err
 }
 
-const deployOpCols = `id, pipeline_id, source_stage_id, target_stage_id, note, performed_by, created_at, detail`
+const deployOpCols = `id, pipeline_id, source_stage_id, target_stage_id, note, performed_by, performed_by_type, created_at, detail`
 
 func scanDeployOp(scan func(...any) error) (*DeploymentOperation, error) {
 	op := &DeploymentOperation{}
 	var detail string
 	if err := scan(&op.ID, &op.PipelineID, &op.SourceStageID, &op.TargetStageID,
-		&op.Note, &op.PerformedBy, &op.CreatedAt, &detail); err != nil {
+		&op.Note, &op.PerformedBy, &op.PerformedByType, &op.CreatedAt, &detail); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal([]byte(detail), &op.Items); err != nil {

@@ -476,6 +476,7 @@ CREATE TABLE IF NOT EXISTS deployment_pipeline_pairs (
 	UNIQUE (pipeline_id, later_stage_id, later_item_id)
 );
 CREATE TABLE IF NOT EXISTS deployment_pipeline_operations (
+  performed_by_type TEXT NOT NULL DEFAULT 'User',
 	id TEXT PRIMARY KEY,           -- the LRO operation id, so /result can find it
 	pipeline_id TEXT NOT NULL REFERENCES deployment_pipelines(id) ON DELETE CASCADE,
 	source_stage_id TEXT NOT NULL,
@@ -523,6 +524,13 @@ PRAGMA foreign_keys = ON;
 		`ALTER TABLE connections ADD COLUMN sso_type TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN encryption TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN credentials_json TEXT NOT NULL DEFAULT ''`,
+		// The spec's Principal carries a type, and the operations table held
+		// only the id -- so performedBy answered without one and the enum
+		// rejected the empty string. Defaulted to User because every row
+		// written before this column existed was written by an interactive
+		// caller; a service principal deploying is recorded correctly from
+		// here on.
+		`ALTER TABLE deployment_pipeline_operations ADD COLUMN performed_by_type TEXT NOT NULL DEFAULT 'User'`,
 		`ALTER TABLE lineage_edges ADD COLUMN producer TEXT NOT NULL DEFAULT 'Copy'`,
 		// What KIND of thing the source ref names. Until now every lineage
 		// endpoint was a Fabric (workspace, item, path) triple, which cannot

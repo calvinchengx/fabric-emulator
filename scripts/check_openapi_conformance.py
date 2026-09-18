@@ -60,37 +60,28 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SPECS = ROOT / "third_party" / "fabric-rest-api-specs"
 
-# Disagreements this tree already has, pinned so a NEW one fails.
+# Disagreements this tree still has, pinned so a NEW one fails.
 #
-# WHY PINNED RATHER THAN FIXED OR SILENCED. The first run of this checker found
-# eleven, all on surfaces that already pass a client witness -- the
-# deployment-pipeline driver asserts on the fields it uses and never looks at
-# the rest, which is exactly the blind spot a schema oracle is for. Fixing them
-# is a separate change with its own argument per route: some are almost
-# certainly the emulator under-filling a response, and at least one may be this
-# vendored spec being newer or older than the shape a real tenant returns.
-# Neither question is answered by the checker, and answering them wrongly in a
-# hurry would be worse than recording them.
+# The first run of this checker found ELEVEN, every one on a surface that was
+# already passing a client witness -- the deployment-pipeline driver asserts on
+# the fields it uses and never looks at the rest, which is exactly the blind
+# spot a schema oracle is for. Ten were the emulator UNDER-ANSWERING and are
+# fixed: create now returns the stages it made, and an operation reports its
+# type, status, lastUpdatedTime, a principal-shaped performedBy and an
+# object-shaped note.
 #
 # An entry is a SUBSTRING of the finding text. Adding one is a claim that the
-# disagreement is known and unadjudicated; the list is auditable and it shrinks.
+# disagreement is known and unadjudicated; the list is auditable and it shrinks
+# -- it has already gone from eleven to one.
 KNOWN = {
-    "POST /v1/deploymentPipelines: MISSING required property 'stages'":
-        "create answers without the stages it created; real Fabric returns them.",
-    "/operations.value[0]: MISSING required property 'type'":
-        "the operations list omits type/status/lastUpdatedTime on every entry.",
-    "/operations.value[0]: MISSING required property 'status'": "as above.",
-    "/operations.value[0]: MISSING required property 'lastUpdatedTime'": "as above.",
-    "/operations.value[1]: MISSING required property 'type'": "as above.",
-    "/operations.value[1]: MISSING required property 'status'": "as above.",
-    "/operations.value[1]: MISSING required property 'lastUpdatedTime'": "as above.",
-    "/operations.value[0].performedBy: type is str, spec says object":
-        "performedBy is a principal object in the spec and a bare id here.",
-    "/operations.value[1].performedBy: type is str, spec says object": "as above.",
-    "/operations.value[1].note: type is str, spec says object":
-        "note is an object carrying the text in the spec.",
     "microsoftEntraMembers[0]: MISSING required property 'tenantId'":
-        "the member carries objectId and objectType but no tenantId.",
+        "NOT the emulator inventing a shape: OneLake roles are stored as the "
+        "raw body the caller PUT and echoed back, so this is a test fixture's "
+        "omission reflected. The spec marks tenantId required on "
+        "MicrosoftEntraMember, so the faithful fix is to REFUSE a member "
+        "without one at authoring time -- which is a behaviour change across "
+        "several fixtures and deserves its own change rather than being "
+        "folded into the one that made this visible.",
 }
 
 

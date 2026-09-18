@@ -16,6 +16,14 @@ import sys
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 def compose(*a): return subprocess.run(["docker", "compose", *a], cwd=DIR).returncode
+# The recorder APPENDS, and the recording is a bind mount that outlives the
+# stack. Without this a second local run validates the first run's traffic as
+# well as its own -- harmless in CI, where the checkout is fresh, and quietly
+# confusing on a laptop.
+recording = os.path.join(DIR, "recording", "responses.jsonl")
+if os.path.exists(recording):
+    os.remove(recording)
+
 try:
     rc = compose("up", "--build", "--abort-on-container-exit", "--exit-code-from", "client")
     if rc != 0:

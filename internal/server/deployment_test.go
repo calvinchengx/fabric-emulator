@@ -206,16 +206,37 @@ func TestDeploymentPipelinesOverTheWire(t *testing.T) {
 	}
 
 	// The deployment is listed on the pipeline.
+	// The documented DeploymentPipelineOperation: `note` is an object with
+	// `content` and `performedBy` a principal, and type/status/lastUpdatedTime
+	// are required. Asserted over the wire because the wire shape is the
+	// contract -- the store holds scalars and builds this in MarshalJSON.
 	var deployOps struct {
 		Value []struct {
 			ID   string `json:"id"`
-			Note string `json:"note"`
+			Type string `json:"type"`
+			Stat string `json:"status"`
+			When string `json:"lastUpdatedTime"`
+			Note struct {
+				Content string `json:"content"`
+			} `json:"note"`
+			PerformedBy struct {
+				ID   string `json:"id"`
+				Type string `json:"type"`
+			} `json:"performedBy"`
 		} `json:"value"`
 	}
 	resp = f.call("GET", "/v1/deploymentPipelines/"+pl.ID+"/operations", tok, nil, &deployOps)
 	f.mustStatus(resp, http.StatusOK, "list deployment operations")
-	if len(deployOps.Value) != 1 || deployOps.Value[0].ID != opID || deployOps.Value[0].Note != "promote" {
+	if len(deployOps.Value) != 1 || deployOps.Value[0].ID != opID ||
+		deployOps.Value[0].Note.Content != "promote" {
 		t.Fatalf("deployment operations = %+v", deployOps.Value)
+	}
+	got := deployOps.Value[0]
+	if got.Type != "Deploy" || got.Stat != "Succeeded" || got.When == "" {
+		t.Errorf("operation is missing its documented type/status/lastUpdatedTime: %+v", got)
+	}
+	if got.PerformedBy.ID == "" || got.PerformedBy.Type == "" {
+		t.Errorf("performedBy must be a principal with a type, got %+v", got.PerformedBy)
 	}
 
 	resp = f.call("POST", "/v1/deploymentPipelines/"+pl.ID+"/stages/"+stages.Value[1].ID+"/unassignWorkspace",

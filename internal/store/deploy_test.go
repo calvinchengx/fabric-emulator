@@ -36,7 +36,7 @@ func newDeployFixture(t *testing.T, devItems, testItems []string) *deployFixture
 func (f *deployFixture) deploy(t *testing.T, selected ...ItemSelector) *DeploymentOperation {
 	t.Helper()
 	op, err := f.s.DeployStageContent(f.pl.ID, f.stages[0].ID, f.stages[1].ID,
-		NewID(), "note", "alice", selected)
+		NewID(), "note", "alice", "User", selected)
 	if err != nil {
 		t.Fatalf("deploy: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestDeployCopiesDefinitionNotData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	op, err := s.DeployStageContent(pl.ID, sts[0].ID, sts[1].ID, NewID(), "", "alice", nil)
+	op, err := s.DeployStageContent(pl.ID, sts[0].ID, sts[1].ID, NewID(), "", "alice", "User", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestDeployUnpairedNameCollisionFailsLoudly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := s.DeployStageContent(pl.ID, sts[0].ID, sts[1].ID, NewID(), "", "alice", nil)
+	_, err := s.DeployStageContent(pl.ID, sts[0].ID, sts[1].ID, NewID(), "", "alice", "User", nil)
 	if !errors.Is(err, ErrNameConflict) {
 		t.Fatalf("collision = %v, want ErrNameConflict", err)
 	}
@@ -241,21 +241,21 @@ func TestDeployRejectsNonAdjacentAndUnassigned(t *testing.T) {
 	f := newDeployFixture(t, []string{"orders"}, nil)
 
 	// stage 0 -> stage 2 is not adjacent.
-	_, err := f.s.DeployStageContent(f.pl.ID, f.stages[0].ID, f.stages[2].ID, NewID(), "", "a", nil)
+	_, err := f.s.DeployStageContent(f.pl.ID, f.stages[0].ID, f.stages[2].ID, NewID(), "", "a", "User", nil)
 	if !errors.Is(err, ErrStagesNotAdjacent) {
 		t.Errorf("non-adjacent = %v, want ErrStagesNotAdjacent", err)
 	}
 	// stage 1 -> stage 2: stage 2 has no workspace.
-	_, err = f.s.DeployStageContent(f.pl.ID, f.stages[1].ID, f.stages[2].ID, NewID(), "", "a", nil)
+	_, err = f.s.DeployStageContent(f.pl.ID, f.stages[1].ID, f.stages[2].ID, NewID(), "", "a", "User", nil)
 	if !errors.Is(err, ErrStageUnassigned) {
 		t.Errorf("unassigned target = %v, want ErrStageUnassigned", err)
 	}
 	// Unknown stage ids.
-	_, err = f.s.DeployStageContent(f.pl.ID, "nope", f.stages[1].ID, NewID(), "", "a", nil)
+	_, err = f.s.DeployStageContent(f.pl.ID, "nope", f.stages[1].ID, NewID(), "", "a", "User", nil)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown source = %v, want ErrNotFound", err)
 	}
-	_, err = f.s.DeployStageContent(f.pl.ID, f.stages[0].ID, "nope", NewID(), "", "a", nil)
+	_, err = f.s.DeployStageContent(f.pl.ID, f.stages[0].ID, "nope", NewID(), "", "a", "User", nil)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown target = %v, want ErrNotFound", err)
 	}
@@ -269,7 +269,7 @@ func TestDeployBackwards(t *testing.T) {
 
 	// Now test -> dev must UPDATE the existing dev item via the same pair.
 	op, err := f.s.DeployStageContent(f.pl.ID, f.stages[1].ID, f.stages[0].ID,
-		NewID(), "", "alice", nil)
+		NewID(), "", "alice", "User", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestDeployClosedDBErrors(t *testing.T) {
 	pl, sts := f.pl, f.stages
 	_ = f.s.Close()
 
-	if _, err := f.s.DeployStageContent(pl.ID, sts[0].ID, sts[1].ID, NewID(), "", "a", nil); err == nil {
+	if _, err := f.s.DeployStageContent(pl.ID, sts[0].ID, sts[1].ID, NewID(), "", "a", "User", nil); err == nil {
 		t.Error("DeployStageContent on closed DB succeeded")
 	}
 	if _, err := f.s.GetDeploymentOperation(pl.ID, "x"); err == nil {
@@ -472,7 +472,7 @@ func deployedNamesAssigning(t *testing.T, testStageFirst bool) string {
 		}
 	}
 
-	op, err := s.DeployStageContent(pl.ID, sts[0].ID, sts[1].ID, NewID(), "n", "alice", nil)
+	op, err := s.DeployStageContent(pl.ID, sts[0].ID, sts[1].ID, NewID(), "n", "alice", "User", nil)
 	if err != nil {
 		t.Fatalf("deploy: %v", err)
 	}
