@@ -178,6 +178,11 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# breaks a Go import loudly and the same rename in a sentence breaks
 	@# nothing at all. Three had already drifted when this landed.
 	@$(PY) scripts/check_doc_drift.py --strict
+	@# The same decay one directory over: a Go comment is where the
+	@# reasoning lives, and no checker read one until this landed. #490
+	@# retired the connector-leaf justification and two comments went on
+	@# teaching it in the present tense for a week.
+	@$(PY) scripts/check_comment_drift.py --strict
 	@$(PY) scripts/check_workflow_concurrency.py
 	@$(PY) scripts/check_cron_workflow_freshness.py
 	@$(PY) scripts/gen_event_kinds.py --check
