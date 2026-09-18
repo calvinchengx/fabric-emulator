@@ -10,7 +10,7 @@
     "check_route_coverage.py <recording> --update and let the diff",
     "be the review."
   ],
-  "exercised": 60,
+  "exercised": 61,
   "registered": 133,
   "notYetExercised": [
     "DELETE /v1/deploymentPipelines/{pid}/roleAssignments/{prid}",
@@ -28,7 +28,6 @@
     "GET /v1/admin/domains/{did}",
     "GET /v1/admin/domains/{did}/roleAssignments",
     "GET /v1/admin/domains/{did}/workspaces",
-    "GET /v1/admin/labels",
     "GET /v1/admin/workspaces/{wid}/items/{iid}/users",
     "GET /v1/connections",
     "GET /v1/deploymentPipelines/{pid}",
