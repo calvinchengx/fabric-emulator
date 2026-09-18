@@ -1764,11 +1764,12 @@ jobs:
       # assert on it. These cmdlets deserialise into .NET types the module
       # ships, and fail inside Microsoft's code before any assertion runs.
       #
-      # Wiring it up found three defects no existing witness could reach:
-      # global-service discovery was unimplemented (so the module could not
-      # connect at all), api.powerbi.com was missing from the TLS certificate
-      # although the emulator has served that alias for releases, and an
-      # unrouted /v1.0/myorg path answers HTML rather than a JSON 404.
+      # Wiring it up found three defects no existing witness could reach,
+      # all since fixed: global-service discovery was unimplemented (so the
+      # module could not connect at all), api.powerbi.com was missing from the
+      # TLS certificate although the emulator has served that alias for
+      # releases, and an unrouted /v1.0/myorg path answered HTML rather than a
+      # JSON 404.
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.11.32"

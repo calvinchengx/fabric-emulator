@@ -135,11 +135,12 @@ Step 'Get-PowerBIWorkspace -Scope Organization is NOT served, and that is pinned
 # the `Tenant-wide workspace admin` claim is about -- so the claim is true and
 # this is a different, unimplemented API rather than a broken one.
 #
-# WHAT THE FAILURE LOOKS LIKE IS ITSELF A FINDING, recorded in docs/parity.md:
-# the unrouted path falls through to the portal and answers HTML, so a typed
-# client reports "Unable to deserialize the response" rather than a 404. A
-# clean JSON error would name the gap; an HTML page makes it look like a
-# serialisation bug in the surface the caller actually asked for.
+# HOW IT FAILS WAS ITSELF A FINDING, and it has since been fixed. The
+# unrouted path fell through to the portal and answered HTML, so a typed
+# client reported "Unable to deserialize the response" -- which reads like a
+# serialisation bug in the surface the caller asked for rather than a route
+# that does not exist. The Power BI roots are now in apiPrefixes and this
+# answers Power BI's own 404 envelope, so the refusal below names the gap.
 $refusedOrg = $false
 try { $null = Get-PowerBIWorkspace -Scope Organization } catch { $refusedOrg = $true }
 if (-not $refusedOrg) { Fail 'Get-PowerBIWorkspace -Scope Organization unexpectedly worked -- regrade the parity row' }
@@ -174,11 +175,12 @@ Write-Host "    activity payload length $($events.Length)"
 # fails, which is the reminder to regrade the row rather than leave the map
 # claiming less than the code does.
 #
-# HOW THEY FAIL IS THE FINDING. An unrouted /v1.0/myorg path falls through to
-# the portal and answers HTML, so a typed client reports "Unable to deserialize
-# the response" -- which reads like a serialisation bug in the surface the
-# caller asked for, rather than the plain 404 that would name the gap. `az rest`
-# prints the HTML and moves on, which is why nothing caught it before.
+# HOW THEY FAIL WAS THE FINDING, and it is fixed. An unrouted /v1.0/myorg path
+# fell through to the portal and answered HTML, so a typed client reported
+# "Unable to deserialize the response" rather than the plain 404 that names the
+# gap. `az rest` prints the HTML and moves on, which is why nothing caught it
+# until a typed client was pointed at the surface. These now fail with Power
+# BI's own 404 envelope -- still refusals, but legible ones.
 Step 'the unserved Power BI cmdlets are asserted to fail, not skipped'
 $unserved = @(
     @{ n = 'Get-PowerBIReport -WorkspaceId'; s = { Get-PowerBIReport -WorkspaceId $created.id } },

@@ -56,6 +56,10 @@ func (s *Server) registerPortal() {
 		// encountered while parsing value: <", which says nothing about the
 		// real problem. Found by the Az e2e (docs/23).
 		if isAPIPath(r.URL.Path) {
+			if isPowerBIPath(r.URL.Path) {
+				writePowerBINotFound(w, r)
+				return
+			}
 			writeJSONError(w, http.StatusNotFound, "UnknownEndpoint",
 				"No such endpoint on this emulator.")
 			return
@@ -78,7 +82,34 @@ func (s *Server) registerPortal() {
 // apiPrefixes are the path roots that belong to an API surface rather than to
 // the operator portal. Anything under them must answer as an API — a JSON
 // error — even when no route matches.
-var apiPrefixes = []string{"/v1/", "/_emulator/", "/metadata/", "/subscriptions/"}
+//
+// THE POWER BI ROOTS WERE MISSING, and the cost was exactly what this guard
+// was built to prevent, on a surface it did not cover. `/v1.0/myorg/...` fell
+// through to the SPA, so an unimplemented Power BI route answered HTML:
+// MicrosoftPowerBIMgmt reported "Unable to deserialize the response" for
+// `Get-PowerBIReport`, which reads like a serialisation bug in the reports
+// surface rather than the plain 404 that would name the gap. The Az e2e found
+// the same shape on /v1 (docs/23); nothing had yet driven a typed client at
+// the Power BI spelling, so the other half of the fix was never written.
+//
+// `/powerbi/` is here for the global-service discovery root, which a client
+// calls BEFORE it authenticates — the earliest possible place to hand back a
+// web page.
+var apiPrefixes = []string{
+	"/v1/", "/v1.0/", "/powerbi/", "/_emulator/", "/metadata/", "/subscriptions/",
+}
+
+// powerBIPrefixes are the subset that must answer in POWER BI's error shape
+// rather than Fabric's. The two services are different products with different
+// envelopes, and this one is MEASURED rather than assumed: a request to the
+// real api.powerbi.com for an unrouted path answers
+//
+//	{"Message":"No HTTP resource was found that matches the request URI '<uri>'."}
+//
+// which is ASP.NET Web API's default, with a capital M and no nested error
+// object. Emitting Fabric's envelope here would be a second wrong shape in
+// place of the first — better than HTML, still not what a client parses.
+var powerBIPrefixes = []string{"/v1.0/", "/powerbi/"}
 
 // isAPIPath reports whether a path belongs to an API surface. The bare prefix
 // without its trailing slash counts too ("/v1" as well as "/v1/…").
@@ -89,6 +120,34 @@ func isAPIPath(p string) bool {
 		}
 	}
 	return false
+}
+
+// isPowerBIPath reports whether a path belongs to the Power BI surface, whose
+// error envelope differs from Fabric's.
+func isPowerBIPath(p string) bool {
+	for _, pre := range powerBIPrefixes {
+		if strings.HasPrefix(p, pre) || p == strings.TrimSuffix(pre, "/") {
+			return true
+		}
+	}
+	return false
+}
+
+// writePowerBINotFound emits the shape the real service emits for an unrouted
+// Power BI path. The URI is echoed because the real one echoes it, and it is
+// the part that tells a caller WHICH request was not routed when several are
+// in flight.
+func writePowerBINotFound(w http.ResponseWriter, r *http.Request) {
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	uri := scheme + "://" + r.Host + r.URL.RequestURI()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"Message": "No HTTP resource was found that matches the request URI '" + uri + "'.",
+	})
 }
 
 // writeJSONError emits the Fabric-shaped error envelope used across /v1.
