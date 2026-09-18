@@ -91,11 +91,12 @@ def test_a_live_path_passes(tree):
     assert c.findings() == []
 
 
-def test_a_go_symbol_is_not_treated_as_a_path(tree):
+def test_a_go_symbol_is_not_treated_as_a_path(tree, tmp_path):
     # `internal/tsql.DataFlows` is prose ABOUT code, not a pointer to a file.
     # Flagging it would be the false positive that gets the check muted.
     tree({"docs/a.md": "recorded by `internal/tsql.DataFlows` on the way past\n"},
          files=["internal/tsql/flows.go"])
+    (tmp_path / "internal/tsql/flows.go").write_text("package tsql\n\ntype DataFlows struct{}\n")
     assert c.findings() == []
 
 
@@ -365,6 +366,51 @@ def test_any_other_python_file_does_credit_a_name(tree, tmp_path):
 
 def test_a_variable_outside_the_projects_prefixes_is_ignored(tree):
     tree({"docs/a.md": "your `PATH` and `HOME` are yours\n"}, files=["docs/a.md"])
+    assert c.findings() == []
+
+
+# --- class 4: documented Go package/symbol refs -------------------------------
+
+def test_a_dead_go_symbol_reference_fails(tree):
+    tree({"docs/a.md": "created by `internal/api.GoneThing`\n"},
+         files=["internal/api/livy.go"])
+    found = c.findings()
+    assert kinds(found) == ["go"]
+    assert found[0][3] == "internal/api.GoneThing"
+
+
+def test_a_live_go_symbol_reference_passes(tree, tmp_path):
+    tree({"docs/a.md": "created by `pkg/onelakesec.Policy`\n"},
+         files=["pkg/onelakesec/policy.go"])
+    (tmp_path / "pkg/onelakesec/policy.go").write_text("package onelakesec\n\ntype Policy struct{}\n")
+    assert c.findings() == []
+
+
+def test_a_go_file_path_is_still_a_path_reference(tree):
+    tree({"docs/a.md": "see `internal/api/livy.go`\n"},
+         files=["internal/api/real.go"])
+    found = c.findings()
+    assert kinds(found) == ["path"]
+    assert found[0][3] == "internal/api/livy.go"
+
+
+def test_a_go_symbol_inside_a_fenced_block_is_not_read(tree):
+    tree({"docs/a.md": "```go\nvar _ = internal/api.GoneThing\n```\n"},
+         files=["internal/api/livy.go"])
+    assert c.findings() == []
+
+
+def test_a_non_repo_or_non_go_qualified_name_is_ignored(tree):
+    tree({"docs/a.md": "`github.com/acme/pkg.Symbol` and `pipeline.ActivityRun`\n"},
+         files=["internal/api/livy.go"])
+    assert c.findings() == []
+
+
+def test_an_exempt_go_symbol_reference_is_skipped(tree):
+    tree({"docs/a.md": "planned: `cmd/fabric-emulator.futureMain`\n"},
+         files=["cmd/fabric-emulator/main.go"],
+         exempt={("docs/a.md", "cmd/fabric-emulator.futureMain"):
+                 "planned, not built until the CLI split lands"})
     assert c.findings() == []
 
 
