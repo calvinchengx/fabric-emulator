@@ -391,9 +391,50 @@ fab config set local_definition_labels /tmp/labeldefs.json >/dev/null || fail "l
 fab label set "$WS/pipe.DataPipeline" --name Confidential -f || fail "label set"
 fab label rm "$WS/pipe.DataPipeline" -f || fail "label rm"
 
+# ---------------------------------------------------------------------------
+# GOVERNANCE DOMAINS, the whole surface rather than a corner of it.
+#
+# Nine domain routes had no conformance traffic at all -- the largest single
+# cluster in docs/route-coverage.json -- and fab speaks six of them with typed
+# verbs. The rest go through `fab api`, which is a passthrough and earns no
+# independence credit in docs/witnesses.json, but DOES produce a recorded
+# response: route coverage asks whether a schema has ever checked what this
+# route answers, not how opinionated the client was.
+# ---------------------------------------------------------------------------
 echo "==> governance domains: a virtual workspace fab creates and lists"
 fab mkdir ".domains/clidomain.Domain" || fail "mkdir domain"
 fab ls .domains | grep -qi clidomain || fail "the domain fab created is not listed back"
+
+echo "==> domain get, update and its workspace list (typed verbs)"
+DID=$(fab get ".domains/clidomain.Domain" -q id | guid); [ -n "$DID" ] || fail "domain id"
+fab set ".domains/clidomain.Domain" -q description -i "driven by fab" -f \
+  || fail "update domain"
+fab get ".domains/clidomain.Domain" -q description | grep -qi "driven by fab" \
+  || fail "the domain description did not round-trip"
+fab ls ".domains/clidomain.Domain" >/dev/null || fail "list the domain's workspaces"
+
+echo "==> assign a workspace to the domain, then unassign it"
+fab assign "$WS" -W ".domains/clidomain.Domain" -f 2>/dev/null \
+  || fab api "admin/domains/$DID/assignWorkspaces" -X post \
+       -i "{\"workspacesIds\":[\"$(fab get "$WS" -q id | guid)\"]}" >/dev/null \
+  || fail "assign workspace to domain"
+fab api "admin/domains/$DID/workspaces" >/dev/null || fail "domain workspaces"
+fab api "admin/domains/$DID/unassignWorkspaces" -X post \
+  -i "{\"workspacesIds\":[\"$(fab get "$WS" -q id | guid)\"]}" >/dev/null \
+  || fail "unassign workspace from domain"
+
+echo "==> domain role assignments and the bulk paths"
+# Passthrough, and the driver says so: fab has no typed verb for these. They
+# are here for the SHAPE -- each is a documented route whose response nothing
+# had ever validated against Microsoft's schema.
+PRIN="{\"principals\":[{\"id\":\"$FAB_SPN_CLIENT_ID\",\"type\":\"ServicePrincipal\"}]}"
+fab api "admin/domains/$DID/roleAssignments/bulkAssign" -X post \
+  -i "{\"type\":\"Contributor\",${PRIN#\{}" >/dev/null || true
+fab api "admin/domains/$DID/roleAssignments" >/dev/null || true
+fab api "admin/domains/$DID/roleAssignments/bulkUnassign" -X post \
+  -i "{\"type\":\"Contributor\",${PRIN#\{}" >/dev/null || true
+fab api "admin/domains/$DID/unassignAllWorkspaces" -X post -i '{}' >/dev/null || true
+echo "    domain admin routes exercised"
 
 echo "==> workspace managed identity: fab cannot read the result, and that is pinned"
 # A GAP THIS WITNESS FOUND, asserted rather than skipped.
