@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "Routes this emulator registers that no published spec documents.",
+    "Written by scripts/check_undocumented_routes.py --update; do not",
+    "hand-edit. The emulator answering a URL real Fabric does not is",
+    "the worst direction for a fidelity bug to point -- a script",
+    "written here passes and 404s in production -- so this set is",
+    "ratcheted in BOTH directions: it may not grow without a decision,",
+    "and a route that leaves it must leave the file too. `notes` says",
+    "what was checked for each one. Surfaces that are emulator-native",
+    "on purpose are declared with their reason in NATIVE, in the",
+    "script, and are counted here but not listed."
+  ],
+  "registered": 613,
+  "documented": 422,
+  "alias": 148,
+  "native": 37,
+  "undocumented": 6,
+  "notes": {
+    "GET /v1/admin/labels": "The sensitivity-label taxonomy is the emulator's own -- real Fabric gets labels and their order from Purview, which cannot be attached offline. internal/api/labels.go calls this read 'an emulator affordance, not a Fabric API' at the registration. The two label operations Microsoft DOES document (bulkSetLabels, bulkRemoveLabels) are served and classify as documented.",
+    "GET /v1/workspaces/{wid}/lineage": "Workspace lineage as a REST collection is emulator-native: Fabric shows lineage in its portal and publishes no operation for it. Note this is the route the loose alias rule falsely credited against the documented POST .../items -- see alias_collections().",
+    "POST /v1/workspaces/{wid}/items/{iid}/jobs/instances": "A SPELLING DISAGREEMENT, not an invented surface, and left here rather than matched away because it is exactly what this gate is for. The operation is documented -- JobScheduler_RunOnDemandItemJob -- but the vendored swagger spells it `/items/{itemId}/jobs/{jobType}/instances` with jobType as a PATH parameter, while this emulator (and internal/api/copyjob.go's citation of Microsoft's REST reference, and the traffic Microsoft's own `fab` CLI records against it) uses `/jobs/instances?jobType=`. Teaching the matcher to fold the two would hide the divergence; recording it keeps it reviewable.",
+    "POST /v1/workspaces/{wid}/lineage": "The write half of the same emulator-native graph: an engine that is not a queued notebook run reports what it moved, so an interactive step reaches the graph too (internal/api/reportlineage.go).",
+    "POST /v1/workspaces/{wid}/mirroredDatabases/{iid}/refreshMirror": "Checked against the swagger first: Microsoft documents startMirroring, stopMirroring, getMirroringStatus and getTablesMirroringStatus on mirroredDatabases, and no refreshMirror. This is the emulator's explicit on-demand snapshot standing in for the continuous replication it cannot run offline (internal/api/mirror.go).",
+    "POST /v1/workspaces/{wid}/sqlDatabases/{iid}/refreshMirror": "As above, on the sqlDatabases spelling: the swagger documents startMirroring and stopMirroring there and no refreshMirror."
+  },
+  "undocumentedRoutes": [
+    "GET /v1/admin/labels",
+    "GET /v1/workspaces/{wid}/lineage",
+    "POST /v1/workspaces/{wid}/items/{iid}/jobs/instances",
+    "POST /v1/workspaces/{wid}/lineage",
+    "POST /v1/workspaces/{wid}/mirroredDatabases/{iid}/refreshMirror",
+    "POST /v1/workspaces/{wid}/sqlDatabases/{iid}/refreshMirror"
+  ]
+}

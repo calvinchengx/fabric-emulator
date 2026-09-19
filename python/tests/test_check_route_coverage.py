@@ -448,6 +448,61 @@ def test_the_family_is_resolved_so_it_is_not_reported_unresolved(partial):
     assert c.unparsed_registrations() == []
 
 
+# A map literal's keys are harvested from RAW SOURCE by a regex that cannot
+# tell code from prose, and internal/api/definitions.go documents where its
+# item types came from by quoting a payload -- `"type": "CopyJob"` -- in a
+# comment. That sentence invented a `type` collection and nine routes nothing
+# registers. Benign for the collapsed counts here, since every family route
+# folds to `{collection}`; not benign for the baseline of
+# check_undocumented_routes.py, which lists the expanded names.
+
+COMMENTED_KEY_SOURCE = '''
+package api
+
+var typedCollections = map[string]string{
+	"notebooks": "Notebook",
+	// Where these came from: the reference prints `"ghost": "Ghost"` in a
+	// sample payload, and "phantom": is in prose too.
+	"warehouses": "Warehouse",
+}
+
+func (a *API) registerTyped(mux *http.ServeMux) {
+	for collection, itemType := range typedCollections {
+		mux.HandleFunc("GET /v1/workspaces/{wid}/"+collection, a.typedList(itemType))
+	}
+}
+'''
+
+
+def test_a_key_quoted_in_a_comment_is_not_a_collection(tmp_path, monkeypatch):
+    """The parser must not reacquire a fiction from prose."""
+    src = tmp_path / "api"
+    src.mkdir()
+    (src / "typed.go").write_text(COMMENTED_KEY_SOURCE)
+    monkeypatch.setattr(c, "SOURCES", (src,))
+    monkeypatch.setattr(c, "ROOT", tmp_path)
+    monkeypatch.setattr(c, "UNPARSED_OK", {})
+    monkeypatch.setattr(c, "PARAMETERISED", {"api/typed.go:collection": "test family"})
+
+    names = c.alias_values("api/typed.go:collection")
+    assert sorted(names) == ["notebooks", "warehouses"]
+    assert "ghost" not in names and "phantom" not in names
+
+    found = c.registered()
+    assert "GET /v1/workspaces/{wid}/notebooks" in found
+    assert not [r for r in found if "ghost" in r or "phantom" in r]
+
+
+def test_the_real_tree_has_no_phantom_type_collection():
+    """The measured case: `"type": "CopyJob"` in definitions.go's comment.
+
+    Nine routes -- GET/POST /v1/workspaces/{wid}/type, .../type/{iid} and its
+    definition and job-instance family -- were produced by a sentence.
+    """
+    assert "type" not in c.alias_values("internal/api/definitions.go:collection")
+    assert not [r for r in c.registered() if "/type" in r and "/types" not in r]
+
+
 # --- the orphan oracle -----------------------------------------------------------
 #
 # A third and stronger oracle than the two above. Route coverage and the
