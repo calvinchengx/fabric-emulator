@@ -52,10 +52,16 @@ services:
       FABRIC_DISABLE_TLS: "true"
       FABRIC_ENTRA_ISSUER: "http://entra-emulator:8443/6f89cf12-978b-4d23-ac18-9ef0c127cf87/v2.0"
       FABRIC_MLFLOW_URL: "http://mlflow:5000"
+      # MEASUREMENT: does this suite reach routes no other recording does?
+      # The traffic exists either way; recording only writes down what came
+      # back. No headers, ever -- see internal/server/record.go.
+      FABRIC_RECORD_RESPONSES: "/recording/responses.jsonl"
     networks:
       default:
         aliases:
           - onelake.dfs.fabric.microsoft.com
+    volumes:
+      - ./recording:/recording
     healthcheck:
       test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
       interval: 3s

@@ -105,6 +105,23 @@ KNOWN = {
     "POST /v1.0/myorg/groups: answered 404":
         "New-PowerBIWorkspace has no route here; creation goes through the "
         "Fabric surface.",
+    # A VALUE THE SPEC'S ENUM DOES NOT HAVE, emitted deliberately. Found the day
+    # e2e/eventstream started recording: its five Reflex-triggered pipeline runs
+    # report `invokeType: "EventTriggered"`, and Microsoft's ItemJobInstance
+    # enumerates only Scheduled and Manual.
+    #
+    # PINNED RATHER THAN FIXED, and the reason is not that the spec is wrong.
+    # The value is the emulator's own distinction between a job an Activator
+    # trigger started and one a person or a schedule did, five e2e assertions
+    # depend on it, and reporting Manual would erase exactly the fact that
+    # makes a trigger observable. What real Fabric reports for an
+    # Activator-launched run is NOT SOMETHING THIS REPOSITORY CAN SETTLE
+    # without a tenant: the trigger binding has no public REST (docs/parity.md
+    # names it emulator-native), so there is no documented request whose answer
+    # could be compared. Recorded as an open question, not as a claim.
+    "invokeType: 'EventTriggered' is not in the spec's enum ['Scheduled', 'Manual']":
+        "Reflex-triggered runs report EventTriggered, outside the documented "
+        "enum. Deliberate; unsettled without a tenant.",
     # THE IMPORTS SURFACE, all nine operations, refused.
     #
     # THIS IS THE TWO GATES PULLING AGAINST EACH OTHER, and the pull is by
