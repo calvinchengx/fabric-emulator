@@ -59,12 +59,32 @@ homebrew_casks:
       email: calvin@calvinx.com
     # Clear the quarantine attribute so the unsigned binary runs without a
     # Gatekeeper prompt (GoReleaser's recommended cask post-install hook).
-    hooks:
-      post:
-        install: |
-          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/fabric-emulator"]
-          end
+    # Clear the quarantine attribute so the unsigned binary runs without a
+    # Gatekeeper prompt. Homebrew stages everything quarantined and the `binary`
+    # artifact only chmods, so without this the binary keeps the attribute. The
+    # LICENSE beside it still carries it either way, which is how you can tell
+    # the step actually ran.
+    #
+    # Deliberately NOT `hooks.post.install`, which is the obvious place:
+    # GoReleaser's template hardcodes `postflight do` around whatever a hook
+    # contains, and Homebrew deprecated `postflight` in favour of
+    # `postflight_steps`. `custom_block` is the only raw-Ruby escape hatch the
+    # template offers, so the stanza is written out in full. It lands at the top
+    # of the cask instead of in cookbook stanza order, which is cosmetic.
+    # scripts/check_cask_stanzas.py stops this drifting back.
+    #
+    # `postflight_steps` is a declarative vocabulary rather than arbitrary Ruby:
+    # a `run` step's `args` are plain strings expanded against a fixed token
+    # list with no `staged_path` in it, so the path comes from `chdir` (a cask's
+    # steps default to base staged_path) plus a bare filename. `must_succeed:
+    # false` replaces the old guard that checked whether xattr exists.
+    custom_block: |
+      postflight_steps do
+        run "/usr/bin/xattr",
+            args:         ["-dr", "com.apple.quarantine", "fabric-emulator"],
+            chdir:        ".",
+            must_succeed: false
+      end
 
 # winget (Windows): on each tag, GoReleaser builds the manifest from the Windows
 # archives and opens a PR against microsoft/winget-pkgs from a fork, so
