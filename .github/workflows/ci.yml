@@ -1454,6 +1454,19 @@ jobs:
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/livy/run.py
+      # MEASURED TO EARN ITS ARTIFACT: six routes: the high-concurrency session lifecycle, its REPL
+      # statements, the Livy passthrough and sparkJobRun that no other
+      # recording reaches. e2e/environment was enabled at the same time and
+      # REVERTED at +0 marginal routes, and e2e/airflow at +1 -- one route is
+      # not worth coupling the conformance gate to the heaviest stack in this
+      # repository, because an absent recording takes that gate red for a
+      # reason that is not its own.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: recording-livy
+          path: e2e/livy/recording/responses.jsonl
+          if-no-files-found: warn
 
   notebook-display:
     needs: changes
@@ -1564,6 +1577,18 @@ jobs:
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/sail/run.py
+      # MEASURED TO EARN ITS ARTIFACT: two routes: materialized lake view create and refresh that no other
+      # recording reaches. e2e/environment was enabled at the same time and
+      # REVERTED at +0 marginal routes, and e2e/airflow at +1 -- one route is
+      # not worth coupling the conformance gate to the heaviest stack in this
+      # repository, because an absent recording takes that gate red for a
+      # reason that is not its own.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: recording-sail
+          path: e2e/sail/recording/responses.jsonl
+          if-no-files-found: warn
 
   data-science-loop:
     needs: changes
@@ -2382,7 +2407,7 @@ jobs:
           cache-invalidation-interval: 1
 
   openapi-conformance:
-    needs: [changes, fabric-cli, az-rest, pipeline-activities, terraform-fabric, powerbi-ps, medallion, semantic-model]
+    needs: [changes, fabric-cli, az-rest, pipeline-activities, terraform-fabric, powerbi-ps, medallion, semantic-model, livy-native, sail]
     if: needs.changes.outputs.docs_only != 'true'
     name: Responses conform to Microsoft's OpenAPI, and route coverage only ratchets
     runs-on: ubuntu-latest
