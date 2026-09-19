@@ -424,6 +424,18 @@ CHECKS = [
     # frame that was mostly still string.
     # Compared case-insensitively: pandas reports its nullable integer dtype as
     # `Int64`, and matching the lowercase spelling failed a passing surface.
+    # THE REST SURFACE, through sempy's typed readers. An inline model has
+    # nothing to re-read, so an EMPTY history is the correct answer and a
+    # refused refresh is the correct answer -- both asserted, because a suite
+    # that merely tolerated either would not notice the surface breaking.
+    ("list_refresh_requests is readable by a typed client (empty is correct here)",
+     results.get("list_refresh_requests") == "OK" and rows.get("list_refresh_requests", -1) == 0),
+    # ASSERTED TO FAIL. This model's rows are an inline definition part, so a
+    # refresh would be a lie; when a Direct Lake model is published here this
+    # check fails, which is the reminder to widen the claim rather than leave
+    # the map saying less than the code does.
+    ("refresh_dataset is REFUSED for an inline model, legibly enough for sempy to raise",
+     results.get("refresh_dataset") not in (None, "OK")),
     ("evaluate_dax columns carry their declared types, not string",
      "int64" in dtypes.lower() and "=string" not in dtypes),
 ]
