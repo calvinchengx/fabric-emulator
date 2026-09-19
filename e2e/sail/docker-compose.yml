@@ -38,6 +38,12 @@ services:
       # rather than a silent success. That 502 is what this suite hit the first
       # time the MLV witness ran here.
       FABRIC_SPARK_AGENT_URL: "http://spark-agent:8099"
+      # RECORDED, and it was MEASURED to earn it: two routes no other recording
+      # reaches. The traffic exists either way; recording only writes down
+      # what came back. No headers, ever -- see internal/server/record.go.
+      FABRIC_RECORD_RESPONSES: "/recording/responses.jsonl"
+    volumes:
+      - ./recording:/recording
     healthcheck:
       test: ["CMD", "/usr/local/bin/fabric-emulator", "healthcheck"]
       interval: 3s

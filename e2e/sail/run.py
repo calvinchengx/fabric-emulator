@@ -36,6 +36,26 @@ def compose(*args, check=False, timeout=None):
     return subprocess.run(COMPOSE + list(args), check=check, timeout=timeout)
 
 
+# THE RECORDING DIRECTORY MUST BE WRITABLE BY A CONTAINER THAT IS NOT ROOT.
+# The emulator image is distroless :nonroot (uid 65532) and this stack does not
+# override the user, so on Linux -- where a bind mount belongs to the host user
+# -- the container cannot create the file. Recording is diagnostic and never
+# fatal, so the emulator starts anyway and the suite PASSES HAVING RECORDED
+# NOTHING. Measured twice now: once on e2e/medallion, and again here, where the
+# artifact simply did not appear and the aggregate gate failed with eight
+# routes it had been told to expect. macOS bind mounts are permissive about
+# uid, so a local run shows nothing wrong, and git does not carry a directory
+# mode, so a chmod on a developer machine does not travel.
+#
+# Cleared as well, because the recorder APPENDS and the mount outlives the
+# stack: a second local run would otherwise validate the first run's traffic.
+_recording = os.path.join(DIR, "recording")
+os.makedirs(_recording, exist_ok=True)
+os.chmod(_recording, 0o777)
+_responses = os.path.join(_recording, "responses.jsonl")
+if os.path.exists(_responses):
+    os.remove(_responses)
+
 try:
     try:
         rc = compose("up", "--build", "--abort-on-container-exit",
