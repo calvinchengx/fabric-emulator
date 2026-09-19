@@ -542,6 +542,12 @@ jobs:
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python scripts/check_witnesses.py --strict
+
+      # The published Homebrew cask is generated, so a deprecated stanza cannot
+      # be fixed in the tap: the next release overwrites it. This checks the
+      # source of the generation, which is the only place a regression can be
+      # introduced. release.yml checks the rendered cask as well.
+      - run: uv run --no-project --python 3.12 scripts/check_cask_stanzas.py
       # Axis A of docs/56, derived rather than transcribed: our notebookutils
       # shim against Microsoft's OWN pinned stubs
       # (third_party/notebookutils-stubs). Every difference is allowed and each
