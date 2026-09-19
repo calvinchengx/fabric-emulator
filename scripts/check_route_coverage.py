@@ -52,20 +52,142 @@ SOURCES = (ROOT / "internal" / "api", ROOT / "internal" / "server")
 # demand evidence the recorder cannot produce.
 IN_SCOPE = ("/v1/", "/v1.0/")
 
-_REGISTRATION = re.compile(
-    r'HandleFunc\("(GET|POST|PUT|PATCH|DELETE|HEAD) (/[^"]*)"')
+METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
+
+# A registration whose pattern is one string literal. The common case.
+_LITERAL = re.compile(
+    r'HandleFunc\(\s*"(' + "|".join(METHODS) + r') (/[^"]*)"')
+
+# A registration ASSEMBLED FROM A VARIABLE, which is where this checker used to
+# go blind. `mux.HandleFunc("POST "+prefix+"/refreshes", ...)` does not match a
+# pattern that expects a closing quote after the path, so those routes were
+# neither counted nor ever reportable as uncovered -- the exact failure the
+# ratchet exists to prevent, sitting inside the ratchet. Measured when it was
+# found: 31 in-scope routes invisible, including every dataset `refreshes` and
+# `datasources` route, which are served AND exercised AND were uncounted.
+_ASSEMBLED = re.compile(
+    r'HandleFunc\(\s*(?:"(?P<m>' + "|".join(METHODS) + r') "|(?P<mvar>\w+)\s*\+\s*" "\s*)'
+    r'\+\s*(?P<var>\w+)(?P<rest>(?:\s*\+\s*"[^"]*")*)\s*[,)]')
+
+# `name := "literal"` / `name = "literal"` / `const name = "literal"`, and a
+# range over a slice literal of strings, which is how the two dataset spellings
+# and the Livy verb list are written.
+_ASSIGN = re.compile(r'(?:const\s+)?(\w+)\s*:?=\s*"([^"]*)"')
+# The slice literal's items are terminated by the `}` that closes it followed
+# by the `{` that opens the loop body -- NOT by the first `}`, because a route
+# template is full of them: "/v1.0/myorg/datasets/{datasetId}" would otherwise
+# be cut after `{datasetId`, which is how this was first written and why the
+# dataset refreshes routes stayed invisible through the first fix.
+_RANGE = re.compile(
+    r'for\s+_,\s*(\w+)\s*:=\s*range\s*\[\]string\{(?P<items>.*?)\}\s*\{', re.S)
+_ITEM = re.compile(r'"([^"]*)"')
+
+# Any HandleFunc at all, so an unresolved one can be NAMED rather than dropped.
+_ANY = re.compile(r'HandleFunc\(')
+
+# Registrations this parser cannot turn into a route template, each allowed by
+# NAME and reason. Anything in scope that is not listed here fails the run.
+#
+# THE POINT IS THAT THE LIST IS SHORT AND AUDITABLE. The bug this replaces was
+# not that a form went unparsed -- it is that going unparsed was SILENT, so 34
+# routes sat outside the denominator and could never be reported as uncovered.
+# An unresolved registration is now either named here with a reason or it stops
+# the gate.
+UNPARSED_OK = {
+    # Not a route template: a ServeMux SUBTREE (trailing slash) that dispatches
+    # on the remainder itself. The individual job routes under it are
+    # registered literally elsewhere and are counted there.
+    "internal/api/schedules.go": 1,
+    # Out of scope by prefix -- none of these is /v1/ or /v1.0/, so no
+    # recording could prove them and IN_SCOPE would drop them anyway.
+    "internal/api/kql.go": 1,          # /kusto/...
+    "internal/api/mlflow.go": 1,       # /mlflow/...
+    "internal/api/vscode.go": 3,       # /webapi/... (the MWC surface)
+    "internal/server/portal.go": 1,    # the "/" catch-all
+    "internal/server/terminal.go": 1,  # /_emulator/portal/terminal/
+}
 
 
-def registered():
+def unparsed_registrations():
+    """Files whose HandleFunc calls this parser could not resolve, vs allowed."""
+    seen = []
+    registered(seen)
+    surprises = []
+    for rel, count in seen:
+        if count != UNPARSED_OK.get(rel):
+            surprises.append((rel, count, UNPARSED_OK.get(rel, 0)))
+    return surprises
+
+
+
+def _rel(path):
+    """Repo-relative when the file is in the repo, absolute otherwise.
+
+    SOURCES is monkeypatched to a temp directory by the tests, and
+    Path.relative_to raises rather than returning the absolute path, so the
+    reporter would crash on exactly the case the tests exist to cover.
+    """
+    try:
+        rel = str(path.relative_to(ROOT))
+    except ValueError:
+        rel = str(path)
+    # FORWARD SLASHES ALWAYS. UNPARSED_OK is keyed by repo-relative POSIX
+    # paths, and on Windows this returned `internal\api\schedules.go`, which
+    # matched no key -- so every allowlisted registration read as a surprise
+    # and the gate failed on the Windows leg alone. The rest of this repo's
+    # stdlib checkers already normalise the same way; this one did not.
+    return rel.replace("\\", "/")
+
+
+def _string_vars(text):
+    """Simple string bindings in a file: name -> list of possible values.
+
+    Deliberately not a Go parser. It resolves the two forms this repository
+    actually uses to build a route -- a plain assignment and a range over a
+    slice literal -- and everything it cannot resolve is REPORTED rather than
+    silently skipped, which is the whole lesson of the bug this replaces.
+    """
+    values = {}
+    for name, literal in _ASSIGN.findall(text):
+        values.setdefault(name, []).append(literal)
+    for match in _RANGE.finditer(text):
+        values.setdefault(match.group(1), []).extend(_ITEM.findall(match.group("items")))
+    return values
+
+
+def registered(report_unresolved=None):
     """Every (method, path template) the emulator mounts, in scope."""
     found = set()
     for source in SOURCES:
         for path in sorted(source.rglob("*.go")):
             if path.name.endswith("_test.go"):
                 continue
-            for method, route in _REGISTRATION.findall(path.read_text(encoding="utf-8")):
+            text = path.read_text(encoding="utf-8")
+            # CALL SITES, not expansions: one registration inside a two-element
+            # range loop yields two routes, and counting those against the
+            # number of HandleFunc calls would report negative unresolved.
+            sites = 0
+            for match in _LITERAL.finditer(text):
+                sites += 1
+                method, route = match.group(1), match.group(2)
                 if route.startswith(IN_SCOPE):
                     found.add(f"{method} {route}")
+            values = _string_vars(text)
+            for match in _ASSEMBLED.finditer(text):
+                methods = ([match.group("m")] if match.group("m")
+                           else values.get(match.group("mvar"), []))
+                bases = values.get(match.group("var"), [])
+                if not bases or not methods:
+                    continue  # unresolved; counted below and reported
+                sites += 1
+                suffix = "".join(_ITEM.findall(match.group("rest") or ""))
+                for base in bases:
+                    for method in methods:
+                        if method in METHODS and (base + suffix).startswith(IN_SCOPE):
+                            found.add(f"{method} {base + suffix}")
+            total = len(_ANY.findall(text))
+            if report_unresolved is not None and sites < total:
+                report_unresolved.append((_rel(path), total - sites))
     return found
 
 
@@ -140,6 +262,17 @@ def main() -> int:
         print("check_route_coverage: no recording exists. Set "
               "FABRIC_RECORD_RESPONSES on the emulator and re-run a suite.",
               file=sys.stderr)
+        return 1
+
+    surprises = unparsed_registrations()
+    if surprises:
+        print("check_route_coverage: a route registration could not be parsed, so it "
+              "would be missing from the denominator:", file=sys.stderr)
+        for rel, found, allowed in surprises:
+            print(f"    {rel}: {found} unresolved HandleFunc call(s), "
+                  f"{allowed} allowed in UNPARSED_OK", file=sys.stderr)
+        print("  -> teach registered() the form, or add it to UNPARSED_OK with the "
+              "reason it is not a route template.", file=sys.stderr)
         return 1
 
     all_routes = registered()

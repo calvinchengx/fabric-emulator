@@ -225,3 +225,137 @@ def test_the_real_baseline_matches_the_real_tree():
     assert recorded <= c.registered(), (
         "the baseline lists routes the emulator no longer registers: "
         f"{sorted(recorded - c.registered())}")
+
+
+# --- assembled registrations ----------------------------------------------------
+#
+# The parser used to require a closing quote right after the path, so a route
+# built from a variable was invisible: not counted, and therefore never
+# reportable as uncovered. Thirty-four routes sat outside the denominator,
+# including every dataset `refreshes` and `datasources` route -- served,
+# exercised, and uncounted. These pin each form that was missed.
+
+ASSEMBLED_SOURCE = '''
+package api
+
+func (a *API) registerAssembled(mux *http.ServeMux) {
+	base := "/v1/workspaces/{wid}/items/{iid}/shortcuts"
+	mux.HandleFunc("GET "+base, a.listShortcuts)
+	mux.HandleFunc("DELETE "+base+"/{path}/{name}", a.deleteShortcut)
+
+	// A range over a slice literal whose ITEMS CONTAIN BRACES. Terminating the
+	// literal at the first `}` cuts this after `{datasetId`, which is exactly
+	// how the first fix for this stayed broken.
+	for _, prefix := range []string{
+		"/v1.0/myorg/datasets/{datasetId}",
+		"/v1.0/myorg/groups/{groupId}/datasets/{datasetId}",
+	} {
+		mux.HandleFunc("POST "+prefix+"/refreshes", a.postRefresh)
+	}
+
+	// The METHOD can be the variable instead of the path.
+	const p = "/v1/proxy/"
+	for _, m := range []string{"GET", "DELETE"} {
+		mux.HandleFunc(m+" "+p+"{rest...}", a.proxy)
+	}
+}
+'''
+
+
+@pytest.fixture
+def assembled(tmp_path, monkeypatch):
+    src = tmp_path / "api"
+    src.mkdir()
+    (src / "assembled.go").write_text(ASSEMBLED_SOURCE)
+    monkeypatch.setattr(c, "SOURCES", (src,))
+    monkeypatch.setattr(c, "UNPARSED_OK", {})
+    return tmp_path
+
+
+def test_a_route_built_from_a_variable_is_counted(assembled):
+    found = c.registered()
+    assert "GET /v1/workspaces/{wid}/items/{iid}/shortcuts" in found
+    assert "DELETE /v1/workspaces/{wid}/items/{iid}/shortcuts/{path}/{name}" in found
+
+
+def test_a_slice_literal_of_paths_containing_braces_expands(assembled):
+    found = c.registered()
+    assert "POST /v1.0/myorg/datasets/{datasetId}/refreshes" in found
+    assert "POST /v1.0/myorg/groups/{groupId}/datasets/{datasetId}/refreshes" in found
+
+
+def test_the_method_may_be_the_variable(assembled):
+    found = c.registered()
+    assert "GET /v1/proxy/{rest...}" in found
+    assert "DELETE /v1/proxy/{rest...}" in found
+    assert "POST /v1/proxy/{rest...}" not in found
+
+
+def test_every_registration_in_that_file_resolved(assembled):
+    """No surprises: the fixture is fully parsed, so the allowlist stays empty."""
+    assert c.unparsed_registrations() == []
+
+
+UNPARSEABLE_SOURCE = '''
+package api
+
+func (a *API) registerOdd(mux *http.ServeMux) {
+	mux.HandleFunc(buildRoute("GET", "/v1/surprise"), a.surprise)
+}
+'''
+
+
+def test_an_unresolvable_registration_is_reported_not_dropped(tmp_path, monkeypatch):
+    """The whole lesson: going unparsed must be LOUD.
+
+    A form the parser cannot resolve is not a route that quietly leaves the
+    denominator -- it stops the gate until somebody either teaches the parser
+    or records why it is not a route template.
+    """
+    src = tmp_path / "api"
+    src.mkdir()
+    (src / "odd.go").write_text(UNPARSEABLE_SOURCE)
+    monkeypatch.setattr(c, "SOURCES", (src,))
+    monkeypatch.setattr(c, "UNPARSED_OK", {})
+    surprises = c.unparsed_registrations()
+    assert len(surprises) == 1
+    assert surprises[0][0].endswith("odd.go")
+
+
+def test_an_allowlisted_registration_is_not_a_surprise(tmp_path, monkeypatch):
+    src = tmp_path / "api"
+    src.mkdir()
+    (src / "odd.go").write_text(UNPARSEABLE_SOURCE)
+    monkeypatch.setattr(c, "SOURCES", (src,))
+    monkeypatch.setattr(c, "UNPARSED_OK", {})
+    allow = {rel: count for rel, count, _ in c.unparsed_registrations()}
+    monkeypatch.setattr(c, "UNPARSED_OK", allow)
+    assert c.unparsed_registrations() == []
+
+
+def test_the_real_tree_has_no_unexplained_registration():
+    """Every HandleFunc in the tree is either parsed or named in UNPARSED_OK."""
+    assert c.unparsed_registrations() == []
+
+
+def test_reported_paths_use_forward_slashes(monkeypatch):
+    r"""UNPARSED_OK is keyed by POSIX paths, so the reporter must speak POSIX.
+
+    On Windows `Path.relative_to` returns `internal\api\schedules.go`, which
+    matches no key in UNPARSED_OK, so every allowlisted registration read as a
+    surprise and the gate failed on the Windows leg alone while every other
+    leg passed. Asserted here rather than left to the three-OS matrix, because
+    a green on ubuntu says nothing about it.
+    """
+    import ntpath
+    import pathlib as _pathlib
+
+    class FakeWindowsPath:
+        def relative_to(self, _root):
+            return self
+
+        def __str__(self):
+            return ntpath.join("internal", "api", "schedules.go")
+
+    assert c._rel(FakeWindowsPath()) == "internal/api/schedules.go"
+    assert "\\" not in c._rel(_pathlib.Path(__file__))

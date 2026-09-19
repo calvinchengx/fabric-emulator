@@ -136,3 +136,57 @@ func TestThePortalStillAnswersHTML(t *testing.T) {
 		t.Errorf("the portal root no longer serves the SPA: %q", string(body[:min(len(body), 120)]))
 	}
 }
+
+// TestAnUnroutedAPIPathAnswersTheAPIShapeForEveryVerb is the half the original
+// guard missed.
+//
+// The catch-all rejected any non-GET/HEAD request with http.NotFound BEFORE it
+// asked whether the path was an API path, so every write verb to an
+// unimplemented route answered Go's default plaintext body, "404 page not
+// found". That is not JSON, so no typed client can deserialise it -- the exact
+// failure the /v1 guard was written to stop, left live for four verbs out of
+// six.
+//
+// Found by asserting Power BI's Imports surface, whose only non-GET operations
+// are POSTs: POST /v1.0/myorg/imports/createTemporaryUploadLocation answered
+// "404 page not found\n" and took an e2e harness down inside json.loads.
+func TestAnUnroutedAPIPathAnswersTheAPIShapeForEveryVerb(t *testing.T) {
+	f := newFixture(t)
+
+	cases := []struct {
+		path string
+		// The Power BI roots answer ASP.NET's envelope; /v1 answers Fabric's.
+		wantKey string
+	}{
+		{"/v1.0/myorg/imports/createTemporaryUploadLocation", "Message"},
+		{"/v1.0/myorg/imports", "Message"},
+		{"/v1/nothing/here", "error"},
+	}
+	for _, method := range []string{"POST", "PUT", "PATCH", "DELETE"} {
+		for _, c := range cases {
+			t.Run(method+" "+c.path, func(t *testing.T) {
+				req, err := http.NewRequest(method, f.fabric.URL+c.path, strings.NewReader("{}"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.Header.Set("Content-Type", "application/json")
+				res, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer res.Body.Close()
+				body, _ := io.ReadAll(res.Body)
+				if res.StatusCode != http.StatusNotFound {
+					t.Fatalf("status = %d, want 404; body %q", res.StatusCode, body)
+				}
+				var got map[string]any
+				if err := json.Unmarshal(body, &got); err != nil {
+					t.Fatalf("body is not JSON, so no typed client can read it: %q", body)
+				}
+				if _, ok := got[c.wantKey]; !ok {
+					t.Errorf("body %q has no %q key — wrong envelope for this root", body, c.wantKey)
+				}
+			})
+		}
+	}
+}

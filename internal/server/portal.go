@@ -45,16 +45,20 @@ func (s *Server) registerPortal() {
 	}
 	files := http.FileServerFS(assets)
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			http.NotFound(w, r)
-			return
-		}
 		// An unrouted path under an API prefix is a 404, never the SPA. A
 		// strict API client that hits an unimplemented or mistyped endpoint
 		// must get a Fabric-shaped JSON error it can parse, not a web page:
 		// Azure PowerShell dies on HTML with "Unexpected character
 		// encountered while parsing value: <", which says nothing about the
 		// real problem. Found by the Az e2e (docs/23).
+		//
+		// THIS RUNS BEFORE THE METHOD GUARD, and it did not always. The guard
+		// below answered Go's DEFAULT NotFound -- the plaintext body
+		// "404 page not found" -- for every non-GET verb, which means the fix
+		// above only ever covered reads. A POST to an unimplemented API route
+		// answered a body no typed client can deserialise, which is the exact
+		// class of defect that fix exists to close. Found by asserting the
+		// Power BI Imports surface, whose only non-GET operations are POSTs.
 		if isAPIPath(r.URL.Path) {
 			if isPowerBIPath(r.URL.Path) {
 				writePowerBINotFound(w, r)
@@ -62,6 +66,10 @@ func (s *Server) registerPortal() {
 			}
 			writeJSONError(w, http.StatusNotFound, "UnknownEndpoint",
 				"No such endpoint on this emulator.")
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.NotFound(w, r)
 			return
 		}
 		// Serve real assets as-is; anything else falls back to the SPA shell

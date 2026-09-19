@@ -51,6 +51,24 @@ def log(m):
     print(f"==> {m}", flush=True)
 
 
+def _decode(raw):
+    """Parsed JSON, or the raw text when it is not JSON.
+
+    A NON-JSON BODY IS INFORMATION, NOT A CRASH. This harness used to call
+    json.loads on whatever came back, so a route answering Go's default
+    plaintext `404 page not found` took the suite down with a JSONDecodeError
+    pointing at the decoder rather than at the route. The defect it was hiding
+    is worth naming: an API path that answers plaintext cannot be parsed by any
+    typed client.
+    """
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw.decode("utf-8", errors="replace")
+
+
 def http(method, url, body=None, token=None, form=False, allow_error=False):
     """`allow_error` returns the status instead of raising, for the negative
     cases — asserting a 401 needs the code, not an exception."""
@@ -68,12 +86,12 @@ def http(method, url, body=None, token=None, form=False, allow_error=False):
     try:
         with urllib.request.urlopen(req, context=_CTX) as r:
             raw = r.read()
-            return r.status, r.headers, (json.loads(raw) if raw else {})
+            return r.status, r.headers, _decode(raw)
     except urllib.error.HTTPError as e:
         if not allow_error:
             raise
         raw = e.read()
-        return e.code, e.headers, (json.loads(raw) if raw else {})
+        return e.code, e.headers, _decode(raw)
 
 
 
@@ -354,6 +372,52 @@ try:
         raise SystemExit(f"group-less executeQueries rows mismatch\n got={bare_rows}"
                          f"\nwant={probe['expected']['rows']}")
     log(f"POST /myorg/datasets/{{id}}/executeQueries: {len(bare_rows)} rows OK")
+
+    # THE IMPORTS SURFACE, asserted as refused rather than left silent.
+    #
+    # Imports is Power BI's CLASSIC PUBLISH path: a .pbix is uploaded and
+    # becomes a report plus a dataset. This suite publishes the other way --
+    # the Fabric item-definition API, a TMSL model posted as definition parts
+    # -- and this emulator serves none of the nine documented Imports
+    # operations.
+    #
+    # THE POINT IS THE STATE THEY WERE IN BEFORE. Nothing served them and
+    # nothing had ever asked, so the gap was simultaneously real and untested:
+    # scripts/check_surface_ledger.py calls that SILENT, and it is the state
+    # where an integration finds out at runtime. Asking turns it into a
+    # measured refusal, which is an answer a caller can act on.
+    #
+    # The envelope is checked, not just the status. An unrouted /v1.0 path
+    # must answer ASP.NET's {"Message": ...}, which is what the real service
+    # sends and what a typed client can deserialise -- before #497 it fell
+    # through to the portal and answered HTML.
+    imports = [
+        ("GET", "/v1.0/myorg/imports"),
+        ("GET", f"/v1.0/myorg/imports/{dataset}"),
+        ("GET", f"/v1.0/myorg/groups/{ws}/imports"),
+        ("GET", f"/v1.0/myorg/groups/{ws}/imports/{dataset}"),
+        # The two UPLOAD operations themselves. A real caller sends multipart
+        # with a .pbix; the body is irrelevant to a route that does not exist,
+        # and what is being asserted is that it does not exist LEGIBLY.
+        ("POST", "/v1.0/myorg/imports"),
+        ("POST", f"/v1.0/myorg/groups/{ws}/imports"),
+        ("POST", "/v1.0/myorg/imports/createTemporaryUploadLocation"),
+        ("POST", f"/v1.0/myorg/groups/{ws}/imports/createTemporaryUploadLocation"),
+        ("GET", "/v1.0/myorg/admin/imports"),
+    ]
+    for method, route in imports:
+        code, _, body = http(method, f"{FABRIC}{route}",
+                             {} if method == "POST" else None,
+                             token=pbi, allow_error=True)
+        if code != 404:
+            raise SystemExit(
+                f"{method} {route} answered {code}, not the 404 this emulator "
+                f"owes an unimplemented Power BI route — regrade the ledger")
+        if not isinstance(body, dict) or "Message" not in body:
+            raise SystemExit(
+                f"{method} {route} answered 404 without Power BI's envelope, so no "
+                f"typed client can read it: {body!r}")
+    log(f"the Imports surface is refused, legibly, on {len(imports)} routes")
 
     # Run each DAX golden query through executeQueries and check the rows.
     golden = json.load(open(os.path.join(FIX, "golden_queries.json")))

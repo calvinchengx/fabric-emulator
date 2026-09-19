@@ -97,6 +97,29 @@ CASES = [
     ("list_columns",       lambda: fx.list_columns(DATASET, workspace=WS)),
     ("list_relationships", lambda: fx.list_relationships(DATASET, workspace=WS)),
     ("list_partitions",    lambda: fx.list_partitions(DATASET, workspace=WS)),
+    # THE REST MANAGEMENT SURFACE, not the XMLA one everything above uses.
+    #
+    # sempy is two clients in one process: `evaluate_dax` and the `list_*`
+    # readers go over XMLA, while the refresh trio below goes over the Power BI
+    # REST API and deserialises into sempy's own types --
+    # `RefreshExecutionDetails` is a class it ships. Nothing here had ever read
+    # that surface with a typed client; e2e/semantic-model and
+    # e2e/data-science-loop drive it over raw HTTP, which cannot tell a
+    # well-shaped answer from one their own asserts happen to tolerate.
+    #
+    # NOT list_datasources: despite the name it is sempy's XMLA reader over
+    # TMSCHEMA_DATA_SOURCES (hence its `additional_xmla_properties` argument),
+    # not the REST /datasources endpoint. Adding it here would have credited
+    # the REST route with a witness that never touches it.
+    #
+    # THIS MODEL IS INLINE, so the branch witnessed is the NEGATIVE one: the
+    # refresh must be refused and the history must be empty. That is the honest
+    # scope -- the positive branch needs a Direct Lake model, which this suite
+    # does not build, and is asserted over raw HTTP in e2e/data-science-loop.
+    # What is new is that a real client can READ the refusal: a 400 that only
+    # `urllib` has ever seen is not evidence that sempy can act on it.
+    ("list_refresh_requests", lambda: fx.list_refresh_requests(DATASET, workspace=WS)),
+    ("refresh_dataset",       lambda: fx.refresh_dataset(DATASET, workspace=WS)),
 ]
 
 def run(name, fn):

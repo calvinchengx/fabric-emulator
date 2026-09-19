@@ -105,6 +105,36 @@ KNOWN = {
     "POST /v1.0/myorg/groups: answered 404":
         "New-PowerBIWorkspace has no route here; creation goes through the "
         "Fabric surface.",
+    # THE IMPORTS SURFACE, all nine operations, refused.
+    #
+    # THIS IS THE TWO GATES PULLING AGAINST EACH OTHER, and the pull is by
+    # design rather than a mistake in either. check_surface_ledger rewards
+    # ASKING: an operation nothing serves and nothing has ever asked about is
+    # SILENT, which is the state where an integration finds out at runtime, and
+    # driving it turns it into a measured REFUSAL. But refusing IS a
+    # disagreement with a spec that documents 200, so every operation moved out
+    # of silent arrives here as a finding. Nine appeared the moment
+    # e2e/semantic-model started asking.
+    #
+    # KNOWN is where that is reconciled, and the reconciliation is the point:
+    # the gap is now written down twice, as a refusal with evidence and as a
+    # pinned disagreement with a reason, instead of being invisible to both.
+    # This emulator publishes through the Fabric item-definition API; the
+    # .pbix upload path is not implemented and is graded in docs/parity.md.
+    "GET /v1.0/myorg/imports: answered 404":
+        "the Imports surface is not served; publishing goes through the "
+        "Fabric item-definition API. See e2e/semantic-model, which asserts "
+        "all nine refusals so the gap cannot close or widen unnoticed.",
+    "GET /v1.0/myorg/imports/{importId}: answered 404": "as above.",
+    "GET /v1.0/myorg/admin/imports: answered 404": "as above.",
+    "GET /v1.0/myorg/groups/{groupId}/imports: answered 404": "as above.",
+    "GET /v1.0/myorg/groups/{groupId}/imports/{importId}: answered 404": "as above.",
+    "POST /v1.0/myorg/imports: answered 404": "as above.",
+    "POST /v1.0/myorg/imports/createTemporaryUploadLocation: answered 404": "as above.",
+    "POST /v1.0/myorg/groups/{groupId}/imports: answered 404": "as above.",
+    "POST /v1.0/myorg/groups/{groupId}/imports/createTemporaryUploadLocation: answered 404":
+        "as above.",
+
     # REFUSALS THAT ARE THE HONEST ANSWER, where answering the documented
     # status would be a well-formed lie. Both are reached only by
     # e2e/semantic-model, which is the only suite that publishes a real

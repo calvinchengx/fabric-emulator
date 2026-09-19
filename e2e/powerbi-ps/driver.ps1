@@ -185,7 +185,17 @@ Step 'the unserved Power BI cmdlets are asserted to fail, not skipped'
 $unserved = @(
     @{ n = 'Get-PowerBIReport -WorkspaceId'; s = { Get-PowerBIReport -WorkspaceId $created.id } },
     @{ n = 'Get-PowerBIReport';              s = { Get-PowerBIReport } },
-    @{ n = 'Get-PowerBICapacity';            s = { Get-PowerBICapacity } }
+    @{ n = 'Get-PowerBICapacity';            s = { Get-PowerBICapacity } },
+    # THE IMPORTS SURFACE -- Power BI's classic PUBLISH path, where a .pbix is
+    # uploaded and becomes a report plus a dataset. This emulator publishes
+    # through the Fabric item-definition API instead and serves none of the
+    # nine documented Imports operations. Until this assertion existed they
+    # were SILENT rather than refused: nothing served them and nothing had
+    # ever asked, so the gap was real and untested at the same time. The
+    # remaining seven have no typed cmdlet and are asserted over HTTP in
+    # e2e/semantic-model; these two are the ones Microsoft ships a cmdlet for.
+    @{ n = 'Get-PowerBIImport -WorkspaceId'; s = { Get-PowerBIImport -WorkspaceId $created.id } },
+    @{ n = 'Get-PowerBIImport';              s = { Get-PowerBIImport } }
 )
 foreach ($u in $unserved) {
     $failed = $false

@@ -184,6 +184,46 @@ after_totals = {r["Sales[Region]"]: r["[Total]"] for r in after["results"][0]["t
 assert after_totals == totals, (totals, after_totals)
 print("post-refresh DAX unchanged — Direct Lake was already current", flush=True)
 
+# RUNG FOUR: prove the model reads the DELTA, not a snapshot taken when it was
+# published.
+#
+# Everything above is consistent with a model that captured its rows at publish
+# time and has answered from that capture ever since. `Completed` proves
+# nothing -- a refresh that does no work reports exactly the same thing -- and
+# neither does the unchanged-answer check above, which a frozen snapshot also
+# passes. Both were written to assert that a refresh is HONEST about doing
+# nothing; neither can tell an honest no-op from a model that CANNOT see new
+# data.
+#
+# So write new rows through Spark and ask again. apac goes from 125 to 200.
+# Only a model reading the table at query time can report that, which is what
+# Direct Lake means and what this emulator claims in docs/parity.md.
+spark.sql("""
+    SELECT * FROM VALUES (5, 'apac', 75) AS sales(id, region, amount)
+""").write.format("delta").mode("append").save(delta_path)
+assert spark.read.format("delta").load(delta_path).count() == 5
+
+fresh = request(
+    "POST", f"{base}/executeQueries",
+    {"queries": [{"query": "EVALUATE SUMMARIZECOLUMNS(Sales[Region], \"Total\", [Total])"}]},
+    pbi_token,
+)[2]
+fresh_totals = {r["Sales[Region]"]: r["[Total]"] for r in fresh["results"][0]["tables"][0]["rows"]}
+want = dict(totals, apac=200)
+assert fresh_totals == want, (
+    f"Direct Lake did not see the appended row: got {fresh_totals}, want {want}. "
+    f"A model answering {totals} here is reading a snapshot, not the table.")
+print(f"appended a row -> Direct Lake DAX followed it: {fresh_totals}", flush=True)
+
+# And the refresh surface still agrees with itself afterwards: a second
+# refresh is accepted and reports a DIFFERENT request id, so a client polling
+# on RequestId cannot be handed a stale one.
+status, headers, _ = request("POST", f"{base}/refreshes", {"notifyOption": "NoNotification"}, pbi_token)
+assert status == 202, status
+second_id = headers.get("RequestId")
+assert second_id and second_id != request_id, (request_id, second_id)
+print(f"second refresh: {second_id} (distinct from the first)", flush=True)
+
 # THE SCANNER — how a catalog crawler learns what the tenant contains, rather
 # than querying one thing it already knows about. This is the only surface that
 # returns a model's tables, columns and measures, which is exactly what a
@@ -264,6 +304,14 @@ assert any(path["name"].endswith("dax/region_totals.json") for path in listing["
 print(f"Direct Lake DAX -> MLflow tracking/model registry: PASS run={run_id}", flush=True)
 
 # dbt-duckdb's built-in Delta plugin independently validates the same table.
+#
+# THE EXPECTED ROWS INCLUDE THE APPEND above, and that is the point rather than
+# an adjustment. Before, both readers saw the same four rows that had been
+# written once and never touched, which a snapshot on either side would also
+# satisfy. Now a row is appended mid-suite and BOTH readers -- Direct Lake over
+# XMLA and dbt-duckdb over the Delta log -- have to follow it to the same
+# answer. apac is 200 across two orders in both, or one of them is reading
+# something that is no longer there.
 env = {
     **os.environ,
     "DELTA_TABLE_PATH": f"az://{workspace['id']}/{lakehouse['id']}/Tables/sales",
@@ -278,7 +326,8 @@ with duckdb.connect("/tmp/analytics_db.duckdb", read_only=True) as connection:
     dbt_rows = connection.sql(
         "select region, total_amount, order_count from analytics.region_totals order by region"
     ).fetchall()
-assert dbt_rows == [("apac", 125, 1), ("eu", 60, 1), ("us", 125, 2)], dbt_rows
+assert dbt_rows == [("apac", 200, 2), ("eu", 60, 1), ("us", 125, 2)], dbt_rows
+assert {r[0]: r[1] for r in dbt_rows} == fresh_totals, (dbt_rows, fresh_totals)
 print(f"OneLake Delta -> dbt-duckdb validation: PASS {dbt_rows}", flush=True)
 
 spark.stop()
