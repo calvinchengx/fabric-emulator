@@ -173,8 +173,14 @@
             <div class="tbl-head"><strong>Query</strong>
               <span class="muted">— DAX, through the same evaluator as <code>executeQueries</code></span>
             </div>
+            <!-- Textarea already supplies the border, radius, padding and
+                 width that `.dax-input` used to set. What it does not supply,
+                 and what a DAX editor needs, is a MONOSPACE face at a size
+                 that fits a measure expression, a top margin off the header,
+                 and a handle that resizes vertically only -- horizontal
+                 resize would widen it out of a fixed-width column. -->
             <Textarea
-              class="dax-input"
+              class="mt-2 resize-y font-mono text-[13px] md:text-[13px]"
               rows={3}
               bind:value={dax}
               aria-label="DAX query"
@@ -191,7 +197,7 @@
               {#if result.rows.length === 0}
                 <p class="muted">No rows — the query ran and returned nothing.</p>
               {:else}
-                <Table.Root class="query-result">
+                <Table.Root class="mt-2">
                   <Table.Header>
                     <Table.Row>
                       {#each result.columns as c (c)}<Table.Head><code>{c}</code></Table.Head>{/each}

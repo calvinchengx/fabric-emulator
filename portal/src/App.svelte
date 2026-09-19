@@ -88,7 +88,7 @@
   <Button
     variant="ghost"
     size="icon-sm"
-    class="nav-toggle"
+    class="-ml-1 text-base leading-none text-muted-foreground"
     aria-label="Toggle sidebar"
     title="Toggle sidebar"
     onclick={toggleNav}
