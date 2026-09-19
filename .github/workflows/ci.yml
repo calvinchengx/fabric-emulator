@@ -1423,6 +1423,18 @@ jobs:
         with:
           version: "0.11.32"
       - run: EVENTSTREAM_ENGINE=sail uv run --frozen --no-sync python e2e/eventstream/run.py
+      # MEASURED TO EARN ITS ARTIFACT: four routes no other recording reaches --
+      # reflex triggers, eventstream destinations, and the source events pair.
+      # THIS JOB RECORDS THE SAIL ENGINE, and that is not incidental: the JVM
+      # engine reads GET .../sources/{did} where Sail reads .../sources/{did}/events,
+      # so the two engines credit different routes. The baseline is derived from
+      # what THIS job produces, not from the default engine a developer runs.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: recording-eventstream
+          path: e2e/eventstream/recording/responses.jsonl
+          if-no-files-found: warn
 
   agent-contract:
     needs: changes
@@ -1611,6 +1623,19 @@ jobs:
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/data-science-loop/run.py
+      # MEASURED TO EARN ITS ARTIFACT: six routes no other recording reaches --
+      # the tenant scanner (getInfo, scanStatus, scanResult), admin
+      # workspaces/modified, and the group-scoped dataset refresh history pair.
+      # e2e/notebook-run (+1) and e2e/deployment-pipelines (+0) were enabled at
+      # the same time and REVERTED: one route does not justify coupling the
+      # conformance gate to a suite, since an absent recording takes it red for
+      # a reason that is not its own.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: recording-data-science-loop
+          path: e2e/data-science-loop/recording/responses.jsonl
+          if-no-files-found: warn
 
   fabric-cli:
     needs: changes
@@ -2413,7 +2438,7 @@ jobs:
           cache-invalidation-interval: 1
 
   openapi-conformance:
-    needs: [changes, fabric-cli, az-rest, pipeline-activities, terraform-fabric, powerbi-ps, medallion, semantic-model, livy-native, sail]
+    needs: [changes, fabric-cli, az-rest, pipeline-activities, terraform-fabric, powerbi-ps, medallion, semantic-model, livy-native, sail, eventstream-sail, data-science-loop]
     if: needs.changes.outputs.docs_only != 'true'
     name: Responses conform to Microsoft's OpenAPI, and route coverage only ratchets
     runs-on: ubuntu-latest
@@ -2464,7 +2489,7 @@ jobs:
           # else's clothes. This turns that into one line naming the suite.
           missing=()
           for suite in fabric-cli az-rest pipeline-activities terraform-fabric \
-                       powerbi-ps medallion semantic-model livy sail; do
+                       powerbi-ps medallion semantic-model livy sail eventstream data-science-loop; do
             printf '%s\n' "${found[@]}" | grep -q "recording-$suite/" || missing+=("$suite")
           done
           if [ "${#missing[@]}" -ne 0 ]; then

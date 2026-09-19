@@ -16,6 +16,21 @@ def compose(*args):
     return subprocess.run(COMPOSE + list(args))
 
 
+# THE RECORDING DIRECTORY MUST BE WRITABLE BY A CONTAINER THAT IS NOT ROOT.
+# The emulator image is distroless :nonroot (uid 65532), so on Linux -- where a
+# bind mount belongs to the host user -- the container cannot create the file,
+# recording is never fatal by design, and the suite PASSES HAVING RECORDED
+# NOTHING. Measured on medallion, livy and sail before this was added here;
+# macOS bind mounts are permissive about uid, so a local run shows nothing
+# wrong. Cleared as well: the recorder APPENDS and the mount outlives the stack.
+_recording = os.path.join(DIR, "recording")
+os.makedirs(_recording, exist_ok=True)
+os.chmod(_recording, 0o777)
+_responses = os.path.join(_recording, "responses.jsonl")
+if os.path.exists(_responses):
+    os.remove(_responses)
+
+
 try:
     result = compose("up", "--build", "--abort-on-container-exit", "--exit-code-from", "witness")
     if result.returncode:
