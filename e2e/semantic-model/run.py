@@ -38,6 +38,9 @@ ENTRA = f"https://localhost:{ENTRA_PORT}"
 FABRIC = f"http://127.0.0.1:{FABRIC_PORT}"
 PBI_AUDIENCE = "https://analysis.windows.net/powerbi/api"
 EXE = ".exe" if os.name == "nt" else ""
+# Off unless asked for, like every other recording suite. An absolute path is
+# required because the emulator opens it from its own working directory.
+RECORD = os.environ.get("FABRIC_RECORD_RESPONSES", "")
 
 _CTX = ssl.create_default_context()
 _CTX.check_hostname = False
@@ -155,9 +158,20 @@ try:
     log(f"starting entra on :{ENTRA_PORT}, fabric on :{FABRIC_PORT}")
     start("entra", [entra_bin], {**os.environ, "ORIGIN_MODE": "compat", "PORT": ENTRA_PORT,
           "DB_PATH": os.path.join(WORK, "entra.sqlite"), "TLS_CERT_DIR": os.path.join(WORK, "entra-tls")})
+    # RECORDING, when the caller asks for it. The traffic below exists either
+    # way; recording only writes down what came back, and the aggregate
+    # conformance job validates it against Microsoft's swagger. This suite is
+    # the ONLY one that publishes a real SemanticModel, so the dataset and
+    # executeQueries shapes are reachable from nowhere else. No headers are
+    # written, ever -- see internal/server/record.go.
+    fabric_env = os.environ.copy()
+    if RECORD:
+        os.makedirs(os.path.dirname(RECORD), exist_ok=True)
+        fabric_env["FABRIC_RECORD_RESPONSES"] = RECORD
+        log(f"recording responses to {RECORD}")
     start("fabric", [fabric_bin, "-addr", f"127.0.0.1:{FABRIC_PORT}", "-data-dir", os.path.join(WORK, "data"),
           "-disable-tls", "-entra-issuer", f"https://localhost:{ENTRA_PORT}/{TENANT}/v2.0", "-entra-tls-insecure"],
-          os.environ.copy())
+          fabric_env)
     wait_healthy(f"{ENTRA}/health")
     wait_healthy(f"{FABRIC}/health")
 
@@ -252,6 +266,94 @@ try:
     if one.get("isRefreshable") is not False:
         raise SystemExit(f"isRefreshable={one.get('isRefreshable')} contradicts the 400 above")
     log("isRefreshable=false agrees with the refusal")
+
+    # THE MY-WORKSPACE SPELLINGS, which are the same surface with the workspace
+    # left out of the path. Power BI documents both: `/myorg/groups/{g}/datasets/
+    # {d}/...` and a group-less `/myorg/datasets/{d}/...`. Everything above used
+    # the group form, so the group-less twins had never been called by anything
+    # -- six registered routes with no traffic, which is where a wrong shape
+    # lives longest because nobody is looking.
+    #
+    # WHAT IS ASSERTED IS THAT THE TWO FORMS AGREE. A group-less route that
+    # answered a DIFFERENT dataset, or different rows, would be a real defect
+    # and nothing here would have noticed: the emulator resolves the id first
+    # and treats the group as a constraint on it, so the two paths meeting in
+    # the same handler is an implementation fact rather than a guarantee.
+    _, _, bare = http("GET", f"{FABRIC}/v1.0/myorg/datasets/{dataset}", token=pbi)
+    if bare != one:
+        raise SystemExit(
+            f"the group-less dataset GET disagrees with the group form:\n"
+            f"  bare={bare}\n  group={one}")
+    log("GET /myorg/datasets/{id} agrees with the group-scoped form")
+
+    # THE LIST IS THE ONE THAT REFUSES, and the refusal is the documented
+    # answer rather than a gap. This emulator models workspaces and has no
+    # personal workspace, so `{"value": []}` would be a well-formed lie --
+    # indistinguishable from a personal workspace that happens to be empty.
+    # Asserted by its ERROR CODE, not just the status, so the day it starts
+    # answering 404 for some other reason this stops passing.
+    code, _, body = http("GET", f"{FABRIC}/v1.0/myorg/datasets", token=pbi,
+                         allow_error=True)
+    #
+    # The envelope here is FABRIC's (`errorCode` at the top level), not Power
+    # BI's documented `{"error": {"code": ...}}`. That is measured rather than
+    # chosen, and it is asserted in the spelling the emulator actually uses so
+    # this suite reports the truth; whether the two envelopes should differ on
+    # a /v1.0/myorg route is a separate question, and the recording this run
+    # writes is what will settle it against the swagger.
+    if code != 404 or (body or {}).get("errorCode") != "PersonalWorkspaceNotSupported":
+        raise SystemExit(f"my-workspace dataset list: want 404 "
+                         f"PersonalWorkspaceNotSupported, got {code} {body}")
+    log("GET /myorg/datasets refuses (404 PersonalWorkspaceNotSupported)")
+
+    # ACCESS, through the group-less spelling. The publisher is the caller, so
+    # it already holds ReadWriteReshare through the workspace role -- which is
+    # what these routes require of a GRANTOR, and is why the reads below are
+    # expected to succeed rather than 403.
+    _, _, users = http("GET", f"{FABRIC}/v1.0/myorg/datasets/{dataset}/users", token=pbi)
+    if not any(u.get("identifier") == CLIENT_ID for u in users["value"]):
+        raise SystemExit(f"dataset users omits the publisher {CLIENT_ID}: {users}")
+    log(f"dataset users: {len(users['value'])} principal(s), publisher among them")
+
+    # POST adds to a direct grant, PUT replaces it outright -- the documented
+    # difference between the two verbs, and the reason both exist. Granting a
+    # principal that is not the caller, because a grant to yourself would pass
+    # whether or not the write did anything.
+    #
+    # A USER BY OBJECT ID, and both halves of that were measured rather than
+    # assumed. An App is refused outright, which is Power BI's own rule
+    # ("Adding or updating permissions for service principals isn't
+    # supported"). A UPN is refused too, with a better message than the real
+    # service gives: this emulator has no directory to resolve
+    # analyst@contoso.com against, and says so instead of inventing a
+    # principal. Two drafts of this block were told no before this one.
+    grantee = "11111111-2222-3333-4444-555555555555"
+    for verb, right, want in (("POST", "Read", "Read"),
+                              ("PUT", "ReadReshare", "ReadReshare")):
+        code, _, body = http(verb, f"{FABRIC}/v1.0/myorg/datasets/{dataset}/users",
+                             {"identifier": grantee, "principalType": "User",
+                              "datasetUserAccessRight": right},
+                             token=pbi, allow_error=True)
+        if code not in (200, 201):
+            raise SystemExit(f"{verb} dataset user returned {code}: {body}")
+        _, _, users = http("GET", f"{FABRIC}/v1.0/myorg/datasets/{dataset}/users", token=pbi)
+        got = next((u["datasetUserAccessRight"] for u in users["value"]
+                    if u["identifier"] == grantee), None)
+        if got != want:
+            raise SystemExit(f"after {verb} {right}, the grantee reads back as {got}, want {want}")
+        log(f"{verb} /myorg/datasets/{{id}}/users -> grantee holds {got}")
+
+    # And the group-less executeQueries, which is the surface this whole suite
+    # exists for. Same query, same oracle, through the other spelling.
+    probe = next(q for q in json.load(
+        open(os.path.join(FIX, "golden_queries.json")))["queries"] if q["handler"] == "dax")
+    _, _, resp = http("POST", f"{FABRIC}/v1.0/myorg/datasets/{dataset}/executeQueries",
+                      {"queries": [{"query": probe["dax"]}]}, token=pbi)
+    bare_rows = resp["results"][0]["tables"][0]["rows"]
+    if not rows_match(bare_rows, probe["expected"]["rows"]):
+        raise SystemExit(f"group-less executeQueries rows mismatch\n got={bare_rows}"
+                         f"\nwant={probe['expected']['rows']}")
+    log(f"POST /myorg/datasets/{{id}}/executeQueries: {len(bare_rows)} rows OK")
 
     # Run each DAX golden query through executeQueries and check the rows.
     golden = json.load(open(os.path.join(FIX, "golden_queries.json")))

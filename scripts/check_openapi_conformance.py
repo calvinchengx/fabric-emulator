@@ -105,6 +105,26 @@ KNOWN = {
     "POST /v1.0/myorg/groups: answered 404":
         "New-PowerBIWorkspace has no route here; creation goes through the "
         "Fabric surface.",
+    # REFUSALS THAT ARE THE HONEST ANSWER, where answering the documented
+    # status would be a well-formed lie. Both are reached only by
+    # e2e/semantic-model, which is the only suite that publishes a real
+    # SemanticModel, and both are asserted there rather than merely tolerated.
+    "GET /v1.0/myorg/datasets: answered 404":
+        "the MY-WORKSPACE list. This emulator models workspaces and has no "
+        "personal workspace, so there is no set for this route to describe. "
+        "The spec documents a 200, and `{\"value\": []}` would satisfy it -- "
+        "and would be indistinguishable to a caller from a personal workspace "
+        "that happens to be empty, which is the reading that costs someone an "
+        "afternoon believing their model failed to publish. The 404 names the "
+        "reason instead.",
+    "POST /v1.0/myorg/groups/{groupId}/datasets/{datasetId}/refreshes: answered 400":
+        "refresh of an INLINE-DATA model, whose rows are a data.json "
+        "definition part with nothing behind them. The spec documents 202 "
+        "Accepted; accepting here would tell a caller their numbers had been "
+        "brought up to date when nothing was re-read. The same predicate "
+        "drives isRefreshable=false on the dataset, so a client that trusts "
+        "the flag is never then contradicted. A Direct Lake model takes the "
+        "positive branch and is witnessed in e2e/data-science-loop.",
     "microsoftEntraMembers[0]: MISSING required property 'tenantId'":
         "NOT the emulator inventing a shape: OneLake roles are stored as the "
         "raw body the caller PUT and echoed back, so this is a test fixture's "
