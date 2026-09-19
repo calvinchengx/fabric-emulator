@@ -54,9 +54,19 @@ IN_SCOPE = ("/v1/", "/v1.0/")
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
 
-# A registration whose pattern is one string literal. The common case.
+# A registration whose pattern is one string literal AND NOTHING ELSE. The
+# trailing lookahead is the whole point: without it this matched the PREFIX of
+# a concatenation, so
+#
+#     mux.HandleFunc("GET /v1/workspaces/{wid}/"+collection, ...)
+#
+# yielded the truncated route `GET /v1/workspaces/{wid}/` and, because a match
+# counts as resolved, the site never reached the unresolved report. 909 typed
+# collection routes were absent from the denominator while four fictional ones
+# sat inside it, and the guard written to make exactly that impossible stayed
+# quiet -- a partial match reads as success.
 _LITERAL = re.compile(
-    r'HandleFunc\(\s*"(' + "|".join(METHODS) + r') (/[^"]*)"')
+    r'HandleFunc\(\s*"(' + "|".join(METHODS) + r') (/[^"]*)"\s*[,)]')
 
 # A registration ASSEMBLED FROM A VARIABLE, which is where this checker used to
 # go blind. `mux.HandleFunc("POST "+prefix+"/refreshes", ...)` does not match a
@@ -65,9 +75,14 @@ _LITERAL = re.compile(
 # ratchet exists to prevent, sitting inside the ratchet. Measured when it was
 # found: 31 in-scope routes invisible, including every dataset `refreshes` and
 # `datasources` route, which are served AND exercised AND were uncounted.
+# The leading literal may carry PART OF THE PATH as well as the method --
+# `"GET /v1/workspaces/{wid}/"+collection` -- which is how the typed
+# collections are mounted. Earlier this group ended at the space after the
+# method, so those registrations matched neither pattern properly.
 _ASSEMBLED = re.compile(
-    r'HandleFunc\(\s*(?:"(?P<m>' + "|".join(METHODS) + r') "|(?P<mvar>\w+)\s*\+\s*" "\s*)'
-    r'\+\s*(?P<var>\w+)(?P<rest>(?:\s*\+\s*"[^"]*")*)\s*[,)]')
+    r'HandleFunc\(\s*(?:"(?P<m>' + "|".join(METHODS) + r') (?P<head>/?[^"]*)"'
+    r'|(?P<mvar>\w+)\s*\+\s*" "\s*)'
+    r'\s*\+\s*(?P<var>\w+)(?P<rest>(?:\s*\+\s*"[^"]*")*)\s*[,)]')
 
 # `name := "literal"` / `name = "literal"` / `const name = "literal"`, and a
 # range over a slice literal of strings, which is how the two dataset spellings
@@ -84,6 +99,34 @@ _ITEM = re.compile(r'"([^"]*)"')
 
 # Any HandleFunc at all, so an unresolved one can be NAMED rather than dropped.
 _ANY = re.compile(r'HandleFunc\(')
+
+# Registration variables that are an ALIAS FAMILY over ONE handler, counted as
+# a parameterised segment rather than expanded. Keyed by "file:variable".
+#
+# WHY NOT EXPAND. registerTypedCollection mounts 9 routes for each of 51 typed
+# collections, in each of up to 2 spellings -- 909 registrations, all of them
+# the SAME handler forced to a different item type. Expanding them would put
+# 909 routes in a denominator currently around 160, and the ratchet would then
+# demand traffic for `GET .../mlExperiments` as separate evidence from
+# `GET .../notebooks` when the second exercises the identical code path. This
+# file already records the argument against that: the honest denominator is
+# what this emulator serves, and "a gate nobody can pass is a gate somebody
+# deletes".
+#
+# So the collection is treated as what it behaves like -- a path parameter.
+# `GET /v1/workspaces/{wid}/{collection}` is one route, which is one
+# implementation, and driving any one collection covers it.
+#
+# THIS IS NOT THE SILENT CASE IT REPLACES. An entry here is a claim, written
+# down, that a variable ranges over aliases of a single handler; anything else
+# unresolved still fails the run.
+PARAMETERISED = {
+    "internal/api/definitions.go:collection":
+        "the typed item collections: 51 names in up to 2 spellings, every one "
+        "of them registerTypedCollection's generic handler with the item type "
+        "forced. One route, one implementation.",
+}
+
 
 # Registrations this parser cannot turn into a route template, each allowed by
 # NAME and reason. Anything in scope that is not listed here fails the run.
@@ -118,6 +161,36 @@ def unparsed_registrations():
             surprises.append((rel, count, UNPARSED_OK.get(rel, 0)))
     return surprises
 
+
+
+_MAP_KEY = re.compile(r'"([A-Za-z0-9_]+)":')
+
+
+def alias_values(key):
+    """The literal names a PARAMETERISED variable stands for.
+
+    The ratchet deliberately does NOT expand these -- one generic handler is
+    one route, and demanding traffic for all 51 collections would ask for 51
+    proofs of the same code path. The LEDGER does expand them, because its
+    question is different: Microsoft documents `.../notebooks` and
+    `.../warehouses` as separate operations, and this emulator answers both.
+    Same registrations, two honest readings.
+    """
+    rel, _, var = key.partition(":")
+    source = ROOT / rel
+    if not source.is_file():
+        return []
+    text = source.read_text(encoding="utf-8")
+    # The map is named for what it holds, not for the loop variable, so find
+    # any map[string]string literal in the file that the loop ranges over.
+    m = re.search(r'range\s+(\w+)\s*\{[^}]*?\b' + re.escape(var) + r'\b', text)
+    if not m:
+        m = re.search(r'for\s+' + re.escape(var) + r'\s*,\s*\w+\s*:=\s*range\s+(\w+)', text)
+    if not m:
+        return []
+    lit = re.search(r'\b' + re.escape(m.group(1)) + r' = map\[string\]string\{(.*?)\n\}',
+                    text, re.S)
+    return _MAP_KEY.findall(lit.group(1)) if lit else []
 
 
 def _rel(path):
@@ -155,7 +228,7 @@ def _string_vars(text):
     return values
 
 
-def registered(report_unresolved=None):
+def registered(report_unresolved=None, families=None):
     """Every (method, path template) the emulator mounts, in scope."""
     found = set()
     for source in SOURCES:
@@ -176,15 +249,30 @@ def registered(report_unresolved=None):
             for match in _ASSEMBLED.finditer(text):
                 methods = ([match.group("m")] if match.group("m")
                            else values.get(match.group("mvar"), []))
-                bases = values.get(match.group("var"), [])
+                var = match.group("var")
+                head = match.group("head") or ""
+                bases = [head + v for v in values.get(var, [])]
+                if not bases:
+                    # An ALIAS FAMILY expands to the names it really serves.
+                    # A `{var}` placeholder here would be a WILDCARD in the
+                    # matcher and would swallow its own siblings: measured,
+                    # `GET /v1/workspaces/{wid}/{collection}` took the credit
+                    # for `.../items`, which every suite drives, and reported
+                    # it unexercised. Families are collapsed for REPORTING
+                    # instead, once matching is done.
+                    bases = [head + v for v in alias_values(f"{_rel(path)}:{var}")]
                 if not bases or not methods:
                     continue  # unresolved; counted below and reported
                 sites += 1
                 suffix = "".join(_ITEM.findall(match.group("rest") or ""))
+                is_family = f"{_rel(path)}:{var}" in PARAMETERISED and not values.get(var)
                 for base in bases:
                     for method in methods:
                         if method in METHODS and (base + suffix).startswith(IN_SCOPE):
-                            found.add(f"{method} {base + suffix}")
+                            label = f"{method} {base + suffix}"
+                            found.add(label)
+                            if is_family and families is not None:
+                                families.add(label)
             total = len(_ANY.findall(text))
             if report_unresolved is not None and sites < total:
                 report_unresolved.append((_rel(path), total - sites))
@@ -221,6 +309,37 @@ def exercised(recordings):
                     seen.add(label)
                     break
     return seen
+
+
+def collapser():
+    """A function folding FAMILY-EXPANDED routes back to one label each.
+
+    The denominator must not be hundreds of rows that are one handler: this
+    file already argues that a baseline nobody reads is the same as no gate.
+    So matching happens against the real names and counting against the family.
+
+    IT FOLDS BY PROVENANCE, NOT BY SPELLING, and that distinction is not
+    academic. `sqlEndpoints` is itself a typed collection, so a name-matching
+    version folded `POST .../sqlEndpoints/{epid}/refreshMetadata` -- a route
+    registered literally and specific to SQL endpoints -- into the family, and
+    thereby claimed all 51 collections answer refreshMetadata. Only routes
+    this parser produced BY expanding the family are folded.
+    """
+    families = set()
+    registered(families=families)
+    names = {}
+    for key in PARAMETERISED:
+        var = key.partition(":")[2]
+        for name in alias_values(key):
+            names[name] = "{" + var + "}"
+
+    def collapse(label):
+        if label not in families:
+            return label
+        method, _, template = label.partition(" ")
+        return f"{method} " + "/".join(names.get(p, p) for p in template.split("/"))
+
+    return collapse
 
 
 def read_baseline():
@@ -275,8 +394,12 @@ def main() -> int:
               "reason it is not a route template.", file=sys.stderr)
         return 1
 
-    all_routes = registered()
-    covered = exercised(present)
+    # MATCH ON THE EXPANDED ROUTES, COUNT ON THE COLLAPSED ONES. A recording
+    # of `.../notebooks` must credit the route it really hit, and the baseline
+    # must not carry 459 rows that are one handler.
+    collapse = collapser()
+    all_routes = {collapse(r) for r in registered()}
+    covered = {collapse(r) for r in exercised(present)}
     uncovered = all_routes - covered
 
     if arguments.update:

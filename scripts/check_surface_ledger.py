@@ -78,7 +78,20 @@ def documented():
 
 
 def served_shapes():
-    """The shapes this emulator registers."""
+    """The shapes this emulator registers, with alias families expanded.
+
+    check_route_coverage.registered() already returns the real collection
+    names rather than a `{collection}` placeholder -- a placeholder would be a
+    wildcard in its matcher and would swallow its own siblings. That gate then
+    COLLAPSES the family for counting, because 459 rows of one handler is a
+    baseline nobody reads. This gate does not collapse: Microsoft documents
+    `.../notebooks` and `.../warehouses` as SEPARATE operations and this
+    emulator answers both, so each is its own fact here.
+
+    Measured when the expansion was fixed: served went 120 -> 422 and silent
+    865 -> 563. The ledger had been reporting 302 operations as
+    nothing-has-ever-asked when the emulator serves them.
+    """
     shapes = collections.defaultdict(set)
     for label in cov.registered():
         method, _, template = label.partition(" ")

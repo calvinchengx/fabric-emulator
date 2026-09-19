@@ -222,9 +222,13 @@ def test_the_real_baseline_matches_the_real_tree():
     """
     assert c.BASELINE.is_file(), f"{c.BASELINE} is missing"
     recorded = set(json.loads(c.BASELINE.read_text())["notYetExercised"])
-    assert recorded <= c.registered(), (
+    # COLLAPSED, because that is what the baseline stores: matching happens on
+    # the expanded alias names and counting on the family.
+    collapse = c.collapser()
+    live = {collapse(r) for r in c.registered()}
+    assert recorded <= live, (
         "the baseline lists routes the emulator no longer registers: "
-        f"{sorted(recorded - c.registered())}")
+        f"{sorted(recorded - live)}")
 
 
 # --- assembled registrations ----------------------------------------------------
@@ -359,3 +363,85 @@ def test_reported_paths_use_forward_slashes(monkeypatch):
 
     assert c._rel(FakeWindowsPath()) == "internal/api/schedules.go"
     assert "\\" not in c._rel(_pathlib.Path(__file__))
+
+
+# --- partial literals and alias families ----------------------------------------
+#
+# The second blind spot, one level up from the first. The literal pattern
+# matched the PREFIX of a concatenation, so a registration built as
+# `"GET /v1/workspaces/{wid}/"+collection` produced the truncated route
+# `GET /v1/workspaces/{wid}/` -- and because a match counts as resolved, the
+# site never reached the unresolved report. 909 registrations were absent from
+# the denominator while four fictional ones sat inside it, and the guard
+# written to make that impossible stayed quiet: a partial match reads as
+# success.
+
+PARTIAL_SOURCE = '''
+package api
+
+var typedCollections = map[string]string{
+	"notebooks":  "Notebook",
+	"warehouses": "Warehouse",
+}
+
+func (a *API) registerTyped(mux *http.ServeMux) {
+	for collection, itemType := range typedCollections {
+		mux.HandleFunc("GET /v1/workspaces/{wid}/"+collection, a.typedList(itemType))
+		mux.HandleFunc("POST /v1/workspaces/{wid}/"+collection+"/{iid}/getDefinition", a.getDef)
+	}
+	// A route that is registered LITERALLY and happens to contain a collection
+	// name. It must NOT be folded into the family.
+	mux.HandleFunc("POST /v1/workspaces/{wid}/warehouses/{id}/special", a.special)
+}
+'''
+
+
+@pytest.fixture
+def partial(tmp_path, monkeypatch):
+    src = tmp_path / "api"
+    src.mkdir()
+    (src / "typed.go").write_text(PARTIAL_SOURCE)
+    monkeypatch.setattr(c, "SOURCES", (src,))
+    monkeypatch.setattr(c, "ROOT", tmp_path)
+    monkeypatch.setattr(c, "UNPARSED_OK", {})
+    monkeypatch.setattr(c, "PARAMETERISED", {"api/typed.go:collection": "test family"})
+    return tmp_path
+
+
+def test_a_partial_literal_does_not_become_a_truncated_route(partial):
+    """The exact defect: `"GET /prefix/"+var` must not register `GET /prefix/`."""
+    found = c.registered()
+    assert "GET /v1/workspaces/{wid}/" not in found
+    assert not [r for r in found if r.endswith("/")]
+
+
+def test_an_alias_family_expands_to_the_names_it_serves(partial):
+    """Not a `{collection}` wildcard, which would swallow its own siblings."""
+    found = c.registered()
+    assert "GET /v1/workspaces/{wid}/notebooks" in found
+    assert "GET /v1/workspaces/{wid}/warehouses" in found
+    assert "POST /v1/workspaces/{wid}/notebooks/{iid}/getDefinition" in found
+
+
+def test_the_family_collapses_for_counting(partial):
+    collapse = c.collapser()
+    assert collapse("GET /v1/workspaces/{wid}/notebooks") == \
+        "GET /v1/workspaces/{wid}/{collection}"
+    assert collapse("GET /v1/workspaces/{wid}/warehouses") == \
+        "GET /v1/workspaces/{wid}/{collection}"
+
+
+def test_collapsing_folds_by_provenance_not_by_spelling(partial):
+    """A literal route containing a collection NAME is not part of the family.
+
+    Measured: `sqlEndpoints` is itself a typed collection, so a name-matching
+    version folded `POST .../sqlEndpoints/{epid}/refreshMetadata` into the
+    family and thereby claimed all 51 collections answer refreshMetadata.
+    """
+    collapse = c.collapser()
+    literal = "POST /v1/workspaces/{wid}/warehouses/{id}/special"
+    assert collapse(literal) == literal
+
+
+def test_the_family_is_resolved_so_it_is_not_reported_unresolved(partial):
+    assert c.unparsed_registrations() == []
