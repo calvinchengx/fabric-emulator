@@ -368,6 +368,67 @@ def test_a_variable_outside_the_projects_prefixes_is_ignored(tree):
     assert c.findings() == []
 
 
+# --- class 4: dead Go package/symbol references -------------------------------
+
+def test_a_dead_go_symbol_reference_fails(tree, tmp_path):
+    tree({"docs/a.md": "call `internal/api.MissingThing` for pagination\n"},
+         files=["internal/api/pagination.go"])
+    (tmp_path / "internal/api/pagination.go").write_text(
+        "package api\n\ntype LiveThing struct{}\n")
+    found = c.findings()
+    assert kinds(found) == ["go"]
+    assert found[0][3] == "internal/api.MissingThing"
+
+
+def test_a_live_go_symbol_reference_passes(tree, tmp_path):
+    tree({"docs/a.md": "call `internal/api.writePage` for pagination\n"},
+         files=["internal/api/pagination.go"])
+    (tmp_path / "internal/api/pagination.go").write_text(
+        "package api\n\nfunc writePage[T any](items []T) {}\n")
+    assert c.findings() == []
+
+
+def test_a_method_is_not_counted_as_a_package_symbol(tree, tmp_path):
+    tree({"docs/a.md": "call `internal/api.writePage` for pagination\n"},
+         files=["internal/api/pagination.go"])
+    (tmp_path / "internal/api/pagination.go").write_text(
+        "package api\n\ntype pager struct{}\nfunc (p pager) writePage() {}\n")
+    found = c.findings()
+    assert kinds(found) == ["go"]
+    assert found[0][3] == "internal/api.writePage"
+
+
+def test_a_go_path_is_still_handled_by_the_path_class(tree, tmp_path):
+    tree({"docs/a.md": "see `internal/api/gone.go` for the handler\n"},
+         files=["internal/api/livy.go"])
+    (tmp_path / "internal/api/livy.go").write_text("package api\n")
+    found = c.findings()
+    assert kinds(found) == ["path"]
+    assert found[0][3] == "internal/api/gone.go"
+
+
+def test_a_go_symbol_inside_a_fenced_block_is_not_read(tree, tmp_path):
+    tree({"docs/a.md": "```go\nx := `internal/api.MissingThing`\n```\n"},
+         files=["internal/api/pagination.go"])
+    (tmp_path / "internal/api/pagination.go").write_text("package api\n")
+    assert c.findings() == []
+
+
+def test_a_non_repo_or_non_go_qualified_name_is_ignored(tree, tmp_path):
+    tree({"docs/a.md": "`github.com/acme.Widget` and `fmt.Println`\n"},
+         files=["internal/api/pagination.go"])
+    (tmp_path / "internal/api/pagination.go").write_text("package api\n")
+    assert c.findings() == []
+
+
+def test_a_go_symbol_exempt_entry_is_skipped(tree, tmp_path):
+    tree({"docs/a.md": "planned: `internal/api.FutureThing`\n"},
+         files=["internal/api/pagination.go"],
+         exempt={("docs/a.md", "internal/api.FutureThing"): "planned API"})
+    (tmp_path / "internal/api/pagination.go").write_text("package api\n")
+    assert c.findings() == []
+
+
 # --- scope, exemptions, reporting ---------------------------------------------
 
 def test_release_notes_are_skipped(tree):
