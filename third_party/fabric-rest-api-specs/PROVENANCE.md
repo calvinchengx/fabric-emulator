@@ -12,10 +12,13 @@ each refers to and the shared schemas under `common/`.
   what it is used for and nothing else.
 - **Used by:** `scripts/check_openapi_conformance.py`, which validates responses
   the emulator actually returned against the schema for the route that returned
-  them. It runs in the `fabric-cli` CI job, immediately after that suite — and
-  NOT in `make check`, because its input is a recording that only exists once a
-  suite has run. A gate that needs a live stack does not belong in the offline
-  one, and claiming it did would be the kind of unbacked sentence this
+  them. It runs in the aggregate `openapi-conformance` CI job, over the union
+  of the recordings every recording suite uploads — it began life inside the
+  `fabric-cli` job and moved out when other suites started recording, because
+  the route-coverage ratchet beside it is only meaningful over that union. It
+  is NOT in `make check`, because its input is a recording that only exists
+  once a suite has run. A gate that needs a live stack does not belong in the
+  offline one, and claiming it did would be the kind of unbacked sentence this
   repository writes checkers to catch.
 
 ## Why this is here rather than consulted
