@@ -162,6 +162,15 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_example_parity.py
 	@$(PY) scripts/check_example_portability.py
 	@$(PY) scripts/check_conformance.py --strict
+	@# THE ONE CONTRACT GATE THAT NEEDS NO RECORDING, which is why it is
+	@# here and its three siblings are not. Conformance, route coverage
+	@# and the surface ledger all read a recording, so they live in the
+	@# aggregate CI job behind eleven e2e suites and cannot answer before
+	@# a push. This one reads the Go source and the vendored swagger:
+	@# offline, deterministic, and it is the direction that bites hardest
+	@# -- a route the emulator answers that no spec documents is a URL a
+	@# script binds to here and 404s on in production.
+	@$(PY) scripts/check_undocumented_routes.py --strict
 	@# Doc 24 summarises the sub-plans in one row each, and three of those
 	@# rows went stale before anything checked them — each pointing a
 	@# maintainer at work already finished.
