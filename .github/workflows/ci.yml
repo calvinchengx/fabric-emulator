@@ -2425,6 +2425,15 @@ jobs:
           set -euo pipefail
           uv run --frozen --no-sync python scripts/check_openapi_conformance.py \
             $(cat recordings.txt) --strict
+      # THE LEDGER, over the same union. Conformance and the route ratchet both
+      # measure against what this emulator SERVES; neither can say anything
+      # about the operations Microsoft documents and this emulator does not
+      # implement, which is most of them. The ledger's denominator is the spec,
+      # so it is the only gate that can tell a silent gap from a refused one.
+      - run: |
+          set -euo pipefail
+          uv run --frozen --no-sync python scripts/check_surface_ledger.py \
+            $(cat recordings.txt) --strict
       - run: |
           set -euo pipefail
           uv run --frozen --no-sync python scripts/check_route_coverage.py \
