@@ -744,7 +744,12 @@
     </Table.Header>
     <Table.Body>
       {#each shown as ev (ev.seq)}
-        <tr class={ev.status === 'Failed' ? 'failed-row' : ''}>
+        <!-- The failed-row colour is a UTILITY, not a scoped rule. It was
+             `.failed-row td { @apply bg-[var(--danger-bg)] }` here and Svelte
+             compiled it away: the td elements are rendered by Table.Cell and
+             carry that component's scope hash, never this one's. A class from
+             the global utility sheet is not scope-hashed, so it applies. -->
+        <tr class={ev.status === 'Failed' ? 'bg-[var(--danger-bg)]' : ''}>
           <Table.Cell class="mono">{fmt(ev.at)}</Table.Cell>
           <Table.Cell><StatusBadge>{ev.kind}</StatusBadge></Table.Cell>
           <Table.Cell>{describe(ev)}</Table.Cell>
