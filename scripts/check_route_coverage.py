@@ -279,6 +279,112 @@ def registered(report_unresolved=None, families=None):
     return found
 
 
+# `{name...}` is Go 1.22+ ServeMux's REST-OF-PATH wildcard: it matches
+# everything after it, slashes included. `{name}` matches one segment. Order
+# matters here -- `...` params must be substituted BEFORE the general `{name}`
+# pass, which would otherwise match them too and produce the single-segment
+# form.
+#
+# FOUND BY AN ORACLE, NOT BY READING: every recorded response the emulator's
+# own mux actually routed must match some registered template, or the parser
+# is blind to whatever handled it. 95 non-404 responses matched nothing --
+# almost all of them Livy statement calls two segments past `{livypath...}`,
+# like `.../versions/2023-12-01/sessions/0/statements/3`. The single-segment
+# substitution could match the CREATE call (one segment: `sessions`) and
+# nothing after it, so GET and DELETE on `{livypath...}` sat in the baseline
+# as not-yet-exercised while every e2e/livy run drove them.
+_DOTDOTDOT = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\.\.\.\}")
+_PARAM = re.compile(r"\{[^}]+\}")
+
+
+def _route_regex(template):
+    pattern = _DOTDOTDOT.sub(".*", template)
+    pattern = _PARAM.sub("[^/]+", pattern)
+    return re.compile("^" + pattern + "$")
+
+
+_SUBTREE = re.compile(r'HandleFunc\(\s*"(/[^"]*/)"\s*,')
+
+
+def subtree_prefixes():
+    """In-scope paths dispatched by hand from a ServeMux SUBTREE registration.
+
+    `mux.HandleFunc("/v1/workspaces/{wid}/items/{iid}/jobs/", a.jobsSubtree)`
+    has no method keyword and a trailing slash -- Go's prefix-match form. What
+    lands there is not describable as a route TEMPLATE by this parser (that is
+    what UNPARSED_OK records), so recorded traffic under it cannot be checked
+    against a template and must not be reported as ORPHANED either. Found
+    programmatically rather than hand-listed, so a new subtree handler is
+    excluded the day it is written rather than the day someone remembers to
+    list it.
+    """
+    prefixes = set()
+    for source in SOURCES:
+        for path in sorted(source.rglob("*.go")):
+            if path.name.endswith("_test.go"):
+                continue
+            for prefix in _SUBTREE.findall(path.read_text(encoding="utf-8", errors="ignore")):
+                if prefix.startswith(IN_SCOPE):
+                    prefixes.add(prefix)
+    return prefixes
+
+
+def orphaned(recordings):
+    """Recorded traffic no registered template explains.
+
+    A DIFFERENT ORACLE FROM THE OTHER TWO CHECKS IN THIS FILE, and a stronger
+    one. Route coverage and the unresolved-registration guard both trust that
+    registered() is complete; this does not. Every response the recorder wrote
+    down was routed by THIS EMULATOR'S OWN MUX -- recordable() wraps s.mux
+    directly -- so if the parser can explain none of it, the parser is wrong,
+    not the traffic.
+
+    A 404 is excluded: the catch-all in internal/server/portal.go answers one
+    for any unrouted path, so a 404 proves only that nothing served the
+    request, which is a legitimate outcome this parser has nothing to say
+    about. Anything else -- 200, 201, 202, 400, 409, whatever the handler that
+    actually ran chose to answer -- proves a handler ran, which proves a
+    registration this parser failed to turn into a matching template.
+
+    FOUND THIS WAY: the {name...} substitution used the same [^/]+ as {name},
+    a single path segment, where Go's `...` wildcard matches the rest of the
+    path including slashes. 95 responses two-plus segments past a `...`
+    route -- almost all e2e/livy's Statements API -- matched nothing, and
+    GET/DELETE on the Livy passthrough sat in the baseline as not-yet-exercised
+    while every run of that suite drove them.
+    """
+    patterns = []
+    for label in registered():
+        method, _, template = label.partition(" ")
+        patterns.append((method, _route_regex(template)))
+    # A subtree PREFIX still carries its own path parameters --
+    # `/v1/workspaces/{wid}/items/{iid}/jobs/` -- so matching it against a
+    # recorded path needs the same param substitution as a route template, not
+    # a literal startswith. A literal comparison never matches a real GUID and
+    # every one of these orphans would misreport as unexplained.
+    subtree_regexes = [re.compile("^" + _DOTDOTDOT.sub(".*", _PARAM.sub("[^/]+", p)))
+                       for p in subtree_prefixes()]
+    found = []
+    for recording in recordings:
+        for line in recording.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if entry.get("status") == 404:
+                continue
+            path = entry.get("path", "")
+            if any(rx.match(path) for rx in subtree_regexes):
+                continue
+            if any(m == entry.get("method") and rx.match(path) for m, rx in patterns):
+                continue
+            found.append(entry)
+    return found
+
+
 def exercised(recordings):
     """The registered routes at least one recorded response matched.
 
@@ -290,8 +396,7 @@ def exercised(recordings):
     patterns = []
     for label in registered():
         method, _, template = label.partition(" ")
-        regex = re.compile("^" + re.sub(r"\{[^}]+\}", "[^/]+", template) + "$")
-        patterns.append((method, regex, template, label))
+        patterns.append((method, _route_regex(template), template, label))
     patterns.sort(key=lambda p: len(p[2]), reverse=True)
 
     seen = set()
@@ -392,6 +497,23 @@ def main() -> int:
                   f"{allowed} allowed in UNPARSED_OK", file=sys.stderr)
         print("  -> teach registered() the form, or add it to UNPARSED_OK with the "
               "reason it is not a route template.", file=sys.stderr)
+        return 1
+
+    orphans = orphaned(present)
+    if orphans:
+        print("check_route_coverage: recorded traffic that no registered template "
+              "explains -- the parser is missing something, not the traffic:",
+              file=sys.stderr)
+        by_route = {}
+        for o in orphans:
+            by_route.setdefault((o["method"], o["path"]), o["status"])
+        for (method, path), status in list(by_route.items())[:10]:
+            print(f"    {method} {path} -> {status}", file=sys.stderr)
+        if len(by_route) > 10:
+            print(f"    … and {len(by_route) - 10} more", file=sys.stderr)
+        print("  -> teach registered()/exercised() the form that produced this "
+              "traffic, or subtree_prefixes() if it is dispatched by hand.",
+              file=sys.stderr)
         return 1
 
     # MATCH ON THE EXPANDED ROUTES, COUNT ON THE COLLAPSED ONES. A recording

@@ -17,6 +17,7 @@ fails on an improvement; it is also the one that keeps the file honest.
 """
 import json
 import pathlib
+import re
 import sys
 
 import pytest
@@ -68,8 +69,8 @@ def recording(tmp_path, entries, name="rec.jsonl"):
     return path
 
 
-def hit(method, path):
-    return {"method": method, "path": path, "status": 200, "body": {}}
+def hit(method, path, status=200):
+    return {"method": method, "path": path, "status": status, "body": {}}
 
 
 # --- registration parsing -------------------------------------------------------
@@ -445,3 +446,111 @@ def test_collapsing_folds_by_provenance_not_by_spelling(partial):
 
 def test_the_family_is_resolved_so_it_is_not_reported_unresolved(partial):
     assert c.unparsed_registrations() == []
+
+
+# --- the orphan oracle -----------------------------------------------------------
+#
+# A third and stronger oracle than the two above. Route coverage and the
+# unresolved-registration guard both trust that registered() is complete;
+# this does not. Every response a recording holds was routed by the
+# emulator's OWN mux, so if the parser can explain none of it, the parser is
+# wrong -- not the traffic.
+#
+# IT FOUND A REAL BUG THE DAY IT WAS WRITTEN: `{name...}` (Go's rest-of-path
+# wildcard) was substituted the same as `{name}` -- a single segment -- so any
+# traffic two-plus segments past a `...` route matched nothing. 95 recorded
+# Livy statement calls were orphaned before the fix.
+
+WILDCARD_SOURCE = '''
+package api
+
+func (a *API) register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/proxy/{rest...}", a.proxy)
+	mux.HandleFunc("POST /v1/proxy/{rest...}", a.proxy)
+}
+'''
+
+SUBTREE_SOURCE = '''
+package api
+
+func (a *API) register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/workspaces/{wid}/items/{iid}/jobs/instances", a.list)
+	// A hand-dispatched subtree: no method keyword, trailing slash.
+	mux.HandleFunc("/v1/workspaces/{wid}/items/{iid}/jobs/", a.jobsSubtree)
+}
+'''
+
+
+@pytest.fixture
+def wildcard(tmp_path, monkeypatch):
+    src = tmp_path / "api"
+    src.mkdir()
+    (src / "wild.go").write_text(WILDCARD_SOURCE)
+    monkeypatch.setattr(c, "SOURCES", (src,))
+    monkeypatch.setattr(c, "ROOT", tmp_path)
+    monkeypatch.setattr(c, "UNPARSED_OK", {})
+    monkeypatch.setattr(c, "PARAMETERISED", {})
+    return tmp_path
+
+
+def test_a_dotdotdot_wildcard_matches_more_than_one_segment(wildcard, tmp_path):
+    """The exact bug: a two-segment path past the wildcard must be credited."""
+    rec = recording(tmp_path, [hit("GET", "/v1/proxy/a/b/c")])
+    assert "GET /v1/proxy/{rest...}" in c.exercised([rec])
+
+
+def test_a_dotdotdot_wildcard_still_matches_one_segment(wildcard, tmp_path):
+    rec = recording(tmp_path, [hit("GET", "/v1/proxy/a")])
+    assert "GET /v1/proxy/{rest...}" in c.exercised([rec])
+
+
+def test_traffic_the_parser_cannot_explain_is_orphaned(wildcard, tmp_path):
+    """Same fixture, matched with the NAIVE (pre-fix) substitution directly."""
+    naive = re.compile("^" + re.sub(r"\{[^}]+\}", "[^/]+", "/v1/proxy/{rest...}") + "$")
+    assert not naive.match("/v1/proxy/a/b/c")  # proves the fixture is discriminating
+
+
+def test_a_404_is_never_reported_as_an_orphan(wildcard, tmp_path):
+    """The portal's catch-all answers 404 for any unrouted path; that is a
+    legitimate outcome, not evidence the parser missed a registration."""
+    rec = recording(tmp_path, [hit("GET", "/v1/nothing/registered", status=404)])
+    assert c.orphaned([rec]) == []
+
+
+def test_traffic_under_a_subtree_handler_is_not_orphaned(tmp_path, monkeypatch):
+    src = tmp_path / "api"
+    src.mkdir()
+    (src / "sub.go").write_text(SUBTREE_SOURCE)
+    monkeypatch.setattr(c, "SOURCES", (src,))
+    monkeypatch.setattr(c, "ROOT", tmp_path)
+    monkeypatch.setattr(c, "UNPARSED_OK", {})
+    monkeypatch.setattr(c, "PARAMETERISED", {})
+    rec = recording(tmp_path, [
+        hit("GET", "/v1/workspaces/11111111-1111-1111-1111-111111111111"
+                   "/items/22222222-2222-2222-2222-222222222222/jobs/Pipeline/schedules"),
+    ])
+    assert c.orphaned([rec]) == []
+
+
+def test_traffic_no_registration_explains_is_orphaned(tmp_path, monkeypatch):
+    """The genuine failure mode: nothing in the tree accounts for this call."""
+    src = tmp_path / "api"
+    src.mkdir()
+    (src / "empty.go").write_text("package api\n")
+    monkeypatch.setattr(c, "SOURCES", (src,))
+    monkeypatch.setattr(c, "ROOT", tmp_path)
+    monkeypatch.setattr(c, "UNPARSED_OK", {})
+    monkeypatch.setattr(c, "PARAMETERISED", {})
+    rec = recording(tmp_path, [hit("GET", "/v1/mystery", status=200)])
+    found = c.orphaned([rec])
+    assert len(found) == 1 and found[0]["path"] == "/v1/mystery"
+
+
+def test_the_real_tree_has_no_orphaned_traffic():
+    """The gate against the tree it guards: every local recording, if any
+    exist, must be explained by a registration."""
+    recs = sorted(pathlib.Path("e2e").glob("*/recording/responses.jsonl"))
+    present = [r for r in recs if r.is_file()]
+    if not present:
+        pytest.skip("no local recordings to check")
+    assert c.orphaned(present) == []

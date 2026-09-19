@@ -10,7 +10,7 @@
     "check_route_coverage.py <recording> --update and let the diff",
     "be the review."
   ],
-  "exercised": 99,
+  "exercised": 101,
   "registered": 172,
   "notYetExercised": [
     "DELETE /v1/deploymentPipelines/{pid}/roleAssignments/{prid}",
@@ -19,7 +19,6 @@
     "DELETE /v1/workspaces/{wid}/items/{iid}/_emulator/access/{principalId}",
     "DELETE /v1/workspaces/{wid}/items/{iid}/shortcuts/{path}/{name}",
     "DELETE /v1/workspaces/{wid}/lakehouses/{iid}/materializedlakeviews/{name}",
-    "DELETE /v1/workspaces/{wid}/lakehouses/{lid}/livyapi/versions/{ver}/{livypath...}",
     "DELETE /v1/workspaces/{wid}/reflexes/{iid}/triggers/{tid}",
     "GET /v1.0/myorg/admin/workspaces/modified",
     "GET /v1.0/myorg/admin/workspaces/scanResult/{scanId}",
@@ -49,7 +48,6 @@
     "GET /v1/workspaces/{wid}/lakehouses/{iid}/materializedlakeviews",
     "GET /v1/workspaces/{wid}/lakehouses/{iid}/materializedlakeviews/{name}",
     "GET /v1/workspaces/{wid}/lakehouses/{lid}/livyapi/versions/{ver}/highConcurrencySessions/{hcid}",
-    "GET /v1/workspaces/{wid}/lakehouses/{lid}/livyapi/versions/{ver}/{livypath...}",
     "GET /v1/workspaces/{wid}/reflexes/{iid}/triggers",
     "GET /v1/workspaces/{wid}/reflexes/{iid}/triggers/{tid}",
     "GET /v1/workspaces/{wid}/{collection}/{iid}/jobs/instances/{jid}",
