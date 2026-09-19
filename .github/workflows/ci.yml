@@ -2446,6 +2446,25 @@ jobs:
           printf 'recording: %s\n' "${found[@]}"
           wc -l "${found[@]}"
           printf '%s\n' "${found[@]}" > recordings.txt
+          # EVERY EXPECTED RECORDING, BY NAME. Counting them is not enough and
+          # neither is refusing an empty set: a suite that passes having
+          # recorded nothing uploads nothing under if-no-files-found: warn, so
+          # the union silently shrinks and the RATCHET fails instead -- naming
+          # eight routes that are missing traffic, which points at the routes
+          # rather than at the suite that stopped recording. That is what
+          # happened when livy and sail were added: their emulator could not
+          # write to a bind mount it did not own, the suites went green, and
+          # the failure arrived several steps downstream wearing someone
+          # else's clothes. This turns that into one line naming the suite.
+          missing=()
+          for suite in fabric-cli az-rest pipeline-activities terraform-fabric \
+                       powerbi-ps medallion semantic-model livy sail; do
+            printf '%s\n' "${found[@]}" | grep -q "recording-$suite/" || missing+=("$suite")
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::these suites uploaded no recording, so the union is short and the ratchet will blame the routes: ${missing[*]}"
+            exit 1
+          fi
       - run: |
           set -euo pipefail
           uv run --frozen --no-sync python scripts/check_openapi_conformance.py \
