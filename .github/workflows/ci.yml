@@ -2295,7 +2295,27 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.11.32"
+      # RECORDED ON ONE LEG ONLY, not all three. A response shape does not
+      # depend on the runner's OS, so three recordings of the same traffic
+      # would cost three artifacts and three names to tell the union nothing
+      # it did not already have. ubuntu is the leg because it is the one the
+      # aggregate job runs on.
+      #
+      # WHY THIS SUITE RECORDS AT ALL, when 28 others deliberately do not: it
+      # is the ONLY suite that publishes a real SemanticModel, so the dataset,
+      # dataset-users and executeQueries shapes are reachable from nowhere
+      # else. Measured, not assumed -- it adds 8 routes no other recording
+      # reaches, and its first recorded run found two status disagreements
+      # with Microsoft's swagger.
       - run: uv run --frozen --no-sync python e2e/semantic-model/run.py
+        env:
+          FABRIC_RECORD_RESPONSES: ${{ matrix.os == 'ubuntu-latest' && format('{0}/e2e/semantic-model/recording/responses.jsonl', github.workspace) || '' }}
+      - uses: actions/upload-artifact@v7
+        if: always() && matrix.os == 'ubuntu-latest'
+        with:
+          name: recording-semantic-model
+          path: e2e/semantic-model/recording/responses.jsonl
+          if-no-files-found: warn
 
   great-expectations:
     needs: changes
@@ -2362,7 +2382,7 @@ jobs:
           cache-invalidation-interval: 1
 
   openapi-conformance:
-    needs: [changes, fabric-cli, az-rest, pipeline-activities, terraform-fabric, powerbi-ps, medallion]
+    needs: [changes, fabric-cli, az-rest, pipeline-activities, terraform-fabric, powerbi-ps, medallion, semantic-model]
     if: needs.changes.outputs.docs_only != 'true'
     name: Responses conform to Microsoft's OpenAPI, and route coverage only ratchets
     runs-on: ubuntu-latest

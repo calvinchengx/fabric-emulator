@@ -10,7 +10,7 @@
     "check_route_coverage.py <recording> --update and let the diff",
     "be the review."
   ],
-  "exercised": 77,
+  "exercised": 84,
   "registered": 133,
   "notYetExercised": [
     "DELETE /v1/deploymentPipelines/{pid}/roleAssignments/{prid}",
@@ -20,10 +20,6 @@
     "GET /v1.0/myorg/admin/workspaces/modified",
     "GET /v1.0/myorg/admin/workspaces/scanResult/{scanId}",
     "GET /v1.0/myorg/admin/workspaces/scanStatus/{scanId}",
-    "GET /v1.0/myorg/datasets",
-    "GET /v1.0/myorg/datasets/{datasetId}",
-    "GET /v1.0/myorg/datasets/{datasetId}/users",
-    "GET /v1.0/myorg/groups/{groupId}/datasets/{datasetId}",
     "GET /v1.0/myorg/groups/{groupId}/datasets/{datasetId}/users",
     "GET /v1/admin/workspaces/{wid}/items/{iid}/users",
     "GET /v1/deploymentPipelines/{pid}",
@@ -47,8 +43,6 @@
     "PATCH /v1/workspaces/{wid}/items/{iid}",
     "PATCH /v1/workspaces/{wid}/roleAssignments/{raid}",
     "POST /v1.0/myorg/admin/workspaces/getInfo",
-    "POST /v1.0/myorg/datasets/{datasetId}/executeQueries",
-    "POST /v1.0/myorg/datasets/{datasetId}/users",
     "POST /v1.0/myorg/groups/{groupId}/datasets/{datasetId}/users",
     "POST /v1/catalog/search",
     "POST /v1/deploymentPipelines/{pid}/roleAssignments",
@@ -66,7 +60,6 @@
     "POST /v1/workspaces/{wid}/lineage",
     "POST /v1/workspaces/{wid}/mirroredDatabases/{iid}/refreshMirror",
     "POST /v1/workspaces/{wid}/sqlDatabases/{iid}/refreshMirror",
-    "PUT /v1.0/myorg/datasets/{datasetId}/users",
     "PUT /v1.0/myorg/groups/{groupId}/datasets/{datasetId}/users",
     "PUT /v1/workspaces/{wid}/items/{iid}/_emulator/access/{principalId}"
   ]
