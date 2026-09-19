@@ -466,7 +466,13 @@ func (a *API) moveItem(w http.ResponseWriter, r *http.Request, p *auth.Principal
 		return
 	}
 	it.FolderID = target
-	writeJSON(w, http.StatusOK, it)
+	// MovedItems, not the bare item: Microsoft documents Move Item's 200 as
+	// `{"value": [Item]}` -- the same envelope bulkMove already answers with --
+	// and a caller reading the documented shape found no `value` here. Found by
+	// check_openapi_conformance the first time a recording reached this route.
+	// fabric-cicd, the client that calls it on a redeploy, stores the response
+	// whole and reads no field from it, so the change cannot break that witness.
+	writeJSON(w, http.StatusOK, map[string]any{"value": []*store.Item{it}})
 }
 
 // bulkMoveItems reparents many items in one request.
