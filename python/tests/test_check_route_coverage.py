@@ -336,3 +336,26 @@ def test_an_allowlisted_registration_is_not_a_surprise(tmp_path, monkeypatch):
 def test_the_real_tree_has_no_unexplained_registration():
     """Every HandleFunc in the tree is either parsed or named in UNPARSED_OK."""
     assert c.unparsed_registrations() == []
+
+
+def test_reported_paths_use_forward_slashes(monkeypatch):
+    r"""UNPARSED_OK is keyed by POSIX paths, so the reporter must speak POSIX.
+
+    On Windows `Path.relative_to` returns `internal\api\schedules.go`, which
+    matches no key in UNPARSED_OK, so every allowlisted registration read as a
+    surprise and the gate failed on the Windows leg alone while every other
+    leg passed. Asserted here rather than left to the three-OS matrix, because
+    a green on ubuntu says nothing about it.
+    """
+    import ntpath
+    import pathlib as _pathlib
+
+    class FakeWindowsPath:
+        def relative_to(self, _root):
+            return self
+
+        def __str__(self):
+            return ntpath.join("internal", "api", "schedules.go")
+
+    assert c._rel(FakeWindowsPath()) == "internal/api/schedules.go"
+    assert "\\" not in c._rel(_pathlib.Path(__file__))

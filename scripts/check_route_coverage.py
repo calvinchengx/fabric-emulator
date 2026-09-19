@@ -128,9 +128,15 @@ def _rel(path):
     reporter would crash on exactly the case the tests exist to cover.
     """
     try:
-        return str(path.relative_to(ROOT))
+        rel = str(path.relative_to(ROOT))
     except ValueError:
-        return str(path)
+        rel = str(path)
+    # FORWARD SLASHES ALWAYS. UNPARSED_OK is keyed by repo-relative POSIX
+    # paths, and on Windows this returned `internal\api\schedules.go`, which
+    # matched no key -- so every allowlisted registration read as a surprise
+    # and the gate failed on the Windows leg alone. The rest of this repo's
+    # stdlib checkers already normalise the same way; this one did not.
+    return rel.replace("\\", "/")
 
 
 def _string_vars(text):
