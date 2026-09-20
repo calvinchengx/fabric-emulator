@@ -159,6 +159,12 @@ NATIVE = {
         "repository's reserved prefix for levers real Fabric has no API for. "
         "Item-level access is Purview/OneLake security in Fabric, which cannot "
         "be attached offline.",
+    r"^(GET|PUT) /v1/workspaces/\{wid\}/sqlEndpoints/\{epid\}/_emulator/dataAccessMode$":
+        "Emulator-native by its own name. Fabric switches a SQL analytics "
+        "endpoint's data access mode in the portal and documents no API for it "
+        "(OneLake security for SQL analytics endpoints). Bearer-authenticated "
+        "and Admin/Member-gated, so it is not under the unauthenticated "
+        "/_emulator/ control prefix. Witnessed by internal/server/dataaccessmode_test.go.",
     r"/livyapi/":
         "The Livy REST protocol, which is Apache's and not Microsoft's. Fabric "
         "exposes a Livy endpoint per lakehouse and the fabric-rest-api-specs "
