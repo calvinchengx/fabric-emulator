@@ -100,6 +100,12 @@ def test_the_real_tree_registers_a_plausible_number():
     assert len(c.registered()) > 50
 
 
+def test_the_real_tree_registers_both_typed_collection_spellings():
+    routes = c.registered()
+    assert "GET /v1/workspaces/{wid}/notebooks" in routes
+    assert "GET /v1/workspaces/{wid}/Notebooks" in routes
+
+
 # --- template matching ----------------------------------------------------------
 
 def test_a_recorded_path_credits_its_template(tree, tmp_path):
@@ -420,13 +426,18 @@ def test_an_alias_family_expands_to_the_names_it_serves(partial):
     """Not a `{collection}` wildcard, which would swallow its own siblings."""
     found = c.registered()
     assert "GET /v1/workspaces/{wid}/notebooks" in found
+    assert "GET /v1/workspaces/{wid}/Notebooks" in found
     assert "GET /v1/workspaces/{wid}/warehouses" in found
+    assert "GET /v1/workspaces/{wid}/Warehouses" in found
     assert "POST /v1/workspaces/{wid}/notebooks/{iid}/getDefinition" in found
+    assert "POST /v1/workspaces/{wid}/Notebooks/{iid}/getDefinition" in found
 
 
 def test_the_family_collapses_for_counting(partial):
     collapse = c.collapser()
     assert collapse("GET /v1/workspaces/{wid}/notebooks") == \
+        "GET /v1/workspaces/{wid}/{collection}"
+    assert collapse("GET /v1/workspaces/{wid}/Notebooks") == \
         "GET /v1/workspaces/{wid}/{collection}"
     assert collapse("GET /v1/workspaces/{wid}/warehouses") == \
         "GET /v1/workspaces/{wid}/{collection}"
@@ -446,6 +457,15 @@ def test_collapsing_folds_by_provenance_not_by_spelling(partial):
 
 def test_the_family_is_resolved_so_it_is_not_reported_unresolved(partial):
     assert c.unparsed_registrations() == []
+
+
+def test_a_capitalized_collection_recording_credits_the_family(partial, tmp_path):
+    rec = recording(tmp_path, [hit("GET", "/v1/workspaces/ws/Notebooks")])
+    assert c.exercised([rec]) == {"GET /v1/workspaces/{wid}/Notebooks"}
+    collapse = c.collapser()
+    assert {collapse(route) for route in c.exercised([rec])} == {
+        "GET /v1/workspaces/{wid}/{collection}"}
+    assert c.orphaned([rec]) == []
 
 
 # A map literal's keys are harvested from RAW SOURCE by a regex that cannot

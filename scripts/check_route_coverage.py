@@ -216,6 +216,17 @@ def alias_values(key):
     return _MAP_KEY.findall(_LINE_COMMENT.sub("", lit.group(1)))
 
 
+def alias_spellings(key):
+    """The collection paths registered by collectionSpellings in Go."""
+    names = []
+    for name in alias_values(key):
+        names.append(name)
+        upper = name[:1].upper() + name[1:]
+        if upper != name:
+            names.append(upper)
+    return names
+
+
 def _rel(path):
     """Repo-relative when the file is in the repo, absolute otherwise.
 
@@ -283,7 +294,7 @@ def registered(report_unresolved=None, families=None):
                     # for `.../items`, which every suite drives, and reported
                     # it unexercised. Families are collapsed for REPORTING
                     # instead, once matching is done.
-                    bases = [head + v for v in alias_values(f"{_rel(path)}:{var}")]
+                    bases = [head + v for v in alias_spellings(f"{_rel(path)}:{var}")]
                 if not bases or not methods:
                     continue  # unresolved; counted below and reported
                 sites += 1
@@ -458,7 +469,7 @@ def collapser():
     names = {}
     for key in PARAMETERISED:
         var = key.partition(":")[2]
-        for name in alias_values(key):
+        for name in alias_spellings(key):
             names[name] = "{" + var + "}"
 
     def collapse(label):
