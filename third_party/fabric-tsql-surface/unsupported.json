@@ -1,0 +1,136 @@
+{
+  "source": "tsql-surface-area.md",
+  "section": "### Limitations",
+  "surface": "lakehouse SQL analytics endpoint (internal/tds isEndpointWrite)",
+  "unsupported": [
+    {
+      "text": "`BULK LOAD`, though `bcp` is supported as a preview feature.",
+      "endpoint": "refused",
+      "probes": [
+        "BULK INSERT dbo.t FROM 'f.csv'"
+      ],
+      "reason": "BULK is a denied keyword in isEndpointWrite."
+    },
+    {
+      "text": "`CREATE USER`",
+      "endpoint": "forwarded",
+      "probes": [
+        "CREATE USER u WITHOUT LOGIN",
+        "CREATE USER [u] FROM EXTERNAL PROVIDER"
+      ],
+      "reason": "USER is in isEndpointWrite's allow-list beside ROLE. Whether that was deliberate for user-authored statements is not recorded; the emulator provisions each caller's database user itself (internal/tds/principal.go). A divergence to decide."
+    },
+    {
+      "text": "`FOR JSON` must be the last operator in the query, so you can't use it inside subqueries.",
+      "endpoint": "forwarded",
+      "probes": [
+        "SELECT (SELECT a FROM dbo.t FOR JSON PATH) AS j"
+      ],
+      "reason": "The guard judges what a batch WRITES; it does not read query shape. The engine, not the guard, would have to refuse a subquery FOR JSON."
+    },
+    {
+      "text": "Manually created multi-column stats",
+      "endpoint": "refused",
+      "probes": [
+        "CREATE STATISTICS s ON dbo.t (a, b)"
+      ],
+      "reason": "CREATE followed by anything outside the allow-list is refused."
+    },
+    {
+      "text": "Materialized views",
+      "endpoint": "refused",
+      "probes": [
+        "CREATE MATERIALIZED VIEW dbo.mv AS SELECT 1 AS x",
+        "CREATE UNIQUE CLUSTERED INDEX ix ON dbo.v (a)"
+      ],
+      "reason": "Neither object kind is in the allow-list. SQL Server's own spelling of a materialized view is an indexed view: a view plus a clustered index, and the index is refused."
+    },
+    {
+      "text": "`PREDICT`",
+      "endpoint": "forwarded",
+      "probes": [
+        "SELECT * FROM PREDICT(MODEL = dbo.m, DATA = dbo.t) AS p"
+      ],
+      "reason": "A read: the guard forwards it and SQL Server, not the guard, would decide."
+    },
+    {
+      "text": "Queries targeting system and user tables",
+      "endpoint": "unspecified",
+      "probes": [],
+      "reason": "The sentence does not say which system tables, or what targeting one means, so there is no statement to probe. Left unclassified rather than guessed."
+    },
+    {
+      "text": "Recursive queries",
+      "endpoint": "forwarded",
+      "probes": [
+        "WITH r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT * FROM r"
+      ],
+      "reason": "A read: the guard forwards it and SQL Server accepts recursive CTEs."
+    },
+    {
+      "text": "Schema and table names can't contain `/` or `\\`",
+      "endpoint": "forwarded",
+      "probes": [
+        "CREATE VIEW dbo.[a/b] AS SELECT 1 AS x",
+        "CREATE VIEW dbo.[a\\b] AS SELECT 1 AS x"
+      ],
+      "reason": "VIEW is allow-listed and the guard does not read object names."
+    },
+    {
+      "text": "`SELECT` - `FOR XML`",
+      "endpoint": "forwarded",
+      "probes": [
+        "SELECT a FROM dbo.t FOR XML PATH"
+      ],
+      "reason": "A read: forwarded, and SQL Server accepts FOR XML."
+    },
+    {
+      "text": "`SET ROWCOUNT`",
+      "endpoint": "forwarded",
+      "probes": [
+        "SET ROWCOUNT 5"
+      ],
+      "reason": "SET is not a write, so the guard forwards it."
+    },
+    {
+      "text": "`SET TRANSACTION ISOLATION LEVEL`",
+      "endpoint": "forwarded",
+      "probes": [
+        "SET TRANSACTION ISOLATION LEVEL READ COMMITTED"
+      ],
+      "reason": "SET is not a write, so the guard forwards it."
+    },
+    {
+      "text": "`sp_showspaceused`",
+      "endpoint": "refused",
+      "probes": [
+        "EXEC sp_showspaceused"
+      ],
+      "reason": "Refused only because EXEC is refused wholesale on this surface, not because of this procedure."
+    },
+    {
+      "text": "Synonyms",
+      "endpoint": "refused",
+      "probes": [
+        "CREATE SYNONYM s FOR dbo.t"
+      ],
+      "reason": "CREATE followed by anything outside the allow-list is refused."
+    },
+    {
+      "text": "Triggers",
+      "endpoint": "refused",
+      "probes": [
+        "CREATE TRIGGER tr ON dbo.t AFTER INSERT AS SELECT 1"
+      ],
+      "reason": "CREATE followed by anything outside the allow-list is refused."
+    },
+    {
+      "text": "Vector data type and search functions",
+      "endpoint": "forwarded",
+      "probes": [
+        "CREATE VIEW dbo.v AS SELECT CAST(NULL AS vector(3)) AS e"
+      ],
+      "reason": "VIEW is allow-listed and the guard does not read types; the engine decides whether it has a vector type."
+    }
+  ]
+}
