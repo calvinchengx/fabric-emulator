@@ -653,6 +653,16 @@ jobs:
       # directions because "too narrow" and "too broad" look identical in a
       # green log.
       - run: uv run --frozen --no-sync python scripts/check_entra_install.py
+      # Every `time.Sleep` in a Go test is inside a loop carrying a bound -- a
+      # deadline or an iteration count -- or is recorded in
+      # docs/test-flakiness.json with the reason it is accepted. An unbounded
+      # sleep before an assertion does not assert what it appears to: it passes
+      # on a laptop because the thing under test finished, and on a loaded
+      # runner because it had not been scheduled yet. Three tests had that
+      # shape and were rewritten (docs/60); this is what stops a fourth.
+      # In `make check` too, which python/tests/test_make_check_runs_in_ci.py
+      # requires of anything in that target.
+      - run: uv run --frozen --no-sync python scripts/check_test_flakiness.py --strict
       # A cron-only workflow is not proved by the next commit — a change to it
       # is unverified until the schedule fires, which can be a week. Three such
       # fixes landed in one week and none had executed; one was BROKEN (the
@@ -671,6 +681,53 @@ jobs:
       # listener, so a kind missing from the client is invisible — no error,
       # no dropped count. This fails the build when the two disagree.
       - run: uv run --frozen --no-sync python scripts/gen_event_kinds.py --check
+
+  race:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: The Go suite under the race detector, in randomised order
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # THE DETECTION GAP THIS CLOSES. Before this job,
+      # `grep -rn -- '-race' .github/workflows/ Makefile scripts/` returned
+      # nothing, and so did the same grep for `-shuffle`. The race detector had
+      # never been run against this repository -- not once, across 285 test
+      # files containing 68 `go func` sites, an event bus that dispatches to
+      # subscribers on its own goroutine, and job drives that deliberately
+      # outlive the POST that started them.
+      #
+      # The suite is clean under both flags (measured: docs/60-test-flakiness.md).
+      # That is the good outcome and it is NOT the reason this job is cheap to
+      # justify -- an unrun detector reports exactly the same silence whether or
+      # not there is anything to find, so the green here is the first evidence
+      # that the answer is no rather than unknown.
+      #
+      # BOTH FLAGS, because they find different things and neither sees the
+      # other's half. `-race` instruments memory access and catches a read
+      # concurrent with a write. `-shuffle=on` randomises the order tests run
+      # in and catches the other classic flake: a test that passes only because
+      # an earlier one in the same package left state behind. Order here was
+      # previously fixed and therefore never varied, so that class was
+      # unobservable by construction.
+      #
+      # `-count=1` defeats the test cache: a cached PASS from a previous run is
+      # not a race-detector verdict on this commit.
+      #
+      # ONE ubuntu leg rather than the three-OS matrix `test` carries. The race
+      # detector instruments the Go memory model, which is the same on every
+      # platform; three legs would triple a 25-minute budget's worth of runner
+      # time to re-answer one question. Platform-specific behaviour is already
+      # covered by the `test` matrix.
+      #
+      # Measured at 2m04s locally under `-race -shuffle=on`, against 25s for a
+      # plain `go test ./...`. The 25-minute timeout is this file's uniform
+      # value; see the comment on the `jobs:` key for why it is one number.
+      - run: make test-race
 
   lint:
     needs: changes

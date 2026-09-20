@@ -90,6 +90,7 @@ export default defineConfig({
             { slug: '10-testing' },
             { slug: '11-testing-with-fabric-cicd' },
             { slug: '12-e2e-matrix' },
+            { slug: '60-test-flakiness' },
           ],
         },
         {

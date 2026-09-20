@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 )
 
 // fakeAgent stands in for the Spark statement agent.
@@ -281,10 +283,17 @@ func TestNotebookWithoutAnAgentStillWaitsForACallback(t *testing.T) {
 	nb := createNotebook(t, st, ws.ID, sampleNotebook)
 
 	_, jid := runJob(t, a, ws.ID, nb.ID, "jobType=RunNotebook", "")
-	time.Sleep(50 * time.Millisecond) // long enough for a driver to have run
-	if s := jobStatus(t, a, ws.ID, nb.ID, jid); s == "Completed" || s == "Failed" {
-		t.Fatalf("job reached %s with no engine attached", s)
-	}
+	// A WINDOW, not a sleep. The old form slept "long enough for a driver to
+	// have run" and then looked once — which on a loaded runner is a pass
+	// bought by the driver not having been scheduled yet, not by there being
+	// no driver. Polling across the window fails the moment a driver lands
+	// anywhere inside it. See internal/testsupport/wait.go and docs/60.
+	testsupport.StaysFalse(t, 50*time.Millisecond,
+		"the job reached a terminal state with no engine attached",
+		func() bool {
+			s := jobStatus(t, a, ws.ID, nb.ID, jid)
+			return s == "Completed" || s == "Failed"
+		})
 	if run := notebookRunDetail(t, a, ws.ID, nb.ID, jid); run.Status != "Pending" {
 		t.Fatalf("run = %+v", run)
 	}

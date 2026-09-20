@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "Timing-coupled sites in the Go test suite that scripts/check_test_flakiness.py",
+    "has seen and that are ACCEPTED. The checker fails on any site not listed here,",
+    "and equally on any entry here that no longer matches a site -- a stale",
+    "allowance is how a ban quietly stops applying.",
+    "",
+    "Keyed on file + enclosing symbol rather than line number: a line number goes",
+    "stale on any edit above it, and a ledger that must be renumbered to stay valid",
+    "is a ledger people delete entries from.",
+    "",
+    "Every entry below is bucket (c), CONTAINER RETRY -- see docs/60-test-flakiness.md.",
+    "Buckets (a) BOUNDED POLL and (b) BARE SLEEP-THEN-ASSERT are absent for opposite",
+    "reasons: (a) is not flagged at all because a deadline-guarded poll is the",
+    "correct shape, and (b) is empty because the three sites that had it were",
+    "rewritten onto internal/testsupport.StaysFalse rather than recorded."
+  ],
+  "accepted": [
+    {
+      "file": "internal/server/sql_database_test.go",
+      "symbol": "TestSQLDatabaseMirror",
+      "bucket": "container-retry",
+      "reason": "Backs off against a real SQL Server that is still booting, inside `for i := 0; i < 60`. The wait is for a socket that is not yet listening, so a shorter interval would only poll a closed port faster. Bounded by iteration count; the test is skipped entirely without WAREHOUSE_MSSQL_DSN."
+    },
+    {
+      "file": "internal/server/tds_conformance_test.go",
+      "symbol": "TestConformanceWriteLanding",
+      "bucket": "container-retry",
+      "reason": "Same SQL Server cold start, wrapped in an `exec` helper that retries each statement up to 60 times. Bounded by iteration count."
+    },
+    {
+      "file": "internal/server/tds_reflect_test.go",
+      "symbol": "TestWarehouseDeltaReflectionE2E",
+      "bucket": "container-retry",
+      "reason": "Two sites (the GROUP BY and its rows.Err retry), both inside `for i := 0; i < 60`. Delta reflection runs against the real engine, so the retry covers both container start and the reflection landing."
+    },
+    {
+      "file": "internal/server/tds_sqlserver_test.go",
+      "symbol": "TestWarehouseSQLServerRelayE2E",
+      "bucket": "container-retry",
+      "reason": "The first relayed statement may arrive before SQL Server accepts connections; retried up to 60 times. Bounded by iteration count."
+    },
+    {
+      "file": "internal/server/tds_strict_test.go",
+      "symbol": "TestWarehouseStrictModeRefusesClassBOverRealTDS",
+      "bucket": "container-retry",
+      "reason": "Establishes the non-strict baseline before asserting on the strict refusal -- a connection error here would be indistinguishable from SQL Server rejecting the statement, which is what the test is about. Bounded by iteration count."
+    },
+    {
+      "file": "internal/server/tds_surfaces_test.go",
+      "symbol": "TestWarehouseTwoSurfaces",
+      "bucket": "container-retry",
+      "reason": "CREATE TABLE against the warehouse surface, retried for cold start up to 60 times. Bounded by iteration count."
+    }
+  ]
+}

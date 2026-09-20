@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 )
 
 // waitForJobStatus polls until a job reaches a terminal state. The drive runs
@@ -185,14 +186,22 @@ func TestWithoutAnAgentASparkJobWaitsForItsCallback(t *testing.T) {
 	item := seedSparkJob(t, st, ws.ID, `{"executableFile":"main.py"}`, "print('external')")
 	_, jid := runJob(t, a, ws.ID, item.ID, "jobType=sparkjob", "")
 
-	time.Sleep(100 * time.Millisecond)
-	j, err := st.GetJobInstance(item.ID, jid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s := j.StatusAt(st.Now()); s == store.JobCompleted || s == store.JobFailed {
-		t.Fatalf("with no agent the job must stay open for a callback; got %q", j.StatusAt(st.Now()))
-	}
+	// A WINDOW, not a sleep. This asserts a NEGATIVE — that nothing drove the
+	// job — and the old form (sleep 100ms, then look once) could pass for the
+	// wrong reason on a loaded runner: the drive may simply not have been
+	// scheduled yet, so the reading says nothing about whether one exists.
+	// Polling across the window fails at the first instant a drive lands
+	// anywhere in it. See internal/testsupport/wait.go and docs/60.
+	testsupport.StaysFalse(t, 100*time.Millisecond,
+		"with no agent the job must stay open for a callback; something drove it to a terminal state",
+		func() bool {
+			j, err := st.GetJobInstance(item.ID, jid)
+			if err != nil {
+				return false
+			}
+			s := j.StatusAt(st.Now())
+			return s == store.JobCompleted || s == store.JobFailed
+		})
 
 	pv := map[string]string{"wid": ws.ID, "iid": item.ID, "jid": jid}
 	if w := do(a.reportSparkJobRun, admin, "POST", `{"status":"Completed","output":"done"}`, pv); w.Code != 200 {

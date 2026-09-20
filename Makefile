@@ -72,7 +72,7 @@ endif
 PY ?= $(shell if command -v uv >/dev/null 2>&1; then echo "uv run --frozen --no-sync python"; \
 	else for c in python3 python py; do if "$$c" -c '' >/dev/null 2>&1; then echo "$$c"; break; fi; done; fi)
 
-.PHONY: help doctor up up-lite up-jupyter up-jvm up-eventstream dax-linux down restart clean status status-spark spark logs ps seed test check lint docs-build docs-serve
+.PHONY: help doctor up up-lite up-jupyter up-jvm up-eventstream dax-linux down restart clean status status-spark spark logs ps seed test test-race check lint docs-build docs-serve
 
 help: ## Show the available targets
 	@grep -hE '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -197,6 +197,12 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/gen_event_kinds.py --check
 	@$(PY) scripts/check_capture_redaction.py
 	@$(PY) scripts/check_entra_install.py
+	@# Every sleep in a Go test is inside a bounded loop, or is recorded
+	@# in docs/test-flakiness.json with the reason it is accepted. An
+	@# unbounded sleep before an assertion makes the verdict a function
+	@# of machine load: it passes on a laptop because the thing under
+	@# test finished, and on a loaded runner because it had not started.
+	@$(PY) scripts/check_test_flakiness.py --strict
 
 # Not part of `check`: these need Node and an installed portal, and `check` is
 # deliberately runnable with nothing but Python. CI runs both in the portal-types
@@ -207,6 +213,27 @@ portal-types: ## Type-check the portal, and prove a new event kind breaks it
 
 test: check ## Repo invariants, then Go build, vet and unit tests
 	go build ./... && go vet ./... && go test ./...
+
+# NOT folded into `test:`. The race detector costs roughly 5x the wall time of a
+# plain run (measured on this tree: 2m04s against 25s), and `test` is the target
+# someone types in a tight edit loop -- a gate that slow gets run less, not more.
+# CI runs this one on every push and pull request (.github/workflows/ci.yml,
+# the `race` job), which is where the cost belongs.
+#
+# WHY IT EXISTS AT ALL. Before this, `grep -rn -- '-race' .github/workflows/
+# Makefile scripts/` returned NOTHING, and so did the same grep for `-shuffle`:
+# the race detector had never run against this repository, across 285 test files
+# with 68 goroutine-spawning sites in them and a real event-bus dispatcher
+# delivering to subscribers on its own goroutine. The suite turned out to be
+# clean -- see docs/60-test-flakiness.md for the measured sweep -- which is the
+# good outcome and not the point. An unrun detector reports the same silence
+# whether or not there is anything to find.
+#
+# Both flags together, deliberately. `-race` finds unsynchronised access;
+# `-shuffle=on` finds the other half, a test that passes only because an earlier
+# test in the same file left state behind. Neither sees what the other does.
+test-race: ## The race detector and randomised test order over the whole Go suite
+	go test -race -shuffle=on -count=1 ./...
 
 # ---------------------------------------------------------------------------
 # The documentation site.
