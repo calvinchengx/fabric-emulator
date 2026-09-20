@@ -157,6 +157,7 @@ def test_a_typed_collection_spelling_is_credited_as_an_alias(tree):
     """`/notebooks/{iid}` IS `/items/{itemId}` with the type forced."""
     states = u.classify()
     assert states["GET /v1/workspaces/{wid}/notebooks/{iid}"] == "alias"
+    assert states["GET /v1/workspaces/{wid}/Notebooks/{iid}"] == "alias"
     assert states["GET /v1/workspaces/{wid}/warehouses/{iid}"] == "alias"
 
 

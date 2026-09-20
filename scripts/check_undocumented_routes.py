@@ -122,12 +122,8 @@ def alias_collections():
     """
     names = set()
     for key in cov.PARAMETERISED:
-        for name in cov.alias_values(key):
+        for name in cov.alias_spellings(key):
             names.add(name)
-            # collectionSpellings(): the documented word, plus the same word
-            # with an initial capital. `GraphQLApis` is already capitalised
-            # and is unchanged by this, exactly as in the Go.
-            names.add(name[:1].upper() + name[1:])
     return names
 
 
