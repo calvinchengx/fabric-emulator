@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/clock"
+	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 )
 
 func newBusStore(t *testing.T) *Store {
@@ -352,13 +353,28 @@ func TestCloseStopsDelivery(t *testing.T) {
 		RelPath: "Files/b.csv", Content: []byte("x")}, false); err != nil {
 		t.Fatal(err)
 	}
-	// Give the dispatcher time to have delivered, had it still been subscribed.
-	time.Sleep(200 * time.Millisecond)
-	select {
-	case ev := <-sub.C:
-		t.Fatalf("received %+v after Close", ev)
-	default:
-	}
+	// A WINDOW, not a sleep. This asserts a NEGATIVE — that a closed
+	// subscriber receives nothing — and the old form slept 200ms and then took
+	// ONE non-blocking read. Dispatch is asynchronous, so on a loaded runner
+	// that read can land before the dispatcher has run at all, and the pass is
+	// bought by the scheduler rather than by Close having worked. Polling
+	// across the window catches a delivery wherever in it the delivery lands.
+	// See internal/testsupport/wait.go and docs/60.
+	//
+	// The event itself is logged rather than formatted into the message: Go
+	// prints a failing test's log lines, so the detail survives without the
+	// helper having to take a format string it cannot fill in advance.
+	testsupport.StaysFalse(t, 200*time.Millisecond,
+		"an event was delivered to a subscriber that had been Closed",
+		func() bool {
+			select {
+			case ev := <-sub.C:
+				t.Logf("delivered after Close: %+v", ev)
+				return true
+			default:
+				return false
+			}
+		})
 }
 
 func TestPublishAfterCloseIsSafe(t *testing.T) {
