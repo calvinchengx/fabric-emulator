@@ -52,11 +52,16 @@ echo "==> fab api passthrough (raw /v1)"
 fab api workspaces >/dev/null || fail "api passthrough"
 
 # ---------------------------------------------------------------------------
-# Deployment pipelines (docs/23). fab 1.7.0 -- the latest release, and the one
-# this suite pins -- still has no deployment-pipeline verbs (`fab deploy` is
+# Deployment pipelines (docs/23). fab has no deployment-pipeline verbs (`fab deploy` is
 # config-file ITEM deployment; the package contains no deploymentPipeline route),
 # so this drives them through `fab api` — still Microsoft's client, its MSAL
 # auth and its HTTP stack, just without a typed wrapper.
+#
+# THE CLIENT VERSION IS THE LOCK'S, NOT THE LATEST. This comment used to say the
+# suite pinned fab 1.7.0; e2e/fabric-cli/uv.lock pins 1.2.0 and the image runs
+# `uv sync --frozen`, so 1.2.0 is what executes. Reading a newer release's
+# source to explain what this suite does gave a wrong answer once already (see
+# the job-verb section below), so verbs are checked against the locked version.
 #
 # The sequence is lifted from Microsoft's own DeploymentPipelines-DeployAll.ps1
 # (fabric-samples): list pipelines -> list stages -> POST deploy -> poll the
@@ -363,6 +368,90 @@ echo "==> job run-list: the item's job instances, parsed by fab"
 # its code, not here.
 fab job run-list "$WS/pipe.DataPipeline" >/dev/null || fail "job run-list"
 
+# ---------------------------------------------------------------------------
+# Three more verbs where fab builds the request and parses the reply, each
+# reaching a route no recording suite drove before. Found by reading fab's own
+# client for the routes the coverage list named, rather than guessing at verbs.
+# ---------------------------------------------------------------------------
+echo "==> job start / run-status / run-cancel: fab's typed job verbs"
+# THE INSTANCE IS ALREADY TERMINAL by the time it is cancelled. pipe.DataPipeline
+# has no definition, so its run fails with PipelineDefinitionInvalid within
+# seconds, and a cancel of a finished run is answered 202 here. What this
+# witnesses is the ROUTES and fab's PARSE of each reply -- a wrong shape throws
+# inside fab, not here. It is NOT evidence about cancellation semantics, and
+# what real Fabric answers for a cancel of an already-finished run is not
+# something this suite can settle without a tenant.
+JOB_OUT=$(fab job start "$WS/pipe.DataPipeline") || fail "job start"
+JID=$(echo "$JOB_OUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+[ -n "$JID" ] || fail "job start printed no instance id: $JOB_OUT"
+sleep 2
+ST_OUT=$(fab job run-status "$WS/pipe.DataPipeline" --id "$JID") || fail "job run-status"
+echo "$ST_OUT" | grep -q "${JID%%-*}" || fail "run-status does not show the instance fab was told about: $ST_OUT"
+CANCEL_OUT=$(fab job run-cancel "$WS/pipe.DataPipeline" --id "$JID") || fail "job run-cancel"
+echo "$CANCEL_OUT" | grep -qi cancelled || fail "run-cancel reported no cancellation: $CANCEL_OUT"
+
+echo "==> item-level acl: a REAL client reads the admin item-users route and cannot use it"
+# THIS IS A GAP A TYPED CLIENT FOUND. `fab acl ls <item>` (fab 1.2.0, the locked
+# version) reads GET /v1/admin/workspaces/{ws}/items/{id}/users and then fails
+# INSIDE FAB with `[UnexpectedError] displayName`: fab_acls_ls.py indexes
+# principal["displayName"] directly. Microsoft's spec marks that field OPTIONAL
+# (Principal requires only id and type), so the emulator's response is
+# spec-conformant -- and Microsoft's own client cannot use it. fab evidently
+# relies on real Fabric sending a name, which cannot be confirmed without a
+# tenant; either way the spec understates what this client needs.
+#
+# NOT FIXED BY INVENTING A NAME. The emulator has no directory to source one
+# from (it refuses a UPN for the same reason), and the convention here is that a
+# field this emulator cannot source is omitted rather than defaulted: a
+# GUID-as-displayName would assert something false. So the gap is pinned. When
+# a display name is supplied this assertion FAILS, which is the reminder to
+# regrade the row rather than leave the map claiming less than the code does.
+ACL_OUT=$(fab acl ls "$WS/nb.Notebook" 2>&1); ACL_RC=$?
+[ "$ACL_RC" -ne 0 ] || fail "fab acl ls <item> unexpectedly worked -- regrade the parity row"
+echo "$ACL_OUT" | grep -q displayName || fail "fab acl ls <item> failed, but not on displayName: $ACL_OUT"
+
+echo "==> item move, bulkMove and rename: through fab api (a TRANSPORT, not a typed verb)"
+# NO TYPED FAB VERB REACHES THESE, and that was measured rather than assumed.
+# `fab mv` looks like the client for them and is not: for an item it issues
+# GET item -> getDefinition -> POST /items (a create) -> DELETE, a copy and a
+# delete, and never PATCH /items/{id} or .../move. The recording of an earlier
+# draft of this section showed exactly that sequence. So these go through
+# `fab api`, which is Microsoft's client, MSAL auth and HTTP stack with no model
+# of the request -- the same standing as `az rest`, and credited no higher.
+WSID=$(fab get "$WS" -q id | guid)
+# Selected BY NAME from the JSON envelope, the way the deployment-pipeline steps
+# above do it. `guid` alone takes the FIRST uuid in the output, which can be the
+# workspace's rather than the folder's.
+pick() { python3 -c '
+import json,sys
+d=json.loads(sys.stdin.read())
+for k in ("text","body","result"):
+    if isinstance(d,dict) and k in d and isinstance(d[k],(dict,list)): d=d[k]
+if isinstance(d,str): d=json.loads(d)
+for x in d["value"]:
+    if x["displayName"]==sys.argv[1]: print(x["id"]); break
+' "$1" | guid; }
+fab api "workspaces/$WSID/folders" -X post -i '{"displayName":"mvfolder"}' >/dev/null || fail "create folder"
+FOLDER=$(fab api "workspaces/$WSID/folders" | pick mvfolder); [ -n "$FOLDER" ] || fail "folder not found by name"
+fab mkdir "$WS/mvone.Notebook" >/dev/null || fail "create mvone"
+fab mkdir "$WS/mvtwo.Notebook" >/dev/null || fail "create mvtwo"
+# By `fab get`, which resolves a NAMED item -- not by parsing `fab api .../items`,
+# whose large listing did not come back as parseable JSON (the first draft of
+# this section saw only two of eight items through it).
+ONE=$(fab get "$WS/mvone.Notebook" -q id | guid); [ -n "$ONE" ] || fail "mvone has no id"
+TWO=$(fab get "$WS/mvtwo.Notebook" -q id | guid); [ -n "$TWO" ] || fail "mvtwo has no id"
+
+fab api "workspaces/$WSID/items/$ONE" -X patch -i '{"displayName":"mvone-renamed"}' >/dev/null || fail "PATCH item"
+fab api "workspaces/$WSID/items/$ONE" | grep -q "mvone-renamed" || fail "PATCH item: the new displayName is not what the server now returns"
+
+fab api "workspaces/$WSID/items/$ONE/move" -X post -i "{\"targetFolderId\":\"$FOLDER\"}" >/dev/null || fail "move item"
+fab api "workspaces/$WSID/items/$ONE" | grep -q "$FOLDER" || fail "move item: the item does not report the folder it was moved into"
+
+fab api "workspaces/$WSID/items/bulkMove" -X post -i "{\"items\":[\"$TWO\"],\"targetFolderId\":\"$FOLDER\"}" >/dev/null || fail "bulkMove"
+fab api "workspaces/$WSID/items/$TWO" | grep -q "$FOLDER" || fail "bulkMove: the item does not report the folder it was moved into"
+
+fab api "workspaces/$WSID/items/$ONE" -X delete >/dev/null 2>&1 || true
+fab api "workspaces/$WSID/items/$TWO" -X delete >/dev/null 2>&1 || true
 echo "==> acl: role assignments read through fab's own verb"
 fab acl ls "$WS" >/dev/null || fail "acl ls"
 fab acl get "$WS" >/dev/null 2>&1 || true   # detail view is optional on a bare workspace

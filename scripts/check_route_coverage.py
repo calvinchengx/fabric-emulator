@@ -165,6 +165,27 @@ def unparsed_registrations():
 
 _MAP_KEY = re.compile(r'"([A-Za-z0-9_]+)":')
 
+# Go line comments, stripped from a map literal's body BEFORE its keys are
+# harvested. _MAP_KEY reads `"name":` out of raw source and cannot tell code
+# from prose, and internal/api/definitions.go documents where its item types
+# came from by QUOTING A PAYLOAD -- `"type": "CopyJob"` -- inside a comment.
+# That one sentence invented a `type` collection and, through
+# registerTypedCollection, nine routes nothing registers:
+# GET/POST /v1/workspaces/{wid}/type, .../type/{iid}, its getDefinition and
+# updateDefinition, and its job-instance pair.
+#
+# THE COLLAPSED COUNTS HERE NEVER MOVED, and saying so is the honest scope of
+# this fix: every family route folds to `{collection}`, so nine fictional
+# spellings folded onto labels the real collections already produced. It is
+# not benign for check_undocumented_routes.py, whose baseline lists the
+# EXPANDED names -- nine routes that do not exist would have been written down
+# as emulator surface somebody had adjudicated.
+#
+# Line comments only. A `/* */` block would need balancing against the string
+# literals around it, this repository writes `//` throughout, and a name this
+# misses still has to survive every check downstream of it.
+_LINE_COMMENT = re.compile(r"//[^\n]*")
+
 
 def alias_values(key):
     """The literal names a PARAMETERISED variable stands for.
@@ -190,7 +211,9 @@ def alias_values(key):
         return []
     lit = re.search(r'\b' + re.escape(m.group(1)) + r' = map\[string\]string\{(.*?)\n\}',
                     text, re.S)
-    return _MAP_KEY.findall(lit.group(1)) if lit else []
+    if not lit:
+        return []
+    return _MAP_KEY.findall(_LINE_COMMENT.sub("", lit.group(1)))
 
 
 def _rel(path):

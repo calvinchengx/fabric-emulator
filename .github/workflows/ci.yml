@@ -573,6 +573,15 @@ jobs:
       # and every ❌ has a pointer. --strict: the matrix has landed, so its
       # absence is now a failure.
       - run: uv run --frozen --no-sync python scripts/check_conformance.py --strict
+      # The inverse of the surface ledger's denominator, and the only contract
+      # gate that needs no recording. The ledger asks which DOCUMENTED
+      # operations this emulator serves; nothing asked which routes it serves
+      # that no published spec documents -- and that direction is the worse
+      # one, because a client that binds to an invented surface passes here
+      # and 404s against real Fabric. Runs beside the other static checkers,
+      # and in `make check` too, which python/tests/test_make_check_runs_in_ci.py
+      # requires of anything in that target.
+      - run: uv run --frozen --no-sync python scripts/check_undocumented_routes.py --strict
       # docs/24 is the map a maintainer reads to pick work, and its rows are
       # copies of the sub-plans. Three had gone stale — the runMultiple row
       # advertised two answers fixed months earlier, and the runtime-

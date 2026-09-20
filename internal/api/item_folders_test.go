@@ -91,6 +91,44 @@ func TestMoveItemBetweenFolders(t *testing.T) {
 	}
 }
 
+// Move Item answers `MovedItems`, the same `{"value": [Item]}` envelope bulkMove
+// uses. It used to answer the bare item, so a caller reading the documented
+// shape found no `value`. Nothing asserted the body either way, which is how it
+// survived: the tests above check the status and what the STORE holds, both of
+// which were right.
+func TestMoveItemAnswersTheDocumentedEnvelope(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	dst := &store.Folder{WorkspaceID: ws.ID, DisplayName: "silver"}
+	if err := st.CreateFolder(dst); err != nil {
+		t.Fatal(err)
+	}
+	it := &store.Item{WorkspaceID: ws.ID, Type: "Notebook", DisplayName: "nb"}
+	if err := st.CreateItem(it, nil); err != nil {
+		t.Fatal(err)
+	}
+	w := do(a.moveItem, admin, "POST", `{"targetFolderId":"`+dst.ID+`"}`,
+		map[string]string{"wid": ws.ID, "iid": it.ID})
+	if w.Code != 200 {
+		t.Fatalf("move = %d %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Value []struct {
+			ID       string `json:"id"`
+			FolderID string `json:"folderId"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Value) != 1 {
+		t.Fatalf("want one moved item under `value`, got %s", w.Body.String())
+	}
+	if got.Value[0].ID != it.ID || got.Value[0].FolderID != dst.ID {
+		t.Errorf("value[0] = %+v, want id %s in folder %s", got.Value[0], it.ID, dst.ID)
+	}
+}
+
 func TestMoveItemErrors(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
