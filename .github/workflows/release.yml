@@ -77,21 +77,37 @@ jobs:
           # on skip_upload in .goreleaser.yaml.
           PUBLISH_WINGET: ${{ inputs.publish_winget || false }}
 
+      # THE CASK GORELEASER RENDERED, checked as an artifact rather than as
+      # config -- which is what survives GoReleaser changing its template
+      # underneath us. It runs after the push, so it cannot stop a bad cask being
+      # published, but it makes the release red instead of letting a deprecation
+      # land silently.
+      #
+      # THIS BELONGS IN THIS JOB AND NOWHERE ELSE, and it was first written into
+      # the `image` job: before `actions/checkout`, so the script did not exist
+      # on the runner, and in a different job on a different runner from the one
+      # GoReleaser writes dist/homebrew/ in. That would have failed the image job
+      # on the first tag, ahead of docker/build-push-action, so the GHCR image
+      # would not have been published. Nothing on a pull request runs this file,
+      # which is why the same class already cost v0.28.0 a startup_failure at
+      # its tag (see fabric-qualification above).
+      #
+      # PROVEN BEFORE IT SHIPPED rather than after: a `goreleaser release
+      # --snapshot` writes dist/homebrew/Casks/fabric-emulator.rb, this check
+      # passes on that real file, and fails on the same file with `postflight do`
+      # put back.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.11.32"
+      - name: The published cask uses no deprecated stanza
+        run: uv run --no-project --python 3.12 scripts/check_cask_stanzas.py --rendered dist/homebrew
+
   image:
     name: Docker image → GHCR
     needs: [fabric-qualification, make-targets]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-
-      # GoReleaser writes the cask it published into dist/homebrew/. Checking
-      # the artifact rather than the config is what survives GoReleaser changing
-      # its template underneath us; it runs after the push, so it cannot stop a
-      # bad cask being published, but it makes the release red instead of
-      # letting the deprecation land silently.
-      - uses: astral-sh/setup-uv@v7
-      - name: The published cask uses no deprecated stanza
-        run: uv run --no-project --python 3.12 scripts/check_cask_stanzas.py --rendered dist/homebrew
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
