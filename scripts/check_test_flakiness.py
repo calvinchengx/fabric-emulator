@@ -121,6 +121,34 @@ def is_long_sleep(line):
     return count * unit_ms >= 1000
 
 
+def relkey(path, root=None):
+    """A path as the ledger spells it: relative to the root, forward slashes.
+
+    THE SEPARATOR IS NOT COSMETIC. The ledger is a checked-in JSON file, so its
+    keys are written once and read on three platforms, while
+    `str(path.relative_to(ROOT))` yields `internal\\server\\x_test.go` on Windows
+    and `internal/server/x_test.go` everywhere else. That mismatch does not make
+    the checker miss things -- it makes it report EVERYTHING, twice over: every
+    site reads as unrecorded (no ledger key matches it) and every ledger entry
+    reads as stale (nothing matched). Both halves of a both-directions check
+    fire at once, on one platform only, which is precisely the shape that
+    survives review on a green Linux run. It failed the Windows leg of
+    make-targets.yml and the Windows leg of the pytest job, and nothing in the
+    checker's own suite could see it.
+
+    An already-pure path is passed THROUGH rather than rebuilt, because
+    `pathlib.PurePath(PureWindowsPath(...))` re-parses with the HOST's flavour
+    and silently discards the Windows one -- `C:/repo/x` then has no root on
+    POSIX, reads as relative, and the root is never stripped. That is the same
+    class of mistake as the bug above, one layer in, and the test below caught
+    it on the first run.
+    """
+    p = path if isinstance(path, pathlib.PurePath) else pathlib.PurePath(path)
+    root = ROOT if root is None else root
+    r = root if isinstance(root, pathlib.PurePath) else pathlib.PurePath(root)
+    return (p.relative_to(r) if p.is_absolute() else p).as_posix()
+
+
 def go_test_files():
     """Every *_test.go under ROOT that is ours."""
     out = []
@@ -180,7 +208,7 @@ def findings_for(path, text=None):
     source = text if text is not None else path.read_text(encoding="utf-8")
     lines = source.split("\n")
     loops = loops_of(lines)
-    rel = str(path.relative_to(ROOT)) if path.is_absolute() else str(path)
+    rel = relkey(path)
 
     # Enclosing func, so a finding names the test rather than only a line.
     funcs = [(i, m.group(1))
@@ -272,7 +300,7 @@ def main(argv):
             for f in unrecorded)
         problems.append(
             f"{len(unrecorded)} timing-coupled site(s) are neither bounded nor recorded in "
-            f"{LEDGER.relative_to(ROOT)}:\n    {lines}\n"
+            f"{relkey(LEDGER)}:\n    {lines}\n"
             "  An unbounded sleep before an assertion makes the verdict a function of machine "
             "load. Poll inside a deadline (internal/testsupport.WaitFor), assert a negative "
             "across an explicit window (StaysFalse), or record the site with its reason.")
@@ -287,7 +315,7 @@ def main(argv):
 
     print(f"check_test_flakiness: {len(files)} test files scanned; "
           f"{len(found)} timing-coupled site(s), all {len(accepted)} recorded in "
-          f"{LEDGER.relative_to(ROOT)} with a reason")
+          f"{relkey(LEDGER)} with a reason")
     return 0
 
 

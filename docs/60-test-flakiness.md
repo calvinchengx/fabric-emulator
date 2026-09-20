@@ -199,8 +199,32 @@ would have made the checker something people argue with rather than fix:
   has a trailing comment — so a correctly bounded retry loop was reported as an
   unbounded sleep.
 
+A third was found by CI rather than by that test, and it is the one worth
+reading. The checker built its ledger key with `str(path.relative_to(ROOT))`,
+which spells a nested path with the HOST's separator — forward slashes on
+POSIX, backslashes on Windows. The ledger is a checked-in JSON file, so it can
+only be written one way. On the Windows legs nothing matched, and **both
+directions of the both-directions check fired at once**: all seven recorded
+sites read as unrecorded, and all six ledger entries read as stale. It took the
+windows leg of `.github/workflows/make-targets.yml` red, and the windows leg of
+the pytest job with it, while every Linux and macOS leg stayed green.
+
+The bug is ordinary; what it says about the test is not. Every test in
+`python/tests/test_check_test_flakiness.py` passed on a POSIX runner whether or
+not the defect was present, so a suite written specifically to drive a checker
+in both directions could not see a defect that broke both directions. A test
+that only exercises the host's own path flavour is testing the host. The guard
+now drives `pathlib.PureWindowsPath` explicitly, so it fails on Linux and macOS
+too: reintroducing `str()` in place of `as_posix()` fails three tests on darwin,
+where before it failed none. The normalisation lives in one function
+(`relkey`), and writing it surfaced the same mistake one layer in —
+`pathlib.PurePath(PureWindowsPath(...))` re-parses with the *host's* flavour
+and silently discards the Windows one, so the root is never stripped. The new
+test caught that on its first run.
+
 The checker was also mutation-tested: disabling the comment-stripping, the
-stale-ledger check, and the sleep detection each fail the suite.
+stale-ledger check, the path normalisation, and the sleep detection each fail
+the suite.
 
 ## 6. What is not covered
 

@@ -225,6 +225,56 @@ def test_a_ledger_entry_for_a_site_that_no_longer_exists_fails(tree, capsys):
     assert "TestDeleted" in out
 
 
+# --- the ledger key, on a platform that is not this one ----------------------
+
+# WHAT THESE PIN, and why they are written against `PureWindowsPath` rather
+# than left to the Windows CI leg to discover. The ledger is a checked-in JSON
+# file with forward slashes in it; the checker built its lookup key with
+# `str(path.relative_to(ROOT))`, which is `internal\server\x_test.go` on
+# Windows. Nothing matched, so on that platform alone EVERY recorded site read
+# as unrecorded and EVERY ledger entry read as stale -- both directions of a
+# both-directions check firing at once, from one missing `as_posix()`.
+#
+# Every test above passes on a POSIX runner whether or not that bug is present,
+# which is exactly how it reached review behind a green Linux run. Driving the
+# Windows path flavour explicitly is what moves the guard onto every leg.
+
+def test_a_nested_finding_is_keyed_the_way_the_ledger_spells_it():
+    findings = c.findings_for(
+        pathlib.PureWindowsPath(r"internal\api\drive_test.go"), BARE_SLEEP)
+    assert [f["file"] for f in findings] == ["internal/api/drive_test.go"], \
+        "the ledger is written with forward slashes, so the key must be too"
+
+
+def test_relkey_strips_the_root_whatever_the_separator():
+    assert c.relkey(
+        pathlib.PureWindowsPath(r"C:\repo\internal\server\tds_test.go"),
+        root=pathlib.PureWindowsPath(r"C:\repo"),
+    ) == "internal/server/tds_test.go"
+    assert c.relkey(
+        pathlib.PurePosixPath("/repo/internal/server/tds_test.go"),
+        root=pathlib.PurePosixPath("/repo"),
+    ) == "internal/server/tds_test.go"
+
+
+def test_a_windows_flavoured_finding_matches_a_forward_slash_ledger_entry(tree, capsys):
+    # The end-to-end half: the same source, recorded in the ledger the only way
+    # a checked-in file can spell it. Before the fix this failed on Windows with
+    # the site unrecorded AND the entry stale, and passed everywhere else.
+    tree({"internal/api/drive_test.go": BARE_SLEEP},
+         ledger={"accepted": [{
+             "file": "internal/api/drive_test.go",
+             "symbol": "TestSomethingStaysOpen",
+             "bucket": "container-retry",
+             "reason": "deliberate, for the test",
+         }]})
+    accepted = c.load_ledger()
+    findings = c.findings_for(
+        pathlib.PureWindowsPath(r"internal\api\drive_test.go"), BARE_SLEEP)
+    assert [f"{f['file']}:{f['symbol']}" in accepted for f in findings] == [True], \
+        "a ledger entry must match its site regardless of the host's separator"
+
+
 # --- the vacuity guard --------------------------------------------------------
 
 def test_walking_zero_files_is_a_failure_not_a_pass(tree, capsys):
@@ -240,3 +290,16 @@ def test_the_real_repository_passes():
     import importlib
     real = importlib.reload(c)
     assert real.main(["check", "--strict"]) == 0
+
+
+def test_no_finding_over_the_real_tree_carries_a_native_separator():
+    """Vacuous on POSIX, load-bearing on Windows — which is where it broke.
+
+    The three tests above hold the separator invariant on every platform; this
+    one holds it over the REAL tree, so a path built somewhere other than
+    `relkey` cannot reintroduce it for the files that actually exist.
+    """
+    import importlib
+    real = importlib.reload(c)
+    offenders = [f for f in real.scan() if "\\" in f["file"]]
+    assert offenders == [], "a finding is keyed with the host's separator, not the ledger's"
