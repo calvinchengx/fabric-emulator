@@ -13,6 +13,19 @@ synced rather than serve SQL permissions under the user identity name.**
 Grounded against Microsoft Learn as read on 2026-09-15: *OneLake security for
 SQL analytics endpoints* and *Get started with OneLake security*.
 
+**Verification, stated plainly: built to Microsoft's documentation and enforced
+by a real SQL engine. Not verified against a real Fabric tenant.** No published
+spec covers the mode (the vendored `sqlEndpoint` swagger has no access-mode
+property), so the sources are Learn prose, a real SQL Server 2022 and, for the
+row-filter translation and the endpoint's T-SQL surface, second readers that are
+not Fabric either (sqlglot-go's parser, and Microsoft's own surface-area page,
+which records what Microsoft says, not what the service does). Only a real
+user-identity-mode endpoint's catalog could show what its sync builds, and
+several readings below are choices where Learn is silent or says two things:
+whether a table `GRANT` is refused or ignored, whether a Contributor in no
+filtering role reads unfiltered, what a client sees when a sync fails on a
+renamed column, and whether an Admin may add a Viewer to `db_datareader`.
+
 ## What Fabric does
 
 | Rule | Source |
