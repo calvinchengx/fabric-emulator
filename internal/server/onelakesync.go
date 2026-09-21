@@ -87,6 +87,9 @@ func oneLakeGrant(st *store.Store, lake *store.Item, principal, role string, acc
 		return tds.Grant{}, err
 	}
 	g := tds.Grant{Database: lake.ID, OneLake: true, OneLakeRoles: oneLakeMemberships(roles, principal, access)}
+	if g.ShortcutTables, g.DeniedTables, err = shortcutAccess(st, lake, principal); err != nil {
+		return tds.Grant{}, err
+	}
 	switch {
 	case !access.Has(store.PermRead):
 		g.Role = tds.RoleNone
@@ -381,3 +384,36 @@ func endpointColumns(ctx context.Context, db *sql.DB) (endpointState, error) {
 
 func sqlIdent(s string) string   { return "[" + strings.ReplaceAll(s, "]", "]]") + "]" }
 func sqlLiteral(s string) string { return "N'" + strings.ReplaceAll(s, "'", "''") + "'" }
+
+// shortcutAccess lists the lakehouse's OneLake shortcut tables and the ones a
+// principal cannot read at the source. "Users must have valid access on both the
+// shortcut source … and the destination where the data physically resides": the
+// destination is decided by the lakehouse's own roles and grant; this is the
+// source's half, asked of the same decision every OneLake read asks, on the
+// source item. A source that no longer exists denies, since nothing can be read
+// from it. An external shortcut is not a table here, so it has no source to ask.
+func shortcutAccess(st *store.Store, lake *store.Item, principal string) (tables, denied []string, err error) {
+	shortcuts, err := st.ListShortcuts(lake.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, sc := range shortcuts {
+		if sc.Path != "Tables" || sc.IsExternalTarget() || sc.TargetItem == "" {
+			continue
+		}
+		tables = append(tables, sc.Name)
+		src, err := st.GetItem(sc.TargetWorkspace, sc.TargetItem)
+		if err != nil {
+			denied = append(denied, sc.Name)
+			continue
+		}
+		read, err := st.OneLakeReadAccess(src, principal, onelakesec.InputTables)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !read.Allowed || (!read.Full && !onelakesec.Allows(read.Entries, sc.TargetPath)) {
+			denied = append(denied, sc.Name)
+		}
+	}
+	return tables, denied, nil
+}

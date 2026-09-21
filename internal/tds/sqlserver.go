@@ -309,7 +309,10 @@ func (b *sqlServerBackend) ensure(ctx context.Context, principal string, g Grant
 	if !g.OneLake || g.Role == RoleNone {
 		return nil
 	}
-	return SyncOneLakeMemberships(ctx, b.pool(g.Database), principal, g.OneLakeRoles)
+	if err := SyncOneLakeMemberships(ctx, b.pool(g.Database), principal, g.OneLakeRoles); err != nil {
+		return err
+	}
+	return SyncShortcutAccess(ctx, b.pool(g.Database), principal, g.ShortcutTables, g.DeniedTables)
 }
 
 // DBAs returns a connection pool that logs into the item's database AS the

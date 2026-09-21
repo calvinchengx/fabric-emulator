@@ -65,6 +65,13 @@ type Grant struct {
 	// other OLS_ membership it holds there is dropped.
 	OneLake      bool
 	OneLakeRoles []string
+	// ShortcutTables are the endpoint's tables that are OneLake shortcuts, and
+	// DeniedTables the ones among them this principal has no access to at the
+	// source: "users must have valid access on both the shortcut source … and the
+	// destination" (docs/61). Each denied table gets a per-principal DENY SELECT,
+	// which wins over any role the synced OneLake security gives them.
+	ShortcutTables []string
+	DeniedTables   []string
 }
 
 // SpliceBackend is a Backend that can open a raw, already-authenticated

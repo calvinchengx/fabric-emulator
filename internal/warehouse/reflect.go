@@ -94,7 +94,7 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 	it.mu.Lock()
 	defer it.mu.Unlock()
 
-	dirs, err := st.ListOneLakePaths(itemID, "Tables", false)
+	tables, err := tableSources(st, itemID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,12 +115,9 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 	present, known := existingTables(ctx, db)
 
 	var done []string
-	for _, d := range dirs {
-		if !d.IsDir {
-			continue
-		}
-		name := strings.TrimPrefix(d.RelPath, "Tables/")
-		fp, err := deltaFingerprint(st, itemID, name)
+	for _, src := range tables {
+		name := src.name
+		fp, err := deltaFingerprint(st, src.item, src.root)
 		if err != nil {
 			// Not a Delta table (no _delta_log): skipped, not fatal — same as a
 			// stray folder under Tables/ has always been.
@@ -129,7 +126,7 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 		if prev, ok := it.seen[name]; ok && prev == fp && known && present[strings.ToLower(name)] {
 			continue
 		}
-		tbl, err := ReadDeltaTable(st, itemID, name)
+		tbl, err := ReadDeltaTableAt(st, src.item, src.root, name)
 		if err != nil {
 			// NOT a skip. deltaFingerprint already proved this is a Delta table
 			// — it found _delta_log commits — so failing to read it now is a
@@ -186,8 +183,8 @@ func existingTables(ctx context.Context, db *sql.DB) (map[string]bool, bool) {
 // costs a read per commit on a path whose whole purpose is to be near-free when
 // nothing has changed. A new commit that somehow left the data identical would
 // cause one needless reload, which is the harmless direction to be wrong in.
-func deltaFingerprint(st *store.Store, itemID, name string) (string, error) {
-	logDir := path.Join("Tables", name, "_delta_log")
+func deltaFingerprint(st *store.Store, itemID, root string) (string, error) {
+	logDir := path.Join(root, "_delta_log")
 	entries, err := st.ListOneLakePaths(itemID, logDir, false)
 	if err != nil {
 		return "", err
@@ -202,7 +199,50 @@ func deltaFingerprint(st *store.Store, itemID, name string) (string, error) {
 		return "", fmt.Errorf("no _delta_log commits under %q", logDir)
 	}
 	sort.Strings(commits)
-	return strings.Join(commits, "\n"), nil
+	// Where the log is read from is part of the fingerprint: a shortcut re-pointed
+	// at another table whose commits happen to be named alike is a different table.
+	return itemID + "|" + root + "\n" + strings.Join(commits, "\n"), nil
+}
+
+// tableSource is one table the endpoint shows: the name it is shown under, and
+// the item and folder its Delta log lives in — its own Tables/<name>, or, for a
+// shortcut, the folder the shortcut points at.
+type tableSource struct {
+	name, item, root string
+}
+
+// tableSources lists a lakehouse's tables: every folder under Tables/, and every
+// OneLake shortcut there — "Shortcuts function as tables in the SQL analytics
+// endpoint". A folder and a shortcut of one name cannot coexist in OneLake; if
+// the store ever holds both, the folder wins. External shortcuts (ADLS, S3,
+// Dataverse) are not listed: their bytes live behind an HTTP read the reflector
+// does not make (docs/61).
+func tableSources(st *store.Store, itemID string) ([]tableSource, error) {
+	dirs, err := st.ListOneLakePaths(itemID, "Tables", false)
+	if err != nil {
+		return nil, err
+	}
+	var out []tableSource
+	have := map[string]bool{}
+	for _, d := range dirs {
+		if !d.IsDir {
+			continue
+		}
+		name := strings.TrimPrefix(d.RelPath, "Tables/")
+		have[strings.ToLower(name)] = true
+		out = append(out, tableSource{name: name, item: itemID, root: d.RelPath})
+	}
+	shortcuts, err := st.ListShortcuts(itemID)
+	if err != nil {
+		return nil, err
+	}
+	for _, sc := range shortcuts {
+		if sc.Path != "Tables" || sc.IsExternalTarget() || sc.TargetItem == "" || have[strings.ToLower(sc.Name)] {
+			continue
+		}
+		out = append(out, tableSource{name: sc.Name, item: sc.TargetItem, root: sc.TargetPath})
+	}
+	return out, nil
 }
 
 // reflectTable drops and recreates one table, then loads its rows over the TDS

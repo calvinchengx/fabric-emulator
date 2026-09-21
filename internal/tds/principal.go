@@ -215,3 +215,37 @@ EXEC sp_executesql @leave;`, quotedID, keep)
 	}
 	return nil
 }
+
+// SyncShortcutAccess makes a principal's per-table refusals on an endpoint's
+// shortcut tables exactly denied: each is DENY SELECT, and every other listed
+// shortcut table is cleared (REVOKE removes a DENY, and a principal holds no
+// table permission of its own in user identity mode). DENY wins over a GRANT
+// through any role, so a OneLake role at the consumer cannot lift what the source
+// refuses. A table the engine does not have yet is skipped: it is listed from the
+// store, and reflection may not have run.
+func SyncShortcutAccess(ctx context.Context, target *sql.DB, objectID string, tables, denied []string) error {
+	if objectID == "" {
+		return fmt.Errorf("no principal to sync")
+	}
+	if len(tables) == 0 {
+		return nil
+	}
+	name := principalName(objectID)
+	deny := map[string]bool{}
+	for _, t := range denied {
+		deny[t] = true
+	}
+	var b strings.Builder
+	for _, t := range tables {
+		lit := "N'[dbo].[" + strings.ReplaceAll(strings.ReplaceAll(t, "]", "]]"), "'", "''") + "]'"
+		verb := "REVOKE SELECT ON [dbo].[%s] FROM [%s]"
+		if deny[t] {
+			verb = "DENY SELECT ON [dbo].[%s] TO [%s]"
+		}
+		fmt.Fprintf(&b, "IF OBJECT_ID(%s, N'U') IS NOT NULL "+verb+";\n", lit, strings.ReplaceAll(t, "]", "]]"), name)
+	}
+	if _, err := target.ExecContext(ctx, b.String()); err != nil {
+		return fmt.Errorf("sync shortcut access for %s: %w", objectID, err)
+	}
+	return nil
+}

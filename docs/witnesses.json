@@ -1483,7 +1483,9 @@
     "go:TestAOneLakeSyncThatFailsRefusesTheConnection": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestARowFilterSurvivesReflection": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestDirectLakeOnSQLOverAUserIdentityEndpoint": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestAnUnchangedSyncKeepsAManualChangeAndAChangedOneOverwritesIt": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+    "go:TestAnUnchangedSyncKeepsAManualChangeAndAChangedOneOverwritesIt": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestAShortcutUnderTablesReadsAsATableOnTheEndpoint": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestAShortcutTableNeedsAccessOnTheSourceToo": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",
@@ -1660,6 +1662,16 @@
       "go:TestEveryDocumentedLimitationIsClassified",
       "go:TestTheGuardDoesWhatEachLimitationRecords",
       "go:TestAnUnchangedSyncKeepsAManualChangeAndAChangedOneOverwritesIt"
+    ]
+  },
+  "sql-analytics-endpoint-onelake-shortcut-tables-and-access-at-the-source": {
+    "section": "Data Warehouse (`data-warehouse/`)",
+    "claim": "SQL analytics endpoint **OneLake shortcut tables**, and access at the source",
+    "witnesses": [
+      "go:TestAShortcutUnderTablesReadsAsATableOnTheEndpoint",
+      "go:TestAShortcutTableNeedsAccessOnTheSourceToo",
+      "go:TestTableSourcesListShortcuts",
+      "go:TestDeltaFingerprintNamesItsSource"
     ]
   }
 }

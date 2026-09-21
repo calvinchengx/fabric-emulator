@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/calvinchengx/fabric-emulator/internal/store"
 	"github.com/calvinchengx/fabric-emulator/internal/testsupport"
 )
 
@@ -165,7 +166,7 @@ func TestDeltaFingerprint(t *testing.T) {
 	put(t, st, wsID, itemID, "Tables/sales/_delta_log/00000000000000000000.json",
 		[]byte(`{"add":{"path":"part-0.parquet"}}`))
 
-	fp0, err := deltaFingerprint(st, itemID, "sales")
+	fp0, err := deltaFingerprint(st, itemID, "Tables/sales")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,13 +174,13 @@ func TestDeltaFingerprint(t *testing.T) {
 		t.Fatal("empty fingerprint")
 	}
 	// Stable across calls, or nothing is ever skipped.
-	if again, _ := deltaFingerprint(st, itemID, "sales"); again != fp0 {
+	if again, _ := deltaFingerprint(st, itemID, "Tables/sales"); again != fp0 {
 		t.Errorf("fingerprint not stable: %q then %q", fp0, again)
 	}
 	// Changes when a commit lands, or stale data is served forever.
 	put(t, st, wsID, itemID, "Tables/sales/_delta_log/00000000000000000001.json",
 		[]byte(`{"add":{"path":"part-1.parquet"}}`))
-	fp1, err := deltaFingerprint(st, itemID, "sales")
+	fp1, err := deltaFingerprint(st, itemID, "Tables/sales")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +189,7 @@ func TestDeltaFingerprint(t *testing.T) {
 	}
 
 	put(t, st, wsID, itemID, "Tables/notatable/readme.txt", []byte("hi"))
-	if _, err := deltaFingerprint(st, itemID, "notatable"); err == nil {
+	if _, err := deltaFingerprint(st, itemID, "Tables/notatable"); err == nil {
 		t.Error("a folder with no _delta_log should not produce a fingerprint")
 	}
 }
@@ -284,5 +285,58 @@ func TestExistingTablesReportsUntrustworthy(t *testing.T) {
 	db.Close() // a pool that cannot answer
 	if _, known := existingTables(context.Background(), db); known {
 		t.Error("existingTables claimed a trustworthy answer from a closed pool")
+	}
+}
+
+// The fingerprint says where the log was read from: a shortcut re-pointed at a
+// table whose commits are named alike is a different table, and must not be
+// skipped as unchanged.
+func TestDeltaFingerprintNamesItsSource(t *testing.T) {
+	st, wsID, itemID := seedLakehouse(t)
+	for _, tbl := range []string{"a", "b"} {
+		put(t, st, wsID, itemID, "Tables/"+tbl+"/_delta_log/00000000000000000000.json",
+			[]byte(`{"add":{"path":"part-0.parquet"}}`))
+	}
+	a, _ := deltaFingerprint(st, itemID, "Tables/a")
+	b, _ := deltaFingerprint(st, itemID, "Tables/b")
+	if a == b {
+		t.Error("two tables with identically named commits share a fingerprint")
+	}
+}
+
+// "Shortcuts function as tables in the SQL analytics endpoint": a OneLake
+// shortcut under Tables/ is a table, shown under the shortcut's name and read
+// from its target. An external one is not listed (its bytes are behind an HTTP
+// read), one outside Tables/ is not a table, and a folder of the same name wins.
+func TestTableSourcesListShortcuts(t *testing.T) {
+	st, wsID, itemID := seedLakehouse(t)
+	put(t, st, wsID, itemID, "Tables/own/_delta_log/00000000000000000000.json", []byte(`{}`))
+	put(t, st, wsID, itemID, "Tables/clash/_delta_log/00000000000000000000.json", []byte(`{}`))
+	for _, sc := range []*store.Shortcut{
+		{ItemID: itemID, Path: "Tables", Name: "linked", TargetType: "OneLake", TargetWorkspace: wsID, TargetItem: "src-item", TargetPath: "Tables/orders"},
+		{ItemID: itemID, Path: "Tables", Name: "Clash", TargetType: "OneLake", TargetWorkspace: wsID, TargetItem: "src-item", TargetPath: "Tables/other"},
+		{ItemID: itemID, Path: "Tables", Name: "cloud", TargetType: "AmazonS3", TargetLocation: "https://s3.example", ConnectionID: "c", TargetItem: "src-item", TargetPath: "Tables/x"},
+		{ItemID: itemID, Path: "Files", Name: "raw", TargetType: "OneLake", TargetWorkspace: wsID, TargetItem: "src-item", TargetPath: "Tables/orders"},
+	} {
+		if err := st.CreateShortcut(sc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := tableSources(st, itemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]tableSource{
+		"own":    {"own", itemID, "Tables/own"},
+		"clash":  {"clash", itemID, "Tables/clash"},
+		"linked": {"linked", "src-item", "Tables/orders"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("listed %v, want exactly own, clash and linked", got)
+	}
+	for _, g := range got {
+		if w, ok := want[g.name]; !ok || w != g {
+			t.Errorf("listed %+v, want %+v", g, want[g.name])
+		}
 	}
 }

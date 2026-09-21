@@ -189,8 +189,8 @@ asked.
 - **Masks** stay in force in user identity mode; Fabric says DDM is "not
   supported in OneLake security" without saying what happens to existing ones.
 - **EXEC** stays refused on the endpoint, as before.
-- **Shortcuts**, ownership chaining, and the security-sync error states are not
-  modelled.
+- **Shortcuts** are partly modelled — see [docs/61](61-sql-endpoint-shortcuts.md).
+  Ownership chaining and the security-sync error states are not modelled.
 - **The owner's OneLake access** in delegated mode — "the item owner must have
   valid OneLake access, or all queries may fail" — is not modelled: the
   reflection reads as the service.
