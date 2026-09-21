@@ -111,7 +111,14 @@ func ReadParquetBytes(data []byte) (*Table, error) {
 // Parquet files, then reads their rows. Only the common shape delta-rs/Spark
 // write for small tables is supported (JSON commits, no checkpoint yet).
 func ReadDeltaTable(st *store.Store, itemID, name string) (*Table, error) {
-	root := path.Join("Tables", name)
+	return ReadDeltaTableAt(st, itemID, path.Join("Tables", name), name)
+}
+
+// ReadDeltaTableAt reads the Delta table rooted at root in the given item. It is
+// ReadDeltaTable for a table that does not live under its own Tables/<name>: a
+// shortcut's source is another item's folder, and `name` is only how errors say
+// which table it was.
+func ReadDeltaTableAt(st *store.Store, itemID, root, name string) (*Table, error) {
 	active, schema, err := activeFiles(st, itemID, root)
 	if err != nil {
 		return nil, err

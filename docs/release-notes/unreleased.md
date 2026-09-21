@@ -23,3 +23,7 @@ functions, roles, grants, security policies, masks — which the relay refused a
 writes before; data writes stay refused, now including one after a leading
 block comment or after another statement in the batch.
 [docs/60](../60-sql-endpoint-access-modes.md)
+
+## Shortcuts on the SQL analytics endpoint
+
+A OneLake shortcut under `Tables/` now reads as a table on a lakehouse's SQL analytics endpoint, from its target: it was not reflected at all. In user identity mode the **source's** security applies as Fabric documents: a caller the source refuses is refused, and the source's column allow-list and row filters narrow the read on top of the consumer's own roles, the intersection winning. Not built: delegated mode does not yet block a shortcut whose source is secured, ownership chaining is not modelled, and ADLS, S3 and Dataverse shortcuts are still not tables. Where a row filter reads a column that another reader is denied, that reader is refused the table, because SQL Server needs SELECT on a policy's predicate columns; this also affects a table with no shortcut when one role narrows columns and another filters rows. [docs/61](../61-sql-endpoint-shortcuts.md)
