@@ -1651,7 +1651,13 @@
       "go:TestDataAccessMode",
       "go:TestSyncOneLakeMembershipsRefusesWhatItCannotSync",
       "go:TestDirectLakeOnSQLOverAUserIdentityEndpoint",
-      "go:TestDirectLakeOnlyOverAUserIdentityEndpoint"
+      "go:TestDirectLakeOnlyOverAUserIdentityEndpoint",
+      "go:TestATranslatedRowFilterIsAStaticPredicateOverOneTable",
+      "go:TestThePredicateShapeCheckCatchesWhatItIsFor",
+      "go:TestARoleNameLongerThan124CharactersDoesNotSync",
+      "go:TestSurfacePageIsThePinnedOne",
+      "go:TestEveryDocumentedLimitationIsClassified",
+      "go:TestTheGuardDoesWhatEachLimitationRecords"
     ]
   }
 }

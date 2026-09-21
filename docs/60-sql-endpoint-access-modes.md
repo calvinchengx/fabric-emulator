@@ -183,6 +183,42 @@ asked.
   reflection reads as the service.
 - **Mirrored items' endpoints** have no SQLEndpoint item here, so no mode.
 
+## What is Fabric's, and what is ours
+
+Only the `OLS_` role prefix is documented ("OneLake security roles are propagated
+to the SQL analytics endpoint with the `OLS_` prefix"). Everything else the sync
+creates is this repository's design, chosen so SQL Server enforces what OneLake
+says, and not a copy of what Fabric's sync service builds: the `OLS_rls_` security
+policies and `OLS_rlsfn_` predicate functions, the `OLS_guard` database DDL
+trigger, and the `OLS_sync` extended property that skips an unchanged sync. Nothing
+here claims a real endpoint's catalog looks like this; only a real endpoint's
+catalog could say. (Fabric documents triggers as unsupported; `OLS_guard` is the
+engine's own guard, not one a client can author.)
+
+## Documented rules, and the witness for each
+
+| Fabric's statement | Witness |
+|---|---|
+| "the maximum number of characters in a row-level security rule is 1000" | `TestTranslateRowFilterRefusals` |
+| "RLS roles don't support dynamic and multitable queries" | `TestTranslateRowFilterRefusals`, and `TestATranslatedRowFilterIsAStaticPredicateOverOneTable`, which parses the *output* with sqlglot-go and fails on a subquery, a call or a second table |
+| "role names cannot exceed 124 characters" | `TestARoleNameLongerThan124CharactersDoesNotSync` |
+| "Manual changes to these roles are not supported" | `TestAOneLakeSyncThatFailsRefusesTheConnection` (a hand-made `OLS_` role that cannot be dropped) |
+| "If there are no changes to sync, security sync does not override manual changes" | built (the `OLS_sync` hash skips an unchanged sync) and **not witnessed**: it needs a real SQL Server to show a manual grant survives an unchanged sync and is overwritten by a changed one |
+| "Queries with invalid RLS syntax … result in no rows being shown" | `TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint` (a Contributor whose role's filter is invalid sees no rows) |
+| Read on the item to connect; ReadData to read | `tds_itemaccess_test.go` |
+| Which T-SQL an endpoint does not support | `internal/tds/tsqlsurface_test.go` against `third_party/fabric-tsql-surface/` |
+
+The second reader is sqlglot-go's T-SQL parser (`v0.4.0`, whose dialects do not
+include Fabric's). It says the predicate is T-SQL of the permitted shape; it does
+not say Fabric emits that predicate.
+
+Not modelled, and why: the security-sync error state for a renamed or deleted
+column. Fabric documents the messages ("Row-level security policy references a
+column that no longer exists") and that the database "enters error state", but not
+what a client sees, so the emulator fails closed — a table with a column-level
+allow-list naming a missing column grants nothing, and a row filter that no longer
+matches grants no rows — without inventing the error.
+
 ## Witnesses
 
 Stage 1: `internal/server/dataaccessmode_test.go` switches a real SQL Server
