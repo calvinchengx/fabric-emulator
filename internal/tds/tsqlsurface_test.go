@@ -4,27 +4,34 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/calvinchengx/fabric-emulator/internal/tsql"
 )
 
 // Microsoft's T-SQL surface-area page lists what a Fabric SQL analytics endpoint
 // does not support. third_party/fabric-tsql-surface holds the page pinned, and a
-// table classifying each of its Limitations against this endpoint's write guard.
-// Three ways to fail, all of them silent before: a Limitations bullet nobody
-// classified, a row whose recorded behaviour is not what the guard does, and a
-// page whose bytes are not the ones pinned.
+// table classifying each of its Limitations against the two things here that can
+// refuse one: the lakehouse endpoint's write guard, which is always on, and Class
+// B strict mode (-tsql-strict), which is off by default. Three ways to fail, all
+// of them silent before: a Limitations bullet nobody classified, a row whose
+// recorded behaviour is not what the guard or strict mode does, and a page whose
+// bytes are not the ones pinned.
 
 const surfaceDir = "../../third_party/fabric-tsql-surface"
 
 type surfaceRow struct {
-	Text     string   `json:"text"`
-	Endpoint string   `json:"endpoint"`
-	Probes   []string `json:"probes"`
-	Reason   string   `json:"reason"`
+	Text    string   `json:"text"`
+	Guard   string   `json:"guard"`  // refused | forwarded | unspecified
+	Strict  string   `json:"strict"` // refused | not-enforced | unspecified
+	Feature string   `json:"feature"`
+	Probes  []string `json:"probes"`
+	Reason  string   `json:"reason"`
 }
 
 func loadSurface(t *testing.T) (page string, rows []surfaceRow) {
@@ -85,31 +92,79 @@ func TestEveryDocumentedLimitationIsClassified(t *testing.T) {
 	}
 }
 
-func TestTheGuardDoesWhatEachLimitationRecords(t *testing.T) {
+func TestTheGuardAndStrictModeDoWhatEachLimitationRecords(t *testing.T) {
 	_, rows := loadSurface(t)
 	for _, r := range rows {
 		t.Run(r.Text, func(t *testing.T) {
 			if strings.TrimSpace(r.Reason) == "" {
 				t.Fatal("every row carries a written reason")
 			}
-			switch r.Endpoint {
-			case "unspecified":
-				if len(r.Probes) != 0 {
+			if (r.Guard == "unspecified") != (r.Strict == "unspecified") {
+				t.Fatalf("guard %q and strict %q: a sentence naming no statement is unspecified for both", r.Guard, r.Strict)
+			}
+			if r.Guard == "unspecified" {
+				if len(r.Probes) != 0 || r.Feature != "" {
 					t.Fatal("an unspecified row has nothing to probe")
 				}
 				return
-			case "refused", "forwarded":
-			default:
-				t.Fatalf("endpoint %q is not refused, forwarded or unspecified", r.Endpoint)
+			}
+			if r.Guard != "refused" && r.Guard != "forwarded" {
+				t.Fatalf("guard %q is not refused, forwarded or unspecified", r.Guard)
+			}
+			if r.Strict != "refused" && r.Strict != "not-enforced" {
+				t.Fatalf("strict %q is not refused, not-enforced or unspecified", r.Strict)
 			}
 			if len(r.Probes) == 0 {
 				t.Fatal("a classified row needs a probe statement")
 			}
+			if (r.Strict == "refused") != (r.Feature != "") {
+				t.Fatalf("strict %q with feature %q: a refusal names its feature, and only a refusal does", r.Strict, r.Feature)
+			}
 			for _, q := range r.Probes {
-				if got := isEndpointWrite(q); got != (r.Endpoint == "refused") {
-					t.Errorf("%q: the guard refuses=%v, the table records %s", q, got, r.Endpoint)
+				if got := isEndpointWrite(q); got != (r.Guard == "refused") {
+					t.Errorf("%q: the guard refuses=%v, the table records %s", q, got, r.Guard)
+				}
+				err := tsql.CheckStrict(q)
+				if (err != nil) != (r.Strict == "refused") {
+					t.Errorf("%q: strict mode refuses=%v, the table records %s", q, err != nil, r.Strict)
+					continue
+				}
+				var ue *tsql.UnsupportedError
+				if errors.As(err, &ue) && ue.Feature != r.Feature {
+					t.Errorf("%q: strict mode names %q, the table records %q", q, ue.Feature, r.Feature)
 				}
 			}
 		})
+	}
+}
+
+// What the table says in total, so a reader need not count: the guard alone
+// refuses 6 of 16 and only on the endpoint; strict mode refuses 10; together they
+// refuse 12; three are refused by neither and one names no statement. If a row
+// changes, this changes, and the docs that quote it have to follow.
+func TestWhatTheTwoRefuseTogether(t *testing.T) {
+	_, rows := loadSurface(t)
+	var guard, strict, either, neither, unspecified int
+	for _, r := range rows {
+		g, s := r.Guard == "refused", r.Strict == "refused"
+		switch {
+		case r.Guard == "unspecified":
+			unspecified++
+			continue
+		case !g && !s:
+			neither++
+		}
+		if g {
+			guard++
+		}
+		if s {
+			strict++
+		}
+		if g || s {
+			either++
+		}
+	}
+	if guard != 6 || strict != 10 || either != 12 || neither != 3 || unspecified != 1 {
+		t.Errorf("guard %d, strict %d, either %d, neither %d, unspecified %d; want 6, 10, 12, 3, 1", guard, strict, either, neither, unspecified)
 	}
 }

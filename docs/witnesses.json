@@ -1664,8 +1664,9 @@
       "go:TestARoleNameLongerThan124CharactersDoesNotSync",
       "go:TestSurfacePageIsThePinnedOne",
       "go:TestEveryDocumentedLimitationIsClassified",
-      "go:TestTheGuardDoesWhatEachLimitationRecords",
-      "go:TestAnUnchangedSyncKeepsAManualChangeAndAChangedOneOverwritesIt"
+      "go:TestTheGuardAndStrictModeDoWhatEachLimitationRecords",
+      "go:TestAnUnchangedSyncKeepsAManualChangeAndAChangedOneOverwritesIt",
+      "go:TestWhatTheTwoRefuseTogether"
     ]
   },
   "sql-analytics-endpoint-onelake-shortcut-tables-and-access-at-the-source": {
