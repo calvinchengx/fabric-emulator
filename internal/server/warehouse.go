@@ -63,14 +63,18 @@ func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(toke
 			if _, err := reflector.Reflect(ctx, be.DB(it.ID), st, it.ID); err != nil {
 				return tds.Connection{}, fmt.Errorf("reflecting lakehouse: %w", err)
 			}
+			if err := syncIfUserIdentity(ctx, be, st, it); err != nil {
+				return tds.Connection{}, err
+			}
 			// The database rung, which is NOT the same question as read-only: a
 			// Contributor may write but must not be able to rewrite the security
 			// policy that constrains them. Admin and Member own the item in Fabric's
 			// model — "can edit OneLake security roles" is exactly those two — so they
-			// are the ones who can author here too.
-			dbRole := dbRung(role, access, readOnly)
+			// are the ones who can author here too. In user identity mode the rung
+			// below Contributor is CONNECT: the workspace sweep decides it.
+			dbRole := targetGrant(grants, it.ID).Role
 			return tds.Connection{
-				TargetDB: it.ID, ReadOnly: readOnly, Principal: principal, Role: dbRole,
+				TargetDB: it.ID, ReadOnly: readOnly, AnalyticsEndpoint: true, Principal: principal, Role: dbRole,
 				Grants: grants,
 			}, nil
 		case "Warehouse", "SQLDatabase":
@@ -115,6 +119,34 @@ func sqlAccess(st *store.Store, it *store.Item, principal string) (store.Access,
 		return store.Access{}, nil, fmt.Errorf("checking access: %w", err)
 	}
 	return access, grants, nil
+}
+
+// targetGrant is the workspace sweep's grant for one database. The sweep lists
+// every SQL item in the connected item's workspace, so the target is always
+// there.
+func targetGrant(grants []tds.Grant, database string) tds.Grant {
+	for _, g := range grants {
+		if g.Database == database {
+			return g
+		}
+	}
+	return tds.Grant{Database: database, Role: tds.RoleNone}
+}
+
+// syncIfUserIdentity syncs a lakehouse's OneLake security into its endpoint
+// when the endpoint is in user identity mode. It runs on every connect and
+// every server-side read, after reflection, so the synced grants follow both
+// the roles and the tables: Fabric syncs "up to 5 minutes" after a change, the
+// emulator on next use.
+func syncIfUserIdentity(ctx context.Context, be warehouseBackend, st *store.Store, lake *store.Item) error {
+	mode, err := st.DataAccessMode(lake)
+	if err != nil {
+		return fmt.Errorf("checking access: %w", err)
+	}
+	if mode != store.AccessModeUserIdentity {
+		return nil
+	}
+	return syncOneLakeRoles(ctx, be.DB(lake.ID), st, lake)
 }
 
 // sqlAddressable are the item types that have a T-SQL endpoint. A workspace
@@ -183,6 +215,23 @@ func workspaceGrants(st *store.Store, workspaceID, principalID, role string) ([]
 				return nil, err
 			}
 			access := store.MergeAccess(role, it.Type, g)
+			// A lakehouse in user identity mode takes its table access from OneLake
+			// security — as a three-part name from a neighbour too, since the rung
+			// and memberships are the same whichever database is connected to.
+			if t == "Lakehouse" {
+				mode, err := st.DataAccessMode(it)
+				if err != nil {
+					return nil, err
+				}
+				if mode == store.AccessModeUserIdentity {
+					og, err := oneLakeGrant(st, it, principalID, role, access)
+					if err != nil {
+						return nil, err
+					}
+					out = append(out, og)
+					continue
+				}
+			}
 			// A lakehouse endpoint is read-only whatever the role; a warehouse
 			// follows the role. Same rule the target uses.
 			readOnly := t == "Lakehouse" || store.RoleRank(role) < store.RoleRank(store.RoleContributor)
@@ -344,6 +393,9 @@ func sqlDBAsFor(be principalBackend, st *store.Store) func(ctx context.Context, 
 		if it.Type == "Lakehouse" {
 			if _, err := reflector.Reflect(ctx, be.DB(it.ID), st, it.ID); err != nil {
 				return nil, fmt.Errorf("reflecting lakehouse: %w", err)
+			}
+			if err := syncIfUserIdentity(ctx, be, st, it); err != nil {
+				return nil, err
 			}
 		}
 		return be.DBAs(ctx, it.ID, principal, grants)

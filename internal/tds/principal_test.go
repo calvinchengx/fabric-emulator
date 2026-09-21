@@ -437,3 +437,12 @@ func TestCrossDatabaseNeedsAUserInBoth(t *testing.T) {
 		t.Fatalf("read %d rows across databases, want 2", n)
 	}
 }
+
+func TestSyncOneLakeMembershipsRefusesWhatItCannotSync(t *testing.T) {
+	if err := SyncOneLakeMemberships(t.Context(), nil, "", nil); err == nil {
+		t.Error("synced memberships for no principal")
+	}
+	if err := SyncOneLakeMemberships(t.Context(), closedDB(t), "u", []string{"OLS_x"}); err == nil {
+		t.Error("a sync the engine could not run reported success")
+	}
+}

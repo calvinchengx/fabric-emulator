@@ -231,6 +231,19 @@ func (a *API) refuseDirectQueryFallback(ctx context.Context, source *store.Item,
 	open := a.SQLDB
 	if source.Type == "Lakehouse" {
 		open = a.LakehouseDB
+		// "The SQL analytics endpoint can be changed to SSO. When this happens,
+		// OneLake security roles are added as SQL granular access control rules …
+		// At this point, Direct Lake on SQL falls back to DirectQuery 100% of the
+		// time." Every table, whatever its catalog says (docs/60).
+		mode, err := a.Store.DataAccessMode(source)
+		if err != nil {
+			return fmt.Errorf("Direct Lake table %q: reading the endpoint's access mode: %w", table.Name, err)
+		}
+		if mode == store.AccessModeUserIdentity {
+			return fmt.Errorf("Direct Lake table %q cannot stay in Direct Lake mode and directLakeBehavior is "+
+				"directLakeOnly, which disables DirectQuery fallback: the SQL analytics endpoint is in user identity "+
+				"access mode, where Direct Lake on SQL always falls back", table.Name)
+		}
 	}
 	if open == nil {
 		return fmt.Errorf("Direct Lake table %q: directLakeOnly needs the endpoint's catalog, and this emulator "+

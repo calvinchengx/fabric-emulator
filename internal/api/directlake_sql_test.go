@@ -548,3 +548,45 @@ func querySales(a *API, p *auth.Principal, model *store.Item) (int, string) {
 	w := do(a.executeQueries, p, "POST", `{"queries":[{"query":"EVALUATE 'Sales'"}]}`, map[string]string{"datasetId": model.ID})
 	return w.Code, w.Body.String()
 }
+
+// Over a lakehouse whose endpoint is in user identity access mode, Direct Lake
+// on SQL "falls back to DirectQuery 100% of the time": directLakeOnly fails every
+// table without consulting the catalog, and automatic serves the caller.
+func TestDirectLakeOnlyOverAUserIdentityEndpoint(t *testing.T) {
+	a, st, ws, items := sqlSources(t)
+	a.SQLDBAs = func(context.Context, string, string) (*sql.DB, error) {
+		return sqliteEndpoint(t, `CREATE TABLE dbo.sales ([amount] TEXT)`, `INSERT INTO dbo.sales VALUES ('1')`), nil
+	}
+	a.LakehouseDB = func(context.Context, string) (*sql.DB, error) { return sqliteEndpoint(t), nil }
+	orig := directQueryFallbackCauses
+	t.Cleanup(func() { directQueryFallbackCauses = orig })
+	directQueryFallbackCauses = func(context.Context, *sql.DB, string) ([]string, error) { return nil, nil }
+	if err := st.SetItemProperties(items["SQLEndpoint"].ID, map[string]string{store.PropDataAccessMode: store.AccessModeUserIdentity}); err != nil {
+		t.Fatal(err)
+	}
+	model := sqlModel(t, st, ws.ID, items["SQLEndpoint"].ID, "", "sales", [2]string{"Amount", "amount"})
+	setBehavior(t, st, model.ID, "directLakeOnly")
+	if code, body := querySales(a, admin, model); code != http.StatusBadRequest || !strings.Contains(body, "user identity access mode") {
+		t.Errorf("directLakeOnly over a user identity endpoint = %d %s", code, body)
+	}
+	setBehavior(t, st, model.ID, "automatic")
+	if code, body := querySales(a, admin, model); code != http.StatusOK {
+		t.Errorf("automatic over a user identity endpoint = %d %s", code, body)
+	}
+}
+
+func TestDirectLakeOnlyFailsClosedOnAnUnreadableAccessMode(t *testing.T) {
+	a, st, dir := newDiskAPI(t)
+	ws := seedWorkspace(t, st)
+	lake := &store.Item{WorkspaceID: ws.ID, Type: "Lakehouse", DisplayName: "lake"}
+	if err := st.CreateItem(lake, nil); err != nil {
+		t.Fatal(err)
+	}
+	a.LakehouseDB = func(context.Context, string) (*sql.DB, error) { return sqliteEndpoint(t), nil }
+	table := &semanticmodel.Table{Name: "Sales", DirectLake: &semanticmodel.DirectLakePartition{EntityName: "sales"}}
+	dropTable(t, dir, "items")
+	if err := a.refuseDirectQueryFallback(t.Context(), lake, table, "[dbo].[sales]"); err == nil ||
+		!strings.Contains(err.Error(), "reading the endpoint's access mode") {
+		t.Errorf("an unreadable access mode = %v", err)
+	}
+}

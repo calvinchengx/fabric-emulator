@@ -266,7 +266,7 @@ func (b *sqlServerBackend) provision(ctx context.Context, database, principal st
 	if target.Role == RoleNone {
 		return fmt.Errorf("provisioning %s: no access to %s", principal, database)
 	}
-	if err := EnsurePrincipal(ctx, b.pool(""), b.pool(database), principal, target.Role); err != nil {
+	if err := b.ensure(ctx, principal, target); err != nil {
 		return fmt.Errorf("provisioning %s: %w", principal, err)
 	}
 	// THE TARGET IS PROVISIONED UNCONDITIONALLY, above, exactly as it always
@@ -292,12 +292,24 @@ func (b *sqlServerBackend) provision(ctx context.Context, database, principal st
 			if !present[g.Database] {
 				continue
 			}
-			if err := EnsurePrincipal(ctx, b.pool(""), b.pool(g.Database), principal, g.Role); err != nil {
+			if err := b.ensure(ctx, principal, g); err != nil {
 				return fmt.Errorf("provisioning %s in %s: %w", principal, g.Database, err)
 			}
 		}
 	}
 	return nil
+}
+
+// ensure provisions a principal in one database at its rung and, on a lakehouse
+// endpoint in user identity mode, syncs its OLS_ memberships there.
+func (b *sqlServerBackend) ensure(ctx context.Context, principal string, g Grant) error {
+	if err := EnsurePrincipal(ctx, b.pool(""), b.pool(g.Database), principal, g.Role); err != nil {
+		return err
+	}
+	if !g.OneLake || g.Role == RoleNone {
+		return nil
+	}
+	return SyncOneLakeMemberships(ctx, b.pool(g.Database), principal, g.OneLakeRoles)
 }
 
 // DBAs returns a connection pool that logs into the item's database AS the

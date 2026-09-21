@@ -11,7 +11,7 @@
     "be the review."
   ],
   "exercised": 116,
-  "registered": 172,
+  "registered": 174,
   "notYetExercised": [
     "DELETE /v1/deploymentPipelines/{pid}/roleAssignments/{prid}",
     "DELETE /v1/mcp/core",
@@ -43,6 +43,7 @@
     "GET /v1/workspaces/{wid}/lakehouses/{lid}/livyapi/versions/{ver}/highConcurrencySessions/{hcid}",
     "GET /v1/workspaces/{wid}/reflexes/{iid}/triggers",
     "GET /v1/workspaces/{wid}/reflexes/{iid}/triggers/{tid}",
+    "GET /v1/workspaces/{wid}/sqlEndpoints/{epid}/_emulator/dataAccessMode",
     "GET /v1/workspaces/{wid}/{collection}/{iid}/jobs/instances/{jid}",
     "PATCH /v1/deploymentPipelines/{pid}",
     "PATCH /v1/deploymentPipelines/{pid}/stages/{sid}",
@@ -68,6 +69,7 @@
     "POST /v1/workspaces/{wid}/{collection}/{iid}/updateDefinition",
     "PUT /v1.0/myorg/groups/{groupId}/datasets/{datasetId}/users",
     "PUT /v1/workspaces/{wid}/apacheAirflowJobs/{iid}/files/{path...}",
-    "PUT /v1/workspaces/{wid}/items/{iid}/_emulator/access/{principalId}"
+    "PUT /v1/workspaces/{wid}/items/{iid}/_emulator/access/{principalId}",
+    "PUT /v1/workspaces/{wid}/sqlEndpoints/{epid}/_emulator/dataAccessMode"
   ]
 }

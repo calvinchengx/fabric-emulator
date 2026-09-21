@@ -41,9 +41,8 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 )
 
-// propParentLakehouse links a SQLEndpoint item back to the lakehouse it serves,
-// the same way a KQLDatabase names its Eventhouse.
-const propParentLakehouse = "parentLakehouseItemId"
+// propParentLakehouse links a SQLEndpoint item back to the lakehouse it serves.
+const propParentLakehouse = store.PropParentLakehouse
 
 // ensureSQLEndpointItem creates the SQLEndpoint item that accompanies a
 // lakehouse. Idempotent by search: a second call finds the existing one, so a

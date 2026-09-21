@@ -203,6 +203,9 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 			a.SQLDB = sqlDBFor(be, st)
 			// Direct Lake on SQL reads as the caller, never as the service account.
 			a.SQLDBAs = sqlDBAsFor(be, st)
+			// Switching a SQL analytics endpoint's data access mode closes the
+			// workspace's sessions and applies the mode's SQL side effects.
+			a.SwitchDataAccessMode = dataAccessModeSwitch(be, st, s.TDS)
 		}
 	}
 

@@ -115,6 +115,10 @@ fail. Only the catalog is read that way; rows are always the caller's. The error
 text is the emulator's own — Microsoft documents that the query "fails with an
 error" but not the message.
 
+Over a lakehouse whose SQL analytics endpoint is in user identity access mode
+(docs/60), every table fails under `directLakeOnly`: Fabric says Direct Lake on
+SQL then "falls back to DirectQuery 100% of the time".
+
 Guardrails and framing, the other documented fallback causes, are not modelled,
 so they cannot trigger it; `TMSCHEMA_DELTA_TABLE_METADATA_STORAGES` still
 refuses `FallbackReason`, and `TABLETRAITS()` is not implemented.
