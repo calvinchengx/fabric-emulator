@@ -1482,7 +1482,8 @@
     "go:TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestAOneLakeSyncThatFailsRefusesTheConnection": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestARowFilterSurvivesReflection": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestDirectLakeOnSQLOverAUserIdentityEndpoint": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+    "go:TestDirectLakeOnSQLOverAUserIdentityEndpoint": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestAnUnchangedSyncKeepsAManualChangeAndAChangedOneOverwritesIt": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",
@@ -1657,7 +1658,8 @@
       "go:TestARoleNameLongerThan124CharactersDoesNotSync",
       "go:TestSurfacePageIsThePinnedOne",
       "go:TestEveryDocumentedLimitationIsClassified",
-      "go:TestTheGuardDoesWhatEachLimitationRecords"
+      "go:TestTheGuardDoesWhatEachLimitationRecords",
+      "go:TestAnUnchangedSyncKeepsAManualChangeAndAChangedOneOverwritesIt"
     ]
   }
 }
