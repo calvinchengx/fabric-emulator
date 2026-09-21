@@ -15,23 +15,33 @@ send here", which no OpenAPI document covers.
   CC-BY-4.0 for documentation). Copied in full, unmodified, with this
   attribution: a single page, and the file is the tamper check.
 - **Used by:** `internal/tds/tsqlsurface_test.go`, which holds
-  `unsupported.json` to the page's Limitations list and holds each row's
-  `endpoint` to what `isEndpointWrite` does with its probe statements.
+  `unsupported.json` to the page's Limitations list and holds each row to what the
+  endpoint's write guard (`isEndpointWrite`) and Class B strict mode
+  (`tsql.CheckStrict`, [docs/29](../../docs/29-tsql-parity.md)) do with its probe
+  statements.
 
 ## `unsupported.json` is ours, not Microsoft's
 
 `text` is Microsoft's, verbatim, one row per bullet under **Limitations**. Every
-other field is this repository's classification of the lakehouse endpoint's
-write guard:
+other field is this repository's classification. Two things here can refuse a
+statement Fabric does not support, and they are different in kind:
 
-| `endpoint` | Meaning |
+- the **guard** — the lakehouse SQL analytics endpoint's write guard. Always on,
+  the endpoint only, and it judges what a batch *writes*;
+- **strict mode** — `-tsql-strict` / `FABRIC_TSQL_STRICT`. **Off by default**,
+  because it removes capability; applies to every TDS connection, endpoint and
+  Warehouse alike.
+
+| Field | Values |
 |---|---|
-| `refused` | the guard refuses every probe statement, so it never reaches the engine |
-| `forwarded` | the guard passes it to the engine. Fabric documents it as unsupported; this emulator does not refuse it. **A divergence**, each with a written `reason` |
-| `unspecified` | the sentence names no statement, so there is nothing to probe |
+| `guard` | `refused` — every probe is refused, so it never reaches the engine. `forwarded` — it reaches the engine. `unspecified` — the sentence names no statement |
+| `strict` | `refused` — strict mode refuses every probe, and `feature` is the name it gives. `not-enforced` — it does not, with the reason in `reason`. `unspecified` |
 
-`forwarded` measures the guard, not the engine: SQL Server may still reject the
-statement, and for most of these it does not.
+Read together, for the 16 Limitations: the guard refuses 6 (on the endpoint only),
+strict mode refuses 10, the two refuse 12 between them, three are refused by
+neither — `FOR JSON` in a subquery, names containing `/` or `\`, and the vector
+type — and one names no statement. Neither measures the engine: a statement that is
+"forwarded" may still be rejected by SQL Server, and for most of these it is not.
 
 ## Refresh
 

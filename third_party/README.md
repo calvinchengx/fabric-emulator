@@ -52,8 +52,8 @@ the golden truth is reviewable. Never let a reference float.
 - [`fabric-tsql-surface/`](fabric-tsql-surface/) — Microsoft's T-SQL surface-area
   page (CC-BY-4.0, copied in full, pinned to a commit SHA): the statements a
   Fabric SQL analytics endpoint does not support. `unsupported.json` classifies
-  each against the endpoint's write guard, and `internal/tds/tsqlsurface_test.go`
-  holds the table to the page and to what the guard does.
+  each against the endpoint's write guard and against Class B strict mode, and
+  `internal/tds/tsqlsurface_test.go` holds the table to the page and to what they do.
 - [`bi-shared-docs/`](bi-shared-docs/) — Microsoft's open BI documentation
   corpus (CC-BY-4.0, pinned by reference). Golden reference for the XMLA
   protocol, rowset encodings, schema rowsets, and the TMSL/TMDL model formats.

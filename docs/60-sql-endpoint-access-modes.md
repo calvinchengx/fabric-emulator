@@ -225,7 +225,7 @@ engine's own guard, not one a client can author.)
 | "If there are no changes to sync, security sync does not override manual changes" | `TestAnUnchangedSyncKeepsAManualChangeAndAChangedOneOverwritesIt`, against a real SQL Server: a table permission authored on an `OLS_` role survives two syncs with nothing to sync, and is gone after one OneLake change. Mutation-checked both ways: with the `OLS_sync` skip removed it fails, and with the role's revoke removed it fails. The manual grant is authored with `OLS_guard` disabled, because this emulator refuses table `GRANT` in T-SQL in this mode where Fabric says only that it "isn't allowed" |
 | "Queries with invalid RLS syntax … result in no rows being shown" | `TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint` (a Contributor whose role's filter is invalid sees no rows) |
 | Read on the item to connect; ReadData to read | `tds_itemaccess_test.go` |
-| Which T-SQL an endpoint does not support | `internal/tds/tsqlsurface_test.go` against `third_party/fabric-tsql-surface/` |
+| Which T-SQL an endpoint does not support | `internal/tds/tsqlsurface_test.go` against `third_party/fabric-tsql-surface/`: of the page's 16 Limitations the endpoint's write guard refuses 6, Class B strict mode (`-tsql-strict`, off by default, [docs/29](29-tsql-parity.md)) refuses 10, the two together 12; `FOR JSON` in a subquery, names containing `/` or `\`, and the vector type are refused by neither |
 
 The second reader is sqlglot-go's T-SQL parser (`v0.4.0`, whose dialects do not
 include Fabric's). It says the predicate is T-SQL of the permitted shape; it does
