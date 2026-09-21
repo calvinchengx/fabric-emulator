@@ -6,26 +6,45 @@ package tds
 // (the text is the payload) or as an RPC message (the text is a parameter of a
 // system procedure such as sp_executesql). Which one a given client uses is a
 // property of the client's driver, not of the server, so it has to be measured
-// rather than assumed. TraceFunc makes that measurable without a debugger.
+// rather than assumed. SetTraceFunc makes that measurable without a debugger.
 
 import (
 	"encoding/binary"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"unicode"
 )
 
-// TraceFunc, when non-nil, receives a one-line description of every
-// client→server TDS message. Nil (the default) disables tracing entirely, so
-// the cost on the hot path is one nil check.
-var TraceFunc func(line string)
+// traceFunc, when set, receives a one-line description of every client→server
+// TDS message. Unset (the default) disables tracing entirely, so the cost on the
+// hot path is one atomic load and a nil check.
+//
+// It is an atomic pointer, not a bare variable, because it is written once at
+// server start and read by the goroutine of every session for the life of the
+// process, and a test replaces it while other tests' sessions are still open. A
+// bare variable made those a data race, and the nil check followed by the call
+// read it twice, so a hook removed between the two was called through nil.
+var traceFunc atomic.Pointer[func(line string)]
 
-// traceRequest describes a client message to TraceFunc, if tracing is on.
-func traceRequest(typ byte, data []byte) {
-	if TraceFunc == nil {
+// SetTraceFunc installs the tracing hook, or removes it when f is nil. It is safe
+// to call while messages are being traced, and f must be safe to call from any
+// session's goroutine.
+func SetTraceFunc(f func(line string)) {
+	if f == nil {
+		traceFunc.Store(nil)
 		return
 	}
-	TraceFunc(describeRequest(typ, data))
+	traceFunc.Store(&f)
+}
+
+// traceRequest describes a client message to the tracing hook, if tracing is on.
+func traceRequest(typ byte, data []byte) {
+	f := traceFunc.Load() // once: a hook removed after the check must not be called
+	if f == nil {
+		return
+	}
+	(*f)(describeRequest(typ, data))
 }
 
 // describeRequest renders a client message as one diagnostic line. It is pure

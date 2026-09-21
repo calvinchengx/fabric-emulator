@@ -3,6 +3,7 @@ package tds
 import (
 	"encoding/binary"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf16"
 )
@@ -103,17 +104,70 @@ func TestQuotePreviewTruncatesAndFlattens(t *testing.T) {
 	}
 }
 
+// setTrace is the one place these tests install the hook.
+func setTrace(f func(string)) { SetTraceFunc(f) }
+
 func TestTraceFuncHookFiresOnlyWhenSet(t *testing.T) {
 	traceRequest(PktSQLBatch, withHeaders(ucs2Bytes("select 1"))) // nil: must not panic
 
+	// Other tests leave TDS sessions running, and a session's messages reach the
+	// hook while it is set, so the hook is safe to call from any goroutine and the
+	// assertion looks only at this test's own statement.
+	var mu sync.Mutex
 	var lines []string
-	TraceFunc = func(l string) { lines = append(lines, l) }
-	t.Cleanup(func() { TraceFunc = nil })
+	setTrace(func(l string) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, l)
+	})
+	t.Cleanup(func() { setTrace(nil) })
 
 	traceRequest(PktSQLBatch, withHeaders(ucs2Bytes("select 2")))
-	if len(lines) != 1 || !strings.Contains(lines[0], "select 2") {
+	mu.Lock()
+	defer mu.Unlock()
+	var mine []string
+	for _, l := range lines {
+		if strings.Contains(l, "select 2") {
+			mine = append(mine, l)
+		}
+	}
+	if len(mine) != 1 {
 		t.Fatalf("got %v", lines)
 	}
+}
+
+// The hook is installed once at server start and read by every session's
+// goroutine for the life of the process, so replacing it while messages are being
+// traced must be safe: no data race, and no call through a hook that was removed
+// between the nil check and the call. Under -race this failed when the hook was a
+// bare package variable (`TraceFunc`); it is what the randomised race job in CI runs.
+func TestTraceFuncCanBeSwappedWhileRequestsAreTraced(t *testing.T) {
+	t.Cleanup(func() { setTrace(nil) })
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					traceRequest(PktSQLBatch, withHeaders(ucs2Bytes("select 3")))
+				}
+			}
+		}()
+	}
+	for i := 0; i < 5000; i++ {
+		if i%2 == 0 {
+			setTrace(func(string) {})
+		} else {
+			setTrace(nil)
+		}
+	}
+	close(stop)
+	wg.Wait()
 }
 
 // A parameter's text can start at an odd offset; a fixed-parity scan would read
