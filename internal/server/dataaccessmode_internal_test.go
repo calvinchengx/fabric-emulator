@@ -67,21 +67,26 @@ func TestDataAccessModeSwitchFailures(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sqlite.Close() })
 
-	for name, tc := range map[string]struct {
+	// A slice, in this order: the last case leaves an unreadable property behind,
+	// which the case before it must not see. Ranged as a map, the order was
+	// random and the test failed about one run in five.
+	for _, tc := range []struct {
+		name string
 		be   *fakeWH
 		to   string
 		prep func()
 		want string
 	}{
-		"the database cannot be prepared":   {&fakeWH{db: sqlite, ensureErr: errors.New("boom")}, store.AccessModeUserIdentity, func() {}, "preparing database"},
-		"the engine refuses the switch in":  {&fakeWH{db: sqlite}, store.AccessModeUserIdentity, func() {}, "switching to user identity"},
-		"the engine refuses the switch out": {&fakeWH{db: sqlite}, store.AccessModeDelegated, func() {}, "switching to delegated identity"},
-		"the remembered policies are unreadable": {&fakeWH{db: sqlite}, store.AccessModeDelegated, func() {
+		{"the database cannot be prepared", &fakeWH{db: sqlite, ensureErr: errors.New("boom")}, store.AccessModeUserIdentity, func() {}, "preparing database"},
+		{"the engine refuses the switch in", &fakeWH{db: sqlite}, store.AccessModeUserIdentity, func() {}, "switching to user identity"},
+		{"the engine refuses the switch out", &fakeWH{db: sqlite}, store.AccessModeDelegated, func() {}, "switching to delegated identity"},
+		{"the remembered policies are unreadable", &fakeWH{db: sqlite}, store.AccessModeDelegated, func() {
 			if err := st.SetItemProperties(ep.ID, map[string]string{propDisabledPolicies: "not json"}); err != nil {
 				t.Fatal(err)
 			}
 		}, "reading what the switch to user identity set aside"},
 	} {
+		name := tc.name
 		tc.prep()
 		err := dataAccessModeSwitch(tc.be, st, closer)(ctx, ep, lake, tc.to)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
