@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 
@@ -63,17 +64,51 @@ func oneLakeRoleName(role string) (string, error) {
 // membership rules OneLake reads use: an Entra member, or a holder of the item
 // permission a role names (DefaultReader's ReadAll).
 func oneLakeMemberships(roles []onelakesec.Role, principal string, access store.Access) []string {
+	return oneLakeMembershipsAs(roles, principal, access, oneLakeRoleName)
+}
+
+// oneLakeMembershipsAs is oneLakeMemberships with the database role a OneLake role
+// syncs to chosen by name — a shortcut source's roles sync under names of their
+// own, so they cannot be mistaken for the consumer's.
+func oneLakeMembershipsAs(roles []onelakesec.Role, principal string, access store.Access, name func(string) (string, error)) []string {
 	held := append(append([]string{}, access.Permissions...), access.Additional...)
 	var out []string
 	for _, r := range roles {
 		if len(onelakesec.Effective([]onelakesec.Role{r}, onelakesec.Principal{ObjectID: principal, ItemAccess: held}, onelakesec.InputTables)) == 0 {
 			continue
 		}
-		if name, err := oneLakeRoleName(r.Name); err == nil {
-			out = append(out, name)
+		if n, err := name(r.Name); err == nil {
+			out = append(out, n)
 		}
 	}
 	return out
+}
+
+// sourceRoleName is the database role a shortcut source's OneLake role syncs to
+// on the consumer's endpoint: the role is the source's, not the consumer's, so it
+// is named from both the source item and the role. It carries no permission; it
+// only says who is in it, for the predicate that narrows the shortcut's rows.
+func sourceRoleName(sourceItem string) func(string) (string, error) {
+	return func(role string) (string, error) {
+		sum := sha256.Sum256([]byte(sourceItem + "/" + role))
+		return olsPrefix + "src_" + hex.EncodeToString(sum[:8]), nil
+	}
+}
+
+// oneLakeShortcuts are the lakehouse's shortcut tables that are read from another
+// OneLake item: the ones whose source's security applies to the consumer's read.
+func oneLakeShortcuts(st *store.Store, lakeID string) ([]*store.Shortcut, error) {
+	all, err := st.ListShortcuts(lakeID)
+	if err != nil {
+		return nil, err
+	}
+	var out []*store.Shortcut
+	for _, sc := range all {
+		if sc.Path == "Tables" && !sc.IsExternalTarget() && sc.TargetItem != "" {
+			out = append(out, sc)
+		}
+	}
+	return out, nil
 }
 
 // oneLakeGrant is a principal's grant on a lakehouse in user identity mode:
@@ -87,9 +122,11 @@ func oneLakeGrant(st *store.Store, lake *store.Item, principal, role string, acc
 		return tds.Grant{}, err
 	}
 	g := tds.Grant{Database: lake.ID, OneLake: true, OneLakeRoles: oneLakeMemberships(roles, principal, access)}
-	if g.ShortcutTables, g.DeniedTables, err = shortcutAccess(st, lake, principal); err != nil {
+	var sourceRoles []string
+	if g.ShortcutTables, g.DeniedTables, g.ShortcutColumns, sourceRoles, err = shortcutAccess(st, lake, principal); err != nil {
 		return tds.Grant{}, err
 	}
+	g.OneLakeRoles = append(g.OneLakeRoles, sourceRoles...)
 	switch {
 	case !access.Has(store.PermRead):
 		g.Role = tds.RoleNone
@@ -144,12 +181,9 @@ func syncOneLakeRoles(ctx context.Context, db *sql.DB, st *store.Store, lake *st
 	}
 	sort.Strings(tables)
 
-	type tableAccess struct {
-		filtered   []roleFilter
-		unfiltered []string // role name literals granting the table whole
-		used       []string // columns the filters read
-	}
 	access := map[string]*tableAccess{}
+	// The consumer's own role names, so a source role's cannot be mistaken for one.
+	consumerNames := map[string]bool{}
 
 	var b strings.Builder
 	b.WriteString("SET XACT_ABORT ON;\nBEGIN TRANSACTION;\n")
@@ -163,6 +197,7 @@ func syncOneLakeRoles(ctx context.Context, db *sql.DB, st *store.Store, lake *st
 			return err
 		}
 		lit, ident := sqlLiteral(name), sqlIdent(name)
+		consumerNames[name] = true
 		keep = append(keep, lit)
 		fmt.Fprintf(&b, "IF DATABASE_PRINCIPAL_ID(%s) IS NULL CREATE ROLE %s;\n", lit, ident)
 		fmt.Fprintf(&b, `DECLARE @revoke_%[1]d nvarchar(max) = N'';
@@ -223,12 +258,88 @@ EXEC sp_executesql @revoke_%[1]d;
 			}
 		}
 	}
-	for _, t := range tables {
-		ta := access[t]
-		if ta == nil || len(ta.filtered) == 0 {
+	// The source's half of each shortcut table: its roles, synced under names of
+	// their own, so the predicate can narrow the consumer's read by what the source
+	// narrows. Columns are narrowed per principal (tds.SyncShortcutAccess); rows
+	// here, since a filter is the same for every member of its role.
+	source := map[string]*tableAccess{}
+	shortcuts, err := oneLakeShortcuts(st, lake.ID)
+	if err != nil {
+		return err
+	}
+	for _, sc := range shortcuts {
+		var table string
+		for _, t := range tables {
+			if strings.EqualFold(t, sc.Name) {
+				table = t
+			}
+		}
+		if table == "" {
 			continue
 		}
-		b.WriteString(rowPolicy(t, ta.filtered, ta.unfiltered, ta.used, endpoint.columns[t]))
+		srcRoles, err := st.EvaluatableRoles(sc.TargetItem)
+		if err != nil {
+			return err
+		}
+		name := sourceRoleName(sc.TargetItem)
+		for _, r := range srcRoles {
+			member := onelakesec.Role{Name: r.Name, DecisionRules: r.DecisionRules, Members: onelakesec.Members{Entra: []string{"sync"}}}
+			entries := onelakesec.Effective([]onelakesec.Role{member}, onelakesec.Principal{ObjectID: "sync"}, onelakesec.InputTables)
+			if !onelakesec.Allows(entries, sc.TargetPath) {
+				continue
+			}
+			dbName, _ := name(r.Name)
+			if consumerNames[dbName] {
+				return fmt.Errorf("OneLake security role %q cannot be synced: its name is taken", dbName)
+			}
+			lit := sqlLiteral(dbName)
+			keep = append(keep, lit)
+			fmt.Fprintf(&b, "IF DATABASE_PRINCIPAL_ID(%s) IS NULL CREATE ROLE %s;\n", lit, sqlIdent(dbName))
+			sa := source[table]
+			if sa == nil {
+				sa = &tableAccess{}
+				source[table] = sa
+			}
+			n := onelakesec.Narrowing(entries, sc.TargetPath)
+			if n == nil || n.Rows == "" {
+				sa.unfiltered = append(sa.unfiltered, lit)
+				continue
+			}
+			filter, cols, err := translateRowFilters(n.Rows, path.Base(sc.TargetPath), endpoint.columns[table])
+			if err != nil {
+				// As for the consumer's own: a filter outside OneLake's grammar shows
+				// no rows to the role's members.
+				sa.filtered = append(sa.filtered, roleFilter{role: lit, expr: "(1 = 0)"})
+				continue
+			}
+			sa.filtered = append(sa.filtered, roleFilter{role: lit, expr: filter})
+			for _, c := range cols {
+				if !containsString(sa.used, c) {
+					sa.used = append(sa.used, c)
+				}
+			}
+		}
+	}
+	for _, t := range tables {
+		ta, sa := access[t], source[t]
+		if (ta == nil || len(ta.filtered) == 0) && (sa == nil || len(sa.filtered) == 0) {
+			continue
+		}
+		var own, src rowLayer
+		var used []string
+		if ta != nil {
+			own = rowLayer{ta.filtered, ta.unfiltered}
+			used = append(used, ta.used...)
+		}
+		if sa != nil {
+			src = rowLayer{sa.filtered, sa.unfiltered}
+			for _, c := range sa.used {
+				if !containsString(used, c) {
+					used = append(used, c)
+				}
+			}
+		}
+		b.WriteString(rowPolicy(t, own, src, used, endpoint.columns[t]))
 	}
 	fmt.Fprintf(&b, `DECLARE @stale nvarchar(max) = N'';
 SELECT @stale += N'ALTER ROLE ' + QUOTENAME(r.name) + N' DROP MEMBER ' + QUOTENAME(m.name) + N';'
@@ -266,14 +377,36 @@ FROM sys.objects WHERE type IN ('IF', 'TF', 'FN') AND name LIKE 'OLS[_]rlsfn[_]%
 EXEC sp_executesql @rls;
 `
 
+// tableAccess is what one layer of roles gives one table: the roles that filter
+// it (with the translated filter), the ones that grant it whole, and the columns
+// the filters read.
+type tableAccess struct {
+	filtered   []roleFilter
+	unfiltered []string // role name literals granting the table whole
+	used       []string // columns the filters read
+}
+
 // roleFilter is one role's translated row filter on a table, with the role as a
 // SQL literal.
 type roleFilter struct {
 	role, expr string
 }
 
+// rowLayer is one layer of a table's row security: the consumer's own roles, or
+// the shortcut source's.
+type rowLayer struct {
+	filtered   []roleFilter
+	unfiltered []string
+}
+
 // rowPolicy creates one table's predicate function and security policy.
-func rowPolicy(table string, filtered []roleFilter, unfiltered, used []string, columns map[string]endpointColumn) string {
+//
+// The predicate is the AND of its layers — the consumer's roles and, for a
+// shortcut table, the source's: "the most restrictive outcome" wins, so a row is
+// shown only when both let it through. Within a layer a reader is admitted by a
+// role that filters it and the filter holds, by a role that grants it whole, or
+// by being in no role of the layer at all.
+func rowPolicy(table string, own, src rowLayer, used []string, columns map[string]endpointColumn) string {
 	sum := sha256.Sum256([]byte(table))
 	name := "OLS_rls_" + hex.EncodeToString(sum[:8])
 	fnName := "OLS_rlsfn_" + hex.EncodeToString(sum[:8])
@@ -292,18 +425,25 @@ func rowPolicy(table string, filtered []roleFilter, unfiltered, used []string, c
 		projections = append(projections, fmt.Sprintf("@p%d AS %s", i, sqlIdent(col.Name)))
 		args = append(args, sqlIdent(col.Name))
 	}
-	var terms, none []string
-	for _, f := range filtered {
-		terms = append(terms, "(IS_MEMBER("+f.role+") = 1 AND "+f.expr+")")
-		none = append(none, "IS_MEMBER("+f.role+") = 0")
+	var clauses []string
+	for _, layer := range []rowLayer{own, src} {
+		var terms, none []string
+		for _, f := range layer.filtered {
+			terms = append(terms, "(IS_MEMBER("+f.role+") = 1 AND "+f.expr+")")
+			none = append(none, "IS_MEMBER("+f.role+") = 0")
+		}
+		for _, u := range layer.unfiltered {
+			terms = append(terms, "IS_MEMBER("+u+") = 1")
+			none = append(none, "IS_MEMBER("+u+") = 0")
+		}
+		if len(none) == 0 {
+			continue
+		}
+		terms = append(terms, "("+strings.Join(none, " AND ")+")")
+		clauses = append(clauses, "("+strings.Join(terms, " OR ")+")")
 	}
-	for _, u := range unfiltered {
-		terms = append(terms, "IS_MEMBER("+u+") = 1")
-		none = append(none, "IS_MEMBER("+u+") = 0")
-	}
-	terms = append(terms, "("+strings.Join(none, " AND ")+")")
 	fn := fmt.Sprintf("CREATE FUNCTION [dbo].%s(%s) RETURNS TABLE AS RETURN SELECT 1 AS ok FROM (SELECT %s) AS r WHERE %s",
-		sqlIdent(fnName), strings.Join(params, ", "), strings.Join(projections, ", "), strings.Join(terms, " OR "))
+		sqlIdent(fnName), strings.Join(params, ", "), strings.Join(projections, ", "), strings.Join(clauses, " AND "))
 	policy := fmt.Sprintf("CREATE SECURITY POLICY [dbo].%s ADD FILTER PREDICATE [dbo].%s(%s) ON [dbo].%s WITH (STATE = ON, SCHEMABINDING = OFF)",
 		sqlIdent(name), sqlIdent(fnName), strings.Join(args, ", "), sqlIdent(table))
 	return fmt.Sprintf("EXEC(N'%s');\nEXEC(N'%s');\nGRANT SELECT ON [dbo].%s TO [public];\n",
@@ -385,22 +525,29 @@ func endpointColumns(ctx context.Context, db *sql.DB) (endpointState, error) {
 func sqlIdent(s string) string   { return "[" + strings.ReplaceAll(s, "]", "]]") + "]" }
 func sqlLiteral(s string) string { return "N'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
-// shortcutAccess lists the lakehouse's OneLake shortcut tables and the ones a
-// principal cannot read at the source. "Users must have valid access on both the
-// shortcut source … and the destination where the data physically resides": the
+// shortcutAccess is what a principal's read of the lakehouse's shortcut tables
+// owes to their sources. "Users must have valid access on both the shortcut
+// source … and the destination where the data physically resides": the
 // destination is decided by the lakehouse's own roles and grant; this is the
 // source's half, asked of the same decision every OneLake read asks, on the
-// source item. A source that no longer exists denies, since nothing can be read
-// from it. An external shortcut is not a table here, so it has no source to ask.
-func shortcutAccess(st *store.Store, lake *store.Item, principal string) (tables, denied []string, err error) {
-	shortcuts, err := st.ListShortcuts(lake.ID)
+// source item. It returns:
+//
+//   - the shortcut tables, and the ones the principal cannot read at the source
+//     (a source that no longer exists denies, since nothing can be read from it);
+//   - per table, the columns the source's roles permit — only when they narrow
+//     them and the principal is one OneLake security narrows, which a Contributor
+//     is not;
+//   - the database roles the principal is in among the source's, for the row
+//     predicate. A Contributor who is in a role that filters is filtered, as in
+//     the consumer's own: OneLake's row-level security "is enforced for all users".
+//
+// An external shortcut is not a table here, so it has no source to ask.
+func shortcutAccess(st *store.Store, lake *store.Item, principal string) (tables, denied []string, columns map[string][]string, sourceRoles []string, err error) {
+	shortcuts, err := oneLakeShortcuts(st, lake.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	for _, sc := range shortcuts {
-		if sc.Path != "Tables" || sc.IsExternalTarget() || sc.TargetItem == "" {
-			continue
-		}
 		tables = append(tables, sc.Name)
 		src, err := st.GetItem(sc.TargetWorkspace, sc.TargetItem)
 		if err != nil {
@@ -409,11 +556,29 @@ func shortcutAccess(st *store.Store, lake *store.Item, principal string) (tables
 		}
 		read, err := st.OneLakeReadAccess(src, principal, onelakesec.InputTables)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		if !read.Allowed || (!read.Full && !onelakesec.Allows(read.Entries, sc.TargetPath)) {
 			denied = append(denied, sc.Name)
+			continue
 		}
+		if !read.Full {
+			if n := onelakesec.Narrowing(read.Entries, sc.TargetPath); n != nil && len(n.Columns) > 0 {
+				if columns == nil {
+					columns = map[string][]string{}
+				}
+				columns[sc.Name] = n.Columns
+			}
+		}
+		roles, err := st.EvaluatableRoles(sc.TargetItem)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		access, err := st.EffectiveItemAccess(src, principal)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		sourceRoles = append(sourceRoles, oneLakeMembershipsAs(roles, principal, access, sourceRoleName(src.ID))...)
 	}
-	return tables, denied, nil
+	return tables, denied, columns, sourceRoles, nil
 }

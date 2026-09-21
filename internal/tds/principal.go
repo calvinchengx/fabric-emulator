@@ -216,33 +216,53 @@ EXEC sp_executesql @leave;`, quotedID, keep)
 	return nil
 }
 
-// SyncShortcutAccess makes a principal's per-table refusals on an endpoint's
-// shortcut tables exactly denied: each is DENY SELECT, and every other listed
-// shortcut table is cleared (REVOKE removes a DENY, and a principal holds no
-// table permission of its own in user identity mode). DENY wins over a GRANT
-// through any role, so a OneLake role at the consumer cannot lift what the source
-// refuses. A table the engine does not have yet is skipped: it is listed from the
-// store, and reflection may not have run.
-func SyncShortcutAccess(ctx context.Context, target *sql.DB, objectID string, tables, denied []string) error {
+// SyncShortcutAccess makes a principal's refusals on an endpoint's shortcut
+// tables exactly what the source says. For each listed table:
+//
+//   - the whole table is DENY SELECT when the source refuses the principal, and
+//     cleared otherwise (REVOKE removes a DENY, and a principal holds no table
+//     permission of its own in user identity mode);
+//   - each column the source withholds is DENY SELECT, and every other column is
+//     cleared — permitted is a table's allow-list, and a table absent from it is
+//     not narrowed.
+//
+// DENY wins over a GRANT through any role, so a consumer role that grants the
+// whole table cannot lift what the source refuses: the most restrictive side
+// wins. A table the engine does not have yet is skipped; it is listed from the
+// store and reflection may not have run.
+func SyncShortcutAccess(ctx context.Context, target *sql.DB, objectID string, tables, denied []string, permitted map[string][]string) error {
 	if objectID == "" {
 		return fmt.Errorf("no principal to sync")
 	}
 	if len(tables) == 0 {
 		return nil
 	}
-	name := principalName(objectID)
+	user := principalName(objectID)
 	deny := map[string]bool{}
 	for _, t := range denied {
 		deny[t] = true
 	}
 	var b strings.Builder
-	for _, t := range tables {
-		lit := "N'[dbo].[" + strings.ReplaceAll(strings.ReplaceAll(t, "]", "]]"), "'", "''") + "]'"
-		verb := "REVOKE SELECT ON [dbo].[%s] FROM [%s]"
+	for i, t := range tables {
+		ident := "[dbo].[" + strings.ReplaceAll(t, "]", "]]") + "]"
+		lit := "N'" + strings.ReplaceAll(ident, "'", "''") + "'"
+		fmt.Fprintf(&b, "IF OBJECT_ID(%s, N'U') IS NOT NULL\nBEGIN\n", lit)
+		fmt.Fprintf(&b, "DECLARE @c%[1]d nvarchar(max) = N'';\nSELECT @c%[1]d += N'REVOKE SELECT ON %[2]s (' + QUOTENAME(name) + N') FROM [%[3]s];' FROM sys.columns WHERE object_id = OBJECT_ID(%[4]s);\nEXEC sp_executesql @c%[1]d;\n",
+			i, strings.ReplaceAll(ident, "'", "''"), user, lit)
 		if deny[t] {
-			verb = "DENY SELECT ON [dbo].[%s] TO [%s]"
+			fmt.Fprintf(&b, "DENY SELECT ON %s TO [%s];\n", ident, user)
+		} else {
+			fmt.Fprintf(&b, "REVOKE SELECT ON %s FROM [%s];\n", ident, user)
+			if cols, ok := permitted[t]; ok {
+				keep := "N''"
+				for _, c := range cols {
+					keep += ", N'" + strings.ReplaceAll(strings.ToLower(c), "'", "''") + "'"
+				}
+				fmt.Fprintf(&b, "DECLARE @d%[1]d nvarchar(max) = N'';\nSELECT @d%[1]d += N'DENY SELECT ON %[2]s (' + QUOTENAME(name) + N') TO [%[3]s];' FROM sys.columns WHERE object_id = OBJECT_ID(%[4]s) AND LOWER(name) NOT IN (%[5]s);\nEXEC sp_executesql @d%[1]d;\n",
+					i, strings.ReplaceAll(ident, "'", "''"), user, lit, keep)
+			}
 		}
-		fmt.Fprintf(&b, "IF OBJECT_ID(%s, N'U') IS NOT NULL "+verb+";\n", lit, strings.ReplaceAll(t, "]", "]]"), name)
+		b.WriteString("END\n")
 	}
 	if _, err := target.ExecContext(ctx, b.String()); err != nil {
 		return fmt.Errorf("sync shortcut access for %s: %w", objectID, err)

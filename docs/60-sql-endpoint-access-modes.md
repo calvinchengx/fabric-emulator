@@ -189,6 +189,12 @@ asked.
 - **Masks** stay in force in user identity mode; Fabric says DDM is "not
   supported in OneLake security" without saying what happens to existing ones.
 - **EXEC** stays refused on the endpoint, as before.
+- **A column narrowing and a filter on another reader's column collide.** SQL
+  Server requires SELECT on every column a row policy takes as an argument, so a
+  reader narrowed away from a column that some role's filter reads is refused
+  every read of that table, even of columns they may read. It fails closed and is
+  stricter than OneLake. Pinned by
+  `TestAColumnNarrowedReaderAndAFilterOnThatColumnFailsClosed`.
 - **Shortcuts** are partly modelled — see [docs/61](61-sql-endpoint-shortcuts.md).
   Ownership chaining and the security-sync error states are not modelled.
 - **The owner's OneLake access** in delegated mode — "the item owner must have

@@ -203,6 +203,7 @@ func (s *Server) handle(conn net.Conn) error {
 			if g.Database == targetDB {
 				target.OneLake, target.OneLakeRoles = g.OneLake, g.OneLakeRoles
 				target.ShortcutTables, target.DeniedTables = g.ShortcutTables, g.DeniedTables
+				target.ShortcutColumns = g.ShortcutColumns
 				break
 			}
 		}

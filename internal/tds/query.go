@@ -72,6 +72,11 @@ type Grant struct {
 	// which wins over any role the synced OneLake security gives them.
 	ShortcutTables []string
 	DeniedTables   []string
+	// ShortcutColumns are, per shortcut table, the columns the source's roles
+	// permit this principal. A table absent from it is not narrowed. The columns
+	// the source withholds are denied to the principal, so a consumer role that
+	// grants the whole table cannot lift them.
+	ShortcutColumns map[string][]string
 }
 
 // SpliceBackend is a Backend that can open a raw, already-authenticated
