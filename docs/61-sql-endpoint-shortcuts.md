@@ -1,10 +1,11 @@
 # 61 — Shortcuts on the SQL analytics endpoint
 
-**Status: three of Fabric's documented shortcut behaviours are built — a OneLake
+**Status: four of Fabric's documented shortcut behaviours are built — a OneLake
 shortcut under `Tables/` reads as a table on the endpoint; in user identity mode a
-caller needs access at the source as well as at the consumer; and what the source's
-roles narrow, columns and rows, narrows the consumer's read too. The rest are
-listed below, not implied.**
+caller needs access at the source as well as at the consumer, and what the
+source's roles narrow narrows the read too; and in delegated mode a shortcut whose
+source has row or column security is blocked. The rest are listed below, not
+implied.**
 
 Built to Microsoft's documentation and enforced by a real SQL engine. Not
 verified against a real Fabric tenant (see the verification note in
@@ -20,7 +21,7 @@ analytics endpoints*, the sections *Shortcuts behavior with security sync* and
 |---|---|---|
 | "Shortcuts function as tables in the SQL analytics endpoint" | **Built** for OneLake targets. A shortcut under `Tables/` is reflected under its own name, read from its target's Delta log, and follows the source when it changes | `TestAShortcutUnderTablesReadsAsATableOnTheEndpoint`, `TestTableSourcesListShortcuts` |
 | "Users must have valid access on **both** the shortcut source … **and** the destination … If the user lacks permission on either side, queries fail with an access error" | **Built, user identity mode.** The destination is the lakehouse's own roles and grant; the source is asked of the same decision every OneLake read asks (`store.OneLakeReadAccess`), on the source item. A caller refused there gets `DENY SELECT` on the table, which wins over any role the synced security gives them. A source that no longer exists refuses | `TestAShortcutTableNeedsAccessOnTheSourceToo` |
-| In delegated mode, a shortcut whose source table has row or column security "is blocked" | **Not built** | — |
+| In delegated mode, a shortcut whose source table has row or column security "is blocked", "even if the end user has SQL permissions on the shortcut object" | **Built.** Any role at the source narrowing the path, whoever its members, blocks the shortcut for every reader — an Admin or Member included, which a `DENY` cannot do. It is reflected as a **view** that refuses every read with the reason, its columns those of the table, so a query naming one is refused for the reason and not for a missing column. Switching the endpoint to user identity mode lifts it, and back restores it | `TestDelegatedModeBlocksAShortcutWhoseSourceIsSecured`, `TestDelegatedShortcutBlock` |
 | In user identity mode, the caller is evaluated against the **source's** OneLake security, including its row and column rules; "when enforcement cannot clearly validate access, the system applies the most restrictive outcome" | **Built.** The source's column allow-list is a per-principal `DENY SELECT` on each column it withholds, and its row filters are synced as roles of their own and ANDed into the table's row policy with the consumer's. A read is narrowed by both sides, and the intersection wins. A Contributor is not column-narrowed, as OneLake security does not narrow one; a Contributor in a source role that filters is filtered, as row-level security "is enforced for all users" | `TestAShortcutTableIsNarrowedByTheSourcesColumnsAndRows` |
 | "Ownership chaining is disabled for tables and views involving shortcuts"; derived objects "do not inherit permissions from the object owner" | **Not modelled.** SQL Server's ownership chaining is the engine's | — |
 | Producer and consumer identities must map "exactly 1:1", with no nested group resolution | The source is asked with the caller's own object id and the evaluator resolves no groups, which agrees; not separately witnessed | — |
@@ -30,7 +31,13 @@ analytics endpoints*, the sections *Shortcuts behavior with security sync* and
 - **OneLake targets only.** An ADLS Gen2, S3 or Dataverse shortcut is not reflected
   as a table: its bytes are behind an HTTP read the reflector does not make.
   That was true before this stage and stays true.
-- **Owners are not narrowed or refused.** A workspace Admin or Member is `db_owner`, and
+- **A blocked shortcut is a view, with our message.** In the catalog it is a view
+  (`sys.views`), not a table; Fabric documents that access is blocked but not what
+  a client sees, so the error — "This shortcut is blocked: its source table has
+  row-level security, and a SQL analytics endpoint in delegated identity mode reads
+  OneLake as the item owner…" — is ours, and reaches a client as the engine's
+  conversion error carrying that text.
+- **Owners are not narrowed or refused** in user identity mode. A workspace Admin or Member is `db_owner`, and
   `DENY` does not bind an owner, so they read a shortcut table whose source they
   cannot. Fabric says shortcut enforcement "can still deny access to Admins,
   Members, or Contributors" in specific cases; which cases is not documented, so
@@ -54,6 +61,13 @@ analytics endpoints*, the sections *Shortcuts behavior with security sync* and
   `TestAColumnNarrowedReaderAndAFilterOnThatColumnFailsClosed`.
 
 ## Design
+
+Whether a shortcut is blocked is `store.DelegatedShortcutBlock`: delegated mode, a
+OneLake source, and any source role narrowing the path. Reflection asks it while
+listing tables (`tableSource.blocked`), and folds the answer into the table's
+fingerprint, so a table whose block changed is reflected again rather than skipped
+as unchanged. Every reflection first removes what an earlier one left under the
+name, table or view.
 
 Reflection lists `Tables/` and the store's shortcuts together
 (`warehouse.tableSources`); a folder and a shortcut of one name cannot coexist in
