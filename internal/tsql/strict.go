@@ -327,7 +327,7 @@ func checkObjectNames(sig []Token) error {
 	default:
 		return nil
 	}
-	if !(matchAt(sig, name, "table") || matchAt(sig, name, "view") || matchAt(sig, name, "schema")) {
+	if !matchAt(sig, name, "table") && !matchAt(sig, name, "view") && !matchAt(sig, name, "schema") {
 		return nil
 	}
 	return checkNameAt(sig, name+1)
