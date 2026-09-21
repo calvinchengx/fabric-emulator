@@ -133,7 +133,8 @@
       "go:TestCheckStrictCorpus",
       "go:TestStrictCorpusCoversEveryFeature",
       "go:TestStrictModeGatesClassBConstructs",
-      "boundary:indexed ('materialized') views and FOR JSON in a subquery are not enforced — a lexer cannot see them (docs/29-tsql-parity.md, T7)"
+      "boundary:indexed ('materialized') views and FOR JSON in a subquery are not enforced — a lexer cannot see them (docs/29-tsql-parity.md, T7)",
+      "go:TestForJSONSubqueryAgreesWithSqlglotGo"
     ]
   },
   "concurrent-delta-overwrite-writers": {
