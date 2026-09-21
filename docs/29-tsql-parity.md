@@ -99,7 +99,8 @@ because refusing them removes capability that works today.
 | `CREATE USER` | Low | ✅ `create-user` |
 | Multi-column statistics | Low | ✅ `multi-column-stats` |
 | `PREDICT`, `sp_showspaceused` | Low | ✅ `predict`, `sp-showspaceused` |
-| `FOR JSON` in a subquery | Low | ⬜ needs real parsing to tell from the legal last-operator form |
+| `FOR JSON` in a subquery | Low | ✅ `for-json-subquery` — the legal form is the one that is not nested, and nesting is parentheses; checked against sqlglot-go's parse tree |
+| `/` or `\` in a schema or table name | Low | ✅ `object-name-character` — a `CREATE` or `ALTER` of a table, view or schema, or a `SELECT … INTO` |
 | Queries against system/user tables | Low | ⬜ not attempted |
 | Vector data type | Low | n/a — **obs**: SQL Server 2022 rejects `vector(3)` with `Msg 2715, Cannot find data type vector`, so both engines lack it and it is not a divergence |
 
@@ -473,14 +474,14 @@ parameters as well as batches.
 | Multi-column statistics | `multi-column-stats` |
 | `PREDICT` | `predict` |
 | `sp_showspaceused` | `sp-showspaceused` |
+| `FOR JSON` inside a subquery, derived table, CTE or call | `for-json-subquery` |
+| `/` or `\` in the name of a schema or table being created | `object-name-character` |
 
 **Still not enforced, with the reason** — a lexer cannot see these, and
 guessing would trade a silent Class B for a noisy false refusal:
 
 - **indexed ("materialized") views** — needs correlating a `CREATE INDEX` with
   the view it targets, across statements;
-- **`FOR JSON` in a subquery** — Fabric allows `FOR JSON` only as the last
-  operator, which needs real parsing to tell from the legal form;
 - **queries against system tables**, and the **vector type** — SQL Server 2022
   has no vector type either, so that row is not actually a divergence here.
 

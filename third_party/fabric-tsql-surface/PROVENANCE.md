@@ -38,10 +38,11 @@ statement Fabric does not support, and they are different in kind:
 | `strict` | `refused` — strict mode refuses every probe, and `feature` is the name it gives. `not-enforced` — it does not, with the reason in `reason`. `unspecified` |
 
 Read together, for the 16 Limitations: the guard refuses 6 (on the endpoint only),
-strict mode refuses 10, the two refuse 12 between them, three are refused by
-neither — `FOR JSON` in a subquery, names containing `/` or `\`, and the vector
-type — and one names no statement. Neither measures the engine: a statement that is
-"forwarded" may still be rejected by SQL Server, and for most of these it is not.
+strict mode refuses 12, the two refuse 14 between them, one is refused by neither —
+the vector type, which the SQL Server 2022 sidecar cannot create anyway, so that is
+a property of its version — and one names no statement. Neither measures the
+engine: a statement that is "forwarded" may still be rejected by SQL Server, and
+for most of these it is not.
 
 ## Refresh
 

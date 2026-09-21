@@ -27,12 +27,12 @@
     {
       "text": "`FOR JSON` must be the last operator in the query, so you can't use it inside subqueries.",
       "guard": "forwarded",
-      "strict": "not-enforced",
-      "feature": "",
+      "strict": "refused",
+      "feature": "for-json-subquery",
       "probes": [
         "SELECT (SELECT a FROM dbo.t FOR JSON PATH) AS j"
       ],
-      "reason": "Neither refuses it. Strict mode says why: FOR JSON is legal as the last operator, so telling a subquery's from it needs a real parse, not a lexer (internal/tsql/strict.go). A candidate for the sqlglot-go tree."
+      "reason": "Strict mode refuses it: FOR JSON at any parenthesis depth above zero is in a subquery, derived table, CTE or call, which is what the sentence excludes. Checked against sqlglot-go's parse tree in internal/tsql. With strict mode off the guard forwards it, as a read."
     },
     {
       "text": "Manually created multi-column stats",
@@ -86,13 +86,13 @@
     {
       "text": "Schema and table names can't contain `/` or `\\`",
       "guard": "forwarded",
-      "strict": "not-enforced",
-      "feature": "",
+      "strict": "refused",
+      "feature": "object-name-character",
       "probes": [
         "CREATE VIEW dbo.[a/b] AS SELECT 1 AS x",
         "CREATE VIEW dbo.[a\\b] AS SELECT 1 AS x"
       ],
-      "reason": "Neither refuses it: VIEW is allow-listed and no check reads object names. Not in strict mode's list at all, and cheap to add: a quoted identifier is one lexer token."
+      "reason": "Strict mode refuses a `/` or `\\` in the name of a table, view or schema being created (CREATE or ALTER, or SELECT … INTO). With strict mode off VIEW is allow-listed and no check reads object names, so the guard forwards it."
     },
     {
       "text": "`SELECT` - `FOR XML`",

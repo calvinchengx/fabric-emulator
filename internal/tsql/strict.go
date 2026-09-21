@@ -18,14 +18,13 @@ package tsql
 //	recursive CTEs, triggers, synonyms, CREATE USER, SET TRANSACTION
 //	ISOLATION LEVEL, SET ROWCOUNT, SET IDENTITY_INSERT, SELECT … FOR XML,
 //	IDENTITY(seed, increment), enforced PRIMARY KEY / UNIQUE / FOREIGN KEY,
-//	multi-column statistics, PREDICT, sp_showspaceused.
+//	multi-column statistics, PREDICT, sp_showspaceused, FOR JSON inside a
+//	subquery, and a `/` or `\` in the name of a schema or table being created.
 //
 // Deliberately not enforced, with the reason, because a lexer cannot see them:
 //
 //   - indexed ("materialized") views — needs correlating CREATE INDEX with the
 //     view it targets, across statements;
-//   - FOR JSON in a *subquery* — Fabric allows FOR JSON only as the last
-//     operator, which needs real parsing to distinguish from the legal form;
 //   - queries against system tables, and the vector data type — the sidecar
 //     (SQL Server 2022) has no vector type either, so that row is not actually
 //     a divergence here.
@@ -97,6 +96,12 @@ func CheckStrict(sql string) error {
 		return err
 	}
 	if err := checkMultiColumnStats(sig); err != nil {
+		return err
+	}
+	if err := checkForJSONSubquery(sig); err != nil {
+		return err
+	}
+	if err := checkObjectNames(sig); err != nil {
 		return err
 	}
 	return checkRecursiveCTE(sql)
@@ -251,6 +256,97 @@ func recursiveIn(w *With) error {
 					fmt.Sprintf("CTE %s references itself; recursive CTEs are not supported", c.Name)}
 			}
 		}
+	}
+	return nil
+}
+
+// checkForJSONSubquery rejects FOR JSON inside parentheses. Microsoft: "`FOR
+// JSON` must be the last operator in the query, so you can't use it inside
+// subqueries." A query's last operator is at the top level of its statement, so
+// FOR JSON at any parenthesis depth above zero is in a subquery, a derived
+// table, a CTE or a call — every form the sentence excludes.
+//
+// This was once written off as needing a real parse. It does not, for the
+// sentence's own reason: the legal form is the one that is not nested, and nesting
+// is what parentheses are. A parse is still the way to be sure of that, so
+// TestForJSONSubqueryAgreesWithSqlglotGo reads the same statements with
+// sqlglot-go's T-SQL parser and holds the two to the same verdict.
+func checkForJSONSubquery(sig []Token) error {
+	depth := 0
+	for i, t := range sig {
+		if t.Kind == Punct {
+			switch t.Text {
+			case "(":
+				depth++
+			case ")":
+				if depth > 0 {
+					depth--
+				}
+			}
+			continue
+		}
+		if depth > 0 && matchAt(sig, i, "for", "json") {
+			return &UnsupportedError{"for-json-subquery",
+				"FOR JSON must be the last operator in the query, so it cannot be used inside a subquery"}
+		}
+	}
+	return nil
+}
+
+// checkObjectNames rejects a `/` or `\` in the name of a schema or table being
+// created: "Schema and table names can't contain `/` or `\`." Only a creation
+// is looked at — CREATE or ALTER of a TABLE, VIEW or SCHEMA, and SELECT … INTO —
+// and only the name itself: a column called [a/b], or a slash in a literal, is
+// not what the sentence says. A quoted identifier is one token, so the name is
+// read whole, however it is bracketed or split by dots.
+func checkObjectNames(sig []Token) error {
+	i := 0
+	if len(sig) > 0 && sig[0].Kind == Punct && sig[0].Text == ";" {
+		i = 1
+	}
+	var name int // index of the first token of the created object's name
+	switch {
+	case matchAt(sig, i, "create", "or", "alter"):
+		name = i + 3
+	case matchAt(sig, i, "create") || matchAt(sig, i, "alter"):
+		name = i + 1
+	case matchAt(sig, i, "select"):
+		// SELECT … INTO <name>: the first INTO outside any parentheses.
+		depth := 0
+		for j := i; j < len(sig); j++ {
+			switch {
+			case sig[j].Kind == Punct && sig[j].Text == "(":
+				depth++
+			case sig[j].Kind == Punct && sig[j].Text == ")":
+				depth--
+			case depth == 0 && matchAt(sig, j, "into"):
+				return checkNameAt(sig, j+1)
+			}
+		}
+		return nil
+	default:
+		return nil
+	}
+	if !(matchAt(sig, name, "table") || matchAt(sig, name, "view") || matchAt(sig, name, "schema")) {
+		return nil
+	}
+	return checkNameAt(sig, name+1)
+}
+
+// checkNameAt reads a (possibly dotted) name starting at sig[i] and refuses a part
+// with a `/` or `\` in it.
+func checkNameAt(sig []Token, i int) error {
+	for i < len(sig) && (sig[i].Kind == Word || sig[i].Kind == QuotedIdent) {
+		if strings.ContainsAny(Ident(sig[i].Text), `/\`) {
+			return &UnsupportedError{"object-name-character",
+				"schema and table names cannot contain / or \\"}
+		}
+		i++
+		if i < len(sig) && sig[i].Kind == Punct && sig[i].Text == "." {
+			i++
+			continue
+		}
+		break
 	}
 	return nil
 }

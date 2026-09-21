@@ -139,9 +139,10 @@ func TestTheGuardAndStrictModeDoWhatEachLimitationRecords(t *testing.T) {
 }
 
 // What the table says in total, so a reader need not count: the guard alone
-// refuses 6 of 16 and only on the endpoint; strict mode refuses 10; together they
-// refuse 12; three are refused by neither and one names no statement. If a row
-// changes, this changes, and the docs that quote it have to follow.
+// refuses 6 of 16 and only on the endpoint; strict mode refuses 12; together they
+// refuse 14; one is refused by neither (the vector type, which the SQL Server 2022
+// sidecar cannot create anyway) and one names no statement. If a row changes, this
+// changes, and the docs that quote it have to follow.
 func TestWhatTheTwoRefuseTogether(t *testing.T) {
 	_, rows := loadSurface(t)
 	var guard, strict, either, neither, unspecified int
@@ -164,7 +165,7 @@ func TestWhatTheTwoRefuseTogether(t *testing.T) {
 			either++
 		}
 	}
-	if guard != 6 || strict != 10 || either != 12 || neither != 3 || unspecified != 1 {
-		t.Errorf("guard %d, strict %d, either %d, neither %d, unspecified %d; want 6, 10, 12, 3, 1", guard, strict, either, neither, unspecified)
+	if guard != 6 || strict != 12 || either != 14 || neither != 1 || unspecified != 1 {
+		t.Errorf("guard %d, strict %d, either %d, neither %d, unspecified %d; want 6, 12, 14, 1, 1", guard, strict, either, neither, unspecified)
 	}
 }
