@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
+
+	"github.com/calvinchengx/fabric-emulator/pkg/onelakesec"
 )
 
 // Shortcut is a OneLake symlink: a named entry inside an item's managed
@@ -148,4 +150,43 @@ func ExternalTargetTypes() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// DelegatedShortcutBlock says why a shortcut table cannot be read on a lakehouse's
+// SQL analytics endpoint, or "" when it can. In delegated identity mode the
+// endpoint reads OneLake as the item's owner, who can only read a table whole:
+// "If the source table has any OneLake-level security rule applied — such as
+// row-level security (RLS) or column-level security (CLS) — the SQL analytics
+// endpoint blocks access to that shortcut". Any role narrowing the source path
+// counts, whoever its members are, and the block binds every reader. In user
+// identity mode nothing is blocked: the caller's own identity is checked at the
+// source instead (docs/61).
+//
+// A source that no longer exists is not blocked here; there is nothing to read.
+func (s *Store) DelegatedShortcutBlock(lake *Item, sc *Shortcut) (string, error) {
+	if sc.IsExternalTarget() || sc.TargetItem == "" {
+		return "", nil
+	}
+	mode, err := s.DataAccessMode(lake)
+	if err != nil {
+		return "", err
+	}
+	if mode != AccessModeDelegated {
+		return "", nil
+	}
+	roles, err := s.EvaluatableRoles(sc.TargetItem)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range roles {
+		member := onelakesec.Role{Name: r.Name, DecisionRules: r.DecisionRules, Members: onelakesec.Members{Entra: []string{"sync"}}}
+		entries := onelakesec.Effective([]onelakesec.Role{member}, onelakesec.Principal{ObjectID: "sync"}, onelakesec.InputTables)
+		if !onelakesec.Allows(entries, sc.TargetPath) {
+			continue
+		}
+		if n := onelakesec.Narrowing(entries, sc.TargetPath); n != nil {
+			return n.Why(), nil
+		}
+	}
+	return "", nil
 }

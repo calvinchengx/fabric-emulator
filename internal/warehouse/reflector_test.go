@@ -327,9 +327,9 @@ func TestTableSourcesListShortcuts(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]tableSource{
-		"own":    {"own", itemID, "Tables/own"},
-		"clash":  {"clash", itemID, "Tables/clash"},
-		"linked": {"linked", "src-item", "Tables/orders"},
+		"own":    {"own", itemID, "Tables/own", ""},
+		"clash":  {"clash", itemID, "Tables/clash", ""},
+		"linked": {"linked", "src-item", "Tables/orders", ""},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("listed %v, want exactly own, clash and linked", got)

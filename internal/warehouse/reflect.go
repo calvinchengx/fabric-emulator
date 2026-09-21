@@ -123,7 +123,24 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 			// stray folder under Tables/ has always been.
 			continue
 		}
+		if src.blocked != "" {
+			// What was reflected depends on the block as well as the log: a table
+			// that is now blocked, or was and no longer is, must be reflected again.
+			fp += "\nblocked:" + src.blocked
+		}
 		if prev, ok := it.seen[name]; ok && prev == fp && known && present[strings.ToLower(name)] {
+			continue
+		}
+		if src.blocked != "" {
+			cols, err := blockedColumns(st, src.item, src.root, name)
+			if err != nil {
+				return done, fmt.Errorf("reflect %q: reading the Delta schema: %w", name, err)
+			}
+			if err := reflectBlocked(ctx, db, name, cols, src.blocked); err != nil {
+				return done, fmt.Errorf("reflect %q: %w", name, err)
+			}
+			it.seen[name] = fp
+			done = append(done, name)
 			continue
 		}
 		tbl, err := ReadDeltaTableAt(st, src.item, src.root, name)
@@ -147,7 +164,7 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 	return done, nil
 }
 
-// existingTables lists the base tables in the destination database, lowercased.
+// existingTables lists the tables and views in the destination database, lowercased.
 //
 // The second return is whether the answer is TRUSTWORTHY. Anything that goes
 // wrong — no permission on sys.tables, a cancelled context, an engine without
@@ -155,7 +172,9 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 // trusting a fingerprint it cannot corroborate. Being wrong in the direction of
 // extra work is the whole point of the flag.
 func existingTables(ctx context.Context, db *sql.DB) (map[string]bool, bool) {
-	rows, err := db.QueryContext(ctx, "SELECT name FROM sys.tables")
+	// Views count: a blocked shortcut is reflected as one (reflectBlocked), and
+	// the fingerprint says which of the two it should be.
+	rows, err := db.QueryContext(ctx, "SELECT name FROM sys.tables UNION ALL SELECT name FROM sys.views")
 	if err != nil {
 		return nil, false
 	}
@@ -209,6 +228,10 @@ func deltaFingerprint(st *store.Store, itemID, root string) (string, error) {
 // shortcut, the folder the shortcut points at.
 type tableSource struct {
 	name, item, root string
+	// blocked is why the table cannot be read, when it cannot: a shortcut whose
+	// source has row or column security, on an endpoint in delegated identity mode.
+	// Such a table is reflected as a view that refuses every read with this reason.
+	blocked string
 }
 
 // tableSources lists a lakehouse's tables: every folder under Tables/, and every
@@ -236,11 +259,23 @@ func tableSources(st *store.Store, itemID string) ([]tableSource, error) {
 	if err != nil {
 		return nil, err
 	}
+	var lake *store.Item
 	for _, sc := range shortcuts {
 		if sc.Path != "Tables" || sc.IsExternalTarget() || sc.TargetItem == "" || have[strings.ToLower(sc.Name)] {
 			continue
 		}
-		out = append(out, tableSource{name: sc.Name, item: sc.TargetItem, root: sc.TargetPath})
+		src := tableSource{name: sc.Name, item: sc.TargetItem, root: sc.TargetPath}
+		// The lakehouse is looked up only when there is a shortcut to judge, so a
+		// lakehouse with none costs nothing.
+		if lake == nil {
+			if lake, err = st.GetItemByID(itemID); err != nil {
+				return nil, err
+			}
+		}
+		if src.blocked, err = st.DelegatedShortcutBlock(lake, sc); err != nil {
+			return nil, err
+		}
+		out = append(out, src)
 	}
 	return out, nil
 }
@@ -261,12 +296,14 @@ func tableSources(st *store.Store, itemID string) ([]tableSource, error) {
 // tds.NewSQLServerBackend, so the text path was unreachable in production and
 // untestable without a double — as were the nprefix parameter and literal()
 // that existed solely to serve it.
-func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table) error {
+// dropReflected removes whatever a reflection left under a name: the table, or the
+// view a blocked shortcut is reflected as. A synced OneLake row policy (docs/60)
+// holds the table even without schema binding, so DROP TABLE would fail. It is
+// dropped with the table's grants; the security sync that runs after reflection
+// recreates both, and until it does a reader restricted by them has no SELECT on
+// the new table.
+func dropReflected(ctx context.Context, db *sql.DB, name string) error {
 	q := quoteIdent(name)
-	// A synced OneLake row policy (docs/60) holds the table even without schema
-	// binding, so DROP TABLE would fail. It is dropped with the table's grants;
-	// the security sync that runs after reflection recreates both, and until it
-	// does a reader restricted by them has no SELECT on the new table.
 	if _, err := db.ExecContext(ctx, `DECLARE @rls nvarchar(max) = N'';
 SELECT @rls += N'DROP SECURITY POLICY ' + QUOTENAME(SCHEMA_NAME(p.schema_id)) + N'.' + QUOTENAME(p.name) + N';'
 FROM sys.security_policies p JOIN sys.security_predicates sp ON sp.object_id = p.object_id
@@ -274,7 +311,50 @@ WHERE sp.target_object_id = OBJECT_ID(@table) AND p.name LIKE 'OLS[_]rls[_]%';
 EXEC sp_executesql @rls;`, sql.Named("table", q)); err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS "+q); err != nil {
+	// By type, since DROP VIEW and DROP TABLE each refuse the other's object.
+	_, err := db.ExecContext(ctx, `IF OBJECT_ID(@table, N'V') IS NOT NULL DROP VIEW `+q+`;
+IF OBJECT_ID(@table, N'U') IS NOT NULL DROP TABLE `+q+`;`, sql.Named("table", q))
+	return err
+}
+
+// blockedColumns names the columns of a Delta table without reading its data: a
+// blocked shortcut is never read, only described. A log with no schema is read
+// whole, as it has nothing else to say.
+func blockedColumns(st *store.Store, itemID, root, name string) ([]string, error) {
+	if _, schema, err := activeFiles(st, itemID, root); err == nil {
+		if cols := omit(schema.Cols, schema.Nested); len(cols) > 0 {
+			return cols, nil
+		}
+	}
+	tbl, err := ReadDeltaTableAt(st, itemID, root, name)
+	if err != nil {
+		return nil, err
+	}
+	return tbl.Columns, nil
+}
+
+// reflectBlocked reflects a blocked shortcut as a view that refuses every read,
+// for every reader, saying why. "Blocks access to that shortcut" binds an owner
+// too, which a DENY cannot (db_owner is not bound by one), and a view's own error
+// reaches every client as the engine's message. Its columns are the table's, so
+// a query that names one is refused for the reason and not for a missing column.
+func reflectBlocked(ctx context.Context, db *sql.DB, name string, columns []string, reason string) error {
+	if err := dropReflected(ctx, db, name); err != nil {
+		return err
+	}
+	defs := make([]string, len(columns))
+	for i, c := range columns {
+		defs[i] = "CAST(NULL AS sql_variant) AS " + quoteIdent(c)
+	}
+	msg := "This shortcut is blocked: its source table has " + reason + ", and a SQL analytics endpoint in delegated identity mode reads OneLake as the item owner, who can only read a table whole. Switch the endpoint to user identity mode to read it."
+	_, err := db.ExecContext(ctx, "CREATE VIEW "+quoteIdent(name)+" AS SELECT "+strings.Join(defs, ", ")+
+		" FROM (SELECT 1 AS x) AS b WHERE 1 = (SELECT CAST(N'"+strings.ReplaceAll(msg, "'", "''")+"' AS int))")
+	return err
+}
+
+func reflectTable(ctx context.Context, db *sql.DB, name string, tbl *Table) error {
+	q := quoteIdent(name)
+	if err := dropReflected(ctx, db, name); err != nil {
 		return err
 	}
 	if len(tbl.Skipped) > 0 {
