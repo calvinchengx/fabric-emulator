@@ -3,7 +3,9 @@ package tds
 import (
 	"encoding/binary"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf16"
 )
 
@@ -104,15 +106,61 @@ func TestQuotePreviewTruncatesAndFlattens(t *testing.T) {
 }
 
 func TestTraceFuncHookFiresOnlyWhenSet(t *testing.T) {
-	traceRequest(PktSQLBatch, withHeaders(ucs2Bytes("select 1"))) // nil: must not panic
+	traceRequest(PktSQLBatch, withHeaders(ucs2Bytes("select 1"))) // unset: must not panic
 
 	var lines []string
-	TraceFunc = func(l string) { lines = append(lines, l) }
-	t.Cleanup(func() { TraceFunc = nil })
+	SetTraceFunc(func(l string) { lines = append(lines, l) })
+	t.Cleanup(func() { SetTraceFunc(nil) })
 
 	traceRequest(PktSQLBatch, withHeaders(ucs2Bytes("select 2")))
 	if len(lines) != 1 || !strings.Contains(lines[0], "select 2") {
 		t.Fatalf("got %v", lines)
+	}
+
+	SetTraceFunc(nil)
+	traceRequest(PktSQLBatch, withHeaders(ucs2Bytes("select 3")))
+	if len(lines) != 1 {
+		t.Fatalf("a cleared hook still fired: %v", lines)
+	}
+}
+
+// The hook is set and cleared while connections are live -- by tests in this
+// package, whose Serve goroutines outlive them because Serve offers no way to
+// wait for its handlers. This is the shape CI run #1709 failed on, made
+// deterministic: without the test's ordering luck, a reader on another
+// goroutine and a writer here. Meaningful only under -race, which is how
+// `make test-race` runs it; a plain variable fails it there.
+func TestTraceHookIsSafeToChangeWhileConnectionsRead(t *testing.T) {
+	t.Cleanup(func() { SetTraceFunc(nil) })
+	msg := withHeaders(ucs2Bytes("select 1"))
+
+	var fired atomic.Int64
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() { // a connection's handler, reading the hook per message
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				traceRequest(PktSQLBatch, msg)
+			}
+		}
+	}()
+	for i := 0; i < 200; i++ { // a test setting and clearing it meanwhile
+		SetTraceFunc(func(string) { fired.Add(1) })
+		SetTraceFunc(nil)
+	}
+	SetTraceFunc(func(string) { fired.Add(1) })
+	deadline := time.Now().Add(5 * time.Second)
+	for fired.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	close(stop)
+	<-done
+	if fired.Load() == 0 {
+		t.Fatal("the reader never observed an installed hook")
 	}
 }
 

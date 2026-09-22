@@ -183,7 +183,7 @@ forward*.
 #### Milestones
 
 - **T6a — reconnaissance. ✅ Done — GO, with a caveat that shapes the scope.**
-  `tds.TraceFunc` (`internal/tds/trace.go`, enabled by `FABRIC_TDS_TRACE=1`)
+  `tds.SetTraceFunc` (`internal/tds/trace.go`, enabled by `FABRIC_TDS_TRACE=1`)
   logs every client→server message. Measured against the real Microsoft ODBC
   Driver 18 and a full nine-step `e2e/medallion` run:
 
@@ -538,7 +538,7 @@ docker compose -f e2e/medallion/docker-compose.yml \
 It is a diagnostic, not a contract: the RPC text extraction is a
 longest-printable-run heuristic over parameter bytes, deliberately not a
 TYPE_INFO decoder, and nothing it produces is used to rewrite anything. Off
-unless the variable is set (a nil `TraceFunc` costs one nil check per message).
+unless the variable is set (an unset hook costs one atomic load per message).
 
 ## Risks and open questions
 

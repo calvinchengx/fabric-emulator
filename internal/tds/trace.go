@@ -12,20 +12,43 @@ import (
 	"encoding/binary"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"unicode"
 )
 
-// TraceFunc, when non-nil, receives a one-line description of every
-// client→server TDS message. Nil (the default) disables tracing entirely, so
-// the cost on the hot path is one nil check.
-var TraceFunc func(line string)
+// traceFunc, when set, receives a one-line description of every client→server
+// TDS message. Unset (the default) disables tracing entirely, so the cost on the
+// hot path is one atomic load.
+//
+// ATOMIC, NOT A PLAIN VARIABLE, because every connection reads it on its own
+// goroutine and nothing orders those reads against a write. It was an exported
+// `var TraceFunc`, which is safe only if it is written once before the first
+// connection -- true of internal/server, false of the tests. Serve spawns a
+// goroutine per connection and offers no way to wait for them, so a handler
+// from one test can still be reading when the next test sets the hook. CI run
+// #1709 caught exactly that under -race -shuffle: TestTraceFuncHookFiresOnlyWhenSet
+// wrote it while a connection left by TestConfiguredAuthorizerNeverReachesTheReEncodeRelay
+// read it. A shuffle seed that does not put them together passes, which is why
+// it surfaced on one run and not the one before.
+var traceFunc atomic.Pointer[func(line string)]
 
-// traceRequest describes a client message to TraceFunc, if tracing is on.
-func traceRequest(typ byte, data []byte) {
-	if TraceFunc == nil {
+// SetTraceFunc installs fn as the trace hook, or disables tracing when fn is
+// nil. Safe to call while connections are being served.
+func SetTraceFunc(fn func(line string)) {
+	if fn == nil {
+		traceFunc.Store(nil)
 		return
 	}
-	TraceFunc(describeRequest(typ, data))
+	traceFunc.Store(&fn)
+}
+
+// traceRequest describes a client message to the trace hook, if tracing is on.
+func traceRequest(typ byte, data []byte) {
+	fn := traceFunc.Load()
+	if fn == nil {
+		return
+	}
+	(*fn)(describeRequest(typ, data))
 }
 
 // describeRequest renders a client message as one diagnostic line. It is pure
