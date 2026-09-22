@@ -1493,7 +1493,11 @@
     "go:TestDelegatedModeBlocksAShortcutWhoseSourceIsSecured": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestAnExternalShortcutReadsAsATableOnTheEndpoint": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestReflectorReadsAnExternalShortcutThroughExternal": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestReflectorSkipsAnExternalShortcutWithNoExternalReaderWired": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+    "go:TestReflectorSkipsAnExternalShortcutWithNoExternalReaderWired": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestARowLevelSecurityRoleNamingAMissingColumnFailsTheWholeSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestAColumnLevelSecurityRoleNamingAMissingColumnFailsTheWholeSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestInvalidRLSSyntaxStillNarrowsRatherThanFailingTheSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestARowLevelSecurityRoleAtAShortcutSourceNamingAMissingColumnFailsTheSync": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",
@@ -1670,7 +1674,10 @@
       "go:TestEveryDocumentedLimitationIsClassified",
       "go:TestTheGuardAndStrictModeDoWhatEachLimitationRecords",
       "go:TestAnUnchangedSyncKeepsAManualChangeAndAChangedOneOverwritesIt",
-      "go:TestWhatTheTwoRefuseTogether"
+      "go:TestWhatTheTwoRefuseTogether",
+      "go:TestARowLevelSecurityRoleNamingAMissingColumnFailsTheWholeSync",
+      "go:TestAColumnLevelSecurityRoleNamingAMissingColumnFailsTheWholeSync",
+      "go:TestInvalidRLSSyntaxStillNarrowsRatherThanFailingTheSync"
     ]
   },
   "sql-analytics-endpoint-shortcut-tables-and-access-at-the-source": {
@@ -1695,7 +1702,8 @@
       "go:TestExternalDeltaCommitsListsBlobWithTheSASQuery",
       "go:TestExternalDeltaCommitsRefusesATruncatedBlobListing",
       "go:TestExternalDeltaCommitsSurfacesAListingFailure",
-      "go:TestExternalReadFileReadsThroughAndWrapsAFailure"
+      "go:TestExternalReadFileReadsThroughAndWrapsAFailure",
+      "go:TestARowLevelSecurityRoleAtAShortcutSourceNamingAMissingColumnFailsTheSync"
     ]
   }
 }

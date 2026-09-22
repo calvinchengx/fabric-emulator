@@ -196,7 +196,16 @@ asked.
   stricter than OneLake. Pinned by
   `TestAColumnNarrowedReaderAndAFilterOnThatColumnFailsClosed`.
 - **Shortcuts** are partly modelled — see [docs/61](61-sql-endpoint-shortcuts.md).
-  Ownership chaining and the security-sync error states are not modelled.
+  Ownership chaining is not modelled.
+- **The security-sync error states are partly modelled.** A row or column
+  security constraint naming a column the table no longer has fails the whole
+  sync — Fabric's documented reaction — for both the consumer's own roles and a
+  OneLake shortcut source's. A constraint naming a *table* that no longer exists
+  is not: Fabric's own table maps that to two different behaviours by mode
+  (an error in user identity, silent in delegated) without saying how a
+  decision rule's granted-table and its constraint's `tablePath` are meant to
+  diverge in the first place, and guessing at the mapping risked inventing a
+  case Fabric does not have.
 - **The owner's OneLake access** in delegated mode — "the item owner must have
   valid OneLake access, or all queries may fail" — is not modelled: the
   reflection reads as the service.
@@ -223,7 +232,8 @@ engine's own guard, not one a client can author.)
 | "role names cannot exceed 124 characters" | `TestARoleNameLongerThan124CharactersDoesNotSync` |
 | "Manual changes to these roles are not supported" | `TestAOneLakeSyncThatFailsRefusesTheConnection` (a hand-made `OLS_` role that cannot be dropped) |
 | "If there are no changes to sync, security sync does not override manual changes" | `TestAnUnchangedSyncKeepsAManualChangeAndAChangedOneOverwritesIt`, against a real SQL Server: a table permission authored on an `OLS_` role survives two syncs with nothing to sync, and is gone after one OneLake change. Mutation-checked both ways: with the `OLS_sync` skip removed it fails, and with the role's revoke removed it fails. The manual grant is authored with `OLS_guard` disabled, because this emulator refuses table `GRANT` in T-SQL in this mode where Fabric says only that it "isn't allowed" |
-| "Queries with invalid RLS syntax … result in no rows being shown" | `TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint` (a Contributor whose role's filter is invalid sees no rows) |
+| "Queries with invalid RLS syntax … result in no rows being shown" | `TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint` (a Contributor whose role's filter is invalid sees no rows), and `TestInvalidRLSSyntaxStillNarrowsRatherThanFailingTheSync`, which pins that this — a malformed rule — stays distinct from the row below |
+| "Row-level security policy references a column that no longer exists. Database enters error state until policy is fixed." (and the same sentence for column-level security) | **Built**, for a column: the whole sync fails with Fabric's own sentence, so every read through the endpoint fails until the role is fixed — not narrowed to nothing, unlike invalid syntax above. Applies to a role's own constraint and to a OneLake shortcut source's. `TestARowLevelSecurityRoleNamingAMissingColumnFailsTheWholeSync`, `TestAColumnLevelSecurityRoleNamingAMissingColumnFailsTheWholeSync`, `TestARowLevelSecurityRoleAtAShortcutSourceNamingAMissingColumnFailsTheSync` |
 | Read on the item to connect; ReadData to read | `tds_itemaccess_test.go` |
 | Which T-SQL an endpoint does not support | `internal/tds/tsqlsurface_test.go` against `third_party/fabric-tsql-surface/`: of the page's 16 Limitations the endpoint's write guard refuses 6, Class B strict mode (`-tsql-strict`, off by default, [docs/29](29-tsql-parity.md)) refuses 12, the two together 14; the vector type is refused by neither |
 
@@ -231,12 +241,14 @@ The second reader is sqlglot-go's T-SQL parser (`v0.4.0`, whose dialects do not
 include Fabric's). It says the predicate is T-SQL of the permitted shape; it does
 not say Fabric emits that predicate.
 
-Not modelled, and why: the security-sync error state for a renamed or deleted
-column. Fabric documents the messages ("Row-level security policy references a
-column that no longer exists") and that the database "enters error state", but not
-what a client sees, so the emulator fails closed — a table with a column-level
-allow-list naming a missing column grants nothing, and a row filter that no longer
-matches grants no rows — without inventing the error.
+Not modelled, and why: the security-sync error state for a **table** a
+constraint no longer finds — as opposed to a *column*, built above. Fabric's own
+table gives that case two different behaviours by mode (an error in user identity
+mode, nothing surfaced in delegated), which does not resolve into one rule this
+emulator could apply the same way regardless of mode, and it never says how a
+decision rule's granted table and its constraint's own `tablePath` are meant to
+part ways in the first place. Guessing at that mapping risked inventing a case
+Fabric does not have, so it stays unbuilt rather than guessed.
 
 ## Witnesses
 

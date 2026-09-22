@@ -21,6 +21,18 @@ import (
 // no rows, as Fabric's does: "Queries with invalid RLS syntax, or RLS syntax that
 // doesn't match the underlying table, result in no rows being shown".
 
+// unknownColumnError is translateRowFilter's specific failure when a filter
+// names a column the table does not have — kept distinguishable, via
+// errors.As, from every other parse failure. The sync treats the two
+// differently: Fabric documents invalid RLS syntax as "no rows being shown",
+// which is what the rest of this grammar's refusals get, but a filter that
+// references "a column that no longer exists" as the security sync entering
+// an error state — evidence of schema drift after the role was authored, not
+// of a malformed rule (docs/60).
+type unknownColumnError struct{ msg string }
+
+func (e *unknownColumnError) Error() string { return e.msg }
+
 // rlsCollation is the collation OneLake RLS compares text in: "Row-level
 // security evaluates string data as case insensitive by using the following
 // collation … Latin1_General_100_CI_AS_KS_WS_SC_UTF8".
@@ -283,7 +295,7 @@ func (p *filterParser) column() (string, error) {
 	}
 	c, ok := p.columns[strings.ToLower(name)]
 	if !ok {
-		return "", fmt.Errorf("the row filter reads column %q, which table %q does not have", name, p.table)
+		return "", &unknownColumnError{fmt.Sprintf("the row filter reads column %q, which table %q does not have", name, p.table)}
 	}
 	seen := false
 	for _, u := range p.used {

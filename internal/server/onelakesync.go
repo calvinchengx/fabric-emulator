@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -218,13 +219,17 @@ EXEC sp_executesql @revoke_%[1]d;
 				for _, c := range n.Columns {
 					actual, ok := endpoint.columns[t][strings.ToLower(c)]
 					if !ok {
-						grantCols = nil
-						break
+						// Fabric: "Column-level security policy references a column
+						// that no longer exists. Database enters error state until
+						// policy is fixed." Unlike an RLS filter outside the grammar,
+						// this is not narrowed to nothing — the whole sync fails, so
+						// every read through the endpoint fails until the role naming
+						// %s is fixed at its source, the lakehouse where it was
+						// authored.
+						return fmt.Errorf("Column-level security policy references a column that no longer exists. "+
+							"(role %q, table %q, column %q)", r.Name, t, c)
 					}
 					grantCols = append(grantCols, sqlIdent(actual.Name))
-				}
-				if grantCols == nil {
-					continue
 				}
 			}
 			ta := access[t]
@@ -235,9 +240,18 @@ EXEC sp_executesql @revoke_%[1]d;
 			if n != nil && n.Rows != "" {
 				filter, cols, err := translateRowFilters(n.Rows, t, endpoint.columns[t])
 				if err != nil {
-					// No rows for any member: a Contributor in the role reads none, and
-					// a Viewer is not granted the table at all, so their query errors
-					// as the SQL analytics endpoint's does.
+					var uce *unknownColumnError
+					if errors.As(err, &uce) {
+						// Fabric: "Row-level security policy references a column that
+						// no longer exists. Database enters error state until policy is
+						// fixed." — distinct from a filter outside OneLake's grammar,
+						// which narrows to no rows rather than failing the sync.
+						return fmt.Errorf("Row-level security policy references a column that no longer exists. "+
+							"(role %q, table %q): %w", r.Name, t, err)
+					}
+					// Invalid RLS syntax: no rows for any member, not a sync failure —
+					// a Contributor in the role reads none, and a Viewer is not granted
+					// the table at all, so their query errors as the endpoint's does.
 					ta.filtered = append(ta.filtered, roleFilter{role: lit, expr: "(1 = 0)"})
 					continue
 				}
@@ -307,6 +321,13 @@ EXEC sp_executesql @revoke_%[1]d;
 			}
 			filter, cols, err := translateRowFilters(n.Rows, path.Base(sc.TargetPath), endpoint.columns[table])
 			if err != nil {
+				var uce *unknownColumnError
+				if errors.As(err, &uce) {
+					// As for the consumer's own roles: a column the source's schema no
+					// longer has fails the whole sync, not just this shortcut's rows.
+					return fmt.Errorf("Row-level security policy references a column that no longer exists. "+
+						"(source role %q, shortcut %q): %w", r.Name, sc.Name, err)
+				}
 				// As for the consumer's own: a filter outside OneLake's grammar shows
 				// no rows to the role's members.
 				sa.filtered = append(sa.filtered, roleFilter{role: lit, expr: "(1 = 0)"})
