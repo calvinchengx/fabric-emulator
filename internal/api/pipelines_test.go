@@ -602,6 +602,73 @@ func TestPipelineCopyDirectory(t *testing.T) {
 	}
 }
 
+// TestPipelineCopyFileListPath: a source naming fileListPath copies exactly
+// the files the list names — not the whole subtree under its folderPath, and
+// not a file under that folder the list leaves out. Fabric's own text is
+// "relative path to the path configured in the dataset"
+// (third_party/adf-pipeline-schema/Pipeline.json), so the list's entries are
+// relative to the source's own path.
+func TestPipelineCopyFileListPath(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	seedFile(t, st, ws.ID, src.ID, "Files/in/a.txt", []byte("A"))
+	seedFile(t, st, ws.ID, src.ID, "Files/in/sub/b.txt", []byte("BB"))
+	// c.txt exists under the same folder but is NOT on the list, and must not
+	// be copied — the load-bearing assertion, since a whole-subtree copy would
+	// pass the other two files by accident.
+	seedFile(t, st, ws.ID, src.ID, "Files/in/c.txt", []byte("C"))
+	seedFile(t, st, ws.ID, src.ID, "Files/lists/pick.txt", []byte("a.txt\r\nsub/b.txt\n\n"))
+
+	content := `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"type":"BinarySource","location":{"itemId":"` + src.ID + `","path":"Files/in"},
+            "fileListPath":"Files/lists/pick.txt"},
+          "sink":{"location":{"itemId":"` + dst.ID + `","path":"Files/out"}}
+        }}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Completed" {
+		t.Fatalf("job status = %s", s)
+	}
+	for rel, want := range map[string]string{"Files/out/a.txt": "A", "Files/out/sub/b.txt": "BB"} {
+		got, err := st.GetOneLakePath(dst.ID, rel)
+		if err != nil || string(got.Content) != want {
+			t.Fatalf("%s = %q (err %v), want %q", rel, got.Content, err, want)
+		}
+	}
+	if _, err := st.GetOneLakePath(dst.ID, "Files/out/c.txt"); err == nil {
+		t.Fatalf("c.txt was copied despite being absent from the file list")
+	}
+}
+
+// TestPipelineCopyFileListPathMissingEntryFails: a list naming a file that
+// does not exist fails the activity rather than silently copying fewer files
+// than the list promised.
+func TestPipelineCopyFileListPathMissingEntryFails(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	seedFile(t, st, ws.ID, src.ID, "Files/in/a.txt", []byte("A"))
+	seedFile(t, st, ws.ID, src.ID, "Files/lists/pick.txt", []byte("a.txt\nmissing.txt\n"))
+
+	content := `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"type":"BinarySource","location":{"itemId":"` + src.ID + `","path":"Files/in"},
+            "fileListPath":"Files/lists/pick.txt"},
+          "sink":{"location":{"itemId":"` + dst.ID + `","path":"Files/out"}}
+        }}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job status = %s, want Failed (the list names a file that does not exist)", s)
+	}
+}
+
 // TestPipelineCopyByName: source/sink resolve by workspace + item *name*
 // (not just GUID), and an unknown workspace fails the activity.
 func TestPipelineCopyByName(t *testing.T) {
@@ -1364,6 +1431,29 @@ func TestCopyRejectsUnsupportedLoudly(t *testing.T) {
 				t.Fatalf("unsupported %s: job status = %s, want Failed", tc.name, s)
 			}
 		})
+	}
+}
+
+// TestCopyFileListPathOnSinkIsRefused: fileListPath is documented only on
+// *ReadSettings (third_party/adf-pipeline-schema/Pipeline.json) — a SINK that
+// sends it must be refused by name, not silently ignored, the same as every
+// other option this emulator does not honour on the side that sent it.
+func TestCopyFileListPathOnSinkIsRefused(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	lh := seedLakehouse(t, st, ws.ID, "lake")
+	seedFile(t, st, ws.ID, lh.ID, "Files/in.csv", []byte("x"))
+	loc := `"datasetSettings":{"linkedService":{"properties":{"typeProperties":{"artifactId":"` + lh.ID + `"}}}}`
+
+	content := `{"properties":{"activities":[
+        {"name":"Bad","type":"Copy","typeProperties":{
+          "source":{"type":"BinarySource","rootFolder":"Files","fileName":"in.csv",` + loc + `},
+          "sink":{"type":"BinarySink","rootFolder":"Files","fileName":"out.csv","fileListPath":"Files/x.txt",` + loc + `}
+        }}]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("fileListPath on a sink: job status = %s, want Failed", s)
 	}
 }
 

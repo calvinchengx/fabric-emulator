@@ -160,9 +160,12 @@
       "ci:medallion",
       "go:TestPipelineCopyActivityRealBytes",
       "go:TestPipelineCopyDirectory",
-      "go:TestPipelineCopyByName"
+      "go:TestPipelineCopyByName",
+      "go:TestPipelineCopyFileListPath",
+      "go:TestPipelineCopyFileListPathMissingEntryFails",
+      "go:TestCopyFileListPathOnSinkIsRefused"
     ],
-    "note": "ci:medallion runs examples/medallion-pyspark, whose bronze pipeline Copy moves CSV in Files/ into Tables/bronze_customers and asserts rowsCopied plus the table contents — OneLake to OneLake, driven by the example rather than a Go client."
+    "note": "ci:medallion runs examples/medallion-pyspark, whose bronze pipeline Copy moves CSV in Files/ into Tables/bronze_customers and asserts rowsCopied plus the table contents — OneLake to OneLake, driven by the example rather than a Go client. The fileListPath witnesses are the negative half of the same claim: TestPipelineCopyFileListPath asserts a file present under the source folder but absent from the list is NOT copied (a whole-subtree copy would pass by accident), TestPipelineCopyFileListPathMissingEntryFails asserts a listed-but-absent file fails the job rather than copying fewer files than promised, and TestCopyFileListPathOnSinkIsRefused asserts the option is refused by name on a sink rather than silently ignored."
   },
   "createdataframe-localrows": {
     "section": "Data Engineering (`data-engineering/`)",
