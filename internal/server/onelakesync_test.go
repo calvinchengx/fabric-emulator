@@ -80,9 +80,11 @@ func TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint(t *testing.T) {
 		`CREATE TABLE dbo.hr (name varchar(10))`,
 		`INSERT INTO dbo.hr VALUES ('ada'), ('bob')`)
 	// Beside the two roles under test: one filtering hr's rows to ADA (text
-	// compares case-insensitively) for carol and erin; one whose filter is not
-	// OneLake's grammar, for frank; and one naming a column sales does not
-	// have, for bob. None may read as no restriction at all.
+	// compares case-insensitively) for carol and erin, and one whose filter is
+	// not OneLake's grammar, for frank. Neither reads as no restriction at all.
+	// A role naming a column the table does not have is its own test
+	// (onelakesync_error_state_test.go): it fails the whole sync, so it cannot
+	// coexist with the many other principals this test checks.
 	rowRole := func(name, table, filter string, members ...string) store.OneLakeRole {
 		var ms []string
 		for _, m := range members {
@@ -97,7 +99,6 @@ func TestUserIdentityModeAppliesOneLakeSecurityOnTheEndpoint(t *testing.T) {
 	roles := []store.OneLakeRole{oneLakeRole("SalesReaders", "sales", alice, "region", "amount"), oneLakeRole("HR", "hr", bob),
 		rowRole("FilteredHR", "hr", "SELECT * FROM hr WHERE name = 'ADA'", carol, erin),
 		rowRole("Dynamic", "hr", "SELECT * FROM hr WHERE name = USER_NAME()", frank),
-		oneLakeRole("Renamed", "sales", bob, "region", "no_such_column"),
 		// Two rules filtering one table in one role arrive joined by UNION and
 		// read as either; a filter reading no column still filters.
 		{Name: "TwoRules", Body: []byte(fmt.Sprintf(`{"name":"TwoRules","decisionRules":[

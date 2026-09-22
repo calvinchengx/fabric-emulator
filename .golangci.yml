@@ -24,18 +24,22 @@ linters:
   exclusions:
     rules:
       # ST1005 wants a lowercase first word, and exempts error strings that
-      # open with a proper noun or identifier. All 26 here do, and they name
+      # open with a proper noun or identifier. Most here do, and they name
       # the thing that failed: the product (Airflow, Spark), the Fabric feature
       # (Direct Lake), or the Eventstream operator kind the definition declared
       # (Filter, Window). Lowercasing "Direct Lake table %q" to "direct Lake"
-      # would be wrong rather than merely ugly.
+      # would be wrong rather than merely ugly. Column-level/Row-level security
+      # policy are exempt for the same reason at one remove: the whole sentence
+      # is Fabric's own documented error text ("Row-level security policy
+      # references a column that no longer exists."), reproduced verbatim so a
+      # client sees the same words real Fabric would show it.
       #
       # Matched on the source line, not the path, so the exemption names which
       # nouns are exempt and an ordinary capitalised error in the same file is
       # still reported.
       - linters: [staticcheck]
         text: "ST1005"
-        source: '(Errorf|errors\.New)\("(Airflow|Direct Lake|Filter|Spark|Window) '
+        source: '(Errorf|errors\.New)\("(Airflow|Direct Lake|Filter|Spark|Window|Column-level security policy|Row-level security policy) '
 issues:
   # Defaults cap identical issues at 3 and each linter at 50, which turns a
   # count into an underestimate: six identical unchecked Close calls reported
