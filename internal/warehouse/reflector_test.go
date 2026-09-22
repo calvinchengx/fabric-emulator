@@ -306,8 +306,11 @@ func TestDeltaFingerprintNamesItsSource(t *testing.T) {
 
 // "Shortcuts function as tables in the SQL analytics endpoint": a OneLake
 // shortcut under Tables/ is a table, shown under the shortcut's name and read
-// from its target. An external one is not listed (its bytes are behind an HTTP
-// read), one outside Tables/ is not a table, and a folder of the same name wins.
+// from its target — and so is an ADLS Gen2, Amazon S3 or Dataverse shortcut
+// there, marked external rather than resolved here (docs/61). One outside
+// Tables/ is not a table, an external shortcut missing its location or
+// connection is not addressable, and a folder of the same name wins over
+// either kind.
 func TestTableSourcesListShortcuts(t *testing.T) {
 	st, wsID, itemID := seedLakehouse(t)
 	put(t, st, wsID, itemID, "Tables/own/_delta_log/00000000000000000000.json", []byte(`{}`))
@@ -315,7 +318,8 @@ func TestTableSourcesListShortcuts(t *testing.T) {
 	for _, sc := range []*store.Shortcut{
 		{ItemID: itemID, Path: "Tables", Name: "linked", TargetType: "OneLake", TargetWorkspace: wsID, TargetItem: "src-item", TargetPath: "Tables/orders"},
 		{ItemID: itemID, Path: "Tables", Name: "Clash", TargetType: "OneLake", TargetWorkspace: wsID, TargetItem: "src-item", TargetPath: "Tables/other"},
-		{ItemID: itemID, Path: "Tables", Name: "cloud", TargetType: "AmazonS3", TargetLocation: "https://s3.example", ConnectionID: "c", TargetItem: "src-item", TargetPath: "Tables/x"},
+		{ItemID: itemID, Path: "Tables", Name: "cloud", TargetType: "AmazonS3", TargetLocation: "https://s3.example", TargetPath: "raw", ConnectionID: "c"},
+		{ItemID: itemID, Path: "Tables", Name: "nocred", TargetType: "AmazonS3", TargetLocation: "https://s3.example", TargetPath: "raw"},
 		{ItemID: itemID, Path: "Files", Name: "raw", TargetType: "OneLake", TargetWorkspace: wsID, TargetItem: "src-item", TargetPath: "Tables/orders"},
 	} {
 		if err := st.CreateShortcut(sc); err != nil {
@@ -326,17 +330,26 @@ func TestTableSourcesListShortcuts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]tableSource{
-		"own":    {"own", itemID, "Tables/own", ""},
-		"clash":  {"clash", itemID, "Tables/clash", ""},
-		"linked": {"linked", "src-item", "Tables/orders", ""},
+	if len(got) != 4 {
+		t.Fatalf("listed %v, want exactly own, clash, linked and cloud", got)
 	}
-	if len(got) != len(want) {
-		t.Fatalf("listed %v, want exactly own, clash and linked", got)
-	}
+	byName := map[string]tableSource{}
 	for _, g := range got {
-		if w, ok := want[g.name]; !ok || w != g {
-			t.Errorf("listed %+v, want %+v", g, want[g.name])
+		byName[g.name] = g
+	}
+	want := map[string]tableSource{
+		"own":    {name: "own", item: itemID, root: "Tables/own"},
+		"clash":  {name: "clash", item: itemID, root: "Tables/clash"},
+		"linked": {name: "linked", item: "src-item", root: "Tables/orders"},
+	}
+	for name, w := range want {
+		g, ok := byName[name]
+		if !ok || g.name != w.name || g.item != w.item || g.root != w.root || g.blocked != w.blocked || g.external != nil {
+			t.Errorf("%s: listed %+v, want %+v", name, g, w)
 		}
+	}
+	cloud, ok := byName["cloud"]
+	if !ok || cloud.external == nil || cloud.external.Name != "cloud" || cloud.item != "" || cloud.root != "" {
+		t.Errorf(`"cloud": listed %+v, want an external tableSource for the cloud shortcut`, cloud)
 	}
 }

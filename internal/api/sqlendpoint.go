@@ -143,7 +143,7 @@ func (a *API) refreshSQLEndpointMetadata(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	var report []tableSync
-	names, rerr := warehouse.Reflect(r.Context(), db, a.Store, lakehouseID)
+	names, rerr := warehouse.ReflectWithExternal(r.Context(), db, a.Store, lakehouseID, a.ExternalDelta)
 	done := time.Now().UTC().Format(time.RFC3339)
 	for _, n := range names {
 		report = append(report, tableSync{

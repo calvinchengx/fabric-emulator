@@ -116,17 +116,55 @@ func ReadDeltaTable(st *store.Store, itemID, name string) (*Table, error) {
 
 // ReadDeltaTableAt reads the Delta table rooted at root in the given item. It is
 // ReadDeltaTable for a table that does not live under its own Tables/<name>: a
-// shortcut's source is another item's folder, and `name` is only how errors say
-// which table it was.
+// OneLake shortcut's source is another item's folder, and `name` is only how
+// errors say which table it was.
 func ReadDeltaTableAt(st *store.Store, itemID, root, name string) (*Table, error) {
 	active, schema, err := activeFiles(st, itemID, root)
 	if err != nil {
 		return nil, err
 	}
+	return assembleTable(name, active, schema, func(f string) ([]byte, error) {
+		p, err := st.GetOneLakePath(itemID, path.Join(root, f))
+		if err != nil {
+			return nil, fmt.Errorf("delta table %q: missing data file %q", name, f)
+		}
+		return p.Content, nil
+	})
+}
+
+// ExternalDelta is how an ADLS Gen2, Amazon S3 or Dataverse shortcut's Delta
+// table is read: its _delta_log folder's JSON commit filenames, sorted, and one
+// file's bytes by the path a commit or the shortcut's own root names, relative
+// to that root. Implemented by *onelake.Service; passed in rather than
+// imported, so this package does not depend on how a shortcut's credential is
+// resolved (docs/61).
+type ExternalDelta interface {
+	ExternalDeltaCommits(sc *store.Shortcut) ([]string, error)
+	ExternalReadFile(sc *store.Shortcut, remainder string) ([]byte, error)
+}
+
+// readExternalDeltaTable is ReadDeltaTableAt for a shortcut whose target is not
+// OneLake: the same replay and assembly, sourced over HTTP through external
+// instead of the store.
+func readExternalDeltaTable(external ExternalDelta, sc *store.Shortcut, name string) (*Table, error) {
+	active, schema, err := activeFilesExternal(external, sc)
+	if err != nil {
+		return nil, err
+	}
+	return assembleTable(name, active, schema, func(f string) ([]byte, error) {
+		return external.ExternalReadFile(sc, f)
+	})
+}
+
+// assembleTable is ReadDeltaTableAt's and readExternalDeltaTable's shared second
+// half: given the active Parquet file paths and the schema activeFiles already
+// found, read each with `read` and stitch the rows together. Where the bytes
+// come from is the only thing that differs between a OneLake table and an
+// external shortcut's.
+func assembleTable(name string, active []string, schema deltaSchema, read func(string) ([]byte, error)) (*Table, error) {
 	if len(active) == 0 {
 		return nil, fmt.Errorf("delta table %q has no active data files", name)
 	}
-
 	// The projection target: the logical schema minus the columns SQL cannot
 	// represent. Computed once, from the schema rather than from any one data
 	// file, so every part lands on the identical column list and the rows
@@ -135,11 +173,11 @@ func ReadDeltaTableAt(st *store.Store, itemID, root, name string) (*Table, error
 
 	var tbl *Table
 	for _, f := range active {
-		p, err := st.GetOneLakePath(itemID, path.Join(root, f))
+		content, err := read(f)
 		if err != nil {
-			return nil, fmt.Errorf("delta table %q: missing data file %q", name, f)
+			return nil, err
 		}
-		part, err := readParquet(p.Content)
+		part, err := readParquet(content)
 		if err != nil {
 			return nil, fmt.Errorf("delta table %q: %w", name, err)
 		}
@@ -169,33 +207,69 @@ func activeFiles(st *store.Store, itemID, root string) ([]string, deltaSchema, e
 	if err != nil {
 		return nil, deltaSchema{}, err
 	}
-	var commits []string
+	var names []string
 	for _, e := range entries {
 		if strings.HasSuffix(e.RelPath, ".json") {
-			commits = append(commits, e.RelPath)
+			names = append(names, e.RelPath)
 		}
 	}
-	if len(commits) == 0 {
+	if len(names) == 0 {
 		return nil, deltaSchema{}, fmt.Errorf("no _delta_log commits under %q", root)
 	}
-	sort.Strings(commits) // 000..0.json ordering is lexicographic
+	sort.Strings(names) // 000..0.json ordering is lexicographic
 
-	var order []string
-	var schema deltaSchema
-	active := map[string]bool{}
-	for _, c := range commits {
+	blobs := make([][]byte, len(names))
+	for i, c := range names {
 		p, err := st.GetOneLakePath(itemID, c)
 		if err != nil {
 			return nil, deltaSchema{}, err
 		}
-		for _, line := range bytes.Split(p.Content, []byte("\n")) {
+		blobs[i] = p.Content
+	}
+	return replayCommits(names, blobs)
+}
+
+// activeFilesExternal is activeFiles for an external shortcut's target: the
+// same replay, over commits listed and read through external instead of the
+// store.
+func activeFilesExternal(external ExternalDelta, sc *store.Shortcut) ([]string, deltaSchema, error) {
+	names, err := external.ExternalDeltaCommits(sc)
+	if err != nil {
+		return nil, deltaSchema{}, err
+	}
+	if len(names) == 0 {
+		return nil, deltaSchema{}, fmt.Errorf("no _delta_log commits under %q", sc.Name)
+	}
+	blobs := make([][]byte, len(names))
+	for i, name := range names {
+		b, err := external.ExternalReadFile(sc, path.Join("_delta_log", name))
+		if err != nil {
+			return nil, deltaSchema{}, err
+		}
+		blobs[i] = b
+	}
+	return replayCommits(names, blobs)
+}
+
+// replayCommits is activeFiles' and activeFilesExternal's shared core: turn a
+// list of _delta_log commits' CONTENTS, already read and in commit order, into
+// the active data file paths and the logical schema. Only how the bytes were
+// fetched differs between a OneLake table and a shortcut's external target;
+// the replay — later metaData supersedes earlier, add/remove — is one rule
+// either way.
+func replayCommits(names []string, blobs [][]byte) ([]string, deltaSchema, error) {
+	var order []string
+	var schema deltaSchema
+	active := map[string]bool{}
+	for i, content := range blobs {
+		for _, line := range bytes.Split(content, []byte("\n")) {
 			line = bytes.TrimSpace(line)
 			if len(line) == 0 {
 				continue
 			}
 			var a deltaAction
 			if err := json.Unmarshal(line, &a); err != nil {
-				return nil, deltaSchema{}, fmt.Errorf("bad _delta_log line in %q: %w", c, err)
+				return nil, deltaSchema{}, fmt.Errorf("bad _delta_log line in %q: %w", names[i], err)
 			}
 			// A later metaData supersedes an earlier one (schema evolution).
 			if a.MetaData != nil {

@@ -31,13 +31,13 @@ type warehouseBackend interface {
 // rejected), and the surface is read-only for a Lakehouse (the analytics
 // endpoint) or a Viewer — read-write for a Warehouse with Contributor+.
 // principalOf resolves the FedAuth token to its principal id.
-func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(token string) (string, error)) func(context.Context, string, string, string) (tds.Connection, error) {
+func warehouseRouter(st *store.Store, be warehouseBackend, principalOf func(token string) (string, error), external warehouse.ExternalDelta) func(context.Context, string, string, string) (tds.Connection, error) {
 	// One Reflector for the life of the server, captured here rather than made
 	// per connection — its whole value is remembering across logins. See its
 	// doc: without that memory a retrying client restarts the entire reflection
 	// every attempt and can only finish if one attempt fits inside the login
 	// timeout.
-	reflector := &warehouse.Reflector{}
+	reflector := &warehouse.Reflector{External: external}
 	return func(ctx context.Context, server, database, token string) (tds.Connection, error) {
 		principal, err := principalOf(token)
 		if err != nil {
@@ -373,8 +373,8 @@ type principalBackend interface {
 // provisioning a relayed connection gets, so SELECT grants, row-level security,
 // column denials and masking all apply to the read. A lakehouse's analytics
 // endpoint is reflected first, as a connection to it is.
-func sqlDBAsFor(be principalBackend, st *store.Store) func(ctx context.Context, itemID, principal string) (*sql.DB, error) {
-	reflector := &warehouse.Reflector{}
+func sqlDBAsFor(be principalBackend, st *store.Store, external warehouse.ExternalDelta) func(ctx context.Context, itemID, principal string) (*sql.DB, error) {
+	reflector := &warehouse.Reflector{External: external}
 	return func(ctx context.Context, itemID, principal string) (*sql.DB, error) {
 		it, err := st.GetItemByID(itemID)
 		if err != nil {

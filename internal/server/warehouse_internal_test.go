@@ -73,7 +73,7 @@ func TestWarehouseRouter(t *testing.T) {
 	ctx := context.Background()
 	// Identity principalOf: the "token" passed in is the principal id.
 	idOf := func(tok string) (string, error) { return tok, nil }
-	route := warehouseRouter(st, &fakeWH{db: db}, idOf)
+	route := warehouseRouter(st, &fakeWH{db: db}, idOf, nil)
 
 	// "u" created the workspace, so it is Admin. Lakehouse by id → read-only, the
 	// resolved backend database is the item id, and reflection populated the engine.
@@ -104,7 +104,7 @@ func TestWarehouseRouter(t *testing.T) {
 		t.Error("notebook accepted as a SQL endpoint")
 	}
 	// EnsureDatabase failure surfaces.
-	if _, err := warehouseRouter(st, &fakeWH{db: db, ensureErr: fmt.Errorf("boom")}, idOf)(ctx, "", wh.ID, "u"); err == nil {
+	if _, err := warehouseRouter(st, &fakeWH{db: db, ensureErr: fmt.Errorf("boom")}, idOf, nil)(ctx, "", wh.ID, "u"); err == nil {
 		t.Error("EnsureDatabase error not surfaced")
 	}
 
@@ -458,7 +458,7 @@ func TestTheRouterFailsClosedOnAccessErrors(t *testing.T) {
 		st, ws, dir := diskStoreWithWarehouse(t)
 		items, _ := st.ListItems(ws.ID, "Warehouse")
 		execOn(t, dir, `ALTER TABLE role_assignments RENAME TO ra_elsewhere`)
-		if _, err := warehouseRouter(st, &fakeWH{}, idOf)(ctx, "", items[0].ID, "owner"); err == nil ||
+		if _, err := warehouseRouter(st, &fakeWH{}, idOf, nil)(ctx, "", items[0].ID, "owner"); err == nil ||
 			!strings.Contains(err.Error(), "checking access") {
 			t.Fatalf("err = %v, want an access-check failure", err)
 		}
@@ -477,7 +477,7 @@ func TestTheRouterFailsClosedOnAccessErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 		execOn(t, dir, `UPDATE item_access SET permissions = 'not json' WHERE item_id = '`+other.ID+`'`)
-		if _, err := warehouseRouter(st, &fakeWH{}, idOf)(ctx, "", items[0].ID, "owner"); err == nil ||
+		if _, err := warehouseRouter(st, &fakeWH{}, idOf, nil)(ctx, "", items[0].ID, "owner"); err == nil ||
 			!strings.Contains(err.Error(), "checking access") {
 			t.Fatalf("err = %v, want the sweep's failure", err)
 		}
@@ -485,7 +485,7 @@ func TestTheRouterFailsClosedOnAccessErrors(t *testing.T) {
 	t.Run("no Read", func(t *testing.T) {
 		st, ws, _ := diskStoreWithWarehouse(t)
 		items, _ := st.ListItems(ws.ID, "Warehouse")
-		if _, err := warehouseRouter(st, &fakeWH{}, idOf)(ctx, "", items[0].ID, "stranger"); err == nil ||
+		if _, err := warehouseRouter(st, &fakeWH{}, idOf, nil)(ctx, "", items[0].ID, "stranger"); err == nil ||
 			!strings.Contains(err.Error(), "access denied") {
 			t.Fatalf("err = %v, want access denied", err)
 		}
@@ -587,7 +587,7 @@ func TestSQLDBAsFor(t *testing.T) {
 	ctx := context.Background()
 
 	be := &fakeWH{db: db}
-	open := sqlDBAsFor(be, st)
+	open := sqlDBAsFor(be, st, nil)
 	for _, it := range []*store.Item{lake, wh} {
 		got, err := open(ctx, it.ID, "u")
 		if err != nil || got != db {
@@ -617,8 +617,8 @@ func TestSQLDBAsFor(t *testing.T) {
 		"an unknown item":                 {open, "does-not-exist", "u"},
 		"an item with no SQL endpoint":    {open, nb.ID, "u"},
 		"a principal without Read":        {open, wh.ID, "stranger"},
-		"a database that cannot be ready": {sqlDBAsFor(&fakeWH{db: db, ensureErr: fmt.Errorf("boom")}, st), wh.ID, "u"},
-		"a lakehouse that cannot reflect": {sqlDBAsFor(&fakeWH{db: closedDB(t)}, st), lake.ID, "u"},
+		"a database that cannot be ready": {sqlDBAsFor(&fakeWH{db: db, ensureErr: fmt.Errorf("boom")}, st, nil), wh.ID, "u"},
+		"a lakehouse that cannot reflect": {sqlDBAsFor(&fakeWH{db: closedDB(t)}, st, nil), lake.ID, "u"},
 	} {
 		if _, err := tc.open(ctx, tc.item, tc.who); err == nil {
 			t.Errorf("%s: opened", name)
