@@ -1,11 +1,11 @@
 # 61 — Shortcuts on the SQL analytics endpoint
 
-**Status: four of Fabric's documented shortcut behaviours are built — a OneLake
-shortcut under `Tables/` reads as a table on the endpoint; in user identity mode a
-caller needs access at the source as well as at the consumer, and what the
-source's roles narrow narrows the read too; and in delegated mode a shortcut whose
-source has row or column security is blocked. The rest are listed below, not
-implied.**
+**Status: five of Fabric's documented shortcut behaviours are built — a OneLake,
+ADLS Gen2, Amazon S3 or Dataverse shortcut under `Tables/` reads as a table on the
+endpoint; in user identity mode a caller needs access at the source as well as at
+the consumer, and what the source's roles narrow narrows the read too, for a
+OneLake source; and in delegated mode a shortcut whose OneLake source has row or
+column security is blocked. The rest are listed below, not implied.**
 
 Built to Microsoft's documentation and enforced by a real SQL engine. Not
 verified against a real Fabric tenant (see the verification note in
@@ -19,7 +19,7 @@ analytics endpoints*, the sections *Shortcuts behavior with security sync* and
 
 | Fabric's statement | Here | Witness |
 |---|---|---|
-| "Shortcuts function as tables in the SQL analytics endpoint" | **Built** for OneLake targets. A shortcut under `Tables/` is reflected under its own name, read from its target's Delta log, and follows the source when it changes | `TestAShortcutUnderTablesReadsAsATableOnTheEndpoint`, `TestTableSourcesListShortcuts` |
+| "Shortcuts function as tables in the SQL analytics endpoint" | **Built for every shortcut kind Fabric documents.** A shortcut under `Tables/` — OneLake, ADLS Gen2, Amazon S3 or Dataverse — is reflected under its own name, read from its target's Delta log, and follows the source when it changes. An external target is listed and read over HTTP (`onelake.Service.ExternalDeltaCommits`/`ExternalReadFile`), the same credential the DFS read-through already resolves | `TestAShortcutUnderTablesReadsAsATableOnTheEndpoint`, `TestTableSourcesListShortcuts`, `TestAnExternalShortcutReadsAsATableOnTheEndpoint` |
 | "Users must have valid access on **both** the shortcut source … **and** the destination … If the user lacks permission on either side, queries fail with an access error" | **Built, user identity mode.** The destination is the lakehouse's own roles and grant; the source is asked of the same decision every OneLake read asks (`store.OneLakeReadAccess`), on the source item. A caller refused there gets `DENY SELECT` on the table, which wins over any role the synced security gives them. A source that no longer exists refuses | `TestAShortcutTableNeedsAccessOnTheSourceToo` |
 | In delegated mode, a shortcut whose source table has row or column security "is blocked", "even if the end user has SQL permissions on the shortcut object" | **Built.** Any role at the source narrowing the path, whoever its members, blocks the shortcut for every reader — an Admin or Member included, which a `DENY` cannot do. It is reflected as a **view** that refuses every read with the reason, its columns those of the table, so a query naming one is refused for the reason and not for a missing column. Switching the endpoint to user identity mode lifts it, and back restores it | `TestDelegatedModeBlocksAShortcutWhoseSourceIsSecured`, `TestDelegatedShortcutBlock` |
 | In user identity mode, the caller is evaluated against the **source's** OneLake security, including its row and column rules; "when enforcement cannot clearly validate access, the system applies the most restrictive outcome" | **Built.** The source's column allow-list is a per-principal `DENY SELECT` on each column it withholds, and its row filters are synced as roles of their own and ANDed into the table's row policy with the consumer's. A read is narrowed by both sides, and the intersection wins. A Contributor is not column-narrowed, as OneLake security does not narrow one; a Contributor in a source role that filters is filtered, as row-level security "is enforced for all users" | `TestAShortcutTableIsNarrowedByTheSourcesColumnsAndRows` |
@@ -28,9 +28,22 @@ analytics endpoints*, the sections *Shortcuts behavior with security sync* and
 
 ## Where it differs, stated
 
-- **OneLake targets only.** An ADLS Gen2, S3 or Dataverse shortcut is not reflected
-  as a table: its bytes are behind an HTTP read the reflector does not make.
-  That was true before this stage and stays true.
+- **Source-side narrowing and delegated blocking are OneLake-only, correctly.**
+  ADLS Gen2, S3 and Dataverse shortcuts carry no OneLake security to check — that
+  layer exists only for OneLake-native items — so an external shortcut table is
+  never narrowed by "the source's security" and never blocked in delegated mode.
+  This is not a gap: Fabric's own rules for both only speak of OneLake-level
+  security, and there is none to ask of an external target.
+- **Listing is ours, not Microsoft's.** Fabric documents no API for listing a
+  shortcut's target; this repository's own coverage of ADLS Gen2 and Dataverse
+  shortcuts (`e2e/azurite-shortcut`, [docs/54](54-onelake-security.md)) is against
+  Azurite's **Blob** endpoint, not the DFS surface a real ADLS Gen2 shortcut names,
+  so the reflector lists external shortcut tables the same way: Amazon S3 with
+  `ListObjectsV2`, and ADLS Gen2/Dataverse with the Blob **List Blobs** API. A
+  truncated listing (more than one page) is refused rather than silently
+  under-read — no Delta table this repository writes needs one, and guessing at
+  pagination against real Fabric traffic this repository has never seen is worse
+  than refusing it by name.
 - **A blocked shortcut is a view, with our message.** In the catalog it is a view
   (`sys.views`), not a table; Fabric documents that access is blocked but not what
   a client sees, so the error — "This shortcut is blocked: its source table has
@@ -71,9 +84,17 @@ name, table or view.
 
 Reflection lists `Tables/` and the store's shortcuts together
 (`warehouse.tableSources`); a folder and a shortcut of one name cannot coexist in
-OneLake, and if the store held both the folder would win. The fingerprint that
-lets an unchanged reflection be skipped names the item and folder it read from, so
-a shortcut re-pointed at a table whose commits are named alike is reloaded.
+OneLake, and if the store held both the folder would win — a OneLake shortcut over
+an external one of the same name, for the same reason. An external shortcut is
+marked (`tableSource.external`) rather than resolved there: reading it needs a
+credential this package does not hold, so `Reflector.External` — `*onelake.Service`
+in production, an `ExternalDelta` (`ExternalDeltaCommits`/`ExternalReadFile`)
+elsewhere — reads it instead. Without one wired, an external shortcut is simply
+not among the tables reflected, the same treatment as a folder with no
+`_delta_log`; the fingerprint that lets an unchanged reflection be skipped names
+the item and folder it read from for a OneLake source, or the shortcut's own
+connection and location for an external one, so a shortcut re-pointed at a table
+whose commits are named alike is reloaded either way.
 
 The per-caller refusal is the grant's `ShortcutTables`, `DeniedTables` and
 `ShortcutColumns` (`oneLakeGrant`), applied by `tds.SyncShortcutAccess` after the

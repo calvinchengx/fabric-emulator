@@ -17,6 +17,7 @@ import (
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
 	"github.com/calvinchengx/fabric-emulator/internal/entra"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
+	"github.com/calvinchengx/fabric-emulator/internal/warehouse"
 	"time"
 )
 
@@ -40,6 +41,12 @@ type API struct {
 	// (the mirroring). Wired by the server when a warehouse SQL backend is set;
 	// nil → the refresh-mirror endpoint 501s.
 	MirrorItem func(ctx context.Context, itemID string) error
+	// ExternalDelta reads an ADLS Gen2, Amazon S3 or Dataverse shortcut's Delta
+	// table (*onelake.Service satisfies it), so a lakehouse's SQL analytics
+	// endpoint refresh (refreshMetadata) can reflect those alongside OneLake
+	// tables and shortcuts (docs/61). Nil is a valid, always-set-before-use zero
+	// value: it just means those tables are not among the ones reflected.
+	ExternalDelta warehouse.ExternalDelta
 	// Airflow runs ApacheAirflowJob DAGs on an attached upstream Airflow
 	// instance. Nil preserves an honest AirflowNotConfigured failure.
 	Airflow AirflowRuntime

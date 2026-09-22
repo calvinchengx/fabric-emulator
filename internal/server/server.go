@@ -118,6 +118,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 	olv := auth.New(cfg.EntraIssuer, cfg.EntraJWKSURL, cfg.EntraTLSInsecure, ck.Now, jwksClient)
 	olv.Audiences = onelake.StorageAudience
 	ol := onelake.New(st, olv)
+	a.ExternalDelta = ol
 
 	// The Purview Data Map is Apache Atlas v2 on its own audience — the spec's
 	// routes are literally /atlas/v2/… — so it validates a purview.azure.net
@@ -188,7 +189,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 				}
 				return p.ID, nil
 			}
-			s.TDS.OnConnect = warehouseRouter(st, be, principalOf)
+			s.TDS.OnConnect = warehouseRouter(st, be, principalOf, ol)
 			// Gold is built over this wire, so the flow graph only reaches it if
 			// the TDS front records what its statements moved.
 			s.TDS.Observe = newWarehouseLineage(st).observe
@@ -202,7 +203,7 @@ func New(cfg *config.Config, jwksClient *http.Client) (*Server, error) {
 			// Warehouse/SQLDatabase item's own database, on the same backend.
 			a.SQLDB = sqlDBFor(be, st)
 			// Direct Lake on SQL reads as the caller, never as the service account.
-			a.SQLDBAs = sqlDBAsFor(be, st)
+			a.SQLDBAs = sqlDBAsFor(be, st, ol)
 			// Switching a SQL analytics endpoint's data access mode closes the
 			// workspace's sessions and applies the mode's SQL side effects.
 			a.SwitchDataAccessMode = dataAccessModeSwitch(be, st, s.TDS)

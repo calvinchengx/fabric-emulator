@@ -29,6 +29,13 @@ func Reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID string) ([
 	return (&Reflector{}).Reflect(ctx, db, st, itemID)
 }
 
+// ReflectWithExternal is Reflect with external shortcut tables (ADLS Gen2,
+// Amazon S3, Dataverse) included: without an ExternalDelta, one of those is
+// simply not among the tables reflected, the same as a stray non-Delta folder.
+func ReflectWithExternal(ctx context.Context, db *sql.DB, st *store.Store, itemID string, external ExternalDelta) ([]string, error) {
+	return (&Reflector{External: external}).Reflect(ctx, db, st, itemID)
+}
+
 // A Reflector is a Reflect that remembers what it already did.
 //
 // Reflection runs during TDS login, synchronously, before the connection is
@@ -60,6 +67,10 @@ func Reflect(ctx context.Context, db *sql.DB, st *store.Store, itemID string) ([
 type Reflector struct {
 	mu    sync.Mutex              // guards items
 	items map[string]*reflectItem // itemID -> its lock and fingerprints
+	// External reads an ADLS Gen2, Amazon S3 or Dataverse shortcut's Delta table
+	// (docs/61). Nil (the zero value) means those tables are not among the ones
+	// reflected — the same treatment as a folder with no _delta_log.
+	External ExternalDelta
 }
 
 type reflectItem struct {
@@ -117,7 +128,18 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 	var done []string
 	for _, src := range tables {
 		name := src.name
-		fp, err := deltaFingerprint(st, src.item, src.root)
+		if src.external != nil && r.External == nil {
+			// A real shortcut, but nothing here can read its target: skipped, not
+			// fatal, same treatment as a stray folder with no _delta_log.
+			continue
+		}
+		var fp string
+		var err error
+		if src.external != nil {
+			fp, err = deltaFingerprintExternal(r.External, src.external)
+		} else {
+			fp, err = deltaFingerprint(st, src.item, src.root)
+		}
 		if err != nil {
 			// Not a Delta table (no _delta_log): skipped, not fatal — same as a
 			// stray folder under Tables/ has always been.
@@ -143,11 +165,16 @@ func (r *Reflector) Reflect(ctx context.Context, db *sql.DB, st *store.Store, it
 			done = append(done, name)
 			continue
 		}
-		tbl, err := ReadDeltaTableAt(st, src.item, src.root, name)
+		var tbl *Table
+		if src.external != nil {
+			tbl, err = readExternalDeltaTable(r.External, src.external, name)
+		} else {
+			tbl, err = ReadDeltaTableAt(st, src.item, src.root, name)
+		}
 		if err != nil {
-			// NOT a skip. deltaFingerprint already proved this is a Delta table
-			// — it found _delta_log commits — so failing to read it now is a
-			// real failure, not the stray-folder case above. Continuing here
+			// NOT a skip. The fingerprint step already proved this is a Delta
+			// table — it found _delta_log commits — so failing to read it now is
+			// a real failure, not the stray-folder case above. Continuing here
 			// let a login report success with a table missing, which is how a
 			// caller ends up querying something that was never created.
 			return done, fmt.Errorf("reflect %q: reading the Delta table: %w", name, err)
@@ -228,18 +255,27 @@ func deltaFingerprint(st *store.Store, itemID, root string) (string, error) {
 // shortcut, the folder the shortcut points at.
 type tableSource struct {
 	name, item, root string
-	// blocked is why the table cannot be read, when it cannot: a shortcut whose
-	// source has row or column security, on an endpoint in delegated identity mode.
-	// Such a table is reflected as a view that refuses every read with this reason.
+	// blocked is why the table cannot be read, when it cannot: a OneLake shortcut
+	// whose source has row or column security, on an endpoint in delegated identity
+	// mode. Such a table is reflected as a view that refuses every read with this
+	// reason. Never set alongside external — delegated-mode blocking is a OneLake
+	// security question, and an external target carries no OneLake security to ask.
 	blocked string
+	// external is set instead of item/root for an ADLS Gen2, Amazon S3 or
+	// Dataverse shortcut: its Delta table is read over HTTP through Reflector's
+	// External, not the store.
+	external *store.Shortcut
 }
 
-// tableSources lists a lakehouse's tables: every folder under Tables/, and every
-// OneLake shortcut there — "Shortcuts function as tables in the SQL analytics
-// endpoint". A folder and a shortcut of one name cannot coexist in OneLake; if
-// the store ever holds both, the folder wins. External shortcuts (ADLS, S3,
-// Dataverse) are not listed: their bytes live behind an HTTP read the reflector
-// does not make (docs/61).
+// tableSources lists a lakehouse's tables: every folder under Tables/, every
+// OneLake shortcut there, and every ADLS Gen2, Amazon S3 or Dataverse shortcut
+// there too — "Shortcuts function as tables in the SQL analytics endpoint" names
+// no kind. A folder and a shortcut of one name cannot coexist in OneLake; if the
+// store ever holds both, the folder wins, and a OneLake shortcut is preferred
+// over an external one of the same name for the same reason (docs/61). An
+// external table is marked, not read here: the Reflect loop reads it through
+// Reflector.External, since reading it needs a credential this package does not
+// resolve.
 func tableSources(st *store.Store, itemID string) ([]tableSource, error) {
 	dirs, err := st.ListOneLakePaths(itemID, "Tables", false)
 	if err != nil {
@@ -261,7 +297,17 @@ func tableSources(st *store.Store, itemID string) ([]tableSource, error) {
 	}
 	var lake *store.Item
 	for _, sc := range shortcuts {
-		if sc.Path != "Tables" || sc.IsExternalTarget() || sc.TargetItem == "" || have[strings.ToLower(sc.Name)] {
+		if sc.Path != "Tables" || have[strings.ToLower(sc.Name)] {
+			continue
+		}
+		if sc.IsExternalTarget() {
+			if sc.TargetLocation == "" || sc.ConnectionID == "" {
+				continue // not a real shortcut this reader can address
+			}
+			out = append(out, tableSource{name: sc.Name, external: sc})
+			continue
+		}
+		if sc.TargetItem == "" {
 			continue
 		}
 		src := tableSource{name: sc.Name, item: sc.TargetItem, root: sc.TargetPath}
@@ -278,6 +324,33 @@ func tableSources(st *store.Store, itemID string) ([]tableSource, error) {
 		out = append(out, src)
 	}
 	return out, nil
+}
+
+// deltaFingerprintExternal is deltaFingerprint for an external shortcut: the
+// commit list stands in for the Delta log, and the target's own identity is
+// folded in so a shortcut re-pointed at a different connection or location,
+// whose commits happen to be named alike, is not mistaken for unchanged.
+func deltaFingerprintExternal(external ExternalDelta, sc *store.Shortcut) (string, error) {
+	commits, err := activeFilesFingerprint(external, sc)
+	if err != nil {
+		return "", err
+	}
+	return sc.TargetType + "|" + sc.ConnectionID + "|" + sc.TargetLocation + "/" + sc.TargetPath + "/" + sc.TargetTable +
+		"\n" + strings.Join(commits, "\n"), nil
+}
+
+// activeFilesFingerprint lists an external shortcut's commits for
+// deltaFingerprintExternal, refusing a target with none the same way
+// deltaFingerprint does for a non-Delta folder.
+func activeFilesFingerprint(external ExternalDelta, sc *store.Shortcut) ([]string, error) {
+	commits, err := external.ExternalDeltaCommits(sc)
+	if err != nil {
+		return nil, err
+	}
+	if len(commits) == 0 {
+		return nil, fmt.Errorf("no _delta_log commits under shortcut %q", sc.Name)
+	}
+	return commits, nil
 }
 
 // reflectTable drops and recreates one table, then loads its rows over the TDS

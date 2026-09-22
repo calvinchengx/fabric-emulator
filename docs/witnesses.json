@@ -1490,7 +1490,10 @@
     "go:TestAShortcutTableIsNarrowedByTheSourcesColumnsAndRows": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestAColumnTheSourceWithholdsAndAFilterReadsFailsClosed": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
     "go:TestAColumnNarrowedReaderAndAFilterOnThatColumnFailsClosed": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
-    "go:TestDelegatedModeBlocksAShortcutWhoseSourceIsSecured": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
+    "go:TestDelegatedModeBlocksAShortcutWhoseSourceIsSecured": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestAnExternalShortcutReadsAsATableOnTheEndpoint": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar (and on a named-pipe backend, which the TDS splice cannot handshake over). Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestReflectorReadsAnExternalShortcutThroughExternal": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml).",
+    "go:TestReflectorSkipsAnExternalShortcutWithNoExternalReaderWired": "WAREHOUSE_MSSQL_DSN — needs a real SQL Server, so it skips on a laptop with no sidecar. Satisfied in CI by the `warehouse-tds` job, which runs a SQL Server service (.github/workflows/ci.yml)."
   },
   "notebookutils-notebook-management-create-get-getdefinition-update-updatedefinition-delete-list": {
     "section": "Data Engineering (`data-engineering/`)",
@@ -1670,9 +1673,9 @@
       "go:TestWhatTheTwoRefuseTogether"
     ]
   },
-  "sql-analytics-endpoint-onelake-shortcut-tables-and-access-at-the-source": {
+  "sql-analytics-endpoint-shortcut-tables-and-access-at-the-source": {
     "section": "Data Warehouse (`data-warehouse/`)",
-    "claim": "SQL analytics endpoint **OneLake shortcut tables**, and access at the source",
+    "claim": "SQL analytics endpoint **shortcut tables** (OneLake, ADLS Gen2, Amazon S3, Dataverse), and access at the source",
     "witnesses": [
       "go:TestAShortcutUnderTablesReadsAsATableOnTheEndpoint",
       "go:TestAShortcutTableNeedsAccessOnTheSourceToo",
@@ -1682,7 +1685,17 @@
       "go:TestAColumnTheSourceWithholdsAndAFilterReadsFailsClosed",
       "go:TestAColumnNarrowedReaderAndAFilterOnThatColumnFailsClosed",
       "go:TestDelegatedModeBlocksAShortcutWhoseSourceIsSecured",
-      "go:TestDelegatedShortcutBlock"
+      "go:TestDelegatedShortcutBlock",
+      "go:TestAnExternalShortcutReadsAsATableOnTheEndpoint",
+      "go:TestReflectorReadsAnExternalShortcutThroughExternal",
+      "go:TestReflectorSkipsAnExternalShortcutWithNoExternalReaderWired",
+      "go:TestExternalDeltaCommitsListsAndSignsS3",
+      "go:TestExternalDeltaCommitsRefusesATruncatedS3Listing",
+      "go:TestExternalDeltaCommitsRequiresAnAccessKeyForS3",
+      "go:TestExternalDeltaCommitsListsBlobWithTheSASQuery",
+      "go:TestExternalDeltaCommitsRefusesATruncatedBlobListing",
+      "go:TestExternalDeltaCommitsSurfacesAListingFailure",
+      "go:TestExternalReadFileReadsThroughAndWrapsAFailure"
     ]
   }
 }
