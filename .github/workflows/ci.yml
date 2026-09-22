@@ -2518,7 +2518,7 @@ jobs:
       # routes -- so a ratchet measured per-suite would fail on every pull
       # request while the tree was getting better. The union is the only
       # honest denominator.
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: recording-*
           path: recordings
