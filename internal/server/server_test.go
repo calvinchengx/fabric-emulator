@@ -148,6 +148,30 @@ func (f *fixture) mustStatus(resp *http.Response, want int, ctx string) {
 	}
 }
 
+// awaitJob polls a job instance until it leaves NotStarted/InProgress and
+// returns its terminal status. Jobs are async (doc 37 §4): the 202, a listing,
+// or a trigger firing all happen while the run is still executing, so a test
+// that reads the run's outcome polls exactly as a real client does.
+//
+// 30s, not 5: nothing here measures timing, so the deadline only bounds the
+// failure case, and 5s was missed on a loaded windows runner. See awaitJob in
+// internal/api for the measurement.
+func (f *fixture) awaitJob(jobURL string) string {
+	f.t.Helper()
+	var job struct{ Status string }
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		f.mustStatus(f.call("GET", jobURL, f.token, nil, &job), http.StatusOK, "get job")
+		if job.Status != "InProgress" && job.Status != "NotStarted" {
+			return job.Status
+		}
+		if time.Now().After(deadline) {
+			f.t.Fatalf("job %s never reached a terminal state", jobURL)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestEndToEndAgainstEntraEmulator(t *testing.T) {
 	f := newFixture(t)
 

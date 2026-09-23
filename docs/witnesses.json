@@ -802,7 +802,8 @@
     "witnesses": [
       "ci:az-rest",
       "go:TestQueryActivityRunsAuthAndEdges",
-      "go:TestQueryActivityRunsMissing"
+      "go:TestQueryActivityRunsMissing",
+      "go:TestQueryActivityRunsAnswersARunThatHasNotFinished"
     ]
   },
   "rbac-sql-permissions": {

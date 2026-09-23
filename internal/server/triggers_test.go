@@ -107,8 +107,12 @@ func TestEventTriggerFiresFromARealOneLakeUpload(t *testing.T) {
 		t.Fatalf("invokeType = %v", runs.Value[0]["invokeType"])
 	}
 
-	// And the pipeline saw which file arrived.
+	// And the pipeline saw which file arrived. The trigger starts the run; it
+	// does not finish it, so wait for the outcome before reading it.
 	jid, _ := runs.Value[0]["id"].(string)
+	if status := f.awaitJob(instances + "/" + jid); status != "Completed" {
+		t.Fatalf("event-triggered run = %s, want Completed", status)
+	}
 	resp := f.call("POST", instances+"/"+jid+"/queryactivityruns", f.token, map[string]any{}, nil)
 	f.mustStatus(resp, http.StatusOK, "queryactivityruns")
 	raw, _ := io.ReadAll(resp.Body)

@@ -1016,6 +1016,19 @@ func (a *API) runPipelineWith(wid string, it *store.Item, jobID string, params, 
 	return ""
 }
 
+// createJob records a job; a pipeline's run detail is written in the same
+// transaction, so no poll can list a run that queryactivityruns cannot find.
+func (a *API) createJob(it *store.Item, j *store.JobInstance) error {
+	if it.Type != "DataPipeline" {
+		return a.Store.CreateJobInstance(j)
+	}
+	status := pipeline.StatusInProgress
+	if j.Queued {
+		status = pipeline.StatusQueued
+	}
+	return a.Store.CreatePipelineJobInstance(j, status)
+}
+
 func (a *API) savePipelineRun(jobID, status string, activities []pipeline.ActivityRun) {
 	if activities == nil {
 		activities = []pipeline.ActivityRun{}
