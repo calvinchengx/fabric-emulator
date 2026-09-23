@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -687,6 +688,50 @@ func TestQueryActivityRunsMissing(t *testing.T) {
 		map[string]string{"wid": ws.ID, "iid": nb.ID, "jid": jid})
 	if w.Code != 404 {
 		t.Fatalf("expected 404 for non-pipeline job, got %d", w.Code)
+	}
+}
+
+// TestQueryActivityRunsAnswersARunThatHasNotFinished: a pipeline run that can
+// be listed can be queried. Detail used to be written only when the run
+// finished, so a client that listed a run and queried it at once got
+// PipelineRunNotFound for a job that plainly existed (a macOS CI flake in
+// TestEventTriggerFiresFromARealOneLakeUpload). Both states are pinned
+// without timing: a queued run, and one created but not yet executed.
+func TestQueryActivityRunsAnswersARunThatHasNotFinished(t *testing.T) {
+	a, st := newAPI(t)
+	a.LRODelaySeconds = 60
+	if err := st.SetCapacityMaxConcurrentJobs(store.DefaultCapacityID, 1); err != nil {
+		t.Fatal(err)
+	}
+	ws := seedCapacityWorkspace(t, st)
+	pl := createPipeline(t, st, ws.ID, `{"properties":{"activities":[]}}`)
+	query := func(jid string) (int, string) {
+		w := do(a.queryActivityRuns, admin, "POST", "",
+			map[string]string{"wid": ws.ID, "iid": pl.ID, "jid": jid})
+		return w.Code, w.Body.String()
+	}
+
+	// Occupy the only slot, so the event-triggered run queues.
+	if w := postJob(a, admin, ws.ID, seedJobItem(t, st, ws).ID, "DefaultJob"); w.Code != http.StatusAccepted {
+		t.Fatalf("occupy slot = %d", w.Code)
+	}
+	queued, err := a.startJob(ws.ID, pl, "Pipeline", store.InvokeEventTriggered, nil)
+	if err != nil || !queued.Queued {
+		t.Fatalf("pipeline did not queue: %+v %v", queued, err)
+	}
+	if code, body := query(queued.ID); code != http.StatusOK ||
+		!strings.Contains(body, `"status":"Queued"`) || !strings.Contains(body, `"value":[]`) {
+		t.Fatalf("queued run = %d %s; want 200 Queued with no activities", code, body)
+	}
+
+	// Created, not yet executed: the state the flake observed.
+	j := &store.JobInstance{ItemID: pl.ID, JobType: "Pipeline", CompleteAt: math.MaxInt64}
+	if err := a.createJob(pl, j); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := query(j.ID); code != http.StatusOK ||
+		!strings.Contains(body, `"status":"InProgress"`) || !strings.Contains(body, `"value":[]`) {
+		t.Fatalf("unstarted run = %d %s; want 200 InProgress with no activities", code, body)
 	}
 }
 

@@ -21,6 +21,12 @@ const (
 	StatusSkipped   = "Skipped"
 )
 
+// Run statuses before a pipeline settles, as queryactivityruns reports them.
+const (
+	StatusQueued     = "Queued"
+	StatusInProgress = "InProgress"
+)
+
 // Activity is one node of a pipeline. TypeProperties is decoded per type.
 type Activity struct {
 	Name           string          `json:"name"`

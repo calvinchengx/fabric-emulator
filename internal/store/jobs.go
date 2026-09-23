@@ -83,6 +83,18 @@ func jobExecJSON(j *JobInstance) string {
 
 // CreateJobInstance records a scheduled job.
 func (s *Store) CreateJobInstance(j *JobInstance) error {
+	return s.createJobInstance(j, "")
+}
+
+// CreatePipelineJobInstance records a pipeline job together with its run
+// detail, in one transaction, so a run that can be listed can always be
+// queried: queryactivityruns answers a run in progress with its status and
+// the activities so far (none yet), never a 404 for a run that exists.
+func (s *Store) CreatePipelineJobInstance(j *JobInstance, runStatus string) error {
+	return s.createJobInstance(j, runStatus)
+}
+
+func (s *Store) createJobInstance(j *JobInstance, runStatus string) error {
 	j.CreatedAt = s.Now()
 	if j.ID == "" {
 		j.ID = NewID()
@@ -97,12 +109,25 @@ func (s *Store) CreateJobInstance(j *JobInstance) error {
 	if j.Queued {
 		queued = 1
 	}
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`
 INSERT INTO job_instances (id, item_id, job_type, invoke_type, created_at, complete_at, cancelled, fail_with, queued, execution_data)
 VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		j.ID, j.ItemID, j.JobType, j.InvokeType, j.CreatedAt, j.CompleteAt, j.Cancelled, j.FailWith,
-		queued, jobExecJSON(j))
-	return err
+		queued, jobExecJSON(j)); err != nil {
+		return err
+	}
+	if runStatus != "" {
+		if _, err := tx.Exec(`INSERT INTO pipeline_runs (job_id, status, activity_runs) VALUES (?,?,'[]')`,
+			j.ID, runStatus); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // GetJobInstance fetches one job scoped to its item.

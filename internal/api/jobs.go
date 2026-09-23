@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/calvinchengx/fabric-emulator/internal/auth"
+	"github.com/calvinchengx/fabric-emulator/internal/pipeline"
 	"github.com/calvinchengx/fabric-emulator/internal/store"
 )
 
@@ -190,11 +191,11 @@ func (a *API) startJob(wid string, it *store.Item, jobType, invokeType string, e
 		j.Queued = true
 		j.CompleteAt = math.MaxInt64
 		j.ExecutionData = exec
-		err := a.Store.CreateJobInstance(j)
+		err := a.createJob(it, j)
 		a.admitMu.Unlock()
 		return j, err
 	}
-	if err := a.Store.CreateJobInstance(j); err != nil {
+	if err := a.createJob(it, j); err != nil {
 		a.admitMu.Unlock()
 		return nil, err
 	}
@@ -410,6 +411,9 @@ func (a *API) dispatchExisting(wid string, it *store.Item, j *store.JobInstance)
 	a.Store.PublishJobEvent(wid, it.ID, j.ID, j.JobType, j.InvokeType, store.JobStarted, "")
 	isCopyJobRun := it.Type == "CopyJob" && (j.JobType == "Execute" || j.JobType == "CopyJob")
 	if it.Type == "DataPipeline" {
+		// Admitted: the Queued detail recorded at create becomes InProgress
+		// before the job can be seen running.
+		a.savePipelineRun(j.ID, pipeline.StatusInProgress, nil)
 		params, _ := exec["parameters"].(map[string]any)
 		trigger, _ := exec["triggerEvent"].(map[string]any)
 		injected := j.FailWith

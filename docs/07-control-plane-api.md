@@ -145,7 +145,7 @@ git wrote. This is what makes `fabric-cicd` and deployment pipelines testable.
 | `GET  /workspaces/{id}/items/{itemId}/jobs/instances` | **List Item Job Instances** — paged, newest first *sync* |
 | `GET  /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}` | status *sync* |
 | `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/cancel` | cancel |
-| `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/queryactivityruns` | DataPipeline: the recorded activity runs *sync* |
+| `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/queryactivityruns` | DataPipeline: the recorded activity runs *sync*; a queued or running job answers `Queued`/`InProgress` with the activities so far, never a 404 |
 | `GET  /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/notebookRun` | RunNotebook: parsed cells + run detail *sync* |
 | `POST /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/notebookRunResult` | engine → service callback: report per-cell results, finalise status |
 | `GET  /workspaces/{id}/items/{itemId}/jobs/instances/{jobId}/sparkJobRun` | SparkJobDefinition: source, arguments, binding, and Environment run contract |
