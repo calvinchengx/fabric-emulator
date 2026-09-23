@@ -647,6 +647,37 @@ func TestPipelineCopyFileListPath(t *testing.T) {
 // TestPipelineCopyFileListPathMissingEntryFails: a list naming a file that
 // does not exist fails the activity rather than silently copying fewer files
 // than the list promised.
+// An entry that climbs out of the source path must fail the job, and must not
+// have copied the file it reached (Files/secret.txt exists, so a path.Join
+// that merely cleaned "../secret.txt" would have succeeded).
+func TestPipelineCopyFileListPathEscapingEntryFails(t *testing.T) {
+	a, st := newAPI(t)
+	ws := seedWorkspace(t, st)
+	src := seedLakehouse(t, st, ws.ID, "src")
+	dst := seedLakehouse(t, st, ws.ID, "dst")
+	seedFile(t, st, ws.ID, src.ID, "Files/in/a.txt", []byte("A"))
+	seedFile(t, st, ws.ID, src.ID, "Files/secret.txt", []byte("S"))
+	seedFile(t, st, ws.ID, src.ID, "Files/lists/pick.txt", []byte("a.txt\n../secret.txt\n"))
+
+	content := `{"properties":{"activities":[
+        {"name":"Move","type":"Copy","typeProperties":{
+          "source":{"type":"BinarySource","location":{"itemId":"` + src.ID + `","path":"Files/in"},
+            "fileListPath":"Files/lists/pick.txt"},
+          "sink":{"location":{"itemId":"` + dst.ID + `","path":"Files/out"}}
+        }}
+      ]}}`
+	pl := createPipeline(t, st, ws.ID, content)
+	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
+	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
+		t.Fatalf("job status = %s, want Failed (entry escapes the source path)", s)
+	}
+	for _, rel := range []string{"Files/out/secret.txt", "Files/secret.txt", "Files/out/a.txt"} {
+		if _, err := st.GetOneLakePath(dst.ID, rel); err == nil {
+			t.Fatalf("%s was written by a failed copy", rel)
+		}
+	}
+}
+
 func TestPipelineCopyFileListPathMissingEntryFails(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)

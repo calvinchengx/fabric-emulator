@@ -678,6 +678,12 @@ func (e *pipelineExecutor) copyFileListEntries(act pipeline.Activity, src, dst o
 		if rel == "" {
 			continue
 		}
+		// An entry is relative to the source path; one that climbs out of it
+		// would read outside the source folder and, joined onto the sink,
+		// write outside the sink folder. Refuse it rather than clean it away.
+		if clean := path.Clean(rel); clean == ".." || strings.HasPrefix(clean, "../") {
+			return nil, fmt.Errorf("copy %q: fileListPath entry %q escapes the source path", act.Name, rel)
+		}
 		full := path.Join(src.path, rel)
 		p, err := e.a.Store.GetOneLakePath(src.itemID, full)
 		if err != nil || p.IsDir {
