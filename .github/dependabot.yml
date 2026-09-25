@@ -212,6 +212,16 @@ updates:
     # Runtime 1.3 pins. The fix is not a newer Delta (that breaks the claim
     # from the other side); it is not taking the bump.
     ignore:
+      # PERMANENT HOLD. Every other hold in this file carries a `LIFT THIS`
+      # naming the upstream change that retires it; this one has none to
+      # wait for, and saying so out loud is what keeps the difference
+      # visible. There is no version of apache/spark that makes taking the
+      # bump correct, because the pin IS the claim: Runtime 1.3 is Spark
+      # 3.5.5, and a newer tag emulates something Fabric does not run.
+      # Revisit only when Fabric itself ships a runtime on a different
+      # Spark, and that is a new oracle rather than a dependency update.
+      # Enforced by scripts/check_dependency_risk.py, which requires every
+      # hold to say either how it ends or that it does not.
       - dependency-name: apache/spark
 
   - package-ecosystem: github-actions

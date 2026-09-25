@@ -193,6 +193,16 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# teaching it in the present tense for a week.
 	@$(PY) scripts/check_comment_drift.py --strict
 	@$(PY) scripts/check_workflow_concurrency.py
+	@# The dependency scanners still watch the repository that is here.
+	@# This repo runs gitleaks, govulncheck and Dependabot across five
+	@# ecosystems; nothing asked whether that configuration still MATCHES
+	@# the tree, and dependabot.yml's own comments record it failing twice
+	@# -- seven example lockfiles watched by nothing, eleven of twelve
+	@# Dockerfiles unwatched including two published to GHCR. A scanner
+	@# that has stopped matching the tree reports clean on exactly the
+	@# manifests nobody is watching, which is worse than no scanner
+	@# because it produces a green check.
+	@$(PY) scripts/check_dependency_risk.py --strict
 	@$(PY) scripts/check_cron_workflow_freshness.py
 	@$(PY) scripts/gen_event_kinds.py --check
 	@$(PY) scripts/check_capture_redaction.py
