@@ -1,0 +1,342 @@
+{
+  "_comment": [
+    "Timing-coupled sites in the PYTHON test surface (the two pytest testpaths plus every e2e",
+    "harness) that scripts/check_python_test_flakiness.py has seen and that are ACCEPTED. The",
+    "checker fails on any site not listed here, and equally on any entry here that no longer",
+    "matches a site -- a stale allowance is how a ban quietly stops applying.",
+    "",
+    "The sibling of docs/test-flakiness.json, which holds the Go suite. Same shape, same",
+    "both-directions contract, same split of responsibility: the `unbounded-sleep` and",
+    "`unbounded-poll` kinds are what this file exists to keep EMPTY, and `long-sleep` is what it",
+    "exists to HOLD. See docs/60-test-flakiness.md for the measured sweep behind it.",
+    "",
+    "Keyed on file + enclosing symbol rather than line number: a line number goes stale on any edit",
+    "above it, and a ledger that must be renumbered to stay valid is a ledger people delete entries",
+    "from. `<module>` is the symbol for a site at a driver's top level -- the e2e harnesses are",
+    "scripts, so many have no enclosing function, and one `<module>` entry covers every",
+    "module-level site in that file.",
+    "",
+    "THE TWO UNBOUNDED ENTRIES ARE THE WHOLE POINT OF THE FILE, and there are only two because the",
+    "sweep found five and three were FIXED rather than recorded: e2e/adls-sdk/driver.py's",
+    "bare-sleep-then-assert on a negative moved onto e2e/waiting.py stays_empty, and the two sleeps",
+    "ordering two threads in python/tests/test_notebookutils_shim.py moved onto threading.Barrier",
+    "and Event. An escape hatch that is easier to reach than a fix is how a checker stops mattering.",
+    "",
+    "EVERY long-sleep entry below sits inside a loop this checker already considers bounded -- 31 of",
+    "them in a `for _ in range(N)` and 11 behind a `while time.time() < deadline`. None is asked to",
+    "change. They are recorded because their AGGREGATE cost is real and invisible at any one call",
+    "site, which is the same rationale docs/test-flakiness.json gives for its seven container",
+    "retries: the point of writing them down is that a sixtieth becomes a deliberate decision",
+    "rather than an unnoticed one."
+  ],
+  "accepted": [
+    {
+      "file": "e2e/engine-matrix/probes.py",
+      "symbol": "streaming_sink_console",
+      "bucket": "liveness-probe",
+      "kind": "unbounded-sleep",
+      "reason": "A bare `time.sleep(4)` before reading `query.isActive`, and it stays that way because NO STRONGER ASSERTION EXISTS FROM HERE. The console sink writes to the Spark server's stdout, not to the client, so there is no output this probe can read and nothing to poll for -- the only observable is whether the query was still alive after starting. The file already says so in the function's own docstring (\"Deliberately still the weak assertion, because no stronger one exists from here. The row is named so that the matrix does not overstate it\"), and docs/engine-matrix.md reports the row as liveness-only rather than as a working sink. Rewriting this onto wait_for would be worse, not better: polling `isActive` until true would pass the instant the query started and would stop witnessing that it STAYED up, which is the only thing this probe claims."
+    },
+    {
+      "file": "e2e/sail/driver.py",
+      "symbol": "_watchdog",
+      "bucket": "watchdog-daemon",
+      "kind": "unbounded-poll",
+      "reason": "An INTENTIONALLY infinite loop, and not an assertion path. This is a heartbeat on a daemon thread whose whole job is to outlive every step of the suite and kill the process with a traceback when one stops making progress (STEP_BUDGET, default 180s). Bounding it would defeat it: a watchdog that returns is a watchdog that stops watching, and the run it was set to kill would then hang to the CI job's own 25-minute timeout with no traceback. It is flagged rather than auto-detected as bounded on purpose -- the checker recognises a body deadline only when the guard calls a clock in its own test AND leaves the loop, and this one reads a precomputed `elapsed` and calls `os._exit(1)`, so declaring it here is what keeps that narrowness honest. Its own comment records a prior bug where the budget check sat on the wrong side of the heartbeat gate, making any budget under one heartbeat unreachable."
+    },
+    {
+      "file": "e2e/agent-contract/run.py",
+      "symbol": "wait_health",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `while time.time() < deadline`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/airflow/witness.py",
+      "symbol": "<module>",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(180)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/az-rest/driver.py",
+      "symbol": "harvest_cert",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `while time.time() < deadline`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/azurite-shortcut/driver.py",
+      "symbol": "wait_for_azurite",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `while time.time() < deadline`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/conformance/live.py",
+      "symbol": "writer",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(60)`, so a job that never finishes fails with its last observed state instead of hanging. 2 site(s) at 1s."
+    },
+    {
+      "file": "e2e/conformance/live.py",
+      "symbol": "fan_out",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(60)`, so a job that never finishes fails with its last observed state instead of hanging. 2 site(s) at 1s."
+    },
+    {
+      "file": "e2e/conformance/live.py",
+      "symbol": "_publish",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(60)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/conformance/live.py",
+      "symbol": "_run_to_completion",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(900)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/data-science-loop/driver.py",
+      "symbol": "<module>",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `for attempt in range(30)`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/databricks-chain/driver.py",
+      "symbol": "main",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(60)`, so a job that never finishes fails with its last observed state instead of hanging. 2 site(s) at 1/2s."
+    },
+    {
+      "file": "e2e/databricks-chain/run.py",
+      "symbol": "main",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(120)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/dbt-fabric/runner.py",
+      "symbol": "warmup",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `for i in range(40)`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 3s."
+    },
+    {
+      "file": "e2e/engine-activities/driver.py",
+      "symbol": "run_pipeline",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(240)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/engine-activities/driver.py",
+      "symbol": "main",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(90)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/engine-matrix/probes.py",
+      "symbol": "_await_rows",
+      "bucket": "engine-settle",
+      "kind": "long-sleep",
+      "reason": "Waits for rows to land in a table an engine is writing asynchronously, retrying the read because the target may not exist yet. Bounded by `while time.time() < end`. Returns (0, set()) on exhaustion so the CALLER decides whether an empty read is a failure -- the probe does not turn a timeout into a pass. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/engine-matrix/tenant.py",
+      "symbol": "_by_name",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(attempts)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/engine-matrix/tenant.py",
+      "symbol": "main",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(900)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/environment/driver.py",
+      "symbol": "wait_health",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `while time.time() < end`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/environment/driver.py",
+      "symbol": "main",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(90)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/environment-notebook/driver.py",
+      "symbol": "run_notebook",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(240)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/environment-notebook/driver.py",
+      "symbol": "main",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(60)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 5s."
+    },
+    {
+      "file": "e2e/governance/run.py",
+      "symbol": "main",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(120)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/governance/stack.py",
+      "symbol": "wait_for_om",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `while time.time() < end`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 5s."
+    },
+    {
+      "file": "e2e/jupyter/driver.py",
+      "symbol": "<module>",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(60)`, so a job that never finishes fails with its last observed state instead of hanging. 2 site(s) at 1s."
+    },
+    {
+      "file": "e2e/livy/client.py",
+      "symbol": "wait_health",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `while time.time() < end`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/livy/client.py",
+      "symbol": "main",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(90)`, so a job that never finishes fails with its last observed state instead of hanging. 10 site(s) at 1/2s."
+    },
+    {
+      "file": "e2e/msmdsrv/smoke.py",
+      "symbol": "wait_health",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `while time.time() < deadline`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/notebook-driven/client.py",
+      "symbol": "<module>",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(60)`, so a job that never finishes fails with its last observed state instead of hanging. 2 site(s) at 1s."
+    },
+    {
+      "file": "e2e/notebook-run/runner.py",
+      "symbol": "<module>",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `for _attempt in range(30)`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/portal-terminal/run.py",
+      "symbol": "wait_for_portal",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `while time.time() < end`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/rest-helix/driver.py",
+      "symbol": "<module>",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(120)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/rest-servicenow/driver.py",
+      "symbol": "<module>",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(120)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/s3/driver.py",
+      "symbol": "wait_for_s3",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `while time.time() < deadline`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/sail/driver.py",
+      "symbol": "<module>",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `for attempt in range(30):  # sail may still be starting`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/sail-per-read-credential/probe.py",
+      "symbol": "wait_health",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `for _ in range(90)`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/salesforce/driver.py",
+      "symbol": "run_pipeline",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(120)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/spark/job.py",
+      "symbol": "<module>",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `for _attempt in range(30)`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/terraform-fabric/driver.py",
+      "symbol": "harvest_cert",
+      "bucket": "service-cold-start",
+      "kind": "long-sleep",
+      "reason": "Backs off while a service this suite started is still coming up, so the wait is for a socket that is not yet listening or an engine not yet accepting sessions -- a shorter interval would only poll a closed port faster. Bounded by `while time.time() < deadline`, so the failure case has a ceiling and the success case returns on the first attempt that works. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/two-context/client.py",
+      "symbol": "statements",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(180)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/two-context/client.py",
+      "symbol": "open_session",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(90)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 2s."
+    },
+    {
+      "file": "e2e/two-context/probe.py",
+      "symbol": "statements",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(120)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 1s."
+    },
+    {
+      "file": "e2e/two-context/probe.py",
+      "symbol": "open_session",
+      "bucket": "job-poll",
+      "kind": "long-sleep",
+      "reason": "Polls an asynchronous Fabric job, LRO or Livy statement to a terminal state. The work is genuinely being done on a real engine, so the interval is the cost of asking rather than a guess about how long it takes, and the result is read from the poll rather than assumed after it. Bounded by `for _ in range(90)`, so a job that never finishes fails with its last observed state instead of hanging. 1 site(s) at 2s."
+    }
+  ]
+}

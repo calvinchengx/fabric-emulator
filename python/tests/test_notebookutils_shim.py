@@ -281,16 +281,40 @@ def test_runtime_context_bind_is_the_running_notebook_not_the_process():
 
 
 def test_runtime_context_bind_isolates_concurrent_statements():
+    """Two threads bound to different workspaces must each read their own.
+
+    THE ORDERING IS ENFORCED, NOT SLEPT FOR. This test used a 0.05s/0.01s sleep
+    pair to interleave the two threads: the worker bound, slept 0.05, then read;
+    the main thread slept 0.01, then read. That only works while 0.01 reliably
+    elapses before 0.05, and under load it does not have to -- a thread
+    descheduled at the wrong moment inverts the pair, and then both reads happen
+    on the same side of the other thread's bind and the isolation assertion stops
+    meaning anything. It does not fail; it stops testing anything, which is the
+    failure mode docs/60-test-flakiness.md exists to describe.
+
+    A Barrier and an Event say the same thing in the language of the guarantee
+    the test depends on: both threads are provably bound before either reads,
+    and the worker provably holds its binding until the main thread has read.
+    No interval is guessed, so there is no load under which the order inverts.
+    """
     import concurrent.futures
-    import time
+    import threading
 
     seen = {}
+    # Both threads have bound before either reads. Timed out rather than
+    # infinite: a barrier nobody else reaches would otherwise hang the suite,
+    # and a hung test reads as "still running" to anything watching.
+    both_bound = threading.Barrier(2, timeout=30)
+    # The worker holds its binding until the main thread has finished reading,
+    # so an unbind cannot race the assertion it is meant to be visible to.
+    main_has_read = threading.Event()
 
     def other():
         token = runtime.bind({"currentWorkspaceId": "other-ws"})
         try:
-            time.sleep(0.05)
+            both_bound.wait()
             seen["other"] = runtime.context["currentWorkspaceId"]
+            assert main_has_read.wait(timeout=30), "the main thread never read"
         finally:
             runtime.unbind(token)
 
@@ -298,8 +322,14 @@ def test_runtime_context_bind_isolates_concurrent_statements():
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             fut = pool.submit(other)
-            time.sleep(0.01)
-            seen["this"] = runtime.context["currentWorkspaceId"]
+            try:
+                both_bound.wait()
+                seen["this"] = runtime.context["currentWorkspaceId"]
+            finally:
+                # In a `finally` so a failed read still releases the worker;
+                # without it a failure here would deadlock on its 30s timeout
+                # and report as a timeout rather than as the assertion it is.
+                main_has_read.set()
             fut.result()
     finally:
         runtime.unbind(token)
