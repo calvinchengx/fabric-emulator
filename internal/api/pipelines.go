@@ -365,8 +365,20 @@ func (e *pipelineExecutor) waitOnCompletion(tp map[string]json.RawMessage, resol
 
 // oneLakeLoc is a resolved OneLake location — the workspace/item/path a Copy
 // side reads from or writes to.
+//
+// fileListPath is set only for a source that named one: the item-relative
+// path of a text file listing exactly which files under `path` to copy, one
+// per line. Empty means "no list", i.e. the ordinary whole-subtree copy.
 type oneLakeLoc struct {
 	wsID, itemID, path string
+	fileListPath       string
+}
+
+// copyFile is one file a Copy activity moves: its path relative to the sink
+// location, and its bytes.
+type copyFile struct {
+	rel     string
+	content []byte
 }
 
 // copyActivity performs a real OneLake→OneLake byte copy. Source and sink each
@@ -577,37 +589,44 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 		}
 	}
 
-	root, err := e.a.Store.GetOneLakePath(src.itemID, src.path)
-	if err != nil {
-		// ADLS parent directories may be implicit: Delta writers commonly create
-		// only files below Tables/<name>. A nonempty prefix is therefore a real
-		// directory source even when it has no standalone metadata row.
-		children, listErr := e.a.Store.ListOneLakePaths(src.itemID, src.path, true)
-		if listErr != nil || len(children) == 0 {
-			return nil, fmt.Errorf("copy %q: source %s not found", act.Name, src.path)
-		}
-		root = &store.OneLakePath{ItemID: src.itemID, RelPath: src.path, IsDir: true}
-	}
-
-	type file struct {
-		rel     string
-		content []byte
-	}
-	var files []file
-	if !root.IsDir {
-		files = append(files, file{dst.path, root.Content})
-	} else {
-		children, err := e.a.Store.ListOneLakePaths(src.itemID, src.path, true)
+	var files []copyFile
+	if src.fileListPath != "" {
+		// A named list of files, not a subtree scan: exactly the entries the
+		// list names, each relative to src.path, and nothing else under it.
+		// Fabric's own text ("relative path to the path configured in the
+		// dataset") is what "src.path" means here.
+		files, err = e.copyFileListEntries(act, src, dst)
 		if err != nil {
-			return nil, fmt.Errorf("copy %q: %v", act.Name, err)
+			return nil, err
 		}
-		base := strings.TrimRight(dst.path, "/")
-		for _, c := range children {
-			if c.IsDir {
-				continue
+	} else {
+		root, err := e.a.Store.GetOneLakePath(src.itemID, src.path)
+		if err != nil {
+			// ADLS parent directories may be implicit: Delta writers commonly
+			// create only files below Tables/<name>. A nonempty prefix is
+			// therefore a real directory source even when it has no
+			// standalone metadata row.
+			children, listErr := e.a.Store.ListOneLakePaths(src.itemID, src.path, true)
+			if listErr != nil || len(children) == 0 {
+				return nil, fmt.Errorf("copy %q: source %s not found", act.Name, src.path)
 			}
-			suffix := strings.TrimPrefix(c.RelPath, strings.TrimRight(src.path, "/"))
-			files = append(files, file{base + suffix, c.Content})
+			root = &store.OneLakePath{ItemID: src.itemID, RelPath: src.path, IsDir: true}
+		}
+		if !root.IsDir {
+			files = append(files, copyFile{dst.path, root.Content})
+		} else {
+			children, err := e.a.Store.ListOneLakePaths(src.itemID, src.path, true)
+			if err != nil {
+				return nil, fmt.Errorf("copy %q: %v", act.Name, err)
+			}
+			base := strings.TrimRight(dst.path, "/")
+			for _, c := range children {
+				if c.IsDir {
+					continue
+				}
+				suffix := strings.TrimPrefix(c.RelPath, strings.TrimRight(src.path, "/"))
+				files = append(files, copyFile{base + suffix, c.Content})
+			}
 		}
 	}
 
@@ -638,6 +657,56 @@ func (e *pipelineExecutor) copyActivity(act pipeline.Activity, tp map[string]jso
 	}, nil
 }
 
+// copyFileListEntries reads src.fileListPath and returns exactly the files it
+// names, each resolved relative to src.path — "relative path to the path
+// configured in the dataset" (third_party/adf-pipeline-schema/Pipeline.json,
+// every *ReadSettings' fileListPath). Lines are one path per line, CRLF or LF,
+// blank lines skipped; a named file that does not exist fails the activity
+// rather than silently copying fewer files than the list promised.
+func (e *pipelineExecutor) copyFileListEntries(act pipeline.Activity, src, dst oneLakeLoc) ([]copyFile, error) {
+	list, err := e.a.Store.GetOneLakePath(src.itemID, src.fileListPath)
+	if err != nil {
+		return nil, fmt.Errorf("copy %q: fileListPath %s: not found", act.Name, src.fileListPath)
+	}
+	if list.IsDir {
+		return nil, fmt.Errorf("copy %q: fileListPath %s is a folder, not a text file", act.Name, src.fileListPath)
+	}
+	base := strings.TrimRight(dst.path, "/")
+	var files []copyFile
+	for _, line := range strings.Split(strings.ReplaceAll(string(list.Content), "\r\n", "\n"), "\n") {
+		rel := strings.TrimSpace(line)
+		if rel == "" {
+			continue
+		}
+		// An entry is relative to the source path; one that climbs out of it
+		// would read outside the source folder and, joined onto the sink,
+		// write outside the sink folder. Refuse it rather than clean it away.
+		// The test is containment of the joined path, not a look at the
+		// cleaned entry: path.Clean("/../x") is "/x", yet path.Join(src, "/../x")
+		// still leaves src.
+		full := path.Join(src.path, rel)
+		if !underPath(src.path, full) || !underPath(base, path.Join(base, rel)) {
+			return nil, fmt.Errorf("copy %q: fileListPath entry %q escapes the source path", act.Name, rel)
+		}
+		p, err := e.a.Store.GetOneLakePath(src.itemID, full)
+		if err != nil || p.IsDir {
+			return nil, fmt.Errorf("copy %q: fileListPath entry %q: %s not found", act.Name, rel, full)
+		}
+		files = append(files, copyFile{path.Join(base, rel), p.Content})
+	}
+	return files, nil
+}
+
+// underPath reports whether p is dir itself or lies beneath it. An empty dir is
+// the item root, which contains everything that does not climb above it.
+func underPath(dir, p string) bool {
+	dir = path.Clean(strings.TrimRight(dir, "/"))
+	if dir == "." || dir == "/" {
+		return p != ".." && !strings.HasPrefix(p, "../")
+	}
+	return p == dir || strings.HasPrefix(p, dir+"/")
+}
+
 // copySideTypes are the Copy source/sink `type` discriminators the emulator can
 // honour. Everything Fabric supports beyond this — external connectors, formats
 // with no reader here — is rejected by name rather than silently treated as an
@@ -660,7 +729,8 @@ var copyUnsupportedOpts = []struct{ key, why string }{
 	{"sqlReaderQuery", "reading a Lakehouse table through a T-SQL query is not implemented"},
 	{"wildcardFolderPath", "wildcard paths are not implemented"},
 	{"wildcardFileName", "wildcard paths are not implemented"},
-	{"fileListPath", "list-of-files sources are not implemented"},
+	// fileListPath is NOT here: it is implemented for a source (below), and
+	// refused separately, by name, for a sink — see refuseUnsupportedCopy.
 	{"versionAsOf", "Delta time travel is not implemented"},
 	{"timestampAsOf", "Delta time travel is not implemented"},
 	{"partitionOption", "partitioned copy is not implemented"},
@@ -798,6 +868,16 @@ func refuseUnsupportedCopy(side, sideType string, f locFields) error {
 	if !copySideTypes[sideType] {
 		return fmt.Errorf("%s type %q is not supported by the emulator", side, sideType)
 	}
+	// fileListPath names a text file of relative paths under the SOURCE's
+	// folderPath (see resolveLoc). Fabric's schema carries it only on
+	// *ReadSettings, never on a sink, so a sink that sends it gets the same
+	// loud refusal every other unimplemented option gets rather than being
+	// silently ignored.
+	if side != "source" {
+		if _, ok := f.lookup("fileListPath"); ok {
+			return fmt.Errorf("%s option %q: list-of-files sinks are not supported", side, "fileListPath")
+		}
+	}
 	for _, opt := range copyUnsupportedOpts {
 		if _, ok := f.lookup(opt.key); ok {
 			return fmt.Errorf("%s option %q: %s", side, opt.key, opt.why)
@@ -867,7 +947,38 @@ func (e *pipelineExecutor) resolveLoc(side string, raw json.RawMessage, resolve 
 	if err != nil {
 		return oneLakeLoc{}, err
 	}
-	return oneLakeLoc{wsID: wsID, itemID: itemID, path: path}, nil
+	loc := oneLakeLoc{wsID: wsID, itemID: itemID, path: path}
+	// fileListPath: "Point to a text file that lists each file (relative path
+	// to the path configured in the dataset) that you want to copy"
+	// (third_party/adf-pipeline-schema/Pipeline.json). The list file itself is
+	// addressed the same way folderPath/fileName are — relative to the item's
+	// Files area unless it already names it — because it is a path in the
+	// SAME container as the source, not relative to folderPath.
+	if side == "source" {
+		flp, err := f.field("fileListPath")
+		if err != nil {
+			return oneLakeLoc{}, err
+		}
+		if flp != "" {
+			loc.fileListPath = filesRootedPath(flp)
+		}
+	}
+	return loc, nil
+}
+
+// filesRootedPath roots a bare path under the Files area, the same
+// normalisation copyPath applies to folderPath/fileName, so a field addressed
+// independently of the source's own path (fileListPath) lands in the same
+// container.
+func filesRootedPath(p string) string {
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return ""
+	}
+	if strings.EqualFold(p, "Files") || strings.HasPrefix(strings.ToLower(p), "files/") {
+		return p
+	}
+	return path.Join("Files", p)
 }
 
 // copyPath derives the OneLake-relative path from whichever of Fabric's

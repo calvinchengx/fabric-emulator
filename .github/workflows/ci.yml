@@ -676,6 +676,17 @@ jobs:
           # (`make check` on a laptop, or the make-targets job) it skips rather
           # than failing something that cannot see the answer.
           FRESHNESS_STRICT: "1"
+      # The Dependabot half of this repository's dependency scanning, held
+      # to the tree it claims to watch. Every tracked manifest is covered
+      # by some entry, every watched directory still exists and still
+      # holds a manifest, and every `ignore:` hold declares how it ends.
+      # Both failures it guards against have happened here and were found
+      # sideways: seven example uv.lock files watched by nothing, and a
+      # stale alert naming examples/medallion months after that directory
+      # was reorganised away. In `make check` too, which
+      # python/tests/test_make_check_runs_in_ci.py requires of anything
+      # in that target.
+      - run: uv run --frozen --no-sync python scripts/check_dependency_risk.py --strict
       # The portal's event-kind list is GENERATED from internal/store/bus.go.
       # The stream names each SSE frame and EventSource has no wildcard
       # listener, so a kind missing from the client is invisible — no error,
