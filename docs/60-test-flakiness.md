@@ -1,16 +1,22 @@
 # 60 — Test flakiness: what was measured, what was fixed, what now guards it
 
 **Status: the Go suite is clean under the race detector and under randomised
-test order. Three load-dependent tests were rewritten. Two guards were added —
-a CI job that runs both flags, and a static checker with a ledger.**
+test order. Three load-dependent Go tests were rewritten (§3b) and three Python
+sites were (§7.2). Three guards: a CI job running both flags, and one static
+checker with a ledger per language.**
 
 **Finding: this suite's flakiness exposure was LATENT, not active. The timing
 discipline was already good; what was missing was any mechanism that would have
-told us if it were not.**
+told us if it were not. That held for the Go suite (§1–5) and it held again,
+independently, for the Python surface (§7) — where nothing had inspected 104
+`time.sleep` sites and three of the five unbounded ones turned out to be real.**
 
-Scoped to the Go suite — 285 `*_test.go` files. The pytest suite under
-`python/tests/`, the sixteen `e2e/*/run.py` harnesses and the portal's vitest
-suite are out of scope here and are not claimed to have been analysed.
+Sections 1–5 are scoped to the Go suite — **304** `*_test.go` files as of this
+revision (285 when they were written; the figure is refreshed rather than
+reworded, because a count that drifts is how a measured document turns into an
+approximate one). §7 covers the Python surface, added later on the same
+architecture. The portal's vitest suite remains out of scope and is not claimed
+to have been analysed.
 
 No historical CI failure data is reachable from a checkout, so flakiness was
 identified two ways rather than by mining past runs: an empirical sweep, and a
@@ -228,7 +234,11 @@ the suite.
 
 ## 6. What is not covered
 
-- **The pytest, e2e and portal suites.** Out of scope, as stated above.
+- **The portal's vitest suite.** 24 test files under `portal/src/`, out of scope
+  as a separate toolchain: they run under vitest/jsdom rather than pytest or
+  `go test`, so neither guard in §5 nor the one in §7 can see them and a third
+  checker would need a third ledger. The pytest and e2e suites are NO LONGER in
+  this bullet — see §7, which measured and closed that half.
 - **Flakiness with no timing tell.** A test depending on map iteration order, on
   a port being free, or on the network would not be found by either the sweep or
   the checker. `-shuffle=on` covers cross-test order dependence; nothing here
@@ -240,3 +250,172 @@ the suite.
   instructions wide may simply not have been hit. `TestPublishDuringCloseDoesNotPanic`
   (`internal/store/bus_test.go`) is the suite's own acknowledgement of this — it
   loops 50 times precisely because one attempt would usually miss.
+
+## 7. The Python surface — the same sweep, one language over
+
+§6's first bullet used to read "the pytest, e2e and portal suites. Out of scope,
+as stated above." This section is what replaced most of it. The measurement and
+the two guards are the same architecture as §5; what is different is the parser,
+the ledger key, and the fact that three of the findings were real.
+
+### 7.1 What was measured
+
+Measured on the checker's own scan roots — the two pytest `testpaths`
+(`python/tests`, `python/fabric-target/tests`) plus every `e2e/**/*.py` harness —
+at the commit that added it:
+
+| Quantity | Measured |
+| --- | --- |
+| Python files scanned | 232 |
+| `time.sleep` call sites | **104** (101 in `e2e/`, 2 in `python/tests/`, 1 in `python/fabric-target/tests/`) |
+| …of those, sleeping ≥ 1s | **59** |
+| `while True` loops containing a sleep | 3 |
+| Genuinely unbounded sites | **5** |
+| Inspected by anything, before this | **0** |
+
+The last row is the finding, exactly as it was in §1 for the race detector. 104
+sleeps is not a large number for a fleet of e2e harnesses and most of them are
+correct; the point is that nothing could have said so.
+
+### 7.2 The five unbounded sites, and why three were fixed rather than recorded
+
+They are not all the same thing, which is why they are listed individually
+rather than waved through as a bucket.
+
+| Site | What it is | Outcome |
+| --- | --- | --- |
+| `e2e/adls-sdk/driver.py:193` | `time.sleep(2)` then `assert not pipeline_runs()` | **fixed** |
+| `python/tests/test_notebookutils_shim.py:292,301` | a 0.05s/0.01s pair ordering two threads | **fixed** |
+| `e2e/engine-matrix/probes.py:196` | console-sink liveness probe | accepted, `liveness-probe` |
+| `e2e/sail/driver.py:63` | infinite watchdog heartbeat | accepted, `watchdog-daemon` |
+
+**The adls-sdk site was bucket (b) — a bare sleep before a NEGATIVE.** It is the
+same shape as the three Go sites in §3(b), and the file's own comment says what
+it is for: "The NEGATIVE half first: a write outside the watched prefix must
+start nothing. Without it, a trigger that fires on every write would pass."
+Sleeping two seconds and finding no run is consistent with two worlds — there is
+no trigger, which is the claim, or there is one that has not been scheduled yet.
+On a laptop it is the first; on a loaded CI runner it can be the second, and then
+the assertion passes for a reason unrelated to prefix matching. Rewritten onto
+`stays_empty`, the assertion is unchanged — it still claims no run started from a
+write outside the watched prefix — but is now made across the whole window, so a
+trigger that fires 10ms in fails instead of being missed.
+
+**The notebookutils site was a sleep pair standing in for a happens-before.** The
+worker thread bound a context, slept 0.05s and read; the main thread slept 0.01s
+and read. That only orders the two while 0.01 reliably elapses before 0.05, and
+under load it need not: a thread descheduled at the wrong moment inverts the
+pair, both reads land on the same side of the other thread's bind, and the
+isolation assertion stops meaning anything. It does not fail — it stops testing
+anything. Rewritten onto `threading.Barrier` and `threading.Event`, so both
+threads are provably bound before either reads and the worker provably holds its
+binding until the main thread has read. Confirmed still load-bearing by mutation:
+replacing `runtime`'s `ContextVar` with a process-wide global fails it.
+
+**The two accepted sites are accepted for opposite reasons.** The console-sink
+probe has no stronger assertion available — a console sink writes to the *server's*
+stdout, so the client has nothing to read and nothing to poll, and polling
+`isActive` until true would pass the instant the query started and stop
+witnessing that it stayed up. The sail watchdog is an intentionally infinite
+daemon heartbeat; bounding it would defeat it, since a watchdog that returns
+stops watching and the run it was set to kill would hang to the CI job's own
+timeout with no traceback.
+
+### 7.3 The 59 long sleeps
+
+Not rewritten, and none asked to change: every one sits inside a loop the checker
+already considers bounded — 31 in a `for _ in range(N)`, 11 behind a
+`while time.time() < deadline` (42 unique `file:symbol` keys, several covering
+more than one site). They are recorded for the reason §5 gives for the seven
+container retries: the aggregate cost is real and invisible at any one call site,
+so writing them down makes a sixtieth a deliberate decision rather than an
+unnoticed one. Three buckets, by what is actually being waited on:
+
+| Bucket | Keys | What it waits for |
+| --- | --- | --- |
+| `service-cold-start` | 16 | a container or binary this suite started that is not yet listening |
+| `job-poll` | 25 | an async Fabric job, LRO or Livy statement reaching a terminal state |
+| `engine-settle` | 1 | rows landing in a table an engine is writing asynchronously |
+
+### 7.4 What the rewrites added
+
+`e2e/waiting.py` — the Python analogue of `internal/testsupport`, placed at the
+existing shared e2e import root (`e2e/entra_install.py` is already reached that
+way by nine harnesses):
+
+- `wait_for(timeout, cond, msg)` — poll until truthy, raise at the deadline.
+- `stays_empty(window, probe, msg)` — assert `probe()` stays empty across the
+  whole window, failing at the first instant it does not.
+
+`window` is passed by name at the call site for the same reason `StaysFalse`'s
+is: the guess about how long is "long enough for the wrong thing to have
+happened" is not engineered away, it is made *visible* where the claim is made.
+`wait_for` raises rather than asserts because an `assert` is stripped under
+`python -O`, and a deadline guard that vanishes under `-O` is a real bug.
+
+### 7.5 The guard
+
+`scripts/check_python_test_flakiness.py --strict`, in `make check` and in the
+`witnesses` CI job — the pairing that
+`python/tests/test_make_check_runs_in_ci.py` enforces. It flags the same three
+kinds as its Go sibling (`unbounded-sleep`, `unbounded-poll`, `long-sleep`), with
+the same split: the first two are what `docs/python-test-flakiness.json` exists
+to keep **empty**, the third is what it exists to **hold**, and the ledger is
+checked in **both** directions.
+
+Three differences from the Go checker, each forced by the language rather than
+chosen:
+
+**It parses.** The Go checker must count braces to find a loop's extent, and has
+the scar to show for it — a correctly bounded `for i := 0; i < 60; i++ {` read as
+unbounded because the line carried a trailing comment. Python ships `ast`, so
+extents here are exact and that whole class of false positive cannot occur.
+
+**The ledger key has a `<module>` fallback.** The e2e harnesses are top-level
+scripts, so `e2e/adls-sdk/driver.py:193` has no enclosing function — a position
+Go has no equivalent of. One `<module>` entry covers every module-level site in
+that file, the same many-to-one the Go ledger already carries for
+`tds_reflect_test.go`. The symbol is the *outermost* enclosing function, so a
+sleep in a nested helper is named by the test containing it.
+
+**Body-deadline detection is a required feature, not a refinement.**
+`e2e/fabric-cicd/driver.py` has two `while True` loops whose only bound is
+`assert time.time() < end` in the loop *body* — correct code that a
+header-reading check reports as violations, in the suite that publishes through
+Microsoft's own fabric-cicd tool. A checker whose false positives land on correct
+code gets argued with rather than fixed. Shape (c) requires the guard to **call a
+clock in its own test** *and* to **leave the loop** (`assert`/`raise`/`break`/
+`return`); that pair of conditions is what keeps the sail watchdog flagged
+(`elapsed` is precomputed, and `os._exit` is neither) so it must be declared
+rather than silently blessed.
+
+It also skips `build/` alongside `.claude/`, for the same reason and a real one:
+`python/fabric-target/build/lib/fabric_target/` is a **checked-in** setuptools
+staging copy of a package that also exists at
+`python/fabric-target/fabric_target/`, so a sweep that walked it would report the
+same site under two paths, only one of which anyone edits.
+
+### 7.6 On this checker also guarding a line already held
+
+Same awkwardness as §5, same answer. `python/tests/test_check_python_test_flakiness.py`
+drives it with violations it must catch (a module-level sleep, an unbounded
+`while True`, a bounded ≥ 1s sleep) **and** with correct-looking near-misses it
+must not: `for _ in range(60)`, a monotonic-deadline `while`, a counter-bounded
+`while`, and both body-deadline spellings — plus the real
+`e2e/fabric-cicd/driver.py` read from disk, so a transcription cannot drift away
+from the file it claims to represent. Two near-misses assert the *limits* of the
+bound rules: `for _ in itertools.count()` is a `for` loop that never ends, and
+`while len(rows) < 3` is a comparison that is not a bound.
+
+`pathlib.PureWindowsPath` is driven explicitly rather than left to the Windows
+leg, because the Go sibling's one escaped defect was exactly there: a ledger key
+built with `str()` instead of `as_posix()` made **both** directions of the
+both-directions check fire at once, on Windows only, while every POSIX leg stayed
+green. Reverting `as_posix()` here fails three tests on darwin.
+
+Mutation-tested, nine ways: disabling the body-deadline bound, the stale-ledger
+check, the path normalisation, the sleep detection, the vacuity guard, the
+`build/` skip, and the outermost-symbol rule each fail the suite, as do
+over-broadening the counter bound to any comparison and dropping the
+infinite-generator exclusion. A mutation that leaves the suite green means the
+corresponding test is not testing anything.

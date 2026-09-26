@@ -663,6 +663,22 @@ jobs:
       # In `make check` too, which python/tests/test_make_check_runs_in_ci.py
       # requires of anything in that target.
       - run: uv run --frozen --no-sync python scripts/check_test_flakiness.py --strict
+      # THE SAME BAN, ONE LANGUAGE OVER. docs/60-test-flakiness.md scoped
+      # itself to the Go suite and named the gap in its own first bullet:
+      # "the pytest, e2e and portal suites". Measured when this landed, that
+      # gap was 104 `time.sleep` call sites across 232 files with nothing
+      # inspecting any of them -- 5 genuinely unbounded, of which 3 were real
+      # (an SDK write's NEGATIVE assertion read after a bare 2s sleep, and a
+      # 0.05s/0.01s pair ordering two threads whose order inverts under load).
+      # All three were rewritten; the two intentional ones are recorded.
+      #
+      # A SEPARATE CHECKER rather than a widened one, because Python ships its
+      # own parser: the Go side must count braces to find a loop's extent and
+      # has the false positives to prove it, while `ast` gives exact extents
+      # here. In `make check` too, which
+      # python/tests/test_make_check_runs_in_ci.py requires of anything in
+      # that target.
+      - run: uv run --frozen --no-sync python scripts/check_python_test_flakiness.py --strict
       # A cron-only workflow is not proved by the next commit — a change to it
       # is unverified until the schedule fires, which can be a week. Three such
       # fixes landed in one week and none had executed; one was BROKEN (the
