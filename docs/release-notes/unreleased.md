@@ -43,7 +43,7 @@ that does not exist fails the activity rather than silently copying fewer
 files than the list promised. The list file itself is addressed the same way
 `folderPath`/`fileName` are. `fileListPath` on a **sink** is still refused by
 name, since Fabric's schema carries it only on `*ReadSettings`. A list entry
-that climbs out of the source path (`../x`) fails the activity and writes
+that climbs out of the source path (`../x`, `/../x`) fails the activity and writes
 nothing.
 [docs/parity.md](../parity.md)
 

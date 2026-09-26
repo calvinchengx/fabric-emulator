@@ -644,20 +644,25 @@ func TestPipelineCopyFileListPath(t *testing.T) {
 	}
 }
 
-// TestPipelineCopyFileListPathMissingEntryFails: a list naming a file that
-// does not exist fails the activity rather than silently copying fewer files
-// than the list promised.
 // An entry that climbs out of the source path must fail the job, and must not
 // have copied the file it reached (Files/secret.txt exists, so a path.Join
-// that merely cleaned "../secret.txt" would have succeeded).
+// that merely cleaned "../secret.txt" would have succeeded). A leading slash
+// must not launder the climb: path.Clean("/../secret.txt") is "/secret.txt",
+// which looks harmless but path.Join(src, "/../secret.txt") still escapes.
 func TestPipelineCopyFileListPathEscapingEntryFails(t *testing.T) {
+	for _, entry := range []string{"../secret.txt", "/../secret.txt", "sub/../../secret.txt"} {
+		t.Run(entry, func(t *testing.T) { escapingEntryFails(t, entry) })
+	}
+}
+
+func escapingEntryFails(t *testing.T, entry string) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
 	src := seedLakehouse(t, st, ws.ID, "src")
 	dst := seedLakehouse(t, st, ws.ID, "dst")
 	seedFile(t, st, ws.ID, src.ID, "Files/in/a.txt", []byte("A"))
 	seedFile(t, st, ws.ID, src.ID, "Files/secret.txt", []byte("S"))
-	seedFile(t, st, ws.ID, src.ID, "Files/lists/pick.txt", []byte("a.txt\n../secret.txt\n"))
+	seedFile(t, st, ws.ID, src.ID, "Files/lists/pick.txt", []byte("a.txt\n"+entry+"\n"))
 
 	content := `{"properties":{"activities":[
         {"name":"Move","type":"Copy","typeProperties":{
@@ -678,6 +683,9 @@ func TestPipelineCopyFileListPathEscapingEntryFails(t *testing.T) {
 	}
 }
 
+// TestPipelineCopyFileListPathMissingEntryFails: a list naming a file that
+// does not exist fails the activity rather than silently copying fewer files
+// than the list promised.
 func TestPipelineCopyFileListPathMissingEntryFails(t *testing.T) {
 	a, st := newAPI(t)
 	ws := seedWorkspace(t, st)
@@ -1973,5 +1981,25 @@ func TestPipelineDeleteMissingFailsLoudly(t *testing.T) {
 	_, jid := runJob(t, a, ws.ID, pl.ID, "jobType=Pipeline", "{}")
 	if s := awaitJob(t, a, ws.ID, pl.ID, jid); s != "Failed" {
 		t.Fatalf("job status = %s, want Failed", s)
+	}
+}
+
+func TestUnderPath(t *testing.T) {
+	for _, c := range []struct {
+		dir, p string
+		want   bool
+	}{
+		{"Files/in", "Files/in", true},
+		{"Files/in/", "Files/in/a.txt", true},
+		{"Files/in", "Files/secret.txt", false},
+		{"Files/in", "Files/inside/a.txt", false},
+		{"", "a.txt", true},
+		{"", "../a.txt", false},
+		{"", "..", false},
+		{"/", "a.txt", true},
+	} {
+		if got := underPath(c.dir, c.p); got != c.want {
+			t.Errorf("underPath(%q, %q) = %v, want %v", c.dir, c.p, got, c.want)
+		}
 	}
 }

@@ -681,10 +681,13 @@ func (e *pipelineExecutor) copyFileListEntries(act pipeline.Activity, src, dst o
 		// An entry is relative to the source path; one that climbs out of it
 		// would read outside the source folder and, joined onto the sink,
 		// write outside the sink folder. Refuse it rather than clean it away.
-		if clean := path.Clean(rel); clean == ".." || strings.HasPrefix(clean, "../") {
+		// The test is containment of the joined path, not a look at the
+		// cleaned entry: path.Clean("/../x") is "/x", yet path.Join(src, "/../x")
+		// still leaves src.
+		full := path.Join(src.path, rel)
+		if !underPath(src.path, full) || !underPath(base, path.Join(base, rel)) {
 			return nil, fmt.Errorf("copy %q: fileListPath entry %q escapes the source path", act.Name, rel)
 		}
-		full := path.Join(src.path, rel)
 		p, err := e.a.Store.GetOneLakePath(src.itemID, full)
 		if err != nil || p.IsDir {
 			return nil, fmt.Errorf("copy %q: fileListPath entry %q: %s not found", act.Name, rel, full)
@@ -692,6 +695,16 @@ func (e *pipelineExecutor) copyFileListEntries(act pipeline.Activity, src, dst o
 		files = append(files, copyFile{path.Join(base, rel), p.Content})
 	}
 	return files, nil
+}
+
+// underPath reports whether p is dir itself or lies beneath it. An empty dir is
+// the item root, which contains everything that does not climb above it.
+func underPath(dir, p string) bool {
+	dir = path.Clean(strings.TrimRight(dir, "/"))
+	if dir == "." || dir == "/" {
+		return p != ".." && !strings.HasPrefix(p, "../")
+	}
+	return p == dir || strings.HasPrefix(p, dir+"/")
 }
 
 // copySideTypes are the Copy source/sink `type` discriminators the emulator can
