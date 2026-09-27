@@ -96,7 +96,7 @@ jobs:
       # --snapshot` writes dist/homebrew/Casks/fabric-emulator.rb, this check
       # passes on that real file, and fails on the same file with `postflight do`
       # put back.
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.11.32"
       - name: The published cask uses no deprecated stanza
@@ -154,7 +154,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python e2e/agent-contract/run.py
@@ -251,7 +251,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.11.32"
       # Builds at the tag's version and PROVES the wheels: installs both into a
