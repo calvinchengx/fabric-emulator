@@ -1,0 +1,92 @@
+{
+  "_comment": [
+    "Scripts under scripts/ that have NO dedicated python/tests/test_<stem>.py and are ACCEPTED,",
+    "each with the reason. scripts/check_script_test_coverage.py fails on any script not listed",
+    "here, and equally on any entry here whose script has gone away or has SINCE GAINED a test --",
+    "a closed gap left recorded goes on excusing the file, and would silently re-cover it if that",
+    "test were later deleted.",
+    "",
+    "WHY THESE SCRIPTS GET A LEDGER AT ALL. They are this repository's invariant enforcement: make",
+    "check runs thirty of them and the witnesses job runs twenty-nine. A guard script whose own",
+    "behaviour nothing asserts can stop guarding and go on reporting green, which is the failure",
+    "python/tests/test_make_check_runs_in_ci.py was written about one level up -- a check that",
+    "passes is indistinguishable from a check that is running.",
+    "",
+    "THE MEASURED BASELINE was 11 of 51 scripts, listed with line counts in the checker's own",
+    "docstring. This file holds EIGHT, because three of the eleven were closed with real unit tests",
+    "in the same change rather than recorded: image_tags.py (test_image_tags.py),",
+    "check_image_digests.py (test_check_image_digests.py) and check_cask_stanzas.py",
+    "(test_check_cask_stanzas.py). All three are pure logic over a tmp_path fixture with no network",
+    "and no Docker, which is what made them the closable three. The ledger therefore ships smaller",
+    "than the gap it records, and the direction it is moving is visible rather than asserted.",
+    "",
+    "The Go surface was measured at the same time for comparison and has no structural gap worth",
+    "recording: all 27 packages under internal/, pkg/ and cmd/ carry a *_test.go, across 209",
+    "non-test source files. This file is the whole of the measured deficit.",
+    "",
+    "`exercised_by` is not an exemption and does not suppress anything on its own -- the reason",
+    "does. It is recorded because indirect coverage under another file's name is a materially",
+    "different situation from no coverage at all, and a ledger that flattened the two would be",
+    "lying in the safe-looking direction. Three entries carry one.",
+    "",
+    "`lines` is the size at the time of recording. It is not checked and is not a contract: it is",
+    "there so a reader can see at a glance which of these is worth closing next, the way the",
+    "checker's docstring orders its baseline by size. govern_ingest.py at 717 lines is the largest",
+    "unguarded surface in this directory by a factor of two and a half."
+  ],
+  "accepted": [
+    {
+      "script": "scripts/govern_ingest.py",
+      "lines": 717,
+      "reason": "The OpenMetadata ingest, and the largest unguarded script here by a wide margin. It is an integration entry point rather than a logic module: every function it exposes talks to a live OpenMetadata server over HTTP or reads a real Delta table, so a unit test would assert against a mock of the API whose shape is the actual risk. Its behaviour is proved end to end by the `governance` and `governance-sso` CI jobs, which stand up OpenMetadata with Postgres and Elasticsearch, run this script, and require OM's own API to return the table with columns mapped from the Delta schema. The pure-logic parts worth pinning have already been LIFTED OUT and are tested: the type mapping by test_check_govern_types.py and the column schema by test_govern_column_schema.py. Closing this properly means continuing that extraction, not adding a mock.",
+      "exercised_by": [
+        "e2e/governance/run.py (ci: governance)",
+        "e2e/governance/sso.py (ci: governance-sso)",
+        "python/tests/test_check_govern_types.py",
+        "python/tests/test_govern_column_schema.py"
+      ]
+    },
+    {
+      "script": "scripts/check_cron_workflow_freshness.py",
+      "lines": 289,
+      "reason": "A NAMING MISS, not a coverage gap: python/tests/test_cron_workflow_freshness.py drives this checker directly and is simply missing the `check_` prefix the rule looks for. Recorded rather than renamed because the rename is a separate change with its own diff -- this checker's job is to make the discrepancy visible, and a silent rename in the same commit that introduced the rule would be the rule bending to fit the tree instead of the reverse.",
+      "exercised_by": ["python/tests/test_cron_workflow_freshness.py"]
+    },
+    {
+      "script": "scripts/build_fixture_wheels.py",
+      "lines": 220,
+      "reason": "A build-time wheel builder, and what it produces is what proves it: the `fixture-wheels` CI job runs it on every pull request precisely because a tag-only invocation could not fail the change that broke it -- v0.21.0 shipped with no wheels when contoso-fixtures gained a uv path dependency that does not survive into wheel metadata. That job builds the set and resolves it, which is the assertion. A unit test over a stubbed pyproject would re-assert the string handling and could not have caught the defect that motivated the job.",
+      "exercised_by": ["ci: fixture-wheels (scripts/build_fixture_wheels.py 0.0.0)"]
+    },
+    {
+      "script": "scripts/capture_definition_shape.py",
+      "lines": 187,
+      "reason": "Its one load-bearing claim IS unit-tested, deliberately and separately: the redactor, whose own docstring warns that passing one value through 'publishes a real customer's hostname forever'. That is scripts/check_capture_redaction.py, covered by python/tests/test_check_capture_redaction.py and run by both `make check` and the witnesses job. The rest of this file drives a real tenant from real-fabric.yml's workflow_dispatch and cannot run without one.",
+      "exercised_by": ["python/tests/test_check_capture_redaction.py (via scripts/check_capture_redaction.py)"]
+    },
+    {
+      "script": "scripts/vendor_notebookutils_stubs.py",
+      "lines": 150,
+      "reason": "A vendoring script whose output is the thing under test, and the output is asserted hard: it refreshes third_party/notebookutils-stubs from Microsoft's own pinned stubs, and scripts/check_notebookutils_surface.py --strict then requires every difference between our shim and those stubs to be allowed and to carry a reason. That runs in `make check` and in the witnesses job. Testing the fetcher rather than the vendored result would assert the download and not the contract.",
+      "exercised_by": ["python/tests/test_check_notebookutils_surface.py (over the vendored result)"]
+    },
+    {
+      "script": "scripts/vendor_adf_pipeline_schema.py",
+      "lines": 90,
+      "reason": "The same shape as vendor_notebookutils_stubs.py one vocabulary over: it vendors ADF's activity-type table, and scripts/check_adf_activity_types.py holds the emulator's dispatch to what was vendored -- the check that found SparkJob falling to the success stub. The vendored file is reviewed as a diff when it is refreshed, which is the only review a vendoring step can usefully get.",
+      "exercised_by": ["python/tests/test_check_adf_activity_types.py (over the vendored table)"]
+    },
+    {
+      "script": "scripts/spark_check.py",
+      "lines": 145,
+      "reason": "A diagnostic, not an invariant: `make spark` and `sh scripts/status.sh --spark` run it to answer whether a LIVE stack is usable, driving Livy through spark-agent into Sail and reporting what it found. Every branch requires containers, and its subject -- that the Spark path works -- is asserted by the e2e suites that exercise the same chain for real (livy-native, spark-a2, notebook-run). A unit test here would mock the stack whose reachability is the entire question.",
+      "exercised_by": ["ci: livy-native, spark-a2, notebook-run (the same chain, live)"]
+    },
+    {
+      "script": "scripts/probe_sail_merge_premise.py",
+      "lines": 72,
+      "reason": "A one-shot investigation probe, kept as the record of a measurement rather than as a guard: it asks a live Sail whether a premise about MERGE holds. It is in no Makefile target and no workflow, so it enforces nothing and nothing depends on its behaviour. A test would pin the shape of a question already answered. If it ever becomes a gate, it needs a test and this entry has to go.",
+      "exercised_by": []
+    }
+  ]
+}

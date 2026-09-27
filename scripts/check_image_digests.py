@@ -47,6 +47,19 @@ SKIP_DIRS = {".git", "node_modules", ".venv", "out", "dist", "__pycache__"}
 # makes it unreadable and stale on every release -- the first version of this
 # checker did exactly that, and flagged a README.
 PULLING_SUFFIXES = {".yml", ".yaml", ".env"}
+# ...and the env file by NAME, which is not the same question and was the hole.
+# `PULLING_SUFFIXES` has held ".env" since this checker was written and it never
+# once matched the file compose actually reads: `Path(".env").suffix` is `""`,
+# because a leading dot makes the whole thing a stem. So `docker/.env` -- the
+# canonical name, and the one `env_file:` defaults to -- was silently out of
+# scope while the constant said it was in, and `examples/fab-driven/.env` is
+# tracked here and was never inspected.
+#
+# Found by a test driving this checker over a synthetic tree, which is the only
+# way it could have been found: the miss produces no finding and no error, and an
+# unscanned file reads exactly like a clean one. See
+# python/tests/test_check_image_digests.py.
+PULLING_NAMES = {".env"}
 # A tag that is floating ON PURPOSE -- `:dev`, `:latest`, a locally built
 # image -- has no digest to pin and pinning one would defeat it. Those lines
 # opt out in place, with a reason, so the exemption is reviewable where it
@@ -68,7 +81,7 @@ def offenders(root=ROOT):
     for path in sorted(root.rglob("*")):
         if not path.is_file() or any(p in SKIP_DIRS for p in path.parts):
             continue
-        if path.suffix not in PULLING_SUFFIXES:
+        if path.suffix not in PULLING_SUFFIXES and path.name not in PULLING_NAMES:
             continue
         try:
             text = path.read_text(encoding="utf-8")
