@@ -344,6 +344,100 @@ really DID reach the leaf", so even a past-tense heuristic would have waved it
 through. Retiring a concept is a deliberate act; this asks only that the act be
 recorded once so the tree cannot drift back to it.
 
+### One level in: who tests the guards
+
+Everything above is a checker reading the tree. Nothing read the checkers.
+
+`scripts/` is where this repository keeps its enforcement: `make check` runs
+thirty-one of these scripts and the `witnesses` job runs thirty. Between them
+they assert that every supported parity claim names a witness, that no route the
+emulator serves is undocumented, that the sidebar is complete, that no Go comment
+teaches a retired justification, and that no test sleeps without a bound. A guard
+script whose own behaviour nothing asserts has the property this whole document is
+about, one level in: its detection can stop matching — a renamed directory, a
+tightened regex, a refactor that drops a branch — and it will go on printing its
+success line and exiting 0 forever. **A check that passes is indistinguishable
+from a check that is running**, and that sentence is as true of the checker as of
+the thing it checks.
+
+The measured gap when this landed: **11 of 51 scripts had no dedicated test
+module**, the largest `scripts/govern_ingest.py` at 717 lines, then
+`scripts/check_cron_workflow_freshness.py` at 289 and
+`scripts/build_fixture_wheels.py` at 220. The Go surface was measured at the same
+time for comparison and has no structural gap worth reporting — all 27 packages
+under `internal/`, `pkg/` and `cmd/` carry a test file, across 209 non-test source
+files — so the deficit was here and here alone.
+
+That the risk is real rather than theoretical is already written down in this
+tree, twice, in the checkers' own words. `scripts/check_doc_drift.py` records that
+the naive form of its path class returned 84 findings, every one a false positive.
+`scripts/check_python_test_flakiness.py` records a kind missing from its match
+key, which exempted 42 of its 44 recorded symbols from the two bans the ledger
+exists to enforce — a bare sleep before an assertion printed `accepted` and passed
+`--strict`. **Both were found by someone driving the checker against a violation
+it had to catch**, which is to say by a test, and neither would have been found by
+reading it.
+
+`scripts/check_script_test_coverage.py` asserts the list instead of the instances,
+for the reason `python/tests/test_make_check_runs_in_ci.py` gives about its own
+subject: fixing eleven files leaves the shape intact, and the twelfth script lands
+with no test and nothing says so. Two finding kinds:
+
+- **UNTESTED** — a script with neither a dedicated test module nor a ledger
+  entry. This is what the ledger exists to keep shrinking.
+- **STALE** — an entry naming a script that no longer exists, or one that has
+  *since gained* a test. A closed gap must not linger as an accepted one: the
+  entry would silently re-cover the file if that test were later deleted, so the
+  ledger would absorb a real regression without a word.
+
+Both directions, like `docs/test-flakiness.json` and
+`docs/python-test-flakiness.json` before it. A one-directional ledger only ever
+grows. Of the two kinds, STALE is the one that needs a checker: an unrecorded
+script is loud by construction — somebody adds a file and the build goes red the
+same day — while a stale entry is green, silent, and re-arms itself.
+
+The rule is a **name**: test\_&lt;stem&gt;.py under `python/tests/` exists. Not a
+coverage measurement — coverage is already measured and gated at 92%
+(`fail_under`, `pyproject.toml`), and what a name adds is the one thing a
+percentage cannot say, that this particular file has somewhere for its violations
+to be driven from. It is also why indirect coverage does not count. Three of the
+recorded scripts *are* exercised, under another file's name:
+`scripts/check_cron_workflow_freshness.py` by
+`python/tests/test_cron_workflow_freshness.py`, which simply drops the `check_`
+prefix; `scripts/vendor_notebookutils_stubs.py` through the surface checker that
+reads what it vendored; `scripts/govern_ingest.py` incidentally by two tests of
+logic that was lifted out of it. Each entry records where the behaviour actually
+is exercised, so the ledger says what is true instead of flattening "covered
+elsewhere" into "not covered".
+
+**The ledger shipped smaller than the gap it records**, which is the part that
+makes it a ratchet rather than a waiver: eleven measured, three closed with real
+unit tests, eight recorded. The three were chosen because they are pure logic over
+a `tmp_path` fixture with no network and no Docker — `scripts/image_tags.py`,
+`scripts/check_image_digests.py`, `scripts/check_cask_stanzas.py`. Its own test
+module pins the count as a **ceiling**, so closing another gap passes and adding
+an exemption without closing anything does not; raising it is done in the change
+that argues for the new entry, and the raise is the review.
+
+Writing one of those three found a live defect, and its shape is this document's
+first category exactly. `scripts/check_image_digests.py` declares its scope as
+"only files that can pull — compose and env", and had listed `.env` in that scope
+since the day it was written. The line never matched a single file:
+`Path(".env").suffix` is the empty string, because a leading dot makes the whole
+name a stem. So the canonical name — the one compose reads, the one `env_file:`
+defaults to — was out of scope while the constant said it was in, and
+`examples/fab-driven/.env` is tracked here and had never been inspected. **An
+unscanned file produces no finding and no error, so it reads exactly like a clean
+one.** No amount of reading either the checker or the tree would have said so;
+only pointing it at a file that must be reported did.
+
+Recording a new exemption is one entry in `docs/script-test-coverage.json`
+carrying the script path, its line count at the time, the reason, and where its
+behaviour is exercised if it is exercised elsewhere. The reason is required and an
+empty one is refused by name — an exemption with no reason is an omission wearing
+a decision's clothes. Writing the test instead is always the cheaper long-term
+answer, and the ceiling above is there to keep that true.
+
 ### What actually caught them
 
 Not review, and not more assertions. In every case it was **looking at what the
