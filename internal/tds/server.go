@@ -233,6 +233,16 @@ func (s *Server) handle(conn net.Conn) error {
 			return nil // client closed the connection
 		}
 		traceRequest(typ, data)
+		// A cancel is acknowledged, never dropped. The client blocks for a DONE
+		// with the ATTN bit and abandons the connection without one. Each batch
+		// is answered in full before the next read, so by now nothing is left
+		// to cut short and the acknowledgement is all that remains to send.
+		if typ == PktAttention {
+			if err := WriteMessage(conn, PktTabular, done(doneAttn, 0)); err != nil {
+				return err
+			}
+			continue
+		}
 		if typ != PktSQLBatch {
 			continue
 		}
