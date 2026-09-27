@@ -557,7 +557,7 @@ func batchPayload(sql string) []byte {
 }
 
 // TestReEncodeRelaySkipsNonBatchMessages: the relay answers PktSQLBatch and
-// skips every other message type. The guarantee worth pinning is that skipping
+// ATTENTION, and skips every other message type. The guarantee worth pinning is that skipping
 // one does not derail the loop — the NEXT batch is still answered.
 //
 // Driven over a raw connection rather than through the driver: a client whose
@@ -601,9 +601,18 @@ func TestReEncodeRelaySkipsNonBatchMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// An ATTENTION is not a batch: skipped, with no reply and no disconnect.
+	// A BULKLOAD is not a batch: skipped, with no reply and no disconnect.
+	if err := WriteMessage(conn, PktBulkLoad, nil); err != nil {
+		t.Fatal(err)
+	}
+	// An ATTENTION is not skipped: the client blocks until a DONE carries the
+	// ATTN bit back (TestAttentionIsAcknowledged drives that through the driver).
 	if err := WriteMessage(conn, PktAttention, nil); err != nil {
 		t.Fatal(err)
+	}
+	if typ, data, err := ReadMessage(conn); err != nil || typ != PktTabular ||
+		len(data) < 3 || data[0] != 0xFD || binary.LittleEndian.Uint16(data[1:3])&doneAttn == 0 {
+		t.Fatalf("ATTENTION reply = %#x % x (err %v); want a DONE with the ATTN bit", typ, data, err)
 	}
 	// The loop must still be running: this batch is answered.
 	if err := WriteMessage(conn, PktSQLBatch, batchPayload("select 1")); err != nil {
