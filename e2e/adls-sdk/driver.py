@@ -17,15 +17,22 @@ import base64
 import json
 import os
 import ssl
+import sys
 import time
 import urllib.parse
 import urllib.request
 from io import BytesIO
 
+# The shared e2e import root -- the same one run.py reaches `entra_install`
+# through. Needed here as well because run.py launches this file as a FRESH
+# subprocess with no PYTHONPATH of its own, so its sys.path does not carry over.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import pyarrow as pa
 import pyarrow.parquet as pq
 from azure.core.credentials import AccessToken
 from azure.storage.blob import BlobServiceClient
+from waiting import stays_empty
 
 ENTRA = f"https://localhost:{os.environ.get('ENTRA_PORT', '18443')}"
 FABRIC = f"https://127.0.0.1:{os.environ.get('FABRIC_PORT', '19443')}"
@@ -189,9 +196,19 @@ def sdk_put(rel, body):
 
 # The NEGATIVE half first: a write outside the watched prefix must start
 # nothing. Without it, a trigger that fires on every write would pass.
+#
+# Checked across the WHOLE window rather than at one instant. This was
+# `time.sleep(2)` followed by a single read, and that is the shape
+# docs/60-test-flakiness.md calls bucket (b): finding no run after two seconds
+# is consistent with there being no trigger -- which is the claim -- and equally
+# with there being one that has not been scheduled yet. On a laptop it is the
+# first; on a loaded CI runner it can be the second, and then this passes for a
+# reason unrelated to the prefix matching. `stays_empty` keeps the assertion
+# identical and makes it continuous, so a trigger that fires 10ms in fails here
+# instead of being missed entirely.
 sdk_put("Files/other/ignored.csv", b"x")
-time.sleep(2)
-assert not pipeline_runs(), f"a write outside the prefix started a run: {pipeline_runs()}"
+stays_empty(window=2.0, probe=pipeline_runs,
+            msg="a write outside the prefix started a run")
 print("event trigger: an SDK write outside the prefix starts nothing")
 
 sdk_put("Files/landing/orders.csv", b"id\n1\n")

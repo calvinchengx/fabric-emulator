@@ -214,6 +214,27 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# of machine load: it passes on a laptop because the thing under
 	@# test finished, and on a loaded runner because it had not started.
 	@$(PY) scripts/check_test_flakiness.py --strict
+	@# The same ban one language over, and it needed its own pass rather
+	@# than a widened checker: the Go one counts braces to find a loop's
+	@# extent, while Python ships a parser, so the bound shapes here are
+	@# decided on the syntax tree. docs/60 recorded the pytest and e2e
+	@# suites as unanalysed; 104 sleep sites across them were inspected by
+	@# nothing, 5 were genuinely unbounded, and 3 of those were real.
+	@$(PY) scripts/check_python_test_flakiness.py --strict
+	@# ...and one level in from both of them: every script in THIS
+	@# directory has a dedicated python/tests/test_<stem>.py, or is
+	@# recorded with the reason it does not. These scripts ARE the
+	@# invariant enforcement -- the thirty lines above this one -- and a
+	@# guard whose own behaviour nothing asserts can stop guarding and
+	@# go on reporting green. That is the failure
+	@# python/tests/test_make_check_runs_in_ci.py was written about one
+	@# level up, in its own words: a check that passes is
+	@# indistinguishable from a check that is running. A missing test
+	@# module is invisible in review for the same reason -- there is no
+	@# diff to notice, only a file that is not there. Measured when this
+	@# landed: 11 of 51 scripts, govern_ingest.py at 717 lines the
+	@# largest; 3 were closed with real tests and 8 recorded.
+	@$(PY) scripts/check_script_test_coverage.py --strict
 
 # Not part of `check`: these need Node and an installed portal, and `check` is
 # deliberately runnable with nothing but Python. CI runs both in the portal-types

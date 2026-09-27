@@ -668,6 +668,56 @@ jobs:
       # In `make check` too, which python/tests/test_make_check_runs_in_ci.py
       # requires of anything in that target.
       - run: uv run --frozen --no-sync python scripts/check_test_flakiness.py --strict
+      # THE SAME BAN, ONE LANGUAGE OVER. docs/60-test-flakiness.md scoped
+      # itself to the Go suite and named the gap in its own first bullet:
+      # "the pytest, e2e and portal suites". Measured when this landed, that
+      # gap was 104 `time.sleep` call sites across 232 files with nothing
+      # inspecting any of them -- 5 genuinely unbounded, of which 3 were real
+      # (an SDK write's NEGATIVE assertion read after a bare 2s sleep, and a
+      # 0.05s/0.01s pair ordering two threads whose order inverts under load).
+      # All three were rewritten; the two intentional ones are recorded.
+      #
+      # A SEPARATE CHECKER rather than a widened one, because Python ships its
+      # own parser: the Go side must count braces to find a loop's extent and
+      # has the false positives to prove it, while `ast` gives exact extents
+      # here. In `make check` too, which
+      # python/tests/test_make_check_runs_in_ci.py requires of anything in
+      # that target.
+      - run: uv run --frozen --no-sync python scripts/check_python_test_flakiness.py --strict
+      # ONE LEVEL IN FROM BOTH OF THOSE. The two checkers above hold the
+      # test suites; nothing held the scripts that do the holding. Every
+      # script in `scripts/` must have a dedicated
+      # python/tests/test_<stem>.py or be recorded in
+      # docs/script-test-coverage.json with the reason.
+      #
+      # This directory IS the invariant enforcement: this job runs thirty of
+      # these scripts and `make check` runs thirty-one. A guard whose own
+      # behaviour nothing asserts can stop guarding -- a renamed directory, a
+      # tightened regex, a refactor that drops a branch -- and go on printing
+      # its success line and exiting 0 forever. That is
+      # python/tests/test_make_check_runs_in_ci.py's finding one level up, in
+      # its own words: a check that passes is indistinguishable from a check
+      # that is running. Both defects this tree has recorded in a checker were
+      # found by DRIVING it against a violation it had to catch --
+      # check_doc_drift's 84 false positives, check_python_test_flakiness's
+      # kind-blind match key that exempted 42 of 44 recorded symbols -- and
+      # neither would have been found by reading it.
+      #
+      # Measured when this landed: 11 of 51 scripts had no dedicated test
+      # module, govern_ingest.py at 717 lines the largest. Three were closed
+      # with real unit tests in the same change (image_tags,
+      # check_image_digests, check_cask_stanzas) and eight recorded, so the
+      # ledger ships smaller than the gap. Writing the test for
+      # check_image_digests found a live defect: `.env` had been in its
+      # declared scope since it was written and never matched, because
+      # `Path(".env").suffix` is `""`.
+      #
+      # The ledger is checked in BOTH directions -- an entry whose script has
+      # gained a test is as loud as an unrecorded one -- because a
+      # one-directional ledger only ever grows. In `make check` too, which
+      # python/tests/test_make_check_runs_in_ci.py requires of anything in
+      # that target.
+      - run: uv run --frozen --no-sync python scripts/check_script_test_coverage.py --strict
       # A cron-only workflow is not proved by the next commit — a change to it
       # is unverified until the schedule fires, which can be a week. Three such
       # fixes landed in one week and none had executed; one was BROKEN (the
