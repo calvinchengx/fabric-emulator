@@ -7,7 +7,7 @@
 # linux/arm — no arm64, so on Apple Silicon it runs under qemu and pwsh
 # segfaults during module install. The tarball ships x64 AND arm64, so this
 # image builds natively on a developer Mac and on the amd64 CI runner alike.
-FROM debian:12-slim
+FROM mirror.gcr.io/library/debian:12-slim
 
 ARG TARGETARCH
 ARG PS_VERSION=7.4.18

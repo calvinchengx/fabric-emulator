@@ -20,7 +20,7 @@ services:
   # Apache-2.0, actively maintained, multi-arch. Deliberately NOT MinIO or
   # LocalStack — both repos were archived in 2026 (see docs/24).
   seaweedfs:
-    image: chrislusf/seaweedfs:latest
+    image: mirror.gcr.io/chrislusf/seaweedfs:latest
     command: >-
       server -dir=/data -s3 -s3.port=8333
       -s3.config=/etc/seaweedfs/s3.json -ip=seaweedfs

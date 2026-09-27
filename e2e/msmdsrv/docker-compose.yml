@@ -25,7 +25,7 @@
 # same as kafka / kustainer.
 services:
   windows:
-    image: dockurr/windows
+    image: mirror.gcr.io/dockurr/windows
     container_name: fabric-msmdsrv-windows
     environment:
       VERSION: "11"

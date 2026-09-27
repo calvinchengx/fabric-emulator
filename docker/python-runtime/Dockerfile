@@ -1,4 +1,4 @@
-FROM python:3.14-slim
+FROM mirror.gcr.io/library/python:3.14-slim
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 
 ARG UV_GROUP

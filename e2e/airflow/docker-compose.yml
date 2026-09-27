@@ -1,6 +1,6 @@
 services:
   volume-init:
-    image: alpine:3.22
+    image: mirror.gcr.io/library/alpine:3.22
     user: "0:0"
     volumes:
       - airflow-dags:/opt/airflow/dags
@@ -31,7 +31,7 @@ services:
   # gone on witnessing a topology nobody runs. Kept in step deliberately --
   # `test_airflow_e2e_matches_the_shipped_sidecar` fails if they diverge again.
   airflow:
-    image: apache/airflow:2.10.5-python3.12
+    image: mirror.gcr.io/apache/airflow:2.10.5-python3.12
     depends_on:
       volume-init:
         condition: service_healthy
@@ -68,7 +68,7 @@ services:
       retries: 60
 
   airflow-db:
-    image: postgres:16.4
+    image: mirror.gcr.io/library/postgres:16.4
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
@@ -80,7 +80,7 @@ services:
       retries: 20
 
   airflow-broker:
-    image: redis:7.4-alpine
+    image: mirror.gcr.io/library/redis:7.4-alpine
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

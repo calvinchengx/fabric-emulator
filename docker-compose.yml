@@ -160,7 +160,7 @@ services:
   # Skip the overlay and the terminal routes are not mounted at all.
   ttyd:
     profiles: [terminal]
-    image: tsl0922/ttyd:1.7.7
+    image: mirror.gcr.io/tsl0922/ttyd:1.7.7
     # `-W` makes the client writable; without it the pane is a read-only
     # viewer, which is a different (and much safer) product — if you want that,
     # drop the flag rather than adding a second service.
@@ -244,7 +244,7 @@ services:
   # cannot be (concurrent writers get `database is locked`).
   airflow:
     profiles: [airflow]
-    image: apache/airflow:2.10.5-python3.12
+    image: mirror.gcr.io/apache/airflow:2.10.5-python3.12
     depends_on:
       airflow-db:
         condition: service_healthy
@@ -294,7 +294,7 @@ services:
   # the executor and the database had to move together.
   airflow-db:
     profiles: [airflow]
-    image: postgres:16.4
+    image: mirror.gcr.io/library/postgres:16.4
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
@@ -311,7 +311,7 @@ services:
   # them off. This is the part that makes the executor Celery rather than Local.
   airflow-broker:
     profiles: [airflow]
-    image: redis:7.4-alpine
+    image: mirror.gcr.io/library/redis:7.4-alpine
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -369,7 +369,7 @@ services:
     # Index digest (multi-arch: linux/amd64 + linux/arm64). Unlike kustainer this
     # runs natively on Apple silicon. Refresh with
     #   docker buildx imagetools inspect apache/kafka:3.9.1
-    image: apache/kafka:3.9.1@sha256:4ceccc577f03f51f6af8dbfda55194d0d892f4fa7913ffbded567ce3895622ed
+    image: mirror.gcr.io/apache/kafka:3.9.1@sha256:4ceccc577f03f51f6af8dbfda55194d0d892f4fa7913ffbded567ce3895622ed
     hostname: kafka
     environment:
       KAFKA_NODE_ID: 1
@@ -446,7 +446,7 @@ services:
     # reserve in a dev-loop stack whose quickstart already asks for 8 GB. 1 GB
     # matches what the Elasticsearch service used here and is enough for the
     # governance e2e's catalog; raise it if you index a real estate.
-    image: opensearchproject/opensearch:3.4.0
+    image: mirror.gcr.io/opensearchproject/opensearch:3.4.0
     environment:
       - discovery.type=single-node
       - OPENSEARCH_JAVA_OPTS=-Xms1024m -Xmx1024m

@@ -1,5 +1,5 @@
 # The fab client: Microsoft's official Fabric CLI, driven against the emulator.
-FROM python:3.12-slim
+FROM mirror.gcr.io/library/python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
