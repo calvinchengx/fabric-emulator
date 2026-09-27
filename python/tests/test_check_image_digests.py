@@ -39,8 +39,12 @@ def write(root, rel, text):
 
 
 def refs(root):
-    """The checker's findings over a synthetic tree, as a list of (path, line)."""
-    return [(str(p), n) for p, n, _ in c.offenders(root=root)]
+    """The checker's findings over a synthetic tree, as a list of (path, line).
+
+    `as_posix()`, not `str()`: the checker yields Path objects, and `str()` of
+    one on Windows uses backslashes, so a test written as `docker/.env` failed
+    on windows-latest while passing everywhere else."""
+    return [(p.as_posix(), n) for p, n, _ in c.offenders(root=root)]
 
 
 # --- what must be REFUSED -----------------------------------------------------
