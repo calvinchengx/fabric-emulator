@@ -88,7 +88,7 @@ func TestAttentionIsAcknowledged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	res := make(chan error, 1)
