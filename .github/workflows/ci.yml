@@ -543,6 +543,11 @@ jobs:
           version: "0.11.32"
       - run: uv run --frozen --no-sync python scripts/check_witnesses.py --strict
 
+      # Test cases kept as data (cases/*.json) are read by more than one runner,
+      # so a case without a unique id or a `why`, or naming a runner that no
+      # longer exists, is refused here rather than wherever it is first read.
+      - run: uv run --frozen --no-sync python scripts/casefiles.py --check
+
       # The published Homebrew cask is generated, so a deprecated stanza cannot
       # be fixed in the tap: the next release overwrites it. This checks the
       # source of the generation, which is the only place a regression can be

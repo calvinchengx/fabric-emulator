@@ -18,7 +18,7 @@ services:
       SAIL_SPARK__SESSION_TIMEOUT_SECS: "3600"
       RUST_LOG: "info"
     volumes:
-      - contract-tables:/tmp/contract
+      - contract-tables:/data/e2e
 
   # THE ARTIFACT UNDER TEST. Built from the same Dockerfile compute-images
   # publishes, so this exercises what a consumer pulls rather than the working
@@ -37,9 +37,11 @@ services:
       - "18099:8099"
     # Sail writes the table and delta-rs (inside this container) reopens it, so
     # both must see the same bytes — the same reason engine-matrix shares a
-    # volume between its probe and its engine.
+    # volume between its probe and its engine. Mounted at /data/e2e because
+    # that is the LOCATION the contract case carries, and run.py executes the
+    # case as written rather than a copy with the path swapped.
     volumes:
-      - contract-tables:/tmp/contract
+      - contract-tables:/data/e2e
 
 volumes:
   contract-tables:

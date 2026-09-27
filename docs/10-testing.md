@@ -65,6 +65,42 @@ Every package covers itself (90% floor cross-package, currently ~90%), on
 Linux, macOS, and Windows. The full matrix of what CI verifies — including
 the real-tool e2e — is in [12-e2e-matrix.md](12-e2e-matrix.md).
 
+## Test cases as data
+
+When a suite's cases are a table — many rows, one procedure — the rows live in
+`cases/<suite>.json` and the procedure stays in code. Every runner that executes
+the cases reads the same file, so a case cannot be edited in one runner and left
+stale in another.
+
+```python
+@pytest.mark.cases("agent-consumer-contract")
+def test_the_agent_honours_the_shape_a_consumer_sends(case):
+    ...  # one procedure; `case` is one row of the file
+```
+
+`python/tests/conftest.py` parametrizes a test marked `cases(<suite>)` over the
+suite and names each run by the case's `id`, so `pytest -k <id>` selects one
+case and a failure names the row to open. A runner outside pytest reads the file
+through `scripts/casefiles.py`, which is standard-library only so an e2e runner
+can import it without the test venv.
+
+Every case has a kebab-case `id`, unique in its suite, and a `why`: the break the
+case guards. JSON has no comments, so `why` carries what a comment above a row
+used to, and `make check` refuses a case without one. A case that another runner
+must also execute lists that runner in `executed_by`; the suite's own test holds
+the runner to exactly that list.
+
+The first suite is the spark agent's consumer contract
+([docs/20](20-lakesail-engine.md)): `test_agent_consumer_contract.py` checks
+that the agent *recognises* every case, and `e2e/agent-contract/run.py`
+*executes* the ones that name it against the built image. Before, the e2e runner
+typed its own copies of those statements.
+
+**When not to.** Move a suite to a case file when three or more cases run the
+same procedure, or when a second runner needs the same cases. A test whose body
+is its own argument — one situation, one reason — stays a function; turning it
+into a row hides the reasoning that makes it worth having.
+
 ## The docs lane — what a documentation change runs
 
 A **pull request** confined to `docs/`, `website/` or a root readme runs **two**

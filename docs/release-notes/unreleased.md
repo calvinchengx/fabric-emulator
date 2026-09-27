@@ -4,6 +4,17 @@ Draft of what landed on `main` after the `v0.40.0` tag. Rename this file to
 `v0.41.0.md` (or whichever minor) when tagging. Open pull requests are not
 here.
 
+## Test cases can be kept as data
+
+A suite whose cases are a table can now keep them in `cases/<suite>.json`, read
+by every runner that executes them: a pytest test marked `cases("<suite>")` is
+parametrized over the file, and an e2e runner reads it through the
+standard-library `scripts/casefiles.py`. `make check` refuses a case without a
+unique kebab-case `id` or a `why`. The spark agent's consumer contract is the
+first suite: the unit test and `e2e/agent-contract` now read the same twelve
+cases, where the e2e runner used to retype the statements it executed.
+[docs/10](../10-testing.md#test-cases-as-data)
+
 ## SQL analytics endpoint access modes can be switched
 
 A lakehouse's SQL analytics endpoint now has a data access mode, delegated

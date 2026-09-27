@@ -13,9 +13,18 @@ whole class of break. Recognition is not execution:
     location that is wrong, a delta-rs call that refuses, an interception that
     returns something the caller cannot use.
 
-So this is the same CONTRACT, run for real: a live Sail, the agent built from
+So this runs the same contract for real: a live Sail, the agent built from
 the Dockerfile `compute-images` publishes, and the statements sent over the
 agent's own HTTP surface the way the emulator sends them.
+
+The consumer shapes are not retyped here. They are read by id from
+`cases/agent-consumer-contract.json`, the file the unit test recognises, so the
+statement this gate executes is byte-for-byte the one the contract cites. `LIVE`
+lists them; the unit test holds `LIVE` to the cases that name this file in
+`executed_by`, and `main()` fails if it declares an id it never ran. The other
+statements below (the seed INSERT, DESCRIBE DETAIL and OPTIMIZE by name, the
+delta-rs read-back, createDataFrame) are this gate's own probes of `resolve()`
+and the engine, not shapes a consumer was cited as sending.
 
 WHY IT GATES THE PUBLISH. The bug that motivated this shipped in four agent
 releases (0.25.0 through 0.26.0). Every one of them was green here, because
@@ -40,7 +49,25 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 AGENT = "http://127.0.0.1:18099"
-TABLE_DIR = "/tmp/contract"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+import casefiles  # noqa: E402
+
+SUITE = "agent-consumer-contract"
+LIVE = (
+    "databricks-create-events-with-column-list",
+    "databricks-merge-events-by-name",
+)
+_used = set()
+
+
+def shape(case_id):
+    """The case `case_id` from the contract, marked as executed by this run."""
+    if case_id not in LIVE:
+        raise SystemExit(f"{case_id} is not in LIVE; declare it so the unit test can "
+                         f"hold the case file to it")
+    _used.add(case_id)
+    return next(c for c in casefiles.load(SUITE) if c["id"] == case_id)
 
 COMPOSE = ["docker", "compose", "-f", str(HERE / "docker-compose.yml"),
            "-p", "fe-agent-contract"]
@@ -112,19 +139,22 @@ def main() -> int:
 
         # 1. The shape that broke. A column list between the name and USING is
         #    what databricks-emulator's Warehouse SQL emits, and what the agent
-        #    silently failed to record — with no symptom until (3).
-        events = f"{TABLE_DIR}/events"
-        ok(f"CREATE TABLE events (id INT, name STRING) USING delta LOCATION '{events}'",
-           "the agent must record a LOCATION from a CREATE carrying a column list")
+        #    silently failed to record — with no symptom until (3). Its LOCATION
+        #    is the compose volume's mount point, so the case runs unedited.
+        create = shape("databricks-create-events-with-column-list")
+        table = create["expect"]["remember"]["table"]
+        events = create["expect"]["remember"]["location"]
+        ok(casefiles.text(create["sql"]), create["why"])
 
-        ok("INSERT INTO events VALUES (1, 'alice'), (2, 'bob')",
+        # Three rows, so the MERGE in (3) both updates one and inserts one.
+        ok(f"INSERT INTO {table} VALUES (1, 'alice'), (2, 'bob'), (3, 'carol')",
            "the engine must accept an ordinary insert into the named table")
 
         # 2. DESCRIBE DETAIL by NAME. Sail has no DETAIL in its grammar, so this
         #    only works if the agent intercepts it AND resolved the location
         #    from what it recorded at (1). This is the assertion that would have
         #    failed for four straight releases.
-        detail = ok("DESCRIBE DETAIL events",
+        detail = ok(f"DESCRIBE DETAIL {table}",
                     "DESCRIBE DETAIL on a NAMED table must be served by the agent, "
                     "not forwarded to an engine whose parser rejects DETAIL")
         got_detail = rows_of(detail)
@@ -136,17 +166,12 @@ def main() -> int:
                 f"  expected it to name {events}")
 
         # 3. MERGE by NAME — the statement that failed as `found DETAIL at 9:15`.
-        ok("""MERGE INTO events AS t
-              USING (SELECT * FROM VALUES (2, 'bob-upd'), (3, 'carol') AS s(id, name)) AS s
-              ON t.id = s.id
-              WHEN MATCHED THEN UPDATE SET t.name = s.name
-              WHEN NOT MATCHED THEN INSERT *""",
-           "MERGE against a NAMED target must resolve through the recorded "
-           "location; this is the exact statement that regressed in 0.25.0")
+        merge = shape("databricks-merge-events-by-name")
+        ok(casefiles.text(merge["sql"]), merge["why"])
 
         # 4. OPTIMIZE by NAME. Same resolve() path, different caller — the one
         #    whose silent degradation to 'skipped' started all of this.
-        ok("OPTIMIZE events",
+        ok(f"OPTIMIZE {table}",
            "OPTIMIZE on a NAMED table must reach delta-rs through the recorded location")
 
         # 5. Confirm with a reader that is NOT the writer. Sail wrote; delta-rs
@@ -162,7 +187,7 @@ got = sorted(zip(t.column(cols['id']).to_pylist(), t.column(cols['name']).to_pyl
 print(json.dumps([[int(i), str(n)] for i, n in got]))
 """, "delta-rs must read back what the MERGE wrote", kind="pyspark")
         got = json.loads(text(rows).strip().splitlines()[-1])
-        want = [[1, "alice"], [2, "bob-upd"], [3, "carol"]]
+        want = [[1, "alice"], [2, "bob"], [3, "carol-upd"], [4, "dave"]]
         if got != want:
             raise SystemExit(f"delta-rs read {got}, contract expects {want}")
 
@@ -175,6 +200,11 @@ print(json.dumps([[int(i), str(n)] for i, n in got]))
                   kind="pyspark")
         if "1" not in text(made):
             raise SystemExit(f"createDataFrame returned {text(made)[:200]}")
+
+        unused = set(LIVE) - _used
+        if unused:
+            raise SystemExit(f"LIVE declares {sorted(unused)} but this run never "
+                             f"executed them; the unit test believes it did")
 
         print("\ne2e/agent-contract: consumer shapes execute against the built "
               f"agent image — named CREATE/DESCRIBE DETAIL/MERGE/OPTIMIZE, "
