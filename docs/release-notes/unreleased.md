@@ -32,6 +32,21 @@ A OneLake, ADLS Gen2, Amazon S3 or Dataverse shortcut under `Tables/` now reads 
 
 On a SQL analytics endpoint in delegated identity mode, a shortcut whose source table has row-level or column-level security is now **blocked**, as Fabric documents: the endpoint reads OneLake as the item owner, who can only read a table whole. Every reader is refused, an Admin or Member included, with a message naming the reason; it is reflected as a view that refuses every read. Switching the endpoint to user identity mode lifts the block, where the caller's own identity is checked at the source instead. Fabric documents that access is blocked but not what a client sees, so the message is ours. [docs/61](../61-sql-endpoint-shortcuts.md)
 
+## Copy activity: `fileListPath` (list-of-files copy)
+
+A Copy activity source naming `fileListPath` now copies exactly the files that
+text file lists — one relative path per line, each "the relative path to the
+path configured in the dataset" (ADF's own wording) — instead of failing
+loudly as every other unimplemented Copy option still does. A file present
+under the source folder but left off the list is not copied; a listed file
+that does not exist fails the activity rather than silently copying fewer
+files than the list promised. The list file itself is addressed the same way
+`folderPath`/`fileName` are. `fileListPath` on a **sink** is still refused by
+name, since Fabric's schema carries it only on `*ReadSettings`. A list entry
+that climbs out of the source path (`../x`, `/../x`) fails the activity and writes
+nothing.
+[docs/parity.md](../parity.md)
+
 ## Strict mode refuses two more of Fabric's unsupported T-SQL
 
 `-tsql-strict` (`FABRIC_TSQL_STRICT`, off by default) now also refuses `FOR JSON` inside a subquery, derived table, CTE or call — Fabric allows it only as the last operator — and a `/` or `\` in the name of a schema or table being created. Of the T-SQL Microsoft lists as unsupported, strict mode now refuses 12 of 16, and together with the endpoint's write guard 14; the vector type is the one neither refuses, because the SQL Server 2022 sidecar has no such type. Nothing changes without the flag. [docs/29](../29-tsql-parity.md)

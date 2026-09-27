@@ -71,6 +71,53 @@ running it, or teaches code a lesson that is wrong in production:
 If you are unsure which side a report falls on, send it. A misfiled report costs
 little; a silent one costs more.
 
+## What scans the dependencies, and what does not
+
+Stated rather than implied, because the gap between "we run scanners" and "this
+manifest is scanned" is where the two failures below lived.
+
+**What runs** (`.github/workflows/security.yml`, on every push and pull request
+and on a weekly cron — a scanner nobody runs is a scanner that finds nothing):
+
+- **gitleaks** over the working tree *and* the full history. A secret that was
+  committed and then removed is still in the pack, still cloneable, and still
+  leaked, so scanning only the tip would report clean on the case that matters
+  most.
+- **govulncheck** over the Go module, with reachability filtering: it reports a
+  vulnerable symbol this code can actually call, not merely a vulnerable
+  version in the graph.
+- **`scripts/check_dismissed_advisories.py`**, which re-asks whether each
+  dismissed alert's justification has expired. GitHub never re-raises a
+  dismissal when upstream ships a fix.
+- **Dependabot** across five ecosystems — `gomod`, `npm`, `uv`, `docker`,
+  `github-actions` — which is *version currency plus GitHub's advisory graph*,
+  not reachability analysis.
+
+**What does not run**, named here rather than left to be assumed:
+
+- **Python and npm dependencies get no reachability-filtered advisory scan.**
+  Go has govulncheck; the other two have Dependabot alerts alone, which flag a
+  vulnerable version whether or not anything here calls the affected code.
+- **Nothing produces an SBOM, and nothing checks licences.** There is no
+  inventory artifact for a downstream consumer to ingest.
+
+**What keeps the Dependabot half honest.** A scanner configuration that has
+quietly stopped matching the repository reports clean on precisely the
+manifests nobody is watching — worse than no scanner, because it produces a
+green check. That has happened here twice, and both times it surfaced sideways
+rather than by anyone looking: seven example `uv.lock` files watched by
+nothing while their pins drifted, and eleven of twelve Dockerfiles unwatched
+including two published to GHCR and pulled family-wide. Both were found through
+a stale alert naming a directory deleted months earlier.
+
+So `scripts/check_dependency_risk.py` runs offline in `make check` and in CI,
+and enforces three things: every tracked manifest is covered by some Dependabot
+entry (with deliberate exclusions written out as data with their reason, never
+as silence), every watched directory still exists and still holds a manifest,
+and every `ignore:` hold declares its exit condition — either the upstream
+change that retires it, or an explicit statement that it is policy rather than
+delay.
+
 ## Supported versions
 
 Fixes land on `main` and ship in the next release. There are no long-lived
