@@ -6,7 +6,7 @@
 # linux/arm. The tarball ships x64 AND arm64, so this builds natively on a
 # developer Mac and on the amd64 CI runner alike. Same reasoning as
 # e2e/deployment-pipelines, and the same PS_VERSION.
-FROM debian:12-slim
+FROM mirror.gcr.io/library/debian:12-slim
 
 ARG TARGETARCH
 ARG PS_VERSION=7.4.18

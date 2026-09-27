@@ -2,7 +2,7 @@
 # thin harness around `terraform init/apply/destroy`; nothing in Terraform
 # or microsoft/fabric is patched. Pin a versioned tag — `latest` would make
 # a Terraform release our flake.
-FROM hashicorp/terraform:1.12.2
+FROM mirror.gcr.io/hashicorp/terraform:1.12.2
 RUN apk add --no-cache python3 openssl ca-certificates \
     && python3 --version
 WORKDIR /work

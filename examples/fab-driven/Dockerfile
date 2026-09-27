@@ -6,7 +6,7 @@
 #
 # The version is pinned because `fab`'s verb set and output shape move between
 # releases — see the version note at the end of ../../docs/34-fab-driven-example.md.
-FROM python:3.12-slim
+FROM mirror.gcr.io/library/python:3.12-slim
 
 ARG FAB_VERSION=1.6.1
 
