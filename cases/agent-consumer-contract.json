@@ -1,0 +1,180 @@
+{
+  "suite": "agent-consumer-contract",
+  "about": "Statement shapes that a named downstream consumer of emulator-spark-agent actually sends, each cited to the consumer file it comes from, with the answer the agent owes it. `expect.match` means delta_ops.match() must claim the statement and route it to that handler. `expect.remember` means the statement is the engine's to execute, but the agent must record where the table lives, because a later OPTIMIZE / MERGE / DESCRIBE of that name has no other way to find it. `given` is the schema registry the statement arrives with (schema -> location); CTAS interception is conditional on it. `sql` is a string, or a list of lines joined with newlines. python/tests/test_agent_consumer_contract.py proves recognition for every case; a case listing e2e/agent-contract/run.py in executed_by is also run against the built agent image before it is published.",
+  "cases": [
+    {
+      "id": "databricks-create-events-with-column-list",
+      "consumer": "databricks-emulator",
+      "source": "e2e/delta/run.py — Warehouse SQL, the shape `databricks-sdk` sends",
+      "why": "A column list between the table name and USING. The agent failed to match this shape in four releases (0.25.0 through 0.26.0): the location went unrecorded, and the MERGE that follows fell through to resolve()'s DESCRIBE DETAIL and died in Sail's parser with `found DETAIL at 9:15`.",
+      "sql": "CREATE TABLE events (id INT, name STRING) USING delta LOCATION '/data/e2e/events'",
+      "expect": {
+        "remember": {
+          "table": "events",
+          "location": "/data/e2e/events"
+        }
+      },
+      "executed_by": [
+        "e2e/agent-contract/run.py"
+      ]
+    },
+    {
+      "id": "databricks-merge-events-by-name",
+      "consumer": "databricks-emulator",
+      "source": "e2e/delta/run.py — upsert against the table created above",
+      "why": "MERGE against a named target. It can only resolve through the location recorded from the CREATE before it; this is the statement that regressed in 0.25.0.",
+      "sql": "MERGE INTO events AS t USING (SELECT * FROM VALUES (3, 'carol-upd'), (4, 'dave') AS s(id, name)) AS s ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.name = s.name WHEN NOT MATCHED THEN INSERT *",
+      "expect": {
+        "match": "merge"
+      },
+      "executed_by": [
+        "e2e/agent-contract/run.py"
+      ]
+    },
+    {
+      "id": "databricks-create-three-part-name",
+      "consumer": "databricks-emulator",
+      "source": "internal/sqlshim — managed CREATE, rewritten to carry a LOCATION",
+      "why": "A managed CREATE that databricks-emulator rewrites to carry a LOCATION. The location has to be findable by the full three-part name the consumer uses afterwards.",
+      "sql": "CREATE TABLE IF NOT EXISTS main.default.t (id BIGINT) USING delta LOCATION '/data/__unitystorage/t'",
+      "expect": {
+        "remember": {
+          "table": "main.default.t",
+          "location": "/data/__unitystorage/t"
+        }
+      }
+    },
+    {
+      "id": "fabric-create-with-location",
+      "consumer": "fabric-emulator",
+      "source": "dbt-fabricspark with +location_root — the shape that has always worked",
+      "why": "The shape that has always worked. It stays as the baseline the other CREATE rows vary from, so a regression in the common path fails here first.",
+      "sql": "CREATE TABLE silver.orders USING delta LOCATION 'abfss://lake/Tables/orders'",
+      "expect": {
+        "remember": {
+          "table": "silver.orders",
+          "location": "abfss://lake/Tables/orders"
+        }
+      }
+    },
+    {
+      "id": "fabric-ctas-into-registered-schema",
+      "consumer": "fabric-emulator",
+      "source": "dbt-fabricspark table materialization",
+      "why": "CTAS interception is conditional on the schema registry: a schema nobody gave a location for belongs in the engine's own warehouse. This case gives gold a location, so the agent must claim the statement.",
+      "sql": "CREATE OR REPLACE TABLE gold.fct AS SELECT 1 AS n",
+      "expect": {
+        "match": "ctas"
+      },
+      "given": {
+        "gold": "abfss://lake/Tables/gold"
+      }
+    },
+    {
+      "id": "fabric-optimize-by-path",
+      "consumer": "fabric-emulator",
+      "source": "notebook maintenance — docs/engine-matrix.md",
+      "why": "OPTIMIZE addressed by path. Sail has no grammar for OPTIMIZE, so the agent must claim it and run it through delta-rs.",
+      "sql": "OPTIMIZE delta.`abfss://lake/Tables/orders`",
+      "expect": {
+        "match": "optimize"
+      }
+    },
+    {
+      "id": "fabric-vacuum-by-name-with-retention",
+      "consumer": "fabric-emulator",
+      "source": "notebook maintenance — docs/engine-matrix.md",
+      "why": "VACUUM by name with a retention clause. Sail has no grammar for VACUUM either, so an unclaimed statement reaches a parser that rejects it.",
+      "sql": "VACUUM silver.orders RETAIN 168 HOURS",
+      "expect": {
+        "match": "vacuum"
+      }
+    },
+    {
+      "id": "databricks-create-decimal-column",
+      "consumer": "databricks-emulator",
+      "source": "Warehouse SQL — a decimal column, the case a naive `\\([^)]*\\)` loses",
+      "why": "Column types carrying their own parentheses. The column list has to be matched paren-aware, or DECIMAL(10,2) truncates it and the LOCATION is lost exactly as in the column-list case, without a symptom until much later.",
+      "sql": "CREATE TABLE priced (id INT, amount DECIMAL(10,2)) USING delta LOCATION '/data/priced'",
+      "expect": {
+        "remember": {
+          "table": "priced",
+          "location": "/data/priced"
+        }
+      }
+    },
+    {
+      "id": "fabric-dbt-ctas-verbatim-with-comment",
+      "consumer": "fabric-emulator",
+      "source": "dbt-fabricspark table materialization — contoso-airflow-data-product dbt/silver/models/silver_product_hierarchy.sql, via logs/dbt.log",
+      "why": "A dbt model file opens with a comment, so the statement the adapter sends carries one between AS and SELECT. Copied verbatim from a dbt-fabricspark debug log, whitespace, backquoted relation and all, because every hand-written probe of this shape passed and only the adapter's own output failed. A tidied version would prove nothing.",
+      "sql": [
+        "create or replace table `lake`.silver_product_hierarchy",
+        "      ",
+        "      ",
+        "    location 'abfss://contoso-analytics@onelake.dfs.fabric.microsoft.com/lake.Lakehouse/Tables/silver_product_hierarchy'",
+        "      ",
+        "",
+        "      as",
+        "      ",
+        "-- The reference vendor's hierarchy, as-is.",
+        "--",
+        "-- Deliberately thin: this vendor is the group data office's publisher.",
+        "select * from `default`.bronze_ref_product_hierarchy"
+      ],
+      "expect": {
+        "match": "ctas"
+      }
+    },
+    {
+      "id": "fabric-dbt-ctas-opening-with-cte",
+      "consumer": "fabric-emulator",
+      "source": "dbt-fabricspark — contoso-airflow-data-product dbt/silver/models/silver_customers.sql, the canonical `with … select`",
+      "why": "A CTE, which is how dbt's own documentation writes models and how most projects follow it. Requiring SELECT claimed the minority of a real silver layer: measured on one project, the three models opening with SELECT landed in OneLake with a _delta_log and the five opening with WITH left bare parquet at the same paths, unreadable as a table and reported as success by both halves.",
+      "sql": [
+        "create or replace table `lake`.silver_customers",
+        "    location 'abfss://lake/Tables/silver_customers'",
+        "      as",
+        "-- THE DUPLICATES ARE DELIBERATE. The POS vendor ships a 2% ratio.",
+        "with ranked as (",
+        "    select *, row_number() over (partition by customer_id order by updated_at desc) as rn",
+        "    from `default`.bronze_pos_customers",
+        ")",
+        "select * from ranked where rn = 1"
+      ],
+      "expect": {
+        "match": "ctas"
+      }
+    },
+    {
+      "id": "fabric-dbt-ctas-block-comment-header",
+      "consumer": "fabric-emulator",
+      "source": "dbt-fabricspark — a model whose header is a block comment (and the query_comment adapters prepend)",
+      "why": "The same miss through the other comment syntax. dbt's own query_comment is a block comment, and a fix that handles only `--` leaves this open.",
+      "sql": [
+        "/* {\"app\": \"dbt\", \"node_id\": \"model.contoso_silver.x\"} */",
+        "create or replace table `lake`.x",
+        "    location 'abfss://lake/Tables/x'",
+        "      as",
+        "/* what this model is for */",
+        "select 1 as n"
+      ],
+      "expect": {
+        "match": "ctas"
+      }
+    },
+    {
+      "id": "fabric-create-partitioned-by-before-location",
+      "consumer": "fabric-emulator",
+      "source": "dbt-fabricspark with +partition_by",
+      "why": "Spark allows clauses between USING and LOCATION, and dbt emits partitioning this way. Writing the shapes down found this one silently unrecorded too; the LOCATION arriving after PARTITIONED BY must still be recorded.",
+      "sql": "CREATE TABLE silver.evt (id INT, d DATE) USING delta PARTITIONED BY (d) LOCATION 'abfss://lake/Tables/evt'",
+      "expect": {
+        "remember": {
+          "table": "silver.evt",
+          "location": "abfss://lake/Tables/evt"
+        }
+      }
+    }
+  ]
+}

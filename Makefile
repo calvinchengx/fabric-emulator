@@ -150,6 +150,7 @@ lint: ## ruff + ty over the Python sources — the CI lint job, locally
 
 check: lint ## Repo invariants — the checks that used to exist only in CI
 	@$(PY) scripts/check_witnesses.py --strict
+	@$(PY) scripts/casefiles.py --check
 	@$(PY) scripts/check_notebookutils_surface.py --strict
 	@$(PY) scripts/check_runtime_wiring.py --strict
 	@$(PY) scripts/check_e2e_matrix.py --strict

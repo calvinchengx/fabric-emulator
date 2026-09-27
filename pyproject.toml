@@ -317,6 +317,7 @@ members = ["python", "python/fabric-target"]
 testpaths = ["python/tests", "python/fabric-target/tests"]
 markers = [
     "target: dual-target conformance runs against fabric-emulator or real Fabric per FABRIC_TARGET",
+    "cases(suite): parametrize the test's `case` argument from cases/<suite>.json (python/tests/conftest.py)",
 ]
 # Coverage flags are deliberately NOT in addopts. addopts applies to EVERY
 # pytest invocation in the repo, including the ones e2e harnesses run inside

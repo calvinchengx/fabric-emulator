@@ -364,15 +364,19 @@ fell through to `resolve()`'s `DESCRIBE DETAIL` and died in Sail's parser with
 wrote. Writing the shapes down found a second, latent one in this repo:
 `PARTITIONED BY` before `LOCATION` was silently unrecorded too.
 
-`python/tests/test_agent_consumer_contract.py` is the guard. Each row is a
+`cases/agent-consumer-contract.json` is the contract, and
+`python/tests/test_agent_consumer_contract.py` is the guard. Each case is a
 statement shape a named consumer actually sends, cited to the file it comes
 from, with the answer the agent owes it — matched to a handler, or recorded as a
-location. It is a unit test with no engine, so it costs milliseconds and runs on
+location — and the break it guards. It is a unit test with no engine, so it costs milliseconds and runs on
 every PR, and it fails in the repo that would *ship* the regression rather than
 the repo that would suffer it.
 
-**Add a row when a consumer starts emitting a new shape.** The failure this
+**Add a case when a consumer starts emitting a new shape.** The failure this
 catches has no symptom at the point it happens: an unmatched statement raises
-nothing, and the location is simply never recorded. What the test cannot prove
-is that the statement *executes* — that needs an engine, and stays with each
-repo's witnesses.
+nothing, and the location is simply never recorded. What the unit test cannot
+prove is that the statement *executes* — that needs an engine. The cases that
+list `e2e/agent-contract/run.py` in `executed_by` are executed by that gate,
+against the built image, before every publish; it reads them from the same file
+rather than keeping copies. See [docs/10](10-testing.md#test-cases-as-data) for
+the convention.

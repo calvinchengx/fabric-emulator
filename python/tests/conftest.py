@@ -25,8 +25,31 @@ test in a different package, which is exactly the kind of coupling a per-file fi
 leaves in place for the next module-level side effect to rediscover.
 """
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+import casefiles  # noqa: E402
+
+
+def pytest_generate_tests(metafunc):
+    """Parametrize a test marked `@pytest.mark.cases("<suite>")` over the suite.
+
+    The test takes one argument, `case`: a dict from `cases/<suite>.json`, and
+    each run is named by the case's own id, so `-k <id>` selects one case and a
+    failure names the row to open. See docs/10-testing.md, "Test cases as data".
+    """
+    marker = metafunc.definition.get_closest_marker("cases")
+    if marker is None:
+        return
+    if "case" not in metafunc.fixturenames:
+        raise pytest.UsageError(
+            f"{metafunc.definition.nodeid} is marked cases(...) but takes no `case` argument")
+    loaded = casefiles.load(marker.args[0])
+    metafunc.parametrize("case", loaded, ids=[c["id"] for c in loaded])
 
 
 @pytest.fixture(autouse=True)
