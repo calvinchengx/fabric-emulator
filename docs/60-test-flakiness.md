@@ -363,6 +363,23 @@ the same split: the first two are what `docs/python-test-flakiness.json` exists
 to keep **empty**, the third is what it exists to **hold**, and the ledger is
 checked in **both** directions.
 
+**That split is enforced by the key, and the first version of this checker did
+not enforce it.** The key is `file:symbol:kind`; review found it spelled inline in
+three places with the kind missing from two, so a finding matched an entry on
+`file:symbol` alone. 42 of the 44 entries are `long-sleep`, so those 42 symbols
+were exempt from the unbounded-sleep and unbounded-poll bans entirely — a bare
+`time.sleep(3)` before an assertion, added to a recorded symbol, printed
+`accepted` and passed `--strict`. The compound case was worse: nine entries use
+`<module>`, which by design covers a file's whole top level, and module level is
+exactly where the `adls-sdk` defect §7.2 fixed lived — so the guard would not
+have caught a recurrence of its own motivating bug in nine sibling drivers. The
+key is now built by one function (`ledger_key`) that reads findings and entries
+alike, because three inline spellings are what let two drift from the third, and
+an entry carrying no kind is refused by name rather than silently accepting every
+kind. **The Go sibling matches kind-blind for the same reason**; the impact there
+is far smaller only because its ledger holds 6 entries against this one's 44, and
+it is left alone here rather than changed in a Python-surface commit.
+
 Three differences from the Go checker, each forced by the language rather than
 chosen:
 
@@ -374,7 +391,7 @@ extents here are exact and that whole class of false positive cannot occur.
 **The ledger key has a `<module>` fallback.** The e2e harnesses are top-level
 scripts, so `e2e/adls-sdk/driver.py:193` has no enclosing function — a position
 Go has no equivalent of. One `<module>` entry covers every module-level site in
-that file, the same many-to-one the Go ledger already carries for
+that file *of one kind*, the same many-to-one the Go ledger already carries for
 `tds_reflect_test.go`. The symbol is the *outermost* enclosing function, so a
 sleep in a nested helper is named by the test containing it.
 
@@ -388,6 +405,33 @@ clock in its own test** *and* to **leave the loop** (`assert`/`raise`/`break`/
 `return`); that pair of conditions is what keeps the sail watchdog flagged
 (`elapsed` is precomputed, and `os._exit` is neither) so it must be declared
 rather than silently blessed.
+
+Three further holes were found by driving the checker rather than reading it, and
+all three are the same shape — a guard that was true of the tree as it stood and
+silently false of the tree as anyone might next write it:
+
+- **A deadline must bound *this* loop.** Shape (c) searched the loop's whole
+  subtree with `ast.walk`, which crosses into nested loops and nested `def`s. A
+  deadline in either place bounds something else, so a `while True` that genuinely
+  spins forever read as correctly bounded. The search is now scoped to what the
+  loop's own iteration governs, and a `break` inside a nested loop no longer
+  counts as leaving the outer one — it does not. The counter search is
+  deliberately *not* scoped the same way: an increment inside an inner loop still
+  advances the outer loop's test, so pruning both would have flagged correct code.
+- **A sleep imported by name is still a sleep.** All 123 sleep sites in this tree
+  write the qualified `time.sleep(...)`, so matching the attribute alone passed —
+  and `from time import sleep` is ordinary Python, so the next bare `sleep(5)`
+  before an assertion would have been an *accident* the checker said nothing
+  about. Resolved per file, so a local helper named `sleep` is not flagged.
+- **A scan root that has been renamed away fails.** The vacuity guard is
+  all-or-nothing and the sweep is not: `rglob` on a missing path yields nothing
+  and raises nothing, so a moved root subtracts its whole share in silence. `e2e/`
+  holds 101 of the 104 sites — rename it and the checker walked the 3 that remain
+  and printed success. A root that *exists* and holds no Python is still fine.
+
+Report mode now prints the stale direction too. It had shown only unrecorded
+sites, so the half of the contract a "flag what is new" reader would never think
+to ask about was the half missing from the output someone actually reads.
 
 It also skips `build/` alongside `.claude/`, for the same reason and a real one:
 `python/fabric-target/build/lib/fabric_target/` is a **checked-in** setuptools
@@ -413,9 +457,13 @@ built with `str()` instead of `as_posix()` made **both** directions of the
 both-directions check fire at once, on Windows only, while every POSIX leg stayed
 green. Reverting `as_posix()` here fails three tests on darwin.
 
-Mutation-tested, nine ways: disabling the body-deadline bound, the stale-ledger
-check, the path normalisation, the sleep detection, the vacuity guard, the
-`build/` skip, and the outermost-symbol rule each fail the suite, as do
-over-broadening the counter bound to any comparison and dropping the
-infinite-generator exclusion. A mutation that leaves the suite green means the
+Mutation-tested, sixteen ways. The original nine: disabling the body-deadline
+bound, the stale-ledger check, the path normalisation, the sleep detection, the
+vacuity guard, the `build/` skip, and the outermost-symbol rule each fail the
+suite, as do over-broadening the counter bound to any comparison and dropping the
+infinite-generator exclusion. Seven more cover the fixes above: dropping the kind
+from the ledger key, accepting a kind-less entry, disabling the per-root guard,
+not detecting a bare imported sleep, reverting the deadline scoping to
+`ast.walk`, counting a nested-loop `break` as an exit, and pruning the counter
+search at nested loops. A mutation that leaves the suite green means the
 corresponding test is not testing anything.
