@@ -281,7 +281,14 @@ jobs:
       # full token → JWKS → RBAC → LRO path over HTTP.
       # shell: bash keeps the coverage profile and the floor step below in
       # the same shell semantics on the Windows runner (pwsh vs Git Bash).
-      - run: go test -coverpkg=./... -coverprofile=cover.out ./...
+      #
+      # -timeout 20m, not Go's default 10m. internal/api and internal/server
+      # take 210-310 s on a typical windows-latest runner, and runner speed
+      # varies 2-3x: on 2026-09-27 (3efbf6f4) and 2026-09-28 (6e38641f) a slow
+      # runner took onelake/store 2.2-3.3x longer than usual and both packages
+      # died at exactly 600 s with no test at fault. 20m stays inside the job's
+      # 25-minute limit, so a genuinely hung test still fails the job.
+      - run: go test -timeout 20m -coverpkg=./... -coverprofile=cover.out ./...
         shell: bash
       # Coverage floor: fail the build if total statement coverage regresses
       # below 90% — enforced only where a real SQL Server was reachable.
