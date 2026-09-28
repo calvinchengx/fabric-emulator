@@ -157,6 +157,13 @@ def tree(tmp_path, monkeypatch):
     """Write Python sources into a fake repo root and point the checker at it."""
     def build(files, ledger=None):
         root = tmp_path / "repo"
+        # Every scan root exists, because a real checkout has all three and the
+        # checker now says so: a root that has been renamed away subtracts its
+        # whole share of the surface in silence, so `missing_scan_roots` fails
+        # on it. A root that exists and holds no Python is still fine, which is
+        # what most cases below build -- one root, one file.
+        for scan_root in c.SCAN_ROOTS:
+            (root / scan_root).mkdir(parents=True, exist_ok=True)
         for name, body in files.items():
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -353,6 +360,7 @@ def test_a_recorded_site_passes(tree, capsys):
          ledger={"accepted": [{
              "file": "e2e/adls-sdk/driver.py",
              "symbol": "<module>",
+             "kind": "unbounded-sleep",
              "bucket": "liveness-probe",
              "reason": "deliberate, for the test",
          }]})
@@ -368,6 +376,7 @@ def test_a_ledger_entry_for_a_site_that_no_longer_exists_fails(tree, capsys):
          ledger={"accepted": [{
              "file": "e2e/gone/driver.py",
              "symbol": "wait_health",
+             "kind": "long-sleep",
              "bucket": "service-cold-start",
              "reason": "this site was rewritten and the entry was not removed",
          }]})
@@ -375,6 +384,139 @@ def test_a_ledger_entry_for_a_site_that_no_longer_exists_fails(tree, capsys):
     out = capsys.readouterr().out
     assert "no longer flagged" in out
     assert "wait_health" in out
+
+
+# --- the ledger key is SCOPED TO ONE KIND ------------------------------------
+#
+# THE DEFECT THESE PIN, and it was in the guard's central contract rather than at
+# an edge. The key was spelled inline in three places and two of them left the
+# `kind` out, so a finding matched a ledger entry on `file:symbol` alone. 42 of
+# the real ledger's 44 entries are `long-sleep` — the kind it exists to HOLD — so
+# those 42 symbols were exempt from the unbounded-sleep and unbounded-poll bans,
+# the two kinds this module's docstring says the ledger exists to keep EMPTY. The
+# checker reported `accepted` and `--strict` exited 0.
+#
+# Both shapes are driven, because the second is strictly worse than the first and
+# would survive a fix that only handled the first.
+
+RECORDED_LONG_SLEEP_PLUS_A_BARE_ONE = '''\
+import time
+
+
+def wait_health(timeout=300):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if up():
+            return
+        time.sleep(2)
+    time.sleep(3)
+    assert up(), "the bare sleep the ledger must NOT cover"
+'''
+
+
+def test_a_recorded_long_sleep_does_not_exempt_the_symbol_from_the_other_bans(
+        tree, capsys):
+    """A `long-sleep` allowance covers that shape and no other.
+
+    Reproduced against the real tree before the fix: a bare `time.sleep(3)`
+    before an assertion, added to `wait_health` in e2e/agent-contract/run.py —
+    a recorded `long-sleep` symbol — printed `accepted` and passed `--strict`.
+    """
+    tree({"e2e/agent-contract/run.py": RECORDED_LONG_SLEEP_PLUS_A_BARE_ONE},
+         ledger={"accepted": [{
+             "file": "e2e/agent-contract/run.py",
+             "symbol": "wait_health",
+             "kind": "long-sleep",
+             "bucket": "service-cold-start",
+             "reason": "the bounded 2s back-off while the agent boots",
+         }]})
+    assert c.main(["check", "--strict"]) == 1, \
+        "a long-sleep allowance must not exempt an unbounded sleep in the same symbol"
+    out = capsys.readouterr().out
+    assert "unbounded-sleep" in out
+    assert "time.sleep(3)" in out, "the finding must name the unrecorded site"
+
+
+MODULE_LONG_SLEEP_PLUS_A_BARE_ONE = '''\
+import time
+
+for _ in range(120):
+    if done():
+        break
+    time.sleep(1)
+
+time.sleep(9)
+assert not runs(), "the bare sleep the <module> entry must NOT cover"
+'''
+
+
+def test_a_module_entry_covers_one_kind_not_a_whole_drivers_top_level(tree, capsys):
+    """THE COMPOUND CASE, and the worse half.
+
+    Nine real entries use the `<module>` symbol, which by design covers every
+    module-level site in that file. Kind-blind, that exempted an entire e2e
+    driver's top level — and module level is exactly where the adls-sdk defect
+    this change fixed lived, so the guard would not have caught a recurrence of
+    its own motivating bug in nine sibling drivers. Reproduced against
+    e2e/rest-helix/driver.py before the fix.
+    """
+    tree({"e2e/rest-helix/driver.py": MODULE_LONG_SLEEP_PLUS_A_BARE_ONE},
+         ledger={"accepted": [{
+             "file": "e2e/rest-helix/driver.py",
+             "symbol": "<module>",
+             "kind": "long-sleep",
+             "bucket": "job-poll",
+             "reason": "the bounded 1s job poll",
+         }]})
+    assert c.main(["check", "--strict"]) == 1, \
+        "a <module> long-sleep entry must not exempt the file's whole top level"
+    out = capsys.readouterr().out
+    assert "unbounded-sleep" in out
+    assert "time.sleep(9)" in out
+
+
+def test_the_recorded_kind_still_covers_its_own_site(tree):
+    """The other direction: scoping the key must not break the allowance itself.
+
+    Without this the two tests above would pass on a checker that had simply
+    stopped matching anything, which is the same vacuous green this whole suite
+    is written against.
+    """
+    tree({"e2e/rest-helix/driver.py": '''\
+import time
+
+for _ in range(120):
+    if done():
+        break
+    time.sleep(1)
+'''},
+         ledger={"accepted": [{
+             "file": "e2e/rest-helix/driver.py",
+             "symbol": "<module>",
+             "kind": "long-sleep",
+             "bucket": "job-poll",
+             "reason": "the bounded 1s job poll",
+         }]})
+    assert c.main(["check", "--strict"]) == 0
+
+
+def test_a_ledger_entry_with_no_kind_is_refused_by_name(tree):
+    """An entry that cannot say which ban it exempts has no safe reading.
+
+    Guessing one is how the defect above got in, so this fails loudly and names
+    the field rather than raising a bare KeyError at whoever is editing the JSON.
+    """
+    with pytest.raises(KeyError, match="missing kind"):
+        c.ledger_key({"file": "e2e/x/driver.py", "symbol": "<module>"})
+
+
+def test_every_real_ledger_entry_carries_a_kind_the_checker_can_emit():
+    """A kind the checker never emits is an allowance that can never match."""
+    import importlib
+    real = importlib.reload(c)
+    kinds = {"unbounded-sleep", "unbounded-poll", "long-sleep"}
+    for key, entry in real.load_ledger().items():
+        assert entry["kind"] in kinds, f"{key} records an unknown kind"
 
 
 # --- the ledger key, on a platform that is not this one ----------------------
@@ -421,13 +563,17 @@ def test_a_windows_flavoured_finding_matches_a_forward_slash_ledger_entry(tree):
          ledger={"accepted": [{
              "file": "e2e/adls-sdk/driver.py",
              "symbol": "<module>",
+             "kind": "unbounded-sleep",
              "bucket": "liveness-probe",
              "reason": "deliberate, for the test",
          }]})
     accepted = c.load_ledger()
     findings = c.findings_for(
         pathlib.PureWindowsPath(r"e2e\adls-sdk\driver.py"), MODULE_LEVEL_SLEEP)
-    assert [f"{f['file']}:{f['symbol']}" in accepted for f in findings] == [True], \
+    # Through `ledger_key`, not an inline f-string. Spelling the key by hand here
+    # would be a fourth copy of it, and three copies drifting is precisely how
+    # the kind came to be missing from two of them.
+    assert [c.ledger_key(f) in accepted for f in findings] == [True], \
         "a ledger entry must match its site regardless of the host's separator"
 
 
@@ -453,6 +599,166 @@ def test_a_checked_in_build_copy_is_not_walked(tree, capsys):
     # build copy contributed nothing, which is the claim.
     assert c.main(["check", "--strict"]) == 1
     assert "vacuously" in capsys.readouterr().out
+
+
+# --- a scan root that is no longer there --------------------------------------
+
+def test_a_scan_root_that_has_been_renamed_away_fails(tree, capsys):
+    """The vacuity guard is all-or-nothing and the sweep is not.
+
+    `rglob` on a path that does not exist yields nothing and raises nothing, so a
+    renamed or moved scan root subtracts its whole share of the surface in
+    silence. `e2e/` holds 101 of this tree's 104 sleep sites: rename it and the
+    checker walks the 3 that remain, matches the ledger against nothing, and
+    prints success -- a partial number that looks plausible.
+    """
+    root = tree({"python/tests/test_ok.py": "def test_x():\n    assert True\n"})
+    (root / "e2e").rmdir()
+    assert c.main(["check", "--strict"]) == 1
+    out = capsys.readouterr().out
+    assert "e2e" in out and "do not exist" in out
+
+
+def test_a_scan_root_that_exists_but_holds_no_python_is_fine(tree):
+    """The distinction that keeps the guard honest rather than merely loud.
+
+    An empty root is what most cases in this file build -- one root, one file --
+    and a checker that failed on it would be unusable. Absent is the failure;
+    empty is not.
+    """
+    tree({"python/tests/test_ok.py": FOR_RANGE_POLL})
+    assert c.main(["check", "--strict"]) == 0
+
+
+# --- the spelling of a sleep --------------------------------------------------
+
+BARE_IMPORTED_SLEEP = '''\
+from time import sleep
+
+trigger_a_write()
+sleep(5)
+assert not runs(), "a bare sleep, and no loop anywhere"
+'''
+
+ALIASED_IMPORTED_SLEEP = '''\
+from time import sleep as nap
+
+nap(5)
+assert not runs(), "aliased, and still a sleep"
+'''
+
+A_LOCAL_HELPER_CALLED_SLEEP = '''\
+def sleep(n):
+    """Not time.sleep -- this one records a nap in a ledger."""
+    ledger.append(n)
+
+
+sleep(5)
+assert ledger == [5]
+'''
+
+
+def test_a_sleep_imported_by_name_is_still_a_sleep(tree, capsys):
+    """THE BAN HAD A ONE-LINE BYPASS.
+
+    All 123 sleep sites in this tree write the qualified `time.sleep(...)`, so
+    matching the attribute alone was true of the tree as it stood and silently
+    false of the tree as anyone might next write it. `from time import sleep` is
+    ordinary Python, so the next bare `sleep(5)` before an assertion would have
+    been an ACCIDENT this checker said nothing about.
+    """
+    tree({"e2e/suite/driver.py": BARE_IMPORTED_SLEEP})
+    assert c.main(["check", "--strict"]) == 1
+    assert "unbounded-sleep" in capsys.readouterr().out
+
+
+def test_an_aliased_import_is_followed(tree, capsys):
+    tree({"e2e/suite/driver.py": ALIASED_IMPORTED_SLEEP})
+    assert c.main(["check", "--strict"]) == 1
+    assert "unbounded-sleep" in capsys.readouterr().out
+
+
+def test_a_local_function_called_sleep_is_not_a_time_sleep(tree):
+    """The near-miss for the test above.
+
+    A bare name is only a sleep when the module IMPORTED one; flagging an
+    unrelated local helper would be a false positive on correct code, which is
+    how a checker gets argued with rather than fixed.
+    """
+    tree({"e2e/suite/driver.py": A_LOCAL_HELPER_CALLED_SLEEP})
+    assert c.main(["check", "--strict"]) == 0
+
+
+# --- the deadline must govern THIS loop ---------------------------------------
+#
+# Shape (c) searched the whole loop subtree with `ast.walk`, which crosses into
+# nested loops and nested `def`s. A deadline in either place bounds something
+# other than the loop being asked about, so a `while True` that genuinely spins
+# forever was reported as correctly bounded.
+
+DEADLINE_IN_A_NESTED_FOR = '''\
+import time
+
+end = time.time() + 5
+while True:
+    for i in range(3):
+        assert time.time() < end
+    time.sleep(1)
+'''
+
+DEADLINE_IN_A_NESTED_DEF = '''\
+import time
+
+end = time.time() + 5
+while True:
+    def check():
+        assert time.time() < end
+    time.sleep(1)
+'''
+
+BREAK_THAT_LEAVES_ONLY_THE_INNER_LOOP = '''\
+import time
+
+end = time.time() + 5
+while True:
+    if time.time() > end:
+        for x in (1,):
+            break
+    time.sleep(1)
+'''
+
+COUNTER_BUMPED_IN_A_NESTED_LOOP = '''\
+import time
+
+tries = 0
+while tries < 60:
+    for row in rows():
+        tries += 1
+    time.sleep(0.1)
+'''
+
+
+@pytest.mark.parametrize("name,body", [
+    ("a deadline in a nested for loop", DEADLINE_IN_A_NESTED_FOR),
+    ("a deadline in a nested def", DEADLINE_IN_A_NESTED_DEF),
+    ("a break that only leaves a nested loop", BREAK_THAT_LEAVES_ONLY_THE_INNER_LOOP),
+])
+def test_a_deadline_that_bounds_something_else_is_not_a_bound(tree, capsys, name, body):
+    tree({"e2e/suite/driver.py": body})
+    assert c.main(["check", "--strict"]) == 1, \
+        f"{name} does not bound the enclosing loop, so it must stay flagged"
+    assert "unbounded-poll" in capsys.readouterr().out
+
+
+def test_a_counter_bumped_in_a_nested_loop_still_bounds_the_outer_while(tree):
+    """The near-miss on the other side of the same scoping.
+
+    Nested loops are pruned for the DEADLINE search and deliberately not for the
+    COUNTER search: an increment inside an inner loop still advances the outer
+    loop's test, so pruning both would have flagged correct code.
+    """
+    tree({"e2e/suite/driver.py": COUNTER_BUMPED_IN_A_NESTED_LOOP})
+    assert c.main(["check", "--strict"]) == 0
 
 
 # --- the control: the real repository ----------------------------------------
