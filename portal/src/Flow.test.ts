@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Flow from './Flow.svelte';
 import { EVENT_KINDS, VIEW_KINDS } from './eventKinds';
-import { FakeEventSource, errRes, fetchCalls, groupOf, installEventSource, removeEventSource, res, stream } from './testing';
+import { FakeEventSource, errRes, fetchCalls, groupOf, installEventSource, removeEventSource, res, staysAbsent, stream } from './testing';
 const edges = [
   {
     jobId: 'job-1', activityName: 'IngestCustomers', producer: 'Copy',
@@ -1137,8 +1137,7 @@ describe('Flow: payloads that omit what they usually carry', () => {
     render(Flow);
     await waitFor(() => expect(screen.getByText('silver_customers')).toBeInTheDocument());
     stream().emit('dropped', { seq: 1, at: 1700000000, kind: 'dropped' });
-    await new Promise((r) => setTimeout(r, 20));
-    expect(screen.queryByText(/event\(s\) dropped/)).not.toBeInTheDocument();
+    await staysAbsent(() => screen.queryByText(/event\(s\) dropped/), 20);
   });
 
   it('labels a source system by its id when the connection has no name', async () => {
