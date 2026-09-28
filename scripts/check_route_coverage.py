@@ -197,7 +197,11 @@ def alias_values(key):
     `.../warehouses` as separate operations, and this emulator answers both.
     Same registrations, two honest readings.
     """
-    rel, _, var = key.partition(":")
+    # rpartition, not partition: the path half is absolute when the file is
+    # outside the repo, and on Windows that starts `C:`, so splitting at the
+    # FIRST colon cut at the drive letter and resolved no collections at all.
+    # A Go identifier never contains a colon, so the last one is the seam.
+    rel, _, var = key.rpartition(":")
     source = ROOT / rel
     if not source.is_file():
         return []
@@ -468,7 +472,7 @@ def collapser():
     registered(families=families)
     names = {}
     for key in PARAMETERISED:
-        var = key.partition(":")[2]
+        var = key.rpartition(":")[2]
         for name in alias_spellings(key):
             names[name] = "{" + var + "}"
 

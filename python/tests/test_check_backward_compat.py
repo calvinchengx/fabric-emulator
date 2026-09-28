@@ -114,17 +114,17 @@ def tree(tmp_path, monkeypatch):
     """A whole miniature repository, with every input the gate reads."""
     main = tmp_path / "cmd" / "fabric-emulator"
     main.mkdir(parents=True)
-    (main / "main.go").write_text(MAIN_GO)
+    (main / "main.go").write_text(MAIN_GO, encoding="utf-8")
 
     config = tmp_path / "internal" / "config"
     config.mkdir(parents=True)
-    (config / "config.go").write_text(CONFIG_GO)
+    (config / "config.go").write_text(CONFIG_GO, encoding="utf-8")
 
     api = tmp_path / "internal" / "api"
     api.mkdir(parents=True)
-    (api / "routes.go").write_text(ROUTES_GO)
+    (api / "routes.go").write_text(ROUTES_GO, encoding="utf-8")
 
-    (tmp_path / "04-configuration.md").write_text(CONFIG_DOC)
+    (tmp_path / "04-configuration.md").write_text(CONFIG_DOC, encoding="utf-8")
 
     monkeypatch.setattr(bc, "MAIN_GO", main / "main.go")
     monkeypatch.setattr(bc, "ENV_SOURCES", (tmp_path / "internal", tmp_path / "cmd"))
@@ -136,13 +136,13 @@ def tree(tmp_path, monkeypatch):
 
 
 def baseline(tree):
-    return json.loads((tree / "compat-surface.json").read_text())
+    return json.loads((tree / "compat-surface.json").read_text(encoding="utf-8"))
 
 
 def rewrite(tree, mutate):
     data = baseline(tree)
     mutate(data)
-    (tree / "compat-surface.json").write_text(json.dumps(data, indent=2) + "\n")
+    (tree / "compat-surface.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 # --- the extractors find things ------------------------------------------------
@@ -178,9 +178,9 @@ def test_a_commented_variable_is_not_a_knob(tree):
 def test_a_read_form_the_parser_does_not_know_is_named_not_dropped(tree):
     """The env reader list is five function names; renaming one must fail."""
     (tree / "internal" / "config" / "config.go").write_text(
-        'package config\nvar x = lookupEnvSomehow("FABRIC_MYSTERY")\n')
+        'package config\nvar x = lookupEnvSomehow("FABRIC_MYSTERY")\n', encoding="utf-8")
     assert bc.unrecognised_env_reads() == [
-        (str(tree / "internal" / "config" / "config.go"), "FABRIC_MYSTERY")]
+        ((tree / "internal" / "config" / "config.go").as_posix(), "FABRIC_MYSTERY")]
     assert bc.main_for_test(strict=True) == 1
 
 
@@ -189,10 +189,10 @@ def test_a_read_form_the_parser_does_not_know_is_named_not_dropped(tree):
 @pytest.mark.parametrize("surface,break_it", [
     # `fs` renamed: every flag disappears and the surface reads as empty.
     ("cliFlags", lambda t: (t / "cmd" / "fabric-emulator" / "main.go").write_text(
-        MAIN_GO.replace("fs.", "flags."))),
+        MAIN_GO.replace("fs.", "flags."), encoding="utf-8")),
     # The subcommand switch moved or was rewritten.
     ("subcommands", lambda t: (t / "cmd" / "fabric-emulator" / "main.go").write_text(
-        MAIN_GO.replace("switch args[0] {", "switch command(args) {"))),
+        MAIN_GO.replace("switch args[0] {", "switch command(args) {"), encoding="utf-8")),
     # A package relocated out from under the env scan.
     ("envVars", lambda t: (t / "internal" / "config" / "config.go").unlink()),
     # …and the same for the route registrations.
@@ -214,7 +214,7 @@ def test_a_zero_extraction_fails_rather_than_passing_vacuously(tree, surface, br
 def test_a_removed_flag_is_a_breaking_change(tree, capsys):
     assert bc.main_for_test(update=True) == 0
     (tree / "cmd" / "fabric-emulator" / "main.go").write_text(
-        "\n".join(line for line in MAIN_GO.splitlines() if '"tsql-strict"' not in line))
+        "\n".join(line for line in MAIN_GO.splitlines() if '"tsql-strict"' not in line), encoding="utf-8")
     assert bc.main_for_test(strict=True) == 1
     out = capsys.readouterr().out
     assert "BREAKING CHANGE" in out
@@ -225,7 +225,7 @@ def test_a_removed_route_is_a_breaking_change(tree, capsys):
     assert bc.main_for_test(update=True) == 0
     (tree / "internal" / "api" / "routes.go").write_text(
         ROUTES_GO.replace(
-            '\tmux.HandleFunc("POST /v1/workspaces/{wid}/items", a.createItem)\n', ""))
+            '\tmux.HandleFunc("POST /v1/workspaces/{wid}/items", a.createItem)\n', ""), encoding="utf-8")
     assert bc.main_for_test(strict=True) == 1
     out = capsys.readouterr().out
     assert "BREAKING CHANGE" in out
@@ -235,7 +235,7 @@ def test_a_removed_route_is_a_breaking_change(tree, capsys):
 def test_a_removed_env_var_is_a_breaking_change(tree, capsys):
     assert bc.main_for_test(update=True) == 0
     (tree / "internal" / "config" / "config.go").write_text(
-        CONFIG_GO.replace('durationEnv("FABRIC_NAME_RESERVATION")', "0"))
+        CONFIG_GO.replace('durationEnv("FABRIC_NAME_RESERVATION")', "0"), encoding="utf-8")
     assert bc.main_for_test(strict=True) == 1
     assert "FABRIC_NAME_RESERVATION" in capsys.readouterr().out
 
@@ -243,7 +243,7 @@ def test_a_removed_env_var_is_a_breaking_change(tree, capsys):
 def test_a_removed_subcommand_is_a_breaking_change(tree, capsys):
     assert bc.main_for_test(update=True) == 0
     (tree / "cmd" / "fabric-emulator" / "main.go").write_text(
-        MAIN_GO.replace('case "healthcheck":', 'case "probe":'))
+        MAIN_GO.replace('case "healthcheck":', 'case "probe":'), encoding="utf-8")
     assert bc.main_for_test(strict=True) == 1
     out = capsys.readouterr().out
     assert "BREAKING CHANGE" in out and "healthcheck" in out
@@ -253,7 +253,7 @@ def test_a_declared_removal_passes(tree):
     """The only way past a removal: write down the release and the reason."""
     assert bc.main_for_test(update=True) == 0
     (tree / "cmd" / "fabric-emulator" / "main.go").write_text(
-        "\n".join(line for line in MAIN_GO.splitlines() if '"tsql-strict"' not in line))
+        "\n".join(line for line in MAIN_GO.splitlines() if '"tsql-strict"' not in line), encoding="utf-8")
     rewrite(tree, lambda d: d["removed"].append({
         "surface": "cliFlags", "id": "tsql-strict", "removedIn": "v0.99.0",
         "reason": "The strict T-SQL mode moved into the warehouse relay.",
@@ -264,7 +264,7 @@ def test_a_declared_removal_passes(tree):
 def test_a_removal_with_no_reason_is_refused(tree, capsys):
     assert bc.main_for_test(update=True) == 0
     (tree / "cmd" / "fabric-emulator" / "main.go").write_text(
-        "\n".join(line for line in MAIN_GO.splitlines() if '"tsql-strict"' not in line))
+        "\n".join(line for line in MAIN_GO.splitlines() if '"tsql-strict"' not in line), encoding="utf-8")
     rewrite(tree, lambda d: d["removed"].append({
         "surface": "cliFlags", "id": "tsql-strict", "removedIn": "v0.99.0",
         "reason": "   ",
@@ -300,7 +300,7 @@ def test_an_undeclared_addition_is_a_stale_ledger(tree, capsys):
     (tree / "cmd" / "fabric-emulator" / "main.go").write_text(MAIN_GO.replace(
         '\tfs.StringVar(&cfg.Addr, "addr"',
         '\tfs.StringVar(&cfg.Brand, "brand-new", cfg.Brand, "new")\n'
-        '\tfs.StringVar(&cfg.Addr, "addr"'))
+        '\tfs.StringVar(&cfg.Addr, "addr"'), encoding="utf-8")
     assert bc.main_for_test(strict=True) == 1
     out = capsys.readouterr().out
     assert "STALE LEDGER" in out and "brand-new" in out
@@ -310,7 +310,7 @@ def test_strict_is_what_decides_the_exit_code(tree):
     """Bare runs REPORT drift. Only --strict fails on it -- the house CLI."""
     assert bc.main_for_test(update=True) == 0
     (tree / "cmd" / "fabric-emulator" / "main.go").write_text(
-        "\n".join(line for line in MAIN_GO.splitlines() if '"tsql-strict"' not in line))
+        "\n".join(line for line in MAIN_GO.splitlines() if '"tsql-strict"' not in line), encoding="utf-8")
     assert bc.main_for_test() == 0
     assert bc.main_for_test(strict=True) == 1
 
@@ -328,7 +328,7 @@ def test_reordering_the_flags_is_not_drift(tree):
     lines = MAIN_GO.splitlines()
     flags = [i for i, line in enumerate(lines) if line.startswith("\tfs.")]
     lines[flags[0]], lines[flags[-1]] = lines[flags[-1]], lines[flags[0]]
-    (tree / "cmd" / "fabric-emulator" / "main.go").write_text("\n".join(lines))
+    (tree / "cmd" / "fabric-emulator" / "main.go").write_text("\n".join(lines), encoding="utf-8")
     assert bc.main_for_test(strict=True) == 0
 
 
@@ -336,7 +336,7 @@ def test_renaming_a_route_parameter_is_not_drift(tree):
     """`{wid}` to `{workspaceId}` changes no URL any client ever writes."""
     assert bc.main_for_test(update=True) == 0
     (tree / "internal" / "api" / "routes.go").write_text(
-        ROUTES_GO.replace("{wid}", "{workspaceId}").replace("{iid}", "{itemId}"))
+        ROUTES_GO.replace("{wid}", "{workspaceId}").replace("{iid}", "{itemId}"), encoding="utf-8")
     assert bc.main_for_test(strict=True) == 0
 
 
@@ -345,7 +345,7 @@ def test_renaming_a_flag_is_both_halves_at_once(tree, capsys):
     as both a removal and an addition, because for a bound client it is both."""
     assert bc.main_for_test(update=True) == 0
     (tree / "cmd" / "fabric-emulator" / "main.go").write_text(
-        MAIN_GO.replace('"tsql-strict"', '"tsql-pedantic"'))
+        MAIN_GO.replace('"tsql-strict"', '"tsql-pedantic"'), encoding="utf-8")
     assert bc.main_for_test(strict=True) == 1
     out = capsys.readouterr().out
     assert "BREAKING CHANGE" in out and "tsql-strict" in out
@@ -372,9 +372,9 @@ def test_the_shape_rule_agrees_with_the_surface_ledger(tree):
 def test_update_round_trips_to_a_clean_run(tree):
     assert bc.main_for_test(update=True) == 0
     assert bc.main_for_test(strict=True) == 0
-    first = (tree / "compat-surface.json").read_text()
+    first = (tree / "compat-surface.json").read_text(encoding="utf-8")
     assert bc.main_for_test(update=True) == 0
-    assert (tree / "compat-surface.json").read_text() == first, \
+    assert (tree / "compat-surface.json").read_text(encoding="utf-8") == first, \
         "regenerating must be a no-op diff, or every change carries noise"
     assert first.endswith("\n")
 
@@ -390,7 +390,7 @@ def test_update_cannot_launder_a_removal(tree, capsys):
     """
     assert bc.main_for_test(update=True) == 0
     (tree / "cmd" / "fabric-emulator" / "main.go").write_text(
-        "\n".join(line for line in MAIN_GO.splitlines() if '"tsql-strict"' not in line))
+        "\n".join(line for line in MAIN_GO.splitlines() if '"tsql-strict"' not in line), encoding="utf-8")
     assert bc.main_for_test(update=True) == 1
     assert "cannot launder a removal" in capsys.readouterr().err
     assert "tsql-strict" in baseline(tree)["cliFlags"], "the baseline must be untouched"
@@ -471,16 +471,16 @@ def test_the_real_repository_documents_or_records_every_knob(tree):
     are named explicitly and the test cannot accidentally read the synthetic
     ones.
     """
-    real = json.loads((bc.ROOT / "docs" / "compat-surface.json").read_text())
+    real = json.loads((bc.ROOT / "docs" / "compat-surface.json").read_text(encoding="utf-8"))
     surface = {
         "cliFlags": sorted(set(re.findall(
             bc._FLAG.pattern,
-            (bc.ROOT / "cmd" / "fabric-emulator" / "main.go").read_text()))),
+            (bc.ROOT / "cmd" / "fabric-emulator" / "main.go").read_text(encoding="utf-8")))),
         "envVars": real["envVars"],
     }
     assert surface["cliFlags"], "the real main.go must still parse"
     doc = bc.ROOT / "docs" / "04-configuration.md"
-    table = "\n".join(line for line in doc.read_text().splitlines()
+    table = "\n".join(line for line in doc.read_text(encoding="utf-8").splitlines()
                       if line.startswith("|"))
     accepted = real["docsUndocumented"]
     missing = [f"-{f}" for f in surface["cliFlags"]
@@ -494,7 +494,7 @@ def test_the_real_repository_documents_or_records_every_knob(tree):
 
 def test_every_recorded_omission_carries_a_reason():
     """An accepted omission with an empty reason is the omission it excuses."""
-    real = json.loads((bc.ROOT / "docs" / "compat-surface.json").read_text())
+    real = json.loads((bc.ROOT / "docs" / "compat-surface.json").read_text(encoding="utf-8"))
     for name, why in real["docsUndocumented"].items():
         assert why.strip(), f"{name} is recorded as undocumented with no reason"
     assert not bc.removal_problems(real)
