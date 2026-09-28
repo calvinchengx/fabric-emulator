@@ -172,6 +172,22 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# -- a route the emulator answers that no spec documents is a URL a
 	@# script binds to here and 404s on in production.
 	@$(PY) scripts/check_undocumented_routes.py --strict
+	@# THE FIFTH READING OF THE SAME REGISTRATIONS, and the only one
+	@# that asks whether a surface a RELEASED BINARY ACCEPTED still
+	@# exists. The four above all point from a spec, or from traffic,
+	@# towards evidence; none of them can say that a route which was
+	@# there yesterday is there today. check_route_coverage comes
+	@# closest and stores `registered` as a COUNT, so deleting a served
+	@# route reads in review as `174 -> 173` and never names itself.
+	@# Below HTTP nothing looked at all: 28 CLI flags, 2 subcommands and
+	@# 37 FABRIC_* knobs that every compose file, CI job and README
+	@# snippet here is written against, and a rename would break all of
+	@# them while every check above stayed green. Offline like its
+	@# neighbour -- the Go source and nothing else -- so it answers
+	@# before a push. Asymmetric on purpose: an addition is a stale
+	@# ledger you fix with --update, a removal fails until someone
+	@# writes down the release it went away in and why.
+	@$(PY) scripts/check_backward_compat.py --strict
 	@# Doc 24 summarises the sub-plans in one row each, and three of those
 	@# rows went stale before anything checked them — each pointing a
 	@# maintainer at work already finished.
@@ -224,7 +240,7 @@ check: lint ## Repo invariants — the checks that used to exist only in CI
 	@# ...and one level in from both of them: every script in THIS
 	@# directory has a dedicated python/tests/test_<stem>.py, or is
 	@# recorded with the reason it does not. These scripts ARE the
-	@# invariant enforcement -- the thirty lines above this one -- and a
+	@# invariant enforcement -- the thirty-one lines above -- and a
 	@# guard whose own behaviour nothing asserts can stop guarding and
 	@# go on reporting green. That is the failure
 	@# python/tests/test_make_check_runs_in_ci.py was written about one

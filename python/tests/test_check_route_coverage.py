@@ -513,6 +513,24 @@ def test_a_key_quoted_in_a_comment_is_not_a_collection(tmp_path, monkeypatch):
     assert not [r for r in found if "ghost" in r or "phantom" in r]
 
 
+def test_a_key_whose_path_holds_a_colon_still_resolves(tmp_path, monkeypatch):
+    """Windows' drive letter, reproduced on any OS.
+
+    A file outside ROOT is keyed by its ABSOLUTE path, and on Windows that
+    starts `C:`. alias_values split `path:var` at the first colon, so there
+    it cut at the drive letter, found no file and resolved no collections:
+    check_backward_compat's route extractor lost every typed collection on
+    windows-latest only. A directory named `C:` puts the same colon in the
+    path here."""
+    src = tmp_path / "C:" / "api"
+    src.mkdir(parents=True)
+    (src / "typed.go").write_text(COMMENTED_KEY_SOURCE, encoding="utf-8")
+    monkeypatch.setattr(c, "ROOT", tmp_path / "elsewhere")
+
+    key = f"{(src / 'typed.go').as_posix()}:collection"
+    assert sorted(c.alias_values(key)) == ["notebooks", "warehouses"]
+
+
 def test_the_real_tree_has_no_phantom_type_collection():
     """The measured case: `"type": "CopyJob"` in definitions.go's comment.
 
