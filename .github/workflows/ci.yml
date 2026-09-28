@@ -582,6 +582,29 @@ jobs:
       # and in `make check` too, which python/tests/test_make_check_runs_in_ci.py
       # requires of anything in that target.
       - run: uv run --frozen --no-sync python scripts/check_undocumented_routes.py --strict
+      # THE FIFTH READING OF THE SAME REGISTRATIONS, and the only one that
+      # asks whether a surface a RELEASED BINARY ACCEPTED still exists. The
+      # four gates above all point from Microsoft's spec, or from recorded
+      # traffic, towards evidence; not one of them can say that a route which
+      # was there yesterday is there today. check_route_coverage comes closest
+      # and stores `registered` as a COUNT, so deleting a served route shows up
+      # in review as `174 -> 173` and never names itself.
+      #
+      # Below the HTTP layer nothing looked at all. Measured when this landed:
+      # 28 CLI flags, 2 subcommands and 37 FABRIC_* variables -- a contract
+      # every compose file, e2e harness, example and README snippet in this
+      # repository is written against, including the FABRIC_RECORD_RESPONSES
+      # this job's own siblings set. A rename would break all of them and
+      # every check above would stay green.
+      #
+      # Asymmetric on purpose. An addition is a stale ledger: run --update and
+      # the diff is the review of what surface is newly promised. A removal is
+      # a breaking change and fails until someone writes it into `removed` with
+      # the release it went away in and why -- --update cannot launder one, or
+      # the gate is a changelog agreeing with itself. In `make check` too,
+      # which python/tests/test_make_check_runs_in_ci.py requires of anything
+      # in that target.
+      - run: uv run --frozen --no-sync python scripts/check_backward_compat.py --strict
       # docs/24 is the map a maintainer reads to pick work, and its rows are
       # copies of the sub-plans. Three had gone stale — the runMultiple row
       # advertised two answers fixed months earlier, and the runtime-
@@ -685,8 +708,8 @@ jobs:
       # python/tests/test_<stem>.py or be recorded in
       # docs/script-test-coverage.json with the reason.
       #
-      # This directory IS the invariant enforcement: this job runs thirty of
-      # these scripts and `make check` runs thirty-one. A guard whose own
+      # This directory IS the invariant enforcement: this job runs thirty-one
+      # of these scripts and `make check` runs thirty-one too. A guard whose own
       # behaviour nothing asserts can stop guarding -- a renamed directory, a
       # tightened regex, a refactor that drops a branch -- and go on printing
       # its success line and exiting 0 forever. That is
